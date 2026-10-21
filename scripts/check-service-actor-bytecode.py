@@ -34,7 +34,7 @@ def main() -> None:
         fift_source = tmp / "service-actor.fif"
         boc = tmp / "service-actor.boc"
         subprocess.run(
-            [str(FUNC), "-APS", str(STDLIB), str(SOURCE), "-W", str(boc), "-o", str(fift_source)],
+            [str(FUNC), "-APS", "-W", str(boc), "-o", str(fift_source), str(STDLIB), str(SOURCE)],
             cwd=ROOT,
             check=True,
         )

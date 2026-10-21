@@ -110,6 +110,7 @@ const int err::terms_mismatch = 1926;
 ;; messages produces such a state, so it is never a caller's refusal code; it
 ;; can only come from an accounting cell or dictionary supplied at deploy time.
 const int err::amount_range = 1927;
+const int err::operating_reserve_unfunded = 1928;
 
 ;; ---- Coin arithmetic ------------------------------------------------------
 ;; Every addition and subtraction of a coin amount goes through these two
@@ -151,9 +152,9 @@ const int MAXIMUM_CLEANUP_BOUNTY = 1000000000; ;; 1 TOS, 10x the floor
 ;; on top of which cleanup_bounty is added (storage_fee >= this + bounty).
 const int MINIMUM_STORAGE_FEE = 100000000; ;; 0.1 TOS
 
-;; Standing balance floor below which no value-moving operation may push the
-;; contract's own get_balance(); a generous multiple of a single send's cost
-;; so ordinary passive storage-fee accrual cannot strand the contract.
+;; Floor retained after successful admission and payout action phases.
+;; Rent and failed transactions still charge fees; an eroded service needs a
+;; separate top-up before it can admit more work or pay protected funds.
 const int MINIMUM_OPERATING_RESERVE = 1000000000; ;; 1 TOS
 
 ;; response_sla / refund_claim_window bounds. The lower bounds mirror
@@ -180,6 +181,17 @@ const int MAX_LIVE_PER_CALLER = 1000;
     .store_tomis(amount)
     .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
   .end_cell(), mode);
+}
+
+;; Reserve exactly, without ignore-errors or best-effort modes. Compute-phase
+;; balance checks are early refusals only: gas and forwarding fees are charged
+;; later. A failed reserve/send rolls back the state and all outbound actions,
+;; but does not refund transaction fees.
+() reserve_obligations(int pending, int refundable, int locked) impure inline {
+  int floor = checked_add_amount(pending, refundable);
+  floor = checked_add_amount(floor, locked);
+  floor = checked_add_amount(floor, MINIMUM_OPERATING_RESERVE);
+  raw_reserve(floor, 0);
 }
 
 ;; ---- terms_hash / attestation domain ------------------------------------
@@ -530,6 +542,13 @@ cell caller_live_decr(cell caller_live_counts, slice caller) inline {
     ;; Only price_per_call + storage_fee is ever owed; refund the excess so a
     ;; caller who overpays (rounding, a wallet's gas-margin padding, a client
     ;; bug) does not permanently lose the difference.
+    ;; This payment belongs to the new request, not to the operator's reserve.
+    int balance = get_balance().pair_first();
+    throw_unless(err::operating_reserve_unfunded, balance >= msg_value);
+    throw_unless(err::operating_reserve_unfunded,
+      checked_sub_amount(balance, msg_value) >= MINIMUM_OPERATING_RESERVE);
+    reserve_obligations(checked_add_amount(pending_liability, price_per_call),
+      refundable_liability, checked_add_amount(locked_storage_fees, storage_fee));
     int overpayment = checked_sub_amount(payment_after_price, storage_fee);
     if (overpayment > 0) {
       send_value(sender, overpayment, 1);
@@ -623,11 +642,20 @@ cell caller_live_decr(cell caller_live_counts, slice caller) inline {
      int refund_claim_deadline) = unpack_refund(entry);
     throw_unless(err::not_refund_caller, equal_slice_bits(sender, caller));
     throw_unless(err::refund_claim_expired, now() < refund_claim_deadline);
-    ;; The only failure mode this design claims to handle atomically: the
-    ;; contract cannot afford to send `price`. Checked, and the entry left
-    ;; untouched on failure, before any state mutation below. Destination-side
-    ;; failure after this point is out of scope -- see the design doc.
-    throw_unless(err::insufficient_balance, price <= get_balance().pair_first());
+    ;; Refusing an insolvent payout preserves the claim and every other entry.
+    int remaining = get_balance().pair_first();
+    throw_unless(err::insufficient_balance, remaining >= price);
+    remaining = checked_sub_amount(remaining, price);
+    int remaining_refundable = checked_sub_amount(refundable_liability, price);
+    int remaining_locked = checked_sub_amount(locked_storage_fees, req_storage_fee);
+    throw_unless(err::insufficient_balance, remaining >= pending_liability);
+    remaining = checked_sub_amount(remaining, pending_liability);
+    throw_unless(err::insufficient_balance, remaining >= remaining_refundable);
+    remaining = checked_sub_amount(remaining, remaining_refundable);
+    throw_unless(err::insufficient_balance, remaining >= remaining_locked);
+    remaining = checked_sub_amount(remaining, remaining_locked);
+    throw_unless(err::insufficient_balance, remaining >= MINIMUM_OPERATING_RESERVE);
+    reserve_obligations(pending_liability, remaining_refundable, remaining_locked);
 
     (refunds, _) = refunds.udict_delete?(64, request_id);
     caller_live_counts = caller_live_decr(caller_live_counts, caller);
@@ -727,6 +755,7 @@ cell caller_live_decr(cell caller_live_counts, slice caller) inline {
     int revenue_credit = checked_add_amount(price, checked_sub_amount(req_storage_fee, req_cleanup_bounty));
     withdrawable_revenue = checked_add_amount(withdrawable_revenue, revenue_credit);
     locked_storage_fees = remaining_locked;
+    reserve_obligations(pending_liability, refundable_liability, locked_storage_fees);
     if (req_cleanup_bounty > 0) {
       send_value(sender, req_cleanup_bounty, 1);
     }
@@ -830,6 +859,7 @@ cell caller_live_decr(cell caller_live_counts, slice caller) inline {
     remaining = checked_sub_amount(remaining, MINIMUM_OPERATING_RESERVE);
     int withdrawable_now = min(withdrawable_revenue, remaining);
     throw_unless(err::insufficient_revenue, amount <= withdrawable_now);
+    reserve_obligations(pending_liability, refundable_liability, locked_storage_fees);
     if (amount > 0) {
       send_value(owner, amount, 1);
     }

@@ -131,7 +131,7 @@ pub struct ServiceActorDeployCmd {
     signer_vault_key: Option<String>,
     #[arg(long, help = "Funding wallet name or master_wallet")]
     from: String,
-    #[arg(long, default_value_t = 0.2, help = "Message value funding the deploy, in TOS")]
+    #[arg(long, default_value_t = 1.2, help = "Deploy funding in TOS; minimum 1.2 (1 TOS reserve plus 0.2 fee margin)")]
     amount: f64,
     #[arg(short = 'w', long = "workchain", allow_negative_numbers = true, default_value_t = super::utils::USER_CONTRACT_WORKCHAIN)]
     workchain: i32,
@@ -415,9 +415,22 @@ fn build_init(
     })
 }
 
+fn validate_deploy_amount(amount: f64) -> anyhow::Result<u64> {
+    validate_tos_amount("amount", amount)?;
+    let amount_nanotos = tos_to_nanotos(amount);
+    let minimum = contracts::service_actor::protocol_constants::MINIMUM_OPERATING_RESERVE
+        .checked_add(200_000_000)
+        .context("Service Actor deploy funding overflow")?;
+    anyhow::ensure!(
+        amount_nanotos >= minimum,
+        "Service Actor deploy requires at least 1.2 TOS (1 TOS operating reserve plus 0.2 TOS fee margin)"
+    );
+    Ok(amount_nanotos)
+}
+
 impl ServiceActorDeployCmd {
     async fn run(&self, config_path: &str) -> anyhow::Result<()> {
-        validate_tos_amount("amount", self.amount)?;
+        let amount_nanotos = validate_deploy_amount(self.amount)?;
         let owner = self.owner.parse::<MsgAddressInt>().context("invalid owner address")?;
         let authorized_caller = self
             .authorized_caller
@@ -481,10 +494,10 @@ impl ServiceActorDeployCmd {
         if payer_info.account_state != AccountState::Active {
             anyhow::bail!("funding wallet is not active");
         }
-        let amount_nanotos = tos_to_nanotos(self.amount);
-        if amount_nanotos == 0
-            || payer_info.balance < amount_nanotos.saturating_add(SERVICE_ACTOR_DEPLOY_GAS)
-        {
+        let required_balance = amount_nanotos
+            .checked_add(SERVICE_ACTOR_DEPLOY_GAS)
+            .context("Service Actor deploy funding overflow")?;
+        if payer_info.balance < required_balance {
             anyhow::bail!("funding wallet has insufficient balance");
         }
         if !self.yes && !confirm("Confirm Service Actor deployment?")? {
@@ -1298,5 +1311,67 @@ impl ServiceActorBuildStateCmd {
             println!("Service Actor address: {}", address);
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod solvency_tests {
+    use super::*;
+    use clap::Parser;
+
+    #[derive(Parser)]
+    struct DeployArgs {
+        #[command(flatten)]
+        deploy: ServiceActorDeployCmd,
+    }
+
+    fn deploy_args() -> ServiceActorDeployCmd {
+        DeployArgs::try_parse_from([
+            "deploy",
+            "--owner",
+            &format!("0:{}", "11".repeat(32)),
+            "--open-access",
+            "--price-per-call",
+            "0.1",
+            "--storage-fee",
+            "0.2",
+            "--cleanup-bounty",
+            "0.1",
+            "--response-sla",
+            "3600",
+            "--refund-claim-window",
+            "3600",
+            "--metadata-hash",
+            &"11".repeat(32),
+            "--proof-scheme-hash",
+            &"22".repeat(32),
+            "--from",
+            "master_wallet",
+        ])
+        .expect("deploy arguments")
+        .deploy
+    }
+
+    #[test]
+    fn service_deploy_default_funds_reserve_and_margin() {
+        assert_eq!(
+            validate_deploy_amount(deploy_args().amount).unwrap(),
+            1_200_000_000
+        );
+        assert!(validate_deploy_amount(1.199999999).is_err());
+        assert!(validate_deploy_amount(1.0).is_err());
+        assert!(validate_deploy_amount(0.2).is_err());
+        assert!(validate_deploy_amount(f64::NAN).is_err());
+    }
+
+    #[tokio::test]
+    async fn service_deploy_rejects_underfunding_before_loading_wallet() {
+        let mut cmd = deploy_args();
+        cmd.amount = 0.2;
+        let error = cmd
+            .run("/nonexistent/service-solvency-config.json")
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("at least 1.2 TOS"), "{error:#}");
     }
 }

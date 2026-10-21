@@ -34,6 +34,8 @@ on:
       - "scripts/test_replay_token_bridge_trace.py"
       - "crosschain/token-bridge/tests/**"
       - "scripts/token-bridge-mutations.py"
+      - "scripts/service-actor-solvency-mutations.py"
+      - "scripts/check-service-actor-bytecode.py"
       - "test/pq-native/validator-set-cases.txt"
       - "test/pq-native/validator-set-cases-gen.cpp"
       - "scripts/update-*-code.py"
@@ -81,6 +83,8 @@ on:
       - "scripts/test_replay_token_bridge_trace.py"
       - "crosschain/token-bridge/tests/**"
       - "scripts/token-bridge-mutations.py"
+      - "scripts/service-actor-solvency-mutations.py"
+      - "scripts/check-service-actor-bytecode.py"
       - "test/pq-native/validator-set-cases.txt"
       - "test/pq-native/validator-set-cases-gen.cpp"
       - "scripts/update-*-code.py"
@@ -381,6 +385,17 @@ jobs:
         # that broke four deploy sandbox tests showed up here as three stale
         # hash assertions and nothing else.
         run: cargo test --manifest-path tosctl/src/Cargo.toml -p contracts --locked --no-fail-fast
+
+      - name: Service Actor source and solvency guard controls
+        env:
+          TOS_ROOT: ${{ github.workspace }}
+          FUNC: ${{ github.workspace }}/build/crypto/func
+          FIFT: ${{ github.workspace }}/build/crypto/fift
+          FUNC_PATH: ${{ github.workspace }}/build/crypto/func
+          FIFT_PATH: ${{ github.workspace }}/build/crypto/fift
+        run: |
+          python3 scripts/check-service-actor-bytecode.py
+          python3 scripts/service-actor-solvency-mutations.py
 
       - name: Legacy wallet audit red/green controls
         env:

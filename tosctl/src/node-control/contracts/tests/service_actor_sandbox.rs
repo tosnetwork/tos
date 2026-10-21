@@ -1174,116 +1174,18 @@ fn revoke_attestor_is_never_frozen_by_a_pending_request() {
 
 #[test]
 fn claim_refund_is_rejected_atomically_when_the_contract_cannot_afford_it() {
-    // Reaching this specific failure mode through the normal call/expire
-    // flow alone is structurally hard: `call` always collects `storage_fee`
-    // (>= MINIMUM_STORAGE_FEE) alongside `price` into the contract's own
-    // balance, and `withdraw_revenue` is independently capped to never take
-    // `get_balance()` below `pending_liability + refundable_liability +
-    // MINIMUM_OPERATING_RESERVE` -- so by construction the balance backing a
-    // live refund is always >= its own price, except for one avenue the
-    // design doc calls out explicitly: passive TVM storage-rent accrual,
-    // charged lazily and independently of any nominal counter. This test
-    // uses the maximum `refund_claim_window` (30 days) to let real elapsed
-    // time actually erode the balance below `price` while staying just
-    // inside the still-open claim window, rather than faking the shortfall.
-    let mut bc = Blockchain::new().expect("blockchain");
-    bc.set_workchain(-1);
-    let owner = bc.treasury("owner", 10_000 * TOS).expect("owner");
-    let caller = bc.treasury("caller", 10_000 * TOS).expect("caller");
-    let init = ServiceActorInit {
-        owner: owner.address().clone(),
-        authorized_caller: None,
-        open_access: true,
-        price_per_call: 2 * TOS,
-        storage_fee: MIN_STORAGE_FEE + MIN_CLEANUP_BOUNTY,
-        cleanup_bounty: MIN_CLEANUP_BOUNTY,
-        rate_limit_per_day: 0,
-        response_sla: MIN_RESPONSE_SLA,
-        refund_claim_window: 2_592_000, // MAX_REFUND_CLAIM_WINDOW: 30 days
-        metadata_hash: [0x11; 32],
-        proof_scheme_hash: [0x22; 32],
-        attestor_pubkey: None,
-    };
-    let service = ServiceActorContract::calculate_address(-1, &init).expect("address");
-    let state_init = ServiceActorContract::build_state_init(&init).expect("state init");
-    // Thin deploy funding: just enough to exist, most of the eventual
-    // balance comes from the call itself.
-    let deploy = MessageBuilder::internal(owner.address(), &service, TOS / 10)
-        .bounce(false)
-        .state_init(state_init)
-        .body(Cell::default())
-        .build();
-    bc.send_message(deploy).expect("deploy").expect_success();
-
-    let owed = init.price_per_call + init.storage_fee;
-    let call_msg = MessageBuilder::internal(caller.address(), &service, owed)
-        .body(
-            ServiceActorContract::call(
-                1,
-                [0xAA; 32],
-                ServiceActorContract::terms_hash_of_init(&init).unwrap(),
-            )
-            .unwrap(),
-        )
-        .build();
-    bc.send_message(call_msg).expect("call").expect_success();
-
-    let stack = bc
-        .run_get_method(&service, "get_request", vec![StackItem::int(0)])
-        .expect("get_request")
-        .expect_success()
-        .stack
-        .clone();
-    let request = ServiceActorContract::decode_request(
-        &common::tvm_stack_parser::TvmStackParser::new(stack_to_entries(&stack)),
-    )
-    .expect("decode_request")
-    .expect("request 0 must exist");
-
-    bc.set_now(request.response_deadline as u32);
-    let expire_msg = MessageBuilder::internal(caller.address(), &service, TOS / 2)
-        .body(ServiceActorContract::expire(2, 0).unwrap())
-        .build();
-    bc.send_message(expire_msg).expect("expire").expect_success();
-    let refund_claim_deadline = request.refund_claim_deadline;
-
-    // Sit just inside the still-open 30-day claim window and poke the
-    // account once so lazily-accrued storage rent is actually collected
-    // before we read the balance and attempt the claim.
-    bc.set_now(refund_claim_deadline as u32 - 1);
-    let poke_msg =
-        MessageBuilder::internal(caller.address(), &service, 1).body(Cell::default()).build();
-    let _ = bc.send_message(poke_msg);
-
-    let balance_before_claim = bc
-        .get_account(&service)
-        .and_then(|a| a.balance().and_then(|c| c.coins.as_u64()))
-        .unwrap_or(0);
-    assert!(
-        balance_before_claim < init.price_per_call,
-        "test setup must actually erode the balance below `price` via elapsed storage rent, \
-         got balance={balance_before_claim} price={}",
-        init.price_per_call
-    );
-
-    let claim_msg = MessageBuilder::internal(caller.address(), &service, TOS / 2)
-        .body(ServiceActorContract::claim_refund(3, 0, caller.address()).unwrap())
-        .build();
-    let result = bc.send_message(claim_msg).expect("claim_refund attempt");
-    result.expect_aborted().expect_exit_code(ERR_INSUFFICIENT_BALANCE);
-
-    // The refund entry must be untouched and retryable.
-    let stack = bc
-        .run_get_method(&service, "get_refund", vec![StackItem::int(0)])
-        .expect("get_refund")
-        .expect_success()
-        .stack
-        .clone();
-    let refund = ServiceActorContract::decode_refund(
-        &common::tvm_stack_parser::TvmStackParser::new(stack_to_entries(&stack)),
-    )
-    .expect("decode_refund");
-    assert!(refund.is_some(), "the refund entry must survive a failed claim attempt untouched");
+    let mut f = Fixture::new();
+    let caller = f.caller.address().clone();
+    f.call(&caller, 1, [0xAA; 32]).expect_success();
+    f.bc.set_now(f.request(0).unwrap().response_deadline as u32);
+    f.send_from(&caller, ServiceActorContract::expire(2, 0).unwrap()).expect_success();
+    // Model an already rent-eroded account without admitting new work while
+    // underfunded. The claim must survive even when its own price is unbacked.
+    f.set_balance(1);
+    f.send_from_with_value(&caller,
+        ServiceActorContract::claim_refund(3, 0, &caller).unwrap(), TOS / 20)
+        .expect_aborted().expect_exit_code(ERR_INSUFFICIENT_BALANCE);
+    assert!(f.refund(0).is_some());
 }
 
 #[test]
@@ -1998,7 +1900,8 @@ fn withdraw_revenue_never_takes_the_storage_fees_locked_for_live_entries() {
     // (The refused message's own value stayed in the contract, so the cap may
     // have moved up by it since.)
     let balance = f.balance(&f.service);
-    let affordable = (balance + probe_value).saturating_sub(floor_with_locked(&f)).min(revenue);
+    let affordable = (balance + probe_value)
+        .saturating_sub(floor_with_locked(&f) + TOS / 10).min(revenue);
     assert!(affordable > 0, "nothing affordable at balance {balance}");
     let withdraw = MessageBuilder::internal(&owner, &f.service, probe_value)
         .bounce(false)
@@ -2180,13 +2083,20 @@ fn tos(amount: u128) -> u128 {
 fn a_call_that_would_push_a_liability_past_the_coin_bound_is_refused_before_any_state_change() {
     let price = u128::from(Fixture::new().init.price_per_call);
 
-    // Positive control: the sum lands exactly on the largest value a Coins
-    // field holds, so the call is admitted and the counter reads back exactly.
+    // Positive control near the Coins bound, with the remaining locked fee,
+    // operating reserve and execution fees backed by an equally large balance.
+    // A liability at MAX_COINS itself cannot coexist with those obligations.
     let mut f = Fixture::new();
     let caller = f.caller.address().clone();
-    f.patch_accounting(|a| Accounting { pending_liability: coins_below_max(price), ..a });
+    let target = coins_below_max(u128::from(f.init.storage_fee) + 2 * u128::from(TOS));
+    f.patch_accounting(|a| Accounting { pending_liability: target - price, ..a });
+    let mut account = f.bc.get_account(&f.service).unwrap().clone();
+    account.set_balance(chain_block::CurrencyCollection::from_coins(coins(coins_below_max(
+        price + u128::from(f.init.storage_fee) + u128::from(CALL_GAS_MARGIN),
+    ))));
+    f.bc.set_account(f.service.clone(), account);
     f.call_from_init(&caller, 1, [0xAA; 32]).expect_success();
-    assert_eq!(f.coin_counter(PENDING_INDEX), MAX_COINS);
+    assert_eq!(f.coin_counter(PENDING_INDEX), target);
     assert_eq!(f.pending_count(), 1);
 
     // One more unit and the sum does not fit: refused with the range code
@@ -2334,4 +2244,224 @@ fn a_bounty_the_balance_cannot_pay_is_refused_as_insufficient_balance() {
     .expect_exit_code(ERR_INSUFFICIENT_BALANCE);
     assert_eq!(f.data_hash(), before);
     assert!(f.request(0).is_some(), "the entry stays live");
+}
+
+// Solvency tests execute compiled source; the equality test binds that source
+// to the deployed SDK artifact. A mutation runner supplies an alternate source
+// only to this fixture, so removal controls exercise the real action phase.
+fn solvency_code() -> Cell {
+    static CODE: std::sync::OnceLock<Cell> = std::sync::OnceLock::new();
+    CODE.get_or_init(|| {
+        let source = std::env::var("SERVICE_ACTOR_SOLVENCY_SOURCE").unwrap_or_else(|_| {
+            format!(
+                "{}/crypto/smartcont/service-actor-code.fc",
+                std::env::var("TOS_ROOT").expect("TOS_ROOT")
+            )
+        });
+        tos_sandbox::compile_func_with_stdlib(&[source]).expect("compile Service Actor")
+    })
+    .clone()
+}
+
+impl Fixture {
+    fn solvency() -> Self {
+        let mut f = Self::new();
+        let mut account = f.bc.get_account(&f.service).unwrap().clone();
+        assert!(account.set_code(solvency_code()));
+        f.bc.set_account(f.service.clone(), account);
+        f
+    }
+
+    fn set_balance(&mut self, balance: u64) {
+        let mut account = self.bc.get_account(&self.service).unwrap().clone();
+        account.set_balance(chain_block::CurrencyCollection::from(balance));
+        self.bc.set_account(self.service.clone(), account);
+    }
+
+    fn state_hash(&self) -> chain_block::UInt256 {
+        self.bc
+            .get_account(&self.service)
+            .unwrap()
+            .get_data()
+            .unwrap()
+            .repr_hash()
+    }
+
+    fn floor(&self) -> u64 {
+        let d = self.data();
+        d.pending_liability + d.refundable_liability + d.locked_storage_fees + TOS
+    }
+
+    fn no_bounce(&mut self, sender: &MsgAddressInt, value: u64, body: Cell) -> SendResult {
+        self.bc
+            .send_message(
+                MessageBuilder::internal(sender, &self.service, value)
+                    .bounce(false)
+                    .body(body)
+                    .build(),
+            )
+            .unwrap()
+    }
+}
+
+fn expect_solvency_action_failure(result: &SendResult) {
+    result
+        .expect_aborted()
+        .expect_exit_code(0)
+        .expect_out_msgs(0);
+    let action = result.read_primary_description().action.unwrap();
+    assert!(!action.success);
+    assert_eq!(
+        action.result_code, 37,
+        "must fail for insufficient action-phase funds"
+    );
+}
+
+#[test]
+fn solvency_source_matches_embedded_code() {
+    assert_eq!(
+        solvency_code().repr_hash(),
+        ServiceActorContract::code().unwrap().repr_hash()
+    );
+}
+
+#[test]
+fn solvency_admission_requires_preexisting_reserve() {
+    let mut f = Fixture::solvency();
+    let caller = f.caller.address().clone();
+    f.set_balance(TOS - 1);
+    let before = f.state_hash();
+    // Overpayment cannot stand in for the operator's independently funded reserve.
+    f.call(&caller, 1, [1; 32])
+        .expect_aborted()
+        .expect_exit_code(1928);
+    assert_eq!(f.state_hash(), before);
+    f.set_balance(2 * TOS);
+    f.call(&caller, 2, [1; 32]).expect_success();
+    assert!(f.balance(&f.service) >= f.floor());
+}
+
+#[test]
+fn solvency_admission_reserves_after_fees_with_and_without_overpayment() {
+    for excess in [0, TOS / 2] {
+        let mut f = Fixture::solvency();
+        let caller = f.caller.address().clone();
+        f.set_balance(TOS);
+        let before = f.state_hash();
+        let value = f.init.price_per_call + f.init.storage_fee + excess;
+        let body = ServiceActorContract::call(1, [1; 32], f.terms()).unwrap();
+        let result = f.no_bounce(&caller, value, body.clone());
+        expect_solvency_action_failure(&result);
+        assert_eq!(
+            f.state_hash(),
+            before,
+            "failed admission changed counters or dictionaries"
+        );
+        f.set_balance(2 * TOS);
+        f.no_bounce(&caller, value, body).expect_success();
+        assert!(f.balance(&f.service) >= f.floor());
+    }
+}
+
+#[test]
+fn solvency_exact_withdrawal_cap_cannot_spend_fee_backing() {
+    let mut f = Fixture::solvency();
+    let caller = f.caller.address().clone();
+    let owner = f.owner.address().clone();
+    f.call(&caller, 1, [1; 32]).expect_success();
+    f.call(&caller, 2, [2; 32]).expect_success();
+    f.respond(3, 0, [3; 32]).expect_success();
+    let amount = f.data().withdrawable_revenue;
+    let value = TOS / 10;
+    f.set_balance(f.floor() + amount - value);
+    let before = f.state_hash();
+    let body = ServiceActorContract::withdraw_revenue(4, amount).unwrap();
+    let result = f.no_bounce(&owner, value, body.clone());
+    expect_solvency_action_failure(&result);
+    assert_eq!(f.state_hash(), before, "failed withdrawal changed revenue");
+    f.no_bounce(&owner, TOS, body).expect_success();
+    assert!(f.balance(&f.service) >= f.floor());
+    assert_eq!(f.data().withdrawable_revenue, 0);
+}
+
+#[test]
+fn solvency_claim_preserves_other_entries_and_reserves_after_fees() {
+    let mut f = Fixture::solvency();
+    let caller = f.caller.address().clone();
+    for id in 0..3 {
+        f.call(&caller, id, [1; 32]).expect_success();
+    }
+    f.bc.set_now(f.request(0).unwrap().response_deadline as u32);
+    for id in 0..2 {
+        f.send_from(&caller, ServiceActorContract::expire(10 + id, id).unwrap())
+            .expect_success();
+    }
+    let price = f.init.price_per_call;
+    let value = TOS / 10;
+    let floor_after = f.floor() - price - f.init.storage_fee;
+    let body = ServiceActorContract::claim_refund(20, 0, &caller).unwrap();
+    let before = f.state_hash();
+    // Covers this price, but not the remaining pending + refund + locked + reserve.
+    f.set_balance(floor_after + price - value - 1);
+    f.no_bounce(&caller, value, body.clone())
+        .expect_aborted()
+        .expect_exit_code(1921);
+    assert_eq!(f.state_hash(), before);
+    // Covers the compute-phase floor exactly, but cannot pay the transaction fees too.
+    f.set_balance(floor_after + price - value);
+    let result = f.no_bounce(&caller, value, body.clone());
+    expect_solvency_action_failure(&result);
+    assert_eq!(
+        f.state_hash(),
+        before,
+        "failed claim consumed a refund or caller slot"
+    );
+    f.no_bounce(&caller, TOS, body).expect_success();
+    assert!(f.refund(0).is_none());
+    assert!(f.refund(1).is_some());
+    assert!(f.request(2).is_some());
+    assert!(f.balance(&f.service) >= f.floor());
+}
+
+#[test]
+fn solvency_sweep_after_real_rent_preserves_other_entries() {
+    for refund in [false, true] {
+        let mut f = Fixture::solvency();
+        let caller = f.caller.address().clone();
+        let sweeper = f.outsider.address().clone();
+        for id in 0..3 {
+            f.call(&caller, id, [1; 32]).expect_success();
+        }
+        let request = f.request(0).unwrap();
+        f.bc.set_now(request.response_deadline as u32);
+        f.send_from(&caller, ServiceActorContract::expire(4, 1).unwrap())
+            .expect_success();
+        let target = if refund { 1 } else { 0 };
+        let floor_after = f.floor() - f.init.price_per_call - f.init.storage_fee;
+        let cap = floor_after + f.init.cleanup_bounty;
+        let before = f.state_hash();
+        // Real storage-phase charges, with all three entries still in storage.
+        let mut day = 0;
+        while f.balance(&f.service) >= cap - TOS / 5 {
+            day += 1;
+            assert!(day < 1000, "rent failed to erode the balance");
+            f.bc.set_now(request.refund_claim_deadline as u32 + day * 86400);
+            f.no_bounce(&sweeper, 1_000_000, Cell::default())
+                .expect_success();
+        }
+        assert_eq!(f.state_hash(), before);
+        let value = cap - f.balance(&f.service);
+        let body = ServiceActorContract::sweep_expired_request(5, target).unwrap();
+        let result = f.no_bounce(&sweeper, value, body.clone());
+        expect_solvency_action_failure(&result);
+        assert_eq!(
+            f.state_hash(),
+            before,
+            "failed sweep removed an entry or caller slot"
+        );
+        f.no_bounce(&sweeper, TOS, body).expect_success();
+        assert_eq!(f.data().live_count, 2);
+        assert!(f.request(2).is_some());
+        assert!(f.balance(&f.service) >= f.floor());
+    }
 }
