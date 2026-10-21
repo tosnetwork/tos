@@ -126,6 +126,46 @@ fn publication_checks_metadata_and_pruning_respects_capture_and_restore_leases()
         signed: node_data_sync::model::SignedManifest,
         trusted: [u8; 32],
     }
+    #[derive(serde::Serialize, serde::Deserialize)]
+    struct AbortFault {
+        source: std::path::PathBuf,
+        cache: std::path::PathBuf,
+        operation: std::path::PathBuf,
+        signed: node_data_sync::model::SignedManifest,
+        trusted: [u8; 32],
+        phase: u8,
+    }
+    if let Some(request) = std::env::var_os("NODE_SYNC_PREPARATION_EXIT") {
+        let request: AbortFault = serde_json::from_slice(&std::fs::read(request)?)?;
+        let catalog = node_data_sync::catalog::Catalog::open(&request.cache, request.trusted)?;
+        let objects = node_data_sync::cas::Objects::open(&request.cache)?;
+        let operation = node_data_sync::safe_io::Root::open(&request.operation)?;
+        let lease = node_data_sync::model::sha256(&operation.bytes("operation-id", 32)?);
+        let writer = objects.writer()?;
+        catalog.begin_owned_download(&request.signed, &writer, &lease, &operation)?;
+        if request.phase == 1 {
+            let object = &request.signed.manifest.files[0];
+            node_data_sync::safe_io::Root::open(&request.cache)?.write_new(
+                &format!("incoming/{}-{}.part", object.compressed_sha256, object.compressed_size),
+                &node_data_sync::safe_io::Root::open(&request.source)?.bytes(
+                    &node_data_sync::cas::Objects::object_name(object)?,
+                    object.compressed_size,
+                )?[..(object.compressed_size as usize / 2)],
+            )?;
+        } else if request.phase >= 2 {
+            let source = node_data_sync::safe_io::Root::open(&request.source)?;
+            let cache = node_data_sync::safe_io::Root::open(&request.cache)?;
+            for object in &request.signed.manifest.files {
+                if objects.check(object).is_err() {
+                    let name = node_data_sync::cas::Objects::object_name(object)?;
+                    cache.write_new(&name, &source.bytes(&name, object.compressed_size)?)?;
+                }
+            }
+            catalog.hold_download(&request.signed, &writer, &lease)?;
+        }
+        // Exit without destructors: recovery must not depend on unwinding or Drop cleanup.
+        std::process::exit(73);
+    }
     if let Some(request) = std::env::var_os("NODE_SYNC_CATALOG_WRITE_FAULT") {
         let request: WriteFault = serde_json::from_slice(&std::fs::read(request)?)?;
         let catalog = node_data_sync::catalog::Catalog::open(&request.directory, request.trusted)?;
@@ -232,6 +272,152 @@ fn publication_checks_metadata_and_pruning_respects_capture_and_restore_leases()
         files,
     };
     manifest.corroboration.binding_sha256 = sha256(&serde_json::to_vec(&manifest.validation)?);
+    // The same production recovery entry point aborts all pre-journal exit windows.
+    #[cfg(feature = "native")]
+    {
+        for phase in 0..4_u8 {
+            let parent = Root::create(&temp.path().join(format!("abort-{phase}")))?;
+            let database = Root::create(&parent.path.join("database"))?;
+            let cache = Catalog::create(&parent.path.join("cache"), trusted)?;
+            let cache_objects = Objects::open(&parent.path.join("cache"))?;
+            let operation = Root::create(&parent.path.join("operation"))?;
+            parent.write_new("engine", b"never executed during abort")?;
+            parent.write_new("worker", b"never executed during abort")?;
+            parent.write_new("global.json", b"{}")?;
+            parent.write_new("operator.json", b"{}")?;
+            let context = node_data_sync::context::NodeContext {
+                unit: "abort-test.service".to_owned(),
+                user_manager: true,
+                database: database.path.clone(),
+                engine: parent.path.join("engine"),
+                engine_sha256: sha256(b"never executed during abort"),
+                validation_worker: parent.path.join("worker"),
+                validation_worker_sha256: sha256(b"never executed during abort"),
+                global_config: parent.path.join("global.json"),
+                global_id: 3,
+                work_root: parent.path.clone(),
+                working_directory: database.path.clone(),
+                operator_config: parent.path.join("operator.json"),
+                node_name: "own-node".to_owned(),
+                budget_roots: vec![parent.path.clone()],
+                disk_policy: node_data_sync::budget::DiskPolicy {
+                    max_owned_bytes: 1 << 30,
+                    shutdown_free_bytes: Some(1),
+                },
+                vault_config_files: vec![],
+                references: reference_fixture::References::new(
+                    &manifest.network,
+                    &manifest.frontier,
+                    reference_fixture::Mode::Agree,
+                )?
+                .policy
+                .clone(),
+            };
+            let signed = SignedManifest::sign(manifest.clone(), &key)?;
+            let request = node_data_sync::operations::RestoreRequest {
+                context,
+                manifest: operation.path.join("generation.json"),
+                cache: parent.path.join("cache"),
+                publisher_key: hex::encode(trusted),
+                source_url: None,
+            };
+            operation.write_new("request.json", &serde_json::to_vec(&request)?)?;
+            operation.write_new("generation.json", &signed.bytes()?)?;
+            operation.write_new("operation-id", b"0123456789abcdef0123456789abcdef")?;
+            if phase == 3 {
+                let target = Root::open(cache_objects.root_path())?;
+                for object in &signed.manifest.files {
+                    let name = Objects::object_name(object)?;
+                    target.write_new(
+                        &name,
+                        &Root::open(objects.root_path())?.bytes(&name, object.compressed_size)?,
+                    )?;
+                }
+                cache.prepare(&signed, &cache_objects.writer()?)?;
+            }
+            let fault = AbortFault {
+                source: objects.root_path().to_owned(),
+                cache: request.cache.clone(),
+                operation: operation.path.clone(),
+                signed,
+                trusted,
+                phase,
+            };
+            parent.write_new("fault.json", &serde_json::to_vec(&fault)?)?;
+            let result = std::process::Command::new(std::env::current_exe()?)
+                .args([
+                    "--exact",
+                    "publication_checks_metadata_and_pruning_respects_capture_and_restore_leases",
+                    "--nocapture",
+                ])
+                .env("NODE_SYNC_PREPARATION_EXIT", parent.path.join("fault.json"))
+                .status()?;
+            assert_eq!(result.code(), Some(73), "pre-journal process-exit precondition");
+            let lease = format!("leases/r-{}", sha256(b"0123456789abcdef0123456789abcdef"));
+            assert!(request.cache.join(&lease).exists());
+            assert!(!operation.path.join("restore.json").exists());
+            let original = operation.bytes("request.json", 1 << 20)?;
+            let mut changed: serde_json::Value = serde_json::from_slice(&original)?;
+            changed["source_url"] = serde_json::json!("http://different.invalid/");
+            operation.replace("request.json", &serde_json::to_vec(&changed)?)?;
+            assert!(
+                node_data_sync::operations::recover(&operation.path).is_err(),
+                "mismatched preparation was aborted"
+            );
+            assert!(request.cache.join(&lease).exists(), "mismatch released another lease");
+            changed = serde_json::from_slice(&original)?;
+            changed["cache"] = serde_json::json!(database.path);
+            operation.replace("request.json", &serde_json::to_vec(&changed)?)?;
+            assert!(node_data_sync::operations::recover(&operation.path).is_err());
+            assert!(
+                std::fs::read_dir(&database.path)?.next().is_none(),
+                "mismatched cache binding wrote into the installed node"
+            );
+            operation.replace("request.json", &original)?;
+            let outcome = node_data_sync::operations::recover(&operation.path);
+            assert!(
+                matches!(outcome, Ok(node_data_sync::operations::RecoveryOutcome::Aborted)),
+                "pre-journal recovery must abort instead of requiring restore.json"
+            );
+            assert!(
+                !request.cache.join(&lease).exists(),
+                "aborted preparation still pins its generation"
+            );
+            assert!(operation.path.join("preparation-aborted.json").exists());
+            assert!(
+                std::fs::read_dir(&database.path)?.next().is_none(),
+                "abort touched the installed node"
+            );
+            assert!(
+                matches!(
+                    node_data_sync::operations::recover(&operation.path)?,
+                    node_data_sync::operations::RecoveryOutcome::Aborted
+                ),
+                "abort is not idempotent"
+            );
+            if phase == 3 {
+                assert_eq!(
+                    cache.list()?.len(),
+                    1,
+                    "abort removed another preparation's generation"
+                );
+                node_data_sync::catalog::verify_generation(
+                    &fault.signed,
+                    &cache_objects,
+                    &trusted,
+                )?;
+            } else {
+                assert!(cache.list()?.is_empty(), "aborted generation was orphaned");
+                for name in ["objects", "incoming"] {
+                    let path = request.cache.join(name);
+                    assert!(
+                        !path.exists() || std::fs::read_dir(path)?.next().is_none(),
+                        "aborted download left orphan bytes"
+                    );
+                }
+            }
+        }
+    }
     let references = reference_fixture::References::new(
         &manifest.network,
         &manifest.frontier,

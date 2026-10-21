@@ -111,11 +111,22 @@ impl NodeSyncCmd {
                 Collector::new(&args.status.references)?;
                 let operation = args.operation.clone();
                 let source = operation.clone();
-                let (context, _) = tokio::task::spawn_blocking(move || {
+                let outcome = tokio::task::spawn_blocking(move || {
                     node_data_sync::operations::recover(&source)
                 })
                 .await??;
-                recovered_status(&context, &operation, &args.status).await
+                match outcome {
+                    node_data_sync::operations::RecoveryOutcome::Installed(result) => {
+                        recovered_status(&result.0, &operation, &args.status).await
+                    }
+                    node_data_sync::operations::RecoveryOutcome::Aborted => {
+                        println!(
+                            "{}",
+                            serde_json::json!({"state":"aborted","reason":"Preparation never reached the restore journal; receiver lease released and unreferenced cache data pruned. Start a new restore."})
+                        );
+                        Ok(())
+                    }
+                }
             }
         }
     }

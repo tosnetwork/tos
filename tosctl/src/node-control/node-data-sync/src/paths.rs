@@ -1,5 +1,7 @@
 use anyhow::{Result, ensure};
 
+pub const CHAIN_ROOTS: [&str; 4] = ["celldb", "files", "archive", "static"];
+
 pub const LOCAL_CONFIGS: [&str; 5] = [
     "custom-overlays.json",
     "collator-options.json",

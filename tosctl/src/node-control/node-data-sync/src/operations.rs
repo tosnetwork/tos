@@ -198,10 +198,11 @@ pub fn create(
     let frozen = service.stop()?;
     // Repeat role checks after quiescence: configuration may have changed while stop settled.
     context.source_role()?;
+    service.require_mode(permanent)?;
     publisher.validate(&context.database, store, operation_path)?;
     let copied =
         capture::cold_image_checked(&frozen, &Root::open(&context.database)?, &image, publisher)?;
-    service.start(frozen)?;
+    service.start_in_mode(frozen, permanent)?;
     operation.write_new(
         "capture.json",
         &serde_json::to_vec(&crate::model::CaptureReceipt {
@@ -270,7 +271,7 @@ pub fn restore(request: &RestoreRequest, operation_path: &Path) -> Result<Journa
     operation.write_new("operation-id", operation_id.as_bytes())?;
     {
         let writer = objects.writer()?;
-        catalog.begin_download(&signed, &writer, &lease)?;
+        catalog.begin_owned_download(&signed, &writer, &lease, &operation)?;
         for object in &signed.manifest.files {
             if objects.check(object).is_err() {
                 let source = request
@@ -283,8 +284,10 @@ pub fn restore(request: &RestoreRequest, operation_path: &Path) -> Result<Journa
         verify_generation(&signed, &objects, &key)?;
         catalog.hold_download(&signed, &writer, &lease)?;
     }
-    let service_files = request.context.preservation_files()?;
+    request.context.service().require_mode(signed.manifest.permanent_cells)?;
     let frozen = request.context.service().stop()?;
+    request.context.service().require_mode(signed.manifest.permanent_cells)?;
+    let service_files = request.context.preservation_files()?;
     let mut journal = stage(
         request,
         &signed,
@@ -305,6 +308,7 @@ pub fn restore(request: &RestoreRequest, operation_path: &Path) -> Result<Journa
         &journal.reference_binding(),
     )?;
     journal.authorize(&operation, &approval)?;
+    request.context.service().require_mode(signed.manifest.permanent_cells)?;
     journal.forward_only(&operation)?;
     journal.exchange(&operation)?;
     drop(frozen);
@@ -407,10 +411,7 @@ fn stage_with_space(
     for object in signed.manifest.files.iter().filter(|o| o.path.starts_with("chain/")) {
         objects.materialize_native(object, &payload, &own)?;
     }
-    for name in ["celldb", "files", "archive", "static"] {
-        payload.rename(&format!("chain/{name}"), name)?;
-        fs::rename(payload.path.join(name), replacement.path.join(name))?;
-    }
+    capture::install_chain_roots(&payload, &replacement)?;
     replacement.sync()?;
     // Native validation uses a separate image with fresh validation identity and fresh recovery dir.
     records::install(&replacement.path.join("state"), &donor, &local)?;
@@ -492,19 +493,52 @@ fn start_installed(context: &NodeContext, operation: &Root, journal: &mut Journa
     if journal.phase == Phase::Exchanged {
         journal.advance(operation, Phase::StartIssued)?;
     }
+    let request: RestoreRequest =
+        serde_json::from_slice(&operation.bytes("request.json", MANIFEST_LIMIT)?)?;
+    let signed = SignedManifest::parse(
+        &operation.bytes("generation.json", MANIFEST_LIMIT)?,
+        &trusted(&request.publisher_key)?,
+    )?;
+    context.service().require_mode(signed.manifest.permanent_cells)?;
     let frozen = context.service().freeze()?;
     journal.check_references(operation, true)?;
-    context.service().start(frozen)?;
+    context.service().start_in_mode(frozen, signed.manifest.permanent_cells)?;
     if journal.phase == Phase::StartIssued {
         journal.advance(operation, Phase::CatchingUp)?;
     }
     Ok(())
 }
-pub fn recover(operation_path: &Path) -> Result<(NodeContext, Journal)> {
+pub enum RecoveryOutcome {
+    Installed(Box<(NodeContext, Journal)>),
+    Aborted,
+}
+pub fn recover(operation_path: &Path) -> Result<RecoveryOutcome> {
     let operation = Root::open(operation_path)?;
     let request: RestoreRequest =
         serde_json::from_slice(&operation.bytes("request.json", MANIFEST_LIMIT)?)?;
     request.context.validate_paths()?;
+    separate(&operation.path, &request.context.database)?;
+    separate(&request.cache, &request.context.database)?;
+    separate(&request.cache, &operation.path)?;
+    if crate::safe_io::absent(&operation.path.join("restore.json"))? {
+        let _monitor = crate::budget::Monitor::start(
+            &request.context.budget_roots,
+            &operation,
+            0,
+            &request.context.disk_policy,
+        )?;
+        let _lock = operation_lock(&request.context.database)?;
+        let key = trusted(&request.publisher_key)?;
+        let signed =
+            SignedManifest::parse(&operation.bytes("generation.json", MANIFEST_LIMIT)?, &key)?;
+        let id = sha256(&operation.bytes("operation-id", 32)?);
+        let objects = Objects::open(&request.cache)?;
+        let catalog = Catalog::open(&request.cache, key)?;
+        catalog.abort_download(&signed, &objects, &id, &operation)?;
+        // Normal reachability pruning retains every other lease and published generation.
+        catalog.prune()?;
+        return Ok(RecoveryOutcome::Aborted);
+    }
     let mut journal = Journal::read(&operation)?;
     let signed_probe = SignedManifest::parse(
         &operation.bytes("generation.json", MANIFEST_LIMIT)?,
@@ -546,6 +580,7 @@ pub fn recover(operation_path: &Path) -> Result<(NodeContext, Journal)> {
         journal.check_references(&operation, false)?;
     }
     let frozen = request.context.service().stop()?;
+    request.context.service().require_mode(signed.manifest.permanent_cells)?;
     match journal.recovery()? {
         Recovery::OldRefreshRequired => {
             // The old root could have booted and signed: capture its latest local state, never reuse a stale overlay.
@@ -569,6 +604,7 @@ pub fn recover(operation_path: &Path) -> Result<(NodeContext, Journal)> {
                 &journal.reference_binding(),
             )?;
             journal.authorize(&operation, &approval)?;
+            request.context.service().require_mode(signed.manifest.permanent_cells)?;
             journal.exchange(&operation)?;
         }
         Recovery::NewContinueOnly => {
@@ -588,7 +624,7 @@ pub fn recover(operation_path: &Path) -> Result<(NodeContext, Journal)> {
     }
     drop(frozen);
     start_installed(&request.context, &operation, &mut journal)?;
-    Ok((request.context, journal))
+    Ok(RecoveryOutcome::Installed(Box::new((request.context, journal))))
 }
 
 /// Completion releases only the receiver lease, never the retained old root or its recovery context.

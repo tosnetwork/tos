@@ -29,7 +29,7 @@ fn cold_image_impl(
     ensure!(frozen.root == source.path, "freeze belongs to another database root");
     let mut total = 0_u64;
     let mut count = 0_usize;
-    for name in ["celldb", "files", "archive", "static", "state", "tmp"] {
+    for name in crate::paths::CHAIN_ROOTS.into_iter().chain(["state", "tmp"]) {
         let path = source.path.join(name);
         match path.symlink_metadata() {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound && name == "tmp" => continue,
@@ -63,7 +63,7 @@ fn cold_image_impl(
 pub fn public_files(image: &Root) -> Result<Vec<trees::TreeFile>> {
     let mut result = Vec::new();
     let mut bytes = 0_u64;
-    for name in ["celldb", "files", "archive", "static"] {
+    for name in crate::paths::CHAIN_ROOTS {
         let root = Root::open(&image.path.join(name))?;
         for mut file in trees::inventory(&root)? {
             let path = format!("{name}/{}", file.path);
@@ -87,4 +87,16 @@ pub fn public_files(image: &Root) -> Result<Vec<trees::TreeFile>> {
         }
     }
     Ok(result)
+}
+
+/// File-only manifests do not encode empty directories; preserve the native root schema explicitly.
+pub fn install_chain_roots(payload: &Root, replacement: &Root) -> Result<()> {
+    for name in crate::paths::CHAIN_ROOTS {
+        payload.ensure_directory(&format!("chain/{name}"))?;
+        payload.rename(&format!("chain/{name}"), name)?;
+        fs::rename(payload.path.join(name), replacement.path.join(name))?;
+    }
+    payload.sync()?;
+    replacement.sync()?;
+    Ok(())
 }

@@ -208,6 +208,8 @@ def validate_node_store_proof(text: str) -> None:
         "grep -F 'test result: ok. 1 passed; 0 failed; 0 ignored' build/node-store-native-tests.log",
         "cargo build --manifest-path tosctl/src/Cargo.toml --locked -p node-store --features native --example reconstruct_fixture",
         "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p node-data-sync --features native --tests",
+        "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p commands --features node-data-sync-native --lib commands::nodectl::node_cmd::status_tests::standalone_status_keeps_rpc_only_contract_without_control_or_references -- --exact --nocapture | tee build/node-status-compatibility.log",
+        "grep -F 'test result: ok. 1 passed; 0 failed; 0 ignored' build/node-status-compatibility.log",
         "cargo build --manifest-path tosctl/src/Cargo.toml --locked -p node-data-sync --features native --examples --bin node-data-sync-worker",
         "cargo build --manifest-path tosctl/src/Cargo.toml --locked -p tosctl --features node-data-sync-native",
         "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p node-data-sync --features native --lib operations::tests::native_stage_preserves_own_context_and_never_overlays_recovery_material -- --ignored --exact --nocapture | tee build/node-sync-native-preservation.log",
@@ -294,12 +296,90 @@ def validate_node_data_sync_callers(root: Path) -> None:
     )
 
 
+def validate_node_data_sync_modes(root: Path) -> None:
+    core = root / "tosctl/src/node-control/node-data-sync/src"
+    source = re.sub(r"\s+", "", (core / "operations.rs").read_text())
+    create = source.split("pubfncreate(", 1)[1].split("pubfnrestore(", 1)[0]
+    restore = source.split("pubfnrestore(", 1)[1].split("structStoppedTarget", 1)[0]
+    recover = source.split("pubfnrecover(", 1)[1].split("pubfncomplete(", 1)[0]
+    start = source.split("fnstart_installed(", 1)[1].split("pubenumRecoveryOutcome", 1)[0]
+
+    def between(body: str, left: str, right: str, check: str, label: str) -> None:
+        require(left in body and right in body, f"storage-mode boundary missing: {label}")
+        start = body.index(left) + len(left)
+        end = body.find(right, start)
+        require(end >= start, f"storage-mode boundary reordered: {label}")
+        require(check in body[start:end], f"storage-mode binding omitted: {label}")
+
+    expected = "require_mode(signed.manifest.permanent_cells)?;"
+    between(create, "letservice=", "letpublic=", "service.permanent_cells()?", "create entry")
+    between(
+        create,
+        "service.stop()?;",
+        "capture::cold_image_checked(",
+        "service.require_mode(permanent)?;",
+        "create stopped",
+    )
+    require(
+        "service.start_in_mode(frozen,permanent)?;" in create,
+        "storage-mode binding omitted: source restart",
+    )
+    selected = source.split("fnselected(", 1)[1].split("pubfnpreflight(", 1)[0]
+    require(
+        "signed.manifest.permanent_cells==request.context.service().permanent_cells()?" in selected,
+        "storage-mode binding omitted: preflight",
+    )
+    between(
+        restore,
+        "catalog.hold_download(",
+        "request.context.service().stop()?;",
+        expected,
+        "restore transfer",
+    )
+    between(
+        restore,
+        "request.context.service().stop()?;",
+        "letmutjournal=stage(",
+        expected,
+        "restore stopped",
+    )
+    between(restore, "journal.authorize(", "journal.forward_only(", expected, "restore exposure")
+    between(
+        recover,
+        "letsigned=",
+        "request.context.service().stop()?;",
+        "signed.manifest.permanent_cells==request.context.service().permanent_cells()?",
+        "recover entry",
+    )
+    between(
+        recover,
+        "request.context.service().stop()?;",
+        "matchjournal.recovery()?",
+        expected,
+        "recover stopped",
+    )
+    between(recover, "journal.authorize(", "journal.exchange(", expected, "recover exposure")
+    between(start, "letsigned=", "context.service().freeze()?;", expected, "replacement freeze")
+    require(
+        "context.service().start_in_mode(frozen,signed.manifest.permanent_cells)?;" in start,
+        "storage-mode binding omitted: replacement start",
+    )
+    service = re.sub(r"\s+", "", (core / "service.rs").read_text())
+    require(
+        "check_mode(configured,Some(running),expected)?;" in service,
+        "running/configured mode comparison omitted",
+    )
+    require("check_mode(configured,None,expected)?;" in service, "expected mode comparison omitted")
+    require("self.describe(expected)?;" in service, "service start bypasses checked description")
+
+
 def main() -> int:
     root = Path(__file__).resolve().parents[1]
     workflow = root / ".github/workflows/branch-chain-python.yml"
     text = workflow.read_text(encoding="utf-8")
     validate_node_store_proof(text)
     validate_node_data_sync_callers(root)
+    validate_node_data_sync_modes(root)
     validate_triggers(text)
     # This workflow's purpose is to run on every pull request and push to main.
     # Refuse runtime conditions: a job- or step-level `if:` is

@@ -162,6 +162,8 @@ jobs:
           grep -F 'test result: ok. 1 passed; 0 failed; 0 ignored' build/node-store-native-tests.log
           cargo build --manifest-path tosctl/src/Cargo.toml --locked -p node-store --features native --example reconstruct_fixture
           cargo test --manifest-path tosctl/src/Cargo.toml --locked -p node-data-sync --features native --tests
+          cargo test --manifest-path tosctl/src/Cargo.toml --locked -p commands --features node-data-sync-native --lib commands::nodectl::node_cmd::status_tests::standalone_status_keeps_rpc_only_contract_without_control_or_references -- --exact --nocapture | tee build/node-status-compatibility.log
+          grep -F 'test result: ok. 1 passed; 0 failed; 0 ignored' build/node-status-compatibility.log
           cargo build --manifest-path tosctl/src/Cargo.toml --locked -p node-data-sync --features native --examples --bin node-data-sync-worker
           cargo build --manifest-path tosctl/src/Cargo.toml --locked -p tosctl --features node-data-sync-native
 

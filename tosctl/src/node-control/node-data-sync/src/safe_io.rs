@@ -80,6 +80,12 @@ impl Root {
         }
         Ok((dir, CString::new(*last)?))
     }
+    /// Create or validate every directory component without following links.
+    pub fn ensure_directory(&self, path: &str) -> Result<()> {
+        let (directory, _) = self.parent(&format!("{path}/directory-probe"), true)?;
+        File::from(directory).sync_all()?;
+        Ok(())
+    }
     pub fn read(&self, path: &str, max: u64) -> Result<File> {
         let (dir, name) = self.parent(path, false)?;
         let raw = unsafe {

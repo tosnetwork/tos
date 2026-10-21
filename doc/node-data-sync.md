@@ -237,7 +237,11 @@ The request is private and binds one exact locally downloaded signed manifest:
 Replace `context` with the JSON object, not a string. `source_url` can be `null`
 when every object is already cached. Prepare the cache directory mode 0700.
 Global id, zero/init full IDs, approved fork policy, build, schema and cell-storage
-mode must match. The target's GC/init/coherent pointers and retirement checkpoints
+mode must match. One checked service description compares the configured mode
+with any running process. The selected mode is rechecked after transfer and stop,
+before exposure, and at restart, including both recovery branches. A mismatch
+refuses the next action; the recovery tool does not select a different mode to
+make a dump fit. The target's GC/init/coherent pointers and retirement checkpoints
 must be full-ID ancestors of the imported frontier; unknown safety schemas refuse.
 No old local fork record overwrites newer imported history. Donor policy is never
 authoritative. Requests use bounded deadlines/retries and resume only one immutable
@@ -264,12 +268,21 @@ consensus/catchain journals and local StateDb values are preserved privately.
 The target's old `tmp`/import material remains with its old CellDb. Replacement
 recovery starts empty; service paths that select external recovery inputs refuse.
 
+Before acquiring a receiver lease, restoration durably records its request,
+signed generation and operation ID. If the process exits before a restore journal
+exists, `sync recover` only aborts that preparation: it checks the exact binding,
+records the abort, releases that receiver lease idempotently and applies normal
+reachability pruning to unreferenced cache data. Other leases and published
+objects remain protected. It does not stop, stage, exchange or start the node;
+start a new restore with a new operation directory. Incomplete or mismatched
+preparation records refuse cleanup. Preparation is never resumed.
+
 A fsynced `FORWARD_ONLY` journal outside both trees precedes atomic exchange.
 It forbids rollback even if a crash occurs before a start marker and a boot-enabled
 service has already signed. If the old tree remains installed, recovery stops it
 and rebuilds from its **latest** local state. If the new tree is installed, recovery
 keeps its current local state and continues forward. Ambiguous identities or a
-corrupt/missing journal refuse movement. Do not manually exchange the old root
+corrupt journal, or a missing journal without matching preparation records, refuse movement. Do not manually exchange the old root
 back or discard these private recovery bundles. Sole managed signing and honest
 local administration are explicit assumptions.
 
@@ -290,7 +303,18 @@ tosctl node --config operator.json --node local sync status --watch --format jso
   --reference https://reference-b.example.invalid/jsonRPC
 ```
 
-Status reports initial sync, coherent-tip age, block lag and full-ID agreement at
+The standalone `node status` command retains its earlier RPC-only diagnostic
+contract and output; its legacy labels do not authorize restoration completion.
+Use `node sync status` for strict qualification.
+
+Strict status captures the target first and immediately fans out reference-head
+reads concurrently, before historical identity checks. A reference head cannot
+precede the target snapshot and understate lag. A cohort taking more than 500 ms, or lacking references at the
+captured target height, is retried within the sample deadline; exhausted retries
+are inconclusive. It never subtracts estimated production from observed lag or
+widens the two-block limit. Each endpoint remains paced independently.
+
+Strict status reports initial sync, coherent-tip age, block lag and full-ID agreement at
 a common height with two separately named sources. At-head requires age <=30 s,
 shard/reference lag <=2 and five continuous minutes of agreement. Endpoints are
 paced at no more than two requests/s each. A responding RPC alone is not sync.

@@ -8,7 +8,7 @@ use std::{
     net::TcpListener,
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     thread::JoinHandle,
     time::Duration,
@@ -16,6 +16,7 @@ use std::{
 #[derive(Clone, Copy)]
 pub enum Mode {
     Agree,
+    Advancing { start: std::time::Instant, unix: u64 },
     Behind,
     DifferentRoot,
     DifferentFile,
@@ -25,6 +26,7 @@ pub enum Mode {
 }
 pub struct References {
     pub policy: ReferencePolicy,
+    pub head_requests: Arc<AtomicUsize>,
     stop: Arc<AtomicBool>,
     threads: Vec<JoinHandle<()>>,
 }
@@ -35,13 +37,16 @@ fn block(id: &FullId) -> serde_json::Value {
 impl References {
     pub fn new(network: &Network, frontier: &FullId, mode: Mode) -> Result<Self> {
         let stop = Arc::new(AtomicBool::new(false));
+        let head_requests = Arc::new(AtomicUsize::new(0));
         let mut threads = Vec::new();
         let mut endpoints = Vec::new();
-        for mode in [Mode::Agree, mode] {
+        for mode in [if matches!(mode, Mode::Advancing { .. }) { mode } else { Mode::Agree }, mode]
+        {
             let listener = TcpListener::bind("127.0.0.1:0")?;
             listener.set_nonblocking(true)?;
             endpoints.push(format!("http://{}", listener.local_addr()?));
             let stop = stop.clone();
+            let seen = head_requests.clone();
             let frontier = frontier.clone();
             let zero = network.zero.clone();
             threads.push(std::thread::spawn(move || {
@@ -58,10 +63,12 @@ impl References {
                     assert!(length<8192); let mut body=vec![0;length];socket.read_exact(&mut body).unwrap();
                     let request:serde_json::Value=serde_json::from_slice(&body).unwrap();
                     let mut head=frontier.clone();head.seqno+=1;
+                    if let Mode::Advancing {start,..}=mode {head.seqno=frontier.seqno+(start.elapsed().as_millis()/500) as u32;}
                     if matches!(mode,Mode::Behind) {head.seqno=frontier.seqno.saturating_sub(1);}
                     let result=match request["method"].as_str().unwrap() {
-                        "getMasterchainInfo" => { let mut anchor=zero.clone(); if matches!(mode,Mode::WrongAnchor) {anchor.root_hash="ef".repeat(32);} serde_json::json!({"last":block(&head),"init":block(&anchor)}) },
-                        "lookupBlock" => {assert_eq!(request["params"]["seqno"], frontier.seqno); let mut at=frontier.clone(); if matches!(mode,Mode::DifferentRoot){at.root_hash="ef".repeat(32);} if matches!(mode,Mode::DifferentFile){at.file_hash="ef".repeat(32);} block(&at)},
+                        "getMasterchainInfo" => { seen.fetch_add(1, Ordering::Release); let mut anchor=zero.clone(); if matches!(mode,Mode::WrongAnchor) {anchor.root_hash="ef".repeat(32);} serde_json::json!({"last":block(&head),"init":block(&anchor)}) },
+                        "lookupBlock" => {let mut at=frontier.clone(); if matches!(mode,Mode::Advancing {..}) {at.seqno=request["params"]["seqno"].as_u64().unwrap() as u32;} else {assert_eq!(request["params"]["seqno"], frontier.seqno);} if matches!(mode,Mode::DifferentRoot){at.root_hash="ef".repeat(32);} if matches!(mode,Mode::DifferentFile){at.file_hash="ef".repeat(32);} block(&at)},
+                        "getBlockHeader" => {let Mode::Advancing {unix,..}=mode else {panic!("unexpected header request")};let mut at=frontier.clone();at.seqno=request["params"]["seqno"].as_u64().unwrap() as u32;serde_json::json!({"id":block(&at),"gen_utime":unix+u64::from((at.seqno-frontier.seqno)/2)})},
                         other=>panic!("unexpected reference method {other}")
                     };
                     let payload=if matches!(mode,Mode::Malformed){b"{".to_vec()}else{serde_json::to_vec(&serde_json::json!({"jsonrpc":"2.0","id":request["id"],"result":result})).unwrap()};
@@ -69,11 +76,20 @@ impl References {
                 }
             }));
         }
-        Ok(Self { policy: ReferencePolicy::from_endpoints(&endpoints)?, stop, threads })
+        Ok(Self {
+            policy: ReferencePolicy::from_endpoints(&endpoints)?,
+            head_requests,
+            stop,
+            threads,
+        })
     }
 }
 impl Drop for References {
     fn drop(&mut self) {
+        assert!(
+            self.head_requests.load(Ordering::Acquire) < 4096,
+            "reference fixture request budget exceeded"
+        );
         self.stop.store(true, Ordering::Release);
         for thread in self.threads.drain(..) {
             assert!(thread.join().is_ok(), "reference fixture failed");

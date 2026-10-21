@@ -6,6 +6,15 @@ use crate::{
 use anyhow::{Context, Result, ensure};
 use std::{collections::BTreeSet, fs, path::Path};
 
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DownloadOwnership {
+    lease: String,
+    generation: String,
+    request_sha256: String,
+    previous_generation: bool,
+}
+
 pub struct Catalog {
     root: Root,
     trusted: [u8; 32],
@@ -138,12 +147,48 @@ impl Catalog {
         writer: &ObjectWriter<'_>,
         operation: &str,
     ) -> Result<String> {
+        self.begin_download_impl(value, writer, operation, None)
+    }
+    pub fn begin_owned_download(
+        &self,
+        value: &SignedManifest,
+        writer: &ObjectWriter<'_>,
+        operation: &str,
+        record: &Root,
+    ) -> Result<String> {
+        self.begin_download_impl(value, writer, operation, Some(record))
+    }
+    fn begin_download_impl(
+        &self,
+        value: &SignedManifest,
+        writer: &ObjectWriter<'_>,
+        operation: &str,
+        record: Option<&Root>,
+    ) -> Result<String> {
         hash(operation)?;
         ensure!(
             writer.objects().root_path() == self.root.path,
             "cache catalog and object store differ"
         );
         let _lock = self.root.lock("catalog.lock")?;
+        let digest = value.verify(&self.trusted)?;
+        if let Some(record) = record {
+            ensure!(
+                crate::model::sha256(&record.bytes("operation-id", 32)?) == operation,
+                "download operation id mismatch"
+            );
+            let ownership = DownloadOwnership {
+                lease: operation.to_owned(),
+                generation: digest.clone(),
+                request_sha256: crate::model::sha256(
+                    &record.bytes("request.json", MANIFEST_LIMIT)?,
+                ),
+                previous_generation: !crate::safe_io::absent(
+                    &self.root.path.join(format!("generations/{digest}.json")),
+                )?,
+            };
+            record.write_new("download.json", &serde_json::to_vec(&ownership)?)?;
+        }
         let digest = self.save_locked(value)?;
         ensure!(
             crate::safe_io::absent(&self.root.path.join(format!("leases/r-{operation}")))?,
@@ -151,6 +196,67 @@ impl Catalog {
         );
         self.atomic_metadata(&format!("leases/r-{operation}"), digest.as_bytes())?;
         Ok(digest)
+    }
+    /// Abort only an authenticated pre-journal receiver; never touch the installed node.
+    pub fn abort_download(
+        &self,
+        value: &SignedManifest,
+        objects: &Objects,
+        operation: &str,
+        record: &Root,
+    ) -> Result<()> {
+        ensure!(objects.root_path() == self.root.path, "cache catalog and object store differ");
+        ensure!(
+            crate::safe_io::absent(&record.path.join("restore.json"))?,
+            "journaled restore cannot use preparation abort"
+        );
+        let bytes = record.bytes("download.json", MANIFEST_LIMIT)?;
+        let ownership: DownloadOwnership = serde_json::from_slice(&bytes)?;
+        let digest = value.verify(&self.trusted)?;
+        ensure!(
+            ownership.lease == operation
+                && ownership.generation == digest
+                && crate::model::sha256(&record.bytes("operation-id", 32)?) == operation
+                && ownership.request_sha256
+                    == crate::model::sha256(&record.bytes("request.json", MANIFEST_LIMIT)?),
+            "preparation abort binding mismatch"
+        );
+        // Authenticate the record before opening any writable cache descriptor.
+        let _writer = objects.writer()?;
+        let _lock = self.root.lock("catalog.lock")?;
+        let lease = format!("leases/r-{operation}");
+        if !crate::safe_io::absent(&self.root.path.join(&lease))? {
+            ensure!(
+                self.root.bytes(&lease, 64)? == digest.as_bytes(),
+                "preparation lease binding mismatch"
+            );
+        }
+        if crate::safe_io::absent(&record.path.join("preparation-aborted.json"))? {
+            record.write_new("preparation-aborted.json", &bytes)?;
+        } else {
+            ensure!(
+                record.bytes("preparation-aborted.json", MANIFEST_LIMIT)? == bytes,
+                "abort receipt binding mismatch"
+            );
+        }
+        if !crate::safe_io::absent(&self.root.path.join(&lease))? {
+            self.root.unlink(&lease)?;
+        }
+        let mut retained = match self.latest()? {
+            Some(value) => value.verify(&self.trusted)? == digest,
+            None => false,
+        };
+        for name in names(&self.root.path.join("leases"))? {
+            retained |= self.root.bytes(&format!("leases/{name}"), 64)? == digest.as_bytes();
+        }
+        if !ownership.previous_generation && !retained {
+            for path in [format!("complete/{digest}"), format!("generations/{digest}.json")] {
+                if !crate::safe_io::absent(&self.root.path.join(&path))? {
+                    self.root.unlink(&path)?;
+                }
+            }
+        }
+        Ok(())
     }
     /// Pin a fully downloaded receiver generation while its writer still excludes pruning.
     pub fn hold_download(

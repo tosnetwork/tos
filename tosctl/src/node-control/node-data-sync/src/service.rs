@@ -18,6 +18,10 @@ pub struct Service {
     pub working_directory: PathBuf,
     pub user_manager: bool,
 }
+struct CheckedService {
+    permanent_cells: bool,
+}
+
 pub struct Frozen {
     _configuration_lock: File,
     pub(crate) root: PathBuf,
@@ -88,13 +92,16 @@ impl Service {
         Ok(paths)
     }
     pub fn permanent_cells(&self) -> Result<bool> {
-        let exec = command(
-            self.manager().args(["show", "--property=ExecStart", "--value", "--", &self.unit]),
-            Duration::from_secs(10),
-        )?;
-        Ok(exec.split_whitespace().any(|word| word == "--permanent-celldb"))
+        Ok(self.describe(None)?.permanent_cells)
+    }
+    pub fn require_mode(&self, expected: bool) -> Result<()> {
+        self.describe(Some(expected)).map(|_| ())
     }
     pub fn validate(&self) -> Result<()> {
+        self.describe(None).map(|_| ())
+    }
+    /// One parser and binding for configured, running and operation-selected storage modes.
+    fn describe(&self, expected: Option<bool>) -> Result<CheckedService> {
         ensure!(
             self.unit.ends_with(".service")
                 && self.unit.len() <= 255
@@ -139,7 +146,7 @@ impl Service {
             self.manager().args(["show", "--property=ExecStart", "--value", "--", &self.unit]),
             Duration::from_secs(10),
         )?;
-        validate_exec(
+        let configured = validate_exec(
             &exec,
             &self.engine,
             &self.database,
@@ -172,15 +179,17 @@ impl Service {
                 arguments.iter().all(|argument| !argument.chars().any(char::is_whitespace)),
                 "running arguments contain unsupported whitespace"
             );
-            validate_exec(
+            let running = validate_exec(
                 &format!("{{ argv[]={} ; running }}", arguments.join(" ")),
                 &self.engine,
                 &self.database,
                 &self.global_config,
                 &self.working_directory,
             )?;
+            check_mode(configured, Some(running), expected)?;
         }
-        Ok(())
+        check_mode(configured, None, expected)?;
+        Ok(CheckedService { permanent_cells: configured })
     }
     pub fn stop(&self) -> Result<Frozen> {
         self.validate()?;
@@ -197,7 +206,13 @@ impl Service {
         Frozen::acquire(&self.database)
     }
     pub fn start(&self, frozen: Frozen) -> Result<()> {
-        self.validate()?;
+        self.start_checked(frozen, None)
+    }
+    pub fn start_in_mode(&self, frozen: Frozen, expected: bool) -> Result<()> {
+        self.start_checked(frozen, Some(expected))
+    }
+    fn start_checked(&self, frozen: Frozen, expected: Option<bool>) -> Result<()> {
+        self.describe(expected)?;
         let held = frozen._configuration_lock.metadata()?;
         let selected = fs::symlink_metadata(self.database.join("config.json.lock"))?;
         ensure!(
@@ -210,6 +225,17 @@ impl Service {
         command(self.manager().args(["start", "--", &self.unit]), Duration::from_secs(120))?;
         Ok(())
     }
+}
+fn check_mode(configured: bool, running: Option<bool>, expected: Option<bool>) -> Result<()> {
+    ensure!(
+        running.is_none_or(|mode| mode == configured),
+        "running and configured cell-storage modes differ"
+    );
+    ensure!(
+        expected.is_none_or(|mode| mode == configured),
+        "service differs from operation cell-storage mode"
+    );
+    Ok(())
 }
 fn command(command: &mut Command, budget: Duration) -> Result<String> {
     // Bounded temporary output avoids pipe deadlock when the child fills stderr.
@@ -319,7 +345,7 @@ fn validate_exec(
     database: &Path,
     global: &Path,
     work: &Path,
-) -> Result<()> {
+) -> Result<bool> {
     let start = value.find("argv[]=").context("service has no inspectable command")?;
     let suffix = &value[start + "argv[]=".len()..];
     let (argv, tail) = suffix.split_once(" ; ").context("unsupported service command encoding")?;
@@ -334,10 +360,14 @@ fn validate_exec(
         "selected engine differs from service executable"
     );
     let mut selectors: std::collections::BTreeMap<&str, Vec<&str>> = Default::default();
+    let mut permanent = false;
     let mut index = 1;
     while let Some(option) = tokens.get(index) {
         let (canonical, takes_value) = canonical_option(option)?;
         index += 1;
+        if canonical == "permanent-celldb" {
+            permanent = true;
+        }
         if takes_value {
             let value = *tokens.get(index).context("service option requires a separate value")?;
             index += 1;
@@ -357,7 +387,7 @@ fn validate_exec(
             "local config is duplicated or outside selected database"
         );
     }
-    Ok(())
+    Ok(permanent)
 }
 // A deliberately restricted spelling/arity subset of the native option table, not a
 // second permissive parser. Unsupported native forms must be canonicalized by the operator.
@@ -399,6 +429,32 @@ fn canonical_option(option: &str) -> Result<(&'static str, bool)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn configured_running_and_expected_modes_are_one_invariant() {
+        for configured in [false, true] {
+            for running in [None, Some(false), Some(true)] {
+                for expected in [None, Some(false), Some(true)] {
+                    assert_eq!(
+                        check_mode(configured, running, expected).is_ok(),
+                        running.is_none_or(|v| v == configured)
+                            && expected.is_none_or(|v| v == configured)
+                    );
+                }
+            }
+        }
+        // A flag-shaped value must not be interpreted as a storage-mode switch.
+        let base = "{ argv[]=/engine --db /db --global-config /global --logname --permanent-celldb ; running }";
+        assert!(
+            !validate_exec(
+                base,
+                Path::new("/engine"),
+                Path::new("/db"),
+                Path::new("/global"),
+                Path::new("/")
+            )
+            .unwrap()
+        );
+    }
     #[test]
     fn service_binding_requires_one_literal_matching_database_and_policy() {
         let check = |s| {

@@ -683,3 +683,32 @@ fn exchange_requires_fresh_revision_bound_reference_evidence() -> Result<()> {
     assert_eq!(TreeIdentity::read(&installed.path)?, journal.old);
     Ok(())
 }
+
+#[test]
+fn file_only_payload_recreates_empty_chain_roots_without_accepting_links() -> Result<()> {
+    let temp = tempfile::tempdir()?;
+    let payload = Root::create(&temp.path().join("payload"))?;
+    let replacement = Root::create(&temp.path().join("replacement"))?;
+    // archive/tmp is filtered from public_files: no archive object creates its parent.
+    payload.write_new("chain/files/packages/temp.archive.1.pack", b"package")?;
+    let result = node_data_sync::capture::install_chain_roots(&payload, &replacement);
+    assert!(result.is_ok(), "empty required chain roots were not materialized: {result:?}");
+    result?;
+    for name in paths::CHAIN_ROOTS {
+        assert!(replacement.path.join(name).is_dir(), "missing native root {name}");
+    }
+    assert_eq!(replacement.bytes("files/packages/temp.archive.1.pack", 100)?, b"package");
+    for kind in ["file", "link"] {
+        let payload = Root::create(&temp.path().join(format!("payload-{kind}")))?;
+        let replacement = Root::create(&temp.path().join(format!("replacement-{kind}")))?;
+        payload.ensure_directory("chain")?;
+        if kind == "file" {
+            payload.write_new("chain/celldb", b"not a directory")?;
+        } else {
+            symlink(temp.path(), payload.path.join("chain/celldb"))?;
+        }
+        assert!(node_data_sync::capture::install_chain_roots(&payload, &replacement).is_err());
+        assert!(std::fs::read_dir(&replacement.path)?.next().is_none());
+    }
+    Ok(())
+}

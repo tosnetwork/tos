@@ -90,6 +90,8 @@ class BranchConditionTests(unittest.TestCase):
             "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p node-store",
             "grep -F 'test result: ok. 1 passed; 0 failed; 0 ignored'",
             "cargo build --manifest-path tosctl/src/Cargo.toml --locked -p node-store",
+            "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p commands --features node-data-sync-native --lib commands::nodectl::node_cmd::status_tests::standalone_status_keeps_rpc_only_contract_without_control_or_references",
+            "grep -F 'test result: ok. 1 passed; 0 failed; 0 ignored' build/node-status-compatibility.log",
             "run: uv run python test/integration/node_store_native_reopen.py",
         )
         for command in controls:
@@ -119,6 +121,54 @@ class BranchConditionTests(unittest.TestCase):
         for name, replacement in mutants.items():
             with self.subTest(name), self.assertRaises(RuntimeError):
                 self.guard.validate_triggers(self.workflow.replace(triggers, replacement, 1))
+
+
+class StorageModeBoundaryTests(unittest.TestCase):
+    def test_each_lifecycle_boundary_keeps_its_expected_mode(self):
+        import shutil
+
+        checkout = Path(__file__).resolve().parents[1]
+        spec = importlib.util.spec_from_file_location(
+            "mode_guard", checkout / "scripts/check-branch-chain-python-ci.py"
+        )
+        guard = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(guard)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            relative = Path("tosctl/src/node-control/node-data-sync/src")
+            (root / relative).mkdir(parents=True)
+            for name in ("operations.rs", "service.rs"):
+                shutil.copy2(checkout / relative / name, root / relative / name)
+            guard.validate_node_data_sync_modes(root)
+            path = root / relative / "operations.rs"
+            original = path.read_text()
+            # Mutate every individual binding, not a single catch-all call.
+            expressions = (
+                "service.permanent_cells()?",
+                "service.require_mode(permanent)?;",
+                "service.start_in_mode(frozen, permanent)?;",
+                "request.context.service().permanent_cells()?",
+                "request.context.service().require_mode(signed.manifest.permanent_cells)?;",
+                "context.service().require_mode(signed.manifest.permanent_cells)?;",
+                "context.service().start_in_mode(frozen, signed.manifest.permanent_cells)?;",
+            )
+            controls = 0
+            for expression in expressions:
+                for occurrence in range(original.count(expression)):
+                    with self.subTest(expression=expression, occurrence=occurrence):
+                        pieces = original.split(expression)
+                        mutated = (
+                            expression.join(pieces[: occurrence + 1])
+                            + "REMOVED_BINDING"
+                            + expression.join(pieces[occurrence + 1 :])
+                        )
+                        path.write_text(mutated)
+                        with self.assertRaises(RuntimeError):
+                            guard.validate_node_data_sync_modes(root)
+                        controls += 1
+            path.write_text(original)
+            guard.validate_node_data_sync_modes(root)
+            self.assertGreaterEqual(controls, 12)
 
 
 class NodeFailureLogTests(unittest.TestCase):
