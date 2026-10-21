@@ -722,8 +722,8 @@ cell caller_live_decr(cell caller_live_counts, slice caller) inline {
     refundable_liability = remaining_refundable;
     caller_live_counts = caller_live_decr(caller_live_counts, caller);
     ;; The storage fee covered the bounty when the request was admitted, so the
-    ;; net credit is computed before it is added to the revenue.
-    int revenue_credit = checked_sub_amount(checked_add_amount(price, req_storage_fee), req_cleanup_bounty);
+    ;; fee's net part is taken first and the credit never exceeds its own result.
+    int revenue_credit = checked_add_amount(price, checked_sub_amount(req_storage_fee, req_cleanup_bounty));
     withdrawable_revenue = checked_add_amount(withdrawable_revenue, revenue_credit);
     locked_storage_fees = remaining_locked;
     if (req_cleanup_bounty > 0) {

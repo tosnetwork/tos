@@ -2259,3 +2259,62 @@ fn a_zero_withdrawal_is_refused_when_the_balance_does_not_cover_the_obligations(
     }
     assert_eq!(f.data_hash(), before);
 }
+
+#[test]
+fn a_bounty_the_balance_cannot_pay_is_refused_as_insufficient_balance() {
+    let mut f = Fixture::new();
+    let owner = f.owner.address().clone();
+    let caller = f.caller.address().clone();
+    let outsider = f.outsider.address().clone();
+    // The largest bounty the policy admits, so a balance just short of it still
+    // buys the gas to reach the check.
+    let storage_fee = MIN_STORAGE_FEE.checked_add(MAX_CLEANUP_BOUNTY).expect("fee fits");
+    let (price, sla, window, open_access, rate_limit, metadata_hash, proof_scheme_hash) = (
+        f.init.price_per_call,
+        f.init.response_sla,
+        f.init.refund_claim_window,
+        f.init.open_access,
+        f.init.rate_limit_per_day,
+        f.init.metadata_hash,
+        f.init.proof_scheme_hash,
+    );
+    f.send_from(
+        &owner,
+        ServiceActorContract::update_policy(
+            1,
+            price,
+            storage_fee,
+            MAX_CLEANUP_BOUNTY,
+            sla,
+            window,
+            true,
+            open_access,
+            None,
+            &owner,
+            rate_limit,
+            metadata_hash,
+            proof_scheme_hash,
+        )
+        .unwrap(),
+    )
+    .expect_success();
+    f.call(&caller, 2, [0xAA; 32]).expect_success();
+    let request = f.request(0).expect("pending request");
+    assert_eq!(request.cleanup_bounty, MAX_CLEANUP_BOUNTY);
+    f.bc.set_now(request.refund_claim_deadline as u32);
+
+    // The contract's own balance plus the sweeper's value stays below the bounty.
+    let mut account = f.bc.get_account(&f.service).expect("service account").clone();
+    account.set_balance(chain_block::CurrencyCollection::from(9 * TOS / 10));
+    f.bc.set_account(f.service.clone(), account);
+    let before = f.data_hash();
+    f.send_from_with_value(
+        &outsider,
+        ServiceActorContract::sweep_expired_request(3, 0).unwrap(),
+        TOS / 20,
+    )
+    .expect_aborted()
+    .expect_exit_code(ERR_INSUFFICIENT_BALANCE);
+    assert_eq!(f.data_hash(), before);
+    assert!(f.request(0).is_some(), "the entry stays live");
+}
