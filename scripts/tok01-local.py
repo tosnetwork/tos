@@ -25,13 +25,26 @@ spec.loader.exec_module(tok01)
 
 
 class SystemdBackend(ProcessBackend):
-    def __init__(self, prefix):
+    def __init__(self, prefix, container=None):
         self.prefix = prefix
+        self.container = container
         self.units = []
 
     async def spawn(self, node_name, executable, args, cwd, env, capture_stdout=False):
         unit = f"{self.prefix}-{node_name}"
         self.units.append(unit)
+        command = [str(executable), *map(str, args)]
+        if self.container:
+            command = [
+                "/usr/bin/docker",
+                "exec",
+                "--user",
+                f"{os.getuid()}:{os.getgid()}",
+                "--workdir",
+                str(cwd),
+                self.container,
+                *command,
+            ]
         return await asyncio.create_subprocess_exec(
             "systemd-run",
             "--user",
@@ -50,8 +63,7 @@ class SystemdBackend(ProcessBackend):
                 for key in ("PATH", "LD_LIBRARY_PATH", "TOS_AUTH_NETWORK_TAG")
                 if key in env
             ],
-            str(executable),
-            *map(str, args),
+            *command,
             stdout=asyncio.subprocess.PIPE if capture_stdout else None,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -80,7 +92,7 @@ async def run(args):
     if shutil.disk_usage(args.runtime.parent).free < 240 * 1024**3:
         raise RuntimeError("Less than 240 GiB free before the 40 GiB budget")
     os.environ["TOS_AUTH_NETWORK_TAG"] = hashlib.sha256(args.prefix.encode()).hexdigest()
-    backend = SystemdBackend(args.prefix)
+    backend = SystemdBackend(args.prefix, args.node_container)
     subprocess.run(
         [
             "systemctl",
@@ -168,6 +180,10 @@ def main():
     parser.add_argument("--prefix", default="bailu-tok01")
     parser.add_argument("--base-port", type=int, default=28600)
     parser.add_argument("--rpc-port", type=int, default=28680)
+    parser.add_argument(
+        "--node-container",
+        help="Existing resource-capped runtime container; paths must match the host",
+    )
     args = parser.parse_args()
     raise SystemExit(asyncio.run(run(args)))
 
