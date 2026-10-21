@@ -7,6 +7,7 @@ import importlib.util
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -30,7 +31,7 @@ lifecycle = module("tok01-lifecycle")
 fixture_transactions = module("../test/tostester/tests/tok01_fixture_transactions")
 
 
-def rendered(data, exit_code):
+def rendered(data, exit_code) -> dict[str, Any]:
     """A retained transaction as the runner stores it: the BOC plus the RPC rendering of it."""
     edges = oracle.decoded_edges({"data": data})
     return {
@@ -48,7 +49,7 @@ def rendered(data, exit_code):
     }
 
 
-def step_record(name):
+def step_record(name) -> dict[str, Any]:
     """One lifecycle step built from the retained sender and target pair of its outcome."""
     exit_code = oracle.EXPECTED_EXIT.get(name, 0)
     real = fixture_transactions.STEPS[exit_code]

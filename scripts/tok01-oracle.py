@@ -7,6 +7,7 @@ import copy
 import json
 import re
 from pathlib import Path
+from typing import Any
 
 from pytosiq_core import Address, Cell
 from pytosiq_core.tlb.transaction import Transaction
@@ -82,11 +83,12 @@ def decoded_outcome(tx):
     """Compute exit, aborted flag and action result read from the hash-checked BOC itself."""
     parsed = Transaction.deserialize(Cell.one_from_boc(base64.b64decode(tx["data"])).begin_parse())
     description = parsed.description
-    compute = getattr(description, "compute_ph", None)
-    require(getattr(compute, "exit_code", None) is not None, "target has no compute phase")
+    exit_code = getattr(getattr(description, "compute_ph", None), "exit_code", None)
+    if exit_code is None:
+        raise AssertionError("target has no compute phase")
     action = getattr(description, "action", None)
     return {
-        "exit_code": compute.exit_code,
+        "exit_code": exit_code,
         "aborted": bool(description.aborted),
         "action_success": None if action is None else bool(action.success),
     }
@@ -169,7 +171,8 @@ def check_message_edges(step):
         "RPC message rendering disagrees with the decoded transaction",
     )
     sender = step.get("sender")
-    require(sender, "step sender missing")
+    if not sender:
+        raise AssertionError("step sender missing")
     sent = []
     for tx in step["transactions"].get(sender, []):
         sender_edges = decoded_edges(tx)
@@ -189,7 +192,8 @@ def check_message_edges(step):
 
 def check_provenance(provenance, summary):
     """Evidence counts only when the run that wrote it finished on an unchanged clean head."""
-    require(provenance is not None, "provenance missing")
+    if provenance is None:
+        raise AssertionError("provenance missing")
     require(provenance.get("completed") is True, "run did not complete on a clean source tree")
     head = provenance.get("source_head")
     require(isinstance(head, str) and SOURCE_HEAD.match(head), "source head is not a commit")
@@ -199,6 +203,7 @@ def check_provenance(provenance, summary):
         "provenance does not belong to this run",
     )
     require(isinstance(provenance.get("global_id"), int), "network identity missing")
+    return provenance
 
 
 def load(directory, name):
@@ -218,8 +223,7 @@ def verify(directory, records=None, expect_source_head=None, expect_global_id=No
         return load_object(directory, name) if records is None else records.get(name)
 
     (summary,) = read("summary.jsonl")
-    provenance = read_object("provenance.json")
-    check_provenance(provenance, summary)
+    provenance = check_provenance(read_object("provenance.json"), summary)
     if expect_source_head is not None:
         require(
             provenance["source_head"] == expect_source_head,
@@ -395,7 +399,7 @@ def controls(directory):
         lambda row: row["block_id"].pop("file_hash"),
         "full block ID missing",
     )
-    records = {
+    records: dict[str, Any] = {
         name: load(directory, name)
         for name in (
             "summary.jsonl",
