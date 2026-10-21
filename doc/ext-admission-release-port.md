@@ -67,6 +67,27 @@ Current supplied operation units do not pass this flag. Historical bundles and
 hash-pinned evidence are retained unchanged; site-specific upgrade inputs must
 use the supported configuration path.
 
+### Configuration fields
+
+A negative field selects its release default, conventionally `-1`. Each update
+constructs a replacement options object; negative fields do not retain a
+previous non-default setting. The native schema uses signed 32-bit integers
+except for the time window, which is a double in seconds.
+
+| Field | Purpose and accepted nonnegative range |
+| --- | --- |
+| `max_mempool_messages` | Per-priority stored-message threshold, 0 through the schema integer maximum; the inherited insertion comparison is `>` |
+| `num_regular_checkers` | Regular checker actors, 0–128 |
+| `num_priority_checkers` | Reserved checker actors for positive-priority requests, 0–128 |
+| `max_admission_waiters` | Absolute queued-request cap, 0 through the schema integer maximum; the effective cap may be lower |
+| `max_ext_msg_per_addr` | Successful checks/address in the configured window, 1 through the schema integer maximum |
+| `max_ext_msg_per_addr_time_window` | Per-address counter window, strictly positive seconds |
+| `local_ls_message_priority` | Local-query queue priority, 0 through the schema integer maximum; positive values may use reserved checkers |
+
+Zero regular checkers refuses regular requests; priority requests can use either
+lane when one exists. Eight checks may be inflight per checker. Pool options are
+local admission policy and do not alter consensus or full transaction execution.
+
 ## Conflict ledger
 
 - **C1 — Checker execution:** the upstream typed outcome and lifecycle wrappers
