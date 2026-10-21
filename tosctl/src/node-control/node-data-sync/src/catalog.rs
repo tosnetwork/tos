@@ -12,7 +12,6 @@ struct DownloadOwnership {
     lease: String,
     generation: String,
     request_sha256: String,
-    previous_generation: bool,
 }
 
 pub struct Catalog {
@@ -183,9 +182,6 @@ impl Catalog {
                 request_sha256: crate::model::sha256(
                     &record.bytes("request.json", MANIFEST_LIMIT)?,
                 ),
-                previous_generation: !crate::safe_io::absent(
-                    &self.root.path.join(format!("generations/{digest}.json")),
-                )?,
             };
             record.write_new("download.json", &serde_json::to_vec(&ownership)?)?;
         }
@@ -231,30 +227,11 @@ impl Catalog {
                 "preparation lease binding mismatch"
             );
         }
-        if crate::safe_io::absent(&record.path.join("preparation-aborted.json"))? {
-            record.write_new("preparation-aborted.json", &bytes)?;
-        } else {
-            ensure!(
-                record.bytes("preparation-aborted.json", MANIFEST_LIMIT)? == bytes,
-                "abort receipt binding mismatch"
-            );
-        }
+        publish_abort_receipt(record, operation, &bytes, |root, path, bytes| {
+            root.write_new(path, bytes)
+        })?;
         if !crate::safe_io::absent(&self.root.path.join(&lease))? {
             self.root.unlink(&lease)?;
-        }
-        let mut retained = match self.latest()? {
-            Some(value) => value.verify(&self.trusted)? == digest,
-            None => false,
-        };
-        for name in names(&self.root.path.join("leases"))? {
-            retained |= self.root.bytes(&format!("leases/{name}"), 64)? == digest.as_bytes();
-        }
-        if !ownership.previous_generation && !retained {
-            for path in [format!("complete/{digest}"), format!("generations/{digest}.json")] {
-                if !crate::safe_io::absent(&self.root.path.join(&path))? {
-                    self.root.unlink(&path)?;
-                }
-            }
         }
         Ok(())
     }
@@ -448,4 +425,79 @@ pub fn verify_generation(
         "StateDb and manifest fork records differ"
     );
     Ok(())
+}
+
+// The final name is authoritative only after fsynced temporary bytes are renamed.
+fn publish_abort_receipt(
+    record: &Root,
+    operation: &str,
+    bytes: &[u8],
+    write: impl FnOnce(&Root, &str, &[u8]) -> Result<()>,
+) -> Result<()> {
+    hash(operation)?;
+    let final_name = "preparation-aborted.json";
+    let temporary = format!("preparation-aborted.{operation}.pending");
+    let complete = !crate::safe_io::absent(&record.path.join(final_name))?;
+    if complete {
+        ensure!(
+            record.bytes(final_name, MANIFEST_LIMIT)? == bytes,
+            "abort receipt binding mismatch"
+        );
+    }
+    if !crate::safe_io::absent(&record.path.join(&temporary))? {
+        // This exact name belongs to the authenticated operation, never a wildcard.
+        record.read(&temporary, MANIFEST_LIMIT)?;
+        record.unlink(&temporary)?;
+    }
+    if !complete {
+        write(record, &temporary, bytes)?;
+        record.rename(&temporary, final_name)?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod abort_receipt_tests {
+    use super::*;
+    #[test]
+    fn interrupted_receipt_has_no_partial_final_and_retry_removes_owned_temporary() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let root = Root::open(tmp.path())?;
+        let operation = "ab".repeat(32);
+        let bytes = b"complete authenticated receipt";
+        let result = publish_abort_receipt(&root, &operation, bytes, |root, path, bytes| {
+            root.write_new(path, &bytes[..7])?;
+            anyhow::bail!("injected write interruption")
+        });
+        assert!(result.is_err());
+        assert!(
+            !root.path.join("preparation-aborted.json").exists(),
+            "partial receipt was published at final name"
+        );
+        let temporary = format!("preparation-aborted.{operation}.pending");
+        assert_eq!(root.bytes(&temporary, 1024)?, &bytes[..7]);
+        root.write_new("unrelated.pending", b"retain")?;
+        publish_abort_receipt(&root, &operation, bytes, |root, path, bytes| {
+            root.write_new(path, bytes)
+        })?;
+        assert_eq!(root.bytes("preparation-aborted.json", 1024)?, bytes);
+        assert!(!root.path.join(&temporary).exists(), "owned temporary survived retry");
+        assert_eq!(root.bytes("unrelated.pending", 100)?, b"retain");
+        root.write_new(&temporary, b"interrupted leftover")?;
+        publish_abort_receipt(&root, &operation, bytes, |_, _, _| {
+            anyhow::bail!("complete receipt was rewritten")
+        })?;
+        assert!(
+            !root.path.join(&temporary).exists(),
+            "owned temporary survived complete-receipt retry"
+        );
+        root.replace("preparation-aborted.json", b"different")?;
+        assert!(
+            publish_abort_receipt(&root, &operation, bytes, |root, path, bytes| root
+                .write_new(path, bytes))
+            .is_err(),
+            "mismatched final receipt was accepted"
+        );
+        Ok(())
+    }
 }

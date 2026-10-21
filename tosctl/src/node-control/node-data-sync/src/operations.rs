@@ -285,6 +285,7 @@ pub fn restore(request: &RestoreRequest, operation_path: &Path) -> Result<Journa
         catalog.hold_download(&signed, &writer, &lease)?;
     }
     request.context.service().require_mode(signed.manifest.permanent_cells)?;
+    prepare_stop(request, &signed, &operation, &operation_id)?;
     let frozen = request.context.service().stop()?;
     request.context.service().require_mode(signed.manifest.permanent_cells)?;
     let service_files = request.context.preservation_files()?;
@@ -393,7 +394,11 @@ fn stage_with_space(
         anchors.iter().all(|a| a.seqno <= signed.manifest.frontier.seqno),
         "dump predates target safety anchor"
     );
-    let revision = format!("stage-{:032x}", rand::random::<u128>());
+    let revision = if previous.is_none() {
+        read_stop(request, signed, operation, operation_id)?.stage
+    } else {
+        format!("stage-{:032x}", rand::random::<u128>())
+    };
     let revision_root = Root::create(&operation.path.join(&revision))?;
     let backup = Root::create(&revision_root.path.join("private"))?;
     let identity = Identity::capture(
@@ -508,9 +513,118 @@ fn start_installed(context: &NodeContext, operation: &Root, journal: &mut Journa
     }
     Ok(())
 }
+
+#[derive(Debug, Serialize)]
+pub struct AbortReport {
+    pub service_state: String,
+    pub restart_command: String,
+    pub removed_stage: Option<String>,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StopPreparation {
+    operation: String,
+    generation: String,
+    request_sha256: String,
+    installed: TreeIdentity,
+    stage: String,
+}
+fn prepare_stop(
+    request: &RestoreRequest,
+    signed: &SignedManifest,
+    operation: &Root,
+    id: &str,
+) -> Result<()> {
+    let stop = StopPreparation {
+        operation: id.to_owned(),
+        generation: signed.verify(&trusted(&request.publisher_key)?)?,
+        request_sha256: sha256(&operation.bytes("request.json", MANIFEST_LIMIT)?),
+        installed: TreeIdentity::read(&request.context.database)?,
+        stage: format!("stage-{:032x}", rand::random::<u128>()),
+    };
+    ensure!(
+        crate::safe_io::absent(&operation.path.join("stop-preparation.json"))?,
+        "stop preparation already exists"
+    );
+    operation.replace("stop-preparation.json", &serde_json::to_vec(&stop)?)
+}
+fn read_stop(
+    request: &RestoreRequest,
+    signed: &SignedManifest,
+    operation: &Root,
+    id: &str,
+) -> Result<StopPreparation> {
+    let stop: StopPreparation =
+        serde_json::from_slice(&operation.bytes("stop-preparation.json", MANIFEST_LIMIT)?)?;
+    ensure!(
+        stop.operation == id
+            && stop.generation == signed.verify(&trusted(&request.publisher_key)?)?
+            && stop.request_sha256 == sha256(&operation.bytes("request.json", MANIFEST_LIMIT)?),
+        "stop preparation binding mismatch"
+    );
+    let suffix = stop.stage.strip_prefix("stage-").context("invalid owned stage")?;
+    ensure!(
+        suffix.len() == 32 && suffix.bytes().all(|b| b.is_ascii_hexdigit()),
+        "invalid owned stage"
+    );
+    ensure!(
+        TreeIdentity::read(&request.context.database)? == stop.installed,
+        "installed root differs from pre-stop identity; preparation abort refused"
+    );
+    Ok(stop)
+}
+fn classify_preparation(
+    request: &RestoreRequest,
+    signed: &SignedManifest,
+    operation: &Root,
+) -> Result<Option<StopPreparation>> {
+    ensure!(
+        crate::safe_io::absent(&operation.path.join("FORWARD_ONLY"))?,
+        "FORWARD_ONLY evidence without journal; retain operation for inspection"
+    );
+    let stop = if crate::safe_io::absent(&operation.path.join("stop-preparation.json"))? {
+        None
+    } else {
+        let id = String::from_utf8(operation.bytes("operation-id", 32)?)?;
+        Some(read_stop(request, signed, operation, &id)?)
+    };
+    for entry in fs::read_dir(&operation.path)? {
+        let entry = entry?;
+        let name = entry
+            .file_name()
+            .into_string()
+            .map_err(|_| anyhow::anyhow!("non-text operation entry"))?;
+        if name.starts_with("stage-") {
+            let stage = Root::open(&entry.path())?;
+            let bytes = trees::allocated_bytes(&stage.path)?;
+            ensure!(
+                crate::safe_io::absent(&stage.path.join("preservation.json"))?
+                    && crate::safe_io::absent(&stage.path.join("FORWARD_ONLY"))?,
+                "stage {name} has later-phase evidence ({bytes} allocated bytes); journal missing, retain for inspection; node may be stopped"
+            );
+            ensure!(
+                stop.as_ref().is_some_and(|s| s.stage == name),
+                "unbound stage {name} ({bytes} allocated bytes); retain for inspection; node may be stopped"
+            );
+        }
+    }
+    Ok(stop)
+}
+fn cleanup_stage(request: &RestoreRequest, operation: &Root, stop: &StopPreparation) -> Result<()> {
+    // Check again at deletion time, not just while classifying the interrupted operation.
+    ensure!(
+        TreeIdentity::read(&request.context.database)? == stop.installed,
+        "installed root changed before staging cleanup"
+    );
+    if !crate::safe_io::absent(&operation.path.join(&stop.stage))? {
+        crate::service::refuse_writers(&operation.path.join(&stop.stage))?;
+        operation.remove_tree(&stop.stage)?;
+    }
+    Ok(())
+}
 pub enum RecoveryOutcome {
     Installed(Box<(NodeContext, Journal)>),
-    Aborted,
+    Aborted(AbortReport),
 }
 pub fn recover(operation_path: &Path) -> Result<RecoveryOutcome> {
     let operation = Root::open(operation_path)?;
@@ -521,23 +635,42 @@ pub fn recover(operation_path: &Path) -> Result<RecoveryOutcome> {
     separate(&request.cache, &request.context.database)?;
     separate(&request.cache, &operation.path)?;
     if crate::safe_io::absent(&operation.path.join("restore.json"))? {
-        let _monitor = crate::budget::Monitor::start(
-            &request.context.budget_roots,
-            &operation,
-            0,
-            &request.context.disk_policy,
-        )?;
-        let _lock = operation_lock(&request.context.database)?;
-        let key = trusted(&request.publisher_key)?;
-        let signed =
-            SignedManifest::parse(&operation.bytes("generation.json", MANIFEST_LIMIT)?, &key)?;
-        let id = sha256(&operation.bytes("operation-id", 32)?);
-        let objects = Objects::open(&request.cache)?;
-        let catalog = Catalog::open(&request.cache, key)?;
-        catalog.abort_download(&signed, &objects, &id, &operation)?;
-        // Normal reachability pruning retains every other lease and published generation.
-        catalog.prune()?;
-        return Ok(RecoveryOutcome::Aborted);
+        let (service_state, restart_command) = request.context.service().abort_guidance()?;
+        let guidance = format!(
+            "Preparation recovery: selected service state={service_state}; command={restart_command}. Do not restart until original-tree identity is confirmed; retain ambiguous staging for inspection"
+        );
+        let result: Result<RecoveryOutcome> = (|| {
+            let _monitor = crate::budget::Monitor::start(
+                &request.context.budget_roots,
+                &operation,
+                0,
+                &request.context.disk_policy,
+            )?;
+            let _lock = operation_lock(&request.context.database)?;
+            let key = trusted(&request.publisher_key)?;
+            let signed =
+                SignedManifest::parse(&operation.bytes("generation.json", MANIFEST_LIMIT)?, &key)?;
+            let id = sha256(&operation.bytes("operation-id", 32)?);
+            let objects = Objects::open(&request.cache)?;
+            let catalog = Catalog::open(&request.cache, key)?;
+            let stop = classify_preparation(&request, &signed, &operation)?;
+            catalog.abort_download(&signed, &objects, &id, &operation)?;
+            // Normal reachability pruning retains every other lease and published generation.
+            let removed_stage = if let Some(stop) = stop {
+                cleanup_stage(&request, &operation, &stop)?;
+                Some(stop.stage)
+            } else {
+                None
+            };
+            catalog.prune()?;
+            let (service_state, restart_command) = request.context.service().abort_guidance()?;
+            Ok(RecoveryOutcome::Aborted(AbortReport {
+                service_state,
+                restart_command,
+                removed_stage,
+            }))
+        })();
+        return result.context(guidance);
     }
     let mut journal = Journal::read(&operation)?;
     let signed_probe = SignedManifest::parse(
@@ -648,6 +781,182 @@ pub fn complete(operation_path: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn stopped_fixture_request(root: &Root) -> Result<RestoreRequest> {
+        let database = Root::create(&root.path.join("database"))?;
+        Ok(RestoreRequest {
+            context: NodeContext {
+                unit: "floria-p2-selected@fixture.service".to_owned(),
+                user_manager: true,
+                database: database.path.clone(),
+                engine: root.path.join("engine"),
+                engine_sha256: "00".repeat(32),
+                validation_worker: root.path.join("worker"),
+                validation_worker_sha256: "00".repeat(32),
+                global_config: root.path.join("global.json"),
+                global_id: 3,
+                work_root: root.path.clone(),
+                working_directory: database.path,
+                operator_config: root.path.join("operator.json"),
+                node_name: "own".to_owned(),
+                budget_roots: vec![root.path.clone()],
+                disk_policy: crate::budget::DiskPolicy {
+                    max_owned_bytes: 1 << 30,
+                    shutdown_free_bytes: Some(1),
+                },
+                vault_config_files: vec![],
+                references: crate::references::ReferencePolicy { sources: vec![] },
+            },
+            manifest: root.path.join("generation.json"),
+            cache: root.path.join("cache"),
+            publisher_key: "00".repeat(32),
+            source_url: None,
+        })
+    }
+    #[test]
+    fn cleanup_rechecks_installed_identity_and_never_follows_links() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let root = Root::open(tmp.path())?;
+        let request = stopped_fixture_request(&root)?;
+        let operation = Root::create(&root.path.join("operation"))?;
+        let stage = Root::create(&operation.path.join(format!("stage-{}", "11".repeat(16))))?;
+        stage.write_new("partial", b"owned")?;
+        let stop = StopPreparation {
+            operation: "ab".repeat(16),
+            generation: "cd".repeat(32),
+            request_sha256: "ef".repeat(32),
+            installed: TreeIdentity::read(&request.context.database)?,
+            stage: stage
+                .path
+                .file_name()
+                .context("stage name")?
+                .to_str()
+                .context("stage text")?
+                .to_owned(),
+        };
+        fs::rename(&request.context.database, root.path.join("saved-original"))?;
+        Root::create(&request.context.database)?;
+        assert!(
+            cleanup_stage(&request, &operation, &stop).is_err(),
+            "cleanup ignored changed installed root"
+        );
+        assert!(stage.path.exists(), "cleanup removed stage after installed-root replacement");
+        fs::remove_dir(&request.context.database)?;
+        fs::rename(root.path.join("saved-original"), &request.context.database)?;
+        let unrelated = Root::create(&operation.path.join("unrelated"))?;
+        unrelated.write_new("keep", b"not owned")?;
+        std::os::unix::fs::symlink(&unrelated.path, stage.path.join("trap"))?;
+        assert!(cleanup_stage(&request, &operation, &stop).is_err(), "cleanup followed a symlink");
+        assert_eq!(unrelated.bytes("keep", 100)?, b"not owned");
+        fs::remove_file(stage.path.join("trap"))?;
+        cleanup_stage(&request, &operation, &stop)?;
+        assert!(!stage.path.exists(), "owned staging survived cleanup");
+        assert_eq!(unrelated.bytes("keep", 100)?, b"not owned");
+        cleanup_stage(&request, &operation, &stop)?;
+        let (_, command) = request.context.service().abort_guidance()?;
+        assert_eq!(
+            command, "systemctl --user start -- floria-p2-selected@fixture.service",
+            "restart command changed selected unit or scope"
+        );
+        let mut system_service = request.context.service();
+        system_service.user_manager = false;
+        assert_eq!(
+            system_service.abort_guidance()?.1,
+            "systemctl start -- floria-p2-selected@fixture.service",
+            "restart command changed system-manager scope"
+        );
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "requires an explicitly provisioned private id-3 service fixture"]
+    fn post_stop_process_exit_aborts_with_restart_guidance() -> Result<()> {
+        let path = std::env::var_os("NODE_SYNC_POST_STOP_REQUEST")
+            .context("private service request is required")?;
+        let request: RestoreRequest = serde_json::from_slice(&fs::read(&path)?)?;
+        let operation = Root::open(Path::new(&path).parent().context("operation parent")?)?;
+        if std::env::var_os("NODE_SYNC_POST_STOP_CHILD").is_some() {
+            let signed = SignedManifest::parse(
+                &operation.bytes("generation.json", MANIFEST_LIMIT)?,
+                &trusted(&request.publisher_key)?,
+            )?;
+            let id = String::from_utf8(operation.bytes("operation-id", 32)?)?;
+            let key = trusted(&request.publisher_key)?;
+            let objects = Objects::open(&request.cache)?;
+            let catalog = Catalog::open(&request.cache, key)?;
+            {
+                let writer = objects.writer()?;
+                catalog.begin_owned_download(
+                    &signed,
+                    &writer,
+                    &sha256(id.as_bytes()),
+                    &operation,
+                )?;
+            }
+            prepare_stop(&request, &signed, &operation, &id)?;
+            let frozen = request.context.service().stop()?;
+            let stop = read_stop(&request, &signed, &operation, &id)?;
+            if std::env::var_os("NODE_SYNC_PARTIAL_STAGE").is_some() {
+                let stage = Root::create(&operation.path.join(&stop.stage))?;
+                stage.write_new("partial", b"interrupted staging")?;
+            }
+            let mut inventory = Vec::new();
+            let own = Root::open(&request.context.database)?;
+            for file in trees::inventory(&own)? {
+                inventory.push((
+                    file.path.clone(),
+                    sha256(&own.bytes(&file.path, crate::model::RAW_LIMIT)?),
+                ));
+            }
+            operation.write_new("post-stop-inventory.json", &serde_json::to_vec(&inventory)?)?;
+            std::mem::forget(frozen);
+            std::process::exit(73);
+        }
+        let result = std::process::Command::new(std::env::current_exe()?)
+            .args([
+                "--ignored",
+                "--exact",
+                "operations::tests::post_stop_process_exit_aborts_with_restart_guidance",
+                "--nocapture",
+            ])
+            .env("NODE_SYNC_POST_STOP_CHILD", "1")
+            .status()?;
+        assert_eq!(result.code(), Some(73), "post-stop process-exit precondition");
+        let outcome = recover(&operation.path)?;
+        let RecoveryOutcome::Aborted(report) = outcome else {
+            anyhow::bail!("post-stop preparation was resumed")
+        };
+        assert_eq!(report.service_state, "inactive", "abort did not report the stopped service");
+        assert_eq!(
+            report.restart_command,
+            format!("systemctl --user start -- {}", request.context.unit),
+            "abort restart command lost the resolved selected unit"
+        );
+        let own = Root::open(&request.context.database)?;
+        let mut inventory = Vec::new();
+        for file in trees::inventory(&own)? {
+            inventory.push((
+                file.path.clone(),
+                sha256(&own.bytes(&file.path, crate::model::RAW_LIMIT)?),
+            ));
+        }
+        assert_eq!(
+            serde_json::to_vec(&inventory)?,
+            operation.bytes("post-stop-inventory.json", MANIFEST_LIMIT)?,
+            "abort changed original native data"
+        );
+        let stage = report.removed_stage.context("post-stop descriptor not reported")?;
+        assert!(!operation.path.join(stage).exists(), "post-stop staging was not cleaned");
+        assert_eq!(
+            request.context.service().abort_guidance()?.0,
+            "inactive",
+            "abort unexpectedly started the node"
+        );
+        assert!(
+            matches!(recover(&operation.path)?, RecoveryOutcome::Aborted(_)),
+            "repeat abort failed"
+        );
+        Ok(())
+    }
     #[test]
     #[ignore = "requires engine-created generation and a private network namespace; run the native fixture CI step"]
     fn native_stage_preserves_own_context_and_never_overlays_recovery_material() -> Result<()> {
@@ -741,6 +1050,8 @@ mod tests {
             source_url: None,
         };
         let operation = Root::create(&parent.path.join("operation"))?;
+        operation.write_new("request.json", &serde_json::to_vec(&request)?)?;
+        prepare_stop(&request, &signed, &operation, &"12".repeat(16))?;
         let frozen = Frozen::acquire(&own.path)?;
         let staged = stage_with_space(
             &request,

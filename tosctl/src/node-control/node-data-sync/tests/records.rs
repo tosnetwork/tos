@@ -275,7 +275,7 @@ fn publication_checks_metadata_and_pruning_respects_capture_and_restore_leases()
     // The same production recovery entry point aborts all pre-journal exit windows.
     #[cfg(feature = "native")]
     {
-        for phase in 0..4_u8 {
+        for phase in 0..5_u8 {
             let parent = Root::create(&temp.path().join(format!("abort-{phase}")))?;
             let database = Root::create(&parent.path.join("database"))?;
             let cache = Catalog::create(&parent.path.join("cache"), trusted)?;
@@ -353,6 +353,13 @@ fn publication_checks_metadata_and_pruning_respects_capture_and_restore_leases()
                 .env("NODE_SYNC_PREPARATION_EXIT", parent.path.join("fault.json"))
                 .status()?;
             assert_eq!(result.code(), Some(73), "pre-journal process-exit precondition");
+            if phase == 4 {
+                let other = sha256(b"completed by a different receiver");
+                let writer = cache_objects.writer()?;
+                cache.begin_download(&fault.signed, &writer, &other)?;
+                cache.hold_download(&fault.signed, &writer, &other)?;
+                cache.release(&other)?;
+            }
             let lease = format!("leases/r-{}", sha256(b"0123456789abcdef0123456789abcdef"));
             assert!(request.cache.join(&lease).exists());
             assert!(!operation.path.join("restore.json").exists());
@@ -374,9 +381,39 @@ fn publication_checks_metadata_and_pruning_respects_capture_and_restore_leases()
                 "mismatched cache binding wrote into the installed node"
             );
             operation.replace("request.json", &original)?;
+            let mut budget_fault: serde_json::Value = serde_json::from_slice(&original)?;
+            budget_fault["context"]["disk_policy"]["max_owned_bytes"] = serde_json::json!(1);
+            operation.replace("request.json", &serde_json::to_vec(&budget_fault)?)?;
+            let refusal = node_data_sync::operations::recover(&operation.path)
+                .err()
+                .ok_or_else(|| anyhow::anyhow!("budget refusal precondition"))?;
+            let message = format!("{refusal:#}");
+            assert!(
+                message.contains("selected service state=")
+                    && message.contains("systemctl --user start -- abort-test.service"),
+                "early preparation refusal omitted selected-service guidance: {message}"
+            );
+            operation.replace("request.json", &original)?;
+            operation.write_new("FORWARD_ONLY", b"evidence")?;
+            assert!(
+                node_data_sync::operations::recover(&operation.path).is_err(),
+                "abort ignored forward-only evidence"
+            );
+            assert!(request.cache.join(&lease).exists(), "later-phase evidence released lease");
+            operation.unlink("FORWARD_ONLY")?;
+            let ambiguous =
+                Root::create(&operation.path.join(format!("stage-{}", "44".repeat(16))))?;
+            ambiguous.write_new("preservation.json", b"evidence")?;
+            assert!(
+                node_data_sync::operations::recover(&operation.path).is_err(),
+                "abort ignored preservation evidence"
+            );
+            assert!(request.cache.join(&lease).exists(), "preservation evidence released lease");
+            ambiguous.unlink("preservation.json")?;
+            std::fs::remove_dir(&ambiguous.path)?;
             let outcome = node_data_sync::operations::recover(&operation.path);
             assert!(
-                matches!(outcome, Ok(node_data_sync::operations::RecoveryOutcome::Aborted)),
+                matches!(outcome, Ok(node_data_sync::operations::RecoveryOutcome::Aborted(_))),
                 "pre-journal recovery must abort instead of requiring restore.json"
             );
             assert!(
@@ -391,11 +428,11 @@ fn publication_checks_metadata_and_pruning_respects_capture_and_restore_leases()
             assert!(
                 matches!(
                     node_data_sync::operations::recover(&operation.path)?,
-                    node_data_sync::operations::RecoveryOutcome::Aborted
+                    node_data_sync::operations::RecoveryOutcome::Aborted(_)
                 ),
                 "abort is not idempotent"
             );
-            if phase == 3 {
+            if phase >= 2 {
                 assert_eq!(
                     cache.list()?.len(),
                     1,

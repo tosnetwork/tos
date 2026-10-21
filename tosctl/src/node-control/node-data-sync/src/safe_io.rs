@@ -183,6 +183,15 @@ impl Root {
         File::from(to_dir).sync_all()?;
         Ok(())
     }
+    /// Remove one owned child tree through descriptors; never traverse links or mounts.
+    pub fn remove_tree(&self, path: &str) -> Result<()> {
+        ensure!(super::paths::relative(path)?.len() == 1, "cleanup requires one direct child");
+        let (parent, name) = self.parent(path, false)?;
+        let mut remaining = super::model::FILE_COUNT_LIMIT;
+        remove_child(parent.as_raw_fd(), &name, &mut remaining)?;
+        File::from(parent).sync_all()?;
+        Ok(())
+    }
     pub fn unlink(&self, path: &str) -> Result<()> {
         let (dir, name) = self.parent(path, false)?;
         let result = unsafe { libc::unlinkat(dir.as_raw_fd(), name.as_ptr(), 0) };
@@ -265,4 +274,62 @@ pub fn absent(path: &Path) -> Result<bool> {
         Err(error) => Err(error.into()),
         Ok(_) => Ok(false),
     }
+}
+
+fn remove_child(parent: i32, name: &std::ffi::CStr, remaining: &mut usize) -> Result<()> {
+    use std::os::unix::fs::MetadataExt;
+    ensure!(*remaining > 0, "cleanup entry limit");
+    *remaining -= 1;
+    #[repr(C)]
+    struct OpenHow {
+        flags: u64,
+        mode: u64,
+        resolve: u64,
+    }
+    let how = OpenHow {
+        flags: (libc::O_RDONLY | libc::O_NONBLOCK | libc::O_NOFOLLOW | libc::O_CLOEXEC) as u64,
+        mode: 0,
+        resolve: 1 | 4 | 8, // NO_XDEV, NO_SYMLINKS, BENEATH
+    };
+    let raw = unsafe {
+        libc::syscall(
+            libc::SYS_openat2,
+            parent,
+            name.as_ptr(),
+            &how,
+            std::mem::size_of::<OpenHow>(),
+        )
+    };
+    if raw < 0 && std::io::Error::last_os_error().kind() == std::io::ErrorKind::NotFound {
+        return Ok(());
+    }
+    ensure!(raw >= 0, "refusing unsafe cleanup child: {}", std::io::Error::last_os_error());
+    let file = unsafe { File::from_raw_fd(raw as i32) };
+    let meta = file.metadata()?;
+    if meta.is_dir() {
+        for entry in std::fs::read_dir(format!("/proc/self/fd/{}", file.as_raw_fd()))? {
+            use std::os::unix::ffi::OsStrExt;
+            let entry = entry?;
+            let child = CString::new(entry.file_name().as_bytes())?;
+            remove_child(file.as_raw_fd(), &child, remaining)?;
+        }
+        file.sync_all()?;
+    } else {
+        ensure!(meta.is_file() && meta.nlink() == 1, "cleanup child is a link or special file");
+    }
+    let mut current: libc::stat = unsafe { std::mem::zeroed() };
+    ensure!(
+        unsafe { libc::fstatat(parent, name.as_ptr(), &mut current, libc::AT_SYMLINK_NOFOLLOW) }
+            == 0
+            && current.st_dev == meta.dev()
+            && current.st_ino == meta.ino(),
+        "cleanup child identity changed"
+    );
+    let flags = if meta.is_dir() { libc::AT_REMOVEDIR } else { 0 };
+    ensure!(
+        unsafe { libc::unlinkat(parent, name.as_ptr(), flags) } == 0,
+        "cleanup unlink failed: {}",
+        std::io::Error::last_os_error()
+    );
+    Ok(())
 }

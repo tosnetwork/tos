@@ -119,10 +119,10 @@ impl NodeSyncCmd {
                     node_data_sync::operations::RecoveryOutcome::Installed(result) => {
                         recovered_status(&result.0, &operation, &args.status).await
                     }
-                    node_data_sync::operations::RecoveryOutcome::Aborted => {
+                    node_data_sync::operations::RecoveryOutcome::Aborted(report) => {
                         println!(
                             "{}",
-                            serde_json::json!({"state":"aborted","reason":"Preparation never reached the restore journal; receiver lease released and unreferenced cache data pruned. Start a new restore."})
+                            serde_json::json!({"state":"aborted","reason":"Preparation aborted without exchange or automatic start. The original tree remains installed. If the selected service is inactive, use restart_command to start it; verify service state before starting a new restore.","recovery":report})
                         );
                         Ok(())
                     }

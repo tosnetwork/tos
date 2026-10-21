@@ -269,13 +269,32 @@ The target's old `tmp`/import material remains with its old CellDb. Replacement
 recovery starts empty; service paths that select external recovery inputs refuse.
 
 Before acquiring a receiver lease, restoration durably records its request,
-signed generation and operation ID. If the process exits before a restore journal
-exists, `sync recover` only aborts that preparation: it checks the exact binding,
-records the abort, releases that receiver lease idempotently and applies normal
-reachability pruning to unreferenced cache data. Other leases and published
-objects remain protected. It does not stop, stage, exchange or start the node;
-start a new restore with a new operation directory. Incomplete or mismatched
-preparation records refuse cleanup. Preparation is never resumed.
+signed generation and operation ID. A bound descriptor naming the original root
+(device/inode), selected service context and one staging directory is durable
+before stop and before creating that directory. An interrupted preparation is
+never resumed. With no restore journal, recovery authenticates its bindings and
+refuses later-phase evidence (including preservation or forward-only markers).
+Unbound or ambiguous staging is retained, with its allocated size in the refusal.
+
+An unambiguous abort atomically publishes its receipt, releases only its receiver
+lease idempotently and uses normal catalog pruning. Completed generations retain
+the normal catalog protection, including when a different receiver completed one.
+Only the exact staging directory named by the descriptor is removed; cleanup
+rechecks the original installed root's device/inode immediately before deletion
+and refuses links, mounts and active writers. A crash during cleanup is retried
+with the same operation; it does not authorize a new restore or rollback.
+
+A crash after stop may leave the original node inactive. Abort reports the observed
+service state and a `restart_command` derived from the recorded selected unit and
+service-manager scope, never defaults. It does not automatically start or stop the
+node. When identity checks succeed and the service is inactive, use that command
+to restart the untouched original tree after confirming the selected unit still points
+to it. An unknown state is not proof it is stopped. Early preparation refusals also
+report the last observed service state and conditional restart guidance.
+Verify the state before starting a new restore with a new operation directory.
+Incomplete or mismatched authoritative records refuse cleanup. Receipt publication
+uses an operation-owned temporary name: retry removes that temporary and accepts
+only a byte-identical complete final receipt; there is no torn-final compatibility.
 
 A fsynced `FORWARD_ONLY` journal outside both trees precedes atomic exchange.
 It forbids rollback even if a crash occurs before a start marker and a boot-enabled
@@ -321,6 +340,13 @@ paced at no more than two requests/s each. A responding RPC alone is not sync.
 Exit codes: 0 at head, 2 catching up/observation timeout, 3 policy failure, 4 unknown
 or unavailable evidence. Distinct endpoint strings are not proof of independent
 operators; select independent references yourself.
+
+Remote cohort qualification remains an acceptance item: measure acquisition
+latency, retries and inconclusive results against two non-local references without
+relaxing the 500 ms cohort or lag limits. Behind references or six unsuccessful
+cohorts produce unknown, not readiness. Locally injected latency is emulation.
+Behavioural lifecycle mode-change tests also remain an open acceptance item;
+source-wiring controls alone do not close it.
 
 ## Local qualification gate
 

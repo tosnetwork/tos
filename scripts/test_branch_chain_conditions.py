@@ -166,6 +166,15 @@ class StorageModeBoundaryTests(unittest.TestCase):
                         with self.assertRaises(RuntimeError):
                             guard.validate_node_data_sync_modes(root)
                         controls += 1
+            path.write_text(
+                original.replace(
+                    "prepare_stop(request, &signed, &operation, &operation_id)?;",
+                    "REMOVED_DESCRIPTOR",
+                    1,
+                )
+            )
+            with self.assertRaises(RuntimeError):
+                guard.validate_node_data_sync_modes(root)
             path.write_text(original)
             guard.validate_node_data_sync_modes(root)
             self.assertGreaterEqual(controls, 12)

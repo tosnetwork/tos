@@ -333,6 +333,21 @@ def validate_node_data_sync_modes(root: Path) -> None:
         restore,
         "catalog.hold_download(",
         "request.context.service().stop()?;",
+        "prepare_stop(request,&signed,&operation,&operation_id)?;",
+        "durable descriptor before stop",
+    )
+    stage = source.split("fnstage_with_space(", 1)[1].split("fnstart_installed(", 1)[0]
+    between(
+        stage,
+        "letrevision=",
+        "Root::create(&operation.path.join(&revision))?;",
+        "read_stop(",
+        "bound descriptor before stage creation",
+    )
+    between(
+        restore,
+        "catalog.hold_download(",
+        "request.context.service().stop()?;",
         expected,
         "restore transfer",
     )

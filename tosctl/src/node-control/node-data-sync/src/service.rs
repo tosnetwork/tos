@@ -91,6 +91,31 @@ impl Service {
         paths.dedup();
         Ok(paths)
     }
+    /// Reporting never substitutes another unit or another service-manager scope.
+    pub fn abort_guidance(&self) -> Result<(String, String)> {
+        ensure!(
+            self.unit.ends_with(".service")
+                && self.unit.len() <= 255
+                && self.unit.bytes().all(|b| b.is_ascii_alphanumeric() || b"._@-".contains(&b)),
+            "invalid explicit service unit"
+        );
+        let state = match command(
+            self.manager().args(["show", "--property=ActiveState", "--value", "--", &self.unit]),
+            Duration::from_secs(10),
+        ) {
+            Ok(state)
+                if matches!(
+                    state.trim(),
+                    "active" | "inactive" | "failed" | "activating" | "deactivating"
+                ) =>
+            {
+                state.trim().to_owned()
+            }
+            _ => "unknown".to_owned(),
+        };
+        let scope = if self.user_manager { "--user " } else { "" };
+        Ok((state, format!("systemctl {scope}start -- {}", self.unit)))
+    }
     pub fn permanent_cells(&self) -> Result<bool> {
         Ok(self.describe(None)?.permanent_cells)
     }
@@ -270,7 +295,7 @@ fn command(command: &mut Command, budget: Duration) -> Result<String> {
     ensure!(status.success(), "service command failed: {status}: {text}");
     Ok(text)
 }
-fn refuse_writers(root: &Path) -> Result<()> {
+pub(crate) fn refuse_writers(root: &Path) -> Result<()> {
     let own = std::process::id().to_string();
     for entry in fs::read_dir("/proc")? {
         let entry = entry?;

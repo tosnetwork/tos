@@ -80,13 +80,8 @@ impl Collector {
         for (index, (client, head)) in self.references.iter().zip(heads).enumerate() {
             // Each configured source verifies the same captured target height.
             tokio::time::sleep(Duration::from_millis(500)).await;
-            let common = if head.seqno >= observation.tip.seqno {
-                client.lookup_block(-1, &i64::MIN.to_string(), observation.tip.seqno).await?
-            } else {
-                // A behind reference cannot establish equality at the node's height.
-                self.stability.missing();
-                continue;
-            };
+            let common =
+                client.lookup_block(-1, &i64::MIN.to_string(), observation.tip.seqno).await?;
             tokio::time::sleep(Duration::from_millis(500)).await;
             let coherent = client
                 .get_block_header(-1, &i64::MIN.to_string(), observation.shard_client_seqno)
