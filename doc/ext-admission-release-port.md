@@ -173,3 +173,36 @@ Mutation runs must restore source, rebuild and rerun green. Keep runtime keys,
 fixtures, build output and raw receipts outside tracked files. No public host,
 service, key or network configuration is changed by this port. Checker priority
 alone does not change the HTTP connection limit or earlier liteserver gate.
+
+## Local verification index
+
+Implementation revision: `9302b1a6a1b18c6865aecad7de106997911bed33` on base
+`5bfe936ab3e144c2c055471262e14f1d604eab18`. This receipt adds documentation
+only. The PR description and operator-held report record the final head's
+verification, static-analysis outcome and linked operator-documentation PR.
+
+| Boundary | Command / oracle | Result |
+| --- | --- | --- |
+| Production build | Release engine, console and external-message targets in the pinned builder below | exit 0 |
+| Native tests | `ctest --test-dir build --output-on-failure -R 'ext-message|test-validator-options|test-state-download-recovery'` | 8/8 targets passed, including 9 generated cases; exit 0 |
+| Source guards | `ctest --test-dir build --output-on-failure -L source-guard` | 58/58 passed; exit 0 |
+| New dispatch/configuration controls | Generated runner `--controls`, at `21ab4130f3b37bc1a4c7aa87d0bcce73ba1d92f2` | 17 variants / 22 intended assertion failures, each exit 1; restored suites exit 0 |
+| Existing admission controls | Pool, manager-entrypoint and stop-on-accept runners | red assertions observed; every restored suite exits 0 |
+| Retired option | Native `--mempool-num=1` and `-m1` | both exit 2, option unrecognized before startup |
+| CLI profile | `check-ext-message-work-cli.py` | exit 0 |
+
+Builder image ID:
+`sha256:ce6ff9ea45fdac532b53a883538782a6a050c1fc14407e3110713ba16c5d5e95`.
+LLVM 21.1.8, x86-64-v2, Release, production allocator/linker settings.
+The local host is a Xeon Platinum 8455C server; native runs used a four-CPU,
+eight-GiB container cap. The claim is deterministic lane isolation: 8 regular
+checks held, 1 regular waiter queued, and 1 priority admission completed;
+disabling routing fails the completion assertion. These are not CPU calibration
+or live-listener availability measurements.
+
+Raw public fixture/log receipts are retained in the test lead's artifact store,
+`${TOS_TESTNET_DEPLOY}/ext-admission-port/evidence`, accessible to the designated
+reviewer, through review and at least 2026-11-20. The manifest includes per-file
+SHA-256 and byte size; its SHA-256 is
+`36b97a69e5bbc1d67bf665f372771fef4a75da9bc6c458bb436e0f3a6963f61d`.
+No runtime private-key files, build tree or bulk logs are committed.
