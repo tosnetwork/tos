@@ -8,7 +8,9 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def validate_collator(collator: str) -> None:
-    loop = collator.split("td::actor::Task<bool> Collator::process_inbound_external_messages()", 1)[1]
+    loop = collator.split("td::actor::Task<bool> Collator::process_inbound_external_messages()", 1)[
+        1
+    ]
     loop = loop.split("\n}\n", 1)[0]
     skip = loop.find("processed_external_messages_.insert(ext_msg_ref->hash_norm()).second")
     assert skip >= 0, "the collator must skip a repeated normalized hash within one collation"
@@ -16,7 +18,9 @@ def validate_collator(collator: str) -> None:
     reports = [m.start() for m in re.finditer(r"bad_ext_msgs_\.emplace_back", loop)]
     assert reports, "the collator must report refused external messages"
     assert skip < min(reports), "refusals must be reported only after the normalized-hash skip"
-    assert skip < loop.index("register_external_message("), "skip repeated messages before registering them"
+    assert skip < loop.index("register_external_message("), (
+        "skip repeated messages before registering them"
+    )
 
 
 def validate(engine: str, manager: str, role: str) -> None:

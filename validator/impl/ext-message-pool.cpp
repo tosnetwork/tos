@@ -68,7 +68,6 @@ td::Result<td::Unit> ExtMessagePool::configure_work_profile(ExtMessageWorkProfil
   return td::Unit{};
 }
 
-
 void ExtMessagePool::update_last_masterchain_state(td::Ref<MasterchainState> state) {
   last_masterchain_state_ = std::move(state);
   work_profile_supported_ = false;
