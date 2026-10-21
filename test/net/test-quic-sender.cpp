@@ -1996,10 +1996,34 @@ TEST(QuicConnectionIdHash, BenchLookupOrderedVersusHashed) {
   }
 }
 
-TEST(QuicConnectionIdHash, Ngtcp2ErrorsAreNamedInMessages) {
-  auto text = tos::quic::ngtcp2_err_str(NGTCP2_ERR_STREAM_ID_BLOCKED);
-  ASSERT_TRUE(text.find(std::to_string(NGTCP2_ERR_STREAM_ID_BLOCKED)) != std::string::npos);
-  ASSERT_TRUE(text.find("STREAM_ID_BLOCKED") != std::string::npos);
+// A transport failure reaches the caller with its code as the status code and its name in the
+// message. Opening one stream past the peer's limit drives the real open-stream path to that failure.
+TEST(QuicStreamLimits, BlockedOpenReportsTransportErrorName) {
+  run_raw_quic_test([](RawQuicTestRunner& t) -> td::actor::Task<td::Unit> {
+    auto options = small_stream_limit_options(1);
+    auto client = co_await t.create_endpoint(options);
+    auto server = co_await t.create_endpoint(options);
+    auto [client_cid, server_cid] = co_await t.connect(client, server);
+    static_cast<void>(client_cid);
+
+    auto first = co_await td::actor::ask(server.server, &tos::quic::QuicServer::open_stream, server_cid,
+                                         tos::quic::StreamOptions{})
+                     .wrap();
+    ASSERT_TRUE(first.is_ok());
+    server.state->remember_local_stream(first.move_as_ok());
+
+    auto blocked = co_await td::actor::ask(server.server, &tos::quic::QuicServer::open_stream, server_cid,
+                                           tos::quic::StreamOptions{})
+                       .wrap();
+    ASSERT_TRUE(blocked.is_error());
+    auto error = blocked.move_as_error();
+    ASSERT_EQ(error.code(), NGTCP2_ERR_STREAM_ID_BLOCKED);
+    auto message = error.message().str();
+    LOG_CHECK(message.find(std::to_string(NGTCP2_ERR_STREAM_ID_BLOCKED)) != std::string::npos &&
+              message.find("STREAM_ID_BLOCKED") != std::string::npos)
+        << "transport error lost its code or name: " << message;
+    co_return td::Unit{};
+  });
 }
 
 TEST(QuicSender, QueryExpiredDeadline) {

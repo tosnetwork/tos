@@ -2303,8 +2303,8 @@ add_test(NAME quic-connection-waiter-limits COMMAND test-quic-sender
   -p 57000 -d tmp-dir-test-quic-waiter-limits -f ConnectionWaiter)
 add_test(NAME quic-connection-id-keyed-hash COMMAND test-quic-sender
   -p 59000 -d tmp-dir-test-quic-cid-hash -f KeyedHashSpreadsIds)
-add_test(NAME quic-ngtcp2-error-names COMMAND test-quic-sender
-  -p 59500 -d tmp-dir-test-quic-error-names -f Ngtcp2ErrorsAreNamed)
+add_test(NAME quic-transport-error-names COMMAND test-quic-sender
+  -p 59500 -d tmp-dir-test-quic-error-names -f BlockedOpenReportsTransportErrorName)
 # Connection-setup regressions on the path the bounded connection wait rewrote: plain queries,
 # handshake failure, response deadlines, and restarts of either side. Each entry keeps its ports
 # (and their QUIC offset) away from every other entry's range.
@@ -2332,7 +2332,7 @@ set_tests_properties(
   quic-expired-waiter-ownership
   quic-connection-waiter-limits
   quic-connection-id-keyed-hash
-  quic-ngtcp2-error-names
+  quic-transport-error-names
   quic-sender-basic
   quic-sender-wrong-public-key
   quic-sender-tls-key-mismatch

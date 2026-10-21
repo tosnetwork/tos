@@ -50,8 +50,8 @@ struct QuicConnectionOptions {
   static constexpr size_t DEFAULT_MAX_STREAMS_BIDI = 4096;
   static constexpr ngtcp2_duration DEFAULT_IDLE_TIMEOUT = 15 * NGTCP2_SECONDS;
   static constexpr ngtcp2_duration DEFAULT_KEEP_ALIVE_TIMEOUT = 5 * NGTCP2_SECONDS;
-  // Two round trips of handshake (stateless retry adds one) plus room for a lost packet at ngtcp2's
-  // 333ms assumed initial RTT. Long enough not to abandon a slow peer, short enough that queued
+  // Two round trips of handshake (stateless retry adds one) plus room for a lost packet at the transport
+  // library's 333ms assumed initial RTT. Long enough not to abandon a slow peer, short enough that queued
   // application messages fail while they still matter.
   static constexpr ngtcp2_duration DEFAULT_HANDSHAKE_TIMEOUT = 5 * NGTCP2_SECONDS;
 
