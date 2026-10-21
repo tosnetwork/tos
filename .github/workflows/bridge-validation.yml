@@ -64,7 +64,6 @@ jobs:
           docker run --rm \
             --user "$(id -u):$(id -g)" \
             -e HOME=/tmp \
-            -e TOS_PRODUCTION_BUILD=1 \
             -v "$GITHUB_WORKSPACE:/workspace" \
             -w /workspace \
             "$BUILDER_IMAGE" \
@@ -73,7 +72,6 @@ jobs:
                 -DCMAKE_C_COMPILER=clang-21 \
                 -DCMAKE_CXX_COMPILER=clang++-21 \
                 -DTOS_USE_JEMALLOC=ON \
-                -DTOS_PRODUCTION_BUILD=ON \
                 -DCMAKE_BUILD_TYPE=Release &&
               cmake --build build-bridge --target func fift -- -j2
             '

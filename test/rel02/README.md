@@ -110,8 +110,7 @@ The new files have separate purposes:
 ## Run
 
 Use the repository's `Dockerfile.builder` environment (with its release
-prerequisites). These are the effective epoch release arguments; the ignored
-`TOS_PRODUCTION_BUILD` option is deliberately absent:
+prerequisites). These are the effective epoch release arguments:
 
 ```sh
 cmake -S . -B build -G Ninja \
