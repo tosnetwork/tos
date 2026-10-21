@@ -705,8 +705,8 @@ td::Status QuicConnectionPImpl::produce_egress(UdpMessageBuffer& msg_out, bool u
   finish_batch();
 
   if (n_write < 0) {
-    return td::Status::Error(static_cast<int>(n_write), PSTRING()
-                                                            << "ngtcp2_conn_write_aggregate_pkt2 failed: " << ngtcp2_err_str(n_write));
+    return td::Status::Error(static_cast<int>(n_write),
+                             PSTRING() << "ngtcp2_conn_write_aggregate_pkt2 failed: " << ngtcp2_err_str(n_write));
   }
 
   ngtcp2_conn_update_pkt_tx_time(conn(), ts);
@@ -750,7 +750,7 @@ td::Status QuicConnectionPImpl::handle_ingress(const UdpMessageBuffer& msg_in, U
     write_connection_close(close_out, rv);
   }
   return td::Status::Error(rv, PSTRING() << "ngtcp2_conn_read_pkt failed: " << ngtcp2_err_str(rv)
-                                          << " tls_alert=" << (int)ngtcp2_conn_get_tls_alert(conn()));
+                                         << " tls_alert=" << (int)ngtcp2_conn_get_tls_alert(conn()));
 }
 
 ngtcp2_conn_info QuicConnectionPImpl::get_conn_info() const {

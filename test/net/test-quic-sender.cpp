@@ -1998,8 +1998,7 @@ TEST(QuicSender, ConnectionWaiterHandshakeTimeout) {
     // connection's idle timeout (15 s).
     td::Timer timer;
     auto [future, promise] = td::actor::StartedTask<std::string>::make_bridge();
-    td::actor::send_closure(a.quic_sender, &tos::quic::QuicSender::get_conn_ip_str, a.id, peer.id,
-                            std::move(promise));
+    td::actor::send_closure(a.quic_sender, &tos::quic::QuicSender::get_conn_ip_str, a.id, peer.id, std::move(promise));
     auto result = co_await std::move(future).wrap();
     ASSERT_TRUE(result.is_error());
     ASSERT_TRUE(timer.elapsed() >= 4.0);
