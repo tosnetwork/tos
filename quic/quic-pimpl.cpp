@@ -386,6 +386,10 @@ void QuicConnectionPImpl::setup_settings_and_params(ngtcp2_settings& settings, n
   CHECK(cc_alg_id < std::size(CC_ALGO_MAP));
   settings.cc_algo = CC_ALGO_MAP[cc_alg_id];
   apply_platform_pmtu_policy(settings);
+  // Without this ngtcp2 never gives up on a handshake (its default is UINT64_MAX), so a dial to an
+  // unreachable peer retransmits Initial packets until the idle timeout and everything queued behind it
+  // waits with it. On expiry handle_expiry() closes the connection, which fails those waiters.
+  settings.handshake_timeout = options.handshake_timeout;
 
   ngtcp2_transport_params_default(&params);
   params.max_idle_timeout = options.idle_timeout;
@@ -867,6 +871,10 @@ td::Result<QuicConnectionPImpl::ExpiryAction> QuicConnectionPImpl::handle_expiry
 
   if (rv == NGTCP2_ERR_IDLE_CLOSE) {
     return ExpiryAction::IdleClose;
+  }
+
+  if (rv == NGTCP2_ERR_HANDSHAKE_TIMEOUT) {
+    return ExpiryAction::HandshakeTimeout;
   }
 
   return ExpiryAction::Close;

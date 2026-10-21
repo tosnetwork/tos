@@ -2295,6 +2295,12 @@ add_test(NAME quic-transport-budget COMMAND test-quic-sender
   -p 49000 -d tmp-dir-test-quic-transport-budget -f QuicTransportBudget)
 add_test(NAME quic-source-share COMMAND test-quic-sender
   -p 51000 -d tmp-dir-test-quic-source-share -f QuicSourceShare)
+add_test(NAME quic-query-expired-deadline COMMAND test-quic-sender
+  -p 53000 -d tmp-dir-test-quic-expired-deadline -f QueryExpiredDeadline)
+add_test(NAME quic-expired-waiter-ownership COMMAND test-quic-sender
+  -p 55000 -d tmp-dir-test-quic-waiter-ownership -f ExpiredWaiterReleasesOnlyUnstartedConnection)
+add_test(NAME quic-connection-waiter-limits COMMAND test-quic-sender
+  -p 57000 -d tmp-dir-test-quic-waiter-limits -f ConnectionWaiter)
 set_tests_properties(
   quic-inbound-stream-timeout
   quic-outbound-query-deadline
@@ -2304,6 +2310,9 @@ set_tests_properties(
   quic-inbound-budget
   quic-transport-budget
   quic-source-share
+  quic-query-expired-deadline
+  quic-expired-waiter-ownership
+  quic-connection-waiter-limits
   test-adnl-peer-pair-cap
   test-overlay-broadcast-capacity
   test-http-server-limits

@@ -39,6 +39,7 @@
 #include "adnl/adnl.h"
 #include "adnl/utils.hpp"
 #include "auto/tl/tos_api.hpp"
+#include "common/errorcode.h"
 #include "keyring/keyring.h"
 #include "keys/keys.hpp"
 #include "quic/quic-sender.h"
@@ -48,12 +49,59 @@
 #include "td/utils/OptionParser.h"
 #include "td/utils/Random.h"
 #include "td/utils/Time.h"
+#include "td/utils/Timer.h"
 #include "td/utils/crypto.h"
 #include "td/utils/format.h"
 #include "td/utils/port/path.h"
 #include "td/utils/port/signals.h"
 #include "td/utils/tests.h"
 #include "tl-utils/common-utils.hpp"
+
+namespace tos::quic {
+
+struct QuicSenderTest : QuicSender {
+  QuicSenderTest() : QuicSender({}, {}) {
+  }
+
+  td::actor::Task<td::Unit> expired_waiter_ownership() {
+    auto& sender = *this;
+    for (bool started : {false, true}) {
+      auto connection = sender.get_or_create_connection({});
+      connection->init_started = started;
+      // Model a deadline crossing after the query's first check and connection lookup.
+      auto result = co_await sender.wait_connection_ready(connection, td::Timestamp::in(-1)).wrap();
+      ASSERT_TRUE(result.is_error());
+      ASSERT_EQ(ErrorCode::timeout, result.error().code());
+      ASSERT_EQ(started ? 1u : 0u, sender.outbound_.size());
+      ASSERT_TRUE(sender.waiter_timeouts_.empty());
+      ASSERT_TRUE(connection->waiting_ready.empty());
+      if (started) {
+        ASSERT_TRUE(sender.outbound_.begin()->second == connection);
+      }
+    }
+
+    sender.outbound_.clear();
+    bool expired = false;
+    Waiter::Queue waiting;
+    auto waiter = waiting.emplace(waiting.end(), waiting, td::make_promise([&](td::Result<td::Unit> result) {
+                                    ASSERT_TRUE(result.is_error());
+                                    // Callbacks must finish before a new, unstarted connection is published.
+                                    ASSERT_TRUE(sender.outbound_.empty());
+                                    expired = true;
+                                  }));
+    waiter->position = waiter;
+    sender.waiter_timeouts_.insert(td::Timestamp::in(-1), &*waiter);
+    auto connection = sender.get_or_create_connection({});
+    ASSERT_TRUE(expired);
+    ASSERT_TRUE(waiting.empty());
+    auto result = co_await sender.wait_connection_ready(connection, td::Timestamp::in(-1)).wrap();
+    ASSERT_TRUE(result.is_error());
+    ASSERT_TRUE(sender.outbound_.empty());
+    co_return td::Unit{};
+  }
+};
+
+}  // namespace tos::quic
 
 namespace {
 
@@ -489,6 +537,17 @@ void run_test(TestRunner::TestFunc test) {
   scheduler.run();
 
   td::rmrf(db_root).ignore();
+}
+
+void assert_timeout(const td::Result<td::BufferSlice>& result) {
+  ASSERT_TRUE(result.is_error());
+  ASSERT_EQ(tos::ErrorCode::timeout, result.error().code());
+}
+
+// Every closure sent to the sender before this call has run once it returns.
+td::actor::Task<td::Unit> sender_barrier(TestNode& node) {
+  co_await td::actor::ask(node.quic_sender, &tos::quic::QuicSender::collect_stats);
+  co_return td::Unit{};
 }
 
 td::Ed25519::PrivateKey make_quic_key(int seed) {
@@ -1842,6 +1901,155 @@ TEST(QuicSender, NoResponseTimeout) {
     }
 
     LOG(INFO) << "Connection still works after no-response timeout";
+    co_return td::Unit{};
+  });
+}
+
+TEST(QuicSender, QueryExpiredDeadline) {
+  run_test([](TestRunner& t) -> td::actor::Task<td::Unit> {
+    auto a = co_await t.create_node("qed-a", next_port());
+    auto b = co_await t.create_node("qed-b", next_port());
+
+    td::Timer timer;
+    auto cold = co_await t.send_query_ex(a, b, "cold", -0.1, 1 << 20).wrap();
+    assert_timeout(cold);
+    ASSERT_TRUE(timer.elapsed() < 1.0);
+
+    t.add_peer(a, b);
+    t.add_peer(b, a);
+    auto resp = co_await t.send_query(a, b, "warm");
+    ASSERT_EQ(resp.as_slice(), td::Slice("Qwarm"));
+
+    auto warm = co_await t.send_query_ex(a, b, "warm", -0.1, 1 << 20).wrap();
+    assert_timeout(warm);
+    co_return td::Unit{};
+  });
+}
+
+TEST(QuicSender, ExpiredWaiterReleasesOnlyUnstartedConnection) {
+  run_test([](TestRunner&) -> td::actor::Task<td::Unit> {
+    auto sender = td::actor::create_actor<tos::quic::QuicSenderTest>("waiter-ownership");
+    co_await td::actor::ask(sender, &tos::quic::QuicSenderTest::expired_waiter_ownership);
+    co_return td::Unit{};
+  });
+}
+
+// The sender registers a local id asynchronously after create_node returns. A query sent before
+// that fails at once with "no local key" instead of waiting for the connection, so the waiter tests
+// first complete one real query from `node` to a throwaway peer, retrying while the id is unknown.
+td::actor::Task<td::Unit> wait_local_id_registered(TestRunner& t, TestNode& node, std::string name) {
+  auto ready = co_await t.create_node(name, next_port());
+  t.add_peer(node, ready);
+  t.add_peer(ready, node);
+  for (int attempt = 0;; attempt++) {
+    auto resp = co_await t.send_query_ex(node, ready, "ready", 5.0, 1 << 20).wrap();
+    if (resp.is_ok()) {
+      ASSERT_EQ(resp.ok().as_slice(), td::Slice("Qready"));
+      co_return td::Unit{};
+    }
+    ASSERT_TRUE(attempt < 50);
+    co_await td::actor::coro_sleep(td::Timestamp::in(0.05));
+  }
+}
+
+TEST(QuicSender, ConnectionWaiterDeadlines) {
+  run_test([](TestRunner& t) -> td::actor::Task<td::Unit> {
+    auto a = co_await t.create_node("qwd-a", next_port());
+    co_await wait_local_id_registered(t, a, "qwd-ready");
+    TestNode peer;
+    peer.port = next_port();
+    peer.key = make_key(peer.port);
+    peer.id = tos::adnl::AdnlNodeIdShort{peer.key.compute_public_key().compute_short_id()};
+    t.add_peer(a, peer);
+
+    auto after_late_deadline = td::Timestamp::in(4.7);
+    auto late = t.send_query_ex(a, peer, "late", 4.5, 1 << 20).start_immediate();
+    auto middle = t.send_query_ex(a, peer, "middle", 0.8, 1 << 20).start_immediate();
+    auto early = co_await t.send_query_ex(a, peer, "early", 0.3, 1 << 20).wrap();
+    assert_timeout(early);
+
+    auto middle_result = co_await std::move(middle).wrap();
+    assert_timeout(middle_result);
+
+    auto b = co_await t.create_node("qwd-b", peer.port);
+    t.add_peer(a, b);
+    t.add_peer(b, a);
+    auto late_result = co_await std::move(late);
+    ASSERT_EQ(late_result.as_slice(), td::Slice("Qlate"));
+
+    co_await td::actor::coro_sleep(after_late_deadline);
+    auto after = co_await t.send_query(a, b, "after");
+    ASSERT_EQ(after.as_slice(), td::Slice("Qafter"));
+    co_return td::Unit{};
+  });
+}
+
+TEST(QuicSender, ConnectionWaiterHandshakeTimeout) {
+  run_test([](TestRunner& t) -> td::actor::Task<td::Unit> {
+    auto a = co_await t.create_node("qht-a", next_port());
+    co_await wait_local_id_registered(t, a, "qht-ready");
+    TestNode peer;
+    peer.port = next_port();
+    peer.key = make_key(peer.port);
+    peer.id = tos::adnl::AdnlNodeIdShort{peer.key.compute_public_key().compute_short_id()};
+    t.add_peer(a, peer);
+
+    // A caller without a deadline is released by the handshake timeout (5 s), not by the
+    // connection's idle timeout (15 s).
+    td::Timer timer;
+    auto [future, promise] = td::actor::StartedTask<std::string>::make_bridge();
+    td::actor::send_closure(a.quic_sender, &tos::quic::QuicSender::get_conn_ip_str, a.id, peer.id,
+                            std::move(promise));
+    auto result = co_await std::move(future).wrap();
+    ASSERT_TRUE(result.is_error());
+    ASSERT_TRUE(timer.elapsed() >= 4.0);
+    ASSERT_TRUE(timer.elapsed() < 10.0);
+    co_return td::Unit{};
+  });
+}
+
+TEST(QuicSender, ConnectionWaiterLimitCountsLiveCallers) {
+  run_test([](TestRunner& t) -> td::actor::Task<td::Unit> {
+    auto a = co_await t.create_node("qwl-a", next_port());
+    co_await wait_local_id_registered(t, a, "qwl-ready");
+    TestNode peer;
+    peer.port = next_port();
+    peer.key = make_key(peer.port);
+    peer.id = tos::adnl::AdnlNodeIdShort{peer.key.compute_public_key().compute_short_id()};
+    t.add_peer(a, peer);
+
+    auto oldest = t.send_query_ex(a, peer, "oldest", 30.0, 1 << 20).start_immediate();
+    std::vector<td::actor::StartedTask<td::BufferSlice>> crowd;
+    crowd.reserve(1023);
+    for (size_t i = 0; i < 1023; i++) {
+      crowd.push_back(t.send_query_ex(a, peer, "crowd", 2.0, 1 << 20).start_immediate());
+    }
+    co_await sender_barrier(a);
+    ASSERT_TRUE(!oldest.await_ready());
+    for (auto& task : crowd) {
+      ASSERT_TRUE(!task.await_ready());
+    }
+
+    auto replacement = t.send_query_ex(a, peer, "replacement", 30.0, 1 << 20).start_immediate();
+    auto evicted = co_await std::move(oldest).wrap();
+    ASSERT_TRUE(evicted.is_error());
+    ASSERT_EQ(evicted.error().message(), td::Slice("dropped waiting for a connection"));
+
+    for (auto& task : crowd) {
+      assert_timeout(co_await std::move(task).wrap());
+    }
+    auto late = t.send_query_ex(a, peer, "late", 30.0, 1 << 20).start_immediate();
+    co_await sender_barrier(a);  // Expired slots must have been reclaimed.
+    ASSERT_TRUE(!replacement.await_ready());
+    ASSERT_TRUE(!late.await_ready());
+
+    auto b = co_await t.create_node("qwl-b", peer.port);
+    t.add_peer(a, b);
+    t.add_peer(b, a);
+    auto replacement_result = co_await std::move(replacement);
+    ASSERT_EQ(replacement_result.as_slice(), td::Slice("Qreplacement"));
+    auto late_result = co_await std::move(late);
+    ASSERT_EQ(late_result.as_slice(), td::Slice("Qlate"));
     co_return td::Unit{};
   });
 }
