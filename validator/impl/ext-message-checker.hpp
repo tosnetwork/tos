@@ -52,7 +52,7 @@ class ExtMessageChecker : public td::actor::Actor {
     Failure failure;
   };
   td::actor::Task<CheckOutcome> check(td::BufferSlice data, block::SizeLimitsConfig::ExtMsgLimits limits,
-                                       td::Ref<MasterchainState> mc_state);
+                                      td::Ref<MasterchainState> mc_state);
 
   // Destroy actor after all checks finish
   void destroy();
@@ -61,7 +61,7 @@ class ExtMessageChecker : public td::actor::Actor {
 
  private:
   td::actor::Task<CheckedExtMsg> check_inner(td::BufferSlice data, block::SizeLimitsConfig::ExtMsgLimits limits,
-                                           td::Ref<MasterchainState> mc_state, Failure &failure);
+                                             td::Ref<MasterchainState> mc_state, Failure& failure);
   td::actor::ActorId<ValidatorManager> manager_;
 
   // ConfigInfo is pinned per task across shard-state awaits. This avoids pairing an older state

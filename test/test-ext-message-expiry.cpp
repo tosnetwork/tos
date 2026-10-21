@@ -104,7 +104,7 @@ struct ExtMessagePoolTestPeer {
     return pool.admission_outcomes_[static_cast<size_t>(outcome)];
   }
 
-  static const metrics::Histogram<metrics::kExtInclusionBuckets> &inclusion(const ExtMessagePool &pool) {
+  static const metrics::ExtMessageInclusionHistogram &inclusion(const ExtMessagePool &pool) {
     return pool.ext_inclusion_seconds_;
   }
 
@@ -142,7 +142,7 @@ TEST(ExtMessagePool, ReprioritizationReplacesEntryAndMovesItToExpiryTail) {
   auto order = PoolPeer::expiry_order(*pool);
   ASSERT_EQ(order.size(), 2u);
   EXPECT(old_entry.get() != replacement.get());
-  EXPECT(old_deadline <= replacement->delete_at);
+  EXPECT(old_deadline.at() <= replacement->delete_at.at());
   EXPECT_EQ(order[0], second_hash);
   EXPECT_EQ(order[1], first_hash);
   EXPECT_EQ(PoolPeer::priority(*pool, first_hash), 2);

@@ -50,7 +50,7 @@ class ExpiryOrderedList {
     CHECK(entry != nullptr);
     CHECK(entry != oldest_ && entry != newest_);
     CHECK(entry->older == nullptr && entry->newer == nullptr);
-    CHECK(newest_ == nullptr || newest_->delete_at <= entry->delete_at);
+    CHECK(newest_ == nullptr || newest_->delete_at.at() <= entry->delete_at.at());
 
     entry->older = newest_;
     if (newest_ != nullptr) {

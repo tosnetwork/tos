@@ -590,6 +590,7 @@ void ValidatorManagerImpl::get_key_block_proof_link(BlockIdExt block_id, td::Pro
 td::actor::Task<> ValidatorManagerImpl::new_external_message_broadcast(td::BufferSlice data, int priority,
                                                                        td::optional<PublicKeyHash> source_peer) {
   if (!started_) {
+    ++ext_message_not_ready_;
     co_return td::Status::Error(ErrorCode::notready, "node not synced");
   }
   auto r_check_result =
@@ -617,7 +618,8 @@ td::actor::Task<> ValidatorManagerImpl::new_external_message_broadcast(td::Buffe
 td::actor::Task<> ValidatorManagerImpl::new_external_message_query(td::BufferSlice data,
                                                                    td::optional<PublicKeyHash> source_peer) {
   auto [message, wait_allow_broadcast] = co_await td::actor::ask(
-      ext_message_pool_, &ExtMessagePool::check_add_external_message, std::move(data), opts_->get_ext_message_pool_options()->local_ls_message_priority,
+      ext_message_pool_, &ExtMessagePool::check_add_external_message, std::move(data),
+      opts_->get_ext_message_pool_options()->local_ls_message_priority,
       /* add_to_mempool = */ has_local_validator_keys() || !collator_nodes_.empty(), std::move(source_peer));
   new_external_message_query_cont(std::move(message), std::move(wait_allow_broadcast)).start().detach();
   co_return td::Unit{};
@@ -4878,14 +4880,40 @@ void ValidatorManagerImpl::collect(metrics::MetricsPromise promise) {
 td::actor::Task<metrics::MetricSet> ValidatorManagerImpl::collect_pool_metrics() {
   metrics::MetricSet result;
   if (last_masterchain_block_handle_) {
-    result.families.push_back(metrics::MetricFamily::make_scalar("masterchain_seqno", "gauge",
-        last_masterchain_block_handle_->id().seqno()));
-    result.families.push_back(metrics::MetricFamily::make_scalar("masterchain_block_age_seconds", "gauge",
-        td::Clocks::system() - double(last_masterchain_block_handle_->unix_time())));
+    result.families.push_back(
+        metrics::MetricFamily::make_scalar("masterchain_seqno", "gauge", last_masterchain_block_handle_->id().seqno()));
+    result.families.push_back(
+        metrics::MetricFamily::make_scalar("masterchain_block_age_seconds", "gauge",
+                                           td::Clocks::system() - double(last_masterchain_block_handle_->unix_time())));
   }
   if (shard_client_handle_) {
-    result.families.push_back(metrics::MetricFamily::make_scalar("shardclient_seqno", "gauge",
-        shard_client_handle_->id().seqno()));
+    result.families.push_back(
+        metrics::MetricFamily::make_scalar("shardclient_seqno", "gauge", shard_client_handle_->id().seqno()));
+  }
+  if (last_masterchain_state_.not_null()) {
+    result.families.push_back(
+        metrics::MetricFamily::make_scalar("active_shards", "gauge", last_masterchain_state_->get_shards().size()));
+  }
+  result = std::move(result).join(ext_message_collation_metrics_.collect());
+  auto not_ready = metrics::MetricFamily::make_scalar("ext_message_not_ready", "counter",
+                                                      static_cast<double>(ext_message_not_ready_));
+  not_ready.metrics[0].suffix = "total";
+  result.families.push_back(std::move(not_ready));
+  for (const auto &[name, master_ok, master_error, shard_ok, shard_error] :
+       {std::tuple{"collated_blocks", total_collated_blocks_master_ok_, total_collated_blocks_master_error_,
+                   total_collated_blocks_shard_ok_, total_collated_blocks_shard_error_},
+        std::tuple{"validated_blocks", total_validated_blocks_master_ok_, total_validated_blocks_master_error_,
+                   total_validated_blocks_shard_ok_, total_validated_blocks_shard_error_}}) {
+    metrics::MetricFamily family{.name = name, .type = "counter", .help = std::nullopt, .metrics = {}};
+    for (const auto &[chain, ok, error] :
+         {std::tuple{"master", master_ok, master_error}, std::tuple{"shard", shard_ok, shard_error}}) {
+      for (const auto &[label, value] : {std::pair{"ok", ok}, std::pair{"error", error}}) {
+        family.metrics.push_back(metrics::Metric{.suffix = "total",
+                                                 .label_set = {{{"chain", chain}, {"result", label}}},
+                                                 .samples = {{.label_set = {}, .value = static_cast<double>(value)}}});
+      }
+    }
+    result.families.push_back(std::move(family));
   }
   if (!ext_message_pool_.empty()) {
     auto snapshot = co_await td::actor::ask(ext_message_pool_.get(), &ExtMessagePool::get_metrics_snapshot);
@@ -5471,12 +5499,20 @@ td::actor::ActorOwn<ValidatorManagerInterface> ValidatorManagerFactory::create(
 }
 
 void ValidatorManagerImpl::log_collate_query_stats(CollationStats stats) {
+  const auto external = stats.external_messages();
+  ext_message_collation_metrics_.add(stats.shard.is_masterchain(), stats.status.is_ok(), external.total,
+                                     external.filtered, external.accepted, external.skipped_backpressure);
   if (stats.status.is_ok()) {
-    ++(stats.block_id.is_masterchain() ? total_collated_blocks_master_ok_ : total_collated_blocks_shard_ok_);
+    ++(stats.shard.is_masterchain() ? total_collated_blocks_master_ok_ : total_collated_blocks_shard_ok_);
     write_session_stats(stats);
   } else {
-    ++(stats.block_id.is_masterchain() ? total_collated_blocks_master_error_ : total_collated_blocks_shard_error_);
+    ++(stats.shard.is_masterchain() ? total_collated_blocks_master_error_ : total_collated_blocks_shard_error_);
   }
+}
+
+void ValidatorManagerImpl::log_collation_external_stats(ShardIdFull shard, CollationStats::ExternalMessages stats) {
+  ext_message_collation_metrics_.add(shard.is_masterchain(), false, stats.total, stats.filtered, stats.accepted,
+                                     stats.skipped_backpressure);
 }
 
 void ValidatorManagerImpl::log_validate_query_stats(ValidationStats stats) {

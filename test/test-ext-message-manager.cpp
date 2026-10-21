@@ -2,6 +2,7 @@
 #include <filesystem>
 
 #include "auto/tl/lite_api.hpp"
+#include "metrics/ext-message-collation-metrics.h"
 #include "quic/quic-sender.h"
 #include "td/actor/TestScheduler.h"
 #include "td/utils/filesystem.h"
@@ -44,6 +45,22 @@ class ExtMessageManagerTestHarness final : public ValidatorManagerImpl {
     co_return td::Unit{};
   }
 };
+
+TEST(ExtMessageManager, CollationOutcomeCountsRemainAttributedAndBounded) {
+  metrics::ExtMessageCollationSnapshot snapshot;
+  snapshot.add(true, false, 12, 2, 3, 4);
+  EXPECT_EQ(snapshot.outcomes[1][0], 2u);
+  EXPECT_EQ(snapshot.outcomes[1][1], 4u);
+  EXPECT_EQ(snapshot.outcomes[1][2], 3u);
+  EXPECT_EQ(snapshot.outcomes[1][3], 3u);
+  snapshot.add(false, true, 1, 2, 3, 4);
+  EXPECT_EQ(snapshot.outcomes[2][3], 0u);
+  auto output = snapshot.collect();
+  auto reservation = metrics::labelled_metrics_reservation(1, 16, 3, 64, 192);
+  EXPECT(output.resident_bytes() <= reservation.resident_bytes);
+  EXPECT_EQ(output.families.size(), 1u);
+  EXPECT_EQ(output.families[0].metrics.size(), 16u);
+}
 
 TEST(ExtMessageManager, BroadcastQueryAndLiteServerShareWorkBudget) {
   auto file =

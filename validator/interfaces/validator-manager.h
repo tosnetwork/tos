@@ -155,6 +155,10 @@ struct StorageStatCacheStats {
 };
 
 struct CollationStats {
+  struct ExternalMessages {
+    td::uint32 total, filtered, accepted, skipped_backpressure;
+  };
+  ShardIdFull shard{workchainInvalid, 0};
   BlockIdExt block_id{workchainInvalid, 0, 0, RootHash::zero(), FileHash::zero()};
   td::Status status = td::Status::OK();
 
@@ -177,6 +181,10 @@ struct CollationStats {
   td::uint32 ext_msgs_filtered = 0;
   td::uint32 ext_msgs_accepted = 0;
   td::uint32 ext_msgs_rejected = 0;
+  td::uint32 ext_msgs_skipped_backpressure = 0;
+  ExternalMessages external_messages() const {
+    return {ext_msgs_total, ext_msgs_filtered, ext_msgs_accepted, ext_msgs_skipped_backpressure};
+  }
 
   td::uint64 old_out_msg_queue_size = 0;
   td::uint64 new_out_msg_queue_size = 0;
@@ -550,6 +558,8 @@ class ValidatorManager : public ValidatorManagerInterface {
   }
 
   virtual void log_collate_query_stats(CollationStats stats) {
+  }
+  virtual void log_collation_external_stats(ShardIdFull shard, CollationStats::ExternalMessages stats) {
   }
   virtual void log_validate_query_stats(ValidationStats stats) {
   }

@@ -68,8 +68,9 @@ td::Status reject_special_cells_for_custom_compute(td::Ref<vm::Cell> root,
 
 }  // namespace
 
-td::actor::Task<ExtMessageChecker::CheckOutcome> ExtMessageChecker::check(
-    td::BufferSlice data, block::SizeLimitsConfig::ExtMsgLimits limits, td::Ref<MasterchainState> mc_state) {
+td::actor::Task<ExtMessageChecker::CheckOutcome> ExtMessageChecker::check(td::BufferSlice data,
+                                                                          block::SizeLimitsConfig::ExtMsgLimits limits,
+                                                                          td::Ref<MasterchainState> mc_state) {
   ++inflight_checks_;
   SCOPE_EXIT {
     --inflight_checks_;
@@ -87,7 +88,7 @@ td::actor::Task<ExtMessageChecker::CheckOutcome> ExtMessageChecker::check(
 
 td::actor::Task<ExtMessageChecker::CheckedExtMsg> ExtMessageChecker::check_inner(
     td::BufferSlice data, block::SizeLimitsConfig::ExtMsgLimits limits, td::Ref<MasterchainState> mc_state,
-    Failure &failure) {
+    Failure& failure) {
   CheckedExtMsg result;
   td::Timer timer;
   auto message = CO_TRY(create_ext_message(std::move(data), limits));

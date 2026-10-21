@@ -37,6 +37,7 @@
 #include "impl/ext-message-pool.hpp"
 #include "interfaces/db.h"
 #include "interfaces/validator-manager.h"
+#include "metrics/ext-message-collation-metrics.h"
 #include "rldp2/rldp.h"
 #include "td/actor/ActorStats.h"
 #include "td/actor/PromiseFuture.h"
@@ -101,15 +102,23 @@ class ValidatorManagerImpl : public ValidatorManager {
  public:
   void collect(metrics::MetricsPromise promise) override;
   std::optional<metrics::CollectionReservation> reservation() const override {
-    return metrics::labelled_metrics_reservation(16, 128, 2, 64, 192);
+    return metrics::labelled_metrics_reservation(20, 192, 3, 64, 192);
   }
 
  private:
   td::actor::Task<metrics::MetricSet> collect_pool_metrics();
+  metrics::ExtMessageCollationSnapshot ext_message_collation_metrics_;
+  td::uint64 ext_message_not_ready_ = 0;
+
+ public:
+  void log_collation_external_stats(ShardIdFull shard, CollationStats::ExternalMessages stats) override;
+
+ private:
   friend class PendingFinalityManagerActorProbe;
   friend class N5ManagerDbFixture;
   friend class TwostepManagerProbe;
   friend class ExtMessageManagerTestHarness;
+  friend class ExtMessagePriorityTestHarness;
   friend class StartupCatchupManagerProbe;
 
  private:

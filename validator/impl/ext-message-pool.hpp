@@ -25,8 +25,8 @@
 #include "td/utils/PersistentTreap.h"
 #include "td/utils/RateLimiterWindow.h"
 
-#include "ext-message-admission-budget.hpp"
 #include "expiry-ordered-list.hpp"
+#include "ext-message-admission-budget.hpp"
 #include "ext-message-checker.hpp"
 #include "ext-message-work-profile.hpp"
 
@@ -120,39 +120,10 @@ class ExtMessagePool : public td::actor::Actor, public metrics::AsyncCollector {
     ExtMessage::Hash hash_norm;
     MempoolMsg *older = nullptr;
     MempoolMsg *newer = nullptr;
-    td::uint32 generation = 0;
-    bool active = true;
-    td::Timestamp reactivate_at;
     const td::Timestamp delete_at;
 
     auto address() const {
       return std::make_pair(message->wc(), message->addr());
-    }
-    bool is_active(bool *reactivated = nullptr) {
-      if (reactivated != nullptr) {
-        *reactivated = false;
-      }
-      if (!active) {
-        if (reactivate_at.is_in_past()) {
-          active = true;
-          generation++;
-          if (reactivated != nullptr) {
-            *reactivated = true;
-          }
-        }
-      }
-      return active;
-    }
-    bool can_postpone() const {
-      return generation <= 2;
-    }
-    bool postpone() {
-      if (!active) {
-        return false;
-      }
-      active = false;
-      reactivate_at = td::Timestamp::in(generation * 5.0);
-      return true;
     }
     bool expired() const {
       return delete_at.is_in_past();
@@ -278,7 +249,6 @@ class ExtMessagePool : public td::actor::Actor, public metrics::AsyncCollector {
   std::vector<std::unique_ptr<ExtMsgCallback>> callbacks_;
 
   static constexpr size_t PER_ADDRESS_LIMIT = 256;
-  static constexpr size_t SOFT_MEMPOOL_LIMIT = 1024;
   static constexpr size_t MAX_INFLIGHT_CHECKS_PER_CHECKER = 8;
   // Keep the estimated queueing delay well under client/liteserver timeouts (~10s): beyond
   // that the requests would be answered after the caller gave up anyway, so fail them fast.

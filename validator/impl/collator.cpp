@@ -111,6 +111,7 @@ Collator::Collator(CollateParams params, td::actor::ActorId<ValidatorManager> ma
                     send_closure(manager, &ValidatorManager::add_perf_timer_stat, "collate", duration);
                   })
     , cancellation_token_(std::move(cancellation_token)) {
+  stats_.shard = shard_;
   if (params_.collator_opts.is_null()) {
     params_.collator_opts = Ref<CollatorOptions>{true};
   }
@@ -390,6 +391,8 @@ bool Collator::fatal_error(td::Status error) {
   if (busy_) {
     if (allow_repeat_collation_ && error.code() != ErrorCode::cancelled && params_.attempt_idx + 1 < MAX_ATTEMPTS &&
         !params_.is_hardfork && !timeout_.is_in_past()) {
+      td::actor::send_closure(manager, &ValidatorManager::log_collation_external_stats, shard_,
+                              stats_.external_messages());
       CollateParams new_params = params_;
       ++new_params.attempt_idx;
       LOG(WARNING) << "Repeating collation (attempt #" << new_params.attempt_idx << ")";
@@ -4417,6 +4420,7 @@ td::actor::Task<bool> Collator::process_inbound_external_messages() {
       continue;
     }
     if (out_msg_queue_size_ > SKIP_EXTERNALS_QUEUE_SIZE && priority < HIGH_PRIORITY_EXTERNAL) {
+      ++stats_.ext_msgs_skipped_backpressure;
       continue;
     }
     auto ext_msg = ext_msg_ref->root_cell();

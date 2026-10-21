@@ -1,7 +1,7 @@
 #pragma once
 
-#include <array>
 #include <algorithm>
+#include <array>
 #include <cstdio>
 #include <string_view>
 
@@ -83,14 +83,20 @@ inline constexpr std::array<double, 12> kExtInclusionBuckets = {0.25, 0.5, 1, 2,
 class ExtMessageInclusionHistogram {
  public:
   void observe(double value) {
-    ++buckets_[std::lower_bound(kExtInclusionBuckets.begin(), kExtInclusionBuckets.end(), value) - kExtInclusionBuckets.begin()];
+    ++buckets_[std::lower_bound(kExtInclusionBuckets.begin(), kExtInclusionBuckets.end(), value) -
+               kExtInclusionBuckets.begin()];
     sum_ += value;
     ++count_;
   }
-  td::uint64 count() const { return count_; }
-  double sum() const { return sum_; }
+  td::uint64 count() const {
+    return count_;
+  }
+  double sum() const {
+    return sum_;
+  }
   MetricFamily collect() const {
-    MetricFamily result{.name = "mempool_ext_inclusion_seconds", .type = "histogram", .help = std::nullopt, .metrics = {}};
+    MetricFamily result{
+        .name = "mempool_ext_inclusion_seconds", .type = "histogram", .help = std::nullopt, .metrics = {}};
     td::uint64 cumulative = 0;
     for (size_t i = 0; i <= kExtInclusionBuckets.size(); ++i) {
       cumulative += buckets_[i];
@@ -100,13 +106,16 @@ class ExtMessageInclusionHistogram {
       } else {
         std::snprintf(bound, sizeof(bound), "+Inf");
       }
-      result.metrics.push_back(Metric{.suffix = "bucket", .label_set = {{{"le", bound}}},
-          .samples = {{.label_set = {}, .value = static_cast<double>(cumulative)}}});
+      result.metrics.push_back(Metric{.suffix = "bucket",
+                                      .label_set = {{{"le", bound}}},
+                                      .samples = {{.label_set = {}, .value = static_cast<double>(cumulative)}}});
     }
     result.metrics.push_back(Metric{.suffix = "sum", .label_set = {}, .samples = {{.label_set = {}, .value = sum_}}});
-    result.metrics.push_back(Metric{.suffix = "count", .label_set = {}, .samples = {{.label_set = {}, .value = static_cast<double>(count_)}}});
+    result.metrics.push_back(Metric{
+        .suffix = "count", .label_set = {}, .samples = {{.label_set = {}, .value = static_cast<double>(count_)}}});
     return result;
   }
+
  private:
   std::array<td::uint64, kExtInclusionBuckets.size() + 1> buckets_{};
   double sum_ = 0;
@@ -127,24 +136,30 @@ struct ExtMessagePoolSnapshot {
   MetricSet collect() const {
     MetricSet result;
     auto pending = MetricFamily{.name = "mempool_ext_messages", .type = "gauge", .help = std::nullopt, .metrics = {}};
-    for (const auto &[name, state] : {std::pair{"eligible", ExtMessageState::eligible}, std::pair{"postponed", ExtMessageState::postponed}}) {
-      pending.metrics.push_back(Metric{.suffix = "", .label_set = {{{"state", name}}},
-          .samples = {{.label_set = {}, .value = static_cast<double>(ext_messages.value(state))}}});
+    for (const auto &[name, state] :
+         {std::pair{"eligible", ExtMessageState::eligible}, std::pair{"postponed", ExtMessageState::postponed}}) {
+      pending.metrics.push_back(
+          Metric{.suffix = "",
+                 .label_set = {{{"state", name}}},
+                 .samples = {{.label_set = {}, .value = static_cast<double>(ext_messages.value(state))}}});
     }
     result.families.push_back(std::move(pending));
-    result.families.push_back(MetricFamily::make_scalar("mempool_oldest_ext_message_age_seconds", "gauge", oldest_ext_message_age_seconds));
+    result.families.push_back(
+        MetricFamily::make_scalar("mempool_oldest_ext_message_age_seconds", "gauge", oldest_ext_message_age_seconds));
     auto add_counter = [&](std::string name, std::string label, auto values, auto names) {
       auto family = MetricFamily{.name = std::move(name), .type = "counter", .help = std::nullopt, .metrics = {}};
       for (size_t i = 0; i < values.size(); ++i) {
-        family.metrics.push_back(Metric{.suffix = "total", .label_set = {{{label, std::string(names[i])}}},
-            .samples = {{.label_set = {}, .value = static_cast<double>(values[i])}}});
+        family.metrics.push_back(Metric{.suffix = "total",
+                                        .label_set = {{{label, std::string(names[i])}}},
+                                        .samples = {{.label_set = {}, .value = static_cast<double>(values[i])}}});
       }
       result.families.push_back(std::move(family));
     };
     add_counter("mempool_ext_check", "result", std::array{check_ok, check_error}, std::array{"ok", "error"});
     add_counter("mempool_ext_admission", "outcome", admission, admission_outcome_names_);
     add_counter("mempool_ext_removed", "reason", removed, removal_reason_names_);
-    add_counter("applied_ext_messages", "chain", std::array{applied_master, applied_shard}, std::array{"master", "shard"});
+    add_counter("applied_ext_messages", "chain", std::array{applied_master, applied_shard},
+                std::array{"master", "shard"});
     result.families.push_back(ext_inclusion_seconds.collect());
     return result;
   }

@@ -2091,6 +2091,10 @@ set_tests_properties(test-bridge-retirement-nonzero PROPERTIES PASS_REGULAR_EXPR
 tos_test(test-block-accepter)
 set_tests_properties(test-block-accepter PROPERTIES PASS_REGULAR_EXPRESSION "BLOCK_ACCEPTER_OK")
 tos_test(test-rldp2-refusal-lifetime)
+add_test(NAME ext-admission-release-source
+  COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-ext-admission-release.py)
+set_tests_properties(ext-admission-release-source PROPERTIES LABELS "source-guard")
+
 tos_test(test-ext-message-pool)
 tos_test(test-ext-message-expiry)
 tos_test(test-ext-message-manager)

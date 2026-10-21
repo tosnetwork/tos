@@ -2709,8 +2709,8 @@ void ValidatorEngine::start_validator() {
   }
 
   td::actor::send_closure(exporter_.get(),
-      &tos::PrometheusExporter::register_collector<tos::validator::ValidatorManagerInterface>,
-      "validator", validator_manager_.get());
+                          &tos::PrometheusExporter::register_collector<tos::validator::ValidatorManagerInterface>,
+                          "validator", validator_manager_.get());
 
   if (json_rpc_addr_) {
     json_rpc_server_ = tos::JsonRpcServer::create(validator_manager_.get(), json_rpc_opts_);

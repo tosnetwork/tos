@@ -101,6 +101,28 @@ def main():
         "assemble-probe",
         [str(build / "crypto/fift"), "-I", str(root / "crypto/fift/lib"), "-s", str(assemble)],
     )
+    source = root / "test/wallet-quantum/admission-action-probe.fc"
+    assembly = fixtures / "admission-action-probe.fif"
+    require_success(
+        "compile-action-probe",
+        [
+            str(build / "crypto/func"),
+            "-SPA",
+            "-o",
+            str(assembly),
+            str(root / "crypto/smartcont/stdlib.fc"),
+            str(source),
+        ],
+    )
+    assemble = fixtures / "assemble-action.fif"
+    assemble.write_text(
+        f'"Asm.fif" include\n"{assembly}" include\n'
+        f'2 boc+>B "{fixtures / "admission-action-probe.boc"}" B>file\n'
+    )
+    require_success(
+        "assemble-action-probe",
+        [str(build / "crypto/fift"), "-I", str(root / "crypto/fift/lib"), "-s", str(assemble)],
+    )
     require_success("baseline", [str(binary)])
     baseline = (output / "baseline.log").read_text(errors="replace")
     required_tests = [
@@ -108,8 +130,14 @@ def main():
         for chain in ("Basechain", "Masterchain")
         for suffix in ("StopsAtAccept", "StopsAtSetGasLimit", "RejectsInsufficientSetGasLimit")
     ]
-    if "6 test(s) passed" not in baseline or any(name not in baseline for name in required_tests):
-        raise RuntimeError("baseline did not execute the six required checker cases")
+    required_tests.extend(
+        [
+            "LocalPriorityAdmittedWhileRegularLaneIsSaturated",
+            "AdmissionAcceptsComputeButExecutionRejectsInvalidAction",
+        ]
+    )
+    if "8 test(s) passed" not in baseline or any(name not in baseline for name in required_tests):
+        raise RuntimeError("baseline did not execute all required checker cases")
     measurements = [
         {
             "workchain": int(workchain),

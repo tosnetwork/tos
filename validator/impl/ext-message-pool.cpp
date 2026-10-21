@@ -168,11 +168,15 @@ td::actor::Task<ExtMessagePool::CheckResult> ExtMessagePool::check_add_external_
     admission_waiters_[priority].push_back(std::move(promise));
     ++total_admission_waiters_;
     auto R = co_await std::move(task).wrap();
-    if (R.is_error() && R.error().code() == ErrorCode::cancelled) {
+    if (R.is_error() && R.error().code() == ErrorCode::cancelled && R.error().message().empty()) {
       // This happens when a higher-priority message drops this one
       ++admission_window_.rejected;
       record_admission(metrics::ExtMessageAdmissionOutcome::backpressure);
       co_return td::Status::Error(ErrorCode::notready, "too many pending external message checks");
+    }
+    if (R.is_error()) {
+      // Preserve explicit target shutdown/cancellation errors instead of dispatching stale work.
+      co_return R.move_as_error();
     }
     // Loop: a new arrival may have grabbed the slot between our wakeup and resumption.
   }
@@ -540,7 +544,7 @@ bool ExtMessagePool::erase_message(int priority, MessageId id, double *stored_ag
   if (stored_age_seconds != nullptr) {
     *stored_age_seconds = stored_age(*message);
   }
-  ext_message_states_.erase(msg_opt.value()->active ? metrics::ExtMessageState::eligible : metrics::ExtMessageState::postponed);
+  ext_message_states_.erase(metrics::ExtMessageState::eligible);
   unlink_message(msg_opt.value().get());
   auto address = msg_opt.value()->address();
   auto hash_norm = msg_opt.value()->hash_norm;
@@ -716,14 +720,7 @@ void ExtMessagePool::unlink_message(MempoolMsg *message) {
 }
 
 bool ExtMessagePool::prepare_message_for_collation(MempoolMsg *message) {
-  bool reactivated = false;
-  if (message->expired() || !message->is_active(&reactivated)) {
-    return false;
-  }
-  if (reactivated && expiry_order_.contains(message)) {
-    ext_message_states_.transition(metrics::ExtMessageState::postponed, metrics::ExtMessageState::eligible);
-  }
-  return true;
+  return !message->expired();
 }
 
 size_t ExtMessagePool::CheckedExtMsgCounter::get_msg_count(WorkchainId wc, StdSmcAddress addr) {
