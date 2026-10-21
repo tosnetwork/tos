@@ -24,6 +24,14 @@ that headroom. The caller must monitor ongoing disk use. Stop only the dedicated
 units through `systemctl`. Remove the disposable runtime after preserving public
 evidence; it contains local signing material and must never be published.
 
+When the host libc is older than the builder's, run Python in the builder image
+and pass `--runtime-libraries` pointing to its copied dynamic loader and required
+public shared libraries. Mount matching absolute workspace paths and the user
+systemd bus into that container. The systemd services execute native nodes with
+that loader, so systemctl owns the actual node processes. In this mode the node
+slice is capped at 6 cores/10 GiB; cap the Python container at 2 cores/2 GiB so
+their combined budget remains 8 cores/12 GiB.
+
 The endpoint runner also accepts an existing endpoint and three funded sender
 addresses:
 
