@@ -50,13 +50,21 @@ block::StdAddress address(int workchain) {
   return block::StdAddress(workchain, td::Bits256::zero());
 }
 
-td::Ref<vm::Tuple> raw_context(vm::StackEntry config) {
+vm::StackEntry basechain_address_entry() {
   vm::CellBuilder address_cell;
   address_cell.store_long(4, 3).store_long(0, 8).store_zeroes(256);
+  return vm::StackEntry(address_cell.as_cellslice_ref());
+}
+
+td::Ref<vm::Tuple> raw_context(vm::StackEntry config, vm::StackEntry address) {
   std::vector<vm::StackEntry> info(18);
-  info[8] = address_cell.as_cellslice_ref();
+  info[8] = std::move(address);
   info[9] = std::move(config);
   return vm::make_tuple_ref(td::make_cnt_ref<std::vector<vm::StackEntry>>(std::move(info)));
+}
+
+td::Ref<vm::Tuple> raw_context(vm::StackEntry config) {
+  return raw_context(std::move(config), basechain_address_entry());
 }
 
 void expect_accepted(const tos::SmartContract::Answer& answer) {
@@ -240,6 +248,55 @@ TEST(ExternalCredit, MalformedRawContextDoesNotFallBack) {
     ASSERT_EQ(answer.gas_used, 0);
     ASSERT_TRUE(answer.vm_log.find("Invalid external-message c7 configuration") != std::string::npos);
   }
+}
+
+TEST(ExternalCredit, RawContextAddressValidatedWhateverElseIsSupplied) {
+  auto config = credit_config(20000, 10000);
+  vm::CellBuilder truncated;
+  truncated.store_long(4, 3).store_long(0, 8).store_zeroes(100);  // addr_std cut short
+  vm::CellBuilder none;
+  none.store_long(0, 2);  // addr_none is not an account
+  std::vector<vm::StackEntry> malformed{vm::StackEntry(truncated.as_cellslice_ref()),
+                                        vm::StackEntry(none.as_cellslice_ref()),
+                                        vm::StackEntry(td::make_refint(7)),  // not a slice at all
+                                        vm::StackEntry(empty_cell())};       // a cell where a slice belongs
+  for (const auto& address : malformed) {
+    // Explicit limits, an explicit parsed config, both or neither: none of them may skip the check.
+    for (int supplied = 0; supplied < 4; ++supplied) {
+      bool explicit_limits = supplied & 1;
+      bool explicit_config = supplied & 2;
+      emulator::TvmEmulator emulator(delayed_accept(), empty_cell());
+      if (explicit_config) {
+        emulator.set_config(config);
+      }
+      emulator.set_c7_raw(raw_context(vm::StackEntry(config->get_root_cell()), address));
+      if (explicit_limits) {
+        emulator.set_gas_limit(1000000);
+      }
+      auto answer = emulator.send_external_message(empty_cell());
+      ASSERT_TRUE(!answer.accepted);
+      ASSERT_TRUE(!answer.success);
+      ASSERT_EQ(answer.gas_used, 0);
+      ASSERT_EQ(answer.code, ~static_cast<int>(vm::Excno::fatal));
+      ASSERT_TRUE(answer.vm_log.find("Invalid external-message c7 address") != std::string::npos);
+    }
+  }
+  // A well-formed address still executes with explicit limits.
+  for (bool explicit_limits : {false, true}) {
+    emulator::TvmEmulator emulator(delayed_accept(), empty_cell());
+    emulator.set_c7_raw(raw_context(vm::StackEntry(config->get_root_cell())));
+    if (explicit_limits) {
+      emulator.set_gas_limit(1000000);
+    }
+    auto answer = emulator.send_external_message(empty_cell());
+    ASSERT_TRUE(answer.gas_used > 0);
+    ASSERT_TRUE(answer.code != ~static_cast<int>(vm::Excno::fatal));
+    ASSERT_TRUE(answer.vm_log.find("Invalid external-message") == std::string::npos);
+  }
+  // A null address slot means no address: the default basechain profile applies.
+  emulator::TvmEmulator emulator(delayed_accept(), empty_cell());
+  emulator.set_c7_raw(raw_context(vm::StackEntry(config->get_root_cell()), vm::StackEntry{}));
+  expect_accepted(emulator.send_external_message(empty_cell()));
 }
 
 TEST(ExternalCredit, ExplicitConfigBeforeRawContextStillValidates) {
