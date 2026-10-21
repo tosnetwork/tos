@@ -31,7 +31,7 @@ using namespace tos;
 using namespace tos::validator;
 
 td::Ref<ValidatorManagerOptions> make_options() {
-  auto opts = ValidatorManagerOptions::create(BlockIdExt{}, BlockIdExt{}, false, 0.0, 0.0, 0.0, 0.0, 0.0, 0, true);
+  auto opts = ValidatorManagerOptions::create(BlockIdExt{}, BlockIdExt{}, false, 0.0, 0.0, 0.0, 0.0, 0.0, true);
   auto& writable = opts.write();
   writable.set_disable_rocksdb_stats(true);
   writable.set_celldb_compress_depth(0);

@@ -72,8 +72,8 @@ def main():
         ),
         (
             "false-completion",
-            b"  if (dispatched) {\n    ++completions_in_rate_window_;",
-            b"  if (true) {\n    ++completions_in_rate_window_;",
+            b"    if (dispatched) {\n      ++completions_in_rate_window_;",
+            b"    if (true) {\n      ++completions_in_rate_window_;",
             "completions_in_rate_window_",
             queued_test,
         ),
@@ -130,8 +130,8 @@ def main():
         ),
         (
             "ignore-queued-cancellation",
-            b"    co_await std::move(task);",
-            b"    (void)co_await std::move(task).wrap();",
+            b"if (R.is_error()) {\n      // Preserve explicit target shutdown/cancellation errors",
+            b"if (false) {\n      // Preserve explicit target shutdown/cancellation errors",
             "queued admission cancelled",
             "QueuedCancellationReleasesBytesWithoutDispatchOrCharge",
         ),

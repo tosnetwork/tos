@@ -98,7 +98,7 @@ class WorkTimerGuard {
  * @param promise The promise to return the result.
  */
 Collator::Collator(CollateParams params, td::actor::ActorId<ValidatorManager> manager,
-                   td::CancellationToken cancellation_token, td::Promise<BlockCandidate> promise)
+                   td::CancellationToken cancellation_token, td::Promise<GeneratedCandidate> promise)
     : params_(std::move(params))
     , shard_(params_.shard)
     , prev_blocks(params_.prev)
@@ -111,6 +111,8 @@ Collator::Collator(CollateParams params, td::actor::ActorId<ValidatorManager> ma
                     send_closure(manager, &ValidatorManager::add_perf_timer_stat, "collate", duration);
                   })
     , cancellation_token_(std::move(cancellation_token)) {
+  stats_.shard = shard_;
+  processed_external_messages_ = params_.processed_external_messages;
   if (params_.collator_opts.is_null()) {
     params_.collator_opts = Ref<CollatorOptions>{true};
   }
@@ -390,10 +392,13 @@ bool Collator::fatal_error(td::Status error) {
   if (busy_) {
     if (allow_repeat_collation_ && error.code() != ErrorCode::cancelled && params_.attempt_idx + 1 < MAX_ATTEMPTS &&
         !params_.is_hardfork && !timeout_.is_in_past()) {
+      td::actor::send_closure(manager, &ValidatorManager::log_collation_external_stats, shard_,
+                              stats_.external_messages());
       CollateParams new_params = params_;
       ++new_params.attempt_idx;
       LOG(WARNING) << "Repeating collation (attempt #" << new_params.attempt_idx << ")";
-      run_collate_query(std::move(new_params), manager, std::move(cancellation_token_), std::move(main_promise));
+      run_collate_query_generated(std::move(new_params), manager, std::move(cancellation_token_),
+                                  std::move(main_promise));
     } else {
       LOG(INFO) << "collation failed in " << perf_timer_.elapsed() << " s " << error;
       LOG(INFO) << perf_log_;
@@ -4411,12 +4416,21 @@ td::actor::Task<bool> Collator::process_inbound_external_messages() {
     WorkTimerGuard timer_guard(work_timer_);
     auto [ext_msg_ref, priority] = std::move(item);
     ++stats_.ext_msgs_total;
-    if (register_external_message(ext_msg_ref, priority).is_error()) {
-      ++stats_.ext_msgs_filtered;
-      bad_ext_msgs_.emplace_back(ext_msg_ref->hash());
+    if (out_msg_queue_size_ > SKIP_EXTERNALS_QUEUE_SIZE && priority < HIGH_PRIORITY_EXTERNAL) {
+      ++stats_.ext_msgs_skipped_backpressure;
       continue;
     }
-    if (out_msg_queue_size_ > SKIP_EXTERNALS_QUEUE_SIZE && priority < HIGH_PRIORITY_EXTERNAL) {
+    // Refusals are reported to the pool by normalized hash, and the pool removes every entry under
+    // it. A message taken earlier in this leader window, by this collation or by the one for an
+    // earlier slot, would fail now that it is included, and its refusal would remove it from the
+    // pool before its block is final. It is skipped unreported.
+    if (processed_external_messages_.find(ext_msg_ref->hash_norm())) {
+      continue;
+    }
+    processed_external_messages_ = processed_external_messages_.insert(ext_msg_ref->hash_norm(), td::Unit{});
+    if (register_external_message(ext_msg_ref, priority).is_error()) {
+      ++stats_.ext_msgs_filtered;
+      bad_ext_msgs_.emplace_back(ext_msg_ref->hash_norm());
       continue;
     }
     auto ext_msg = ext_msg_ref->root_cell();
@@ -4428,11 +4442,11 @@ td::actor::Task<bool> Collator::process_inbound_external_messages() {
       ++stats_.ext_msgs_rejected;
     }
     if (r < 0) {
-      bad_ext_msgs_.emplace_back(ext_msg_ref->hash());
+      bad_ext_msgs_.emplace_back(ext_msg_ref->hash_norm());
       co_return false;
     }
     if (r == 0) {
-      delay_ext_msgs_.emplace_back(ext_msg_ref->hash());
+      bad_ext_msgs_.emplace_back(ext_msg_ref->hash_norm());
     }
     if (r > 0) {
       full = !block_limit_status_->fits(block::ParamLimits::cl_soft);
@@ -6644,10 +6658,9 @@ bool Collator::create_block_candidate() {
                                   });
   }
   // 5. communicate about bad and delayed external messages
-  if (!bad_ext_msgs_.empty() || !delay_ext_msgs_.empty()) {
+  if (!bad_ext_msgs_.empty()) {
     LOG(INFO) << "sending complete_external_messages() to Manager";
-    td::actor::send_closure_later(manager, &ValidatorManager::complete_external_messages, std::move(delay_ext_msgs_),
-                                  std::move(bad_ext_msgs_));
+    td::actor::send_closure_later(manager, &ValidatorManager::complete_external_messages, std::move(bad_ext_msgs_));
   }
   if (!storage_stat_cache_update_.empty()) {
     td::actor::send_closure(manager, &ValidatorManager::update_storage_stat_cache,
@@ -6676,7 +6689,8 @@ void Collator::return_block_candidate(td::Result<td::Unit> saved, td::PerfLogAct
     finalize_stats();
     stats_.status = td::Status::OK();
     td::actor::send_closure(manager, &ValidatorManager::log_collate_query_stats, std::move(stats_));
-    main_promise.set_value(block_candidate->clone());
+    main_promise.set_value(GeneratedCandidate{.candidate = block_candidate->clone(),
+                                              .processed_external_messages = processed_external_messages_});
     busy_ = false;
     stop();
   }

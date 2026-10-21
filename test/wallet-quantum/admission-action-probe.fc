@@ -1,0 +1,7 @@
+;; Admission succeeds at ACCEPT; full execution must reject the invalid action.
+() set_actions(cell actions) impure asm "c5 POP";
+() recv_internal(slice body) impure { }
+() recv_external(slice body) impure {
+  set_actions(begin_cell().store_ref(begin_cell().end_cell()).store_uint(0, 32).end_cell());
+  accept_message();
+}

@@ -46,12 +46,22 @@ class ExtMessageChecker : public td::actor::Actor {
     StageTimings timings;
   };
 
-  td::actor::Task<CheckedExtMsg> check(td::BufferSlice data, block::SizeLimitsConfig::ExtMsgLimits limits,
-                                       td::Ref<MasterchainState> mc_state);
+  enum class Failure : size_t { none, invalid, state_unavailable, vm_rejected };
+  struct CheckOutcome {
+    td::Result<CheckedExtMsg> result;
+    Failure failure;
+  };
+  td::actor::Task<CheckOutcome> check(td::BufferSlice data, block::SizeLimitsConfig::ExtMsgLimits limits,
+                                      td::Ref<MasterchainState> mc_state);
+
+  // Destroy actor after all checks finish
+  void destroy();
 
   void alarm() override;
 
  private:
+  td::actor::Task<CheckedExtMsg> check_inner(td::BufferSlice data, block::SizeLimitsConfig::ExtMsgLimits limits,
+                                             td::Ref<MasterchainState> mc_state, Failure& failure);
   td::actor::ActorId<ValidatorManager> manager_;
 
   // ConfigInfo is pinned per task across shard-state awaits. This avoids pairing an older state
@@ -100,6 +110,8 @@ class ExtMessageChecker : public td::actor::Actor {
   td::Result<bool> check_workchain_execution(const td::Ref<ExtMessage>& message,
                                              block::SizeLimitsConfig::ExtMsgLimits limits,
                                              const block::ConfigInfo& config) const;
+  bool destroying_ = false;
+  size_t inflight_checks_ = 0;
 };
 
 }  // namespace tos::validator

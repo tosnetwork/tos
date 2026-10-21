@@ -184,7 +184,7 @@ Config::Config() {
   full_node = tos::PublicKeyHash::zero();
 }
 
-Config::Config(const tos::tos_api::engine_validator_config &config) {
+Config::Config(tos::tos_api::engine_validator_config config) {
   full_node = tos::PublicKeyHash::zero();
   out_port = static_cast<td::uint16>(config.out_port_);
   if (!out_port) {
@@ -309,6 +309,7 @@ Config::Config(const tos::tos_api::engine_validator_config &config) {
       }
       pq_consensus = std::move(parsed);
     }
+    ext_message_pool_config = std::move(config.extraconfig_->ext_message_pool_config_);
   } else {
     state_serializer_enabled = true;
   }
@@ -416,7 +417,7 @@ tos::tl_object_ptr<tos::tos_api::engine_validator_config> Config::tl() const {
 
   tos::tl_object_ptr<tos::tos_api::engine_validator_extraConfig> extra_config_obj = {};
   if (!state_serializer_enabled || !fast_sync_member_certificates.empty() || collator_node_whitelist_obj ||
-      !fast_sync_overlay_clients.empty() || pq_consensus) {
+      !fast_sync_overlay_clients.empty() || pq_consensus || ext_message_pool_config) {
     // Non-default values
     extra_config_obj = tos::create_tl_object<tos::tos_api::engine_validator_extraConfig>();
     extra_config_obj->state_serializer_enabled_ = state_serializer_enabled;
@@ -450,6 +451,15 @@ tos::tl_object_ptr<tos::tos_api::engine_validator_config> Config::tl() const {
       }
       extra_config_obj->pq_consensus_ = tos::create_tl_object<tos::tos_api::engine_validator_pqConsensus>(
           pq_consensus->validator_id.value, std::move(primary_file), std::move(keys));
+    }
+    if (ext_message_pool_config) {
+      extra_config_obj->ext_message_pool_config_ =
+          tos::create_tl_object<tos::tos_api::engine_validator_extMessagePoolConfig>(
+              ext_message_pool_config->max_mempool_messages_, ext_message_pool_config->num_regular_checkers_,
+              ext_message_pool_config->num_priority_checkers_, ext_message_pool_config->max_admission_waiters_,
+              ext_message_pool_config->max_ext_msg_per_addr_,
+              ext_message_pool_config->max_ext_msg_per_addr_time_window_,
+              ext_message_pool_config->local_ls_message_priority_);
     }
   }
 
@@ -1850,9 +1860,6 @@ td::Status ValidatorEngine::load_global_config() {
   if (ext_message_work_profile_) {
     TRY_STATUS(validator_options_.write().set_ext_message_work_profile(ext_message_work_profile_.value()));
   }
-  if (max_mempool_num_ != 0) {
-    validator_options_.write().set_max_mempool_num(max_mempool_num_);
-  }
   if (block_ttl_ != 0) {
     validator_options_.write().set_block_ttl(block_ttl_);
   }
@@ -2355,7 +2362,7 @@ void ValidatorEngine::load_config(td::Promise<> promise) {
     return;
   }
 
-  config_ = Config{conf};
+  config_ = Config{std::move(conf)};
 
   td::MultiPromise mp;
   auto ig = mp.init_guard();
@@ -2506,6 +2513,10 @@ void ValidatorEngine::start_after_config_checks() {
   load_collators_list();
   load_shard_block_verifier_config();
   load_noncritical_params_overrides();
+  if (config_.ext_message_pool_config) {
+    validator_options_.write().set_ext_message_pool_options(
+        tos::validator::ExtMessagePoolOptions::unpack(*config_.ext_message_pool_config).ensure().move_as_ok());
+  }
   read_config_ = true;
   td::actor::send_closure(exporter_.get(), &tos::PrometheusExporter::register_collector<tos::PrometheusExporter>,
                           "exporter", exporter_.get());
@@ -2696,6 +2707,10 @@ void ValidatorEngine::start_validator() {
     }
     recover_wc0_index();
   }
+
+  td::actor::send_closure(exporter_.get(),
+                          &tos::PrometheusExporter::register_collector<tos::validator::ValidatorManagerInterface>,
+                          "validator", validator_manager_.get());
 
   if (json_rpc_addr_) {
     json_rpc_server_ = tos::JsonRpcServer::create(validator_manager_.get(), json_rpc_opts_);
@@ -6415,6 +6430,36 @@ void ValidatorEngine::run_control_query(tos::tos_api::engine_validator_getConsen
   }
 }
 
+void ValidatorEngine::run_control_query(tos::tos_api::engine_validator_setExtMessagePoolOptions &query,
+                                        td::BufferSlice data, tos::PublicKeyHash src, td::uint32 perm,
+                                        td::Promise<td::BufferSlice> promise) {
+  if (!(perm & ValidatorEnginePermissions::vep_modify)) {
+    promise.set_value(create_control_query_error(td::Status::Error(tos::ErrorCode::error, "not authorized")));
+    return;
+  }
+  if (!started_) {
+    promise.set_value(create_control_query_error(td::Status::Error(tos::ErrorCode::notready, "not started")));
+    return;
+  }
+  auto r_options = tos::validator::ExtMessagePoolOptions::unpack(*query.config_);
+  if (r_options.is_error()) {
+    promise.set_value(create_control_query_error(r_options.move_as_error_prefix("failed to unpack options: ")));
+    return;
+  }
+  validator_options_.write().set_ext_message_pool_options(r_options.move_as_ok());
+  td::actor::send_closure(validator_manager_, &tos::validator::ValidatorManagerInterface::update_options,
+                          validator_options_);
+  config_.ext_message_pool_config = std::move(query.config_);
+  write_config([promise = std::move(promise)](td::Result<> R) mutable {
+    if (R.is_error()) {
+      promise.set_value(create_control_query_error(R.move_as_error()));
+    } else {
+      promise.set_value(
+          tos::serialize_tl_object(tos::create_tl_object<tos::tos_api::engine_validator_success>(), true));
+    }
+  });
+}
+
 void ValidatorEngine::process_control_query(td::uint16 port, tos::adnl::AdnlNodeIdShort src,
                                             tos::adnl::AdnlNodeIdShort dst, td::BufferSlice data,
                                             td::Promise<td::BufferSlice> promise) {
@@ -6833,11 +6878,6 @@ int main(int argc, char *argv[]) {
                          });
                          return td::Status::OK();
                        });
-  p.add_checked_option('m', "mempool-num", "Maximal number of mempool external message", [&](td::Slice s) {
-    TRY_RESULT(v, td::to_integer_safe<size_t>(s));
-    acts.push_back([&x, v]() { td::actor::send_closure(x, &ValidatorEngine::set_max_mempool_num, v); });
-    return td::Status::OK();
-  });
   p.add_checked_option('b', "block-ttl", "deprecated", [&](td::Slice fname) {
     auto v = td::to_double(fname);
     if (v <= 0) {

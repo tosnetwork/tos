@@ -112,6 +112,9 @@ class BlockProducerImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
     ParentId parent = event->base;
     bool block_generation_active = false;
     td::actor::SharedFuture<GeneratedCandidate> block_generation;
+    // External messages already taken by the candidates of this window. The pool keeps them until
+    // their block is applied, so each later slot must skip them rather than refuse them.
+    td::PersistentTreap<td::Bits256, td::Unit> processed_external_messages;
 
     std::chrono::milliseconds hard_timeout = std::max(target_rate_ * 3, std::chrono::milliseconds(60'000));
     std::chrono::milliseconds start_collate_before =
@@ -148,6 +151,7 @@ class BlockProducerImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
             .hard_timeout = slot_start + hard_timeout,
             .prev_block_data = state->block_data(),
             .prev_block_state_roots = state->state(),
+            .processed_external_messages = processed_external_messages,
         };
         if (bus.shard.is_masterchain()) {
           params.soft_timeout = slot_start + target_rate_;
@@ -221,6 +225,7 @@ class BlockProducerImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
         // untrusted, collator-supplied candidate is ever routed here, it must
         // be fully validated (or apply made fail-soft) before this call.
         state = state->apply(generated_candidate->candidate);
+        processed_external_messages = generated_candidate->processed_external_messages;
         block = std::move(generated_candidate->candidate);
         if (!generated_candidate->collator_node_id.is_zero()) {
           collator = adnl::AdnlNodeIdShort{generated_candidate->collator_node_id};

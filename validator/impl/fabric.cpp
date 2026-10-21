@@ -217,6 +217,19 @@ void run_validate_query(BlockCandidate candidate, ValidateParams params, td::act
 
 void run_collate_query(CollateParams params, td::actor::ActorId<ValidatorManager> manager,
                        td::CancellationToken cancellation_token, td::Promise<BlockCandidate> promise) {
+  run_collate_query_generated(
+      std::move(params), std::move(manager), std::move(cancellation_token),
+      td::PromiseCreator::lambda([promise = std::move(promise)](td::Result<GeneratedCandidate> R) mutable {
+        if (R.is_error()) {
+          promise.set_error(R.move_as_error());
+          return;
+        }
+        promise.set_value(std::move(R.ok_ref().candidate));
+      }));
+}
+
+void run_collate_query_generated(CollateParams params, td::actor::ActorId<ValidatorManager> manager,
+                                 td::CancellationToken cancellation_token, td::Promise<GeneratedCandidate> promise) {
   BlockSeqno seqno = 0;
   for (auto& p : params.prev) {
     if (p.seqno() > seqno) {

@@ -45,7 +45,7 @@ target_include_directories(tos_external_message_parser PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/..
 )
 target_link_libraries(tos_external_message_parser PUBLIC tos_crypto tos_block tdutils tdactor tl_api)
-target_link_libraries(tos_validator PRIVATE tos_external_message_parser)
+target_link_libraries(tos_validator PRIVATE tos_external_message_parser PUBLIC metrics)
 
 target_compile_options(tos_validator PRIVATE
   $<$<CXX_COMPILER_ID:Clang,AppleClang>:-Wno-cast-qual>
