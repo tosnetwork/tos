@@ -76,6 +76,12 @@ class BroadcastsFecTestAccess {
                                       bool is_ours) {
     return b.try_process_fresh_for_test(&overlay, hash, is_ours);
   }
+  static void inject_ready(BroadcastsFec &b, Overlay::BroadcastHash hash, td::uint32 date, td::BufferSlice data) {
+    b.inject_ready_for_test(hash, date, std::move(data));
+  }
+  static td::uint32 symbols_count(const BroadcastsFec &b, Overlay::BroadcastHash hash) {
+    return b.symbols_count_for_test(hash);
+  }
 };
 
 class BroadcastsTwostepTestAccess {
@@ -253,6 +259,39 @@ TEST(OverlayBroadcastCapacity, FecProcessConsultsAdmissionGate) {
     ASSERT_TRUE(status.is_error());
     ASSERT_EQ(status.error().code(), static_cast<int>(tos::ErrorCode::notready));
     ASSERT_EQ(Access::count(fec), cap);
+  });
+}
+
+// A short part names its symbol by seqno, and the receiver regenerates that symbol from its own
+// encoder before checking anything else about the part. The seqno is bounded the same way as a
+// full part's, so a peer cannot make the receiver encode arbitrary symbols of a finished broadcast.
+TEST(OverlayBroadcastCapacity, FecShortPartSeqnoIsBounded) {
+  using Access = tos::overlay::BroadcastsFecTestAccess;
+  with_overlay([](tos::overlay::OverlayImpl &overlay) {
+    auto &fec = tos::overlay::OverlayImplBroadcastCapacityTest::fec(overlay);
+    auto hash = hash_from_index(1);
+    Access::inject_ready(fec, hash, now_sec(), td::BufferSlice(std::string(4096, 'x')));
+    // Full parts accept seqno < symbols_count * 2 + 4; short parts must use the same bound.
+    auto bound = static_cast<td::int32>(Access::symbols_count(fec, hash) * 2 + 4);
+    ASSERT_TRUE(bound > 4);
+    auto short_part = [&](td::int32 seqno) {
+      return tos::create_tl_object<tos::tos_api::overlay_broadcastFecShort>(
+          tos::PublicKey{tos::pubkeys::Ed25519{td::Bits256::zero()}}.tl(),
+          tos::overlay::Certificate::empty_tl(), hash, td::Bits256::zero(), seqno, td::BufferSlice());
+    };
+    td::Bits256 peer_bits;
+    peer_bits.as_slice().fill('p');
+    auto peer = tos::adnl::AdnlNodeIdShort{peer_bits};
+
+    for (td::int32 seqno : {bound, 1 << 23, -1}) {
+      auto status = fec.process_broadcast(&overlay, peer, short_part(seqno));
+      ASSERT_TRUE(status.is_error());
+      ASSERT_EQ(status.message(), td::Slice("too big seqno"));
+    }
+    // In range, the part reaches the data-hash check instead.
+    auto status = fec.process_broadcast(&overlay, peer, short_part(bound - 1));
+    ASSERT_TRUE(status.is_error());
+    ASSERT_EQ(status.message(), td::Slice("wrong part data hash"));
   });
 }
 
