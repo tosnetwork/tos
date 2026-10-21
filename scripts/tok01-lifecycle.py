@@ -197,20 +197,33 @@ class Harness:
         self.record("checks.jsonl", {"step": self.current_step, **row})
         return row
 
+    RPC_ATTEMPTS = 3
+
     def rpc(self, rpc_method, **params):
-        try:
-            payload, result = rpc_call(self.endpoint, rpc_method, **params)
-        except RuntimeError as error:
-            self.record("rpc.jsonl", {"request": {"method": rpc_method}, "error": str(error)})
-            raise
-        except Exception as error:
-            self.record(
-                "rpc.jsonl",
-                {"request": {"method": rpc_method, "params": params}, "error": str(error)},
-            )
-            raise
-        self.record("rpc.jsonl", {"request": payload, "response": result})
-        return result["result"]
+        # Every query the harness makes is an idempotent read, so a transport stall
+        # (timeout, connection error) is retried a bounded number of times; each failed
+        # attempt is recorded. A JSON-RPC error answer is final.
+        for attempt in range(1, self.RPC_ATTEMPTS + 1):
+            try:
+                payload, result = rpc_call(self.endpoint, rpc_method, **params)
+            except RuntimeError as error:
+                self.record("rpc.jsonl", {"request": {"method": rpc_method}, "error": str(error)})
+                raise
+            except (TimeoutError, OSError) as error:
+                self.record(
+                    "rpc.jsonl",
+                    {
+                        "request": {"method": rpc_method, "params": params},
+                        "error": str(error),
+                        "attempt": attempt,
+                    },
+                )
+                if attempt == self.RPC_ATTEMPTS:
+                    raise
+                continue
+            self.record("rpc.jsonl", {"request": payload, "response": result})
+            return result["result"]
+        raise RuntimeError("unreachable")
 
     def new_transactions(self, account, before):
         return [

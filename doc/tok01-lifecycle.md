@@ -85,6 +85,9 @@ notification payload checks, persistent-data equality after refusal, and bounce
 accounting including the forwarding remainder and storage fees charged against
 the previous contract balance. A refusal still pays native transaction fees;
 unchanged state means unchanged contract data and asset ownership/balances.
+Every query the harness makes is an idempotent read, so a transport stall
+(timeout, connection error) is retried up to three times with each failed
+attempt recorded in `rpc.jsonl`; a JSON-RPC error answer is final.
 Index methods expose membership and wallet/collection references; fields absent
 from their schema (including Token wallet balances) are recorded through getters,
 not invented as RPC fields. The output must be reviewed for any gaps before

@@ -398,6 +398,44 @@ def test_endpoint_network_guard():
         lifecycle.decode_global_id(trailing)
 
 
+def test_rpc_reads_retry_transport_stalls_a_bounded_number_of_times():
+    harness = object.__new__(lifecycle.Harness)
+    harness.endpoint = "http://127.0.0.1:1/jsonRPC"
+    recorded = []
+    harness.record = lambda name, value: recorded.append((name, value))
+    answers = [TimeoutError("timed out"), OSError("connection reset"), ({}, {"result": 7})]
+
+    def rpc_call(endpoint, method, **params):
+        answer = answers.pop(0)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    with patch.object(lifecycle, "rpc_call", rpc_call):
+        assert harness.rpc("getMasterchainInfo") == 7
+    assert [value.get("attempt") for name, value in recorded if "error" in value] == [1, 2]
+
+    def always(endpoint, method, **params):
+        raise TimeoutError("timed out")
+
+    with patch.object(lifecycle, "rpc_call", always):
+        with pytest.raises(TimeoutError):
+            harness.rpc("getMasterchainInfo")
+    assert (
+        sum(1 for name, value in recorded if "error" in value) == 2 + lifecycle.Harness.RPC_ATTEMPTS
+    )
+
+    # A JSON-RPC error answer is final and is not retried.
+    def refused(endpoint, method, **params):
+        raise RuntimeError("getMasterchainInfo: refused")
+
+    before = len(recorded)
+    with patch.object(lifecycle, "rpc_call", refused):
+        with pytest.raises(RuntimeError):
+            harness.rpc("getMasterchainInfo")
+    assert len(recorded) == before + 1
+
+
 def test_launcher_reads_the_network_identity_from_the_node():
     param = base64.b64encode(begin_cell().store_int(3, 32).end_cell().to_boc()).decode()
     seen = {}
