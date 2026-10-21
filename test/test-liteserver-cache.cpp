@@ -52,8 +52,10 @@ constexpr double kNow = 1'000'000.0;
 
 }  // namespace
 
-// Registered first so the memory diagnostics switch is read before any buffer
-// of this process is allocated; the counters are off otherwise.
+// The memory diagnostics switch is read on the first buffer allocation of the
+// process and never again. ctest sets it in the environment (CMakeLists.txt);
+// the setenv here covers a run of the binary by hand, and the assertion fails
+// loudly if either came too late.
 TEST(LiteServerCache, private_copies_do_not_pin_pooled_slabs) {
   setenv("TOS_MEMORY_DIAGNOSTICS", "1", 1);
   ASSERT_TRUE(td::memory_tracker_enabled());
@@ -70,6 +72,8 @@ TEST(LiteServerCache, private_copies_do_not_pin_pooled_slabs) {
 
   auto baseline = td::BufferAllocator::get_memory_stats();
   size_t slabs_seen_while_allocating = 0;
+  // Assertions belong to the main thread: the test context is thread-local.
+  bool every_answer_admitted = true;
   {
     std::thread worker([&] {
       for (size_t i = 0; i < kAnswers; i++) {
@@ -77,13 +81,14 @@ TEST(LiteServerCache, private_copies_do_not_pin_pooled_slabs) {
         std::memcpy(arrival.as_slice().begin(), value_of(i, kAnswerSize).data(), kAnswerSize);
         td::BufferSlice transient(kAnswerSize * 3);  // leaves the slab as soon as this iteration ends
         pinned_like_before.push_back(arrival.clone());
-        ASSERT_TRUE(cache.update(key_of(i), arrival.as_slice(), kNow));
+        every_answer_admitted = cache.update(key_of(i), arrival.as_slice(), kNow) && every_answer_admitted;
       }
       slabs_seen_while_allocating = td::BufferAllocator::get_memory_stats().live_small_slabs;
       td::clear_thread_locals();  // drop the worker's current slab reference
     });
     worker.join();
   }
+  ASSERT_TRUE(every_answer_admitted);
   ASSERT_TRUE(slabs_seen_while_allocating > baseline.live_small_slabs);  // the instrument saw the slabs
   ASSERT_EQ(kAnswers, cache.entries());
 
@@ -164,6 +169,13 @@ TEST(LiteServerCache, an_oversized_answer_is_not_cached_and_evicts_nothing) {
   ASSERT_EQ(size_before, cache.total_size());
   ASSERT_EQ(1u, cache.rejected_oversized());
   ASSERT_TRUE(cache.lookup(key_of(1000), kNow).is_error());
+  // An oversized update of a cached key drops the older answer: the caller has
+  // a newer one than the store could keep.
+  ASSERT_TRUE(cache.lookup(key_of(1), kNow).is_ok());
+  ASSERT_TRUE(!cache.update(key_of(1), oversized, kNow));
+  ASSERT_TRUE(cache.lookup(key_of(1), kNow).is_error());
+  ASSERT_EQ(99u, cache.entries());
+  ASSERT_EQ(size_before - LiteServerQueryCache::charge(64), cache.total_size());
   // The largest admissible answer is cached.
   std::string largest(LiteServerQueryCache::MAX_ENTRY_VALUE_SIZE, 'y');
   ASSERT_TRUE(cache.update(key_of(1001), largest, kNow));
@@ -276,8 +288,10 @@ TEST(LiteServerCache, a_returned_answer_outlives_eviction_and_expiry) {
   ASSERT_EQ(1u, cache.expire_idle(kNow + 2 * LiteServerQueryCache::MAX_ENTRY_IDLE));
   ASSERT_EQ(0u, cache.entries());
   ASSERT_EQ(answer, held.as_slice().str());
+  // Churn with answers of the same size, so a freed block of that size class
+  // is reused and an answer that aliased the store would read the new bytes.
   for (size_t i = 0; i <= LiteServerQueryCache::MAX_CACHE_ENTRIES; i++) {
-    ASSERT_TRUE(cache.update(key_of(i), value_of(i, 8), kNow));
+    ASSERT_TRUE(cache.update(key_of(i), value_of(i + 1, answer.size()), kNow));
   }
   ASSERT_EQ(answer, held.as_slice().str());
 }

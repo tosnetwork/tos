@@ -33,8 +33,9 @@ namespace tos::validator {
 // A cache is a memory budget, so every bound here is on memory the store itself
 // owns:
 //  - each entry keeps a private copy of the answer in a plain string, sized by
-//    the answer rather than by whoever produced it. An answer arrives as a view into the buffer the serializer or the
-//    network wrote, and a shared view keeps that whole buffer alive; small
+//    the answer rather than by whoever produced it. An answer arrives as a view
+//    into the buffer the serializer or the network wrote, and a shared view
+//    keeps that whole buffer alive; small
 //    answers carved from pooled slabs pinned the slab long after everything
 //    else in it was gone. A hit hands out a fresh buffer copied from the
 //    string, so no caller can pin anything the store owns;
@@ -119,22 +120,33 @@ class LiteServerQueryCache {
   bool update(td::Bits256 key, td::Slice value, double now) {
     if (!admissible(value.size())) {
       ++rejected_oversized_;
+      // The caller now holds a newer answer than the store does, so an older
+      // one under the same key must not stay to be served.
+      auto stale = cache_.find(key);
+      if (stale != cache_.end()) {
+        erase(stale->second.get());
+      }
       return false;
     }
     std::string copy = private_copy(value);
-    std::unique_ptr<CacheEntry> &slot = cache_[key];
-    if (slot == nullptr) {
-      slot = std::make_unique<CacheEntry>(key, std::move(copy), now);
+    auto it = cache_.find(key);
+    if (it == cache_.end()) {
+      // Built before it is inserted, so a failed allocation leaves no empty slot.
+      auto entry = std::make_unique<CacheEntry>(key, std::move(copy), now);
+      CacheEntry *inserted = entry.get();
+      cache_.emplace(key, std::move(entry));
+      total_size_ += inserted->charge();
+      touch(inserted, now);
     } else {
-      total_size_ -= slot->charge();
+      CacheEntry *entry = it->second.get();
+      total_size_ -= entry->charge();
       // Swap rather than assign: assignment may keep the old buffer when the new
       // answer fits in it, and the charge would then count storage the small
       // answer does not need.
-      slot->value_.swap(copy);
-      slot->remove();
+      entry->value_.swap(copy);
+      total_size_ += entry->charge();
+      touch(entry, now);
     }
-    total_size_ += slot->charge();
-    touch(slot.get(), now);
     enforce_bounds();
     return true;
   }
@@ -181,9 +193,11 @@ class LiteServerQueryCache {
   }
 
   void erase(CacheEntry *entry) {
+    // The key is copied first: the map erase destroys the entry that owns it.
+    td::Bits256 key = entry->key_;
     total_size_ -= entry->charge();
     entry->remove();
-    cache_.erase(entry->key_);
+    cache_.erase(key);
   }
 
   void enforce_bounds() {
@@ -217,13 +231,15 @@ class LiteServerCacheImpl : public LiteServerCache {
     // The idle sweep runs whether or not anything was asked in the last minute:
     // an idle node is exactly when retained answers stop earning their memory.
     size_t expired = cache_.expire_idle(td::Time::now());
-    if (queries_cnt_ > 0 || expired > 0 || !send_message_cache_.empty()) {
+    // Every number on the line covers the last minute, the oversized count too.
+    size_t oversized = cache_.rejected_oversized() - reported_oversized_;
+    reported_oversized_ = cache_.rejected_oversized();
+    if (queries_cnt_ > 0 || expired > 0 || oversized > 0 || !send_message_cache_.empty()) {
       LOG(WARNING) << "LS Cache stats: " << queries_cnt_ << " queries, " << queries_hit_cnt_ << " hits; "
                    << cache_.entries() << "/" << LiteServerQueryCache::MAX_CACHE_ENTRIES
                    << " entries, size=" << cache_.total_size() << "/" << LiteServerQueryCache::MAX_CACHE_SIZE << ", "
-                   << expired << " expired, " << cache_.rejected_oversized() << " oversized;   "
-                   << send_message_cache_.size() << " different sendMessage queries, " << send_message_error_cnt_
-                   << " duplicates";
+                   << expired << " expired, " << oversized << " oversized;   " << send_message_cache_.size()
+                   << " different sendMessage queries, " << send_message_error_cnt_ << " duplicates";
       queries_cnt_ = 0;
       queries_hit_cnt_ = 0;
       send_message_cache_.clear();
@@ -266,6 +282,7 @@ class LiteServerCacheImpl : public LiteServerCache {
   LiteServerQueryCache cache_;
 
   size_t queries_cnt_ = 0, queries_hit_cnt_ = 0;
+  size_t reported_oversized_ = 0;
 
   td::LRUCache<td::Bits256, td::Unit> send_message_cache_{MAX_MSG_CACHE_SIZE};
   size_t send_message_error_cnt_ = 0;
