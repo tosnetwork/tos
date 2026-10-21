@@ -19,7 +19,7 @@ from tostester.pq_initial_validator import deterministic_pq_initial_validator_se
 REPO = Path(__file__).resolve().parents[2]
 
 
-async def run(root: Path, build: Path, reconstruct: Path):
+async def run(root: Path, build: Path, reconstruct: Path, validate_generation: Path | None = None):
     if root.exists():
         raise RuntimeError("fixture root already exists; refusing to overwrite")
     root.mkdir(mode=0o700, parents=True)
@@ -41,6 +41,7 @@ async def run(root: Path, build: Path, reconstruct: Path):
             node.announce_to(dht)
             validators.append(node)
         source = network.create_full_node()
+        source._local_config.validators = []
         source.announce_to(dht)
         await dht.run(StartOptions(threads=2, verbosity=1))
         options = StartOptions(
@@ -68,6 +69,43 @@ async def run(root: Path, build: Path, reconstruct: Path):
                     break
                 await asyncio.sleep(0.2)
         await source.stop()
+        if validate_generation is not None:
+            # The harness shares genesis files through symlinks; production capture refuses links.
+            # Materialize only fixture-owned static inputs, retaining the capture refusal unchanged.
+            for state in (source.directory / "static").iterdir():
+                if state.is_symlink():
+                    original = state.resolve(strict=True)
+                    if not original.is_relative_to(root.resolve()):
+                        raise RuntimeError("static fixture points outside its private root")
+                    content = original.read_bytes()
+                    temporary = state.with_suffix(".copy")
+                    temporary.write_bytes(content)
+                    temporary.chmod(0o600)
+                    temporary.replace(state)
+            # A valid unadopted record for a deliberately absent hash exercises startup recovery
+            # in the captured image without modifying any real fixture cell.
+            rollback = (
+                source.directory / "tmp/persistent-state/node-sync.celldb-rollback.fixture.partial"
+            )
+            rollback.parent.mkdir(parents=True, exist_ok=True)
+            rollback.write_bytes(bytes([0xA5]) * 32 + (1).to_bytes(4, "little") + b"x")
+            process = await asyncio.create_subprocess_exec(
+                validate_generation,
+                source.directory,
+                root / "checked-generation",
+                build / "validator-engine/validator-engine",
+                source.directory / "config.global.json",
+            )
+            if await process.wait() != 0:
+                raise RuntimeError("native cold-generation validation refused the fixture")
+            if not rollback.exists():
+                raise RuntimeError("capture changed the stopped source's recovery material")
+            recovered = root / "checked-generation/image/tmp/persistent-state" / rollback.name
+            if recovered.exists():
+                raise RuntimeError("published generation skipped native rollback recovery")
+            log = (root / "checked-generation/checked/reopen-0.log").read_bytes()
+            if b"processed=1 erased=0" not in log or rollback.name.encode() not in log:
+                raise RuntimeError("native recovery did not process the captured rollback record")
         original = source.directory / "state"
         frozen = source.directory / "proof-original-state"
         original.rename(frozen)
@@ -112,9 +150,17 @@ def main():
     parser.add_argument("--root", required=True, type=Path)
     parser.add_argument("--build", type=Path, default=REPO / "build")
     parser.add_argument("--reconstruct", type=Path, required=True)
+    parser.add_argument("--validate-generation", type=Path)
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO)
-    asyncio.run(run(args.root.resolve(), args.build.resolve(), args.reconstruct.resolve()))
+    asyncio.run(
+        run(
+            args.root.resolve(),
+            args.build.resolve(),
+            args.reconstruct.resolve(),
+            args.validate_generation.resolve() if args.validate_generation else None,
+        )
+    )
 
 
 if __name__ == "__main__":

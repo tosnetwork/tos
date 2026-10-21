@@ -776,6 +776,11 @@ impl ControlClientAdnl {
         Ok(Self::new(config, 4))
     }
 
+    /// Public server identity bound to the control handshake.
+    pub fn server_id(&self) -> [u8; 32] {
+        self.config.server_id()
+    }
+
     /// Establish connection to the Control Server via ADNL.
     ///
     /// If connection is already established, do nothing.

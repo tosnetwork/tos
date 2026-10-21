@@ -8,3 +8,5 @@
  */
 pub mod command_manager;
 pub mod commands;
+
+pub use node_data_sync::status::StatusExit;

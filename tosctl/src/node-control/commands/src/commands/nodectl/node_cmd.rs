@@ -52,12 +52,12 @@ fn parse_shard_descriptor(s: &str) -> anyhow::Result<(i32, i64)> {
 
 /// The configuration file and the configured node a `tosctl node` command talks to.
 pub struct NodeTarget<'a> {
-    config: &'a str,
-    node: Option<&'a str>,
+    pub(super) config: &'a str,
+    pub(super) node: Option<&'a str>,
 }
 
 /// Helper: create a connected control client for the target node.
-async fn create_control_client(
+pub(super) async fn create_control_client(
     target: &NodeTarget<'_>,
 ) -> anyhow::Result<(String, control_client::client_adnl::ControlClientAdnl)> {
     use common::app_config::AppConfig;
@@ -76,6 +76,10 @@ async fn create_control_client(
 pub enum NodeAction {
     /// Node status summary
     Status(NodeStatusCmd),
+    /// Coherent sync status and node-data restoration
+    Sync(super::node_sync_cmd::NodeSyncCmd),
+    /// Verify and manage signed chain-data generations
+    Dump(super::node_dump_cmd::NodeDumpCmd),
     /// Ping node
     Ping,
     /// Probe node health
@@ -99,7 +103,16 @@ pub enum NodeAction {
 pub struct NodeStatusCmd {
     /// Output format: table or json
     #[arg(short, long, default_value = "table")]
-    format: super::output_format::OutputFormat,
+    pub(super) format: super::output_format::OutputFormat,
+    /// Independent named JSON-RPC reference; repeat at least twice for at-head status
+    #[arg(long = "reference")]
+    pub(super) references: Vec<String>,
+    /// Keep sampling until continuously at head for five minutes
+    #[arg(long)]
+    pub(super) watch: bool,
+    /// Maximum watch duration, in seconds
+    #[arg(long, default_value_t = 1800)]
+    pub(super) timeout: u64,
 }
 
 // ---------------------------------------------------------------------------
@@ -317,89 +330,9 @@ impl NodeCmd {
 
     pub async fn run(&self) -> anyhow::Result<()> {
         match &self.action {
-            NodeAction::Status(cmd) => {
-                use colored::Colorize;
-                use common::app_config::AppConfig;
-                use std::path::Path;
-                use std::str::FromStr;
-
-                let config = AppConfig::load(Path::new(&self.config))?;
-
-                let rpc_client = match super::utils::try_create_rpc_client(&config).await {
-                    Ok(c) => c,
-                    Err(e) => {
-                        if cmd.format == super::output_format::OutputFormat::Json {
-                            let obj = serde_json::json!({
-                                "sync_status": "unknown",
-                                "error": "RPC unavailable",
-                            });
-                            println!("{}", serde_json::to_string_pretty(&obj)?);
-                        } else {
-                            super::utils::warn_chain_rpc_unavailable(
-                                &e,
-                                "Cannot show node status without a reachable chain RPC endpoint",
-                            );
-                            println!();
-                            println!("{}", "Node Status".bold());
-                            println!("{}", "───────────".dimmed());
-                            println!(
-                                "  {:<18}{}",
-                                "Sync status:".bold(),
-                                "unknown (RPC unavailable)".yellow()
-                            );
-                            println!();
-                        }
-                        return Ok(());
-                    }
-                };
-
-                let mc_info = rpc_client.get_masterchain_info().await?;
-                let last = &mc_info.last;
-
-                // Probe node responsiveness and obtain sync_utime by
-                // querying the elector contract on the masterchain.
-                let elector_addr = chain_block::MsgAddressInt::from_str(
-                    "-1:3333333333333333333333333333333333333333333333333333333333333333",
-                )
-                .map_err(|e| anyhow::anyhow!("Invalid elector address: {}", e))?;
-
-                let (block_time_display, sync_status_str) =
-                    match rpc_client.get_address_information(&elector_addr).await {
-                        Ok(info) => {
-                            let block_time = common::time_format::format_ts(info.sync_utime);
-                            ("synced".to_string(), block_time)
-                        }
-                        Err(_) => ("behind".to_string(), "unknown".to_string()),
-                    };
-
-                if cmd.format == super::output_format::OutputFormat::Json {
-                    let obj = serde_json::json!({
-                        "last_mc_block_seqno": last.seqno,
-                        "block_time": sync_status_str,
-                        "sync_status": block_time_display,
-                    });
-                    println!("{}", serde_json::to_string_pretty(&obj)?);
-                } else {
-                    let (block_time_colored, sync_colored) = if block_time_display == "synced" {
-                        (sync_status_str, "synced".green().bold().to_string())
-                    } else {
-                        (sync_status_str, "behind".yellow().bold().to_string())
-                    };
-                    println!();
-                    println!("{}", "Node Status".bold());
-                    println!("{}", "───────────".dimmed());
-                    println!(
-                        "  {:<18}seqno {}",
-                        "Last MC block:".bold(),
-                        last.seqno.to_string().green()
-                    );
-                    println!("  {:<18}{}", "Block time:".bold(), block_time_colored);
-                    println!("  {:<18}{}", "Sync status:".bold(), sync_colored);
-                    println!();
-                }
-
-                Ok(())
-            }
+            NodeAction::Status(cmd) => super::node_sync_cmd::status(&self.target(), cmd).await,
+            NodeAction::Sync(cmd) => cmd.run(&self.target()).await,
+            NodeAction::Dump(cmd) => cmd.run().await,
             NodeAction::Ping => {
                 use colored::Colorize;
                 use common::app_config::AppConfig;

@@ -35,6 +35,8 @@ jobs:
   python-and-pq-chain:
     runs-on: ubuntu-24.04
     container:
+      # Native generation validation reopens private images in a separate network namespace.
+      options: --security-opt seccomp=unconfined --security-opt apparmor=unconfined
       image: ghcr.io/${{ github.repository }}-builder:ubuntu-24.04
       credentials:
         username: ${{ github.repository_owner }}
@@ -139,6 +141,9 @@ jobs:
           cargo test --manifest-path tosctl/src/Cargo.toml --locked -p node-store --features native --test native_fixture -- --nocapture | tee build/node-store-native-tests.log
           grep -F 'test result: ok. 1 passed; 0 failed; 0 ignored' build/node-store-native-tests.log
           cargo build --manifest-path tosctl/src/Cargo.toml --locked -p node-store --features native --example reconstruct_fixture
+          cargo test --manifest-path tosctl/src/Cargo.toml --locked -p node-data-sync --features native --tests
+          cargo build --manifest-path tosctl/src/Cargo.toml --locked -p node-data-sync --features native --examples --bin node-data-sync-worker
+          cargo build --manifest-path tosctl/src/Cargo.toml --locked -p tosctl --features node-data-sync-native
 
       - name: Verify Rust operator reads against the actual engine
         # The job runs in a container: the default sh has no pipefail, and the
@@ -328,7 +333,21 @@ jobs:
 
       - name: Reopen reconstructed StateDb in the production engine
         timeout-minutes: 10
-        run: uv run python test/integration/node_store_native_reopen.py --root build/node-store-native-reopen --build build --reconstruct build/operator-rust-target/debug/examples/reconstruct_fixture
+        run: uv run python test/integration/node_store_native_reopen.py --root build/node-store-native-reopen --build build --reconstruct build/operator-rust-target/debug/examples/reconstruct_fixture --validate-generation build/operator-rust-target/debug/examples/capture_and_validate
+
+      - name: Verify native restore preservation and forward-only exchange
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          export NODE_STORE_NATIVE_DIR="$GITHUB_WORKSPACE/build/third-party/rocksdb"
+          export CARGO_TARGET_DIR="$GITHUB_WORKSPACE/build/operator-rust-target"
+          export NODE_SYNC_NATIVE_FIXTURE="$GITHUB_WORKSPACE/build/node-store-native-reopen/checked-generation"
+          export NODE_SYNC_NATIVE_SOURCE="$GITHUB_WORKSPACE/build/node-store-native-reopen/network/node5"
+          export NODE_SYNC_NATIVE_ENGINE="$GITHUB_WORKSPACE/build/validator-engine/validator-engine"
+          export NODE_SYNC_NATIVE_WORKER="$GITHUB_WORKSPACE/build/operator-rust-target/debug/node-data-sync-worker"
+          cargo test --manifest-path tosctl/src/Cargo.toml --locked -p node-data-sync --features native --lib operations::tests::native_stage_preserves_own_context_and_never_overlays_recovery_material -- --ignored --exact --nocapture | tee build/node-sync-native-preservation.log
+          grep -Fx 'NATIVE_STAGE_PRESERVATION_OK' build/node-sync-native-preservation.log
 
       - name: Run the complete Python suite
         run: uv run pytest

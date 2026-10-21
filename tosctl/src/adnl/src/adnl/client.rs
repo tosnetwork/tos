@@ -111,6 +111,11 @@ impl AdnlClientConfig {
         Ok((result_config, ret))
     }
 
+    /// Public identity authenticated by this configured control connection.
+    pub fn server_id(&self) -> [u8; 32] {
+        *self.server_key.id().data()
+    }
+
     /// Get timeouts
     pub fn timeouts(&self) -> &Timeouts {
         &self.timeouts

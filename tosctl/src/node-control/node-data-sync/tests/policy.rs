@@ -1,0 +1,452 @@
+use anyhow::Result;
+use node_data_sync::{
+    cas::Objects,
+    journal::{Journal, Phase, Recovery, TreeIdentity},
+    model::{FullId, sha256},
+    paths,
+    safe_io::Root,
+    status::Observation,
+};
+use std::{
+    fs,
+    os::unix::fs::{MetadataExt, symlink},
+};
+
+fn id(n: u32) -> FullId {
+    FullId {
+        workchain: -1,
+        shard: i64::MIN,
+        seqno: n,
+        root_hash: "12".repeat(32),
+        file_hash: "34".repeat(32),
+    }
+}
+
+#[test]
+fn closed_payload_rejects_every_local_and_recovery_class() {
+    for path in [
+        "state/CURRENT",
+        "chain/state/CURRENT",
+        "chain/config.json",
+        "chain/keyring/key",
+        "chain/consensus/000001.sst",
+        "chain/catchains/000001.sst",
+        "chain/tmp/persistent-state",
+        "chain/import/state",
+        "chain/archive/tmp/file",
+        "chain/adnl/key",
+        "chain/celldb/LOCK",
+        "chain/celldb/LOG",
+        "chain/celldb/unknown",
+        "../chain/celldb/CURRENT",
+        "chain//celldb/CURRENT",
+        "/chain/celldb/CURRENT",
+        "chain/static/../../config.json",
+    ] {
+        assert!(paths::public_path(path).is_err(), "accepted {path}");
+    }
+    for path in [
+        "chain/celldb/000001.sst",
+        "chain/celldb/000002.log",
+        "chain/celldb/MANIFEST-1",
+        "chain/files/packages/temp.archive.3.pack",
+        "chain/files/packages/temp.archive.3.index/CURRENT",
+        "chain/archive/packages/arch0000/archive.3.-1_8000000000000000.pack",
+        "state-records.cbor",
+    ] {
+        paths::public_path(path).unwrap_or_else(|e| panic!("refused {path}: {e}"));
+    }
+}
+
+#[test]
+fn descriptor_io_refuses_links_special_files_and_overwrites() -> Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let root = Root::create(&tmp.path().join("private"))?;
+    let outside = tmp.path().join("outside");
+    fs::write(&outside, b"secret")?;
+    symlink(&outside, root.path.join("link"))?;
+    assert!(root.bytes("link", 100).is_err());
+    symlink(tmp.path(), root.path.join("parent"))?;
+    assert!(root.write_new("parent/escaped", b"bad").is_err());
+    assert!(!tmp.path().join("escaped").exists());
+    root.write_new("one", b"one")?;
+    assert!(root.write_new("one", b"two").is_err());
+    assert!(root.bytes("one", 2).is_err());
+    assert_eq!(root.bytes("one", 3)?, b"one");
+    root.replace("one", b"new")?;
+    assert_eq!(root.bytes("one", 3)?, b"new");
+    Ok(())
+}
+
+#[test]
+fn objects_verify_both_hashes_and_reuse_only_matching_immutable_bytes() -> Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let objects = Objects::create(&tmp.path().join("objects"))?;
+    let source = tmp.path().join("source");
+    fs::write(&source, b"owned table bytes")?;
+    let object = objects.writer()?.put("chain/celldb/000001.sst", fs::File::open(&source)?, 100)?;
+    objects.check(&object)?;
+    let reuse = Root::create(&tmp.path().join("reuse"))?;
+    reuse.write_new(&object.path, b"wrong table bytes")?;
+    let first = Root::create(&tmp.path().join("first"))?;
+    assert!(!objects.materialize(&object, &first, Some(&reuse))?);
+    assert_eq!(first.bytes(&object.path, 100)?, b"owned table bytes");
+    let second = Root::create(&tmp.path().join("second"))?;
+    assert!(objects.materialize(&object, &second, Some(&first))?);
+    assert_ne!(
+        fs::metadata(first.path.join(&object.path))?.ino(),
+        fs::metadata(second.path.join(&object.path))?.ino()
+    );
+    let compressed = tmp.path().join("objects").join(Objects::object_name(&object)?);
+    let mut bad = object.clone();
+    bad.sha256 = sha256(b"wrong");
+    fs::copy(&compressed, tmp.path().join("objects").join(Objects::object_name(&bad)?))?;
+    assert!(objects.check(&bad).is_err());
+    let mut bad = object.clone();
+    bad.size -= 1;
+    fs::copy(&compressed, tmp.path().join("objects").join(Objects::object_name(&bad)?))?;
+    assert!(objects.check(&bad).is_err());
+    fs::write(&compressed, b"corrupt")?;
+    assert!(objects.check(&object).is_err());
+    let failed = Root::create(&tmp.path().join("failed"))?;
+    assert!(objects.materialize(&object, &failed, None).is_err());
+    assert!(!failed.path.join(&object.path).exists());
+    Ok(())
+}
+
+#[test]
+fn mutable_files_never_reuse_even_with_the_same_hash() -> Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let objects = Objects::create(&tmp.path().join("objects"))?;
+    let source = tmp.path().join("source");
+    fs::write(&source, b"mutable")?;
+    let object = objects.writer()?.put("chain/celldb/CURRENT", fs::File::open(&source)?, 100)?;
+    let reuse = Root::create(&tmp.path().join("reuse"))?;
+    reuse.write_new(&object.path, b"mutable")?;
+    let out = Root::create(&tmp.path().join("out"))?;
+    assert!(!objects.materialize(&object, &out, Some(&reuse))?);
+    Ok(())
+}
+
+#[test]
+fn durable_boundary_survives_exchange_without_a_start_marker() -> Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let installed = tmp.path().join("installed");
+    let staged = tmp.path().join("staged");
+    let old = Root::create(&installed)?;
+    let new = Root::create(&staged)?;
+    old.write_new("vote", b"old signing state")?;
+    new.write_new("vote", b"current signing state")?;
+    let operation = Root::create(&tmp.path().join("operation"))?;
+    let mut journal = Journal {
+        version: 1,
+        operation: "ab".repeat(16),
+        generation: "12".repeat(32),
+        old: TreeIdentity::read(&installed)?,
+        new: TreeIdentity::read(&staged)?,
+        installed: installed.to_string_lossy().into_owned(),
+        staged: staged.to_string_lossy().into_owned(),
+        preservation_sha256: "34".repeat(32),
+        target_anchor: id(1),
+        phase: Phase::Staged,
+    };
+    journal.write(&operation)?;
+    assert!(journal.exchange(&operation).is_err());
+    journal.forward_only(&operation)?;
+    journal.exchange(&operation)?;
+    // Simulate a boot-started signer completing work before the restore process resumes.
+    Root::open(&installed)?.replace("vote", b"new signed state")?;
+    // A crash between exchange and its journal write leaves only FORWARD_ONLY durable.
+    journal.phase = Phase::ForwardOnly;
+    journal.write(&operation)?;
+    let mut recovered = Journal::read(&operation)?;
+    assert_eq!(recovered.recovery()?, Recovery::NewContinueOnly);
+    assert!(recovered.exchange(&operation).is_err());
+    assert!(recovered.forward_only(&operation).is_err());
+    assert_eq!(Root::open(&installed)?.bytes("vote", 100)?, b"new signed state");
+    assert_eq!(Root::open(&staged)?.bytes("vote", 100)?, b"old signing state");
+    Ok(())
+}
+
+#[test]
+fn interrupted_old_root_always_requires_refresh_and_ambiguity_refuses() -> Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let installed = tmp.path().join("installed");
+    let staged = tmp.path().join("staged");
+    Root::create(&installed)?;
+    Root::create(&staged)?;
+    let operation = Root::create(&tmp.path().join("operation"))?;
+    let mut j = Journal {
+        version: 1,
+        operation: "ab".repeat(16),
+        generation: "12".repeat(32),
+        old: TreeIdentity::read(&installed)?,
+        new: TreeIdentity::read(&staged)?,
+        installed: installed.to_string_lossy().into_owned(),
+        staged: staged.to_string_lossy().into_owned(),
+        preservation_sha256: "34".repeat(32),
+        target_anchor: id(1),
+        phase: Phase::Staged,
+    };
+    j.write(&operation)?;
+    j.forward_only(&operation)?;
+    Root::open(&installed)?.write_new("vote", b"signed during restart")?;
+    assert_eq!(Journal::read(&operation)?.recovery()?, Recovery::OldRefreshRequired);
+    fs::rename(&staged, tmp.path().join("unknown"))?;
+    Root::create(&staged)?;
+    assert!(j.recovery().is_err());
+    Ok(())
+}
+
+#[test]
+fn status_requires_fresh_coherent_full_ids_and_two_consistent_references() -> Result<()> {
+    let obs = Observation {
+        sampled_utc: 1000,
+        tip: id(10),
+        tip_utime: 990,
+        coherent_tip: Some(id(10)),
+        coherent_tip_utime: Some(990),
+        shard_client_seqno: 10,
+        initial_sync_complete: true,
+    };
+    let refs = vec![("a".to_owned(), id(11), id(10)), ("b".to_owned(), id(12), id(10))];
+    assert_eq!(obs.clone().status(&refs, 300)?.exit_code, 0);
+    assert_eq!(obs.clone().status(&refs, 299)?.exit_code, 2);
+    assert_eq!(obs.clone().status(&refs[..1], 300)?.exit_code, 4);
+    let mut bad = refs.clone();
+    bad[0].2.root_hash = "ab".repeat(32);
+    assert_eq!(obs.clone().status(&bad, 300)?.exit_code, 3);
+    let mut bad = refs.clone();
+    bad[0].1 = id(9);
+    assert!(obs.clone().status(&bad, 300).is_err());
+    let mut bad = refs.clone();
+    bad[0].1 = id(10);
+    bad[0].1.file_hash = "ab".repeat(32);
+    assert!(obs.clone().status(&bad, 300).is_err());
+    let mut bad = refs.clone();
+    bad[0].0 = "b".to_owned();
+    assert!(obs.clone().status(&bad, 300).is_err());
+    let mut stale = obs.clone();
+    stale.tip_utime = 900;
+    stale.coherent_tip_utime = Some(900);
+    assert_eq!(stale.status(&refs, 300)?.exit_code, 2);
+    let mut initial = obs;
+    initial.initial_sync_complete = false;
+    assert_eq!(initial.status(&refs, 300)?.exit_code, 2);
+    Ok(())
+}
+
+#[test]
+fn private_capture_preserves_config_absence_and_referenced_seeds() -> Result<()> {
+    use node_data_sync::{identity::Identity, paths::LOCAL_CONFIGS};
+    let tmp = tempfile::tempdir()?;
+    let db = Root::create(&tmp.path().join("db"))?;
+    let work = Root::create(&tmp.path().join("work"))?;
+    fs::create_dir(db.path.join("keyring"))?;
+    fs::create_dir(work.path.join("keys"))?;
+    db.write_new("keyring/one", b"own key")?;
+    work.write_new("keys/two", b"own second key")?;
+    work.write_new("primary.seed", &[1; 32])?;
+    work.write_new("next.seed", &[2; 32])?;
+    db.write_new("config.json", br#"{"extraconfig":{"pq_consensus":{"consensus_key_file":"primary.seed","keys":[{"consensus_key_file":"next.seed"}]}}}"#)?;
+    for (i, name) in LOCAL_CONFIGS.iter().enumerate() {
+        if i != 2 {
+            db.write_new(name, format!("own-{i}").as_bytes())?;
+        }
+    }
+    let operator = tmp.path().join("operator.json");
+    fs::write(&operator, b"operator")?;
+    let service = tmp.path().join("service.conf");
+    fs::write(&service, b"service")?;
+    let backup = Root::create(&tmp.path().join("backup"))?;
+    db.write_new("global.json", b"held anchor")?;
+    let inventory = Identity::capture(
+        &db.path,
+        &work.path,
+        &work.path,
+        &operator,
+        &db.path.join("global.json"),
+        &[service],
+        &backup,
+    )?;
+
+    assert_eq!(inventory.files.iter().filter(|f| f.size.is_none()).count(), 1);
+    assert!(inventory.files.iter().any(|f| f.source == work.path.join("primary.seed")));
+    assert!(inventory.files.iter().any(|f| f.source == work.path.join("next.seed")));
+    let target = Root::create(&tmp.path().join("target"))?;
+    inventory.overlay(&db.path, &target, &backup)?;
+    assert_eq!(target.bytes("global.json", 100)?, b"held anchor");
+    assert_eq!(target.bytes("config.json", 1000)?, db.bytes("config.json", 1000)?);
+    for (i, name) in LOCAL_CONFIGS.iter().enumerate() {
+        if i == 2 {
+            assert!(!target.path.join(name).exists());
+        } else {
+            assert_eq!(
+                target.bytes(name, 100).ok().as_deref(),
+                Some(format!("own-{i}").as_bytes()),
+                "own config content was not preserved: {name}"
+            );
+        }
+    }
+    work.replace("next.seed", b"changed")?;
+    let other = Root::create(&tmp.path().join("other"))?;
+    assert!(inventory.overlay(&db.path, &other, &backup).is_err());
+    Ok(())
+}
+
+fn manifest() -> node_data_sync::model::Manifest {
+    use node_data_sync::model::{Manifest, NativeValidation, Network, Object};
+    Manifest {
+        format: 1,
+        network: Network { global_id: 3, zero: id(0), init: id(0) },
+        frontier: id(10),
+        frontier_utime: 900,
+        created_utc: 1000,
+        source_build: "12".repeat(32),
+        database_version: 2,
+        retained_from: id(0),
+        permanent_cells: false,
+        coverage: vec!["-1:8000000000000000".to_owned()],
+        approved_forks: vec![],
+        capture: node_data_sync::model::CaptureReceipt {
+            method: "cold_copy".to_owned(),
+            started_utc: 0,
+            finished_utc: 1,
+            copied_bytes: 1,
+            elapsed_millis: 1,
+        },
+        validation: NativeValidation {
+            engine_sha256: "12".repeat(32),
+            policy_sha256: "34".repeat(32),
+            frontier: id(10),
+            passes: 2,
+            permanent_cells: false,
+            recovery_resolved: true,
+            monitored_states_readable: true,
+            elapsed_millis: 100,
+            recovery_context_sha256: "56".repeat(32),
+            started_utc: 1,
+            finished_utc: 2,
+        },
+        files: ["metadata/tip-block.boc", "metadata/zero-state.boc", "state-records.cbor"]
+            .into_iter()
+            .map(|path| Object {
+                kind: node_data_sync::model::ObjectKind::RegularFile,
+                path: path.to_owned(),
+                size: 1,
+                sha256: "12".repeat(32),
+                compressed_size: 10,
+                compressed_sha256: "34".repeat(32),
+                codec: "zstd".to_owned(),
+            })
+            .collect(),
+    }
+}
+
+#[test]
+fn signatures_bind_the_network_receipt_and_closed_file_inventory() -> Result<()> {
+    use ed25519_dalek::SigningKey;
+    use node_data_sync::model::SignedManifest;
+    let key = SigningKey::from_bytes(&[42; 32]);
+    let signed = SignedManifest::sign(manifest(), &key)?;
+    let bytes = signed.bytes()?;
+    let trusted = key.verifying_key().to_bytes();
+    SignedManifest::parse(&bytes, &trusted)?;
+    assert!(
+        SignedManifest::parse(
+            &bytes,
+            &SigningKey::from_bytes(&[43; 32]).verifying_key().to_bytes()
+        )
+        .is_err()
+    );
+    let mut changed = signed.clone();
+    changed.manifest.network.global_id = 2;
+    assert!(changed.verify(&trusted).is_err());
+    let mut changed = signed.clone();
+    changed.manifest.validation.passes = 1;
+    assert!(SignedManifest::sign(changed.manifest, &key).is_err());
+    let mut changed = signed.clone();
+    changed.manifest.files[0].path = "chain/keyring/key".to_owned();
+    assert!(SignedManifest::sign(changed.manifest, &key).is_err());
+    let mut changed = signed.clone();
+    changed.manifest.files.push(changed.manifest.files[0].clone());
+    assert!(SignedManifest::sign(changed.manifest, &key).is_err());
+    let mut changed = signed.clone();
+    changed.manifest.files[0].size = u64::MAX;
+    assert!(SignedManifest::sign(changed.manifest, &key).is_err());
+    let mut trailing = bytes;
+    trailing.push(b' ');
+    assert!(SignedManifest::parse(&trailing, &trusted).is_err());
+    Ok(())
+}
+
+#[test]
+fn stability_resets_on_missing_or_unqualified_samples() -> Result<()> {
+    use node_data_sync::status::Stability;
+    let obs = Observation {
+        sampled_utc: 1000,
+        tip: id(10),
+        tip_utime: 990,
+        coherent_tip: Some(id(10)),
+        coherent_tip_utime: Some(990),
+        shard_client_seqno: 10,
+        initial_sync_complete: true,
+    };
+    let refs = vec![("a".to_owned(), id(10), id(10)), ("b".to_owned(), id(10), id(10))];
+    let status = obs.status(&refs, 0)?;
+    let mut stability = Stability::default();
+    let start = std::time::Instant::now();
+    for n in 0..=30 {
+        assert_eq!(
+            stability.observe(&status, start + std::time::Duration::from_secs(n * 10))?,
+            n * 10
+        );
+    }
+    stability.missing();
+    assert_eq!(stability.observe(&status, start + std::time::Duration::from_secs(310))?, 0);
+    assert_eq!(stability.observe(&status, start + std::time::Duration::from_secs(350))?, 0);
+    Ok(())
+}
+
+#[test]
+fn memory_only_forward_boundary_does_not_authorize_exchange() -> Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let installed = tmp.path().join("installed");
+    let staged = tmp.path().join("staged");
+    Root::create(&installed)?;
+    Root::create(&staged)?;
+    let operation = Root::create(&tmp.path().join("operation"))?;
+    let mut j = Journal {
+        version: 1,
+        operation: "ab".repeat(16),
+        generation: "12".repeat(32),
+        old: TreeIdentity::read(&installed)?,
+        new: TreeIdentity::read(&staged)?,
+        installed: installed.to_string_lossy().into_owned(),
+        staged: staged.to_string_lossy().into_owned(),
+        preservation_sha256: "34".repeat(32),
+        target_anchor: id(1),
+        phase: Phase::Staged,
+    };
+    j.write(&operation)?;
+    j.phase = Phase::ForwardOnly;
+    assert!(j.exchange(&operation).is_err());
+    assert_eq!(TreeIdentity::read(&installed)?, j.old);
+    Ok(())
+}
+
+#[test]
+fn sparse_input_is_refused_but_identical_dense_zero_bytes_are_readable() -> Result<()> {
+    use std::io::Write;
+    let temp = tempfile::tempdir()?;
+    let root = Root::create(&temp.path().join("private"))?;
+    let sparse = root.create_file("sparse")?;
+    sparse.set_len(1 << 20)?;
+    sparse.sync_all()?;
+    assert!(root.read("sparse", 1 << 20).is_err(), "sparse expansion was admitted");
+    let mut dense = root.create_file("dense")?;
+    dense.write_all(&vec![0; 1 << 20])?;
+    dense.sync_all()?;
+    assert_eq!(root.bytes("dense", 1 << 20)?.len(), 1 << 20);
+    Ok(())
+}

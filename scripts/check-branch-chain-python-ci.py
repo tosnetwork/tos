@@ -207,7 +207,12 @@ def validate_node_store_proof(text: str) -> None:
         "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p node-store --features native --test native_fixture -- --nocapture | tee build/node-store-native-tests.log",
         "grep -F 'test result: ok. 1 passed; 0 failed; 0 ignored' build/node-store-native-tests.log",
         "cargo build --manifest-path tosctl/src/Cargo.toml --locked -p node-store --features native --example reconstruct_fixture",
-        "run: uv run python test/integration/node_store_native_reopen.py --root build/node-store-native-reopen --build build --reconstruct build/operator-rust-target/debug/examples/reconstruct_fixture",
+        "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p node-data-sync --features native --tests",
+        "cargo build --manifest-path tosctl/src/Cargo.toml --locked -p node-data-sync --features native --examples --bin node-data-sync-worker",
+        "cargo build --manifest-path tosctl/src/Cargo.toml --locked -p tosctl --features node-data-sync-native",
+        "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p node-data-sync --features native --lib operations::tests::native_stage_preserves_own_context_and_never_overlays_recovery_material -- --ignored --exact --nocapture | tee build/node-sync-native-preservation.log",
+        "grep -Fx 'NATIVE_STAGE_PRESERVATION_OK' build/node-sync-native-preservation.log",
+        "run: uv run python test/integration/node_store_native_reopen.py --root build/node-store-native-reopen --build build --reconstruct build/operator-rust-target/debug/examples/reconstruct_fixture --validate-generation build/operator-rust-target/debug/examples/capture_and_validate",
     )
     for command in required:
         require(
@@ -216,11 +221,29 @@ def validate_node_store_proof(text: str) -> None:
         )
 
 
+def validate_node_data_sync_callers(root: Path) -> None:
+    callers = {
+        "node_dump_cmd.rs": ("create",),
+        "node_sync_cmd.rs": ("restore", "recover", "complete"),
+        "backup_cmd.rs": ("backup",),
+    }
+    directory = root / "tosctl/src/node-control/commands/src/commands/nodectl"
+    for filename, operations in callers.items():
+        source = (directory / filename).read_text(encoding="utf-8")
+        require("node_store::" not in source, f"{filename} bypasses the shared typed-store policy")
+        for operation in operations:
+            call = f"node_data_sync::operations::{operation}("
+            require(
+                source.count(call) == 1, f"{filename} must use exactly one shared {operation} entry"
+            )
+
+
 def main() -> int:
     root = Path(__file__).resolve().parents[1]
     workflow = root / ".github/workflows/branch-chain-python.yml"
     text = workflow.read_text(encoding="utf-8")
     validate_node_store_proof(text)
+    validate_node_data_sync_callers(root)
     validate_triggers(text)
     # This workflow's purpose is to run on every pull request and push to main.
     # Refuse runtime conditions: a job- or step-level `if:` is
