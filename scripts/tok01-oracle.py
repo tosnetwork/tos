@@ -9,7 +9,6 @@ from pathlib import Path
 
 from pytosiq_core import Cell
 
-
 # Independent acceptance contract: matching counts alone cannot establish coverage.
 REQUIRED_STEPS = [
     "token deploy",

@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[3]
 
 def module(name):
     spec = importlib.util.spec_from_file_location(name, ROOT / f"scripts/{name}.py")
+    assert spec is not None and spec.loader is not None
     result = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(result)
     return result
