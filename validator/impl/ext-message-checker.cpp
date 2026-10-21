@@ -68,9 +68,17 @@ td::Status reject_special_cells_for_custom_compute(td::Ref<vm::Cell> root,
 
 }  // namespace
 
-td::actor::Task<ExtMessageChecker::CheckedExtMsg> ExtMessageChecker::check(td::BufferSlice data,
-                                                                           block::SizeLimitsConfig::ExtMsgLimits limits,
-                                                                           td::Ref<MasterchainState> mc_state) {
+td::actor::Task<ExtMessageChecker::CheckOutcome> ExtMessageChecker::check(
+    td::BufferSlice data, block::SizeLimitsConfig::ExtMsgLimits limits, td::Ref<MasterchainState> mc_state) {
+  auto failure = Failure::invalid;
+  auto result = co_await check_inner(std::move(data), limits, std::move(mc_state), failure).wrap();
+  const auto outcome = result.is_ok() ? Failure::none : failure;
+  co_return CheckOutcome{std::move(result), outcome};
+}
+
+td::actor::Task<ExtMessageChecker::CheckedExtMsg> ExtMessageChecker::check_inner(
+    td::BufferSlice data, block::SizeLimitsConfig::ExtMsgLimits limits, td::Ref<MasterchainState> mc_state,
+    Failure &failure) {
   CheckedExtMsg result;
   td::Timer timer;
   auto message = CO_TRY(create_ext_message(std::move(data), limits));
@@ -81,6 +89,7 @@ td::actor::Task<ExtMessageChecker::CheckedExtMsg> ExtMessageChecker::check(td::B
   StdSmcAddress addr = message->addr();
 
   timer = td::Timer();
+  failure = Failure::state_unavailable;
   auto config_snapshot = CO_TRY(resolve_config(mc_state));
   bool use_tvm = CO_TRY(check_workchain_execution(message, limits, *config_snapshot.config));
   if (!use_tvm) {
@@ -121,6 +130,7 @@ td::actor::Task<ExtMessageChecker::CheckedExtMsg> ExtMessageChecker::check(td::B
     }
   }
 
+  failure = Failure::vm_rejected;
   // Admission failures must not trigger a second VM execution just to collect logs.
   CO_TRY(
       ExtMessageQ::run_message_on_account(wc, &account, state.utime, state.lt + 1, message->root_cell(), *exec_config));

@@ -107,8 +107,9 @@ TEST(ExtMessageChecker, RejectsMalformedBagOfCellsBeforeStateLookup) {
                                 block::SizeLimitsConfig::ExtMsgLimits{}, td::Ref<MasterchainState>{})
             .wrap();
 
-    ASSERT_TRUE(result.is_error());
-    EXPECT(result.error().code() != ErrorCode::notready);
+    ASSERT_TRUE(result.is_ok());
+    ASSERT_TRUE(result.ok().result.is_error());
+    EXPECT(result.ok().result.error().code() != ErrorCode::notready);
     co_return td::Unit{};
   });
 }
@@ -123,9 +124,10 @@ TEST(ExtMessageChecker, ParsesValidMessageBeforeStateLookup) {
                                           block::SizeLimitsConfig::ExtMsgLimits{}, td::Ref<MasterchainState>{})
                       .wrap();
 
-    ASSERT_TRUE(result.is_error());
-    EXPECT_EQ(result.error().code(), ErrorCode::notready);
-    EXPECT_EQ(result.error().message(), "masterchain state is not ready");
+    ASSERT_TRUE(result.is_ok());
+    ASSERT_TRUE(result.ok().result.is_error());
+    EXPECT_EQ(result.ok().result.error().code(), ErrorCode::notready);
+    EXPECT_EQ(result.ok().result.error().message(), "masterchain state is not ready");
     co_return td::Unit{};
   });
 }
@@ -292,7 +294,8 @@ TEST(ExtMessageChecker, RejectedContractExecutesVmExactlyOnce) {
       auto result = co_await td::actor::ask(checker.get(), &ExtMessageChecker::check, encoded.move_as_ok(),
                                             state->get_ext_msg_limits(), state)
                         .wrap();
-      ASSERT_TRUE(result.is_error());
+      ASSERT_TRUE(result.is_ok());
+      ASSERT_TRUE(result.ok().result.is_error());
       co_return td::Unit{};
     });
   }

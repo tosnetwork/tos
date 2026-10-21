@@ -57,7 +57,7 @@ class ExtMessagePool : public td::actor::Actor, public metrics::AsyncCollector {
   // masterchain/basechain.
   void cleanup_expired_messages_all_workchains();
   void complete_external_messages(std::vector<ExtMessage::Hash> to_delay, std::vector<ExtMessage::Hash> to_delete);
-  void erase_external_messages(std::vector<ExtMessage::Hash> to_delete);
+  void erase_external_messages(BlockIdExt block_id, td::uint64 applied_count, std::vector<ExtMessage::Hash> to_delete);
 
   void update_last_masterchain_state(td::Ref<MasterchainState> state);
   void update_options(td::Ref<ValidatorManagerOptions> opts);
@@ -70,7 +70,7 @@ class ExtMessagePool : public td::actor::Actor, public metrics::AsyncCollector {
     promise.set_value(get_metrics_snapshot().collect());
   }
   std::optional<metrics::CollectionReservation> reservation() const override {
-    return metrics::labelled_metrics_reservation(2, 3, 1, 64, 128);
+    return metrics::labelled_metrics_reservation(6, 24, 1, 64, 128);
   }
 
   void alarm() override;
@@ -109,8 +109,12 @@ class ExtMessagePool : public td::actor::Actor, public metrics::AsyncCollector {
     }
   };
   struct MempoolMsg {
+    static constexpr double TTL = 600.0;
+
     td::Ref<ExtMessage> message;
     ExtMessage::Hash hash_norm;
+    MempoolMsg *older = nullptr;
+    MempoolMsg *newer = nullptr;
     td::uint32 generation = 0;
     bool active = true;
     td::Timestamp reactivate_at;
@@ -142,7 +146,7 @@ class ExtMessagePool : public td::actor::Actor, public metrics::AsyncCollector {
       return delete_at.is_in_past();
     }
     explicit MempoolMsg(td::Ref<ExtMessage> msg) : message(std::move(msg)), hash_norm(message->hash_norm()) {
-      delete_at = td::Timestamp::in(600);
+      delete_at = td::Timestamp::in(TTL);
     }
   };
 
@@ -179,11 +183,20 @@ class ExtMessagePool : public td::actor::Actor, public metrics::AsyncCollector {
   } checked_ext_msg_counter_;
   td::uint64 total_check_ext_messages_ok_{0}, total_check_ext_messages_error_{0};
   td::uint64 applied_ext_msgs_delete_requests_{0}, applied_ext_msgs_deleted_{0};
+  std::array<td::uint64, static_cast<size_t>(metrics::ExtMessageAdmissionOutcome::count)> admission_outcomes_{};
+  std::array<td::uint64, static_cast<size_t>(metrics::ExtMessageRemovalReason::count)> removal_reasons_{};
+  td::uint64 applied_ext_messages_master_{0}, applied_ext_messages_shard_{0};
+  MempoolMsg *oldest_ext_message_{nullptr};
+  MempoolMsg *newest_ext_message_{nullptr};
 
   td::Timestamp cleanup_mempool_at_ = td::Timestamp::now();
 
-  void add_message_to_mempool(td::Ref<ExtMessage> message, int priority);
-  bool erase_message(int priority, const MessageId &id);
+  metrics::ExtMessageAdmissionOutcome add_message_to_mempool(td::Ref<ExtMessage> message, int priority);
+  bool erase_message(int priority, MessageId id);
+  void link_message(MempoolMsg *message);
+  void unlink_message(MempoolMsg *message);
+  void record_admission(metrics::ExtMessageAdmissionOutcome outcome);
+  void record_removal(metrics::ExtMessageRemovalReason reason);
 
   // Parallel admission workers own the expensive, pool-independent validation stages. Shared
   // counters, mempool indexes and callback mutation remain serialized on this pool actor.
