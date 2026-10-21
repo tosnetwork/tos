@@ -17,9 +17,12 @@
     Copyright 2017-2020 Telegram Systems LLP
     Copyright 2025-2026 TOS Blockchain Teams
 */
+#include <algorithm>
 #include <exception>
+#include <limits>
 
 #include "block/block-auto.h"
+#include "block/block-parse.h"
 #include "block/block.h"
 #include "td/utils/crypto.h"
 #include "vm/cellslice.h"
@@ -525,6 +528,44 @@ td::Ref<vm::Cell> SmartContract::get_init_state() const {
   return GenericAccount::get_init_state(get_state().code, get_state().data);
 }
 
+namespace {
+
+td::Result<vm::GasLimits> external_message_limits(const SmartContract::Args& args) try {
+  auto workchain = args.address ? args.address.value().workchain : basechainId;
+  // Raw c7 is the VM's effective execution context, even when Args also has an address.
+  if (args.c7 && args.c7.value().not_null() && !args.c7.value()->empty()) {
+    auto info = args.c7.value()->at(0).as_tuple();
+    if (info.not_null() && info->size() > 8) {
+      auto address = info->at(8).as_slice();
+      if (address.not_null() && !address->empty_ext()) {
+        block::StdAddress parsed;
+        if (!block::tlb::t_MsgAddressInt.extract_std_address(address, parsed)) {
+          return td::Status::Error("Invalid external-message c7 address");
+        }
+        workchain = parsed.workchain;
+      }
+    }
+  }
+  td::uint64 limit = 1000000;
+  td::uint64 credit = workchain == masterchainId ? 10000 : 20000;
+  if (args.config && args.config.value()) {
+    TRY_RESULT(prices, args.config.value()->get_gas_limits_prices(workchain == masterchainId));
+    limit = prices.gas_limit;
+    credit = prices.gas_credit;
+  }
+  if (limit > static_cast<td::uint64>(std::numeric_limits<long long>::max()) ||
+      credit > static_cast<td::uint64>(std::numeric_limits<long long>::max())) {
+    return td::Status::Error("External-message gas limits exceed the VM range");
+  }
+  return vm::GasLimits(0, static_cast<long long>(limit), static_cast<long long>(std::min(credit, limit)));
+} catch (const vm::VmError& error) {
+  return td::Status::Error(td::Slice(error.get_msg()));
+} catch (const vm::VmVirtError& error) {
+  return td::Status::Error(td::Slice(error.get_msg()));
+}
+
+}  // namespace
+
 SmartContract::Answer SmartContract::run_method(Args args) {
   if (args.c7 && !args.config) {
     args.config = try_fetch_config_from_c7(args.c7.value());
@@ -539,8 +580,15 @@ SmartContract::Answer SmartContract::run_method(Args args) {
     }
     bool is_internal = r_method_id.ok() == 0;
 
-    args.limits = vm::GasLimits{is_internal ? (long long)args.amount * 1000 : (long long)0, (long long)1000000,
-                                is_internal ? 0 : (long long)10000};
+    if (is_internal) {
+      args.limits = vm::GasLimits{(long long)args.amount * 1000, 1000000, 0};
+    } else {
+      auto limits = external_message_limits(args);
+      if (limits.is_error()) {
+        return make_error_answer(get_state(), ~static_cast<td::int32>(vm::Excno::fatal), limits.error().message());
+      }
+      args.limits = limits.move_as_ok();
+    }
   }
   if (!args.stack) {
     return make_error_answer(get_state(), ~static_cast<td::int32>(vm::Excno::fatal), "Args has no stack");

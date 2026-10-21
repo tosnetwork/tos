@@ -610,6 +610,9 @@ target_link_libraries(test-ed25519 PRIVATE tos_crypto keys)
 add_executable(test-vm test/test-td-main.cpp ${TOSVM_TEST_SOURCE})
 target_link_libraries(test-vm PRIVATE tos_crypto fift-lib)
 
+add_executable(test-external-credit test/test-td-main.cpp crypto/test/test-external-credit.cpp)
+target_link_libraries(test-external-credit PRIVATE smc-envelope fift-lib)
+
 add_executable(test-smartcont test/test-td-main.cpp ${SMARTCONT_TEST_SOURCE})
 target_link_libraries(test-smartcont PRIVATE smc-envelope fift-lib tos_db tos_pq_consensus_signer tos_pq_consensus)
 target_compile_definitions(test-smartcont PRIVATE TOS_CRYPTO_BUILD_DIR="${CMAKE_CURRENT_BINARY_DIR}/crypto")
@@ -2211,6 +2214,7 @@ if(TARGET proof-persisted-fsync-shim)
   add_dependencies(all-tests proof-persisted-fsync-shim)
 endif()
 tos_test(test-emulator)
+tos_test(test-external-credit)
 # Keep the fee regressions in the PR selection without running the full emulator suite.
 add_test(NAME json-rpc-import-fee
   COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/scripts/run-jsonrpc-import-fee-tests.py $<TARGET_FILE:test-emulator>)
