@@ -118,6 +118,23 @@ fn preservation_distinguishes_absence_empty_and_arbitrary_existing_bytes() -> Re
 
 #[test]
 fn publication_checks_metadata_and_pruning_respects_capture_and_restore_leases() -> Result<()> {
+    #[derive(serde::Serialize, serde::Deserialize)]
+    struct WriteFault {
+        directory: std::path::PathBuf,
+        signed: node_data_sync::model::SignedManifest,
+        trusted: [u8; 32],
+    }
+    if let Some(request) = std::env::var_os("NODE_SYNC_CATALOG_WRITE_FAULT") {
+        let request: WriteFault = serde_json::from_slice(&std::fs::read(request)?)?;
+        let catalog = node_data_sync::catalog::Catalog::open(&request.directory, request.trusted)?;
+        let objects = node_data_sync::cas::Objects::open(&request.directory)?;
+        let writer = objects.writer()?;
+        let limit = libc::rlimit { rlim_cur: 128, rlim_max: 128 };
+        assert_eq!(unsafe { libc::setrlimit(libc::RLIMIT_FSIZE, &limit) }, 0);
+        unsafe { libc::signal(libc::SIGXFSZ, libc::SIG_DFL) };
+        catalog.begin_download(&request.signed, &writer, &"ef".repeat(32))?;
+        panic!("the file-size fault did not interrupt metadata writing");
+    }
     use chain_block::{Block, BlockInfo, Serializable, ShardIdent, ShardStateUnsplit};
     use node_data_sync::{
         cas::Objects,
@@ -243,6 +260,50 @@ fn publication_checks_metadata_and_pruning_respects_capture_and_restore_leases()
     );
     assert!(!cache_root.path.join(&partial).exists(), "orphaned partial transfer was retained");
     assert_eq!(catalog.list()?.len(), 2);
+    let mut interrupted = manifest.clone();
+    interrupted.created_utc = 3000;
+    let interrupted = SignedManifest::sign(interrupted, &key)?;
+    let interrupted_id = interrupted.verify(&key.verifying_key().to_bytes())?;
+    let fault_path = temp.path().join("write-fault.json");
+    std::fs::write(
+        &fault_path,
+        serde_json::to_vec(&WriteFault {
+            directory: objects.root_path().to_owned(),
+            signed: interrupted,
+            trusted: key.verifying_key().to_bytes(),
+        })?,
+    )?;
+    let child = std::process::Command::new(std::env::current_exe()?)
+        .args([
+            "--exact",
+            "publication_checks_metadata_and_pruning_respects_capture_and_restore_leases",
+        ])
+        .env("NODE_SYNC_CATALOG_WRITE_FAULT", fault_path)
+        .status()?;
+    assert!(!child.success(), "metadata interruption control did not fire");
+    let partial_public = cache_root
+        .path
+        .join(format!("generations/{interrupted_id}.json"))
+        .symlink_metadata()
+        .is_ok_and(|m| m.len() == 128);
+    let partial_private = std::fs::read_dir(cache_root.path.join("incoming"))?
+        .any(|entry| entry.is_ok_and(|entry| entry.metadata().is_ok_and(|m| m.len() == 128)));
+    assert!(
+        partial_public || partial_private,
+        "the interruption did not reach a partial metadata write"
+    );
+    let listed = catalog.list();
+    assert!(
+        listed.is_ok(),
+        "an interrupted metadata write exposed a partial generation: {listed:?}"
+    );
+    assert_eq!(listed?.len(), 2);
+    catalog.prune()?;
+    assert_eq!(
+        std::fs::read_dir(cache_root.path.join("incoming"))?.count(),
+        0,
+        "unreachable temporary metadata was retained"
+    );
     let mut bad = manifest;
     bad.network.global_id = 2;
     assert!(

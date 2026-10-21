@@ -229,6 +229,10 @@ pub fn create(
 pub fn restore(request: &RestoreRequest, operation_path: &Path) -> Result<Journal> {
     let preparation = preflight(request)?;
     let (signed, key) = selected(request)?;
+    ensure!(
+        signed.verify(&key)? == preparation.generation,
+        "selected generation changed during preflight"
+    );
     let objects = Objects::open(&request.cache)?;
     let catalog = Catalog::open(&request.cache, key)?;
     separate(objects.root_path(), &request.context.database)?;

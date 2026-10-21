@@ -88,9 +88,10 @@ impl Collector {
                 full_id(&common)?,
             ));
         }
-        let preliminary = observation.clone().status(&references, 0)?;
+        let evaluated_utc = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+        let preliminary = observation.clone().status_at(&references, 0, evaluated_utc)?;
         let stable = self.stability.observe(&preliminary, Instant::now())?;
-        observation.status(&references, stable)
+        observation.status_at(&references, stable, evaluated_utc)
     }
 }
 pub fn full_id(value: &BlockIdExt) -> Result<FullId> {

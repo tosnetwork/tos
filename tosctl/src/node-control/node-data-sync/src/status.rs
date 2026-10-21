@@ -65,6 +65,17 @@ impl Observation {
             initial_sync_complete,
         })
     }
+    /// Include all sampling latency in freshness, using one explicit evaluation time.
+    pub fn status_at(
+        mut self,
+        references: &[(String, FullId, FullId)],
+        stable_seconds: u64,
+        evaluated_utc: u64,
+    ) -> Result<SyncStatus> {
+        ensure!(evaluated_utc >= self.sampled_utc, "sample wall clock moved backwards");
+        self.sampled_utc = evaluated_utc;
+        self.status(references, stable_seconds)
+    }
     /// Each reference tuple carries its head and independently queried id at this node's height.
     pub fn status(
         self,
@@ -207,7 +218,9 @@ impl Stability {
         if let Some(last) = self.last {
             ensure!(now >= last, "status clock moved backwards");
         }
-        let gap = self.last.is_some_and(|last| now.duration_since(last).as_secs() > 30);
+        let gap = self
+            .last
+            .is_some_and(|last| now.duration_since(last) > std::time::Duration::from_secs(30));
         self.last = Some(now);
         let qualified = status.initial_sync_complete
             && status.block_age_seconds <= 30

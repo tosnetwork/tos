@@ -450,3 +450,47 @@ fn sparse_input_is_refused_but_identical_dense_zero_bytes_are_readable() -> Resu
     assert_eq!(root.bytes("dense", 1 << 20)?.len(), 1 << 20);
     Ok(())
 }
+
+#[test]
+fn status_freshness_includes_reference_query_latency_and_fractional_gaps() -> Result<()> {
+    let observation = Observation {
+        sampled_utc: 1000,
+        tip: id(10),
+        tip_utime: 990,
+        coherent_tip: Some(id(10)),
+        coherent_tip_utime: Some(990),
+        shard_client_seqno: 10,
+        initial_sync_complete: true,
+    };
+    let references = vec![("a".to_owned(), id(10), id(10)), ("b".to_owned(), id(10), id(10))];
+    assert_eq!(observation.clone().status_at(&references, 300, 1000)?.exit_code, 0);
+    let delayed = observation.clone().status_at(&references, 300, 1040)?;
+    assert_eq!(delayed.block_age_seconds, 50, "query latency was omitted from head age");
+    assert_eq!(delayed.exit_code, 2);
+    assert!(observation.clone().status_at(&references, 300, 999).is_err());
+    let qualified = observation.status_at(&references, 0, 1000)?;
+    let mut stability = node_data_sync::status::Stability::default();
+    let start = std::time::Instant::now();
+    stability.observe(&qualified, start)?;
+    assert_eq!(
+        stability.observe(&qualified, start + std::time::Duration::from_millis(30_001))?,
+        0,
+        "a gap longer than thirty seconds retained qualification"
+    );
+    Ok(())
+}
+
+#[test]
+fn disk_admission_reserves_space_and_refuses_overflow() -> Result<()> {
+    use node_data_sync::{
+        budget,
+        model::{FREE_FLOOR, TASK_LIMIT},
+    };
+    budget::admit(&[TASK_LIMIT - 1], 1, FREE_FLOOR + 1)?;
+    assert!(budget::admit(&[TASK_LIMIT], 1, FREE_FLOOR + 1).is_err());
+    assert!(budget::admit(&[0], 1, FREE_FLOOR).is_err());
+    assert!(budget::admit(&[u64::MAX, 1], 0, u64::MAX).is_err());
+    assert!(budget::admit(&[1], u64::MAX, u64::MAX).is_err());
+    assert!(budget::admit(&[0], 2, 1).is_err());
+    Ok(())
+}

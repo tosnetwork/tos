@@ -17,6 +17,12 @@ impl Catalog {
     pub fn create(path: &Path, trusted: [u8; 32]) -> Result<Self> {
         Ok(Self { root: Root::create(path)?, trusted })
     }
+    fn atomic_metadata(&self, path: &str, bytes: &[u8]) -> Result<()> {
+        // An interrupted write stays unreachable and can be pruned, never partially visible.
+        let temporary = format!("incoming/{:032x}.zst", rand::random::<u128>());
+        self.root.write_new(&temporary, bytes)?;
+        self.root.rename(&temporary, path)
+    }
     pub fn list(&self) -> Result<Vec<(String, SignedManifest)>> {
         self.list_locked()
     }
@@ -60,7 +66,7 @@ impl Catalog {
                 "generation identity conflict"
             );
         } else {
-            self.root.write_new(&name, &value.bytes()?)?;
+            self.atomic_metadata(&name, &value.bytes()?)?;
         }
         Ok(digest)
     }
@@ -78,8 +84,8 @@ impl Catalog {
             );
         }
         self.save_locked(value)?;
-        self.root.replace(&format!("complete/{digest}"), digest.as_bytes())?;
-        self.root.replace(&format!("leases/p-{digest}"), digest.as_bytes())?;
+        self.atomic_metadata(&format!("complete/{digest}"), digest.as_bytes())?;
+        self.atomic_metadata(&format!("leases/p-{digest}"), digest.as_bytes())?;
         Ok(digest)
     }
     /// HTTP publication remains a separate operation after creation and verification.
@@ -103,8 +109,8 @@ impl Catalog {
             );
         }
         let digest = self.save_locked(value)?;
-        self.root.replace(&format!("complete/{digest}"), digest.as_bytes())?;
-        self.root.replace("latest.json", &value.bytes()?)?;
+        self.atomic_metadata(&format!("complete/{digest}"), digest.as_bytes())?;
+        self.atomic_metadata("latest.json", &value.bytes()?)?;
         let lease = format!("leases/p-{digest}");
         if self.root.path.join(&lease).try_exists()? {
             self.root.unlink(&lease)?;
@@ -125,7 +131,11 @@ impl Catalog {
         );
         let _lock = self.root.lock("catalog.lock")?;
         let digest = self.save_locked(value)?;
-        self.root.write_new(&format!("leases/r-{operation}"), digest.as_bytes())?;
+        ensure!(
+            crate::safe_io::absent(&self.root.path.join(format!("leases/r-{operation}")))?,
+            "receiver lease already exists"
+        );
+        self.atomic_metadata(&format!("leases/r-{operation}"), digest.as_bytes())?;
         Ok(digest)
     }
     /// Pin a fully downloaded receiver generation while its writer still excludes pruning.
@@ -141,7 +151,7 @@ impl Catalog {
         verify_generation(value, objects, &self.trusted)?;
         let _lock = self.root.lock("catalog.lock")?;
         let digest = self.save_locked(value)?;
-        self.root.replace(&format!("complete/{digest}"), digest.as_bytes())?;
+        self.atomic_metadata(&format!("complete/{digest}"), digest.as_bytes())?;
         ensure!(
             self.root.bytes(&format!("leases/r-{operation}"), 64)? == digest.as_bytes(),
             "completed download does not match its durable lease"
@@ -156,7 +166,11 @@ impl Catalog {
             self.list_locked()?.iter().any(|(id, _)| id == generation),
             "lease generation unavailable"
         );
-        self.root.write_new(&format!("leases/r-{operation}"), generation.as_bytes())
+        ensure!(
+            crate::safe_io::absent(&self.root.path.join(format!("leases/r-{operation}")))?,
+            "receiver lease already exists"
+        );
+        self.atomic_metadata(&format!("leases/r-{operation}"), generation.as_bytes())
     }
     pub fn release(&self, operation: &str) -> Result<()> {
         hash(operation)?;

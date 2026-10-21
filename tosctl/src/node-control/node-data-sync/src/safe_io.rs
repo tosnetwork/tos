@@ -32,7 +32,9 @@ impl Root {
     pub fn create(path: &Path) -> Result<Self> {
         use std::os::unix::fs::DirBuilderExt;
         std::fs::DirBuilder::new().mode(0o700).create(path)?;
-        Self::open(path)
+        let root = Self::open(path)?;
+        Self::open(path.parent().context("private directory parent")?)?.sync()?;
+        Ok(root)
     }
     pub fn attached(&self) -> Result<()> {
         let held = self.directory.metadata()?;
@@ -171,6 +173,8 @@ impl Root {
             )
         };
         ensure!(result == 0, "rename failed: {}", std::io::Error::last_os_error());
+        File::from(from_dir).sync_all()?;
+        File::from(to_dir).sync_all()?;
         Ok(())
     }
     pub fn unlink(&self, path: &str) -> Result<()> {

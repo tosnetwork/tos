@@ -23,14 +23,19 @@ cargo build --manifest-path tosctl/src/Cargo.toml --locked --release \
   -p tosctl --features node-data-sync-native
 cargo build --manifest-path tosctl/src/Cargo.toml --locked --release \
   -p node-data-sync --features native --bin node-data-sync-worker
+install -m 0755 tosctl/src/target/release/tosctl /opt/node/bin/tosctl
+install -m 0755 tosctl/src/target/release/node-data-sync-worker \
+  /opt/node/bin/node-data-sync-worker
 sha256sum build/validator-engine/validator-engine \
-  tosctl/src/target/release/node-data-sync-worker
+  /opt/node/bin/node-data-sync-worker
 ```
 
 The native-enabled CLI provides creation, restoration and offline private backup.
 A build without that feature provides verification, catalog management and status,
 without exposing a restoration fallback. Keep the worker beside the installed
-operator tools and pin both executable digests in the private context.
+operator tools and pin both executable digests in the private context. Install
+regular copies: build outputs may be hard-linked, and the verifier refuses linked
+executables. Create the installation directory using the local operator policy.
 
 The invoking user must own the selected service and database. `systemctl` must
 be able to stop/start that exact unit. Native validation requires `unshare` with
