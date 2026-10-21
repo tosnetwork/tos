@@ -29,6 +29,7 @@ use chain_block::{
     BuilderData, Cell, Deserializable, IBitstring, MsgAddressInt, Serializable, SliceData,
     StateInit,
 };
+use contracts::service_actor::protocol_constants::MINIMUM_OPERATING_RESERVE;
 use contracts::{ServiceActorContract, ServiceActorData, ServiceActorInit};
 use ed25519_dalek::{Signer, SigningKey};
 use tos_sandbox::{Blockchain, MessageBuilder, SendResult, Treasury};
@@ -67,6 +68,7 @@ const ERR_REQUEST_NOT_LIVE: i32 = 1920;
 const ERR_INSUFFICIENT_BALANCE: i32 = 1921;
 const ERR_NOT_AUTHORIZED: i32 = 1923;
 const ERR_RATE_LIMITED: i32 = 1924;
+const ERR_OPERATING_RESERVE_UNFUNDED: i32 = 1928;
 
 struct Fixture {
     bc: Blockchain,
@@ -358,10 +360,10 @@ fn deploy_with_runtime_counters(
 
 fn stack_to_entries(stack: &[tos_vm::stack::StackItem]) -> Vec<tl_api::tos::tvm::StackEntry> {
     use tl_api::tos::tvm::{
-        Number, StackEntry,
         numberdecimal::NumberDecimal,
         slice,
         stackentry::{StackEntryNumber, StackEntrySlice},
+        Number, StackEntry,
     };
     stack
         .iter()
@@ -2288,7 +2290,13 @@ impl Fixture {
 
     fn floor(&self) -> u64 {
         let d = self.data();
-        d.pending_liability + d.refundable_liability + d.locked_storage_fees + TOS
+        d.pending_liability
+            .checked_add(d.refundable_liability)
+            .unwrap()
+            .checked_add(d.locked_storage_fees)
+            .unwrap()
+            .checked_add(MINIMUM_OPERATING_RESERVE)
+            .unwrap()
     }
 
     fn no_bounce(&mut self, sender: &MsgAddressInt, value: u64, body: Cell) -> SendResult {
@@ -2319,13 +2327,33 @@ fn solvency_source_matches_embedded_code() {
 fn solvency_admission_requires_preexisting_reserve() {
     let mut f = Fixture::solvency();
     let caller = f.caller.address().clone();
-    f.set_balance(TOS - 1);
+    f.set_balance(MINIMUM_OPERATING_RESERVE.checked_sub(1).unwrap());
     let before = f.state_hash();
     // Overpayment cannot stand in for the operator's independently funded reserve.
-    f.call(&caller, 1, [1; 32]).expect_aborted().expect_exit_code(1928);
+    f.call(&caller, 1, [1; 32]).expect_aborted().expect_exit_code(ERR_OPERATING_RESERVE_UNFUNDED);
     assert_eq!(f.state_hash(), before);
     f.set_balance(2 * TOS);
     f.call(&caller, 2, [1; 32]).expect_success();
+    assert!(f.balance(&f.service) >= f.floor());
+}
+
+#[test]
+fn solvency_admission_requires_existing_obligations() {
+    let mut f = Fixture::solvency();
+    let caller = f.caller.address().clone();
+    f.call(&caller, 1, [1; 32]).expect_success();
+    f.call(&caller, 2, [2; 32]).expect_success();
+    f.bc.set_now(f.request(0).unwrap().response_deadline as u32);
+    f.expire(&caller, 10, 0).expect_success();
+    assert!(f.data().pending_liability > 0 && f.data().refundable_liability > 0);
+    let floor = f.floor();
+    f.set_balance(floor.checked_sub(1).unwrap());
+    assert!(f.balance(&f.service) >= MINIMUM_OPERATING_RESERVE);
+    let before = f.state_hash();
+    f.call(&caller, 3, [3; 32]).expect_aborted().expect_exit_code(ERR_OPERATING_RESERVE_UNFUNDED);
+    assert_eq!(f.state_hash(), before);
+    f.set_balance(floor.checked_add(TOS).unwrap());
+    f.call(&caller, 4, [3; 32]).expect_success();
     assert!(f.balance(&f.service) >= f.floor());
 }
 
@@ -2334,7 +2362,7 @@ fn solvency_admission_reserves_after_fees_with_and_without_overpayment() {
     for excess in [0, TOS / 2] {
         let mut f = Fixture::solvency();
         let caller = f.caller.address().clone();
-        f.set_balance(TOS);
+        f.set_balance(MINIMUM_OPERATING_RESERVE);
         let before = f.state_hash();
         let value = f.init.price_per_call + f.init.storage_fee + excess;
         let body = ServiceActorContract::call(1, [1; 32], f.terms()).unwrap();
@@ -2386,7 +2414,9 @@ fn solvency_claim_preserves_other_entries_and_reserves_after_fees() {
     let before = f.state_hash();
     // Covers this price, but not the remaining pending + refund + locked + reserve.
     f.set_balance(floor_after + price - value - 1);
-    f.no_bounce(&caller, value, body.clone()).expect_aborted().expect_exit_code(1921);
+    f.no_bounce(&caller, value, body.clone())
+        .expect_aborted()
+        .expect_exit_code(ERR_INSUFFICIENT_BALANCE);
     assert_eq!(f.state_hash(), before);
     // Covers the compute-phase floor exactly, but cannot pay the transaction fees too.
     f.set_balance(floor_after + price - value);

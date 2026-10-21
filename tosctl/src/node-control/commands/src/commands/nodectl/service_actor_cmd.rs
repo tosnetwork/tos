@@ -28,7 +28,7 @@ use common::{
 use contracts::{
     PendingRequestData, RefundData, ServiceActorContract, ServiceActorData, ServiceActorInit,
 };
-use futures_util::{StreamExt, stream};
+use futures_util::{stream, StreamExt};
 use std::{path::Path, str::FromStr};
 
 const SERVICE_ACTOR_DEPLOY_GAS: u64 = 1_000_000; // 0.001 TOS
@@ -133,8 +133,8 @@ pub struct ServiceActorDeployCmd {
     from: String,
     #[arg(
         long,
-        default_value_t = 1.2,
-        help = "Deploy funding in TOS; minimum 1.2 (1 TOS reserve plus 0.2 fee margin)"
+        default_value_t = default_deploy_amount(),
+        help = deploy_funding_help()
     )]
     amount: f64,
     #[arg(short = 'w', long = "workchain", allow_negative_numbers = true, default_value_t = super::utils::USER_CONTRACT_WORKCHAIN)]
@@ -419,15 +419,37 @@ fn build_init(
     })
 }
 
+const DEPLOY_FEE_MARGIN: u64 = 200_000_000;
+const NANOTOS_PER_TOS: u64 = 1_000_000_000;
+const MINIMUM_DEPLOY_FUNDING: u64 =
+    match contracts::service_actor::protocol_constants::MINIMUM_OPERATING_RESERVE
+        .checked_add(DEPLOY_FEE_MARGIN)
+    {
+        Some(amount) => amount,
+        None => panic!("Service Actor deploy funding constant overflows"),
+    };
+
+fn default_deploy_amount() -> f64 {
+    MINIMUM_DEPLOY_FUNDING as f64 / NANOTOS_PER_TOS as f64
+}
+
+fn deploy_funding_help() -> String {
+    format!(
+        "Deploy funding in TOS; minimum {} ({} TOS reserve plus {} TOS fee margin)",
+        default_deploy_amount(),
+        contracts::service_actor::protocol_constants::MINIMUM_OPERATING_RESERVE as f64
+            / NANOTOS_PER_TOS as f64,
+        DEPLOY_FEE_MARGIN as f64 / NANOTOS_PER_TOS as f64
+    )
+}
+
 fn validate_deploy_amount(amount: f64) -> anyhow::Result<u64> {
     validate_tos_amount("amount", amount)?;
     let amount_nanotos = tos_to_nanotos(amount);
-    let minimum = contracts::service_actor::protocol_constants::MINIMUM_OPERATING_RESERVE
-        .checked_add(200_000_000)
-        .context("Service Actor deploy funding overflow")?;
     anyhow::ensure!(
-        amount_nanotos >= minimum,
-        "Service Actor deploy requires at least 1.2 TOS (1 TOS operating reserve plus 0.2 TOS fee margin)"
+        amount_nanotos >= MINIMUM_DEPLOY_FUNDING,
+        "Service Actor deploy requires at least {} TOS",
+        default_deploy_amount()
     );
     Ok(amount_nanotos)
 }
@@ -1358,8 +1380,14 @@ mod solvency_tests {
 
     #[test]
     fn service_deploy_default_funds_reserve_and_margin() {
-        assert_eq!(validate_deploy_amount(deploy_args().amount).unwrap(), 1_200_000_000);
-        assert!(validate_deploy_amount(1.199999999).is_err());
+        let minimum = contracts::service_actor::protocol_constants::MINIMUM_OPERATING_RESERVE
+            .checked_add(DEPLOY_FEE_MARGIN)
+            .unwrap();
+        assert_eq!(validate_deploy_amount(deploy_args().amount).unwrap(), minimum);
+        assert!(validate_deploy_amount(
+            minimum.checked_sub(1).unwrap() as f64 / NANOTOS_PER_TOS as f64
+        )
+        .is_err());
         assert!(validate_deploy_amount(1.0).is_err());
         assert!(validate_deploy_amount(0.2).is_err());
         assert!(validate_deploy_amount(f64::NAN).is_err());
@@ -1370,6 +1398,9 @@ mod solvency_tests {
         let mut cmd = deploy_args();
         cmd.amount = 0.2;
         let error = cmd.run("/nonexistent/service-solvency-config.json").await.unwrap_err();
-        assert!(error.to_string().contains("at least 1.2 TOS"), "{error:#}");
+        assert!(
+            error.to_string().contains(&format!("at least {} TOS", default_deploy_amount())),
+            "{error:#}"
+        );
     }
 }

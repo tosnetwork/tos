@@ -27,16 +27,19 @@ def main():
         (
             "admission funding",
             "admission_requires_preexisting_reserve",
-            "    throw_unless(err::operating_reserve_unfunded, balance >= msg_value);\n"
-            "    throw_unless(err::operating_reserve_unfunded,\n"
-            "      checked_sub_amount(balance, msg_value) >= MINIMUM_OPERATING_RESERVE);",
+            source[
+                source.index(
+                    "    throw_unless(err::operating_reserve_unfunded, balance >= msg_value);"
+                ) : source.index(
+                    "    reserve_obligations(admitted_pending, refundable_liability, admitted_locked);"
+                )
+            ],
             "",
         ),
         (
             "admission action reserve",
             "admission_reserves_after_fees_with_and_without_overpayment",
-            "    reserve_obligations(checked_add_amount(pending_liability, price_per_call),\n"
-            "      refundable_liability, checked_add_amount(locked_storage_fees, storage_fee));",
+            "    reserve_obligations(admitted_pending, refundable_liability, admitted_locked);",
             "",
         ),
         (
@@ -76,6 +79,20 @@ def main():
             claim[:check_start],
         )
     )
+    cases.append(
+        (
+            "admission existing obligations",
+            "admission_requires_existing_obligations",
+            source[
+                source.index(
+                    "    throw_unless(err::operating_reserve_unfunded, backing >= pending_liability);"
+                ) : source.index(
+                    "    throw_unless(err::operating_reserve_unfunded, backing >= MINIMUM_OPERATING_RESERVE);"
+                )
+            ],
+            "",
+        )
+    )
     cmd = [
         "cargo",
         "test",
@@ -90,9 +107,15 @@ def main():
     env = dict(os.environ, TOS_ROOT=str(ROOT), CARGO_TERM_COLOR="never")
     env.pop("SERVICE_ACTOR_SOLVENCY_SOURCE", None)
     green = subprocess.run(cmd + [PREFIX], cwd=ROOT, env=env, capture_output=True, text=True)
-    if green.returncode or "test result: ok. 6 passed" not in green.stdout:
-        raise RuntimeError("baseline did not run all six tests:\n" + green.stdout + green.stderr)
-    print("PASS: all six unmodified solvency tests", flush=True)
+    expected_tests = {PREFIX + case[1] for case in cases} | {
+        PREFIX + "source_matches_embedded_code"
+    }
+    passed_tests = set(re.findall(r"^test (solvency_\w+) \.\.\. ok$", green.stdout, re.MULTILINE))
+    if green.returncode or not expected_tests <= passed_tests:
+        raise RuntimeError(
+            "baseline did not pass every required test:\n" + green.stdout + green.stderr
+        )
+    print(f"PASS: {len(passed_tests)} unmodified solvency tests", flush=True)
     with tempfile.TemporaryDirectory(prefix="service-solvency-") as tmp:
         for include in re.findall(r'^#include "([^"\n]+)";', source, re.MULTILINE):
             (Path(tmp) / include).write_bytes((SOURCE.parent / include).read_bytes())
@@ -110,6 +133,7 @@ def main():
             output = result.stdout + result.stderr
             expected = {
                 "admission funding": "expected exit code 1928, got 0",
+                "admission existing obligations": "expected exit code 1928, got 0",
                 "refund early floor": "expected exit code 1921, got 0",
             }.get(label, "expected first transaction to be aborted, but it succeeded")
             if (

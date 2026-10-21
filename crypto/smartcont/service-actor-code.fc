@@ -153,8 +153,9 @@ const int MAXIMUM_CLEANUP_BOUNTY = 1000000000; ;; 1 TOS, 10x the floor
 const int MINIMUM_STORAGE_FEE = 100000000; ;; 0.1 TOS
 
 ;; Floor retained after successful admission and payout action phases.
-;; Rent and failed transactions still charge fees; an eroded service needs a
-;; separate top-up before it can admit more work or pay protected funds.
+;; Storage rent can erode backing; top up before admitting work or paying funds.
+;; A failed refund does not pause its deadline: after expiry, sweep releases the
+;; unclaimed price as owner revenue. Operators must replenish backing in time.
 const int MINIMUM_OPERATING_RESERVE = 1000000000; ;; 1 TOS
 
 ;; response_sla / refund_claim_window bounds. The lower bounds mirror
@@ -544,11 +545,18 @@ cell caller_live_decr(cell caller_live_counts, slice caller) inline {
     ;; bug) does not permanently lose the difference.
     ;; This payment belongs to the new request, not to the operator's reserve.
     int balance = get_balance().pair_first();
+    int admitted_pending = checked_add_amount(pending_liability, price_per_call);
+    int admitted_locked = checked_add_amount(locked_storage_fees, storage_fee);
     throw_unless(err::operating_reserve_unfunded, balance >= msg_value);
-    throw_unless(err::operating_reserve_unfunded,
-      checked_sub_amount(balance, msg_value) >= MINIMUM_OPERATING_RESERVE);
-    reserve_obligations(checked_add_amount(pending_liability, price_per_call),
-      refundable_liability, checked_add_amount(locked_storage_fees, storage_fee));
+    int backing = checked_sub_amount(balance, msg_value);
+    throw_unless(err::operating_reserve_unfunded, backing >= pending_liability);
+    backing = checked_sub_amount(backing, pending_liability);
+    throw_unless(err::operating_reserve_unfunded, backing >= refundable_liability);
+    backing = checked_sub_amount(backing, refundable_liability);
+    throw_unless(err::operating_reserve_unfunded, backing >= locked_storage_fees);
+    backing = checked_sub_amount(backing, locked_storage_fees);
+    throw_unless(err::operating_reserve_unfunded, backing >= MINIMUM_OPERATING_RESERVE);
+    reserve_obligations(admitted_pending, refundable_liability, admitted_locked);
     int overpayment = checked_sub_amount(payment_after_price, storage_fee);
     if (overpayment > 0) {
       send_value(sender, overpayment, 1);

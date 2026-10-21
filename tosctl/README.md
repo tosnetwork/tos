@@ -549,6 +549,13 @@ interfaces share that default:
 | Dispute and Proof Attestation deploy | `0` |
 | PredictionMarket | Explicit `workchain_id` in its definition; use `0` for user deployments |
 
+Service Actor deployment funds its operating reserve plus a fee margin. Operators
+must keep the reserve and all live liabilities funded as storage rent accrues.
+Refunds retain the operating reserve: if the service is short, replenish it before
+retrying `claim-refund`. A refusal does not pause the claim deadline; once it
+expires, `sweep-expired-request` releases the unclaimed price as owner revenue.
+This policy is unchanged by the solvency checks.
+
 An explicit `--workchain -1` remains supported. Existing addresses, signed
 messages, stored wallet configurations and frozen compatibility vectors are
 not migrated. Agent Account generations pin their workchain with the deployment ID, before
