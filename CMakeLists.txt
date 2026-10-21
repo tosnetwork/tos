@@ -820,6 +820,11 @@ target_include_directories(test-consensus-db-path PRIVATE ${CMAKE_CURRENT_SOURCE
                            ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
 target_link_libraries(test-consensus-db-path PRIVATE tos_crypto_core tdutils)
 
+add_executable(test-liteserver-cache test/test-td-main.cpp test/test-liteserver-cache.cpp)
+target_include_directories(test-liteserver-cache PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto ${CMAKE_CURRENT_SOURCE_DIR}/validator)
+target_link_libraries(test-liteserver-cache PRIVATE tos_crypto_core tdactor tdutils)
+
 add_executable(test-validator-cleanup test/test-td-main.cpp test/test-validator-cleanup.cpp)
 target_include_directories(test-validator-cleanup PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
                            ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
@@ -2105,6 +2110,8 @@ tos_test(test-json-rpc-source-ip)
 tos_test(test-json-rpc-listen-policy)
 tos_test(test-json-rpc-signing-payload)
 tos_test(test-consensus-db-path)
+tos_test(test-liteserver-cache)
+set_tests_properties(test-liteserver-cache PROPERTIES ENVIRONMENT TOS_MEMORY_DIAGNOSTICS=1)
 tos_test(test-validator-cleanup)
 tos_test(test-validator-cleanup-statedb)
 tos_test(test-validator-cleanup-worker)

@@ -75,7 +75,6 @@ jobs:
           -DCMAKE_BUILD_TYPE=Release
           -DTOS_ARCH=x86-64
           -DTOS_USE_JEMALLOC=ON
-          -DTOS_PRODUCTION_BUILD=ON
 
       - name: Build the chain fixtures and security regression targets
         run: |
@@ -98,7 +97,8 @@ jobs:
             test-download-refusal-answers test-consensus-retry-backoff test-bridge-retirement \
             test-block-accepter test-rldp2-refusal-lifetime \
             test-startup-catchup-policy test-startup-catchup-importer test-startup-catchup-driver \
-            test-startup-catchup-probe test-startup-catchup-manager test-startup-orphan-reconcile
+            test-startup-catchup-probe test-startup-catchup-manager test-startup-orphan-reconcile \
+            test-liteserver-cache
           ccache --show-stats
 
       # Answered capacity refusals through the download actors, their query
@@ -114,6 +114,11 @@ jobs:
           ctest --test-dir build --output-on-failure --no-tests=error -R '^test-bridge-retirement-nonzero$'
           ctest --test-dir build --output-on-failure --no-tests=error -R '^test-block-accepter$'
           ctest --test-dir build --output-on-failure --no-tests=error -R '^test-rldp2-refusal-lifetime$'
+
+      # The lite-server query cache bounds the memory it owns: entry count,
+      # private copies instead of slab views, idle expiry, oversized bypass.
+      - name: Verify the lite-server query cache bounds
+        run: ctest --test-dir build --output-on-failure --no-tests=error -R '^test-liteserver-cache$'
 
       # These security regressions previously ran only after merging to main.
       # Check registration too: ctest must not silently pass a reduced set.

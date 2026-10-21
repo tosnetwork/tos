@@ -31,6 +31,10 @@ on:
       - '.github/workflows/node-health-monitor.yml'
       - '.github/actions/native-cache/**'
   workflow_dispatch:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 jobs:

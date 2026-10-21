@@ -28,6 +28,10 @@ on:
       - "scripts/toscan-explorer-e2e.py"
       - ".github/workflows/tosctl-service.yml"
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 

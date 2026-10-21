@@ -105,6 +105,29 @@ const int err::not_authorized = 1923;
 const int err::rate_limited = 1924;
 const int err::weak_attestor = 1925;
 const int err::terms_mismatch = 1926;
+;; A coin computation left the range a Coins field can hold: a sum at or past
+;; 2^120, or a liability going negative. No sequence of this contract's own
+;; messages produces such a state, so it is never a caller's refusal code; it
+;; can only come from an accounting cell or dictionary supplied at deploy time.
+const int err::amount_range = 1927;
+
+;; ---- Coin arithmetic ------------------------------------------------------
+;; Every addition and subtraction of a coin amount goes through these two
+;; helpers, so the bound is stated where the arithmetic happens rather than
+;; left to the 257-bit integer width and the range check of store_tomis.
+const int MAX_COINS = 1329227995784915872903807060280344576; ;; 2^120, exclusive
+
+int checked_add_amount(int a, int b) impure inline {
+  throw_unless(err::amount_range, (a >= 0) & (b >= 0));
+  int total = a + b;
+  throw_unless(err::amount_range, total < MAX_COINS);
+  return total;
+}
+
+int checked_sub_amount(int a, int b) impure inline {
+  throw_unless(err::amount_range, (b >= 0) & (a >= b));
+  return a - b;
+}
 
 ;; The attestor signs: tag, network, this actor, then the request it answers.
 const int domain::respond = 0x53525032; ;; "SRP2"
@@ -455,12 +478,17 @@ cell caller_live_decr(cell caller_live_counts, slice caller) inline {
       (refund_claim_window <= MAX_REFUND_CLAIM_WINDOW));
     throw_unless(err::invalid_cleanup_bounty,
       (cleanup_bounty >= MINIMUM_CLEANUP_BOUNTY) & (cleanup_bounty <= MAXIMUM_CLEANUP_BOUNTY));
-    throw_unless(err::insufficient_storage_fee, storage_fee >= MINIMUM_STORAGE_FEE + cleanup_bounty);
+    throw_unless(err::insufficient_storage_fee,
+      storage_fee >= checked_add_amount(MINIMUM_STORAGE_FEE, cleanup_bounty));
     ;; Ported unchanged from the single-slot Service Actor: open access, or
     ;; the single authorized caller.
     throw_unless(err::not_authorized,
       (open_access == 1) | (has_authorized_caller & equal_slice_bits(sender, authorized_caller)));
-    throw_unless(err::insufficient_payment, msg_value >= price_per_call + storage_fee);
+    ;; The payment is checked in two steps against each part it must cover, so
+    ;; an underpayment is refused as such and no sum of policy values is formed.
+    throw_unless(err::insufficient_payment, msg_value >= price_per_call);
+    int payment_after_price = checked_sub_amount(msg_value, price_per_call);
+    throw_unless(err::insufficient_payment, payment_after_price >= storage_fee);
     throw_unless(err::capacity_exceeded_global, live_count < MAX_LIVE_GLOBAL);
     throw_unless(err::capacity_exceeded_caller,
       caller_live_count(caller_live_counts, sender) < MAX_LIVE_PER_CALLER);
@@ -502,7 +530,7 @@ cell caller_live_decr(cell caller_live_counts, slice caller) inline {
     ;; Only price_per_call + storage_fee is ever owed; refund the excess so a
     ;; caller who overpays (rounding, a wallet's gas-margin padding, a client
     ;; bug) does not permanently lose the difference.
-    int overpayment = msg_value - price_per_call - storage_fee;
+    int overpayment = checked_sub_amount(payment_after_price, storage_fee);
     if (overpayment > 0) {
       send_value(sender, overpayment, 1);
     }
@@ -511,7 +539,8 @@ cell caller_live_decr(cell caller_live_counts, slice caller) inline {
       policy_version, price_per_call, storage_fee, cleanup_bounty, response_sla,
       refund_claim_window, open_access, has_authorized_caller, authorized_caller,
       rate_limit_per_day, metadata_hash, proof_scheme_hash, has_attestor, attestor_pubkey,
-      withdrawable_revenue, locked_storage_fees + storage_fee, pending_liability + price_per_call,
+      withdrawable_revenue, checked_add_amount(locked_storage_fees, storage_fee),
+      checked_add_amount(pending_liability, price_per_call),
       refundable_liability, call_day, calls_today, pending_requests, refunds, caller_live_counts);
     return ();
   }
@@ -547,8 +576,10 @@ cell caller_live_decr(cell caller_live_counts, slice caller) inline {
     save_state(owner, active, next_request_id, pending_count - 1, live_count - 1, policy_version,
       price_per_call, storage_fee, cleanup_bounty, response_sla, refund_claim_window, open_access,
       has_authorized_caller, authorized_caller, rate_limit_per_day, metadata_hash,
-      proof_scheme_hash, has_attestor, attestor_pubkey, withdrawable_revenue + price +
-      req_storage_fee, locked_storage_fees - req_storage_fee, pending_liability - price,
+      proof_scheme_hash, has_attestor, attestor_pubkey,
+      checked_add_amount(withdrawable_revenue, checked_add_amount(price, req_storage_fee)),
+      checked_sub_amount(locked_storage_fees, req_storage_fee),
+      checked_sub_amount(pending_liability, price),
       refundable_liability, call_day, calls_today, pending_requests, refunds, caller_live_counts);
     return ();
   }
@@ -577,8 +608,8 @@ cell caller_live_decr(cell caller_live_counts, slice caller) inline {
       price_per_call, storage_fee, cleanup_bounty, response_sla, refund_claim_window, open_access,
       has_authorized_caller, authorized_caller, rate_limit_per_day, metadata_hash,
       proof_scheme_hash, has_attestor, attestor_pubkey, withdrawable_revenue, locked_storage_fees,
-      pending_liability - price, refundable_liability + price, call_day, calls_today,
-      pending_requests, refunds, caller_live_counts);
+      checked_sub_amount(pending_liability, price), checked_add_amount(refundable_liability, price),
+      call_day, calls_today, pending_requests, refunds, caller_live_counts);
     return ();
   }
 
@@ -607,8 +638,10 @@ cell caller_live_decr(cell caller_live_counts, slice caller) inline {
     save_state(owner, active, next_request_id, pending_count, live_count - 1, policy_version,
       price_per_call, storage_fee, cleanup_bounty, response_sla, refund_claim_window, open_access,
       has_authorized_caller, authorized_caller, rate_limit_per_day, metadata_hash,
-      proof_scheme_hash, has_attestor, attestor_pubkey, withdrawable_revenue + req_storage_fee,
-      locked_storage_fees - req_storage_fee, pending_liability, refundable_liability - price,
+      proof_scheme_hash, has_attestor, attestor_pubkey,
+      checked_add_amount(withdrawable_revenue, req_storage_fee),
+      checked_sub_amount(locked_storage_fees, req_storage_fee), pending_liability,
+      checked_sub_amount(refundable_liability, price),
       call_day, calls_today, pending_requests, refunds, caller_live_counts);
     return ();
   }
@@ -657,23 +690,43 @@ cell caller_live_decr(cell caller_live_counts, slice caller) inline {
     ;; deleted entry -- sweepers should call from an address that can
     ;; receive value reliably.
     ;; What the bounty leaves behind must still cover every other live entry's price and
-    ;; locked storage fee, plus the operating reserve.
-    throw_unless(err::insufficient_balance,
-      get_balance().pair_first() - req_cleanup_bounty >=
-        pending_liability + refundable_liability - price
-          + locked_storage_fees - req_storage_fee + MINIMUM_OPERATING_RESERVE);
+    ;; locked storage fee, plus the operating reserve. The entry's own price and fee leave
+    ;; their liabilities first, and the remaining obligations are then subtracted from the
+    ;; balance one at a time, so no intermediate sum is formed that the final state would
+    ;; not hold, and an unaffordable sweep is refused as insufficient balance.
+    int balance = get_balance().pair_first();
+    throw_unless(err::insufficient_balance, balance >= req_cleanup_bounty);
+    int remaining = checked_sub_amount(balance, req_cleanup_bounty);
+    int remaining_pending = pending_liability;
+    int remaining_refundable = refundable_liability;
+    if (came_from_pending) {
+      remaining_pending = checked_sub_amount(pending_liability, price);
+    } else {
+      remaining_refundable = checked_sub_amount(refundable_liability, price);
+    }
+    int remaining_locked = checked_sub_amount(locked_storage_fees, req_storage_fee);
+    throw_unless(err::insufficient_balance, remaining >= remaining_pending);
+    remaining = checked_sub_amount(remaining, remaining_pending);
+    throw_unless(err::insufficient_balance, remaining >= remaining_refundable);
+    remaining = checked_sub_amount(remaining, remaining_refundable);
+    throw_unless(err::insufficient_balance, remaining >= remaining_locked);
+    remaining = checked_sub_amount(remaining, remaining_locked);
+    throw_unless(err::insufficient_balance, remaining >= MINIMUM_OPERATING_RESERVE);
 
     if (came_from_pending) {
       (pending_requests, _) = pending_requests.udict_delete?(64, request_id);
       pending_count -= 1;
-      pending_liability -= price;
     } else {
       (refunds, _) = refunds.udict_delete?(64, request_id);
-      refundable_liability -= price;
     }
+    pending_liability = remaining_pending;
+    refundable_liability = remaining_refundable;
     caller_live_counts = caller_live_decr(caller_live_counts, caller);
-    withdrawable_revenue = withdrawable_revenue + price + req_storage_fee - req_cleanup_bounty;
-    locked_storage_fees -= req_storage_fee;
+    ;; The storage fee covered the bounty when the request was admitted, so the
+    ;; fee's net part is taken first and the credit never exceeds its own result.
+    int revenue_credit = checked_add_amount(price, checked_sub_amount(req_storage_fee, req_cleanup_bounty));
+    withdrawable_revenue = checked_add_amount(withdrawable_revenue, revenue_credit);
+    locked_storage_fees = remaining_locked;
     if (req_cleanup_bounty > 0) {
       send_value(sender, req_cleanup_bounty, 1);
     }
@@ -714,7 +767,7 @@ cell caller_live_decr(cell caller_live_counts, slice caller) inline {
       (new_cleanup_bounty >= MINIMUM_CLEANUP_BOUNTY) &
       (new_cleanup_bounty <= MAXIMUM_CLEANUP_BOUNTY));
     throw_unless(err::insufficient_storage_fee,
-      new_storage_fee >= MINIMUM_STORAGE_FEE + new_cleanup_bounty);
+      new_storage_fee >= checked_add_amount(MINIMUM_STORAGE_FEE, new_cleanup_bounty));
 
     ;; Per-request policy/attestor snapshots (see call()/compute_terms_hash)
     ;; mean already-outstanding requests are entirely unaffected by this --
@@ -763,9 +816,19 @@ cell caller_live_decr(cell caller_live_counts, slice caller) inline {
     in_msg.end_parse();
     ;; What live entries still need -- their prices, their locked storage fees and the
     ;; operating reserve -- is never the owner's to withdraw, whatever the revenue counter says.
-    int withdrawable_now = min(withdrawable_revenue,
-      get_balance().pair_first() - pending_liability - refundable_liability
-        - locked_storage_fees - MINIMUM_OPERATING_RESERVE);
+    ;; The obligations are subtracted from the balance one at a time: a balance that does
+    ;; not cover them refuses every withdrawal, the zero one included, as insufficient
+    ;; revenue, and no sum of obligations is formed along the way.
+    int remaining = get_balance().pair_first();
+    throw_unless(err::insufficient_revenue, remaining >= pending_liability);
+    remaining = checked_sub_amount(remaining, pending_liability);
+    throw_unless(err::insufficient_revenue, remaining >= refundable_liability);
+    remaining = checked_sub_amount(remaining, refundable_liability);
+    throw_unless(err::insufficient_revenue, remaining >= locked_storage_fees);
+    remaining = checked_sub_amount(remaining, locked_storage_fees);
+    throw_unless(err::insufficient_revenue, remaining >= MINIMUM_OPERATING_RESERVE);
+    remaining = checked_sub_amount(remaining, MINIMUM_OPERATING_RESERVE);
+    int withdrawable_now = min(withdrawable_revenue, remaining);
     throw_unless(err::insufficient_revenue, amount <= withdrawable_now);
     if (amount > 0) {
       send_value(owner, amount, 1);
@@ -773,7 +836,8 @@ cell caller_live_decr(cell caller_live_counts, slice caller) inline {
     save_state(owner, active, next_request_id, pending_count, live_count, policy_version,
       price_per_call, storage_fee, cleanup_bounty, response_sla, refund_claim_window, open_access,
       has_authorized_caller, authorized_caller, rate_limit_per_day, metadata_hash,
-      proof_scheme_hash, has_attestor, attestor_pubkey, withdrawable_revenue - amount,
+      proof_scheme_hash, has_attestor, attestor_pubkey,
+      checked_sub_amount(withdrawable_revenue, amount),
       locked_storage_fees, pending_liability, refundable_liability, call_day, calls_today,
       pending_requests, refunds, caller_live_counts);
     return ();
