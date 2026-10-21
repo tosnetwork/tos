@@ -2301,6 +2301,10 @@ add_test(NAME quic-expired-waiter-ownership COMMAND test-quic-sender
   -p 55000 -d tmp-dir-test-quic-waiter-ownership -f ExpiredWaiterReleasesOnlyUnstartedConnection)
 add_test(NAME quic-connection-waiter-limits COMMAND test-quic-sender
   -p 57000 -d tmp-dir-test-quic-waiter-limits -f ConnectionWaiter)
+add_test(NAME quic-connection-id-keyed-hash COMMAND test-quic-sender
+  -p 59000 -d tmp-dir-test-quic-cid-hash -f KeyedHashSpreadsIds)
+add_test(NAME quic-ngtcp2-error-names COMMAND test-quic-sender
+  -p 59500 -d tmp-dir-test-quic-error-names -f Ngtcp2ErrorsAreNamed)
 set_tests_properties(
   quic-inbound-stream-timeout
   quic-outbound-query-deadline
@@ -2313,6 +2317,8 @@ set_tests_properties(
   quic-query-expired-deadline
   quic-expired-waiter-ownership
   quic-connection-waiter-limits
+  quic-connection-id-keyed-hash
+  quic-ngtcp2-error-names
   test-adnl-peer-pair-cap
   test-overlay-broadcast-capacity
   test-http-server-limits

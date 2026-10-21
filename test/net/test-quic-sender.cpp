@@ -24,7 +24,10 @@
 #include <mutex>
 #include <netinet/in.h>
 #include <optional>
+#include <algorithm>
+#include <map>
 #include <set>
+#include <string>
 #include <sys/socket.h>
 #include <thread>
 #include <unistd.h>
@@ -42,10 +45,12 @@
 #include "common/errorcode.h"
 #include "keyring/keyring.h"
 #include "keys/keys.hpp"
+#include "quic/quic-pimpl.h"
 #include "quic/quic-sender.h"
 #include "quic/quic-server.h"
 #include "td/actor/coro_task.h"
 #include "td/actor/coro_utils.h"
+#include "td/utils/HashMap.h"
 #include "td/utils/OptionParser.h"
 #include "td/utils/Random.h"
 #include "td/utils/Time.h"
@@ -1903,6 +1908,98 @@ TEST(QuicSender, NoResponseTimeout) {
     LOG(INFO) << "Connection still works after no-response timeout";
     co_return td::Unit{};
   });
+}
+
+// Connection ids are looked up once per inbound datagram with a key taken from the wire. The
+// polynomial hash TOS used before (h = h * 31 + byte) lets a peer choose any number of ids with the
+// same hash: adding 1 to one byte and subtracting 31 from the next leaves it unchanged. The keyed
+// hash must spread exactly those ids.
+std::vector<tos::quic::QuicConnectionId> polynomial_hash_collisions(size_t pair_count) {
+  std::vector<tos::quic::QuicConnectionId> ids;
+  for (size_t mask = 0; mask < (size_t{1} << pair_count); mask++) {
+    td::uint8 raw[tos::quic::QuicConnectionId::MAX_SIZE];
+    std::fill(std::begin(raw), std::end(raw), td::uint8{64});
+    for (size_t pair = 0; pair < pair_count; pair++) {
+      if (mask & (size_t{1} << pair)) {
+        raw[2 * pair] += 1;
+        raw[2 * pair + 1] -= 31;
+      }
+    }
+    ids.push_back(tos::quic::QuicConnectionId::from_raw(raw, sizeof(raw)).move_as_ok());
+  }
+  return ids;
+}
+
+size_t polynomial_hash(const tos::quic::QuicConnectionId& cid) {
+  size_t h = 0;
+  for (auto c : cid.as_slice()) {
+    h = h * 31 + static_cast<td::uint8>(c);
+  }
+  return h;
+}
+
+TEST(QuicConnectionIdHash, KeyedHashSpreadsIdsThatCollideUnderThePolynomialHash) {
+  auto ids = polynomial_hash_collisions(10);
+  ASSERT_EQ(1024u, ids.size());
+  std::set<size_t> old_hashes;
+  std::set<size_t> keyed_hashes;
+  std::set<std::string> distinct_ids;
+  for (auto& id : ids) {
+    distinct_ids.insert(id.as_slice().str());
+    old_hashes.insert(polynomial_hash(id));
+    keyed_hashes.insert(td::Hash<tos::quic::QuicConnectionId>()(id));
+  }
+  ASSERT_EQ(ids.size(), distinct_ids.size());
+  // Every crafted id shares one polynomial hash...
+  ASSERT_EQ(1u, old_hashes.size());
+  // ...and gets its own keyed hash (64-bit values; a collision here is a defect, not bad luck).
+  ASSERT_EQ(ids.size(), keyed_hashes.size());
+
+  td::HashMap<tos::quic::QuicConnectionId, size_t> table;
+  for (size_t i = 0; i < ids.size(); i++) {
+    table.emplace(ids[i], i);
+  }
+  for (size_t i = 0; i < ids.size(); i++) {
+    auto it = table.find(ids[i]);
+    ASSERT_TRUE(it != table.end());
+    ASSERT_EQ(i, it->second);
+  }
+}
+
+// Lookup cost per datagram at realistic and maximal connection counts: the ordered map TOS used
+// before against the keyed hashed map. Prints the numbers; excluded from regular runs by the
+// benchmark filter.
+TEST(QuicConnectionIdHash, BenchLookupOrderedVersusHashed) {
+  for (size_t count : {size_t{100}, size_t{1000}, size_t{8192}}) {
+    std::vector<tos::quic::QuicConnectionId> ids;
+    std::map<tos::quic::QuicConnectionId, size_t> ordered;
+    td::HashMap<tos::quic::QuicConnectionId, size_t> hashed;
+    for (size_t i = 0; i < count; i++) {
+      ids.push_back(tos::quic::QuicConnectionId::random());
+      ordered.emplace(ids.back(), i);
+      hashed.emplace(ids.back(), i);
+    }
+    const size_t lookups = 2000000;
+    size_t sum = 0;
+    td::Timer ordered_timer;
+    for (size_t i = 0; i < lookups; i++) {
+      sum += ordered.find(ids[(i * 7919) % count])->second;
+    }
+    double ordered_ns = ordered_timer.elapsed() * 1e9 / lookups;
+    td::Timer hashed_timer;
+    for (size_t i = 0; i < lookups; i++) {
+      sum += hashed.find(ids[(i * 7919) % count])->second;
+    }
+    double hashed_ns = hashed_timer.elapsed() * 1e9 / lookups;
+    LOG(ERROR) << "connection-id lookup at " << count << " connections: ordered " << ordered_ns << " ns, hashed "
+               << hashed_ns << " ns (checksum " << sum << ")";
+  }
+}
+
+TEST(QuicConnectionIdHash, Ngtcp2ErrorsAreNamedInMessages) {
+  auto text = tos::quic::ngtcp2_err_str(NGTCP2_ERR_STREAM_ID_BLOCKED);
+  ASSERT_TRUE(text.find(std::to_string(NGTCP2_ERR_STREAM_ID_BLOCKED)) != std::string::npos);
+  ASSERT_TRUE(text.find("STREAM_ID_BLOCKED") != std::string::npos);
 }
 
 TEST(QuicSender, QueryExpiredDeadline) {
