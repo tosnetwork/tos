@@ -121,8 +121,8 @@ class Harness:
         self.record("checks.jsonl", {"step": self.current_step, **row})
         return row
 
-    def rpc(self, method, **params):
-        payload = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
+    def rpc(self, rpc_method, **params):
+        payload = {"jsonrpc": "2.0", "id": 1, "method": rpc_method, "params": params}
         request = urllib.request.Request(
             self.endpoint,
             data=json.dumps(payload).encode(),
@@ -136,7 +136,7 @@ class Harness:
             raise
         self.record("rpc.jsonl", {"request": payload, "response": result})
         if "error" in result or "result" not in result:
-            raise RuntimeError(f"{method}: {result}")
+            raise RuntimeError(f"{rpc_method}: {result}")
         return result["result"]
 
     def getter(self, account, method, stack=None):
