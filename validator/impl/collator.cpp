@@ -98,7 +98,7 @@ class WorkTimerGuard {
  * @param promise The promise to return the result.
  */
 Collator::Collator(CollateParams params, td::actor::ActorId<ValidatorManager> manager,
-                   td::CancellationToken cancellation_token, td::Promise<BlockCandidate> promise)
+                   td::CancellationToken cancellation_token, td::Promise<GeneratedCandidate> promise)
     : params_(std::move(params))
     , shard_(params_.shard)
     , prev_blocks(params_.prev)
@@ -112,6 +112,7 @@ Collator::Collator(CollateParams params, td::actor::ActorId<ValidatorManager> ma
                   })
     , cancellation_token_(std::move(cancellation_token)) {
   stats_.shard = shard_;
+  processed_external_messages_ = params_.processed_external_messages;
   if (params_.collator_opts.is_null()) {
     params_.collator_opts = Ref<CollatorOptions>{true};
   }
@@ -396,7 +397,8 @@ bool Collator::fatal_error(td::Status error) {
       CollateParams new_params = params_;
       ++new_params.attempt_idx;
       LOG(WARNING) << "Repeating collation (attempt #" << new_params.attempt_idx << ")";
-      run_collate_query(std::move(new_params), manager, std::move(cancellation_token_), std::move(main_promise));
+      run_collate_query_generated(std::move(new_params), manager, std::move(cancellation_token_),
+                                  std::move(main_promise));
     } else {
       LOG(INFO) << "collation failed in " << perf_timer_.elapsed() << " s " << error;
       LOG(INFO) << perf_log_;
@@ -4419,11 +4421,13 @@ td::actor::Task<bool> Collator::process_inbound_external_messages() {
       continue;
     }
     // Refusals are reported to the pool by normalized hash, and the pool removes every entry under
-    // it. A second message with the same normalized hash would fail once the first is included,
-    // and its refusal would then remove the included one too, so it is skipped unreported.
-    if (!processed_external_messages_.insert(ext_msg_ref->hash_norm()).second) {
+    // it. A message taken earlier in this leader window, by this collation or by the one for an
+    // earlier slot, would fail now that it is included, and its refusal would remove it from the
+    // pool before its block is final. It is skipped unreported.
+    if (processed_external_messages_.find(ext_msg_ref->hash_norm())) {
       continue;
     }
+    processed_external_messages_ = processed_external_messages_.insert(ext_msg_ref->hash_norm(), td::Unit{});
     if (register_external_message(ext_msg_ref, priority).is_error()) {
       ++stats_.ext_msgs_filtered;
       bad_ext_msgs_.emplace_back(ext_msg_ref->hash_norm());
@@ -6685,7 +6689,8 @@ void Collator::return_block_candidate(td::Result<td::Unit> saved, td::PerfLogAct
     finalize_stats();
     stats_.status = td::Status::OK();
     td::actor::send_closure(manager, &ValidatorManager::log_collate_query_stats, std::move(stats_));
-    main_promise.set_value(block_candidate->clone());
+    main_promise.set_value(GeneratedCandidate{.candidate = block_candidate->clone(),
+                                              .processed_external_messages = processed_external_messages_});
     busy_ = false;
     stop();
   }

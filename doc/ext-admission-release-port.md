@@ -39,10 +39,9 @@ were authored on 2026-08-27, integrated into the upstream test branch on
 Upstream `d85e3bec03694082def3ef8e3575f09058262239` contributes no new
 admission hunk: the target already checks serialized size before queueing and
 rechecks limits after waiting. Leader-window deduplication
-`468092512ebd2d4f1a61d207016ac3b345fc5017` is outside this subsystem alignment;
-its producer architecture is not imported. Its collator-loop part is ported
-within one collation (see C7), because the normalized removal of `0f18b86c`
-depends on it. Broad block-production phase timing,
+`468092512ebd2d4f1a61d207016ac3b345fc5017` is ported for the part the normalized
+removal of `0f18b86c` depends on: the leader-window set of processed external
+messages (see C7). Its metrics and unrelated candidate-type cleanups are not. Broad block-production phase timing,
 transport, consensus and whole-exporter migrations are also outside scope.
 
 ## Defaults and configuration
@@ -133,11 +132,15 @@ local admission policy and do not alter consensus or full transaction execution.
   entries; it does not reintroduce postponement. Refusals are reported by
   normalized hash and the pool removes every entry under that hash, so the
   collator skips, unreported, a second message whose normalized hash it has
-  already taken in the same collation; otherwise the second message's refusal
-  would also remove the first, already included one. This is the collator-loop
-  part of `468092512`, kept to one collation: no deduplication across a
-  producer window is claimed. As upstream, the backpressure skip now precedes
-  message validation.
+  already taken in the same leader window, by this collation or by the one for
+  an earlier slot of the window. The pool keeps an included message until its
+  block is applied, so without the skip the next slot would take it again, fail
+  it on replay protection, and its refusal would remove it before its block is
+  final. As in `468092512`, the block producer passes the set through
+  `CollateParams` and takes back the set of each candidate it uses
+  (`GeneratedCandidate`); callers that collate outside a leader window keep the
+  `BlockCandidate` form of `run_collate_query` and start from an empty set. As
+  upstream, the backpressure skip now precedes message validation.
 - **Collation retry statistics** follow `8b5fa7d5`. The release later replaced
   that external-only retry report with a full failed-attempt report
   (`932b7c89`), which is not ported; the counters here are local statistics only.

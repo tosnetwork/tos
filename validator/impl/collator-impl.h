@@ -80,7 +80,7 @@ class Collator final : public td::actor::Actor {
   td::actor::ActorId<ValidatorManager> manager;
   td::Timestamp timeout_;
   td::Timestamp queue_cleanup_timeout_, external_msg_timeout_, internal_msg_timeout_;
-  td::Promise<BlockCandidate> main_promise;
+  td::Promise<GeneratedCandidate> main_promise;
   bool allow_repeat_collation_ = false;
   tos::BlockSeqno last_block_seqno{0};
   tos::BlockSeqno prev_mc_block_seqno{0};
@@ -98,7 +98,7 @@ class Collator final : public td::actor::Actor {
 
  public:
   Collator(CollateParams params, td::actor::ActorId<ValidatorManager> manager, td::CancellationToken cancellation_token,
-           td::Promise<BlockCandidate> promise);
+           td::Promise<GeneratedCandidate> promise);
   ~Collator() override = default;
   bool is_busy() const {
     return busy_;
@@ -207,8 +207,8 @@ class Collator final : public td::actor::Actor {
   std::unique_ptr<vm::AugmentedDictionary> fees_import_dict_;
 
   std::set<td::Bits256> registered_ext_msgs_;
-  // Normalized hashes of the external messages this collation has taken from the pool.
-  std::set<td::Bits256> processed_external_messages_;
+  // Normalized hashes of the external messages taken in this leader window, this collation included.
+  td::PersistentTreap<td::Bits256, td::Unit> processed_external_messages_;
   ExtMsgQueue ext_msg_queue_;
   bool ext_msg_queue_initialized_{false};
   std::optional<std::pair<td::Ref<ExtMessage>, int>> pending_ext_msg_;
