@@ -25,24 +25,20 @@ spec.loader.exec_module(tok01)
 
 
 class SystemdBackend(ProcessBackend):
-    def __init__(self, prefix, container=None):
+    def __init__(self, prefix, runtime_libraries=None):
         self.prefix = prefix
-        self.container = container
+        self.runtime_libraries = runtime_libraries
         self.units = []
 
     async def spawn(self, node_name, executable, args, cwd, env, capture_stdout=False):
         unit = f"{self.prefix}-{node_name}"
         self.units.append(unit)
         command = [str(executable), *map(str, args)]
-        if self.container:
+        if self.runtime_libraries:
             command = [
-                "/usr/bin/docker",
-                "exec",
-                "--user",
-                f"{os.getuid()}:{os.getgid()}",
-                "--workdir",
-                str(cwd),
-                self.container,
+                str(self.runtime_libraries / "ld-linux-x86-64.so.2"),
+                "--library-path",
+                str(self.runtime_libraries),
                 *command,
             ]
         return await asyncio.create_subprocess_exec(
@@ -92,7 +88,7 @@ async def run(args):
     if shutil.disk_usage(args.runtime.parent).free < 240 * 1024**3:
         raise RuntimeError("Less than 240 GiB free before the 40 GiB budget")
     os.environ["TOS_AUTH_NETWORK_TAG"] = hashlib.sha256(args.prefix.encode()).hexdigest()
-    backend = SystemdBackend(args.prefix, args.node_container)
+    backend = SystemdBackend(args.prefix, args.runtime_libraries)
     subprocess.run(
         [
             "systemctl",
@@ -181,8 +177,9 @@ def main():
     parser.add_argument("--base-port", type=int, default=28600)
     parser.add_argument("--rpc-port", type=int, default=28680)
     parser.add_argument(
-        "--node-container",
-        help="Existing resource-capped runtime container; paths must match the host",
+        "--runtime-libraries",
+        type=Path,
+        help="Compatible loader and libraries for systemd-managed native nodes",
     )
     args = parser.parse_args()
     raise SystemExit(asyncio.run(run(args)))
