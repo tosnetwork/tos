@@ -4,6 +4,11 @@ on:
   workflow_dispatch:
   workflow_call:
 
+# Called from other workflows: a group of its own, so it never queues behind its caller.
+concurrency:
+  group: explorer-pq-validation-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
