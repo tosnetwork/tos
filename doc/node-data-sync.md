@@ -63,9 +63,20 @@ The invoking user must own the selected service and database. `systemctl` must
 be able to stop/start that exact unit. Native validation requires `unshare` with
 user and network namespaces; refusal to create one is fatal. The verifier uses
 fresh local credentials and isolated loopback, with no external network access.
+On an Ubuntu 24.04 operator host with the default
+`kernel.apparmor_restrict_unprivileged_userns=1` sysctl, the restore verifier needs
+root/CAP_SYS_ADMIN or an AppArmor user-namespace rule.
 A stopped copy is recoverable, not proof that every asynchronous write drained:
 every public generation undergoes native recovery, shard-state reads and a second
 reopen before it can be signed.
+
+Managed service commands use a conservative subset of native options, with a
+separate token for each option and value. Attached or clustered short options,
+long equals forms, duplicate path selectors, unknown options and positional tokens
+refuse before service stop. For example, use `-v 0`, not `-v0`. This restriction
+aligns with the native parser's supported arities without changing that parser
+(reference `857b8a57a178e6ae0fe7fa86e7d81c5233de8560`,
+`tdutils/td/utils/OptionParser.cpp:137–164`).
 
 ## Private context
 
@@ -89,6 +100,10 @@ placeholder below with independently held local values:
   "operator_config": "/srv/node/operator.json",
   "node_name": "local",
   "vault_config_files": [],
+  "references": {"sources": [
+    {"name": "reference-a", "endpoint": "https://reference-a.example.invalid/jsonRPC"},
+    {"name": "reference-b", "endpoint": "https://reference-b.example.invalid/jsonRPC"}
+  ]},
   "budget_roots": ["/srv/node", "/srv/node-sync", "/srv/node-build"]
 }
 ```
@@ -114,7 +129,9 @@ The source must be a non-validating full node: no validator registrations, nativ
 consensus signing custody or enabled operator election binding, including aliases.
 Supply an existing dedicated publisher seed file, owned by the invoking user,
 mode 0600, exactly 32 bytes. It must not be a validator key. The tool does not
-create publisher secrets. Keep that file outside the public catalog.
+create publisher secrets. Keep that file outside the entire source database, public catalog and every operation tree.
+The shared creation path checks its provenance before stopping and again before capture;
+symlinks, hard links, replacement and capture aliases refuse.
 
 ```sh
 install -d -m 700 /srv/node-sync/catalog
@@ -127,7 +144,9 @@ tosctl node dump verify --manifest /srv/node-sync/create-001/generation.json \
   --global-config held-global.json --global-id 3
 tosctl node dump publish --manifest /srv/node-sync/create-001/generation.json \
   --objects /srv/node-sync/catalog --directory /srv/node-sync/catalog \
-  --publisher-key <PINNED_PUBLIC_KEY> --global-config held-global.json --global-id 3
+  --publisher-key <PINNED_PUBLIC_KEY> --global-config held-global.json --global-id 3 \
+  --reference https://reference-a.example.invalid/jsonRPC \
+  --reference https://reference-b.example.invalid/jsonRPC
 tosctl node dump list --directory /srv/node-sync/catalog --publisher-key <PINNED_PUBLIC_KEY>
 tosctl node dump prune --directory /srv/node-sync/catalog --publisher-key <PINNED_PUBLIC_KEY>
 ```
@@ -138,6 +157,19 @@ If a capture fails, inspect the private operation and service state; no unverifi
 generation is published. All temporary-package files selected by the native
 allowlist are included; `archive/tmp` is staging and is excluded. Raw donor
 StateDb, keys, config, sessions and recovery files have no public payload variant.
+
+At least two named, distinct canonical reference endpoints are mandatory. Each
+must serve the exact native-validated frontier full ID and have a head at or above
+it. Creation checks before signing/preparing; publication checks freshly before
+updating latest. Restoration durably binds fresh evidence to the generation and
+preservation revision before `FORWARD_ONLY`, exchange and start. Old-installed
+recovery restages current own records and rechecks; new-installed recovery keeps
+the current tree and checks its current coherent frontier before restart. Any
+unavailable, behind or disagreeing named source refuses; there is no fallback.
+Endpoint independence is an operator assumption. A base URL and its `/jsonRPC`
+spelling identify the same source. Manifest and journal format 2 require these
+receipts; old formats refuse explicitly. The five-minute post-start check remains
+separate from this pre-exposure check.
 
 The catalog contains `latest.json`, signed `generations/<digest>.json` and
 `objects/<uncompressed-sha256>-<size>-<compressed-sha256>.zst`. Each object is
@@ -229,3 +261,29 @@ paced at no more than two requests/s each. A responding RPC alone is not sync.
 Exit codes: 0 at head, 2 catching up/observation timeout, 3 policy failure, 4 unknown
 or unavailable evidence. Distinct endpoint strings are not proof of independent
 operators; select independent references yourself.
+
+## Local qualification gate
+
+The PR remains draft until the private global-id-3 rehearsal passes on the fixed
+code. Component files standing in for votes do not prove signing-state safety.
+Two process-crash cases must use the real managed service, native signing journals
+and `sync recover`:
+
+- Interrupt at exchange syscall entry, after durable `FORWARD_ONLY`. Boot the old
+  installed tree, observe and independently verify a new own signed vote, then
+  stop it. Recovery must rebuild from those latest local records and preserve
+  them byte-for-byte before the replacement starts.
+- Interrupt at successful exchange syscall return, before acknowledgement. Boot
+  the new installed tree, observe a new valid own signed vote, then stop it.
+  Recovery must keep that installed inode and its newest records, without an old
+  overlay or rollback based on a missing start marker.
+
+Use fresh isolated fixtures for controls that reuse a stale overlay or roll back
+on a missing acknowledgement; their pre-start preservation assertions must fail.
+No signing record may be injected for a green run. Production engines, real
+system services and the actual recovery entry point are required. Keep fork and
+rotation checks, the smoke backlog of at least 10,000 blocks, the acceptance
+backlog of at least 172,800 blocks, measured phase durations, subsequent signing
+and transfer, and five minutes of two-reference qualification as separate gates.
+No public deployment, capture cadence or thirty-minute claim follows from the
+component receipts.

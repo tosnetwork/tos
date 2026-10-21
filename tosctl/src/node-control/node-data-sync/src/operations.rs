@@ -169,9 +169,10 @@ pub fn create(
     context: &NodeContext,
     operation_path: &Path,
     store: &Path,
-    signing_key: &ed25519_dalek::SigningKey,
+    publisher: &crate::publisher::PublisherSecret,
 ) -> Result<String> {
     context.validate_paths()?;
+    publisher.validate(&context.database, store, operation_path)?;
     context.source_role()?;
     let _lock = operation_lock(&context.database)?;
     let service = context.service();
@@ -195,7 +196,9 @@ pub fn create(
     let frozen = service.stop()?;
     // Repeat role checks after quiescence: configuration may have changed while stop settled.
     context.source_role()?;
-    let copied = capture::cold_image(&frozen, &Root::open(&context.database)?, &image)?;
+    publisher.validate(&context.database, store, operation_path)?;
+    let copied =
+        capture::cold_image_checked(&frozen, &Root::open(&context.database)?, &image, publisher)?;
     service.start(frozen)?;
     operation.write_new(
         "capture.json",
@@ -210,13 +213,17 @@ pub fn create(
     worker::validate(context, &image, &operation, vec![], permanent)?;
     let checked = Root::open(&operation.path.join("checked"))?;
     let objects = Objects::open(store)?;
+    let signing_key = publisher.signing_key();
     let catalog = Catalog::open(store, signing_key.verifying_key().to_bytes())?;
     let (_, policy) = context.policy()?;
     let signed = generation::assemble(
         &image,
         &checked,
-        &policy,
-        context.global_id,
+        generation::GenerationPolicy {
+            global_config: &policy,
+            global_id: context.global_id,
+            references: &context.references,
+        },
         &objects,
         signing_key,
         &catalog,
@@ -287,6 +294,12 @@ pub fn restore(request: &RestoreRequest, operation_path: &Path) -> Result<Journa
     )?;
     crate::budget::check_active()?;
     request.context.validate_paths()?;
+    let approval = request.context.references.corroborate(
+        &signed.manifest.network,
+        &signed.manifest.frontier,
+        &journal.reference_binding(),
+    )?;
+    journal.authorize(&operation, &approval)?;
     journal.forward_only(&operation)?;
     journal.exchange(&operation)?;
     drop(frozen);
@@ -439,7 +452,8 @@ fn stage(
     ensure!(preservation.len() as u64 <= MANIFEST_LIMIT, "private preservation receipt size limit");
     revision_root.write_new("preservation.json", &preservation)?;
     let journal = Journal {
-        version: 1,
+        version: 2,
+        corroboration_sha256: None,
         operation: operation_id.to_owned(),
         generation: signed.verify(&trusted(&request.publisher_key)?)?,
         old: TreeIdentity::read(&own.path)?,
@@ -465,6 +479,7 @@ fn start_installed(context: &NodeContext, operation: &Root, journal: &mut Journa
         journal.advance(operation, Phase::StartIssued)?;
     }
     let frozen = context.service().freeze()?;
+    journal.check_references(operation, true)?;
     context.service().start(frozen)?;
     if journal.phase == Phase::StartIssued {
         journal.advance(operation, Phase::CatchingUp)?;
@@ -483,13 +498,24 @@ pub fn recover(operation_path: &Path) -> Result<(NodeContext, Journal)> {
         Path::new(&journal.installed) == request.context.database,
         "journal and selected service root differ"
     );
+    let key = trusted(&request.publisher_key)?;
+    let signed = SignedManifest::parse(&operation.bytes("generation.json", MANIFEST_LIMIT)?, &key)?;
+    let (network, policy) = request.context.policy()?;
+    ensure!(
+        signed.verify(&key)? == journal.generation
+            && signed.manifest.network == network
+            && signed.manifest.approved_forks == approved_forks(&policy)?
+            && signed.manifest.source_build == request.context.engine_sha256
+            && signed.manifest.permanent_cells == request.context.service().permanent_cells()?,
+        "recovery generation differs from held policy, build or storage mode"
+    );
+    if journal.recovery()? == Recovery::NewContinueOnly {
+        journal.check_references(&operation, false)?;
+    }
     let frozen = request.context.service().stop()?;
     match journal.recovery()? {
         Recovery::OldRefreshRequired => {
             // The old root could have booted and signed: capture its latest local state, never reuse a stale overlay.
-            let key = trusted(&request.publisher_key)?;
-            let signed =
-                SignedManifest::parse(&operation.bytes("generation.json", MANIFEST_LIMIT)?, &key)?;
             let objects = Objects::open(&request.cache)?;
             verify_generation(&signed, &objects, &key)?;
             journal = stage(
@@ -504,9 +530,27 @@ pub fn recover(operation_path: &Path) -> Result<(NodeContext, Journal)> {
                 },
                 Some(&journal),
             )?;
+            let approval = request.context.references.corroborate(
+                &network,
+                &signed.manifest.frontier,
+                &journal.reference_binding(),
+            )?;
+            journal.authorize(&operation, &approval)?;
             journal.exchange(&operation)?;
         }
-        Recovery::NewContinueOnly => { /* Current local state is authoritative; never overlay old signing records. */
+        Recovery::NewContinueOnly => {
+            // A boot may have advanced this tree. Corroborate its current coherent frontier;
+            // never replace it with the original snapshot or overlay old signing records.
+            let store =
+                node_store::OfflineStore::open_existing(&request.context.database.join("state"))?;
+            let (current, _) = records::export(&store)?;
+            drop(store);
+            let approval = request.context.references.corroborate(
+                &network,
+                &current.frontier()?,
+                &journal.reference_binding(),
+            )?;
+            journal.authorize(&operation, &approval)?;
         }
     }
     drop(frozen);
@@ -587,7 +631,7 @@ mod tests {
             crate::safe_io::file_hash(crate::context::read_file(&engine, 1 << 30)?, 1 << 30)?.1;
         let worker_sha256 =
             crate::safe_io::file_hash(crate::context::read_file(&worker, 1 << 30)?, 1 << 30)?.1;
-        let context = NodeContext {
+        let mut context = NodeContext {
             unit: "fixture.service".to_owned(),
             user_manager: true,
             database: own.path.clone(),
@@ -603,12 +647,19 @@ mod tests {
             node_name: "fixture".to_owned(),
             budget_roots: vec![fixture.clone()],
             vault_config_files: vec![],
+            references: crate::references::ReferencePolicy { sources: vec![] },
         };
         let key = ed25519_dalek::SigningKey::from_bytes(&[42; 32]);
         let objects = Objects::open(&fixture.join("catalog"))?;
         let signed = Catalog::open(objects.root_path(), key.verifying_key().to_bytes())?
             .latest()?
             .context("published native generation")?;
+        let references = crate::test_references::References::new(
+            &signed.manifest.network,
+            &signed.manifest.frontier,
+            crate::test_references::Mode::Agree,
+        )?;
+        context.references = references.policy.clone();
         let request = RestoreRequest {
             context,
             manifest: fixture.join("unused.json"),
@@ -653,6 +704,12 @@ mod tests {
             "old recovery was overlaid onto imported cells"
         );
         assert!(own.path.join("tmp/persistent-state/target-only.celldb-rollback.receipt").exists());
+        let approval = references.policy.corroborate(
+            &signed.manifest.network,
+            &signed.manifest.frontier,
+            &journal.reference_binding(),
+        )?;
+        journal.authorize(&operation, &approval)?;
         journal.forward_only(&operation)?;
         journal.exchange(&operation)?;
         drop(frozen);

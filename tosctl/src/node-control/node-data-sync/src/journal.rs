@@ -40,6 +40,7 @@ pub struct Journal {
     pub installed: String,
     pub staged: String,
     pub preservation_sha256: String,
+    pub corroboration_sha256: Option<String>,
     pub target_anchor: FullId,
     pub phase: Phase,
 }
@@ -51,13 +52,16 @@ pub enum Recovery {
 impl Journal {
     pub fn validate(&self) -> Result<()> {
         ensure!(
-            self.version == 1
+            self.version == 2
                 && self.operation.len() == 32
                 && self.operation.bytes().all(|b| b.is_ascii_hexdigit()),
             "invalid restore journal identity"
         );
         hash(&self.generation)?;
         hash(&self.preservation_sha256)?;
+        if let Some(hash_value) = &self.corroboration_sha256 {
+            hash(hash_value)?;
+        }
         self.target_anchor.masterchain()?;
         ensure!(
             self.old.device == self.new.device && self.old.inode != self.new.inode,
@@ -86,11 +90,56 @@ impl Journal {
         result.validate()?;
         Ok(result)
     }
+    pub fn reference_binding(&self) -> String {
+        crate::model::sha256(
+            format!("TOS_NODE_EXPOSURE_V1\0{}{}", self.generation, self.preservation_sha256)
+                .as_bytes(),
+        )
+    }
+    pub fn authorize(
+        &mut self,
+        operation: &Root,
+        approval: &crate::references::Corroborated,
+    ) -> Result<()> {
+        let receipt = approval.receipt()?;
+        ensure!(
+            receipt.binding_sha256 == self.reference_binding()
+                && receipt.frontier.seqno >= self.target_anchor.seqno,
+            "reference approval belongs to another preservation revision or precedes its safety anchor"
+        );
+        let bytes = serde_json::to_vec(&receipt)?;
+        operation.replace("corroboration.json", &bytes)?;
+        self.corroboration_sha256 = Some(crate::model::sha256(&bytes));
+        self.write(operation)
+    }
+    pub fn check_references(
+        &self,
+        operation: &Root,
+        fresh: bool,
+    ) -> Result<crate::references::ReferenceReceipt> {
+        let digest = self
+            .corroboration_sha256
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("restore has no corroboration approval"))?;
+        let bytes = operation.bytes("corroboration.json", 1 << 20)?;
+        ensure!(&crate::model::sha256(&bytes) == digest, "restore corroboration receipt changed");
+        let receipt: crate::references::ReferenceReceipt = serde_json::from_slice(&bytes)?;
+        receipt.validate(&receipt.network, &receipt.frontier, &self.reference_binding())?;
+        ensure!(
+            receipt.frontier.seqno >= self.target_anchor.seqno,
+            "reference frontier precedes safety anchor"
+        );
+        if fresh {
+            receipt.ensure_fresh()?;
+        }
+        Ok(receipt)
+    }
     pub fn forward_only(&mut self, operation: &Root) -> Result<()> {
         ensure!(
             self.phase == Phase::Staged,
             "forward-only boundary cannot be cleared or re-entered"
         );
+        self.check_references(operation, true)?;
         self.phase = Phase::ForwardOnly;
         self.write(operation)
     }
@@ -106,6 +155,7 @@ impl Journal {
             "replacement exposed before durable forward-only boundary"
         );
         ensure!(installed == self.new && staged == self.old, "restore tree identity is ambiguous");
+        ensure!(self.corroboration_sha256.is_some(), "replacement exposed without corroboration");
         Ok(Recovery::NewContinueOnly)
     }
     pub fn exchange(&mut self, operation: &Root) -> Result<()> {
@@ -117,6 +167,7 @@ impl Journal {
             self.recovery()? == Recovery::OldRefreshRequired,
             "replacement is already installed"
         );
+        self.check_references(operation, true)?;
         atomic_exchange(Path::new(&self.installed), Path::new(&self.staged))?;
         self.phase = Phase::Exchanged;
         self.write(operation)

@@ -3,10 +3,7 @@ use crate::{
     status::{Observation, Stability, SyncStatus},
 };
 use anyhow::{Result, ensure};
-use chain_rpc_client::v2::{
-    client_json_rpc::{ClientJsonRpc, canonicalize_chain_rpc_endpoint},
-    data_models::BlockIdExt,
-};
+use chain_rpc_client::v2::{client_json_rpc::ClientJsonRpc, data_models::BlockIdExt};
 use control_client::{client_adnl::ControlClientAdnl, client_api::ClientAPI};
 use std::{
     collections::BTreeSet,
@@ -23,7 +20,7 @@ impl Collector {
         let mut unique = BTreeSet::new();
         let mut references = Vec::new();
         for endpoint in endpoints {
-            let (canonical, _) = canonicalize_chain_rpc_endpoint(endpoint)?;
+            let canonical = crate::references::canonical_endpoint(endpoint)?;
             ensure!(unique.insert(canonical.clone()), "duplicate named reference endpoint");
             references.push(ClientJsonRpc::connect(canonical, None)?);
         }

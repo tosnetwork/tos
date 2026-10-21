@@ -89,7 +89,12 @@ impl Catalog {
         Ok(digest)
     }
     /// HTTP publication remains a separate operation after creation and verification.
-    pub fn publish(&self, value: &SignedManifest, objects: &Objects) -> Result<String> {
+    pub fn publish(
+        &self,
+        value: &SignedManifest,
+        objects: &Objects,
+        references: &crate::references::ReferencePolicy,
+    ) -> Result<String> {
         ensure!(objects.root_path() == self.root.path, "catalog and object store differ");
         let _capture = objects.writer()?;
         verify_generation(value, objects, &self.trusted)?;
@@ -108,7 +113,16 @@ impl Catalog {
                 "same-height publication changes full block id"
             );
         }
-        let digest = self.save_locked(value)?;
+        let digest = value.verify(&self.trusted)?;
+        let approval =
+            references.corroborate(&value.manifest.network, &value.manifest.frontier, &digest)?;
+        let receipt = approval.receipt()?;
+        self.save_locked(value)?;
+        self.atomic_metadata(
+            &format!("publications/{digest}.json"),
+            &serde_json::to_vec(&receipt)?,
+        )?;
+        approval.receipt()?;
         self.atomic_metadata(&format!("complete/{digest}"), digest.as_bytes())?;
         self.atomic_metadata("latest.json", &value.bytes()?)?;
         let lease = format!("leases/p-{digest}");
@@ -230,6 +244,9 @@ impl Catalog {
                 self.root.unlink(&format!("generations/{id}.json"))?;
                 if self.root.path.join(format!("complete/{id}")).try_exists()? {
                     self.root.unlink(&format!("complete/{id}"))?;
+                }
+                if self.root.path.join(format!("publications/{id}.json")).try_exists()? {
+                    self.root.unlink(&format!("publications/{id}.json"))?;
                 }
                 deleted.push(id);
             }

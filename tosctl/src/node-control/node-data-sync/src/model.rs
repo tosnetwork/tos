@@ -228,15 +228,25 @@ pub struct Manifest {
     pub approved_forks: Vec<FullId>,
     pub validation: NativeValidation,
     pub capture: CaptureReceipt,
+    pub corroboration: crate::references::ReferenceReceipt,
     pub files: Vec<Object>,
 }
 impl Manifest {
     pub fn validate(&self) -> Result<()> {
         ensure!(
-            self.format == 1 && self.database_version == 2,
+            self.format == 2 && self.database_version == 2,
             "unsupported generation format or database schema"
         );
         self.network.validate()?;
+        self.corroboration.validate(
+            &self.network,
+            &self.frontier,
+            &sha256(&serde_json::to_vec(&self.validation)?),
+        )?;
+        ensure!(
+            self.corroboration.finished_utc <= self.created_utc,
+            "generation predates reference corroboration"
+        );
         ensure!(
             self.capture.method == "cold_copy"
                 && self.capture.started_utc <= self.capture.finished_utc

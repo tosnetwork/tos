@@ -333,55 +333,69 @@ fn validate_exec(
         tokens.first().is_some_and(|s| Path::new(s) == engine),
         "selected engine differs from service executable"
     );
-    for (flag, expected) in [("-D", database), ("-C", global)] {
-        let positions: Vec<_> = tokens
-            .iter()
-            .enumerate()
-            .filter(|(_, s)| {
-                **s == flag
-                    || (flag == "-D" && **s == "--db")
-                    || (flag == "-C" && **s == "--global-config")
-            })
-            .map(|(i, _)| i)
-            .collect();
+    let mut selectors: std::collections::BTreeMap<&str, Vec<&str>> = Default::default();
+    let mut index = 1;
+    while let Some(option) = tokens.get(index) {
+        let (canonical, takes_value) = canonical_option(option)?;
+        index += 1;
+        if takes_value {
+            let value = *tokens.get(index).context("service option requires a separate value")?;
+            index += 1;
+            selectors.entry(canonical).or_default().push(value);
+        }
+    }
+    for (flag, expected) in [("db", database), ("global-config", global)] {
+        let values = selectors.get(flag).context("service omitted a required path selector")?;
         ensure!(
-            positions.len() == 1
-                && tokens
-                    .get(positions[0] + 1)
-                    .is_some_and(|s| resolve_arg(work, s).is_ok_and(|path| path == expected)),
-            "service {flag} differs from selected path"
+            values.len() == 1 && resolve_arg(work, values[0])? == expected,
+            "service {flag} differs from selected path or is duplicated"
         );
     }
-    let locals: Vec<_> = tokens
-        .iter()
-        .enumerate()
-        .filter(|(_, s)| matches!(**s, "-c" | "--local-config"))
-        .map(|(index, _)| index)
-        .collect();
-    ensure!(locals.len() <= 1, "duplicate local configuration selection");
-    if let Some(index) = locals.first() {
+    if let Some(values) = selectors.get("local-config") {
         ensure!(
-            tokens.get(index + 1).is_some_and(|path| resolve_arg(work, path)
-                .is_ok_and(|path| path == database.join("config.json"))),
-            "local config is outside selected database"
+            values.len() == 1 && resolve_arg(work, values[0])? == database.join("config.json"),
+            "local config is duplicated or outside selected database"
         );
     }
-    ensure!(
-        !tokens.iter().any(|s| matches!(*s, "-T" | "-U" | "-F" | "-u")
-            || s.starts_with("--truncate-db")
-            || s.starts_with("--unsafe-catchain")
-            || s.starts_with("--test-")
-            || s.starts_with("--celldb-in-memory")
-            || s.starts_with("--user")
-            || s.starts_with("--import")
-            || s.starts_with("--local-config=")
-            || s.starts_with("--tmp")
-            || s.starts_with("--db=")
-            || s.starts_with("--global-config=")),
-        "destructive/debug, external recovery/import or overriding path is unsupported"
-    );
     Ok(())
 }
+// A deliberately restricted spelling/arity subset of the native option table, not a
+// second permissive parser. Unsupported native forms must be canonicalized by the operator.
+const SAFE_OPTIONS: &[(&str, &str, bool)] = &[
+    ("D", "db", true),
+    ("C", "global-config", true),
+    ("c", "local-config", true),
+    ("v", "verbosity", true),
+    ("t", "threads", true),
+    ("l", "logname", true),
+    ("", "initial-sync-delay", true),
+    ("", "celldb-cache-size", true),
+    ("", "celldb-cache-min-size", true),
+    ("", "json-rpc-address", true),
+    ("", "session-logs", true),
+    ("s", "state-ttl", true),
+    ("b", "block-ttl", true),
+    ("A", "archive-ttl", true),
+    ("K", "key-proof-ttl", true),
+    ("S", "sync-before", true),
+    ("", "permanent-celldb", false),
+    ("", "enable-validator-consensus-cleanup", false),
+    ("", "disable-validator-consensus-cleanup", false),
+    ("", "json-rpc-readonly", false),
+];
+fn canonical_option(option: &str) -> Result<(&'static str, bool)> {
+    for &(short, long, takes_value) in SAFE_OPTIONS {
+        if option.strip_prefix("--") == Some(long)
+            || (!short.is_empty() && option.strip_prefix('-') == Some(short))
+        {
+            return Ok((long, takes_value));
+        }
+    }
+    anyhow::bail!(
+        "unsupported service option {option:?}; use reviewed canonical options with separate values (no attached, clustered or equals forms)"
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -409,6 +423,65 @@ mod tests {
             "{ argv[]=/engine -D /private/db -C /global.json --celldb-in-memory ; x }",
         ] {
             assert!(check(s).is_err(), "accepted {s}");
+        }
+    }
+    #[test]
+    fn attached_clustered_and_alias_selectors_cannot_bypass_binding() {
+        let check = |extra: &str| {
+            validate_exec(
+                &format!("{{ argv[]=/engine -D /private/db -C /global.json {extra} ; x }}"),
+                Path::new("/engine"),
+                Path::new("/private/db"),
+                Path::new("/global.json"),
+                Path::new("/private"),
+            )
+        };
+        for extra in [
+            "-T1",
+            "-D/other",
+            "-C/other",
+            "-c/other",
+            "-MT1",
+            "-MD/other",
+            "-v3",
+            "--db=/other",
+            "--",
+            "positional",
+            "--unknown",
+        ] {
+            let error = check(extra).expect_err(extra).to_string();
+            assert!(
+                error.contains("unsupported service option"),
+                "wrong refusal for {extra}: {error}"
+            );
+        }
+        for extra in [
+            "--db /private/db",
+            "--global-config /global.json",
+            "-c /private/db/config.json --local-config /private/db/config.json",
+        ] {
+            assert!(check(extra).is_err(), "duplicate effective selector accepted: {extra}");
+        }
+        assert!(check("--verbosity -1 --threads 4 --json-rpc-readonly").is_ok());
+        assert!(
+            check("--logname -T1").is_ok(),
+            "a native option argument was reinterpreted as an option"
+        );
+    }
+    #[test]
+    fn service_subset_arity_matches_native_registrations() {
+        let source = include_str!("../../../../../validator-engine/validator-engine.cpp");
+        for &(_, long, takes_value) in SAFE_OPTIONS {
+            let needle = format!("\"{long}\"");
+            let registration =
+                source.split("p.add_").find(|part| part.contains(&needle)).expect(long);
+            let callback = registration.find("[&]").expect("native callback");
+            let tail = &registration[callback..];
+            assert_eq!(
+                tail.starts_with("[&](td::Slice"),
+                takes_value,
+                "native arity changed: {long}"
+            );
         }
     }
 }

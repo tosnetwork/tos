@@ -1,3 +1,5 @@
+#[path = "support/references.rs"]
+mod reference_fixture;
 use anyhow::Result;
 use node_data_sync::{
     model::FullId,
@@ -190,7 +192,13 @@ fn publication_checks_metadata_and_pruning_respects_capture_and_restore_leases()
     files.sort_by(|a, b| a.path.cmp(&b.path));
     drop(writer);
     let mut manifest = Manifest {
-        format: 1,
+        format: 2,
+        corroboration: reference_fixture::historical_receipt(
+            &Network { global_id: 3, zero: zero_id.clone(), init: zero_id.clone() },
+            &tip,
+            &"12".repeat(32),
+            1000,
+        ),
         network: Network { global_id: 3, zero: zero_id.clone(), init: zero_id },
         frontier: tip.clone(),
         frontier_utime: 900,
@@ -223,11 +231,116 @@ fn publication_checks_metadata_and_pruning_respects_capture_and_restore_leases()
         },
         files,
     };
+    manifest.corroboration.binding_sha256 = sha256(&serde_json::to_vec(&manifest.validation)?);
+    let references = reference_fixture::References::new(
+        &manifest.network,
+        &manifest.frontier,
+        reference_fixture::Mode::Agree,
+    )?;
+    // Exercise the actual pre-sign assembly gate with native-format component artifacts.
+    // The separate engine fixture proves their provenance; this test proves ordering/refusal.
+    #[cfg(feature = "native")]
+    {
+        use base64::Engine;
+        let parent = Root::create(&temp.path().join("assembly"))?;
+        let image = Root::create(&parent.path.join("image"))?;
+        for name in ["celldb", "files", "archive", "static"] {
+            std::fs::create_dir(image.path.join(name))?;
+        }
+        image.write_new(
+            &format!("static/{}", manifest.network.zero.file_hash.to_uppercase()),
+            &zero_boc,
+        )?;
+        let checked = Root::create(&parent.path.join("checked"))?;
+        checked.write_new("state-records.cbor", &records.bytes()?)?;
+        checked.write_new("zero-state.boc", &zero_boc)?;
+        checked.write_new("tip-block.boc", &tip_boc)?;
+        parent.write_new("capture.json", &serde_json::to_vec(&manifest.capture)?)?;
+        let encode = |s: &str| -> Result<String> {
+            Ok(base64::engine::general_purpose::STANDARD.encode(hex::decode(s)?))
+        };
+        let policy = serde_json::to_vec(
+            &serde_json::json!({"validator":{"zero_state":{"workchain":-1,"shard":i64::MIN,"seqno":0,"root_hash":encode(&manifest.network.zero.root_hash)?,"file_hash":encode(&manifest.network.zero.file_hash)?}}}),
+        )?;
+        let mut validation = manifest.validation.clone();
+        validation.policy_sha256 = sha256(&policy);
+        checked.write_new(
+            "validation.json",
+            &serde_json::to_vec(&node_data_sync::engine::ValidationResult {
+                validation,
+                coverage: manifest.coverage.clone(),
+                ancestors: vec![manifest.network.zero.clone()],
+            })?,
+        )?;
+        for (index, mode) in [
+            reference_fixture::Mode::Agree,
+            reference_fixture::Mode::Behind,
+            reference_fixture::Mode::DifferentRoot,
+            reference_fixture::Mode::Unavailable,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let store = parent.path.join(format!("store-{index}"));
+            let catalog = Catalog::create(&store, key.verifying_key().to_bytes())?;
+            let objects = Objects::open(&store)?;
+            let refs =
+                reference_fixture::References::new(&manifest.network, &manifest.frontier, mode)?;
+            let result = node_data_sync::generation::assemble(
+                &image,
+                &checked,
+                node_data_sync::generation::GenerationPolicy {
+                    global_config: &policy,
+                    global_id: 3,
+                    references: &refs.policy,
+                },
+                &objects,
+                &key,
+                &catalog,
+            );
+            if index == 0 {
+                assert!(result.is_ok(), "positive assembly precondition: {result:?}");
+                assert_eq!(catalog.list()?.len(), 1);
+            } else {
+                let error = result.expect_err("generation signed without corroboration");
+                assert!(format!("{error:#}").contains("reference-2"), "wrong refusal: {error:#}");
+                assert!(
+                    catalog.list()?.is_empty(),
+                    "uncorroborated generation was signed/prepared"
+                );
+                assert!(!store.join("latest.json").exists());
+            }
+        }
+    }
     let mut ids = Vec::new();
     for n in 0..4 {
         manifest.created_utc = 1000 + n;
-        ids.push(catalog.publish(&SignedManifest::sign(manifest.clone(), &key)?, &objects)?);
+        ids.push(catalog.publish(
+            &SignedManifest::sign(manifest.clone(), &key)?,
+            &objects,
+            &references.policy,
+        )?);
     }
+    let before = catalog
+        .latest()?
+        .expect("positive publication precondition")
+        .verify(&key.verifying_key().to_bytes())?;
+    let disagree = reference_fixture::References::new(
+        &manifest.network,
+        &manifest.frontier,
+        reference_fixture::Mode::DifferentFile,
+    )?;
+    let mut refused = manifest.clone();
+    refused.created_utc += 1;
+    assert!(
+        catalog.publish(&SignedManifest::sign(refused, &key)?, &objects, &disagree.policy).is_err(),
+        "publication ignored a disagreeing named reference"
+    );
+    assert_eq!(
+        catalog.latest()?.expect("latest disappeared").verify(&key.verifying_key().to_bytes())?,
+        before,
+        "failed corroboration changed publication"
+    );
     let operation = "ab".repeat(32);
     catalog.lease(&operation, &ids[0])?;
     assert_eq!(catalog.prune()?, vec![ids[1].clone()]);
@@ -249,7 +362,10 @@ fn publication_checks_metadata_and_pruning_respects_capture_and_restore_leases()
     let object = &pending.manifest.files[0];
     let partial = format!("incoming/{}-{}.part", object.compressed_sha256, object.compressed_size);
     cache_root.write_new(&partial, b"interrupted transfer")?;
-    assert!(catalog.publish(&pending, &objects).is_err(), "incomplete generation was published");
+    assert!(
+        catalog.publish(&pending, &objects, &references.policy).is_err(),
+        "incomplete generation was published"
+    );
     assert!(catalog.prune()?.is_empty(), "in-progress receiver generation was pruned");
     assert!(cache_root.path.join(&partial).exists(), "in-progress partial object was pruned");
     catalog.release(&receiver)?;
@@ -306,12 +422,13 @@ fn publication_checks_metadata_and_pruning_respects_capture_and_restore_leases()
     );
     let mut bad = manifest;
     bad.network.global_id = 2;
+    bad.corroboration.network = bad.network.clone();
     assert!(
         node_data_sync::metadata::validate(&bad, &zero_boc, &tip_boc).is_err(),
         "public metadata accepted the wrong global id"
     );
     assert!(
-        catalog.publish(&SignedManifest::sign(bad, &key)?, &objects).is_err(),
+        catalog.publish(&SignedManifest::sign(bad, &key)?, &objects, &references.policy).is_err(),
         "publication accepted metadata from a different network"
     );
     Ok(())

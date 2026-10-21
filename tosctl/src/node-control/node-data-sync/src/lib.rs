@@ -15,7 +15,9 @@ pub mod metadata;
 pub mod model;
 pub mod native_validation;
 pub mod paths;
+pub mod publisher;
 pub mod records;
+pub mod references;
 pub mod safe_io;
 pub mod service;
 pub mod status;
@@ -25,3 +27,9 @@ pub mod trees;
 pub mod operations;
 #[cfg(feature = "native")]
 pub mod worker;
+
+#[cfg(test)]
+extern crate self as node_data_sync;
+#[cfg(test)]
+#[path = "../tests/support/references.rs"]
+mod test_references;

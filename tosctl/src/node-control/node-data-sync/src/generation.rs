@@ -11,16 +11,21 @@ use chain_block::{Block, Deserializable, read_single_root_boc};
 use ed25519_dalek::SigningKey;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+pub struct GenerationPolicy<'a> {
+    pub global_config: &'a [u8],
+    pub global_id: i32,
+    pub references: &'a crate::references::ReferencePolicy,
+}
 /// Assemble only a fully native-checked private image; no caller-supplied readiness flag.
 pub fn assemble(
     image: &Root,
     checked: &Root,
-    policy: &[u8],
-    global_id: i32,
+    policy: GenerationPolicy<'_>,
     objects: &Objects,
     signing_key: &SigningKey,
     catalog: &crate::catalog::Catalog,
 ) -> Result<SignedManifest> {
+    let GenerationPolicy { global_config: policy, global_id, references } = policy;
     let _frozen = Frozen::acquire(&image.path)?;
     let result: ValidationResult =
         serde_json::from_slice(&checked.bytes("validation.json", MANIFEST_LIMIT)?)?;
@@ -56,8 +61,14 @@ pub fn assemble(
     }
     files.sort_by(|a, b| a.path.cmp(&b.path));
     let frontier = result.validation.frontier.clone();
+    let approval = references.corroborate(
+        &network,
+        &frontier,
+        &crate::model::sha256(&serde_json::to_vec(&result.validation)?),
+    )?;
     let manifest = Manifest {
-        format: 1,
+        format: 2,
+        corroboration: approval.receipt()?,
         network,
         frontier,
         frontier_utime,
@@ -77,6 +88,7 @@ pub fn assemble(
     };
     // Bind the exact image to the independently held public anchor before making it signable.
     crate::metadata::validate(&manifest, &checked.bytes("zero-state.boc", MANIFEST_LIMIT)?, &tip)?;
+    approval.receipt()?;
     let signed = SignedManifest::sign(manifest, signing_key)?;
     crate::catalog::verify_generation(&signed, objects, &signing_key.verifying_key().to_bytes())?;
     catalog.prepare(&signed, &writer)?;

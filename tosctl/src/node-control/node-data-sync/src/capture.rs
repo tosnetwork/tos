@@ -10,6 +10,22 @@ use std::fs;
 /// Cold copy includes matched recovery material privately, before native reopen and public filtering.
 /// The source's identity and signing databases are never copied into the validation image.
 pub fn cold_image(frozen: &Frozen, source: &Root, image: &Root) -> Result<u64> {
+    cold_image_impl(frozen, source, image, None)
+}
+pub fn cold_image_checked(
+    frozen: &Frozen,
+    source: &Root,
+    image: &Root,
+    secret: &crate::publisher::PublisherSecret,
+) -> Result<u64> {
+    cold_image_impl(frozen, source, image, Some(secret))
+}
+fn cold_image_impl(
+    frozen: &Frozen,
+    source: &Root,
+    image: &Root,
+    secret: Option<&crate::publisher::PublisherSecret>,
+) -> Result<u64> {
     ensure!(frozen.root == source.path, "freeze belongs to another database root");
     let mut total = 0_u64;
     let mut count = 0_usize;
@@ -30,6 +46,9 @@ pub fn cold_image(frozen: &Frozen, source: &Root, image: &Root) -> Result<u64> {
             total = total.checked_add(file.size).context("capture byte count overflow")?;
             ensure!(total <= RAW_LIMIT, "captured native image exceeds raw byte ceiling");
             let path = format!("{name}/{}", file.path);
+            if let Some(secret) = secret {
+                secret.reject_input(&source.read(&path, file.size)?)?;
+            }
             trees::copy_file(source, &path, image, &path, file.size)?;
         }
         if !image.path.join(name).try_exists()? {

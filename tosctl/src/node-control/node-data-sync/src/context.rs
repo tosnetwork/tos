@@ -29,6 +29,7 @@ pub struct NodeContext {
     /// Every task-owned source, cache, staging and build root; include retained old operations.
     pub budget_roots: Vec<PathBuf>,
     pub vault_config_files: Vec<PathBuf>,
+    pub references: crate::references::ReferencePolicy,
 }
 impl NodeContext {
     pub fn load(path: &Path) -> Result<Self> {
@@ -68,6 +69,7 @@ impl NodeContext {
         }
     }
     pub fn validate_paths(&self) -> Result<()> {
+        self.references.normalized()?;
         ensure!(
             !self.node_name.is_empty() && self.node_name.len() <= 128,
             "missing or oversized configured node name"

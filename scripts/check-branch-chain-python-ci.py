@@ -229,13 +229,69 @@ def validate_node_data_sync_callers(root: Path) -> None:
     }
     directory = root / "tosctl/src/node-control/commands/src/commands/nodectl"
     for filename, operations in callers.items():
-        source = (directory / filename).read_text(encoding="utf-8")
+        source = (directory / filename).read_text(encoding="utf-8").split("#[cfg(test)]", 1)[0]
         require("node_store::" not in source, f"{filename} bypasses the shared typed-store policy")
         for operation in operations:
             call = f"node_data_sync::operations::{operation}("
             require(
                 source.count(call) == 1, f"{filename} must use exactly one shared {operation} entry"
             )
+
+    dump_source = (
+        (directory / "node_dump_cmd.rs").read_text(encoding="utf-8").split("#[cfg(test)]", 1)[0]
+    )
+    require(
+        "PublisherSecret::load(&args.signing_key)" in dump_source,
+        "publisher provenance bypasses shared policy",
+    )
+    require(
+        "ReferencePolicy::from_endpoints(&args.references)" in re.sub(r"\s+", "", dump_source),
+        "publication lacks named references",
+    )
+    require(
+        dump_source.count("catalog.publish(") == 1,
+        "publication must use the shared corroborated catalog entry",
+    )
+    core = root / "tosctl/src/node-control/node-data-sync/src"
+    operations = (core / "operations.rs").read_text(encoding="utf-8")
+    require(
+        "publisher.validate(&context.database, store, operation_path)?;" in operations,
+        "capture lacks publisher confinement",
+    )
+    create = operations.split("pub fn create(", 1)[1].split("pub fn restore(", 1)[0]
+    confinement = "publisher.validate(&context.database, store, operation_path)?;"
+    require(create.count(confinement) == 2, "publisher confinement must run before and after stop")
+    require(
+        create.index(confinement)
+        < create.index("service.stop()")
+        < create.rindex(confinement)
+        < create.index("capture::cold_image_checked("),
+        "publisher confinement must precede capture exposure",
+    )
+    restore = operations.split("pub fn restore(", 1)[1].split("struct StoppedTarget", 1)[0]
+    restore_positions = [
+        restore.find(call)
+        for call in (
+            "references.corroborate(",
+            "journal.authorize(",
+            "journal.forward_only(",
+            "journal.exchange(",
+        )
+    ]
+    require(
+        min(restore_positions) >= 0 and restore_positions == sorted(set(restore_positions)),
+        "restore must corroborate before the forward-only exposure boundary",
+    )
+    generation = (core / "generation.rs").read_text(encoding="utf-8")
+    generation_positions = [
+        generation.find(call)
+        for call in ("references.corroborate(", "SignedManifest::sign(", "catalog.prepare(")
+    ]
+    require(
+        min(generation_positions) >= 0
+        and generation_positions == sorted(set(generation_positions)),
+        "creation must corroborate before signing and preparation",
+    )
 
 
 def main() -> int:

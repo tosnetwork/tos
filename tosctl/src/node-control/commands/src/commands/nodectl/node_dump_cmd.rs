@@ -63,6 +63,9 @@ struct VerifyArgs {
 }
 #[derive(Args, Clone)]
 struct PublishArgs {
+    /// Two independently selected reference endpoints, each queried before publication
+    #[arg(long = "reference", required = true)]
+    references: Vec<String>,
     #[command(flatten)]
     verify: VerifyArgs,
     /// Must be the same store whose objects were verified
@@ -103,34 +106,16 @@ impl NodeDumpCmd {
             match action {
                 #[cfg(feature = "node-data-sync-native")]
                 DumpAction::Create(args) => {
-                    use std::os::unix::fs::{MetadataExt, PermissionsExt};
-                    ensure!(
-                        !args
-                            .signing_key
-                            .canonicalize()?
-                            .starts_with(args.directory.canonicalize()?),
-                        "publisher secret must remain outside the public catalog"
-                    );
-                    let metadata = args.signing_key.symlink_metadata()?;
-                    ensure!(
-                        metadata.file_type().is_file()
-                            && metadata.uid() == unsafe { libc::geteuid() }
-                            && metadata.permissions().mode() & 0o077 == 0,
-                        "publisher seed is not an owned private regular file"
-                    );
-                    let seed: [u8; 32] =
-                        node_data_sync::context::read_bytes(&args.signing_key, 32)?
-                            .try_into()
-                            .map_err(|_| anyhow::anyhow!("publisher seed length"))?;
                     let context = node_data_sync::context::NodeContext::load(&args.context)?;
-                    let key = ed25519_dalek::SigningKey::from_bytes(&seed);
+                    let publisher =
+                        node_data_sync::publisher::PublisherSecret::load(&args.signing_key)?;
                     println!(
                         "prepared generation {}",
                         node_data_sync::operations::create(
                             &context,
                             &args.operation,
                             &args.directory,
-                            &key
+                            &publisher
                         )?
                     );
                 }
@@ -154,7 +139,16 @@ impl NodeDumpCmd {
                     );
                     let (signed, objects, trusted) = verify(&args.verify)?;
                     let catalog = Catalog::open(&args.directory, trusted)?;
-                    println!("published generation {}", catalog.publish(&signed, &objects)?);
+                    println!(
+                        "published generation {}",
+                        catalog.publish(
+                            &signed,
+                            &objects,
+                            &node_data_sync::references::ReferencePolicy::from_endpoints(
+                                &args.references
+                            )?
+                        )?
+                    );
                 }
                 DumpAction::Prune(args) => {
                     let catalog = Catalog::open(&args.directory, key(&args.publisher_key)?)?;
@@ -165,5 +159,46 @@ impl NodeDumpCmd {
         })
         .await??;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+    #[derive(Parser)]
+    struct Cli {
+        #[command(flatten)]
+        dump: NodeDumpCmd,
+    }
+    #[test]
+    fn publication_accepts_repeatable_reference_flags() {
+        let parsed = Cli::try_parse_from([
+            "dump",
+            "publish",
+            "--manifest",
+            "manifest.json",
+            "--objects",
+            "catalog",
+            "--directory",
+            "catalog",
+            "--publisher-key",
+            "key",
+            "--global-config",
+            "global.json",
+            "--global-id",
+            "3",
+            "--reference",
+            "http://127.0.0.1:10001/jsonRPC",
+            "--reference",
+            "http://127.0.0.1:10002/jsonRPC",
+        ])
+        .expect("documented repeatable reference flags must parse");
+        let DumpAction::Publish(args) = parsed.dump.action else {
+            panic!("wrong action");
+        };
+        assert_eq!(args.references.len(), 2);
+        node_data_sync::references::ReferencePolicy::from_endpoints(&args.references)
+            .expect("two distinct documented endpoints");
     }
 }

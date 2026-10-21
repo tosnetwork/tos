@@ -9,6 +9,8 @@ import asyncio
 import hashlib
 import json
 import logging
+import socket
+from dataclasses import replace
 from pathlib import Path
 
 from toslib.toslibjson import ToslibError
@@ -57,8 +59,19 @@ async def run(root: Path, build: Path, reconstruct: Path, validate_generation: P
             ],
             env={"TOS_ROCKSDB_BLOCK_CACHE_SIZE": "134217728"},
         )
-        for node in validators:
-            await node.run(options)
+        reference_sockets = [socket.socket() for _ in range(2)]
+        for reference_socket in reference_sockets:
+            reference_socket.bind(("127.0.0.1", 0))
+        reference_addresses = [f"127.0.0.1:{sock.getsockname()[1]}" for sock in reference_sockets]
+        for reference_socket in reference_sockets:
+            reference_socket.close()
+        for index, node in enumerate(validators):
+            node_options = options
+            if index < 2:
+                node_options = replace(
+                    options, args=[*options.args, "--json-rpc-address", reference_addresses[index]]
+                )
+            await node.run(node_options)
         await source.run(options)
         await asyncio.wait_for(network.wait_mc_block(5), 180)
         client = await source.toslib_client()
@@ -95,6 +108,7 @@ async def run(root: Path, build: Path, reconstruct: Path, validate_generation: P
                 root / "checked-generation",
                 build / "validator-engine/validator-engine",
                 source.directory / "config.global.json",
+                *[f"http://{address}" for address in reference_addresses],
             )
             if await process.wait() != 0:
                 raise RuntimeError("native cold-generation validation refused the fixture")

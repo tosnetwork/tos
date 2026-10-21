@@ -1,3 +1,5 @@
+#[path = "support/references.rs"]
+mod reference_fixture;
 use anyhow::Result;
 use node_data_sync::{
     cas::Objects,
@@ -139,7 +141,8 @@ fn durable_boundary_survives_exchange_without_a_start_marker() -> Result<()> {
     new.write_new("vote", b"current signing state")?;
     let operation = Root::create(&tmp.path().join("operation"))?;
     let mut journal = Journal {
-        version: 1,
+        version: 2,
+        corroboration_sha256: None,
         operation: "ab".repeat(16),
         generation: "12".repeat(32),
         old: TreeIdentity::read(&installed)?,
@@ -152,6 +155,7 @@ fn durable_boundary_survives_exchange_without_a_start_marker() -> Result<()> {
     };
     journal.write(&operation)?;
     assert!(journal.exchange(&operation).is_err());
+    reference_fixture::authorize(&mut journal, &operation)?;
     journal.forward_only(&operation)?;
     journal.exchange(&operation)?;
     // Simulate a boot-started signer completing work before the restore process resumes.
@@ -177,7 +181,8 @@ fn interrupted_old_root_always_requires_refresh_and_ambiguity_refuses() -> Resul
     Root::create(&staged)?;
     let operation = Root::create(&tmp.path().join("operation"))?;
     let mut j = Journal {
-        version: 1,
+        version: 2,
+        corroboration_sha256: None,
         operation: "ab".repeat(16),
         generation: "12".repeat(32),
         old: TreeIdentity::read(&installed)?,
@@ -189,6 +194,7 @@ fn interrupted_old_root_always_requires_refresh_and_ambiguity_refuses() -> Resul
         phase: Phase::Staged,
     };
     j.write(&operation)?;
+    reference_fixture::authorize(&mut j, &operation)?;
     j.forward_only(&operation)?;
     Root::open(&installed)?.write_new("vote", b"signed during restart")?;
     assert_eq!(Journal::read(&operation)?.recovery()?, Recovery::OldRefreshRequired);
@@ -296,8 +302,14 @@ fn private_capture_preserves_config_absence_and_referenced_seeds() -> Result<()>
 
 fn manifest() -> node_data_sync::model::Manifest {
     use node_data_sync::model::{Manifest, NativeValidation, Network, Object};
-    Manifest {
-        format: 1,
+    let mut manifest = Manifest {
+        format: 2,
+        corroboration: reference_fixture::historical_receipt(
+            &reference_fixture::network(&id(10)),
+            &id(10),
+            &"12".repeat(32),
+            1000,
+        ),
         network: Network { global_id: 3, zero: id(0), init: id(0) },
         frontier: id(10),
         frontier_utime: 900,
@@ -340,7 +352,10 @@ fn manifest() -> node_data_sync::model::Manifest {
                 codec: "zstd".to_owned(),
             })
             .collect(),
-    }
+    };
+    manifest.corroboration.binding_sha256 =
+        node_data_sync::model::sha256(&serde_json::to_vec(&manifest.validation).unwrap());
+    manifest
 }
 
 #[test]
@@ -417,7 +432,8 @@ fn memory_only_forward_boundary_does_not_authorize_exchange() -> Result<()> {
     Root::create(&staged)?;
     let operation = Root::create(&tmp.path().join("operation"))?;
     let mut j = Journal {
-        version: 1,
+        version: 2,
+        corroboration_sha256: None,
         operation: "ab".repeat(16),
         generation: "12".repeat(32),
         old: TreeIdentity::read(&installed)?,
@@ -492,5 +508,102 @@ fn disk_admission_reserves_space_and_refuses_overflow() -> Result<()> {
     assert!(budget::admit(&[u64::MAX, 1], 0, u64::MAX).is_err());
     assert!(budget::admit(&[1], u64::MAX, u64::MAX).is_err());
     assert!(budget::admit(&[0], 2, 1).is_err());
+    Ok(())
+}
+
+#[test]
+fn publisher_secret_cannot_enter_capture_or_public_trees() -> Result<()> {
+    use node_data_sync::publisher::PublisherSecret;
+    use std::os::unix::fs::PermissionsExt;
+    let temp = tempfile::tempdir()?;
+    let root = Root::create(&temp.path().join("private"))?;
+    for name in ["db", "db/static", "catalog", "operations"] {
+        fs::create_dir(root.path.join(name))?;
+    }
+    let operation = root.path.join("operations/new");
+    for relative in [
+        format!("db/static/{}", "ab".repeat(32)),
+        "db/key".to_owned(),
+        "catalog/key".to_owned(),
+        "operations/new/key".to_owned(),
+    ] {
+        if relative.starts_with("operations/new/") {
+            fs::create_dir(&operation)?;
+        }
+        root.write_new(&relative, &[42; 32])?;
+        let key = PublisherSecret::load(&root.path.join(&relative))?;
+        let error = key
+            .validate(&root.path.join("db"), &root.path.join("catalog"), &operation)
+            .expect_err("secret overlap was accepted");
+        assert!(error.to_string().contains("publisher secret overlaps"), "wrong refusal: {error}");
+        fs::remove_file(root.path.join(&relative))?;
+        if operation.exists() {
+            fs::remove_dir(&operation)?;
+        }
+    }
+    root.write_new("publisher", &[42; 32])?;
+    let key = PublisherSecret::load(&root.path.join("publisher"))?;
+    key.validate(&root.path.join("db"), &root.path.join("catalog"), &operation)?;
+    symlink(root.path.join("publisher"), root.path.join("link"))?;
+    assert!(PublisherSecret::load(&root.path.join("link")).is_err());
+    fs::hard_link(root.path.join("publisher"), root.path.join("hard"))?;
+    assert!(key.validate(&root.path.join("db"), &root.path.join("catalog"), &operation).is_err());
+    fs::remove_file(root.path.join("hard"))?;
+    fs::set_permissions(root.path.join("publisher"), fs::Permissions::from_mode(0o644))?;
+    assert!(PublisherSecret::load(&root.path.join("publisher")).is_err());
+    fs::set_permissions(root.path.join("publisher"), fs::Permissions::from_mode(0o600))?;
+    fs::rename(root.path.join("publisher"), root.path.join("old"))?;
+    root.write_new("publisher", &[43; 32])?;
+    assert!(
+        key.validate(&root.path.join("db"), &root.path.join("catalog"), &operation).is_err(),
+        "post-stop key replacement was accepted"
+    );
+    assert!(!root.path.join("catalog/objects").exists(), "refusal wrote public objects");
+    Ok(())
+}
+
+#[test]
+fn exchange_requires_fresh_revision_bound_reference_evidence() -> Result<()> {
+    let temp = tempfile::tempdir()?;
+    let installed = Root::create(&temp.path().join("installed"))?;
+    let staged = Root::create(&temp.path().join("staged"))?;
+    let operation = Root::create(&temp.path().join("operation"))?;
+    let mut journal = Journal {
+        version: 2,
+        operation: "ab".repeat(16),
+        generation: "12".repeat(32),
+        old: TreeIdentity::read(&installed.path)?,
+        new: TreeIdentity::read(&staged.path)?,
+        installed: installed.path.to_str().unwrap().to_owned(),
+        staged: staged.path.to_str().unwrap().to_owned(),
+        preservation_sha256: "34".repeat(32),
+        corroboration_sha256: None,
+        target_anchor: id(1),
+        phase: Phase::Staged,
+    };
+    journal.write(&operation)?;
+    assert!(journal.forward_only(&operation).is_err(), "missing references authorized exposure");
+    reference_fixture::authorize(&mut journal, &operation)?;
+    journal.forward_only(&operation)?;
+    let original = operation.bytes("corroboration.json", 1 << 20)?;
+    let mut receipt: node_data_sync::references::ReferenceReceipt =
+        serde_json::from_slice(&original)?;
+    receipt.finished_utc -= 31;
+    receipt.started_utc = receipt.finished_utc;
+    for answer in &mut receipt.answers {
+        answer.observed_utc = receipt.finished_utc;
+    }
+    let bytes = serde_json::to_vec(&receipt)?;
+    operation.replace("corroboration.json", &bytes)?;
+    journal.corroboration_sha256 = Some(node_data_sync::model::sha256(&bytes));
+    journal.write(&operation)?;
+    assert!(journal.exchange(&operation).is_err(), "expired references authorized exchange");
+    assert_eq!(TreeIdentity::read(&installed.path)?, journal.old, "refusal exposed a new tree");
+    operation.replace("corroboration.json", &original)?;
+    journal.corroboration_sha256 = Some(node_data_sync::model::sha256(&original));
+    journal.preservation_sha256 = "56".repeat(32);
+    journal.write(&operation)?;
+    assert!(journal.exchange(&operation).is_err(), "another preservation revision reused approval");
+    assert_eq!(TreeIdentity::read(&installed.path)?, journal.old);
     Ok(())
 }

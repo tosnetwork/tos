@@ -1,22 +1,36 @@
 use anyhow::{Context, Result, ensure};
 use node_data_sync::{
-    capture::cold_image, engine::ValidationRequest, safe_io::Root, service::Frozen,
+    capture::cold_image_checked, engine::ValidationRequest, safe_io::Root, service::Frozen,
 };
 use std::{os::unix::fs::MetadataExt, path::Path, process::Command};
 fn main() -> Result<()> {
     let args: Vec<_> = std::env::args_os().collect();
     ensure!(
-        args.len() == 5,
-        "usage: capture_and_validate STOPPED_SOURCE PRIVATE_OPERATION ENGINE HELD_GLOBAL_CONFIG"
+        args.len() == 7,
+        "usage: capture_and_validate STOPPED_SOURCE PRIVATE_OPERATION ENGINE HELD_GLOBAL_CONFIG REFERENCE_1 REFERENCE_2"
     );
     let source = Root::open(Path::new(&args[1]))?;
     let operation = Root::create(Path::new(&args[2]))?;
+    let key_path =
+        operation.path.parent().context("fixture parent")?.join("fixture-publisher.seed");
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::write(&key_path, [42; 32])?;
+    std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o600))?;
+    let publisher = node_data_sync::publisher::PublisherSecret::load(&key_path)?;
+    publisher.validate(&source.path, &operation.path.join("catalog"), &operation.path)?;
+    let references = node_data_sync::references::ReferencePolicy::from_endpoints(
+        &args[5..]
+            .iter()
+            .map(|s| s.to_str().context("reference URL").map(str::to_owned))
+            .collect::<Result<Vec<_>>>()?,
+    )?;
     let image = Root::create(&operation.path.join("image"))?;
     let started = std::time::Instant::now();
     let capture_started =
         std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs();
     let frozen = Frozen::acquire(&source.path)?;
-    let bytes = cold_image(&frozen, &source, &image)?;
+    publisher.validate(&source.path, &operation.path.join("catalog"), &operation.path)?;
+    let bytes = cold_image_checked(&frozen, &source, &image, &publisher)?;
     drop(frozen);
     operation.write_new(
         "capture.json",
@@ -58,13 +72,16 @@ fn main() -> Result<()> {
     let signed = node_data_sync::generation::assemble(
         &image,
         &checked,
-        &std::fs::read(&request.global_config)?,
-        3,
+        node_data_sync::generation::GenerationPolicy {
+            global_config: &std::fs::read(&request.global_config)?,
+            global_id: 3,
+            references: &references,
+        },
         &objects,
         &key,
         &catalog,
     )?;
-    let digest = catalog.publish(&signed, &objects)?;
+    let digest = catalog.publish(&signed, &objects, &references)?;
     ensure!(catalog.list()?.len() == 1, "generation was not published");
     println!("NATIVE_COLD_GENERATION_VALIDATED copied_bytes={bytes} generation={digest}");
     Ok(())
