@@ -575,6 +575,7 @@ metrics::ExtMessageAdmissionOutcome ExtMessagePool::add_message_to_mempool(td::R
               << " to mempool: per address limit reached (limit=" << PER_ADDRESS_LIMIT << ")";
     return metrics::ExtMessageAdmissionOutcome::address_full;
   }
+  bool reprioritized = false;
   auto existing = ext_messages_hashes_.find(id.hash);
   if (existing != ext_messages_hashes_.end()) {
     int old_priority = existing->second.first;
@@ -584,6 +585,7 @@ metrics::ExtMessageAdmissionOutcome ExtMessagePool::add_message_to_mempool(td::R
       return metrics::ExtMessageAdmissionOutcome::duplicate;
     }
     erase_message(old_priority, id);
+    reprioritized = true;
   }
   auto hash_norm = msg->hash_norm;
   auto *msg_ptr = msg.get();
@@ -602,7 +604,8 @@ metrics::ExtMessageAdmissionOutcome ExtMessagePool::add_message_to_mempool(td::R
     }
     return false;
   });
-  return metrics::ExtMessageAdmissionOutcome::accepted;
+  return reprioritized ? metrics::ExtMessageAdmissionOutcome::reprioritized
+                       : metrics::ExtMessageAdmissionOutcome::accepted;
 }
 
 void ExtMessagePool::link_message(MempoolMsg *message) {

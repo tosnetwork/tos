@@ -72,8 +72,10 @@ td::actor::Task<ExtMessageChecker::CheckOutcome> ExtMessageChecker::check(
     td::BufferSlice data, block::SizeLimitsConfig::ExtMsgLimits limits, td::Ref<MasterchainState> mc_state) {
   auto failure = Failure::invalid;
   auto result = co_await check_inner(std::move(data), limits, std::move(mc_state), failure).wrap();
-  const auto outcome = result.is_ok() ? Failure::none : failure;
-  co_return CheckOutcome{std::move(result), outcome};
+  if (result.is_error()) {
+    co_return CheckOutcome{result.move_as_error(), failure};
+  }
+  co_return CheckOutcome{result.move_as_ok(), Failure::none};
 }
 
 td::actor::Task<ExtMessageChecker::CheckedExtMsg> ExtMessageChecker::check_inner(
@@ -123,7 +125,9 @@ td::actor::Task<ExtMessageChecker::CheckedExtMsg> ExtMessageChecker::check_inner
   auto& exec_config = exec_configs_[key];
   alarm_timestamp().relax(td::Timestamp::in(60.0));
   if (exec_config == nullptr) {
-    exec_config = CO_TRY(ExtMessageQ::ExecutionConfig::create(*config_snapshot.config, wc, state.utime, false));
+    // Publish only a fully initialized configuration. Rejections execute once.
+    auto config = CO_TRY(ExtMessageQ::ExecutionConfig::create(*config_snapshot.config, wc, state.utime, false));
+    exec_config = std::move(config);
     if (exec_configs_.size() > 16) {
       std::erase_if(exec_configs_,
                     [&](const auto& item) { return item.second == nullptr || item.first.utime + 60 < state.utime; });
