@@ -255,6 +255,10 @@ fn check_mode(configured: bool, running: Option<bool>, expected: Option<bool>) -
     Ok(())
 }
 fn command(command: &mut Command, budget: Duration) -> Result<String> {
+    #[cfg(all(test, feature = "native-lifecycle-tests"))]
+    if let Some(result) = crate::test_hooks::command(command) {
+        return result;
+    }
     // Bounded temporary output avoids pipe deadlock when the child fills stderr.
     let output = tempfile::tempfile()?;
     let child = command

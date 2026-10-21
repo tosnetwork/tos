@@ -303,6 +303,50 @@ def validate_node_data_sync_modes(root: Path) -> None:
         '.join("FORWARD_ONLY")' not in source,
         "restore boundary is the restore.json phase, not a standalone FORWARD_ONLY file",
     )
+    import tomllib
+
+    manifest = tomllib.loads((core.parent / "Cargo.toml").read_text())
+    features = manifest["features"]
+    pending = list(features.get("default", []))
+    seen = set()
+    while pending:
+        feature = pending.pop()
+        require(feature != "native-lifecycle-tests", "lifecycle hooks must not be default features")
+        if feature not in seen:
+            seen.add(feature)
+            pending.extend(features.get(feature, []))
+    build = (core.parent / "build.rs").read_text()
+    require(
+        "CARGO_FEATURE_NATIVE_LIFECYCLE_TESTS" in build
+        and '== Ok("release")' in build
+        and "native-lifecycle-tests is forbidden in the release build profile" in build,
+        "release profile must reject lifecycle test feature",
+    )
+    workflow = (root / ".github/workflows/branch-chain-python.yml").read_text()
+    for token in (
+        "--features native-lifecycle-tests --lib native_lifecycle:: -- --test-threads=1 --nocapture",
+        "rustc --edition=2024 tosctl/src/node-control/node-data-sync/build.rs -o build/node-sync-profile-check",
+        "if env CARGO_FEATURE_NATIVE_LIFECYCLE_TESTS=1 PROFILE=release build/node-sync-profile-check",
+        "grep -Fx 'PRODUCTION_COMPLETE_RETRY_OK'",
+        "grep -Fx 'PRODUCTION_RESTORE_STOP_CUT_OK'",
+        "grep -Fx 'PRODUCTION_RESTORE_PROCESS_EXIT_OK'",
+        "grep -Fx 'PRODUCTION_LIFECYCLE_MODES_OK'",
+    ):
+        require(token in workflow, "native lifecycle CI command or required result missing")
+    library = (core / "lib.rs").read_text()
+    require(
+        '#[cfg(all(test, feature = "native-lifecycle-tests"))]\nmod test_hooks;' in library,
+        "lifecycle hook module must be compiled only for unit tests",
+    )
+    for name in ("operations.rs", "service.rs", "cas.rs"):
+        text = (core / name).read_text()
+        calls = text.count("crate::test_hooks::")
+        guarded = re.findall(
+            r'#\[cfg\(all\(test,\s*feature = "native-lifecycle-tests"\)\)\]\s*'
+            r"(?:if let Some\(result\) = )?crate::test_hooks::",
+            text,
+        )
+        require(len(guarded) == calls, f"non-test lifecycle hook in {name}")
     create = source.split("pubfncreate(", 1)[1].split("pubfnrestore(", 1)[0]
     restore = source.split("pubfnrestore(", 1)[1].split("structStoppedTarget", 1)[0]
     recover = source.split("pubfnrecover(", 1)[1].split("pubfncomplete(", 1)[0]

@@ -200,6 +200,8 @@ pub fn create(
     context.source_role()?;
     service.require_mode(permanent)?;
     publisher.validate(&context.database, store, operation_path)?;
+    #[cfg(all(test, feature = "native-lifecycle-tests"))]
+    crate::test_hooks::boundary("before-capture")?;
     let copied =
         capture::cold_image_checked(&frozen, &Root::open(&context.database)?, &image, publisher)?;
     service.start_in_mode(frozen, permanent)?;
@@ -284,11 +286,17 @@ pub fn restore(request: &RestoreRequest, operation_path: &Path) -> Result<Journa
         verify_generation(&signed, &objects, &key)?;
         catalog.hold_download(&signed, &writer, &lease)?;
     }
+    #[cfg(all(test, feature = "native-lifecycle-tests"))]
+    crate::test_hooks::boundary("after-download")?;
     request.context.service().require_mode(signed.manifest.permanent_cells)?;
     prepare_stop(request, &signed, &operation, &operation_id)?;
     let frozen = request.context.service().stop()?;
+    #[cfg(all(test, feature = "native-lifecycle-tests"))]
+    crate::test_hooks::boundary("after-stop-before-stage")?;
     request.context.service().require_mode(signed.manifest.permanent_cells)?;
     let service_files = request.context.preservation_files()?;
+    #[cfg(all(test, feature = "native-lifecycle-tests"))]
+    crate::test_hooks::boundary("before-stage")?;
     let mut journal = stage(
         request,
         &signed,
@@ -774,6 +782,21 @@ pub fn complete(operation_path: &Path) -> Result<()> {
         serde_json::from_slice(&operation.bytes("request.json", MANIFEST_LIMIT)?)?;
     let _lock = operation_lock(&request.context.database)?;
     let mut journal = Journal::read(&operation)?;
+    let key = trusted(&request.publisher_key)?;
+    let signed = SignedManifest::parse(&operation.bytes("generation.json", MANIFEST_LIMIT)?, &key)?;
+    ensure!(
+        operation.bytes("operation-id", 32)? == journal.operation.as_bytes(),
+        "completed operation identity mismatch"
+    );
+    let objects = Objects::open(&request.cache)?;
+    let catalog = Catalog::open(&request.cache, key)?;
+    let operation_id = sha256(journal.operation.as_bytes());
+    let (_, generation) = catalog.verify_receiver(&signed, &objects, &operation_id, &operation)?;
+    ensure!(
+        generation == journal.generation
+            && Path::new(&journal.installed) == request.context.database,
+        "completed receiver context binding mismatch"
+    );
     if journal.phase == Phase::CatchingUp {
         journal.advance(&operation, Phase::Complete)?;
     }
@@ -781,8 +804,10 @@ pub fn complete(operation_path: &Path) -> Result<()> {
         journal.phase == Phase::Complete && journal.recovery()? == Recovery::NewContinueOnly,
         "restore is not completed on the replacement tree"
     );
-    Catalog::open(&request.cache, trusted(&request.publisher_key)?)?
-        .release(&sha256(journal.operation.as_bytes()))
+    catalog.release_completed(&signed, &objects, &operation_id, &operation)?;
+    #[cfg(all(test, feature = "native-lifecycle-tests"))]
+    crate::test_hooks::boundary("after-completion-lease-release")?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -874,96 +899,6 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    #[ignore = "requires an explicitly provisioned private id-3 service fixture"]
-    fn post_stop_process_exit_aborts_with_restart_guidance() -> Result<()> {
-        let path = std::env::var_os("NODE_SYNC_POST_STOP_REQUEST")
-            .context("private service request is required")?;
-        let request: RestoreRequest = serde_json::from_slice(&fs::read(&path)?)?;
-        let operation = Root::open(Path::new(&path).parent().context("operation parent")?)?;
-        if std::env::var_os("NODE_SYNC_POST_STOP_CHILD").is_some() {
-            let signed = SignedManifest::parse(
-                &operation.bytes("generation.json", MANIFEST_LIMIT)?,
-                &trusted(&request.publisher_key)?,
-            )?;
-            let id = String::from_utf8(operation.bytes("operation-id", 32)?)?;
-            let key = trusted(&request.publisher_key)?;
-            let objects = Objects::open(&request.cache)?;
-            let catalog = Catalog::open(&request.cache, key)?;
-            {
-                let writer = objects.writer()?;
-                catalog.begin_owned_download(
-                    &signed,
-                    &writer,
-                    &sha256(id.as_bytes()),
-                    &operation,
-                )?;
-            }
-            prepare_stop(&request, &signed, &operation, &id)?;
-            let frozen = request.context.service().stop()?;
-            let stop = read_stop(&request, &signed, &operation, &id)?;
-            if std::env::var_os("NODE_SYNC_PARTIAL_STAGE").is_some() {
-                let stage = Root::create(&operation.path.join(&stop.stage))?;
-                stage.write_new("partial", b"interrupted staging")?;
-            }
-            let mut inventory = Vec::new();
-            let own = Root::open(&request.context.database)?;
-            for file in trees::inventory(&own)? {
-                inventory.push((
-                    file.path.clone(),
-                    sha256(&own.bytes(&file.path, crate::model::RAW_LIMIT)?),
-                ));
-            }
-            operation.write_new("post-stop-inventory.json", &serde_json::to_vec(&inventory)?)?;
-            std::mem::forget(frozen);
-            std::process::exit(73);
-        }
-        let result = std::process::Command::new(std::env::current_exe()?)
-            .args([
-                "--ignored",
-                "--exact",
-                "operations::tests::post_stop_process_exit_aborts_with_restart_guidance",
-                "--nocapture",
-            ])
-            .env("NODE_SYNC_POST_STOP_CHILD", "1")
-            .status()?;
-        assert_eq!(result.code(), Some(73), "post-stop process-exit precondition");
-        let outcome = recover(&operation.path)?;
-        let RecoveryOutcome::Aborted(report) = outcome else {
-            anyhow::bail!("post-stop preparation was resumed")
-        };
-        assert_eq!(report.service_state, "inactive", "abort did not report the stopped service");
-        assert_eq!(
-            report.restart_command,
-            format!("systemctl --user start -- {}", request.context.unit),
-            "abort restart command lost the resolved selected unit"
-        );
-        let own = Root::open(&request.context.database)?;
-        let mut inventory = Vec::new();
-        for file in trees::inventory(&own)? {
-            inventory.push((
-                file.path.clone(),
-                sha256(&own.bytes(&file.path, crate::model::RAW_LIMIT)?),
-            ));
-        }
-        assert_eq!(
-            serde_json::to_vec(&inventory)?,
-            operation.bytes("post-stop-inventory.json", MANIFEST_LIMIT)?,
-            "abort changed original native data"
-        );
-        let stage = report.removed_stage.context("post-stop descriptor not reported")?;
-        assert!(!operation.path.join(stage).exists(), "post-stop staging was not cleaned");
-        assert_eq!(
-            request.context.service().abort_guidance()?.0,
-            "inactive",
-            "abort unexpectedly started the node"
-        );
-        assert!(
-            matches!(recover(&operation.path)?, RecoveryOutcome::Aborted(_)),
-            "repeat abort failed"
-        );
-        Ok(())
-    }
     #[test]
     #[ignore = "requires engine-created generation and a private network namespace; run the native fixture CI step"]
     fn native_stage_preserves_own_context_and_never_overlays_recovery_material() -> Result<()> {

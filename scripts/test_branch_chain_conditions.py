@@ -137,8 +137,16 @@ class StorageModeBoundaryTests(unittest.TestCase):
             root = Path(tmp)
             relative = Path("tosctl/src/node-control/node-data-sync/src")
             (root / relative).mkdir(parents=True)
-            for name in ("operations.rs", "service.rs"):
+            for name in ("operations.rs", "service.rs", "cas.rs", "lib.rs"):
                 shutil.copy2(checkout / relative / name, root / relative / name)
+            for relative_file in (
+                ".github/workflows/branch-chain-python.yml",
+                "tosctl/src/node-control/node-data-sync/Cargo.toml",
+                "tosctl/src/node-control/node-data-sync/build.rs",
+            ):
+                destination = root / relative_file
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(checkout / relative_file, destination)
             guard.validate_node_data_sync_modes(root)
             path = root / relative / "operations.rs"
             original = path.read_text()
@@ -186,6 +194,21 @@ class StorageModeBoundaryTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "standalone FORWARD_ONLY file"):
                 guard.validate_node_data_sync_modes(root)
             path.write_text(original)
+            guard.validate_node_data_sync_modes(root)
+            cargo = root / "tosctl/src/node-control/node-data-sync/Cargo.toml"
+            pristine = cargo.read_text()
+            cargo.write_text(
+                pristine.replace("default = []", 'default = ["native-lifecycle-tests"]')
+            )
+            with self.assertRaisesRegex(RuntimeError, "must not be default"):
+                guard.validate_node_data_sync_modes(root)
+            cargo.write_text(pristine)
+            build = root / "tosctl/src/node-control/node-data-sync/build.rs"
+            pristine = build.read_text()
+            build.write_text(pristine.replace('== Ok("release")', '== Ok("never")'))
+            with self.assertRaisesRegex(RuntimeError, "release profile must reject"):
+                guard.validate_node_data_sync_modes(root)
+            build.write_text(pristine)
             guard.validate_node_data_sync_modes(root)
             self.assertGreaterEqual(controls, 12)
 

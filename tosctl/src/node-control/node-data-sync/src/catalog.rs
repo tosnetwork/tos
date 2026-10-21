@@ -200,11 +200,20 @@ impl Catalog {
         operation: &str,
         record: &Root,
     ) -> Result<(Vec<u8>, String)> {
-        ensure!(objects.root_path() == self.root.path, "cache catalog and object store differ");
         ensure!(
             crate::safe_io::absent(&record.path.join("restore.json"))?,
             "journaled restore cannot use preparation abort"
         );
+        self.verify_receiver(value, objects, operation, record)
+    }
+    pub(crate) fn verify_receiver(
+        &self,
+        value: &SignedManifest,
+        objects: &Objects,
+        operation: &str,
+        record: &Root,
+    ) -> Result<(Vec<u8>, String)> {
+        ensure!(objects.root_path() == self.root.path, "cache catalog and object store differ");
         let bytes = record.bytes("download.json", MANIFEST_LIMIT)?;
         let ownership: DownloadOwnership = serde_json::from_slice(&bytes)?;
         let digest = value.verify(&self.trusted)?;
@@ -279,10 +288,32 @@ impl Catalog {
         );
         self.atomic_metadata(&format!("leases/r-{operation}"), generation.as_bytes())
     }
-    pub fn release(&self, operation: &str) -> Result<()> {
-        hash(operation)?;
+    /// A retry may observe an absent lease only for this authenticated completed receiver.
+    pub(crate) fn release_completed(
+        &self,
+        value: &SignedManifest,
+        objects: &Objects,
+        operation: &str,
+        record: &Root,
+    ) -> Result<()> {
+        let (_, generation) = self.verify_receiver(value, objects, operation, record)?;
+        let journal = crate::journal::Journal::read(record)?;
+        ensure!(
+            journal.phase == crate::journal::Phase::Complete
+                && crate::model::sha256(journal.operation.as_bytes()) == operation
+                && journal.generation == generation,
+            "completed receiver journal binding mismatch"
+        );
         let _lock = self.root.lock("catalog.lock")?;
-        self.root.unlink(&format!("leases/r-{operation}"))
+        let lease = format!("leases/r-{operation}");
+        if !crate::safe_io::absent(&self.root.path.join(&lease))? {
+            ensure!(
+                self.root.bytes(&lease, 64)? == generation.as_bytes(),
+                "completed receiver lease binding mismatch"
+            );
+            self.root.unlink(&lease)?;
+        }
+        Ok(())
     }
     /// Reachability, preparation leases and receiver leases all protect objects.
     pub fn prune(&self) -> Result<Vec<String>> {

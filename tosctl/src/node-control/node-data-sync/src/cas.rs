@@ -258,6 +258,8 @@ impl Objects {
                         continue;
                     }
                 };
+                #[cfg(all(test, feature = "native-lifecycle-tests"))]
+                crate::test_hooks::boundary("during-download")?;
                 if response.status().is_server_error() {
                     last_error = Some(format!("source returned {}", response.status()));
                     continue;

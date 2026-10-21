@@ -358,7 +358,7 @@ fn publication_checks_metadata_and_pruning_respects_capture_and_restore_leases()
                 let writer = cache_objects.writer()?;
                 cache.begin_download(&fault.signed, &writer, &other)?;
                 cache.hold_download(&fault.signed, &writer, &other)?;
-                cache.release(&other)?;
+                Root::open(&request.cache)?.unlink(&format!("leases/r-{other}"))?;
             }
             let lease = format!("leases/r-{}", sha256(b"0123456789abcdef0123456789abcdef"));
             assert!(request.cache.join(&lease).exists());
@@ -437,6 +437,47 @@ fn publication_checks_metadata_and_pruning_respects_capture_and_restore_leases()
                 ),
                 "abort is not idempotent"
             );
+            if phase == 2 {
+                use node_data_sync::journal::{Journal, Phase, TreeIdentity};
+                let old = Root::create(&operation.path.join("retained-old"))?;
+                let journal = Journal {
+                    version: 2,
+                    operation: "0123456789abcdef0123456789abcdef".to_owned(),
+                    generation: fault.signed.verify(&trusted)?,
+                    old: TreeIdentity::read(&old.path)?,
+                    new: TreeIdentity::read(&database.path)?,
+                    installed: database.path.to_string_lossy().into_owned(),
+                    staged: old.path.to_string_lossy().into_owned(),
+                    preservation_sha256: "11".repeat(32),
+                    corroboration_sha256: Some("22".repeat(32)),
+                    target_anchor: fault.signed.manifest.frontier.clone(),
+                    phase: Phase::Complete,
+                };
+                journal.write(&operation)?;
+                let own_id = sha256(journal.operation.as_bytes());
+                let other = "cc".repeat(32);
+                cache.lease(&own_id, &journal.generation)?;
+                cache.lease(&other, &journal.generation)?;
+                node_data_sync::operations::complete(&operation.path)?;
+                // Durable state at the crash window: Complete is written and the lease is gone.
+                assert!(!request.cache.join(&lease).exists());
+                let retry = node_data_sync::operations::complete(&operation.path);
+                assert!(retry.is_ok(), "completion retry after lease unlink failed: {retry:?}");
+                assert!(
+                    request.cache.join(format!("leases/r-{other}")).exists(),
+                    "completion released another operation's lease"
+                );
+                Root::open(&request.cache)?.write_new(&lease, "ee".repeat(32).as_bytes())?;
+                let refused = node_data_sync::operations::complete(&operation.path).err();
+                assert!(refused.is_some(), "completion accepted a different generation's lease");
+                assert!(format!("{refused:?}").contains("lease binding mismatch"));
+                assert!(request.cache.join(&lease).exists(), "mismatched lease was removed");
+                Root::open(&request.cache)?.unlink(&lease)?;
+                operation.replace("operation-id", b"fedcba9876543210fedcba9876543210")?;
+                let refused = node_data_sync::operations::complete(&operation.path).err();
+                assert!(refused.is_some(), "absent lease bypassed operation authentication");
+                assert!(format!("{refused:?}").contains("operation identity mismatch"));
+            }
             if phase >= 2 {
                 assert_eq!(
                     cache.list()?.len(),
@@ -573,7 +614,7 @@ fn publication_checks_metadata_and_pruning_respects_capture_and_restore_leases()
     catalog.lease(&operation, &ids[0])?;
     assert_eq!(catalog.prune()?, vec![ids[1].clone()]);
     assert_eq!(catalog.list()?.len(), 3);
-    catalog.release(&operation)?;
+    Root::open(objects.root_path())?.unlink(&format!("leases/r-{operation}"))?;
     assert_eq!(catalog.prune()?, vec![ids[0].clone()]);
     assert_eq!(catalog.list()?.len(), 2);
     // An incomplete receiver generation is leased before its first transfer, but cannot publish.
@@ -596,7 +637,7 @@ fn publication_checks_metadata_and_pruning_respects_capture_and_restore_leases()
     );
     assert!(catalog.prune()?.is_empty(), "in-progress receiver generation was pruned");
     assert!(cache_root.path.join(&partial).exists(), "in-progress partial object was pruned");
-    catalog.release(&receiver)?;
+    Root::open(objects.root_path())?.unlink(&format!("leases/r-{receiver}"))?;
     assert_eq!(
         catalog.prune()?,
         vec![pending_id],

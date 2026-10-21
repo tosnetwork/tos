@@ -370,6 +370,19 @@ jobs:
           export NODE_SYNC_NATIVE_WORKER="$GITHUB_WORKSPACE/build/operator-rust-target/debug/node-data-sync-worker"
           cargo test --manifest-path tosctl/src/Cargo.toml --locked -p node-data-sync --features native --lib operations::tests::native_stage_preserves_own_context_and_never_overlays_recovery_material -- --ignored --exact --nocapture | tee build/node-sync-native-preservation.log
           grep -Fx 'NATIVE_STAGE_PRESERVATION_OK' build/node-sync-native-preservation.log
+          rustc --edition=2024 tosctl/src/node-control/node-data-sync/build.rs -o build/node-sync-profile-check
+          if env CARGO_FEATURE_NATIVE_LIFECYCLE_TESTS=1 PROFILE=release build/node-sync-profile-check > build/node-sync-profile-refusal.log 2>&1; then
+            echo 'Release profile accepted lifecycle test feature'
+            exit 1
+          fi
+          grep -Fx 'native-lifecycle-tests is forbidden in the release build profile' build/node-sync-profile-refusal.log
+          env -u CARGO_FEATURE_NATIVE_LIFECYCLE_TESTS PROFILE=release build/node-sync-profile-check
+          env CARGO_FEATURE_NATIVE_LIFECYCLE_TESTS=1 PROFILE=debug build/node-sync-profile-check
+          cargo test --manifest-path tosctl/src/Cargo.toml --locked -p node-data-sync --features native-lifecycle-tests --lib native_lifecycle:: -- --test-threads=1 --nocapture | tee build/node-sync-native-lifecycle.log
+          grep -Fx 'PRODUCTION_COMPLETE_RETRY_OK' build/node-sync-native-lifecycle.log
+          grep -Fx 'PRODUCTION_RESTORE_STOP_CUT_OK' build/node-sync-native-lifecycle.log
+          grep -Fx 'PRODUCTION_RESTORE_PROCESS_EXIT_OK' build/node-sync-native-lifecycle.log
+          grep -Fx 'PRODUCTION_LIFECYCLE_MODES_OK' build/node-sync-native-lifecycle.log
 
       - name: Run the complete Python suite
         run: uv run pytest

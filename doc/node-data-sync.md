@@ -349,8 +349,9 @@ Remote cohort qualification remains an acceptance item: measure acquisition
 latency, retries and inconclusive results against two non-local references without
 relaxing the 500 ms cohort or lag limits. Behind references or six unsuccessful
 cohorts produce unknown, not readiness. Locally injected latency is emulation.
-Behavioural lifecycle mode-change tests also remain an open acceptance item;
-source-wiring controls alone do not close it.
+Native CI now exercises the lifecycle mode-change boundaries described below.
+The separate real signing/crash and backlog rehearsals remain acceptance items;
+source-wiring controls alone do not close them.
 
 ## Local qualification gate
 
@@ -377,3 +378,26 @@ backlog of at least 172,800 blocks, measured phase durations, subsequent signing
 and transfer, and five minutes of two-reference qualification as separate gates.
 No public deployment, capture cadence or thirty-minute claim follows from the
 component receipts.
+
+### Native lifecycle test boundary
+
+The native CI step runs non-ignored tests through production create, restore,
+recover and completion entry points. A controllable manager fixture observes real
+local engine processes. Tests exercise running/configured mode mismatch, drift
+while stop settles, drift during object transfer, and interruption after the real
+restore stop before staging. Completion retries authenticate request, generation
+and operation records before accepting an already absent receiver lease. The
+unauthenticated receiver-release API is not exposed.
+
+Interruption hooks and manager overrides are compiled only under `cfg(test)` and
+the non-default `native-lifecycle-tests` feature. The build rejects that feature
+in the release profile; source guards reject default activation or unguarded hook
+calls and pin the native CI command and result tokens. No runtime switch enables
+hooks in the operator executable. These component tests do not replace the real
+signed-vote/crash or full-backlog qualification rehearsals.
+
+A watching sync-status command does not begin a zero-budget observation. If its
+observation deadline expires after a successful catching-up observation, it
+reports that last observation and exits 2 (observation timeout), not 4 (unknown).
+Without a successful catching-up observation it remains unknown; policy failure
+and at-head results retain their distinct exits.

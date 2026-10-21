@@ -33,3 +33,9 @@ extern crate self as node_data_sync;
 #[cfg(test)]
 #[path = "../tests/support/references.rs"]
 mod test_references;
+
+#[cfg(all(test, feature = "native-lifecycle-tests"))]
+#[path = "../tests/support/native_lifecycle.rs"]
+mod native_lifecycle;
+#[cfg(all(test, feature = "native-lifecycle-tests"))]
+mod test_hooks;

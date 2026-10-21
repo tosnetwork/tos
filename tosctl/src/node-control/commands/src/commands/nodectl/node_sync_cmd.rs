@@ -1,7 +1,11 @@
 use super::node_cmd::{NodeStatusCmd, NodeTarget, create_control_client};
 use anyhow::{Result, ensure};
-use node_data_sync::{collector::Collector, status::StatusExit};
-use std::time::{Duration, Instant};
+use node_data_sync::{
+    collector::Collector,
+    status::{StatusExit, SyncStatus},
+};
+use std::time::Duration;
+use tokio::time::Instant;
 
 #[derive(clap::Args, Clone)]
 pub struct NodeSyncCmd {
@@ -149,16 +153,10 @@ pub(super) async fn status(target: &NodeTarget<'_>, cmd: &NodeStatusCmd) -> Resu
                 return Err(StatusExit(4).into());
             }
         };
-    let start = Instant::now();
-    let exit = loop {
-        let remaining = Duration::from_secs(cmd.timeout).saturating_sub(start.elapsed());
-        let result = match tokio::time::timeout(remaining, collector.sample(&mut client)).await {
-            Ok(result) => result,
-            Err(_) => Err(anyhow::anyhow!("sync status observation deadline expired")),
-        };
-        let code = match result {
+    let mut sampler = LiveSampler { collector: &mut collector, client: &mut client };
+    let exit = observe(&mut sampler, cmd.watch, Duration::from_secs(cmd.timeout), Duration::from_secs(5), |result| {
+        match result {
             Ok(sample) => {
-                let code = sample.exit_code;
                 if cmd.format == super::output_format::OutputFormat::Json {
                     println!("{}", serde_json::to_string(&sample)?);
                 } else {
@@ -172,32 +170,152 @@ pub(super) async fn status(target: &NodeTarget<'_>, cmd: &NodeStatusCmd) -> Resu
                         sample.stable_seconds
                     );
                 }
-                code
             }
             Err(error) => {
                 if cmd.format == super::output_format::OutputFormat::Json {
-                    println!(
-                        "{}",
-                        serde_json::json!({"state":"unknown", "exit_code":4,"reason":error.to_string()})
-                    );
-                } else {
-                    println!("unknown: {error:#}");
-                }
-                4
+                    println!("{}", serde_json::json!({"state":"unknown", "exit_code":4,"reason":error.to_string()}));
+                } else { println!("unknown: {error:#}"); }
             }
-        };
-        if !cmd.watch || code == 0 || start.elapsed() >= Duration::from_secs(cmd.timeout) {
-            break code;
         }
-        tokio::time::sleep(
-            Duration::from_secs(5)
-                .min(Duration::from_secs(cmd.timeout).saturating_sub(start.elapsed())),
-        )
-        .await;
-    };
+        Ok(())
+    }).await?;
     client.shutdown().await?;
     if exit != 0 {
         return Err(StatusExit(exit).into());
     }
     Ok(())
+}
+
+trait StatusSampler {
+    fn sample(&mut self) -> impl std::future::Future<Output = Result<SyncStatus>>;
+}
+struct LiveSampler<'a> {
+    collector: &'a mut Collector,
+    client: &'a mut control_client::client_adnl::ControlClientAdnl,
+}
+impl StatusSampler for LiveSampler<'_> {
+    async fn sample(&mut self) -> Result<SyncStatus> {
+        self.collector.sample(self.client).await
+    }
+}
+async fn observe(
+    sampler: &mut impl StatusSampler,
+    watch: bool,
+    budget: Duration,
+    interval: Duration,
+    mut emit: impl FnMut(std::result::Result<&SyncStatus, &anyhow::Error>) -> Result<()>,
+) -> Result<u8> {
+    let start = Instant::now();
+    let mut last_catching_up = None;
+    loop {
+        let remaining = budget.saturating_sub(start.elapsed());
+        if remaining.is_zero() {
+            if let Some(sample) = last_catching_up.as_ref() {
+                emit(Ok(sample))?;
+                return Ok(2);
+            }
+            emit(Err(&anyhow::anyhow!("sync status observation deadline expired")))?;
+            return Ok(4);
+        }
+        let result = match tokio::time::timeout(remaining, sampler.sample()).await {
+            Ok(result) => result,
+            Err(_) => {
+                if let Some(sample) = last_catching_up.as_ref() {
+                    emit(Ok(sample))?;
+                    return Ok(2);
+                }
+                emit(Err(&anyhow::anyhow!("sync status observation deadline expired")))?;
+                return Ok(4);
+            }
+        };
+        let code = match &result {
+            Ok(sample) => {
+                if sample.exit_code == 2 {
+                    last_catching_up = Some(sample.clone());
+                }
+                sample.exit_code
+            }
+            Err(_) => 4,
+        };
+        emit(result.as_ref())?;
+        if !watch || code == 0 || code == 3 {
+            return Ok(code);
+        }
+        tokio::time::sleep(interval.min(budget.saturating_sub(start.elapsed()))).await;
+    }
+}
+
+#[cfg(test)]
+mod watch_tests {
+    use super::*;
+    struct Script {
+        calls: usize,
+        pending_after_first: bool,
+        error_after_first: bool,
+    }
+    impl StatusSampler for Script {
+        async fn sample(&mut self) -> Result<SyncStatus> {
+            self.calls += 1;
+            if self.calls > 1 && self.error_after_first {
+                anyhow::bail!("unavailable observation");
+            }
+            if self.calls > 1 && self.pending_after_first {
+                std::future::pending::<()>().await;
+            }
+            Ok(serde_json::from_value(serde_json::json!({
+                "state":"catching_up", "exit_code":2, "block_age_seconds":100,
+                "shard_lag_blocks":10,"reference_lag_blocks":10,"common_id":null,
+                "stable_seconds":0,"initial_sync_complete":false,"reason":"still catching up",
+                "evidence":{"sampled_utc":100,"tip":{"workchain":-1,"shard":i64::MIN,"seqno":10,"root_hash":"11".repeat(32),"file_hash":"22".repeat(32)},"tip_utime":0,"coherent_tip":null,"coherent_tip_utime":null,"shard_client_seqno":0,"initial_sync_complete":false}
+            }))?)
+        }
+    }
+    #[tokio::test(start_paused = true)]
+    async fn watch_deadline_keeps_catching_up_without_a_zero_budget_sample() -> Result<()> {
+        for interval in [Duration::from_secs(5), Duration::ZERO] {
+            let mut script =
+                Script { calls: 0, pending_after_first: true, error_after_first: false };
+            let mut outputs = Vec::new();
+            let code = observe(&mut script, true, Duration::from_secs(1), interval, |s| {
+                outputs.push(s.map(|s| s.exit_code).unwrap_or(4));
+                Ok(())
+            })
+            .await?;
+            assert_eq!(code, 2, "watch observation timeout became unknown");
+            assert_eq!(
+                outputs,
+                vec![2, 2],
+                "deadline lost the last successful catching-up observation"
+            );
+            assert_eq!(
+                script.calls,
+                if interval.is_zero() { 2 } else { 1 },
+                "sample started with zero budget"
+            );
+        }
+        let mut transient =
+            Script { calls: 0, pending_after_first: false, error_after_first: true };
+        let mut outputs = Vec::new();
+        let code = observe(
+            &mut transient,
+            true,
+            Duration::from_secs(1),
+            Duration::from_millis(500),
+            |s| {
+                outputs.push(s.map(|s| s.exit_code).unwrap_or(4));
+                Ok(())
+            },
+        )
+        .await?;
+        assert_eq!(
+            code, 2,
+            "deadline discarded the last successful observation after a transient error"
+        );
+        assert_eq!(outputs, vec![2, 4, 2]);
+        let mut script = Script { calls: 0, pending_after_first: false, error_after_first: false };
+        let code = observe(&mut script, true, Duration::ZERO, Duration::ZERO, |_| Ok(())).await?;
+        assert_eq!(code, 4);
+        assert_eq!(script.calls, 0, "sample started with zero budget");
+        Ok(())
+    }
 }
