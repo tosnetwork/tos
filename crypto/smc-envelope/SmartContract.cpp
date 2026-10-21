@@ -592,15 +592,19 @@ SmartContract::Answer SmartContract::run_method(Args args) {
     return make_error_answer(get_state(), ~static_cast<td::int32>(vm::Excno::fatal), r_method_id.error().message());
   }
   bool is_internal = r_method_id.ok() == 0;
-  if (args.c7 && !args.config) {
+  if (args.c7) {
     if (is_internal) {
-      args.config = try_fetch_config_from_c7(args.c7.value());
+      if (!args.config) {
+        args.config = try_fetch_config_from_c7(args.c7.value());
+      }
     } else {
       auto config = external_config_from_c7(args.c7.value());
       if (config.is_error()) {
         return make_error_answer(get_state(), ~static_cast<td::int32>(vm::Excno::fatal), config.error().message());
       }
-      args.config = config.move_as_ok();
+      if (!args.config) {
+        args.config = config.move_as_ok();
+      }
     }
   }
   if (!args.c7) {

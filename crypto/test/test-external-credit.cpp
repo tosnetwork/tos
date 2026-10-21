@@ -71,6 +71,51 @@ void expect_credit_exhausted(const tos::SmartContract::Answer& answer) {
   ASSERT_EQ(answer.code, ~static_cast<int>(vm::Excno::out_of_gas));
 }
 
+void check_explicit_config_raw_context(bool config_first) {
+  auto config = credit_config(20000, 10000);
+  std::vector<td::Ref<vm::Tuple>> invalid_contexts{
+      raw_context(vm::StackEntry(empty_cell())),
+      raw_context(vm::StackEntry(td::make_refint(1))),
+      {},
+      vm::make_tuple_ref(),
+      vm::make_tuple_ref(td::make_refint(1)),
+      vm::make_tuple_ref(td::make_cnt_ref<std::vector<vm::StackEntry>>(9))};
+  for (const auto& c7 : invalid_contexts) {
+    for (bool explicit_limits : {false, true}) {
+      emulator::TvmEmulator emulator(delayed_accept(), empty_cell());
+      if (config_first) {
+        emulator.set_config(config);
+      }
+      emulator.set_c7_raw(c7);
+      if (!config_first) {
+        emulator.set_config(config);
+      }
+      if (explicit_limits) {
+        emulator.set_gas_limit(1000000);
+      }
+      auto answer = emulator.send_external_message(empty_cell());
+      ASSERT_TRUE(!answer.accepted);
+      ASSERT_TRUE(!answer.success);
+      ASSERT_EQ(answer.gas_used, 0);
+      ASSERT_EQ(answer.code, ~static_cast<int>(vm::Excno::fatal));
+      ASSERT_TRUE(answer.vm_log.find("Invalid external-message c7 configuration") != std::string::npos);
+    }
+  }
+  // A valid raw context still allows the separately configured execution profile.
+  for (const auto& c7 : {raw_context(vm::StackEntry{}), raw_context(vm::StackEntry(config->get_root_cell())),
+                         raw_context(vm::StackEntry(credit_config(10000, 10000)->get_root_cell()))}) {
+    emulator::TvmEmulator emulator(delayed_accept(), empty_cell());
+    if (config_first) {
+      emulator.set_config(config);
+    }
+    emulator.set_c7_raw(c7);
+    if (!config_first) {
+      emulator.set_config(config);
+    }
+    expect_accepted(emulator.send_external_message(empty_cell()));
+  }
+}
+
 }  // namespace
 
 TEST(ExternalCredit, WorkchainDefaults) {
@@ -195,4 +240,12 @@ TEST(ExternalCredit, MalformedRawContextDoesNotFallBack) {
     ASSERT_EQ(answer.gas_used, 0);
     ASSERT_TRUE(answer.vm_log.find("Invalid external-message c7 configuration") != std::string::npos);
   }
+}
+
+TEST(ExternalCredit, ExplicitConfigBeforeRawContextStillValidates) {
+  check_explicit_config_raw_context(true);
+}
+
+TEST(ExternalCredit, RawContextBeforeExplicitConfigStillValidates) {
+  check_explicit_config_raw_context(false);
 }
