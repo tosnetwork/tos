@@ -273,7 +273,7 @@ signed generation and operation ID. A bound descriptor naming the original root
 (device/inode), selected service context and one staging directory is durable
 before stop and before creating that directory. An interrupted preparation is
 never resumed. With no restore journal, recovery authenticates its bindings and
-refuses later-phase evidence (including preservation or forward-only markers).
+refuses later-phase evidence (including staging `preservation.json` records).
 Unbound or ambiguous staging is retained, with its allocated size in the refusal.
 
 An unambiguous abort atomically publishes its receipt, releases only its receiver
@@ -289,14 +289,18 @@ service state and a `restart_command` derived from the recorded selected unit an
 service-manager scope, never defaults. It does not automatically start or stop the
 node. When identity checks succeed and the service is inactive, use that command
 to restart the untouched original tree after confirming the selected unit still points
-to it. An unknown state is not proof it is stopped. Early preparation refusals also
-report the last observed service state and conditional restart guidance.
+to it. A unit whose `LoadState` is not `loaded` is reported as unknown.
+An unknown state is not proof it is stopped. Only binding-verified preparation
+refusals report the last observed service state and conditional restart guidance.
+Before authentication, recovery reports that the binding is unverified and gives
+no restart command.
 Verify the state before starting a new restore with a new operation directory.
 Incomplete or mismatched authoritative records refuse cleanup. Receipt publication
 uses an operation-owned temporary name: retry removes that temporary and accepts
 only a byte-identical complete final receipt; there is no torn-final compatibility.
 
-A fsynced `FORWARD_ONLY` journal outside both trees precedes atomic exchange.
+The fsynced `restore.json` journal outside both trees records the `FORWARD_ONLY`
+phase before atomic exchange. There is no standalone `FORWARD_ONLY` file.
 It forbids rollback even if a crash occurs before a start marker and a boot-enabled
 service has already signed. If the old tree remains installed, recovery stops it
 and rebuilds from its **latest** local state. If the new tree is installed, recovery

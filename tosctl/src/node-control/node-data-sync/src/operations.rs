@@ -578,10 +578,6 @@ fn classify_preparation(
     signed: &SignedManifest,
     operation: &Root,
 ) -> Result<Option<StopPreparation>> {
-    ensure!(
-        crate::safe_io::absent(&operation.path.join("FORWARD_ONLY"))?,
-        "FORWARD_ONLY evidence without journal; retain operation for inspection"
-    );
     let stop = if crate::safe_io::absent(&operation.path.join("stop-preparation.json"))? {
         None
     } else {
@@ -598,8 +594,7 @@ fn classify_preparation(
             let stage = Root::open(&entry.path())?;
             let bytes = trees::allocated_bytes(&stage.path)?;
             ensure!(
-                crate::safe_io::absent(&stage.path.join("preservation.json"))?
-                    && crate::safe_io::absent(&stage.path.join("FORWARD_ONLY"))?,
+                crate::safe_io::absent(&stage.path.join("preservation.json"))?,
                 "stage {name} has later-phase evidence ({bytes} allocated bytes); journal missing, retain for inspection; node may be stopped"
             );
             ensure!(
@@ -635,6 +630,18 @@ pub fn recover(operation_path: &Path) -> Result<RecoveryOutcome> {
     separate(&request.cache, &request.context.database)?;
     separate(&request.cache, &operation.path)?;
     if crate::safe_io::absent(&operation.path.join("restore.json"))? {
+        let authenticated = (|| -> Result<_> {
+            let key = trusted(&request.publisher_key)?;
+            let signed =
+                SignedManifest::parse(&operation.bytes("generation.json", MANIFEST_LIMIT)?, &key)?;
+            let id = sha256(&operation.bytes("operation-id", 32)?);
+            let objects = Objects::open(&request.cache)?;
+            let catalog = Catalog::open(&request.cache, key)?;
+            catalog.verify_preparation(&signed, &objects, &id, &operation)?;
+            Ok(())
+        })();
+        authenticated
+            .context("Preparation binding is unverified; retain operation for inspection")?;
         let (service_state, restart_command) = request.context.service().abort_guidance()?;
         let guidance = format!(
             "Preparation recovery: selected service state={service_state}; command={restart_command}. Do not restart until original-tree identity is confirmed; retain ambiguous staging for inspection"

@@ -99,20 +99,12 @@ impl Service {
                 && self.unit.bytes().all(|b| b.is_ascii_alphanumeric() || b"._@-".contains(&b)),
             "invalid explicit service unit"
         );
-        let state = match command(
-            self.manager().args(["show", "--property=ActiveState", "--value", "--", &self.unit]),
+        let state = command(
+            self.manager().args(["show", "--property=ActiveState,LoadState", "--", &self.unit]),
             Duration::from_secs(10),
-        ) {
-            Ok(state)
-                if matches!(
-                    state.trim(),
-                    "active" | "inactive" | "failed" | "activating" | "deactivating"
-                ) =>
-            {
-                state.trim().to_owned()
-            }
-            _ => "unknown".to_owned(),
-        };
+        )
+        .map(|output| reported_state(&output))
+        .unwrap_or_else(|_| "unknown".to_owned());
         let scope = if self.user_manager { "--user " } else { "" };
         Ok((state, format!("systemctl {scope}start -- {}", self.unit)))
     }
@@ -596,4 +588,37 @@ fn resolve_arg(work: &Path, value: &str) -> Result<PathBuf> {
         }
     }
     Ok(output)
+}
+
+fn reported_state(output: &str) -> String {
+    let mut load = None;
+    let mut active = None;
+    for line in output.lines() {
+        if let Some(value) = line.strip_prefix("LoadState=")
+            && load.replace(value).is_some()
+        {
+            return "unknown".to_owned();
+        }
+        if let Some(value) = line.strip_prefix("ActiveState=")
+            && active.replace(value).is_some()
+        {
+            return "unknown".to_owned();
+        }
+    }
+    match (load, active) {
+        (
+            Some("loaded"),
+            Some(state @ ("active" | "inactive" | "failed" | "activating" | "deactivating")),
+        ) => state.to_owned(),
+        _ => "unknown".to_owned(),
+    }
+}
+#[cfg(test)]
+mod reported_state_tests {
+    #[test]
+    fn unloaded_units_are_unknown() {
+        assert_eq!(super::reported_state("ActiveState=inactive\nLoadState=not-found\n"), "unknown");
+        assert_eq!(super::reported_state("ActiveState=inactive\nLoadState=loaded\n"), "inactive");
+        assert_eq!(super::reported_state("ActiveState=inactive\n"), "unknown");
+    }
 }

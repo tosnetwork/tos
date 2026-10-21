@@ -367,49 +367,54 @@ fn publication_checks_metadata_and_pruning_respects_capture_and_restore_leases()
             let mut changed: serde_json::Value = serde_json::from_slice(&original)?;
             changed["source_url"] = serde_json::json!("http://different.invalid/");
             operation.replace("request.json", &serde_json::to_vec(&changed)?)?;
+            let refusal = node_data_sync::operations::recover(&operation.path)
+                .err()
+                .ok_or_else(|| anyhow::anyhow!("mismatched preparation was aborted"))?;
+            let message = format!("{refusal:#}");
+            assert!(message.contains("preparation abort binding mismatch"));
             assert!(
-                node_data_sync::operations::recover(&operation.path).is_err(),
-                "mismatched preparation was aborted"
+                message.contains("binding is unverified") && !message.contains("systemctl"),
+                "unverified preparation exposed restart guidance: {message}"
             );
             assert!(request.cache.join(&lease).exists(), "mismatch released another lease");
             changed = serde_json::from_slice(&original)?;
             changed["cache"] = serde_json::json!(database.path);
             operation.replace("request.json", &serde_json::to_vec(&changed)?)?;
-            assert!(node_data_sync::operations::recover(&operation.path).is_err());
+            let refusal = node_data_sync::operations::recover(&operation.path)
+                .err()
+                .ok_or_else(|| anyhow::anyhow!("mismatched cache binding was accepted"))?;
+            assert!(format!("{refusal:#}").contains("must be disjoint"));
             assert!(
                 std::fs::read_dir(&database.path)?.next().is_none(),
                 "mismatched cache binding wrote into the installed node"
             );
             operation.replace("request.json", &original)?;
-            let mut budget_fault: serde_json::Value = serde_json::from_slice(&original)?;
-            budget_fault["context"]["disk_policy"]["max_owned_bytes"] = serde_json::json!(1);
-            operation.replace("request.json", &serde_json::to_vec(&budget_fault)?)?;
+            let mut changed_policy: serde_json::Value = serde_json::from_slice(&original)?;
+            changed_policy["context"]["disk_policy"]["max_owned_bytes"] = serde_json::json!(1);
+            operation.replace("request.json", &serde_json::to_vec(&changed_policy)?)?;
             let refusal = node_data_sync::operations::recover(&operation.path)
                 .err()
-                .ok_or_else(|| anyhow::anyhow!("budget refusal precondition"))?;
+                .ok_or_else(|| anyhow::anyhow!("mismatched policy was accepted"))?;
             let message = format!("{refusal:#}");
             assert!(
-                message.contains("selected service state=")
-                    && message.contains("systemctl --user start -- abort-test.service"),
-                "early preparation refusal omitted selected-service guidance: {message}"
+                message.contains("binding is unverified") && !message.contains("systemctl"),
+                "unverified preparation exposed restart guidance: {message}"
             );
             operation.replace("request.json", &original)?;
-            operation.write_new("FORWARD_ONLY", b"evidence")?;
-            assert!(
-                node_data_sync::operations::recover(&operation.path).is_err(),
-                "abort ignored forward-only evidence"
-            );
-            assert!(request.cache.join(&lease).exists(), "later-phase evidence released lease");
-            operation.unlink("FORWARD_ONLY")?;
             let ambiguous =
                 Root::create(&operation.path.join(format!("stage-{}", "44".repeat(16))))?;
             ambiguous.write_new("preservation.json", b"evidence")?;
-            assert!(
-                node_data_sync::operations::recover(&operation.path).is_err(),
-                "abort ignored preservation evidence"
-            );
+            let refusal = node_data_sync::operations::recover(&operation.path)
+                .err()
+                .ok_or_else(|| anyhow::anyhow!("abort ignored preservation evidence"))?;
+            assert!(format!("{refusal:#}").contains("later-phase evidence"));
             assert!(request.cache.join(&lease).exists(), "preservation evidence released lease");
             ambiguous.unlink("preservation.json")?;
+            let refusal = node_data_sync::operations::recover(&operation.path).err();
+            assert!(refusal.is_some(), "abort ignored unbound stage");
+            assert!(format!("{refusal:?}").contains("unbound stage"));
+            assert!(request.cache.join(&lease).exists(), "unbound stage released lease");
+
             std::fs::remove_dir(&ambiguous.path)?;
             let outcome = node_data_sync::operations::recover(&operation.path);
             assert!(

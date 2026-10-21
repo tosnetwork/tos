@@ -193,14 +193,13 @@ impl Catalog {
         self.atomic_metadata(&format!("leases/r-{operation}"), digest.as_bytes())?;
         Ok(digest)
     }
-    /// Abort only an authenticated pre-journal receiver; never touch the installed node.
-    pub fn abort_download(
+    pub(crate) fn verify_preparation(
         &self,
         value: &SignedManifest,
         objects: &Objects,
         operation: &str,
         record: &Root,
-    ) -> Result<()> {
+    ) -> Result<(Vec<u8>, String)> {
         ensure!(objects.root_path() == self.root.path, "cache catalog and object store differ");
         ensure!(
             crate::safe_io::absent(&record.path.join("restore.json"))?,
@@ -217,6 +216,17 @@ impl Catalog {
                     == crate::model::sha256(&record.bytes("request.json", MANIFEST_LIMIT)?),
             "preparation abort binding mismatch"
         );
+        Ok((bytes, digest))
+    }
+    /// Abort only an authenticated pre-journal receiver; never touch the installed node.
+    pub fn abort_download(
+        &self,
+        value: &SignedManifest,
+        objects: &Objects,
+        operation: &str,
+        record: &Root,
+    ) -> Result<()> {
+        let (bytes, digest) = self.verify_preparation(value, objects, operation, record)?;
         // Authenticate the record before opening any writable cache descriptor.
         let _writer = objects.writer()?;
         let _lock = self.root.lock("catalog.lock")?;

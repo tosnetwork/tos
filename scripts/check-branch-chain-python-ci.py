@@ -299,6 +299,10 @@ def validate_node_data_sync_callers(root: Path) -> None:
 def validate_node_data_sync_modes(root: Path) -> None:
     core = root / "tosctl/src/node-control/node-data-sync/src"
     source = re.sub(r"\s+", "", (core / "operations.rs").read_text())
+    require(
+        '.join("FORWARD_ONLY")' not in source,
+        "restore boundary is the restore.json phase, not a standalone FORWARD_ONLY file",
+    )
     create = source.split("pubfncreate(", 1)[1].split("pubfnrestore(", 1)[0]
     restore = source.split("pubfnrestore(", 1)[1].split("structStoppedTarget", 1)[0]
     recover = source.split("pubfnrecover(", 1)[1].split("pubfncomplete(", 1)[0]

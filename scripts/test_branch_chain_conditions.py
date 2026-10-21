@@ -175,6 +175,16 @@ class StorageModeBoundaryTests(unittest.TestCase):
             )
             with self.assertRaises(RuntimeError):
                 guard.validate_node_data_sync_modes(root)
+            path.write_text(
+                original.replace(
+                    "    let stop = if crate::safe_io::absent(",
+                    '    let _ = operation.path.join("FORWARD_ONLY");\n'
+                    "    let stop = if crate::safe_io::absent(",
+                    1,
+                )
+            )
+            with self.assertRaisesRegex(RuntimeError, "standalone FORWARD_ONLY file"):
+                guard.validate_node_data_sync_modes(root)
             path.write_text(original)
             guard.validate_node_data_sync_modes(root)
             self.assertGreaterEqual(controls, 12)
