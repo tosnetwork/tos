@@ -4891,8 +4891,8 @@ td::actor::Task<metrics::MetricSet> ValidatorManagerImpl::collect_pool_metrics()
         metrics::MetricFamily::make_scalar("shardclient_seqno", "gauge", shard_client_handle_->id().seqno()));
   }
   if (last_masterchain_state_.not_null()) {
-    result.families.push_back(
-        metrics::MetricFamily::make_scalar("active_shards", "gauge", last_masterchain_state_->get_shards().size()));
+    result.families.push_back(metrics::MetricFamily::make_scalar(
+        "active_shards", "gauge", static_cast<double>(last_masterchain_state_->get_shards().size())));
   }
   result = std::move(result).join(ext_message_collation_metrics_.collect());
   auto not_ready = metrics::MetricFamily::make_scalar("ext_message_not_ready", "counter",
