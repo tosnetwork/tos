@@ -46,7 +46,7 @@ routine e2e run, so this script does not exercise the *success* side of
 those deadlines) live. That exact behavior -- including the precise boundary
 instants and the cleanup_bounty payout -- is already proven against the real
 compiled bytecode by
-`tosctl/src/node-control/contracts/tests/service_actor_sandbox.rs`'s 29
+`tosctl/src/node-control/contracts/tests/service_actor_sandbox.rs`'s 43
 tests, which fast-forward `now()` deterministically; that is a strictly
 stronger check of the boundary logic than a live wall-clock wait would be.
 What this script proves instead is that the real CLI commands, RPC

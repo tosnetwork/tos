@@ -2021,6 +2021,12 @@ fn withdraw_revenue_never_takes_the_storage_fees_locked_for_live_entries() {
 const ERR_AMOUNT_RANGE: i32 = 1927;
 /// The largest value a Coins field holds.
 const MAX_COINS: u128 = (1u128 << 120) - 1;
+/// The gas margin the fixture attaches to a call, in nanotos (0.5 TOS).
+const CALL_GAS_MARGIN: u64 = 500_000_000;
+/// A balance just short of the largest bounty, in nanotos (0.9 TOS).
+const BALANCE_BELOW_MAX_BOUNTY: u64 = 900_000_000;
+/// The value a sweeper attaches in the shortfall case, in nanotos (0.05 TOS).
+const SWEEP_VALUE_BELOW_SHORTFALL: u64 = 50_000_000;
 
 /// The accounting cell of a Service Actor's data, in the order `build_data`
 /// writes it. Values beyond u64 are what these tests are about, so the cell is
@@ -2050,6 +2056,10 @@ fn read_accounting(cell: &Cell) -> Accounting {
         chain_block::Coins::construct_from(&mut s).expect("refundable").as_u128();
     let call_day = s.get_next_u32().expect("call_day");
     let calls_today = s.get_next_u32().expect("calls_today");
+    assert!(
+        s.remaining_bits() == 0 && s.remaining_references() == 0,
+        "the accounting cell holds exactly the six fields"
+    );
     Accounting {
         withdrawable_revenue,
         locked_storage_fees,
@@ -2135,7 +2145,7 @@ impl Fixture {
             .init
             .price_per_call
             .checked_add(self.init.storage_fee)
-            .and_then(|owed| owed.checked_add(TOS / 2))
+            .and_then(|owed| owed.checked_add(CALL_GAS_MARGIN))
             .expect("call value fits u64");
         let terms = ServiceActorContract::terms_hash_of_init(&self.init).unwrap();
         self.send_from_with_value(
@@ -2205,8 +2215,14 @@ fn a_liability_that_would_go_negative_is_refused_with_the_range_code() {
     assert!(f.request(0).is_some(), "the request stays pending");
 }
 
+/// The sweep's revenue credit is taken in the order whose checked steps never
+/// exceed the final result: `price + (fee - bounty)`, added to the revenue. A
+/// checked sum that first added price and fee to the revenue would refuse this
+/// state although the result fits. The pre-fix raw arithmetic also produced the
+/// result, so this guards the order of the checked operations, not a change in
+/// what the contract accepts.
 #[test]
-fn a_sweep_succeeds_when_the_final_revenue_fits_even_though_a_naive_sum_would_not() {
+fn a_sweep_credits_the_net_fee_so_no_checked_step_exceeds_the_result() {
     let mut f = Fixture::new();
     let caller = f.caller.address().clone();
     let outsider = f.outsider.address().clone();
@@ -2305,13 +2321,13 @@ fn a_bounty_the_balance_cannot_pay_is_refused_as_insufficient_balance() {
 
     // The contract's own balance plus the sweeper's value stays below the bounty.
     let mut account = f.bc.get_account(&f.service).expect("service account").clone();
-    account.set_balance(chain_block::CurrencyCollection::from(9 * TOS / 10));
+    account.set_balance(chain_block::CurrencyCollection::from(BALANCE_BELOW_MAX_BOUNTY));
     f.bc.set_account(f.service.clone(), account);
     let before = f.data_hash();
     f.send_from_with_value(
         &outsider,
         ServiceActorContract::sweep_expired_request(3, 0).unwrap(),
-        TOS / 20,
+        SWEEP_VALUE_BELOW_SHORTFALL,
     )
     .expect_aborted()
     .expect_exit_code(ERR_INSUFFICIENT_BALANCE);

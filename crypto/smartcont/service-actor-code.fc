@@ -106,8 +106,9 @@ const int err::rate_limited = 1924;
 const int err::weak_attestor = 1925;
 const int err::terms_mismatch = 1926;
 ;; A coin computation left the range a Coins field can hold: a sum at or past
-;; 2^120, or a liability going negative. Both describe a state this contract
-;; declares impossible, so they are never a caller's refusal code.
+;; 2^120, or a liability going negative. No sequence of this contract's own
+;; messages produces such a state, so it is never a caller's refusal code; it
+;; can only come from an accounting cell or dictionary supplied at deploy time.
 const int err::amount_range = 1927;
 
 ;; ---- Coin arithmetic ------------------------------------------------------
