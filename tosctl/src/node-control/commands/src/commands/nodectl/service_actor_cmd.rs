@@ -131,7 +131,11 @@ pub struct ServiceActorDeployCmd {
     signer_vault_key: Option<String>,
     #[arg(long, help = "Funding wallet name or master_wallet")]
     from: String,
-    #[arg(long, default_value_t = 1.2, help = "Deploy funding in TOS; minimum 1.2 (1 TOS reserve plus 0.2 fee margin)")]
+    #[arg(
+        long,
+        default_value_t = 1.2,
+        help = "Deploy funding in TOS; minimum 1.2 (1 TOS reserve plus 0.2 fee margin)"
+    )]
     amount: f64,
     #[arg(short = 'w', long = "workchain", allow_negative_numbers = true, default_value_t = super::utils::USER_CONTRACT_WORKCHAIN)]
     workchain: i32,
@@ -1354,10 +1358,7 @@ mod solvency_tests {
 
     #[test]
     fn service_deploy_default_funds_reserve_and_margin() {
-        assert_eq!(
-            validate_deploy_amount(deploy_args().amount).unwrap(),
-            1_200_000_000
-        );
+        assert_eq!(validate_deploy_amount(deploy_args().amount).unwrap(), 1_200_000_000);
         assert!(validate_deploy_amount(1.199999999).is_err());
         assert!(validate_deploy_amount(1.0).is_err());
         assert!(validate_deploy_amount(0.2).is_err());
@@ -1368,10 +1369,7 @@ mod solvency_tests {
     async fn service_deploy_rejects_underfunding_before_loading_wallet() {
         let mut cmd = deploy_args();
         cmd.amount = 0.2;
-        let error = cmd
-            .run("/nonexistent/service-solvency-config.json")
-            .await
-            .unwrap_err();
+        let error = cmd.run("/nonexistent/service-solvency-config.json").await.unwrap_err();
         assert!(error.to_string().contains("at least 1.2 TOS"), "{error:#}");
     }
 }

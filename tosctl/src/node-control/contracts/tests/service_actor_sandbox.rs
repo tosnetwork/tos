@@ -1182,9 +1182,13 @@ fn claim_refund_is_rejected_atomically_when_the_contract_cannot_afford_it() {
     // Model an already rent-eroded account without admitting new work while
     // underfunded. The claim must survive even when its own price is unbacked.
     f.set_balance(1);
-    f.send_from_with_value(&caller,
-        ServiceActorContract::claim_refund(3, 0, &caller).unwrap(), TOS / 20)
-        .expect_aborted().expect_exit_code(ERR_INSUFFICIENT_BALANCE);
+    f.send_from_with_value(
+        &caller,
+        ServiceActorContract::claim_refund(3, 0, &caller).unwrap(),
+        TOS / 20,
+    )
+    .expect_aborted()
+    .expect_exit_code(ERR_INSUFFICIENT_BALANCE);
     assert!(f.refund(0).is_some());
 }
 
@@ -1900,8 +1904,8 @@ fn withdraw_revenue_never_takes_the_storage_fees_locked_for_live_entries() {
     // (The refused message's own value stayed in the contract, so the cap may
     // have moved up by it since.)
     let balance = f.balance(&f.service);
-    let affordable = (balance + probe_value)
-        .saturating_sub(floor_with_locked(&f) + TOS / 10).min(revenue);
+    let affordable =
+        (balance + probe_value).saturating_sub(floor_with_locked(&f) + TOS / 10).min(revenue);
     assert!(affordable > 0, "nothing affordable at balance {balance}");
     let withdraw = MessageBuilder::internal(&owner, &f.service, probe_value)
         .bounce(false)
@@ -2279,12 +2283,7 @@ impl Fixture {
     }
 
     fn state_hash(&self) -> chain_block::UInt256 {
-        self.bc
-            .get_account(&self.service)
-            .unwrap()
-            .get_data()
-            .unwrap()
-            .repr_hash()
+        self.bc.get_account(&self.service).unwrap().get_data().unwrap().repr_hash()
     }
 
     fn floor(&self) -> u64 {
@@ -2305,24 +2304,15 @@ impl Fixture {
 }
 
 fn expect_solvency_action_failure(result: &SendResult) {
-    result
-        .expect_aborted()
-        .expect_exit_code(0)
-        .expect_out_msgs(0);
+    result.expect_aborted().expect_exit_code(0).expect_out_msgs(0);
     let action = result.read_primary_description().action.unwrap();
     assert!(!action.success);
-    assert_eq!(
-        action.result_code, 37,
-        "must fail for insufficient action-phase funds"
-    );
+    assert_eq!(action.result_code, 37, "must fail for insufficient action-phase funds");
 }
 
 #[test]
 fn solvency_source_matches_embedded_code() {
-    assert_eq!(
-        solvency_code().repr_hash(),
-        ServiceActorContract::code().unwrap().repr_hash()
-    );
+    assert_eq!(solvency_code().repr_hash(), ServiceActorContract::code().unwrap().repr_hash());
 }
 
 #[test]
@@ -2332,9 +2322,7 @@ fn solvency_admission_requires_preexisting_reserve() {
     f.set_balance(TOS - 1);
     let before = f.state_hash();
     // Overpayment cannot stand in for the operator's independently funded reserve.
-    f.call(&caller, 1, [1; 32])
-        .expect_aborted()
-        .expect_exit_code(1928);
+    f.call(&caller, 1, [1; 32]).expect_aborted().expect_exit_code(1928);
     assert_eq!(f.state_hash(), before);
     f.set_balance(2 * TOS);
     f.call(&caller, 2, [1; 32]).expect_success();
@@ -2352,11 +2340,7 @@ fn solvency_admission_reserves_after_fees_with_and_without_overpayment() {
         let body = ServiceActorContract::call(1, [1; 32], f.terms()).unwrap();
         let result = f.no_bounce(&caller, value, body.clone());
         expect_solvency_action_failure(&result);
-        assert_eq!(
-            f.state_hash(),
-            before,
-            "failed admission changed counters or dictionaries"
-        );
+        assert_eq!(f.state_hash(), before, "failed admission changed counters or dictionaries");
         f.set_balance(2 * TOS);
         f.no_bounce(&caller, value, body).expect_success();
         assert!(f.balance(&f.service) >= f.floor());
@@ -2393,8 +2377,7 @@ fn solvency_claim_preserves_other_entries_and_reserves_after_fees() {
     }
     f.bc.set_now(f.request(0).unwrap().response_deadline as u32);
     for id in 0..2 {
-        f.send_from(&caller, ServiceActorContract::expire(10 + id, id).unwrap())
-            .expect_success();
+        f.send_from(&caller, ServiceActorContract::expire(10 + id, id).unwrap()).expect_success();
     }
     let price = f.init.price_per_call;
     let value = TOS / 10;
@@ -2403,19 +2386,13 @@ fn solvency_claim_preserves_other_entries_and_reserves_after_fees() {
     let before = f.state_hash();
     // Covers this price, but not the remaining pending + refund + locked + reserve.
     f.set_balance(floor_after + price - value - 1);
-    f.no_bounce(&caller, value, body.clone())
-        .expect_aborted()
-        .expect_exit_code(1921);
+    f.no_bounce(&caller, value, body.clone()).expect_aborted().expect_exit_code(1921);
     assert_eq!(f.state_hash(), before);
     // Covers the compute-phase floor exactly, but cannot pay the transaction fees too.
     f.set_balance(floor_after + price - value);
     let result = f.no_bounce(&caller, value, body.clone());
     expect_solvency_action_failure(&result);
-    assert_eq!(
-        f.state_hash(),
-        before,
-        "failed claim consumed a refund or caller slot"
-    );
+    assert_eq!(f.state_hash(), before, "failed claim consumed a refund or caller slot");
     f.no_bounce(&caller, TOS, body).expect_success();
     assert!(f.refund(0).is_none());
     assert!(f.refund(1).is_some());
@@ -2434,8 +2411,7 @@ fn solvency_sweep_after_real_rent_preserves_other_entries() {
         }
         let request = f.request(0).unwrap();
         f.bc.set_now(request.response_deadline as u32);
-        f.send_from(&caller, ServiceActorContract::expire(4, 1).unwrap())
-            .expect_success();
+        f.send_from(&caller, ServiceActorContract::expire(4, 1).unwrap()).expect_success();
         let target = if refund { 1 } else { 0 };
         let floor_after = f.floor() - f.init.price_per_call - f.init.storage_fee;
         let cap = floor_after + f.init.cleanup_bounty;
@@ -2446,19 +2422,14 @@ fn solvency_sweep_after_real_rent_preserves_other_entries() {
             day += 1;
             assert!(day < 1000, "rent failed to erode the balance");
             f.bc.set_now(request.refund_claim_deadline as u32 + day * 86400);
-            f.no_bounce(&sweeper, 1_000_000, Cell::default())
-                .expect_success();
+            f.no_bounce(&sweeper, 1_000_000, Cell::default()).expect_success();
         }
         assert_eq!(f.state_hash(), before);
         let value = cap - f.balance(&f.service);
         let body = ServiceActorContract::sweep_expired_request(5, target).unwrap();
         let result = f.no_bounce(&sweeper, value, body.clone());
         expect_solvency_action_failure(&result);
-        assert_eq!(
-            f.state_hash(),
-            before,
-            "failed sweep removed an entry or caller slot"
-        );
+        assert_eq!(f.state_hash(), before, "failed sweep removed an entry or caller slot");
         f.no_bounce(&sweeper, TOS, body).expect_success();
         assert_eq!(f.data().live_count, 2);
         assert!(f.request(2).is_some());

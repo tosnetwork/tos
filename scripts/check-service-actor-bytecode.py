@@ -8,7 +8,6 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 FUNC = Path(os.environ.get("FUNC", ROOT / "build-remove-workchains-full/crypto/func"))
 FIFT = Path(os.environ.get("FIFT", ROOT / "build-remove-workchains-full/crypto/fift"))
@@ -46,12 +45,15 @@ def main() -> None:
         embedded_boc.write_bytes(embedded)
         hash_script = tmp / "hashes.fif"
         hash_script.write_text(
-            f'"{boc}" file>B B>boc hashu . cr '
-            f'"{embedded_boc}" file>B B>boc hashu . cr\n'
+            f'"{boc}" file>B B>boc hashu . cr "{embedded_boc}" file>B B>boc hashu . cr\n'
         )
         hashes = subprocess.run(
-            [str(FIFT), str(hash_script)], cwd=ROOT, env=env, check=True,
-            capture_output=True, text=True,
+            [str(FIFT), str(hash_script)],
+            cwd=ROOT,
+            env=env,
+            check=True,
+            capture_output=True,
+            text=True,
         ).stdout.split()
 
     # BOC containers may legitimately differ in index/CRC flags; the root
