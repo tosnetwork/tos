@@ -73,7 +73,6 @@ jobs:
           -DCMAKE_BUILD_TYPE=Release
           -DTOS_ARCH=x86-64
           -DTOS_USE_JEMALLOC=ON
-          -DTOS_PRODUCTION_BUILD=ON
 
       - name: Build the chain fixtures and security regression targets
         run: |

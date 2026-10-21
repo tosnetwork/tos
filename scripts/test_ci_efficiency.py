@@ -87,6 +87,23 @@ def validate(root=ROOT):
         or 'ccache -M "${CCACHE_MAXSIZE:-0}"' not in script
     ):
         raise ValueError("Inherited cache directory and bound must be honored")
+    # Reconstruct the retired no-op block for the historical source receipt.
+    # Every other build-script byte remains covered by its original hash.
+    retired_block = """# Audit #10 (2026-04-26): under CI we are always producing artifacts that
+# could be deployed, so any opt-in that compromises consensus determinism
+# (currently UNO_DEVNET_ALLOW_ENV_TARGET) becomes a hard CMake error.
+# Local dev builds default OFF; set TOS_PRODUCTION_BUILD=1 in the env to
+# opt in from outside CI.
+if [ "${GITHUB_ACTIONS}" = "true" ] || \\
+   [ "${TOS_PRODUCTION_BUILD:-0}" = "1" ] || \\
+   [ "${TOS_PRODUCTION_BUILD:-}" = "ON" ]; then
+  CMAKE_EXTRA_ARGS+=(-DTOS_PRODUCTION_BUILD=ON)
+fi
+
+"""
+    if "TOS_PRODUCTION_BUILD" in script:
+        raise ValueError("Unused production flag returned to the build script")
+    script = script.replace("cmake -GNinja ..", retired_block + "cmake -GNinja ..", 1)
     original = script.replace(
         '  export CCACHE_DIR="${CCACHE_DIR:-$HOME/.ccache}"\n  ccache -M "${CCACHE_MAXSIZE:-0}"',
         "  export CCACHE_DIR=~/.ccache\n  ccache -M 0",
@@ -116,6 +133,33 @@ class EfficiencyTests(unittest.TestCase):
 
             with patch.object(Path, "read_text", read), self.assertRaises(ValueError):
                 validate()
+
+    def test_retired_production_flag_is_absent_from_active_callers(self):
+        for relative in [
+            "assembly/native/build-ubuntu-shared.sh",
+            "assembly/native/build-ubuntu-portable.sh",
+            "assembly/native/build-ubuntu-appimages.sh",
+            ".github/workflows/bridge-validation.yml",
+            ".github/workflows/branch-chain-python.yml",
+        ]:
+            with self.subTest(path=relative):
+                self.assertNotIn("TOS_PRODUCTION_BUILD", (ROOT / relative).read_text())
+
+    def test_retired_production_flag_cannot_return(self):
+        from unittest.mock import patch
+
+        path = ROOT / "assembly/native/build-ubuntu-shared.sh"
+        mutant = path.read_text() + "\nCMAKE_EXTRA_ARGS+=(-DTOS_PRODUCTION_BUILD=ON)\n"
+        original = Path.read_text
+
+        def read(p, *args, **kwargs):
+            return mutant if p == path else original(p, *args, **kwargs)
+
+        with (
+            patch.object(Path, "read_text", read),
+            self.assertRaisesRegex(ValueError, "Unused production flag returned"),
+        ):
+            validate()
 
     def test_cache_override_cannot_revert_to_unbounded_legacy_settings(self):
         from unittest.mock import patch
