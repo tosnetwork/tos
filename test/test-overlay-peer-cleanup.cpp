@@ -65,11 +65,11 @@ TEST(Overlay, InactiveEagerPeerThatRefusesPlumtreeIsPruned) {
   options.max_neighbours_ = 0;
   options.enable_plumtree_broadcast_ = false;
   // Not public: a public overlay also requires a fresh node version, which these bare peers lack.
-  tos::overlay::OverlayImpl overlay(
-      {}, {}, {}, {}, tos::adnl::AdnlNodeIdShort{local_bits},
-      tos::overlay::OverlayIdFull{td::BufferSlice{"eager-prune-test"}}, tos::overlay::OverlayType::FixedMemberList,
-      {}, {}, {}, std::make_unique<tos::overlay::Overlays::Callback>(), tos::overlay::OverlayPrivacyRules{},
-      "eager-prune-test", std::move(options));
+  tos::overlay::OverlayImpl overlay({}, {}, {}, {}, tos::adnl::AdnlNodeIdShort{local_bits},
+                                    tos::overlay::OverlayIdFull{td::BufferSlice{"eager-prune-test"}},
+                                    tos::overlay::OverlayType::FixedMemberList, {}, {}, {},
+                                    std::make_unique<tos::overlay::Overlays::Callback>(),
+                                    tos::overlay::OverlayPrivacyRules{}, "eager-prune-test", std::move(options));
   td::Bits256 refusing_bits;
   refusing_bits.as_slice().fill('r');
   auto refusing = tos::adnl::AdnlNodeIdShort{refusing_bits};
