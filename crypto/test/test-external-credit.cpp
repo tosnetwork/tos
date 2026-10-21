@@ -124,6 +124,46 @@ void check_explicit_config_raw_context(bool config_first) {
   }
 }
 
+void check_special_gas_config(int workchain) {
+  auto valid = credit_config(20000, 20000);
+  auto account = vm::CellBuilder().store_long(4, 3).store_long(workchain, 8).store_zeroes(256).as_cellslice_ref();
+  auto ordinary = vm::CellBuilder().store_ref(empty_cell()).finalize();
+  std::vector<td::Ref<vm::Cell>> special_cells{vm::CellBuilder::create_pruned_branch(ordinary, 1),
+                                               vm::CellBuilder().store_long(2, 8).store_zeroes(256).finalize(true),
+                                               vm::CellBuilder::create_merkle_proof(ordinary),
+                                               vm::CellBuilder::create_merkle_update(ordinary, ordinary)};
+  // Both configuration sources must reach gas-price decoding, rather than fail
+  // while unpacking the enclosing dictionary or execute under fallback prices.
+  for (bool explicit_config : {false, true}) {
+    emulator::TvmEmulator control(delayed_accept(), empty_cell());
+    control.set_c7_raw(raw_context(vm::StackEntry(valid->get_root_cell()), vm::StackEntry(account)));
+    if (explicit_config) {
+      control.set_config(valid);
+    }
+    expect_accepted(control.send_external_message(empty_cell()));
+    for (const auto& special : special_cells) {
+      vm::Dictionary dict(valid->get_root_cell(), 32);
+      td::BitArray<32> key;
+      key.store_long(workchain == -1 ? 20 : 21);
+      CHECK(dict.set_ref(key, special));
+      auto config =
+          std::make_shared<block::Config>(dict.get_root_cell(), td::Bits256::zero(), block::Config::needCapabilities);
+      config->unpack().ensure();
+      emulator::TvmEmulator emulator(delayed_accept(), empty_cell());
+      emulator.set_c7_raw(raw_context(vm::StackEntry(dict.get_root_cell()), vm::StackEntry(account)));
+      if (explicit_config) {
+        emulator.set_config(config);
+      }
+      auto answer = emulator.send_external_message(empty_cell());
+      ASSERT_TRUE(!answer.accepted);
+      ASSERT_TRUE(!answer.success);
+      ASSERT_EQ(answer.gas_used, 0);
+      ASSERT_EQ(answer.code, ~static_cast<int>(vm::Excno::fatal));
+      ASSERT_TRUE(answer.vm_log.find("Invalid external-message gas configuration") != std::string::npos);
+    }
+  }
+}
+
 }  // namespace
 
 TEST(ExternalCredit, WorkchainDefaults) {
@@ -194,6 +234,14 @@ TEST(ExternalCredit, MissingConfigDoesNotFallBack) {
   ASSERT_TRUE(!answer.success);
   ASSERT_EQ(answer.gas_used, 0);
   ASSERT_TRUE(answer.vm_log.find("gas prices is absent") != std::string::npos);
+}
+
+TEST(ExternalCredit, SpecialMasterchainGasConfigIsRejected) {
+  check_special_gas_config(-1);
+}
+
+TEST(ExternalCredit, SpecialBasechainGasConfigIsRejected) {
+  check_special_gas_config(0);
 }
 
 TEST(ExternalCredit, RawContextWithoutConfig) {

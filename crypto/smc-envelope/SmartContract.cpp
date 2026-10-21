@@ -586,7 +586,8 @@ td::Result<ExternalContext> external_context(const SmartContract::Args& args) tr
   return td::Status::Error(td::Slice(error.get_msg()));
 }
 
-td::Result<vm::GasLimits> external_message_limits(int workchain, const std::shared_ptr<const block::Config>& config) {
+td::Result<vm::GasLimits> external_message_limits(int workchain,
+                                                  const std::shared_ptr<const block::Config>& config) try {
   td::uint64 limit = 1000000;
   td::uint64 credit = workchain == masterchainId ? 10000 : 20000;
   if (config) {
@@ -599,6 +600,10 @@ td::Result<vm::GasLimits> external_message_limits(int workchain, const std::shar
     return td::Status::Error("External-message gas limits exceed the VM range");
   }
   return vm::GasLimits(0, static_cast<long long>(limit), static_cast<long long>(std::min(credit, limit)));
+} catch (const vm::VmError& error) {
+  return td::Status::Error(std::string("Invalid external-message gas configuration: ") + error.get_msg());
+} catch (const vm::VmVirtError& error) {
+  return td::Status::Error(std::string("Invalid external-message gas configuration: ") + error.get_msg());
 }
 
 }  // namespace
