@@ -772,6 +772,9 @@ add_executable(test-tos-collator test/test-tos-collator.cpp)
 target_link_libraries(test-tos-collator overlay tdutils tdactor adnl tl_api dht
   validator-disk tos_validator validator-disk )
 
+add_executable(test-ext-message-expiry test/test-td-main.cpp test/test-ext-message-expiry.cpp)
+target_link_libraries(test-ext-message-expiry PRIVATE tos_validator validator-common tos_crypto common tdactor tdutils)
+
 add_executable(test-ext-message-pool test/test-td-main.cpp test/test-ext-message-pool.cpp)
 target_link_libraries(test-ext-message-pool PRIVATE tos_validator validator-common tos_crypto common tdactor tdutils)
 
@@ -2089,6 +2092,7 @@ tos_test(test-block-accepter)
 set_tests_properties(test-block-accepter PROPERTIES PASS_REGULAR_EXPRESSION "BLOCK_ACCEPTER_OK")
 tos_test(test-rldp2-refusal-lifetime)
 tos_test(test-ext-message-pool)
+tos_test(test-ext-message-expiry)
 tos_test(test-ext-message-manager)
 tos_test(test-ext-message-ingress)
 tos_test(test-ext-message-admission-budget)

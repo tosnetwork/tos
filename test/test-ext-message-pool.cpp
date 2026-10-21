@@ -43,9 +43,12 @@ td::BufferSlice make_valid_external_message() {
 }
 
 TEST(ExtMessagePool, SnapshotExportsStoredStockAndCheckResults) {
-  metrics::ExtMessagePoolSnapshot snapshot{.pending_ext_messages = 42, .check_ok = 7, .check_error = 3};
+  metrics::ExtMessagePoolSnapshot snapshot;
+  snapshot.ext_messages.insert(metrics::ExtMessageState::eligible, 42);
+  snapshot.check_ok = 7;
+  snapshot.check_error = 3;
   auto text = snapshot.collect().render();
-  EXPECT(text.find("mempool_ext_messages 42") != std::string::npos);
+  EXPECT(text.find("mempool_ext_messages{state=\"eligible\"} 42") != std::string::npos);
   EXPECT(text.find("result=\"ok\"") != std::string::npos);
   EXPECT(text.find("result=\"error\"") != std::string::npos);
 }
