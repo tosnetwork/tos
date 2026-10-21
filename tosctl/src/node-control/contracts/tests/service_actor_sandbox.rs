@@ -360,10 +360,10 @@ fn deploy_with_runtime_counters(
 
 fn stack_to_entries(stack: &[tos_vm::stack::StackItem]) -> Vec<tl_api::tos::tvm::StackEntry> {
     use tl_api::tos::tvm::{
+        Number, StackEntry,
         numberdecimal::NumberDecimal,
         slice,
         stackentry::{StackEntryNumber, StackEntrySlice},
-        Number, StackEntry,
     };
     stack
         .iter()

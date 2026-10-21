@@ -28,7 +28,7 @@ use common::{
 use contracts::{
     PendingRequestData, RefundData, ServiceActorContract, ServiceActorData, ServiceActorInit,
 };
-use futures_util::{stream, StreamExt};
+use futures_util::{StreamExt, stream};
 use std::{path::Path, str::FromStr};
 
 const SERVICE_ACTOR_DEPLOY_GAS: u64 = 1_000_000; // 0.001 TOS
@@ -1384,10 +1384,10 @@ mod solvency_tests {
             .checked_add(DEPLOY_FEE_MARGIN)
             .unwrap();
         assert_eq!(validate_deploy_amount(deploy_args().amount).unwrap(), minimum);
-        assert!(validate_deploy_amount(
-            minimum.checked_sub(1).unwrap() as f64 / NANOTOS_PER_TOS as f64
-        )
-        .is_err());
+        assert!(
+            validate_deploy_amount(minimum.checked_sub(1).unwrap() as f64 / NANOTOS_PER_TOS as f64)
+                .is_err()
+        );
         assert!(validate_deploy_amount(1.0).is_err());
         assert!(validate_deploy_amount(0.2).is_err());
         assert!(validate_deploy_amount(f64::NAN).is_err());

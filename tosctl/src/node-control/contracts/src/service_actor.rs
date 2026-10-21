@@ -10,8 +10,8 @@
 //! `request_id` and snapshots the policy/attestor key in force at `call`
 //! time, so it resolves independently of every other outstanding request.
 use chain_block::{
-    base64_decode, read_single_root_boc, BuilderData, Coins, Deserializable, IBitstring,
-    MsgAddressInt, Serializable, StateInit,
+    BuilderData, Coins, Deserializable, IBitstring, MsgAddressInt, Serializable, StateInit,
+    base64_decode, read_single_root_boc,
 };
 use common::tvm_stack_parser::TvmStackParser;
 
@@ -521,10 +521,10 @@ mod tests {
     use chain_block::{Deserializable, Serializable, SliceData};
     use common::tvm_stack_parser::TvmStackParser;
     use tl_api::tos::tvm::{
+        Number, StackEntry,
         numberdecimal::NumberDecimal,
         slice,
         stackentry::{StackEntryNumber, StackEntrySlice},
-        Number, StackEntry,
     };
 
     fn number(value: impl Into<String>) -> StackEntry {
