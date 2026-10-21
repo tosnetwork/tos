@@ -104,16 +104,52 @@ placeholder below with independently held local values:
     {"name": "reference-a", "endpoint": "https://reference-a.example.invalid/jsonRPC"},
     {"name": "reference-b", "endpoint": "https://reference-b.example.invalid/jsonRPC"}
   ]},
-  "budget_roots": ["/srv/node", "/srv/node-sync", "/srv/node-build"]
+  "budget_roots": ["/srv/node", "/srv/node-sync", "/srv/node-build"],
+  "disk_policy": {"max_owned_bytes": 85899345920, "shutdown_free_bytes": null}
 }
 ```
 
 List every task-owned source, retained operation, cache, staging and build root
 in `budget_roots`, without overlaps. They must exist. Allocation accounting
 counts physical blocks and deduplicates hard-linked build artifacts; payload
-handling refuses links. Aggregate admission is 320 GiB, with at least 200 GiB free.
-The monitor stops new work at 316 GiB or 212 GiB free, leaving shutdown headroom.
-Use the shared build/cache ceiling of 16 GiB. These checks are not filesystem quotas.
+handling refuses links. `disk_policy.max_owned_bytes` is a required, non-zero
+aggregate ceiling in bytes, below filesystem capacity. Include the retained
+original tree and every earlier operation. Missing input refuses with that field's
+name; it is not inferred from this development host. The example sets 80 GiB;
+size it for the actual measured trees, not by copying the example. No existing
+external automation invokes these new commands; a future operator runbook or
+caller must supply this context field.
+
+There is exactly one free-space threshold. Admission requires
+`available - entire reservation >= shutdown_free_bytes`; the monitor stops new
+work strictly below it. Consuming exactly the admitted reservation is allowed;
+one byte more at the boundary stops work. There is no second unused hard floor.
+Zero thresholds, thresholds at/above capacity, invalid probe values and arithmetic
+overflow refuse. Recovery uses the persisted policy but re-measures available
+space and capacity before acquiring a writable operation lock or opening StateDb.
+Probe errors refuse. These checks are guards, not filesystem quotas; other writers
+can consume space between samples.
+
+A null `shutdown_free_bytes` selects `max(16 GiB, ceil(capacity / 20))`.
+Basis: retained epoch-4 filesystem-usage samples on 2026-10-19 at approximately
+21:17–21:21 UTC observed two consecutive ~70-second growth intervals of
+777,609 and 916,990 bytes/s (about 3.30 decimal GB/hour at the higher rate).
+These are short-window net filesystem growth observations, not a sustained
+validator-only database growth measurement. Conservatively rounding upward to
+1 MiB/s gives 10.55 GiB for a two-hour operation plus one-hour restart margin;
+16 GiB rounds that allowance upward again. The 5% term protects larger shared
+filesystems. It is not evidence that any workload fits: multiple nodes, a higher
+measured growth rate or a longer recovery window require a larger explicit value.
+At 160 GiB capacity the default is 16 GiB; at 1,000 GiB it is 50 GiB.
+
+New work is stopped after two hours per create/restore/recover invocation; an
+already dispatched bounded native child can still settle before returning an
+error. Restart safety remains forward-only. Reservations use measured raw data,
+compressed objects and target-private trees with checked arithmetic: three raw
+copies plus compressed/private bytes and a 1 GiB metadata/WAL allowance. The
+monitor also enforces the explicit aggregate ceiling. The rehearsal's separate
+320 GiB allocation / 212 GiB free-space guard and 16 GiB build cache limit remain
+rehearsal constraints, not deployment defaults.
 
 `vault_config_files` lists local vault configuration files that must be preserved;
 non-exportable custody remains at its existing local service/handle. Never put

@@ -9,8 +9,6 @@ pub const MANIFEST_LIMIT: u64 = 32 << 20;
 pub const FILE_COUNT_LIMIT: usize = 100_000;
 pub const RAW_LIMIT: u64 = 80 << 30;
 pub const TRANSFER_LIMIT: u64 = 24 << 30;
-pub const FREE_FLOOR: u64 = 200 << 30;
-pub const TASK_LIMIT: u64 = 320 << 30;
 const DOMAIN: &[u8] = b"TOS_NODE_DUMP_V1";
 
 pub fn sha256(bytes: &[u8]) -> String {

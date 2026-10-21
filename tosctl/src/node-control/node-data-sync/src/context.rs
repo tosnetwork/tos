@@ -28,6 +28,8 @@ pub struct NodeContext {
     pub node_name: String,
     /// Every task-owned source, cache, staging and build root; include retained old operations.
     pub budget_roots: Vec<PathBuf>,
+    #[serde(default)]
+    pub disk_policy: crate::budget::DiskPolicy,
     pub vault_config_files: Vec<PathBuf>,
     pub references: crate::references::ReferencePolicy,
 }
@@ -110,6 +112,7 @@ impl NodeContext {
             self.budget_roots.iter().any(|root| self.database.starts_with(root)),
             "database missing from task allocation inventory"
         );
+        self.disk_policy.threshold(Root::open(&self.database)?.space()?)?;
         hash(&self.engine_sha256)?;
         hash(&self.validation_worker_sha256)?;
         let (_, digest) = file_hash(read_file(&self.engine, 1 << 30)?, 1 << 30)?;

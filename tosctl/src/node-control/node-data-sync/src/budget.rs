@@ -1,65 +1,132 @@
-use crate::{
-    model::{FREE_FLOOR, TASK_LIMIT},
-    safe_io::Root,
-};
+use crate::safe_io::Root;
 use anyhow::{Context, Result, ensure};
-
-/// Admission accounts for measured existing trees plus worst-case new allocation.
-pub fn admit(existing: &[u64], reserve: u64, free: u64) -> Result<()> {
-    let used = existing
-        .iter()
-        .try_fold(0_u64, |sum, size| sum.checked_add(*size).context("task size overflow"))?;
-    let total = used.checked_add(reserve).context("task reservation overflow")?;
-    ensure!(total <= TASK_LIMIT, "task reservation exceeds aggregate disk budget");
-    let remaining = free.checked_sub(reserve).context("insufficient free disk for reservation")?;
-    ensure!(remaining >= FREE_FLOOR, "reservation would cross shared free-space floor");
-    Ok(())
-}
-pub fn check_during_work(root: &Root, owned_bytes: u64) -> Result<()> {
-    ensure!(owned_bytes < 316 << 30, "task allocation reached shutdown headroom");
-    ensure!(root.free_bytes()? >= 212 << 30, "shared free space reached shutdown headroom");
-    Ok(())
-}
-
+use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
+
+/// One threshold: admission leaves it after consuming the entire reservation;
+/// the monitor stops new work strictly below it. Equality is safe in both paths.
+/// There is no separate, unused hard floor. This is a guard, not a disk quota.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DiskPolicy {
+    pub max_owned_bytes: u64,
+    /// None selects max(16 GiB, ceil(filesystem capacity / 20)).
+    pub shutdown_free_bytes: Option<u64>,
+}
+#[derive(Clone, Copy, Debug)]
+pub struct Space {
+    pub capacity: u64,
+    pub free: u64,
+}
+impl DiskPolicy {
+    pub fn threshold(&self, space: Space) -> Result<u64> {
+        ensure!(
+            self.max_owned_bytes > 0,
+            "disk_policy.max_owned_bytes is required and must be non-zero"
+        );
+        ensure!(
+            space.capacity > 0 && space.free <= space.capacity,
+            "invalid filesystem capacity/free-space probe"
+        );
+        let percent = (space.capacity / 20)
+            .checked_add(u64::from(!space.capacity.is_multiple_of(20)))
+            .context("disk percentage overflow")?;
+        let threshold = self.shutdown_free_bytes.unwrap_or((16_u64 << 30).max(percent));
+        ensure!(
+            threshold > 0 && threshold < space.capacity,
+            "disk_policy.shutdown_free_bytes must be non-zero and below filesystem capacity"
+        );
+        ensure!(
+            self.max_owned_bytes < space.capacity,
+            "disk_policy.max_owned_bytes must be below filesystem capacity"
+        );
+        Ok(threshold)
+    }
+}
+/// The fixed auxiliary allowance covers metadata, WAL and validation output.
+/// Copy multiplicities are deliberately conservative, not assumed compression ratios.
+pub fn reservation(raw: u64, compressed: u64, private: u64) -> Result<u64> {
+    raw.checked_mul(3)
+        .and_then(|n| n.checked_add(compressed))
+        .and_then(|n| n.checked_add(private))
+        .and_then(|n| n.checked_add(1 << 30))
+        .context("task reservation overflow")
+}
+pub fn admit(policy: &DiskPolicy, existing: &[u64], reserve: u64, space: Space) -> Result<()> {
+    let threshold = policy.threshold(space)?;
+    let used = existing
+        .iter()
+        .try_fold(0_u64, |sum, size| sum.checked_add(*size).context("task size overflow"))?;
+    let total = used.checked_add(reserve).context("task reservation overflow")?;
+    ensure!(total <= policy.max_owned_bytes, "task reservation exceeds aggregate disk budget");
+    let remaining =
+        space.free.checked_sub(reserve).context("insufficient free disk for reservation")?;
+    ensure!(remaining >= threshold, "reservation would cross shared free-space threshold");
+    Ok(())
+}
+pub fn check_sample(policy: &DiskPolicy, owned_bytes: u64, space: Space) -> Result<()> {
+    let threshold = policy.threshold(space)?;
+    ensure!(owned_bytes <= policy.max_owned_bytes, "task allocation reached disk budget");
+    ensure!(space.free >= threshold, "shared free space reached shutdown threshold");
+    Ok(())
+}
+/// Probe errors propagate before admission and on every monitor sample.
+pub fn check_probe(
+    policy: &DiskPolicy,
+    owned: u64,
+    probe: impl FnOnce() -> Result<Space>,
+) -> Result<()> {
+    check_sample(policy, owned, probe()?)
+}
 static STOP_NEW_WORK: AtomicBool = AtomicBool::new(false);
 /// Streaming and native-worker loops consult the same fail-closed stop signal.
 pub fn check_active() -> Result<()> {
     ensure!(
         !STOP_NEW_WORK.load(Ordering::Acquire),
-        "task disk monitor stopped new work; inspect allocation and free-space limits"
+        "task disk monitor stopped new work; inspect allocation, free-space limits and operation deadline"
     );
     Ok(())
 }
+pub const OPERATION_SECONDS: u64 = 7200;
 pub struct Monitor {
     stop: Arc<AtomicBool>,
     thread: Option<std::thread::JoinHandle<()>>,
 }
 impl Monitor {
-    pub fn start(roots: &[PathBuf], operation: &Root, reserve: u64) -> Result<Self> {
+    pub fn start(
+        roots: &[PathBuf],
+        operation: &Root,
+        reserve: u64,
+        policy: &DiskPolicy,
+    ) -> Result<Self> {
         ensure!(
             roots.iter().any(|root| operation.path.starts_with(root)),
             "operation is outside task allocation inventory"
         );
         let used = allocated(roots)?;
-        admit(&[used], reserve, operation.free_bytes()?)?;
-        check_during_work(operation, used)?;
+        admit(policy, &[used], reserve, operation.space()?)?;
         STOP_NEW_WORK.store(false, Ordering::Release);
         let roots = roots.to_vec();
         let probe = operation.path.clone();
+        let policy = policy.clone();
+        let started = Instant::now();
         let stop = Arc::new(AtomicBool::new(false));
         let child_stop = stop.clone();
         let thread = std::thread::spawn(move || {
             while !child_stop.load(Ordering::Acquire) {
                 let result = (|| -> Result<()> {
-                    check_during_work(&Root::open(&probe)?, allocated(&roots)?)
+                    ensure!(
+                        started.elapsed() < Duration::from_secs(OPERATION_SECONDS),
+                        "operation reached two-hour work deadline"
+                    );
+                    check_probe(&policy, allocated(&roots)?, || Root::open(&probe)?.space())
                 })();
                 if let Err(error) = result {
                     eprintln!("task allocation monitor: {error:#}");
@@ -83,6 +150,7 @@ impl Drop for Monitor {
         }
     }
 }
+
 pub fn allocated(roots: &[PathBuf]) -> Result<u64> {
     use std::os::unix::fs::MetadataExt;
     fn visit(

@@ -185,11 +185,13 @@ pub fn create(
         context.budget_roots.iter().any(|root| store.starts_with(root)),
         "catalog is outside task allocation inventory"
     );
-    let reserve = trees::allocated_bytes(&context.database)?
-        .checked_mul(3)
-        .and_then(|n| n.checked_add(1 << 30))
-        .context("capture reservation overflow")?;
-    let _monitor = crate::budget::Monitor::start(&context.budget_roots, &operation, reserve)?;
+    let reserve = crate::budget::reservation(trees::allocated_bytes(&context.database)?, 0, 0)?;
+    let _monitor = crate::budget::Monitor::start(
+        &context.budget_roots,
+        &operation,
+        reserve,
+        &context.disk_policy,
+    )?;
     let image = Root::create(&operation.path.join("image"))?;
     let started = Instant::now();
     let capture_started = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
@@ -250,14 +252,17 @@ pub fn restore(request: &RestoreRequest, operation_path: &Path) -> Result<Journa
         request.context.budget_roots.iter().any(|root| request.cache.starts_with(root)),
         "cache is outside task allocation inventory"
     );
-    let reserve = preparation
-        .raw_bytes
-        .checked_mul(3)
-        .and_then(|n| n.checked_add(preparation.compressed_bytes))
-        .and_then(|n| n.checked_add(1 << 30))
-        .context("restore reservation overflow")?;
-    let _monitor =
-        crate::budget::Monitor::start(&request.context.budget_roots, &operation, reserve)?;
+    let reserve = crate::budget::reservation(
+        preparation.raw_bytes,
+        preparation.compressed_bytes,
+        trees::allocated_bytes(&request.context.database)?,
+    )?;
+    let _monitor = crate::budget::Monitor::start(
+        &request.context.budget_roots,
+        &operation,
+        reserve,
+        &request.context.disk_policy,
+    )?;
     operation.write_new("request.json", &serde_json::to_vec(request)?)?;
     operation.write_new("generation.json", &signed.bytes()?)?;
     let operation_id = format!("{:032x}", rand::random::<u128>());
@@ -319,6 +324,18 @@ fn stage(
     target: StoppedTarget<'_>,
     previous: Option<&Journal>,
 ) -> Result<Journal> {
+    let space = Root::open(&request.context.database)?.space()?;
+    stage_with_space(request, signed, objects, operation, target, previous, space)
+}
+fn stage_with_space(
+    request: &RestoreRequest,
+    signed: &SignedManifest,
+    objects: &Objects,
+    operation: &Root,
+    target: StoppedTarget<'_>,
+    previous: Option<&Journal>,
+    space: crate::budget::Space,
+) -> Result<Journal> {
     let StoppedTarget { operation_id, frozen, service_files } = target;
     ensure!(frozen.root == request.context.database, "preservation lock belongs to another root");
     let own = Root::open(&request.context.database)?;
@@ -356,15 +373,12 @@ fn stage(
     let raw = signed.manifest.files.iter().try_fold(0_u64, |sum, file| {
         sum.checked_add(file.size).context("manifest raw size overflow")
     })?;
-    let reserve = raw
-        .checked_mul(3)
-        .and_then(|value| value.checked_add(private_bytes))
-        .and_then(|value| value.checked_add(1 << 30))
-        .context("stopped restoration reservation overflow")?;
+    let reserve = crate::budget::reservation(raw, 0, private_bytes)?;
     crate::budget::admit(
+        &request.context.disk_policy,
         &[crate::budget::allocated(&request.context.budget_roots)?],
         reserve,
-        operation.free_bytes()?,
+        space,
     )?;
     let store = node_store::OfflineStore::open_existing(&own.path.join("state"))?;
     let (old, local) = records::export(&store)?;
@@ -491,9 +505,28 @@ pub fn recover(operation_path: &Path) -> Result<(NodeContext, Journal)> {
     let request: RestoreRequest =
         serde_json::from_slice(&operation.bytes("request.json", MANIFEST_LIMIT)?)?;
     request.context.validate_paths()?;
-    let _lock = operation_lock(&request.context.database)?;
-    let _monitor = crate::budget::Monitor::start(&request.context.budget_roots, &operation, 0)?;
     let mut journal = Journal::read(&operation)?;
+    let signed_probe = SignedManifest::parse(
+        &operation.bytes("generation.json", MANIFEST_LIMIT)?,
+        &trusted(&request.publisher_key)?,
+    )?;
+    let raw = signed_probe
+        .manifest
+        .files
+        .iter()
+        .try_fold(0_u64, |n, f| n.checked_add(f.size).context("recovery size overflow"))?;
+    let reserve = if journal.recovery()? == Recovery::OldRefreshRequired {
+        crate::budget::reservation(raw, 0, trees::allocated_bytes(&request.context.database)?)?
+    } else {
+        0
+    };
+    let _monitor = crate::budget::Monitor::start(
+        &request.context.budget_roots,
+        &operation,
+        reserve,
+        &request.context.disk_policy,
+    )?;
+    let _lock = operation_lock(&request.context.database)?;
     ensure!(
         Path::new(&journal.installed) == request.context.database,
         "journal and selected service root differ"
@@ -646,6 +679,10 @@ mod tests {
             operator_config: parent.path.join("operator.json"),
             node_name: "fixture".to_owned(),
             budget_roots: vec![fixture.clone()],
+            disk_policy: crate::budget::DiskPolicy {
+                max_owned_bytes: 64 << 30,
+                shutdown_free_bytes: Some(4 << 30),
+            },
             vault_config_files: vec![],
             references: crate::references::ReferencePolicy { sources: vec![] },
         };
@@ -669,7 +706,7 @@ mod tests {
         };
         let operation = Root::create(&parent.path.join("operation"))?;
         let frozen = Frozen::acquire(&own.path)?;
-        let staged = stage(
+        let staged = stage_with_space(
             &request,
             &signed,
             &objects,
@@ -680,6 +717,7 @@ mod tests {
                 service_files: &[parent.path.join("fixture.service")],
             },
             None,
+            crate::budget::Space { capacity: 128 << 30, free: 100 << 30 },
         );
         assert!(staged.is_ok(), "native stage preservation failed: {staged:?}");
         let mut journal = staged?;

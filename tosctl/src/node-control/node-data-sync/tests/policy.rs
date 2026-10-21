@@ -498,16 +498,92 @@ fn status_freshness_includes_reference_query_latency_and_fractional_gaps() -> Re
 
 #[test]
 fn disk_admission_reserves_space_and_refuses_overflow() -> Result<()> {
-    use node_data_sync::{
-        budget,
-        model::{FREE_FLOOR, TASK_LIMIT},
+    use node_data_sync::budget::{self, DiskPolicy, Space};
+    let policy = DiskPolicy { max_owned_bytes: 1000, shutdown_free_bytes: Some(100) };
+    let space = |free| Space { capacity: 2000, free };
+    budget::admit(&policy, &[999], 1, space(101))?;
+    assert!(budget::admit(&policy, &[1000], 1, space(101)).is_err());
+    assert!(budget::admit(&policy, &[0], 1, space(100)).is_err());
+    assert!(budget::admit(&policy, &[u64::MAX, 1], 0, space(2000)).is_err());
+    assert!(budget::admit(&policy, &[1], u64::MAX, space(2000)).is_err());
+    assert!(budget::admit(&policy, &[0], 2, space(1)).is_err());
+    assert!(budget::reservation(u64::MAX, 0, 0).is_err());
+    assert!(budget::reservation(1, u64::MAX, 0).is_err());
+    assert!(budget::reservation(1, 0, u64::MAX).is_err());
+    Ok(())
+}
+
+#[test]
+fn admitted_full_reservation_reaches_exact_threshold_without_stopping() -> Result<()> {
+    use node_data_sync::budget::{self, DiskPolicy, Space};
+    let policy = DiskPolicy { max_owned_bytes: 1000, shutdown_free_bytes: Some(100) };
+    budget::admit(&policy, &[10], 400, Space { capacity: 2000, free: 500 })?;
+    budget::check_sample(&policy, 410, Space { capacity: 2000, free: 100 })?;
+    let error = budget::check_sample(&policy, 411, Space { capacity: 2000, free: 99 })
+        .expect_err("one extra byte must stop work");
+    assert!(error.to_string().contains("shutdown threshold"));
+    assert!(budget::admit(&policy, &[10], 401, Space { capacity: 2000, free: 500 }).is_err());
+    Ok(())
+}
+
+#[test]
+fn disk_policy_validation_and_probe_fail_closed() -> Result<()> {
+    use node_data_sync::budget::{self, DiskPolicy, Space};
+    let space = Space { capacity: 2000, free: 1500 };
+    assert!(
+        DiskPolicy::default()
+            .threshold(space)
+            .expect_err("required ceiling")
+            .to_string()
+            .contains("disk_policy.max_owned_bytes")
+    );
+    for (max_owned_bytes, threshold) in
+        [(1000, 0), (1000, 2000), (1000, 2001), (2000, 100), (0, 100)]
+    {
+        assert!(
+            DiskPolicy { max_owned_bytes, shutdown_free_bytes: Some(threshold) }
+                .threshold(space)
+                .is_err()
+        );
+    }
+    let policy = DiskPolicy { max_owned_bytes: 1000, shutdown_free_bytes: Some(100) };
+    assert!(policy.threshold(Space { capacity: 0, free: 0 }).is_err());
+    assert!(policy.threshold(Space { capacity: 2000, free: 2001 }).is_err());
+    assert!(
+        budget::check_probe(&policy, 0, || anyhow::bail!("injected disk probe failure"))
+            .expect_err("probe errors refuse")
+            .to_string()
+            .contains("injected disk probe failure")
+    );
+    let default = DiskPolicy { max_owned_bytes: 1, shutdown_free_bytes: None };
+    assert_eq!(default.threshold(Space { capacity: 160 << 30, free: 100 << 30 })?, 16 << 30);
+    assert_eq!(default.threshold(Space { capacity: 1000 << 30, free: 500 << 30 })?, 50 << 30);
+    Ok(())
+}
+
+#[test]
+fn recovery_rechecks_persisted_policy_before_writes() -> Result<()> {
+    use node_data_sync::budget::{self, DiskPolicy, Space};
+    let policy = DiskPolicy { max_owned_bytes: 1000, shutdown_free_bytes: Some(100) };
+    let persisted = serde_json::to_vec(&policy)?;
+    budget::admit(&policy, &[10], 400, Space { capacity: 2000, free: 500 })?;
+    let restored: DiskPolicy = serde_json::from_slice(&persisted)?;
+    let mut writes = 0;
+    let mut resume = |space| -> Result<()> {
+        budget::admit(&restored, &[10], 400, space)?;
+        writes += 1;
+        Ok(())
     };
-    budget::admit(&[TASK_LIMIT - 1], 1, FREE_FLOOR + 1)?;
-    assert!(budget::admit(&[TASK_LIMIT], 1, FREE_FLOOR + 1).is_err());
-    assert!(budget::admit(&[0], 1, FREE_FLOOR).is_err());
-    assert!(budget::admit(&[u64::MAX, 1], 0, u64::MAX).is_err());
-    assert!(budget::admit(&[1], u64::MAX, u64::MAX).is_err());
-    assert!(budget::admit(&[0], 2, 1).is_err());
+    assert!(resume(Space { capacity: 2000, free: 499 }).is_err());
+    assert!(resume(Space { capacity: 100, free: 99 }).is_err());
+    assert_eq!(writes, 0);
+    budget::admit(&restored, &[10], 400, Space { capacity: 2000, free: 500 })?;
+    let source = include_str!("../src/operations.rs");
+    let recovery = source.split("pub fn recover(").nth(1).expect("recovery function");
+    assert!(
+        recovery.find("Monitor::start").expect("admission")
+            < recovery.find("operation_lock(").expect("first potential write")
+    );
     Ok(())
 }
 

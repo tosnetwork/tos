@@ -212,13 +212,19 @@ impl Root {
         Ok(file)
     }
     pub fn free_bytes(&self) -> Result<u64> {
+        Ok(self.space()?.free)
+    }
+    pub fn space(&self) -> Result<crate::budget::Space> {
         let mut stat = std::mem::MaybeUninit::<libc::statvfs>::uninit();
         ensure!(
             unsafe { libc::fstatvfs(self.directory.as_raw_fd(), stat.as_mut_ptr()) } == 0,
             "statvfs failed"
         );
         let stat = unsafe { stat.assume_init() };
-        stat.f_bavail.checked_mul(stat.f_frsize).context("disk byte count overflow")
+        Ok(crate::budget::Space {
+            capacity: stat.f_blocks.checked_mul(stat.f_frsize).context("disk capacity overflow")?,
+            free: stat.f_bavail.checked_mul(stat.f_frsize).context("disk byte count overflow")?,
+        })
     }
 }
 pub fn copy_hash(
