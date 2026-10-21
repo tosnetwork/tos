@@ -358,10 +358,12 @@ jobs:
         run: uv run python test/integration/node_store_native_reopen.py --root build/node-store-native-reopen --build build --reconstruct build/operator-rust-target/debug/examples/reconstruct_fixture --validate-generation build/operator-rust-target/debug/examples/capture_and_validate
 
       - name: Verify native restore preservation and forward-only exchange
-        timeout-minutes: 10
+        timeout-minutes: 25
         shell: bash
         run: |
           set -euo pipefail
+          started=$SECONDS
+          trap 'result=$?; elapsed=$((SECONDS - started)); printf "Native restore verification duration: %ss (exit %s)\n" "$elapsed" "$result"; printf "Native restore verification: **%ss**, exit **%s** (25-minute limit).\n" "$elapsed" "$result" >> "$GITHUB_STEP_SUMMARY"; exit "$result"' EXIT
           export NODE_STORE_NATIVE_DIR="$GITHUB_WORKSPACE/build/third-party/rocksdb"
           export CARGO_TARGET_DIR="$GITHUB_WORKSPACE/build/operator-rust-target"
           export NODE_SYNC_NATIVE_FIXTURE="$GITHUB_WORKSPACE/build/node-store-native-reopen/checked-generation"

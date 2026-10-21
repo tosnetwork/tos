@@ -393,11 +393,16 @@ Interruption hooks and manager overrides are compiled only under `cfg(test)` and
 the non-default `native-lifecycle-tests` feature. The build rejects that feature
 in the release profile; source guards reject default activation or unguarded hook
 calls and pin the native CI command and result tokens. No runtime switch enables
-hooks in the operator executable. These component tests do not replace the real
+hooks in the operator executable. Without the fixture environment these optional native tests print an explicit skip;
+the dedicated CI step requires their result tokens, so it cannot silently skip.
+These component tests do not replace the real
 signed-vote/crash or full-backlog qualification rehearsals.
 
 A watching sync-status command does not begin a zero-budget observation. If its
 observation deadline expires after a successful catching-up observation, it
 reports that last observation and exits 2 (observation timeout), not 4 (unknown).
+That deadline reprint is labelled `stale=true` in text and `"stale": true` in
+JSON; `sample_age` / `sample_age_seconds` measures elapsed monotonic time since
+the last successful sample completed. Fresh samples are not labelled stale.
 Without a successful catching-up observation it remains unknown; policy failure
 and at-head results retain their distinct exits.

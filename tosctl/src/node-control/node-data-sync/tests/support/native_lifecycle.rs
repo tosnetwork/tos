@@ -146,6 +146,25 @@ struct Fixture {
     // Drop the native process owner before removing its database tree.
     _temporary: tempfile::TempDir,
 }
+fn fixture_environment_available() -> bool {
+    let missing: Vec<_> = [
+        "NODE_SYNC_NATIVE_FIXTURE",
+        "NODE_SYNC_NATIVE_SOURCE",
+        "NODE_SYNC_NATIVE_ENGINE",
+        "NODE_SYNC_NATIVE_WORKER",
+    ]
+    .into_iter()
+    .filter(|name| std::env::var_os(name).is_none())
+    .collect();
+    if missing.is_empty() {
+        return true;
+    }
+    eprintln!(
+        "SKIP native lifecycle fixture: missing {}; run the native lifecycle CI step",
+        missing.join(", ")
+    );
+    false
+}
 impl Fixture {
     fn new() -> Result<Self> {
         let fixture = PathBuf::from(
@@ -345,6 +364,9 @@ impl Drop for ObjectServer {
 fn production_restore_stop_cut_recovers_without_exchange() -> Result<()> {
     let _serial =
         SERIAL.lock().map_err(|_| anyhow::anyhow!("native lifecycle fixture poisoned"))?;
+    if !fixture_environment_available() {
+        return Ok(());
+    }
     let fixture = Fixture::new()?;
     let after_stop = Rc::new(RefCell::new(None));
     let stopped = Rc::clone(&after_stop);
@@ -398,7 +420,7 @@ fn production_restore_stop_cut_recovers_without_exchange() -> Result<()> {
         "restore crossed interrupted boundary or restarted"
     );
     assert!(matches!(operations::recover(&fixture.operation)?, RecoveryOutcome::Aborted(_)));
-    println!("PRODUCTION_RESTORE_STOP_CUT_OK");
+    println!("\nPRODUCTION_RESTORE_STOP_CUT_OK");
     Ok(())
 }
 
@@ -406,6 +428,9 @@ fn production_restore_stop_cut_recovers_without_exchange() -> Result<()> {
 fn production_entry_points_refuse_lifecycle_mode_changes() -> Result<()> {
     let _serial =
         SERIAL.lock().map_err(|_| anyhow::anyhow!("native lifecycle fixture poisoned"))?;
+    if !fixture_environment_available() {
+        return Ok(());
+    }
     for case in ["running-configured", "create-stop", "restore-stop", "download"] {
         let mut fixture = Fixture::new()?;
         let state = Rc::clone(&fixture.manager);
@@ -467,6 +492,12 @@ fn production_entry_points_refuse_lifecycle_mode_changes() -> Result<()> {
             "{case}: prohibited action reached: {:?}",
             manager.events
         );
+        if case == "running-configured" {
+            assert!(
+                !manager.events.iter().any(|v| v == "stop"),
+                "running/configured mismatch stopped the source"
+            );
+        }
         if case == "download" {
             assert!(
                 manager.events.iter().any(|v| v == "during-download"),
@@ -491,7 +522,7 @@ fn production_entry_points_refuse_lifecycle_mode_changes() -> Result<()> {
         fixture.manager.borrow_mut().stop()?;
         println!("LIFECYCLE_MODE_CASE_OK {case}");
     }
-    println!("PRODUCTION_LIFECYCLE_MODES_OK");
+    println!("\nPRODUCTION_LIFECYCLE_MODES_OK");
     Ok(())
 }
 
@@ -537,6 +568,9 @@ fn production_restore_process_exit_recovers() -> Result<()> {
         let result = operations::restore(&request, &operation);
         anyhow::bail!("production process-exit cut was not reached: {result:?}");
     }
+    if !fixture_environment_available() {
+        return Ok(());
+    }
     let fixture = Fixture::new()?;
     Root::open(&fixture.request.context.work_root)?
         .write_new("child-request.json", &serde_json::to_vec(&fixture.request)?)?;
@@ -576,7 +610,7 @@ fn production_restore_process_exit_recovers() -> Result<()> {
     assert!(!fixture.request.cache.join(format!("leases/r-{}", sha256(&id))).exists());
     assert!(matches!(operations::recover(&fixture.operation)?, RecoveryOutcome::Aborted(_)));
     assert!(fixture.manager.borrow().events.is_empty(), "recovery unexpectedly started the node");
-    println!("PRODUCTION_RESTORE_PROCESS_EXIT_OK");
+    println!("\nPRODUCTION_RESTORE_PROCESS_EXIT_OK");
     Ok(())
 }
 
@@ -584,6 +618,9 @@ fn production_restore_process_exit_recovers() -> Result<()> {
 fn production_complete_retries_after_release_cut() -> Result<()> {
     let _serial =
         SERIAL.lock().map_err(|_| anyhow::anyhow!("native lifecycle fixture poisoned"))?;
+    if !fixture_environment_available() {
+        return Ok(());
+    }
     let fixture = Fixture::new()?;
     let record = Root::create(&fixture.operation)?;
     record.write_new("request.json", &serde_json::to_vec(&fixture.request)?)?;
@@ -640,6 +677,6 @@ fn production_complete_retries_after_release_cut() -> Result<()> {
         fixture.request.cache.join(format!("leases/r-{other}")).exists(),
         "retry removed another receiver lease"
     );
-    println!("PRODUCTION_COMPLETE_RETRY_OK");
+    println!("\nPRODUCTION_COMPLETE_RETRY_OK");
     Ok(())
 }

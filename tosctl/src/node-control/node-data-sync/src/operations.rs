@@ -1049,7 +1049,7 @@ mod tests {
             b"signed after exchange before start-issued"
         );
         assert!(journal.exchange(&operation).is_err(), "interrupted recovery permitted rollback");
-        println!("NATIVE_STAGE_PRESERVATION_OK");
+        println!("\nNATIVE_STAGE_PRESERVATION_OK");
         Ok(())
     }
 }

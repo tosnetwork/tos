@@ -154,23 +154,9 @@ pub(super) async fn status(target: &NodeTarget<'_>, cmd: &NodeStatusCmd) -> Resu
             }
         };
     let mut sampler = LiveSampler { collector: &mut collector, client: &mut client };
-    let exit = observe(&mut sampler, cmd.watch, Duration::from_secs(cmd.timeout), Duration::from_secs(5), |result| {
+    let exit = observe(&mut sampler, cmd.watch, Duration::from_secs(cmd.timeout), Duration::from_secs(5), |result, stale_age| {
         match result {
-            Ok(sample) => {
-                if cmd.format == super::output_format::OutputFormat::Json {
-                    println!("{}", serde_json::to_string(&sample)?);
-                } else {
-                    println!(
-                        "{}; head={}, age={}s, shard_lag={}, reference_lag={:?}, stable={}s",
-                        sample.reason,
-                        sample.evidence.tip.seqno,
-                        sample.block_age_seconds,
-                        sample.shard_lag_blocks,
-                        sample.reference_lag_blocks,
-                        sample.stable_seconds
-                    );
-                }
-            }
+            Ok(sample) => println!("{}", status_output(sample, &cmd.format, stale_age)?),
             Err(error) => {
                 if cmd.format == super::output_format::OutputFormat::Json {
                     println!("{}", serde_json::json!({"state":"unknown", "exit_code":4,"reason":error.to_string()}));
@@ -184,6 +170,35 @@ pub(super) async fn status(target: &NodeTarget<'_>, cmd: &NodeStatusCmd) -> Resu
         return Err(StatusExit(exit).into());
     }
     Ok(())
+}
+
+fn status_output(
+    sample: &SyncStatus,
+    format: &super::output_format::OutputFormat,
+    stale_age: Option<Duration>,
+) -> Result<String> {
+    if *format == super::output_format::OutputFormat::Json {
+        let mut value = serde_json::to_value(sample)?;
+        if let Some(age) = stale_age {
+            value["stale"] = serde_json::json!(true);
+            value["sample_age_seconds"] = serde_json::json!(age.as_secs_f64());
+        }
+        Ok(serde_json::to_string(&value)?)
+    } else {
+        let mut text = format!(
+            "{}; head={}, age={}s, shard_lag={}, reference_lag={:?}, stable={}s",
+            sample.reason,
+            sample.evidence.tip.seqno,
+            sample.block_age_seconds,
+            sample.shard_lag_blocks,
+            sample.reference_lag_blocks,
+            sample.stable_seconds
+        );
+        if let Some(age) = stale_age {
+            text.push_str(&format!("; stale=true, sample_age={:.3}s", age.as_secs_f64()));
+        }
+        Ok(text)
+    }
 }
 
 trait StatusSampler {
@@ -203,41 +218,44 @@ async fn observe(
     watch: bool,
     budget: Duration,
     interval: Duration,
-    mut emit: impl FnMut(std::result::Result<&SyncStatus, &anyhow::Error>) -> Result<()>,
+    mut emit: impl FnMut(
+        std::result::Result<&SyncStatus, &anyhow::Error>,
+        Option<Duration>,
+    ) -> Result<()>,
 ) -> Result<u8> {
     let start = Instant::now();
     let mut last_successful = None;
     loop {
         let remaining = budget.saturating_sub(start.elapsed());
         if remaining.is_zero() {
-            if let Some(sample) = last_successful.as_ref() {
-                emit(Ok(sample))?;
+            if let Some((sample, completed_at)) = last_successful.as_ref() {
+                emit(Ok(sample), Some(Instant::now().duration_since(*completed_at)))?;
                 return Ok(sample.exit_code);
             }
-            emit(Err(&anyhow::anyhow!("sync status observation deadline expired")))?;
+            emit(Err(&anyhow::anyhow!("sync status observation deadline expired")), None)?;
             return Ok(4);
         }
         let result = match tokio::time::timeout(remaining, sampler.sample()).await {
             Ok(result) => result,
             Err(_) => {
-                if let Some(sample) = last_successful.as_ref() {
-                    emit(Ok(sample))?;
+                if let Some((sample, completed_at)) = last_successful.as_ref() {
+                    emit(Ok(sample), Some(Instant::now().duration_since(*completed_at)))?;
                     return Ok(sample.exit_code);
                 }
-                emit(Err(&anyhow::anyhow!("sync status observation deadline expired")))?;
+                emit(Err(&anyhow::anyhow!("sync status observation deadline expired")), None)?;
                 return Ok(4);
             }
         };
         let code = match &result {
             Ok(sample) => {
                 if matches!(sample.exit_code, 2 | 3) {
-                    last_successful = Some(sample.clone());
+                    last_successful = Some((sample.clone(), Instant::now()));
                 }
                 sample.exit_code
             }
             Err(_) => 4,
         };
-        emit(result.as_ref())?;
+        emit(result.as_ref(), None)?;
         if !watch || code == 0 {
             return Ok(code);
         }
@@ -280,12 +298,43 @@ mod watch_tests {
         }
     }
     #[tokio::test(start_paused = true)]
+    async fn deadline_reprint_marks_its_age_in_both_formats() -> Result<()> {
+        use super::super::output_format::OutputFormat;
+        for interval in [Duration::from_secs(5), Duration::ZERO] {
+            let mut script =
+                Script { calls: 0, pending_after_first: true, error_after_first: false, code: 2 };
+            let mut output = Vec::new();
+            let exit =
+                observe(&mut script, true, Duration::from_secs(1), interval, |sample, age| {
+                    let sample = sample.map_err(|e| anyhow::anyhow!("unexpected error: {e}"))?;
+                    output.push((
+                        status_output(sample, &OutputFormat::Json, age)?,
+                        status_output(sample, &OutputFormat::Table, age)?,
+                    ));
+                    Ok(())
+                })
+                .await?;
+            assert_eq!(exit, 2);
+            let fresh: serde_json::Value = serde_json::from_str(&output[0].0)?;
+            assert!(fresh.get("stale").is_none(), "fresh sample labelled stale");
+            assert!(!output[0].1.contains("stale=true"));
+            let stale: serde_json::Value = serde_json::from_str(&output[1].0)?;
+            assert_eq!(stale["stale"], true, "deadline JSON hides stale sample");
+            assert_eq!(stale["sample_age_seconds"], 1.0, "deadline sample age is wrong");
+            assert!(
+                output[1].1.ends_with("stale=true, sample_age=1.000s"),
+                "deadline text hides stale sample or age"
+            );
+        }
+        Ok(())
+    }
+    #[tokio::test(start_paused = true)]
     async fn watch_deadline_keeps_catching_up_without_a_zero_budget_sample() -> Result<()> {
         for interval in [Duration::from_secs(5), Duration::ZERO] {
             let mut script =
                 Script { calls: 0, pending_after_first: true, error_after_first: false, code: 2 };
             let mut outputs = Vec::new();
-            let code = observe(&mut script, true, Duration::from_secs(1), interval, |s| {
+            let code = observe(&mut script, true, Duration::from_secs(1), interval, |s, _| {
                 outputs.push(s.map(|s| s.exit_code).unwrap_or(4));
                 Ok(())
             })
@@ -310,7 +359,7 @@ mod watch_tests {
             true,
             Duration::from_secs(1),
             Duration::from_millis(500),
-            |s| {
+            |s, _| {
                 outputs.push(s.map(|s| s.exit_code).unwrap_or(4));
                 Ok(())
             },
@@ -323,7 +372,8 @@ mod watch_tests {
         assert_eq!(outputs, vec![2, 4, 2]);
         let mut script =
             Script { calls: 0, pending_after_first: false, error_after_first: false, code: 2 };
-        let code = observe(&mut script, true, Duration::ZERO, Duration::ZERO, |_| Ok(())).await?;
+        let code =
+            observe(&mut script, true, Duration::ZERO, Duration::ZERO, |_, _| Ok(())).await?;
         assert_eq!(code, 4);
         assert_eq!(script.calls, 0, "sample started with zero budget");
         for expected in [0, 3, 4] {
@@ -334,7 +384,7 @@ mod watch_tests {
                 code: expected,
             };
             let code =
-                observe(&mut script, true, Duration::from_secs(1), Duration::ZERO, |_| Ok(()))
+                observe(&mut script, true, Duration::from_secs(1), Duration::ZERO, |_, _| Ok(()))
                     .await?;
             assert_eq!(code, expected, "watch changed an existing exit case");
             assert_eq!(
