@@ -8,7 +8,7 @@ import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from pytosiq_core import Cell, begin_cell
@@ -16,6 +16,7 @@ from pytosiq_core import Cell, begin_cell
 ROOT = Path(__file__).resolve().parents[3]
 ACCOUNT = "0:" + "11" * 32
 OTHER_ACCOUNT = "0:" + "22" * 32
+OWNERS = [ACCOUNT, OTHER_ACCOUNT, "0:" + "33" * 32]
 
 
 def module(name):
@@ -49,6 +50,67 @@ def rendered(data, exit_code) -> dict[str, Any]:
     }
 
 
+def comparison_rows(name, destination):
+    """Synthetic comparisons shaped like the runner's complete per-step output."""
+    fields = [
+        "total_supply",
+        "mintable",
+        "admin_address",
+        "token_content",
+        "token_wallet_code",
+        "expected supply",
+        "expected admin",
+        "supply equals wallet sum",
+    ]
+    for owner in OWNERS:
+        fields.extend(
+            [
+                "expected balance " + owner,
+                "nonnegative balance",
+                "indexed wallet",
+                "wallet owner",
+                "wallet master",
+                "wallet code",
+            ]
+        )
+    if name != "token deploy":
+        fields.extend(["collection next index", "collection owner", "collection metadata"])
+    if name.startswith("NFT "):
+        fields.extend(
+            [
+                "item initialized",
+                "item index",
+                "item collection",
+                "item owner",
+                "expected NFT owner",
+                "item metadata",
+                "NFT indexed collection",
+            ]
+        )
+        fields.extend("NFT owner index " + owner for owner in OWNERS)
+    if name == "transfer payload notification":
+        fields.extend(
+            [
+                "notification query",
+                "notification amount",
+                "notification from",
+                "notification payload marker",
+                "notification payload",
+                "notification source",
+                "notification count",
+            ]
+        )
+    if name in ("insufficient balance", "NFT non-owner refused"):
+        fields.extend(
+            [
+                "refused operation persistent data " + destination,
+                "bounce value conservation",
+                "bounce receipt count",
+            ]
+        )
+    return [{"getter": 1, "rpc_or_expected": 1, "pass": True, "field": f} for f in fields]
+
+
 def step_record(name) -> dict[str, Any]:
     """One lifecycle step built from the retained sender and target pair of its outcome."""
     exit_code = oracle.EXPECTED_EXIT.get(name, 0)
@@ -65,7 +127,7 @@ def step_record(name) -> dict[str, Any]:
             real["destination"]: [copy.deepcopy(target)],
             real["sender"]: [rendered(real["sender_tx"], 0)],
         },
-        "comparisons": [{"getter": 1, "rpc_or_expected": 1, "pass": True, "field": "synthetic"}],
+        "comparisons": comparison_rows(name, real["destination"]),
     }
 
 
@@ -81,6 +143,7 @@ def records():
             "source_head_after": head,
             "completed": True,
             "global_id": 3,
+            "owners": OWNERS,
         },
         "summary.jsonl": [
             {
@@ -91,7 +154,9 @@ def records():
             }
         ],
         "steps.jsonl": steps,
-        "checks.jsonl": [field],
+        "checks.jsonl": [
+            dict(row, step=step["step"]) for step in steps for row in step["comparisons"]
+        ],
         "invariants.jsonl": [
             {
                 "step": name,
@@ -120,6 +185,208 @@ def records():
 
 def test_complete_receipt(records):
     assert oracle.verify(None, records)["pass"]
+
+
+def test_comparison_red_controls_fail_for_their_stated_reasons(records):
+    receipts = []
+    original = copy.deepcopy(records)
+    oracle.comparison_controls(
+        records,
+        lambda name, baseline, validate, mutate, reason: oracle.exercise(
+            receipts, name, baseline, validate, mutate, reason
+        ),
+    )
+    assert len(receipts) == 7
+    assert all(row["baseline_exit"] == row["restored_exit"] == 0 for row in receipts)
+    assert all(row["mutant_exit"] == 1 for row in receipts)
+    assert records == original
+
+
+@pytest.mark.parametrize(
+    "change,reason",
+    [
+        ("empty_checks", "missing comparison receipts"),
+        ("missing_step_checks", "comparison receipts differ"),
+        ("empty_step_comparisons", "missing getter/RPC comparisons"),
+        ("missing_one_check", "comparison receipts differ"),
+    ],
+)
+def test_comparison_receipts_cannot_be_missing(records, change, reason):
+    assert oracle.verify(None, records)["pass"]
+    if change == "empty_checks":
+        records["checks.jsonl"] = []
+    elif change == "missing_step_checks":
+        records["checks.jsonl"] = [r for r in records["checks.jsonl"] if r["step"] != "burn"]
+    elif change == "empty_step_comparisons":
+        records["steps.jsonl"][8]["comparisons"] = []
+    else:
+        records["checks.jsonl"].pop()
+    with pytest.raises(AssertionError, match=reason):
+        oracle.verify(None, records)
+
+
+@pytest.mark.parametrize("where", ["step", "checks", "both"])
+@pytest.mark.parametrize(
+    "change,reason", [("value", "field mismatch"), ("flag", "field marked failed")]
+)
+def test_failed_comparison_receipts_are_rejected(records, where, change, reason):
+    assert oracle.verify(None, records)["pass"]
+    rows = []
+    if where in ("step", "both"):
+        rows.append(records["steps.jsonl"][8]["comparisons"][0])
+    if where in ("checks", "both"):
+        rows.append(next(r for r in records["checks.jsonl"] if r["step"] == "burn"))
+    for row in rows:
+        if change == "value":
+            row["getter"] = 999
+        else:
+            row["pass"] = False
+    with pytest.raises(AssertionError, match=reason):
+        oracle.verify(None, records)
+
+
+@pytest.mark.parametrize(
+    "change", ["checks_value", "step_value", "field", "step", "order", "duplicate"]
+)
+def test_comparison_records_must_agree(records, change):
+    assert oracle.verify(None, records)["pass"]
+    if change == "checks_value":
+        records["checks.jsonl"][0].update(getter=2, rpc_or_expected=2)
+    elif change == "step_value":
+        records["steps.jsonl"][0]["comparisons"][0].update(getter=2, rpc_or_expected=2)
+    elif change == "field":
+        records["checks.jsonl"][0]["field"] = "another valid-looking field"
+    elif change == "step":
+        records["checks.jsonl"][0]["step"] = "burn"
+    elif change == "order":
+        records["checks.jsonl"][0:2] = records["checks.jsonl"][1::-1]
+    else:
+        records["checks.jsonl"].append(copy.deepcopy(records["checks.jsonl"][-1]))
+    with pytest.raises(AssertionError, match="comparison receipts differ"):
+        oracle.verify(None, records)
+
+
+@pytest.mark.parametrize(
+    "step_name,field",
+    [
+        ("burn", "total_supply"),
+        ("collection deploy", "collection metadata"),
+        ("NFT transfer", "expected NFT owner"),
+        ("transfer payload notification", "notification payload"),
+        ("insufficient balance", "bounce receipt count"),
+    ],
+)
+def test_required_comparison_cannot_be_deleted_from_both_records(records, step_name, field):
+    assert oracle.verify(None, records)["pass"]
+    step = next(s for s in records["steps.jsonl"] if s["step"] == step_name)
+    step["comparisons"] = [r for r in step["comparisons"] if r["field"] != field]
+    records["checks.jsonl"] = [
+        r for r in records["checks.jsonl"] if (r["step"], r["field"]) != (step_name, field)
+    ]
+    with pytest.raises(AssertionError, match="required comparison missing or duplicated"):
+        oracle.verify(None, records)
+
+
+@pytest.mark.parametrize("owners", [None, [], OWNERS[:2], [OWNERS[0]] * 3])
+def test_comparison_coverage_requires_three_distinct_owners(records, owners):
+    assert oracle.verify(None, records)["pass"]
+    records["provenance.json"]["owners"] = owners
+    with pytest.raises(AssertionError, match="comparison owners missing or invalid"):
+        oracle.verify(None, records)
+
+
+@pytest.mark.parametrize(
+    "field,reason",
+    [
+        ("nonnegative balance", "wallet balance comparisons missing"),
+        ("indexed wallet", "wallet index comparisons missing"),
+        ("wallet code", "wallet identity comparisons missing"),
+    ],
+)
+def test_wallet_comparison_coverage_cannot_be_shortened_in_both_records(records, field, reason):
+    assert oracle.verify(None, records)["pass"]
+    rows = records["steps.jsonl"][8]["comparisons"]
+    rows.pop(next(i for i, row in enumerate(rows) if row["field"] == field))
+    records["checks.jsonl"] = [
+        dict(row, step=step["step"])
+        for step in records["steps.jsonl"]
+        for row in step["comparisons"]
+    ]
+    with pytest.raises(AssertionError, match=reason):
+        oracle.verify(None, records)
+
+
+def test_required_comparison_cannot_be_duplicated_in_both_records(records):
+    assert oracle.verify(None, records)["pass"]
+    rows = records["steps.jsonl"][8]["comparisons"]
+    rows.append(copy.deepcopy(rows[0]))
+    records["checks.jsonl"] = [
+        dict(row, step=step["step"])
+        for step in records["steps.jsonl"]
+        for row in step["comparisons"]
+    ]
+    with pytest.raises(AssertionError, match="required comparison missing or duplicated"):
+        oracle.verify(None, records)
+
+
+@pytest.mark.parametrize(
+    "label,exit_code",
+    [
+        ("token deploy", 0),
+        ("transfer payload notification", 0),
+        ("insufficient balance", 706),
+    ],
+)
+def test_runner_persists_all_comparisons_in_both_records(tmp_path, label, exit_code):
+    real = fixture_transactions.STEPS[exit_code]
+    target = rendered(real["target_tx"], exit_code)
+    owners = [real["sender"], OTHER_ACCOUNT, OWNERS[2]]
+    harness = lifecycle.Harness("unused", tmp_path / "evidence", AsyncMock(), owners)
+    harness.master = real["destination"]
+    harness.collection = ACCOUNT
+    harness.lt = lambda _account: 0
+    harness.rpc = lambda method, **_params: (
+        {"data": "unchanged"} if method == "getAddressInformation" else {"last": {"seqno": 10}}
+    )
+    harness.transfer = AsyncMock()
+    harness.wait = AsyncMock(side_effect=[real["message_hash"], target, True])
+    transactions = {
+        real["destination"]: [target],
+        real["sender"]: [rendered(real["sender_tx"], 0)],
+    }
+    harness.new_transactions = lambda account, _before: transactions.get(account, [])
+
+    async def snapshot(_label):
+        return [harness.compare("snapshot field", 1, 1)]
+
+    async def extra(_target):
+        harness.compare("extra callback field", 2, 2)
+
+    harness.snapshot = snapshot
+    harness.notification = lambda _transactions: harness.compare("notification field", 3, 3)
+    harness.bounce_accounting = lambda *_args: harness.compare("bounce field", 4, 4)
+    with patch.object(lifecycle.asyncio, "sleep", AsyncMock()):
+        asyncio.run(
+            harness.step(
+                label,
+                real["sender"],
+                real["destination"],
+                Cell.empty(),
+                expected_exit=exit_code,
+                extra=extra,
+            )
+        )
+    checks = oracle.load(harness.output, "checks.jsonl")
+    (step,) = oracle.load(harness.output, "steps.jsonl")
+    assert checks == [dict(row, step=label) for row in step["comparisons"]]
+    fields = [row["field"] for row in step["comparisons"]]
+    assert "snapshot field" in fields and "extra callback field" in fields
+    if exit_code:
+        assert "bounce field" in fields
+        assert "refused operation persistent data " + real["destination"] in fields
+    if label == "transfer payload notification":
+        assert "notification field" in fields
+    assert not harness.failures
 
 
 @pytest.mark.parametrize("where", ["steps.jsonl", "summary.jsonl", "invariants.jsonl"])

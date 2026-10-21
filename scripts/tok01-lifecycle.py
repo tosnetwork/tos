@@ -170,6 +170,7 @@ class Harness:
         self.wallets = {}
         self.failures = []
         self.steps = []
+        self.step_comparisons = []
         self.item = None
         self.item_owner = None
         # Contracts that a completed step deployed or minted; later snapshots require them active.
@@ -194,6 +195,7 @@ class Harness:
             self.failures.append(failure)
             self.record("failures.jsonl", failure)
             row = {"field": label, "getter": actual, "rpc_or_expected": expected, "pass": False}
+        self.step_comparisons.append(row)
         self.record("checks.jsonl", {"step": self.current_step, **row})
         return row
 
@@ -291,6 +293,7 @@ class Harness:
     ):
         print(f"STEP {label}", flush=True)
         self.current_step = label
+        self.step_comparisons = []
         accounts = list(
             dict.fromkeys(
                 [
@@ -323,7 +326,6 @@ class Harness:
         target = await self.wait(
             lambda: select_target(self.new_transactions(destination, before), sent)
         )
-        rows = []
         try:
             equal(label + " compute exit", target["compute"]["exit_code"], expected_exit)
             equal(label + " aborted", target["aborted"], expected_exit != 0)
@@ -339,7 +341,7 @@ class Harness:
                 )
             )
             await asyncio.sleep(2)
-            rows = await self.snapshot(label)
+            await self.snapshot(label)
             if extra:
                 await extra(target)
         except Exception as error:
@@ -365,11 +367,9 @@ class Harness:
                 "message_hash": sent,
                 "destination": raw(destination),
                 "expected_exit": expected_exit,
-                "comparisons": rows,
+                "comparisons": self.step_comparisons,
                 "head": self.rpc("getMasterchainInfo")["last"],
             }
-            self.record("steps.jsonl", evidence)
-            self.steps.append(label)
             if expected_exit:
                 for a, previous in before_data.items():
                     self.compare(
@@ -385,6 +385,10 @@ class Harness:
                     self.record("failures.jsonl", failure)
             if label == "transfer payload notification":
                 self.notification(transactions)
+            # Include post-snapshot checks (callbacks, refusals, bounces and notifications)
+            # before persisting the second copy of this step's complete comparisons.
+            self.record("steps.jsonl", evidence)
+            self.steps.append(label)
 
     def notification(self, transactions):
         from pytosiq_core import Transaction

@@ -45,6 +45,91 @@ def check_field(row):
     require(row["pass"] is True, f"field marked failed: {row['field']}")
 
 
+def check_comparisons(steps, checks, owners):
+    """Every recorded comparison must pass and occur identically in both receipts."""
+    require(bool(checks), "missing comparison receipts")
+    expected = []
+    for step in steps:
+        comparisons = step.get("comparisons")
+        require(bool(comparisons), "missing getter/RPC comparisons")
+        for row in comparisons:
+            check_field(row)
+            expected.append(dict(row, step=step["step"]))
+    for row in checks:
+        check_field(row)
+    # Equality also binds the step labels, order, multiplicity and complete row contents.
+    require(checks == expected, "comparison receipts differ between checks.jsonl and steps.jsonl")
+    require(
+        isinstance(owners, list) and len(owners) == 3 and len(set(owners)) == 3,
+        "comparison owners missing or invalid",
+    )
+    for owner in owners:
+        account_hex(owner)
+    for index, step in enumerate(steps):
+        required = {
+            "total_supply",
+            "mintable",
+            "admin_address",
+            "token_content",
+            "token_wallet_code",
+            "expected supply",
+            "expected admin",
+            "supply equals wallet sum",
+            *("expected balance " + owner for owner in owners),
+        }
+        if index >= 1:
+            required.update({"collection next index", "collection owner", "collection metadata"})
+        if index >= 10:
+            required.update(
+                {
+                    "item initialized",
+                    "item index",
+                    "item collection",
+                    "item owner",
+                    "expected NFT owner",
+                    "item metadata",
+                    "NFT indexed collection",
+                    *("NFT owner index " + owner for owner in owners),
+                }
+            )
+        if step["step"] == "transfer payload notification":
+            required.update(
+                {
+                    "notification query",
+                    "notification amount",
+                    "notification from",
+                    "notification payload marker",
+                    "notification payload",
+                    "notification source",
+                    "notification count",
+                }
+            )
+        if step["step"] in EXPECTED_EXIT:
+            required.update(
+                {
+                    "refused operation persistent data " + step["destination"],
+                    "bounce value conservation",
+                    "bounce receipt count",
+                }
+            )
+        fields = [row["field"] for row in step["comparisons"]]
+        for field in sorted(required):
+            require(fields.count(field) == 1, f"required comparison missing or duplicated: {field}")
+        require(fields.count("nonnegative balance") == 3, "wallet balance comparisons missing")
+        active = fields.count("indexed wallet")
+        require(
+            active + fields.count("undeployed wallet index") == 3,
+            "wallet index comparisons missing",
+        )
+        require(
+            all(
+                fields.count(field) == active
+                for field in ("wallet owner", "wallet master", "wallet code")
+            ),
+            "wallet identity comparisons missing",
+        )
+
+
 def check_supply(row):
     require(row["supply"] == row["expected_supply"], "unexpected supply")
     require(sum(row["balances"]) == row["supply"], "wallet sum differs from supply")
@@ -235,8 +320,7 @@ def verify(directory, records=None, expect_source_head=None, expect_global_id=No
     steps = read("steps.jsonl")
     require([step["step"] for step in steps] == REQUIRED_STEPS, "incorrect lifecycle steps")
     require(summary["steps"] == REQUIRED_STEPS, "incorrect summary steps")
-    for row in read("checks.jsonl"):
-        check_field(row)
+    check_comparisons(steps, read("checks.jsonl"), provenance.get("owners"))
     invariants = read("invariants.jsonl")
     require([row["step"] for row in invariants] == REQUIRED_STEPS, "incorrect invariant steps")
     for row in invariants:
@@ -246,7 +330,6 @@ def verify(directory, records=None, expect_source_head=None, expect_global_id=No
     for row in bounces:
         check_bounce(row)
     for step in steps:
-        require(bool(step["comparisons"]), "missing getter/RPC comparisons")
         target = step["target"]
         check_tx(target)
         destination_transactions = step["transactions"].get(step["destination"], [])
@@ -292,6 +375,62 @@ def exercise(receipts, name, original, validate, mutate, reason):
     else:
         raise AssertionError(f"Control did not turn red: {name}")
     validate(original)
+
+
+def comparison_controls(records, exercise):
+    """Exercise comparison completeness and agreement without modifying retained receipts."""
+
+    def omit_required(data):
+        step = data["steps.jsonl"][8]
+        step["comparisons"] = [row for row in step["comparisons"] if row["field"] != "total_supply"]
+        data["checks.jsonl"] = [
+            row
+            for row in data["checks.jsonl"]
+            if (row["step"], row["field"]) != ("burn", "total_supply")
+        ]
+
+    for label, mutate, reason in (
+        (
+            "empty comparison receipts",
+            lambda data: data.__setitem__("checks.jsonl", []),
+            "missing comparison receipts",
+        ),
+        (
+            "missing comparison receipt",
+            lambda data: data["checks.jsonl"].pop(),
+            "comparison receipts differ",
+        ),
+        (
+            "failed per-step comparison",
+            lambda data: data["steps.jsonl"][0]["comparisons"][0].__setitem__("pass", False),
+            "field marked failed",
+        ),
+        (
+            "mismatched per-step values",
+            lambda data: data["steps.jsonl"][0]["comparisons"][0].__setitem__(
+                "getter", "deliberately wrong"
+            ),
+            "field mismatch",
+        ),
+        (
+            "comparison copies disagree",
+            lambda data: data["checks.jsonl"][0].update(
+                getter="changed", rpc_or_expected="changed"
+            ),
+            "comparison receipts differ",
+        ),
+        (
+            "comparison step relabelled",
+            lambda data: data["checks.jsonl"][0].__setitem__("step", "burn"),
+            "comparison receipts differ",
+        ),
+        (
+            "required comparison omitted from both copies",
+            omit_required,
+            "required comparison missing or duplicated",
+        ),
+    ):
+        exercise(label, records, lambda data: verify(None, data), mutate, reason)
 
 
 def controls(directory):
@@ -411,6 +550,7 @@ def controls(directory):
         )
     }
     records["provenance.json"] = load_object(directory, "provenance.json")
+    comparison_controls(records, exercise)
 
     def full(data):
         return verify(directory, data)

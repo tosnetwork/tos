@@ -157,19 +157,37 @@ absence checks. Missing or false completeness eventually fails the rehearsal. On
 a step has deployed the token master or the collection, or minted the item, every
 later snapshot requires that contract to be active.
 
+Every step retains all comparisons, including extra callbacks, notification,
+refused-data and bounce checks. Flattening those rows with their step labels must
+exactly reproduce `checks.jsonl`, including order and multiplicity. The oracle
+checks every row in both copies and rejects missing, failed or inconsistent
+comparisons. Its own field-coverage rules require the Token, wallet and index
+checks on every step, collection checks after deployment, NFT checks after mint,
+and notification/refusal checks on their respective steps. Removing a required
+field from both copies therefore also fails. Earlier receipts whose step tables
+contain only snapshot comparisons need a fresh rehearsal; do not edit them to
+manufacture the additional evidence.
+
 Run `uv run pytest -q test/tostester/tests/test_tok01_review_guards.py` for the
-52 offline guard tests. They use synthetic records, mocked RPC responses and
+86 offline guard tests. They use synthetic records, mocked RPC responses and
 three retained sender/target transaction pairs from a disposable local network
 (`tok01_fixture_transactions.py`, one per outcome class) so message-edge and
 outcome decoding are exercised; they are not native lifecycle evidence. Removing
 each of the step, destination transaction, decoded message edge, sender binding,
 decoded outcome, provenance, expectation, network, signer-deadline, clean-source
 and index-completeness guards makes its targeted tests fail; restoring the
-guards passes all 52. `tok01-oracle.py --red-controls` additionally exercises
+guards passes all 86. The comparison follow-up was checked against parent
+`f59dfda96250b971756e58cfe472af2226f1be2b`: 16 comparison rejection cases failed
+because the old oracle did not reject them, and all three runner serialization
+cases failed because post-snapshot comparisons were absent from the step table.
+The fixed suite passes, including seven comparison-specific green/red/restored
+controls on synthetic receipts; these are offline controls, not a native run.
+`tok01-oracle.py --red-controls` additionally exercises
 step duplication, label replacement, empty transaction sets, wrong destinations,
 tampered renderings of outcomes and message edges, a swapped target transaction,
-a relabelled sender transaction, a missing sender message and tampered
-provenance against fresh native receipts; each control must turn red for its
+a relabelled sender transaction, a missing sender message, tampered provenance,
+missing/failed comparisons, divergent comparison copies and a required field
+removed from both copies against fresh native receipts; each control must turn red for its
 stated reason, not merely fail. A new native rehearsal is required for
 acceptance of this revision; previous retained receipts describe their recorded
 source only.
