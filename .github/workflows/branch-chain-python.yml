@@ -35,8 +35,14 @@ jobs:
   python-and-pq-chain:
     runs-on: ubuntu-24.04
     container:
-      # Native generation validation reopens private images in a separate network namespace.
-      options: --security-opt seccomp=unconfined --security-opt apparmor=unconfined
+      # Native generation validation reopens private images in a separate
+      # network namespace: the verifier runs under `unshare --user
+      # --map-root-user --net`. The runner host restricts unprivileged user
+      # namespaces for unconfined processes, and a container without
+      # CAP_SYS_ADMIN is unprivileged: namespace creation succeeds but the uid
+      # map write is refused. CAP_SYS_ADMIN exempts the container from that
+      # restriction, as root is exempt on an operator host.
+      options: --security-opt seccomp=unconfined --security-opt apparmor=unconfined --cap-add SYS_ADMIN
       image: ghcr.io/${{ github.repository }}-builder:ubuntu-24.04
       credentials:
         username: ${{ github.repository_owner }}
@@ -44,6 +50,15 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Confirm user and network namespaces are available
+        # Fails in seconds instead of after the build when the container cannot
+        # create the namespaces that native generation validation requires.
+        run: |
+          if ! unshare --user --map-root-user --net -- true; then
+            echo "::error::this container cannot create user and network namespaces; native generation validation needs them"
+            exit 1
+          fi
 
       - name: Set up repository Python
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
