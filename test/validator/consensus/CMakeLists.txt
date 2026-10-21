@@ -368,6 +368,13 @@ add_test(
     COMMAND test-consensus --duration 40 --n-nodes 4 --target-rate-ms 100
             --net-ping 0.005:0.02 --pq-finality-e2e-test
 )
+# The block producer hands each collation the external messages taken earlier in the same leader
+# window and starts every window empty. The floor makes the run span several windows.
+add_test(
+    NAME test-consensus-simplex2-pq-ext-window
+    COMMAND test-consensus --duration 40 --n-nodes 4 --target-rate-ms 100
+            --net-ping 0.005:0.02 --pq-finality-e2e-test --min-finalized-blocks 15 --ext-window-test
+)
 # The structural scales the end-to-end gate asks for, at the two this harness can carry. Measured on one
 # developer machine: 21 nodes in 0.4s, 100 in 2.5s. The measurements and the boundary above
 # them are recorded in the plan document; the launch measurement set runs on real hosts.
