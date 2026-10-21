@@ -10,6 +10,24 @@ from pathlib import Path
 from pytosiq_core import Cell
 
 
+# Independent acceptance contract: matching counts alone cannot establish coverage.
+REQUIRED_STEPS = [
+    "token deploy",
+    "collection deploy",
+    "mint 1000",
+    "mint 100",
+    "transfer existing wallet",
+    "transfer undeployed wallet",
+    "transfer payload notification",
+    "insufficient balance",
+    "burn",
+    "admin change",
+    "NFT mint",
+    "NFT transfer",
+    "NFT non-owner refused",
+]
+
+
 def require(condition, message):
     if not condition:
         raise AssertionError(message)
@@ -65,11 +83,12 @@ def verify(directory, records=None):
     (summary,) = read("summary.jsonl")
     require(summary["pass"] and not summary["failures"], "lifecycle reported failures")
     steps = read("steps.jsonl")
-    require(len(steps) == 13 and len(summary["steps"]) == 13, "incomplete lifecycle")
+    require([step["step"] for step in steps] == REQUIRED_STEPS, "incorrect lifecycle steps")
+    require(summary["steps"] == REQUIRED_STEPS, "incorrect summary steps")
     for row in read("checks.jsonl"):
         check_field(row)
     invariants = read("invariants.jsonl")
-    require(len(invariants) == 13, "missing per-step invariant")
+    require([row["step"] for row in invariants] == REQUIRED_STEPS, "incorrect invariant steps")
     for row in invariants:
         check_supply(row)
     bounces = read("bounce.jsonl")
@@ -78,6 +97,10 @@ def verify(directory, records=None):
         check_bounce(row)
     for step in steps:
         require(bool(step["comparisons"]), "missing getter/RPC comparisons")
+        target = step["target"]
+        check_tx(target)
+        destination_transactions = step["transactions"].get(step["destination"], [])
+        require(target in destination_transactions, "destination transaction missing from step")
         for transactions in step["transactions"].values():
             for tx in transactions:
                 check_tx(tx)
@@ -196,6 +219,22 @@ def controls(directory):
         (
             "failed lifecycle summary",
             lambda data: data["summary.jsonl"][0].__setitem__("pass", False),
+        ),
+        (
+            "duplicated lifecycle step",
+            lambda data: data["steps.jsonl"].__setitem__(8, copy.deepcopy(data["steps.jsonl"][7])),
+        ),
+        (
+            "renamed summary step",
+            lambda data: data["summary.jsonl"][0]["steps"].__setitem__(8, "substituted operation"),
+        ),
+        (
+            "empty step transactions",
+            lambda data: data["steps.jsonl"][0].__setitem__("transactions", {}),
+        ),
+        (
+            "wrong destination",
+            lambda data: data["steps.jsonl"][0].__setitem__("destination", "missing destination"),
         ),
         ("missing lifecycle step", lambda data: data["steps.jsonl"].pop()),
         ("missing summary step", lambda data: data["summary.jsonl"][0]["steps"].pop()),

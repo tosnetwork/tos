@@ -6,7 +6,10 @@ Run from the repository root with the workspace Python dependencies installed:
 uv run python scripts/tok01-local.py --runtime ../tok01-runtime --output ../tok01-evidence
 ```
 
-Both destinations must be new. Build the production Release targets in the builder
+Both destinations must be new. The local launcher requires a clean tracked source
+tree, including the staging area, before starting nodes. It checks the same
+commit and clean state again after the run before writing provenance. Commit
+source changes before collecting evidence. Build the production Release targets in the builder
 image first: `gen_fif create-state fift func toslibjson validator-engine
 validator-engine-console generate-random-id dht-server lite-client
 tos-pq-consensus-key`. Pass `--build` when using another build directory.
@@ -105,3 +108,23 @@ then revalidate the original. They never modify retained evidence. Controls
 cover expected supply, wallet sum, a negative balance that still conserves the
 sum, comparison fields and flags, notification payload, refused-state equality,
 bounce accounting/receipt completeness, transaction identity and block identity.
+
+## Receipt acceptance guards
+
+The independent oracle requires the exact ordered lifecycle labels in the step,
+summary and invariant records. Every step records its destination and must retain
+that destination's target transaction, whose BOC hash and full block identity are
+validated. Older receipts without a destination field need a fresh rehearsal;
+they must not be edited to simulate evidence the runner did not collect.
+
+Token and NFT membership checks wait for `index_state.complete == true`, including
+absence checks. Missing or false completeness eventually fails the rehearsal.
+
+Run `uv run pytest -q test/tostester/tests/test_tok01_review_guards.py` for the
+24 offline guard tests. They use synthetic public cells and mocked RPC responses,
+not native lifecycle evidence. Removing each of the step, destination transaction,
+clean-source and index-completeness guards makes its targeted tests fail; restoring
+the guards passes all 24. `tok01-oracle.py --red-controls` additionally exercises
+step duplication, label replacement, empty transaction sets and wrong destinations
+against fresh native receipts. A new native rehearsal is required for acceptance
+of this revision; previous retained receipts describe their recorded source only.

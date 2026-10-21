@@ -7,6 +7,7 @@ import base64
 import json
 import re
 import shlex
+import subprocess
 import time
 import urllib.request
 from decimal import Decimal
@@ -24,6 +25,16 @@ from pytosiq_core import (
 )
 
 REPO = Path(__file__).resolve().parents[1]
+
+
+def clean_source_head(root=REPO):
+    """Bind evidence to committed source, including staged changes."""
+    status = subprocess.check_output(
+        ["git", "status", "--porcelain", "--untracked-files=no"], cwd=root, text=True
+    )
+    if status:
+        raise RuntimeError("Lifecycle evidence requires a clean tracked source tree")
+    return subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
 
 
 def raw(address):
@@ -164,6 +175,13 @@ class Harness:
             await asyncio.sleep(1)
         raise TimeoutError(f"Condition not met within {timeout}s; last error: {last}")
 
+    async def complete_index(self, method, owner):
+        def ready():
+            result = self.rpc(method, address=raw(owner))
+            return result if result.get("index_state", {}).get("complete") is True else None
+
+        return await self.wait(ready)
+
     async def transfer(self, sender, destination, body, value=500_000_000, init=None):
         message = WalletMessage(
             send_mode=3,
@@ -267,6 +285,7 @@ class Harness:
                 "step": label,
                 "transactions": transactions,
                 "target": target,
+                "destination": raw(destination),
                 "comparisons": rows,
                 "head": self.rpc("getMasterchainInfo")["last"],
             }
@@ -389,7 +408,7 @@ class Harness:
                 wallet = self.wallets[owner]
                 active = self.rpc("getAddressState", address=raw(wallet)) == "active"
                 balance = 0
-                index = self.rpc("getAccountTokens", address=owner)
+                index = await self.complete_index("getAccountTokens", owner)
                 entries = [
                     entry
                     for entry in index["tokens"]
@@ -413,16 +432,9 @@ class Harness:
                             ),
                         ]
                     )
-                    entry = await self.wait(
-                        lambda: next(
-                            (
-                                e
-                                for e in self.rpc("getAccountTokens", address=owner)["tokens"]
-                                if raw(e["token_master"]) == raw(self.master)
-                            ),
-                            None,
-                        )
-                    )
+                    if len(entries) != 1:
+                        raise AssertionError("Complete token index must contain exactly one wallet")
+                    entry = entries[0]
                     rows.append(
                         self.compare("indexed wallet", raw(entry["token_wallet"]), raw(wallet))
                     )
@@ -490,7 +502,8 @@ class Harness:
                 ]
             )
             for owner in self.owners:
-                entries = self.rpc("getAccountNfts", address=raw(owner))["nfts"]
+                index = await self.complete_index("getAccountNfts", owner)
+                entries = index["nfts"]
                 matches = [e for e in entries if raw(e["nft_item"]) == raw(self.item)]
                 rows.append(
                     self.compare(

@@ -83,6 +83,7 @@ class SystemdBackend(ProcessBackend):
 
 
 async def run(args):
+    source_head = tok01.clean_source_head()
     if args.runtime.exists() or args.output.exists():
         raise ValueError("Runtime and evidence paths must both be new")
     if shutil.disk_usage(args.runtime.parent).free < 240 * 1024**3:
@@ -150,9 +151,7 @@ async def run(args):
                     )
                 )
             provenance = {
-                "source_head": subprocess.check_output(
-                    ["git", "rev-parse", "HEAD"], cwd=tok01.REPO, text=True
-                ).strip(),
+                "source_head": source_head,
                 "global_id": 3,
                 "limits": {"cpus": 8, "ram_gib": 12, "disk_gib": 40},
                 "auth_network_tag": os.environ["TOS_AUTH_NETWORK_TAG"],
@@ -161,8 +160,11 @@ async def run(args):
                 ).hexdigest(),
                 "owners": [tok01.raw(bp.address) for bp in blueprints],
             }
+            result = await harness.run()
+            if tok01.clean_source_head() != source_head:
+                raise RuntimeError("Source revision changed during the lifecycle run")
             (args.output / "provenance.json").write_text(json.dumps(provenance, indent=2) + "\n")
-            return await harness.run()
+            return result
         finally:
             await backend.stop()
             await asyncio.gather(*tasks, return_exceptions=True)
