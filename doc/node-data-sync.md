@@ -10,6 +10,28 @@ backend is a future measured option; these commands do not provision storage.
 Capture cadence, maximum useful age and the thirty-minute rejoin target require
 the separate local qualification run. They have not been qualified by unit tests.
 
+## Reference comparison
+
+The operator reference at `66240cfd0be42934d2f38d811ac3ed77a88b4da6`,
+the installer module `dump.py:181–210`, obtains a database dump with checksums
+and sizes.
+The producer reference at `c62f3eab957c5ea9acaed76920b102a4a50c20d8`,
+the stop/capture script under `node/snapshots/` at lines 60–84, stops the service
+for capture and uses a
+filesystem snapshot for delta transfer. This lane follows the stopped-capture
+strategy. Cold copy is the supported backend here; no snapshot backend is assumed.
+The references were read for behavior, not copied.
+
+The native reference default branch was checked at
+`857b8a57a178e6ae0fe7fa86e7d81c5233de8560`: `validator/db/statedb.cpp:30–39,153–179`
+and `validator/manager-init.cpp:405–420` retain native state/fork semantics.
+There is no corresponding Rust operator stack there. TOS additionally has local
+retirement records (`validator/db/statedb.cpp:123–248`) and import recovery
+manifests; the typed boundary and native recovery checks preserve those rules.
+This feature changes no inherited native recovery or consensus implementation.
+The inspected release notes and dump/restore issue searches supplied no native
+operator replacement to port.
+
 ## Build and prerequisites
 
 Build the offline database wrapper against the same vendored native database
