@@ -28,13 +28,15 @@ struct ExtMessagePoolTestPeer {
     return std::make_unique<ExtMessagePool>(std::move(options), td::actor::ActorId<ValidatorManager>{});
   }
 
-  static td::Ref<ExtMessage> make_message(td::uint32 id) {
+  static td::Ref<ExtMessage> make_message(td::uint32 id, td::uint32 normalized_id = 0) {
     auto hash = Bits256::zero();
     hash.bits().store_uint(id, 32);
+    auto normalized_hash = hash;
+    normalized_hash.bits().store_uint(normalized_id == 0 ? id : normalized_id, 32);
     StdSmcAddress address = hash;
     td::Ref<ExtMessageQ> message{
-        true, td::BufferSlice{}, td::Ref<vm::Cell>{}, AccountIdPrefixFull{basechainId, id}, basechainId, address, hash,
-        hash};
+        true, td::BufferSlice{}, td::Ref<vm::Cell>{}, AccountIdPrefixFull{basechainId, id}, basechainId, address,
+        hash, normalized_hash};
     return std::move(message);
   }
 
@@ -225,6 +227,23 @@ TEST(ExtMessagePool, OnlyAppliedRemovalObservesHowLongTheEntryWasStored) {
   EXPECT_EQ(PoolPeer::removed_total(*evicted_pool), 2u);
   EXPECT_EQ(PoolPeer::inclusion(*evicted_pool).count(), 0u);
   EXPECT_EQ(PoolPeer::inclusion(*evicted_pool).sum(), 0.0);
+}
+
+TEST(ExtMessagePool, CollatorRefusalRemovesEveryNormalizedVariantExactlyOnce) {
+  auto pool = PoolPeer::make_pool();
+  auto first = PoolPeer::make_message(14, 99);
+  auto second = PoolPeer::make_message(15, 99);
+  auto alarm = td::Timestamp::never();
+  ASSERT_EQ(PoolPeer::add(*pool, first, 1, alarm), metrics::ExtMessageAdmissionOutcome::accepted);
+  ASSERT_EQ(PoolPeer::add(*pool, second, 2, alarm), metrics::ExtMessageAdmissionOutcome::accepted);
+  ASSERT_EQ(PoolPeer::state_total(*pool), 2u);
+  PoolPeer::filter_out(*pool, first->hash_norm());
+  EXPECT_EQ(PoolPeer::removed(*pool, metrics::ExtMessageRemovalReason::filtered), 2u);
+  EXPECT_EQ(PoolPeer::state_total(*pool), 0u);
+  EXPECT(PoolPeer::expiry_order(*pool).empty());
+  PoolPeer::filter_out(*pool, first->hash_norm());
+  EXPECT_EQ(PoolPeer::removed_total(*pool), 2u);
+  EXPECT_EQ(PoolPeer::inclusion(*pool).count(), 0u);
 }
 
 TEST(ExtMessagePool, AdmissionAndRemovalCountersReconcileWithStoredStock) {

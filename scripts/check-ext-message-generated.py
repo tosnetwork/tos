@@ -19,7 +19,12 @@ def main():
     parser.add_argument("--build-dir", required=True, type=Path)
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.add_argument("--controls", action="store_true")
+    parser.add_argument(
+        "--control", action="append", help="run only this named mutation (with --controls)"
+    )
     args = parser.parse_args()
+    if args.control and not args.controls:
+        parser.error("--control requires --controls")
     root = Path(__file__).resolve().parents[1]
     build = args.build_dir.resolve()
     output = args.output_dir.resolve()
@@ -179,6 +184,57 @@ def main():
     if args.controls:
         controls = [
             (
+                "reverse-priority-wakeup",
+                "validator/impl/ext-message-pool.cpp",
+                b"auto &[priority, waiters] = *admission_waiters_.rbegin();",
+                b"auto &[priority, waiters] = *admission_waiters_.begin();",
+                ["WaitersWakeByPriorityThenFifo"],
+                "awakened.back()",
+            ),
+            (
+                "reverse-fifo-wakeup",
+                "validator/impl/ext-message-pool.cpp",
+                b"auto waiter = std::move(waiters.front());\n    waiters.pop_front();",
+                b"auto waiter = std::move(waiters.back());\n    waiters.pop_back();",
+                ["WaitersWakeByPriorityThenFifo"],
+                "awakened.back()",
+            ),
+            (
+                "disable-normalized-refusal-removal",
+                "validator/impl/ext-message-pool.cpp",
+                b"void ExtMessagePool::complete_external_messages(std::vector<ExtMessage::Hash> to_delete) {",
+                b"void ExtMessagePool::complete_external_messages(std::vector<ExtMessage::Hash> to_delete) { return;",
+                ["CollatorRefusalRemovesEveryNormalizedVariantExactlyOnce"],
+                "metrics::ExtMessageRemovalReason::filtered",
+            ),
+            (
+                "disable-priority-eviction",
+                "validator/impl/ext-message-pool.cpp",
+                b"admission_waiters_.empty() || admission_waiters_.begin()->first >= priority",
+                b"true",
+                ["PriorityEvictsLowerPriorityWaiterAtTheQueueCap"],
+                "low.await_ready()",
+            ),
+            (
+                "disable-ordered-expiry",
+                "validator/impl/expiry-ordered-list.hpp",
+                b"oldest_ != nullptr && oldest_->delete_at.is_in_past(now)",
+                b"false",
+                ["PopsExpiredHeadInOrderExactlyOnce"],
+                "count is not equal to 2u",
+            ),
+            (
+                "repeat-rejected-execution",
+                "validator/impl/ext-message-checker.cpp",
+                b"failure = Failure::vm_rejected;",
+                b"failure = Failure::vm_rejected;\n"
+                b"  auto repeated = ExtMessageQ::run_message_on_account(wc, &account, state.utime, "
+                b"state.lt + 1, message->root_cell(), *exec_config);\n"
+                b"  if (repeated.is_ok()) { co_return result; }",
+                ["RejectedContractExecutesVmExactlyOnce"],
+                "counter.starts",
+            ),
+            (
                 "ignore-checker-generation",
                 "validator/impl/ext-message-pool.cpp",
                 b"if (current_generation == checkers_generation_) {",
@@ -263,6 +319,12 @@ def main():
                     "ExtMessagePoolOptions::unpack(config).is_error()",
                 )
             )
+        if args.control:
+            selected = set(args.control)
+            known = {control[0] for control in controls}
+            if selected - known:
+                raise RuntimeError("unknown controls: " + ", ".join(sorted(selected - known)))
+            controls = [control for control in controls if control[0] in selected]
         for label, relative, anchor, replacement, test_names, assertion in controls:
             guarded = root / relative
             original = guarded.read_bytes()
@@ -275,7 +337,19 @@ def main():
                     name = label + "-" + test_name
                     test_binary = (
                         build / "test-ext-message-pool"
-                        if test_name == "OptionsPreserveReleaseDefaultsAndRefuseInvalidLimits"
+                        if test_name
+                        in {
+                            "OptionsPreserveReleaseDefaultsAndRefuseInvalidLimits",
+                            "PriorityEvictsLowerPriorityWaiterAtTheQueueCap",
+                            "RejectedContractExecutesVmExactlyOnce",
+                            "WaitersWakeByPriorityThenFifo",
+                        }
+                        else build / "test-ext-message-expiry"
+                        if test_name
+                        in {
+                            "PopsExpiredHeadInOrderExactlyOnce",
+                            "CollatorRefusalRemovesEveryNormalizedVariantExactlyOnce",
+                        }
                         else binary
                     )
                     if run(name, [str(test_binary), "--filter", test_name]) == 0:
@@ -303,6 +377,9 @@ def main():
                 rebuild(label + "-restore-build")
                 require_success(label + "-restored", [str(binary)])
                 require_success(label + "-pool-restored", [str(build / "test-ext-message-pool")])
+                require_success(
+                    label + "-expiry-restored", [str(build / "test-ext-message-expiry")]
+                )
 
     sources = [
         "crypto/smartcont/gen-zerostate.fif",

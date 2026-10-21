@@ -191,6 +191,31 @@ class ExtMessagePoolTestHarness final : public ExtMessagePool {
   void release_all_for_queue_test() {
     release_synthetic_occupancy();
   }
+  void verify_priority_fifo_wakeups() {
+    std::vector<std::pair<int, td::actor::StartedTask<>>> tasks;
+    std::vector<bool> observed(3, false);
+    std::vector<int> awakened;
+    for (auto [priority, id] : {std::pair{0, 0}, std::pair{1, 11}, std::pair{1, 12}}) {
+      auto [task, promise] = td::actor::StartedTask<>::make_bridge();
+      tasks.emplace_back(id, std::move(task));
+      admission_waiters_[priority].push_back(std::move(promise));
+      ++total_admission_waiters_;
+    }
+    for (int expected : {11, 12, 0}) {
+      auto previous = awakened.size();
+      release_synthetic_occupancy();
+      for (size_t i = 0; i < tasks.size(); ++i) {
+        if (!observed[i] && tasks[i].second.await_ready()) {
+          awakened.push_back(tasks[i].first);
+          observed[i] = true;
+        }
+      }
+      ASSERT_EQ(awakened.size(), previous + 1);
+      EXPECT_EQ(awakened.back(), expected);
+    }
+    EXPECT_EQ(total_admission_waiters_, 0u);
+    EXPECT(admission_waiters_.empty());
+  }
   void verify_queued_priority(int priority) {
     EXPECT_EQ(total_admission_waiters_, 1u);
     EXPECT_EQ(admission_waiters_.begin()->first, priority);
@@ -246,6 +271,16 @@ class ExtMessagePoolTestHarness final : public ExtMessagePool {
     stop();
   }
 };
+
+TEST(ExtMessagePool, WaitersWakeByPriorityThenFifo) {
+  td::actor::TestScheduler scheduler;
+  scheduler.run([&]() -> td::actor::Task<> {
+    auto bytes = std::make_shared<adnl::AdnlExtByteBudget>(65535);
+    auto pool = td::actor::create_actor<ExtMessagePoolTestHarness>("waiter-order", bytes);
+    co_await td::actor::ask(pool, &ExtMessagePoolTestHarness::verify_priority_fifo_wakeups);
+    co_return td::Unit{};
+  });
+}
 
 TEST(ExtMessagePool, OptionsPreserveReleaseDefaultsAndRefuseInvalidLimits) {
   auto config = tos_api::engine_validator_extMessagePoolConfig{-1, -1, -1, -1, -1, -1.0, -1};
@@ -622,7 +657,7 @@ void exercise_work_dispatch(bool mismatched_config, bool ordinary_account = fals
     }
     auto stats = co_await td::actor::ask(pool.get(), &ExtMessagePool::prepare_stats);
     bool observed = false;
-    for (const auto& stat : stats) {
+    for (const auto &stat : stats) {
       if (stat.first == "ext_msg_admission_work") {
         EXPECT_EQ(stat.second, mismatched_config ? "available:2 supported:false" : "available:0 supported:true");
         observed = true;
