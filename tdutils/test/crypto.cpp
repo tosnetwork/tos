@@ -446,7 +446,7 @@ TEST(Crypto, sip_hash13) {
   LOG_CHECK(worst < 40) << "worst bucket has " << worst << " of " << key_count << " keys";
 }
 
-TEST(Crypto, sip_hash13_benchmark) {
+TEST(Crypto, BenchSipHash13) {
   // The size that matters is a connection id: this hash sits on every packet's lookup.
   class SipHash13Benchmark : public td::Benchmark {
    public:
