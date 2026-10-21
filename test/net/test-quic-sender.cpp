@@ -14,6 +14,7 @@
     You should have received a copy of the GNU General Public License
     along with TOS Blockchain.  If not, see <http://www.gnu.org/licenses/>.
 */
+#include <algorithm>
 #include <arpa/inet.h>
 #include <array>
 #include <atomic>
@@ -21,11 +22,10 @@
 #include <chrono>
 #include <future>
 #include <iostream>
+#include <map>
 #include <mutex>
 #include <netinet/in.h>
 #include <optional>
-#include <algorithm>
-#include <map>
 #include <set>
 #include <string>
 #include <sys/socket.h>
