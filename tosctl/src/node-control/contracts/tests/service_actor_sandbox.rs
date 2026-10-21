@@ -2019,8 +2019,9 @@ fn withdraw_revenue_never_takes_the_storage_fees_locked_for_live_entries() {
 /// A coin computation left the range a Coins field holds: a sum at or past
 /// 2^120, or a liability going negative. Never a caller's refusal code.
 const ERR_AMOUNT_RANGE: i32 = 1927;
-/// The largest value a Coins field holds.
-const MAX_COINS: u128 = (1u128 << 120) - 1;
+/// The largest value a Coins field holds: 2^120 - 1, written out so the bound is
+/// a literal and not a computation.
+const MAX_COINS: u128 = 1_329_227_995_784_915_872_903_807_060_280_344_575;
 /// The gas margin the fixture attaches to a call, in nanotos (0.5 TOS).
 const CALL_GAS_MARGIN: u64 = 500_000_000;
 /// A balance just short of the largest bounty, in nanotos (0.9 TOS).
