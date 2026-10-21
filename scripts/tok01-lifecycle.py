@@ -6,6 +6,7 @@ import asyncio
 import base64
 import json
 import re
+import secrets
 import shlex
 import subprocess
 import time
@@ -104,8 +105,61 @@ def equal(label, actual, expected):
     return {"field": label, "getter": actual, "rpc_or_expected": expected, "pass": True}
 
 
+def outgoing_message_hash(transactions, destination):
+    """Hash of the sender's single new outgoing message to the destination, once sent."""
+    hashes = [
+        message["hash"]
+        for tx in transactions
+        for message in tx.get("out_msgs", [])
+        if message.get("destination") and raw(message["destination"]) == destination
+    ]
+    if len(hashes) > 1:
+        raise RuntimeError("sender emitted several messages to the destination")
+    return hashes[0] if hashes else None
+
+
+def select_target(transactions, message_hash):
+    """The transaction that consumed exactly this inbound message, not merely a later one."""
+    matches = [tx for tx in transactions if (tx.get("in_msg") or {}).get("hash") == message_hash]
+    if len(matches) > 1:
+        raise RuntimeError("several transactions claim the same inbound message")
+    return matches[0] if matches else None
+
+
+def decode_global_id(config_bytes):
+    """Network identity from the ConfigParam 19 cell that getConfigParam returns."""
+    body = Cell.one_from_boc(base64.b64decode(config_bytes)).begin_parse()
+    value = body.load_int(32)
+    if body.remaining_bits or body.remaining_refs:
+        raise RuntimeError("ConfigParam 19 carries unexpected trailing data")
+    return value
+
+
+def check_global_id(reported, allowed):
+    """Refuse any network the operator did not list explicitly."""
+    if reported not in allowed:
+        raise RuntimeError(
+            f"endpoint global id {reported} is not in the allowed set {sorted(allowed)}"
+        )
+    return reported
+
+
+def rpc_call(endpoint, rpc_method, **params):
+    payload = {"jsonrpc": "2.0", "id": 1, "method": rpc_method, "params": params}
+    request = urllib.request.Request(
+        endpoint,
+        data=json.dumps(payload).encode(),
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(request, timeout=15) as response:
+        result = json.load(response)
+    if "error" in result or "result" not in result:
+        raise RuntimeError(f"{rpc_method}: {result}")
+    return payload, result
+
+
 class Harness:
-    def __init__(self, endpoint, output, send, owners):
+    def __init__(self, endpoint, output, send, owners, provenance=None):
         self.endpoint, self.output, self.send, self.owners = endpoint, output, send, owners
         output.mkdir(parents=True, exist_ok=False)
         self.supply = 0
@@ -116,6 +170,15 @@ class Harness:
         self.steps = []
         self.item = None
         self.item_owner = None
+        # Contracts that a completed step deployed or minted; later snapshots require them active.
+        self.expected_active = set()
+        self.run_id = secrets.token_hex(16)
+        self.provenance = dict(provenance or {})
+
+    def write_provenance(self):
+        (self.output / "provenance.json").write_text(
+            json.dumps(self.provenance, indent=2, sort_keys=True) + "\n"
+        )
 
     def record(self, filename, value):
         with (self.output / filename).open("a") as stream:
@@ -133,22 +196,26 @@ class Harness:
         return row
 
     def rpc(self, rpc_method, **params):
-        payload = {"jsonrpc": "2.0", "id": 1, "method": rpc_method, "params": params}
-        request = urllib.request.Request(
-            self.endpoint,
-            data=json.dumps(payload).encode(),
-            headers={"Content-Type": "application/json"},
-        )
         try:
-            with urllib.request.urlopen(request, timeout=15) as response:
-                result = json.load(response)
+            payload, result = rpc_call(self.endpoint, rpc_method, **params)
+        except RuntimeError as error:
+            self.record("rpc.jsonl", {"request": {"method": rpc_method}, "error": str(error)})
+            raise
         except Exception as error:
-            self.record("rpc.jsonl", {"request": payload, "error": str(error)})
+            self.record(
+                "rpc.jsonl",
+                {"request": {"method": rpc_method, "params": params}, "error": str(error)},
+            )
             raise
         self.record("rpc.jsonl", {"request": payload, "response": result})
-        if "error" in result or "result" not in result:
-            raise RuntimeError(f"{rpc_method}: {result}")
         return result["result"]
+
+    def new_transactions(self, account, before):
+        return [
+            tx
+            for tx in self.transactions(account)
+            if int(tx["transaction_id"]["lt"]) > before[raw(account)]
+        ]
 
     def getter(self, account, method, stack=None):
         result = self.rpc("runGetMethodStd", address=raw(account), method=method, stack=stack or [])
@@ -232,15 +299,14 @@ class Harness:
         }
         before_head = self.rpc("getMasterchainInfo")["last"]
         await self.transfer(sender, destination, body, init=init)
+        # The receipt is the transaction that consumed this step's own message: the sender's
+        # outgoing message hash selects it, so a bounce or an unrelated inbound message on the
+        # destination cannot stand in for it.
+        sent = await self.wait(
+            lambda: outgoing_message_hash(self.new_transactions(sender, before), raw(destination))
+        )
         target = await self.wait(
-            lambda: next(
-                (
-                    tx
-                    for tx in self.transactions(destination)
-                    if int(tx["transaction_id"]["lt"]) > before[raw(destination)]
-                ),
-                None,
-            )
+            lambda: select_target(self.new_transactions(destination, before), sent)
         )
         rows = []
         try:
@@ -265,12 +331,7 @@ class Harness:
             self.failures.append({"step": label, "error": str(error)})
             self.record("failures.jsonl", self.failures[-1])
         finally:
-            transactions = {
-                a: [
-                    tx for tx in self.transactions(a) if int(tx["transaction_id"]["lt"]) > before[a]
-                ]
-                for a in accounts
-            }
+            transactions = {a: self.new_transactions(a, before) for a in accounts}
             for txs in transactions.values():
                 for tx in txs:
                     equal(
@@ -285,7 +346,9 @@ class Harness:
                 "step": label,
                 "transactions": transactions,
                 "target": target,
+                "message_hash": sent,
                 "destination": raw(destination),
+                "expected_exit": expected_exit,
                 "comparisons": rows,
                 "head": self.rpc("getMasterchainInfo")["last"],
             }
@@ -381,6 +444,17 @@ class Harness:
 
     async def snapshot(self, label):
         rows = []
+        for name, account in (
+            ("token master", self.master),
+            ("collection", self.collection),
+            ("NFT item", self.item),
+        ):
+            if account is not None and raw(account) in self.expected_active:
+                equal(
+                    f"{name} active after {label}",
+                    self.rpc("getAddressState", address=raw(account)),
+                    "active",
+                )
         if self.rpc("getAddressState", address=raw(self.master)) == "active":
             stack = ordered(
                 self.getter(self.master, "get_token_data"), ["num", "num", "slice", "cell", "cell"]
@@ -530,6 +604,16 @@ class Harness:
         return rows
 
     async def run(self):
+        # Evidence binds to committed source: the same clean head before and after the run.
+        source_head = clean_source_head()
+        self.provenance.update(
+            run_id=self.run_id,
+            source_head=source_head,
+            endpoint=self.endpoint,
+            owners=[raw(owner) for owner in self.owners],
+            completed=False,
+        )
+        self.write_provenance()
         self.wallet_code = code("token", "TOKEN_WALLET_CODE_HEX")
         content = (
             begin_cell()
@@ -603,9 +687,21 @@ class Harness:
                 },
             },
         )
-        await self.step("token deploy", self.owners[0], self.master, Cell.empty(), init=master_init)
         await self.step(
-            "collection deploy", self.owners[0], self.collection, Cell.empty(), init=collection_init
+            "token deploy",
+            self.owners[0],
+            self.master,
+            Cell.empty(),
+            init=master_init,
+            update=lambda: self.expected_active.add(raw(self.master)),
+        )
+        await self.step(
+            "collection deploy",
+            self.owners[0],
+            self.collection,
+            Cell.empty(),
+            init=collection_init,
+            update=lambda: self.expected_active.add(raw(self.collection)),
         )
         for owner, amount in [(self.owners[0], 1000), (self.owners[1], 100)]:
             internal = (
@@ -711,7 +807,13 @@ class Harness:
             .store_ref(begin_cell().store_address(self.owners[0]).store_ref(nft_content).end_cell())
             .end_cell()
         )
-        await self.step("NFT mint", self.owners[0], self.collection, mint)
+        await self.step(
+            "NFT mint",
+            self.owners[0],
+            self.collection,
+            mint,
+            update=lambda: self.expected_active.add(raw(self.item)),
+        )
 
         def nft_transfer(owner):
             return (
@@ -742,13 +844,25 @@ class Harness:
         )
         self.record(
             "summary.jsonl",
-            {"steps": self.steps, "failures": self.failures, "pass": not self.failures},
+            {
+                "run_id": self.run_id,
+                "steps": self.steps,
+                "failures": self.failures,
+                "pass": not self.failures,
+            },
         )
+        source_head_after = clean_source_head()
+        if source_head_after != source_head:
+            raise RuntimeError("Source revision changed during the lifecycle run")
+        # Only a run whose source stayed clean and unchanged is marked complete; the
+        # verifier refuses everything else.
+        self.provenance.update(source_head_after=source_head_after, completed=True)
+        self.write_provenance()
         return int(bool(self.failures))
 
 
-async def endpoint_run(args):
-    owners = [Address(a) for a in args.owners]
+def make_sender(command, timeout):
+    """Submit through the operator's signer adapter, bounded by a deadline."""
 
     async def send(sender, message):
         request = {
@@ -757,18 +871,42 @@ async def endpoint_run(args):
             "send_mode": message.send_mode,
         }
         process = await asyncio.create_subprocess_exec(
-            *shlex.split(args.sender_command),
+            *shlex.split(command),
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        stdout, _ = await process.communicate(json.dumps(request).encode())
+        try:
+            stdout, _ = await asyncio.wait_for(
+                process.communicate(json.dumps(request).encode()), timeout
+            )
+        except asyncio.TimeoutError:
+            process.kill()
+            await process.wait()
+            raise TimeoutError(f"Signer adapter did not answer within {timeout}s") from None
         if process.returncode != 0:
             raise RuntimeError(f"Signer adapter failed with exit {process.returncode}")
         result = json.loads(stdout)
         equal("signer submitted", result.get("submitted"), True)
 
-    return await Harness(args.endpoint, args.output, send, owners).run()
+    return send
+
+
+async def endpoint_run(args):
+    owners = [Address(a) for a in args.owners]
+    # An endpoint alone does not authorize a run: the network it serves must be listed.
+    _, response = rpc_call(args.endpoint, "getConfigParam", param=19)
+    global_id = check_global_id(
+        decode_global_id(response["result"]["config"]["bytes"]), set(args.allow_global_id)
+    )
+    harness = Harness(
+        args.endpoint,
+        args.output,
+        make_sender(args.sender_command, args.signer_timeout),
+        owners,
+        {"global_id": global_id, "mode": "endpoint"},
+    )
+    return await harness.run()
 
 
 def main():
@@ -777,7 +915,23 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--owners", nargs=3, required=True)
     parser.add_argument("--sender-command", required=True)
+    parser.add_argument(
+        "--allow-global-id",
+        type=int,
+        action="append",
+        help="Network identity the endpoint must report; repeatable (default: the local 3)",
+    )
+    parser.add_argument(
+        "--signer-timeout",
+        type=float,
+        default=120.0,
+        help="Seconds the signer adapter may take per submission",
+    )
     args = parser.parse_args()
+    if args.allow_global_id is None:
+        args.allow_global_id = [3]
+    if args.signer_timeout <= 0:
+        parser.error("--signer-timeout must be positive")
     raise SystemExit(asyncio.run(endpoint_run(args)))
 
 

@@ -7,9 +7,10 @@ uv run python scripts/tok01-local.py --runtime ../tok01-runtime --output ../tok0
 ```
 
 Both destinations must be new. The local launcher requires a clean tracked source
-tree, including the staging area, before starting nodes. It checks the same
-commit and clean state again after the run before writing provenance. Commit
-source changes before collecting evidence. Build the production Release targets in the builder
+tree, including the staging area, before starting nodes. The harness binds the
+run to that commit: it writes `provenance.json` with a run identifier before the
+first step and marks it complete only when the same clean head is observed again
+after the last step. Commit source changes before collecting evidence. Build the production Release targets in the builder
 image first: `gen_fif create-state fift func toslibjson validator-engine
 validator-engine-console generate-random-id dht-server lite-client
 tos-pq-consensus-key`. Pass `--build` when using another build directory.
@@ -20,12 +21,13 @@ The local launcher reuses `tostester.Network`, its genesis faucet and wallet
 implementations. It uses global id 3, the deployment fee schedule, a fresh public
 authentication namespace, one validator, dedicated loopback ports 28601 onward,
 and JSON-RPC at 28680. It manages its nodes through user systemd units in the
-`bailu-tok01.slice` aggregate (8 cores, 12 GiB RAM, swap disabled). Override
-`--prefix`, `--base-port` and `--rpc-port` for another concurrent run. Maintain
-a 40 GiB task disk budget and at least 200 GiB free; the launch preflight reserves
-that headroom. The caller must monitor ongoing disk use. Stop only the dedicated
-units through `systemctl`. Remove the disposable runtime after preserving public
-evidence; it contains local signing material and must never be published.
+`tok01-lifecycle.slice` aggregate (8 cores, 12 GiB RAM, swap disabled). Override
+`--prefix`, `--base-port` and `--rpc-port` for another concurrent run. The task
+owns a 40 GiB disk budget that must stay above the 200 GiB shared free-space
+floor, so the launch preflight refuses to start with less than 240 GiB free. The
+caller must monitor ongoing disk use. Stop only the dedicated units through
+`systemctl`. Remove the disposable runtime after preserving public evidence; it
+contains local signing material and must never be published.
 
 When the host libc is older than the builder's, run Python in the builder image
 and pass `--runtime-libraries` pointing to its copied dynamic loader and required
@@ -46,15 +48,20 @@ uv run python scripts/tok01-lifecycle.py \
   --sender-command './operator-signer-adapter'
 ```
 
-The adapter receives a JSON object on stdin with `sender`, `message_boc` (an
-unsigned internal message including optional StateInit), and `send_mode`. It
-must sign and submit using the selected sender's supported wallet path and
-return `{"submitted":true}` on stdout only after successful submission, with
-exit code zero. It must keep signing material out of stdout and evidence.
-Submission is subsequently checked through real destination transactions.
-The harness owns no external keys and does not bootstrap or fund an external
-network. Supplying an endpoint authorizes transactions; the local task does
-not authorize a public run.
+Before any transaction the runner reads the network identity (ConfigParam 19)
+from the endpoint and refuses unless it is listed: only the local id 3 is allowed
+by default, and any other network needs an explicit `--allow-global-id` for that
+exact value. The identity is recorded in the provenance. The adapter receives a
+JSON object on stdin with `sender`, `message_boc` (an unsigned internal message
+including optional StateInit), and `send_mode`. It must sign and submit using
+the selected sender's supported wallet path and return `{"submitted":true}` on
+stdout only after successful submission, with exit code zero, within
+`--signer-timeout` seconds (120 by default); a slower adapter is killed and the
+run fails. It must keep signing material out of stdout and evidence. Submission
+is subsequently checked through real destination transactions. The harness owns
+no external keys and does not bootstrap or fund an external network. Supplying
+an endpoint does not by itself authorize a public run: the network must be
+allowed explicitly and the separate live-run authorization still applies.
 
 The contract code comes directly from the release SDK's generated Token
 constants and NFT constants. These match the SDK wrapper layouts; the native
@@ -85,13 +92,13 @@ implement the asset lifecycles. Existing SDK code constants and transaction,
 wallet, genesis and process abstractions are reused instead of adding another
 signer, contract compiler or network implementation.
 
-For epoch 5, pin the approved release and contract hashes, use its approved RPC
-endpoint and supported signer adapter, fund the three wallets with test funds,
-verify the new genesis/global id/authentication namespace and real fee config,
-and obtain the separate live-run authorization. Rebuild/rehearse on that exact
-release: this main snapshot precedes the pending basechain gas-credit change.
-Preserve the resulting blocks for the separate cross-architecture replay case;
-the local lifecycle runner does not claim that replay qualification.
+For a public network run, pin the approved release and contract hashes, use its
+approved RPC endpoint and supported signer adapter, fund the three wallets with
+test funds, verify the genesis, global id, authentication namespace and real fee
+configuration, allow that global id explicitly, and obtain the separate live-run
+authorization. Rebuild and rehearse on that exact release first. Preserve the
+resulting blocks for the separate cross-architecture replay case; the local
+lifecycle runner does not claim that replay qualification.
 
 Independently verify retained evidence and exercise the oracle with mutations:
 
@@ -112,19 +119,33 @@ bounce accounting/receipt completeness, transaction identity and block identity.
 ## Receipt acceptance guards
 
 The independent oracle requires the exact ordered lifecycle labels in the step,
-summary and invariant records. Every step records its destination and must retain
-that destination's target transaction, whose BOC hash and full block identity are
-validated. Older receipts without a destination field need a fresh rehearsal;
-they must not be edited to simulate evidence the runner did not collect.
+summary and invariant records. Every step records its destination, the hash of the
+message it sent and the transaction that consumed exactly that message: the
+runner selects the receipt by the sender's outgoing message hash, so a bounce or
+an unrelated inbound message on the destination can never stand in for it, and
+the oracle checks that binding again. The oracle holds its own table of expected
+outcomes (exit 0 everywhere except 706 for the insufficient-balance transfer and
+401 for the non-owner NFT transfer) and checks each target transaction's compute
+exit code, aborted flag and action result against it, independently of the
+runner's own summary. It requires `provenance.json` to be marked complete, to
+carry the same commit before and after the run, to name the network identity and
+to belong to the run that wrote the summary. Older receipts without these fields
+need a fresh rehearsal; they must not be edited to simulate evidence the runner
+did not collect.
 
 Token and NFT membership checks wait for `index_state.complete == true`, including
-absence checks. Missing or false completeness eventually fails the rehearsal.
+absence checks. Missing or false completeness eventually fails the rehearsal. Once
+a step has deployed the token master or the collection, or minted the item, every
+later snapshot requires that contract to be active.
 
 Run `uv run pytest -q test/tostester/tests/test_tok01_review_guards.py` for the
-24 offline guard tests. They use synthetic public cells and mocked RPC responses,
+42 offline guard tests. They use synthetic public cells and mocked RPC responses,
 not native lifecycle evidence. Removing each of the step, destination transaction,
-clean-source and index-completeness guards makes its targeted tests fail; restoring
-the guards passes all 24. `tok01-oracle.py --red-controls` additionally exercises
-step duplication, label replacement, empty transaction sets and wrong destinations
-against fresh native receipts. A new native rehearsal is required for acceptance
-of this revision; previous retained receipts describe their recorded source only.
+message binding, outcome, provenance, network, signer-deadline, clean-source and
+index-completeness guards makes its targeted tests fail; restoring the guards
+passes all 42. `tok01-oracle.py --red-controls` additionally exercises step
+duplication, label replacement, empty transaction sets, wrong destinations,
+tampered outcomes and provenance against fresh native receipts; each control must
+turn red for its stated reason, not merely fail. A new native rehearsal is
+required for acceptance of this revision; previous retained receipts describe
+their recorded source only.

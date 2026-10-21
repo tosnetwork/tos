@@ -5,7 +5,6 @@ import argparse
 import asyncio
 import hashlib
 import importlib.util
-import json
 import os
 import shutil
 import subprocess
@@ -82,12 +81,22 @@ class SystemdBackend(ProcessBackend):
         await asyncio.sleep(2)
 
 
+TASK_DISK_BUDGET_GIB = 40
+SHARED_FREE_FLOOR_GIB = 200
+
+
 async def run(args):
-    source_head = tok01.clean_source_head()
+    # Refuse a dirty tree before any node starts; the harness binds the run to this head again.
+    tok01.clean_source_head()
     if args.runtime.exists() or args.output.exists():
         raise ValueError("Runtime and evidence paths must both be new")
-    if shutil.disk_usage(args.runtime.parent).free < 240 * 1024**3:
-        raise RuntimeError("Less than 240 GiB free before the 40 GiB budget")
+    required_free = (TASK_DISK_BUDGET_GIB + SHARED_FREE_FLOOR_GIB) * 1024**3
+    if shutil.disk_usage(args.runtime.parent).free < required_free:
+        raise RuntimeError(
+            f"Less than {TASK_DISK_BUDGET_GIB + SHARED_FREE_FLOOR_GIB} GiB free: the "
+            f"{TASK_DISK_BUDGET_GIB} GiB task budget must stay above the "
+            f"{SHARED_FREE_FLOOR_GIB} GiB shared floor"
+        )
     os.environ["TOS_AUTH_NETWORK_TAG"] = hashlib.sha256(args.prefix.encode()).hexdigest()
     backend = SystemdBackend(args.prefix, args.runtime_libraries)
     subprocess.run(
@@ -141,6 +150,15 @@ async def run(args):
                 args.output,
                 send,
                 [bp.address for bp in blueprints],
+                {
+                    "mode": "local",
+                    "global_id": 3,
+                    "limits": {"cpus": 8, "ram_gib": 12, "disk_gib": TASK_DISK_BUDGET_GIB},
+                    "auth_network_tag": os.environ["TOS_AUTH_NETWORK_TAG"],
+                    "node_sha256": hashlib.sha256(
+                        (args.build / "validator-engine/validator-engine").read_bytes()
+                    ).hexdigest(),
+                },
             )
             for blueprint in blueprints:
                 await faucet.deploy(blueprint, tos(10))
@@ -150,21 +168,7 @@ async def run(args):
                         == "active"
                     )
                 )
-            provenance = {
-                "source_head": source_head,
-                "global_id": 3,
-                "limits": {"cpus": 8, "ram_gib": 12, "disk_gib": 40},
-                "auth_network_tag": os.environ["TOS_AUTH_NETWORK_TAG"],
-                "node_sha256": hashlib.sha256(
-                    (args.build / "validator-engine/validator-engine").read_bytes()
-                ).hexdigest(),
-                "owners": [tok01.raw(bp.address) for bp in blueprints],
-            }
-            result = await harness.run()
-            if tok01.clean_source_head() != source_head:
-                raise RuntimeError("Source revision changed during the lifecycle run")
-            (args.output / "provenance.json").write_text(json.dumps(provenance, indent=2) + "\n")
-            return result
+            return await harness.run()
         finally:
             await backend.stop()
             await asyncio.gather(*tasks, return_exceptions=True)
@@ -175,7 +179,7 @@ def main():
     parser.add_argument("--build", type=Path, default=tok01.REPO / "build")
     parser.add_argument("--runtime", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--prefix", default="bailu-tok01")
+    parser.add_argument("--prefix", default="tok01-lifecycle")
     parser.add_argument("--base-port", type=int, default=28600)
     parser.add_argument("--rpc-port", type=int, default=28680)
     parser.add_argument(
