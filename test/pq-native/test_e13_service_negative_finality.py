@@ -89,6 +89,62 @@ def bounce_tx(message_hash="bounce-hash"):
 
 
 class ServiceNegativeTests(unittest.TestCase):
+    def test_cli_funding_refusal_requires_exact_error_and_no_submission(self):
+        for error in (
+            "Service Actor message requires at least 0.2 TOS for execution",
+            "unrelated configuration failure",
+            "Service Actor message requires at least; message submitted",
+            None,
+        ):
+            with (
+                self.subTest(error=error),
+                patch.object(e13, "service_show", new=AsyncMock(return_value=STATE)),
+                patch.object(e13, "last_lt", side_effect=[10, 20, 10, 20]),
+                patch.object(
+                    e13,
+                    "send_op",
+                    new=AsyncMock(
+                        side_effect=RuntimeError(error) if error else None, return_value="submitted"
+                    ),
+                ),
+                patch.object(e13, "record_jsonl") as record,
+                patch.object(e13, "check"),
+            ):
+                operation = e13.rejected_cli_funding(
+                    "underpayment", "0:service", "0:payer", "svc-1", "payer", "call"
+                )
+                if error == "Service Actor message requires at least 0.2 TOS for execution":
+                    asyncio.run(operation)
+                    self.assertEqual(record.call_args.args[1]["boundary"], "cli-preflight")
+                else:
+                    with self.assertRaises(RuntimeError):
+                        asyncio.run(operation)
+
+    def test_cli_funding_refusal_fails_if_wallet_or_service_changed(self):
+        for sequence in ([10, 20, 11], [10, 20, 10, 21]):
+            with (
+                self.subTest(sequence=sequence),
+                patch.object(e13, "service_show", new=AsyncMock(return_value=STATE)),
+                patch.object(e13, "last_lt", side_effect=sequence),
+                patch.object(
+                    e13,
+                    "send_op",
+                    new=AsyncMock(
+                        side_effect=RuntimeError(
+                            "Service Actor message requires at least 0.2 TOS for execution"
+                        )
+                    ),
+                ),
+                patch.object(e13, "record_jsonl") as record,
+            ):
+                with self.assertRaisesRegex(RuntimeError, "preflight refusal changed"):
+                    asyncio.run(
+                        e13.rejected_cli_funding(
+                            "underpayment", "0:service", "0:payer", "svc-1", "payer", "call"
+                        )
+                    )
+                record.assert_not_called()
+
     def run_case(
         self,
         *,

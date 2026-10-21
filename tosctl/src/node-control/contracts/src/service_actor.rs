@@ -15,7 +15,7 @@ use chain_block::{
 };
 use common::tvm_stack_parser::TvmStackParser;
 
-pub const SERVICE_ACTOR_CODE_B64: &str = "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VQQyAB4xOlGkIML/UyG+sPLnh6EAIjA7UZQgwv9TIb6w8ueHoQkKAdogwv9TIb6w8ueHoVOrvvLngVGrIML/UyG+sPLnh6FTCb7y54EpIML/UyG+sPLnh6FTCr7y54EqIML/UyG+sPLnh6GCEDuaygC+8ueBmxEeFIBA9FswERmlnhEfFIBA9FswER4RHREZ4gERIAECJwHOXPkBAYMH9A5voZPTHzCSMHDiIMECmTD5AQGDB/RbMJylyMsfAfkBWIMH9EPiAlYcIML/UyG+sPLnh6EBER8BIcL/IcL/sPLnh6Agg3e58ueHFyHC/yHC/7Dy54egIIN3ufLnh1R1NCgB/lkhwv8hwv+w8ueHoCCDd7ny54cBIcL/IcL/sPLnh6Agg3e58ueHghA7msoAIcL/IcL/sPLnh6Agg3e58ueHcPsCVhrCAI4bAREcAREacXCAEMjLBVAEzxZY+gISy2rJAfsAlFcaVxviEROlERcRGxEXERYRGhEWERURGREVERcpAXARGBESERYREhERERUREREQERQREA8REw8OERIODRERDQwREAwQvxCuEJ0QjBB7EGoQWUcYEDZAVDIBoPLnchESpBEXERsRFwYRGgYRFREZERURFBEYERQRExEXERMRFgsRFQsKERQKCRETCQgREggHEREHBREQBRBPED4QLRCMGxBaEEkQOEB3AwYEMgP+4FYcghBTVkMHuo9qODhXGhEaVhfHBfLnbBEX0//RINs88teFERYRGhEWERURGREVERQRGBEUERMRFxETERIRFhESERERFRERERARFBEQDxETDw4REg4NERENDBEQDBC/EK4QnRCMEHsQanFQmhBIEDdGFFBVA+BWHIIQU1ZDCCwyLQHYIKv3gQDsvo4QIKsHhO+whO+6AYB/sMB/sOCDBrEghD+wIIMGvSGCMLE4AohtU/yFvbABgjBOx/13kqwD+r2wkjBw4CCDBrohgukAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAurEhLgLsuo7gOVcbERtWGMcF8udsERjRERYRGhEWERURGREVERQRGBEUERMRFxETERIRFhESERERFRERERARFBEQDxETDw4REg4NERENDBEQDBC/EK4QnRCMEHsQanAKEFkQSBA3RlMS4BEcghBTVkMJuuMCXw9fD/LHdjIvAJKC8CbolY/CsiewRcP0ifLvmPDV36wF08YzObE4AohtU/yFurEBgvDHF2pwPU3YT7o8C3YNEGcPKiBT+iw5zMZOx/13kqwD+rqxAeIRHFYZxwXy52wRGfoA0fgnbxBTBL7y54IkIML/UyG+sPLnh6FTA77y54IjIML/UyG+sPLnh6FTBb7y54IlIML/UyG+sPLnh6EgghA7msoAvvLngoIQO5rKACDC/1MhvrDy54ehUmC2CFIQu/LnglRzJDAB+lkhwv8hwv+w8ueHoCCDd7ny54cBIcL/IcL/sPLnh6Agg3e58ueHghA7msoAIcL/IcL/sPLnh6Agg3e58ueHcPsCIMIAjhhWGCFxcIAQyMsFUATPFlj6AhLLaskB+wDeFSDC/1MhvrDy54ehERcRGxEXERYRGhEWERURGREVMQGCERQRGBEUERMRFxETERIRFhESERERFRERERARFBEQDxETDw4REg4NERENDBEQDBC/EK4QnRCMEHsQahBZCBA3RlMyAOIMyMv/G8v/GcsAF8v/yRETyMsfARES+gIBERD6AlAO+gIcyx8ayx8YywAWywBQBM8WEssfGszJyFAF+gJQBfoCUAX6AlAF+gIVyx8Tyx/JAcj0ABL0ABP0AMnIUAjPFhbLABTLPxLLH8sfEszMzMntVMHenM8=";
+pub const SERVICE_ACTOR_CODE_B64: &str = "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juM6VxxXHREbVhjHBfLnbBEY0REWERoRFhEVERkRFREUERgRFBETERcRExESERYREhERERUREREQERQREA8REw8OERIODRERDQwREAwQvxCuEJ0QjBB7EGpwChBZEEgQN0YTUFLgER2CEFNWQwm64wJfD18PMDMvMAGq8udyERKkERcRGxEXBhEaBhEVERkRFREUERgRFBETERcRExEWCxEVCwoRFAoJERMJCBESCAcREQcFERAFEE8QPhAtEIwbEHoQWRBIEDcQJhBFEDQQIzMAkoLwJuiVj8KyJ7BFw/SJ8u+Y8NXfrAXTxjM5sTgCiG1T/IW6sQGC8McXanA9TdhPujwLdg0QZw8qIFP6LDnMxk7H/XeSrAP6urEB/FYdVhvHBfLnbBEb+gDRVh6BB4L4J28QUwK+EvL0ASDC/1MhvrDy54ehVHAGvvLngicgwv9TIb6w8ueHoVMGvvLngiYgwv9TIb6w8ueHoVMIvvLngiggwv9TIb6w8ueHoSCCEDuaygC+8ueCghA7msoAIML/UyG+sPLnh6FSkDEABvLHdgH8tghSILvy54IRH4IQC+vCAL7y54lWGgIBER4BER9WHmYgwv9TIb6w8ueHoXD7AiDCAI4WEnFwgBDIywVQBM8WWPoCEstqyQH7AJIwMeJwgwZwgBDIywVQBM8WWPoCEstqyQH7ABEbFSDC/1MhvrDy54ehERcRGxEXERYRGhEWMgGSERURGREVERQRGBEUERMRFxETERIRFhESERERFRERERARFBEQDxETDw4REg4NERENDBEQDBC/EK4QnRCMEHsQahBZCBA3RlBDADMA4gzIy/8by/8ZywAXy//JERPIyx8BERL6AgEREPoCUA76AhzLHxrLHxjLABbLAFAEzxYSyx8azMnIUAX6AlAF+gJQBfoCUAX6AhXLHxPLH8kByPQAEvQAE/QAychQCM8WFssAFMs/Essfyx8SzMzMye1Uo8shBA==";
 
 pub const SVC_CALL_OPCODE: u32 = 0x5356_4301;
 pub const SVC_RESPOND_OPCODE: u32 = 0x5356_4302;
@@ -37,6 +37,12 @@ pub mod protocol_constants {
     pub const MAXIMUM_CLEANUP_BOUNTY: u64 = 1_000_000_000; // 1 TOS
     pub const MINIMUM_STORAGE_FEE: u64 = 100_000_000; // 0.1 TOS
     pub const MINIMUM_OPERATING_RESERVE: u64 = 1_000_000_000; // 1 TOS
+    /// Attached in addition to the quoted price and storage fee. Unused execution
+    /// funding is returned to the caller after the transaction's fees.
+    pub const ADMISSION_GAS_ALLOWANCE: u64 = 200_000_000; // 0.2 TOS
+    /// Attached to refund, sweep and withdrawal messages so their transaction fees
+    /// are paid by the sender instead of reducing the payout or existing backing.
+    pub const PAYOUT_GAS_ALLOWANCE: u64 = 200_000_000; // 0.2 TOS
     pub const MIN_RESPONSE_SLA_SECS: u32 = 3_600; // 1 hour
     pub const MAX_RESPONSE_SLA_SECS: u32 = 2_592_000; // 30 days
     pub const MIN_REFUND_CLAIM_WINDOW_SECS: u32 = 3_600; // 1 hour
@@ -306,8 +312,19 @@ impl ServiceActorContract {
         }))
     }
 
+    /// Minimum value to attach to a call under the quoted policy, including the
+    /// refundable execution allowance. Refuse client-side overflow explicitly.
+    pub fn minimum_call_payment(price: u64, storage_fee: u64) -> anyhow::Result<u64> {
+        price
+            .checked_add(storage_fee)
+            .and_then(|amount| amount.checked_add(protocol_constants::ADMISSION_GAS_ALLOWANCE))
+            .ok_or_else(|| anyhow::anyhow!("Service Actor call funding exceeds u64"))
+    }
+
     /// A `call` commits to the terms the caller was quoted: the contract refuses
     /// it unless `expected_terms_hash` equals the hash of its current terms.
+    /// Attach at least `minimum_call_payment(price, storage_fee)`. The unused
+    /// execution allowance returns to the caller after transaction fees.
     pub fn call(
         query_id: u64,
         request_hash: [u8; 32],
@@ -391,10 +408,11 @@ impl ServiceActorContract {
 
     /// Caller-only: claims `price` (not the locked `storage_fee`) to a
     /// chosen destination before `refund_claim_deadline`.
-    /// Requires the post-refund liabilities, locked fees and operating reserve to
-    /// remain funded after fees. Rent erosion can require an operator top-up even
-    /// when this refund's price is backed. Refusal does not pause the claim window;
-    /// after expiry, sweep releases the unclaimed price as owner revenue.
+    /// Attach at least `protocol_constants::PAYOUT_GAS_ALLOWANCE`. The destination
+    /// receives the exact price; unused execution funding returns to the caller. Other
+    /// callers' liabilities and locked fees stay protected; the operator's reserve
+    /// does not take priority over a backed refund. Refusal does not pause the claim
+    /// window; after expiry, sweep releases the unclaimed price as owner revenue.
     pub fn claim_refund(
         query_id: u64,
         request_id: u64,
@@ -410,6 +428,8 @@ impl ServiceActorContract {
     /// still-pending or still-refundable entry and pays `cleanup_bounty` to
     /// the sender, so cleanup does not depend on owner or caller
     /// cooperation. Accepts a `request_id` found in either dictionary.
+    /// Attach at least `protocol_constants::PAYOUT_GAS_ALLOWANCE`; the sender
+    /// receives the exact bounty and a separate return of unused execution funding.
     pub fn sweep_expired_request(
         query_id: u64,
         request_id: u64,
@@ -472,6 +492,10 @@ impl ServiceActorContract {
         })
     }
 
+    /// Owner-only. Attach `protocol_constants::PAYOUT_GAS_ALLOWANCE` separately
+    /// from the requested amount. The owner receives the exact amount and a
+    /// separate return of unused execution funding; zero withdrawals return only
+    /// that funding. Other liabilities and the operating reserve stay protected.
     pub fn withdraw_revenue(query_id: u64, amount: u64) -> anyhow::Result<chain_block::Cell> {
         message(SVC_WITHDRAW_REVENUE_OPCODE, query_id, |b| Coins::new(amount).write_to(b))
     }
@@ -526,6 +550,18 @@ mod tests {
         slice,
         stackentry::{StackEntryNumber, StackEntrySlice},
     };
+
+    #[test]
+    fn service_actor_minimum_call_payment_checks_all_components() {
+        let allowance = protocol_constants::ADMISSION_GAS_ALLOWANCE;
+        assert_eq!(ServiceActorContract::minimum_call_payment(0, 0).unwrap(), allowance);
+        assert_eq!(
+            ServiceActorContract::minimum_call_payment(100_000_000, 200_000_000).unwrap(),
+            300_000_000u64.checked_add(allowance).unwrap()
+        );
+        assert!(ServiceActorContract::minimum_call_payment(u64::MAX, 1).is_err());
+        assert!(ServiceActorContract::minimum_call_payment(u64::MAX - allowance + 1, 0).is_err());
+    }
 
     fn number(value: impl Into<String>) -> StackEntry {
         StackEntry::Tvm_StackEntryNumber(StackEntryNumber {

@@ -15,6 +15,10 @@ the two engines in any of them would make the sandbox evidence describe the
 wrong chain.
 
 Usage: replay-token-bridge-trace.py <trace-dir> [--emulator path/to/libemulator.so]
+
+The replayer also accepts raw sandbox receipts: rust_transaction and
+shard_account_after BOCs in place of an expect dictionary. This lets other
+contract suites record execution without duplicating the outcome decoder.
 """
 
 from __future__ import annotations
@@ -318,6 +322,17 @@ def failed_deployment_kept_by_rust(expect: dict, got: dict, before: dict, init) 
     )
 
 
+def raw_outcome(transaction: str, shard_account: str) -> dict:
+    """Decode the same observable fields from a recorded executor receipt."""
+    tx = from_boc(base64.b64decode(transaction))
+    result = description(tx)
+    result["out"] = outgoing(tx)
+    after = read_account(from_boc(base64.b64decode(shard_account)))
+    for key in ("balance", "data", "code"):
+        result[key] = after[key]
+    return result
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -345,7 +360,10 @@ def main() -> int:
             record["message"],
             int(record.get("lt", 2_000_000_000)),
         )
-        expect = record["expect"]
+        if "expect" in record:
+            expect = record["expect"]
+        else:
+            expect = raw_outcome(record["rust_transaction"], record["shard_account_after"])
         if not result.get("success"):
             differences.append(
                 f"{path}: the native engine did not execute it: {result.get('error')}"

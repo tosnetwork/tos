@@ -577,8 +577,8 @@ async def run_checks(faucet) -> None:
     # protocol minimums enforced in crypto/smartcont/service-actor-code.fc
     # (MINIMUM_STORAGE_FEE=MINIMUM_CLEANUP_BOUNTY=0.1 TOS,
     # MIN_RESPONSE_SLA=MIN_REFUND_CLAIM_WINDOW=3600s); amount covers the
-    # protocol's MINIMUM_OPERATING_RESERVE (1 TOS) plus headroom for the two
-    # mid-workflow calls this script makes against this same instance.
+    # protocol's MINIMUM_OPERATING_RESERVE (1 TOS) plus deployment fees and
+    # storage-rent headroom. Each caller funds its own execution costs.
     service_deploy = await tosctl_json(
         "agent", "service", "deploy", "--name", "model-provider-service",
         "--owner", model_provider, "--open-access",
@@ -603,10 +603,12 @@ async def run_checks(faucet) -> None:
         # here before the next one is submitted).
         pre_call = await tosctl_json("agent", "service", "show", "--name", "model-provider-service")
         request_id = pre_call["next_request_id"]
+        # Omitted --amount follows the quoted price, storage fee and the SDK's
+        # execution allowance, so protocol funding changes do not stale this client.
         await tosctl(
             "agent", "service", "send", "--operation", "call", "--name", "model-provider-service",
             "--from", "worker-owner", "--request-hash", REQUEST_HASH,
-            "--amount", "0.3", "--yes",  # 0.05 price + 0.2 storage_fee + real-fee headroom
+            "--yes",
         )
         await tosctl(
             "agent", "service", "send", "--operation", "respond", "--name",

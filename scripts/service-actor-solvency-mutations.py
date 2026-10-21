@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prove Service Actor solvency tests fail when each protection is removed."""
+"""Prove Service Actor funding tests reject specific broken settlement rules."""
 
 import os
 import re
@@ -20,79 +20,121 @@ def replace_once(source, old, new):
 
 def main():
     source = SOURCE.read_text()
-    reserve = (
-        "    reserve_obligations(pending_liability, refundable_liability, locked_storage_fees);\n"
+    admission_check = (
+        "    require_backing(backing, pending_liability, refundable_liability, locked_storage_fees,\n"
+        "      MINIMUM_OPERATING_RESERVE, err::operating_reserve_unfunded);"
     )
+    refund_check = (
+        "    require_backing(remaining, pending_liability, remaining_refundable, remaining_locked,\n"
+        "      0, err::insufficient_balance);"
+    )
+    admission_settlement = "    raw_reserve(retained, 0);\n    send_value(sender, 0, 128);"
     cases = [
         (
-            "admission funding",
+            "admission operating reserve",
             "admission_requires_preexisting_reserve",
-            source[
-                source.index(
-                    "    throw_unless(err::operating_reserve_unfunded, balance >= msg_value);"
-                ) : source.index(
-                    "    reserve_obligations(admitted_pending, refundable_liability, admitted_locked);"
-                )
-            ],
+            admission_check,
             "",
+            "expected first transaction to be aborted, but it succeeded",
+        ),
+        (
+            "admission existing liabilities",
+            "admission_requires_existing_obligations",
+            admission_check,
+            "    require_backing(backing, 0, 0, 0, MINIMUM_OPERATING_RESERVE, err::operating_reserve_unfunded);",
+            "expected first transaction to be aborted, but it succeeded",
+        ),
+        (
+            "admission execution budget",
+            "admission_requires_execution_budget",
+            "    throw_unless(err::insufficient_execution_payment,\n      execution_payment >= ADMISSION_GAS_ALLOWANCE);",
+            "",
+            "expected exit code 1929, got 0",
+        ),
+        (
+            "old admission fee subsidy",
+            "admission_preserves_operator_excess",
+            admission_settlement,
+            "    raw_reserve(checked_add_amount(checked_add_amount(checked_add_amount(admitted_pending, refundable_liability), admitted_locked), MINIMUM_OPERATING_RESERVE), 0);\n"
+            "    send_value(sender, execution_payment, 1);",
+            "successful admission spent preexisting backing",
         ),
         (
             "admission action reserve",
-            "admission_reserves_after_fees_with_and_without_overpayment",
-            "    reserve_obligations(admitted_pending, refundable_liability, admitted_locked);",
+            "admission_preserves_operator_excess",
+            admission_settlement,
+            "    send_value(sender, 0, 128);",
+            "successful admission spent preexisting backing",
+        ),
+        (
+            "refund priority",
+            "claim_preserves_other_entries_and_reserves_after_fees",
+            refund_check,
+            refund_check.replace("      0,", "      MINIMUM_OPERATING_RESERVE,"),
+            "expected first transaction to succeed, but it was aborted",
+        ),
+        (
+            "refund other-customer floor",
+            "claim_preserves_other_entries_and_reserves_after_fees",
+            refund_check,
             "",
-        ),
-        (
-            "withdrawal action reserve",
-            "exact_withdrawal_cap_cannot_spend_fee_backing",
-            "    throw_unless(err::insufficient_revenue, amount <= withdrawable_now);\n" + reserve,
-            "    throw_unless(err::insufficient_revenue, amount <= withdrawable_now);\n",
-        ),
-        (
-            "sweep action reserve",
-            "sweep_after_real_rent_preserves_other_entries",
-            "    locked_storage_fees = remaining_locked;\n" + reserve,
-            "    locked_storage_fees = remaining_locked;\n",
+            "expected first transaction to be aborted, but it succeeded",
         ),
         (
             "refund action reserve",
             "claim_preserves_other_entries_and_reserves_after_fees",
-            "    reserve_obligations(pending_liability, remaining_refundable, remaining_locked);",
-            "",
+            "    pay_with_change(destination, sender, backing, price);",
+            "    send_value(destination, price, 1);\n    send_value(sender, 0, 128);",
+            "only this operation's execution and forwarding fees reduce change",
+        ),
+        (
+            "withdrawal action reserve",
+            "exact_withdrawal_cap_cannot_spend_fee_backing",
+            "    pay_with_change(owner, sender, backing, amount);",
+            "    send_value(owner, amount, 1);\n    send_value(sender, 0, 128);",
+            "only this operation's execution and forwarding fees reduce change",
+        ),
+        (
+            "sweep action reserve",
+            "sweep_after_real_rent_preserves_other_entries",
+            "    pay_with_change(sender, sender, backing, req_cleanup_bounty);",
+            "    send_value(sender, req_cleanup_bounty, 1);\n    send_value(sender, 0, 128);",
+            "only this operation's execution and forwarding fees reduce change",
+        ),
+        (
+            "exact principal instead of carry-all haircut",
+            "refund_never_haircuts_principal_when_fees_rise",
+            "  if (amount > 0) {\n    send_value(destination, amount, 1);\n  }\n  send_value(payer, 0, 128);",
+            "  send_value(destination, 0, 128);",
+            "expected first transaction to be aborted, but it succeeded",
         ),
     ]
-    # Removing all early remaining-obligation checks must fail for the compute
-    # exit assertion, even though the action-phase reserve independently holds.
-    claim_start = source.index("    ;; Refusing an insolvent payout")
-    claim_end = source.index(
-        "    reserve_obligations(pending_liability, remaining_refundable", claim_start
+    # Mutate each branch independently so another branch cannot mask a missing guard.
+    budget_guard = (
+        "    throw_unless(err::insufficient_execution_payment, msg_value >= PAYOUT_GAS_ALLOWANCE);"
     )
-    claim = source[claim_start:claim_end]
-    check_start = claim.index(
-        "    throw_unless(err::insufficient_balance, remaining >= pending_liability);"
-    )
-    cases.append(
-        (
-            "refund early floor",
-            "claim_preserves_other_entries_and_reserves_after_fees",
-            claim,
-            claim[:check_start],
+    for operation, next_operation in [
+        ("claim_refund", "sweep_expired_request"),
+        ("sweep_expired_request", "update_policy"),
+        ("withdraw_revenue", None),
+    ]:
+        start = source.index(f"  if (op == op::{operation}) {{")
+        end = (
+            source.index(f"  if (op == op::{next_operation}) {{", start)
+            if next_operation
+            else source.index("  throw(err::unknown_op);", start)
         )
-    )
-    cases.append(
-        (
-            "admission existing obligations",
-            "admission_requires_existing_obligations",
-            source[
-                source.index(
-                    "    throw_unless(err::operating_reserve_unfunded, backing >= pending_liability);"
-                ) : source.index(
-                    "    throw_unless(err::operating_reserve_unfunded, backing >= MINIMUM_OPERATING_RESERVE);"
-                )
-            ],
-            "",
+        branch = source[start:end]
+        cases.append(
+            (
+                f"{operation} execution budget",
+                "payouts_require_execution_budget",
+                branch,
+                replace_once(branch, budget_guard, ""),
+                "expected first transaction to be aborted, but it succeeded",
+            )
         )
-    )
+
     cmd = [
         "cargo",
         "test",
@@ -107,19 +149,17 @@ def main():
     env = dict(os.environ, TOS_ROOT=str(ROOT), CARGO_TERM_COLOR="never")
     env.pop("SERVICE_ACTOR_SOLVENCY_SOURCE", None)
     green = subprocess.run(cmd + [PREFIX], cwd=ROOT, env=env, capture_output=True, text=True)
-    expected_tests = {PREFIX + case[1] for case in cases} | {
-        PREFIX + "source_matches_embedded_code"
-    }
-    passed_tests = set(re.findall(r"^test (solvency_\w+) \.\.\. ok$", green.stdout, re.MULTILINE))
-    if green.returncode or not expected_tests <= passed_tests:
+    required = {PREFIX + case[1] for case in cases} | {PREFIX + "source_matches_embedded_code"}
+    passed = set(re.findall(r"^test (solvency_\w+) \.\.\. ok$", green.stdout, re.MULTILINE))
+    if green.returncode or not required <= passed:
         raise RuntimeError(
             "baseline did not pass every required test:\n" + green.stdout + green.stderr
         )
-    print(f"PASS: {len(passed_tests)} unmodified solvency tests", flush=True)
+    print(f"PASS: {len(passed)} unmodified solvency tests", flush=True)
     with tempfile.TemporaryDirectory(prefix="service-solvency-") as tmp:
         for include in re.findall(r'^#include "([^"\n]+)";', source, re.MULTILINE):
             (Path(tmp) / include).write_bytes((SOURCE.parent / include).read_bytes())
-        for index, (label, test, old, new) in enumerate(cases):
+        for index, (label, test, old, new, assertion) in enumerate(cases):
             path = Path(tmp) / f"mutation-{index}.fc"
             path.write_text(replace_once(source, old, new))
             mutated_env = dict(env, SERVICE_ACTOR_SOLVENCY_SOURCE=str(path))
@@ -131,23 +171,17 @@ def main():
                 text=True,
             )
             output = result.stdout + result.stderr
-            expected = {
-                "admission funding": "expected exit code 1928, got 0",
-                "admission existing obligations": "expected exit code 1928, got 0",
-                "refund early floor": "expected exit code 1921, got 0",
-            }.get(label, "expected first transaction to be aborted, but it succeeded")
             if (
                 result.returncode == 0
                 or "test result: FAILED. 0 passed; 1 failed" not in output
-                or expected not in output
+                or assertion not in output
                 or "compilation failed" in output
             ):
                 raise RuntimeError(f"{label}: no valid red assertion:\n{output}")
-            # Keep the bounded assertion evidence in CI logs, not every build warning.
             start = output.index("panicked at")
-            assertion = output[start:].split("note: run with", 1)[0].strip()
-            print(f"RED: {label}\n{assertion}", flush=True)
-    print(f"PASS: {len(cases)}/{len(cases)} removed protections detected", flush=True)
+            evidence = output[start:].split("note: run with", 1)[0].strip()
+            print(f"RED: {label}\n{evidence}", flush=True)
+    print(f"PASS: {len(cases)}/{len(cases)} broken rules detected", flush=True)
 
 
 if __name__ == "__main__":
