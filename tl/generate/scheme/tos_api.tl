@@ -713,6 +713,9 @@ engine.validator.fullNodeConfig ext_messages_broadcast_disabled:Bool = engine.va
 engine.validator.fastSyncMemberCertificate adnl_id:int256 certificate:overlay.MemberCertificate = engine.validator.FastSyncMemberCertificate;
 engine.validator.fastSyncOverlayClient adnl_id:int256 slot:int = engine.validator.FastSyncOverlayClient;
 engine.validator.collatorNodeWhitelist enabled:Bool adnl_ids:(vector int256) = engine.validator.CollatorNodeWhitelist;
+engine.validator.extMessagePoolConfig max_mempool_messages:int
+    num_checkers:int max_admission_waiters:int
+    max_ext_msg_per_addr:int max_ext_msg_per_addr_time_window:double = engine.validator.ExtMessagePoolConfig;
 // One more post-quantum consensus key for the same validator, held alongside the others
 // so the consensus key can rotate without a moment at which the node holds only the
 // wrong one. valid_from is the first election date (unix time) the key may sign a stake
@@ -736,6 +739,7 @@ engine.validator.pqConsensus validator_id:int256 consensus_key_file:string
 engine.validator.extraConfig state_serializer_enabled:Bool fast_sync_member_certificates:(vector engine.validator.fastSyncMemberCertificate)
     collator_node_whitelist:engine.validator.collatorNodeWhitelist
     fast_sync_overlay_clients:(vector engine.validator.fastSyncOverlayClient)
+    ext_message_pool_config:engine.validator.extMessagePoolConfig
     pq_consensus:engine.validator.pqConsensus = engine.validator.ExtraConfig;
 engine.validator.config out_port:int addrs:(vector engine.Addr) adnl:(vector engine.adnl)
         dht:(vector engine.dht)
@@ -956,6 +960,8 @@ engine.validator.delFastSyncClient adnl_id:int256 = engine.validator.Success;
 
 engine.validator.setShardBlockVerifierConfig config:engine.validator.shardBlockVerifierConfig = engine.validator.Success;
 engine.validator.showShardBlockVerifierConfig = engine.validator.ShardBlockVerifierConfig;
+
+engine.validator.setExtMessagePoolOptions config:engine.validator.extMessagePoolConfig = engine.validator.Success;
 
 ---types---
 

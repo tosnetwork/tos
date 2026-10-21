@@ -54,6 +54,9 @@ class ExtMessageChecker : public td::actor::Actor {
   td::actor::Task<CheckOutcome> check(td::BufferSlice data, block::SizeLimitsConfig::ExtMsgLimits limits,
                                        td::Ref<MasterchainState> mc_state);
 
+  // Destroy actor after all checks finish
+  void destroy();
+
   void alarm() override;
 
  private:
@@ -107,6 +110,8 @@ class ExtMessageChecker : public td::actor::Actor {
   td::Result<bool> check_workchain_execution(const td::Ref<ExtMessage>& message,
                                              block::SizeLimitsConfig::ExtMsgLimits limits,
                                              const block::ConfigInfo& config) const;
+  bool destroying_ = false;
+  size_t inflight_checks_ = 0;
 };
 
 }  // namespace tos::validator

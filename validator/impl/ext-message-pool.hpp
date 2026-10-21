@@ -45,6 +45,10 @@ class ExtMessagePool : public td::actor::Actor, public metrics::AsyncCollector {
       , admission_budget_(std::move(admission_budget))
       , work_admission_(std::move(work_admission)) {
     CHECK(admission_budget_ != nullptr);
+    if (opts_.not_null()) {
+      pool_opts_ = opts_->get_ext_message_pool_options();
+    }
+    checked_ext_msg_counter_.time_window_ = pool_opts_->max_ext_msg_per_addr_time_window;
   }
 
   struct CheckResult {
@@ -159,6 +163,7 @@ class ExtMessagePool : public td::actor::Actor, public metrics::AsyncCollector {
   };
 
   td::Ref<ValidatorManagerOptions> opts_;
+  td::Ref<ExtMessagePoolOptions> pool_opts_{true};
   td::actor::ActorId<ValidatorManager> manager_;
   td::Ref<MasterchainState> last_masterchain_state_;
 
@@ -184,6 +189,7 @@ class ExtMessagePool : public td::actor::Actor, public metrics::AsyncCollector {
   struct CheckedExtMsgCounter {
     std::map<std::pair<WorkchainId, StdSmcAddress>, size_t> counter_cur_, counter_prev_;
     td::Timestamp cleanup_at_ = td::Timestamp::now();
+    double time_window_ = 10.0;
 
     size_t get_msg_count(WorkchainId wc, StdSmcAddress addr);
     size_t inc_msg_count(WorkchainId wc, StdSmcAddress addr);
@@ -212,10 +218,16 @@ class ExtMessagePool : public td::actor::Actor, public metrics::AsyncCollector {
   void record_admission(metrics::ExtMessageAdmissionOutcome outcome);
   void record_removal(metrics::ExtMessageRemovalReason reason);
 
-  // Parallel admission workers own the expensive, pool-independent validation stages. Shared
-  // counters, mempool indexes and callback mutation remain serialized on this pool actor.
-  std::vector<td::actor::ActorOwn<ExtMessageChecker>> checkers_;
-  std::vector<size_t> checker_inflight_;
+  // ===== Parallel admission =====
+  // The expensive per-message stages (parse, account state fetch, VM check) run on these worker
+  // actors; the pool only dispatches and finalizes. Created lazily on the first check.
+  bool inited_checkers_ = false;
+  size_t checkers_generation_ = 0;
+  struct Checker {
+    td::actor::ActorOwn<ExtMessageChecker> actor;
+    size_t inflight = 0;
+  };
+  std::vector<Checker> checkers_;
   size_t next_checker_{0};
   void init_checkers();
 
@@ -224,7 +236,7 @@ class ExtMessagePool : public td::actor::Actor, public metrics::AsyncCollector {
   std::unique_ptr<ExtMessageWorkAdmission> work_admission_;
   bool work_profile_supported_{false};
   std::deque<td::actor::StartedTask<>::ExternalPromise> admission_waiters_;
-  void release_check_slot(bool dispatched);
+  void release_check_slot();
 
   double check_completion_rate_{2000.0};
   td::uint64 completions_in_rate_window_{0};
@@ -253,13 +265,11 @@ class ExtMessagePool : public td::actor::Actor, public metrics::AsyncCollector {
 
   std::vector<std::unique_ptr<ExtMsgCallback>> callbacks_;
 
-  static constexpr double MAX_EXT_MSG_PER_ADDR_TIME_WINDOW = 10.0;
-  static constexpr size_t MAX_EXT_MSG_PER_ADDR = 3 * 10;
   static constexpr size_t PER_ADDRESS_LIMIT = 256;
   static constexpr size_t SOFT_MEMPOOL_LIMIT = 1024;
-  static constexpr size_t NUM_CHECKERS = 24;
-  static constexpr size_t MAX_INFLIGHT_CHECKS = 8 * NUM_CHECKERS;
-  static constexpr size_t MAX_ADMISSION_WAITERS = 50000;
+  static constexpr size_t MAX_INFLIGHT_CHECKS_PER_CHECKER = 8;
+  // Keep the estimated queueing delay well under client/liteserver timeouts (~10s): beyond
+  // that the requests would be answered after the caller gave up anyway, so fail them fast.
   static constexpr double MAX_ADMISSION_QUEUE_DELAY = 5.0;
   static constexpr size_t MAX_TRACKED_ADMISSION_PEERS = 4096;
   static constexpr double ADMISSION_STATS_PERIOD = 5.0;

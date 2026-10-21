@@ -165,7 +165,6 @@ LONG_OPTIONS_WITH_ARGUMENT="
   log-rotate-mb
   log-keep-files
   state-ttl
-  mempool-num
   block-ttl
   archive-ttl
   key-proof-ttl
@@ -257,7 +256,7 @@ LONG_OPTIONS_WITHOUT_ARGUMENT="
   persistent-state-allow-oversize-single-file
   dht-server
 "
-SHORT_OPTIONS="v=verbosity V=version h=help C=global-config c=local-config I=ip D=db f=fift-dir d=daemonize l=logname s=state-ttl m=mempool-num b=block-ttl A=archive-ttl K=key-proof-ttl S=sync-before T=truncate-db U=unsafe-catchain-restore F=unsafe-catchain-rotate M=not-all-shards t=threads u=user"
+SHORT_OPTIONS="v=verbosity V=version h=help C=global-config c=local-config I=ip D=db f=fift-dir d=daemonize l=logname s=state-ttl b=block-ttl A=archive-ttl K=key-proof-ttl S=sync-before T=truncate-db U=unsafe-catchain-restore F=unsafe-catchain-rotate M=not-all-shards t=threads u=user"
 
 # The options CUSTOM_ARG gives the engine, as long names and values, in order.
 ENGINE_OPTION_NAMES=()

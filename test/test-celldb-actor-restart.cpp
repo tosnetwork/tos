@@ -102,7 +102,6 @@ td::Ref<tos::validator::ValidatorManagerOptions> make_options() {
       /*state_ttl=*/0.0,
       /*archive_ttl=*/0.0,
       /*key_proof_ttl=*/0.0,
-      /*max_mempool_num=*/0,
       /*initial_sync_disabled=*/true);
   auto& writable = opts.write();
   writable.set_disable_rocksdb_stats(true);

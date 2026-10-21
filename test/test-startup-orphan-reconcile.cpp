@@ -46,7 +46,7 @@ using consensus::PendingValidatorConsensusDbCleanup;
 using consensus::StartupOrphanSummary;
 
 td::Ref<ValidatorManagerOptions> make_options() {
-  auto opts = ValidatorManagerOptions::create(BlockIdExt{}, BlockIdExt{}, false, 0.0, 0.0, 0.0, 0.0, 0.0, 0, true);
+  auto opts = ValidatorManagerOptions::create(BlockIdExt{}, BlockIdExt{}, false, 0.0, 0.0, 0.0, 0.0, 0.0, true);
   auto& w = opts.write();
   w.set_disable_rocksdb_stats(true);
   w.set_celldb_compress_depth(0);
