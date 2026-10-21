@@ -677,10 +677,12 @@ td::actor::Task<td::Unit> QuicSender::send_message_coro(adnl::AdnlNodeIdShort sr
   auto R = co_await send_message_coro_inner(src, dst, std::move(data)).wrap();
   if (R.is_error()) {
     // Idle expiry races with queued broadcasts are normal for a datagram
-    // transport.  Keep these at DEBUG so a burst cannot fill journald; real
+    // transport, as is dropping the oldest waiter of a connection that is still
+    // handshaking.  Keep these at DEBUG so a burst cannot fill journald; real
     // protocol/serialization failures remain visible at WARNING.
     auto message = R.error().message().str();
-    if (message == "connection closed" || message == "Connection not found") {
+    if (message == "connection closed" || message == "Connection not found" ||
+        message == "dropped waiting for a connection") {
       LOG(DEBUG) << "Failed to send message: " << src << " -> " << dst << " size=" << size
                  << " magic=" << td::format::as_hex(magic) << " " << R.error();
     } else {
