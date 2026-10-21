@@ -235,7 +235,8 @@ class ExtMessagePool : public td::actor::Actor, public metrics::AsyncCollector {
   std::shared_ptr<adnl::AdnlExtByteBudget> admission_budget_;
   std::unique_ptr<ExtMessageWorkAdmission> work_admission_;
   bool work_profile_supported_{false};
-  std::deque<td::actor::StartedTask<>::ExternalPromise> admission_waiters_;
+  std::map<int, std::deque<td::actor::StartedTask<>::ExternalPromise>> admission_waiters_;  // priority -> queue
+  size_t total_admission_waiters_ = 0;
   void release_check_slot();
 
   double check_completion_rate_{2000.0};

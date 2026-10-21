@@ -46,11 +46,15 @@ metrics::ExtMessageAdmissionOutcome admission_outcome(ExtMessageChecker::Failure
 void ExtMessagePool::tear_down() {
   // Suspended admission coroutines retain this actor. End their waits before
   // destruction, otherwise their promises and actor references form a cycle.
-  while (!admission_waiters_.empty()) {
-    auto waiter = std::move(admission_waiters_.front());
-    admission_waiters_.pop_front();
-    waiter.set_error(td::Status::Error(ErrorCode::cancelled, "external admission pool stopped"));
+  for (auto &[priority, waiters] : admission_waiters_) {
+    while (!waiters.empty()) {
+      auto waiter = std::move(waiters.front());
+      waiters.pop_front();
+      waiter.set_error(td::Status::Error(ErrorCode::cancelled, "external admission pool stopped"));
+    }
   }
+  admission_waiters_.clear();
+  total_admission_waiters_ = 0;
 }
 
 td::Result<td::Unit> ExtMessagePool::configure_work_profile(ExtMessageWorkProfile profile) {
@@ -134,19 +138,36 @@ td::actor::Task<ExtMessagePool::CheckResult> ExtMessagePool::check_add_external_
   // unbounded work onto the worker/pool mailboxes and the queueing delay alone times every
   // request out (congestion collapse) while starving the rest of the node of CPU.
   while (inflight_checks_ >= MAX_INFLIGHT_CHECKS_PER_CHECKER * checkers_.size()) {
-    if (admission_waiters_.size() >= max_admission_waiters()) {
-      ++admission_window_.rejected;
-      record_admission(metrics::ExtMessageAdmissionOutcome::backpressure);
-      co_return td::Status::Error(ErrorCode::notready, "too many pending external message checks");
-    }
     if (checkers_.empty()) {
       ++admission_window_.rejected;
       record_admission(metrics::ExtMessageAdmissionOutcome::not_ready);
       co_return td::Status::Error(ErrorCode::notready, "no checkers are configured");
     }
+    if (total_admission_waiters_ >= max_admission_waiters()) {
+      if (admission_waiters_.empty() || admission_waiters_.begin()->first >= priority) {
+        ++admission_window_.rejected;
+        record_admission(metrics::ExtMessageAdmissionOutcome::backpressure);
+        co_return td::Status::Error(ErrorCode::notready, "too many pending external message checks");
+      }
+      auto &[_, min_priority_waiters] = *admission_waiters_.begin();
+      min_priority_waiters.back().set_error(td::Status::Error(ErrorCode::cancelled));
+      min_priority_waiters.pop_back();
+      if (min_priority_waiters.empty()) {
+        admission_waiters_.erase(admission_waiters_.begin());
+      }
+      --total_admission_waiters_;
+    }
     auto [task, promise] = td::actor::StartedTask<>::make_bridge();
-    admission_waiters_.push_back(std::move(promise));
-    co_await std::move(task);
+    admission_waiters_[priority].push_back(std::move(promise));
+    ++total_admission_waiters_;
+    auto R = co_await std::move(task).wrap();
+    if (R.is_error() && R.error().code() == ErrorCode::cancelled) {
+      // This happens when a higher-priority message drops this one
+      ++admission_window_.rejected;
+      record_admission(metrics::ExtMessageAdmissionOutcome::backpressure);
+      co_return td::Status::Error(ErrorCode::notready, "too many pending external message checks");
+    }
+    // Loop: a new arrival may have grabbed the slot between our wakeup and resumption.
   }
   size_t current_generation = checkers_generation_;
   ++inflight_checks_;
@@ -302,8 +323,13 @@ size_t ExtMessagePool::max_admission_waiters() {
 void ExtMessagePool::release_check_slot() {
   --inflight_checks_;
   if (!admission_waiters_.empty()) {
-    auto waiter = std::move(admission_waiters_.front());
-    admission_waiters_.pop_front();
+    auto &[priority, waiters] = *admission_waiters_.rbegin();
+    auto waiter = std::move(waiters.front());
+    waiters.pop_front();
+    --total_admission_waiters_;
+    if (waiters.empty()) {
+      admission_waiters_.erase(priority);
+    }
     waiter.set_value(td::Unit{});
   }
 }
@@ -324,7 +350,7 @@ void ExtMessagePool::log_admission_stats() {
              "avg_check_ms=%.2f (parse=%.2f state=%.2f lookup=%.2f vm=%.2f)",
              static_cast<double>(window.in) / elapsed, static_cast<double>(window.admitted) / elapsed,
              static_cast<double>(window.rejected) / elapsed, busy_workers, checkers_.size(), inflight,
-             admission_waiters_.size(),
+             total_admission_waiters_,
              window.checked ? window.check_time / static_cast<double>(window.checked) * 1e3 : 0.0,
              window.checked ? window.timings.parse / static_cast<double>(window.checked) * 1e3 : 0.0,
              window.checked ? window.timings.fetch_state / static_cast<double>(window.checked) * 1e3 : 0.0,
@@ -542,10 +568,13 @@ void ExtMessagePool::update_options(td::Ref<ValidatorManagerOptions> opts) {
     // Wakeup all waiters here. Pool options don't change often, so it's OK
     auto waiters = std::move(admission_waiters_);
     admission_waiters_.clear();
-    while (!waiters.empty()) {
-      auto waiter = std::move(waiters.front());
-      waiters.pop_front();
-      waiter.set_value(td::Unit{});
+    total_admission_waiters_ = 0;
+    for (auto it = waiters.rbegin(); it != waiters.rend(); ++it) {
+      while (!it->second.empty()) {
+        auto waiter = std::move(it->second.front());
+        it->second.pop_front();
+        waiter.set_value(td::Unit{});
+      }
     }
   }
 }
