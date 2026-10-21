@@ -4414,13 +4414,19 @@ td::actor::Task<bool> Collator::process_inbound_external_messages() {
     WorkTimerGuard timer_guard(work_timer_);
     auto [ext_msg_ref, priority] = std::move(item);
     ++stats_.ext_msgs_total;
+    if (out_msg_queue_size_ > SKIP_EXTERNALS_QUEUE_SIZE && priority < HIGH_PRIORITY_EXTERNAL) {
+      ++stats_.ext_msgs_skipped_backpressure;
+      continue;
+    }
+    // Refusals are reported to the pool by normalized hash, and the pool removes every entry under
+    // it. A second message with the same normalized hash would fail once the first is included,
+    // and its refusal would then remove the included one too, so it is skipped unreported.
+    if (!processed_external_messages_.insert(ext_msg_ref->hash_norm()).second) {
+      continue;
+    }
     if (register_external_message(ext_msg_ref, priority).is_error()) {
       ++stats_.ext_msgs_filtered;
       bad_ext_msgs_.emplace_back(ext_msg_ref->hash_norm());
-      continue;
-    }
-    if (out_msg_queue_size_ > SKIP_EXTERNALS_QUEUE_SIZE && priority < HIGH_PRIORITY_EXTERNAL) {
-      ++stats_.ext_msgs_skipped_backpressure;
       continue;
     }
     auto ext_msg = ext_msg_ref->root_cell();

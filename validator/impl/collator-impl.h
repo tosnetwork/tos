@@ -207,6 +207,8 @@ class Collator final : public td::actor::Actor {
   std::unique_ptr<vm::AugmentedDictionary> fees_import_dict_;
 
   std::set<td::Bits256> registered_ext_msgs_;
+  // Normalized hashes of the external messages this collation has taken from the pool.
+  std::set<td::Bits256> processed_external_messages_;
   ExtMsgQueue ext_msg_queue_;
   bool ext_msg_queue_initialized_{false};
   std::optional<std::pair<td::Ref<ExtMessage>, int>> pending_ext_msg_;

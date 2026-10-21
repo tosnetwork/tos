@@ -40,7 +40,9 @@ Upstream `d85e3bec03694082def3ef8e3575f09058262239` contributes no new
 admission hunk: the target already checks serialized size before queueing and
 rechecks limits after waiting. Leader-window deduplication
 `468092512ebd2d4f1a61d207016ac3b345fc5017` is outside this subsystem alignment;
-its producer architecture is not imported. Broad block-production phase timing,
+its producer architecture is not imported. Its collator-loop part is ported
+within one collation (see C7), because the normalized removal of `0f18b86c`
+depends on it. Broad block-production phase timing,
 transport, consensus and whole-exporter migrations are also outside scope.
 
 ## Defaults and configuration
@@ -128,8 +130,21 @@ local admission policy and do not alter consensus or full transaction execution.
 - **C7 — Collator removal:** normalized rejection removal is ported through all
   manager variants. The delay/postpone API and retired entry helpers are deleted.
   The release's fixed postponed-state metric label remains zero for these new
-  entries; it does not reintroduce postponement. No producer-window
-  deduplication behavior is claimed.
+  entries; it does not reintroduce postponement. Refusals are reported by
+  normalized hash and the pool removes every entry under that hash, so the
+  collator skips, unreported, a second message whose normalized hash it has
+  already taken in the same collation; otherwise the second message's refusal
+  would also remove the first, already included one. This is the collator-loop
+  part of `468092512`, kept to one collation: no deduplication across a
+  producer window is claimed. As upstream, the backpressure skip now precedes
+  message validation.
+- **Collation retry statistics** follow `8b5fa7d5`. The release later replaced
+  that external-only retry report with a full failed-attempt report
+  (`932b7c89`), which is not ported; the counters here are local statistics only.
+- **Persisted pool options** are unpacked at engine startup with `ensure()`, as
+  upstream does: a hand-edited out-of-range value in
+  `extraconfig.ext_message_pool_config` stops the engine at startup. Change these
+  options through the console command, which validates them.
 
 Namespace/schema renaming is mechanical. Source commits with unrelated node
 changes contribute only their agreed subsystem hunks and dependencies. The
