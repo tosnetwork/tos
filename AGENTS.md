@@ -79,13 +79,15 @@ against source, not against memory.
 - Do not reference external project names or issue trackers in comments or
   commit messages. Comments explain intent, not history.
 
-## Static analysis gates new C++, not old debt
+## Static analysis is run manually
 
 The tree carries hundreds of inherited analyzer findings. Fixing them is
-tracked work; it is not a reason to let a change add more. Before opening or
-updating a PR that touches C/C++, run the gate. It needs two builds: one of the
-checkout under review, and one of a separate, clean checkout of the merge base,
-for example a worktree of `main` that you keep built:
+tracked work; it is not a reason to let a change add more. The two-build gate
+is not required before opening or updating a PR: it costs two full builds and
+an analysis of every compilation a change reaches, so it is run manually, when
+the owner or a reviewer asks for it. It needs two builds: one of the checkout
+under review, and one of a separate, clean checkout of the merge base, for
+example a worktree of `main` that you keep built:
 
 ```
 uv tool install codechecker==6.29.1    # once; LLVM 21 comes from install-llvm-toolchain.sh
@@ -98,8 +100,8 @@ the two sides' generated files, so a change to a schema or a contract is
 analysed through the code generated from it.
 
 Exit 0 means no new blocking finding, 1 lists the new blocking findings, and 2
-means the gate could not establish a result. A new finding in a blocking check
-fails the change.
+means the gate could not establish a result. When the gate is run on a change,
+a new finding in a blocking check fails that change.
 
 - The tier tables in the script are the rule set. `.clang-tidy` at the
   repository root is what clangd reads while you edit, and the script refuses
