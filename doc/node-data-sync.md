@@ -167,6 +167,19 @@ elapsed-time failure on a slow disk. Samples do not overlap and are not atomic
 snapshots; newly created files can appear in the next sample. Prefer dedicated
 operation roots plus their actual shared dependencies over an unrelated workspace,
 without excluding any source, target, cache, stage or retained original tree.
+The operation, source/target, cache, catalog and every budget root must use the
+same filesystem device. Actual paths (including existing ancestors before
+creation) are checked, not only lexical containment. The monitor pins root
+descriptors and the operation device, checks attachment again on every sample,
+and rejects a nested mount before deduplicating or descending into it. A changed
+root or device refuses. Use stable parent directories as inventory roots; do not
+name the installed database itself as a budget root for an exchanging restore.
+Read-only executables may live on another filesystem. Service commands use a
+short-lived anonymous temporary output file in the system temporary directory:
+this auxiliary file is outside the tree inventory, with the existing 1 MiB
+output-limit checks and command deadline (at most 120 seconds), and is closed
+when the command completes or fails. It never stores snapshot or signing data.
+
 `disk_policy.max_owned_bytes` is a required, non-zero
 aggregate ceiling in bytes, below filesystem capacity. Include the retained
 original tree and every earlier operation. Missing input refuses with that field's
@@ -183,7 +196,15 @@ Zero thresholds, thresholds at/above capacity, invalid probe values and arithmet
 overflow refuse. Recovery uses the persisted policy but re-measures available
 space and capacity before acquiring a writable operation lock or opening StateDb.
 Probe errors refuse. These checks are guards, not filesystem quotas; other writers
-can consume space between samples.
+can consume space between samples. Restore rechecks the sampled stop signal after
+reference corroboration, before authorization, before each forward-only/exchange
+boundary, and immediately before starting the installed replacement after final
+service validation. A pre-authorization refusal leaves a staged, unexposed tree;
+recovery retains that phase until a new approval is durably recorded. Already
+forward-only or exchanged operations never revert to staged or overlay older
+signing state. These checks use the most recent sample, not a filesystem quota
+or an atomic reservation against other writers. A refused capture monitor does
+not prevent restarting the original snapshot source.
 
 A null `shutdown_free_bytes` selects `max(16 GiB, ceil(capacity / 20))`.
 Basis: retained epoch-4 filesystem-usage samples on 2026-10-19 at approximately

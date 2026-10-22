@@ -47,6 +47,16 @@ impl Root {
         );
         Ok(())
     }
+    /// Device of this still-attached directory descriptor, never a replacement path.
+    pub fn device(&self) -> Result<u64> {
+        self.attached()
+            .with_context(|| format!("check allocation root attachment {}", self.path.display()))?;
+        Ok(self
+            .directory
+            .metadata()
+            .with_context(|| format!("stat allocation root descriptor {}", self.path.display()))?
+            .dev())
+    }
     fn parent(&self, path: &str, create: bool) -> Result<(OwnedFd, CString)> {
         self.attached()?;
         let parts = super::paths::relative(path)?;

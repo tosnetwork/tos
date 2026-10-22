@@ -46,8 +46,28 @@ fn trusted(text: &str) -> Result<[u8; 32]> {
     crate::model::hash(text)?;
     hex::decode(text)?.try_into().map_err(|_| anyhow::anyhow!("publisher key length"))
 }
-fn selected(request: &RestoreRequest) -> Result<(SignedManifest, [u8; 32])> {
+fn restore_storage(request: &RestoreRequest, operation: Option<&Path>) -> Result<()> {
     request.context.validate_paths()?;
+    ensure!(
+        !request
+            .context
+            .budget_roots
+            .iter()
+            .any(|root| root.starts_with(&request.context.database)),
+        "restore allocation roots must remain outside the exchanged database; select stable parent roots"
+    );
+    let mut paths = vec![request.cache.as_path()];
+    if let Some(operation) = operation {
+        paths.push(operation);
+    }
+    crate::budget::require_paths(
+        &request.context.budget_roots,
+        &Root::open(&request.context.database)?,
+        &paths,
+    )
+}
+fn selected(request: &RestoreRequest) -> Result<(SignedManifest, [u8; 32])> {
+    restore_storage(request, None)?;
     request.context.service().require_restore_target(None)?;
     let key = trusted(&request.publisher_key)?;
     let signed = SignedManifest::parse(&read_bytes(&request.manifest, MANIFEST_LIMIT)?, &key)?;
@@ -124,6 +144,11 @@ fn operation_directory(context: &NodeContext, path: &Path) -> Result<Root> {
         !absolute.starts_with(&context.database) && !context.database.starts_with(&absolute),
         "operation must be outside installed tree"
     );
+    crate::budget::require_paths(
+        &context.budget_roots,
+        &Root::open(&context.database)?,
+        &[&absolute],
+    )?;
     let root = Root::create(&absolute)?;
     ensure!(
         TreeIdentity::read(&root.path)?.device == TreeIdentity::read(&context.database)?.device,
@@ -174,6 +199,11 @@ pub fn create(
     context.validate_paths()?;
     publisher.validate(&context.database, store, operation_path)?;
     context.source_role()?;
+    crate::budget::require_paths(
+        &context.budget_roots,
+        &Root::open(&context.database)?,
+        &[store, operation_path],
+    )?;
     let _lock = operation_lock(&context.database)?;
     let service = context.service();
     let permanent = service.permanent_cells()?;
@@ -245,6 +275,7 @@ pub fn restore(request: &RestoreRequest, operation_path: &Path) -> Result<Journa
         signed.verify(&key)? == preparation.generation,
         "selected generation changed during preflight"
     );
+    restore_storage(request, Some(operation_path))?;
     let objects = Objects::open(&request.cache)?;
     let catalog = Catalog::open(&request.cache, key)?;
     separate(objects.root_path(), &request.context.database)?;
@@ -311,15 +342,9 @@ pub fn restore(request: &RestoreRequest, operation_path: &Path) -> Result<Journa
     )?;
     crate::budget::check_active()?;
     request.context.validate_paths()?;
-    let approval = request.context.references.corroborate(
-        &signed.manifest.network,
-        &signed.manifest.frontier,
-        &journal.reference_binding(),
-    )?;
-    journal.authorize(&operation, &approval)?;
+    authorize_references(request, &operation, &mut journal, &signed.manifest.frontier)?;
     request.context.service().require_restore_target(Some(signed.manifest.permanent_cells))?;
-    journal.forward_only(&operation)?;
-    journal.exchange(&operation)?;
+    expose_staged(&operation, &mut journal)?;
     drop(frozen);
     start_installed(&request.context, &operation, &mut journal)?;
     Ok(journal)
@@ -481,6 +506,11 @@ fn stage_with_space(
     )?;
     ensure!(preservation.len() as u64 <= MANIFEST_LIMIT, "private preservation receipt size limit");
     revision_root.write_new("preservation.json", &preservation)?;
+    let phase = match previous.map(|journal| journal.phase) {
+        None | Some(Phase::Staged) => Phase::Staged,
+        Some(Phase::ForwardOnly) => Phase::ForwardOnly,
+        Some(_) => anyhow::bail!("old-tree refresh has invalid journal phase"),
+    };
     let journal = Journal {
         version: 2,
         corroboration_sha256: None,
@@ -492,12 +522,41 @@ fn stage_with_space(
         staged: replacement.path.to_str().context("stage path")?.to_owned(),
         preservation_sha256: sha256(&preservation),
         target_anchor: old.frontier()?,
-        phase: previous.map_or(Phase::Staged, |_| Phase::ForwardOnly),
+        phase,
     };
     journal.write(operation)?;
     Ok(journal)
 }
+// Every potentially blocking corroboration is followed by the same exposure guard.
+fn exposure_check(boundary: &str) -> Result<()> {
+    #[cfg(all(test, feature = "native-lifecycle-tests"))]
+    crate::test_hooks::boundary(boundary)?;
+    crate::budget::check_active().with_context(|| format!("disk refusal before {boundary}"))
+}
+fn authorize_references(
+    request: &RestoreRequest,
+    operation: &Root,
+    journal: &mut Journal,
+    frontier: &FullId,
+) -> Result<()> {
+    let approval = request.context.references.corroborate(
+        &request.context.policy()?.0,
+        frontier,
+        &journal.reference_binding(),
+    )?;
+    exposure_check("restore-authorize")?;
+    journal.authorize(operation, &approval)
+}
+fn expose_staged(operation: &Root, journal: &mut Journal) -> Result<()> {
+    if journal.phase == Phase::Staged {
+        exposure_check("restore-forward-only")?;
+        journal.forward_only(operation)?;
+    }
+    exposure_check("restore-exchange")?;
+    journal.exchange(operation)
+}
 fn start_installed(context: &NodeContext, operation: &Root, journal: &mut Journal) -> Result<()> {
+    exposure_check("restore-start-installed")?;
     ensure!(
         journal.recovery()? == Recovery::NewContinueOnly,
         "cannot start old installed tree as recovered replacement"
@@ -635,7 +694,7 @@ pub fn recover(operation_path: &Path) -> Result<RecoveryOutcome> {
     let operation = Root::open(operation_path)?;
     let request: RestoreRequest =
         serde_json::from_slice(&operation.bytes("request.json", MANIFEST_LIMIT)?)?;
-    request.context.validate_paths()?;
+    restore_storage(&request, Some(&operation.path))?;
     separate(&operation.path, &request.context.database)?;
     separate(&request.cache, &request.context.database)?;
     separate(&request.cache, &operation.path)?;
@@ -749,17 +808,12 @@ pub fn recover(operation_path: &Path) -> Result<RecoveryOutcome> {
                 },
                 Some(&journal),
             )?;
-            let approval = request.context.references.corroborate(
-                &network,
-                &signed.manifest.frontier,
-                &journal.reference_binding(),
-            )?;
-            journal.authorize(&operation, &approval)?;
+            authorize_references(&request, &operation, &mut journal, &signed.manifest.frontier)?;
             request
                 .context
                 .service()
                 .require_restore_target(Some(signed.manifest.permanent_cells))?;
-            journal.exchange(&operation)?;
+            expose_staged(&operation, &mut journal)?;
         }
         Recovery::NewContinueOnly => {
             // A boot may have advanced this tree. Corroborate its current coherent frontier;
@@ -768,12 +822,7 @@ pub fn recover(operation_path: &Path) -> Result<RecoveryOutcome> {
                 node_store::OfflineStore::open_existing(&request.context.database.join("state"))?;
             let (current, _) = records::export(&store)?;
             drop(store);
-            let approval = request.context.references.corroborate(
-                &network,
-                &current.frontier()?,
-                &journal.reference_binding(),
-            )?;
-            journal.authorize(&operation, &approval)?;
+            authorize_references(&request, &operation, &mut journal, &current.frontier()?)?;
         }
     }
     drop(frozen);
@@ -786,6 +835,7 @@ pub fn complete(operation_path: &Path) -> Result<()> {
     let operation = Root::open(operation_path)?;
     let request: RestoreRequest =
         serde_json::from_slice(&operation.bytes("request.json", MANIFEST_LIMIT)?)?;
+    restore_storage(&request, Some(&operation.path))?;
     let _lock = operation_lock(&request.context.database)?;
     let mut journal = Journal::read(&operation)?;
     let key = trusted(&request.publisher_key)?;

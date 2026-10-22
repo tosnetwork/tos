@@ -112,7 +112,9 @@ impl NodeContext {
             self.budget_roots.iter().any(|root| self.database.starts_with(root)),
             "database missing from task allocation inventory"
         );
-        self.disk_policy.threshold(Root::open(&self.database)?.space()?)?;
+        let database = Root::open(&self.database)?;
+        crate::budget::require_paths(&self.budget_roots, &database, &[&self.database])?;
+        self.disk_policy.threshold(database.space()?)?;
         hash(&self.engine_sha256)?;
         hash(&self.validation_worker_sha256)?;
         let (_, digest) = file_hash(read_file(&self.engine, 1 << 30)?, 1 << 30)?;

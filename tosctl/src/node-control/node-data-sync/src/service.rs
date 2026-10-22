@@ -126,7 +126,7 @@ impl Service {
     }
     pub fn start_restore(&self, frozen: Frozen, expected: bool) -> Result<()> {
         self.require_restore_target(Some(expected))?;
-        self.start_in_mode(frozen, expected)
+        self.start_checked(frozen, Some(expected), true)
     }
     pub fn validate(&self) -> Result<()> {
         self.describe(None).map(|_| ())
@@ -239,12 +239,16 @@ impl Service {
         Frozen::acquire(&self.database)
     }
     pub fn start(&self, frozen: Frozen) -> Result<()> {
-        self.start_checked(frozen, None)
+        self.start_checked(frozen, None, false)
     }
     pub fn start_in_mode(&self, frozen: Frozen, expected: bool) -> Result<()> {
-        self.start_checked(frozen, Some(expected))
+        self.start_checked(frozen, Some(expected), false)
     }
-    fn start_checked(&self, frozen: Frozen, expected: Option<bool>) -> Result<()> {
+    fn start_checked(&self, frozen: Frozen, expected: Option<bool>, restore: bool) -> Result<()> {
+        if restore {
+            #[cfg(all(test, feature = "native-lifecycle-tests"))]
+            crate::test_hooks::boundary("restore-start-validating")?;
+        }
         self.describe(expected)?;
         let held = frozen._configuration_lock.metadata()?;
         let selected = fs::symlink_metadata(self.database.join("config.json.lock"))?;
@@ -254,6 +258,10 @@ impl Service {
                 && held.dev() == selected.dev(),
             "start lock belongs to another installed tree"
         );
+        // Source restart remains available even if capture's allocation monitor refused.
+        if restore {
+            crate::budget::check_active().context("disk refusal before restore-service-start")?;
+        }
         drop(frozen);
         command(self.manager().args(["start", "--", &self.unit]), Duration::from_secs(120))?;
         Ok(())

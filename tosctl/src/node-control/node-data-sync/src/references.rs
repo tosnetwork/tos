@@ -107,7 +107,7 @@ impl ReferencePolicy {
         frontier.masterchain()?;
         hash(binding)?;
         // Administrative entry points are synchronous; never nest a runtime in a caller's executor.
-        std::thread::scope(|scope| {
+        let approval = std::thread::scope(|scope| {
             scope
                 .spawn(|| -> Result<Corroborated> {
                     let runtime =
@@ -123,7 +123,10 @@ impl ReferencePolicy {
                 })
                 .join()
                 .map_err(|_| anyhow::anyhow!("reference corroboration worker failed"))?
-        })
+        })?;
+        #[cfg(all(test, feature = "native-lifecycle-tests"))]
+        crate::test_hooks::boundary("reference-corroborated")?;
+        Ok(approval)
     }
     async fn read(
         &self,

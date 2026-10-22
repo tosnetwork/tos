@@ -271,18 +271,21 @@ def validate_node_data_sync_callers(root: Path) -> None:
         "publisher confinement must precede capture exposure",
     )
     restore = operations.split("pub fn restore(", 1)[1].split("struct StoppedTarget", 1)[0]
-    restore_positions = [
-        restore.find(call)
-        for call in (
-            "references.corroborate(",
-            "journal.authorize(",
-            "journal.forward_only(",
-            "journal.exchange(",
-        )
-    ]
     require(
-        min(restore_positions) >= 0 and restore_positions == sorted(set(restore_positions)),
+        restore.index("authorize_references(") < restore.index("expose_staged("),
         "restore must corroborate before the forward-only exposure boundary",
+    )
+    authorization = operations.split("fn authorize_references(", 1)[1].split(
+        "fn expose_staged(", 1
+    )[0]
+    require(
+        authorization.index("references.corroborate(") < authorization.index("journal.authorize("),
+        "shared authorization must corroborate before persisting approval",
+    )
+    exposure = operations.split("fn expose_staged(", 1)[1].split("fn start_installed(", 1)[0]
+    require(
+        exposure.index("journal.forward_only(") < exposure.index("journal.exchange("),
+        "exchange must follow the durable forward-only boundary",
     )
     generation = (core / "generation.rs").read_text(encoding="utf-8")
     generation_positions = [
@@ -332,6 +335,8 @@ def validate_node_data_sync_modes(root: Path) -> None:
         "grep -Fx 'PRODUCTION_RESTORE_PROCESS_EXIT_OK'",
         "grep -Fx 'PRODUCTION_LIFECYCLE_MODES_OK'",
         "grep -Fx 'PRODUCTION_RESTORE_INDEX_BOUNDARIES_OK'",
+        "grep -Fx 'RESTORE_DISK_BOUNDARIES_OK'",
+        "grep -Fx 'STAGED_DISK_RECOVERY_OK'",
     ):
         require(token in workflow, "native lifecycle CI command or required result missing")
     library = (core / "lib.rs").read_text()
@@ -339,7 +344,7 @@ def validate_node_data_sync_modes(root: Path) -> None:
         '#[cfg(all(test, feature = "native-lifecycle-tests"))]\nmod test_hooks;' in library,
         "lifecycle hook module must be compiled only for unit tests",
     )
-    for name in ("operations.rs", "service.rs", "cas.rs"):
+    for name in ("operations.rs", "service.rs", "cas.rs", "references.rs"):
         text = (core / name).read_text()
         calls = text.count("crate::test_hooks::")
         guarded = re.findall(
@@ -376,7 +381,7 @@ def validate_node_data_sync_modes(root: Path) -> None:
     selected = source.split("fnselected(", 1)[1].split("pubfnpreflight(", 1)[0]
     between(
         selected,
-        "request.context.validate_paths()?;",
+        "restore_storage(request,None)?;",
         "letkey=trusted(",
         "request.context.service().require_restore_target(None)?;",
         "restore supported target before preparation",
@@ -414,7 +419,7 @@ def validate_node_data_sync_modes(root: Path) -> None:
         expected,
         "restore stopped",
     )
-    between(restore, "journal.authorize(", "journal.forward_only(", expected, "restore exposure")
+    between(restore, "authorize_references(", "expose_staged(", expected, "restore exposure")
     between(
         recover,
         "letsigned=",
@@ -436,12 +441,29 @@ def validate_node_data_sync_modes(root: Path) -> None:
         expected,
         "recover stopped",
     )
-    between(recover, "journal.authorize(", "journal.exchange(", expected, "recover exposure")
+    between(recover, "authorize_references(", "expose_staged(", expected, "recover exposure")
     between(start, "letsigned=", "context.service().freeze()?;", expected, "replacement freeze")
     require(
         "context.service().start_restore(frozen,signed.manifest.permanent_cells)?;" in start,
         "storage-mode binding omitted: replacement start",
     )
+    authorization = source.split("fnauthorize_references(", 1)[1].split("fnexpose_staged(", 1)[0]
+    between(
+        authorization,
+        ".corroborate(",
+        "journal.authorize(",
+        'exposure_check("restore-authorize")?;',
+        "post-corroboration disk check",
+    )
+    exposure = source.split("fnexpose_staged(", 1)[1].split("fnstart_installed(", 1)[0]
+    for boundary, action in (
+        ("restore-forward-only", "journal.forward_only("),
+        ("restore-exchange", "journal.exchange("),
+    ):
+        require(
+            exposure.index(f'exposure_check("{boundary}")?;') < exposure.index(action),
+            f"disk exposure boundary missing: {boundary}",
+        )
     service = re.sub(r"\s+", "", (core / "service.rs").read_text())
     require(
         "check_mode(configured,Some(running),expected)?;" in service,
