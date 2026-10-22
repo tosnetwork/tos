@@ -25,8 +25,6 @@ from pytosiq_core.tlb.config import (
     ConfigParam17,
     ConfigParam20,
     ConfigParam21,
-    ConfigParam22,
-    ConfigParam23,
     ConfigParam28,
     ConfigParam34,
 )
@@ -758,11 +756,11 @@ def _out_msg_queue_size_limits(state) -> tuple[int, int]:
 
 
 def test_canonical_genesis_bounds_the_outbound_message_queue(tmp_path):
-    """The outbound message queue of a shard is bounded from genesis. While the
-    previous queue is under the soft limit, the first message of a transaction
-    cannot be deferred, and each such message spends at least two lt units, so
-    one block adds at most lt_hard / 2 of them. The gap between the limits must
-    hold that many, or an honest block could not stay under the hard limit."""
+    """Check the serialized queue limits, not an aggregate capacity bound.
+
+    Transactions on different accounts can share logical time, so lt_delta
+    cannot establish how many non-deferrable messages fit in the queue gap.
+    """
     _write_pq_manifest(tmp_path)
     subprocess.run(
         _create_state_command(REPO / "crypto/smartcont/gen-zerostate.fif"),
@@ -775,8 +773,7 @@ def test_canonical_genesis_bounds_the_outbound_message_queue(tmp_path):
     state = _load_masterchain_state(tmp_path / "zerostate.boc")
     hard, soft = _out_msg_queue_size_limits(state)
     assert (hard, soft) == (18000, 12000)
-    for limits in (_config(state, 22, ConfigParam22), _config(state, 23, ConfigParam23)):
-        assert hard - soft >= limits.lt_delta.hard_limit // 2
+    assert hard > soft > 0
 
 
 def test_canonical_genesis_script_accepts_only_four_validator_keys(tmp_path):

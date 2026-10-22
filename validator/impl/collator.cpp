@@ -4102,11 +4102,13 @@ bool Collator::precheck_inbound_message(Ref<vm::CellSlice> enq_msg, tos::Logical
  * @param lt The logical time of the message.
  * @param key The 32+64+256-bit key of the message.
  * @param src_nb_idx The index of the source neighbor shard.
+ * @param postponed Set when a transit message must wait for outbound queue capacity.
  *
  * @returns True if the message was processed successfully, false otherwise.
  */
 bool Collator::process_inbound_message(Ref<vm::CellSlice> enq_msg, tos::LogicalTime lt, td::ConstBitPtr key,
-                                       int src_nb_idx) {
+                                       int src_nb_idx, bool& postponed) {
+  postponed = false;
   const auto& src_nb = neighbors_.at(src_nb_idx);
   tos::LogicalTime enqueued_lt = enq_msg->prefetch_ulong(64);
   auto msg_env = enq_msg->prefetch_ref();
@@ -4140,10 +4142,6 @@ bool Collator::process_inbound_message(Ref<vm::CellSlice> enq_msg, tos::LogicalT
   if (!block::tlb::validate_message_libs(env.msg)) {
     LOG(ERROR) << "inbound internal message has invalid StateInit";
     return false;
-  }
-  // 2.0. update last_proc_int_msg
-  if (!update_last_proc_int_msg(std::pair<tos::LogicalTime, tos::Bits256>(lt, env.msg->get_hash().bits()))) {
-    return fatal_error("processing a message AFTER a newer message has been processed");
   }
   // 2.1. check fwd_fee and fwd_fee_remaining
   td::RefInt256 orig_fwd_fee = block::tlb::t_Tomis.as_integer(info.fwd_fee);
@@ -4200,7 +4198,18 @@ bool Collator::process_inbound_message(Ref<vm::CellSlice> enq_msg, tos::LogicalT
   block::EnqueuedMsgDescr enq_msg_descr{cur_prefix, next_prefix,
                                         env.emitted_lt ? env.emitted_lt.value() : info.created_lt, enqueued_lt,
                                         env.msg->get_hash().bits()};
-  if (processed_upto_->already_processed(enq_msg_descr)) {
+  bool already_processed = processed_upto_->already_processed(enq_msg_descr);
+  if (out_msg_queue_postpone_transit(already_processed, our, to_us, out_msg_queue_size_, new_msgs_from_dispatch,
+                                     out_msg_queue_size_hard_limit_)) {
+    // Do not advance ProcessedUpTo or the inbound merger: importing a later
+    // message would skip this one, and importing this one would exceed the cap.
+    postponed = true;
+    return true;
+  }
+  if (!update_last_proc_int_msg(std::pair<tos::LogicalTime, tos::Bits256>(lt, env.msg->get_hash().bits()))) {
+    return fatal_error("processing a message AFTER a newer message has been processed");
+  }
+  if (already_processed) {
     LOG(DEBUG) << "inbound internal message with lt=" << enq_msg_descr.lt_ << " hash=" << enq_msg_descr.hash_.to_hex()
                << " enqueued_lt=" << enq_msg_descr.enqueued_lt_ << " has been already processed by us before, skipping";
     // should we dequeue the message if it is ours (after a merge?)
@@ -4339,14 +4348,14 @@ bool Collator::process_inbound_internal_messages() {
     }
     LOG(DEBUG) << "processing inbound message with (lt,hash)=(" << kv->lt << "," << kv->key.to_hex()
                << ") from neighbor #" << kv->source;
-    ++neighbor_stats.processed_msgs;
     if (verbosity > 2) {
       FLOG(INFO) {
         sb << "inbound message: lt=" << kv->lt << " from=" << kv->source << " key=" << kv->key.to_hex() << " msg=";
         block::gen::t_EnqueuedMsg.print(sb, kv->msg);
       };
     }
-    if (!process_inbound_message(kv->msg, kv->lt, kv->key.cbits(), kv->source)) {
+    bool postponed = false;
+    if (!process_inbound_message(kv->msg, kv->lt, kv->key.cbits(), kv->source, postponed)) {
       if (verbosity > 1) {
         FLOG(INFO) {
           sb << "invalid inbound message: lt=" << kv->lt << " from=" << kv->source << " key=" << kv->key.to_hex()
@@ -4356,6 +4365,11 @@ bool Collator::process_inbound_internal_messages() {
       }
       return fatal_error("error processing inbound internal message");
     }
+    if (postponed) {
+      LOG(INFO) << "out msg queue has no free transit slot, stop processing inbound internal messages";
+      break;
+    }
+    ++neighbor_stats.processed_msgs;
     nb_out_msgs_->next();
   }
   inbound_queues_empty_ = nb_out_msgs_->is_eof();

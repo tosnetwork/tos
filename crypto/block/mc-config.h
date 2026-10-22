@@ -437,10 +437,11 @@ struct SizeLimitsConfig {
   td::uint32 max_total_msg_bits = (1 << 21) * 5 / 2;       // enabled in global version 15
   td::uint32 max_total_msg_cells = (1 << 13) * 5 / 2;      // enabled in global version 15
   // Bound on the number of entries in a shard's outbound message queue. A
-  // collator sends every message that would grow the queue to the hard limit
-  // into the dispatch queue instead, and a validator rejects a block whose new
-  // queue exceeds max(hard limit, old queue size). Once the old queue exceeds
-  // the soft limit, any message may be deferred. A queue above hard_limit / 2
+  // collator defers new messages once the queue reaches the hard limit and
+  // stops importing foreign transit messages that would exceed it. A validator
+  // rejects a block whose new queue exceeds max(hard limit, old queue size).
+  // Once the old queue exceeds the soft limit, any message may be deferred.
+  // A queue above hard_limit / 2
   // keeps the shard from wanting to merge. The gap between the two limits must
   // exceed what one block can add while deferring is still restricted.
   td::uint32 out_msg_queue_size_hard_limit = 18000;

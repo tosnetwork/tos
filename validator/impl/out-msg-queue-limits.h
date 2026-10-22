@@ -18,6 +18,16 @@ inline bool out_msg_queue_reached_hard_limit(td::uint64 queue_size, td::uint64 p
   return queue_size + pending >= hard_limit;
 }
 
+// A foreign transit message needs a new outbound queue entry. Stop before
+// importing it when all slots are occupied or reserved for dispatched messages.
+// Already processed messages, final deliveries and requeues of our own messages
+// do not grow the queue and must remain available even when the queue is full.
+inline bool out_msg_queue_postpone_transit(bool already_processed, bool from_our_queue, bool to_us,
+                                           td::uint64 queue_size, td::uint64 pending, td::uint64 hard_limit) {
+  return !already_processed && !from_our_queue && !to_us &&
+         out_msg_queue_reached_hard_limit(queue_size, pending, hard_limit);
+}
+
 // True when a new queue size breaks the hard limit. A queue that already exceeded the
 // limit in the previous state (it can after a merge) may not grow beyond that size.
 inline bool out_msg_queue_exceeds_hard_limit(td::uint64 new_size, td::uint64 hard_limit,

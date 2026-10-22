@@ -506,9 +506,10 @@ before they were added (epoch 4) does not satisfy them and is not migrated.
   with `out_msg_queue_size_hard_limit` and `out_msg_queue_size_soft_limit`. The genesis
   sets 18000 and 12000. A v3 record without the two fields is refused, and v1/v2 records
   use 18000 and 12000.
-  - The collator defers to the dispatch queue a message that would grow a shard's
-    outbound queue to the hard limit (messages of special accounts are never deferred),
-    and stops dispatch-queue processing at the limit.
+  - Once a shard's outbound queue reaches the hard limit, the collator defers new
+    outputs (including those of special accounts) to the dispatch queue and stops
+    dispatch-queue processing. Foreign transit imports also wait for a free slot;
+    final local deliveries and requeues of the shard's own messages can continue.
   - Validation rejects a new queue larger than the hard limit or the previous size,
     whichever is greater, and accepts deferral of any message once the previous queue is
     above the soft limit.

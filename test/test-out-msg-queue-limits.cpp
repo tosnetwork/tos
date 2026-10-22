@@ -3,8 +3,8 @@
 // configuration parser and applied through the rules the collator and the
 // validator share.
 #include <optional>
-#include <vector>
 
+#include "block/block.h"
 #include "block/mc-config.h"
 #include "td/utils/tests.h"
 #include "validator/impl/out-msg-queue-limits.h"
@@ -33,21 +33,19 @@ block::SizeLimitsConfig parse(td::Ref<vm::CellSlice> cs) {
   return r.move_as_ok();
 }
 
-struct NewMessage {
-  bool special;  // a tick-tock or other special transaction, which the collator never defers
-};
-
 struct CollationResult {
   td::uint64 queue_size;
   size_t deferred;
 };
 
-// The collator's decision for each new outbound message, in the order the messages are
-// produced: one that would reach the hard limit goes to the dispatch queue.
-CollationResult collate(td::uint64 queue_size, const std::vector<NewMessage>& messages, td::uint64 hard_limit) {
+// The collator's decision for new outbound messages, including outputs of special
+// accounts: once the queue reaches the hard limit, further outputs are deferred.
+// Synthetic mint/recover inputs are immediately delivered within the masterchain
+// and do not add entries to its outbound queue.
+CollationResult collate(td::uint64 queue_size, size_t message_count, td::uint64 hard_limit) {
   CollationResult result{queue_size, 0};
-  for (const auto& msg : messages) {
-    if (out_msg_queue_reached_hard_limit(result.queue_size, 0, hard_limit) && !msg.special) {
+  for (size_t i = 0; i < message_count; ++i) {
+    if (out_msg_queue_reached_hard_limit(result.queue_size, 0, hard_limit)) {
       ++result.deferred;
     } else {
       ++result.queue_size;
@@ -70,20 +68,18 @@ TEST(OutMsgQueueLimits, ConfigCarriesBothLimits) {
 
 TEST(OutMsgQueueLimits, CollatorDefersOverflowAndHoldsTheHardLimit) {
   auto limits = parse(size_limits_v3(100, 60));
-  std::vector<NewMessage> burst(5000, NewMessage{false});
-  auto result = collate(0, burst, limits.out_msg_queue_size_hard_limit);
+  auto result = collate(0, 5000, limits.out_msg_queue_size_hard_limit);
   CHECK(result.queue_size == 100);
   CHECK(result.deferred == 4900);
 
   // Already at the limit: everything ordinary is deferred, nothing is lost.
-  result = collate(100, std::vector<NewMessage>(7, NewMessage{false}), limits.out_msg_queue_size_hard_limit);
+  result = collate(100, 7, limits.out_msg_queue_size_hard_limit);
   CHECK(result.queue_size == 100);
   CHECK(result.deferred == 7);
 
-  // Special transactions are never deferred, so only they can push past the limit.
-  result = collate(99, {{false}, {true}, {false}, {true}}, limits.out_msg_queue_size_hard_limit);
-  CHECK(result.queue_size == 102);
-  CHECK(result.deferred == 1);
+  result = collate(99, 4, limits.out_msg_queue_size_hard_limit);
+  CHECK(result.queue_size == 100);
+  CHECK(result.deferred == 3);
 
   // Messages taken from the dispatch queue count against the limit before they land.
   CHECK(out_msg_queue_reached_hard_limit(95, 5, 100));
@@ -106,6 +102,51 @@ TEST(OutMsgQueueLimits, ValidatorRejectsQueueOverHardLimit) {
   // Without a size recorded in the previous state there is no such allowance.
   CHECK(out_msg_queue_exceeds_hard_limit(150, hard, std::nullopt));
   CHECK(!out_msg_queue_exceeds_hard_limit(100, hard, std::nullopt));
+}
+
+TEST(OutMsgQueueLimits, TransitAdmissionReservesDispatchSlots) {
+  auto limits = parse(size_limits_v3(18000, 12000));
+  const auto hard = limits.out_msg_queue_size_hard_limit;
+  // A foreign transit adds one queue entry, unlike a final delivery or an
+  // own-queue requeue. The old block is valid at 18000; one more is invalid.
+  CHECK(!out_msg_queue_exceeds_hard_limit(hard, hard, hard));
+  CHECK(out_msg_queue_exceeds_hard_limit(hard + 1, hard, hard));
+  CHECK(out_msg_queue_postpone_transit(false, false, false, hard, 0, hard));
+  CHECK(!out_msg_queue_postpone_transit(false, false, false, hard - 1, 0, hard));
+
+  // Dispatch entries have already been removed from DispatchQueue and cannot
+  // be deferred again. Transit imports must not consume their reserved slots.
+  CHECK(out_msg_queue_postpone_transit(false, false, false, hard - 5, 5, hard));
+  CHECK(!out_msg_queue_postpone_transit(false, false, false, hard - 5, 4, hard));
+
+  // Full queues must still drain, re-route their existing entries after a merge,
+  // and skip messages a neighbor has not yet cleaned up after delivery.
+  CHECK(!out_msg_queue_postpone_transit(false, false, true, hard, 0, hard));
+  CHECK(!out_msg_queue_postpone_transit(false, true, false, hard, 0, hard));
+  CHECK(!out_msg_queue_postpone_transit(true, false, false, hard, 0, hard));
+}
+
+TEST(OutMsgQueueLimits, MultiHopRoutingNeedsTransitCapacity) {
+  // Five-bit shards can require more than one four-bit routing hop. This is
+  // enabled by a future workchain split-depth configuration, even though the
+  // initial genesis limits the basechain to two split bits.
+  const tos::AccountIdPrefixFull src{0, 0x0000000000000000ULL};
+  const tos::AccountIdPrefixFull dest{0, 0xf800000000000000ULL};
+  const tos::ShardIdFull source_shard{0, 0x0400000000000000ULL};
+  const tos::ShardIdFull relay_shard{0, 0xf400000000000000ULL};
+  auto route = block::perform_hypercube_routing(src, dest, source_shard);
+  CHECK(route.first >= 0 && route.second <= 96);
+  auto cur = block::interpolate_addr(src, dest, route.first);
+  auto next = block::interpolate_addr(src, dest, route.second);
+  CHECK(tos::shard_contains(source_shard, cur));
+  CHECK(tos::shard_contains(relay_shard, next));
+  CHECK(!tos::shard_contains(relay_shard, dest));
+  auto onward = block::perform_hypercube_routing(next, dest, relay_shard);
+  CHECK(onward.first >= 0 && onward.second <= 96);
+  auto final_hop = block::interpolate_addr(next, dest, onward.second);
+  CHECK(final_hop.workchain == dest.workchain && final_hop.account_id_prefix == dest.account_id_prefix);
+  CHECK(out_msg_queue_postpone_transit(false, tos::shard_contains(relay_shard, cur),
+                                       tos::shard_contains(relay_shard, dest), 18000, 0, 18000));
 }
 
 TEST(OutMsgQueueLimits, SoftLimitOpensDeferral) {
