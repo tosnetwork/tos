@@ -270,6 +270,7 @@ set(ED25519_TEST_SOURCE
 )
 
 set(TOSDB_TEST_SOURCE
+  ${CMAKE_CURRENT_SOURCE_DIR}/test/test-boc-compression.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test/test-db.cpp
   PARENT_SCOPE
 )
