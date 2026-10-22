@@ -9,8 +9,10 @@ on:
   workflow_dispatch:
   workflow_call:
 
+# A newer commit cancels a pull request's run, but every push to main runs to
+# completion, so the README status badge reports a finished main run.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
 
 permissions:

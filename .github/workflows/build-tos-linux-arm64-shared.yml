@@ -9,8 +9,10 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Every push to main runs to completion, so the README status badge always
+# reports a finished run of a main commit.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
 
 permissions:
