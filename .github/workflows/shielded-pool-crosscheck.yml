@@ -24,6 +24,10 @@ name: Shielded pool cross-check
 on:
   pull_request:
     paths:
+      - "tl/generate/scheme/**"
+      - "tosctl/src/tl/**"
+      - "scripts/check-tl-single-source.py"
+      - "test/tl-cli/**"
       - "crypto/smartcont/shielded/**"
       - "crypto/smartcont/tos-shielded-pool-v1.fc"
       - "tools/shielded-pool-circuit/**"
@@ -43,6 +47,10 @@ on:
   push:
     branches: [main, master, testnet]
     paths:
+      - "tl/generate/scheme/**"
+      - "tosctl/src/tl/**"
+      - "scripts/check-tl-single-source.py"
+      - "test/tl-cli/**"
       - "crypto/smartcont/shielded/**"
       - "crypto/smartcont/tos-shielded-pool-v1.fc"
       - "tools/shielded-pool-circuit/**"

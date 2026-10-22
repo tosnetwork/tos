@@ -8,6 +8,10 @@ on:
   pull_request:
     types: [opened, reopened, synchronize, ready_for_review]
     paths:
+      - "tl/generate/scheme/**"
+      - "tosctl/src/tl/**"
+      - "scripts/check-tl-single-source.py"
+      - "test/tl-cli/**"
       - 'tools/shielded-pool-circuit/**'
       - 'crypto/smartcont/tos-shielded-pool-v1.fc'
       - 'scripts/check-local-pq-generator.py'

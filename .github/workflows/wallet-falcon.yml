@@ -2,6 +2,10 @@ name: Falcon wallet AUTH
 on:
   pull_request:
     paths:
+      - "tl/generate/scheme/**"
+      - "tosctl/src/tl/**"
+      - "scripts/check-tl-single-source.py"
+      - "test/tl-cli/**"
       - '.github/workflows/wallet-falcon.yml'
       - 'crypto/pq/**'
       - 'crypto/vm/**'

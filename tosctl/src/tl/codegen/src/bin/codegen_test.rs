@@ -8,29 +8,15 @@
  * This file has been modified from its original version.
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
-use std::{fs, io::Read, path, path::Path};
+use std::{env, path::PathBuf};
 
-const OUTPUT_DIR: &str = "api/src/tos";
-const TL_DIR: &str = "api/tl";
-
-fn main() {
-    let mut files = fs::read_dir(TL_DIR)
-        .unwrap_or_else(|_| panic!("Unable to read directory contents: {}", TL_DIR))
-        .filter_map(Result::ok)
-        .map(|d| d.path())
-        .filter(|path| path.to_str().unwrap().ends_with(".tl"))
-        .collect::<Vec<path::PathBuf>>();
-
-    assert!(!files.is_empty());
-    files.sort();
-
-    let mut input = String::new();
-    for file in files {
-        if !input.is_empty() {
-            input += "---types---\n";
-        }
-        fs::File::open(&file).unwrap().read_to_string(&mut input).unwrap();
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut args = env::args_os().skip(1);
+    let root = PathBuf::from(args.next().ok_or("usage: codegen_test REPOSITORY OUTPUT_DIRECTORY")?);
+    let output = PathBuf::from(args.next().ok_or("missing generated output directory")?);
+    if args.next().is_some() {
+        return Err("unexpected argument".into());
     }
-
-    tl_codegen::generate_code_for(None, &input, Path::new(OUTPUT_DIR));
+    tl_codegen::input::generate(tl_codegen::input::load(&root)?, &output)?;
+    Ok(())
 }

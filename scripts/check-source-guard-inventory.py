@@ -63,6 +63,8 @@ REQUIRED_SOURCE_GUARDS = frozenset(
         "sync-stall-wiring-source",
         "sync-stall-wiring-source-self-test",
         "test-quorum-static-grep",
+        "tl-single-source",
+        "tl-single-source-self-test",
         "tosctl-election-chain-reads-source",
         "tosctl-pq-stake-builder-source",
         "validator-id-key-hash-source",

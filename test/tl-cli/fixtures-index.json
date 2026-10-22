@@ -1,0 +1,34 @@
+{
+  "schema_base_commit": "a5e256b623c8cda741cb40cc7336396f9ee1ce3d",
+  "producer": "test/tl-cli/fixtures.cpp",
+  "producer_source": {
+    "sha256": "9e66d45421c4f9207abe2ec558fef80952092a871ec7c039f441b9ef00a4f20e",
+    "bytes": 67304
+  },
+  "toolchain": {
+    "image": "tos-builder-local:24",
+    "image_id": "sha256:ce6ff9ea45fdac532b53a883538782a6a050c1fc14407e3110713ba16c5d5e95",
+    "compiler": "clang 21.1.8",
+    "build_type": "Release"
+  },
+  "command": "build/test-tl-cli-fixtures > test/tl-cli/fixtures.tsv",
+  "fixture": {
+    "sha256": "19a7830a1b12820d12d66c7ea637952f09500e392b15cb5e33f27a306e21792b",
+    "bytes": 20050
+  },
+  "cases": 98,
+  "schemas": {
+    "lite_api.tl": {
+      "sha256": "b3e7a4dd0a3cc8b3a3c33dc377fd99cc9e51329262500dc76ca7776a56cdd4f3",
+      "bytes": 11284
+    },
+    "tos_api.tl": {
+      "sha256": "77fc00fd010c2ce6ed8cb33e50ffd507811669bfd44d9b0447cbbfdcb8a84f0a",
+      "bytes": 81952
+    },
+    "toslib_api.tl": {
+      "sha256": "6a475afc52d221e669ebac0d44f5b3d86db1a2d5622110d1d8349925746c2919",
+      "bytes": 20378
+    }
+  }
+}

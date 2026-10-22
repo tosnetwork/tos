@@ -8,13 +8,8 @@
  * This file has been modified from its original version.
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
-use std::{
-    fs,
-    io::Read,
-    path::{Path, PathBuf},
-    process::Command,
-};
-use tl_codegen::Config;
+use std::{path::Path, process::Command};
+use tl_codegen::input;
 
 fn get_value(cmd: &str, args: &[&str]) -> String {
     Command::new(cmd)
@@ -57,39 +52,16 @@ fn build_time() -> Result<String, String> {
 }
 
 const OUTPUT_DIR: &str = "src/tos";
-const TL_DIR: &str = "tl";
-const TL_FILES: [&str; 3] = ["lite_api.tl", "tos_api.tl", "toslib_api.tl"];
-
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // TODO: This line was commented because of different behavior of cargo in rust ver 1.50.
-    //       We can revert it, when this behavior is fixed.
-    // println!("cargo:rerun-if-changed={}", OUTPUT_DIR);
-    println!("cargo:rerun-if-changed={}", TL_DIR);
-    println!("cargo:rerun-if-changed=../codegen");
-
-    let mut files: Vec<PathBuf> =
-        TL_FILES.iter().map(|file| Path::new(TL_DIR).join(file)).collect();
-    files.sort();
-
-    let mut input = String::new();
-    for file in files {
-        if !input.is_empty() {
-            input += "---types---\n";
-        }
-        fs::File::open(&file)?.read_to_string(&mut input)?;
-        println!("cargo:rerun-if-changed={}", file.to_string_lossy());
+    let api = std::env::var("CARGO_MANIFEST_DIR")?;
+    let root = input::repository_from_api(Path::new(&api))?;
+    let source = input::load(&root)?;
+    for file in &source.files {
+        println!("cargo:rerun-if-changed={}", file.display());
     }
-
-    let config_path = Path::new(TL_DIR).join("codegen.json");
-    let config: Option<Config> = if config_path.exists() && config_path.is_file() {
-        let mut config_string = String::new();
-        fs::File::open(&config_path)?.read_to_string(&mut config_string)?;
-        Some(serde_json::from_str(&config_string)?)
-    } else {
-        None
-    };
-
-    tl_codegen::generate_code_for(config, &input, Path::new(OUTPUT_DIR));
+    println!("cargo:rerun-if-changed={}", source.config_file.display());
+    println!("cargo:rerun-if-changed=../codegen");
+    input::generate(source, &Path::new(&api).join(OUTPUT_DIR))?;
 
     let git_branch = get_value("git", &["rev-parse", "--abbrev-ref", "HEAD"]);
     let git_commit = get_value("git", &["rev-parse", "HEAD"]);

@@ -30,7 +30,7 @@ clippy:
 	@cargo clippy --package lockfree --release --no-deps
 
 docker-image:
-	@docker build --force-rm --no-cache .
+	@cd ../.. && docker build --force-rm --no-cache -f tosctl/src/Dockerfile .
 
 fmt:
 	@cargo fmt --all

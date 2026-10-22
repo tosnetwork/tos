@@ -3,6 +3,10 @@ name: Authentication extension validation
 on:
   pull_request:
     paths:
+      - "tl/generate/scheme/**"
+      - "tosctl/src/tl/**"
+      - "scripts/check-tl-single-source.py"
+      - "test/tl-cli/**"
       - 'scripts/ci-snapshot.py'
       - 'scripts/test_ci_snapshot.py'
       - 'crypto/smartcont/**'

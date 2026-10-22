@@ -2,6 +2,10 @@ name: PQ v16 readiness
 on:
   pull_request:
     paths:
+      - "tl/generate/scheme/**"
+      - "tosctl/src/tl/**"
+      - "scripts/check-tl-single-source.py"
+      - "test/tl-cli/**"
       - '.github/workflows/pq-v16-readiness.yml'
       - '.github/actions/native-cache/**'
       - 'test/pq-readiness/**'
