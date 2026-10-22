@@ -39,7 +39,7 @@ provides review questions and evidence requirements; it does not replace those i
 
 | Level | Meaning | Examples of impact |
 |---|---|---|
-| **P0** | Breaks a safety property of the network or of funds. | Two honest nodes finalize different blocks or states; a signature or vote is accepted that the rules reject (or the reverse); funds can be stolen, created, destroyed or locked permanently; a validator or wallet key can be extracted or misused; a single cheap action halts block production or finality network-wide. |
+| **P0** | Breaks a safety property of the network or of funds. | Two honest nodes finalize different blocks or states; an invalid signature or vote is accepted, or a valid one is rejected with a consensus split, network-wide liveness failure or equivalent safety consequence; funds can be stolen, created, destroyed or locked permanently; a validator or wallet key can be extracted or misused; a single cheap action halts block production or finality network-wide. |
 | **P1** | Breaks availability or a funds-handling guarantee under realistic conditions, or makes a P0 likely. | A node crashes, stalls or exhausts memory or disk from remote input or normal load; a validator cannot recover after a restart; an operator tool can send, double-send or misreport a value transfer; a contract's solvency or replay protection depends on luck; a release or deployment artifact is not the reviewed one. |
 | **P2** | Incorrect or fragile behaviour with bounded impact. | Wrong error codes or exit statuses; bounded resource waste; a limit that rejects a rare valid input; missing diagnostics; a test that cannot fail; documentation that contradicts the code. |
 | P3 | Hygiene and clarity. | Naming, comments, log noise, small refactors. |
@@ -52,9 +52,11 @@ provides review questions and evidence requirements; it does not replace those i
 3. a concrete test, reproduction or measurement can show it.
 
 Every P0 or P1 that meets these conditions blocks. A P2 that meets them blocks unless the
-owner accepts it in writing on the pull request. Anything else gets a reply with the reason
-and becomes a tracked follow-up; it does not block. A finding that is identical in the
-upstream implementation follows *Upstream first* below.
+owner accepts it in writing on the pull request, except for the two-round disposition under
+*Review and merge checks* below: remaining P2 findings become tracked follow-ups after the
+allowed rounds. Anything else gets a reply with the reason and becomes a tracked follow-up;
+it does not block. A finding that is identical in the upstream implementation follows
+*Upstream first* below.
 
 ### Review and merge checks
 
@@ -210,8 +212,9 @@ alongside that required inventory.
 - **RB-7** Does an optional or diagnostic feature (indexer, metrics, health instrumentation)
   add cost on the block-application or consensus path, even when disabled? Is it off the
   critical path and bounded when enabled?
-- **RB-8** Do caps fail safe? When a cap is hit, is the input refused with a clear error,
-  rather than silently dropped, permanently omitted, or marked as delivered?
+- **RB-8** Do caps fail safe? When a cap is hit, is the input refused, dropped or evicted
+  according to the documented protocol, with counters or logging at a bounded rate? Is
+  dropped or evicted input never falsely reported as delivered?
 - **RB-9** Do limits admit every valid input? Is the largest legitimate object (state piece,
   proof, block, message) measured and below the limit with margin?
 - **RB-10** Disk growth: what is the growth rate of every directory the change writes, under
@@ -291,9 +294,10 @@ vaults, and every signed message format.
 - **CK-1** Does every signed message carry a domain separator that binds it to its purpose,
   the network (global id), the contract or account, the session or epoch, and the protocol
   version? Could the same bytes be valid in another context?
-- **CK-2** Is the signing preimage derived only from canonical chain state, identically by
-  the signer and by every verifier, including an independent verifier that only has the
-  chain? Is no local or runtime-only value mixed into it?
+- **CK-2** Does the signing preimage canonically encode the proposed action payload so
+  that the signer and every verifier can reproduce it? Does its chain-derived context come
+  from canonical chain state? Are unverifiable runtime identifiers excluded without
+  excluding the off-chain action being authorized?
 - **CK-3** Is the signer's authority checked against the right key type? Can a weaker or
   classical key change, replace or bypass a post-quantum key or policy?
 - **CK-4** Are public keys validated on admission (weak, small-order, malformed,
@@ -507,9 +511,11 @@ Applies to JSON-RPC, lite-server, HTTP endpoints, the operator CLI and services,
 - **AP-4** Authentication: is access control applied before the request body is buffered or
   parsed, are credentials never sent in plaintext, and are proxy and loopback hops handled
   explicitly?
-- **AP-5** Do RPC and client-library answers that depend on chain state come with proofs that
-  are checked on every path (including error paths, no blank result on error), and do readers
-  fail over across nodes instead of trusting one?
+- **AP-5** Is the trust model for chain-dependent RPC and client-library answers explicit
+  (trusted-node operation or trustless verification)? Are proofs verified or independent
+  sources checked where that model requires them, on every applicable path? Are errors
+  reported rather than replaced by blank success results, and are any required failover
+  guarantees tested?
 - **AP-6** Batch and notification handling: are malformed batch elements answered with the
   correct error, and are limits applied to encoded size?
 - **AP-7** Are long-running services restartable after a fatal error (exit status that the
@@ -530,9 +536,10 @@ refunds, relayers, SDK send paths).
   permitted only after the earlier attempt is proven terminal and accounted for, linked to
   that attempt, and explicitly requested under the journal lock with every gate rechecked?
   Can two attempts move the value twice?
-- **VM-3** Is settlement confirmed by finding the specific transaction (by hash, on more
-  than one independent source), decoding its outcome, and checking every phase — not by
-  balance changes, sequence numbers or timeouts?
+- **VM-3** Is settlement confirmed by finding the specific executed transaction by hash,
+  decoding its outcome and checking every phase, in both trusted-node and trustless modes,
+  rather than by balance changes, sequence numbers or timeouts? Are verified proofs or
+  independent corroboration required wherever the stated trust model calls for them?
 - **VM-4** Is a pre-broadcast balance check made against amount plus every fee the chain
   will actually charge, using the chain's own formulas?
 - **VM-5** Is the destination verified (address derived or confirmed independently), and is
@@ -629,7 +636,8 @@ refunds, relayers, SDK send paths).
 
 ## Author self-check before requesting review
 
-Before asking for review, the author confirms each of these in the pull request description:
+Before asking for review, the author confirms each of these in the pull request description
+or a comment:
 
 1. **Callers.** For every changed public function, type or message format, every caller and
    decoder was found (search, not memory) and updated; argument order, arity and defaults
