@@ -1557,6 +1557,18 @@ fn build_graph_recursive(
     // Check if already visited (DAG deduplication)
     let cell_hash = cell.repr_hash();
     if let Some(&id) = visited.get(&cell_hash) {
+        // The graph node is stored only once, but balance aggregation is per edge.
+        // A repeated right node must still contribute its diff against the left
+        // node paired with this particular occurrence.
+        if under_mu_right {
+            if let (Some(left), Some(out)) = (left_cell, sum_diff_out) {
+                if let Some(vd) = process_shard_accounts_vertex(left, cell) {
+                    *out = out
+                        .checked_add(vd)
+                        .ok_or_else(|| error!("BOC compression failed: integer overflow"))?;
+                }
+            }
+        }
         return Ok(id);
     }
 

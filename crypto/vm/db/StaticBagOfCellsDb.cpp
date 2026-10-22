@@ -277,11 +277,13 @@ class StaticBagOfCellsDbLazyImpl : public StaticBagOfCellsDb {
   }
   template <class T>
   T check_result(T&& to_check) {
-    CHECK(!has_error_.load());
+    // Loads on other threads may fail between our status check and here: keep the first
+    // error as the status and return this result as it is.
     if (to_check.is_error()) {
       std::lock_guard<std::mutex> guard(status_mutex_);
-      has_error_.store(true);
-      status_ = to_check.error().clone();
+      if (!has_error_.exchange(true)) {
+        status_ = to_check.error().clone();
+      }
     }
     return std::forward<T>(to_check);
   }

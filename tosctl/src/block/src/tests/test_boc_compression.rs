@@ -1352,3 +1352,155 @@ fn test_cpp_compat_generic_api() {
         assert_eq!(recompressed.as_slice(), *compressed, "Test file {} recompression mismatch", i);
     }
 }
+
+// ============================================
+// Depth-balance elision: per-edge accounting of repeated right cells
+// ============================================
+//
+// A cell that appears more than once in the right tree of a MerkleUpdate is stored once in
+// the graph, but its balance diff counts once per edge. The encoder must sum it per edge, as
+// the decoder does, or it elides a parent the decoder cannot rebuild (or misses one it can).
+
+mod per_edge_balance {
+    use super::*;
+
+    fn plain(tag: u32, refs: &[Cell]) -> Cell {
+        let mut b = BuilderData::new();
+        b.append_u32(tag).unwrap();
+        for r in refs {
+            b.checked_append_reference(r.clone()).unwrap();
+        }
+        b.into_cell().unwrap()
+    }
+
+    fn balance(coins: u128, refs: &[Cell]) -> Cell {
+        let mut b = BuilderData::new();
+        write_depth_balance_coins(&mut b, coins).unwrap();
+        for r in refs {
+            b.checked_append_reference(r.clone()).unwrap();
+        }
+        b.into_cell().unwrap()
+    }
+
+    // A block-shaped root whose third reference is a MerkleUpdate carrying the complete old
+    // and new trees, so the pairing under test does not depend on pruning.
+    fn block_with_state_update(old_payload: Cell, new_payload: Cell) -> Cell {
+        let stable = plain(0xc0ffee00, &[plain(0x70000000, &[])]);
+        let old_state = plain(0x51000000, &[old_payload, stable.clone()]);
+        let new_state = plain(0x51000000, &[new_payload, stable]);
+        let mu = {
+            let mut b = BuilderData::new();
+            b.set_type(CellType::MerkleUpdate);
+            b.append_u8(u8::from(CellType::MerkleUpdate)).unwrap();
+            old_state.hash(0).write_to(&mut b).unwrap();
+            new_state.hash(0).write_to(&mut b).unwrap();
+            b.append_u16(old_state.depth(0)).unwrap();
+            b.append_u16(new_state.depth(0)).unwrap();
+            b.checked_append_reference(old_state).unwrap();
+            b.checked_append_reference(new_state).unwrap();
+            b.into_cell().unwrap()
+        };
+        plain(0x11ef55aa, &[plain(1, &[]), plain(2, &[]), mu, plain(3, &[])])
+    }
+
+    // Counts cell type 9 (data elided, rebuilt from the paired left cell) in the metadata.
+    fn count_elision_markers(compressed: &[u8]) -> usize {
+        assert_eq!(compressed[0], CompressionAlgorithm::ImprovedStructureLZ4 as u8);
+        let size = u32::from_be_bytes(compressed[1..5].try_into().unwrap()) as usize;
+        let inner = lz4::block::decompress(&compressed[5..], Some(size as i32)).unwrap();
+        let read_u32 =
+            |at: usize| u32::from_be_bytes(inner[at..at + 4].try_into().unwrap()) as usize;
+        let root_count = read_u32(0);
+        let mut offset = 4 + root_count * 4;
+        let node_count = read_u32(offset);
+        offset += 4;
+        let mut markers = 0;
+        for _ in 0..node_count {
+            let cell_type = inner[offset] >> 4;
+            offset += 1;
+            if cell_type == 9 {
+                markers += 1;
+            } else if cell_type <= 1 {
+                offset += 1;
+            }
+        }
+        markers
+    }
+
+    fn assert_round_trip(scenario: &str, block: &Cell, expected_elisions: usize) {
+        let compressed =
+            boc_compress(vec![block.clone()], CompressionAlgorithm::ImprovedStructureLZ4).unwrap();
+        let markers = count_elision_markers(&compressed);
+        let decoded = boc_decompress(&compressed, 20 << 20);
+        let ok = matches!(&decoded, Ok(roots) if roots.len() == 1 && roots[0].repr_hash() == block.repr_hash());
+        assert!(
+            ok && markers == expected_elisions,
+            "{scenario}: round_trip={ok} elisions={markers} expected={expected_elisions} decoded={:?}",
+            decoded.err()
+        );
+    }
+
+    #[test]
+    fn duplicate_edges_use_full_multiplicity() {
+        // (name, child_old, child_new, parent_old, parent_new, multiplicity, expected_elisions)
+        let cases: [(&str, u128, u128, u128, u128, usize, usize); 5] = [
+            ("two edges, false positive elision", 0, 5, 100, 105, 2, 0),
+            ("two edges, valid positive elision", 0, 5, 100, 110, 2, 1),
+            ("two edges, false negative elision", 10, 5, 100, 95, 2, 0),
+            ("two edges, valid negative elision across a byte boundary", 10, 5, 260, 250, 2, 1),
+            ("maximum four-edge multiplicity", 0, 5, 100, 120, 4, 1),
+        ];
+        for (name, child_old, child_new, parent_old, parent_new, multiplicity, expected) in cases {
+            let tail = plain(0x77000000, &[]);
+            let old_child = balance(child_old, &[tail.clone()]);
+            let new_child = balance(child_new, &[tail]);
+            let old_parent = balance(parent_old, &vec![old_child; multiplicity]);
+            let new_parent = balance(parent_new, &vec![new_child; multiplicity]);
+            assert_round_trip(name, &block_with_state_update(old_parent, new_parent), expected);
+        }
+    }
+
+    #[test]
+    fn shared_right_cell_uses_each_left_occurrence() {
+        let tail = plain(0x77000003, &[]);
+        let old_child1 = balance(0, &[tail.clone()]);
+        let old_child2 = balance(2, &[tail.clone()]);
+        let new_shared = balance(5, &[tail]);
+        // Edge deltas are 5 and 3: a parent delta of 5 must stay explicit, 8 is elided.
+        let old_parent = balance(100, &[old_child1.clone(), old_child2.clone()]);
+        let false_block = block_with_state_update(
+            old_parent.clone(),
+            balance(105, &[new_shared.clone(), new_shared.clone()]),
+        );
+        let valid_block =
+            block_with_state_update(old_parent, balance(108, &[new_shared.clone(), new_shared]));
+        assert_round_trip("different-left false-elision guard", &false_block, 0);
+        assert_round_trip("different-left genuine elision", &valid_block, 1);
+    }
+
+    #[test]
+    fn unpaired_duplicate_right_edge_does_not_contribute() {
+        let tail = plain(0x77000006, &[]);
+        let old_child = balance(0, &[tail.clone()]);
+        let new_child = balance(5, &[tail]);
+        let block = block_with_state_update(
+            balance(100, &[old_child]),
+            balance(105, &[new_child.clone(), new_child]),
+        );
+        assert_round_trip("duplicate right edge without a left partner", &block, 1);
+    }
+
+    #[test]
+    fn nested_elided_shared_child_counts_every_edge() {
+        let tail = plain(0x77000007, &[]);
+        let old_grandchild = balance(0, &[tail.clone()]);
+        let new_grandchild = balance(5, &[tail]);
+        let old_child = balance(10, &[old_grandchild]);
+        let new_child = balance(15, &[new_grandchild]);
+        let block = block_with_state_update(
+            balance(100, &[old_child.clone(), old_child]),
+            balance(110, &[new_child.clone(), new_child]),
+        );
+        assert_round_trip("nested elision with a shared nonzero-delta child", &block, 2);
+    }
+}

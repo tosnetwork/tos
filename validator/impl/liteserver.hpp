@@ -100,6 +100,9 @@ class LiteQuery : public td::actor::Actor {
       WorkchainId wc, StdSmcAddress acc_addr, td::actor::ActorId<tos::validator::ValidatorManager> manager,
       td::Promise<std::tuple<td::Ref<vm::CellSlice>, UnixTime, LogicalTime, std::unique_ptr<block::ConfigInfo>>>
           promise);
+  // Merkle proof of a block header that a lite client can check against the block id and the
+  // given state hash: it covers everything check_block_header_proof() reads.
+  static td::Result<Ref<vm::Cell>> build_state_root_proof(Ref<vm::Cell> block_root, const vm::CellHash& state_hash);
 
  private:
   bool fatal_error(td::Status error);
