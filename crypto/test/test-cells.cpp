@@ -38,6 +38,7 @@
 #include "td/utils/tests.h"
 #include "vm/cells.h"
 #include "vm/cellslice.h"
+#include "vm/stack.hpp"
 
 static std::stringstream create_ss() {
   std::stringstream ss;
@@ -293,6 +294,51 @@ TEST(Cells, pruned_branch_rebuilt_from_a_hash_and_a_depth) {
   // Swapping the two branches is the mistake a reader of the TL-B would make, so it is
   // worth knowing it does not go unnoticed either.
   ASSERT_TRUE(state_init(rebuilt(data), rebuilt(code))->get_hash(0) != address);
+}
+
+// A get-method result stack is serialized into one root cell. A result holding a cell at the
+// maximum depth serializes, but the root that references it cannot exist. The non-throwing
+// finalize reports that as an error, which is what lets the lite server answer with an error
+// instead of throwing out of the query actor.
+TEST(Cells, result_stack_root_too_deep_is_an_error) {
+  auto chain_of_depth = [](unsigned depth) {
+    td::Ref<vm::Cell> cell = vm::CellBuilder().store_long(0, 8).finalize_novm();
+    for (unsigned i = 0; i < depth; i++) {
+      vm::CellBuilder cb;
+      cb.store_ref(cell);
+      cell = cb.finalize_novm();
+    }
+    return cell;
+  };
+
+  // One level below the limit is an ordinary result and still finalizes.
+  vm::Stack ordinary;
+  ordinary.push_cell(chain_of_depth(vm::CellTraits::max_depth - 1));
+  vm::CellBuilder ordinary_cb;
+  ASSERT_TRUE(ordinary.serialize(ordinary_cb));
+  auto ordinary_root = ordinary_cb.finalize_novm_nothrow();
+  ASSERT_TRUE(ordinary_root.is_ok());
+  ASSERT_EQ(ordinary_root.ok()->get_depth(), static_cast<td::uint16>(vm::CellTraits::max_depth));
+
+  auto deepest = chain_of_depth(vm::CellTraits::max_depth);
+  ASSERT_EQ(deepest->get_depth(), static_cast<td::uint16>(vm::CellTraits::max_depth));
+  vm::Stack stack;
+  stack.push_cell(deepest);
+
+  vm::CellBuilder nothrow_cb;
+  ASSERT_TRUE(stack.serialize(nothrow_cb));
+  ASSERT_TRUE(nothrow_cb.finalize_novm_nothrow().is_error());
+
+  vm::CellBuilder throwing_cb;
+  ASSERT_TRUE(stack.serialize(throwing_cb));
+  bool thrown = false;
+  try {
+    td::Ref<vm::Cell> cell;
+    throwing_cb.finalize_to(cell);
+  } catch (vm::CellBuilder::CellWriteError&) {
+    thrown = true;
+  }
+  ASSERT_TRUE(thrown);
 }
 
 TEST(Bitstrings, main) {

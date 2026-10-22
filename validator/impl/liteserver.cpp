@@ -1523,9 +1523,17 @@ void LiteQuery::finish_runSmcMethod(td::BufferSlice shard_proof, td::BufferSlice
   }
   // pre-serialize stack always (to visit all data cells referred from the result)
   vm::CellBuilder cb;
-  if (!(stack_->serialize(cb) && cb.finalize_to(cell))) {
+  if (!stack_->serialize(cb)) {
     fatal_error("cannot serialize resulting stack");
     return;
+  }
+  // The getter controls the result stack, so the root cell may be invalid (for example too deep);
+  // report that as a query error instead of letting the builder throw out of the actor.
+  if (auto R = cb.finalize_novm_nothrow(); R.is_error()) {
+    fatal_error("cannot serialize resulting stack");
+    return;
+  } else {
+    cell = R.move_as_ok();
   }
   if (mode & 4) {
     // serialize stack if required
