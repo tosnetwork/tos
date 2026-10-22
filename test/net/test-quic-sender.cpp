@@ -449,63 +449,96 @@ class TestRunner : public td::actor::Actor {
                             std::make_unique<StaticResponseCallback>(std::move(response)));
   }
 
+  // QuicSender::add_id registers a local id asynchronously, and create_node returns before that
+  // finishes. Registration stores the key first and the QUIC server for the id last, so a query
+  // sent in between fails at once with one of the two errors below (QuicSender's connection setup);
+  // on a slow host that is the first query of a test. Only these setup errors are retried, so every
+  // other outcome reaches the test unchanged. wait_local_id_registered covers the same race for the
+  // waiter tests by completing one real query before they measure anything.
+  static bool local_id_registration_pending(const td::Status& error) {
+    auto message = error.message();
+    return message == "no local key for source ADNL ID" || message == "no QuicServer for local id";
+  }
+
+  template <class Issue>
+  td::actor::Task<td::BufferSlice> retry_while_local_id_pending(Issue issue) {
+    auto deadline = td::Timestamp::in(5.0);
+    while (true) {
+      auto result = co_await issue().wrap();
+      if (result.is_ok() || !local_id_registration_pending(result.error()) || deadline.is_in_past()) {
+        co_return std::move(result);
+      }
+      co_await td::actor::coro_sleep(td::Timestamp::in(0.02));
+    }
+  }
+
   td::actor::Task<td::BufferSlice> send_never_respond_query(TestNode& from, TestNode& to, td::Slice data,
                                                             double timeout, td::uint64 max_answer_size) {
-    td::BufferSlice query(1 + data.size());
-    query.as_slice()[0] = 'X';
-    query.as_slice().substr(1).copy_from(data);
+    co_return co_await retry_while_local_id_pending([&]() -> td::actor::Task<td::BufferSlice> {
+      td::BufferSlice query(1 + data.size());
+      query.as_slice()[0] = 'X';
+      query.as_slice().substr(1).copy_from(data);
 
-    auto [future, promise] = td::actor::StartedTask<td::BufferSlice>::make_bridge();
-    td::actor::send_closure(from.quic_sender, &tos::quic::QuicSender::send_query_ex, from.id, to.id, std::string("X"),
-                            std::move(promise), td::Timestamp::in(timeout), std::move(query), max_answer_size);
-    co_return co_await std::move(future);
+      auto [future, promise] = td::actor::StartedTask<td::BufferSlice>::make_bridge();
+      td::actor::send_closure(from.quic_sender, &tos::quic::QuicSender::send_query_ex, from.id, to.id, std::string("X"),
+                              std::move(promise), td::Timestamp::in(timeout), std::move(query), max_answer_size);
+      co_return co_await std::move(future);
+    });
   }
 
   td::actor::Task<td::BufferSlice> send_query(TestNode& from, TestNode& to, td::Slice data) {
-    td::BufferSlice query(1 + data.size());
-    query.as_slice()[0] = 'Q';
-    query.as_slice().substr(1).copy_from(data);
+    co_return co_await retry_while_local_id_pending([&]() -> td::actor::Task<td::BufferSlice> {
+      td::BufferSlice query(1 + data.size());
+      query.as_slice()[0] = 'Q';
+      query.as_slice().substr(1).copy_from(data);
 
-    auto [future, promise] = td::actor::StartedTask<td::BufferSlice>::make_bridge();
-    td::actor::send_closure(from.quic_sender, &tos::quic::QuicSender::send_query, from.id, to.id, std::string("Q"),
-                            std::move(promise), td::Timestamp::in(30.0), std::move(query));
-    co_return co_await std::move(future);
+      auto [future, promise] = td::actor::StartedTask<td::BufferSlice>::make_bridge();
+      td::actor::send_closure(from.quic_sender, &tos::quic::QuicSender::send_query, from.id, to.id, std::string("Q"),
+                              std::move(promise), td::Timestamp::in(30.0), std::move(query));
+      co_return co_await std::move(future);
+    });
   }
 
   td::actor::Task<td::BufferSlice> send_query_ex(TestNode& from, TestNode& to, td::Slice data, double timeout,
                                                  td::uint64 max_answer_size) {
-    td::BufferSlice query(1 + data.size());
-    query.as_slice()[0] = 'Q';
-    query.as_slice().substr(1).copy_from(data);
+    co_return co_await retry_while_local_id_pending([&]() -> td::actor::Task<td::BufferSlice> {
+      td::BufferSlice query(1 + data.size());
+      query.as_slice()[0] = 'Q';
+      query.as_slice().substr(1).copy_from(data);
 
-    auto [future, promise] = td::actor::StartedTask<td::BufferSlice>::make_bridge();
-    td::actor::send_closure(from.quic_sender, &tos::quic::QuicSender::send_query_ex, from.id, to.id, std::string("Q"),
-                            std::move(promise), td::Timestamp::in(timeout), std::move(query), max_answer_size);
-    co_return co_await std::move(future);
+      auto [future, promise] = td::actor::StartedTask<td::BufferSlice>::make_bridge();
+      td::actor::send_closure(from.quic_sender, &tos::quic::QuicSender::send_query_ex, from.id, to.id, std::string("Q"),
+                              std::move(promise), td::Timestamp::in(timeout), std::move(query), max_answer_size);
+      co_return co_await std::move(future);
+    });
   }
 
   td::actor::Task<td::BufferSlice> send_slow_query_ex(TestNode& from, TestNode& to, td::Slice data, double timeout,
                                                       td::uint64 max_answer_size) {
-    td::BufferSlice query(1 + data.size());
-    query.as_slice()[0] = 'S';
-    query.as_slice().substr(1).copy_from(data);
+    co_return co_await retry_while_local_id_pending([&]() -> td::actor::Task<td::BufferSlice> {
+      td::BufferSlice query(1 + data.size());
+      query.as_slice()[0] = 'S';
+      query.as_slice().substr(1).copy_from(data);
 
-    auto [future, promise] = td::actor::StartedTask<td::BufferSlice>::make_bridge();
-    td::actor::send_closure(from.quic_sender, &tos::quic::QuicSender::send_query_ex, from.id, to.id, std::string("S"),
-                            std::move(promise), td::Timestamp::in(timeout), std::move(query), max_answer_size);
-    co_return co_await std::move(future);
+      auto [future, promise] = td::actor::StartedTask<td::BufferSlice>::make_bridge();
+      td::actor::send_closure(from.quic_sender, &tos::quic::QuicSender::send_query_ex, from.id, to.id, std::string("S"),
+                              std::move(promise), td::Timestamp::in(timeout), std::move(query), max_answer_size);
+      co_return co_await std::move(future);
+    });
   }
 
   td::actor::Task<td::BufferSlice> send_prefixed_query_ex(TestNode& from, TestNode& to, td::Slice prefix,
                                                           td::Slice data, double timeout, td::uint64 max_answer_size) {
-    td::BufferSlice query(prefix.size() + data.size());
-    query.as_slice().substr(0, prefix.size()).copy_from(prefix);
-    query.as_slice().substr(prefix.size()).copy_from(data);
+    co_return co_await retry_while_local_id_pending([&]() -> td::actor::Task<td::BufferSlice> {
+      td::BufferSlice query(prefix.size() + data.size());
+      query.as_slice().substr(0, prefix.size()).copy_from(prefix);
+      query.as_slice().substr(prefix.size()).copy_from(data);
 
-    auto [future, promise] = td::actor::StartedTask<td::BufferSlice>::make_bridge();
-    td::actor::send_closure(from.quic_sender, &tos::quic::QuicSender::send_query_ex, from.id, to.id, prefix.str(),
-                            std::move(promise), td::Timestamp::in(timeout), std::move(query), max_answer_size);
-    co_return co_await std::move(future);
+      auto [future, promise] = td::actor::StartedTask<td::BufferSlice>::make_bridge();
+      td::actor::send_closure(from.quic_sender, &tos::quic::QuicSender::send_query_ex, from.id, to.id, prefix.str(),
+                              std::move(promise), td::Timestamp::in(timeout), std::move(query), max_answer_size);
+      co_return co_await std::move(future);
+    });
   }
 
   void send_message(TestNode& from, TestNode& to, td::Slice data) {
