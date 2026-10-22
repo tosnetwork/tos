@@ -109,6 +109,13 @@ inline ErrorCtxSet ErrorCtx::set_guard(std::vector<std::string> str_list) {
  */
 namespace validate_rules {
 
+// True if start_lt lies on the logical-time grid that the collator aligns every block to.
+bool is_block_start_lt_aligned(LogicalTime start_lt);
+
+// True if split/merge information that ends at fsm_utime_end has expired at time now. The collator clears it from
+// that moment on, so a block that still carries it is invalid.
+bool is_fsm_expired(UnixTime now, UnixTime fsm_utime_end);
+
 // OutMsg tags as normalized in ValidateQuery::precheck_one_message_queue_update.
 enum : int {
   out_msg_tag_new = 1,          // msg_export_new

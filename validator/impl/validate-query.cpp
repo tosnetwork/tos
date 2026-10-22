@@ -83,6 +83,14 @@ std::string ErrorCtx::as_string() const {
 
 namespace validate_rules {
 
+bool is_block_start_lt_aligned(LogicalTime start_lt) {
+  return start_lt % block::Config::get_lt_align() == 0;
+}
+
+bool is_fsm_expired(UnixTime now, UnixTime fsm_utime_end) {
+  return now >= fsm_utime_end;
+}
+
 td::Status check_enqueued_lt(int out_msg_tag, LogicalTime emitted_lt, LogicalTime enqueued_lt,
                              LogicalTime block_start_lt) {
   if (emitted_lt > enqueued_lt) {
@@ -624,6 +632,9 @@ bool ValidateQuery::init_parse() {
   }
   if (start_lt_ >= end_lt_) {
     return reject_query("block has start_lt greater than or equal to end_lt");
+  }
+  if (!validate_rules::is_block_start_lt_aligned(start_lt_)) {
+    return reject_query(PSTRING() << "start_lt " << start_lt_ << " is not aligned");
   }
   if (shard.is_masterchain() && (info.after_merge | info.before_split | info.after_split)) {
     return reject_query("block header declares split/merge for a masterchain block");
@@ -2253,7 +2264,7 @@ bool ValidateQuery::check_one_shard(const block::McShardHash& info, const block:
                           " has been arbitrarily changed without a good reason");
     }
     fsm_inherited = !prev->is_fsm_none() && prev->fsm_equal(info);
-    if (fsm_inherited && (now_ > prev->fsm_utime_end() || info.before_split_)) {
+    if (fsm_inherited && (validate_rules::is_fsm_expired(now_, prev->fsm_utime_end()) || info.before_split_)) {
       return reject_query(
           PSTRING() << "future split/merge information for shard " << shard.to_str()
                     << "has been carried on to the new shard configuration, but it is either expired (expire time "

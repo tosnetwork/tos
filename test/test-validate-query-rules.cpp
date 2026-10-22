@@ -48,4 +48,22 @@ TEST(ValidateQueryRules, TransitMessagesEnqueueAtBlockStartLt) {
   }
 }
 
+TEST(ValidateQueryRules, BlockStartLtMustBeAligned) {
+  constexpr tos::LogicalTime align = block::Config::get_lt_align();
+  ASSERT_TRUE(rules::is_block_start_lt_aligned(align));
+  ASSERT_TRUE(rules::is_block_start_lt_aligned(kBlockStartLt));
+  ASSERT_TRUE(rules::is_block_start_lt_aligned(0));
+  ASSERT_TRUE(!rules::is_block_start_lt_aligned(align + 1));
+  ASSERT_TRUE(!rules::is_block_start_lt_aligned(kBlockStartLt - 1));
+  ASSERT_TRUE(!rules::is_block_start_lt_aligned(align / 2));
+}
+
+TEST(ValidateQueryRules, SplitMergeInfoExpiresAtItsEndTime) {
+  constexpr tos::UnixTime end = 1800000000;
+  ASSERT_TRUE(!rules::is_fsm_expired(end - 1, end));
+  // The collator drops the information when now reaches its end time; carrying it on at that time is invalid.
+  ASSERT_TRUE(rules::is_fsm_expired(end, end));
+  ASSERT_TRUE(rules::is_fsm_expired(end + 1, end));
+}
+
 }  // namespace
