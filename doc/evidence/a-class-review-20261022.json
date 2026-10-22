@@ -1,0 +1,223 @@
+{
+  "reviewed_head": "08018e3b361d26ed42a44bd60ee448d209b08c4b",
+  "base": "a5e256b623c8cda741cb40cc7336396f9ee1ce3d",
+  "raw_retention": "Local temporary files only; no guaranteed retention. Bounded excerpts and synthetic codec fixtures are retained here.",
+  "controls": [
+    {
+      "receipt": "rust-precompiled-red.log",
+      "exit_code": 101,
+      "excerpt": [
+        "gas limit 4294967296",
+        "test result: FAILED. 5 passed; 1 failed; 0 ignored; 0 measured; 60 filtered out; finished in 0.15s"
+      ]
+    },
+    {
+      "receipt": "rust-boc-canonical-red.log",
+      "exit_code": 101,
+      "excerpt": [
+        "noncanonical parent with duplicate child edges: round_trip=false elisions=1 expected=0 decoded=Some(Merkle update cell second reference hash does not match the second hash in the data 61d373927c9ec49aaf53ac25dc9f7bab4c91e2992e4d1e0b540680335b588863 != 933c428bc8d8cffd77174fcf53e65cf7ebb1b0a07ffc63b29ea469b8dca23ba2)",
+        "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 647 filtered out; finished in 0.00s"
+      ]
+    },
+    {
+      "receipt": "rust-boc-main-mu-red.log",
+      "exit_code": 101,
+      "excerpt": [
+        "standalone update root: round_trip=true elisions=1 expected=0 decoded=None",
+        "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 648 filtered out; finished in 0.01s"
+      ]
+    },
+    {
+      "mutation": "helper returns false",
+      "exit_code": 1,
+      "excerpt": [
+        "[ 0][t 0][2026-10-22 10:37:48.922365][test-out-msg-queue-limits.cpp:114]\tCheck `out_msg_queue_postpone_transit(false, false, false, hard, 0, hard)` failed"
+      ]
+    },
+    {
+      "mutation": "helper returns false, routing fixture",
+      "exit_code": 1,
+      "excerpt": [
+        "[ 0][t 0][2026-10-22 10:38:31.427020][test-out-msg-queue-limits.cpp:149]\tCheck `out_msg_queue_postpone_transit(false, tos::shard_contains(relay_shard, cur), tos::shard_contains(relay_shard, dest), 18000, 0, 18000)` failed"
+      ]
+    },
+    {
+      "mutation": "ignore pending dispatch",
+      "exit_code": 1,
+      "excerpt": [
+        "[ 0][t 0][2026-10-22 10:38:33.688538][test-out-msg-queue-limits.cpp:119]\tCheck `out_msg_queue_postpone_transit(false, false, false, hard - 5, 5, hard)` failed"
+      ]
+    }
+  ],
+  "native_decoder_result": {
+    "standalone-before-port": {
+      "exit": 0,
+      "stdout": "decoded roots=1\n",
+      "stderr": ""
+    },
+    "standalone-ported": {
+      "exit": 1,
+      "stdout": "",
+      "stderr": "[Error : 0 : BOC decompression failed: depth-balance node must be reconstructed under MerkleUpdate]\n"
+    },
+    "standalone-fixed": {
+      "exit": 0,
+      "stdout": "decoded roots=1\n",
+      "stderr": ""
+    },
+    "block-fixed": {
+      "exit": 0,
+      "stdout": "decoded roots=1\n",
+      "stderr": ""
+    }
+  },
+  "native_decoder_fixtures": [
+    {
+      "name": "standalone-before-port",
+      "bytes": 139,
+      "sha256": "0980ec08b501db3a164a65af49704624ecfbbf8f06aec4ab571bfc0e720df261",
+      "base64": "AQAAAIdSAAAAAQABAPBtChJGAqACoAGgAKAClAGMApQBlACgh7gABEDgAQSWeT0V8nXBlzABmBIdsy6wGdorrrLTHCkePk68+Y86aOd8ROFhWGZPE9JlII6W7g9gz1d6IMK/8CdD2RWP5HO1AAMAA1EAAABRAAAAwP/uAHAAAAACyAAC3AIKdwAAAA=="
+    },
+    {
+      "name": "standalone-ported",
+      "bytes": 135,
+      "sha256": "7d7e783baf901d36e0c9d7bf794820b46433fa5d0a2d01e9301773d7959a5389",
+      "base64": "AQAAAINSAAAAAQABAPBpChJGAqACoAGgAKAClAGMkgGUAKCHuAAEHAEElnk9FfJ1wZcwAZgSHbMusBnaK66y0xwpHj5OvPmPOmjnfEThYVhmTxPSZSCOlu4PYM9XeiDCv/AnQ9kVj+RztQADAANRAAAAUQAAAMD/7gBwAAAAAsgAAgp3AAAA"
+    },
+    {
+      "name": "standalone-fixed",
+      "bytes": 139,
+      "sha256": "0980ec08b501db3a164a65af49704624ecfbbf8f06aec4ab571bfc0e720df261",
+      "base64": "AQAAAIdSAAAAAQABAPBtChJGAqACoAGgAKAClAGMApQBlACgh7gABEDgAQSWeT0V8nXBlzABmBIdsy6wGdorrrLTHCkePk68+Y86aOd8ROFhWGZPE9JlII6W7g9gz1d6IMK/8CdD2RWP5HO1AAMAA1EAAABRAAAAwP/uAHAAAAACyAAC3AIKdwAAAA=="
+    },
+    {
+      "name": "block-fixed",
+      "bytes": 162,
+      "sha256": "a44356e6d4e6f8739941b2eb8d06d7622fd6e849095cd491ae23929f61616fb8",
+      "base64": "AQAAAJ5SAAAAAQABAPAJDgSgAKASRgKgAqABoACgApQBjJIBlACgAgDwSxh7gALqCgaAEe9VqgAAAAMBBJZ5PRXydcGXMAGYEh2zLrAZ2iuustMcKR4+Trz5jzpo53xE4WFYZk8T0mUgjpbuD2DPV3ogwr/wJ0PZFY/kc7UAAwADUQAAAAQA8ArA/+4AcAAAAALIAAIKdwAAAAAAAAIAAAAB"
+    }
+  ],
+  "native_rust_parity": {
+    "passed": true,
+    "gas_limit": 1000000,
+    "rows": {
+      "ext-accept": {
+        "native": "ext-accept\ttrue\t5000\t99993900000",
+        "rust": "ext-accept\ttrue\t5000\t99993900000"
+      },
+      "ext-no-accept": {
+        "native": "ext-no-accept\trejected",
+        "rust": "ext-no-accept\trejected"
+      },
+      "ext-over-gas-max": {
+        "native": "ext-over-gas-max\trejected",
+        "rust": "ext-over-gas-max\trejected"
+      },
+      "ext-burn-under-credit": {
+        "native": "ext-burn-under-credit\ttrue\t0\t99998800000",
+        "rust": "ext-burn-under-credit\ttrue\t0\t99998800000"
+      },
+      "ext-burn-over-credit": {
+        "native": "ext-burn-over-credit\trejected",
+        "rust": "ext-burn-over-credit\trejected"
+      },
+      "int-accept": {
+        "native": "int-accept\ttrue\t5000\t100995000000",
+        "rust": "int-accept\ttrue\t5000\t100995000000"
+      },
+      "ext-no-accept-credit-4294967295": {
+        "native": "ext-no-accept-credit-4294967295\trejected",
+        "rust": "ext-no-accept-credit-4294967295\trejected"
+      },
+      "ext-accept-credit-4294967295": {
+        "native": "ext-accept-credit-4294967295\ttrue\t5000\t99993900000",
+        "rust": "ext-accept-credit-4294967295\ttrue\t5000\t99993900000"
+      },
+      "ext-no-accept-credit-4294967296": {
+        "native": "ext-no-accept-credit-4294967296\trejected",
+        "rust": "ext-no-accept-credit-4294967296\trejected"
+      },
+      "ext-accept-credit-4294967296": {
+        "native": "ext-accept-credit-4294967296\ttrue\t5000\t99993900000",
+        "rust": "ext-accept-credit-4294967296\ttrue\t5000\t99993900000"
+      },
+      "ext-no-accept-credit-4294967297": {
+        "native": "ext-no-accept-credit-4294967297\trejected",
+        "rust": "ext-no-accept-credit-4294967297\trejected"
+      },
+      "ext-accept-credit-4294967297": {
+        "native": "ext-accept-credit-4294967297\ttrue\t5000\t99993900000",
+        "rust": "ext-accept-credit-4294967297\ttrue\t5000\t99993900000"
+      }
+    },
+    "failures": []
+  },
+  "raw_logs": [
+    {
+      "path": "/private/tmp/pr276-review-notes/rust-precompiled-red.log",
+      "bytes": 8585,
+      "sha256": "6aff844e56b6f9310786238234f94c02c9faf224f17a59067fb4e095037a8450"
+    },
+    {
+      "path": "/private/tmp/pr276-review-notes/rust-boc-canonical-red.log",
+      "bytes": 6334,
+      "sha256": "5d786d2cefa5198fcc68de8b2a97a885087256f4196b4588bc8dbb8ea77cdb5d"
+    },
+    {
+      "path": "/private/tmp/pr276-review-notes/rust-boc-canonical-before-port.log",
+      "bytes": 1811,
+      "sha256": "860400f08bff9738ca181bc9fd1963ed09d1fdbd3205a78817157dd66a49e833"
+    },
+    {
+      "path": "/private/tmp/pr276-review-notes/rust-boc-main-mu-red.log",
+      "bytes": 2425,
+      "sha256": "c8d4b2a57408441bbea79a7a27a9d79a35d00631319a29b12117f3905ae2d756"
+    },
+    {
+      "path": "/private/tmp/pr276-review-notes/rust-executor-green.log",
+      "bytes": 10663,
+      "sha256": "00e556049920e4db742e8057057f78dc3bf0ff4cd4e3a7392a3aad75432c514b"
+    },
+    {
+      "path": "/private/tmp/pr276-review-notes/rust-boc-green.log",
+      "bytes": 6371,
+      "sha256": "fd26c4e0e5abbc1bc2b7017af489d6c833ea6db44683698ba2b06a8895b694b6"
+    },
+    {
+      "path": "/private/tmp/pr276-review-notes/final-focused-ctest.log",
+      "bytes": 1008,
+      "sha256": "6c9048ecd98b5e713905855248fd56b73238fff5ca30461060052a3a217d369a"
+    },
+    {
+      "path": "/private/tmp/pr276-review-notes/highload-policy.log",
+      "bytes": 44870,
+      "sha256": "0765f678971216c2bf5546158c1c2fe52e99d1399d6d80402accec997d999c39"
+    },
+    {
+      "path": "/private/tmp/pr276-queue-mutation/red.log",
+      "bytes": 3642,
+      "sha256": "628cd8dfb0961e5e20496126d8af709b694758e16349a3bde9550af23976cc57"
+    },
+    {
+      "path": "/private/tmp/pr276-queue-mutation/red-routing.log",
+      "bytes": 3436,
+      "sha256": "027322ef3b112996fdae2befa5127ffe05491c640bf29547073cf1e95ea0af60"
+    },
+    {
+      "path": "/private/tmp/pr276-queue-mutation/red-pending.log",
+      "bytes": 3377,
+      "sha256": "30a093d15f6d8a1b91211b28aeec470fd8ea1deadcfd06cebf820eb236ecbd7c"
+    },
+    {
+      "path": "/private/tmp/pr276-review-notes/genesis-queue-final.log",
+      "bytes": 113,
+      "sha256": "2bf3c20e26a632add407f6f33fb34fc76d353516f72a2aef383a6f47eaec8b8a",
+      "excerpt": ".                                                                        [100%]\n1 passed, 52 deselected in 0.34s"
+    }
+  ],
+  "correction_commits": [
+    "6ce166ed6",
+    "fddbcbc2e",
+    "c93b956aa"
+  ]
+}
