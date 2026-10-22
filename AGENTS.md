@@ -130,6 +130,41 @@ a new finding in a blocking check fails that change.
   database. "No new findings" from an analysis that did not run is not a
   result. A new blocking check comes with a control the check must flag.
 
+## Review every C++ change for memory and resource growth
+
+A node runs for months on a 12 GB host. Memory that grows with traffic, peers or
+uptime shows up as anonymous RSS climbing until the kernel kills the validator,
+and no unit test catches it, because a test ends before the growth matters. The
+public testnet has already shown it: an RPC node grew from 2 GB to 8 GB under
+read load. Every PR that changes C/C++ is reviewed for this, by the author in the
+self-check and again by the reviewer.
+
+For each piece of state the change adds or makes longer-lived (containers,
+caches, queues, maps keyed by peer, query, message, block or connection id,
+pending promises, actors, timers, buffers and file descriptors), answer:
+
+- **What bounds it?** Name the limit, in entries and in bytes, and where it is
+  enforced. A limit that holds only because of a constant declared elsewhere, or
+  because "peers are honest", is not a bound. Input from the network or from a
+  client must not be able to raise it.
+- **What removes entries?** Expiry, eviction or completion, on the error,
+  timeout and cancellation paths as well as the success path. An entry that is
+  only removed when a reply arrives leaks when the reply never comes.
+- **What happens when it is full?** Refuse, drop or evict, never grow. Refusals
+  are counted or logged at a bounded rate.
+- **Does memory go back?** Clearing a container that keeps its capacity, or a
+  `BufferSlice` that pins a larger parent buffer, can hold memory after the
+  entries are gone.
+- **Are threads, file descriptors, sockets and on-disk files bounded and
+  released?** On restart too.
+
+State that is bounded by design needs a test at the bound: fill it past the
+limit and check that it stops growing. Growth that depends on time or traffic,
+and that a test cannot reach, is measured with a run long enough to show a flat
+RSS: record the duration, the load and the resident and anonymous memory before
+and after. Report the answers in the PR. A finding here blocks the merge like a
+correctness bug, because on a validator it is one.
+
 ## Keep evidence reviewable without filling Git with run output
 
 Commit the smallest durable set that lets another person check a claim and
