@@ -31,13 +31,13 @@ std::string summary(const block::SizeLimitsConfig& limits) {
   std::string loads =
       limits.max_transaction_library_loads ? std::to_string(limits.max_transaction_library_loads.value()) : "-";
   char buffer[512];
-  std::snprintf(buffer, sizeof buffer, "%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%s,%u,%u", limits.max_msg_bits,
+  std::snprintf(buffer, sizeof buffer, "%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%s,%u,%u,%u,%u", limits.max_msg_bits,
                 limits.max_msg_cells, limits.max_library_cells, limits.max_vm_data_depth,
                 limits.ext_msg_limits.max_size, limits.ext_msg_limits.max_depth, limits.max_acc_state_cells,
                 limits.max_mc_acc_state_cells, limits.max_acc_public_libraries, limits.defer_out_queue_size_limit,
                 limits.max_msg_extra_currencies, limits.max_acc_fixed_prefix_length,
                 limits.acc_state_cells_for_storage_dict, loads.c_str(), limits.max_total_msg_bits,
-                limits.max_total_msg_cells);
+                limits.max_total_msg_cells, limits.out_msg_queue_size_hard_limit, limits.out_msg_queue_size_soft_limit);
   return buffer;
 }
 
@@ -81,7 +81,7 @@ int main() {
   // only carries accepted encodings proves nothing about what must be refused.
   assert(checked >= 8);
   assert(accepted >= 6);
-  assert(rejected >= 2);
+  assert(rejected >= 3);
   std::printf("CONFIG43_VECTORS_OK %d encodings (%d accepted, %d refused)\n", checked, accepted, rejected);
   return 0;
 }

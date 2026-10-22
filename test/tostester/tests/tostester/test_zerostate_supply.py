@@ -741,6 +741,41 @@ def test_canonical_genesis_sets_a_stake_proportional_punishment_schedule(tmp_pat
     assert required == 27_500 * NANOTOS_PER_TOS
 
 
+def _out_msg_queue_size_limits(state) -> tuple[int, int]:
+    """Decode the outbound-queue limits at the end of ConfigParam 43 v3."""
+    cs = _config_cells(state)[43].copy()
+    assert cs.load_uint(8) == 0x03, "genesis must write SizeLimitsConfig v3"
+    cs.load_bits(32 * 3 + 16 + 32 + 16)  # v1 fields
+    cs.load_bits(32 * 5 + 8 + 32)  # v2 fields
+    if cs.load_bit():
+        cs.load_uint(32)  # max_transaction_library_loads
+    cs.load_bits(32 * 2)  # max_total_msg_bits, max_total_msg_cells
+    hard, soft = cs.load_uint(32), cs.load_uint(32)
+    assert cs.remaining_bits == 0 and cs.remaining_refs == 0
+    return hard, soft
+
+
+def test_canonical_genesis_bounds_the_outbound_message_queue(tmp_path):
+    """Check the serialized queue limits, not an aggregate capacity bound.
+
+    Transactions on different accounts can share logical time, so lt_delta
+    cannot establish how many non-deferrable messages fit in the queue gap.
+    """
+    _write_pq_manifest(tmp_path)
+    subprocess.run(
+        _create_state_command(REPO / "crypto/smartcont/gen-zerostate.fif"),
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+        env=_mainnet_genesis_env(),
+    )
+    state = _load_masterchain_state(tmp_path / "zerostate.boc")
+    hard, soft = _out_msg_queue_size_limits(state)
+    assert (hard, soft) == (18000, 12000)
+    assert hard > soft > 0
+
+
 def test_canonical_genesis_script_accepts_only_four_validator_keys(tmp_path):
     keys = _write_pq_manifest(tmp_path)
 

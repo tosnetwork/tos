@@ -54,6 +54,8 @@ SIZE_V3 = SIZE_V2 + (
     "max_transaction_library_loads",
     "max_total_msg_bits",
     "max_total_msg_cells",
+    "out_msg_queue_size_hard_limit",
+    "out_msg_queue_size_soft_limit",
 )
 
 

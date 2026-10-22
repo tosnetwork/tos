@@ -316,7 +316,9 @@ td::Result<std::string> decode_config(int param, td::Ref<vm::Cell> cell, td::uin
                                               "acc_state_cells_for_storage_dict",
                                               "max_transaction_library_loads",
                                               "max_total_msg_bits",
-                                              "max_total_msg_cells"};
+                                              "max_total_msg_cells",
+                                              "out_msg_queue_size_hard_limit",
+                                              "out_msg_queue_size_soft_limit"};
       const std::vector<std::string> values = {
           std::to_string(v.max_msg_bits),
           std::to_string(v.max_msg_cells),
@@ -333,7 +335,9 @@ td::Result<std::string> decode_config(int param, td::Ref<vm::Cell> cell, td::uin
           std::to_string(v.acc_state_cells_for_storage_dict),
           v.max_transaction_library_loads ? std::to_string(v.max_transaction_library_loads.value()) : "null",
           std::to_string(v.max_total_msg_bits),
-          std::to_string(v.max_total_msg_cells)};
+          std::to_string(v.max_total_msg_cells),
+          std::to_string(v.out_msg_queue_size_hard_limit),
+          std::to_string(v.out_msg_queue_size_soft_limit)};
       auto fields = [&](std::size_t n) {
         out << "{";
         for (std::size_t i = 0; i < n; ++i) {
@@ -343,7 +347,7 @@ td::Result<std::string> decode_config(int param, td::Ref<vm::Cell> cell, td::uin
         }
         out << "}";
       };
-      auto configured = wire == 1 ? 6u : wire == 2 ? 13u : wire == 3 ? 16u : 0u;
+      auto configured = wire == 1 ? 6u : wire == 2 ? 13u : wire == 3 ? 18u : 0u;
       out << "{\"kind\":\"size_limits\",\"wire_version\":";
       if (wire)
         out << wire;
@@ -355,7 +359,7 @@ td::Result<std::string> decode_config(int param, td::Ref<vm::Cell> cell, td::uin
       else
         out << "null";
       out << ",\"effective\":";
-      fields(16);
+      fields(names.size());
       out << ",\"defaulted_fields\":[";
       for (std::size_t i = configured; i < names.size(); ++i) {
         if (i != configured)

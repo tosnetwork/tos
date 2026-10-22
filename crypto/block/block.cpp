@@ -2270,8 +2270,16 @@ bool check_old_mc_block_id(vm::AugmentedDictionary& prev_blocks_dict, const tos:
          old_blkid == blkid;
 }
 
-td::Result<Ref<vm::Cell>> get_block_transaction(Ref<vm::Cell> block_root, tos::WorkchainId workchain,
+td::Result<Ref<vm::Cell>> get_block_transaction(Ref<vm::Cell> block_root, const tos::BlockIdExt& block_id,
                                                 const tos::StdSmcAddress& addr, tos::LogicalTime lt) {
+  // Walk the header the way check_block_header_proof() does, so a Merkle proof built from this
+  // traversal also carries the previous-block and masterchain references the verifier reads.
+  {
+    std::vector<tos::BlockIdExt> prev;
+    tos::BlockIdExt mc_blkid;
+    bool after_split = false;
+    TRY_STATUS(unpack_block_prev_blk_try(block_root, block_id, prev, mc_blkid, after_split));
+  }
   block::gen::Block::Record block;
   block::gen::BlockInfo::Record info;
   if (!(tlb::unpack_cell(std::move(block_root), block) && tlb::unpack_cell(std::move(block.info), info))) {
@@ -2301,10 +2309,10 @@ td::Result<Ref<vm::Cell>> get_block_transaction(Ref<vm::Cell> block_root, tos::W
   return Ref<vm::Cell>{};
 }
 
-td::Result<Ref<vm::Cell>> get_block_transaction_try(Ref<vm::Cell> block_root, tos::WorkchainId workchain,
+td::Result<Ref<vm::Cell>> get_block_transaction_try(Ref<vm::Cell> block_root, const tos::BlockIdExt& block_id,
                                                     const tos::StdSmcAddress& addr, tos::LogicalTime lt) {
   try {
-    return get_block_transaction(std::move(block_root), workchain, addr, lt);
+    return get_block_transaction(std::move(block_root), block_id, addr, lt);
   } catch (vm::VmError& err) {
     return td::Status::Error(std::string{"error while extracting transaction from block : "} + err.get_msg());
   } catch (vm::VmVirtError& err) {

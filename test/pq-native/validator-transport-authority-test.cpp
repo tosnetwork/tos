@@ -7,6 +7,7 @@
 #include "keys/encryptor.h"
 #include "keys/keys.hpp"
 #include "overlay/overlays.h"
+#include "validator/certificate-sender-gate.h"
 #include "validator/validator-transport-authority.h"
 
 namespace {
@@ -167,5 +168,55 @@ int main() {
   require(!issue_certificate(roots, local_validator_adnl_ids, transport_key, recipient_id).has_value(),
           "node without a local transport key issued a certificate");
   std::cout << "REGISTRY_LIFECYCLE: startup/add/delete/expiry/overlap/no-key all enforced\n";
+
+  // Pushed certificates are parsed only when sent by a validator transport identity of the
+  // previous, current or next set; a validator_id, consensus key or any other ADNL id is dropped.
+  tos::ValidatorDescr next_validator{
+      tos::ValidatorId{fill(0x43)}, 1,  tos::ConsensusKeyId{fill(0x53)},
+      std::string(1312, '\x33'),    10, other_validator_key.compute_short_id().bits256_value()};
+  std::set<tos::adnl::AdnlNodeIdShort> senders;
+  tos::validator::add_validator_transport_senders(senders, {before});
+  tos::validator::add_validator_transport_senders(senders, {next_validator});
+  require(senders == std::set{transport_id, tos::adnl::AdnlNodeIdShort{other_validator_key.compute_short_id()}},
+          "validator sender set is not the transport identities of the given sets");
+  auto pushed = [&](const tos::overlay::OverlayMemberCertificate &cert) {
+    return tos::create_serialize_tl_object<tos::tos_api::tosNode_newFastSyncMemberCertificate>(
+        recipient_id.bits256_value(), cert.tl());
+  };
+  // The issuer sends from the identity it signs with, so that identity must pass the gate.
+  require(certificate->issued_by().compute_short_id() == transport_id.pubkey_hash(),
+          "certificate is not signed by the identity it is sent from");
+  auto from_validator =
+      tos::validator::accept_pushed_fast_sync_certificate(transport_id, pushed(*certificate), senders);
+  require(from_validator.is_ok(), "certificate pushed by a validator transport identity was dropped");
+  require(from_validator.ok_ref().check_signature(recipient_id).is_ok() && authorized(roots, from_validator.ok_ref()),
+          "certificate accepted from a validator did not survive the import checks");
+  for (auto src : {recipient_id, tos::adnl::AdnlNodeIdShort{permanent_key.compute_short_id()},
+                   tos::adnl::AdnlNodeIdShort{validator_id.value}, tos::adnl::AdnlNodeIdShort{key_id_before.value}}) {
+    auto dropped = tos::validator::accept_pushed_fast_sync_certificate(src, pushed(*certificate), senders);
+    require(dropped.is_error() && dropped.error().message().str().find("is not a validator") != std::string::npos,
+            "certificate pushed by a non-validator ADNL id was not dropped at the sender check");
+  }
+  require(
+      tos::validator::accept_pushed_fast_sync_certificate(transport_id, td::BufferSlice("junk"), senders).is_error(),
+      "malformed certificate message from a validator was accepted");
+  require(tos::validator::accept_pushed_fast_sync_certificate(transport_id,
+                                                              pushed(tos::overlay::OverlayMemberCertificate()), senders)
+              .is_error(),
+          "empty certificate from a validator was accepted");
+  // Once the sets no longer list a validator, its pushes are dropped too.
+  std::set<tos::adnl::AdnlNodeIdShort> rotated;
+  tos::validator::add_validator_transport_senders(rotated, {after_adnl_rotation});
+  require(tos::validator::accept_pushed_fast_sync_certificate(transport_id, pushed(*certificate), rotated).is_error(),
+          "certificate from a former validator transport identity was accepted after rotation");
+
+  const std::set<tos::adnl::AdnlNodeIdShort> configured{recipient_id};
+  require(tos::validator::shard_overlay_certificate_sender_allowed(transport_id, true, configured, senders) &&
+              !tos::validator::shard_overlay_certificate_sender_allowed(recipient_id, true, configured, senders),
+          "accept-from-any-validator mode did not require a validator transport identity");
+  require(tos::validator::shard_overlay_certificate_sender_allowed(recipient_id, false, configured, senders) &&
+              !tos::validator::shard_overlay_certificate_sender_allowed(transport_id, false, configured, senders),
+          "configured-sender mode did not require a configured sender");
+  std::cout << "CERTIFICATE_SENDER_GATE: only validator transport identities reach the import checks\n";
   return 0;
 }

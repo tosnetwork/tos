@@ -1788,6 +1788,95 @@ TEST(TosDb, BocDeserializerSimpleThreads) {
   test_boc_deserializer_threads<StaticBagOfCellsDbLazy>();
 }
 
+namespace {
+
+// A bag of cells whose root loads, but whose four children each fail to load: every child
+// refers back to cell 0. The children head long chains, so the serializer stores their hashes
+// and the root holds them as lazy cells.
+std::string boc_with_unloadable_children() {
+  std::vector<Ref<Cell>> children;
+  for (int i = 0; i < 4; i++) {
+    CellBuilder leaf;
+    leaf.store_long(i, 32);
+    Ref<Cell> chain = leaf.finalize();
+    for (int j = 0; j < 300; j++) {
+      CellBuilder link;
+      link.store_long(i * 1000 + j, 32);
+      link.store_ref(chain);
+      chain = link.finalize();
+    }
+    children.push_back(chain);
+  }
+  CellBuilder root;
+  for (auto &child : children) {
+    root.store_ref(child);
+  }
+  auto serialized =
+      std_boc_serialize(root.finalize(), BagOfCells::Mode::WithIndex | BagOfCells::Mode::WithIntHashes).move_as_ok();
+  std::string data = serialized.as_slice().str();
+
+  BagOfCells::Info info;
+  CHECK(info.parse_serialized_header(td::Slice(data)) > 0);
+  CHECK(info.has_index && !info.has_cache_bits);
+  auto *bytes = reinterpret_cast<unsigned char *>(data.data());
+  auto cell_at = [&](int idx, CellSerializationInfo &cell_info) {
+    auto begin = idx == 0 ? 0 : info.read_offset(bytes + info.index_offset + (idx - 1) * info.offset_byte_size);
+    auto end = info.read_offset(bytes + info.index_offset + idx * info.offset_byte_size);
+    td::Slice cell(bytes + info.data_offset + begin, bytes + info.data_offset + end);
+    CHECK(cell_info.init(cell, info.ref_byte_size).is_ok());
+    return bytes + info.data_offset + begin;
+  };
+  CellSerializationInfo root_info;
+  auto *root_bytes = cell_at(0, root_info);
+  CHECK(root_info.refs_cnt == 4);
+  for (int k = 0; k < 4; k++) {
+    auto child_idx = static_cast<int>(info.read_ref(root_bytes + root_info.refs_offset + k * info.ref_byte_size));
+    CellSerializationInfo child_info;
+    auto *child = cell_at(child_idx, child_info);
+    CHECK(child_info.with_hashes && child_info.refs_cnt == 1);
+    info.write_ref(child + child_info.refs_offset, 0);
+  }
+  return data;
+}
+
+}  // namespace
+
+// Loads that fail at the same time on several threads each report an error, and the first
+// error stays the bag's status; none of them stops the process.
+TEST(TosDb, BocLazyConcurrentLoadErrors) {
+  auto data = boc_with_unloadable_children();
+  for (int round = 0; round < 500; round++) {
+    auto db = StaticBagOfCellsDbLazy::create(data).move_as_ok();
+    auto root = db->get_root_cell(0).move_as_ok();
+    std::vector<Ref<Cell>> children;
+    {
+      CellSlice cs(NoVm(), root);
+      for (unsigned i = 0; i < cs.size_refs(); i++) {
+        children.push_back(cs.prefetch_ref(i));
+      }
+    }
+    ASSERT_EQ(children.size(), 4u);
+    std::vector<td::Status> results(children.size());
+    std::barrier start(static_cast<std::ptrdiff_t>(children.size()));
+    std::vector<std::thread> threads;
+    for (size_t i = 0; i < children.size(); i++) {
+      threads.emplace_back([&, i] {
+        start.arrive_and_wait();
+        auto loaded = children[i]->load_cell();
+        results[i] = loaded.is_ok() ? td::Status::OK() : loaded.move_as_error();
+      });
+    }
+    for (auto &thread : threads) {
+      thread.join();
+    }
+    for (auto &result : results) {
+      ASSERT_TRUE(result.is_error());
+    }
+    // The bag keeps reporting an error afterwards.
+    ASSERT_TRUE(db->get_root_count().is_error());
+  }
+}
+
 class RandomTree {
  public:
   RandomTree(size_t size, td::Random::Xorshift128plus rnd) : rnd_(rnd) {

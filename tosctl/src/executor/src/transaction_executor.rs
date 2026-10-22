@@ -107,6 +107,10 @@ mod tests_with_real_data;
 #[path = "tests/test_message_size_limits.rs"]
 mod tests_message_size_limits;
 
+#[cfg(test)]
+#[path = "tests/test_precompiled_external.rs"]
+mod tests_precompiled_external;
+
 #[derive(Clone, Default)]
 pub struct ExecuteParams {
     pub state_libs: HashmapE,
@@ -391,7 +395,13 @@ pub trait TransactionExecutor {
         let precompiled = self.config().raw_config().precompiled_contracts_list()?;
         let precompiled = if let Some(list) = precompiled { list.get(&code_hash)? } else { None };
         if let Some(precompiled) = precompiled.as_ref() {
-            if gas.get_gas_limit() < precompiled.gas_usage as i64 {
+            // An external message has no gas limit until the contract accepts
+            // it; what it can pay for is gas_max.
+            let available = if is_external { gas.get_gas_max() } else { gas.get_gas_limit() };
+            let affordable = i64::try_from(precompiled.gas_usage)
+                .map(|usage| usage <= available)
+                .unwrap_or(false);
+            if !affordable {
                 log::debug!(target: "executor", "skip computing phase no gas for precompiled contract");
                 return Ok((TrComputePhase::skipped(ComputeSkipReason::NoGas), None, None));
             }
@@ -406,8 +416,11 @@ pub trait TransactionExecutor {
             let gas_limit =
                 if is_special { gas_config.special_gas_limit } else { gas_config.gas_limit };
             let gas_credit = if gas.get_gas_credit() != 0 { gas_limit } else { 0 };
+            // An unaccepted external runs on credit alone, as in an ordinary
+            // compute phase.
+            let initial_limit = if gas_credit != 0 { 0 } else { gas_limit };
             gas = Gas::new(
-                gas_limit as i64,
+                initial_limit as i64,
                 gas_credit as i64,
                 gas_limit as i64,
                 gas_config.get_real_gas_price() as i64,
@@ -468,7 +481,10 @@ pub trait TransactionExecutor {
 
         // calc gas fees
         let gas = vm.get_gas();
-        let credit = gas.get_gas_credit() as u32;
+        // The fallback for a precompiled contract uses the full configured
+        // gas limit as credit, which can exceed the serialized credit width.
+        // Acceptance depends on the complete VM credit being zero.
+        let credit = gas.get_gas_credit();
         //for external messages gas will not be exacted if VM throws the exception and gas_credit != 0
         if let Some(precompiled) = precompiled.as_ref() {
             vm_phase.gas_used = precompiled.gas_usage.try_into()?;

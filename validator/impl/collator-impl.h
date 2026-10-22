@@ -45,6 +45,8 @@ namespace validator {
 using td::Ref;
 
 class Collator final : public td::actor::Actor {
+  friend class CollatorQueueLimitsTestAccess;
+
  public:
   static constexpr int supported_version() {
     return SUPPORTED_VERSION;
@@ -215,6 +217,7 @@ class Collator final : public td::actor::Actor {
   td::CancellationTokenSource ext_msg_cancellation_;
 
   std::priority_queue<NewOutMsg, std::vector<NewOutMsg>, std::greater<NewOutMsg>> new_msgs;
+  size_t new_msgs_from_dispatch = 0;  // messages in new_msgs taken from the dispatch queue
   std::pair<tos::LogicalTime, tos::Bits256> last_proc_int_msg_, first_unproc_int_msg_;
   block::tlb::Aug_InMsgDescr aug_InMsgDescr{0};
   block::tlb::Aug_OutMsgDescr aug_OutMsgDescr{0};
@@ -223,6 +226,7 @@ class Collator final : public td::actor::Actor {
   std::map<StdSmcAddress, size_t> unprocessed_deferred_messages_;  // number of messages from dispatch queue in new_msgs
   td::uint64 out_msg_queue_size_ = 0;
   td::uint64 old_out_msg_queue_size_ = 0;
+  td::uint64 out_msg_queue_size_hard_limit_ = std::numeric_limits<td::uint64>::max();
   bool have_out_msg_queue_size_in_state_ = false;
   std::unique_ptr<vm::Dictionary> ihr_pending;
   std::shared_ptr<block::MsgProcessedUptoCollection> processed_upto_, sibling_processed_upto_;
@@ -340,7 +344,7 @@ class Collator final : public td::actor::Actor {
   bool check_this_shard_mc_info();
   bool request_neighbor_msg_queues();
   bool request_out_msg_queue_size();
-  void update_max_lt(tos::LogicalTime lt);
+  bool update_max_lt(tos::LogicalTime lt);
   bool is_masterchain() const {
     return shard_.is_masterchain();
   }
@@ -359,12 +363,13 @@ class Collator final : public td::actor::Actor {
   td::actor::Task<> wait_for_external_message(td::Timestamp timeout);
 
   void register_new_msg(block::NewOutMsg msg);
-  void register_new_msgs(block::transaction::Transaction& trans, td::optional<block::MsgMetadata> msg_metadata);
+  bool register_new_msgs(block::transaction::Transaction& trans, td::optional<block::MsgMetadata> msg_metadata);
   bool process_new_messages(bool& enqueue_only);
   int process_one_new_message(block::NewOutMsg msg, bool enqueue_only = false, Ref<vm::Cell>* is_special = nullptr);
   bool process_inbound_internal_messages();
   bool precheck_inbound_message(Ref<vm::CellSlice> msg, tos::LogicalTime lt);
-  bool process_inbound_message(Ref<vm::CellSlice> msg, tos::LogicalTime lt, td::ConstBitPtr key, int src_nb_idx);
+  bool process_inbound_message(Ref<vm::CellSlice> msg, tos::LogicalTime lt, td::ConstBitPtr key, int src_nb_idx,
+                               bool& postponed);
   td::actor::Task<> process_external_and_new_messages();
   td::actor::Task<bool> process_inbound_external_messages();
   int process_external_message(Ref<vm::Cell> msg);

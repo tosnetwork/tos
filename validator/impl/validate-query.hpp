@@ -104,6 +104,35 @@ inline ErrorCtxSet ErrorCtx::set_guard(std::vector<std::string> str_list) {
 }
 
 /*
+ * Block rules that ValidateQuery checks without needing any state.
+ * They are free functions so that tests can check them directly.
+ */
+namespace validate_rules {
+
+// True if start_lt lies on the logical-time grid that the collator aligns every block to.
+bool is_block_start_lt_aligned(LogicalTime start_lt);
+
+// True if split/merge information that ends at fsm_utime_end has expired at time now. The collator clears it from
+// that moment on, so a block that still carries it is invalid.
+bool is_fsm_expired(UnixTime now, UnixTime fsm_utime_end);
+
+// OutMsg tags as normalized in ValidateQuery::precheck_one_message_queue_update.
+enum : int {
+  out_msg_tag_new = 1,          // msg_export_new
+  out_msg_tag_tr = 3,           // msg_export_tr
+  out_msg_tag_tr_req = 7,       // msg_export_tr_req
+  out_msg_tag_deferred_tr = 9,  // msg_export_deferred_tr
+};
+
+// Checks the enqueued_lt of a message added to the OutMsgQueue against the emitted_lt of its envelope and the
+// start_lt of the block. The collator fixes enqueued_lt for every tag that enqueues, so any other value means the
+// message was reordered or delayed.
+td::Status check_enqueued_lt(int out_msg_tag, LogicalTime emitted_lt, LogicalTime enqueued_lt,
+                             LogicalTime block_start_lt);
+
+}  // namespace validate_rules
+
+/*
  *
  * must write candidate to disk, if accepted
  * can reject block only if it is invalid (i.e. in case of
@@ -272,6 +301,9 @@ class ValidateQuery : public td::actor::Actor {
 
   td::uint64 processed_account_dispatch_queues_ = 0;
   bool have_unprocessed_account_dispatch_queue_ = false;
+  td::uint64 out_msg_queue_size_hard_limit_ = std::numeric_limits<td::uint64>::max();
+  td::uint64 out_msg_queue_size_soft_limit_ = std::numeric_limits<td::uint64>::max();
+  bool out_msg_queue_size_soft_limit_exceeded_ = false;
 
   td::PerfWarningTimer perf_timer_;
   td::PerfLog perf_log_;
@@ -370,6 +402,15 @@ class ValidateQuery : public td::actor::Actor {
   bool check_utime_lt();
   bool prepare_out_msg_queue_size();
   void got_out_queue_size(size_t i, td::Result<td::uint64> res, td::PerfLogAction token);
+  void init_msg_queue_size_limits();
+  // The previous queue size when the previous state records it, which is what the
+  // queue size limits are measured against.
+  std::optional<td::uint64> old_out_msg_queue_size_in_state() const {
+    if (ps_.out_msg_queue_size_) {
+      return old_out_msg_queue_size_;
+    }
+    return std::nullopt;
+  }
   void verified_shard_blocks(td::Status S, td::PerfLogAction token);
 
   bool fix_one_processed_upto(block::MsgProcessedUpto& proc, tos::ShardIdFull owner, bool allow_cur = false);
@@ -418,6 +459,7 @@ class ValidateQuery : public td::actor::Actor {
       block::CurrencyCollection total_burned{0};
       std::vector<std::tuple<Bits256, Bits256, bool>> lib_publishers{};
       bool defer_all_messages = false;
+      bool always_allow_defer = false;
       std::vector<std::pair<td::Ref<vm::Cell>, td::uint32>> storage_stat_cache_update{};
       ValidationStats::WorkTimeStats work_time{};
 

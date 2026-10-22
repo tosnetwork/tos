@@ -1352,3 +1352,263 @@ fn test_cpp_compat_generic_api() {
         assert_eq!(recompressed.as_slice(), *compressed, "Test file {} recompression mismatch", i);
     }
 }
+
+// ============================================
+// Depth-balance elision: per-edge accounting of repeated right cells
+// ============================================
+//
+// A cell that appears more than once in the right tree of a MerkleUpdate is stored once in
+// the graph, but its balance diff counts once per edge. The encoder must sum it per edge, as
+// the decoder does, or it elides a parent the decoder cannot rebuild (or misses one it can).
+
+mod per_edge_balance {
+    use super::*;
+
+    fn plain(tag: u32, refs: &[Cell]) -> Cell {
+        let mut b = BuilderData::new();
+        b.append_u32(tag).unwrap();
+        for r in refs {
+            b.checked_append_reference(r.clone()).unwrap();
+        }
+        b.into_cell().unwrap()
+    }
+
+    fn balance(coins: u128, refs: &[Cell]) -> Cell {
+        let mut b = BuilderData::new();
+        write_depth_balance_coins(&mut b, coins).unwrap();
+        for r in refs {
+            b.checked_append_reference(r.clone()).unwrap();
+        }
+        b.into_cell().unwrap()
+    }
+
+    fn noncanonical_balance(coins: u8, refs: &[Cell]) -> Cell {
+        let mut b = BuilderData::new();
+        b.append_bits(0, 7).unwrap(); // Empty label and zero split depth.
+        b.append_bits(2, 4).unwrap(); // A one-byte value encoded in two bytes.
+        b.append_u16(u16::from(coins)).unwrap();
+        b.append_bit_zero().unwrap(); // No extra currencies.
+        for r in refs {
+            b.checked_append_reference(r.clone()).unwrap();
+        }
+        b.into_cell().unwrap()
+    }
+
+    fn merkle_update(old_state: Cell, new_state: Cell) -> Cell {
+        let mut b = BuilderData::new();
+        b.set_type(CellType::MerkleUpdate);
+        b.append_u8(u8::from(CellType::MerkleUpdate)).unwrap();
+        old_state.hash(0).write_to(&mut b).unwrap();
+        new_state.hash(0).write_to(&mut b).unwrap();
+        b.append_u16(old_state.depth(0)).unwrap();
+        b.append_u16(new_state.depth(0)).unwrap();
+        b.checked_append_reference(old_state).unwrap();
+        b.checked_append_reference(new_state).unwrap();
+        b.into_cell().unwrap()
+    }
+
+    // A block-shaped root whose third reference is a MerkleUpdate carrying the complete old
+    // and new trees, so the pairing under test does not depend on pruning.
+    fn block_with_state_update(old_payload: Cell, new_payload: Cell) -> Cell {
+        let stable = plain(0xc0ffee00, &[plain(0x70000000, &[])]);
+        let old_state = plain(0x51000000, &[old_payload, stable.clone()]);
+        let new_state = plain(0x51000000, &[new_payload, stable]);
+        let mu = merkle_update(old_state, new_state);
+        plain(0x11ef55aa, &[plain(1, &[]), plain(2, &[]), mu, plain(3, &[])])
+    }
+
+    // Counts cell type 9 (data elided, rebuilt from the paired left cell) in the metadata.
+    fn count_elision_markers(compressed: &[u8]) -> usize {
+        assert_eq!(compressed[0], CompressionAlgorithm::ImprovedStructureLZ4 as u8);
+        let size = u32::from_be_bytes(compressed[1..5].try_into().unwrap()) as usize;
+        let inner = lz4::block::decompress(&compressed[5..], Some(size as i32)).unwrap();
+        let read_u32 =
+            |at: usize| u32::from_be_bytes(inner[at..at + 4].try_into().unwrap()) as usize;
+        let root_count = read_u32(0);
+        let mut offset = 4 + root_count * 4;
+        let node_count = read_u32(offset);
+        offset += 4;
+        let mut markers = 0;
+        for _ in 0..node_count {
+            let cell_type = inner[offset] >> 4;
+            offset += 1;
+            if cell_type == 9 {
+                markers += 1;
+            } else if cell_type <= 1 {
+                offset += 1;
+            }
+        }
+        markers
+    }
+
+    fn assert_round_trip(scenario: &str, block: &Cell, expected_elisions: usize) {
+        let compressed =
+            boc_compress(vec![block.clone()], CompressionAlgorithm::ImprovedStructureLZ4).unwrap();
+        let markers = count_elision_markers(&compressed);
+        let decoded = boc_decompress(&compressed, 20 << 20);
+        let ok = matches!(&decoded, Ok(roots) if roots.len() == 1 && roots[0].repr_hash() == block.repr_hash());
+        assert!(
+            ok && markers == expected_elisions,
+            "{scenario}: round_trip={ok} elisions={markers} expected={expected_elisions} decoded={:?}",
+            decoded.err()
+        );
+    }
+
+    #[test]
+    fn duplicate_edges_use_full_multiplicity() {
+        // (name, child_old, child_new, parent_old, parent_new, multiplicity, expected_elisions)
+        let cases: [(&str, u128, u128, u128, u128, usize, usize); 5] = [
+            ("two edges, false positive elision", 0, 5, 100, 105, 2, 0),
+            ("two edges, valid positive elision", 0, 5, 100, 110, 2, 1),
+            ("two edges, false negative elision", 10, 5, 100, 95, 2, 0),
+            ("two edges, valid negative elision across a byte boundary", 10, 5, 260, 250, 2, 1),
+            ("maximum four-edge multiplicity", 0, 5, 100, 120, 4, 1),
+        ];
+        for (name, child_old, child_new, parent_old, parent_new, multiplicity, expected) in cases {
+            let tail = plain(0x77000000, &[]);
+            let old_child = balance(child_old, &[tail.clone()]);
+            let new_child = balance(child_new, &[tail]);
+            let old_parent = balance(parent_old, &vec![old_child; multiplicity]);
+            let new_parent = balance(parent_new, &vec![new_child; multiplicity]);
+            assert_round_trip(name, &block_with_state_update(old_parent, new_parent), expected);
+        }
+    }
+
+    #[test]
+    fn noncanonical_balance_encoding_is_not_elided() {
+        let tail = plain(0x7700000c, &[]);
+        let old_child = balance(0, &[tail.clone()]);
+        let new_child = balance(5, &[tail]);
+        // The corrected per-edge sum is ten. These parent payloads have that
+        // numerical delta, but reconstructing them canonically changes their bits.
+        let old_parent = noncanonical_balance(100, &[old_child.clone(), old_child]);
+        let new_parent = noncanonical_balance(110, &[new_child.clone(), new_child]);
+        assert_round_trip(
+            "noncanonical parent with duplicate child edges",
+            &block_with_state_update(old_parent, new_parent),
+            0,
+        );
+    }
+
+    fn mixed_balance_block(parent_new: u128) -> Cell {
+        let tail = plain(0x77000011, &[]);
+        let old = balance(100, &[noncanonical_balance(100, &[tail.clone()])]);
+        let new = balance(parent_new, &[balance(105, &[tail])]);
+        plain(0x11ef55aa, &[plain(1, &[]), plain(2, &[]), merkle_update(old, new), plain(3, &[])])
+    }
+
+    #[test]
+    fn native_noncanonical_child_uses_canonical_deltas() {
+        // Native output ignores the noncanonical child's delta and elides the
+        // unchanged parent balance. A numeric-only decoder changes its hash.
+        let encoded = include_bytes!("test_data/native_noncanonical_child_ct9.boc");
+        assert_eq!(count_elision_markers(encoded), 1);
+        let expected = mixed_balance_block(100);
+        assert_eq!(
+            expected.repr_hash().to_hex_string(),
+            "c12f6f530c1a82d4f40c258b24b43f955940ec6e82794133dc4c17e3cad06637"
+        );
+        let decoded = boc_decompress(encoded, 20 << 20).expect("canonical child delta decodes");
+        assert_eq!(decoded.len(), 1);
+        assert_eq!(decoded[0].repr_hash(), expected.repr_hash());
+        // Re-encoding makes the same elision as the native encoder.
+        assert_round_trip("re-encoded native child delta", &decoded[0], 1);
+    }
+
+    #[test]
+    fn mixed_balance_encodings_do_not_change_parent_elision() {
+        for noncanonical_left in [false, true] {
+            // As in the native codec, a noncanonical child has no balance and
+            // contributes no delta, and it is never elided itself. The canonical
+            // parent is elided exactly when its own balance is unchanged.
+            for (child_old, child_new, parent_new, expected_elisions) in [
+                (100, 105, 100, 1),
+                (100, 105, 105, 0),
+                (105, 100, 100, 1),
+                (105, 100, 95, 0),
+                (100, 100, 100, 1),
+            ] {
+                let tail = plain(0x77000011, &[]);
+                let old_child = if noncanonical_left {
+                    noncanonical_balance(child_old, &[tail.clone()])
+                } else {
+                    balance(u128::from(child_old), &[tail.clone()])
+                };
+                let new_child = if noncanonical_left {
+                    balance(u128::from(child_new), &[tail])
+                } else {
+                    noncanonical_balance(child_new, &[tail])
+                };
+                for multiplicity in [1, 2, 4] {
+                    let parent_new = 100 + (parent_new as i128 - 100) * multiplicity as i128;
+                    let block = block_with_state_update(
+                        balance(100, &vec![old_child.clone(); multiplicity]),
+                        balance(parent_new as u128, &vec![new_child.clone(); multiplicity]),
+                    );
+                    assert_round_trip("mixed balance encodings", &block, expected_elisions);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn only_the_block_root_merkle_update_is_elided() {
+        let tail = plain(0x77000010, &[]);
+        let old_child = balance(0, &[tail.clone()]);
+        let new_child = balance(5, &[tail]);
+        let block = block_with_state_update(
+            balance(100, &[old_child.clone(), old_child]),
+            balance(110, &[new_child.clone(), new_child]),
+        );
+        assert_round_trip("block root third reference", &block, 1);
+        let mu = block.reference(2).unwrap();
+        // The native wire decoder does not pair these update subtrees. A type-9
+        // marker here would make otherwise valid encoded BOCs undecodable.
+        assert_round_trip("standalone update root", &mu, 0);
+        assert_round_trip("update outside the third reference", &plain(0x71000000, &[mu]), 0);
+    }
+
+    #[test]
+    fn shared_right_cell_uses_each_left_occurrence() {
+        let tail = plain(0x77000003, &[]);
+        let old_child1 = balance(0, &[tail.clone()]);
+        let old_child2 = balance(2, &[tail.clone()]);
+        let new_shared = balance(5, &[tail]);
+        // Edge deltas are 5 and 3: a parent delta of 5 must stay explicit, 8 is elided.
+        let old_parent = balance(100, &[old_child1.clone(), old_child2.clone()]);
+        let false_block = block_with_state_update(
+            old_parent.clone(),
+            balance(105, &[new_shared.clone(), new_shared.clone()]),
+        );
+        let valid_block =
+            block_with_state_update(old_parent, balance(108, &[new_shared.clone(), new_shared]));
+        assert_round_trip("different-left false-elision guard", &false_block, 0);
+        assert_round_trip("different-left genuine elision", &valid_block, 1);
+    }
+
+    #[test]
+    fn unpaired_duplicate_right_edge_does_not_contribute() {
+        let tail = plain(0x77000006, &[]);
+        let old_child = balance(0, &[tail.clone()]);
+        let new_child = balance(5, &[tail]);
+        let block = block_with_state_update(
+            balance(100, &[old_child]),
+            balance(105, &[new_child.clone(), new_child]),
+        );
+        assert_round_trip("duplicate right edge without a left partner", &block, 1);
+    }
+
+    #[test]
+    fn nested_elided_shared_child_counts_every_edge() {
+        let tail = plain(0x77000007, &[]);
+        let old_grandchild = balance(0, &[tail.clone()]);
+        let new_grandchild = balance(5, &[tail]);
+        let old_child = balance(10, &[old_grandchild]);
+        let new_child = balance(15, &[new_grandchild]);
+        let block = block_with_state_update(
+            balance(100, &[old_child.clone(), old_child]),
+            balance(110, &[new_child.clone(), new_child]),
+        );
+        assert_round_trip("nested elision with a shared nonzero-delta child", &block, 2);
+    }
+}

@@ -28,6 +28,15 @@ on:
       - 'http/**'
       - 'rldp-http-proxy/**'
       - 'tdactor/**'
+      - 'validator/impl/collator*'
+      - 'validator/impl/out-msg-queue-limits.h'
+      - 'validator/impl/validate-query*'
+      - 'validator/fabric.h'
+      - 'test/test-out-msg-queue-limits.cpp'
+      - 'test/test-validate-query-rules.cpp'
+      - 'crypto/test/test-boc-compression.cpp'
+      - 'crypto/vm/boc-compression.*'
+      - 'scripts/run-boc-compression-tests.py'
       - 'test/test-adnl-peer-pair-cap.cpp'
       - 'test/test-adnl-peer-pair-hardening.cpp'
       - 'test/test-overlay-broadcast-capacity.cpp'
@@ -138,3 +147,13 @@ jobs:
     - name: Run network-safety tests under AddressSanitizer
       working-directory: build-asan
       run: ctest -L network-safety --no-tests=error --output-on-failure
+
+    - name: Build and run queue admission and codec regressions under AddressSanitizer
+      env:
+        FUNC_BIN: ${{ github.workspace }}/build-asan/crypto/func
+        FIFT_BIN: ${{ github.workspace }}/build-asan/crypto/fift
+      run: |
+        cmake --build build-asan --target test-out-msg-queue-limits test-validate-query-rules test-db -j2
+        python3 scripts/check-ctest-inventory.py --build-dir build-asan \
+          --label queue-codec --exact test-out-msg-queue-limits test-validate-query-rules boc-compression
+        ctest --test-dir build-asan --output-on-failure --no-tests=error -L queue-codec

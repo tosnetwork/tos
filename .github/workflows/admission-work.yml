@@ -13,6 +13,10 @@ on:
       - 'tl/generate/scheme/tos_api.tl'
       - 'test/test-ext-message-*.cpp'
       - 'test/test-validator-options.cpp'
+      - 'test/test-out-msg-queue-limits.cpp'
+      - 'test/test-validate-query-rules.cpp'
+      - 'crypto/test/test-boc-compression.cpp'
+      - 'scripts/run-boc-compression-tests.py'
       - 'test/pq-native/data/c04-pq-genesis.boc'
       - 'test/wallet-quantum/post-accept-probe.boc'
       - 'test/wallet-quantum/post-accept-probe.fc'
@@ -69,6 +73,13 @@ jobs:
           build-admission/test-ext-message-expiry 2>&1 | tee artifacts/admission/expiry.log
           build-admission/test-ext-message-manager 2>&1 | tee artifacts/admission/manager.log
           python3 scripts/check-ext-message-work-cli.py --engine build-admission/validator-engine/validator-engine --output-dir artifacts/admission/cli
+      - name: Execute queue admission and codec regressions on both architectures
+        run: |
+          cmake --build build-admission --target test-out-msg-queue-limits test-validate-query-rules test-db -j2
+          python3 scripts/check-ctest-inventory.py --build-dir build-admission \
+            --label queue-codec --exact test-out-msg-queue-limits test-validate-query-rules boc-compression
+          ctest --test-dir build-admission --output-on-failure --no-tests=error -L queue-codec \
+            2>&1 | tee artifacts/admission/queue-codec.log
       - name: Configuration deletion controls
         run: |
           for boundary in setter parser-validation parser-canonical; do

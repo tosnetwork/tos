@@ -532,6 +532,8 @@ jobs:
         run: cargo test --manifest-path tosctl/src/Cargo.toml -p secrets-vault --lib --locked
       - name: Compile every Rust workspace test target
         run: cargo check --manifest-path tosctl/src/Cargo.toml --workspace --tests --locked
+      - name: Run Rust BOC compression regressions and verify the test selection
+        run: python3 scripts/run-boc-compression-tests.py --rust
       - name: Run command tests including backup, secret input and wallet confirmation
         run: cargo test --manifest-path tosctl/src/Cargo.toml -p commands --lib --locked --no-default-features
       - name: Exercise the real vault CLI secret import boundary

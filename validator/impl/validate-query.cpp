@@ -39,6 +39,7 @@
 #include "collator-impl.h"
 #include "dispatch-progress.h"
 #include "fabric.h"
+#include "out-msg-queue-limits.h"
 #include "storage-stat-cache.hpp"
 #include "top-shard-descr.hpp"
 #include "validate-query.hpp"
@@ -80,6 +81,48 @@ std::string ErrorCtx::as_string() const {
   }
   return a;
 }
+
+namespace validate_rules {
+
+bool is_block_start_lt_aligned(LogicalTime start_lt) {
+  return start_lt % block::Config::get_lt_align() == 0;
+}
+
+bool is_fsm_expired(UnixTime now, UnixTime fsm_utime_end) {
+  return now >= fsm_utime_end;
+}
+
+td::Status check_enqueued_lt(int out_msg_tag, LogicalTime emitted_lt, LogicalTime enqueued_lt,
+                             LogicalTime block_start_lt) {
+  if (emitted_lt > enqueued_lt) {
+    return td::Status::Error(PSTRING() << "has emitted_lt " << emitted_lt << " greater than enqueued_lt "
+                                       << enqueued_lt);
+  }
+  switch (out_msg_tag) {
+    case out_msg_tag_new:
+    case out_msg_tag_deferred_tr:
+      // A new or deferred message enters the queue at the logical time it was emitted.
+      if (emitted_lt != enqueued_lt) {
+        return td::Status::Error(PSTRING()
+                                 << "has emitted_lt " << emitted_lt << " not equal to enqueued_lt " << enqueued_lt);
+      }
+      break;
+    case out_msg_tag_tr:
+    case out_msg_tag_tr_req:
+      // A transit message enters the queue at the start of the block that relays it.
+      if (enqueued_lt != block_start_lt) {
+        return td::Status::Error(PSTRING() << "has enqueued_lt " << enqueued_lt << " not equal to block start_lt "
+                                           << block_start_lt);
+      }
+      break;
+    default:
+      // Other tags do not enqueue a message; precheck_one_message_queue_update rejects them before this point.
+      break;
+  }
+  return td::Status::OK();
+}
+
+}  // namespace validate_rules
 
 /**
  * Constructs a ValidateQuery object.
@@ -590,6 +633,9 @@ bool ValidateQuery::init_parse() {
   }
   if (start_lt_ >= end_lt_) {
     return reject_query("block has start_lt greater than or equal to end_lt");
+  }
+  if (!validate_rules::is_block_start_lt_aligned(start_lt_)) {
+    return reject_query(PSTRING() << "start_lt " << start_lt_ << " is not aligned");
   }
   if (shard.is_masterchain() && (info.after_merge | info.before_split | info.after_split)) {
     return reject_query("block header declares split/merge for a masterchain block");
@@ -2219,7 +2265,7 @@ bool ValidateQuery::check_one_shard(const block::McShardHash& info, const block:
                           " has been arbitrarily changed without a good reason");
     }
     fsm_inherited = !prev->is_fsm_none() && prev->fsm_equal(info);
-    if (fsm_inherited && (now_ > prev->fsm_utime_end() || info.before_split_)) {
+    if (fsm_inherited && (validate_rules::is_fsm_expired(now_, prev->fsm_utime_end()) || info.before_split_)) {
       return reject_query(
           PSTRING() << "future split/merge information for shard " << shard.to_str()
                     << "has been carried on to the new shard configuration, but it is either expired (expire time "
@@ -2618,6 +2664,19 @@ void ValidateQuery::got_out_queue_size(size_t i, td::Result<td::uint64> res, td:
   LOG(DEBUG) << "got outbound queue size from prev block #" << i << ": " << size;
   old_out_msg_queue_size_ += size;
   try_validate();
+}
+
+/**
+ * Initializes hard and soft limits for out msg queue size
+ */
+void ValidateQuery::init_msg_queue_size_limits() {
+  out_msg_queue_size_hard_limit_ = action_phase_cfg_.size_limits.out_msg_queue_size_hard_limit;
+  out_msg_queue_size_soft_limit_ = action_phase_cfg_.size_limits.out_msg_queue_size_soft_limit;
+  if (out_msg_queue_soft_limit_exceeded(old_out_msg_queue_size_in_state(), out_msg_queue_size_soft_limit_)) {
+    out_msg_queue_size_soft_limit_exceeded_ = true;
+    LOG(INFO) << "Outbound msg queue size " << old_out_msg_queue_size_ << " exceeds soft limit "
+              << out_msg_queue_size_soft_limit_;
+  }
 }
 
 /**
@@ -3224,7 +3283,7 @@ bool ValidateQuery::precheck_account_updates() {
               REJECT_UNLESS(key_len == 256);
               return precheck_one_account_update(key, std::move(old_val_extra), std::move(new_val_extra));
             },
-            2 /* check augmentation of changed nodes in the new dict */)) {
+            vm::DictionaryFixed::check_new_aug)) {
       return reject_query("invalid ShardAccounts dictionary in the new state");
     }
   } catch (vm::VmError& err) {
@@ -3538,11 +3597,11 @@ bool ValidateQuery::precheck_one_message_queue_update(td::ConstBitPtr out_msg_id
   }
   auto q_msg_env = (old_value.not_null() ? old_value : new_value)->prefetch_ref();
   int tag = block::tlb::t_OutMsg.get_tag(*out_msg_cs);
-  if (tag == 12 || tag == 13) {
+  if (tag == 12 || tag == 13) {  // dequeue
     tag /= 2;
-  } else if (tag == 20) {
+  } else if (tag == 20) {  // msg_export_new_defer
     tag = 8;
-  } else if (tag == 21) {
+  } else if (tag == 21) {  // msg_export_deferred_tr
     tag = 9;
   }
   // mode for msg_export_{ext,new,imm,tr,deq_imm,???,deq/deq_short,tr_req,new_defer,deferred_tr}
@@ -3554,8 +3613,8 @@ bool ValidateQuery::precheck_one_message_queue_update(td::ConstBitPtr out_msg_id
                                   << out_msg_id.to_hex(352) << " has invalid tag " << tag << "(" << tag_str[tag & 7]
                                   << ")");
   }
-  bool is_short = (tag == 6 && (out_msg_cs->prefetch_ulong(4) &
-                                1));  // msg_export_deq_short does not contain true MsgEnvelope / Message
+  bool is_short = (tag == /* dequeue */ 6 && (out_msg_cs->prefetch_ulong(4) &
+                                              1));  // msg_export_deq_short does not contain true MsgEnvelope / Message
   Ref<vm::Cell> msg_env, msg;
   td::Bits256 msg_env_hash;
   block::gen::OutMsg::Record_msg_export_deq_short deq_short;
@@ -3583,7 +3642,7 @@ bool ValidateQuery::precheck_one_message_queue_update(td::ConstBitPtr out_msg_id
   //
   if (mode == 1) {
     // dequeued message
-    if (tag == 7) {
+    if (tag == /* msg_export_tr_req */ 7) {
       // this is a msg_export_tr_req$111, a re-queued transit message (after merge)
       // check that q_msg_env still contains msg
       auto q_msg = vm::load_cell_slice(q_msg_env).prefetch_ref();
@@ -3630,9 +3689,11 @@ bool ValidateQuery::precheck_one_message_queue_update(td::ConstBitPtr out_msg_id
     }
     unsigned long long emitted_lt;
     REJECT_UNLESS(block::tlb::t_MsgEnvelope.get_emitted_lt(vm::load_cell_slice(q_msg_env), emitted_lt));
-    REJECT_UNLESS_MSG(emitted_lt <= enqueued_lt, PSTRING() << "EnqueuedMsg with key " << out_msg_id.to_hex(352)
-                                                           << " has emitted_lt " << emitted_lt
-                                                           << " greater than enqueued_lt " << enqueued_lt);
+    auto lt_status = validate_rules::check_enqueued_lt(tag, emitted_lt, enqueued_lt, start_lt_);
+    if (lt_status.is_error()) {
+      return reject_query(PSTRING() << "EnqueuedMsg with key " << out_msg_id.to_hex(352) << " and tag " << tag_str[tag]
+                                    << " " << lt_status.message());
+    }
   }
   // in all cases above, we have to check that all 352-bit key is correct (including first 96 bits)
   // otherwise we might not be able to correctly recover OutMsgQueue entries starting from OutMsgDescr later
@@ -3687,7 +3748,7 @@ bool ValidateQuery::precheck_message_queue_update() {
               REJECT_UNLESS(key_len == 352);
               return precheck_one_message_queue_update(key, std::move(old_val_extra), std::move(new_val_extra));
             },
-            2 /* check augmentation of changed nodes in the new dict */)) {
+            vm::DictionaryFixed::check_new_aug | vm::DictionaryFixed::check_new_canonical_labels)) {
       return reject_query("invalid OutMsgQueue dictionary in the new state");
     }
   } catch (vm::VmError& err) {
@@ -3706,6 +3767,12 @@ bool ValidateQuery::precheck_message_queue_update() {
       return reject_query(PSTRING() << "outbound message queue size in the new state is not correct (expected: "
                                     << new_out_msg_queue_size_ << ", found: " << ns_.out_msg_queue_size_.value()
                                     << ")");
+    }
+    if (out_msg_queue_exceeds_hard_limit(new_out_msg_queue_size_, out_msg_queue_size_hard_limit_,
+                                         old_out_msg_queue_size_in_state())) {
+      return reject_query(PSTRING() << "outbound message queue size " << new_out_msg_queue_size_
+                                    << " exceeds hard limit " << out_msg_queue_size_hard_limit_
+                                    << ", old queue size is " << old_out_msg_queue_size_);
     }
   } else {
     if (ns_.out_msg_queue_size_) {
@@ -3759,9 +3826,6 @@ bool ValidateQuery::check_account_dispatch_queue_update(td::Bits256 addr, Ref<vm
           ++expected_dict_size;
           if (!block::tlb::csr_unpack(new_val, rec)) {
             return reject_query(PSTRING() << "invalid EnqueuedMsg in AccountDispatchQueue for " << addr.to_hex());
-          }
-          if (is_masterchain() && config_->is_special_smartcontract(addr)) {
-            return reject_query(PSTRING() << "cannot defer message from a special account -1:" << addr.to_hex());
           }
         }
         if (lt != rec.enqueued_lt) {
@@ -3850,7 +3914,7 @@ bool ValidateQuery::unpack_dispatch_queue_update() {
           return check_account_dispatch_queue_update(key, ps_.dispatch_queue_->extract_value(std::move(old_val_extra)),
                                                      ns_.dispatch_queue_->extract_value(std::move(new_val_extra)));
         },
-        2 /* check augmentation of changed nodes in the new dict */);
+        vm::DictionaryFixed::check_new_aug);
     if (!res) {
       return reject_query("invalid DispatchQueue dictionary in the new state");
     }
@@ -5937,11 +6001,19 @@ bool ValidateQuery::CheckAccountTxs::check_one_transaction(block::Account& accou
           return reject_query(PSTRING() << "outbound message #" << i + 1 << " on account " << vq_.workchain() << ":"
                                         << ss_addr.to_hex() << " is deferred, but deferring messages is disabled");
         }
-        if (i == 0 && !ctx_.defer_all_messages) {
+        auto refusal = deferral_refusal(i == 0, account.is_masterchain() && account.is_special, ctx_.defer_all_messages,
+                                        ctx_.always_allow_defer);
+        if (refusal == DeferralRefusal::FirstMessage) {
           return reject_query(PSTRING() << "outbound message #1 on account " << vq_.workchain() << ":"
                                         << ss_addr.to_hex()
                                         << " must not be deferred (the first message cannot be deferred unless some "
-                                           "prevoius messages are deferred)");
+                                           "previous messages are deferred or soft msg queue limit is exceeded)");
+        }
+        if (refusal == DeferralRefusal::SpecialAccount) {
+          return reject_query(
+              PSTRING() << "outbound message on account " << vq_.workchain() << ":" << ss_addr.to_hex()
+                        << " must not be deferred (message from special accounts cannot be deferred unless some "
+                           "previous messages are deferred or soft msg queue limit is exceeded)");
         }
         ctx_.defer_all_messages = true;
       }
@@ -6408,12 +6480,14 @@ bool ValidateQuery::CheckAccountTxs::fatal_error(std::string err_msg, int err_co
 ValidateQuery::CheckAccountTxs::Context ValidateQuery::load_check_account_transactions_context(
     const StdSmcAddress& address) {
   CheckAccountTxs::Context ctx{};
-  if (!accounts_with_dispatch_queue_diff_.contains(address) && ps_.dispatch_queue_->lookup(address).not_null()) {
+  auto dispatch_queue_was_non_empty = ps_.dispatch_queue_->lookup(address).not_null();
+  if (!accounts_with_dispatch_queue_diff_.contains(address) && dispatch_queue_was_non_empty) {
     account_expected_defer_all_messages_.insert(address);
   }
   if (account_expected_defer_all_messages_.contains(address)) {
     ctx.defer_all_messages = true;
   }
+  ctx.always_allow_defer = out_msg_queue_size_soft_limit_exceeded_ || dispatch_queue_was_non_empty;
   return ctx;
 }
 
@@ -6554,7 +6628,7 @@ bool ValidateQuery::CheckAccountTxs::scan_account_libraries(Ref<vm::Cell> orig_l
                }
                return true;
              },
-             3) ||
+             vm::DictionaryFixed::check_old_aug | vm::DictionaryFixed::check_new_aug) ||
          reject_query("error scanning old and new libraries of account "s + addr.to_hex());
 }
 
@@ -6813,7 +6887,7 @@ bool ValidateQuery::check_one_library_update(td::ConstBitPtr key, Ref<vm::CellSl
             lib_publishers2_.emplace_back(lib_key, key, new_val.not_null());
             return true;
           },
-          3 /* check augmentation of changed nodes */)) {
+          vm::DictionaryFixed::check_old_aug | vm::DictionaryFixed::check_new_aug)) {
     return reject_query("invalid publishers set for shard library with hash "s + key.to_hex(256));
   }
   return true;
@@ -6834,7 +6908,7 @@ bool ValidateQuery::check_shard_libraries() {
             REJECT_UNLESS(key_len == 256);
             return check_one_library_update(key, std::move(old_val), std::move(new_val));
           },
-          3 /* check augmentation of changed nodes */)) {
+          vm::DictionaryFixed::check_old_aug | vm::DictionaryFixed::check_new_aug)) {
     return reject_query("invalid shard libraries dictionary in the new state");
   }
   std::sort(lib_publishers_.begin(), lib_publishers_.end());
@@ -6907,12 +6981,18 @@ bool ValidateQuery::check_new_state() {
   }
   bool expected_want_split = Collator::history_weight(ns_.overload_history_) >= 0;
   bool expected_want_merge = !expected_want_split && Collator::history_weight(ns_.underload_history_) >= 0;
+  bool queue_size_blocks_merge = false;
+  if (ns_.out_msg_queue_size_ && out_msg_queue_blocks_merge(new_out_msg_queue_size_, out_msg_queue_size_hard_limit_)) {
+    expected_want_merge = false;
+    queue_size_blocks_merge = true;
+  }
   REJECT_UNLESS_MSG(want_split_ == expected_want_split,
                     PSTRING() << "new block's want_split=" << want_split_ << ", expected " << expected_want_split
                               << " based on overload history " << ns_.overload_history_);
   REJECT_UNLESS_MSG(want_merge_ == expected_want_merge,
                     PSTRING() << "new block's want_merge=" << want_merge_ << ", expected " << expected_want_merge
-                              << " based on underload history " << ns_.underload_history_);
+                              << " based on underload history " << ns_.underload_history_
+                              << (queue_size_blocks_merge ? " and queue size exceeding half of the hard_limit" : ""));
   // total_balance:CurrencyCollection
   // total_validator_fees:CurrencyCollection
   block::CurrencyCollection total_balance, total_validator_fees, old_total_validator_fees(ps_.total_validator_fees_);
@@ -7197,7 +7277,7 @@ bool ValidateQuery::check_mc_state_extra() {
               return check_one_prev_dict_update((unsigned)key.get_uint(32), std::move(old_val_extra),
                                                 std::move(new_val_extra));
             },
-            3 /* check augmentation of changed nodes */)) {
+            vm::DictionaryFixed::check_old_aug | vm::DictionaryFixed::check_new_aug)) {
       return reject_query("invalid previous block dictionary in the new state");
     }
     td::BitArray<32> key;
@@ -7436,7 +7516,7 @@ bool ValidateQuery::check_block_create_stats() {
               REJECT_UNLESS(key_len == 256);
               return check_one_block_creator_update(key, std::move(old_val), std::move(new_val));
             },
-            3 /* check augmentation of changed nodes */)) {
+            vm::DictionaryFixed::check_old_aug | vm::DictionaryFixed::check_new_aug)) {
       return reject_query("invalid BlockCreateStats dictionary in the new state");
     }
     for (const auto& p : block_create_count_) {
@@ -7659,6 +7739,7 @@ bool ValidateQuery::try_validate() {
     if (stage_ == 1) {
       LOG(WARNING) << "try_validate stage 1";
       LOG(INFO) << "running automated validity checks for block candidate " << id_.to_str();
+      init_msg_queue_size_limits();
       {
         td::RealCpuTimer timer;
         SCOPE_EXIT {

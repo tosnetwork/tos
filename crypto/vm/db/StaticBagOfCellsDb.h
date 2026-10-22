@@ -24,6 +24,10 @@
 #include "vm/cells.h"
 
 namespace vm {
+
+// Note: creating StaticBagOfCellsDb from unverified data is unsafe.
+// The node uses a static bag of cells only for blocks accepted by validators, so handling invalid bags of cells
+// in StaticBagOfCellsDb is not an issue.
 class StaticBagOfCellsDb : public std::enable_shared_from_this<StaticBagOfCellsDb> {
  public:
   virtual ~StaticBagOfCellsDb() = default;

@@ -1,0 +1,255 @@
+{
+  "parent_commit": "a5c4834e833a1ee15d2ca95be6facea7ae078655",
+  "base_commit": "a5e256b623c8cda741cb40cc7336396f9ee1ce3d",
+  "upstream_reference_commit": "857b8a57a178e6ae0fe7fa86e7d81c5233de8560",
+  "recorded_utc": "2026-10-22T12:53:23+00:00",
+  "environment": {
+    "platform": "macOS arm64",
+    "native_build": "Release, review-build, no local ASan",
+    "rust_environment": {
+      "PATH_prefix": "/private/tmp/pr276-gnu-bin",
+      "CARGO_TARGET_DIR": "/private/tmp/tos-pr276-cargo-target"
+    }
+  },
+  "source_sha256": {
+    ".github/workflows/admission-work.yml": "e32c3fa75b2bab87919faf9e23e73e94d8b95f7d990b1fb52f0e8f5ae213a8cc",
+    ".github/workflows/branch-chain-python.yml": "9267b3dbb1c60bcb57d7c2db9efd8a728e7c2e71591c44a18d1aa8bfa33dfcf8",
+    ".github/workflows/network-safety-asan.yml": "16cabab699c89154fe8fb9e53d9c697a3260e0f15f8fc8ee2ab6640a2bb2f727",
+    "CMakeLists.txt": "ac31a7c0575777a324ce212987ba247e08e6346f2bb5b8ae422923f7e2df2f82",
+    "doc/ConfigParam.md": "663e3f263f190438073c988455c2ef5c7c1db702458caf71d7f4cd72c701ab14",
+    "scripts/strict-build-targeted-tests.txt": "8fa9d52dd215338ea378cdbd507a4b1e28c6ff8d1341524e784390a421f326b1",
+    "test/test-out-msg-queue-limits.cpp": "847a2386201d8d929f3b4e4e6b3d401d81d61ff00730171caf43d0f37d86c436",
+    "tosctl/src/block/src/boc_compression.rs": "3240f787691e83e2e98789d9d77376cd5b8d4b70d2eed5c34dd2fc036fed082e",
+    "tosctl/src/block/src/tests/test_boc_compression.rs": "27a8fd272e10639a3a7d5498f658560cc3fa91645332a103b041712bcda19be3",
+    "validator/fabric.h": "8169b0f234e6fbf3bf62d85933662f7625bf2b9021dc2f3c598e52f099217842",
+    "validator/impl/collator-impl.h": "5b10ac5612326785d90822bf23c0e53fe882e355abee5d0e6ae3e32bef7d21c7",
+    "validator/impl/collator.cpp": "64c1d86355293d16d9181927c63138bd1e50a9efdf2f045cee6de7e79f5cb501",
+    "validator/impl/out-msg-queue-limits.h": "5b88d86a452ae39cd832525e4e787afce5277150071186070dd348a90bc9ca14",
+    "scripts/run-boc-compression-tests.py": "4e4c127f15df817e7376e7d8232fa00f18413f9e5b67599db9b7b674c63fde14",
+    "tosctl/src/block/src/tests/test_data/legacy_noncanonical_balance_ct9.boc": "600c8a58411568b811e6bbd5c04fe70166947a150918d88fd2ed9cdbd496891e",
+    "tosctl/src/block/src/tests/test_data/legacy_noncanonical_child_ct9.boc": "f1b5d9aaf88b9cfcd15cb3c52b5bb52e0a39ac45e31df737c0aa216c5a60ea18",
+    "tosctl/src/block/src/tests/test_data/native_noncanonical_child_ct9.boc": "9446b34989cc08d51b1cb460f356acec3892ee1f92b51030ba531906a6ac7ff4"
+  },
+  "green_checks": [
+    {
+      "command": "cmake --build review-build --target test-out-msg-queue-limits test-validate-query-rules test-db test-emulator test-vm test-cells -j2",
+      "exit": 0,
+      "note": "Targets built across the final targeted build invocations."
+    },
+    {
+      "command": "python3 scripts/check-ctest-inventory.py --build-dir review-build --label queue-codec --exact test-out-msg-queue-limits test-validate-query-rules boc-compression",
+      "exit": 0,
+      "selected": 3
+    },
+    {
+      "command": "ctest --test-dir review-build -L queue-codec --no-tests=error --output-on-failure",
+      "exit": 0,
+      "passed_entries": 3,
+      "case_counts": {
+        "OutMsgQueueLimits": 14,
+        "ValidateQueryRules": 4,
+        "BocCompression": 13
+      }
+    },
+    {
+      "command": "python3 scripts/run-boc-compression-tests.py --rust",
+      "exit": 0,
+      "passed": 68,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "command": "review-build/test-emulator --filter +PrecompiledExternalMessage",
+      "exit": 0,
+      "passed": 6
+    },
+    {
+      "command": "review-build/test-vm --filter +dict_",
+      "exit": 0,
+      "passed": 5
+    },
+    {
+      "command": "ctest --test-dir review-build --output-on-failure -R 'branch-chain-python-ci-source|workflow-supply-chain'",
+      "exit": 0,
+      "passed_entries": 4
+    },
+    {
+      "command": "git diff --check; clang-format 21 changed-line check against PR base; ruff check and format check for the new runner; cargo fmt check",
+      "exit": 0
+    }
+  ],
+  "queue_red_controls": {
+    "source_sha256": "64c1d86355293d16d9181927c63138bd1e50a9efdf2f045cee6de7e79f5cb501",
+    "test_sha256": "847a2386201d8d929f3b4e4e6b3d401d81d61ff00730171caf43d0f37d86c436",
+    "test_object_sha256": "eee43e16e545fb596ac675ad89a295329d9886c5d9212a43fb61d5da64d195d5",
+    "results": [
+      {
+        "variant": "restore-head-of-line-stop",
+        "mutant_source_sha256": "06fb49070e63185e986940aee67963dc1e4bd25cf8490711540cd1e509ab9302",
+        "mutant_object_sha256": "96d0a566dac231720dd0d217899c5ab838311615ac72ffd39f09117eff5cdd06",
+        "source_matches_except_whitespace": true,
+        "reused_compile_exit": 0,
+        "link_exit": 0,
+        "run_exit": 1,
+        "failed_check": "Check `result.frontier == 99 + count && result.transactions == count && result.empty` failed"
+      },
+      {
+        "variant": "drop-final-cap",
+        "mutant_source_sha256": "606d250926fa049220f99a34444b3e2663c6bc5f6e6d30432b95532bebb81662",
+        "mutant_object_sha256": "9c832979e9b2af838b2b7cca4ff699557e3310d221c964b9610f41d22ffbba47",
+        "source_matches_except_whitespace": true,
+        "reused_compile_exit": 0,
+        "link_exit": 0,
+        "run_exit": 1,
+        "failed_check": "Check `debt.borrowed && !debt.accepted && debt.stopped && debt.retry_strict` failed"
+      },
+      {
+        "variant": "drop-strict-retry",
+        "mutant_source_sha256": "b00e40fa9e5e84970f0979970fcfee8725c8ffdefb2a85756011d88843d5bcd7",
+        "mutant_object_sha256": "803cf9384f8c7ae55c60bf8434e1845f8f3cbef8e7e1b8bb416a10a79d258d40",
+        "source_matches_except_whitespace": true,
+        "reused_compile_exit": 0,
+        "link_exit": 0,
+        "run_exit": 1,
+        "failed_check": "Check `result.retry_strict && result.retry_attempt == 1` failed"
+      },
+      {
+        "variant": "drop-dispatch-reservation",
+        "mutant_source_sha256": "8101ca29df4bc413fe8a7ae1183014bc1b4de2bea639154ab118273d8d9ac9a2",
+        "mutant_object_sha256": "a09e8f94e996ee975b016df730e06a4ea5d3efe81844c72403a34a3ec43f9e84",
+        "source_matches_except_whitespace": true,
+        "reused_compile_exit": 0,
+        "link_exit": 0,
+        "run_exit": 1,
+        "failed_check": "Check `strict.queue_size == 2 && strict.dictionary_size == 2 && strict.frontier == 0` failed"
+      }
+    ]
+  },
+  "codec_red_controls": [
+    {
+      "control": "fallback-removed-red",
+      "command": "cargo test -p chain_block legacy_noncanonical_left_balance_is_decodable --offline",
+      "exit": 101
+    },
+    {
+      "control": "numeric-only-red",
+      "command": "cargo test -p chain_block native_noncanonical_child_uses_canonical_deltas --offline",
+      "exit": 101
+    },
+    {
+      "control": "numeric-only-elision-red",
+      "command": "cargo test -p chain_block mixed_balance_encodings_do_not_change_parent_elision --offline",
+      "exit": 101
+    },
+    {
+      "control": "canonical-only-elision-red",
+      "command": "cargo test -p chain_block mixed_balance_encodings_do_not_change_parent_elision --offline",
+      "exit": 101
+    }
+  ],
+  "codec_boundary_controls": {
+    "name": "boc_compression::tests::per_edge_balance::legacy_fallback_preserves_size_and_merkle_hash_checks",
+    "green_exit": 0,
+    "checks": [
+      "canonical failure sets saw_noncanonical; numeric succeeds with the same root",
+      "public and numeric-pass max_size=size-1 both reject",
+      "one-bit declared new-hash corruption rejected in canonical and numeric modes and public fallback"
+    ],
+    "controls": [
+      {
+        "control": "fallback-size-guard-removed",
+        "command": "cargo test -p chain_block legacy_fallback_preserves_size_and_merkle_hash_checks --offline",
+        "exit": 101
+      },
+      {
+        "control": "fallback-hash-corruption-removed",
+        "command": "cargo test -p chain_block legacy_fallback_preserves_size_and_merkle_hash_checks --offline",
+        "exit": 101
+      }
+    ]
+  },
+  "codec_fixtures": {
+    "tosctl/src/block/src/tests/test_data/legacy_noncanonical_balance_ct9.boc": {
+      "sha256": "600c8a58411568b811e6bbd5c04fe70166947a150918d88fd2ed9cdbd496891e",
+      "size": 127
+    },
+    "tosctl/src/block/src/tests/test_data/legacy_noncanonical_child_ct9.boc": {
+      "sha256": "f1b5d9aaf88b9cfcd15cb3c52b5bb52e0a39ac45e31df737c0aa216c5a60ea18",
+      "size": 137
+    },
+    "tosctl/src/block/src/tests/test_data/native_noncanonical_child_ct9.boc": {
+      "sha256": "9446b34989cc08d51b1cb460f356acec3892ee1f92b51030ba531906a6ac7ff4",
+      "size": 137
+    }
+  },
+  "additional_local_interop": {
+    "mixed_cases": 150,
+    "mixed_native_decode_hash_passes": 150,
+    "mixed_native_reencode_rust_decode_hash_passes": 150,
+    "mixed_new_encoding_legacy_numeric_rust_decode_hash_passes": 150,
+    "additional_shape_cases": 12,
+    "shape_both_directions_hash_passes": 12,
+    "scope": "Auxiliary local probes, not a replacement for the committed frozen fixtures or remote CI."
+  },
+  "runner_controls": {
+    "accepted": [
+      "complete native selection",
+      "complete Rust selection"
+    ],
+    "rejected": [
+      "empty selection",
+      "missing critical case",
+      "ignored Rust case",
+      "unexecuted Rust case",
+      "incorrect pass count",
+      "nonzero child process"
+    ],
+    "mutation": "Removing require_cases accepts an empty selection; the control detects this."
+  },
+  "remote_ci": {
+    "status": "Not asserted by this local receipt. Check all required gates and relevant x86/ARM/ASan jobs on the pushed repair commit.",
+    "epoch4_replay": "Manual-only by existing owner decision; not covered by this run."
+  },
+  "scope_limits": [
+    "Real collator component execution, not full serialized candidate validation or historical/network replay.",
+    "Narrow hard/soft queue gaps remain a documented configuration constraint; consensus deferral rules are unchanged.",
+    "Two-pass compatibility decoding keeps the same per-pass size and integrity checks; no recursive retry."
+  ],
+  "local_logs": {
+    "/private/tmp/pr276-real-collator-run.log": {
+      "sha256": "cb2ebe8d07dcd73bfd75a7110513a30897ae4ba927a72263284f480cf1e17953",
+      "bytes": 2199
+    },
+    "/private/tmp/pr276-review-notes/boc-ci-rust.log": {
+      "sha256": "9ee8e8643b61fd945f53f3843b41540d9dc4dde64db95178be4f8f61ac39d060",
+      "bytes": 12293
+    },
+    "/private/tmp/pr276-repair-native-ctest.log": {
+      "sha256": "dd196d1b808a343933fa9c39cb2442b743aca4349ae5aa75314a5cccd963a720",
+      "bytes": 612
+    },
+    "/private/tmp/pr276-repair-emulator.log": {
+      "sha256": "df6176d378e6858288204c44c7282ce6ed8e361cc01b5cbd54ec997aed282690",
+      "bytes": 13942104
+    },
+    "/private/tmp/pr276-repair-dict.log": {
+      "sha256": "b62499876422bbcb2ece49964bf1e474723fd868f8d6f4c587be8b67091be02b",
+      "bytes": 4398
+    },
+    "/private/tmp/pr276-review-notes/boc-ci-runner-controls.log": {
+      "sha256": "0d3cb6e6e8eff0e0ce55f4ff86bef68d3642bb303c2703ce32c42861bb0db768",
+      "bytes": 253
+    },
+    "/private/tmp/pr276-review-notes/boc-ci-runner-mutation.log": {
+      "sha256": "1e4edf070c9ae095d5733aa08c4bb4cf086f882414c49b91e67a77fd5c1e7e48",
+      "bytes": 179
+    },
+    "/private/tmp/pr276-review-notes/ci-empty-selection-controls.log": {
+      "sha256": "3e1697b1169504e442fcda7551d03f3829f231a0a5a88dd22a00112091608ac1",
+      "bytes": 1204
+    }
+  },
+  "local_logs_note": "Temporary local logs are not committed and have no retention guarantee. Reproduction uses committed tests, fixtures and commands; bounded failure assertions are included above.",
+  "queue_admission_status": "Superseded: the speculative queue admission recorded in queue_red_controls was withdrawn by owner decision; strict admission from c93b956aa is restored. See the Markdown report.",
+  "codec_status": "Superseded: the two-pass compatibility decoder recorded in codec_red_controls, codec_boundary_controls and codec_fixtures was withdrawn by owner decision; the Rust codec keeps the single canonical interpretation of the native codec, and the two legacy fixtures are deleted. See the Markdown report."
+}

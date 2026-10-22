@@ -276,6 +276,14 @@ class ValidatorEngine : public td::actor::Actor {
   std::set<tos::adnl::AdnlNodeIdShort> auto_sign_adnls_;
   bool accept_shard_overlay_certificates_from_any_validator_ = false;
   std::set<tos::adnl::AdnlNodeIdShort> accept_shard_overlay_certificates_from_;
+  // Transport identities of the previous, current and next validator sets: the only senders whose
+  // pushed overlay certificates are parsed. Bounded by three validator sets; rebuilt from scratch
+  // whenever the last key block changes, so validators that left all three sets are dropped.
+  std::set<tos::adnl::AdnlNodeIdShort> all_validator_adnl_ids_;
+  // How many local roles (the full-node id and each collator shard entry) listen for pushed
+  // fast-sync certificates on an ADNL id. One entry per such id; it is erased, and the ADNL
+  // subscription removed, when its count drops to zero.
+  std::map<tos::adnl::AdnlNodeIdShort, size_t> registered_fast_sync_certificate_callback_;
 
   td::Promise<tos::PublicKey> get_key_promise(td::MultiPromise::InitGuard &ig);
   void got_key(tos::PublicKey key);
@@ -700,8 +708,13 @@ class ValidatorEngine : public td::actor::Actor {
   void try_del_quic_addr(td::uint32 ip, td::int32 port, std::vector<AdnlCategory> cats,
                          std::vector<AdnlCategory> prio_cats, td::Promise<td::Unit> promise);
 
-  void register_fast_sync_certificate_callback();
+  void register_fast_sync_certificate_callback(tos::adnl::AdnlNodeIdShort adnl_id);
+  void unregister_fast_sync_certificate_callback(tos::adnl::AdnlNodeIdShort adnl_id);
+  void received_fast_sync_certificate(tos::adnl::AdnlNodeIdShort src, tos::adnl::AdnlNodeIdShort dst,
+                                      td::BufferSlice data);
   void register_shard_overlay_certificate_callback();
+  void received_shard_overlay_certificate(tos::adnl::AdnlNodeIdShort src, tos::adnl::AdnlNodeIdShort dst,
+                                          td::BufferSlice data);
   void try_import_fast_sync_member_certificate(tos::adnl::AdnlNodeIdShort id,
                                                tos::overlay::OverlayMemberCertificate certificate,
                                                td::Promise<td::Unit> promise, bool defer_write);

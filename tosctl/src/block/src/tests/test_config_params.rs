@@ -1195,7 +1195,7 @@ mod config43_vectors {
             None => "-".to_string(),
         };
         format!(
-            "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
+            "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
             limits.max_msg_bits,
             limits.max_msg_cells,
             limits.max_library_cells,
@@ -1212,6 +1212,8 @@ mod config43_vectors {
             loads,
             limits.max_total_msg_bits,
             limits.max_total_msg_cells,
+            limits.out_msg_queue_size_hard_limit,
+            limits.out_msg_queue_size_soft_limit,
         )
     }
 
@@ -1247,6 +1249,6 @@ mod config43_vectors {
         // A file that lost its cases would otherwise pass by checking nothing, and a lock
         // carrying only accepted encodings proves nothing about what must be refused.
         assert!(accepted >= 6, "expected the accepted encodings, saw {accepted}");
-        assert!(rejected >= 2, "expected the refused encodings, saw {rejected}");
+        assert!(rejected >= 3, "expected the refused encodings, saw {rejected}");
     }
 }

@@ -1191,27 +1191,39 @@ bool LiteQuery::make_state_root_proof(Ref<vm::Cell>& proof, Ref<vm::Cell> state_
   CHECK(block_root.not_null() && state_root.not_null());
   RootHash rhash{block_root->get_hash().bits()};
   CHECK(rhash == blkid.root_hash);
+  auto R = build_state_root_proof(std::move(block_root), state_root->get_hash());
+  if (R.is_error()) {
+    return fatal_error(R.move_as_error());
+  }
+  proof = R.move_as_ok();
+  return true;
+}
+
+td::Result<Ref<vm::Cell>> LiteQuery::build_state_root_proof(Ref<vm::Cell> block_root, const vm::CellHash& state_hash) {
   vm::MerkleProofBuilder pb{std::move(block_root)};
   block::gen::Block::Record blk;
   block::gen::BlockInfo::Record info;
+  block::gen::ExtBlkRef::Record mcref;
   if (!(tlb::unpack_cell(pb.root(), blk) && tlb::unpack_cell(blk.info, info) &&
-        block::gen::BlkPrevInfo(info.after_merge).validate_ref(info.prev_ref))) {
-    return fatal_error("cannot unpack block header");
+        block::gen::BlkPrevInfo(info.after_merge).validate_ref(info.prev_ref) &&
+        (!info.not_master || tlb::unpack_cell(info.master_ref, mcref)))) {
+    return td::Status::Error(-400, "cannot unpack block header");
   }
   vm::CellSlice upd_cs{vm::NoVm(), blk.state_update};
   if (!(upd_cs.is_special() && upd_cs.prefetch_long(8) == 4  // merkle update
         && upd_cs.size_ext() == 0x20228)) {
-    return fatal_error("invalid Merkle update in block");
+    return td::Status::Error(-400, "invalid Merkle update in block");
   }
   auto upd_hash = upd_cs.prefetch_ref(1)->get_hash(0);
-  auto state_hash = state_root->get_hash();
   if (upd_hash != state_hash) {
-    return fatal_error("cannot construct Merkle proof for given masterchain state because of hash mismatch");
+    return td::Status::Error(-400,
+                             "cannot construct Merkle proof for given masterchain state because of hash mismatch");
   }
+  Ref<vm::Cell> proof;
   if (!pb.extract_proof_to(proof)) {
-    return fatal_error("unknown error creating Merkle proof");
+    return td::Status::Error(-400, "unknown error creating Merkle proof");
   }
-  return true;
+  return proof;
 }
 
 bool LiteQuery::make_shard_info_proof(Ref<vm::Cell>& proof, Ref<block::McShardHash>& info, ShardIdFull shard,
@@ -1523,9 +1535,17 @@ void LiteQuery::finish_runSmcMethod(td::BufferSlice shard_proof, td::BufferSlice
   }
   // pre-serialize stack always (to visit all data cells referred from the result)
   vm::CellBuilder cb;
-  if (!(stack_->serialize(cb) && cb.finalize_to(cell))) {
+  if (!stack_->serialize(cb)) {
     fatal_error("cannot serialize resulting stack");
     return;
+  }
+  // The getter controls the result stack, so the root cell may be invalid (for example too deep);
+  // report that as a query error instead of letting the builder throw out of the actor.
+  if (auto R = cb.finalize_novm_nothrow(); R.is_error()) {
+    fatal_error("cannot serialize resulting stack");
+    return;
+  } else {
+    cell = R.move_as_ok();
   }
   if (mode & 4) {
     // serialize stack if required
@@ -1557,7 +1577,7 @@ void LiteQuery::continue_getOneTransaction() {
   LOG(DEBUG) << "completing getOneTransaction() query";
   CHECK(block_.not_null());
   vm::MerkleProofBuilder pb{block_->root_cell()};
-  auto trans_res = block::get_block_transaction(pb.root(), acc_workchain_, acc_addr_, trans_lt_);
+  auto trans_res = block::get_block_transaction_try(pb.root(), block_->block_id(), acc_addr_, trans_lt_);
   if (trans_res.is_error()) {
     fatal_error(trans_res.move_as_error());
     return;
@@ -1615,7 +1635,7 @@ void LiteQuery::continue_getTransactions(unsigned remaining, bool exact) {
       fatal_error("obtained a block that cannot contain specified account");
       return;
     }
-    auto res = block::get_block_transaction_try(block_->root_cell(), acc_workchain_, acc_addr_, trans_lt_);
+    auto res = block::get_block_transaction_try(block_->root_cell(), block_->block_id(), acc_addr_, trans_lt_);
     if (res.is_error()) {
       fatal_error(res.move_as_error());
       return;

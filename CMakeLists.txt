@@ -1045,6 +1045,23 @@ target_include_directories(test-get-method-context PRIVATE ${CMAKE_CURRENT_SOURC
 target_link_libraries(test-get-method-context PRIVATE validator-disk validator-common validator-db
                       tos_validator smc-envelope proof-verify-engine tos_db tos_crypto tddb tdutils tdactor adnl overlay tl_api dht fift-lib)
 
+# Lite-client server selection for queries pinned to a masterchain seqno.
+add_executable(test-lite-query-routing test/test-lite-query-routing.cpp)
+target_include_directories(test-lite-query-routing PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(test-lite-query-routing PRIVATE lite-client-common keys tdutils)
+add_dependencies(all-tests test-lite-query-routing)
+add_test(NAME lite-query-routing COMMAND test-lite-query-routing)
+
+# Lite-server proofs carry every block header cell the lite client checks.
+add_executable(test-lite-proof-content test/validator/lite-proof-content-test.cpp)
+target_include_directories(test-lite-proof-content PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-lite-proof-content PRIVATE validator-disk validator-common validator-db
+                      tos_validator tos_db tos_crypto tddb tdutils tdactor adnl overlay tl_api dht)
+add_dependencies(all-tests test-lite-proof-content)
+add_test(NAME lite-proof-content
+  COMMAND test-lite-proof-content ${CMAKE_CURRENT_SOURCE_DIR}/test/rel02/corpus/blocks)
+
 # Measurement tool, not a gate: apply completion when the wallet index must
 # read a block's data itself, against the same apply with no index.
 add_executable(test-apply-block-readback-latency test/validator/apply-block-readback-latency.cpp
@@ -1154,6 +1171,10 @@ target_link_libraries(test-wallet-message-processor PRIVATE tos_validator smc-en
 
 add_executable(test-vm-exception-hardening test/test-td-main.cpp test/test-vm-exception-hardening.cpp)
 target_link_libraries(test-vm-exception-hardening PRIVATE tos_validator tos_crypto common tdutils tos_block keys)
+
+add_executable(test-validate-query-rules test/test-td-main.cpp test/test-validate-query-rules.cpp)
+# The validator factory references ApplyBlock, whose implementation is in validator-common.
+target_link_libraries(test-validate-query-rules PRIVATE tos_validator validator-common validator-db tos_crypto common tdutils tos_block keys)
 
 if (UNIX AND NOT TOS_ONLY_TOSLIB AND NOT USE_EMSCRIPTEN AND NOT EMSCRIPTEN)
   add_executable(test-state-download-recovery test/test-state-download-recovery.cpp)
@@ -1566,6 +1587,8 @@ add_executable(test-emulator
         # VmState-level test above and the TL-B parse test in
         # tvm-v14-v15-transaction-fixture.cpp.
         emulator/test/config-param-43-transaction-fixture.cpp
+        # Gas of messages to contracts listed as precompiled in ConfigParam 45.
+        emulator/test/precompiled-external-message-fixture.cpp
         # Measures the token wallet fee profile against this build and checks
         # the config-priced transfer/burn requirements end to end.
         emulator/test/token-wallet-fee-profile-fixture.cpp
@@ -2181,6 +2204,9 @@ tos_test(test-http-listen-address)
 set_tests_properties(test-http-listen-address PROPERTIES SKIP_RETURN_CODE 77)
 tos_test(test-wallet-message-processor)
 tos_test(test-vm-exception-hardening)
+tos_test(test-validate-query-rules)
+set_tests_properties(test-validate-query-rules PROPERTIES FAIL_REGULAR_EXPRESSION "(^|[^0-9])0 test\\(s\\) passed")
+set_property(TEST test-validate-query-rules APPEND PROPERTY LABELS queue-codec)
 tos_test(test-celldb-streaming-import)
 tos_test(test-celldb-actor-restart)
 tos_test(test-inmemory-celldb-dec)
@@ -2241,6 +2267,12 @@ tos_regression_test(test-tddb)
 set_tests_properties(test-tddb PROPERTIES ENVIRONMENT
   "TOS_ROCKSDB_BLOCK_CACHE_SIZE=33554432;TOS_ROCKSDB_CRITICAL_WRITE_BUFFER_SIZE=67108864;TOS_ROCKSDB_CRITICAL_WRITE_BUFFER_ALLOW_STALL=1;TOS_ROCKSDB_GLOBAL_WRITE_BUFFER_SIZE=134217728;TOS_ROCKSDB_GLOBAL_WRITE_BUFFER_ALLOW_STALL=1")
 tos_regression_test(test-db)
+# Run the compression cases in PR CI without the unrelated database stress tests.
+add_test(NAME boc-compression
+  COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/scripts/run-boc-compression-tests.py
+    --native-binary $<TARGET_FILE:test-db>)
+set_tests_properties(boc-compression PROPERTIES TIMEOUT 180)
+set_property(TEST boc-compression APPEND PROPERTY LABELS queue-codec)
 add_test(NAME benchmark-exclusion-source
   COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-benchmark-exclusion.sh ${CMAKE_CURRENT_SOURCE_DIR})
 set_tests_properties(benchmark-exclusion-source PROPERTIES LABELS "source-guard")
@@ -2380,6 +2412,16 @@ if (NOT TOS_ONLY_TOSLIB AND NOT USE_EMSCRIPTEN AND NOT EMSCRIPTEN)
   tos_test(test-security-boundaries)
 
   set_tests_properties(test-security-boundaries PROPERTIES LABELS "security-findings")
+
+  # ConfigParam 43 outbound queue limits through the real parser, and the
+  # deferral, rejection and merge rules the collator and validator share.
+  add_executable(test-out-msg-queue-limits test/test-td-main.cpp test/test-out-msg-queue-limits.cpp)
+  target_include_directories(test-out-msg-queue-limits PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/crypto ${CMAKE_CURRENT_SOURCE_DIR}/common)
+  target_link_libraries(test-out-msg-queue-limits PRIVATE tos_validator validator-common validator-db tos_block tos_crypto tdutils)
+  tos_test(test-out-msg-queue-limits)
+  set_tests_properties(test-out-msg-queue-limits PROPERTIES FAIL_REGULAR_EXPRESSION "(^|[^0-9])0 test\\(s\\) passed")
+  set_property(TEST test-out-msg-queue-limits APPEND PROPERTY LABELS queue-codec)
 
   add_executable(test-archive-prune test/test-archive-prune.cpp)
   target_include_directories(test-archive-prune PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
