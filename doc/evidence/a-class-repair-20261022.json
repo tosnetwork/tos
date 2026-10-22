@@ -250,5 +250,6 @@
     }
   },
   "local_logs_note": "Temporary local logs are not committed and have no retention guarantee. Reproduction uses committed tests, fixtures and commands; bounded failure assertions are included above.",
-  "queue_admission_status": "Superseded: the speculative queue admission recorded in queue_red_controls was withdrawn by owner decision; strict admission from c93b956aa is restored. See the Markdown report."
+  "queue_admission_status": "Superseded: the speculative queue admission recorded in queue_red_controls was withdrawn by owner decision; strict admission from c93b956aa is restored. See the Markdown report.",
+  "codec_status": "Superseded: the two-pass compatibility decoder recorded in codec_red_controls, codec_boundary_controls and codec_fixtures was withdrawn by owner decision; the Rust codec keeps the single canonical interpretation of the native codec, and the two legacy fixtures are deleted. See the Markdown report."
 }

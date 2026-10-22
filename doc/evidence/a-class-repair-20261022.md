@@ -48,30 +48,29 @@ frontier past a postponed transit (`RealCollatorPostponesTransitAtCapacity`).
 The restored source passes again. Remote x86-64, arm64 and ASan CI must still
 pass on the pushed commit.
 
-## Lossless codec compatibility
+## Codec: one balance interpretation
 
-Canonical balance detection belongs to the encoding optimization. A shared
-extractor had also narrowed decoding, rejecting earlier streams that used a
-leading-zero left balance. Simply restoring numeric parsing is insufficient:
-canonical and earlier numeric decoders accumulate noncanonical child deltas
-differently, so either interpretation alone rejects valid historical output.
+`b687d122d` added a two-pass decoder that retried with a numeric interpretation
+of leading-zero balances, and an encoder that elided only where both
+interpretations agreed. That compatibility path is withdrawn by owner decision:
+the network is pre-launch and keeps no old encodings.
 
-Decoding first uses canonical deltas. Only if that pass actually observes a
-noncanonical balance and fails does it retry the earlier numeric interpretation.
-There are at most two complete passes, with the first graph released before the
-second. Both passes retain the same size, graph and cell/MerkleUpdate hash checks.
-The fallback has dedicated size-limit and corrupted-hash rejection tests.
+The native codec reads a balance through `VarUInteger::as_integer_skip`, which
+rejects a leading-zero length-prefixed encoding. A noncanonical DepthBalanceInfo
+therefore has no balance there: it contributes no delta and is never elided, in
+encoding and in decoding. The numeric interpretation came only from the earlier
+Rust implementation and was never the native behaviour. The Rust codec returns
+to the single canonical interpretation of `fddbcbc2e`, the same as the native one.
 
-Encoding tracks both child-delta interpretations per edge. It elides a canonical
-node only when both reconstruct exactly the original value. Otherwise it retains
-the original payload. Three frozen compressed fixtures (401 bytes total) preserve
-the two historical interpretations independently of the current encoder.
+The frozen native fixture `native_noncanonical_child_ct9.boc` stays: it decodes
+to the expected tree, and re-encoding makes the same single elision. The mixed
+encoding test now expects the parent to be elided exactly when its own balance
+is unchanged. The two legacy fixtures and their tests are deleted.
 
-The compression module has 68 passing cases, including mixed encodings and
-repeated edges. Removing the fallback, selecting numeric-only decoding, or
-dropping either encoder delta comparison fails the respective regression test.
-An additional local probe checked 162 shapes in both native directions; its 150
-mixed cases also decoded with the earlier numeric Rust implementation.
+Local receipt (Linux x86-64): `run-boc-compression-tests.py --rust` passes 66
+cases with the required selection. Making the extractor accept leading-zero
+balances (the numeric interpretation) fails the native fixture, the
+noncanonical non-elision and the mixed encoding tests; the restored source passes.
 
 ## Execution and scope
 
@@ -94,8 +93,8 @@ claim that those remote gates have passed.
 
 No persistent collection, cache, actor, thread, file or timer is added. Strict
 queue admission adds no state beyond a per-message flag and retains the existing
-input-work, block/proof-size and deadline bounds. Codec work can double only on the
-specified compatibility path; its configured maximum allocation is unchanged.
+input-work, block/proof-size and deadline bounds. Decoding is a single pass with
+its configured maximum allocation unchanged.
 
 The real-collator tests are not a complete historical-state or serialized
 candidate-to-ValidateQuery replay. They do not prove general network liveness.

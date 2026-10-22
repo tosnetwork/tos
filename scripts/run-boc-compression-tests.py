@@ -18,10 +18,8 @@ RUST_REQUIRED = {
     "boc_compression::tests::per_edge_balance::duplicate_edges_use_full_multiplicity",
     "boc_compression::tests::per_edge_balance::noncanonical_balance_encoding_is_not_elided",
     "boc_compression::tests::per_edge_balance::only_the_block_root_merkle_update_is_elided",
-    "boc_compression::tests::per_edge_balance::legacy_noncanonical_left_balance_is_decodable",
     "boc_compression::tests::per_edge_balance::native_noncanonical_child_uses_canonical_deltas",
     "boc_compression::tests::per_edge_balance::mixed_balance_encodings_do_not_change_parent_elision",
-    "boc_compression::tests::per_edge_balance::legacy_fallback_preserves_size_and_merkle_hash_checks",
 }
 
 

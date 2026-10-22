@@ -1490,90 +1490,6 @@ mod per_edge_balance {
         );
     }
 
-    #[test]
-    fn legacy_noncanonical_left_balance_is_decodable() {
-        // Frozen output of the earlier encoder: the left balance has a leading
-        // zero byte, while the canonical right balance is represented by type 9.
-        // The payload is retained so the current encoder cannot silently replace
-        // this historical decoding case with a different encoding.
-        let encoded = include_bytes!("test_data/legacy_noncanonical_balance_ct9.boc");
-        assert_eq!(count_elision_markers(encoded), 1);
-        let tail = plain(0x77000000, &[]);
-        let old = noncanonical_balance(100, &[tail.clone()]);
-        let new = balance(100, &[tail]);
-        let expected = plain(
-            0x11ef55ae,
-            &[plain(1, &[]), plain(2, &[]), merkle_update(old, new), plain(3, &[])],
-        );
-        assert_eq!(
-            expected.repr_hash().to_hex_string(),
-            "2221b6b85a8731fecf3605677dc9f8b912a56190df3096fcc323ba17b8beb2a7"
-        );
-        let decoded = boc_decompress(encoded, 20 << 20).expect("legacy balance elision decodes");
-        assert_eq!(decoded.len(), 1);
-        assert_eq!(decoded[0].repr_hash(), expected.repr_hash());
-        // New encodings preserve the same original tree without relying on a
-        // noncanonical left balance for reconstruction.
-        assert_round_trip("re-encoded legacy tree", &decoded[0], 0);
-
-        // Older streams also counted a noncanonical child's numeric delta when
-        // reconstructing its canonical parent. This requires the same fallback.
-        let encoded = include_bytes!("test_data/legacy_noncanonical_child_ct9.boc");
-        assert_eq!(count_elision_markers(encoded), 1);
-        let expected = mixed_balance_block(105);
-        assert_eq!(
-            expected.repr_hash().to_hex_string(),
-            "97c84bc7d1bee33d68fb7cb50d09188c674b2134ab78d3e71ed1a0c81e1817a5"
-        );
-        let decoded = boc_decompress(encoded, 20 << 20).expect("legacy child delta decodes");
-        assert_eq!(decoded.len(), 1);
-        assert_eq!(decoded[0].repr_hash(), expected.repr_hash());
-        assert_round_trip("re-encoded legacy child delta", &decoded[0], 0);
-    }
-
-    #[test]
-    fn legacy_fallback_preserves_size_and_merkle_hash_checks() {
-        let encoded = include_bytes!("test_data/legacy_noncanonical_balance_ct9.boc");
-        let size = u32::from_be_bytes(encoded[1..5].try_into().unwrap()) as usize;
-        let mut canonical = DepthBalanceDecoder { canonical_only: true, saw_noncanonical: false };
-        let error =
-            decompress_improved_structure_lz4(&encoded[1..], size, &mut canonical).unwrap_err();
-        assert!(canonical.saw_noncanonical);
-        assert!(error.to_string().contains("depth-balance left vertex has no coins"));
-        let mut numeric = DepthBalanceDecoder { canonical_only: false, saw_noncanonical: false };
-        let roots = decompress_improved_structure_lz4(&encoded[1..], size, &mut numeric)
-            .expect("the legacy interpretation is a valid control");
-        assert_eq!(boc_decompress(encoded, size).unwrap()[0].repr_hash(), roots[0].repr_hash());
-
-        // Both the public entry point and the legacy pass enforce the same limit.
-        let error = boc_decompress(encoded, size - 1).unwrap_err();
-        assert!(error.to_string().contains("invalid decompressed size"));
-        let error =
-            decompress_improved_structure_lz4(&encoded[1..], size - 1, &mut numeric).unwrap_err();
-        assert!(error.to_string().contains("invalid decompressed size"));
-
-        // Corrupt only the update's declared new hash, preserving the entire
-        // compressed graph and the balances that trigger the legacy retry.
-        let update = roots[0].reference(2).unwrap();
-        let new_hash = &update.data()[33..65];
-        let mut inner = lz4::block::decompress(&encoded[5..], Some(size as i32)).unwrap();
-        let positions: Vec<_> = inner
-            .windows(new_hash.len())
-            .enumerate()
-            .filter_map(|(offset, bytes)| (bytes == new_hash).then_some(offset))
-            .collect();
-        assert_eq!(positions.len(), 1, "the declared new hash must be unique in the payload");
-        inner[positions[0]] ^= 1;
-        let mut corrupted = encoded[..5].to_vec();
-        corrupted.extend(lz4::block::compress(&inner, None, false).unwrap());
-        assert!(decompress_improved_structure_lz4(&corrupted[1..], size, &mut canonical).is_err());
-        let error =
-            decompress_improved_structure_lz4(&corrupted[1..], size, &mut numeric).unwrap_err();
-        assert!(error.to_string().contains("second reference hash does not match"));
-        let error = boc_decompress(&corrupted, size).unwrap_err();
-        assert!(error.to_string().contains("second reference hash does not match"));
-    }
-
     fn mixed_balance_block(parent_new: u128) -> Cell {
         let tail = plain(0x77000011, &[]);
         let old = balance(100, &[noncanonical_balance(100, &[tail.clone()])]);
@@ -1595,19 +1511,20 @@ mod per_edge_balance {
         let decoded = boc_decompress(encoded, 20 << 20).expect("canonical child delta decodes");
         assert_eq!(decoded.len(), 1);
         assert_eq!(decoded[0].repr_hash(), expected.repr_hash());
-        assert_round_trip("re-encoded native child delta", &decoded[0], 0);
+        // Re-encoding makes the same elision as the native encoder.
+        assert_round_trip("re-encoded native child delta", &decoded[0], 1);
     }
 
     #[test]
     fn mixed_balance_encodings_do_not_change_parent_elision() {
         for noncanonical_left in [false, true] {
-            // A numeric decoder includes the child delta; a canonical-only
-            // decoder ignores it. Neither candidate parent may be elided unless
-            // both reconstruction rules produce the original parent balance.
+            // As in the native codec, a noncanonical child has no balance and
+            // contributes no delta, and it is never elided itself. The canonical
+            // parent is elided exactly when its own balance is unchanged.
             for (child_old, child_new, parent_new, expected_elisions) in [
-                (100, 105, 100, 0),
+                (100, 105, 100, 1),
                 (100, 105, 105, 0),
-                (105, 100, 100, 0),
+                (105, 100, 100, 1),
                 (105, 100, 95, 0),
                 (100, 100, 100, 1),
             ] {
