@@ -81,6 +81,40 @@ std::string ErrorCtx::as_string() const {
   return a;
 }
 
+namespace validate_rules {
+
+td::Status check_enqueued_lt(int out_msg_tag, LogicalTime emitted_lt, LogicalTime enqueued_lt,
+                             LogicalTime block_start_lt) {
+  if (emitted_lt > enqueued_lt) {
+    return td::Status::Error(PSTRING() << "has emitted_lt " << emitted_lt << " greater than enqueued_lt "
+                                       << enqueued_lt);
+  }
+  switch (out_msg_tag) {
+    case out_msg_tag_new:
+    case out_msg_tag_deferred_tr:
+      // A new or deferred message enters the queue at the logical time it was emitted.
+      if (emitted_lt != enqueued_lt) {
+        return td::Status::Error(PSTRING()
+                                 << "has emitted_lt " << emitted_lt << " not equal to enqueued_lt " << enqueued_lt);
+      }
+      break;
+    case out_msg_tag_tr:
+    case out_msg_tag_tr_req:
+      // A transit message enters the queue at the start of the block that relays it.
+      if (enqueued_lt != block_start_lt) {
+        return td::Status::Error(PSTRING() << "has enqueued_lt " << enqueued_lt << " not equal to block start_lt "
+                                           << block_start_lt);
+      }
+      break;
+    default:
+      // Other tags do not enqueue a message; precheck_one_message_queue_update rejects them before this point.
+      break;
+  }
+  return td::Status::OK();
+}
+
+}  // namespace validate_rules
+
 /**
  * Constructs a ValidateQuery object.
  *
@@ -3538,11 +3572,11 @@ bool ValidateQuery::precheck_one_message_queue_update(td::ConstBitPtr out_msg_id
   }
   auto q_msg_env = (old_value.not_null() ? old_value : new_value)->prefetch_ref();
   int tag = block::tlb::t_OutMsg.get_tag(*out_msg_cs);
-  if (tag == 12 || tag == 13) {
+  if (tag == 12 || tag == 13) {  // dequeue
     tag /= 2;
-  } else if (tag == 20) {
+  } else if (tag == 20) {  // msg_export_new_defer
     tag = 8;
-  } else if (tag == 21) {
+  } else if (tag == 21) {  // msg_export_deferred_tr
     tag = 9;
   }
   // mode for msg_export_{ext,new,imm,tr,deq_imm,???,deq/deq_short,tr_req,new_defer,deferred_tr}
@@ -3554,8 +3588,8 @@ bool ValidateQuery::precheck_one_message_queue_update(td::ConstBitPtr out_msg_id
                                   << out_msg_id.to_hex(352) << " has invalid tag " << tag << "(" << tag_str[tag & 7]
                                   << ")");
   }
-  bool is_short = (tag == 6 && (out_msg_cs->prefetch_ulong(4) &
-                                1));  // msg_export_deq_short does not contain true MsgEnvelope / Message
+  bool is_short = (tag == /* dequeue */ 6 && (out_msg_cs->prefetch_ulong(4) &
+                                              1));  // msg_export_deq_short does not contain true MsgEnvelope / Message
   Ref<vm::Cell> msg_env, msg;
   td::Bits256 msg_env_hash;
   block::gen::OutMsg::Record_msg_export_deq_short deq_short;
@@ -3583,7 +3617,7 @@ bool ValidateQuery::precheck_one_message_queue_update(td::ConstBitPtr out_msg_id
   //
   if (mode == 1) {
     // dequeued message
-    if (tag == 7) {
+    if (tag == /* msg_export_tr_req */ 7) {
       // this is a msg_export_tr_req$111, a re-queued transit message (after merge)
       // check that q_msg_env still contains msg
       auto q_msg = vm::load_cell_slice(q_msg_env).prefetch_ref();
@@ -3630,9 +3664,11 @@ bool ValidateQuery::precheck_one_message_queue_update(td::ConstBitPtr out_msg_id
     }
     unsigned long long emitted_lt;
     REJECT_UNLESS(block::tlb::t_MsgEnvelope.get_emitted_lt(vm::load_cell_slice(q_msg_env), emitted_lt));
-    REJECT_UNLESS_MSG(emitted_lt <= enqueued_lt, PSTRING() << "EnqueuedMsg with key " << out_msg_id.to_hex(352)
-                                                           << " has emitted_lt " << emitted_lt
-                                                           << " greater than enqueued_lt " << enqueued_lt);
+    auto lt_status = validate_rules::check_enqueued_lt(tag, emitted_lt, enqueued_lt, start_lt_);
+    if (lt_status.is_error()) {
+      return reject_query(PSTRING() << "EnqueuedMsg with key " << out_msg_id.to_hex(352) << " and tag " << tag_str[tag]
+                                    << " " << lt_status.message());
+    }
   }
   // in all cases above, we have to check that all 352-bit key is correct (including first 96 bits)
   // otherwise we might not be able to correctly recover OutMsgQueue entries starting from OutMsgDescr later
