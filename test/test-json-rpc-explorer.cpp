@@ -246,12 +246,17 @@ TEST(JsonRpcExplorer, config_absence_defaults_and_retirement_are_exact) {
           .store_long(8, 8)
           .store_long(1300, 32);
     if (wire == 3)
-      builder.store_long(0, 1).store_long(1400, 32).store_long(1500, 32);
+      builder.store_long(0, 1).store_long(1400, 32).store_long(1500, 32).store_long(1600, 32).store_long(1700, 32);
     auto decoded = decode_config(43, builder.finalize(), 16, 1000);
     ASSERT_TRUE(decoded.is_ok());
     ASSERT_TRUE(decoded.ok().find("\"wire_version\":" + std::to_string(wire)) != std::string::npos);
-    if (wire == 3)
+    if (wire == 3) {
       ASSERT_TRUE(decoded.ok().find("\"defaulted_fields\":[]") != std::string::npos);
+      ASSERT_TRUE(decoded.ok().find("\"out_msg_queue_size_hard_limit\":1600,\"out_msg_queue_size_soft_limit\":1700}") !=
+                  std::string::npos);
+    } else {
+      ASSERT_TRUE(decoded.ok().find("\"out_msg_queue_size_soft_limit\"]") != std::string::npos);
+    }
   }
   ASSERT_TRUE(decode_config(8, {}, 16, 1000).is_error());
   ASSERT_TRUE(decode_config(48, {}, 15, 1000).is_ok());

@@ -272,6 +272,9 @@ class ValidateQuery : public td::actor::Actor {
 
   td::uint64 processed_account_dispatch_queues_ = 0;
   bool have_unprocessed_account_dispatch_queue_ = false;
+  td::uint64 out_msg_queue_size_hard_limit_ = std::numeric_limits<td::uint64>::max();
+  td::uint64 out_msg_queue_size_soft_limit_ = std::numeric_limits<td::uint64>::max();
+  bool out_msg_queue_size_soft_limit_exceeded_ = false;
 
   td::PerfWarningTimer perf_timer_;
   td::PerfLog perf_log_;
@@ -370,6 +373,15 @@ class ValidateQuery : public td::actor::Actor {
   bool check_utime_lt();
   bool prepare_out_msg_queue_size();
   void got_out_queue_size(size_t i, td::Result<td::uint64> res, td::PerfLogAction token);
+  void init_msg_queue_size_limits();
+  // The previous queue size when the previous state records it, which is what the
+  // queue size limits are measured against.
+  std::optional<td::uint64> old_out_msg_queue_size_in_state() const {
+    if (ps_.out_msg_queue_size_) {
+      return old_out_msg_queue_size_;
+    }
+    return std::nullopt;
+  }
   void verified_shard_blocks(td::Status S, td::PerfLogAction token);
 
   bool fix_one_processed_upto(block::MsgProcessedUpto& proc, tos::ShardIdFull owner, bool allow_cur = false);
@@ -418,6 +430,7 @@ class ValidateQuery : public td::actor::Actor {
       block::CurrencyCollection total_burned{0};
       std::vector<std::tuple<Bits256, Bits256, bool>> lib_publishers{};
       bool defer_all_messages = false;
+      bool always_allow_defer = false;
       std::vector<std::pair<td::Ref<vm::Cell>, td::uint32>> storage_stat_cache_update{};
       ValidationStats::WorkTimeStats work_time{};
 

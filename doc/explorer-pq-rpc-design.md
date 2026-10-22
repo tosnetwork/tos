@@ -617,7 +617,7 @@ with absent presence.
 
 The schema MUST enforce the complete wire-version field set, not merely allow a
 subset of possible names. V1 has exactly six configured fields, v2 has thirteen,
-and v3 has sixteen. `defaulted_fields` is exactly the complement of that set in
+and v3 has eighteen. `defaulted_fields` is exactly the complement of that set in
 `effective`, with no omissions, duplicates or configured names. A present Config
 43 cannot use null `wire_version`/`configured`. The v3 Maybe field is required in
 JSON even when its value is null (explicit unlimited); that null is configured,
@@ -634,6 +634,7 @@ checks do not prove those values match the authenticated cell or native defaults
 | `acc_state_cells_for_storage_dict` | v2+ | U32 |
 | `max_transaction_library_loads` | v3, Maybe uint32 | U32 or null (unlimited) |
 | `max_total_msg_bits`, `max_total_msg_cells` | v3 | U32 |
+| `out_msg_queue_size_hard_limit`, `out_msg_queue_size_soft_limit` | v3 | U32 |
 
 Expose source-defined units: bits, cells, bytes for `max_ext_msg_size`, and counts
 for libraries/currencies/loads. `defaulted_fields` distinguishes an absent wire

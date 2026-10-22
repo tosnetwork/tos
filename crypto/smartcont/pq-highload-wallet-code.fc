@@ -112,7 +112,7 @@ int message_extra_currency_limit() impure inline {
     if (limits~load_uint(1)) {
       limits~skip_bits(32);
     }
-    limits~skip_bits(64);
+    limits~skip_bits(64 + 64);
   }
   limits.end_parse();
   return count;

@@ -2376,6 +2376,13 @@ if (NOT TOS_ONLY_TOSLIB AND NOT USE_EMSCRIPTEN AND NOT EMSCRIPTEN)
 
   set_tests_properties(test-security-boundaries PROPERTIES LABELS "security-findings")
 
+  # ConfigParam 43 outbound queue limits through the real parser, and the
+  # deferral, rejection and merge rules the collator and validator share.
+  add_executable(test-out-msg-queue-limits test/test-td-main.cpp test/test-out-msg-queue-limits.cpp)
+  target_include_directories(test-out-msg-queue-limits PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+  target_link_libraries(test-out-msg-queue-limits PRIVATE tos_block tos_crypto tdutils)
+  tos_test(test-out-msg-queue-limits)
+
   add_executable(test-archive-prune test/test-archive-prune.cpp)
   target_include_directories(test-archive-prune PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
   target_link_libraries(test-archive-prune PRIVATE validator full-node tos_block tos_crypto tos_mldsa44 tos_pq_consensus_signer tos_pq_consensus tl_lite_api tl_api tdactor tdutils tddb validator-common)

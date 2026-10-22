@@ -958,6 +958,12 @@ impl StateParser {
                 max_total_msg_cells: p43
                     .get_num32("max_total_msg_cells")
                     .unwrap_or(SizeLimitsConfig::default().max_total_msg_cells),
+                out_msg_queue_size_hard_limit: p43
+                    .get_num32("out_msg_queue_size_hard_limit")
+                    .unwrap_or(SizeLimitsConfig::default().out_msg_queue_size_hard_limit),
+                out_msg_queue_size_soft_limit: p43
+                    .get_num32("out_msg_queue_size_soft_limit")
+                    .unwrap_or(SizeLimitsConfig::default().out_msg_queue_size_soft_limit),
             }))
         })?;
 

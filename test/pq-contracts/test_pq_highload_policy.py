@@ -111,7 +111,9 @@ def size_limits43(tag, count):
         c.uint(value, 32)
     c.uint(8, 8).uint(26, 32)
     if tag == 3:
-        c.uint(1, 1).uint(10000, 32).uint(5 << 20, 32).uint(20480, 32)
+        c.uint(1, 1).uint(10000, 32).uint(5 << 20, 32).uint(20480, 32).uint(18000, 32).uint(
+            12000, 32
+        )
     return c
 
 
