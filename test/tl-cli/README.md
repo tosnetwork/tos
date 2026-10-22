@@ -81,7 +81,9 @@ threads, sockets or retained node state in the native producer/verifier.
 
 Docker builds now need repository-root context:
 `docker build -f tosctl/src/Dockerfile .` (or `Dockerfile.nodectl`). This change
-only supplies the required inputs; those inherited recipes still name unavailable
+only supplies the required inputs. Recipe-specific ignore files retain the old
+exclusion of build outputs and local configuration under the new root context.
+Those inherited recipes still name unavailable
 `node`/`console` binaries or the obsolete `nodectl` package. They are not verified
 release targets. Repairing or retiring them needs a separate packaging decision.
 
