@@ -277,7 +277,7 @@ of the same document gives the bound and the order the two move in.
 
 | Param | Type | Purpose |
 |---|---|---|
-| 43 | `SizeLimitsConfig` | account/message/state size limits |
+| 43 | `SizeLimitsConfig` | account/message/state size limits; v3 also carries `out_msg_queue_size_hard_limit` / `out_msg_queue_size_soft_limit`, the outbound message queue bounds of a shard (genesis 18000 / 12000, see [GlobalVersions.md](GlobalVersions.md)) |
 | 44 | `SuspendedAddressList` | suspended (blocked) addresses |
 | 45 | `PrecompiledContractsConfig` | precompiled-contract registry |
 

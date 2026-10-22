@@ -496,6 +496,38 @@ reinterpreted as formal FN-DSA.
   transaction; null for internal messages, tick/tock, getters and compute-only
   contexts. See [tvm-lms-fee-hash.md](tvm-lms-fee-hash.md).
 
+### Block validity and queue limits of the epoch-5 genesis
+
+The epoch-5 genesis starts with the following rules, adopted from the upstream
+v2026.10 release into this baseline without a version gate. A network started
+before they were added (epoch 4) does not satisfy them and is not migrated.
+
+- **Outbound message queue limits.** `SizeLimitsConfig` v3 (`ConfigParam 43`) ends
+  with `out_msg_queue_size_hard_limit` and `out_msg_queue_size_soft_limit`. The genesis
+  sets 18000 and 12000. A v3 record without the two fields is refused, and v1/v2 records
+  use 18000 and 12000.
+  - The collator defers to the dispatch queue a message that would grow a shard's
+    outbound queue to the hard limit (messages of special accounts are never deferred),
+    and stops dispatch-queue processing at the limit.
+  - Validation rejects a new queue larger than the hard limit or the previous size,
+    whichever is greater, and accepts deferral of any message once the previous queue is
+    above the soft limit.
+  - A shard whose queue is above half the hard limit cannot request a merge.
+- **Canonical labels in the outbound queue.** Validation rejects a new `OutMsgQueue`
+  dictionary written with non-canonical labels. TVM dictionary instructions are
+  unchanged.
+- **Exact `enqueued_lt`.** A new message, or one released from the dispatch queue, must
+  be enqueued at its `emitted_lt`, and a transit message at the block's `start_lt`.
+- **Aligned `start_lt`.** A block's `start_lt` must be a multiple of the logical-time
+  alignment. Split/merge information expires when `now >= fsm_utime_end`, matching the
+  collator.
+- **External messages to precompiled contracts.** An external message is affordable when
+  the precompiled gas usage fits `gas_max`; it used to be compared with `gas_limit`,
+  which is 0 before acceptance, so every such message was skipped. On the VM fallback an
+  unaccepted external runs on credit alone (gas limit 0, credit up to the precompiled
+  limit), as in an ordinary compute phase, instead of the limit plus an equal credit. The
+  Rust executor follows the same rule.
+
 ## Capability flags versus version bumps
 
 Both are set in `ConfigParam 8`, and neither is enforced by refusing to run. A node
