@@ -39,7 +39,7 @@ def main():
                 str(args.build.resolve()),
                 "--target",
                 "emulator",
-                f"-j{os.cpu_count() or 2}",
+                f"-j{len(os.sched_getaffinity(0))}",
             ],
         )
         assert code == 0, log[-3000:]

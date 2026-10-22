@@ -11,8 +11,8 @@ import native_executor_check as check
 
 
 class NativeExecutorCheckTests(unittest.TestCase):
-    def test_build_uses_every_runner_cpu(self):
-        self.assertEqual(check.BUILD_JOBS, f"-j{os.cpu_count() or 2}")
+    def test_build_uses_every_cpu_this_process_may_use(self):
+        self.assertEqual(check.BUILD_JOBS, f"-j{len(os.sched_getaffinity(0))}")
 
     def test_original_native_commands_are_retained(self):
         self.assertEqual(

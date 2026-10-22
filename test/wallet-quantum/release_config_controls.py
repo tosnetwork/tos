@@ -60,7 +60,7 @@ def main():
                     "tos_executor",
                     "--example",
                     "pq-tx-parity",
-                    f"-j{os.cpu_count() or 2}",
+                    f"-j{len(os.sched_getaffinity(0))}",
                 ],
                 cwd=ROOT,
                 env=env,

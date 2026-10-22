@@ -58,7 +58,7 @@ def main():
                 "--target",
                 "test-pq-falcon512-parity",
                 "test-pq-suite-parity",
-                f"-j{os.cpu_count() or 2}",
+                f"-j{len(os.sched_getaffinity(0))}",
             ],
         ),
         (
@@ -77,7 +77,7 @@ def main():
                 "falcon-parity",
                 "--example",
                 "suite-parity",
-                f"-j{os.cpu_count() or 2}",
+                f"-j{len(os.sched_getaffinity(0))}",
             ],
         ),
     ]

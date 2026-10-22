@@ -68,7 +68,7 @@ def main():
                     args.build_dir,
                     "--target",
                     "test-ext-message-pool",
-                    f"-j{os.cpu_count() or 2}",
+                    f"-j{len(os.sched_getaffinity(0))}",
                 ],
                 label + "-build",
             )

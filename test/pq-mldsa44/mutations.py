@@ -19,7 +19,7 @@ def run(build: Path, vectors: Path):
                 str(build),
                 "--target",
                 "test-pq-mldsa44",
-                f"-j{os.cpu_count() or 2}",
+                f"-j{len(os.sched_getaffinity(0))}",
             ],
             check=True,
         )
