@@ -146,7 +146,6 @@ pub(crate) struct BroadcastSendContext<'a> {
 pub(crate) enum BroadcastSendMethod {
     Fast,
     QuicOrRldp,
-    Safe,
 }
 
 impl Display for BroadcastSendMethod {
@@ -154,7 +153,6 @@ impl Display for BroadcastSendMethod {
         let msg = match self {
             Self::Fast => "datagram ADNL",
             Self::QuicOrRldp => "QUIC/RLDP",
-            Self::Safe => "stream ADNL",
         };
         write!(f, "{msg}")
     }

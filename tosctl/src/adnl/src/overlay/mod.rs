@@ -664,9 +664,6 @@ impl Overlay {
                         None
                     }
                 }
-                BroadcastSendMethod::Safe => {
-                    self.adnl.send_custom_get_status(data, peers, AdnlSendMethod::Safe).await.err()
-                }
             };
             if let Some(e) = err {
                 log::warn!(
