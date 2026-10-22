@@ -121,3 +121,20 @@ and both corrected dependency sets linked successfully. This control is evidence
 for dependency closure only; mixed instrumented and uninstrumented objects are
 not a valid ASan runtime test. The full homogeneous Linux ASan job must pass on
 the new commit before this gate is considered cleared.
+
+### Homogeneous Debug and Release verification
+
+A clean Debug build with `TOS_USE_ASAN=ON` reproduced both original vtable
+failures. Adding `validator-common` alone then exposed unresolved
+`PersistentStateImportResult` and `CellDbGcPauseLease` symbols: its downloader
+objects also require the production `validator-db` objects. Both test targets
+therefore link both object libraries directly, following the existing
+integration-test pattern.
+
+In the builder image, Debug with ASan and Release each built all three targets
+and passed the exact `queue-codec` inventory and all three CTest entries
+(14 queue, four validation-rule and 13 codec cases). The source-guard selection
+passed all 58 entries. Sanitizer options, test assertions and production sources
+are unchanged. These are local receipts; remote CI must still pass on the final
+head. The earlier review of `a5c4834e8` does not cover the substantive queue and
+codec repair in `b687d122d`, which requires fresh independent review.
