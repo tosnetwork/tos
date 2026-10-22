@@ -104,6 +104,35 @@ inline ErrorCtxSet ErrorCtx::set_guard(std::vector<std::string> str_list) {
 }
 
 /*
+ * Block rules that ValidateQuery checks without needing any state.
+ * They are free functions so that tests can check them directly.
+ */
+namespace validate_rules {
+
+// True if start_lt lies on the logical-time grid that the collator aligns every block to.
+bool is_block_start_lt_aligned(LogicalTime start_lt);
+
+// True if split/merge information that ends at fsm_utime_end has expired at time now. The collator clears it from
+// that moment on, so a block that still carries it is invalid.
+bool is_fsm_expired(UnixTime now, UnixTime fsm_utime_end);
+
+// OutMsg tags as normalized in ValidateQuery::precheck_one_message_queue_update.
+enum : int {
+  out_msg_tag_new = 1,          // msg_export_new
+  out_msg_tag_tr = 3,           // msg_export_tr
+  out_msg_tag_tr_req = 7,       // msg_export_tr_req
+  out_msg_tag_deferred_tr = 9,  // msg_export_deferred_tr
+};
+
+// Checks the enqueued_lt of a message added to the OutMsgQueue against the emitted_lt of its envelope and the
+// start_lt of the block. The collator fixes enqueued_lt for every tag that enqueues, so any other value means the
+// message was reordered or delayed.
+td::Status check_enqueued_lt(int out_msg_tag, LogicalTime emitted_lt, LogicalTime enqueued_lt,
+                             LogicalTime block_start_lt);
+
+}  // namespace validate_rules
+
+/*
  *
  * must write candidate to disk, if accepted
  * can reject block only if it is invalid (i.e. in case of

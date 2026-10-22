@@ -1150,6 +1150,9 @@ target_link_libraries(test-wallet-message-processor PRIVATE tos_validator smc-en
 add_executable(test-vm-exception-hardening test/test-td-main.cpp test/test-vm-exception-hardening.cpp)
 target_link_libraries(test-vm-exception-hardening PRIVATE tos_validator tos_crypto common tdutils tos_block keys)
 
+add_executable(test-validate-query-rules test/test-td-main.cpp test/test-validate-query-rules.cpp)
+target_link_libraries(test-validate-query-rules PRIVATE tos_validator tos_crypto common tdutils tos_block keys)
+
 if (UNIX AND NOT TOS_ONLY_TOSLIB AND NOT USE_EMSCRIPTEN AND NOT EMSCRIPTEN)
   add_executable(test-state-download-recovery test/test-state-download-recovery.cpp)
   # GNU ld cannot revisit validator.a when fabric.cpp later needs BlockHandleImpl.
@@ -1561,6 +1564,8 @@ add_executable(test-emulator
         # VmState-level test above and the TL-B parse test in
         # tvm-v14-v15-transaction-fixture.cpp.
         emulator/test/config-param-43-transaction-fixture.cpp
+        # Gas of messages to contracts listed as precompiled in ConfigParam 45.
+        emulator/test/precompiled-external-message-fixture.cpp
         # Measures the token wallet fee profile against this build and checks
         # the config-priced transfer/burn requirements end to end.
         emulator/test/token-wallet-fee-profile-fixture.cpp
@@ -2176,6 +2181,7 @@ tos_test(test-http-listen-address)
 set_tests_properties(test-http-listen-address PROPERTIES SKIP_RETURN_CODE 77)
 tos_test(test-wallet-message-processor)
 tos_test(test-vm-exception-hardening)
+tos_test(test-validate-query-rules)
 tos_test(test-celldb-streaming-import)
 tos_test(test-celldb-actor-restart)
 tos_test(test-inmemory-celldb-dec)

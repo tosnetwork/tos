@@ -17,6 +17,9 @@
     Copyright 2017-2020 Telegram Systems LLP
     Copyright 2025-2026 TOS Blockchain Teams
 */
+#include <random>
+#include <vector>
+
 #include "common/bigint.hpp"
 #include "fift/utils.h"
 #include "td/utils/ScopeGuard.h"
@@ -493,4 +496,149 @@ ATEXITALT
 RETALT
 )A";
   test_run_vm(fift::compile_asm(test1).move_as_ok());
+}
+
+namespace {
+
+// Leaf cell for an 8-bit key whose label is encoded in an explicitly chosen form.
+enum class LabelForm { ShortUnary, Long, Same };
+
+td::Ref<vm::Cell> make_leaf_with_label(unsigned key, LabelForm form) {
+  constexpr int key_bits = 8;
+  constexpr int len_bits = 4;  // 32 - clz(8)
+  vm::CellBuilder cb;
+  switch (form) {
+    case LabelForm::ShortUnary:
+      CHECK(cb.store_long_bool(0, 1));
+      CHECK(cb.store_long_bool(-2, key_bits + 1));  // eight ones, then a zero
+      CHECK(cb.store_long_bool(key, key_bits));
+      break;
+    case LabelForm::Long:
+      CHECK(cb.store_long_bool(2, 2));
+      CHECK(cb.store_long_bool(key_bits, len_bits));
+      CHECK(cb.store_long_bool(key, key_bits));
+      break;
+    case LabelForm::Same:
+      CHECK(key == 0 || key == 0xff);
+      CHECK(cb.store_long_bool(6 + (key != 0), 3));
+      CHECK(cb.store_long_bool(key_bits, len_bits));
+      break;
+  }
+  CHECK(cb.store_long_bool(0x5a, 8));
+  return cb.finalize();
+}
+
+td::Ref<vm::Cell> make_canonical_leaf(unsigned key) {
+  vm::Dictionary dict{8};
+  td::BitArray<8> k;
+  k.bits().store_uint(key, 8);
+  vm::CellBuilder value;
+  CHECK(value.store_long_bool(0x5a, 8));
+  CHECK(dict.set_builder(k.cbits(), 8, value));
+  return dict.get_root_cell();
+}
+
+bool label_parses(td::Ref<vm::Cell> cell, bool check_canonical) {
+  try {
+    vm::dict::LabelParser label{std::move(cell), 8, vm::dict::LabelParser::chk_all, check_canonical};
+    return label.l_bits == 8;
+  } catch (vm::VmError &) {
+    return false;
+  }
+}
+
+// Returns the number of changed keys reported, or -1 if the scan threw.
+int count_diff(td::Ref<vm::Cell> old_root, td::Ref<vm::Cell> new_root, int key_bits, int mode) {
+  vm::Dictionary old_dict{std::move(old_root), key_bits};
+  vm::Dictionary new_dict{std::move(new_root), key_bits};
+  int changed = 0;
+  try {
+    bool ok = old_dict.scan_diff(
+        new_dict,
+        [&](td::ConstBitPtr, int, td::Ref<vm::CellSlice>, td::Ref<vm::CellSlice>) {
+          ++changed;
+          return true;
+        },
+        mode);
+    CHECK(ok);
+  } catch (vm::VmError &) {
+    return -1;
+  }
+  return changed;
+}
+
+}  // namespace
+
+TEST(VM, dict_label_canonical_check_is_opt_in) {
+  // The encoder picks the long form for a mixed 8-bit label and the same-bit form for 0x00 / 0xff.
+  ASSERT_EQ(make_canonical_leaf(0xb2)->get_hash(), make_leaf_with_label(0xb2, LabelForm::Long)->get_hash());
+  ASSERT_EQ(make_canonical_leaf(0xff)->get_hash(), make_leaf_with_label(0xff, LabelForm::Same)->get_hash());
+  ASSERT_EQ(make_canonical_leaf(0x00)->get_hash(), make_leaf_with_label(0x00, LabelForm::Same)->get_hash());
+
+  struct Case {
+    unsigned key;
+    LabelForm form;
+    bool canonical;
+  };
+  const Case cases[] = {
+      {0xb2, LabelForm::Long, true},  {0xb2, LabelForm::ShortUnary, false}, {0xff, LabelForm::Same, true},
+      {0xff, LabelForm::Long, false}, {0xff, LabelForm::ShortUnary, false}, {0x00, LabelForm::Same, true},
+      {0x00, LabelForm::Long, false},
+  };
+  for (const auto &c : cases) {
+    auto cell = make_leaf_with_label(c.key, c.form);
+    // Default mode (used by every TVM dictionary operation) accepts every valid encoding.
+    ASSERT_TRUE(label_parses(cell, false));
+    ASSERT_EQ(c.canonical, label_parses(cell, true));
+  }
+}
+
+TEST(VM, dict_scan_diff_rejects_non_canonical_new_labels) {
+  const int strict = vm::DictionaryFixed::check_new_aug | vm::DictionaryFixed::check_new_canonical_labels;
+  auto canonical = make_canonical_leaf(0xb2);
+  auto aliased = make_leaf_with_label(0xb2, LabelForm::ShortUnary);
+  ASSERT_TRUE(canonical->get_hash() != aliased->get_hash());
+
+  // Empty old dictionary: the new entry is reported, unless its label is not canonical.
+  ASSERT_EQ(1, count_diff({}, canonical, 8, strict));
+  ASSERT_EQ(1, count_diff({}, aliased, 8, vm::DictionaryFixed::check_new_aug));
+  ASSERT_EQ(-1, count_diff({}, aliased, 8, strict));
+
+  // Same content under a different encoding: no key changes, so only the label check can refuse it.
+  ASSERT_EQ(0, count_diff(canonical, aliased, 8, vm::DictionaryFixed::check_new_aug));
+  ASSERT_EQ(-1, count_diff(canonical, aliased, 8, strict));
+  // Only the new side is checked.
+  ASSERT_EQ(0, count_diff(aliased, canonical, 8, strict));
+}
+
+TEST(VM, dict_scan_diff_canonical_check_accepts_encoder_output) {
+  const int strict = vm::DictionaryFixed::check_new_aug | vm::DictionaryFixed::check_new_canonical_labels;
+  std::mt19937_64 rng(20261022);
+  for (int key_bits : {1, 2, 3, 7, 8, 16, 64, 352}) {
+    vm::Dictionary old_dict{key_bits};
+    vm::Dictionary new_dict{key_bits};
+    std::vector<td::BitArray<352>> keys;
+    for (int i = 0; i < 300; i++) {
+      td::BitArray<352> key;
+      for (int b = 0; b < key_bits; b++) {
+        // Sparse ones give long runs of equal bits, so the same-bit label form is exercised too.
+        key.bits()[b] = (rng() % 8) == 0;
+      }
+      if (i % 50 == 0) {
+        key.bits().fill(i % 100 == 0, key_bits);
+      }
+      vm::CellBuilder value;
+      CHECK(value.store_long_bool((long long)(rng() & 0xff), 8));
+      new_dict.set_builder(key.cbits(), key_bits, value);
+      if (i % 3 == 0) {
+        old_dict.set_builder(key.cbits(), key_bits, value);
+      }
+      keys.push_back(key);
+    }
+    for (std::size_t i = 0; i < keys.size(); i += 7) {
+      new_dict.lookup_delete(keys[i].cbits(), key_bits);
+    }
+    ASSERT_TRUE(count_diff({}, new_dict.get_root_cell(), key_bits, strict) >= 0);
+    ASSERT_TRUE(count_diff(old_dict.get_root_cell(), new_dict.get_root_cell(), key_bits, strict) >= 0);
+  }
 }

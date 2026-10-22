@@ -494,6 +494,17 @@ jobs:
           python3 test/executor-parity/fail_action_fine.py \
             --driver tosctl/src/target/debug/examples/pq-tx-parity --output "$RUNNER_TEMP/fail-action-fine"
 
+      # An external message to a contract listed in ConfigParam 45 is checked
+      # against gas_max and runs on its credit alone until it accepts; both
+      # executors must agree on every outcome.
+      - name: Precompiled-contract externals agree between the executors
+        env:
+          EMULATOR_PATH: ${{ github.workspace }}/build/emulator/libemulator.so
+        run: |
+          cargo build --manifest-path tosctl/src/Cargo.toml --locked -p tos_executor --example pq-tx-parity
+          python3 test/executor-parity/precompiled_external.py \
+            --driver tosctl/src/target/debug/examples/pq-tx-parity --output "$RUNNER_TEMP/precompiled-external"
+
       # Each guard of the settlement protocol is removed in a copy of the
       # sources and the test that names it must fail for its stated reason.
       # The runner first runs every named test unmutated. A guard no test
