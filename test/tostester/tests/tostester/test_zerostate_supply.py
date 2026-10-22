@@ -25,6 +25,8 @@ from pytosiq_core.tlb.config import (
     ConfigParam17,
     ConfigParam20,
     ConfigParam21,
+    ConfigParam22,
+    ConfigParam23,
     ConfigParam28,
     ConfigParam34,
 )
@@ -739,6 +741,42 @@ def test_canonical_genesis_sets_a_stake_proportional_punishment_schedule(tmp_pat
     worst_flat, worst_part = _punishment_tier(punishment, True, long)
     required = worst_flat + (100_000 * NANOTOS_PER_TOS) * worst_part // (1 << 32)
     assert required == 27_500 * NANOTOS_PER_TOS
+
+
+def _out_msg_queue_size_limits(state) -> tuple[int, int]:
+    """Decode the outbound-queue limits at the end of ConfigParam 43 v3."""
+    cs = _config_cells(state)[43].copy()
+    assert cs.load_uint(8) == 0x03, "genesis must write SizeLimitsConfig v3"
+    cs.load_bits(32 * 3 + 16 + 32 + 16)  # v1 fields
+    cs.load_bits(32 * 5 + 8 + 32)  # v2 fields
+    if cs.load_bit():
+        cs.load_uint(32)  # max_transaction_library_loads
+    cs.load_bits(32 * 2)  # max_total_msg_bits, max_total_msg_cells
+    hard, soft = cs.load_uint(32), cs.load_uint(32)
+    assert cs.remaining_bits == 0 and cs.remaining_refs == 0
+    return hard, soft
+
+
+def test_canonical_genesis_bounds_the_outbound_message_queue(tmp_path):
+    """The outbound message queue of a shard is bounded from genesis. While the
+    previous queue is under the soft limit, the first message of a transaction
+    cannot be deferred, and each such message spends at least two lt units, so
+    one block adds at most lt_hard / 2 of them. The gap between the limits must
+    hold that many, or an honest block could not stay under the hard limit."""
+    _write_pq_manifest(tmp_path)
+    subprocess.run(
+        _create_state_command(REPO / "crypto/smartcont/gen-zerostate.fif"),
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+        env=_mainnet_genesis_env(),
+    )
+    state = _load_masterchain_state(tmp_path / "zerostate.boc")
+    hard, soft = _out_msg_queue_size_limits(state)
+    assert (hard, soft) == (18000, 12000)
+    for limits in (_config(state, 22, ConfigParam22), _config(state, 23, ConfigParam23)):
+        assert hard - soft >= limits.lt_delta.hard_limit // 2
 
 
 def test_canonical_genesis_script_accepts_only_four_validator_keys(tmp_path):

@@ -41,6 +41,7 @@
 #include "collator-impl.h"
 #include "dispatch-progress.h"
 #include "fabric.h"
+#include "out-msg-queue-limits.h"
 #include "storage-stat-cache.hpp"
 #include "top-shard-descr.hpp"
 
@@ -2277,6 +2278,7 @@ bool Collator::fetch_config_params() {
                                                      compute_phase_cfg_.size_limits.defer_out_queue_size_limit);
   // This one is checked in validate-query
   hard_defer_out_queue_size_limit_ = compute_phase_cfg_.size_limits.defer_out_queue_size_limit;
+  out_msg_queue_size_hard_limit_ = compute_phase_cfg_.size_limits.out_msg_queue_size_hard_limit;
 
   bool custom_workchain = false;
   auto resolved_execution = block::default_workchain_execution_registry().resolve_workchain(
@@ -2449,11 +2451,6 @@ td::actor::Task<> Collator::do_collate_inner() {
   if (!init_value_create()) {
     co_return td::Status::Error("cannot compute the value to be created / minted / recovered");
   }
-  // 2-. take messages from dispatch queue
-  LOG(INFO) << "process dispatch queue";
-  if (!process_dispatch_queue()) {
-    co_return td::Status::Error("cannot process dispatch queue");
-  }
   // 2. tick transactions
   LOG(INFO) << "create tick transactions";
   if (!create_ticktock_transactions(2)) {
@@ -2474,6 +2471,12 @@ td::actor::Task<> Collator::do_collate_inner() {
     // See V-011.
     LOG(DEBUG) << "skipping merge prepare/install for large smart contracts"
                << " (globally disabled; see V-011/V-002/V-003)";
+  }
+  // 3+. take messages from dispatch queue, after tick and special transactions have queued their messages, so the
+  // queue size limit accounts for messages that can never be deferred
+  LOG(INFO) << "process dispatch queue";
+  if (!process_dispatch_queue()) {
+    co_return td::Status::Error("cannot process dispatch queue");
   }
   // 4. import inbound internal messages, process or transit
   LOG(INFO) << "process inbound internal messages";
@@ -3774,6 +3777,10 @@ int Collator::process_one_new_message(block::NewOutMsg msg, bool enqueue_only, R
     if (dispatch_queue_->lookup(src_addr).not_null() || unprocessed_deferred_messages_.count(src_addr)) {
       defer = true;
     }
+    if (out_msg_queue_reached_hard_limit(out_msg_queue_size_, new_msgs.size(), out_msg_queue_size_hard_limit_) &&
+        !is_special) {
+      defer = true;
+    }
   } else {
     auto& x = unprocessed_deferred_messages_[src_addr];
     CHECK(x > 0);
@@ -4547,6 +4554,10 @@ bool Collator::process_dispatch_queue() {
     auto prioritylist = params_.collator_opts->prioritylist;
     auto prioritylist_iter = prioritylist.begin();
     while (!cur_dispatch_queue.is_empty()) {
+      if (out_msg_queue_reached_hard_limit(out_msg_queue_size_, new_msgs.size(), out_msg_queue_size_hard_limit_)) {
+        LOG(INFO) << "out msg queue size too big, stop processing dispatch queue";
+        return true;
+      }
       block_full_ = !block_limit_status_->fits(block::ParamLimits::cl_normal);
       if (block_full_) {
         LOG(INFO) << "BLOCK FULL, stop processing dispatch queue";
@@ -5658,6 +5669,9 @@ bool Collator::check_block_overload() {
     snprintf(buffer, sizeof(buffer), "%016llx", (unsigned long long)overload_history_);
     LOG(INFO) << "want_split set because of overload history " << buffer;
     want_split_ = true;
+  } else if (out_msg_queue_blocks_merge(out_msg_queue_size_, out_msg_queue_size_hard_limit_)) {
+    LOG(INFO) << "out msg queue " << out_msg_queue_size_
+              << " exceeds hard_limit/2 = " << out_msg_queue_size_hard_limit_ / 2 << ", cannot set want_merge";
   } else if (history_weight(underload_history_) >= 0) {
     snprintf(buffer, sizeof(buffer), "%016llx", (unsigned long long)underload_history_);
     LOG(INFO) << "want_merge set because of underload history " << buffer;

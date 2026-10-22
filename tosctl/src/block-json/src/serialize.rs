@@ -1042,6 +1042,16 @@ fn serialize_limits(limits: &SizeLimitsConfig) -> Result<Value> {
     }
     serialize_field(&mut map, "max_total_msg_bits", limits.max_total_msg_bits);
     serialize_field(&mut map, "max_total_msg_cells", limits.max_total_msg_cells);
+    serialize_field(
+        &mut map,
+        "out_msg_queue_size_hard_limit",
+        limits.out_msg_queue_size_hard_limit,
+    );
+    serialize_field(
+        &mut map,
+        "out_msg_queue_size_soft_limit",
+        limits.out_msg_queue_size_soft_limit,
+    );
     Ok(map.into())
 }
 

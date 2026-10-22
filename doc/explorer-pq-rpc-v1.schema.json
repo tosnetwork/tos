@@ -1404,6 +1404,12 @@
         "max_total_msg_cells": {
           "$ref": "#/$defs/U32"
         },
+        "out_msg_queue_size_hard_limit": {
+          "$ref": "#/$defs/U32"
+        },
+        "out_msg_queue_size_soft_limit": {
+          "$ref": "#/$defs/U32"
+        },
         "max_vm_data_depth": {
           "$ref": "#/$defs/U16"
         },
@@ -1466,6 +1472,12 @@
         "max_total_msg_cells": {
           "$ref": "#/$defs/U32"
         },
+        "out_msg_queue_size_hard_limit": {
+          "$ref": "#/$defs/U32"
+        },
+        "out_msg_queue_size_soft_limit": {
+          "$ref": "#/$defs/U32"
+        },
         "max_vm_data_depth": {
           "$ref": "#/$defs/U16"
         },
@@ -1499,6 +1511,8 @@
         "acc_state_cells_for_storage_dict",
         "max_total_msg_bits",
         "max_total_msg_cells",
+        "out_msg_queue_size_hard_limit",
+        "out_msg_queue_size_soft_limit",
         "max_vm_data_depth",
         "max_ext_msg_depth",
         "max_acc_fixed_prefix_length",
@@ -1555,6 +1569,8 @@
               "acc_state_cells_for_storage_dict",
               "max_total_msg_bits",
               "max_total_msg_cells",
+              "out_msg_queue_size_hard_limit",
+              "out_msg_queue_size_soft_limit",
               "max_vm_data_depth",
               "max_ext_msg_depth",
               "max_acc_fixed_prefix_length",
@@ -1588,8 +1604,8 @@
                 "const": null
               },
               "defaulted_fields": {
-                "minItems": 16,
-                "maxItems": 16,
+                "minItems": 18,
+                "maxItems": 18,
                 "items": {
                   "enum": [
                     "max_msg_bits",
@@ -1604,6 +1620,8 @@
                     "acc_state_cells_for_storage_dict",
                     "max_total_msg_bits",
                     "max_total_msg_cells",
+                    "out_msg_queue_size_hard_limit",
+                    "out_msg_queue_size_soft_limit",
                     "max_vm_data_depth",
                     "max_ext_msg_depth",
                     "max_acc_fixed_prefix_length",
@@ -1628,8 +1646,8 @@
                 "$ref": "#/$defs/ConfiguredSizeLimitsV1"
               },
               "defaulted_fields": {
-                "minItems": 10,
-                "maxItems": 10,
+                "minItems": 12,
+                "maxItems": 12,
                 "items": {
                   "enum": [
                     "max_acc_state_cells",
@@ -1640,6 +1658,8 @@
                     "acc_state_cells_for_storage_dict",
                     "max_total_msg_bits",
                     "max_total_msg_cells",
+                    "out_msg_queue_size_hard_limit",
+                    "out_msg_queue_size_soft_limit",
                     "max_acc_fixed_prefix_length",
                     "max_transaction_library_loads"
                   ]
@@ -1662,12 +1682,14 @@
                 "$ref": "#/$defs/ConfiguredSizeLimitsV2"
               },
               "defaulted_fields": {
-                "minItems": 3,
-                "maxItems": 3,
+                "minItems": 5,
+                "maxItems": 5,
                 "items": {
                   "enum": [
                     "max_total_msg_bits",
                     "max_total_msg_cells",
+                    "out_msg_queue_size_hard_limit",
+                    "out_msg_queue_size_soft_limit",
                     "max_transaction_library_loads"
                   ]
                 }
@@ -2039,7 +2061,9 @@
             "acc_state_cells_for_storage_dict",
             "max_transaction_library_loads",
             "max_total_msg_bits",
-            "max_total_msg_cells"
+            "max_total_msg_cells",
+            "out_msg_queue_size_hard_limit",
+            "out_msg_queue_size_soft_limit"
           ],
           "propertyNames": {
             "enum": [
@@ -2058,7 +2082,9 @@
               "acc_state_cells_for_storage_dict",
               "max_transaction_library_loads",
               "max_total_msg_bits",
-              "max_total_msg_cells"
+              "max_total_msg_cells",
+              "out_msg_queue_size_hard_limit",
+              "out_msg_queue_size_soft_limit"
             ]
           }
         }

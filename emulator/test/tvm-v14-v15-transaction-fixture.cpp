@@ -29,7 +29,9 @@ block::gen::SizeLimitsConfig::Record_size_limits_config_v3 make_size_limits_v3(
           /*acc_state_cells_for_storage_dict=*/1024,
           std::move(max_transaction_library_loads),
           /*max_total_msg_bits=*/2000,
-          /*max_total_msg_cells=*/200};
+          /*max_total_msg_cells=*/200,
+          /*out_msg_queue_size_hard_limit=*/3000,
+          /*out_msg_queue_size_soft_limit=*/2000};
 }
 
 td::Ref<vm::CellSlice> make_maybe_uint32(td::optional<td::uint32> value) {
@@ -95,6 +97,8 @@ TEST(TvmV15Config, SizeLimitsV3ParsesTransactionLibraryLimit) {
   CHECK(*limits.max_transaction_library_loads == 77);
   CHECK(limits.max_total_msg_bits == 2000);
   CHECK(limits.max_total_msg_cells == 200);
+  CHECK(limits.out_msg_queue_size_hard_limit == 3000);
+  CHECK(limits.out_msg_queue_size_soft_limit == 2000);
 }
 
 TEST(TvmV15Config, SizeLimitsV3AllowsNoTransactionLibraryLimit) {

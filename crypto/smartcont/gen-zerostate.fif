@@ -308,18 +308,30 @@ triple untriple config.block_limits!
 // the defaults. This build reads max_transaction_library_loads only from the
 // v3 constructor (#03), which also carries the per-transaction message totals;
 // they are set to their defaults, 5 x 2^20 bits and 20480 cells.
+// The outbound message queue of a shard is bounded at 18000 entries (hard
+// limit, messages beyond it go to the dispatch queue) with a soft limit of
+// 12000 (above it any message may be deferred); these are the node defaults.
+// While the previous queue is under the soft limit only first messages of a
+// transaction and messages of special accounts must bypass the dispatch
+// queue. A transaction spends at least two lt units for its first outbound
+// message, so the lt hard limit of both chains (10000, above) admits at most
+// 5000 of them per block, inside the 6000-entry gap between the two limits.
+// Queue entries are state cells loaded on demand, so the limits bound shard
+// state and the work of every collation, not resident memory directly.
 //   max_msg_bits max_msg_cells max_library_cells max_vm_data_depth
 //   max_ext_msg_size max_ext_msg_depth max_acc_state_cells
 //   max_mc_acc_state_cells max_acc_public_libraries defer_out_queue_size_limit
 //   max_msg_extra_currencies max_acc_fixed_prefix_length
 //   acc_state_cells_for_storage_dict max_transaction_library_loads
 //   max_total_msg_bits max_total_msg_cells
+//   out_msg_queue_size_hard_limit out_msg_queue_size_soft_limit
 <b x{03} s, 2097152 32 u, 8192 32 u, 200 32 u, 512 16 u,
    65535 32 u, 512 16 u, 65536 32 u,
    2048 32 u, 256 32 u, 256 32 u,
    0 32 u, 8 8 u,
    26 32 u, 1 1 u, 3 32 u,
-   5242880 32 u, 20480 32 u, b> 43 config!
+   5242880 32 u, 20480 32 u,
+   18000 32 u, 12000 32 u, b> 43 config!
 
 // Candidate values calibrated from a four-validator Simplex v2 rehearsal at
 // 2.5 finalized masterchain and basechain blocks per second, retaining the

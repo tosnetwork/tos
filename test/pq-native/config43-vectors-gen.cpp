@@ -33,6 +33,8 @@ struct Values {
   long long max_transaction_library_loads = -1;  // -1 means absent, which means unlimited
   unsigned max_total_msg_bits = (1u << 21) * 5 / 2;
   unsigned max_total_msg_cells = (1u << 13) * 5 / 2;
+  unsigned out_msg_queue_size_hard_limit = 18000;
+  unsigned out_msg_queue_size_soft_limit = 12000;
 };
 
 void store_v1_fields(vm::CellBuilder& cb, const Values& v) {
@@ -69,11 +71,7 @@ td::Ref<vm::Cell> v2(const Values& v) {
   return cb.finalize();
 }
 
-td::Ref<vm::Cell> v3(const Values& v) {
-  vm::CellBuilder cb;
-  cb.store_long(0x03, 8);
-  store_v1_fields(cb, v);
-  store_v2_fields(cb, v);
+void store_v3_message_fields(vm::CellBuilder& cb, const Values& v) {
   if (v.max_transaction_library_loads < 0) {
     cb.store_long(0, 1);
   } else {
@@ -82,6 +80,16 @@ td::Ref<vm::Cell> v3(const Values& v) {
   }
   cb.store_long(v.max_total_msg_bits, 32);
   cb.store_long(v.max_total_msg_cells, 32);
+}
+
+td::Ref<vm::Cell> v3(const Values& v) {
+  vm::CellBuilder cb;
+  cb.store_long(0x03, 8);
+  store_v1_fields(cb, v);
+  store_v2_fields(cb, v);
+  store_v3_message_fields(cb, v);
+  cb.store_long(v.out_msg_queue_size_hard_limit, 32);
+  cb.store_long(v.out_msg_queue_size_soft_limit, 32);
   return cb.finalize();
 }
 
@@ -105,17 +113,20 @@ Values v2_expectation(const Values& written) {
   expected.max_transaction_library_loads = defaults.max_transaction_library_loads;
   expected.max_total_msg_bits = defaults.max_total_msg_bits;
   expected.max_total_msg_cells = defaults.max_total_msg_cells;
+  expected.out_msg_queue_size_hard_limit = defaults.out_msg_queue_size_hard_limit;
+  expected.out_msg_queue_size_soft_limit = defaults.out_msg_queue_size_soft_limit;
   return expected;
 }
 
 void emit(const char* name, const char* verdict, const td::Ref<vm::Cell>& cell, const Values& e) {
   std::string loads = e.max_transaction_library_loads < 0 ? "-" : std::to_string(e.max_transaction_library_loads);
-  std::printf("%s\t%s\t%s\t%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%s,%u,%u\n", name, verdict,
+  std::printf("%s\t%s\t%s\t%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%s,%u,%u,%u,%u\n", name, verdict,
               td::hex_encode(vm::std_boc_serialize(cell, 31).move_as_ok().as_slice()).c_str(), e.max_msg_bits,
               e.max_msg_cells, e.max_library_cells, e.max_vm_data_depth, e.max_ext_msg_size, e.max_ext_msg_depth,
               e.max_acc_state_cells, e.max_mc_acc_state_cells, e.max_acc_public_libraries, e.defer_out_queue_size_limit,
               e.max_msg_extra_currencies, e.max_acc_fixed_prefix_length, e.acc_state_cells_for_storage_dict,
-              loads.c_str(), e.max_total_msg_bits, e.max_total_msg_cells);
+              loads.c_str(), e.max_total_msg_bits, e.max_total_msg_cells, e.out_msg_queue_size_hard_limit,
+              e.out_msg_queue_size_soft_limit);
 }
 
 void emit_reject(const char* name, const td::Ref<vm::Cell>& cell) {
@@ -133,7 +144,7 @@ int main() {
       "max_ext_msg_size,max_ext_msg_depth,max_acc_state_cells,max_mc_acc_state_cells,"
       "max_acc_public_libraries,defer_out_queue_size_limit,max_msg_extra_currencies,"
       "max_acc_fixed_prefix_length,acc_state_cells_for_storage_dict,max_transaction_library_loads,"
-      "max_total_msg_bits,max_total_msg_cells\n");
+      "max_total_msg_bits,max_total_msg_cells,out_msg_queue_size_hard_limit,out_msg_queue_size_soft_limit\n");
 
   Values defaults;
   emit("v1-defaults", "accept", v1(defaults), v1_expectation(defaults));
@@ -161,6 +172,8 @@ int main() {
   v3_absent.max_transaction_library_loads = -1;
   v3_absent.max_total_msg_bits = 7000000;
   v3_absent.max_total_msg_cells = 20000;
+  v3_absent.out_msg_queue_size_hard_limit = 30000;
+  v3_absent.out_msg_queue_size_soft_limit = 21000;
   emit("v3-library-loads-absent", "accept", v3(v3_absent), v3_absent);
 
   Values v3_present = v3_absent;
@@ -185,6 +198,15 @@ int main() {
     store_v1_fields(cb, defaults);
     cb.store_long(defaults.max_acc_state_cells, 32);
     emit_reject("v2-truncated", cb.finalize());
+  }
+  {  // A version-3 record without the outbound queue limits is refused rather than given the
+     // node defaults: the queue bound is consensus, and a default is a node-local choice.
+    vm::CellBuilder cb;
+    cb.store_long(0x03, 8);
+    store_v1_fields(cb, defaults);
+    store_v2_fields(cb, defaults);
+    store_v3_message_fields(cb, defaults);
+    emit_reject("v3-without-queue-limits", cb.finalize());
   }
   return 0;
 }

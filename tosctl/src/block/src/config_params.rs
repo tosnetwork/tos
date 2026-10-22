@@ -3486,6 +3486,11 @@ pub struct SizeLimitsConfig {
     pub max_transaction_library_loads: Option<u32>,
     pub max_total_msg_bits: u32,
     pub max_total_msg_cells: u32,
+    /// A shard's outbound message queue may not grow past this many entries; the
+    /// collator sends the excess to the dispatch queue.
+    pub out_msg_queue_size_hard_limit: u32,
+    /// Above this many entries in the previous state any outbound message may be deferred.
+    pub out_msg_queue_size_soft_limit: u32,
 }
 
 impl Default for SizeLimitsConfig {
@@ -3507,6 +3512,8 @@ impl Default for SizeLimitsConfig {
             max_transaction_library_loads: None,
             max_total_msg_bits: MAX_MSG_BITS * 5 / 2,
             max_total_msg_cells: MAX_MSG_CELLS * 5 / 2,
+            out_msg_queue_size_hard_limit: 18000,
+            out_msg_queue_size_soft_limit: 12000,
         }
     }
 }
@@ -3521,6 +3528,8 @@ impl SizeLimitsConfig {
         self.max_transaction_library_loads != default.max_transaction_library_loads
             || self.max_total_msg_bits != default.max_total_msg_bits
             || self.max_total_msg_cells != default.max_total_msg_cells
+            || self.out_msg_queue_size_hard_limit != default.out_msg_queue_size_hard_limit
+            || self.out_msg_queue_size_soft_limit != default.out_msg_queue_size_soft_limit
     }
 }
 
@@ -3551,6 +3560,8 @@ impl Serializable for SizeLimitsConfig {
             }
             self.max_total_msg_bits.write_to(cell)?;
             self.max_total_msg_cells.write_to(cell)?;
+            self.out_msg_queue_size_hard_limit.write_to(cell)?;
+            self.out_msg_queue_size_soft_limit.write_to(cell)?;
         }
         Ok(())
     }
@@ -3587,6 +3598,8 @@ impl Deserializable for SizeLimitsConfig {
             };
             self.max_total_msg_bits.read_from(slice)?;
             self.max_total_msg_cells.read_from(slice)?;
+            self.out_msg_queue_size_hard_limit.read_from(slice)?;
+            self.out_msg_queue_size_soft_limit.read_from(slice)?;
         }
         Ok(())
     }
