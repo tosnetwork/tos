@@ -105,7 +105,11 @@ The new files have separate purposes:
   sensitivity receipt; hosted runs repeat the controls on both architectures.
 - `.github/workflows/epoch-replay.yml` provides one bounded two-architecture
   matrix and a dependent artifact comparison. Existing architecture workflows
-  do not compare these execution artifacts with each other.
+  do not compare these execution artifacts with each other. It runs manually
+  only for now: this epoch-4 corpus carries the ConfigParam 43 layout without
+  the outbound-queue limits, which the node no longer reads. Re-capture the
+  corpus from epoch 5 and restore the workflow's pull_request and push triggers.
+  The block files remain inputs of `test-lite-proof-content`.
 
 ## Run
 
