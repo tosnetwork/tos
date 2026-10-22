@@ -1,5 +1,11 @@
 # TOS Blockchain
 
+[![x86-64 build](https://github.com/tosnetwork/tos/actions/workflows/build-tos-linux-x86-64-shared.yml/badge.svg?branch=main&event=push)](https://github.com/tosnetwork/tos/actions/workflows/build-tos-linux-x86-64-shared.yml?query=branch%3Amain)
+[![arm64 build](https://github.com/tosnetwork/tos/actions/workflows/build-tos-linux-arm64-shared.yml/badge.svg?branch=main&event=push)](https://github.com/tosnetwork/tos/actions/workflows/build-tos-linux-arm64-shared.yml?query=branch%3Amain)
+[![Lint](https://github.com/tosnetwork/tos/actions/workflows/build-tos-linux-x86-64-werror.yml/badge.svg?branch=main&event=push)](https://github.com/tosnetwork/tos/actions/workflows/build-tos-linux-x86-64-werror.yml?query=branch%3Amain)
+[![PQ chain and Python tests](https://github.com/tosnetwork/tos/actions/workflows/branch-chain-python.yml/badge.svg?branch=main&event=push)](https://github.com/tosnetwork/tos/actions/workflows/branch-chain-python.yml?query=branch%3Amain)
+[![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
+
 **Post-quantum validator signatures. Shielded native-asset transfers.**
 
 TOS is an open-source Layer-1 blockchain with a masterchain, shardchains and
