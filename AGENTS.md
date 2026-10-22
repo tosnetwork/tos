@@ -60,6 +60,8 @@ against source, not against memory.
 
 ## Conventions
 
+- Use [the code review checklist](doc/REVIEW.md) and post its author self-check
+  before requesting review.
 - Keep documentation in this repository in English. Store Chinese plans,
   design notes, and audit reports in the `memo` repository.
 - For node-health-monitor work, use the existing `node-health-monitor` branch
