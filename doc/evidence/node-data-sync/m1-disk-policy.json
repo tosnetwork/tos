@@ -1,0 +1,421 @@
+{
+  "schema": 1,
+  "parent_commit": "2acdfe094058222a1d3482fdc411b97754011242",
+  "scope": "Operator disk policy; native signing/crash acceptance is still pending.",
+  "checklist": "CF-5 / BC-5 (existed, not applied: coordinator limits were incorrectly treated as deployment limits).",
+  "upstream": {
+    "commit": "857b8a57a178e6ae0fe7fa86e7d81c5233de8560",
+    "comparison": "The Rust operator budget layer has no counterpart in the native reference; no native consensus, parser or database-core source changes."
+  },
+  "policy": {
+    "required_input": "disk_policy.max_owned_bytes",
+    "default_shutdown_threshold": "max(17179869184, ceil(filesystem_capacity / 20))",
+    "admission": "available - total_reservation >= shutdown_threshold; owned + reservation <= max_owned_bytes",
+    "monitor": "stop new work strictly below shutdown_threshold or above max_owned_bytes; equality permitted",
+    "floor": "No separate unused floor.",
+    "reservation": "checked(3 * measured_raw + compressed + target_private + 1073741824)",
+    "recovery": "Persisted policy, fresh capacity and availability before operation-lock creation or mutable StateDb access.",
+    "work_deadline_seconds": 7200
+  },
+  "growth_basis": {
+    "source": "epoch-4/sta04/live/abort/TRIGGER.json",
+    "source_sha256": "24b8d0f364726a8aba97b4c4fdb5f4a949b044363518554d646827179e9d5bcc",
+    "source_bytes": 473178,
+    "at": "2026-10-19T21:21:37.964271+00:00",
+    "calculation": {
+      "node": "node-2",
+      "consecutive_growth_intervals_seconds": [
+        70.38862405100372,
+        70.40109463297995
+      ],
+      "growth_bytes_per_second": [
+        777609.2903924225,
+        916989.3783122761
+      ],
+      "conservative_rate_bytes_per_second": 777609.2903924225,
+      "free_bytes": 69631352832,
+      "hours_to_exhaustion": 24.873728609353837,
+      "remaining_outage_plus_recovery_hours": 25.83502499614223,
+      "recovery_budget_seconds": 7200,
+      "interpretation": "A short-window projection triggered the accepted guard. Actual disk was not full; sustained growth has not been established."
+    },
+    "kind": "short-window net filesystem growth; not sustained validator-only DB growth",
+    "default_basis": {
+      "conservative_rate_bytes_per_second": 1048576,
+      "operation_seconds": 7200,
+      "restart_margin_seconds": 3600,
+      "growth_allowance_bytes": 11324620800,
+      "fixed_threshold_bytes": 17179869184,
+      "capacity_fraction_denominator": 20
+    }
+  },
+  "inventory": [
+    {
+      "paths": "budget.rs; model.rs",
+      "action": "Removed coordinator 200/212/316/320 GiB production constants; operator policy replaces them."
+    },
+    {
+      "paths": "model.rs; capture.rs; cas.rs; trees.rs",
+      "action": "80 GiB raw, 24 GiB compressed, 32 MiB manifest and 100000-file ceilings remain defensive format/resource caps, not available-space requirements."
+    },
+    {
+      "paths": "identity.rs",
+      "action": "64 MiB per-file and 1 GiB total identity-backup caps retained."
+    },
+    {
+      "paths": "operations.rs",
+      "action": "Measured reservation arithmetic centralized; fixed 1 GiB auxiliary allowance retained explicitly."
+    },
+    {
+      "paths": "engine.rs",
+      "action": "Two initialization threads, four verifier threads and 1 GiB verifier cell-cache settings retained; no assumed deployment-host core/memory capacity."
+    },
+    {
+      "paths": "node-store/src/native.rs; records.rs; service.rs; worker.rs",
+      "action": "Existing record-count, command/log-byte and bounded child deadlines retained. No personal absolute paths found in either crate production source."
+    }
+  ],
+  "callers": {
+    "updated": "create, restore, stage and recover share DiskPolicy; NodeContext schema, docs and its sole struct-construction fixture updated.",
+    "external": "No current tos-ops production/testnet caller found; future callers must supply disk_policy.max_owned_bytes."
+  },
+  "gates": {
+    "sync_tests": {
+      "passed": 31,
+      "ignored_by_default": 1,
+      "ignored_native_case": "explicitly invoked and passed using the exact CI cargo command"
+    },
+    "native_wal": {
+      "passed": 1
+    },
+    "commands": {
+      "passed": 223,
+      "test_threads": 1
+    },
+    "workspace_check": {
+      "exit": 0
+    },
+    "workspace_link": {
+      "exit": 0,
+      "targets": 140
+    },
+    "native_generation": {
+      "exit": 0,
+      "global_id": 3,
+      "before_seqno": 22,
+      "after_seqno": 63,
+      "same_height_full_id_equal": true
+    },
+    "source_guards": {
+      "passed": 57
+    },
+    "branch_chain_tests": {
+      "passed": 9,
+      "subtests": 33
+    },
+    "efficiency_tests": {
+      "passed": 5
+    },
+    "format_lint_supply_chain": "Passed Cargo fmt, changed-line native format with hygiene extensions/excludes, pinned Ruff check/format on the relevant Python files, workflow supply-chain check and diff whitespace check.",
+    "strict_clippy": [
+      {
+        "package": "node-store",
+        "exit": 0,
+        "new_diagnostics": [],
+        "inherited_diagnostics": 1
+      },
+      {
+        "package": "node-data-sync",
+        "exit": 0,
+        "new_diagnostics": [],
+        "inherited_diagnostics": 3
+      },
+      {
+        "package": "adnl",
+        "exit": 101,
+        "new_diagnostics": [],
+        "inherited_diagnostics": 150
+      },
+      {
+        "package": "control-client",
+        "exit": 0,
+        "new_diagnostics": [],
+        "inherited_diagnostics": 3
+      },
+      {
+        "package": "commands",
+        "exit": 101,
+        "new_diagnostics": [],
+        "inherited_diagnostics": 119
+      },
+      {
+        "package": "tosctl",
+        "exit": 101,
+        "new_diagnostics": [],
+        "inherited_diagnostics": 13
+      }
+    ],
+    "native_static_analysis": "No C/C++ source changed in this fix. Prior reviewed native gate (HEAD20/BASE19, ten controls, zero new blocking, two inherited-header advisories) remains historical evidence; not represented as a fresh run."
+  },
+  "commands": [
+    "cargo test --release --locked -p node-data-sync --features native --tests -j4",
+    "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p node-data-sync --features native --lib operations::tests::native_stage_preserves_own_context_and_never_overlays_recovery_material -- --ignored --exact --nocapture",
+    "cargo test --release --locked -p node-store --features native --test native_fixture -- --nocapture",
+    "cargo test --release --locked -p commands --features node-data-sync-native --lib -j4 -- --test-threads=1",
+    "cargo check --release --workspace --tests --locked -j4",
+    "cargo test --release --workspace --locked --no-run -j4 --message-format=json",
+    "ctest --test-dir $BUILD -L source-guard --output-on-failure",
+    "uv run pytest -q scripts/test_branch_chain_conditions.py",
+    "python3 scripts/check-workflow-supply-chain.py; python3 scripts/test_ci_efficiency.py",
+    "cargo fmt --all --check",
+    "git clang-format-21 --binary clang-format-21 --diff --extensions h,hpp,cpp $MERGE_BASE -- :/ :(exclude)crypto/smartcont/tol-stdlib/ :(exclude)tol/ :(exclude)tol-tester/ :(exclude)third-party/"
+  ],
+  "execution_environment": "Builder image; exact CI cargo invocation uses its native fixture environment variables. Debug information stripped for the standalone CI-target directory to stay within the shared cache budget. Completed workspace test executables discarded only after Cargo reports their link.",
+  "controls": [
+    {
+      "name": "admission-threshold",
+      "assertion_red": true,
+      "exit": 101,
+      "sha256": "c6d94c9d6f2aebcb2e85ad4bf4a1ae4742cf0bc9c807e780cf004df651c2abc8"
+    },
+    {
+      "name": "monitor-threshold",
+      "assertion_red": true,
+      "exit": 101,
+      "sha256": "6a625c061728448a8ed23044c9e3b4d5842db03f93932660ad017ab127345989"
+    },
+    {
+      "name": "aggregate-ceiling",
+      "assertion_red": true,
+      "exit": 101,
+      "sha256": "255a60c1052bd2a7fa12313d30d38b441a8bb078c032d170b0b27b11fa6115c1"
+    },
+    {
+      "name": "probe-error",
+      "assertion_red": true,
+      "exit": 101,
+      "sha256": "821a3ba885c2d013456b99a838713aed8cea6d8288a08551250d05e6b0a16985"
+    },
+    {
+      "name": "recovery-write-before-admission",
+      "assertion_red": true,
+      "exit": 101,
+      "sha256": "2deafdf64f8a0de036add01decb3224a8e8aa739ddf7eb324565391a2a0aec21"
+    }
+  ],
+  "nonpassing_prechecks": [
+    "Strict Clippy initially identified derivable Default and manual multiple-of detection in the new code; both corrected without suppressions, final zero changed-line diagnostics.",
+    "Initial local native-format invocation omitted the hygiene extension filter and tried formatting existing JSON receipts; rerun with the exact hygiene extension filter/excludes passed. No evidence files reformatted."
+  ],
+  "retained_evidence": {
+    "root": "$NODE_SYNC_EVIDENCE/m1-s4",
+    "retention": "At least 30 days after final review; private fixture keys/databases are not public artifacts.",
+    "artifacts": [
+      {
+        "path": "receipts/disk-policy/all-tests.log",
+        "sha256": "1f7d59287f216618ee33bf9b25a0fad9ff7c6c41a8e8b73ac8fd3f1ff5701cf4",
+        "bytes": 9261
+      },
+      {
+        "path": "receipts/disk-policy/changed-lines-format.log",
+        "sha256": "abc07078597158b78506ec468bafc9ea7fe7ec1c82e2559e5766f823634bf85e",
+        "bytes": 38
+      },
+      {
+        "path": "receipts/disk-policy/commands.log",
+        "sha256": "9009cc351952081ecb56a5bbd744f1dea0a540bfaa40ecee759649a384a60c25",
+        "bytes": 29723
+      },
+      {
+        "path": "receipts/disk-policy/controls/admission-threshold.log",
+        "sha256": "c6d94c9d6f2aebcb2e85ad4bf4a1ae4742cf0bc9c807e780cf004df651c2abc8",
+        "bytes": 3664
+      },
+      {
+        "path": "receipts/disk-policy/controls/aggregate-ceiling.log",
+        "sha256": "255a60c1052bd2a7fa12313d30d38b441a8bb078c032d170b0b27b11fa6115c1",
+        "bytes": 2983
+      },
+      {
+        "path": "receipts/disk-policy/controls/index.json",
+        "sha256": "bb8fa242e522e87dd341561b2f7221eadf8df2e72073fc4fe39b87e40b5552d4",
+        "bytes": 848
+      },
+      {
+        "path": "receipts/disk-policy/controls/monitor-threshold.log",
+        "sha256": "6a625c061728448a8ed23044c9e3b4d5842db03f93932660ad017ab127345989",
+        "bytes": 2992
+      },
+      {
+        "path": "receipts/disk-policy/controls/probe-error.log",
+        "sha256": "821a3ba885c2d013456b99a838713aed8cea6d8288a08551250d05e6b0a16985",
+        "bytes": 2916
+      },
+      {
+        "path": "receipts/disk-policy/controls/recovery-write-before-admission.log",
+        "sha256": "2deafdf64f8a0de036add01decb3224a8e8aa739ddf7eb324565391a2a0aec21",
+        "bytes": 3044
+      },
+      {
+        "path": "receipts/disk-policy/controls/restored-green.log",
+        "sha256": "8eef9751768e1c80ae2d008e3a575d894a04ffb3b191496d24643d959f236c49",
+        "bytes": 9261
+      },
+      {
+        "path": "receipts/disk-policy/controls-run.log",
+        "sha256": "e7beb8a01dbfb827ad51b56e342be37cca9bc26304e9c2a0d282c09099214250",
+        "bytes": 125
+      },
+      {
+        "path": "receipts/disk-policy/exact-ci-preservation-final.log",
+        "sha256": "5d08b59fe946bd7d1d67a77ebf9ba9e3973c961fa70a71c1d125eafa60c27fe6",
+        "bytes": 3237
+      },
+      {
+        "path": "receipts/disk-policy/exact-ci-preservation.log",
+        "sha256": "f4e783d0f07f5a7256181bef1df9d265b79749d26b792dd1133f7a2af1953fed",
+        "bytes": 14568
+      },
+      {
+        "path": "receipts/disk-policy/final-build.log",
+        "sha256": "7923fad0751fb7bc63b5ac0a2c4f6a35e1c8067caa577e89fc3e7b4b3fd6e805",
+        "bytes": 5554
+      },
+      {
+        "path": "receipts/disk-policy/final-format.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      {
+        "path": "receipts/disk-policy/final-gates-run.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      {
+        "path": "receipts/disk-policy/final-restored-build.log",
+        "sha256": "edb983931ac130b720d6a319a9f0b2b88d0352a9e629f86079f0d56d06ce1979",
+        "bytes": 5554
+      },
+      {
+        "path": "receipts/disk-policy/format-initial-missing-extension-filter.log",
+        "sha256": "f282479ada2bc6a3d73c32d1fb1d80fac127ef6637570b93a5aa515b9f0b1d24",
+        "bytes": 240
+      },
+      {
+        "path": "receipts/disk-policy/format.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      {
+        "path": "receipts/disk-policy/gates-run.log",
+        "sha256": "63183bb9f3748be752275f4ae419e490ea3c1a4808ed179c8dbaad1984d129e4",
+        "bytes": 80
+      },
+      {
+        "path": "receipts/disk-policy/growth-basis.json",
+        "sha256": "181b03237a548ea7bcc19d23b8107498c60ff217d3b541c90023c87efd99d330",
+        "bytes": 1195
+      },
+      {
+        "path": "receipts/disk-policy/native-generation.log",
+        "sha256": "539f78088955e0ff1de11b496f64dfce44155c86d630b5eec7b610877962da52",
+        "bytes": 11465
+      },
+      {
+        "path": "receipts/disk-policy/native-wal.log",
+        "sha256": "ae288a8d62bf4a5f6aca5ae4ed44b4d7e7c3854cdd16d3114ff417f47e70753a",
+        "bytes": 1157
+      },
+      {
+        "path": "receipts/disk-policy/ruff.log",
+        "sha256": "afa20b27dacc9bf0aba3c1d265964c21e04ab42f6e39e2dd4769718ceded003a",
+        "bytes": 45
+      },
+      {
+        "path": "receipts/disk-policy/source-gates.log",
+        "sha256": "ae08df028b6127b40448f255e2e3da74c1e3a65e863309f67f68ee5c1ad19c72",
+        "bytes": 8887
+      },
+      {
+        "path": "receipts/disk-policy/status.txt",
+        "sha256": "63183bb9f3748be752275f4ae419e490ea3c1a4808ed179c8dbaad1984d129e4",
+        "bytes": 80
+      },
+      {
+        "path": "receipts/disk-policy/strict-changed/index.json",
+        "sha256": "015007bbecff18f2d88940a5e09d511f8ef2ff80d3f57cec0eae18b9b8f941bc",
+        "bytes": 676
+      },
+      {
+        "path": "receipts/disk-policy/strict-initial-style-diagnostics/index.json",
+        "sha256": "e4253894d3a03e404650a3ab1c488d63b2936d357d7fb4908285b7a5134c352c",
+        "bytes": 2616
+      },
+      {
+        "path": "receipts/disk-policy/strict-initial-style.log",
+        "sha256": "bbeb7541c265655f020910f7f7a98db02318654ce49dc6073fdd179b276f84b0",
+        "bytes": 315
+      },
+      {
+        "path": "receipts/disk-policy/strict-run.log",
+        "sha256": "6142dc779f12b248215eb58ad75fabd946474644716c4c08adddf17d9fd9129a",
+        "bytes": 217
+      },
+      {
+        "path": "receipts/disk-policy/workspace-check.log",
+        "sha256": "88d7caa9aa046cf6d2b20ff9a4c4a2f96902b63fa716ae2c79449664ad3cbae8",
+        "bytes": 36895
+      },
+      {
+        "path": "receipts/disk-policy/workspace-link/index.json",
+        "sha256": "e55862a6b34e79184ebb04d36b2c2403e4c040207d162c002bd0a84407d33305",
+        "bytes": 30315
+      },
+      {
+        "path": "receipts/disk-policy/workspace-link/stderr.log",
+        "sha256": "e547a927ce990f3cedfbcfaaff81ac11a94f21404798b2fa895d684ed6d5f009",
+        "bytes": 8190
+      },
+      {
+        "path": "receipts/disk-policy/workspace-link-run.log",
+        "sha256": "3c635bfcfe431713b23f263dcaca4cfd7699a3315d1ad4221479325862ee598f",
+        "bytes": 31
+      }
+    ]
+  },
+  "sources": [
+    {
+      "path": "doc/node-data-sync.md",
+      "sha256": "0b1591f6120437a7b689c83981a418ee865a10379a872d4e5e92c10f878176a6"
+    },
+    {
+      "path": "tosctl/src/node-control/node-data-sync/src/budget.rs",
+      "sha256": "a742f8499d30cc7ded1cd3e7419bd9fcd9346288657caecdff088a13eba7dfe9"
+    },
+    {
+      "path": "tosctl/src/node-control/node-data-sync/src/context.rs",
+      "sha256": "a11b775ab34fdb039caace4d427d57404c648a19a843fc158a257c90145fbceb"
+    },
+    {
+      "path": "tosctl/src/node-control/node-data-sync/src/model.rs",
+      "sha256": "a7cfa3bb13cae8b224fafc85efa94f1a5042e76b70ceccfe585d2a60073f1a24"
+    },
+    {
+      "path": "tosctl/src/node-control/node-data-sync/src/operations.rs",
+      "sha256": "5f86c7b7699dd518c261d7a63c632d773eddd6fd97e78497c84bb2aa15b6cc8c"
+    },
+    {
+      "path": "tosctl/src/node-control/node-data-sync/src/safe_io.rs",
+      "sha256": "f4ffaca2c6666f6c1bfe64d7c4eb2ef2ef8306e5219293b504be43c9e46e7b38"
+    },
+    {
+      "path": "tosctl/src/node-control/node-data-sync/tests/policy.rs",
+      "sha256": "d84756a418c62216fa9a98904039a1b38a0ba9aa7267bb3d9a6af024f6a3efcf"
+    }
+  ],
+  "pending": [
+    "Real native signing/crash interleavings A and B with independent red controls.",
+    "No >=172800-block rehearsal in this step.",
+    "No public network action and no thirty-minute qualification."
+  ]
+}

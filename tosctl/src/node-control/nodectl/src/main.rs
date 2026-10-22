@@ -17,7 +17,18 @@ use std::process::exit;
 mod app_cli_args;
 
 #[tokio::main(flavor = "multi_thread")]
-async fn main() -> anyhow::Result<()> {
+async fn main() -> std::process::ExitCode {
+    match run().await {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(error) => {
+            let code = error.downcast_ref::<commands::StatusExit>().map_or(1, |status| status.0);
+            eprintln!("{error:#}");
+            std::process::ExitCode::from(code)
+        }
+    }
+}
+
+async fn run() -> anyhow::Result<()> {
     let args = AppCliArgs::parse()?;
 
     // Spawn signal handler task
@@ -34,9 +45,7 @@ async fn main() -> anyhow::Result<()> {
 
     let run_handle = match CommandManager::execute(cmd, cancellation_ctx.clone()).await {
         Ok(h) => h,
-        Err(e) => {
-            anyhow::bail!("command failed: {:#}", e);
-        }
+        Err(e) => return Err(e.context("command failed")),
     };
 
     // Wait for the service to complete. Its error, or its panic, becomes the

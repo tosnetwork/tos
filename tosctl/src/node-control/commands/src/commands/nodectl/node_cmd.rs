@@ -52,12 +52,12 @@ fn parse_shard_descriptor(s: &str) -> anyhow::Result<(i32, i64)> {
 
 /// The configuration file and the configured node a `tosctl node` command talks to.
 pub struct NodeTarget<'a> {
-    config: &'a str,
-    node: Option<&'a str>,
+    pub(super) config: &'a str,
+    pub(super) node: Option<&'a str>,
 }
 
 /// Helper: create a connected control client for the target node.
-async fn create_control_client(
+pub(super) async fn create_control_client(
     target: &NodeTarget<'_>,
 ) -> anyhow::Result<(String, control_client::client_adnl::ControlClientAdnl)> {
     use common::app_config::AppConfig;
@@ -75,7 +75,11 @@ async fn create_control_client(
 #[derive(clap::Subcommand, Clone)]
 pub enum NodeAction {
     /// Node status summary
-    Status(NodeStatusCmd),
+    Status(StandaloneNodeStatusCmd),
+    /// Coherent sync status and node-data restoration
+    Sync(super::node_sync_cmd::NodeSyncCmd),
+    /// Verify and manage signed chain-data generations
+    Dump(super::node_dump_cmd::NodeDumpCmd),
     /// Ping node
     Ping,
     /// Probe node health
@@ -95,11 +99,29 @@ pub enum NodeAction {
 }
 
 #[derive(clap::Args, Clone)]
+#[command(
+    about = "Node status summary (diagnostic only; use node sync status for recovery qualification)"
+)]
+pub struct StandaloneNodeStatusCmd {
+    #[arg(short, long, default_value = "table")]
+    pub(super) format: super::output_format::OutputFormat,
+}
+
+#[derive(clap::Args, Clone)]
 #[command(about = "Node status summary")]
 pub struct NodeStatusCmd {
     /// Output format: table or json
     #[arg(short, long, default_value = "table")]
-    format: super::output_format::OutputFormat,
+    pub(super) format: super::output_format::OutputFormat,
+    /// Independent named JSON-RPC reference; repeat at least twice for at-head status
+    #[arg(long = "reference")]
+    pub(super) references: Vec<String>,
+    /// Keep sampling until continuously at head for five minutes
+    #[arg(long)]
+    pub(super) watch: bool,
+    /// Maximum watch duration, in seconds
+    #[arg(long, default_value_t = 1800)]
+    pub(super) timeout: u64,
 }
 
 // ---------------------------------------------------------------------------
@@ -400,6 +422,8 @@ impl NodeCmd {
 
                 Ok(())
             }
+            NodeAction::Sync(cmd) => cmd.run(&self.target()).await,
+            NodeAction::Dump(cmd) => cmd.run().await,
             NodeAction::Ping => {
                 use colored::Colorize;
                 use common::app_config::AppConfig;
@@ -1031,5 +1055,132 @@ impl NodeNetQuicCmd {
                 Ok(())
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod status_tests {
+    use super::*;
+    use base64::Engine;
+    use chain_block::Serializable;
+    use std::{
+        io::{Read, Write},
+        net::TcpListener,
+        time::{Duration, Instant},
+    };
+    #[derive(clap::Parser)]
+    struct Parser {
+        #[command(flatten)]
+        node: NodeCmd,
+    }
+    #[test]
+    fn standalone_status_keeps_rpc_only_contract_without_control_or_references()
+    -> anyhow::Result<()> {
+        use clap::Parser as _;
+        if let Some(path) = std::env::var_os("NODE_SYNC_STANDALONE_STATUS_CONFIG") {
+            let command = Parser::try_parse_from([
+                "node",
+                "--config",
+                path.to_str().unwrap(),
+                "status",
+                "--format",
+                "json",
+            ])?;
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()?
+                .block_on(command.node.run())?;
+            std::process::exit(0);
+        }
+        let listener = TcpListener::bind("127.0.0.1:0")?;
+        listener.set_nonblocking(true)?;
+        let url = format!("http://{}", listener.local_addr()?);
+        let server = std::thread::spawn(move || -> anyhow::Result<Vec<String>> {
+            let mut methods = vec![];
+            let deadline = Instant::now() + Duration::from_secs(15);
+            while methods.len() < 3 && Instant::now() < deadline {
+                let (mut socket, _) = match listener.accept() {
+                    Ok(v) => v,
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(5));
+                        continue;
+                    }
+                    Err(e) => return Err(e.into()),
+                };
+                socket.set_read_timeout(Some(Duration::from_secs(5)))?;
+                let mut header = vec![];
+                while !header.ends_with(b"\r\n\r\n") {
+                    let mut b = [0];
+                    socket.read_exact(&mut b)?;
+                    header.push(b[0]);
+                    assert!(header.len() < 8192);
+                }
+                let header = String::from_utf8(header)?;
+                let length: usize = header
+                    .lines()
+                    .find_map(|s| {
+                        s.to_ascii_lowercase()
+                            .strip_prefix("content-length:")
+                            .map(|v| v.trim().parse().unwrap())
+                    })
+                    .unwrap();
+                let mut body = vec![0; length];
+                socket.read_exact(&mut body)?;
+                let query: serde_json::Value = serde_json::from_slice(&body)?;
+                let method = query["method"].as_str().unwrap();
+                methods.push(method.to_owned());
+                let block = serde_json::json!({"@type":"tos.blockIdExt","workchain":-1,"shard":i64::MIN.to_string(),"seqno":100,"root_hash":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","file_hash":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="});
+                let result = match method {
+                    "getConfigParam" => {
+                        serde_json::json!({"config":{"bytes":base64::engine::general_purpose::STANDARD.encode(chain_block::ConfigParam1 {elector_addr:chain_block::AccountId::from([0x33; 32])}.write_to_bytes()?)}})
+                    }
+                    "getMasterchainInfo" => serde_json::json!({"last":block,"init":block}),
+                    "getAddressInformation" => {
+                        serde_json::json!({"@type":"raw.fullAccountState","balance":"1000000000","state":"active","last_transaction_id":{"@type":"internal.transactionId","lt":"1","hash":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="},"block_id":block,"sync_utime":1792580000})
+                    }
+                    other => anyhow::bail!("unexpected standalone query {other}"),
+                };
+                let body = serde_json::to_vec(
+                    &serde_json::json!({"jsonrpc":"2.0","id":query["id"],"result":result}),
+                )?;
+                write!(
+                    socket,
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                )?;
+                socket.write_all(&body)?;
+            }
+            Ok(methods)
+        });
+        let temp = tempfile::tempdir()?;
+        let config = temp.path().join("operator.json");
+        std::fs::write(
+            &config,
+            serde_json::to_vec(
+                &serde_json::json!({"nodes":{},"chain_rpc":{"urls":[url],"api_key":null},"http":{}}),
+            )?,
+        )?;
+        let child=std::process::Command::new(std::env::current_exe()?)
+            .args(["--exact","commands::nodectl::node_cmd::status_tests::standalone_status_keeps_rpc_only_contract_without_control_or_references","--nocapture"])
+            .env("NODE_SYNC_STANDALONE_STATUS_CONFIG",&config).output()?;
+        let methods = server.join().expect("standalone RPC fixture")?;
+        assert!(
+            child.status.success(),
+            "standalone status failed: {}",
+            String::from_utf8_lossy(&child.stderr)
+        );
+        assert_eq!(methods, ["getConfigParam", "getMasterchainInfo", "getAddressInformation"]);
+        let text = String::from_utf8(child.stdout)?;
+        let start = text.find('{').expect("standalone JSON output");
+        let result: serde_json::Value = serde_json::from_str(text[start..].trim())?;
+        assert_eq!(result["last_mc_block_seqno"], 100);
+        assert_eq!(result["sync_status"], "synced");
+        assert!(result["block_time"].is_string());
+        assert!(
+            Parser::try_parse_from(["node", "status", "--reference", "http://127.0.0.1:1"])
+                .is_err(),
+            "standalone status accepted recovery-only flags"
+        );
+        Ok(())
     }
 }

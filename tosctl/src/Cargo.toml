@@ -9,6 +9,8 @@ members = [
     'lockfree',
     'node-control/commands',
     'node-control/common',
+    'node-control/node-store',
+    'node-control/node-data-sync',
     'node-control/contracts',
     'node-control/control-client',
     'node-control/elections',
