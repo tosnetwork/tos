@@ -5,6 +5,7 @@ Run exclusively: this runner temporarily changes and rebuilds VM sources.
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -57,7 +58,7 @@ def main():
                 "--target",
                 "test-pq-falcon512-parity",
                 "test-pq-suite-parity",
-                "-j2",
+                f"-j{os.cpu_count() or 2}",
             ],
         ),
         (
@@ -76,7 +77,7 @@ def main():
                 "falcon-parity",
                 "--example",
                 "suite-parity",
-                "-j1",
+                f"-j{os.cpu_count() or 2}",
             ],
         ),
     ]

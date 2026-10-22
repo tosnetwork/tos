@@ -71,7 +71,7 @@ def main():
                     "native-wallet-signer",
                     "--example",
                     "lms_fee_cache_fixture",
-                    "-j1",
+                    f"-j{os.cpu_count() or 2}",
                 ],
                 cwd=ROOT,
                 env=env,

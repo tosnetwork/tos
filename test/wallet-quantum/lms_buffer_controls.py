@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -31,7 +32,15 @@ def main():
 
     def build(label):
         code, log = command(
-            label, ["cmake", "--build", str(args.build.resolve()), "--target", "emulator", "-j2"]
+            label,
+            [
+                "cmake",
+                "--build",
+                str(args.build.resolve()),
+                "--target",
+                "emulator",
+                f"-j{os.cpu_count() or 2}",
+            ],
         )
         assert code == 0, log[-3000:]
 
