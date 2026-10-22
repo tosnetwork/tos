@@ -163,6 +163,22 @@ TEST(Misc, get_last_argument) {
   ASSERT_EQ(*b, 5);
 }
 
+namespace {
+td::Result<int> checked_half(int x) {
+  TRY_BOOL(x % 2 == 0);
+  return x / 2;
+}
+}  // namespace
+
+TEST(Misc, try_bool_returns_error_instead_of_aborting) {
+  auto even = checked_half(4);
+  ASSERT_TRUE(even.is_ok());
+  ASSERT_EQ(even.ok(), 2);
+  auto odd = checked_half(3);
+  ASSERT_TRUE(odd.is_error());
+  ASSERT_EQ(odd.error().message().str(), "check failed: x % 2 == 0");
+}
+
 TEST(Misc, call_n_arguments) {
   auto f = [](int, int) {};
   call_n_arguments<2>(f, 1, 3, 4);

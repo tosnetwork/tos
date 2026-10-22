@@ -342,7 +342,7 @@ class Collator final : public td::actor::Actor {
   bool check_this_shard_mc_info();
   bool request_neighbor_msg_queues();
   bool request_out_msg_queue_size();
-  void update_max_lt(tos::LogicalTime lt);
+  bool update_max_lt(tos::LogicalTime lt);
   bool is_masterchain() const {
     return shard_.is_masterchain();
   }
@@ -361,7 +361,7 @@ class Collator final : public td::actor::Actor {
   td::actor::Task<> wait_for_external_message(td::Timestamp timeout);
 
   void register_new_msg(block::NewOutMsg msg);
-  void register_new_msgs(block::transaction::Transaction& trans, td::optional<block::MsgMetadata> msg_metadata);
+  bool register_new_msgs(block::transaction::Transaction& trans, td::optional<block::MsgMetadata> msg_metadata);
   bool process_new_messages(bool& enqueue_only);
   int process_one_new_message(block::NewOutMsg msg, bool enqueue_only = false, Ref<vm::Cell>* is_special = nullptr);
   bool process_inbound_internal_messages();
