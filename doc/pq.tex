@@ -22,7 +22,10 @@
 \begin{abstract}
 TOS is a Layer-1 blockchain with masterchain and shardchain infrastructure,
 asynchronous smart contracts, and a native virtual machine. Its canonical
-genesis configuration uses ML-DSA-44 validator signatures. Its shielded
+genesis configuration uses ML-DSA-44 validator signatures. Contracts can
+verify four post-quantum signature suites: ML-DSA-44, Falcon-512,
+SLH-DSA-SHA2-128s, and an LMS fee profile. The post-quantum wallets use them
+for daily authorization, recovery, and fee payment. Its shielded
 native-asset design combines zero-knowledge transaction proofs, one-time
 post-quantum note authorization, and post-quantum encrypted note delivery.
 These mechanisms protect different surfaces: signature security is not the
@@ -32,7 +35,7 @@ post-quantum proof system. This overview describes implementation boundaries,
 public information, and deployment prerequisites rather than asserting
 unconditional anonymity or production readiness.
 \end{abstract}
-\textbf{Scope.} Source baseline: \code{54be8f1f4}. This document describes the
+\textbf{Scope.} Source baseline: \code{a57b8c279}. This document describes the
 repository's October 2026 implementation and canonical configuration; it is
 not a statement that every running network has activated them. Exact wire
 formats and deployment identities remain defined by source and the frozen
@@ -57,7 +60,8 @@ TOS applies cryptographic mechanisms at distinct layers:
 Surface & Mechanism and boundary \\
 \midrule
 Validator signing & ML-DSA-44; protects authorized consensus messages. \\
-Contract authorization & Native ML-DSA-44 verification, with contract-specific signed fields and replay rules. \\
+Contract authorization & Native verification of four post-quantum suites, with contract-specific signed fields and replay rules. \\
+Wallet authorization & ML-DSA-44 primary key, SLH-DSA-SHA2-128s protection and recovery key, LMS fee authorization without asset authority. \\
 Shielded note spending & One-time ML-DSA-44 note authorization plus a circuit proof of valid state transition. \\
 Note delivery & ML-KEM-768 key encapsulation and XChaCha20-Poly1305 authenticated encryption. \\
 Hidden-value validity & Groth16 over BLS12-381, with Poseidon2 commitments and tree hashing; not post-quantum proof soundness. \\
@@ -101,10 +105,12 @@ and network rules, rather than an assumption that every address or key is
 interchangeable. Operators must provision, protect, and recover the correct
 key for each role.
 
-TVM exposes \code{PQCHECKSIG\_MLDSA44} for contract verification. Its minimum
-global version is 16; the canonical genesis profile is version 16. An
-instruction's introduction version is not the complete version requirement
-of a contract using additional instructions.
+Validator consensus keys use ML-DSA-44 only. The other suites described in
+Section~\ref{sec:suites} are available to contracts and wallets, not to
+consensus. Every post-quantum instruction has minimum global version 16; the
+canonical genesis profile is version 16. An instruction's introduction version
+is not the complete version requirement of a contract using additional
+instructions.
 
 \subsection{Resource implications}
 Post-quantum signatures increase serialized message sizes relative to compact
@@ -113,6 +119,50 @@ limits, and network capacity must account for those sizes. This overview
 makes no throughput or fee claim: measured cost depends on the implementation,
 message path, hardware, and workload. Native contract verification also does
 not imply that each contract call repeats consensus verification.
+
+\section{Post-quantum signature suites and wallets}\label{sec:suites}
+\subsection{Suites and instructions}
+TVM verifies four signature suites. The generic \code{PQCHECKSIG\_SUITE}
+instruction takes the suite number with a message, context, signature, and
+public key; the dedicated \code{PQCHECKSIG\_MLDSA44},
+\code{PQCHECKSIG\_FALCON512\_PADDED}, and \code{LMSCHECKFEEHASH} instructions
+serve fixed formats. Each verifier charges gas for every input byte before
+verification and refuses an unknown suite or profile.
+\begin{center}
+\small
+\begin{tabularx}{\linewidth}{@{}p{0.06\linewidth}p{0.24\linewidth}X@{}}
+\toprule
+Suite & Algorithm & Use and status \\
+\midrule
+1 & ML-DSA-44~\cite{fips204} & Validator consensus keys, Quantum wallet primary key, one-time shielded note keys. Canonical. \\
+2 & Falcon-512, padded original profile~\cite{falcon} & Falcon wallet authorization module. Experimental; the standardized FN-DSA profile will be separately versioned. \\
+3 & SLH-DSA-SHA2-128s~\cite{fips205} & Quantum wallet protection and recovery key. Hash-based, so its security does not rest on lattice assumptions. \\
+4 & LMS fee profile~\cite{sp800208} & Quantum wallet fee authorization. Stateful and hash-based; it authorizes fees only. \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{Quantum wallet}
+The Quantum wallet is a post-quantum-only account in workchain 0 with the
+action set of the standard wallet. Its primary ML-DSA-44 key authorizes
+everyday transfers. A separate SLH-DSA-SHA2-128s key protects the account:
+it can lock the primary key, rotate it, and recover the wallet if the primary
+key is lost or compromised. Both keys derive from one recovery backup through
+separate derivation roles. Fees are paid from a paired fee vault authorized by
+LMS signatures, which cannot move the wallet's assets.
+
+The two signature families have different failure modes. A break of the
+lattice assumptions behind ML-DSA does not by itself give an attacker the
+SLH-DSA recovery key. LMS keys are stateful: each one-time leaf must be used
+at most once, so the wallet journals its fee-key state durably.
+
+\subsection{Status}
+The wallet contracts, verifiers, and client tooling are in the repository,
+together with local transaction evidence. Production custody, default
+activation, and deployment are not approved: the release gates, including
+independent review, complete conformance vectors, pricing on supported
+hardware, and a live-network authorization test, remain open. See
+\repo{doc/wallet-quantum-release-status.md}{the Quantum wallet release status}.
 
 \section{Shielded native-asset transfers}
 \subsection{State and transaction flow}
@@ -173,8 +223,10 @@ set affect practical privacy.
 
 \section{Cryptographic and financial boundaries}
 \subsection{Post-quantum scope}
-ML-DSA signatures and ML-KEM delivery address quantum threats to their
-respective authentication and encapsulation tasks. Groth16 is a pairing-based
+The post-quantum signature suites and ML-KEM delivery address quantum threats
+to their respective authentication and encapsulation tasks. A wallet that
+keeps a classical key, or an account that never moves to a post-quantum
+wallet, keeps its classical exposure. Groth16 is a pairing-based
 proof construction~\cite{groth16}; its soundness assumptions are not
 post-quantum. Adding a post-quantum signature to a Groth16 transaction does
 not make the proof system post-quantum.
@@ -254,6 +306,11 @@ source directory. Historical protocol papers remain available separately.
 and \repo{doc/validator-genesis-bootstrap.md}{validator bootstrap guide}.
 \item \repo{crypto/pq/pq-consensus.h}{Post-quantum consensus types} and
 \repo{doc/tvm-mldsa44.md}{native ML-DSA verification interface}.
+\item \repo{crypto/vm/pqops.cpp}{TVM post-quantum instructions},
+\repo{doc/tvm-lms-fee-hash.md}{LMS fee verification}, and
+\repo{doc/wallet-falcon-fndsa.md}{Falcon wallet profile}.
+\item \repo{doc/wallet-quantum-release-status.md}{Quantum wallet release status}
+and \repo{doc/wallet-quantum-implementation.md}{implementation record}.
 \item \repo{artifacts/shielded-pool/PROFILE.md}{Frozen shielded-pool profile}:
 exact encoding, privacy boundaries, and activation gates.
 \item \repo{tools/shielded-pool-circuit/README.md}{Circuit package and development-key warning}.
@@ -266,6 +323,13 @@ exact encoding, privacy boundaries, and activation gates.
 FIPS 204, 2024. \url{https://doi.org/10.6028/NIST.FIPS.204}.
 \bibitem{fips203} NIST. \emph{Module-Lattice-Based Key-Encapsulation Mechanism Standard}.
 FIPS 203, 2024. \url{https://doi.org/10.6028/NIST.FIPS.203}.
+\bibitem{fips205} NIST. \emph{Stateless Hash-Based Digital Signature Standard}.
+FIPS 205, 2024. \url{https://doi.org/10.6028/NIST.FIPS.205}.
+\bibitem{sp800208} NIST. \emph{Recommendation for Stateful Hash-Based Signature
+Schemes}. SP 800-208, 2020. \url{https://doi.org/10.6028/NIST.SP.800-208}.
+\bibitem{falcon} Pierre-Alain Fouque et al. \emph{Falcon: Fast-Fourier
+Lattice-based Compact Signatures over NTRU}. Specification v1.2, 2020.
+\url{https://falcon-sign.info/}.
 \bibitem{groth16} Jens Groth. \emph{On the Size of Pairing-Based Non-interactive
 Arguments}. EUROCRYPT, 2016.
 \url{https://doi.org/10.1007/978-3-662-49896-5_11}.

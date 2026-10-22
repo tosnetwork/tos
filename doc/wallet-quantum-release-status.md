@@ -1,15 +1,45 @@
-# Quantum delivery status — 2026-10-06 continuation
+# Quantum wallet release status
 
-PR [138](https://github.com/tosnetwork/tos/pull/138), branch
-`feat/quantum-rescue`, remains a **draft implementation candidate**. The delivery
-contract is a complete V5R1-equivalent wallet with ML-DSA-44 PRIMARY and
-SLH-DSA-SHA2-128s protection/recovery, based in workchain 0. READY and REQUIRED
-remain distinct. LMS authorizes the specified fee classes and does not grant
-wallet asset authority. Production custody, default activation and merge have
-not been approved.
+Updated 2026-10-22. The release gates and evidence below were recorded on the
+pre-merge continuation of 2026-10-06 and keep their source boundaries.
 
-The continuation started from `8251ca8679f5212bf7325d3ee0ae46a9994584c8`.
-New result indexes bind their actual working-tree sources by SHA-256; they do
+## Current state
+
+The Quantum wallet is **merged into main but not released**.
+
+- **Merged.** PR [138](https://github.com/tosnetwork/tos/pull/138) was merged on
+  2026-10-08 as `dac83b644`. The Falcon-512 AUTH module, PR
+  [131](https://github.com/tosnetwork/tos/pull/131), was merged on 2026-10-03 as
+  `4bd0ae3e4`; its profile is experimental (see [Falcon profile](wallet-falcon-fndsa.md)).
+- **Wallet design.** A V5R1-equivalent wallet in workchain 0 with an ML-DSA-44
+  PRIMARY key and an SLH-DSA-SHA2-128s protection and recovery key. READY and
+  REQUIRED remain distinct. The LMS fee profile authorizes the specified fee
+  classes and grants no wallet asset authority.
+- **Not approved.** Merging is not release approval. Production custody,
+  default activation and deployment remain unapproved; the fee vault source
+  (`crypto/smartcont/wallet-quantum-fee-vault.fc`) still carries its NOT
+  RELEASE READY note.
+
+Changes on main since the merge that affect the wallet:
+
+| Change | Effect |
+| --- | --- |
+| PR [226](https://github.com/tosnetwork/tos/pull/226) (`a103efa12`, 2026-10-16) | Every feature, including the PQ suites, the LMS fee-hash instruction and `c7[18]`, opens at global version 16, the genesis version. ConfigParam 48 (AUTH policy) is mandatory from version 16, so a genesis needs an explicit AUTH namespace. |
+| PR [266](https://github.com/tosnetwork/tos/pull/266) (`37768f0bb`, 2026-10-21) | The basechain external gas credit is 20,000 in genesis and in the Rust defaults; the masterchain credit stays 10,000. |
+
+Still open beyond the release gates:
+
+- **Operator path.** `tosctl wallet-pq` creates keys with a 24-word backup,
+  prepares identities, restores, inspects and signs offline. It does not
+  deploy a wallet or broadcast; deployment exists only in the JS SDK and test
+  scripts. Adding deployment and submission to tosctl was decided on
+  2026-10-21 and is not implemented yet.
+- **Live network.** No public-network test of the authorization modes (valid,
+  invalid primary, invalid rescue, underfunded module, stale authority) has
+  passed yet.
+
+The pre-merge continuation started from `8251ca8679f5212bf7325d3ee0ae46a9994584c8`.
+Its result indexes bind their actual working-tree sources by SHA-256; they do
 not relabel earlier runs as final-head CI. The
 [implementation record](wallet-quantum-implementation.md) retains earlier results
 at their own source boundaries.
@@ -22,7 +52,7 @@ at their own source boundaries.
 | R1 | Both VM implementations, fixed H20/W4 fee verification and the actual generated version-18 profile have local transaction evidence. Thirty-one selected successful fee requests have matching G−1/G and historical 10,000 controls. | Complete ACVP/interop, re-signed legal maximum inputs, cold/adversarial envelopes, hardware pricing and final-head architecture CI. Selected paths are not a universal bound. |
 | Quantum | Full V5 action engine, strict PQ-only receiver, immutable module/vault pairing, monotonic retirement and same-wallet successor installation. The current selected generated-config corpus has 138 matching transactions, plus 19 PRIMARY/SLH module-delivery transactions. | Revalidate every required design and gas boundary on the frozen release; finish the legal maximum-input and failure matrices. Keep activation separate from test configuration selection. |
 | R3 | Rust SDK/CLI custody, durable journals, staged deployment, dual POP receipts and migration are implemented. Local native execution covers two consecutive installed-route promotions, encrypted restarts, exact retries and recipient payments. Fourteen guard groups exercise tuple/checkpoint binding, retained journals/history, portable export and capacity preflights. | Complete deployed proof acquisition, funding/readiness/finality, full device-loss acceptance and iOS/Android integration. Local test adapters and public fixture custody do not establish those production workflows. |
-| R4 | PR 138 remains draft. Rescue and admission workflows select the exact pull-request head and retain their evidence artifacts. | Relevant final-head CI, independent source/crypto security review, dependency acceptance and explicit deployment/default-switch approval. |
+| R4 | PR 138 was merged on 2026-10-08 (`dac83b644`); merging is not release approval. Rescue and admission workflows retain their evidence artifacts. | Relevant final-head CI, independent source/crypto security review, dependency acceptance and explicit deployment/default-switch approval. |
 
 ## Configuration and protocol versions
 
@@ -157,9 +187,9 @@ it does not mark the entire requirement passed at this head.
 | T26–T27 | Real fee/action/bounce, paired preparation, dual POP and staged migration | Complete accepted-failure, reserve/setup, exhaustion and rollover matrix on the frozen profile |
 | T28 | Mnemonic-derived H20 reconstruction, encrypted restore and exact cached retry components | Integrated loss drill with authenticated live state, competing devices, reserve/readiness and purge/fresh-tree handling |
 
-## Evidence and CI interpretation
+## Evidence and CI interpretation (pre-merge, 2026-10-06)
 
-The completed CI for continuation head
+This section records the pre-merge review of PR 138. The completed CI for continuation head
 `18349b79b401d249db0c464d99d81b7218f1f33b` establishes the following source-bound
 results. It also identifies four integration issues addressed by the follow-on
 changes; these results do not certify a later commit.
@@ -230,7 +260,7 @@ workflow conclusions.
 | External import size rejection and signature retry | Agent-account sandbox suite and the import-guard sensitivity result; contract sandbox CI |
 | ARM job time budget | Complete rescue architecture jobs with the original checks retained |
 
-The rescue and admission workflows check out the PR's actual head SHA. Their
+On a pull request, the rescue and admission workflows check out the PR's actual head SHA. Their
 source-mutating controls must run sequentially; a build failure is never a
 semantic red result. Generated-config transactions and the new PRIMARY and
 review-bundle checks are wired into rescue CI. Other repository workflows may
@@ -238,7 +268,7 @@ continue testing merge compatibility.
 
 Previous successful runs and the handoff-head runs are historical evidence once
 new code is pushed. Queued, running or cancelled jobs do not certify the final
-head. The PR body records the current head and observed workflow states.
+head. During review, the body of PR 138 recorded its current head and observed workflow states.
 Large public trees, custody journals and repeated raw logs are not committed.
 Small indexes retain source hashes, commands and targeted failure receipts;
 rescue CI artifacts have 14-day retention and admission artifacts have 90-day
