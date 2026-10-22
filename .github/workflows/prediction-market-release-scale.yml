@@ -5,6 +5,10 @@ name: PredictionMarket release-scale sandbox
 on:
   pull_request:
     paths:
+      - "tl/generate/scheme/**"
+      - "tosctl/src/tl/**"
+      - "scripts/check-tl-single-source.py"
+      - "test/tl-cli/**"
       - ".github/workflows/prediction-market-release-scale.yml"
       - "crypto/smartcont/prediction-market-code.fc"
       - "crypto/smartcont/prediction-market-v1.boc.base64"

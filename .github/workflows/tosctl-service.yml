@@ -5,6 +5,10 @@ on:
   push:
     branches: [main]
     paths:
+      - "tl/generate/scheme/**"
+      - "tosctl/src/tl/**"
+      - "scripts/check-tl-single-source.py"
+      - "test/tl-cli/**"
       - "tosctl/src/node-control/**"
       - "tosctl/src/secrets-vault/**"
       - "tosctl/src/adnl/**"
@@ -17,6 +21,10 @@ on:
       - ".github/workflows/tosctl-service.yml"
   pull_request:
     paths:
+      - "tl/generate/scheme/**"
+      - "tosctl/src/tl/**"
+      - "scripts/check-tl-single-source.py"
+      - "test/tl-cli/**"
       - "tosctl/src/node-control/**"
       - "tosctl/src/secrets-vault/**"
       - "tosctl/src/adnl/**"
@@ -49,9 +57,13 @@ jobs:
           components: rustfmt
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
+          key: tl-${{ hashFiles('tl/generate/scheme/*.tl', 'tosctl/src/tl/codegen/**', 'tosctl/src/tl/api/tl/codegen.json') }}
           workspaces: tosctl/src/node-control -> target
       - name: Formatting
         run: cargo fmt --manifest-path service/Cargo.toml --check
+      - name: Compile the outer VM consumer with its own lockfile
+        working-directory: .
+        run: cargo check --manifest-path tools/poseidon2-bench/Cargo.toml --all-targets --locked
       - name: Service tests
         run: cargo test --manifest-path service/Cargo.toml --lib --locked
 
@@ -74,6 +86,7 @@ jobs:
           components: rustfmt
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
+          key: tl-${{ hashFiles('tl/generate/scheme/*.tl', 'tosctl/src/tl/codegen/**', 'tosctl/src/tl/api/tl/codegen.json') }}
           workspaces: tosctl/src -> target
       - name: Formatting
         run: cargo fmt -p secrets-vault --check
@@ -100,6 +113,7 @@ jobs:
           components: rustfmt
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
+          key: tl-${{ hashFiles('tl/generate/scheme/*.tl', 'tosctl/src/tl/codegen/**', 'tosctl/src/tl/api/tl/codegen.json') }}
           workspaces: tosctl/src -> target
       - name: Formatting
         run: cargo fmt -p raptorq --check
@@ -109,6 +123,7 @@ jobs:
         run: |
           cargo test -p adnl --locked --lib rldp::
           cargo test -p adnl --locked --test test_overlay -- test_raptorq test_twostep
+          TOKIO_WORKER_THREADS=2 cargo test -p adnl --locked --test test_overlay safe_overlay_broadcast_refuses_without_sending_and_fast_delivers -- --exact
 
   # This harness creates a new encrypted file Vault for one local child
   # process. It has no third-party Python dependency and must stay unable to
@@ -160,6 +175,7 @@ jobs:
             tos-ccache-${{ runner.os }}-
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
+          key: tl-${{ hashFiles('tl/generate/scheme/*.tl', 'tosctl/src/tl/codegen/**', 'tosctl/src/tl/api/tl/codegen.json') }}
           workspaces: tosctl/src -> target
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
         with:

@@ -2385,3 +2385,13 @@ if (NOT TOS_ONLY_TOSLIB AND NOT USE_EMSCRIPTEN AND NOT EMSCRIPTEN)
   add_test(NAME archive-prune-held-reader-shutdown COMMAND test-archive-prune --held-reader-shutdown)
   set_tests_properties(archive-prune archive-prune-held-reader-shutdown PROPERTIES TIMEOUT 90)
 endif()
+
+# Rust and native generators consume the same authoritative schema set.
+add_test(NAME tl-single-source COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-tl-single-source.py ${CMAKE_CURRENT_SOURCE_DIR})
+add_test(NAME tl-single-source-self-test COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-tl-single-source.py ${CMAKE_CURRENT_SOURCE_DIR} --self-test)
+set_tests_properties(tl-single-source tl-single-source-self-test PROPERTIES LABELS "source-guard")
+
+add_executable(test-tl-cli-fixtures test/tl-cli/fixtures.cpp)
+target_include_directories(test-tl-cli-fixtures PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(test-tl-cli-fixtures PRIVATE tl_api tl_lite_api tl_toslib_api tdutils)
+add_test(NAME test-tl-cli-fixtures COMMAND test-tl-cli-fixtures --verify ${CMAKE_CURRENT_SOURCE_DIR}/test/tl-cli/fixtures.tsv)

@@ -5,6 +5,10 @@ on:
   workflow_dispatch:
   pull_request:
     paths:
+      - "tl/generate/scheme/**"
+      - "tosctl/src/tl/**"
+      - "scripts/check-tl-single-source.py"
+      - "test/tl-cli/**"
       - '.github/workflows/rescue-context.yml'
       - '.github/workflows/source-guards.yml'
       - '.github/actions/native-cache/**'

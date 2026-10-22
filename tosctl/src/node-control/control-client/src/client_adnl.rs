@@ -988,3 +988,7 @@ impl Shutdown for ControlClientAdnl {
         ControlClientAdnl::shutdown(self).await
     }
 }
+
+#[cfg(test)]
+#[path = "cli_wire_parity.rs"]
+mod cli_wire_parity;

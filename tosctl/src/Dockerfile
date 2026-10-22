@@ -8,8 +8,10 @@ RUN apt-get update && apt-get install -y \
     libzstd-dev \
     libgoogle-perftools-dev
 
-COPY . /node
-WORKDIR /node
+COPY tosctl/src/ /workspace/tosctl/src/
+COPY tl/generate/scheme/lite_api.tl tl/generate/scheme/tos_api.tl tl/generate/scheme/toslib_api.tl /workspace/tl/generate/scheme/
+COPY crypto/smartcont/prediction-market-v1.boc.base64 /workspace/crypto/smartcont/
+WORKDIR /workspace/tosctl/src
 
 ARG GIT_BRANCH
 ARG GIT_COMMIT
@@ -30,7 +32,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgoogle-perftools4t64 \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /node/target/release/node /usr/local/bin/
-COPY --from=builder /node/target/release/console /usr/local/bin/
+COPY --from=builder /workspace/tosctl/src/target/release/node /usr/local/bin/
+COPY --from=builder /workspace/tosctl/src/target/release/console /usr/local/bin/
 
 WORKDIR /node

@@ -96,7 +96,7 @@ jobs:
             test-block-accepter test-rldp2-refusal-lifetime \
             test-startup-catchup-policy test-startup-catchup-importer test-startup-catchup-driver \
             test-startup-catchup-probe test-startup-catchup-manager test-startup-orphan-reconcile \
-            test-liteserver-cache
+            test-liteserver-cache test-tl-cli-fixtures
           ccache --show-stats
 
       # Answered capacity refusals through the download actors, their query
@@ -131,6 +131,18 @@ jobs:
 
       - name: Install repository-pinned Rust toolchain for engine integration
         run: scripts/install-rust-toolchain.sh
+
+      - name: Native and Rust TL wire parity
+        run: |
+          build/test-tl-cli-fixtures > "$RUNNER_TEMP/tl-fixtures.tsv"
+          cmp test/tl-cli/fixtures.tsv "$RUNNER_TEMP/tl-fixtures.tsv"
+          build/test-tl-cli-fixtures --verify test/tl-cli/fixtures.tsv
+          cargo test --manifest-path tosctl/src/Cargo.toml -p tl_codegen --lib --locked
+          TL_CLI_REVERSE_OUTPUT="$RUNNER_TEMP/tl-reverse.tsv" cargo test --manifest-path tosctl/src/Cargo.toml -p tl_api --test cli_wire_parity --locked
+          build/test-tl-cli-fixtures --verify "$RUNNER_TEMP/tl-reverse.tsv"
+          cargo test --manifest-path tosctl/src/Cargo.toml -p control-client --lib production_request_serializers_match_cpp_and_have_complete_coverage --locked
+          python3 scripts/check-tl-single-source.py . --self-test
+          python3 test/tl-cli/check_controls.py --checkout . --target-dir tosctl/src/target --native-tool build/test-tl-cli-fixtures --output-dir build/tl-controls
 
       - name: Verify Rust operator reads against the actual engine
         # The job runs in a container: the default sh has no pipefail, and the

@@ -14,6 +14,10 @@ name: Smart contract sandboxes
 on:
   pull_request:
     paths:
+      - "tl/generate/scheme/**"
+      - "tosctl/src/tl/**"
+      - "scripts/check-tl-single-source.py"
+      - "test/tl-cli/**"
       - "crypto/smartcont/**"
       - "crypto/smc-envelope/**"
       - "emulator/tvm-emulator.hpp"
@@ -68,6 +72,10 @@ on:
   push:
     branches: [main, master, testnet]
     paths:
+      - "tl/generate/scheme/**"
+      - "tosctl/src/tl/**"
+      - "scripts/check-tl-single-source.py"
+      - "test/tl-cli/**"
       - "crypto/smartcont/**"
       - "crypto/smc-envelope/**"
       - "emulator/tvm-emulator.hpp"
