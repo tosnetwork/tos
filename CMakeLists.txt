@@ -1564,6 +1564,8 @@ add_executable(test-emulator
         # VmState-level test above and the TL-B parse test in
         # tvm-v14-v15-transaction-fixture.cpp.
         emulator/test/config-param-43-transaction-fixture.cpp
+        # Gas of messages to contracts listed as precompiled in ConfigParam 45.
+        emulator/test/precompiled-external-message-fixture.cpp
         # Measures the token wallet fee profile against this build and checks
         # the config-priced transfer/burn requirements end to end.
         emulator/test/token-wallet-fee-profile-fixture.cpp
