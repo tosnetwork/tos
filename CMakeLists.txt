@@ -1045,6 +1045,16 @@ target_include_directories(test-get-method-context PRIVATE ${CMAKE_CURRENT_SOURC
 target_link_libraries(test-get-method-context PRIVATE validator-disk validator-common validator-db
                       tos_validator smc-envelope proof-verify-engine tos_db tos_crypto tddb tdutils tdactor adnl overlay tl_api dht fift-lib)
 
+# Lite-server proofs carry every block header cell the lite client checks.
+add_executable(test-lite-proof-content test/validator/lite-proof-content-test.cpp)
+target_include_directories(test-lite-proof-content PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-lite-proof-content PRIVATE validator-disk validator-common validator-db
+                      tos_validator tos_db tos_crypto tddb tdutils tdactor adnl overlay tl_api dht)
+add_dependencies(all-tests test-lite-proof-content)
+add_test(NAME lite-proof-content
+  COMMAND test-lite-proof-content ${CMAKE_CURRENT_SOURCE_DIR}/test/rel02/corpus/blocks)
+
 # Measurement tool, not a gate: apply completion when the wallet index must
 # read a block's data itself, against the same apply with no index.
 add_executable(test-apply-block-readback-latency test/validator/apply-block-readback-latency.cpp

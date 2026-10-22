@@ -778,9 +778,9 @@ bool unpack_old_mc_block_id(Ref<vm::CellSlice> old_blk_info, tos::BlockSeqno seq
 bool check_old_mc_block_id(vm::AugmentedDictionary* prev_blocks_dict, const tos::BlockIdExt& blkid);
 bool check_old_mc_block_id(vm::AugmentedDictionary& prev_blocks_dict, const tos::BlockIdExt& blkid);
 
-td::Result<Ref<vm::Cell>> get_block_transaction(Ref<vm::Cell> block_root, tos::WorkchainId workchain,
+td::Result<Ref<vm::Cell>> get_block_transaction(Ref<vm::Cell> block_root, const tos::BlockIdExt& block_id,
                                                 const tos::StdSmcAddress& addr, tos::LogicalTime lt);
-td::Result<Ref<vm::Cell>> get_block_transaction_try(Ref<vm::Cell> block_root, tos::WorkchainId workchain,
+td::Result<Ref<vm::Cell>> get_block_transaction_try(Ref<vm::Cell> block_root, const tos::BlockIdExt& block_id,
                                                     const tos::StdSmcAddress& addr, tos::LogicalTime lt);
 
 bool get_transaction_in_msg(Ref<vm::Cell> trans_ref, Ref<vm::Cell>& in_msg);
