@@ -568,7 +568,6 @@ fn get_time_share_ms(percentage: u8) -> u64 {
 enum Protocol {
     Fec,
     Simple,
-    StreamSimple,
     TwostepFec,
     TwostepSimple,
 }
@@ -591,7 +590,7 @@ fn run_propagation(
     const STEPS: usize = 1;
 
     let data_size = match &protocol {
-        Protocol::Simple | Protocol::StreamSimple | Protocol::TwostepSimple => DATA_SIZE_SIMPLE,
+        Protocol::Simple | Protocol::TwostepSimple => DATA_SIZE_SIMPLE,
         Protocol::TwostepFec => PART_SIZE_TWOSTEP_FEC * neighbours[0].len() / 2,
         _ => DATA_SIZE_FEC,
     };
@@ -661,11 +660,6 @@ fn run_propagation(
                     Protocol::Simple | Protocol::Fec => {
                         node_send
                             .broadcast(&overlay_id_send, &data, None, 0, AdnlSendMethod::Fast)
-                            .await
-                    }
-                    Protocol::StreamSimple => {
-                        node_send
-                            .broadcast(&overlay_id_send, &data, None, 0, AdnlSendMethod::Safe)
                             .await
                     }
                     Protocol::TwostepSimple | Protocol::TwostepFec => {
@@ -820,7 +814,7 @@ fn test_broadcast(
     protocol: Protocol,
 ) {
     let min_neighbours = match protocol {
-        Protocol::StreamSimple | Protocol::TwostepFec => return, /* Not ready yet */
+        Protocol::TwostepFec => return, /* Not ready yet */
         //Protocol::TwostepFec => 4,
         Protocol::TwostepSimple => 3,
         _ => 1,
@@ -892,7 +886,6 @@ fn test_overlay_broadcast() {
     test_broadcast(5, run_propagation, Protocol::Fec);
     test_broadcast(5, run_propagation, Protocol::TwostepSimple);
     test_broadcast(5, run_propagation, Protocol::TwostepFec);
-    test_broadcast(5, run_propagation, Protocol::StreamSimple);
 }
 
 #[ignore]
@@ -2047,4 +2040,71 @@ fn test_twostep_fec_encoder_large_symbols() {
         }
         assert_eq!(seqno, neighbours, "every symbol carries its own seqno");
     }
+}
+
+#[test]
+fn safe_overlay_broadcast_refuses_without_sending_and_fast_delivers() {
+    init_test();
+    let first = init_local_node("127.0.0.1:53680".to_string(), 50);
+    let second = init_local_node("127.0.0.1:53681".to_string(), 50);
+    for (local, remote) in [(&first, &second), (&second, &first)] {
+        let signed = remote.overlay.get_signed_node(&remote.overlay_id).expect("signed local peer");
+        let ip = IpAddress::from_versioned_string(&remote.ip, None).expect("local address");
+        assert!(local
+            .overlay
+            .add_public_peer(&ip, &signed, &local.overlay_id)
+            .expect("valid peer")
+            .is_some());
+        local.rt.block_on(local.overlay.wait_for_peers(&local.overlay_id)).expect("peer available");
+    }
+    let payload = TaggedByteSlice {
+        object: b"single-source-safe-broadcast-probe",
+        #[cfg(feature = "telemetry")]
+        tag: 0,
+    };
+    let receive_overlay = second.overlay.clone();
+    let receive_id = second.overlay_id.clone();
+    let pending =
+        second.rt.spawn(async move { receive_overlay.wait_for_broadcast(&receive_id).await });
+    let refused = first
+        .rt
+        .block_on(first.overlay.broadcast(
+            &first.overlay_id,
+            &payload,
+            None,
+            0,
+            AdnlSendMethod::Safe,
+        ))
+        .expect_err("SAFE_BROADCAST_MUST_REFUSE");
+    assert_eq!(
+        refused.to_string(),
+        "Safe overlay broadcast is unsupported",
+        "SAFE_BROADCAST_REASON"
+    );
+    // Keep the same receive operation alive across both observations.
+    second.rt.block_on(async {
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    });
+    assert!(!pending.is_finished(), "SAFE_BROADCAST_SENT_DATA");
+    let sent = first
+        .rt
+        .block_on(first.overlay.broadcast(
+            &first.overlay_id,
+            &payload,
+            None,
+            0,
+            AdnlSendMethod::Fast,
+        ))
+        .expect("FAST_POSITIVE_SEND");
+    assert!(sent.send_to > 0 && sent.packets > 0, "FAST_POSITIVE_SEND_COUNT");
+    let received = second
+        .rt
+        .block_on(async { tokio::time::timeout(Duration::from_secs(10), pending).await })
+        .expect("FAST_POSITIVE_DELIVERY_DEADLINE")
+        .expect("FAST_POSITIVE_TASK")
+        .expect("FAST_POSITIVE_DELIVERY")
+        .expect("FAST_POSITIVE_PAYLOAD");
+    assert_eq!(received.data, payload.object, "FAST_POSITIVE_BYTES");
+    first.rt.block_on(first.adnl.stop());
+    second.rt.block_on(second.adnl.stop());
 }

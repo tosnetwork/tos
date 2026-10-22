@@ -36,7 +36,7 @@ use tl_api::{
         overlay::{
             broadcast::{
                 id::Id as BroadcastSimpleId, tosign::ToSign as BroadcastToSign,
-                Broadcast as BroadcastSimple, BroadcastFec, BroadcastStream, BroadcastTwostepFec,
+                Broadcast as BroadcastSimple, BroadcastFec, BroadcastTwostepFec,
                 BroadcastTwostepSimple,
             },
             broadcast_fec::{id::Id as BroadcastFecId, partid::PartId as BroadcastFecPartId},
@@ -62,7 +62,6 @@ pub(crate) enum BroadcastData<'a> {
     Buf(Vec<u8>),
     None,
     Raw(&'a [u8]),
-    Stream(Option<BroadcastStream>),
 }
 
 pub(crate) type BroadcastId = [u8; 32];
@@ -165,7 +164,6 @@ impl Display for BroadcastSendMethod {
 pub(crate) enum BroadcastType {
     Fec,
     Simple,
-    StreamSimple,
     TwostepFec,
     TwostepSimple,
 }
@@ -175,7 +173,6 @@ impl Display for BroadcastType {
         let msg = match self {
             Self::Fec => "datagram FEC",
             Self::Simple => "datagram simple",
-            Self::StreamSimple => "stream simple",
             Self::TwostepFec => "two-step datagram FEC",
             Self::TwostepSimple => "two-step datagram simple",
         };
@@ -441,7 +438,6 @@ pub(crate) trait BroadcastProtocol<T: BroadcastParsed + Send + 'static>:
             BroadcastData::Buf(data) => data,
             BroadcastData::None => return Ok(()),
             BroadcastData::Raw(data) => *data,
-            BroadcastData::Stream(_) => fail!("INTERNAL ERROR: unprepared stream data"),
         };
         #[cfg(feature = "telemetry")]
         match Self::broadcast_type() {
@@ -1524,138 +1520,6 @@ impl BroadcastProtocol<BroadcastSimple> for BroadcastSimpleProtocol {
         _neighbours: &mut BroadcastNeighbours,
     ) -> Result<BroadcastJob> {
         Ok(BroadcastJob::Foreground(Self::build_broadcast(ctx, bcast_id, date)?.into_boxed()))
-    }
-}
-
-// Broadcast stream simple ****************************************************
-
-#[rustfmt::skip]
-impl BroadcastParsed for BroadcastStream {
-    fn date(&self) -> i32 { self.data.date }
-    fn src_key(&self) -> Result<Arc<dyn KeyOption>> { (&self.data.src).try_into() }
-    #[cfg(feature = "telemetry")]
-    fn default_tag(&self) -> u32 { BroadcastStream::constructor_const() }
-    #[cfg(feature = "xp25")]
-    fn flags(&self) -> u32 { self.data.flags as u32 }
-}
-
-pub(crate) struct BroadcastStreamSimpleProtocol;
-
-impl BroadcastMultistep for BroadcastStreamSimpleProtocol {}
-
-#[async_trait::async_trait]
-impl BroadcastProtocol<BroadcastStream> for BroadcastStreamSimpleProtocol {
-    // Common
-
-    fn broadcast_type() -> BroadcastType {
-        BroadcastType::StreamSimple
-    }
-
-    fn calc_broadcast_neighbours(
-        &self,
-        overlay: &Arc<Overlay>,
-        hops: Option<u8>,
-    ) -> Result<BroadcastNeighbours> {
-        <Self as BroadcastMultistep>::calc_broadcast_neighbours(
-            overlay,
-            hops,
-            Overlay::SIZE_NEIGHBOURS_STREAM_BROADCAST,
-        )
-    }
-
-    fn select_broadcast_neighbours(
-        &self,
-        overlay: &Arc<Overlay>,
-        neighbours: &mut BroadcastNeighbours,
-        skip: Option<&Arc<KeyId>>,
-    ) {
-        <Self as BroadcastMultistep>::select_broadcast_neighbours(overlay, neighbours, skip);
-    }
-
-    fn send_method(&self) -> BroadcastSendMethod {
-        BroadcastSendMethod::Safe
-    }
-
-    // Receive side
-
-    fn check_broadcast(
-        &self,
-        bcast: &BroadcastStream,
-        ctx: &BroadcastRecvContext,
-    ) -> Result<BroadcastCheckInfo> {
-        BroadcastSimpleProtocol::check_broadcast(&bcast.data, ctx)
-    }
-
-    fn build_rebroadcast(
-        &self,
-        ctx: &mut BroadcastRecvContext,
-        neighbours: &mut BroadcastNeighbours,
-    ) -> Result<()> {
-        let BroadcastData::Stream(bcast) = &mut ctx.data else {
-            fail!(
-                "INTERNAL ERROR: unexpected broadcast data type for {} rebroadcast",
-                Self::broadcast_type()
-            );
-        };
-        let Some(mut bcast) = bcast.take() else {
-            fail!("INTERNAL ERROR: no stream data for rebroadcast");
-        };
-        self.select_broadcast_neighbours(ctx.overlay, neighbours, Some(ctx.peers.other()));
-        let hops = neighbours.hops;
-        let Some(neighbours) = neighbours.get_ids() else {
-            ctx.data = BroadcastData::None;
-            return Ok(());
-        };
-        neighbours.retain(|n| !bcast.trace.iter().any(|k| k.as_slice() == n.data()));
-        for neighbour in neighbours.iter() {
-            bcast.trace.push(UInt256::from_slice(neighbour.data()));
-        }
-        let mut buf = ctx.overlay.serialize_broadcast(&bcast.into_boxed())?;
-        if let Some(hops) = hops {
-            buf.push(hops);
-        }
-        ctx.data = BroadcastData::Buf(buf);
-        Ok(())
-    }
-
-    async fn process_broadcast(
-        &self,
-        bcast: BroadcastStream,
-        ctx: &mut BroadcastRecvContext,
-        _bcast_id: &BroadcastId,
-    ) -> Result<(Option<BroadcastRecvInfo>, bool)> {
-        let ret = BroadcastSimpleProtocol::process_broadcast(bcast.data.clone())?;
-        ctx.data = BroadcastData::Stream(Some(bcast));
-        Ok(ret)
-    }
-
-    // Send side
-
-    fn calc_broadcast_id(
-        &self,
-        ctx: &BroadcastSendContext,
-        _date: i32,
-    ) -> Result<(BroadcastId, bool)> {
-        let bcast_id =
-            BroadcastSimpleProtocol::calc_broadcast_id(ctx.data.object, &ctx.src_key, ctx.flags)?;
-        Ok((bcast_id, false))
-    }
-
-    fn build_broadcast(
-        &mut self,
-        ctx: &BroadcastSendContext,
-        bcast_id: &BroadcastId,
-        date: i32,
-        neighbours: &mut BroadcastNeighbours,
-    ) -> Result<BroadcastJob> {
-        let bcast = BroadcastSimpleProtocol::build_broadcast(ctx, bcast_id, date)?;
-        self.select_broadcast_neighbours(ctx.overlay, neighbours, None);
-        let trace = if let Some(ids) = neighbours.get_ids() {
-            ids.iter().map(|k| UInt256::from_slice(k.data())).collect()
-        } else {
-            Vec::new()
-        };
-        Ok(BroadcastJob::Foreground(BroadcastStream { data: bcast, trace }.into_boxed()))
     }
 }
 

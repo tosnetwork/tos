@@ -7,23 +7,20 @@
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
 use crate::client_api::{
-    Account, AddAdnlAddressRq, AddCollatorRq, AddLiteserverRq, AddValidatorAdnlAddrRq,
+    AddAdnlAddressRq, AddCollatorRq, AddLiteserverRq, AddValidatorAdnlAddrRq,
     AddValidatorPermKeyRq, AddValidatorTempKeyRq, BlockchainConfigInfo, ClientAPI, CollatorEntry,
     CollatorNodeWhitelist, CollatorNodeWhitelistRq, CollatorsList, CollatorsListShard,
     CustomOverlayConfig, CustomOverlayNode, CustomOverlaysConfig, EngineValidatorConfig, NodeStats,
-    PqStakeAuthorization, ShardAccountState, ShardDescriptor, Shutdown, SignRq,
+    PqStakeAuthorization, ShardDescriptor, Shutdown, SignRq,
 };
 use crate::{operator_reads::*, operator_requests::*};
 use adnl::client::{AdnlClient, AdnlClientConfig, AdnlClientConfigJson};
 use anyhow::Context;
-use chain_block::{BlockIdExt, Deserializable, ShardAccount, UInt256, UnixTime, write_boc};
+use chain_block::{BlockIdExt, UInt256, UnixTime};
 use std::time::Instant;
 use tl_api::{
     AnyBoxedSerialize, TLObject, serialize_boxed,
-    tos::{
-        self, engine::validator::ControlQueryError, raw::ShardAccountState as ShardAccountState_TL,
-        rpc::engine::validator::ControlQuery,
-    },
+    tos::{self, engine::validator::ControlQueryError, rpc::engine::validator::ControlQuery},
 };
 
 pub trait ToFromTL {
@@ -62,42 +59,6 @@ pub(crate) fn downcast<T: tl_api::AnyBoxedSerialize>(data: TLObject) -> anyhow::
     match data.downcast::<T>() {
         Ok(result) => Ok(result),
         Err(obj) => anyhow::bail!("Wrong downcast {:?} to {}", obj, std::any::type_name::<T>()),
-    }
-}
-
-struct GetAccountRqRs {}
-
-impl ToFromTL for GetAccountRqRs {
-    type Rq = String;
-    type Rs = Account;
-
-    fn serialize(address: &Self::Rq) -> anyhow::Result<TLObject> {
-        Ok(tos::rpc::raw::GetShardAccountState {
-            account_address: tl_api::tos::accountaddress::AccountAddress {
-                account_address: address.to_owned(),
-            },
-        }
-        .into_tl_object())
-    }
-
-    fn deserialize(rs: TLObject) -> anyhow::Result<Self::Rs> {
-        Ok(match downcast::<ShardAccountState_TL>(rs)? {
-            ShardAccountState_TL::Raw_ShardAccountNone => Account::Nonexist,
-            ShardAccountState_TL::Raw_ShardAccountState(account_state) => {
-                let shard_account =
-                    ShardAccount::construct_from_bytes(&account_state.shard_account)?;
-                let account = shard_account.read_account()?;
-                let sas = ShardAccountState {
-                    status: account.status(),
-                    balance: account.balance().map_or(0, |val| val.coins.as_u128()),
-                    last_paid: account.last_paid(),
-                    last_trans: shard_account.last_trans_lt(),
-                    data: write_boc(&shard_account.account_cell())?,
-                };
-
-                Account::ShardAccountState(sas)
-            }
-        })
     }
 }
 
@@ -885,10 +846,6 @@ impl ClientAPI for ControlClientAdnl {
         request: &ConfigProposalRequest,
     ) -> anyhow::Result<ConfigProposalDetail> {
         self.do_rq::<GetConfigProposalRqRs>(request).await
-    }
-
-    async fn get_account_state(&mut self, address: &str) -> anyhow::Result<Account> {
-        self.do_rq::<GetAccountRqRs>(&address.to_string()).await
     }
 
     async fn get_blockchain_config(&mut self) -> anyhow::Result<BlockchainConfigInfo> {

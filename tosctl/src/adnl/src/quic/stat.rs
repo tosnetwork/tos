@@ -60,7 +60,6 @@ pub(super) fn tl_tag_name(tag: u32) -> &'static str {
         0xb15a2b6b => "overlay.broadcast",
         0xbad7c36a => "overlay.broadcastFec",
         0xf1881342 => "overlay.broadcastFecShort",
-        0x46efae62 => "overlay.broadcastStream",
         0xf99fd63d => "overlay.broadcastTwostepFec",
         0x80b859b0 => "overlay.broadcastTwostepSimple",
         0x33534e24 => "overlay.unicast",
