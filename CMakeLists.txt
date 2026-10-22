@@ -1168,7 +1168,8 @@ add_executable(test-vm-exception-hardening test/test-td-main.cpp test/test-vm-ex
 target_link_libraries(test-vm-exception-hardening PRIVATE tos_validator tos_crypto common tdutils tos_block keys)
 
 add_executable(test-validate-query-rules test/test-td-main.cpp test/test-validate-query-rules.cpp)
-target_link_libraries(test-validate-query-rules PRIVATE tos_validator tos_crypto common tdutils tos_block keys)
+# The validator factory references ApplyBlock, whose implementation is in validator-common.
+target_link_libraries(test-validate-query-rules PRIVATE tos_validator validator-common tos_crypto common tdutils tos_block keys)
 
 if (UNIX AND NOT TOS_ONLY_TOSLIB AND NOT USE_EMSCRIPTEN AND NOT EMSCRIPTEN)
   add_executable(test-state-download-recovery test/test-state-download-recovery.cpp)
@@ -2412,7 +2413,7 @@ if (NOT TOS_ONLY_TOSLIB AND NOT USE_EMSCRIPTEN AND NOT EMSCRIPTEN)
   add_executable(test-out-msg-queue-limits test/test-td-main.cpp test/test-out-msg-queue-limits.cpp)
   target_include_directories(test-out-msg-queue-limits PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/crypto ${CMAKE_CURRENT_SOURCE_DIR}/common)
-  target_link_libraries(test-out-msg-queue-limits PRIVATE tos_validator tos_block tos_crypto tdutils)
+  target_link_libraries(test-out-msg-queue-limits PRIVATE tos_validator validator-common tos_block tos_crypto tdutils)
   tos_test(test-out-msg-queue-limits)
   set_tests_properties(test-out-msg-queue-limits PROPERTIES FAIL_REGULAR_EXPRESSION "(^|[^0-9])0 test\\(s\\) passed")
   set_property(TEST test-out-msg-queue-limits APPEND PROPERTY LABELS queue-codec)

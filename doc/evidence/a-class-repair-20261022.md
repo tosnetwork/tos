@@ -103,3 +103,21 @@ deployment/configuration constraint; this repair does not change deferral
 consensus rules. [The parameter checklist](../ConfigParam.md#queue-limit-proposals-and-collator-settings)
 records the coupled assumptions and recovery prerequisites. Fresh epoch-5/global-16
 deployment remains the scope; epoch-4 replay is still manual pending a new corpus.
+
+## Instrumented-link follow-up
+
+The [Linux ASan job for `b687d122d`](https://github.com/tosnetwork/tos/actions/runs/39782207748/job/119836050755)
+passed all 26 network-safety tests, then failed to link `test-out-msg-queue-limits`
+and `test-validate-query-rules`: `fabric.cpp.o` referenced the `ApplyBlock` vtable,
+but neither test linked its implementation in the `validator-common` object
+library. The normal optimized build had discarded that unused factory path.
+
+Both test targets now link `validator-common` explicitly, following the existing
+external-message tests. Production sources, sanitizer options and test selections
+are unchanged. The normal build and all three `queue-codec` CTest entries pass.
+A local link control retained the actual `run_apply_block_query` factory:
+both original link dependency sets failed with the missing `ApplyBlock` vtable,
+and both corrected dependency sets linked successfully. This control is evidence
+for dependency closure only; mixed instrumented and uninstrumented objects are
+not a valid ASan runtime test. The full homogeneous Linux ASan job must pass on
+the new commit before this gate is considered cleared.
