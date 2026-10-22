@@ -35,6 +35,14 @@ jobs:
   python-and-pq-chain:
     runs-on: ubuntu-24.04
     container:
+      # Native generation validation reopens private images in a separate
+      # network namespace: the verifier runs under `unshare --user
+      # --map-root-user --net`. The runner host restricts unprivileged user
+      # namespaces for unconfined processes, and a container without
+      # CAP_SYS_ADMIN is unprivileged: namespace creation succeeds but the uid
+      # map write is refused. CAP_SYS_ADMIN exempts the container from that
+      # restriction, as root is exempt on an operator host.
+      options: --security-opt seccomp=unconfined --security-opt apparmor=unconfined --cap-add SYS_ADMIN
       image: ghcr.io/${{ github.repository }}-builder:ubuntu-24.04
       credentials:
         username: ${{ github.repository_owner }}
@@ -42,6 +50,15 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Confirm user and network namespaces are available
+        # Fails in seconds instead of after the build when the container cannot
+        # create the namespaces that native generation validation requires.
+        run: |
+          if ! unshare --user --map-root-user --net -- true; then
+            echo "::error::this container cannot create user and network namespaces; native generation validation needs them"
+            exit 1
+          fi
 
       - name: Set up repository Python
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
@@ -80,7 +97,7 @@ jobs:
           cmake --build build --parallel 4 --target \
             gen_fif create-state toslibjson func fift emulator \
             generate-random-id tos-pq-consensus-key tos-pq-controller \
-            dht-server validator-engine-console validator-engine \
+            dht-server validator-engine-console validator-engine test-node-store-fixture \
             create-hardfork test-tos-collator test-apply-block-readback-latency \
             test-pq-lite-forward-proof test-pending-finality-cache test-c04-real-state-proof \
             tos-proof-verify test-proof-verify proof-verify-fs-shim test-proof-readonly-query test-json-rpc-transport test-json-rpc-explorer \
@@ -143,6 +160,24 @@ jobs:
           cargo test --manifest-path tosctl/src/Cargo.toml -p control-client --lib production_request_serializers_match_cpp_and_have_complete_coverage --locked
           python3 scripts/check-tl-single-source.py . --self-test
           python3 test/tl-cli/check_controls.py --checkout . --target-dir tosctl/src/target --native-tool build/test-tl-cli-fixtures --output-dir build/tl-controls
+
+      - name: Verify offline StateDb compatibility on native WAL fixtures
+        shell: bash
+        env:
+          CARGO_BUILD_JOBS: 4
+        run: |
+          set -euo pipefail
+          export NODE_STORE_NATIVE_DIR="$GITHUB_WORKSPACE/build/third-party/rocksdb"
+          export NODE_STORE_FIXTURE="$GITHUB_WORKSPACE/build/test-node-store-fixture"
+          export CARGO_TARGET_DIR="$GITHUB_WORKSPACE/build/operator-rust-target"
+          cargo test --manifest-path tosctl/src/Cargo.toml --locked -p node-store --features native --test native_fixture -- --nocapture | tee build/node-store-native-tests.log
+          grep -F 'test result: ok. 1 passed; 0 failed; 0 ignored' build/node-store-native-tests.log
+          cargo build --manifest-path tosctl/src/Cargo.toml --locked -p node-store --features native --example reconstruct_fixture
+          cargo test --manifest-path tosctl/src/Cargo.toml --locked -p node-data-sync --features native --tests
+          cargo test --manifest-path tosctl/src/Cargo.toml --locked -p commands --features node-data-sync-native --lib commands::nodectl::node_cmd::status_tests::standalone_status_keeps_rpc_only_contract_without_control_or_references -- --exact --nocapture | tee build/node-status-compatibility.log
+          grep -F 'test result: ok. 1 passed; 0 failed; 0 ignored' build/node-status-compatibility.log
+          cargo build --manifest-path tosctl/src/Cargo.toml --locked -p node-data-sync --features native --examples --bin node-data-sync-worker
+          cargo build --manifest-path tosctl/src/Cargo.toml --locked -p tosctl --features node-data-sync-native
 
       - name: Verify Rust operator reads against the actual engine
         # The job runs in a container: the default sh has no pipefail, and the
@@ -329,6 +364,40 @@ jobs:
             build/explorer-rpc-ordinary-v16/*/rpc-evidence.json
           if-no-files-found: error
           retention-days: 14
+
+      - name: Reopen reconstructed StateDb in the production engine
+        timeout-minutes: 10
+        run: uv run python test/integration/node_store_native_reopen.py --root build/node-store-native-reopen --build build --reconstruct build/operator-rust-target/debug/examples/reconstruct_fixture --validate-generation build/operator-rust-target/debug/examples/capture_and_validate
+
+      - name: Verify native restore preservation and forward-only exchange
+        timeout-minutes: 25
+        shell: bash
+        run: |
+          set -euo pipefail
+          started=$SECONDS
+          trap 'result=$?; elapsed=$((SECONDS - started)); printf "Native restore verification duration: %ss (exit %s)\n" "$elapsed" "$result"; printf "Native restore verification: **%ss**, exit **%s** (25-minute limit).\n" "$elapsed" "$result" >> "$GITHUB_STEP_SUMMARY"; exit "$result"' EXIT
+          export NODE_STORE_NATIVE_DIR="$GITHUB_WORKSPACE/build/third-party/rocksdb"
+          export CARGO_TARGET_DIR="$GITHUB_WORKSPACE/build/operator-rust-target"
+          export NODE_SYNC_NATIVE_FIXTURE="$GITHUB_WORKSPACE/build/node-store-native-reopen/checked-generation"
+          export NODE_SYNC_NATIVE_SOURCE="$GITHUB_WORKSPACE/build/node-store-native-reopen/network/node5"
+          export NODE_SYNC_NATIVE_ENGINE="$GITHUB_WORKSPACE/build/validator-engine/validator-engine"
+          export NODE_SYNC_NATIVE_WORKER="$GITHUB_WORKSPACE/build/operator-rust-target/debug/node-data-sync-worker"
+          cargo test --manifest-path tosctl/src/Cargo.toml --locked -p node-data-sync --features native --lib operations::tests::native_stage_preserves_own_context_and_never_overlays_recovery_material -- --ignored --exact --nocapture | tee build/node-sync-native-preservation.log
+          grep -Fx 'NATIVE_STAGE_PRESERVATION_OK' build/node-sync-native-preservation.log
+          rustc --edition=2024 tosctl/src/node-control/node-data-sync/build.rs -o build/node-sync-profile-check
+          if env CARGO_FEATURE_NATIVE_LIFECYCLE_TESTS=1 PROFILE=release build/node-sync-profile-check > build/node-sync-profile-refusal.log 2>&1; then
+            echo 'Release profile accepted lifecycle test feature'
+            exit 1
+          fi
+          grep -Fx 'native-lifecycle-tests is forbidden in the release build profile' build/node-sync-profile-refusal.log
+          env -u CARGO_FEATURE_NATIVE_LIFECYCLE_TESTS PROFILE=release build/node-sync-profile-check
+          env CARGO_FEATURE_NATIVE_LIFECYCLE_TESTS=1 PROFILE=debug build/node-sync-profile-check
+          cargo test --manifest-path tosctl/src/Cargo.toml --locked -p node-data-sync --features native-lifecycle-tests --lib native_lifecycle:: -- --test-threads=1 --nocapture | tee build/node-sync-native-lifecycle.log
+          grep -Fx 'PRODUCTION_COMPLETE_RETRY_OK' build/node-sync-native-lifecycle.log
+          grep -Fx 'PRODUCTION_RESTORE_STOP_CUT_OK' build/node-sync-native-lifecycle.log
+          grep -Fx 'PRODUCTION_RESTORE_PROCESS_EXIT_OK' build/node-sync-native-lifecycle.log
+          grep -Fx 'PRODUCTION_LIFECYCLE_MODES_OK' build/node-sync-native-lifecycle.log
+          grep -Fx 'PRODUCTION_RESTORE_INDEX_BOUNDARIES_OK' build/node-sync-native-lifecycle.log
 
       - name: Run the complete Python suite
         run: uv run pytest

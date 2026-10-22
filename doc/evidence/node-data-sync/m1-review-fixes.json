@@ -1,0 +1,473 @@
+{
+  "scope": "Review fixes 1\u20133 and component gates; native signing/crash and backlog acceptance remain pending. No public action or rejoin-time qualification.",
+  "reviewed_head": "8772a3c264157f7bac63b4180c595b713a16736f",
+  "preserved_workflow_commit": "88a8ea11fae5da14fc8adb1d2b33eef7421a4076",
+  "merge_base": "5bfe936ab3e144c2c055471262e14f1d604eab18",
+  "upstream_comparison": {
+    "commit": "857b8a57a178e6ae0fe7fa86e7d81c5233de8560",
+    "result": "No equivalent Rust operator layer. Native option syntax is supported behavior, unchanged here; the added guard now refuses noncanonical spellings.",
+    "native_parser": "tdutils/td/utils/OptionParser.cpp:137\u2013164",
+    "tos_parser": "tdutils/td/utils/OptionParser.cpp:138\u2013165"
+  },
+  "builder_image": "sha256:ce6ff9ea45fdac532b53a883538782a6a050c1fc14407e3110713ba16c5d5e95",
+  "profile": "Release, incremental disabled, production native engine; bounded builder-image replay. Native host-build runtime/header dependencies supplied read-only to the image; host compiler-linker override cleared with CARGO_ENCODED_RUSTFLAGS=.",
+  "gates": [
+    {
+      "command": "cargo test --release --locked -p node-data-sync --features native --tests",
+      "exit": 0,
+      "passed": 28,
+      "ignored": 1
+    },
+    {
+      "command": "cargo test --release --locked -p node-store --features native --test native_fixture",
+      "exit": 0,
+      "passed": 1,
+      "property": "Native WAL, raw version key, hashed keys, absent/empty preservation, native reopen"
+    },
+    {
+      "command": "cargo build --release --locked -p node-store -p node-data-sync -p tosctl --features node-store/native,node-data-sync/native,tosctl/node-data-sync-native --bins --examples",
+      "exit": 0
+    },
+    {
+      "command": "cargo test --release --locked -p commands --features node-data-sync-native --lib -- --test-threads=1",
+      "exit": 0,
+      "passed": 223
+    },
+    {
+      "command": "cargo check --release --workspace --tests --locked -j4",
+      "exit": 0
+    },
+    {
+      "command": "cargo test --release --workspace --locked --no-run -j8",
+      "exit": 0,
+      "linked_test_targets": 140,
+      "note": "Completed test executables discarded after reported links to bound cache."
+    },
+    {
+      "command": "node_store_native_reopen.py --validate-generation capture_and_validate",
+      "exit": 0,
+      "global_id": 3,
+      "frontier_before": 22,
+      "frontier_after": 63,
+      "same_full_id_at_before": true,
+      "note": "Real production engines, native recovery and two real reference endpoints before generation signing/publication; not a backlog qualification."
+    },
+    {
+      "command": "native_stage_preserves_own_context_and_never_overlays_recovery_material --ignored --exact",
+      "exit": 0,
+      "passed": 1,
+      "note": "Native stage/component proof; text fixture votes are not native signing evidence."
+    },
+    {
+      "command": "ctest -L source-guard",
+      "exit": 0,
+      "passed": 57
+    },
+    {
+      "command": "pytest -q scripts/test_branch_chain_conditions.py",
+      "exit": 0,
+      "passed": 9,
+      "subtests": 33
+    },
+    {
+      "command": "ruff check and ruff format --check on both changed Python files; cargo fmt --all --check; changed-lines clang-format",
+      "exit": 0
+    },
+    {
+      "command": "check-workflow-supply-chain.py; test_ci_efficiency.py",
+      "exit": 0,
+      "efficiency_tests": 5
+    },
+    {
+      "command": "strict Clippy with unwrap/expect/panic/disallowed-methods/warnings denied, filtered against the PR diff including new files",
+      "changed_line_diagnostics": 0,
+      "unfiltered_results": [
+        {
+          "package": "node-store",
+          "exit": 0,
+          "new_diagnostics": [],
+          "inherited_diagnostics": 1
+        },
+        {
+          "package": "node-data-sync",
+          "exit": 0,
+          "new_diagnostics": [],
+          "inherited_diagnostics": 3
+        },
+        {
+          "package": "adnl",
+          "exit": 101,
+          "new_diagnostics": [],
+          "inherited_diagnostics": 150
+        },
+        {
+          "package": "control-client",
+          "exit": 0,
+          "new_diagnostics": [],
+          "inherited_diagnostics": 3
+        },
+        {
+          "package": "commands",
+          "exit": 101,
+          "new_diagnostics": [],
+          "inherited_diagnostics": 119
+        },
+        {
+          "package": "tosctl",
+          "exit": 101,
+          "new_diagnostics": [],
+          "inherited_diagnostics": 13
+        }
+      ],
+      "note": "Inherited failures retained, not treated as a passing unfiltered gate or a new baseline."
+    },
+    {
+      "command": "static-analysis.py --jobs 8 against a clean fully built merge base",
+      "exit": 0,
+      "head_compilations": 20,
+      "base_compilations": 19,
+      "positive_controls": 10,
+      "new_blocking": 0,
+      "new_advisory": 2
+    }
+  ],
+  "advisories": [
+    {
+      "tos": "tdactor/td/actor/coro_task.h:533",
+      "reference": "tdactor/td/actor/coro_task.h:526\u2013534",
+      "result": "Same forwarding-reference move in the reference; unchanged by this PR."
+    },
+    {
+      "tos": "crypto/common/bigint.hpp:402",
+      "reference": "crypto/common/bigint.hpp:401\u2013406",
+      "result": "Same assignment body in the reference; unchanged by this PR."
+    }
+  ],
+  "controls": [
+    {
+      "control": "publisher-overlap",
+      "assertion_red": true,
+      "exit": 101,
+      "sha256": "4397e1462a2d360ef9576efd919940420a891be04ebebacdc98804d3a2e05fe6"
+    },
+    {
+      "control": "attached-options",
+      "assertion_red": true,
+      "exit": 101,
+      "sha256": "f63d935619915491129b065c813155c019cdfbc109ecc3f97e3f6bce966d7e6b"
+    },
+    {
+      "control": "duplicate-aliases",
+      "assertion_red": true,
+      "exit": 101,
+      "sha256": "0c2478b33b6dcbce33c130c68929b5efdaa2f566755ace2380a6b5da2bd17aec"
+    },
+    {
+      "control": "missing-source",
+      "assertion_red": true,
+      "exit": 101,
+      "sha256": "f57eaa2778f9243c67a989109cf95b04eefcffcbe85f0750d548f88bfd22be93"
+    },
+    {
+      "control": "full-id",
+      "assertion_red": true,
+      "exit": 101,
+      "sha256": "7c758ae0582085e0e727f871e2d400b01167125d1626f17db31677a4aca27896"
+    },
+    {
+      "control": "advertised-anchor",
+      "assertion_red": true,
+      "exit": 101,
+      "sha256": "0eaa7e3b33744a108b6bb97f602dc4a2d4d4d5c6cbe01c29743d79e63946fb99"
+    },
+    {
+      "control": "pre-exchange",
+      "assertion_red": true,
+      "exit": 101,
+      "sha256": "52ca32961a2844da248a629893dbeb99dfc2674297f15f4183412427e930fa32"
+    },
+    {
+      "control": "early-publication",
+      "exit": 101,
+      "assertion_red": true,
+      "sha256": "687b99c0fbf13649c7b39f063eadc3ecf9f726c17c803d4af69315e535975eb1"
+    }
+  ],
+  "caller_omission_controls": [
+    {
+      "control": "publisher-input",
+      "red": true,
+      "message": "BRANCH_CHAIN_PYTHON_CI_FAILURE: publisher provenance bypasses shared policy"
+    },
+    {
+      "control": "publish-references",
+      "red": true,
+      "message": "BRANCH_CHAIN_PYTHON_CI_FAILURE: publication lacks named references"
+    },
+    {
+      "control": "publish-shared",
+      "red": true,
+      "message": "BRANCH_CHAIN_PYTHON_CI_FAILURE: publication must use the shared corroborated catalog entry"
+    },
+    {
+      "control": "confinement-before-stop",
+      "red": true,
+      "message": "BRANCH_CHAIN_PYTHON_CI_FAILURE: publisher confinement must run before and after stop"
+    },
+    {
+      "control": "pre-exposure",
+      "red": true,
+      "message": "BRANCH_CHAIN_PYTHON_CI_FAILURE: restore must corroborate before the forward-only exposure boundary"
+    },
+    {
+      "control": "pre-sign",
+      "red": true,
+      "message": "BRANCH_CHAIN_PYTHON_CI_FAILURE: creation must corroborate before signing and preparation"
+    }
+  ],
+  "restored": "All 28 default component tests green after restoring controls; native ignored fixture executed separately.",
+  "nonpassing_attempts": "Retained command-suite parallel vault-lock refusal (serial 223/223); inherited host linker override omitted native initializers (cleared and WAL green); scratch monitor interrupted two workspace attempts (corrected, fresh workspace check/link green); missing cache/runtime/header/link prerequisites and memory-limited base build retries are setup refusals, not red controls or passing checks.",
+  "qualification_pending": [
+    "Real old-root and new-root start/sign/stop plus actual recover interleavings and their stale-overlay/rollback controls",
+    "Native fork/rotation cases",
+    "Smoke backlog >=10000",
+    "Acceptance backlog >=172800, phase/cadence/churn/resource measurements, subsequent signing and transfer, five-minute two-reference qualification"
+  ],
+  "resources": {
+    "observed_build_cache_bytes_max": 10584166400,
+    "observed_task_bytes_max": 14686924800,
+    "observed_free_bytes_min": 642471043072,
+    "cache_limit_bytes": 17179869184,
+    "free_floor_bytes": 214748364800,
+    "note": "Fixed-root allocation samples; transient container analysis files are discarded with the container. An early monitor sampling failure and two interrupted checks are retained, not a claim of continuous sampling throughout."
+  },
+  "artifact_root": "$NODE_SYNC_EVIDENCE",
+  "retention": "Retain cited public receipts through acceptance and at least 30 days after merge. Private fixture databases and keys are not publication artifacts; rebuildable build directories are removed after rehearsal.",
+  "artifacts": [
+    {
+      "file": "m1-s4/receipts/controls/index.json",
+      "sha256": "2a32ca54d7b026a0b4d7fd4053da4a82a119cef70508828afe019fe76780517b",
+      "bytes": 1174
+    },
+    {
+      "file": "m1-s4/receipts/controls/early-publication.json",
+      "sha256": "1571ab504ff1347b54ea71f47bd7cec63ae41853bd60184d1e01cc9fdb7791a4",
+      "bytes": 123
+    },
+    {
+      "file": "m1-s4/receipts/controls/restored-green.log",
+      "sha256": "3887564d966a990a2278b6d5a9d3b2d719bf325ada1c662c595631cadbeb70d3",
+      "bytes": 9051
+    },
+    {
+      "file": "m1-s4/receipts/caller-controls.json",
+      "sha256": "4f17f27b8717c8369cc2b0842c117b8988e12ae16aaca1b31afb905a63c47cad",
+      "bytes": 972
+    },
+    {
+      "file": "m1-s4/receipts/review-restored-tests.log",
+      "sha256": "561b4ee1babdeacad39f702b0113dddfc34c8915f682c6c84141cda98054764c",
+      "bytes": 20381
+    },
+    {
+      "file": "m1-s4/receipts/review-native-wal.log",
+      "sha256": "d1676eaa3cb3f8cb320de218e87c6e2fba9a494b54542e441971db78cf9b9052",
+      "bytes": 3314
+    },
+    {
+      "file": "m1-s4/receipts/review-final-build.log",
+      "sha256": "16f319ac06c3f89d955f04000ec1956c34bd5c04c2265688c180a32387ec6160",
+      "bytes": 8708
+    },
+    {
+      "file": "m1-s4/receipts/review-command-tests-serial.log",
+      "sha256": "8a2f39c9704b893c60d28c75b7ccb3fcc03bc607267e42a871404796a950638e",
+      "bytes": 28668
+    },
+    {
+      "file": "m1-s4/receipts/review-command-tests.log",
+      "sha256": "d0d8641fbb5e02aa7f27805a325ecb54f1d811702abc4f329551e98047b25fc6",
+      "bytes": 30335
+    },
+    {
+      "file": "m1-s4/receipts/review-workspace-check-j4.log",
+      "sha256": "cbc06da1e620219ee899cd5fcfcd818449eca047e8c3a439bfffb120d2ea5114",
+      "bytes": 38659
+    },
+    {
+      "file": "m1-s4/receipts/workspace-link/index.json",
+      "sha256": "f22977de83b90df2470329cb7855efc2c549792ad8b0137378c983c34808404e",
+      "bytes": 30315
+    },
+    {
+      "file": "m1-s4/receipts/review-native-generation.log",
+      "sha256": "a3bde32f536c78d875436551677ce102d920dd831e0fff2c7e2e943ec5775b97",
+      "bytes": 11106
+    },
+    {
+      "file": "m1-s4/receipts/review-native-preservation.log",
+      "sha256": "ad2746db542ee793ebf93ed5b42df89f89b4d93f2a5a8b501502c24cd3036cc0",
+      "bytes": 3886
+    },
+    {
+      "file": "m1-s4/receipts/review-builder-python-source-gates.log",
+      "sha256": "1a4d465885142859cab687e8d0c6ae74ca6c7e43946a0a7abca5f81248517016",
+      "bytes": 7980
+    },
+    {
+      "file": "m1-s4/receipts/review-static-analysis.log",
+      "sha256": "3fc5a76585e56392ccf7a27d84989428bc44dccc8a15f0d03c2236912de25703",
+      "bytes": 1295
+    },
+    {
+      "file": "m1-s4/receipts/strict-changed/index.json",
+      "sha256": "015007bbecff18f2d88940a5e09d511f8ef2ff80d3f57cec0eae18b9b8f941bc",
+      "bytes": 676
+    },
+    {
+      "file": "m1-s4/receipts/review-clang-format.log",
+      "sha256": "abc07078597158b78506ec468bafc9ea7fe7ec1c82e2559e5766f823634bf85e",
+      "bytes": 38
+    },
+    {
+      "file": "m1-s4/receipts/review-workflow-supply-chain.log",
+      "sha256": "eec13da646ddf69cc95636ae10ad3c923fd9531619b442a7f2cd80a8a7b9e14a",
+      "bytes": 50
+    },
+    {
+      "file": "m1-s4/receipts/review-ci-efficiency.log",
+      "sha256": "39b17c7abcfdb41bc3ae74ace0fc2676ca54c39137bb3bac4637e1b0372c114c",
+      "bytes": 103
+    },
+    {
+      "file": "m1-s4/receipts/controls/publisher-overlap.log",
+      "sha256": "4397e1462a2d360ef9576efd919940420a891be04ebebacdc98804d3a2e05fe6",
+      "bytes": 2951
+    },
+    {
+      "file": "m1-s4/receipts/controls/attached-options.log",
+      "sha256": "f63d935619915491129b065c813155c019cdfbc109ecc3f97e3f6bce966d7e6b",
+      "bytes": 3571
+    },
+    {
+      "file": "m1-s4/receipts/controls/duplicate-aliases.log",
+      "sha256": "0c2478b33b6dcbce33c130c68929b5efdaa2f566755ace2380a6b5da2bd17aec",
+      "bytes": 3619
+    },
+    {
+      "file": "m1-s4/receipts/controls/missing-source.log",
+      "sha256": "f57eaa2778f9243c67a989109cf95b04eefcffcbe85f0750d548f88bfd22be93",
+      "bytes": 2701
+    },
+    {
+      "file": "m1-s4/receipts/controls/full-id.log",
+      "sha256": "7c758ae0582085e0e727f871e2d400b01167125d1626f17db31677a4aca27896",
+      "bytes": 2682
+    },
+    {
+      "file": "m1-s4/receipts/controls/advertised-anchor.log",
+      "sha256": "0eaa7e3b33744a108b6bb97f602dc4a2d4d4d5c6cbe01c29743d79e63946fb99",
+      "bytes": 2682
+    },
+    {
+      "file": "m1-s4/receipts/controls/pre-exchange.log",
+      "sha256": "52ca32961a2844da248a629893dbeb99dfc2674297f15f4183412427e930fa32",
+      "bytes": 2969
+    },
+    {
+      "file": "m1-s4/receipts/controls/early-publication.log",
+      "sha256": "687b99c0fbf13649c7b39f063eadc3ecf9f726c17c803d4af69315e535975eb1",
+      "bytes": 3326
+    }
+  ],
+  "tested_source_files": [
+    {
+      "file": ".github/workflows/branch-chain-python.yml",
+      "sha256": "d8b203622d7510b6f66e7493ad31916bc05bdccb3f85a2d478475dad91c6fd88"
+    },
+    {
+      "file": "doc/node-data-sync.md",
+      "sha256": "0dc252128e25de1f3c5e8f34d80f2235bd8919bb66790d7d22334e319247bfb4"
+    },
+    {
+      "file": "scripts/check-branch-chain-python-ci.py",
+      "sha256": "1b79f3512f0ef0dd1626655a91a62660471ad763d345bdbd51ffb06f3966c436"
+    },
+    {
+      "file": "test/integration/node_store_native_reopen.py",
+      "sha256": "e3e48c009e7c5e0fd37a6285028c5827ae61b6dcaca1f21e401d251cfd79f54b"
+    },
+    {
+      "file": "tosctl/src/node-control/commands/src/commands/nodectl/node_dump_cmd.rs",
+      "sha256": "4207a72c045e5249bd41396a1962b88d9cb335a2d7d3b2b4a734847546854d11"
+    },
+    {
+      "file": "tosctl/src/node-control/node-data-sync/examples/capture_and_validate.rs",
+      "sha256": "85e9b92074a69811180ab610da7452e1f9a4657b966ee5814c3a1d19d2866ed7"
+    },
+    {
+      "file": "tosctl/src/node-control/node-data-sync/src/capture.rs",
+      "sha256": "116258a1638c9f29139e625db68f7d5f586ec1b9e63777e6df9b3cefb5d92173"
+    },
+    {
+      "file": "tosctl/src/node-control/node-data-sync/src/catalog.rs",
+      "sha256": "ef6ad6e1a15c645d10a2a49dff25575ef2f387ea638fc9a4f2a42bf98779da69"
+    },
+    {
+      "file": "tosctl/src/node-control/node-data-sync/src/collector.rs",
+      "sha256": "7bb1535a0529c9e9e59316a87b1669aecd3a9d13955c3e339f4467937c0427b6"
+    },
+    {
+      "file": "tosctl/src/node-control/node-data-sync/src/context.rs",
+      "sha256": "206870701b1b5049fee35dd0afc983aee9b272bf07c97d37c456c19f3a313a70"
+    },
+    {
+      "file": "tosctl/src/node-control/node-data-sync/src/generation.rs",
+      "sha256": "8a04b027dbdd3836c45fe40ebce107dfe60f35a7b5ac0f278037ffa7af0c7788"
+    },
+    {
+      "file": "tosctl/src/node-control/node-data-sync/src/journal.rs",
+      "sha256": "23f16b782b87f97baa74042a9736816866665880f219a2430880e3bf33266310"
+    },
+    {
+      "file": "tosctl/src/node-control/node-data-sync/src/lib.rs",
+      "sha256": "9769b3e8934dc17384aeb9f34543f0b4f3733cdec12b11dd432ef49ba2c1c827"
+    },
+    {
+      "file": "tosctl/src/node-control/node-data-sync/src/model.rs",
+      "sha256": "4be566ac0fcd8cab10dd02442a6b032000b5db4902b4150e1da98e8d8ddf365d"
+    },
+    {
+      "file": "tosctl/src/node-control/node-data-sync/src/operations.rs",
+      "sha256": "5d193fa72d3d03839ee98407300a420682d101da8dd8ebd8d64ab2b96fcbffbb"
+    },
+    {
+      "file": "tosctl/src/node-control/node-data-sync/src/publisher.rs",
+      "sha256": "d5443816dfbb0fc9597ae66468e3a9b0ced991cd5703493da15e945765cdcf01"
+    },
+    {
+      "file": "tosctl/src/node-control/node-data-sync/src/references.rs",
+      "sha256": "6e1ecc741a221cf55850196276e3dc125ece5a48c2e5d45d2e8069f6980af681"
+    },
+    {
+      "file": "tosctl/src/node-control/node-data-sync/src/service.rs",
+      "sha256": "cfc79d6118395121f0561d4d1cb34cf7374a209f5ee2bd64f7f53d05fa6a438f"
+    },
+    {
+      "file": "tosctl/src/node-control/node-data-sync/tests/policy.rs",
+      "sha256": "043df74f00d8fda421bc2ee4e01d4c6e2a56d7ca84ebb712e389cfe8a1280ccb"
+    },
+    {
+      "file": "tosctl/src/node-control/node-data-sync/tests/records.rs",
+      "sha256": "fd0b18a2d0cb6027908671b8b95d7437128a177aeada81ceadddaf4abb802f64"
+    },
+    {
+      "file": "tosctl/src/node-control/node-data-sync/tests/references.rs",
+      "sha256": "0e0a059f6cb5472cb65666061ca0ad2e94080468e761ffe4dab635b10c3dcad3"
+    },
+    {
+      "file": "tosctl/src/node-control/node-data-sync/tests/support/references.rs",
+      "sha256": "4835903d599364e88da8a1850fddb53f9ced8c41a31e4dc6676499a6618833a4"
+    }
+  ]
+}

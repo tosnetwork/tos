@@ -9,6 +9,7 @@ from pathlib import Path
 
 REQUIRED_NATIVE_TARGETS = {
     "gen_fif",
+    "test-node-store-fixture",
     "create-state",
     "toslibjson",
     "generate-random-id",
@@ -199,10 +200,264 @@ def validate_triggers(text: str) -> None:
     )
 
 
+def validate_node_store_proof(text: str) -> None:
+    required = (
+        'export NODE_STORE_NATIVE_DIR="$GITHUB_WORKSPACE/build/third-party/rocksdb"',
+        'export NODE_STORE_FIXTURE="$GITHUB_WORKSPACE/build/test-node-store-fixture"',
+        "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p node-store --features native --test native_fixture -- --nocapture | tee build/node-store-native-tests.log",
+        "grep -F 'test result: ok. 1 passed; 0 failed; 0 ignored' build/node-store-native-tests.log",
+        "cargo build --manifest-path tosctl/src/Cargo.toml --locked -p node-store --features native --example reconstruct_fixture",
+        "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p node-data-sync --features native --tests",
+        "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p commands --features node-data-sync-native --lib commands::nodectl::node_cmd::status_tests::standalone_status_keeps_rpc_only_contract_without_control_or_references -- --exact --nocapture | tee build/node-status-compatibility.log",
+        "grep -F 'test result: ok. 1 passed; 0 failed; 0 ignored' build/node-status-compatibility.log",
+        "cargo build --manifest-path tosctl/src/Cargo.toml --locked -p node-data-sync --features native --examples --bin node-data-sync-worker",
+        "cargo build --manifest-path tosctl/src/Cargo.toml --locked -p tosctl --features node-data-sync-native",
+        "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p node-data-sync --features native --lib operations::tests::native_stage_preserves_own_context_and_never_overlays_recovery_material -- --ignored --exact --nocapture | tee build/node-sync-native-preservation.log",
+        "grep -Fx 'NATIVE_STAGE_PRESERVATION_OK' build/node-sync-native-preservation.log",
+        "run: uv run python test/integration/node_store_native_reopen.py --root build/node-store-native-reopen --build build --reconstruct build/operator-rust-target/debug/examples/reconstruct_fixture --validate-generation build/operator-rust-target/debug/examples/capture_and_validate",
+    )
+    for command in required:
+        require(
+            re.search(rf"(?m)^ +{re.escape(command)}$", text) is not None,
+            f"native StateDb proof command is absent: {command}",
+        )
+
+
+def validate_node_data_sync_callers(root: Path) -> None:
+    callers = {
+        "node_dump_cmd.rs": ("create",),
+        "node_sync_cmd.rs": ("restore", "recover", "complete"),
+        "backup_cmd.rs": ("backup",),
+    }
+    directory = root / "tosctl/src/node-control/commands/src/commands/nodectl"
+    for filename, operations in callers.items():
+        source = (directory / filename).read_text(encoding="utf-8").split("#[cfg(test)]", 1)[0]
+        require("node_store::" not in source, f"{filename} bypasses the shared typed-store policy")
+        for operation in operations:
+            call = f"node_data_sync::operations::{operation}("
+            require(
+                source.count(call) == 1, f"{filename} must use exactly one shared {operation} entry"
+            )
+
+    dump_source = (
+        (directory / "node_dump_cmd.rs").read_text(encoding="utf-8").split("#[cfg(test)]", 1)[0]
+    )
+    require(
+        "PublisherSecret::load(&args.signing_key)" in dump_source,
+        "publisher provenance bypasses shared policy",
+    )
+    require(
+        "ReferencePolicy::from_endpoints(&args.references)" in re.sub(r"\s+", "", dump_source),
+        "publication lacks named references",
+    )
+    require(
+        dump_source.count("catalog.publish(") == 1,
+        "publication must use the shared corroborated catalog entry",
+    )
+    core = root / "tosctl/src/node-control/node-data-sync/src"
+    operations = (core / "operations.rs").read_text(encoding="utf-8")
+    require(
+        "publisher.validate(&context.database, store, operation_path)?;" in operations,
+        "capture lacks publisher confinement",
+    )
+    create = operations.split("pub fn create(", 1)[1].split("pub fn restore(", 1)[0]
+    confinement = "publisher.validate(&context.database, store, operation_path)?;"
+    require(create.count(confinement) == 2, "publisher confinement must run before and after stop")
+    require(
+        create.index(confinement)
+        < create.index("service.stop()")
+        < create.rindex(confinement)
+        < create.index("capture::cold_image_checked("),
+        "publisher confinement must precede capture exposure",
+    )
+    restore = operations.split("pub fn restore(", 1)[1].split("struct StoppedTarget", 1)[0]
+    restore_positions = [
+        restore.find(call)
+        for call in (
+            "references.corroborate(",
+            "journal.authorize(",
+            "journal.forward_only(",
+            "journal.exchange(",
+        )
+    ]
+    require(
+        min(restore_positions) >= 0 and restore_positions == sorted(set(restore_positions)),
+        "restore must corroborate before the forward-only exposure boundary",
+    )
+    generation = (core / "generation.rs").read_text(encoding="utf-8")
+    generation_positions = [
+        generation.find(call)
+        for call in ("references.corroborate(", "SignedManifest::sign(", "catalog.prepare(")
+    ]
+    require(
+        min(generation_positions) >= 0
+        and generation_positions == sorted(set(generation_positions)),
+        "creation must corroborate before signing and preparation",
+    )
+
+
+def validate_node_data_sync_modes(root: Path) -> None:
+    core = root / "tosctl/src/node-control/node-data-sync/src"
+    source = re.sub(r"\s+", "", (core / "operations.rs").read_text())
+    require(
+        '.join("FORWARD_ONLY")' not in source,
+        "restore boundary is the restore.json phase, not a standalone FORWARD_ONLY file",
+    )
+    import tomllib
+
+    manifest = tomllib.loads((core.parent / "Cargo.toml").read_text())
+    features = manifest["features"]
+    pending = list(features.get("default", []))
+    seen = set()
+    while pending:
+        feature = pending.pop()
+        require(feature != "native-lifecycle-tests", "lifecycle hooks must not be default features")
+        if feature not in seen:
+            seen.add(feature)
+            pending.extend(features.get(feature, []))
+    build = (core.parent / "build.rs").read_text()
+    require(
+        "CARGO_FEATURE_NATIVE_LIFECYCLE_TESTS" in build
+        and '== Ok("release")' in build
+        and "native-lifecycle-tests is forbidden in the release build profile" in build,
+        "release profile must reject lifecycle test feature",
+    )
+    workflow = (root / ".github/workflows/branch-chain-python.yml").read_text()
+    for token in (
+        "--features native-lifecycle-tests --lib native_lifecycle:: -- --test-threads=1 --nocapture",
+        "rustc --edition=2024 tosctl/src/node-control/node-data-sync/build.rs -o build/node-sync-profile-check",
+        "if env CARGO_FEATURE_NATIVE_LIFECYCLE_TESTS=1 PROFILE=release build/node-sync-profile-check",
+        "grep -Fx 'PRODUCTION_COMPLETE_RETRY_OK'",
+        "grep -Fx 'PRODUCTION_RESTORE_STOP_CUT_OK'",
+        "grep -Fx 'PRODUCTION_RESTORE_PROCESS_EXIT_OK'",
+        "grep -Fx 'PRODUCTION_LIFECYCLE_MODES_OK'",
+        "grep -Fx 'PRODUCTION_RESTORE_INDEX_BOUNDARIES_OK'",
+    ):
+        require(token in workflow, "native lifecycle CI command or required result missing")
+    library = (core / "lib.rs").read_text()
+    require(
+        '#[cfg(all(test, feature = "native-lifecycle-tests"))]\nmod test_hooks;' in library,
+        "lifecycle hook module must be compiled only for unit tests",
+    )
+    for name in ("operations.rs", "service.rs", "cas.rs"):
+        text = (core / name).read_text()
+        calls = text.count("crate::test_hooks::")
+        guarded = re.findall(
+            r'#\[cfg\(all\(test,\s*feature = "native-lifecycle-tests"\)\)\]\s*'
+            r"(?:if let Some\(result\) = )?crate::test_hooks::",
+            text,
+        )
+        require(len(guarded) == calls, f"non-test lifecycle hook in {name}")
+    create = source.split("pubfncreate(", 1)[1].split("pubfnrestore(", 1)[0]
+    restore = source.split("pubfnrestore(", 1)[1].split("structStoppedTarget", 1)[0]
+    recover = source.split("pubfnrecover(", 1)[1].split("pubfncomplete(", 1)[0]
+    start = source.split("fnstart_installed(", 1)[1].split("pubenumRecoveryOutcome", 1)[0]
+
+    def between(body: str, left: str, right: str, check: str, label: str) -> None:
+        require(left in body and right in body, f"storage-mode boundary missing: {label}")
+        start = body.index(left) + len(left)
+        end = body.find(right, start)
+        require(end >= start, f"storage-mode boundary reordered: {label}")
+        require(check in body[start:end], f"storage-mode binding omitted: {label}")
+
+    expected = "require_restore_target(Some(signed.manifest.permanent_cells))?;"
+    between(create, "letservice=", "letpublic=", "service.permanent_cells()?", "create entry")
+    between(
+        create,
+        "service.stop()?;",
+        "capture::cold_image_checked(",
+        "service.require_mode(permanent)?;",
+        "create stopped",
+    )
+    require(
+        "service.start_in_mode(frozen,permanent)?;" in create,
+        "storage-mode binding omitted: source restart",
+    )
+    selected = source.split("fnselected(", 1)[1].split("pubfnpreflight(", 1)[0]
+    between(
+        selected,
+        "request.context.validate_paths()?;",
+        "letkey=trusted(",
+        "request.context.service().require_restore_target(None)?;",
+        "restore supported target before preparation",
+    )
+    require(
+        "signed.manifest.permanent_cells==request.context.service().permanent_cells()?" in selected,
+        "storage-mode binding omitted: preflight",
+    )
+    between(
+        restore,
+        "catalog.hold_download(",
+        "request.context.service().stop()?;",
+        "prepare_stop(request,&signed,&operation,&operation_id)?;",
+        "durable descriptor before stop",
+    )
+    stage = source.split("fnstage_with_space(", 1)[1].split("fnstart_installed(", 1)[0]
+    between(
+        stage,
+        "letrevision=",
+        "Root::create(&operation.path.join(&revision))?;",
+        "read_stop(",
+        "bound descriptor before stage creation",
+    )
+    between(
+        restore,
+        "catalog.hold_download(",
+        "request.context.service().stop()?;",
+        expected,
+        "restore transfer",
+    )
+    between(
+        restore,
+        "request.context.service().stop()?;",
+        "letmutjournal=stage(",
+        expected,
+        "restore stopped",
+    )
+    between(restore, "journal.authorize(", "journal.forward_only(", expected, "restore exposure")
+    between(
+        recover,
+        "letsigned=",
+        "request.context.service().stop()?;",
+        "signed.manifest.permanent_cells==request.context.service().permanent_cells()?",
+        "recover entry",
+    )
+    between(
+        recover,
+        "signed.manifest.permanent_cells==request.context.service().permanent_cells()?",
+        "request.context.service().stop()?;",
+        expected,
+        "recover supported target before stop",
+    )
+    between(
+        recover,
+        "request.context.service().stop()?;",
+        "matchjournal.recovery()?",
+        expected,
+        "recover stopped",
+    )
+    between(recover, "journal.authorize(", "journal.exchange(", expected, "recover exposure")
+    between(start, "letsigned=", "context.service().freeze()?;", expected, "replacement freeze")
+    require(
+        "context.service().start_restore(frozen,signed.manifest.permanent_cells)?;" in start,
+        "storage-mode binding omitted: replacement start",
+    )
+    service = re.sub(r"\s+", "", (core / "service.rs").read_text())
+    require(
+        "check_mode(configured,Some(running),expected)?;" in service,
+        "running/configured mode comparison omitted",
+    )
+    require("check_mode(configured,None,expected)?;" in service, "expected mode comparison omitted")
+    require("self.describe(expected)?;" in service, "service start bypasses checked description")
+
+
 def main() -> int:
     root = Path(__file__).resolve().parents[1]
     workflow = root / ".github/workflows/branch-chain-python.yml"
     text = workflow.read_text(encoding="utf-8")
+    validate_node_store_proof(text)
+    validate_node_data_sync_callers(root)
+    validate_node_data_sync_modes(root)
     validate_triggers(text)
     # This workflow's purpose is to run on every pull request and push to main.
     # Refuse runtime conditions: a job- or step-level `if:` is

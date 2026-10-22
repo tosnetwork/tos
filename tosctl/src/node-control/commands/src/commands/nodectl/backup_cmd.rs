@@ -34,6 +34,9 @@ pub struct BackupCmd {
 
 #[derive(clap::Subcommand, Clone)]
 pub enum BackupAction {
+    /// Capture complete identity/config from an explicitly stopped local node
+    #[cfg(feature = "node-data-sync-native")]
+    CreateOffline(BackupOfflineCmd),
     /// Create a new backup
     Create(BackupCreateCmd),
     /// Restore from a backup
@@ -42,6 +45,14 @@ pub enum BackupAction {
     Verify(BackupVerifyCmd),
 }
 
+#[cfg(feature = "node-data-sync-native")]
+#[derive(clap::Args, Clone)]
+pub struct BackupOfflineCmd {
+    #[arg(long)]
+    context: PathBuf,
+    #[arg(long)]
+    output: PathBuf,
+}
 #[derive(clap::Args, Clone)]
 pub struct BackupCreateCmd {
     #[arg(short = 'o', long = "output", help = "Output directory", default_value = ".")]
@@ -371,6 +382,19 @@ fn write_private_archive(dir: &Path, archive_path: &Path) -> anyhow::Result<()> 
 impl BackupCmd {
     pub async fn run(&self) -> anyhow::Result<()> {
         match &self.action {
+            #[cfg(feature = "node-data-sync-native")]
+            BackupAction::CreateOffline(cmd) => {
+                let context = node_data_sync::context::NodeContext::load(&cmd.context)?;
+                let destination = cmd.output.clone();
+                let count = tokio::task::spawn_blocking(move || {
+                    node_data_sync::operations::backup(&context, &destination)
+                })
+                .await??
+                .files
+                .len();
+                println!("verified offline identity/config backup: {count} entries");
+                Ok(())
+            }
             BackupAction::Create(cmd) => cmd.run(&self.config).await,
             BackupAction::Restore(cmd) => cmd.run().await,
             BackupAction::Verify(cmd) => cmd.run().await,

@@ -1,0 +1,274 @@
+{
+  "scope": "M1 step 1 only: native StateDb interoperability. Not a restore implementation or performance qualification.",
+  "base_commit": "fe75bce9693fec3b24c0716ffa6aeabc6773f994",
+  "builder_image": "sha256:ce6ff9ea45fdac532b53a883538782a6a050c1fc14407e3110713ba16c5d5e95",
+  "native_library_version": "10.10.1",
+  "rust_toolchain": "1.97.1",
+  "result": "PASS",
+  "engine_reopen": {
+    "result": "NODE_STORE_ENGINE_REOPEN_OK",
+    "global_id": 3,
+    "before": "Tos_blockIdExt<{'@type': 'tos.blockIdExt', 'workchain': -1, 'shard': -9223372036854775808, 'seqno': 14, 'root_hash': 'bMxtulSwyBPKuj8PibwBsZJJkLG11kC8i6samr6xNaM=', 'file_hash': 'aVK4F4IatLXgHincxilXUVpEm65PvrM+n8zbpsMD4i8='}>",
+    "after": "Tos_blockIdExt<{'@type': 'tos.blockIdExt', 'workchain': -1, 'shard': -9223372036854775808, 'seqno': 156, 'root_hash': 'a5KXvsr8eWUnHfA/RHOBF/0HdsscTEAHh0XHyTdMFRM=', 'file_hash': '17HDnohK/101QGdy83dhBOCXhJP1d/Y0gqwHW/XtHW0='}>",
+    "same_height": "Tos_blockIdExt<{'@type': 'tos.blockIdExt', 'workchain': -1, 'shard': -9223372036854775808, 'seqno': 14, 'root_hash': 'bMxtulSwyBPKuj8PibwBsZJJkLG11kC8i6samr6xNaM=', 'file_hash': 'aVK4F4IatLXgHincxilXUVpEm65PvrM+n8zbpsMD4i8='}>"
+  },
+  "checks": [
+    {
+      "command": "cmake --build build --parallel 24 --target validator-engine rocksdb test-node-store-fixture gen_fif create-state func fift generate-random-id tos-pq-consensus-key dht-server",
+      "exit": 0
+    },
+    {
+      "command": "cmake --build build --parallel 16 --target toslibjson validator-engine-console",
+      "exit": 0
+    },
+    {
+      "command": "cargo test -p node-store --features native --locked -j4 -- --nocapture",
+      "exit": 0,
+      "native_integration_tests": 1,
+      "ignored": 0
+    },
+    {
+      "command": "cargo clippy -p node-store --features native --all-targets --no-deps --locked -j4 -- -D clippy::unwrap_used -D clippy::expect_used -D clippy::panic -D warnings",
+      "exit": 0
+    },
+    {
+      "command": "cargo fmt --all --check",
+      "exit": 0
+    },
+    {
+      "command": "python test/integration/node_store_native_reopen.py --root <private-fixture-root> --build build --reconstruct <target>/debug/examples/reconstruct_fixture",
+      "exit": 0
+    },
+    {
+      "command": "ctest --test-dir build -L source-guard --output-on-failure --no-tests=error",
+      "exit": 0,
+      "passed": 57
+    },
+    {
+      "command": "python3 scripts/check-workflow-supply-chain.py",
+      "exit": 0
+    },
+    {
+      "command": "python3 scripts/test_ci_efficiency.py",
+      "exit": 0,
+      "passed": 3
+    },
+    {
+      "command": "python3 scripts/test_branch_chain_conditions.py",
+      "exit": 0,
+      "passed": 9,
+      "node_store_omission_controls": 6
+    },
+    {
+      "command": "uv run ruff check <changed Python files>; uv run ruff format --check <changed Python files>",
+      "exit": 0
+    },
+    {
+      "command": "git clang-format-21 --binary clang-format-21 --diff origin/main -- test/test-node-store-fixture.cpp; git diff --check",
+      "exit": 0
+    }
+  ],
+  "red_controls": [
+    {
+      "name": "R1-version-hashed",
+      "exit": 101,
+      "anchor": "missing or unsupported StateDb version",
+      "red": true,
+      "file": "tosctl/src/node-control/node-store/src/lib.rs",
+      "substitution": [
+        "if matches!(self, Self::Version)",
+        "if false"
+      ]
+    },
+    {
+      "name": "R2-init-raw",
+      "exit": 101,
+      "anchor": "key encoding or WAL recovery is wrong",
+      "red": true,
+      "file": "tosctl/src/node-control/node-store/src/lib.rs",
+      "substitution": [
+        "if matches!(self, Self::Version)",
+        "if matches!(self, Self::Version | Self::Init)"
+      ]
+    },
+    {
+      "name": "R3-empty-is-missing",
+      "exit": 101,
+      "anchor": "present-empty local record was lost",
+      "red": true,
+      "file": "tosctl/src/node-control/node-store/src/native.rs",
+      "substitution": [
+        "if raw.is_null() {\n                return Ok(None);",
+        "if raw.is_null() || len == 0 {\n                return Ok(None);"
+      ]
+    },
+    {
+      "name": "R4-no-delete",
+      "exit": 101,
+      "anchor": "was not byte-preserved",
+      "red": true,
+      "file": "tosctl/src/node-control/node-store/src/native.rs",
+      "substitution": [
+        "ffi::rocksdb_writebatch_delete(batch.raw(), key.as_ptr().cast(), key.len())",
+        "ffi::rocksdb_writebatch_put(batch.raw(), key.as_ptr().cast(), key.len(), b\"\".as_ptr().cast(), 0)"
+      ]
+    },
+    {
+      "name": "R5-drop-local",
+      "exit": 101,
+      "anchor": "was not byte-preserved",
+      "red": true,
+      "file": "tosctl/src/node-control/node-store/src/native.rs",
+      "substitution": [
+        "for (key, value) in encoded {",
+        "for (key, value) in encoded {\n                if key == StateKey::DestroyedSessions.bytes()? { continue; }"
+      ]
+    },
+    {
+      "name": "R6-key-case",
+      "exit": 101,
+      "anchor": "native validator cleanup record missing",
+      "red": true,
+      "file": "tosctl/src/node-control/node-store/src/lib.rs",
+      "substitution": [
+        "b\"0123456789ABCDEF\"",
+        "b\"0123456789abcdef\""
+      ]
+    },
+    {
+      "name": "R7-version-check",
+      "exit": 101,
+      "anchor": "unsupported database version was accepted",
+      "red": true,
+      "file": "tosctl/src/node-control/node-store/src/native.rs",
+      "substitution": [
+        "if store.get(&StateKey::Version)?.as_ref() != Some(&expected)",
+        "if false"
+      ]
+    },
+    {
+      "name": "R8-create-missing",
+      "exit": 101,
+      "anchor": "missing-source open left a database behind",
+      "red": true,
+      "file": "tosctl/src/node-control/node-store/src/native.rs",
+      "substitution": [
+        "std::fs::symlink_metadata(path).context",
+        "std::fs::symlink_metadata(path.parent().context(\"missing parent\")?).context"
+      ]
+    },
+    {
+      "name": "R9-missing-WAL",
+      "exit": 101,
+      "anchor": "missing or unsupported StateDb version",
+      "red": true,
+      "file": "tosctl/src/node-control/node-store/tests/native_fixture.rs",
+      "substitution": [
+        "let source_store = OfflineStore::open_existing(&source)?;",
+        "for entry in &files { if entry.path().extension().is_some_and(|ext| ext == \"log\") { fs::remove_file(entry.path())?; } }\n    let source_store = OfflineStore::open_existing(&source)?;"
+      ]
+    }
+  ],
+  "baseline_observations": [
+    "An unchanged block/build.rs emits an unused Result warning; changed-crate strict Clippy passed.",
+    "Initial host/container mixed-ABI link failed; all linked proof runs use the builder image.",
+    "Initial source-guard invocation omitted Git metadata mount and had a lock-probe/start race; corrected complete runs passed 57/57."
+  ],
+  "pending": [
+    "Remaining M1 implementation and its guards",
+    "Full affected-job replay and static-analysis gate before the draft PR",
+    "Smoke and 172800-block qualification rehearsal; no 30-minute claim"
+  ],
+  "tested_source_sha256": {
+    ".github/workflows/branch-chain-python.yml": "47928f53b4e653a63df03a35210d9fc81420064abf0cd1f0c0fe3ebb4faecded",
+    "CMakeLists.txt": "a002bd749177c0fe34cd5e0d0376c3f15b933caba3aebd3fc8ff5999ef9f0bf1",
+    "scripts/check-branch-chain-python-ci.py": "05ea03df607cd16d782f8660e3ecd528cfd575fcfdb1617dc15495e0d37976c1",
+    "scripts/test_branch_chain_conditions.py": "df6f35214235d29296a1577b8d766cecc6cacedc4218b45a05208335132f444a",
+    "test/integration/node_store_native_reopen.py": "476443e18bcdf91e46c70be8b1dbe5af52a58c139b7c45c5c591f4cd3c834a65",
+    "test/test-node-store-fixture.cpp": "a963c7691695f5a8fae4e093672429a1a89cc82c2f85347aeb94809d53042fe4",
+    "tosctl/src/Cargo.toml": "68e37cf73d3ed0fa5c0449ea8a42fdd18927c60f617243d400937a12cfd5f31a",
+    "tosctl/src/Cargo.lock": "bc9a54d35fb9daaf3f29df9f9854474c7316e084a3bbc18eac65190ab481d3af",
+    "tosctl/src/node-control/node-store/Cargo.toml": "6c69033df7cf3e18fb36095a46da5f0b5337c177a0536b29fd6f7222307129c9",
+    "tosctl/src/node-control/node-store/README.md": "09b74fccdd52965883e05375489730bc67bd4058c9fcc52ac9fe17707d2d6ebe",
+    "tosctl/src/node-control/node-store/build.rs": "8753c668e074af6f60629b70615f9dbf9f0b4318b6742cca9eb7a1c55f550ed7",
+    "tosctl/src/node-control/node-store/examples/reconstruct_fixture.rs": "0f64a1c1203ba4713bee23794aa38e59c5d909ed532cc4f7414b51145a51aed2",
+    "tosctl/src/node-control/node-store/src/lib.rs": "f81631e25641b873bc65bebff52b21ea91fa15e50c771b953d8ddff8fe135290",
+    "tosctl/src/node-control/node-store/src/native.rs": "b265bce4ac9244092f0b7e51961ab2e983c7f05899530d20df41e147a615230a",
+    "tosctl/src/node-control/node-store/tests/native_fixture.rs": "9c104439240bd2da251afd81440fc988bc545091e1b64a32ccbc4cc34c11c938"
+  },
+  "raw_evidence": {
+    "location": "operator evidence store: node-data-sync/m1-proof/",
+    "retention": "retain through M1 review and rehearsal acceptance; raw logs are supplemental to the committed tests, commands and assertion excerpts",
+    "files": {
+      "controls.json": {
+        "sha256": "91c0a745eb5ceee1bc4de2dd07c9cff5fb63ceaac5de5c5f659abbd2e1d637c8",
+        "bytes": 3150
+      },
+      "cleanup-step1.json": {
+        "sha256": "4e0fb9eda933733533fd115e2eaccc7a294bf4ab6c0fe841fcc2b7e2631ffe35",
+        "bytes": 775
+      },
+      "build-retry.log": {
+        "sha256": "b0036b73b1d3e14b3e159c4fcb2ef8d0154d0e5450c323522e32edfbe764ac01",
+        "bytes": 164539
+      },
+      "build-tools.log": {
+        "sha256": "8441c1266c56abb35dc1354f093fbc235f89bbadc2eb69f715abd2deac932a44",
+        "bytes": 1336
+      },
+      "restored-green.log": {
+        "sha256": "fa407a9ace200c5bd1812cf5764ea2de0ee8a6f41d8678a53b4d83661c6aada2",
+        "bytes": 2445
+      },
+      "engine-reopen-receipt.log": {
+        "sha256": "beb246faaa935f5c8f61ad451467fe3d33c780ffe293d3296f8e5070ceb03a8f",
+        "bytes": 10079
+      },
+      "final-source-workflow-gates.log": {
+        "sha256": "41b0d2e824852725f1dcfaa52dfeb7658742478f91f361880ceba2a616462156",
+        "bytes": 7911
+      },
+      "R1-version-hashed.log": {
+        "sha256": "1e2f98471c421c8cf5dc0ae89551a21a1af446d4ae8436d2a335493c8a136ba0",
+        "bytes": 1112
+      },
+      "R2-init-raw.log": {
+        "sha256": "2e8b45c7bc54735c3dd7f7c8034ce9768cb6e563d5acf0227f142ab87b2102a3",
+        "bytes": 1105
+      },
+      "R3-empty-is-missing.log": {
+        "sha256": "f3c9c1d076e35a186bd96d1c14f10037f9e8f4c5fd1dfa734defbf294fc3e9f8",
+        "bytes": 1075
+      },
+      "R4-no-delete.log": {
+        "sha256": "e9509e589b1d49855ce9f009d2c32341aed98f88c5c2e1f67c387f649f28fad8",
+        "bytes": 1583
+      },
+      "R5-drop-local.log": {
+        "sha256": "b0ec7129eb7b89586b9d07ecfe65567269ff6afb7a9561a24a08ac2c69b8696b",
+        "bytes": 1087
+      },
+      "R6-key-case.log": {
+        "sha256": "114e495d06906af51680015077694096a0e4ac9202ccc3a8a17b2772bb879c5c",
+        "bytes": 1079
+      },
+      "R7-version-check.log": {
+        "sha256": "bca93e49d22a8805b1e4b5e69d44ee186aea59b9af63523b93b40ad0658edec9",
+        "bytes": 1639
+      },
+      "R8-create-missing.log": {
+        "sha256": "e874be7eca17fecae78cd8a6493135ad3c922dba4c34e21c3d34de1088f4da9c",
+        "bytes": 1195
+      },
+      "R9-missing-WAL.log": {
+        "sha256": "2250f5375a33bee306f02f22b816b62177c6059d6774880c176592b3237ebc09",
+        "bytes": 1112
+      }
+    }
+  },
+  "native_artifacts": {
+    "build/third-party/rocksdb/librocksdb.a": "ccdc3442af6459287d1403aaf7a3a0b78c5d2cda5dfed1b2fa11ca9ecf22c404",
+    "build/validator-engine/validator-engine": "6d27bf5a43606a69bdc32973871e6ad80c73199c56dc59f78b896b991b1eca3c",
+    "build/test-node-store-fixture": "ca344c8eee63238debebe6472a333c839bdf66c2ec10f705afb6e7fea200f094"
+  }
+}

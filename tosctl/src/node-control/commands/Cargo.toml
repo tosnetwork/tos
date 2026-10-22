@@ -5,6 +5,7 @@ edition = "2024"
 license = 'GPL-3.0'
 
 [features]
+node-data-sync-native = ["node-data-sync/native"]
 pq-wallet = ["dep:wallet-pq-signer", "contracts/native-wallet-vault"]
 
 [dependencies]
@@ -32,6 +33,7 @@ zeroize = "1.8"
 futures-util = "0.3"
 common = { path = "../common" }
 control-client = { path = "../control-client" }
+node-data-sync = { path = "../node-data-sync" }
 chain-rpc-client = { path = "../chain-rpc-client" }
 adnl = { features = ["client"], path = "../../adnl" }
 chain_block = { path = "../../block" }
@@ -53,6 +55,7 @@ tempfile = "3"
 tokio = { version = "1.48.0", features = ["full"] }
 
 [dev-dependencies]
+tokio = { version = "1.48.0", features = ["test-util"] }
 tl_api = { path = "../../tl/api" }
 adnl = { path = "../../adnl", features = ["server"] }
 async-trait = "0.1"

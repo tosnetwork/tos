@@ -1,0 +1,18 @@
+[package]
+name = "node-store"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0"
+
+[dependencies]
+anyhow = "1.0"
+sha2 = "0.10"
+tl_api = { path = "../../tl/api" }
+
+[features]
+default = []
+native = []
+
+[[example]]
+name = "reconstruct_fixture"
+required-features = ["native"]
