@@ -1045,6 +1045,13 @@ target_include_directories(test-get-method-context PRIVATE ${CMAKE_CURRENT_SOURC
 target_link_libraries(test-get-method-context PRIVATE validator-disk validator-common validator-db
                       tos_validator smc-envelope proof-verify-engine tos_db tos_crypto tddb tdutils tdactor adnl overlay tl_api dht fift-lib)
 
+# Lite-client server selection for queries pinned to a masterchain seqno.
+add_executable(test-lite-query-routing test/test-lite-query-routing.cpp)
+target_include_directories(test-lite-query-routing PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(test-lite-query-routing PRIVATE lite-client-common keys tdutils)
+add_dependencies(all-tests test-lite-query-routing)
+add_test(NAME lite-query-routing COMMAND test-lite-query-routing)
+
 # Lite-server proofs carry every block header cell the lite client checks.
 add_executable(test-lite-proof-content test/validator/lite-proof-content-test.cpp)
 target_include_directories(test-lite-proof-content PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
