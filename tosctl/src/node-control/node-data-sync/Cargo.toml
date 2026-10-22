@@ -1,0 +1,49 @@
+[package]
+name = "node-data-sync"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0"
+
+[features]
+default = []
+native = ["node-store/native"]
+native-lifecycle-tests = ["native"]
+
+[dependencies]
+anyhow = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+ciborium = "0.2"
+sha2 = "0.10"
+hex = "0.4"
+base64 = "0.22"
+ed25519-dalek = "2"
+rand = "0.8"
+libc = "0.2"
+zstd = "0.13"
+reqwest = { version = "0.12.24", default-features = false, features = ["blocking", "rustls-tls"] }
+node-store = { path = "../node-store" }
+control-client = { path = "../control-client" }
+common = { path = "../common" }
+adnl = { path = "../../adnl", features = ["client"] }
+chain-rpc-client = { path = "../chain-rpc-client" }
+tokio = { version = "1", features = ["time"] }
+tl_api = { path = "../../tl/api" }
+chain_block = { path = "../../block" }
+
+tempfile = "3"
+
+[dev-dependencies]
+
+[[example]]
+name = "validate_image"
+required-features = ["native"]
+
+[[example]]
+name = "capture_and_validate"
+required-features = ["native"]
+
+[[bin]]
+name = "node-data-sync-worker"
+path = "src/bin/node-data-sync-worker.rs"
+required-features = ["native"]

@@ -63,8 +63,6 @@ tosctl/src/tl/api/src/tos/lite_server/mod.rs	*	14	definition	generated Rust enum
 tosctl/src/tl/api/src/tos/lite_server/signature_set/signatureset.rs	*	4	definition	generated Rust classical lite signature-set records
 tosctl/src/tl/api/src/tos/tos_node/mod.rs	*	15	definition	generated Rust enum and codec retains classical node variants alongside simplexPq
 tosctl/src/tl/api/src/tos/tos_node/signature_set/signatureset.rs	*	4	definition	generated Rust classical node signature-set records
-tosctl/src/tl/api/tl/lite_api.tl	*	2	definition	Rust generator copy of the classical lite signature-set schema
-tosctl/src/tl/api/tl/tos_api.tl	*	2	definition	Rust generator copy of the classical node signature-set schema
 toslib/toslib/ToslibClient.cpp	*	3	reachable	the generated PQ node variant exists, but client conversion remains owned by the parser/API wiring unit
 validator-engine/json-rpc-explorer-finality.cpp	carrier_io	1	historical	the anchored proof chain is validated before rendering; tl_lite runs only in the explicit non-PQ branch for classical history
 validator-engine/json-rpc-server-parse.cpp	cpp_lite_tl	4	reachable	the public API still emits classical history, while a PQ lite carrier is explicitly refused rather than rendered as an empty classical set

@@ -26,6 +26,8 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
 };
 
+pub mod input;
+
 pub mod parser {
     use pom::{
         self,
@@ -235,6 +237,7 @@ pub mod parser {
             | (sym(b'!') * ident().map(Type::TypeParameter))
             | ty_flag()
             | ty_generic()
+            | (sym(b'(') * call(ty) - sym(b')'))
             | dotted_ident().map(Type::Named)
     }
 

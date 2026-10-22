@@ -82,6 +82,22 @@ class BranchConditionTests(unittest.TestCase):
             with self.subTest(index=index), self.assertRaises(RuntimeError):
                 self.guard.validate_unconditional_steps(workflow)
 
+    def test_node_store_proof_cannot_be_omitted(self):
+        self.guard.validate_node_store_proof(self.workflow)
+        controls = (
+            "export NODE_STORE_NATIVE_DIR=",
+            "export NODE_STORE_FIXTURE=",
+            "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p node-store",
+            "grep -F 'test result: ok. 1 passed; 0 failed; 0 ignored'",
+            "cargo build --manifest-path tosctl/src/Cargo.toml --locked -p node-store",
+            "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p commands --features node-data-sync-native --lib commands::nodectl::node_cmd::status_tests::standalone_status_keeps_rpc_only_contract_without_control_or_references",
+            "grep -F 'test result: ok. 1 passed; 0 failed; 0 ignored' build/node-status-compatibility.log",
+            "run: uv run python test/integration/node_store_native_reopen.py",
+        )
+        for command in controls:
+            with self.subTest(command=command), self.assertRaises(RuntimeError):
+                self.guard.validate_node_store_proof(self.workflow.replace(command, "REMOVED"))
+
     def test_triggers_are_every_pull_request_and_pushes_to_main(self):
         self.guard.validate_triggers(self.workflow)
 
@@ -105,6 +121,97 @@ class BranchConditionTests(unittest.TestCase):
         for name, replacement in mutants.items():
             with self.subTest(name), self.assertRaises(RuntimeError):
                 self.guard.validate_triggers(self.workflow.replace(triggers, replacement, 1))
+
+
+class StorageModeBoundaryTests(unittest.TestCase):
+    def test_each_lifecycle_boundary_keeps_its_expected_mode(self):
+        import shutil
+
+        checkout = Path(__file__).resolve().parents[1]
+        spec = importlib.util.spec_from_file_location(
+            "mode_guard", checkout / "scripts/check-branch-chain-python-ci.py"
+        )
+        guard = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(guard)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            relative = Path("tosctl/src/node-control/node-data-sync/src")
+            (root / relative).mkdir(parents=True)
+            for name in ("operations.rs", "service.rs", "cas.rs", "lib.rs"):
+                shutil.copy2(checkout / relative / name, root / relative / name)
+            for relative_file in (
+                ".github/workflows/branch-chain-python.yml",
+                "tosctl/src/node-control/node-data-sync/Cargo.toml",
+                "tosctl/src/node-control/node-data-sync/build.rs",
+            ):
+                destination = root / relative_file
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(checkout / relative_file, destination)
+            guard.validate_node_data_sync_modes(root)
+            path = root / relative / "operations.rs"
+            original = path.read_text()
+            # Mutate every individual binding, not a single catch-all call.
+            expressions = (
+                "service.permanent_cells()?",
+                "service.require_mode(permanent)?;",
+                "service.start_in_mode(frozen, permanent)?;",
+                "request.context.service().permanent_cells()?",
+                "request.context.service().require_restore_target(None)?;",
+                "request.context.service().require_restore_target(Some(signed.manifest.permanent_cells))?;",
+                "context.service().require_restore_target(Some(signed.manifest.permanent_cells))?;",
+                "context.service().start_restore(frozen, signed.manifest.permanent_cells)?;",
+            )
+            controls = 0
+            for expression in expressions:
+                for occurrence in range(original.count(expression)):
+                    with self.subTest(expression=expression, occurrence=occurrence):
+                        pieces = original.split(expression)
+                        mutated = (
+                            expression.join(pieces[: occurrence + 1])
+                            + "REMOVED_BINDING"
+                            + expression.join(pieces[occurrence + 1 :])
+                        )
+                        path.write_text(mutated)
+                        with self.assertRaises(RuntimeError):
+                            guard.validate_node_data_sync_modes(root)
+                        controls += 1
+            path.write_text(
+                original.replace(
+                    "prepare_stop(request, &signed, &operation, &operation_id)?;",
+                    "REMOVED_DESCRIPTOR",
+                    1,
+                )
+            )
+            with self.assertRaises(RuntimeError):
+                guard.validate_node_data_sync_modes(root)
+            path.write_text(
+                original.replace(
+                    "    let stop = if crate::safe_io::absent(",
+                    '    let _ = operation.path.join("FORWARD_ONLY");\n'
+                    "    let stop = if crate::safe_io::absent(",
+                    1,
+                )
+            )
+            with self.assertRaisesRegex(RuntimeError, "standalone FORWARD_ONLY file"):
+                guard.validate_node_data_sync_modes(root)
+            path.write_text(original)
+            guard.validate_node_data_sync_modes(root)
+            cargo = root / "tosctl/src/node-control/node-data-sync/Cargo.toml"
+            pristine = cargo.read_text()
+            cargo.write_text(
+                pristine.replace("default = []", 'default = ["native-lifecycle-tests"]')
+            )
+            with self.assertRaisesRegex(RuntimeError, "must not be default"):
+                guard.validate_node_data_sync_modes(root)
+            cargo.write_text(pristine)
+            build = root / "tosctl/src/node-control/node-data-sync/build.rs"
+            pristine = build.read_text()
+            build.write_text(pristine.replace('== Ok("release")', '== Ok("never")'))
+            with self.assertRaisesRegex(RuntimeError, "release profile must reject"):
+                guard.validate_node_data_sync_modes(root)
+            build.write_text(pristine)
+            guard.validate_node_data_sync_modes(root)
+            self.assertGreaterEqual(controls, 12)
 
 
 class NodeFailureLogTests(unittest.TestCase):

@@ -56,7 +56,7 @@ jobs:
             -DCMAKE_C_COMPILER=clang-21 -DCMAKE_CXX_COMPILER=clang++-21 \
             -DTOS_ARCH="$CPU" -DPORTABLE="$CPU" -DTOS_USE_JEMALLOC=ON
       - name: Build the existing execution libraries and replay entry point
-        run: cmake --build build --target test-epoch-replay --parallel 2
+        run: cmake --build build --target test-epoch-replay --parallel "$(nproc)"
       - name: Replay and check the on-chain oracle
         run: |
           mkdir -p result

@@ -3,6 +3,10 @@ name: Authentication extension validation
 on:
   pull_request:
     paths:
+      - "tl/generate/scheme/**"
+      - "tosctl/src/tl/**"
+      - "scripts/check-tl-single-source.py"
+      - "test/tl-cli/**"
       - 'scripts/ci-snapshot.py'
       - 'scripts/test_ci_snapshot.py'
       - 'crypto/smartcont/**'
@@ -46,7 +50,7 @@ jobs:
         if: steps.snapshot.outputs.run-tests == 'true'
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-          cmake --build build --target func fift tol emulator test-config-transition -j2
+          cmake --build build --target func fift tol emulator test-config-transition -j"$(nproc)"
       - name: Install deterministic-signature test dependency
         if: steps.snapshot.outputs.run-tests == 'true'
         run: python3 -m pip install cryptography==46.0.4

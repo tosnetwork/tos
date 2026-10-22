@@ -1,0 +1,242 @@
+{
+  "scope": "M1 implementation and component gates only. Step 4 rehearsal and performance qualification require the test lead confirmation.",
+  "implementation_commit": "e91c2a34a",
+  "merge_base": "5bfe936ab3e144c2c055471262e14f1d604eab18",
+  "builder_image": "sha256:ce6ff9ea45fdac532b53a883538782a6a050c1fc14407e3110713ba16c5d5e95",
+  "upstream_comparison": {
+    "native_reference": "857b8a57a178e6ae0fe7fa86e7d81c5233de8560",
+    "paths": [
+      "validator/db/statedb.cpp:30-39,153-179",
+      "validator/manager-init.cpp:405-420"
+    ],
+    "result": "Rust operator counterpart absent; inherited native recovery and consensus unchanged. Follow the reference stopped-capture strategy; preserve TOS-local retirement and import-recovery state. No replacement found in inspected release notes and dump/restore searches.",
+    "operator_reference": "66240cfd0be42934d2f38d811ac3ed77a88b4da6",
+    "producer_reference": "c62f3eab957c5ea9acaed76920b102a4a50c20d8"
+  },
+  "gates": [
+    {
+      "command": "native release build: validator-engine create-state toslibjson dht-server test-node-store-fixture test-celldb-actor-restart",
+      "exit": 0
+    },
+    {
+      "command": "cargo check --workspace --tests --locked",
+      "exit": 0
+    },
+    {
+      "command": "CARGO_INCREMENTAL=0 cargo test --workspace --locked --no-run -j8",
+      "exit": 0,
+      "linked_test_targets": 139,
+      "workspace_members": 27,
+      "note": "Completed test executables discarded after linking. Initial incremental attempt interrupted to bound cache."
+    },
+    {
+      "command": "cargo test -p node-data-sync --features native --tests --locked",
+      "exit": 0,
+      "passed": 22,
+      "ignored": 1,
+      "note": "Ignored native fixture explicitly executed separately; not counted as a default test pass."
+    },
+    {
+      "command": "explicit native_stage_preserves_own_context_and_never_overlays_recovery_material --ignored --exact",
+      "exit": 0,
+      "passed": 1,
+      "success_token": "NATIVE_STAGE_PRESERVATION_OK"
+    },
+    {
+      "command": "cargo test -p commands --lib --locked --no-default-features",
+      "exit": 0,
+      "passed": 222
+    },
+    {
+      "command": "cargo test -p secrets-vault --lib --locked",
+      "exit": 0,
+      "passed": 237,
+      "ignored": 1
+    },
+    {
+      "command": "cargo test -p secrets-vault --features secrets-vault-cli --test cli_import_secret_input --locked",
+      "exit": 0,
+      "passed": 1
+    },
+    {
+      "command": "cargo test -p node-store --features native --test native_fixture --locked",
+      "exit": 0,
+      "passed": 1
+    },
+    {
+      "command": "cargo test -p control-client --test engine_operator_reads real_engine_ -- --ignored",
+      "exit": 0,
+      "passed": 3
+    },
+    {
+      "command": "cargo build -p tosctl --features node-data-sync-native --locked",
+      "exit": 0
+    },
+    {
+      "command": "make fmt-check",
+      "exit": 0
+    },
+    {
+      "command": "ctest -L source-guard",
+      "exit": 0,
+      "passed": 57
+    },
+    {
+      "command": "ctest --no-tests=error -R ^test-celldb-actor-restart$",
+      "exit": 0,
+      "passed": 1
+    },
+    {
+      "command": "scripts/static-analysis.py against fully built clean merge base",
+      "exit": 0,
+      "new_blocking": 0,
+      "new_advisory": 0,
+      "positive_controls": 10
+    },
+    {
+      "command": "strict Clippy with changed-line diagnostic filter",
+      "exit": 0,
+      "new_diagnostics": 0,
+      "note": "Unfiltered adnl, commands and CLI runs exit 101 on inherited diagnostics; their raw results are retained separately. New storage crates and control client exit 0."
+    },
+    {
+      "command": "pinned Ruff check and format on changed Python files",
+      "exit": 0
+    },
+    {
+      "command": "workflow supply-chain check; CI efficiency tests; branch-chain condition tests",
+      "exit": 0,
+      "efficiency_tests": 5,
+      "condition_tests": 9
+    },
+    {
+      "command": "changed-lines clang-format with hygiene exclusions",
+      "exit": 0,
+      "diff": "empty"
+    }
+  ],
+  "native_component_fixture": {
+    "global_id": 3,
+    "recovered_frontier_seqno": 17,
+    "reopened_head_seqno": 53,
+    "same_height_full_id_equal": true,
+    "native_reopen_passes": 2,
+    "coverage": [
+      "masterchain",
+      "basechain"
+    ],
+    "note": "Recovery manifest exercised an absent-cell rollback record (processed=1, erased=0). Actual native erase/restart is a separate existing CellDb test. No backlog or cadence qualification."
+  },
+  "controls": {
+    "foundation_assertion_red": 8,
+    "additional_assertion_red": 4,
+    "atomicity_freshness_budget_assertion_red": 5,
+    "native_preservation_assertion_red": 3,
+    "CI_guard_refusal": 6,
+    "restored_green": true,
+    "substitutions": "Retained in the corresponding control indexes; original files restored before final gates."
+  },
+  "pending_step_4": [
+    "Actual start/sign/stop interruption on both sides of exchange",
+    "Live native approved-fork crossing and rotations",
+    "Smoke backlog >=10000 then >=172800 blocks",
+    "Measured copy, compression, hashing, fsync, transfer, source catch-up and status qualification",
+    "Qualified cadence, snapshot age and thirty-minute target"
+  ],
+  "resource_note": "Build/cache directory was observed at approximately 18 GiB during workspace linking, exceeding the planned 16 GiB ceiling before cleanup. Completed examples, incremental artifacts and base build were removed; no limit was raised. All build targets and private fixture databases are removed after receipts. No public-network action.",
+  "evidence_files": [
+    {
+      "file": "m1-final-native-build.log",
+      "sha256": "64c32d6e07873847513c70559031bdd2a2dfcac4f777bb462e41216be31af442",
+      "bytes": 25903
+    },
+    {
+      "file": "m1-workspace-check.log",
+      "sha256": "55d5ae14559ac624951a9b62fd8a841f5b845ebf8b4578c6289bfeadbbf44f90",
+      "bytes": 41499
+    },
+    {
+      "file": "m1-final-ci-rust.log",
+      "sha256": "30c1b975d408418da481b0ead346ce4526ced9cae9787f0b4c6e2698d3b5207e",
+      "bytes": 54085
+    },
+    {
+      "file": "m1-final-engine-reads.log",
+      "sha256": "9de4e10ef25a0d104a9eb72a2db2877e15618c1dd88a8a49348ab1eb3ee9c303",
+      "bytes": 2694
+    },
+    {
+      "file": "m1-final-source-native.log",
+      "sha256": "e7d4fbb52caba632e2f23172371870b0446186b4c244cd72fad56d5026958a31",
+      "bytes": 8030
+    },
+    {
+      "file": "m1-final-static-analysis.log",
+      "sha256": "e174cd553467b9bf560a6eaee0259f186bf559803bd5bc72f0997fb6d52dc6c4",
+      "bytes": 660
+    },
+    {
+      "file": "m1-final-format.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "file": "m1-final-native-fixture.log",
+      "sha256": "17f266ed56e6614907fbff5eb868bda55c10a836a7e41581cc653740d4e1961f",
+      "bytes": 13195
+    },
+    {
+      "file": "m1-final-cli-status.log",
+      "sha256": "a574a1fd533601858f309052ddf7130f98c83805f1c3866fc47f79090c014aa4",
+      "bytes": 771
+    },
+    {
+      "file": "m1-same-namespace-refusal.log",
+      "sha256": "4830a880a592fb667af590949d3d596ca894092ece65599d88c03d4864226c7f",
+      "bytes": 87
+    },
+    {
+      "file": "m1-workspace-link/index.json",
+      "sha256": "e995ee3b7f7565fbdf154f1b2a4be80dcc4e192ebd3e1fe84d15b0d4a5e207e5",
+      "bytes": 23996
+    },
+    {
+      "file": "m1-strict-changed/index.json",
+      "sha256": "015007bbecff18f2d88940a5e09d511f8ef2ff80d3f57cec0eae18b9b8f941bc",
+      "bytes": 676
+    },
+    {
+      "file": "m1-ci-guard-controls.json",
+      "sha256": "9f8885882f8e5cef11f4f95ec75b45228d2552fd8822a74bf68c9b64227e79d9",
+      "bytes": 1641
+    },
+    {
+      "file": "m1-foundation-controls/index.json",
+      "sha256": "0514ad5815458a438b45f7172583d279761d7596792994bdd95c0da5a1e4fdc7",
+      "bytes": 4609
+    },
+    {
+      "file": "m1-extra-controls/index.json",
+      "sha256": "062fdb79b95f764cfeddf581e11c72da7fd6ac92f5ba93fa1857331e6888fff0",
+      "bytes": 1131
+    },
+    {
+      "file": "m1-final-controls/index.json",
+      "sha256": "20767e9354c71d4771e9254fbf5298b2e6515b50a62607b5afdb7b95fb6c0612",
+      "bytes": 868
+    },
+    {
+      "file": "m1-native-stage-controls/index.json",
+      "sha256": "b841c4bc880a1e39da7a70e7bf790fd26433b1e6c49a03e766f191fd4ee67594",
+      "bytes": 940
+    }
+  ],
+  "cleanup": {
+    "receipt": "M1-CLEANUP.json",
+    "sha256": "988d51cbd2fb1d2efc7f694b7d988827e1651afd57472b56b1fdd13089721700",
+    "task_build_and_target_removed": true,
+    "private_fixture_databases_and_keys_removed": true,
+    "clean_base_worktree_removed": true,
+    "free_bytes_after": 671496949760
+  }
+}

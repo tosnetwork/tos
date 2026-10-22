@@ -68,7 +68,7 @@ jobs:
             -DOPENSSL_INCLUDE_DIR="$(pkg-config --variable=includedir openssl)"
           cmake --build build --target validator test-config-transition create-state \
             tos-pq-consensus-key gen_fif_smartcont_auto_config_code \
-            gen_fif_smartcont_auto_elector_code gen_fif_smartcont_auto_validator_controller_v1_code -j2
+            gen_fif_smartcont_auto_elector_code gen_fif_smartcont_auto_validator_controller_v1_code -j"$(nproc)"
       - name: Prepare repository Python environment
         if: steps.snapshot.outputs.run-tests == 'true'
         run: |

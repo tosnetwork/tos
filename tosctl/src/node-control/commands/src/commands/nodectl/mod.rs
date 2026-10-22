@@ -47,5 +47,7 @@ mod utils;
 pub(crate) mod vote_cmd;
 pub(crate) mod wallet_cmd;
 
+pub(crate) mod node_dump_cmd;
+pub(crate) mod node_sync_cmd;
 #[cfg(feature = "pq-wallet")]
 mod wallet_pq_cmd;

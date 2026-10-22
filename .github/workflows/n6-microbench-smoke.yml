@@ -41,7 +41,7 @@ jobs:
         run: cmake -S . -B build-n6-smoke -G Ninja -DCMAKE_BUILD_TYPE=Release
 
       - name: Build smoke benchmark
-        run: cmake --build build-n6-smoke --target n6-microbench-smoke -j2
+        run: cmake --build build-n6-smoke --target n6-microbench-smoke -j"$(nproc)"
 
       - name: Run registered smoke gate
         working-directory: build-n6-smoke

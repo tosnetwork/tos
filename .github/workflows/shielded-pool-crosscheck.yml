@@ -24,6 +24,10 @@ name: Shielded pool cross-check
 on:
   pull_request:
     paths:
+      - "tl/generate/scheme/**"
+      - "tosctl/src/tl/**"
+      - "scripts/check-tl-single-source.py"
+      - "test/tl-cli/**"
       - "crypto/smartcont/shielded/**"
       - "crypto/smartcont/tos-shielded-pool-v1.fc"
       - "tools/shielded-pool-circuit/**"
@@ -43,6 +47,10 @@ on:
   push:
     branches: [main, master, testnet]
     paths:
+      - "tl/generate/scheme/**"
+      - "tosctl/src/tl/**"
+      - "scripts/check-tl-single-source.py"
+      - "test/tl-cli/**"
       - "crypto/smartcont/shielded/**"
       - "crypto/smartcont/tos-shielded-pool-v1.fc"
       - "tools/shielded-pool-circuit/**"
@@ -108,7 +116,7 @@ jobs:
       # with `POSEIDON2_HASH7:-?`, which looks like a broken contract and is a
       # missing toolchain.
       - name: Build FunC and Fift
-        run: cmake --build build --target func fift -j2
+        run: cmake --build build --target func fift -j"$(nproc)"
 
       # TOS_ROOT locates that toolchain. The sources under test come from the
       # checkout through each crate's manifest, so the two are the same

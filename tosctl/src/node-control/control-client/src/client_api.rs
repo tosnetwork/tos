@@ -255,7 +255,6 @@ pub trait ClientAPI: Send + Sync {
         request: &crate::operator_reads::ConfigProposalRequest,
     ) -> anyhow::Result<crate::operator_reads::ConfigProposalDetail>;
 
-    async fn get_account_state(&mut self, address: &str) -> anyhow::Result<Account>;
     async fn get_blockchain_config(&mut self) -> anyhow::Result<BlockchainConfigInfo>;
     async fn get_validator_config(&mut self) -> anyhow::Result<EngineValidatorConfig>;
     async fn get_config_param(&mut self, id: u32) -> anyhow::Result<Vec<u8>>;
