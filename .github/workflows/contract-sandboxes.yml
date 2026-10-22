@@ -14,6 +14,10 @@ name: Smart contract sandboxes
 on:
   pull_request:
     paths:
+      - "tl/generate/scheme/**"
+      - "tosctl/src/tl/**"
+      - "scripts/check-tl-single-source.py"
+      - "test/tl-cli/**"
       - "crypto/smartcont/**"
       - "crypto/smc-envelope/**"
       - "emulator/tvm-emulator.hpp"
@@ -68,6 +72,10 @@ on:
   push:
     branches: [main, master, testnet]
     paths:
+      - "tl/generate/scheme/**"
+      - "tosctl/src/tl/**"
+      - "scripts/check-tl-single-source.py"
+      - "test/tl-cli/**"
       - "crypto/smartcont/**"
       - "crypto/smc-envelope/**"
       - "emulator/tvm-emulator.hpp"
@@ -163,7 +171,7 @@ jobs:
       # generates a real zerostate, which needs create-state and the compiled
       # system contracts it deploys. Still far cheaper than a full build.
       - name: Build FunC, Fift and the zerostate tooling
-        run: cmake --build build --target func fift create-state gen_fif -j2
+        run: cmake --build build --target func fift create-state gen_fif -j"$(nproc)"
 
       # The post-quantum elector suite signs real ML-DSA-44 requests. Signing is
       # deliberately absent from the node's libraries, so it shells out to the operator
@@ -190,7 +198,7 @@ jobs:
       # by the sandbox suites below; this is the producing side.
       - name: Validator vote bodies
         run: |
-          cmake --build build --target test-pq-vote-body test-vote-carrier -j2
+          cmake --build build --target test-pq-vote-body test-vote-carrier -j"$(nproc)"
           ./build/crypto/pq/test-pq-vote-body
           # The recorded carriers. The tooling's half of this lock is a Rust test, which
           # the sandbox step below runs; both read the same file, so a layout that drifts
@@ -203,7 +211,7 @@ jobs:
       - name: Consensus key file
         run: |
           cmake --build build --target test-consensus-key-file tos-pq-consensus-key tos-pq-controller \
-            test-fsync-dir-failure-shim -j2
+            test-fsync-dir-failure-shim -j"$(nproc)"
           ./build/crypto/pq/test-consensus-key-file
           python3 test/pq-mldsa44/consensus_key_tool_test.py \
             --tool build/crypto/pq/tos-pq-consensus-key \
@@ -218,12 +226,12 @@ jobs:
       # as that was true.
       - name: Native external-message credit selection
         run: |
-          cmake --build build --target test-external-credit -j2
+          cmake --build build --target test-external-credit -j"$(nproc)"
           ./build/test-external-credit
 
       - name: Recorded answers
         run: |
-          cmake --build build --target test-fift test-cells test-vm test-smartcont -j2
+          cmake --build build --target test-fift test-cells test-vm test-smartcont -j"$(nproc)"
           ./scripts/check-regression-db.sh . build
 
       # The shared vector files. Their readers compare against the file, so a generator
@@ -238,13 +246,13 @@ jobs:
             echo "vector check failed: generator manifest is empty" >&2
             exit 1
           fi
-          cmake --build build --target "${vector_generators[@]}" -j2
+          cmake --build build --target "${vector_generators[@]}" -j"$(nproc)"
           ./scripts/check-vector-files.sh . build
 
       - name: Build the post-quantum key tool
         run: |
           cmake -S crypto/pq/tools -B build-pq-key -G Ninja -DCMAKE_BUILD_TYPE=Release
-          cmake --build build-pq-key -j2
+          cmake --build build-pq-key -j"$(nproc)"
 
       # The two programs the suites run rather than imitate: the node's vote producer
       # and the operator's root-authorisation tool. The tests that use them panic when
@@ -252,7 +260,7 @@ jobs:
       # optional -- without it those suites cannot run at all, and a job that never runs
       # a test reports nothing about it.
       - name: Build the post-quantum producers the suites drive
-        run: cmake --build build --target tos-pq-vote tos-pq-controller -j2
+        run: cmake --build build --target tos-pq-vote tos-pq-controller -j"$(nproc)"
 
       # The sandbox charges storage as the node does. The node's own
       # compute_storage_fees checks every row of the shared vector file, and the
@@ -260,7 +268,7 @@ jobs:
       # filter that matches nothing passes, so each run must report its tests.
       - name: Storage fees agree with the node
         run: |
-          cmake --build build --target test-storage-fee-vectors -j2
+          cmake --build build --target test-storage-fee-vectors -j"$(nproc)"
           ctest --test-dir build --output-on-failure --no-tests=error -R '^test-storage-fee-vectors$'
           cargo test --manifest-path tosctl/src/Cargo.toml --locked -p chain_block --lib storage_fee_tests \
             2>&1 | tee "$RUNNER_TEMP/storage-fee-helper.log"
@@ -349,12 +357,12 @@ jobs:
       # generates a real zerostate, which needs create-state and the compiled
       # system contracts it deploys. Still far cheaper than a full build.
       - name: Build FunC, Fift and the zerostate tooling
-        run: cmake --build build --target func fift create-state gen_fif -j2
+        run: cmake --build build --target func fift create-state gen_fif -j"$(nproc)"
 
       - name: Build the post-quantum key tool
         run: |
           cmake -S crypto/pq/tools -B build-pq-key -G Ninja -DCMAKE_BUILD_TYPE=Release
-          cmake --build build-pq-key -j2
+          cmake --build build-pq-key -j"$(nproc)"
 
       # The two programs the suites run rather than imitate: the node's vote producer
       # and the operator's root-authorisation tool. The tests that use them panic when
@@ -362,14 +370,14 @@ jobs:
       # optional -- without it those suites cannot run at all, and a job that never runs
       # a test reports nothing about it.
       - name: Build the post-quantum producers the suites drive
-        run: cmake --build build --target tos-pq-vote tos-pq-controller -j2
+        run: cmake --build build --target tos-pq-vote tos-pq-controller -j"$(nproc)"
 
       # Pool snapshots are computed by the proof verifier from proven state, never
       # taken from an endpoint. Its suite re-verifies recorded proof material with
       # the real verifier, so the verifier is built here; the suite fails, not
       # skips, without it.
       - name: Build the proof verifier the snapshot suite drives
-        run: cmake --build build --target tos-proof-verify test-proven-pool-fixture -j2
+        run: cmake --build build --target tos-proof-verify test-proven-pool-fixture -j"$(nproc)"
 
       # Runs every file under contracts/tests/, which is where the sandbox
       # suites live. Do not narrow this to a single --test target: the point
@@ -478,7 +486,7 @@ jobs:
           TOKEN_BRIDGE_TRACE_DIR: ${{ runner.temp }}/token-bridge-trace
         run: |
           python3 scripts/test_replay_token_bridge_trace.py
-          cmake --build build --target emulator -j2
+          cmake --build build --target emulator -j"$(nproc)"
           cargo test --manifest-path tosctl/src/Cargo.toml -p contracts --locked --test token_bridge_sandbox
           python3 scripts/replay-token-bridge-trace.py "$TOKEN_BRIDGE_TRACE_DIR"
 

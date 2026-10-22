@@ -57,7 +57,6 @@ def main():
                 "--target",
                 "test-pq-falcon512-parity",
                 "test-pq-suite-parity",
-                "-j2",
             ],
         ),
         (
@@ -76,7 +75,6 @@ def main():
                 "falcon-parity",
                 "--example",
                 "suite-parity",
-                "-j1",
             ],
         ),
     ]

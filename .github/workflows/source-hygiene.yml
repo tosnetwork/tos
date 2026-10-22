@@ -32,7 +32,7 @@ jobs:
       - name: Configure compiler toolchain
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
       - name: Build FunC and Fift
-        run: cmake --build build --target func fift -j2
+        run: cmake --build build --target func fift -j"$(nproc)"
       - name: Reproduce the frozen Native Registry release
         run: scripts/test-tos-service-native-registry-v1.sh
       - name: Deployment entry points pin the released registry hash
@@ -45,6 +45,6 @@ jobs:
         run: scripts/check-root-authority-off-the-node.sh
       - name: Verify generated intermediates stay in the build tree
         run: |
-          cmake --build build --target gen_fif -j2
+          cmake --build build --target gen_fif -j"$(nproc)"
           test ! -e crypto/smartcont/auto
           git diff --exit-code

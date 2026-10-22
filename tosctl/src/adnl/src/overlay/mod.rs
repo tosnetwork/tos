@@ -85,8 +85,7 @@ mod broadcast;
 use broadcast::{
     BroadcastData, BroadcastFecProtocol, BroadcastId, BroadcastProtocol, BroadcastRecvContext,
     BroadcastSendContext, BroadcastSendMethod, BroadcastSimpleProtocol,
-    BroadcastStreamSimpleProtocol, BroadcastTwostepFecProtocol, BroadcastTwostepSimpleProtocol,
-    OwnedBroadcast,
+    BroadcastTwostepFecProtocol, BroadcastTwostepSimpleProtocol, OwnedBroadcast,
 };
 pub use broadcast::{BroadcastRecvInfo, BroadcastSendInfo};
 
@@ -465,7 +464,6 @@ impl Overlay {
     const OPTION_DISABLE_BROADCAST_RETRANSMIT: u32 = 0x01;
     const SIZE_NEIGHBOURS_LONG_BROADCAST: u8 = 5;
     const SIZE_NEIGHBOURS_SHORT_BROADCAST: u8 = 3;
-    const SIZE_NEIGHBOURS_STREAM_BROADCAST: u8 = 20;
     const TIMEOUT_ONE_TIME_BROADCAST_SEC: u64 = 60;
     #[cfg(feature = "xp25")]
     const TIMEOUT_REPEATED_BROADCAST_SEC: u64 = 2;
@@ -665,9 +663,6 @@ impl Overlay {
                         //rldp.message(data, peers, true, None).await.err()
                         None
                     }
-                }
-                BroadcastSendMethod::Safe => {
-                    self.adnl.send_custom_get_status(data, peers, AdnlSendMethod::Safe).await.err()
                 }
             };
             if let Some(e) = err {
@@ -1405,7 +1400,7 @@ impl OverlayNode {
         ctx.flags &= !Self::FLAG_BCAST_ANY_SENDER;
         match method {
             AdnlSendMethod::Fast => BroadcastSimpleProtocol.send(ctx).await,
-            AdnlSendMethod::Safe => BroadcastStreamSimpleProtocol.send(ctx).await,
+            AdnlSendMethod::Safe => fail!("Safe overlay broadcast is unsupported"),
         }
     }
 
@@ -2251,10 +2246,6 @@ impl Subscriber for OverlayNode {
                 }
                 Ok(Broadcast::Overlay_Broadcast(bcast)) => {
                     BroadcastSimpleProtocol.recv(bcast, ctx).await?;
-                    return Ok(true);
-                }
-                Ok(Broadcast::Overlay_BroadcastStream(bcast)) => {
-                    BroadcastStreamSimpleProtocol.recv(bcast, ctx).await?;
                     return Ok(true);
                 }
                 Ok(Broadcast::Overlay_BroadcastTwostepFec(bcast)) => {

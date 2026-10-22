@@ -22,7 +22,7 @@ def require(condition: bool, message: str) -> None:
 
 
 def main(root: Path) -> None:
-    for relative in ("tl/generate/scheme/tos_api.tl", "tosctl/src/tl/api/tl/tos_api.tl"):
+    for relative in ("tl/generate/scheme/tos_api.tl",):
         source = (root / relative).read_text(encoding="utf-8")
         require(DECLARATION in source, f"{relative} lost the five-field authorization response")
         require(FUNCTION in source, f"{relative} lost the authorization request")
@@ -52,7 +52,7 @@ def main(root: Path) -> None:
     for field in ("validator_id", "key_id", "algorithm_id", "public_key", "signature"):
         require(f"pub {field} :" in generated, f"generated Rust response is missing {field}")
     print(
-        "PQ_STAKE_AUTH_RESPONSE_OK: both TL schemas and generated Rust carry five fields from one node signer"
+        "PQ_STAKE_AUTH_RESPONSE_OK: the main TL schema and generated Rust carry five fields from one node signer"
     )
 
 

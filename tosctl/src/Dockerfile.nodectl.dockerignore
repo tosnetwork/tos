@@ -1,0 +1,22 @@
+# Repository-root context, restricted to the inputs these recipes copy.
+**
+!tosctl/
+!tosctl/src/
+!tosctl/src/**
+!tl/
+!tl/generate/
+!tl/generate/scheme/
+!tl/generate/scheme/lite_api.tl
+!tl/generate/scheme/tos_api.tl
+!tl/generate/scheme/toslib_api.tl
+!crypto/
+!crypto/smartcont/
+!crypto/smartcont/prediction-market-v1.boc.base64
+**/target
+**/.git
+**/.venv
+**/.vscode
+**/.idea
+**/*.log
+**/*.local
+**/.env.local

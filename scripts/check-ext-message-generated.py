@@ -177,7 +177,6 @@ def main():
                 "test-ext-message-generated-checker",
                 "test-ext-message-pool",
                 "test-ext-message-expiry",
-                "-j2",
             ],
         )
 

@@ -8,7 +8,7 @@ import tempfile
 from pathlib import Path
 
 PHASES = (
-    ("build", ["cmake", "--build", "build", "--target", "test-fift", "test-cells", "-j2"]),
+    ("build", ["cmake", "--build", "build", "--target", "test-fift", "test-cells"]),
     ("test-fift", ["./build/test-fift"]),
     ("test-cells", ["./build/test-cells"]),
 )

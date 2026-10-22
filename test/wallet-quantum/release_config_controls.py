@@ -60,7 +60,6 @@ def main():
                     "tos_executor",
                     "--example",
                     "pq-tx-parity",
-                    "-j1",
                 ],
                 cwd=ROOT,
                 env=env,
