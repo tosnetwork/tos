@@ -31,6 +31,7 @@ use std::{
 struct Manager {
     context: NodeContext,
     configured: bool,
+    indexed: bool,
     flip_on_stop: bool,
     child: Option<Child>,
     events: Vec<String>,
@@ -101,11 +102,12 @@ impl Manager {
                 for property in properties.split(',') {
                     let value = match property {
                         "ExecStart" => format!(
-                            "{{ argv[]={} --db {} --global-config {}{} ; running }}",
+                            "{{ argv[]={} --db {} --global-config {}{}{} ; running }}",
                             self.context.engine.display(),
                             self.context.database.display(),
                             self.context.global_config.display(),
-                            if self.configured { " --permanent-celldb" } else { "" }
+                            if self.configured { " --permanent-celldb" } else { "" },
+                            if self.indexed { " --json-rpc-address 127.0.0.1:8081" } else { "" }
                         ),
                         "User" => String::new(),
                         "WorkingDirectory" => self.context.working_directory.display().to_string(),
@@ -274,6 +276,7 @@ impl Fixture {
         let manager = Rc::new(RefCell::new(Manager {
             context,
             configured: false,
+            indexed: false,
             flip_on_stop: false,
             child: None,
             events: Vec::new(),
@@ -538,6 +541,7 @@ fn production_restore_process_exit_recovers() -> Result<()> {
         let manager = Rc::new(RefCell::new(Manager {
             context: request.context.clone(),
             configured: false,
+            indexed: false,
             flip_on_stop: false,
             child: None,
             events: Vec::new(),
@@ -678,5 +682,72 @@ fn production_complete_retries_after_release_cut() -> Result<()> {
         "retry removed another receiver lease"
     );
     println!("\nPRODUCTION_COMPLETE_RETRY_OK");
+    Ok(())
+}
+
+#[test]
+fn production_restore_refuses_indexed_targets_at_lifecycle_boundaries() -> Result<()> {
+    let _serial =
+        SERIAL.lock().map_err(|_| anyhow::anyhow!("native lifecycle fixture poisoned"))?;
+    if !fixture_environment_available() {
+        return Ok(());
+    }
+    for case in ["configured", "disk-only", "download", "stop"] {
+        let mut fixture = Fixture::new()?;
+        fixture.manager.borrow_mut().start()?;
+        let state = Rc::clone(&fixture.manager);
+        let mode = case.to_owned();
+        let _scope = fixture.scope(move |point| {
+            if (mode == "download" && point == "during-download")
+                || (mode == "stop" && point == "after-stop-before-stage")
+            {
+                state.borrow_mut().indexed = true;
+            }
+            if point == "before-stage" {
+                anyhow::bail!("prohibited staging reached");
+            }
+            Ok(())
+        });
+        if case == "configured" {
+            fixture.manager.borrow_mut().indexed = true;
+        }
+        if case == "disk-only" {
+            fs::create_dir(fixture.request.context.database.join("wc0-index"))?;
+        }
+        let _server;
+        if case == "download" {
+            let objects = Objects::open(&fixture.request.cache)?;
+            let first = fixture.signed.manifest.files.first().context("native object")?;
+            Root::open(objects.root_path())?.unlink(&Objects::object_name(first)?)?;
+            _server = ObjectServer::new(fixture.source_catalog.clone())?;
+            fixture.request.source_url = Some(_server.url.clone());
+        }
+        let error = operations::restore(&fixture.request, &fixture.operation)
+            .expect_err("indexed restore accepted");
+        let message = format!("{error:#}");
+        assert!(message.contains("wallet-indexed nodes"), "{case}: wrong refusal: {message}");
+        if case == "configured" || case == "disk-only" {
+            assert!(
+                !fixture.operation.exists(),
+                "{case}: preparation began before unsupported target refusal"
+            );
+        }
+        let manager = fixture.manager.borrow();
+        assert!(
+            !manager.events.iter().any(|v| v == "before-stage" || v == "start"),
+            "{case}: prohibited action reached: {:?}",
+            manager.events
+        );
+        if case != "stop" {
+            assert!(
+                !manager.events.iter().any(|v| v == "stop"),
+                "{case}: stopped unsupported target"
+            );
+        }
+        if case == "disk-only" {
+            assert!(fixture.request.context.database.join("wc0-index").is_dir());
+        }
+    }
+    println!("\nPRODUCTION_RESTORE_INDEX_BOUNDARIES_OK");
     Ok(())
 }

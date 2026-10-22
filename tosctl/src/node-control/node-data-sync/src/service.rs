@@ -20,6 +20,7 @@ pub struct Service {
 }
 struct CheckedService {
     permanent_cells: bool,
+    indexed: bool,
 }
 
 pub struct Frozen {
@@ -114,6 +115,19 @@ impl Service {
     pub fn require_mode(&self, expected: bool) -> Result<()> {
         self.describe(Some(expected)).map(|_| ())
     }
+    /// Restore supports only non-indexed targets; capture may still use an indexed source.
+    pub fn require_restore_target(&self, expected: Option<bool>) -> Result<()> {
+        let checked = self.describe(expected)?;
+        ensure!(
+            !checked.indexed,
+            "wallet-indexed nodes (--json-rpc-address) are not supported by restore in this version; the standard validator configuration does not run the index; see doc/node-data-sync.md#supported-targets"
+        );
+        crate::paths::restore_root(&self.database)
+    }
+    pub fn start_restore(&self, frozen: Frozen, expected: bool) -> Result<()> {
+        self.require_restore_target(Some(expected))?;
+        self.start_in_mode(frozen, expected)
+    }
     pub fn validate(&self) -> Result<()> {
         self.describe(None).map(|_| ())
     }
@@ -170,6 +184,7 @@ impl Service {
             &self.global_config,
             &self.working_directory,
         )?;
+        let mut indexed = indexed_exec(&exec)?;
         let pid = command(
             self.manager().args(["show", "--property=MainPID", "--value", "--", &self.unit]),
             Duration::from_secs(10),
@@ -203,10 +218,11 @@ impl Service {
                 &self.global_config,
                 &self.working_directory,
             )?;
+            indexed |= indexed_exec(&format!("{{ argv[]={} ; running }}", arguments.join(" ")))?;
             check_mode(configured, Some(running), expected)?;
         }
         check_mode(configured, None, expected)?;
-        Ok(CheckedService { permanent_cells: configured })
+        Ok(CheckedService { permanent_cells: configured, indexed })
     }
     pub fn stop(&self) -> Result<Frozen> {
         self.validate()?;
@@ -410,6 +426,22 @@ fn validate_exec(
     }
     Ok(permanent)
 }
+// Called only on commands accepted by validate_exec, using the same option arities.
+fn indexed_exec(value: &str) -> Result<bool> {
+    let (_, rest) = value.split_once("argv[]=").context("service command missing")?;
+    let (argv, _) = rest.split_once(" ; ").context("service command encoding")?;
+    let mut tokens = argv.split_whitespace().skip(1);
+    let mut indexed = false;
+    while let Some(option) = tokens.next() {
+        let (name, takes_value) = canonical_option(option)?;
+        indexed |= name == "json-rpc-address";
+        if takes_value {
+            tokens.next().context("service option requires value")?;
+        }
+    }
+    Ok(indexed)
+}
+
 // A deliberately restricted spelling/arity subset of the native option table, not a
 // second permissive parser. Unsupported native forms must be canonicalized by the operator.
 const SAFE_OPTIONS: &[(&str, &str, bool)] = &[
@@ -450,6 +482,15 @@ fn canonical_option(option: &str) -> Result<(&'static str, bool)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn indexing_detection_uses_option_arity_not_values() -> Result<()> {
+        assert!(indexed_exec(
+            "{ argv[]=/engine --db /db --json-rpc-address 127.0.0.1:8081 ; running }"
+        )?);
+        assert!(!indexed_exec("{ argv[]=/engine --logname --json-rpc-address ; running }")?);
+        assert!(!indexed_exec("{ argv[]=/engine --db /db ; running }")?);
+        Ok(())
+    }
     #[test]
     fn configured_running_and_expected_modes_are_one_invariant() {
         for configured in [false, true] {

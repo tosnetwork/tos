@@ -10,6 +10,53 @@ backend is a future measured option; these commands do not provision storage.
 Capture cadence, maximum useful age and the thirty-minute rejoin target require
 the separate local qualification run. They have not been qualified by unit tests.
 
+## Supported targets
+
+Restore supports non-indexed nodes only. Wallet-indexed RPC nodes are a later
+milestone: `--json-rpc-address` enables the wallet index, and either that configured
+or running flag, or an existing `wc0-index` directory, refuses restore. The
+standard validator configuration does not run the index. Dropping the flag alone
+does not make an indexed target supported: a retired `wc0-index` must be removed
+by the operator before restore; the tool never deletes it. Do not temporarily
+disable indexing to bypass this restriction. Preserving an old index would leave
+the imported block gap missing, and an empty replacement would omit old history.
+
+Database-root directories have explicit dispositions:
+
+| Roots | Restore disposition |
+|---|---|
+| `celldb`, `files`, `archive`, `static` | Import only allowlisted chain files; current temporary packages remain eligible, `archive/tmp` does not. |
+| `state` | Reconcile typed chain and target-local records; never copy raw donor StateDb. |
+| `keyring`, `consensus`, `catchains`, `adnl`, `overlays`, `dht-*` | Preserve target identity, signing and transport state. |
+| `error` | Preserve target diagnostic records (`common/errorlog.cpp`), never donor diagnostics. |
+| `tmp` | Keep recovery material with the frozen old root, never overlay it. |
+| `wc0-index` | Refuse; neither preserve across a gap nor silently discard. |
+| `import` | Refuse pending operator input; an empty directory may be recreated. |
+| `packed` | Refuse unsupported legacy archive layout. |
+| Other directories or root symlinks | Refuse and name the path. |
+
+The wallet index (`validator-engine/wallet-index.cpp`) and this restore path are
+absent from the native reference at `857b8a57a178e6ae0fe7fa86e7d81c5233de8560`.
+
+### Files inside chain roots
+
+After mandatory native recovery and reopen, publication excludes only these
+named non-chain outputs: `celldb/db_stats.txt`; `LOCK`, `LOG`, `LOG.old`,
+`LOG.old.<digits>`, `<digits>.dbtmp` and `OPTIONS-<digits>.dbtmp` inside a
+recognised database directory; and `archive/tmp/` staging. A diagnostic basename
+in another directory is not an exclusion. Numbered lowercase `.log` files are
+WAL recovery data and are carried, alongside `.sst`/`.ldb`, `CURRENT`,
+`MANIFEST-<digits>`, `OPTIONS-<digits>` and `IDENTITY`. The latter is database
+metadata, not a node signing identity. `CURRENT` and numbered manifests are
+required to select and recover the database version.
+
+This inventory follows `validator/db/celldb.cpp` and the vendored
+`file/filename.cc` and `db/db_impl/db_impl_files.cc`. Bare `MANIFEST`, malformed
+lookalikes, unsupported blob/secondary database layouts, unlisted files and
+archive `.pack.new`/`.pack.tmp` rewrite leftovers still refuse publication;
+unknown files are never silently ignored. Current `temp.archive.*.pack` files
+remain chain data. Native recovery must resolve interrupted work before filtering.
+
 ## Reference comparison
 
 The operator reference at `66240cfd0be42934d2f38d811ac3ed77a88b4da6`,

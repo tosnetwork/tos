@@ -67,15 +67,7 @@ pub fn public_files(image: &Root) -> Result<Vec<trees::TreeFile>> {
         let root = Root::open(&image.path.join(name))?;
         for mut file in trees::inventory(&root)? {
             let path = format!("{name}/{}", file.path);
-            if path.starts_with("archive/tmp/") {
-                continue;
-            }
-            let basename = file.path.rsplit('/').next().context("native filename")?;
-            let parent = path.rsplit_once('/').context("native parent")?.0;
-            let native_db = crate::paths::public_path(&format!("chain/{parent}/CURRENT")).is_ok();
-            if native_db
-                && (basename == "LOCK" || basename == "LOG" || basename.starts_with("LOG.old."))
-            {
+            if crate::paths::excluded_public_file(&path)? {
                 continue;
             }
             let public = format!("chain/{path}");
@@ -99,4 +91,113 @@ pub fn install_chain_roots(payload: &Root, replacement: &Root) -> Result<()> {
     payload.sync()?;
     replacement.sync()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod public_file_tests {
+    use super::*;
+    use std::collections::BTreeSet;
+    fn fixture() -> Result<(tempfile::TempDir, Root)> {
+        let temporary = tempfile::tempdir()?;
+        let image = Root::create(&temporary.path().join("image"))?;
+        for root in crate::paths::CHAIN_ROOTS {
+            image.ensure_directory(root)?;
+        }
+        Ok((temporary, image))
+    }
+    #[test]
+    fn every_native_file_has_an_explicit_public_disposition() -> Result<()> {
+        let (_temporary, image) = fixture()?;
+        let mut expected = BTreeSet::new();
+        for parent in [
+            "celldb",
+            "files/globalindex",
+            "files/packages/temp.archive.123.index",
+            "archive/packages/arch0000/archive.00001.index",
+        ] {
+            for name in [
+                "CURRENT",
+                "MANIFEST-000001",
+                "OPTIONS-000002",
+                "IDENTITY",
+                "000003.log",
+                "000004.sst",
+                "000005.ldb",
+            ] {
+                let path = format!("{parent}/{name}");
+                image.write_new(&path, b"carried fixture bytes")?;
+                expected.insert(format!("chain/{path}"));
+            }
+            for name in
+                ["LOCK", "LOG", "LOG.old", "LOG.old.123", "000006.dbtmp", "OPTIONS-000007.dbtmp"]
+            {
+                let path = format!("{parent}/{name}");
+                image.write_new(&path, b"excluded fixture bytes")?;
+                assert!(
+                    crate::paths::public_path(&format!("chain/{path}")).is_err(),
+                    "publisher may ship excluded file: {path}"
+                );
+            }
+        }
+        for path in ["celldb/db_stats.txt", "archive/tmp/unfinished-write"] {
+            image.write_new(path, b"diagnostics or staging")?;
+        }
+        for path in [
+            format!("static/{}", "ab".repeat(32)),
+            "files/packages/temp.archive.123.pack".to_owned(),
+            format!("archive/states/zerostate_-1_{}", "cd".repeat(32)),
+        ] {
+            image.write_new(&path, b"chain fixture bytes")?;
+            expected.insert(format!("chain/{path}"));
+        }
+        let result = public_files(&image);
+        assert!(result.is_ok(), "listed native file rejected: {result:?}");
+        let files = result?;
+        assert_eq!(
+            files.iter().map(|v| v.path.clone()).collect::<BTreeSet<_>>(),
+            expected,
+            "public disposition mismatch"
+        );
+        assert_eq!(files.len(), expected.len());
+        for file in files {
+            assert!(
+                image
+                    .bytes(file.path.strip_prefix("chain/").unwrap(), file.size)?
+                    .starts_with(b"carried")
+                    || file.path.starts_with("chain/static/")
+                    || file.path.starts_with("chain/archive/states/")
+                    || file.path.ends_with(".pack")
+            );
+        }
+        Ok(())
+    }
+    #[test]
+    fn unlisted_or_misplaced_files_still_refuse() -> Result<()> {
+        for path in [
+            "celldb/unlisted.txt",
+            "celldb/LOG.old.18446744073709551616",
+            "celldb/18446744073709551616.dbtmp",
+            "static/LOG",
+            "files/globalindex/LOG.old.bad",
+            "celldb/OPTIONS-bad.dbtmp",
+            "celldb/MANIFEST",
+            "celldb/000001.blob",
+            "celldb/METADB-1",
+            "celldb/COMPACTION_PROGRESS-1",
+            "celldb/COMPACTION_PROGRESS-1.dbtmp",
+            "files/packages/temp.archive.123.pack.new",
+            "files/packages/temp.archive.123.pack.tmp",
+        ] {
+            let (_temporary, image) = fixture()?;
+            image.write_new(path, b"must refuse")?;
+            let result = public_files(&image);
+            assert!(result.is_err(), "unlisted or unsupported file admitted: {path}");
+            let message = result.unwrap_err().to_string();
+            assert!(
+                message.contains("non-chain or unknown generation path"),
+                "wrong refusal for {path}: {message}"
+            );
+        }
+        Ok(())
+    }
 }

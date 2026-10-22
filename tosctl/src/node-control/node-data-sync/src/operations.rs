@@ -48,7 +48,7 @@ fn trusted(text: &str) -> Result<[u8; 32]> {
 }
 fn selected(request: &RestoreRequest) -> Result<(SignedManifest, [u8; 32])> {
     request.context.validate_paths()?;
-    request.context.service().validate()?;
+    request.context.service().require_restore_target(None)?;
     let key = trusted(&request.publisher_key)?;
     let signed = SignedManifest::parse(&read_bytes(&request.manifest, MANIFEST_LIMIT)?, &key)?;
     let (network, policy) = request.context.policy()?;
@@ -288,12 +288,12 @@ pub fn restore(request: &RestoreRequest, operation_path: &Path) -> Result<Journa
     }
     #[cfg(all(test, feature = "native-lifecycle-tests"))]
     crate::test_hooks::boundary("after-download")?;
-    request.context.service().require_mode(signed.manifest.permanent_cells)?;
+    request.context.service().require_restore_target(Some(signed.manifest.permanent_cells))?;
     prepare_stop(request, &signed, &operation, &operation_id)?;
     let frozen = request.context.service().stop()?;
     #[cfg(all(test, feature = "native-lifecycle-tests"))]
     crate::test_hooks::boundary("after-stop-before-stage")?;
-    request.context.service().require_mode(signed.manifest.permanent_cells)?;
+    request.context.service().require_restore_target(Some(signed.manifest.permanent_cells))?;
     let service_files = request.context.preservation_files()?;
     #[cfg(all(test, feature = "native-lifecycle-tests"))]
     crate::test_hooks::boundary("before-stage")?;
@@ -317,7 +317,7 @@ pub fn restore(request: &RestoreRequest, operation_path: &Path) -> Result<Journa
         &journal.reference_binding(),
     )?;
     journal.authorize(&operation, &approval)?;
-    request.context.service().require_mode(signed.manifest.permanent_cells)?;
+    request.context.service().require_restore_target(Some(signed.manifest.permanent_cells))?;
     journal.forward_only(&operation)?;
     journal.exchange(&operation)?;
     drop(frozen);
@@ -352,11 +352,13 @@ fn stage_with_space(
     let StoppedTarget { operation_id, frozen, service_files } = target;
     ensure!(frozen.root == request.context.database, "preservation lock belongs to another root");
     let own = Root::open(&request.context.database)?;
+    crate::paths::restore_root(&own.path)?;
     let mut private_names = vec![
         "consensus".to_owned(),
         "catchains".to_owned(),
         "adnl".to_owned(),
         "overlays".to_owned(),
+        "error".to_owned(),
     ];
     for entry in fs::read_dir(&own.path)? {
         let entry = entry?;
@@ -512,10 +514,10 @@ fn start_installed(context: &NodeContext, operation: &Root, journal: &mut Journa
         &operation.bytes("generation.json", MANIFEST_LIMIT)?,
         &trusted(&request.publisher_key)?,
     )?;
-    context.service().require_mode(signed.manifest.permanent_cells)?;
+    context.service().require_restore_target(Some(signed.manifest.permanent_cells))?;
     let frozen = context.service().freeze()?;
     journal.check_references(operation, true)?;
-    context.service().start_in_mode(frozen, signed.manifest.permanent_cells)?;
+    context.service().start_restore(frozen, signed.manifest.permanent_cells)?;
     if journal.phase == Phase::StartIssued {
         journal.advance(operation, Phase::CatchingUp)?;
     }
@@ -724,11 +726,12 @@ pub fn recover(operation_path: &Path) -> Result<RecoveryOutcome> {
             && signed.manifest.permanent_cells == request.context.service().permanent_cells()?,
         "recovery generation differs from held policy, build or storage mode"
     );
+    request.context.service().require_restore_target(Some(signed.manifest.permanent_cells))?;
     if journal.recovery()? == Recovery::NewContinueOnly {
         journal.check_references(&operation, false)?;
     }
     let frozen = request.context.service().stop()?;
-    request.context.service().require_mode(signed.manifest.permanent_cells)?;
+    request.context.service().require_restore_target(Some(signed.manifest.permanent_cells))?;
     match journal.recovery()? {
         Recovery::OldRefreshRequired => {
             // The old root could have booted and signed: capture its latest local state, never reuse a stale overlay.
@@ -752,7 +755,10 @@ pub fn recover(operation_path: &Path) -> Result<RecoveryOutcome> {
                 &journal.reference_binding(),
             )?;
             journal.authorize(&operation, &approval)?;
-            request.context.service().require_mode(signed.manifest.permanent_cells)?;
+            request
+                .context
+                .service()
+                .require_restore_target(Some(signed.manifest.permanent_cells))?;
             journal.exchange(&operation)?;
         }
         Recovery::NewContinueOnly => {
@@ -945,6 +951,7 @@ mod tests {
         )?;
         own.write_new("consensus/session/own-vote", b"own newest signed vote")?;
         own.write_new("catchains/own-journal", b"own session journal")?;
+        own.write_new("error/files/target-report", b"own diagnostics")?;
         parent.write_new("operator.json", b"{}")?;
         parent.write_new("fixture.service", b"fixture definition bytes")?;
         let engine_sha256 =
@@ -1026,6 +1033,7 @@ mod tests {
             b"own newest signed vote"
         );
         assert_eq!(replacement.bytes("catchains/own-journal", 100)?, b"own session journal");
+        assert_eq!(replacement.bytes("error/files/target-report", 100)?, b"own diagnostics");
         assert!(
             fs::read_dir(replacement.path.join("tmp"))?.next().is_none(),
             "old recovery was overlaid onto imported cells"

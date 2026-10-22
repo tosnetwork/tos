@@ -385,6 +385,7 @@ jobs:
           grep -Fx 'PRODUCTION_RESTORE_STOP_CUT_OK' build/node-sync-native-lifecycle.log
           grep -Fx 'PRODUCTION_RESTORE_PROCESS_EXIT_OK' build/node-sync-native-lifecycle.log
           grep -Fx 'PRODUCTION_LIFECYCLE_MODES_OK' build/node-sync-native-lifecycle.log
+          grep -Fx 'PRODUCTION_RESTORE_INDEX_BOUNDARIES_OK' build/node-sync-native-lifecycle.log
 
       - name: Run the complete Python suite
         run: uv run pytest

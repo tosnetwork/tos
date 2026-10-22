@@ -114,6 +114,136 @@ fn state_file(value: &str) -> bool {
         _ => false,
     }
 }
+/// Exclude only named non-chain outputs, after the captured database has recovered/reopened.
+/// This does not widen the manifest allowlist: publishers still cannot ship these files.
+pub fn excluded_public_file(path: &str) -> Result<bool> {
+    relative(path)?;
+    if path == "celldb/db_stats.txt" {
+        return Ok(true);
+    }
+    if path.starts_with("archive/tmp/") {
+        return Ok(true);
+    }
+    let (parent, name) =
+        path.rsplit_once('/').ok_or_else(|| anyhow::anyhow!("native file parent missing"))?;
+    if public_path(&format!("chain/{parent}/CURRENT")).is_err() {
+        return Ok(false);
+    }
+    let excluded = name == "LOCK"
+        || name == "LOG"
+        || name == "LOG.old"
+        || name.strip_prefix("LOG.old.").is_some_and(|v| digits(v) && v.parse::<u64>().is_ok())
+        || name.strip_suffix(".dbtmp").is_some_and(|v| digits(v) && v.parse::<u64>().is_ok())
+        || name
+            .strip_prefix("OPTIONS-")
+            .and_then(|v| v.strip_suffix(".dbtmp"))
+            .is_some_and(|v| digits(v) && v.parse::<u64>().is_ok());
+    Ok(excluded)
+}
+
 pub fn immutable_sst(path: &str) -> bool {
     public_path(path).is_ok() && path.ends_with(".sst")
+}
+
+/// A replacement must account for every database-root directory, never silently discard one.
+pub fn restore_root(root: &std::path::Path) -> Result<()> {
+    let index = root.join("wc0-index");
+    match std::fs::symlink_metadata(&index) {
+        Ok(_) => anyhow::bail!(
+            "wallet-indexed nodes (existing {}) are not supported by restore in this version; a retired index must be removed by the operator before restore; the tool never deletes it; the standard validator configuration does not run the index; see doc/node-data-sync.md#supported-targets",
+            index.display()
+        ),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
+    for entry in std::fs::read_dir(root)? {
+        let entry = entry?;
+        let metadata = std::fs::symlink_metadata(entry.path())?;
+        ensure!(
+            !metadata.file_type().is_symlink(),
+            "database-root symlink is unsupported: {}",
+            entry.path().display()
+        );
+        if !metadata.is_dir() {
+            continue;
+        }
+        let name = entry.file_name();
+        let name =
+            name.to_str().ok_or_else(|| anyhow::anyhow!("database-root name is not text"))?;
+        match name {
+            "celldb" | "files" | "archive" | "static" | "state" | "keyring" | "consensus"
+            | "catchains" | "adnl" | "overlays" | "error" | "tmp" => {}
+            "import" => ensure!(
+                std::fs::read_dir(entry.path())?.next().transpose()?.is_none(),
+                "pending import directory is not supported by restore: {}",
+                entry.path().display()
+            ),
+            "packed" => anyhow::bail!(
+                "legacy packed archive directory is not supported by restore: {}",
+                entry.path().display()
+            ),
+            value if value.starts_with("dht-") => {}
+            _ => anyhow::bail!(
+                "unknown database-root directory is not supported by restore: {}",
+                entry.path().display()
+            ),
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod restore_tests {
+    use super::*;
+    #[test]
+    fn every_unsupported_root_has_a_specific_refusal() -> Result<()> {
+        for (name, message) in [
+            ("wc0-index", "retired index must be removed"),
+            ("packed", "legacy packed archive"),
+            ("unexpected", "unknown database-root directory"),
+            ("import", "pending import directory"),
+        ] {
+            let root = tempfile::tempdir()?;
+            std::fs::create_dir(root.path().join(name))?;
+            if name == "import" {
+                std::fs::write(root.path().join(name).join("pending"), b"input")?;
+            }
+            let error =
+                restore_root(root.path()).expect_err("unsupported root accepted").to_string();
+            assert!(error.contains(message), "wrong refusal: {error}");
+            assert!(root.path().join(name).exists(), "refusal deleted operator data");
+        }
+        Ok(())
+    }
+    #[test]
+    fn supported_roots_and_empty_import_are_allowed_but_links_are_not() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        for name in [
+            "celldb",
+            "files",
+            "archive",
+            "static",
+            "state",
+            "keyring",
+            "consensus",
+            "catchains",
+            "adnl",
+            "overlays",
+            "tmp",
+            "import",
+            "dht-local",
+            "error",
+        ] {
+            std::fs::create_dir(root.path().join(name))?;
+        }
+        restore_root(root.path())?;
+        std::os::unix::fs::symlink("absent", root.path().join("wc0-index"))?;
+        assert!(restore_root(root.path()).unwrap_err().to_string().contains("retired index"));
+        std::fs::remove_file(root.path().join("wc0-index"))?;
+        std::os::unix::fs::symlink("absent", root.path().join("unexpected"))?;
+        assert!(
+            restore_root(root.path()).unwrap_err().to_string().contains("database-root symlink")
+        );
+        Ok(())
+    }
 }

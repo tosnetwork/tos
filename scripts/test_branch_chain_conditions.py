@@ -156,9 +156,10 @@ class StorageModeBoundaryTests(unittest.TestCase):
                 "service.require_mode(permanent)?;",
                 "service.start_in_mode(frozen, permanent)?;",
                 "request.context.service().permanent_cells()?",
-                "request.context.service().require_mode(signed.manifest.permanent_cells)?;",
-                "context.service().require_mode(signed.manifest.permanent_cells)?;",
-                "context.service().start_in_mode(frozen, signed.manifest.permanent_cells)?;",
+                "request.context.service().require_restore_target(None)?;",
+                "request.context.service().require_restore_target(Some(signed.manifest.permanent_cells))?;",
+                "context.service().require_restore_target(Some(signed.manifest.permanent_cells))?;",
+                "context.service().start_restore(frozen, signed.manifest.permanent_cells)?;",
             )
             controls = 0
             for expression in expressions:

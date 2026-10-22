@@ -331,6 +331,7 @@ def validate_node_data_sync_modes(root: Path) -> None:
         "grep -Fx 'PRODUCTION_RESTORE_STOP_CUT_OK'",
         "grep -Fx 'PRODUCTION_RESTORE_PROCESS_EXIT_OK'",
         "grep -Fx 'PRODUCTION_LIFECYCLE_MODES_OK'",
+        "grep -Fx 'PRODUCTION_RESTORE_INDEX_BOUNDARIES_OK'",
     ):
         require(token in workflow, "native lifecycle CI command or required result missing")
     library = (core / "lib.rs").read_text()
@@ -359,7 +360,7 @@ def validate_node_data_sync_modes(root: Path) -> None:
         require(end >= start, f"storage-mode boundary reordered: {label}")
         require(check in body[start:end], f"storage-mode binding omitted: {label}")
 
-    expected = "require_mode(signed.manifest.permanent_cells)?;"
+    expected = "require_restore_target(Some(signed.manifest.permanent_cells))?;"
     between(create, "letservice=", "letpublic=", "service.permanent_cells()?", "create entry")
     between(
         create,
@@ -373,6 +374,13 @@ def validate_node_data_sync_modes(root: Path) -> None:
         "storage-mode binding omitted: source restart",
     )
     selected = source.split("fnselected(", 1)[1].split("pubfnpreflight(", 1)[0]
+    between(
+        selected,
+        "request.context.validate_paths()?;",
+        "letkey=trusted(",
+        "request.context.service().require_restore_target(None)?;",
+        "restore supported target before preparation",
+    )
     require(
         "signed.manifest.permanent_cells==request.context.service().permanent_cells()?" in selected,
         "storage-mode binding omitted: preflight",
@@ -416,6 +424,13 @@ def validate_node_data_sync_modes(root: Path) -> None:
     )
     between(
         recover,
+        "signed.manifest.permanent_cells==request.context.service().permanent_cells()?",
+        "request.context.service().stop()?;",
+        expected,
+        "recover supported target before stop",
+    )
+    between(
+        recover,
         "request.context.service().stop()?;",
         "matchjournal.recovery()?",
         expected,
@@ -424,7 +439,7 @@ def validate_node_data_sync_modes(root: Path) -> None:
     between(recover, "journal.authorize(", "journal.exchange(", expected, "recover exposure")
     between(start, "letsigned=", "context.service().freeze()?;", expected, "replacement freeze")
     require(
-        "context.service().start_in_mode(frozen,signed.manifest.permanent_cells)?;" in start,
+        "context.service().start_restore(frozen,signed.manifest.permanent_cells)?;" in start,
         "storage-mode binding omitted: replacement start",
     )
     service = re.sub(r"\s+", "", (core / "service.rs").read_text())
