@@ -79,13 +79,15 @@ against source, not against memory.
 - Do not reference external project names or issue trackers in comments or
   commit messages. Comments explain intent, not history.
 
-## Static analysis gates new C++, not old debt
+## Static analysis is run manually
 
 The tree carries hundreds of inherited analyzer findings. Fixing them is
-tracked work; it is not a reason to let a change add more. Before opening or
-updating a PR that touches C/C++, run the gate. It needs two builds: one of the
-checkout under review, and one of a separate, clean checkout of the merge base,
-for example a worktree of `main` that you keep built:
+tracked work; it is not a reason to let a change add more. The two-build gate
+is not required before opening or updating a PR: it costs two full builds and
+an analysis of every compilation a change reaches, so it is run manually, when
+the owner or a reviewer asks for it. It needs two builds: one of the checkout
+under review, and one of a separate, clean checkout of the merge base, for
+example a worktree of `main` that you keep built:
 
 ```
 uv tool install codechecker==6.29.1    # once; LLVM 21 comes from install-llvm-toolchain.sh
@@ -98,8 +100,8 @@ the two sides' generated files, so a change to a schema or a contract is
 analysed through the code generated from it.
 
 Exit 0 means no new blocking finding, 1 lists the new blocking findings, and 2
-means the gate could not establish a result. A new finding in a blocking check
-fails the change.
+means the gate could not establish a result. When the gate is run on a change,
+a new finding in a blocking check fails that change.
 
 - The tier tables in the script are the rule set. `.clang-tidy` at the
   repository root is what clangd reads while you edit, and the script refuses
@@ -127,6 +129,41 @@ fails the change.
   its marked line, or if a changed file is missing from the compilation
   database. "No new findings" from an analysis that did not run is not a
   result. A new blocking check comes with a control the check must flag.
+
+## Review every C++ change for memory and resource growth
+
+A node runs for months on a 12 GB host. Memory that grows with traffic, peers or
+uptime shows up as anonymous RSS climbing until the kernel kills the validator,
+and no unit test catches it, because a test ends before the growth matters. The
+public testnet has already shown it: an RPC node grew from 2 GB to 8 GB under
+read load. Every PR that changes C/C++ is reviewed for this, by the author in the
+self-check and again by the reviewer.
+
+For each piece of state the change adds or makes longer-lived (containers,
+caches, queues, maps keyed by peer, query, message, block or connection id,
+pending promises, actors, timers, buffers and file descriptors), answer:
+
+- **What bounds it?** Name the limit, in entries and in bytes, and where it is
+  enforced. A limit that holds only because of a constant declared elsewhere, or
+  because "peers are honest", is not a bound. Input from the network or from a
+  client must not be able to raise it.
+- **What removes entries?** Expiry, eviction or completion, on the error,
+  timeout and cancellation paths as well as the success path. An entry that is
+  only removed when a reply arrives leaks when the reply never comes.
+- **What happens when it is full?** Refuse, drop or evict, never grow. Refusals
+  are counted or logged at a bounded rate.
+- **Does memory go back?** Clearing a container that keeps its capacity, or a
+  `BufferSlice` that pins a larger parent buffer, can hold memory after the
+  entries are gone.
+- **Are threads, file descriptors, sockets and on-disk files bounded and
+  released?** On restart too.
+
+State that is bounded by design needs a test at the bound: fill it past the
+limit and check that it stops growing. Growth that depends on time or traffic,
+and that a test cannot reach, is measured with a run long enough to show a flat
+RSS: record the duration, the load and the resident and anonymous memory before
+and after. Report the answers in the PR. A finding here blocks the merge like a
+correctness bug, because on a validator it is one.
 
 ## Keep evidence reviewable without filling Git with run output
 
