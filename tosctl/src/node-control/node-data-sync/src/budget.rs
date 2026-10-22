@@ -94,6 +94,76 @@ pub fn check_active() -> Result<()> {
     );
     Ok(())
 }
+#[cfg(all(test, feature = "native-lifecycle-tests"))]
+pub(crate) fn stop_for_test(stopped: bool) {
+    STOP_NEW_WORK.store(stopped, Ordering::Release);
+}
+/// All accounted writes use one filesystem. Read-only executables may live elsewhere.
+/// Validate real existing ancestors before creating a cache, catalog or operation root.
+pub(crate) fn require_paths(roots: &[PathBuf], anchor: &Root, paths: &[&Path]) -> Result<()> {
+    let device = anchor.device()?;
+    for path in roots.iter().map(PathBuf::as_path).chain(paths.iter().copied()) {
+        let absolute = std::path::absolute(path)?;
+        let path = absolute.as_path();
+        ensure!(
+            roots.iter().any(|root| path.starts_with(root)),
+            "writable path is outside task allocation inventory: {}",
+            path.display()
+        );
+        let mut existing = path;
+        loop {
+            match existing.symlink_metadata() {
+                Ok(_) => break,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    existing =
+                        existing.parent().context("allocation path has no existing ancestor")?;
+                }
+                Err(error) => {
+                    return Err(error)
+                        .with_context(|| format!("stat allocation path {}", existing.display()));
+                }
+            }
+        }
+        let root = Root::open(existing)
+            .with_context(|| format!("open writable allocation path {}", existing.display()))?;
+        require_device(device, root.device()?, path)?;
+    }
+    Ok(())
+}
+fn require_device(expected: u64, actual: u64, path: &Path) -> Result<()> {
+    ensure!(
+        actual == expected,
+        "allocation filesystem differs from operation device: {}",
+        path.display()
+    );
+    Ok(())
+}
+/// Retain descriptors and device bindings across samples, not just during one walk.
+struct Inventory {
+    roots: Vec<Root>,
+    device: u64,
+}
+impl Inventory {
+    fn open(roots: &[PathBuf], operation: &Root) -> Result<Self> {
+        require_paths(roots, operation, &[&operation.path])?;
+        Ok(Self {
+            roots: roots.iter().map(|path| Root::open(path)).collect::<Result<_>>()?,
+            device: operation.device()?,
+        })
+    }
+    fn sample(&self) -> Result<u64> {
+        for root in &self.roots {
+            require_device(self.device, root.device()?, &root.path)?;
+        }
+        let paths = self.roots.iter().map(|root| root.path.clone()).collect::<Vec<_>>();
+        let bytes =
+            AllocationWalk { device: Some(self.device), ..Default::default() }.sample(&paths)?;
+        for root in &self.roots {
+            require_device(self.device, root.device()?, &root.path)?;
+        }
+        Ok(bytes)
+    }
+}
 pub const OPERATION_SECONDS: u64 = 7200;
 pub struct Monitor {
     stop: Arc<AtomicBool>,
@@ -110,7 +180,8 @@ impl Monitor {
             roots.iter().any(|root| operation.path.starts_with(root)),
             "operation is outside task allocation inventory"
         );
-        let used = allocated(roots)?;
+        let inventory = Inventory::open(roots, operation)?;
+        let used = inventory.sample()?;
         admit(
             policy,
             &[used],
@@ -120,8 +191,7 @@ impl Monitor {
             })?,
         )?;
         STOP_NEW_WORK.store(false, Ordering::Release);
-        let roots = roots.to_vec();
-        let probe = operation.path.clone();
+        let probe = Root::open(&operation.path)?;
         let policy = policy.clone();
         let started = Instant::now();
         let stop = Arc::new(AtomicBool::new(false));
@@ -133,12 +203,10 @@ impl Monitor {
                         started.elapsed() < Duration::from_secs(OPERATION_SECONDS),
                         "operation reached two-hour work deadline"
                     );
-                    check_probe(&policy, allocated(&roots)?, || {
-                        let root = Root::open(&probe).with_context(|| {
-                            format!("open allocation space probe {}", probe.display())
-                        })?;
-                        root.space().with_context(|| {
-                            format!("probe allocation free space at {}", probe.display())
+                    check_probe(&policy, inventory.sample()?, || {
+                        require_device(inventory.device, probe.device()?, &probe.path)?;
+                        probe.space().with_context(|| {
+                            format!("probe allocation free space at {}", probe.path.display())
                         })
                     })
                 })();
@@ -185,6 +253,9 @@ type WalkHook = Box<dyn FnMut(&Path, WalkStep) -> std::io::Result<()>>;
 
 #[derive(Default)]
 struct AllocationWalk {
+    device: Option<u64>,
+    #[cfg(test)]
+    device_hook: Option<Box<dyn FnMut(&Path, u64) -> u64>>,
     seen: std::collections::BTreeSet<(u64, u64)>,
     count: usize,
     #[cfg(test)]
@@ -222,6 +293,17 @@ impl AllocationWalk {
             Err(error) => Err(error).with_context(|| format!("{action} {}", path.display())),
         }
     }
+    fn check_device(&mut self, path: &Path, actual: u64) -> Result<()> {
+        #[cfg(test)]
+        let actual = match self.device_hook.as_mut() {
+            Some(hook) => hook(path, actual),
+            None => actual,
+        };
+        if let Some(expected) = self.device {
+            require_device(expected, actual, path)?;
+        }
+        Ok(())
+    }
     fn visit(&mut self, path: &Path, required: bool) -> Result<u64> {
         use std::os::unix::fs::MetadataExt;
         // Count attempts before lookup, including entries removed by other writers.
@@ -236,6 +318,7 @@ impl AllocationWalk {
         else {
             return Ok(0);
         };
+        self.check_device(path, metadata.dev())?;
         if !self.seen.insert((metadata.dev(), metadata.ino())) {
             return Ok(0);
         }
@@ -271,6 +354,7 @@ impl AllocationWalk {
             let metadata = root
                 .symlink_metadata()
                 .with_context(|| format!("stat required allocation root {}", root.display()))?;
+            self.check_device(root, metadata.dev())?;
             identities.push((root, metadata.dev(), metadata.ino()));
             bytes =
                 bytes.checked_add(self.visit(root, true)?).context("task allocation overflow")?;
@@ -280,6 +364,7 @@ impl AllocationWalk {
             let metadata = root
                 .symlink_metadata()
                 .with_context(|| format!("recheck required allocation root {}", root.display()))?;
+            self.check_device(root, metadata.dev())?;
             ensure!(
                 (metadata.dev(), metadata.ino()) == (device, inode),
                 "required allocation root replaced during sample: {}",
@@ -294,6 +379,97 @@ impl AllocationWalk {
 mod tests {
     use super::*;
     use std::{io, os::unix::fs::MetadataExt};
+
+    #[test]
+    fn allocation_devices_are_checked_before_deduplication_and_descent() -> Result<()> {
+        for nested in [false, true] {
+            let temp = tempfile::tempdir()?;
+            let root = Root::open(temp.path())?;
+            let child = root.path.join("nested");
+            std::fs::create_dir(&child)?;
+            std::fs::write(child.join("file"), [1; 4096])?;
+            let device = root.device()?;
+            let selected = if nested { child } else { root.path.clone() };
+            let foreign = device.checked_add(1).context("test device overflow")?;
+            let selected_hook = selected.clone();
+            let mut walk =
+                AllocationWalk {
+                    device: Some(device),
+                    device_hook: Some(Box::new(move |path, actual| {
+                        if path == selected_hook { foreign } else { actual }
+                    })),
+                    ..Default::default()
+                };
+            // A duplicate entry must not bypass the device check either.
+            walk.seen.insert((device, selected.symlink_metadata()?.ino()));
+            let error = walk
+                .sample(std::slice::from_ref(&root.path))
+                .expect_err("foreign allocation device was admitted");
+            let message = format!("{error:#}");
+            assert!(
+                message.contains("allocation filesystem differs from operation device")
+                    && message.contains(&selected.display().to_string()),
+                "{message}"
+            );
+            let mut same = AllocationWalk { device: Some(device), ..Default::default() };
+            assert!(same.sample(std::slice::from_ref(&root.path))? > 0);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn allocation_pins_device_and_descriptor_across_samples() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let path = temp.path().join("accounted");
+        std::fs::create_dir(&path)?;
+        let root = Root::open(&path)?;
+        let inventory = Inventory::open(std::slice::from_ref(&path), &root)?;
+        assert!(inventory.sample()? > 0);
+        // Replacing the path cannot detach the descriptor used for space probes.
+        std::fs::rename(&path, temp.path().join("saved"))?;
+        std::fs::create_dir(&path)?;
+        let error = inventory.sample().expect_err("replaced root accepted on a later sample");
+        assert!(format!("{error:#}").contains("root path was exchanged or replaced"));
+        let replacement = Root::open(&path)?;
+        let mut inventory = Inventory::open(std::slice::from_ref(&path), &replacement)?;
+        assert!(inventory.sample()? > 0);
+        // Inject a changed device on the later sample without requiring mount privileges.
+        inventory.device = inventory.device.checked_add(1).context("test device overflow")?;
+        let error = inventory.sample().expect_err("later device change accepted");
+        assert!(
+            format!("{error:#}").contains("allocation filesystem differs from operation device")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn writable_paths_check_actual_devices_and_inventory() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let root = Root::open(temp.path())?;
+        let roots = [root.path.clone()];
+        require_paths(&roots, &root, &[&root.path.join("cache"), &root.path.join("operation")])?;
+        let external = tempfile::tempdir()?;
+        assert!(
+            format!(
+                "{:#}",
+                require_paths(&roots, &root, &[external.path()])
+                    .expect_err("unaccounted cache admitted")
+            )
+            .contains("outside task allocation inventory")
+        );
+        if let Ok(other) = Root::open(Path::new("/dev/shm"))
+            && other.device()? != root.device()?
+        {
+            let error =
+                require_paths(&[root.path.clone(), other.path.clone()], &root, &[&other.path])
+                    .expect_err("foreign top-level allocation root admitted");
+            assert!(
+                format!("{error:#}")
+                    .contains("allocation filesystem differs from operation device")
+            );
+        }
+        Ok(())
+    }
 
     #[test]
     fn vanished_listed_children_are_zero_and_siblings_are_counted() -> Result<()> {

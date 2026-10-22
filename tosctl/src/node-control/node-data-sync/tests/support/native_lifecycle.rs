@@ -33,6 +33,7 @@ struct Manager {
     configured: bool,
     indexed: bool,
     flip_on_stop: bool,
+    trip_on_describe: bool,
     child: Option<Child>,
     events: Vec<String>,
 }
@@ -111,7 +112,14 @@ impl Manager {
                         ),
                         "User" => String::new(),
                         "WorkingDirectory" => self.context.working_directory.display().to_string(),
-                        "MainPID" => self.child.as_ref().map_or(0, Child::id).to_string(),
+                        "MainPID" => {
+                            if self.trip_on_describe {
+                                self.trip_on_describe = false;
+                                crate::budget::stop_for_test(true);
+                                self.events.push("final-validation-disk-trip".to_owned());
+                            }
+                            self.child.as_ref().map_or(0, Child::id).to_string()
+                        }
                         "ActiveState" => {
                             if self.child.is_some() { "active" } else { "inactive" }.to_owned()
                         }
@@ -278,6 +286,7 @@ impl Fixture {
             configured: false,
             indexed: false,
             flip_on_stop: false,
+            trip_on_describe: false,
             child: None,
             events: Vec::new(),
         }));
@@ -543,6 +552,7 @@ fn production_restore_process_exit_recovers() -> Result<()> {
             configured: false,
             indexed: false,
             flip_on_stop: false,
+            trip_on_describe: false,
             child: None,
             events: Vec::new(),
         }));
@@ -749,5 +759,251 @@ fn production_restore_refuses_indexed_targets_at_lifecycle_boundaries() -> Resul
         }
     }
     println!("\nPRODUCTION_RESTORE_INDEX_BOUNDARIES_OK");
+    Ok(())
+}
+
+#[test]
+fn production_restore_disk_refusals_preserve_recovery_phases() -> Result<()> {
+    let _serial =
+        SERIAL.lock().map_err(|_| anyhow::anyhow!("native lifecycle fixture poisoned"))?;
+    if !fixture_environment_available() {
+        return Ok(());
+    }
+    use crate::journal::{Journal, Phase, Recovery};
+    for (point, expected, refusal) in [
+        ("reference-corroborated", Phase::Staged, "restore-authorize"),
+        ("restore-forward-only", Phase::Staged, "restore-forward-only"),
+        ("restore-exchange", Phase::ForwardOnly, "restore-exchange"),
+        ("restore-start-installed", Phase::Exchanged, "restore-start-installed"),
+        ("restore-start-validating", Phase::StartIssued, "restore-service-start"),
+    ] {
+        let fixture = Fixture::new()?;
+        let selected = point.to_owned();
+        let state = Rc::clone(&fixture.manager);
+        let hit = Rc::new(RefCell::new(false));
+        let seen = Rc::clone(&hit);
+        let _scope = fixture.scope(move |boundary| {
+            if boundary == selected {
+                *seen.borrow_mut() = true;
+                if selected == "restore-start-validating" {
+                    state.borrow_mut().trip_on_describe = true;
+                } else {
+                    crate::budget::stop_for_test(true);
+                }
+            }
+            Ok(())
+        });
+        let error = operations::restore(&fixture.request, &fixture.operation)
+            .expect_err("disk refusal did not stop restore exposure");
+        let message = format!("{error:#}");
+        assert!(*hit.borrow(), "{point}: injection did not execute");
+        assert!(
+            !fixture.manager.borrow().events.iter().any(|e| e == "start"),
+            "{point}: start issued after refusal"
+        );
+        let record = Root::open(&fixture.operation)?;
+        let before = Journal::read(&record)?;
+        assert_eq!(before.phase, expected, "{point}: wrong durable phase after refusal");
+        if expected == Phase::Staged {
+            assert_eq!(before.recovery()?, Recovery::OldRefreshRequired);
+            if point == "reference-corroborated" {
+                assert!(
+                    before.corroboration_sha256.is_none(),
+                    "authorization happened after monitor trip"
+                );
+            } else {
+                assert!(before.corroboration_sha256.is_some(), "earlier authorization did not run");
+            }
+        }
+        assert!(message.contains(&format!("disk refusal before {refusal}")), "{point}: {message}");
+        if point == "restore-start-validating" {
+            assert!(
+                fixture
+                    .manager
+                    .borrow()
+                    .events
+                    .iter()
+                    .any(|event| event == "final-validation-disk-trip"),
+                "final service description did not execute the injected trip"
+            );
+        }
+        drop(_scope);
+        if before.recovery()? == Recovery::NewContinueOnly {
+            Root::open(&fixture.request.context.database)?
+                .write_new("consensus/disk-refusal-marker", b"new signing tree")?;
+            let _scope = fixture.scope(|boundary| {
+                if boundary == "reference-corroborated" {
+                    crate::budget::stop_for_test(true);
+                }
+                Ok(())
+            });
+            let error = operations::recover(&fixture.operation)
+                .err()
+                .context("exchanged recovery ignored monitor refusal")?;
+            assert!(format!("{error:#}").contains("disk refusal before restore-authorize"));
+            let refused = Journal::read(&record)?;
+            assert_eq!(refused.phase, before.phase);
+            assert_eq!(refused.new, before.new);
+            assert_eq!(refused.recovery()?, Recovery::NewContinueOnly);
+            assert_eq!(
+                Root::open(&fixture.request.context.database)?
+                    .bytes("consensus/disk-refusal-marker", 100)?,
+                b"new signing tree"
+            );
+        }
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let observed = Rc::clone(&events);
+        let path = fixture.operation.clone();
+        let _scope = fixture.scope(move |boundary| {
+            if matches!(boundary, "restore-authorize" | "restore-forward-only" | "restore-exchange")
+            {
+                let current = Journal::read(&Root::open(&path)?)?;
+                observed.borrow_mut().push((
+                    boundary.to_owned(),
+                    current.phase,
+                    current.corroboration_sha256.is_some(),
+                ));
+            }
+            Ok(())
+        });
+        let outcome = operations::recover(&fixture.operation)?;
+        assert!(matches!(outcome, RecoveryOutcome::Installed(_)), "{point}: recovery aborted");
+        let after = Journal::read(&record)?;
+        assert_eq!(after.phase, Phase::CatchingUp);
+        if expected == Phase::Staged {
+            assert_eq!(
+                &*events.borrow(),
+                &[
+                    ("restore-authorize".to_owned(), Phase::Staged, false),
+                    ("restore-forward-only".to_owned(), Phase::Staged, true),
+                    ("restore-exchange".to_owned(), Phase::ForwardOnly, true),
+                ],
+                "staged recovery must durably authorize, cross forward-only, then exchange"
+            );
+        } else if expected == Phase::ForwardOnly {
+            assert_eq!(
+                &*events.borrow(),
+                &[
+                    ("restore-authorize".to_owned(), Phase::ForwardOnly, false),
+                    ("restore-exchange".to_owned(), Phase::ForwardOnly, true),
+                ],
+                "forward-only recovery re-entered or cleared its boundary"
+            );
+        } else {
+            assert_eq!(after.new, before.new, "exchanged recovery replaced signing state");
+            assert_eq!(
+                Root::open(&fixture.request.context.database)?
+                    .bytes("consensus/disk-refusal-marker", 100)?,
+                b"new signing tree"
+            );
+            assert!(
+                !events
+                    .borrow()
+                    .iter()
+                    .any(|(e, _, _)| e == "restore-exchange" || e == "restore-forward-only")
+            );
+        }
+        println!("RESTORE_DISK_BOUNDARY_OK {point}");
+    }
+    println!("RESTORE_DISK_BOUNDARIES_OK");
+    Ok(())
+}
+
+#[test]
+fn staged_recovery_keeps_staged_on_failed_corroboration_and_monitor() -> Result<()> {
+    let _serial =
+        SERIAL.lock().map_err(|_| anyhow::anyhow!("native lifecycle fixture poisoned"))?;
+    if !fixture_environment_available() {
+        return Ok(());
+    }
+    use crate::journal::{Journal, Phase};
+    for failure in ["reference", "monitor"] {
+        let fixture = Fixture::new()?;
+        let _scope = fixture.scope(|point| {
+            if point == "restore-authorize" {
+                anyhow::bail!("fixture cut before authorization");
+            }
+            Ok(())
+        });
+        let error =
+            operations::restore(&fixture.request, &fixture.operation).expect_err("cut missed");
+        assert!(format!("{error:#}").contains("fixture cut before authorization"));
+        drop(_scope);
+        let record = Root::open(&fixture.operation)?;
+        let bad_refs;
+        if failure == "reference" {
+            bad_refs = crate::test_references::References::new(
+                &fixture.signed.manifest.network,
+                &fixture.signed.manifest.frontier,
+                crate::test_references::Mode::DifferentRoot,
+            )?;
+            let mut request = fixture.request.clone();
+            request.context.references = bad_refs.policy.clone();
+            record.replace("request.json", &serde_json::to_vec(&request)?)?;
+        }
+        let _scope = fixture.scope(move |point| {
+            if failure == "monitor" && point == "reference-corroborated" {
+                crate::budget::stop_for_test(true);
+            }
+            Ok(())
+        });
+        let error = operations::recover(&fixture.operation)
+            .err()
+            .context("failed corroboration/monitor permitted recovery")?;
+        let message = format!("{error:#}");
+        assert!(
+            message.contains(if failure == "reference" {
+                "disagrees with the exact frontier"
+            } else {
+                "disk refusal before restore-authorize"
+            }),
+            "{failure}: {message}"
+        );
+        let journal = Journal::read(&record)?;
+        assert_eq!(journal.phase, Phase::Staged, "staged refusal became forward-only");
+        assert!(journal.corroboration_sha256.is_none(), "refusal authorized exposure");
+        assert!(!fixture.manager.borrow().events.iter().any(|e| e == "start"));
+    }
+    println!("\nSTAGED_DISK_RECOVERY_OK");
+    Ok(())
+}
+
+#[test]
+fn source_restart_remains_available_after_monitor_refusal() -> Result<()> {
+    let _serial =
+        SERIAL.lock().map_err(|_| anyhow::anyhow!("native lifecycle fixture poisoned"))?;
+    if !fixture_environment_available() {
+        return Ok(());
+    }
+    let fixture = Fixture::new()?;
+    let _scope = fixture.scope(|_| Ok(()));
+    let frozen = Frozen::acquire(&fixture.request.context.database)?;
+    crate::budget::stop_for_test(true);
+    fixture.request.context.service().start_in_mode(frozen, false)?;
+    assert_eq!(fixture.manager.borrow().events, vec!["start"]);
+    Ok(())
+}
+
+#[test]
+fn restore_requires_stable_budget_roots_before_preparation() -> Result<()> {
+    let _serial =
+        SERIAL.lock().map_err(|_| anyhow::anyhow!("native lifecycle fixture poisoned"))?;
+    if !fixture_environment_available() {
+        return Ok(());
+    }
+    let mut fixture = Fixture::new()?;
+    fixture.request.context.budget_roots =
+        vec![fixture.request.context.database.clone(), fixture.request.cache.clone()];
+    let _scope = fixture.scope(|_| Ok(()));
+    let error = operations::preflight(&fixture.request)
+        .err()
+        .context("preflight admitted an allocation root that exchange would detach")?;
+    assert!(
+        format!("{error:#}")
+            .contains("restore allocation roots must remain outside the exchanged database"),
+        "wrong unstable-root refusal: {error:#}"
+    );
+    assert!(!fixture.operation.exists());
+    assert!(fixture.manager.borrow().events.is_empty());
     Ok(())
 }

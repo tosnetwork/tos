@@ -23,6 +23,7 @@ impl Scope {
 }
 impl Drop for Scope {
     fn drop(&mut self) {
+        crate::budget::stop_for_test(false);
         MANAGER.with(|slot| *slot.borrow_mut() = None);
         BOUNDARY.with(|slot| *slot.borrow_mut() = None);
     }

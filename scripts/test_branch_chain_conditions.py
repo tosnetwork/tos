@@ -137,7 +137,7 @@ class StorageModeBoundaryTests(unittest.TestCase):
             root = Path(tmp)
             relative = Path("tosctl/src/node-control/node-data-sync/src")
             (root / relative).mkdir(parents=True)
-            for name in ("operations.rs", "service.rs", "cas.rs", "lib.rs"):
+            for name in ("operations.rs", "service.rs", "cas.rs", "references.rs", "lib.rs"):
                 shutil.copy2(checkout / relative / name, root / relative / name)
             for relative_file in (
                 ".github/workflows/branch-chain-python.yml",

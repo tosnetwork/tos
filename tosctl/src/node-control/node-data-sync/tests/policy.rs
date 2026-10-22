@@ -712,3 +712,60 @@ fn file_only_payload_recreates_empty_chain_roots_without_accepting_links() -> Re
     }
     Ok(())
 }
+
+#[test]
+fn failed_authorization_keeps_staged_durable() -> Result<()> {
+    let temp = tempfile::tempdir()?;
+    let old = Root::create(&temp.path().join("old"))?;
+    let new = Root::create(&temp.path().join("new"))?;
+    let operation = Root::create(&temp.path().join("operation"))?;
+    let mut journal = Journal {
+        version: 2,
+        operation: "ab".repeat(16),
+        generation: "12".repeat(32),
+        old: TreeIdentity::read(&old.path)?,
+        new: TreeIdentity::read(&new.path)?,
+        installed: old.path.display().to_string(),
+        staged: new.path.display().to_string(),
+        preservation_sha256: "34".repeat(32),
+        corroboration_sha256: None,
+        target_anchor: id(1),
+        phase: Phase::Staged,
+    };
+    journal.write(&operation)?;
+    let network = reference_fixture::network(&journal.target_anchor);
+    let references = reference_fixture::References::new(
+        &network,
+        &journal.target_anchor,
+        reference_fixture::Mode::Agree,
+    )?;
+    let other_binding = "56".repeat(32);
+    let approval =
+        references.policy.corroborate(&network, &journal.target_anchor, &other_binding)?;
+    let error = journal.authorize(&operation, &approval).expect_err("wrong revision authorized");
+    assert!(
+        format!("{error:#}")
+            .contains("reference approval belongs to another preservation revision")
+    );
+    assert_eq!(Journal::read(&operation)?, journal);
+    assert_eq!(journal.phase, Phase::Staged);
+    assert!(!operation.path.join("corroboration.json").exists());
+    let approval = references.policy.corroborate(
+        &network,
+        &journal.target_anchor,
+        &journal.reference_binding(),
+    )?;
+    let saved = temp.path().join("saved-operation");
+    fs::rename(&operation.path, &saved)?;
+    fs::create_dir(&operation.path)?;
+    let error = journal
+        .authorize(&operation, &approval)
+        .expect_err("detached operation accepted authorization write");
+    assert!(format!("{error:#}").contains("root path was exchanged or replaced"));
+    fs::remove_dir(&operation.path)?;
+    fs::rename(saved, &operation.path)?;
+    assert_eq!(Journal::read(&operation)?.phase, Phase::Staged);
+    assert_eq!(journal.phase, Phase::Staged);
+
+    Ok(())
+}
