@@ -10,6 +10,20 @@ import os
 import subprocess
 from pathlib import Path
 
+# Build-job limits an operator may set; without one, the container's own
+# ninja and cargo size the build from the CPUs it may use.
+BUILD_JOB_ENV = ("CMAKE_BUILD_PARALLEL_LEVEL", "CARGO_BUILD_JOBS")
+
+
+def container_exec(container, command, environ):
+    forwarded = [
+        arg
+        for name in BUILD_JOB_ENV
+        if environ.get(name)
+        for arg in ("-e", f"{name}={environ[name]}")
+    ]
+    return ["docker", "exec", *forwarded, container, *command]
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -49,7 +63,7 @@ def main():
 
     def run(command, label):
         if args.container:
-            command = ["docker", "exec", args.container, *command]
+            command = container_exec(args.container, command, os.environ)
         with (output / (label + ".log")).open("w") as log:
             result = subprocess.run(command, cwd=root, stdout=log, stderr=subprocess.STDOUT)
         results[label] = result.returncode
@@ -62,14 +76,7 @@ def main():
             subprocess.run(["docker", "exec", args.container, "touch", target], check=True)
         assert (
             run(
-                [
-                    "cmake",
-                    "--build",
-                    args.build_dir,
-                    "--target",
-                    "test-ext-message-pool",
-                    f"-j{len(os.sched_getaffinity(0))}",
-                ],
+                ["cmake", "--build", args.build_dir, "--target", "test-ext-message-pool"],
                 label + "-build",
             )
             == 0

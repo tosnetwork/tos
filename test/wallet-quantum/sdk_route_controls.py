@@ -71,7 +71,6 @@ def main():
                     "native-wallet-signer",
                     "--example",
                     "lms_fee_cache_fixture",
-                    f"-j{len(os.sched_getaffinity(0))}",
                 ],
                 cwd=ROOT,
                 env=env,

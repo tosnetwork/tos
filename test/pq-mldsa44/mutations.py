@@ -2,7 +2,6 @@
 """Remove one protection at a time; compilation failure is not a killed mutation."""
 
 import argparse
-import os
 import subprocess
 import tempfile
 from pathlib import Path
@@ -12,17 +11,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def run(build: Path, vectors: Path):
     def rebuild():
-        subprocess.run(
-            [
-                "cmake",
-                "--build",
-                str(build),
-                "--target",
-                "test-pq-mldsa44",
-                f"-j{len(os.sched_getaffinity(0))}",
-            ],
-            check=True,
-        )
+        subprocess.run(["cmake", "--build", str(build), "--target", "test-pq-mldsa44"], check=True)
 
     def check(output: Path):
         return subprocess.run(

@@ -513,6 +513,20 @@ def parse_kv_file(path: Path) -> dict[str, str]:
     return out
 
 
+def parallelism_env(jobs: int) -> dict[str, str]:
+    """Build-tool defaults for --jobs; a workflow, job or step value still wins."""
+    if not jobs:
+        return {}
+    return {"CMAKE_BUILD_PARALLEL_LEVEL": str(jobs), "CARGO_BUILD_JOBS": str(jobs)}
+
+
+def memory_args(memory: str, memory_swap: str) -> list[str]:
+    if memory_swap and not memory:
+        sys.exit("--memory-swap needs --memory")
+    args = ["--memory", memory] if memory else []
+    return args + (["--memory-swap", memory_swap] if memory_swap else [])
+
+
 class Run:
     def __init__(self, args: argparse.Namespace) -> None:
         self.args = args
@@ -1043,6 +1057,7 @@ class Run:
             "--init",
             "--cpuset-cpus",
             a.cpuset,
+            *memory_args(a.memory, a.memory_swap),
             "--shm-size",
             "8g",
             "--security-opt",
@@ -1123,6 +1138,9 @@ fi
         defaults = dict(((wf.get("defaults") or {}).get("run") or {}))
         defaults.update(((job.get("defaults") or {}).get("run") or {}))
         try:
+            # Builds that helpers start from Python never pass through the
+            # line rewrite; the standard build-tool variables still bound them.
+            state.env.update(parallelism_env(a.jobs))
             for k, v in wf_env.items():
                 state.env[k] = interpolate_str(v, ev)
             ctx["env"] = dict(state.env)
@@ -1337,7 +1355,8 @@ fi
             if re.search(r"\b(cmake|ninja|make)\b", line):
                 new = re.sub(r"(?<![\w-])-j\s?(?:\d+|\"\$\(nproc\)\"|\$\(nproc\))", f"-j{n}", new)
                 new = re.sub(
-                    r"--parallel\s+(?:\d+|\"\$\((?:nproc|getconf _NPROCESSORS_ONLN)\)\")",
+                    r"--parallel\s+(?:\d+|\"\$\((?:nproc|getconf _NPROCESSORS_ONLN"
+                    r"|nproc 2>/dev/null \|\| sysctl -n hw\.ncpu)\)\")",
                     f"--parallel {n}",
                     new,
                 )
@@ -1829,6 +1848,16 @@ def main() -> int:
         help="rewrite build parallelism (-jN, --parallel N) in cmake/ninja/make lines to this value",
     )
     ap.add_argument("--cpuset", default="0-95", help="docker --cpuset-cpus for every job container")
+    ap.add_argument(
+        "--memory",
+        default="",
+        help="docker --memory for every job container, e.g. 16g as on a hosted runner",
+    )
+    ap.add_argument(
+        "--memory-swap",
+        default="",
+        help="docker --memory-swap (memory plus swap), e.g. 20g; needs --memory",
+    )
     ap.add_argument("--parallel", type=int, default=2, help="jobs to run at once")
     ap.add_argument(
         "--min-free-gb", type=int, default=30, help="do not start a job below this free disk"

@@ -7,10 +7,8 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-# One compile job per CPU this process may use, as nproc counts them.
-BUILD_JOBS = f"-j{len(os.sched_getaffinity(0))}"
 PHASES = (
-    ("build", ["cmake", "--build", "build", "--target", "test-fift", "test-cells", BUILD_JOBS]),
+    ("build", ["cmake", "--build", "build", "--target", "test-fift", "test-cells"]),
     ("test-fift", ["./build/test-fift"]),
     ("test-cells", ["./build/test-cells"]),
 )
