@@ -44,19 +44,15 @@ provides review questions and evidence requirements; it does not replace those i
 | **P2** | Incorrect or fragile behaviour with bounded impact. | Wrong error codes or exit statuses; bounded resource waste; a limit that rejects a rare valid input; missing diagnostics; a test that cannot fail; documentation that contradicts the code. |
 | P3 | Hygiene and clarity. | Naming, comments, log noise, small refactors. |
 
-**What blocks a merge.** A finding blocks a merge when all three hold:
+**What blocks a merge.** A finding blocks a merge only if all three hold:
 
 1. the change introduced it, including a newly introduced path to a pre-existing defect;
-2. it can happen in the supported deployment (the platforms, topologies and operator
-   workflows this repository supports);
+2. it can happen in the actual deployment and use;
 3. a concrete test, reproduction or measurement can show it.
 
-Every P0 or P1 that meets these conditions blocks. A P2 that meets them blocks unless the
-owner accepts it in writing on the pull request, except for the two-round disposition under
-*Review and merge checks* below: remaining P2 findings become tracked follow-ups after the
-allowed rounds. Anything else gets a reply with the reason and becomes a tracked follow-up;
-it does not block. A finding that is identical in the upstream implementation follows
-*Upstream first* below.
+Anything that does not meet all three conditions gets a reply with the reason and becomes
+a tracked follow-up; it does not block. A finding that is identical in the upstream
+implementation follows *Upstream first* below.
 
 ### Review and merge checks
 
