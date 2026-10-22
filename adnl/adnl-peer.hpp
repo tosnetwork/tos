@@ -124,6 +124,7 @@ class AdnlPeerPairImpl : public AdnlPeerPair {
   }
 
  private:
+  friend class AdnlPeerPairImplTest;
   void respond_with_nop();
   void reinit(td::int32 date);
   td::Result<std::pair<td::actor::ActorId<AdnlNetworkConnection>, bool>> get_conn();
@@ -141,7 +142,9 @@ class AdnlPeerPairImpl : public AdnlPeerPair {
   }
 
   void add_received_packet(td::uint64 seqno) {
-    CHECK(!received_packet(seqno));
+    if (received_packet(seqno)) {
+      return;
+    }
     if (seqno <= in_seqno_) {
       recv_seqno_mask_ |= (1ull << (in_seqno_ - seqno));
     } else {

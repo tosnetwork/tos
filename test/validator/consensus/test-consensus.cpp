@@ -170,6 +170,8 @@ std::vector<std::pair<std::string, simplex::UnfinalizedTransition>> REQUIRED_UNF
 bool EMPTY_CHAIN_RESTART_TEST = false;
 bool VOTE_JOURNAL_TEST = false;
 bool PQ_FINALITY_E2E_TEST = false;
+// Require the leader-window external-message checks below to have run, however few candidates the run made.
+bool EXT_WINDOW_TEST = false;
 // Requires the resolver to keep, report and stop retrying a finalization that failed in a
 // way retrying cannot mend, and to stop the group rather than run ahead of it. Needs
 // TOS_SIMPLEX_INJECT_PERMANENT_FINALIZATION_FAILURE set: production does not
@@ -234,6 +236,14 @@ std::atomic<size_t> EMPTY_CHAIN_MANAGER_ANCHOR_FAILURES = 0;
 // Candidates produced anywhere in the network. Read twice, a settle window apart, it says
 // whether collation has actually stopped.
 std::atomic<size_t> CANDIDATES_GENERATED = 0;
+// The block producer must hand each slot's collation the set of external messages that the
+// candidate it builds on returned, within one leader window, and start each window empty. The fake
+// collator records the set it returns for every candidate and checks the set it is given.
+std::mutex WINDOW_SET_MUTEX;
+std::map<BlockIdExt, td::PersistentTreap<td::Bits256, td::Unit>> WINDOW_SET_RETURNED;
+std::atomic<size_t> WINDOW_SET_CARRIED = 0;
+std::atomic<size_t> WINDOW_SET_MISMATCHED = 0;
+std::atomic<size_t> WINDOW_SET_RESTARTED = 0;
 std::atomic<size_t> BYZANTINE_RELAYS_SENT = 0;
 // Times a node reported that more agreed certificates were waiting to be finalized than its
 // resolver will hold, and candidates produced by a node while it was in that state. The
@@ -554,6 +564,27 @@ class TestManagerFacade : public ManagerFacade {
     LOG(WARNING) << "Collate block #" << prev_seqno + 1;
     CHECK(params.shard == SHARD);
     CHECK(params.min_masterchain_block_id == MIN_MC_BLOCK_ID);
+    auto processed = params.processed_external_messages;
+    {
+      std::lock_guard<std::mutex> guard(WINDOW_SET_MUTEX);
+      auto it = WINDOW_SET_RETURNED.find(params.prev[0]);
+      if (processed.empty()) {
+        // A new window, built on a candidate that did return a set.
+        if (it != WINDOW_SET_RETURNED.end() && !it->second.empty()) {
+          ++WINDOW_SET_RESTARTED;
+        }
+      } else {
+        bool same = it != WINDOW_SET_RETURNED.end() && it->second.size() == processed.size();
+        for (size_t i = 0; same && i < processed.size(); i++) {
+          same = it->second.find(processed.at(i).first).has_value();
+        }
+        if (same) {
+          ++WINDOW_SET_CARRIED;
+        } else {
+          ++WINDOW_SET_MISMATCHED;
+        }
+      }
+    }
 
     CHECK(params.prev_block_state_roots.size() == 1 &&
           params.prev_block_state_roots[0]->get_hash() == gen_shard_state(prev_seqno)->get_hash());
@@ -625,7 +656,16 @@ class TestManagerFacade : public ManagerFacade {
         BlockIdExt(BlockId(params.shard, prev_seqno + 1), block_root->get_hash().bits(), td::sha256_bits256(data)),
         td::sha256_bits256(collated_data), data.clone(), collated_data.clone());
     CHECK(params.skip_store_candidate);
-    co_return GeneratedCandidate{.candidate = std::move(candidate), .is_cached = false, .self_collated = true};
+    // Stands for the normalized hash of an external message this collation took.
+    processed = processed.insert(candidate.id.root_hash, td::Unit{});
+    {
+      std::lock_guard<std::mutex> guard(WINDOW_SET_MUTEX);
+      WINDOW_SET_RETURNED[candidate.id] = processed;
+    }
+    co_return GeneratedCandidate{.candidate = std::move(candidate),
+                                 .is_cached = false,
+                                 .self_collated = true,
+                                 .processed_external_messages = processed};
   }
 
   td::actor::Task<ValidateCandidateResult> validate_block_candidate(BlockCandidate candidate, ValidateParams params,
@@ -2981,6 +3021,21 @@ class TestConsensus : public td::actor::Actor {
       CHECK(consensus_stats.sessions_active == 0 && consensus_stats.sessions_stopping == 0);
       LOG(WARNING) << "C04_NATIVE_PIPELINE_PASS: actual proposal/votes/DB/resolver plus drained quiescent conservation";
     }
+    LOG(WARNING) << "WINDOW_SET generated=" << CANDIDATES_GENERATED.load() << " carried=" << WINDOW_SET_CARRIED.load()
+                 << " restarted=" << WINDOW_SET_RESTARTED.load() << " mismatched=" << WINDOW_SET_MISMATCHED.load();
+    if (WINDOW_SET_MISMATCHED.load() != 0) {
+      co_return td::Status::Error(PSTRING() << WINDOW_SET_MISMATCHED.load()
+                                            << " collations received a processed-external set that the candidate "
+                                               "they build on did not return");
+    }
+    bool window_checks_due =
+        EXT_WINDOW_TEST || CANDIDATES_GENERATED.load() > static_cast<size_t>(SLOTS_PER_LEADER_WINDOW) * 2;
+    if (window_checks_due && WINDOW_SET_CARRIED.load() == 0) {
+      co_return td::Status::Error("no collation received the processed-external set of the previous slot");
+    }
+    if (window_checks_due && WINDOW_SET_RESTARTED.load() == 0) {
+      co_return td::Status::Error("no leader window started with an empty processed-external set");
+    }
     if (last_accepted_block_.seqno() < MIN_FINALIZED_BLOCKS) {
       co_return td::Status::Error(PSTRING() << "finalized only " << last_accepted_block_.seqno()
                                             << " blocks, expected at least " << MIN_FINALIZED_BLOCKS);
@@ -4268,6 +4323,9 @@ int main(int argc, char* argv[]) {
   p.add_option('\0', "pq-finality-e2e-test",
                "require an agreed post-quantum finality certificate on every node, and nothing past it",
                [&]() { PQ_FINALITY_E2E_TEST = true; });
+  p.add_option('\0', "ext-window-test",
+               "require that collations carried the processed-external set within a leader window and restarted it",
+               [&]() { EXT_WINDOW_TEST = true; });
   p.add_option('\0', "candidate-relay-eviction-test", "fill the candidate-relay LRU and verify oldest-entry eviction",
                [&]() { run_candidate_relay_eviction_test = true; });
   p.add_option('\0', "state-resolver-cache-unit-test",

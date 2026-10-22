@@ -19,7 +19,12 @@ def main():
     parser.add_argument("--build-dir", required=True, type=Path)
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.add_argument("--controls", action="store_true")
+    parser.add_argument(
+        "--control", action="append", help="run only this named mutation (with --controls)"
+    )
     args = parser.parse_args()
+    if args.control and not args.controls:
+        parser.error("--control requires --controls")
     root = Path(__file__).resolve().parents[1]
     build = args.build_dir.resolve()
     output = args.output_dir.resolve()
@@ -101,6 +106,28 @@ def main():
         "assemble-probe",
         [str(build / "crypto/fift"), "-I", str(root / "crypto/fift/lib"), "-s", str(assemble)],
     )
+    source = root / "test/wallet-quantum/admission-action-probe.fc"
+    assembly = fixtures / "admission-action-probe.fif"
+    require_success(
+        "compile-action-probe",
+        [
+            str(build / "crypto/func"),
+            "-SPA",
+            "-o",
+            str(assembly),
+            str(root / "crypto/smartcont/stdlib.fc"),
+            str(source),
+        ],
+    )
+    assemble = fixtures / "assemble-action.fif"
+    assemble.write_text(
+        f'"Asm.fif" include\n"{assembly}" include\n'
+        f'2 boc+>B "{fixtures / "admission-action-probe.boc"}" B>file\n'
+    )
+    require_success(
+        "assemble-action-probe",
+        [str(build / "crypto/fift"), "-I", str(root / "crypto/fift/lib"), "-s", str(assemble)],
+    )
     require_success("baseline", [str(binary)])
     baseline = (output / "baseline.log").read_text(errors="replace")
     required_tests = [
@@ -108,8 +135,15 @@ def main():
         for chain in ("Basechain", "Masterchain")
         for suffix in ("StopsAtAccept", "StopsAtSetGasLimit", "RejectsInsufficientSetGasLimit")
     ]
-    if "6 test(s) passed" not in baseline or any(name not in baseline for name in required_tests):
-        raise RuntimeError("baseline did not execute the six required checker cases")
+    required_tests.extend(
+        [
+            "LocalPriorityAdmittedWhileRegularLaneIsSaturated",
+            "OldCompletionsDoNotConsumeReplacementCheckerSlots",
+            "AdmissionAcceptsComputeButExecutionRejectsInvalidAction",
+        ]
+    )
+    if "9 test(s) passed" not in baseline or any(name not in baseline for name in required_tests):
+        raise RuntimeError("baseline did not execute all required checker cases")
     measurements = [
         {
             "workchain": int(workchain),
@@ -141,12 +175,93 @@ def main():
                 str(build),
                 "--target",
                 "test-ext-message-generated-checker",
+                "test-ext-message-pool",
+                "test-ext-message-expiry",
                 "-j2",
             ],
         )
 
     if args.controls:
         controls = [
+            (
+                "reverse-priority-wakeup",
+                "validator/impl/ext-message-pool.cpp",
+                b"auto &[priority, waiters] = *admission_waiters_.rbegin();",
+                b"auto &[priority, waiters] = *admission_waiters_.begin();",
+                ["WaitersWakeByPriorityThenFifo"],
+                "awakened.back()",
+            ),
+            (
+                "reverse-fifo-wakeup",
+                "validator/impl/ext-message-pool.cpp",
+                b"auto waiter = std::move(waiters.front());\n    waiters.pop_front();",
+                b"auto waiter = std::move(waiters.back());\n    waiters.pop_back();",
+                ["WaitersWakeByPriorityThenFifo"],
+                "awakened.back()",
+            ),
+            (
+                "disable-normalized-refusal-removal",
+                "validator/impl/ext-message-pool.cpp",
+                b"void ExtMessagePool::complete_external_messages(std::vector<ExtMessage::Hash> to_delete) {",
+                b"void ExtMessagePool::complete_external_messages(std::vector<ExtMessage::Hash> to_delete) { return;",
+                ["CollatorRefusalRemovesEveryNormalizedVariantExactlyOnce"],
+                "metrics::ExtMessageRemovalReason::filtered",
+            ),
+            (
+                "disable-priority-eviction",
+                "validator/impl/ext-message-pool.cpp",
+                b"admission_waiters_.empty() || admission_waiters_.begin()->first >= priority",
+                b"true",
+                ["PriorityEvictsLowerPriorityWaiterAtTheQueueCap"],
+                "low.await_ready()",
+            ),
+            (
+                "disable-ordered-expiry",
+                "validator/impl/expiry-ordered-list.hpp",
+                b"oldest_ != nullptr && oldest_->delete_at.is_in_past(now)",
+                b"false",
+                ["PopsExpiredHeadInOrderExactlyOnce"],
+                "count is not equal to 2u",
+            ),
+            (
+                "repeat-rejected-execution",
+                "validator/impl/ext-message-checker.cpp",
+                b"failure = Failure::vm_rejected;",
+                b"failure = Failure::vm_rejected;\n"
+                b"  auto repeated = ExtMessageQ::run_message_on_account(wc, &account, state.utime, "
+                b"state.lt + 1, message->root_cell(), *exec_config);\n"
+                b"  if (repeated.is_ok()) { co_return result; }",
+                ["RejectedContractExecutesVmExactlyOnce"],
+                "counter.starts",
+            ),
+            (
+                "ignore-checker-generation",
+                "validator/impl/ext-message-pool.cpp",
+                b"if (current_generation == checkers_generation_) {",
+                b"if (true) {",
+                ["OldCompletionsDoNotConsumeReplacementCheckerSlots"],
+                "priority.await_ready()",
+            ),
+            (
+                "disable-local-priority",
+                "validator/manager.cpp",
+                b"opts_->get_ext_message_pool_options()->local_ls_message_priority,",
+                b"0,",
+                ["LocalPriorityAdmittedWhileRegularLaneIsSaturated"],
+                "priority.await_ready()",
+            ),
+            (
+                "restore-admission-action-phase",
+                "validator/impl/external-message.cpp",
+                b"if (!trans->compute_phase->accepted) {",
+                b"if (trans->compute_phase->accepted && "
+                b"(!trans->prepare_action_phase(exec_config.action_phase_cfg) || "
+                b"!trans->action_phase->success)) { "
+                b'return td::Status::Error("action refused by mutation"); }\n'
+                b"  if (!trans->compute_phase->accepted) {",
+                ["AdmissionAcceptsComputeButExecutionRejectsInvalidAction"],
+                "admitted.is_ok()",
+            ),
             (
                 "disable-stop",
                 "validator/impl/external-message.cpp",
@@ -188,6 +303,28 @@ def main():
                 "result.is_ok() == accepted",
             ),
         ]
+        for field, condition in (
+            ("num_regular_checkers", "> 128"),
+            ("num_priority_checkers", "> 128"),
+            ("max_ext_msg_per_addr", "== 0"),
+            ("max_ext_msg_per_addr_time_window", "== 0.0"),
+        ):
+            controls.append(
+                (
+                    "disable-limit-" + field,
+                    "validator/validator-options.cpp",
+                    ("if (f." + field + "_ " + condition + ") {").encode(),
+                    b"if (false) {",
+                    ["OptionsPreserveReleaseDefaultsAndRefuseInvalidLimits"],
+                    "ExtMessagePoolOptions::unpack(config).is_error()",
+                )
+            )
+        if args.control:
+            selected = set(args.control)
+            known = {control[0] for control in controls}
+            if selected - known:
+                raise RuntimeError("unknown controls: " + ", ".join(sorted(selected - known)))
+            controls = [control for control in controls if control[0] in selected]
         for label, relative, anchor, replacement, test_names, assertion in controls:
             guarded = root / relative
             original = guarded.read_bytes()
@@ -198,7 +335,24 @@ def main():
                 rebuild(label + "-build")
                 for test_name in test_names:
                     name = label + "-" + test_name
-                    if run(name, [str(binary), "--filter", test_name]) == 0:
+                    test_binary = (
+                        build / "test-ext-message-pool"
+                        if test_name
+                        in {
+                            "OptionsPreserveReleaseDefaultsAndRefuseInvalidLimits",
+                            "PriorityEvictsLowerPriorityWaiterAtTheQueueCap",
+                            "RejectedContractExecutesVmExactlyOnce",
+                            "WaitersWakeByPriorityThenFifo",
+                        }
+                        else build / "test-ext-message-expiry"
+                        if test_name
+                        in {
+                            "PopsExpiredHeadInOrderExactlyOnce",
+                            "CollatorRefusalRemovesEveryNormalizedVariantExactlyOnce",
+                        }
+                        else binary
+                    )
+                    if run(name, [str(test_binary), "--filter", test_name]) == 0:
                         raise RuntimeError(name + " unexpectedly passed")
                     failure = (output / (name + ".log")).read_text(errors="replace")
                     if (
@@ -222,10 +376,15 @@ def main():
                 guarded.write_bytes(original)
                 rebuild(label + "-restore-build")
                 require_success(label + "-restored", [str(binary)])
+                require_success(label + "-pool-restored", [str(build / "test-ext-message-pool")])
+                require_success(
+                    label + "-expiry-restored", [str(build / "test-ext-message-expiry")]
+                )
 
     sources = [
         "crypto/smartcont/gen-zerostate.fif",
         "test/wallet-quantum/checker-gas-probe.fc",
+        "test/wallet-quantum/admission-action-probe.fc",
         "test/test-ext-message-generated-checker.cpp",
         "scripts/check-ext-message-generated.py",
         "validator/impl/ext-message-checker.cpp",
@@ -236,7 +395,13 @@ def main():
     artifacts = {}
     evidence_files = [output / (name + ".log") for name in runs]
     evidence_files.extend(
-        fixtures / name for name in ("zerostate.boc", "basestate0.boc", "checker-gas-probe.boc")
+        fixtures / name
+        for name in (
+            "zerostate.boc",
+            "basestate0.boc",
+            "checker-gas-probe.boc",
+            "admission-action-probe.boc",
+        )
     )
     for path in sorted(evidence_files):
         raw = path.read_bytes()

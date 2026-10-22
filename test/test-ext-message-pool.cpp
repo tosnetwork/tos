@@ -30,6 +30,11 @@
 namespace tos::validator {
 namespace {
 
+template <class T>
+td::actor::Task<td::Result<T>> wrap_started(td::actor::StartedTask<T> task) {
+  co_return co_await std::move(task).wrap();
+}
+
 td::BufferSlice make_valid_external_message() {
   // ext_in_msg_info$10, addr_none$00 source, addr_std$10 destination with no
   // anycast in workchain 0, zero address/import fee, no StateInit, empty inline body.
@@ -40,6 +45,17 @@ td::BufferSlice make_valid_external_message() {
                   .store_zeroes(1 + 8 + 256 + 4 + 1 + 1)
                   .finalize();
   return vm::std_boc_serialize(std::move(root)).move_as_ok();
+}
+
+TEST(ExtMessagePool, SnapshotExportsStoredStockAndCheckResults) {
+  metrics::ExtMessagePoolSnapshot snapshot;
+  snapshot.ext_messages.insert(metrics::ExtMessageState::eligible, 42);
+  snapshot.check_ok = 7;
+  snapshot.check_error = 3;
+  auto text = snapshot.collect().render();
+  EXPECT(text.find("mempool_ext_messages{state=\"eligible\"} 42") != std::string::npos);
+  EXPECT(text.find("result=\"ok\"") != std::string::npos);
+  EXPECT(text.find("result=\"error\"") != std::string::npos);
 }
 
 TEST(ExtMessagePool, RejectsAdmissionBeforeMasterchainState) {
@@ -99,8 +115,9 @@ TEST(ExtMessageChecker, RejectsMalformedBagOfCellsBeforeStateLookup) {
                                 block::SizeLimitsConfig::ExtMsgLimits{}, td::Ref<MasterchainState>{})
             .wrap();
 
-    ASSERT_TRUE(result.is_error());
-    EXPECT(result.error().code() != ErrorCode::notready);
+    ASSERT_TRUE(result.is_ok());
+    ASSERT_TRUE(result.ok().result.is_error());
+    EXPECT(result.ok().result.error().code() != ErrorCode::notready);
     co_return td::Unit{};
   });
 }
@@ -115,9 +132,10 @@ TEST(ExtMessageChecker, ParsesValidMessageBeforeStateLookup) {
                                           block::SizeLimitsConfig::ExtMsgLimits{}, td::Ref<MasterchainState>{})
                       .wrap();
 
-    ASSERT_TRUE(result.is_error());
-    EXPECT_EQ(result.error().code(), ErrorCode::notready);
-    EXPECT_EQ(result.error().message(), "masterchain state is not ready");
+    ASSERT_TRUE(result.is_ok());
+    ASSERT_TRUE(result.ok().result.is_error());
+    EXPECT_EQ(result.ok().result.error().code(), ErrorCode::notready);
+    EXPECT_EQ(result.ok().result.error().message(), "masterchain state is not ready");
     co_return td::Unit{};
   });
 }
@@ -145,23 +163,72 @@ class ExtMessagePoolTestHarness final : public ExtMessagePool {
  public:
   ExtMessagePoolTestHarness(td::Ref<ValidatorManagerOptions> options, std::shared_ptr<adnl::AdnlExtByteBudget> bytes)
       : ExtMessagePool(std::move(options), {}, std::move(bytes)) {
-    inflight_checks_ = MAX_INFLIGHT_CHECKS;
+    occupy_regular_slots();
   }
   explicit ExtMessagePoolTestHarness(std::shared_ptr<adnl::AdnlExtByteBudget> bytes)
       : ExtMessagePool({}, {}, std::move(bytes)) {
     last_masterchain_state_ = td::make_ref<AdmissionLimitsState>(65535);
-    inflight_checks_ = MAX_INFLIGHT_CHECKS;
+    occupy_regular_slots();
+  }
+  void clear_synthetic_occupancy() {
+    inflight_total_checks_ = inflight_regular_checks_ = inflight_priority_checks_ = 0;
+    for (auto &checker : checkers_) {
+      checker.inflight = 0;
+    }
+  }
+  void occupy_regular_slots() {
+    init_checkers();
+    inflight_total_checks_ = inflight_regular_checks_ = num_regular_checkers_ * MAX_INFLIGHT_CHECKS_PER_CHECKER;
+    for (size_t i = 0; i < num_regular_checkers_; ++i) {
+      checkers_[i].inflight = MAX_INFLIGHT_CHECKS_PER_CHECKER;
+    }
+  }
+  void release_synthetic_occupancy() {
+    clear_synthetic_occupancy();
+    inflight_total_checks_ = inflight_regular_checks_ = checkers_[0].inflight = 1;
+    release_check_slot(0);
+  }
+  void release_all_for_queue_test() {
+    release_synthetic_occupancy();
+  }
+  void verify_priority_fifo_wakeups() {
+    std::vector<std::pair<int, td::actor::StartedTask<>>> tasks;
+    std::vector<bool> observed(3, false);
+    std::vector<int> awakened;
+    for (auto [priority, id] : {std::pair{0, 0}, std::pair{1, 11}, std::pair{1, 12}}) {
+      auto [task, promise] = td::actor::StartedTask<>::make_bridge();
+      tasks.emplace_back(id, std::move(task));
+      admission_waiters_[priority].push_back(std::move(promise));
+      ++total_admission_waiters_;
+    }
+    for (int expected : {11, 12, 0}) {
+      auto previous = awakened.size();
+      release_synthetic_occupancy();
+      for (size_t i = 0; i < tasks.size(); ++i) {
+        if (!observed[i] && tasks[i].second.await_ready()) {
+          awakened.push_back(tasks[i].first);
+          observed[i] = true;
+        }
+      }
+      ASSERT_EQ(awakened.size(), previous + 1);
+      EXPECT_EQ(awakened.back(), expected);
+    }
+    EXPECT_EQ(total_admission_waiters_, 0u);
+    EXPECT(admission_waiters_.empty());
+  }
+  void verify_queued_priority(int priority) {
+    EXPECT_EQ(total_admission_waiters_, 1u);
+    EXPECT_EQ(admission_waiters_.begin()->first, priority);
   }
   void shrink_limits_and_release() {
     ASSERT_TRUE(admission_waiters_.size() == 1);
     last_masterchain_state_ = td::make_ref<AdmissionLimitsState>(1);
     // Release the synthetic occupancy. The queued request must now re-read
     // limits and reject without dispatching or inflating completion throughput.
-    inflight_checks_ = 1;
-    release_check_slot(false);
+    release_synthetic_occupancy();
   }
   void verify_released_without_dispatch() {
-    EXPECT_EQ(inflight_checks_, 0u);
+    EXPECT_EQ(inflight_total_checks_, 0u);
     EXPECT_EQ(completions_in_rate_window_, 0u);
     EXPECT_EQ(admission_window_.checked, 0u);
     EXPECT_EQ(admission_budget_->used(), 0u);
@@ -173,27 +240,29 @@ class ExtMessagePoolTestHarness final : public ExtMessagePool {
     EXPECT_EQ(work_admission_->available(), 2u);
     ASSERT_TRUE(configure_work_profile(std::move(profile)).is_ok());
     EXPECT_EQ(work_admission_->available(), 2u);
-    inflight_checks_ = 1;
-    release_check_slot(false);
+    release_synthetic_occupancy();
   }
   void verify_work_released(bool dispatched) {
-    EXPECT_EQ(inflight_checks_, 0u);
+    EXPECT_EQ(inflight_total_checks_, 0u);
     EXPECT_EQ(completions_in_rate_window_, dispatched ? 1u : 0u);
     EXPECT_EQ(admission_window_.checked, dispatched ? 1u : 0u);
     EXPECT_EQ(work_admission_->available(), dispatched ? 1u : 2u);
     EXPECT_EQ(admission_budget_->used(), 0u);
     EXPECT(admission_waiters_.empty());
-    for (auto count : checker_inflight_) {
-      EXPECT_EQ(count, 0u);
+    for (const auto &checker : checkers_) {
+      EXPECT_EQ(checker.inflight, 0u);
     }
   }
   void cancel_waiter() {
     ASSERT_TRUE(admission_waiters_.size() == 1);
     EXPECT(admission_budget_->used() > 0);
-    auto waiter = std::move(admission_waiters_.front());
-    admission_waiters_.pop_front();
+    auto &waiters = admission_waiters_.begin()->second;
+    auto waiter = std::move(waiters.front());
+    waiters.pop_front();
+    admission_waiters_.clear();
+    total_admission_waiters_ = 0;
     // Drop only synthetic occupancy; no real checker was dispatched.
-    inflight_checks_ = 0;
+    clear_synthetic_occupancy();
     waiter.set_error(td::Status::Error(ErrorCode::cancelled, "queued admission cancelled"));
   }
   void stop_while_queued() {
@@ -202,6 +271,103 @@ class ExtMessagePoolTestHarness final : public ExtMessagePool {
     stop();
   }
 };
+
+TEST(ExtMessagePool, WaitersWakeByPriorityThenFifo) {
+  td::actor::TestScheduler scheduler;
+  scheduler.run([&]() -> td::actor::Task<> {
+    auto bytes = std::make_shared<adnl::AdnlExtByteBudget>(65535);
+    auto pool = td::actor::create_actor<ExtMessagePoolTestHarness>("waiter-order", bytes);
+    co_await td::actor::ask(pool, &ExtMessagePoolTestHarness::verify_priority_fifo_wakeups);
+    co_return td::Unit{};
+  });
+}
+
+TEST(ExtMessagePool, OptionsPreserveReleaseDefaultsAndRefuseInvalidLimits) {
+  auto config = tos_api::engine_validator_extMessagePoolConfig{-1, -1, -1, -1, -1, -1.0, -1};
+  auto unpacked = ExtMessagePoolOptions::unpack(config);
+  ASSERT_TRUE(unpacked.is_ok());
+  EXPECT_EQ(unpacked.ok()->num_regular_checkers, 24u);
+  EXPECT_EQ(unpacked.ok()->num_priority_checkers, 0u);
+  EXPECT_EQ(unpacked.ok()->local_ls_message_priority, 0);
+  EXPECT_EQ(unpacked.ok()->max_admission_waiters, 50000u);
+  EXPECT_EQ(unpacked.ok()->max_ext_msg_per_addr, 30u);
+  EXPECT_EQ(unpacked.ok()->max_ext_msg_per_addr_time_window, 10.0);
+  config.num_regular_checkers_ = 129;
+  EXPECT(ExtMessagePoolOptions::unpack(config).is_error());
+  config.num_regular_checkers_ = 1;
+  config.num_priority_checkers_ = 129;
+  EXPECT(ExtMessagePoolOptions::unpack(config).is_error());
+  config.num_priority_checkers_ = 1;
+  config.max_ext_msg_per_addr_ = 0;
+  EXPECT(ExtMessagePoolOptions::unpack(config).is_error());
+  config.max_ext_msg_per_addr_ = 30;
+  config.max_ext_msg_per_addr_time_window_ = 0;
+  EXPECT(ExtMessagePoolOptions::unpack(config).is_error());
+  config.max_ext_msg_per_addr_time_window_ = 10;
+  EXPECT(ExtMessagePoolOptions::unpack(config).is_ok());
+}
+
+TEST(ExtMessagePool, ZeroRegularCheckersRefuseRegularRequestsButAllowPriorityDispatch) {
+  td::actor::TestScheduler scheduler;
+  scheduler.run([&]() -> td::actor::Task<> {
+    auto options = ValidatorManagerOptions::create(BlockIdExt{}, BlockIdExt{});
+    td::Ref<ExtMessagePoolOptions> pool_options{true};
+    pool_options.write().num_regular_checkers = 0;
+    pool_options.write().num_priority_checkers = 1;
+    options.write().set_ext_message_pool_options(pool_options);
+    auto pool =
+        td::actor::create_actor<ExtMessagePool>("priority-only", options, td::actor::ActorId<ValidatorManager>{});
+    co_await td::actor::ask(pool, &ExtMessagePool::update_last_masterchain_state,
+                            td::Ref<MasterchainState>{td::make_ref<AdmissionLimitsState>(65535)});
+    auto regular = co_await td::actor::ask(pool, &ExtMessagePool::check_add_external_message,
+                                           td::BufferSlice{"invalid"}, 0, false, td::optional<PublicKeyHash>{})
+                       .wrap();
+    ASSERT_TRUE(regular.is_error());
+    EXPECT_EQ(regular.error().message(), "no checkers are configured");
+    auto priority = co_await td::actor::ask(pool, &ExtMessagePool::check_add_external_message,
+                                            td::BufferSlice{"invalid"}, 1, false, td::optional<PublicKeyHash>{})
+                        .wrap();
+    ASSERT_TRUE(priority.is_error());
+    EXPECT(priority.error().message().str().find("cannot deserialize bag-of-cells") != std::string::npos);
+    co_return td::Unit{};
+  });
+}
+
+TEST(ExtMessagePool, PriorityEvictsLowerPriorityWaiterAtTheQueueCap) {
+  td::actor::TestScheduler scheduler;
+  scheduler.run([&]() -> td::actor::Task<> {
+    auto options = ValidatorManagerOptions::create(BlockIdExt{}, BlockIdExt{});
+    td::Ref<ExtMessagePoolOptions> pool_options{true};
+    pool_options.write().num_regular_checkers = 1;
+    pool_options.write().max_admission_waiters = 1;
+    options.write().set_ext_message_pool_options(pool_options);
+    auto bytes = std::make_shared<adnl::AdnlExtByteBudget>(65535);
+    auto pool = td::actor::create_actor<ExtMessagePoolTestHarness>("priority-eviction", options, bytes);
+    co_await td::actor::ask(pool, &ExtMessagePool::update_last_masterchain_state,
+                            td::Ref<MasterchainState>{td::make_ref<AdmissionLimitsState>(65535)});
+    auto low = wrap_started(td::actor::ask(pool, &ExtMessagePool::check_add_external_message, td::BufferSlice{"low"}, 0,
+                                           false, td::optional<PublicKeyHash>{}))
+                   .start();
+    co_await scheduler.wait_sync_work();
+    co_await td::actor::ask(pool, &ExtMessagePoolTestHarness::verify_queued_priority, 0);
+    auto high = wrap_started(td::actor::ask(pool, &ExtMessagePool::check_add_external_message, td::BufferSlice{"high"},
+                                            1, false, td::optional<PublicKeyHash>{}))
+                    .start();
+    co_await scheduler.wait_sync_work();
+    ASSERT_TRUE(low.await_ready());
+    auto evicted = co_await std::move(low);
+    ASSERT_TRUE(evicted.is_error());
+    EXPECT_EQ(evicted.error().message(), "too many pending external message checks");
+    EXPECT(!high.await_ready());
+    co_await td::actor::ask(pool, &ExtMessagePoolTestHarness::verify_queued_priority, 1);
+    co_await td::actor::ask(pool, &ExtMessagePoolTestHarness::release_all_for_queue_test);
+    auto dispatched = co_await std::move(high);
+    ASSERT_TRUE(dispatched.is_error());
+    EXPECT(dispatched.error().message().str().find("cannot deserialize bag-of-cells") != std::string::npos);
+    EXPECT_EQ(bytes->used(), 0u);
+    co_return td::Unit{};
+  });
+}
 
 TEST(ExtMessagePool, QueuedRequestUsesFreshLimitsWithoutCountingDispatch) {
   td::actor::TestScheduler scheduler;
@@ -284,7 +450,8 @@ TEST(ExtMessageChecker, RejectedContractExecutesVmExactlyOnce) {
       auto result = co_await td::actor::ask(checker.get(), &ExtMessageChecker::check, encoded.move_as_ok(),
                                             state->get_ext_msg_limits(), state)
                         .wrap();
-      ASSERT_TRUE(result.is_error());
+      ASSERT_TRUE(result.is_ok());
+      ASSERT_TRUE(result.ok().result.is_error());
       co_return td::Unit{};
     });
   }
@@ -474,7 +641,8 @@ void exercise_work_dispatch(bool mismatched_config, bool ordinary_account = fals
       if (mismatched_config) {
         EXPECT_EQ(result.error().message(), "external admission configuration is outside the work profile");
       } else if (i == 0) {
-        EXPECT(result.error().message().str().find("External message was not accepted") != std::string::npos);
+        EXPECT_EQ(result.error().code(), -701);
+        EXPECT(result.error().message().str().find("inbound external message rejected") != std::string::npos);
         if (ordinary_account) {
           std::fprintf(stderr, "Ordinary account rejection: %s\n", result.error().message().str().c_str());
           EXPECT(result.error().message().str().find("gas_used=0") != std::string::npos);
@@ -489,7 +657,7 @@ void exercise_work_dispatch(bool mismatched_config, bool ordinary_account = fals
     }
     auto stats = co_await td::actor::ask(pool.get(), &ExtMessagePool::prepare_stats);
     bool observed = false;
-    for (const auto& stat : stats) {
+    for (const auto &stat : stats) {
       if (stat.first == "ext_msg_admission_work") {
         EXPECT_EQ(stat.second, mismatched_config ? "available:2 supported:false" : "available:0 supported:true");
         observed = true;

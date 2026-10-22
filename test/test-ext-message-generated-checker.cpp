@@ -11,6 +11,7 @@
 #include "td/utils/filesystem.h"
 #include "td/utils/tests.h"
 #include "validator/impl/applied-ext-message-cleanup.hpp"
+#include "validator/impl/collator-impl.h"
 #include "validator/impl/ext-message-pool.hpp"
 #include "validator/impl/shard.hpp"
 #include "validator/manager.hpp"
@@ -19,6 +20,11 @@
 
 namespace tos::validator {
 namespace {
+
+template <class T>
+td::actor::Task<td::Result<T>> wrap_started(td::actor::StartedTask<T> task) {
+  co_return co_await std::move(task).wrap();
+}
 
 td::Ref<vm::Cell> read_fixture(const char* filename) {
   const char* directory = std::getenv("TOS_ADMISSION_GENERATED_DIR");
@@ -77,10 +83,10 @@ td::Ref<vm::Cell> add_probe_account(td::Ref<vm::Cell> root, const block::gen::Sh
   return root;
 }
 
-GeneratedStates generated_states() {
+GeneratedStates generated_states(const char* code_filename = "checker-gas-probe.boc") {
   auto masterchain_root = read_fixture("zerostate.boc");
   auto basechain_root = read_fixture("basestate0.boc");
-  auto code = read_fixture("checker-gas-probe.boc");
+  auto code = read_fixture(code_filename);
   BlockIdExt initial_id{masterchainId, shardIdAll, 0, masterchain_root->get_hash().bits(), FileHash::zero()};
   auto initial_config = block::ConfigInfo::extract_config(masterchain_root, initial_id, 0xFFFF);
   ASSERT_TRUE(initial_config.is_ok());
@@ -152,6 +158,205 @@ GeneratedStates generated_states() {
   ASSERT_TRUE(current_config.is_ok());
   ASSERT_TRUE(td::Bits256{current_config.ok()->get_root_cell()->get_hash().bits()} == config_root);
   return {masterchain_state.move_as_ok(), basechain_state.move_as_ok(), config_root, destination};
+}
+
+}  // namespace
+
+class ExtMessagePriorityTestHarness final : public ValidatorManagerImpl {
+ public:
+  explicit ExtMessagePriorityTestHarness(td::Ref<ValidatorManagerOptions> options)
+      : ValidatorManagerImpl(std::move(options), "", {}, {}, {}, {}, {}) {
+  }
+  void start_up() override {
+  }
+  td::actor::Task<> initialize(td::Ref<MasterchainState> state, td::Ref<ShardState> basechain) {
+    basechain_ = std::move(basechain);
+    callback_ = std::make_unique<ValidatorManagerInterface::Callback>();
+    ext_message_pool_ = td::actor::create_actor<ExtMessagePool>("priority-pool", opts_, actor_id(this));
+    co_await td::actor::ask(ext_message_pool_, &ExtMessagePool::update_last_masterchain_state, std::move(state));
+    co_return td::Unit{};
+  }
+  void wait_block_state_short(BlockIdExt block_id, td::uint32, td::Timestamp, bool,
+                              td::Promise<td::Ref<ShardState>> promise) override {
+    ASSERT_TRUE(block_id == basechain_->get_block_id());
+    if (hold_) {
+      held_.push_back(std::move(promise));
+    } else {
+      promise.set_value(td::Ref<ShardState>{basechain_});
+    }
+  }
+  td::actor::Task<ExtMessagePool::CheckResult> regular(td::BufferSlice message) {
+    co_return co_await td::actor::ask(ext_message_pool_, &ExtMessagePool::check_add_external_message,
+                                      std::move(message), 0, false, td::optional<PublicKeyHash>{});
+  }
+  size_t held() {
+    return held_.size();
+  }
+  td::actor::Task<ExtMessagePool::MetricsSnapshot> pool_snapshot() {
+    co_return co_await td::actor::ask(ext_message_pool_, &ExtMessagePool::get_metrics_snapshot);
+  }
+  td::actor::Task<> replace_checkers() {
+    td::Ref<ExtMessagePoolOptions> pool_options{true};
+    pool_options.write().num_regular_checkers = 0;
+    pool_options.write().num_priority_checkers = 1;
+    pool_options.write().local_ls_message_priority = 1;
+    opts_.write().set_ext_message_pool_options(pool_options);
+    co_await td::actor::ask(ext_message_pool_, &ExtMessagePool::update_options, opts_);
+    co_return td::Unit{};
+  }
+  void release_regular() {
+    hold_ = false;
+    for (auto& promise : held_) {
+      promise.set_error(td::Status::Error(ErrorCode::cancelled, "regular lookup released"));
+    }
+    held_.clear();
+  }
+
+ private:
+  td::Ref<ShardState> basechain_;
+  bool hold_ = true;
+  std::vector<td::Promise<td::Ref<ShardState>>> held_;
+};
+
+namespace {
+
+td::BufferSlice generated_message(WorkchainId workchain, const StdSmcAddress& destination) {
+  auto message = vm::CellBuilder()
+                     .store_long(2, 2)
+                     .store_zeroes(2)
+                     .store_long(2, 2)
+                     .store_zeroes(1)
+                     .store_long(workchain, 8)
+                     .store_bits(destination.cbits(), 256)
+                     .store_zeroes(4 + 1 + 1)
+                     .store_long(0, 8)
+                     .store_long(200000, 32)
+                     .store_long(5, 32)
+                     .finalize();
+  auto encoded = vm::std_boc_serialize(message);
+  ASSERT_TRUE(encoded.is_ok());
+  return encoded.move_as_ok();
+}
+
+TEST(GeneratedExternalChecker, LocalPriorityAdmittedWhileRegularLaneIsSaturated) {
+  ASSERT_TRUE(vm::init_vm().is_ok());
+  auto states = generated_states();
+  auto options = ValidatorManagerOptions::create(BlockIdExt{}, BlockIdExt{});
+  td::Ref<ExtMessagePoolOptions> pool_options{true};
+  pool_options.write().num_regular_checkers = 1;
+  pool_options.write().num_priority_checkers = 1;
+  pool_options.write().local_ls_message_priority = 1;
+  options.write().set_ext_message_pool_options(pool_options);
+  td::actor::TestScheduler scheduler;
+  scheduler.run([&]() -> td::actor::Task<> {
+    auto manager = td::actor::create_actor<ExtMessagePriorityTestHarness>("priority-manager", options);
+    co_await td::actor::ask(manager, &ExtMessagePriorityTestHarness::initialize, states.masterchain, states.basechain);
+    std::vector<td::actor::StartedTask<td::Result<ExtMessagePool::CheckResult>>> regular;
+    for (unsigned i = 0; i < 9; ++i) {
+      regular.push_back(wrap_started(td::actor::ask(manager, &ExtMessagePriorityTestHarness::regular,
+                                                    generated_message(basechainId, states.destination)))
+                            .start());
+    }
+    co_await scheduler.wait_sync_work();
+    EXPECT_EQ(co_await td::actor::ask(manager, &ExtMessagePriorityTestHarness::held), 8u);
+    for (auto& pending : regular) {
+      EXPECT(!pending.await_ready());
+    }
+    auto priority = wrap_started(td::actor::ask(manager, &ValidatorManager::new_external_message_query,
+                                                generated_message(masterchainId, states.destination),
+                                                td::optional<PublicKeyHash>{}))
+                        .start();
+    co_await scheduler.wait_sync_work();
+    ASSERT_TRUE(priority.await_ready());
+    auto result = co_await std::move(priority);
+    ASSERT_TRUE(result.is_ok());
+    EXPECT_EQ(co_await td::actor::ask(manager, &ExtMessagePriorityTestHarness::held), 8u);
+    EXPECT(!regular.back().await_ready());
+    auto snapshot = co_await td::actor::ask(manager, &ExtMessagePriorityTestHarness::pool_snapshot);
+    EXPECT_EQ(snapshot.check_ok, 1u);
+    co_await td::actor::ask(manager, &ExtMessagePriorityTestHarness::release_regular);
+    for (size_t i = 0; i < regular.size(); ++i) {
+      auto completed = co_await std::move(regular[i]);
+      EXPECT_EQ(completed.is_ok(), i == 8);
+    }
+    co_return td::Unit{};
+  });
+}
+
+TEST(GeneratedExternalChecker, OldCompletionsDoNotConsumeReplacementCheckerSlots) {
+  ASSERT_TRUE(vm::init_vm().is_ok());
+  auto states = generated_states();
+  auto options = ValidatorManagerOptions::create(BlockIdExt{}, BlockIdExt{});
+  td::Ref<ExtMessagePoolOptions> pool_options{true};
+  pool_options.write().num_regular_checkers = 1;
+  options.write().set_ext_message_pool_options(pool_options);
+  td::actor::TestScheduler scheduler;
+  scheduler.run([&]() -> td::actor::Task<> {
+    auto manager = td::actor::create_actor<ExtMessagePriorityTestHarness>("replacement-manager", options);
+    co_await td::actor::ask(manager, &ExtMessagePriorityTestHarness::initialize, states.masterchain, states.basechain);
+    std::vector<td::actor::StartedTask<td::Result<ExtMessagePool::CheckResult>>> regular;
+    for (unsigned i = 0; i < 8; ++i) {
+      regular.push_back(wrap_started(td::actor::ask(manager, &ExtMessagePriorityTestHarness::regular,
+                                                    generated_message(basechainId, states.destination)))
+                            .start());
+    }
+    co_await scheduler.wait_sync_work();
+    ASSERT_EQ(co_await td::actor::ask(manager, &ExtMessagePriorityTestHarness::held), 8u);
+    co_await td::actor::ask(manager, &ExtMessagePriorityTestHarness::replace_checkers);
+    co_await td::actor::ask(manager, &ExtMessagePriorityTestHarness::release_regular);
+    for (auto& pending : regular) {
+      auto result = co_await std::move(pending);
+      EXPECT(result.is_error());
+    }
+    auto priority = wrap_started(td::actor::ask(manager, &ValidatorManager::new_external_message_query,
+                                                generated_message(masterchainId, states.destination),
+                                                td::optional<PublicKeyHash>{}))
+                        .start();
+    co_await scheduler.wait_sync_work();
+    ASSERT_TRUE(priority.await_ready());
+    auto result = co_await std::move(priority);
+    ASSERT_TRUE(result.is_ok());
+    co_return td::Unit{};
+  });
+}
+
+TEST(GeneratedExternalChecker, AdmissionAcceptsComputeButExecutionRejectsInvalidAction) {
+  ASSERT_TRUE(vm::init_vm().is_ok());
+  auto states = generated_states("admission-action-probe.boc");
+  auto config =
+      block::ConfigInfo::extract_config(states.masterchain->root_cell(), states.masterchain->get_block_id(), 0xFFFF);
+  ASSERT_TRUE(config.is_ok());
+  block::gen::ShardStateUnsplit::Record shard;
+  ASSERT_TRUE(tlb::unpack_cell(states.masterchain->root_cell(), shard));
+  vm::AugmentedDictionary accounts{vm::load_cell_slice_ref(shard.accounts), 256, block::tlb::aug_ShardAccounts};
+  auto unpack = [&]() {
+    auto account = std::make_unique<block::Account>(masterchainId, states.destination.cbits());
+    ASSERT_TRUE(account->unpack(accounts.lookup(states.destination), shard.gen_utime, false));
+    account->block_lt = shard.gen_lt;
+    return account;
+  };
+  auto execution = ExtMessageQ::ExecutionConfig::create(*config.ok(), masterchainId, shard.gen_utime, false);
+  ASSERT_TRUE(execution.is_ok());
+  auto message = vm::std_boc_deserialize(generated_message(masterchainId, states.destination));
+  ASSERT_TRUE(message.is_ok());
+  auto account = unpack();
+  auto admitted = ExtMessageQ::run_message_on_account(masterchainId, account.get(), shard.gen_utime, shard.gen_lt + 1,
+                                                      message.ok(), *execution.ok());
+  ASSERT_TRUE(admitted.is_ok());
+  // Exercise the unchanged full transaction path with ordinary execution semantics.
+  execution.ok()->compute_phase_cfg.stop_on_accept_message = false;
+  account = unpack();
+  auto transaction = Collator::impl_create_ordinary_transaction(
+      message.ok(), account.get(), shard.gen_utime, shard.gen_lt + 1, &execution.ok()->storage_phase_cfg,
+      &execution.ok()->compute_phase_cfg, &execution.ok()->action_phase_cfg, &execution.ok()->serialize_config, true,
+      shard.gen_lt + 1);
+  ASSERT_TRUE(transaction.is_ok());
+  ASSERT_TRUE(transaction.ok()->compute_phase != nullptr);
+  EXPECT(transaction.ok()->compute_phase->accepted);
+  EXPECT(transaction.ok()->compute_phase->success);
+  ASSERT_TRUE(transaction.ok()->action_phase != nullptr);
+  EXPECT(!transaction.ok()->action_phase->success);
+  EXPECT_EQ(transaction.ok()->action_phase->result_code, 34);
 }
 
 class GeneratedCheckerManager final : public ValidatorManagerImpl {
@@ -237,7 +442,8 @@ void exercise_generated_checker(WorkchainId workchain, unsigned operation, bool 
     }
     EXPECT(result.is_ok() == accepted);
     if (!accepted && result.is_error()) {
-      EXPECT(result.error().message().str().find("External message was not accepted") != std::string::npos);
+      EXPECT_EQ(result.error().code(), -701);
+      EXPECT(result.error().message().str().find("inbound external message rejected") != std::string::npos);
       EXPECT(result.error().message().str().find("gas_used=0") != std::string::npos);
       EXPECT(result.error().message().str().find("steps=0,") == std::string::npos);
     }

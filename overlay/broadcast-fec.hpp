@@ -83,6 +83,10 @@ class BroadcastsFec {
   // production admission wiring (not just the predicate) is covered. Defined
   // where BroadcastFec is a complete type.
   void inject_in_flight_for_test(Overlay::BroadcastHash hash, td::uint32 date);
+  // A finished broadcast holding a real encoder for `data`, as after a successful decode, so the
+  // short-part path can be driven without assembling parts first.
+  void inject_ready_for_test(Overlay::BroadcastHash hash, td::uint32 date, td::BufferSlice data);
+  td::uint32 symbols_count_for_test(Overlay::BroadcastHash hash) const;
   size_t in_flight_count_for_test() const;
   size_t capacity_for_test() const;
   td::Status try_process_fresh_for_test(OverlayImpl *overlay, Overlay::BroadcastHash hash, bool is_ours);

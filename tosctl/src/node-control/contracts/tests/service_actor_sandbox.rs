@@ -29,11 +29,16 @@ use chain_block::{
     BuilderData, Cell, Deserializable, IBitstring, MsgAddressInt, Serializable, SliceData,
     StateInit,
 };
+use contracts::service_actor::protocol_constants::{
+    ADMISSION_GAS_ALLOWANCE, MINIMUM_OPERATING_RESERVE, PAYOUT_GAS_ALLOWANCE,
+};
 use contracts::{ServiceActorContract, ServiceActorData, ServiceActorInit};
 use ed25519_dalek::{Signer, SigningKey};
 use tos_sandbox::{Blockchain, MessageBuilder, SendResult, Treasury};
 use tos_vm::stack::StackItem;
 
+#[path = "fixtures/current_network.rs"]
+mod current_network;
 mod weak_ed25519;
 
 const TOS: u64 = 1_000_000_000;
@@ -67,6 +72,8 @@ const ERR_REQUEST_NOT_LIVE: i32 = 1920;
 const ERR_INSUFFICIENT_BALANCE: i32 = 1921;
 const ERR_NOT_AUTHORIZED: i32 = 1923;
 const ERR_RATE_LIMITED: i32 = 1924;
+const ERR_OPERATING_RESERVE_UNFUNDED: i32 = 1928;
+const ERR_INSUFFICIENT_EXECUTION_PAYMENT: i32 = 1929;
 
 struct Fixture {
     bc: Blockchain,
@@ -88,7 +95,8 @@ impl Fixture {
     }
 
     fn build(attestor_pubkey: Option<[u8; 32]>) -> Self {
-        let mut bc = Blockchain::new().expect("blockchain");
+        let mut bc =
+            Blockchain::with_global_version(current_network::global_version()).expect("blockchain");
         // The sandbox config has no basechain workchain descriptor, so run
         // everything in the masterchain where outbound sends are permitted.
         bc.set_workchain(-1);
@@ -129,7 +137,54 @@ impl Fixture {
 
     fn send_from_with_value(&mut self, from: &MsgAddressInt, body: Cell, value: u64) -> SendResult {
         let msg = MessageBuilder::internal(from, &self.service, value).body(body).build();
-        self.bc.send_message(msg).expect("send")
+        self.send_with_optional_trace(msg)
+    }
+
+    /// Preserve the real executor inputs and outputs for production-engine replay.
+    /// Recording is opt-in so ordinary sandbox runs create no files.
+    fn send_with_optional_trace(&mut self, msg: chain_block::Message) -> SendResult {
+        use chain_block::{HashmapType, ShardAccount, UInt256, base64_encode, write_boc};
+
+        let boc = |cell: Cell| base64_encode(write_boc(&cell).expect("trace BOC"));
+        let trace = std::env::var_os("SERVICE_ACTOR_TRACE_DIR").map(|dir| {
+            let account = self.bc.get_account(&self.service).expect("service before transaction");
+            let shard =
+                ShardAccount::with_params(account, UInt256::default(), 0).expect("trace pre-state");
+            let config = HashmapType::data(&self.bc.config_params().config_params)
+                .cloned()
+                .expect("trace configuration");
+            (dir, boc(config), boc(shard.serialize().unwrap()), boc(msg.serialize().unwrap()))
+        });
+        let result = self.bc.send_message(msg).expect("send");
+        if let Some((dir, config, shard_account, message)) = trace {
+            assert_eq!(
+                result.transactions_for(&self.service).len(),
+                1,
+                "native trace requires one service transaction per cascade"
+            );
+            let tx = result.first_transaction().expect("service transaction");
+            let after = self.bc.get_account(&self.service).expect("service after transaction");
+            let shard_after =
+                ShardAccount::with_params(after, UInt256::default(), 0).expect("trace post-state");
+            let record = serde_json::json!({
+                "unixtime": self.bc.now(),
+                "lt": tx.logical_time().to_string(),
+                "config": config,
+                "shard_account": shard_account,
+                "message": message,
+                "rust_transaction": boc(tx.serialize().unwrap()),
+                "shard_account_after": boc(shard_after.serialize().unwrap()),
+            });
+            let thread = std::thread::current();
+            let test = thread.name().unwrap_or("unnamed").replace("::", "-");
+            let dir = std::path::PathBuf::from(dir).join(test);
+            std::fs::create_dir_all(&dir).expect("trace directory");
+            static NEXT_TRACE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let index = NEXT_TRACE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            std::fs::write(dir.join(format!("{index:04}.json")), record.to_string())
+                .expect("trace record");
+        }
+        result
     }
 
     /// Sends a message with the `bounced` header flag set -- simulating an
@@ -290,6 +345,68 @@ fn address_slice(addr: &MsgAddressInt) -> chain_block::SliceData {
     use chain_block::Serializable;
     let cell = addr.write_to_new_cell().unwrap().into_cell().unwrap();
     chain_block::SliceData::load_cell(cell).unwrap()
+}
+
+/// Inspect the service's own output messages, before recipient execution fees.
+fn service_outputs(result: &SendResult) -> Vec<(MsgAddressInt, u64)> {
+    let mut outputs = Vec::new();
+    result
+        .first_transaction()
+        .expect("service transaction")
+        .iterate_out_msgs(|message| {
+            outputs.push((
+                message.dst().expect("internal destination"),
+                message.get_value().expect("internal value").coins.as_u64().expect("u64 value"),
+            ));
+            Ok(true)
+        })
+        .expect("outgoing messages");
+    outputs
+}
+
+fn execution_fees(result: &SendResult) -> u64 {
+    let description = result.read_primary_description();
+    let chain_block::TrComputePhase::Vm(vm) = description.compute_ph else {
+        panic!("expected VM computation");
+    };
+    vm.gas_fees
+        .as_u64()
+        .unwrap()
+        .checked_add(description.action.expect("action phase").total_fwd_fees().as_u64().unwrap())
+        .unwrap()
+}
+
+fn storage_fees(result: &SendResult) -> u64 {
+    result
+        .read_primary_description()
+        .storage_ph
+        .map(|phase| phase.storage_fees_collected.as_u64().unwrap())
+        .unwrap_or(0)
+}
+
+fn expect_payment_and_change(
+    result: &SendResult,
+    destination: &MsgAddressInt,
+    payer: &MsgAddressInt,
+    principal: u64,
+    budget: u64,
+) {
+    result.expect_success().expect_exit_code(0);
+    let outputs = service_outputs(result);
+    let change = if principal > 0 {
+        assert_eq!(outputs.len(), 2, "principal and change have distinct messages");
+        assert_eq!(outputs[0], (destination.clone(), principal), "principal is paid in full");
+        &outputs[1]
+    } else {
+        assert_eq!(outputs.len(), 1, "zero principal returns only the execution change");
+        &outputs[0]
+    };
+    assert_eq!(change.0, *payer, "unused execution funding belongs to its sender");
+    assert_eq!(
+        change.1,
+        budget.checked_sub(execution_fees(result)).unwrap(),
+        "only this operation's execution and forwarding fees reduce change"
+    );
 }
 
 /// Rebuild only the scalar prefix of Service Actor data while preserving all
@@ -455,19 +572,19 @@ fn overpayment_above_price_plus_storage_fee_is_refunded_at_call_time() {
     let outsider_before = f.balance(&outsider);
     let owed = f.init.price_per_call + f.init.storage_fee;
     // Overpay by 1 TOS beyond what's owed.
-    f.send_from_with_value(
+    let result = f.send_from_with_value(
         &outsider,
         ServiceActorContract::call(1, [0xAA; 32], f.terms()).unwrap(),
         owed + TOS,
-    )
-    .expect_success();
+    );
+    result.expect_success();
     let data = f.data();
     assert_eq!(data.pending_liability, f.init.price_per_call, "only the quoted price is owed");
     assert_eq!(data.locked_storage_fees, f.init.storage_fee, "only the quoted storage fee is owed");
     let delta = f.balance(&outsider) - outsider_before;
     assert!(
-        delta > TOS - TOS / 100 && delta <= TOS,
-        "expected close to the 1 TOS overpayment refunded, got {delta}"
+        delta > TOS.checked_sub(ADMISSION_GAS_ALLOWANCE).unwrap() && delta < TOS,
+        "the caller receives unused execution funding after fees, got {delta}"
     );
 }
 
@@ -528,7 +645,8 @@ fn deploy_with_out_of_bounds_policy_is_rejected_at_call_time() {
     // just the tooling, rejects the first call rather than silently admitting
     // requests under a policy with e.g. zero incentive to ever sweep an
     // expired entry.
-    let mut bc = Blockchain::new().expect("blockchain");
+    let mut bc =
+        Blockchain::with_global_version(current_network::global_version()).expect("blockchain");
     bc.set_workchain(-1);
     let owner = bc.treasury("bad-deploy-owner", 100 * TOS).unwrap();
     let caller = bc.treasury("bad-deploy-caller", 100 * TOS).unwrap();
@@ -584,7 +702,8 @@ fn deploy_with_out_of_bounds_policy_is_rejected_at_call_time() {
 
 #[test]
 fn request_id_overflow_is_rejected_without_mutating_state() {
-    let mut bc = Blockchain::new().expect("blockchain");
+    let mut bc =
+        Blockchain::with_global_version(current_network::global_version()).expect("blockchain");
     bc.set_workchain(-1);
     let owner = bc.treasury("overflow-owner", 100 * TOS).unwrap();
     let caller = bc.treasury("overflow-caller", 100 * TOS).unwrap();
@@ -630,7 +749,8 @@ fn request_id_overflow_is_rejected_without_mutating_state() {
 
 #[test]
 fn global_live_capacity_is_enforced_by_the_shipped_bytecode() {
-    let mut bc = Blockchain::new().expect("blockchain");
+    let mut bc =
+        Blockchain::with_global_version(current_network::global_version()).expect("blockchain");
     bc.set_workchain(-1);
     let owner = bc.treasury("global-cap-owner", 100 * TOS).unwrap();
     let caller = bc.treasury("global-cap-caller", 100 * TOS).unwrap();
@@ -794,10 +914,8 @@ fn claim_refund_boundary_is_exact() {
     let refund = f.refund(0).unwrap();
 
     f.bc.set_now((refund.refund_claim_deadline - 1) as u32);
-    let caller_before = f.balance(&caller);
-    f.claim_refund(&caller, 3, 0, &caller).expect_success();
-    let delta = f.balance(&caller) - caller_before;
-    assert!(delta > f.init.price_per_call - TOS / 100 && delta <= f.init.price_per_call);
+    let result = f.claim_refund(&caller, 3, 0, &caller);
+    expect_payment_and_change(&result, &caller, &caller, f.init.price_per_call, TOS / 2);
 
     // A second request to check the exact-deadline rejection in isolation.
     f.call(&caller, 4, [0xBB; 32]).expect_success(); // request 1
@@ -845,8 +963,8 @@ fn sweep_works_directly_against_a_never_expired_pending_request() {
     // Nobody ever calls expire(): the entry sits in pending_requests past
     // both deadlines.
     f.bc.set_now(request.refund_claim_deadline as u32);
-    let outsider_before = f.balance(&outsider);
-    f.sweep(&outsider, 2, 0).expect_success();
+    let result = f.sweep(&outsider, 2, 0);
+    expect_payment_and_change(&result, &outsider, &outsider, f.init.cleanup_bounty, TOS / 2);
 
     assert!(f.request(0).is_none(), "sweep must clean up a still-pending entry directly");
     assert!(f.refund(0).is_none());
@@ -858,11 +976,6 @@ fn sweep_works_directly_against_a_never_expired_pending_request() {
     assert_eq!(
         data.withdrawable_revenue,
         f.init.price_per_call + f.init.storage_fee - f.init.cleanup_bounty
-    );
-    let delta = f.balance(&outsider) - outsider_before;
-    assert!(
-        delta > f.init.cleanup_bounty - TOS / 100 && delta <= f.init.cleanup_bounty,
-        "sweeper must receive the cleanup bounty, got {delta}"
     );
 }
 
@@ -878,8 +991,8 @@ fn sweep_works_against_a_properly_expired_refund_entry() {
     let refund = f.refund(0).unwrap();
 
     f.bc.set_now(refund.refund_claim_deadline as u32);
-    let outsider_before = f.balance(&outsider);
-    f.sweep(&outsider, 3, 0).expect_success();
+    let result = f.sweep(&outsider, 3, 0);
+    expect_payment_and_change(&result, &outsider, &outsider, f.init.cleanup_bounty, TOS / 2);
 
     assert!(f.refund(0).is_none());
     let data = f.data();
@@ -889,8 +1002,6 @@ fn sweep_works_against_a_properly_expired_refund_entry() {
         data.withdrawable_revenue,
         f.init.price_per_call + f.init.storage_fee - f.init.cleanup_bounty
     );
-    let delta = f.balance(&outsider) - outsider_before;
-    assert!(delta > f.init.cleanup_bounty - TOS / 100 && delta <= f.init.cleanup_bounty);
 }
 
 #[test]
@@ -1174,116 +1285,22 @@ fn revoke_attestor_is_never_frozen_by_a_pending_request() {
 
 #[test]
 fn claim_refund_is_rejected_atomically_when_the_contract_cannot_afford_it() {
-    // Reaching this specific failure mode through the normal call/expire
-    // flow alone is structurally hard: `call` always collects `storage_fee`
-    // (>= MINIMUM_STORAGE_FEE) alongside `price` into the contract's own
-    // balance, and `withdraw_revenue` is independently capped to never take
-    // `get_balance()` below `pending_liability + refundable_liability +
-    // MINIMUM_OPERATING_RESERVE` -- so by construction the balance backing a
-    // live refund is always >= its own price, except for one avenue the
-    // design doc calls out explicitly: passive TVM storage-rent accrual,
-    // charged lazily and independently of any nominal counter. This test
-    // uses the maximum `refund_claim_window` (30 days) to let real elapsed
-    // time actually erode the balance below `price` while staying just
-    // inside the still-open claim window, rather than faking the shortfall.
-    let mut bc = Blockchain::new().expect("blockchain");
-    bc.set_workchain(-1);
-    let owner = bc.treasury("owner", 10_000 * TOS).expect("owner");
-    let caller = bc.treasury("caller", 10_000 * TOS).expect("caller");
-    let init = ServiceActorInit {
-        owner: owner.address().clone(),
-        authorized_caller: None,
-        open_access: true,
-        price_per_call: 2 * TOS,
-        storage_fee: MIN_STORAGE_FEE + MIN_CLEANUP_BOUNTY,
-        cleanup_bounty: MIN_CLEANUP_BOUNTY,
-        rate_limit_per_day: 0,
-        response_sla: MIN_RESPONSE_SLA,
-        refund_claim_window: 2_592_000, // MAX_REFUND_CLAIM_WINDOW: 30 days
-        metadata_hash: [0x11; 32],
-        proof_scheme_hash: [0x22; 32],
-        attestor_pubkey: None,
-    };
-    let service = ServiceActorContract::calculate_address(-1, &init).expect("address");
-    let state_init = ServiceActorContract::build_state_init(&init).expect("state init");
-    // Thin deploy funding: just enough to exist, most of the eventual
-    // balance comes from the call itself.
-    let deploy = MessageBuilder::internal(owner.address(), &service, TOS / 10)
-        .bounce(false)
-        .state_init(state_init)
-        .body(Cell::default())
-        .build();
-    bc.send_message(deploy).expect("deploy").expect_success();
-
-    let owed = init.price_per_call + init.storage_fee;
-    let call_msg = MessageBuilder::internal(caller.address(), &service, owed)
-        .body(
-            ServiceActorContract::call(
-                1,
-                [0xAA; 32],
-                ServiceActorContract::terms_hash_of_init(&init).unwrap(),
-            )
-            .unwrap(),
-        )
-        .build();
-    bc.send_message(call_msg).expect("call").expect_success();
-
-    let stack = bc
-        .run_get_method(&service, "get_request", vec![StackItem::int(0)])
-        .expect("get_request")
-        .expect_success()
-        .stack
-        .clone();
-    let request = ServiceActorContract::decode_request(
-        &common::tvm_stack_parser::TvmStackParser::new(stack_to_entries(&stack)),
+    let mut f = Fixture::new();
+    let caller = f.caller.address().clone();
+    f.call(&caller, 1, [0xAA; 32]).expect_success();
+    f.bc.set_now(f.request(0).unwrap().response_deadline as u32);
+    f.send_from(&caller, ServiceActorContract::expire(2, 0).unwrap()).expect_success();
+    // Model an already rent-eroded account without admitting new work while
+    // underfunded. The claim must survive even when its own price is unbacked.
+    f.set_balance(1);
+    f.send_from_with_value(
+        &caller,
+        ServiceActorContract::claim_refund(3, 0, &caller).unwrap(),
+        TOS / 20,
     )
-    .expect("decode_request")
-    .expect("request 0 must exist");
-
-    bc.set_now(request.response_deadline as u32);
-    let expire_msg = MessageBuilder::internal(caller.address(), &service, TOS / 2)
-        .body(ServiceActorContract::expire(2, 0).unwrap())
-        .build();
-    bc.send_message(expire_msg).expect("expire").expect_success();
-    let refund_claim_deadline = request.refund_claim_deadline;
-
-    // Sit just inside the still-open 30-day claim window and poke the
-    // account once so lazily-accrued storage rent is actually collected
-    // before we read the balance and attempt the claim.
-    bc.set_now(refund_claim_deadline as u32 - 1);
-    let poke_msg =
-        MessageBuilder::internal(caller.address(), &service, 1).body(Cell::default()).build();
-    let _ = bc.send_message(poke_msg);
-
-    let balance_before_claim = bc
-        .get_account(&service)
-        .and_then(|a| a.balance().and_then(|c| c.coins.as_u64()))
-        .unwrap_or(0);
-    assert!(
-        balance_before_claim < init.price_per_call,
-        "test setup must actually erode the balance below `price` via elapsed storage rent, \
-         got balance={balance_before_claim} price={}",
-        init.price_per_call
-    );
-
-    let claim_msg = MessageBuilder::internal(caller.address(), &service, TOS / 2)
-        .body(ServiceActorContract::claim_refund(3, 0, caller.address()).unwrap())
-        .build();
-    let result = bc.send_message(claim_msg).expect("claim_refund attempt");
-    result.expect_aborted().expect_exit_code(ERR_INSUFFICIENT_BALANCE);
-
-    // The refund entry must be untouched and retryable.
-    let stack = bc
-        .run_get_method(&service, "get_refund", vec![StackItem::int(0)])
-        .expect("get_refund")
-        .expect_success()
-        .stack
-        .clone();
-    let refund = ServiceActorContract::decode_refund(
-        &common::tvm_stack_parser::TvmStackParser::new(stack_to_entries(&stack)),
-    )
-    .expect("decode_refund");
-    assert!(refund.is_some(), "the refund entry must survive a failed claim attempt untouched");
+    .expect_aborted()
+    .expect_exit_code(ERR_INSUFFICIENT_BALANCE);
+    assert!(f.refund(0).is_some());
 }
 
 #[test]
@@ -1363,13 +1380,10 @@ fn withdraw_revenue_is_capped_by_real_balance_not_only_the_counter() {
         "a rejected withdrawal must not touch the counter"
     );
 
-    let owner_before = f.balance(&owner);
     // A modest, clearly-affordable withdrawal must succeed.
     let modest = earned / 2;
-    f.send_from(&owner, ServiceActorContract::withdraw_revenue(4, modest).unwrap())
-        .expect_success();
-    let delta = f.balance(&owner) - owner_before;
-    assert!(delta > modest - TOS / 100 && delta <= modest);
+    let result = f.send_from(&owner, ServiceActorContract::withdraw_revenue(4, modest).unwrap());
+    expect_payment_and_change(&result, &owner, &owner, modest, TOS / 2);
     assert_eq!(f.data().withdrawable_revenue, earned - modest);
 }
 
@@ -1445,7 +1459,8 @@ fn call_beyond_the_per_caller_capacity_limit_is_rejected() {
 
 #[test]
 fn restricted_access_and_daily_rate_limit_match_the_compiled_bytecode() {
-    let mut bc = Blockchain::new().expect("blockchain");
+    let mut bc =
+        Blockchain::with_global_version(current_network::global_version()).expect("blockchain");
     bc.set_workchain(-1);
     let owner = bc.treasury("owner", 10_000 * TOS).expect("owner");
     let caller = bc.treasury("caller", 10_000 * TOS).expect("caller");
@@ -1474,8 +1489,9 @@ fn restricted_access_and_daily_rate_limit_match_the_compiled_bytecode() {
         .build();
     bc.send_message(deploy).expect("deploy").expect_success();
 
-    let owed = init.price_per_call + init.storage_fee;
-    let outsider_call = MessageBuilder::internal(outsider.address(), &service, owed)
+    let funding = ServiceActorContract::minimum_call_payment(init.price_per_call, init.storage_fee)
+        .expect("funded call");
+    let outsider_call = MessageBuilder::internal(outsider.address(), &service, funding)
         .body(
             ServiceActorContract::call(
                 1,
@@ -1493,7 +1509,7 @@ fn restricted_access_and_daily_rate_limit_match_the_compiled_bytecode() {
     // The authorized caller succeeds twice, up to rate_limit_per_day. Both
     // stay concurrently pending -- this design allows that.
     for (i, hash) in [[0xBBu8; 32], [0xCCu8; 32]].into_iter().enumerate() {
-        let msg = MessageBuilder::internal(caller.address(), &service, owed)
+        let msg = MessageBuilder::internal(caller.address(), &service, funding)
             .body(
                 ServiceActorContract::call(
                     2 + i as u64,
@@ -1523,7 +1539,7 @@ fn restricted_access_and_daily_rate_limit_match_the_compiled_bytecode() {
     assert_eq!(data.pending_count, 2);
 
     // A third call, same day, is rejected -- and must not mutate state.
-    let call3 = MessageBuilder::internal(caller.address(), &service, owed)
+    let call3 = MessageBuilder::internal(caller.address(), &service, funding)
         .body(
             ServiceActorContract::call(
                 4,
@@ -1894,15 +1910,16 @@ fn a_call_quoted_under_one_policy_is_refused_under_another() {
 }
 
 /// The owner's withdrawal cap keeps the storage fees locked for live entries
-/// in the contract. Call-path gas, overpayment forwarding fees and storage rent
-/// all erode the balance without being booked anywhere; the test uses rent,
+/// in the contract. Storage rent erodes backing; successful calls separately
+/// fund their own execution. The test uses rent,
 /// letting it accrue until the balance no longer covers pending +
 /// refundable + locked + reserve + revenue, then shows the nominal revenue is
 /// refused while the amount that leaves the locked fees intact is paid.
 #[test]
 fn withdraw_revenue_never_takes_the_storage_fees_locked_for_live_entries() {
     const RESERVE: u64 = TOS; // MINIMUM_OPERATING_RESERVE in the contract
-    let mut bc = Blockchain::new().expect("blockchain");
+    let mut bc =
+        Blockchain::with_global_version(current_network::global_version()).expect("blockchain");
     bc.set_workchain(-1);
     let owner = bc.treasury("owner", 10_000 * TOS).expect("owner");
     let caller = bc.treasury("caller", 10_000 * TOS).expect("caller");
@@ -1998,9 +2015,9 @@ fn withdraw_revenue_never_takes_the_storage_fees_locked_for_live_entries() {
     // (The refused message's own value stayed in the contract, so the cap may
     // have moved up by it since.)
     let balance = f.balance(&f.service);
-    let affordable = (balance + probe_value).saturating_sub(floor_with_locked(&f)).min(revenue);
+    let affordable = balance.checked_sub(floor_with_locked(&f)).unwrap().min(revenue);
     assert!(affordable > 0, "nothing affordable at balance {balance}");
-    let withdraw = MessageBuilder::internal(&owner, &f.service, probe_value)
+    let withdraw = MessageBuilder::internal(&owner, &f.service, PAYOUT_GAS_ALLOWANCE)
         .bounce(false)
         .body(ServiceActorContract::withdraw_revenue(q, affordable).unwrap())
         .build();
@@ -2180,13 +2197,20 @@ fn tos(amount: u128) -> u128 {
 fn a_call_that_would_push_a_liability_past_the_coin_bound_is_refused_before_any_state_change() {
     let price = u128::from(Fixture::new().init.price_per_call);
 
-    // Positive control: the sum lands exactly on the largest value a Coins
-    // field holds, so the call is admitted and the counter reads back exactly.
+    // Positive control near the Coins bound, with the remaining locked fee,
+    // operating reserve and execution fees backed by an equally large balance.
+    // A liability at MAX_COINS itself cannot coexist with those obligations.
     let mut f = Fixture::new();
     let caller = f.caller.address().clone();
-    f.patch_accounting(|a| Accounting { pending_liability: coins_below_max(price), ..a });
+    let target = coins_below_max(u128::from(f.init.storage_fee) + 2 * u128::from(TOS));
+    f.patch_accounting(|a| Accounting { pending_liability: target - price, ..a });
+    let mut account = f.bc.get_account(&f.service).unwrap().clone();
+    account.set_balance(chain_block::CurrencyCollection::from_coins(coins(coins_below_max(
+        price + u128::from(f.init.storage_fee) + u128::from(CALL_GAS_MARGIN),
+    ))));
+    f.bc.set_account(f.service.clone(), account);
     f.call_from_init(&caller, 1, [0xAA; 32]).expect_success();
-    assert_eq!(f.coin_counter(PENDING_INDEX), MAX_COINS);
+    assert_eq!(f.coin_counter(PENDING_INDEX), target);
     assert_eq!(f.pending_count(), 1);
 
     // One more unit and the sum does not fit: refused with the range code
@@ -2334,4 +2358,918 @@ fn a_bounty_the_balance_cannot_pay_is_refused_as_insufficient_balance() {
     .expect_exit_code(ERR_INSUFFICIENT_BALANCE);
     assert_eq!(f.data_hash(), before);
     assert!(f.request(0).is_some(), "the entry stays live");
+}
+
+// Solvency tests execute compiled source; the equality test binds that source
+// to the deployed SDK artifact. A mutation runner supplies an alternate source
+// only to this fixture, so removal controls exercise the real action phase.
+fn solvency_code() -> Cell {
+    static CODE: std::sync::OnceLock<Cell> = std::sync::OnceLock::new();
+    CODE.get_or_init(|| {
+        let source = std::env::var("SERVICE_ACTOR_SOLVENCY_SOURCE").unwrap_or_else(|_| {
+            tos_sandbox::find_tos_root()
+                .expect("checkout root")
+                .join("crypto/smartcont/service-actor-code.fc")
+                .to_string_lossy()
+                .into_owned()
+        });
+        tos_sandbox::compile_func_with_stdlib(&[source]).expect("compile Service Actor")
+    })
+    .clone()
+}
+
+impl Fixture {
+    fn solvency() -> Self {
+        let mut f = Self::new();
+        let mut account = f.bc.get_account(&f.service).unwrap().clone();
+        assert!(account.set_code(solvency_code()));
+        f.bc.set_account(f.service.clone(), account);
+        f
+    }
+
+    fn set_balance(&mut self, balance: u64) {
+        let mut account = self.bc.get_account(&self.service).unwrap().clone();
+        account.set_balance(chain_block::CurrencyCollection::from(balance));
+        self.bc.set_account(self.service.clone(), account);
+    }
+
+    fn state_hash(&self) -> chain_block::UInt256 {
+        self.bc.get_account(&self.service).unwrap().get_data().unwrap().repr_hash()
+    }
+
+    fn floor(&self) -> u64 {
+        let d = self.data();
+        d.pending_liability
+            .checked_add(d.refundable_liability)
+            .unwrap()
+            .checked_add(d.locked_storage_fees)
+            .unwrap()
+            .checked_add(MINIMUM_OPERATING_RESERVE)
+            .unwrap()
+    }
+
+    fn no_bounce(&mut self, sender: &MsgAddressInt, value: u64, body: Cell) -> SendResult {
+        self.send_with_optional_trace(
+            MessageBuilder::internal(sender, &self.service, value).bounce(false).body(body).build(),
+        )
+    }
+}
+
+fn expect_solvency_action_failure(result: &SendResult) {
+    result.expect_aborted().expect_exit_code(0).expect_out_msgs(0);
+    let action = result.read_primary_description().action.unwrap();
+    assert!(!action.success);
+    assert_eq!(action.result_code, 37, "must fail for insufficient action-phase funds");
+}
+
+#[test]
+fn solvency_source_matches_embedded_code() {
+    assert_eq!(solvency_code().repr_hash(), ServiceActorContract::code().unwrap().repr_hash());
+}
+
+#[test]
+fn solvency_admission_requires_preexisting_reserve() {
+    let mut f = Fixture::solvency();
+    let caller = f.caller.address().clone();
+    f.set_balance(MINIMUM_OPERATING_RESERVE.checked_sub(1).unwrap());
+    let before = f.state_hash();
+    // Overpayment cannot stand in for the operator's independently funded reserve.
+    f.call(&caller, 1, [1; 32]).expect_aborted().expect_exit_code(ERR_OPERATING_RESERVE_UNFUNDED);
+    assert_eq!(f.state_hash(), before);
+    f.set_balance(2 * TOS);
+    f.call(&caller, 2, [1; 32]).expect_success();
+    assert!(f.balance(&f.service) >= f.floor());
+}
+
+#[test]
+fn solvency_admission_requires_existing_obligations() {
+    let mut f = Fixture::solvency();
+    let caller = f.caller.address().clone();
+    f.call(&caller, 1, [1; 32]).expect_success();
+    f.call(&caller, 2, [2; 32]).expect_success();
+    f.bc.set_now(f.request(0).unwrap().response_deadline as u32);
+    f.expire(&caller, 10, 0).expect_success();
+    assert!(f.data().pending_liability > 0 && f.data().refundable_liability > 0);
+    let floor = f.floor();
+    f.set_balance(floor.checked_sub(1).unwrap());
+    assert!(f.balance(&f.service) >= MINIMUM_OPERATING_RESERVE);
+    let before = f.state_hash();
+    f.call(&caller, 3, [3; 32]).expect_aborted().expect_exit_code(ERR_OPERATING_RESERVE_UNFUNDED);
+    assert_eq!(f.state_hash(), before);
+    f.set_balance(floor.checked_add(TOS).unwrap());
+    f.call(&caller, 4, [3; 32]).expect_success();
+    assert!(f.balance(&f.service) >= f.floor());
+}
+
+#[test]
+fn solvency_admission_requires_execution_budget() {
+    let mut f = Fixture::solvency();
+    let caller = f.caller.address().clone();
+    let principal = f.init.price_per_call.checked_add(f.init.storage_fee).unwrap();
+    let before = f.state_hash();
+    for budget in [0, ADMISSION_GAS_ALLOWANCE.checked_sub(1).unwrap()] {
+        let body = ServiceActorContract::call(1, [1; 32], f.terms()).unwrap();
+        f.send_from_with_value(&caller, body, principal.checked_add(budget).unwrap())
+            .expect_aborted()
+            .expect_exit_code(ERR_INSUFFICIENT_EXECUTION_PAYMENT);
+        assert_eq!(f.state_hash(), before, "underfunded call changed persistent state");
+    }
+    f.set_balance(MINIMUM_OPERATING_RESERVE);
+    let body = ServiceActorContract::call(1, [1; 32], f.terms()).unwrap();
+    let result =
+        f.no_bounce(&caller, principal.checked_add(ADMISSION_GAS_ALLOWANCE).unwrap(), body);
+    result.expect_success().expect_out_msgs(1);
+    assert_eq!(f.balance(&f.service), MINIMUM_OPERATING_RESERVE.checked_add(principal).unwrap());
+    assert_eq!(
+        service_outputs(&result),
+        vec![(caller, ADMISSION_GAS_ALLOWANCE.checked_sub(execution_fees(&result)).unwrap())]
+    );
+}
+
+#[test]
+fn solvency_admission_preserves_operator_excess() {
+    for bounce in [true, false] {
+        let mut f = Fixture::solvency();
+        let caller = f.caller.address().clone();
+        let principal = f.init.price_per_call.checked_add(f.init.storage_fee).unwrap();
+        // A finite deployment margin must survive arbitrarily many funded calls.
+        f.set_balance(MINIMUM_OPERATING_RESERVE.checked_add(TOS / 5).unwrap());
+        let excess = f.balance(&f.service).checked_sub(f.floor()).unwrap();
+        for id in 0..24 {
+            let before = f.balance(&f.service);
+            let budget =
+                ADMISSION_GAS_ALLOWANCE.checked_add(if id % 2 == 0 { 0 } else { TOS }).unwrap();
+            let body = ServiceActorContract::call(id, [1; 32], f.terms()).unwrap();
+            let result =
+                f.bc.send_message(
+                    MessageBuilder::internal(
+                        &caller,
+                        &f.service,
+                        principal.checked_add(budget).unwrap(),
+                    )
+                    .bounce(bounce)
+                    .body(body)
+                    .build(),
+                )
+                .unwrap();
+            result.expect_success().expect_out_msgs(1);
+            assert_eq!(storage_fees(&result), 0, "fixed-time admissions accrue no rent");
+            assert_eq!(
+                f.balance(&f.service),
+                before.checked_add(principal).unwrap(),
+                "successful admission spent preexisting backing"
+            );
+            assert_eq!(
+                f.balance(&f.service).checked_sub(f.floor()).unwrap(),
+                excess,
+                "successful admission eroded operator excess"
+            );
+            assert_eq!(
+                service_outputs(&result),
+                vec![(caller.clone(), budget.checked_sub(execution_fees(&result)).unwrap())]
+            );
+        }
+    }
+}
+
+#[test]
+fn solvency_exact_withdrawal_cap_cannot_spend_fee_backing() {
+    let mut f = Fixture::solvency();
+    let caller = f.caller.address().clone();
+    let owner = f.owner.address().clone();
+    f.call(&caller, 1, [1; 32]).expect_success();
+    f.call(&caller, 2, [2; 32]).expect_success();
+    f.respond(3, 0, [3; 32]).expect_success();
+    let amount = f.data().withdrawable_revenue;
+    f.set_balance(f.floor().checked_add(amount).unwrap().checked_sub(1).unwrap());
+    let before = f.state_hash();
+    let body = ServiceActorContract::withdraw_revenue(4, amount).unwrap();
+    // The transaction's fee budget cannot masquerade as withdrawable revenue.
+    f.send_from_with_value(&owner, body.clone(), TOS)
+        .expect_aborted()
+        .expect_exit_code(ERR_INSUFFICIENT_REVENUE);
+    assert_eq!(f.state_hash(), before, "failed withdrawal changed revenue");
+    f.set_balance(f.floor().checked_add(amount).unwrap());
+    let result = f.no_bounce(&owner, PAYOUT_GAS_ALLOWANCE, body);
+    expect_payment_and_change(&result, &owner, &owner, amount, PAYOUT_GAS_ALLOWANCE);
+    assert_eq!(f.balance(&f.service), f.floor(), "withdrawal spent protected backing");
+    assert_eq!(f.data().withdrawable_revenue, 0);
+}
+
+#[test]
+fn solvency_zero_withdrawal_at_floor_returns_execution_change() {
+    let mut f = Fixture::solvency();
+    let owner = f.owner.address().clone();
+    f.set_balance(f.floor());
+    let before = f.state_hash();
+    let result = f.no_bounce(
+        &owner,
+        PAYOUT_GAS_ALLOWANCE,
+        ServiceActorContract::withdraw_revenue(1, 0).unwrap(),
+    );
+    expect_payment_and_change(&result, &owner, &owner, 0, PAYOUT_GAS_ALLOWANCE);
+    assert_eq!(f.state_hash(), before);
+    assert_eq!(f.balance(&f.service), f.floor());
+}
+
+#[test]
+fn solvency_claim_preserves_other_entries_and_reserves_after_fees() {
+    let mut f = Fixture::solvency();
+    let caller = f.caller.address().clone();
+    for id in 0..3 {
+        f.call(&caller, id, [1; 32]).expect_success();
+    }
+    f.bc.set_now(f.request(0).unwrap().response_deadline as u32);
+    for id in 0..2 {
+        f.send_from(&caller, ServiceActorContract::expire(10 + id, id).unwrap()).expect_success();
+    }
+    let price = f.init.price_per_call;
+    let destination = f.outsider.address().clone();
+    let floor_after = f
+        .floor()
+        .checked_sub(MINIMUM_OPERATING_RESERVE)
+        .unwrap()
+        .checked_sub(price)
+        .unwrap()
+        .checked_sub(f.init.storage_fee)
+        .unwrap();
+    let body = ServiceActorContract::claim_refund(20, 0, &destination).unwrap();
+    let before = f.state_hash();
+    // Covers this price, but not every other customer's backing. A large
+    // execution payment cannot hide even a one-unit customer shortfall.
+    f.set_balance(floor_after.checked_add(price).unwrap().checked_sub(1).unwrap());
+    f.send_from_with_value(&caller, body.clone(), TOS)
+        .expect_aborted()
+        .expect_exit_code(ERR_INSUFFICIENT_BALANCE);
+    assert_eq!(f.state_hash(), before);
+    // Customer obligations are fully backed, with no operator buffer at all.
+    f.set_balance(floor_after.checked_add(price).unwrap());
+    let result = f.no_bounce(&caller, PAYOUT_GAS_ALLOWANCE, body);
+    expect_payment_and_change(&result, &destination, &caller, price, PAYOUT_GAS_ALLOWANCE);
+    assert_eq!(f.balance(&f.service), floor_after, "refund spent another customer's backing");
+    assert!(f.refund(0).is_none());
+    assert!(f.refund(1).is_some());
+    assert!(f.request(2).is_some());
+    assert_eq!(f.caller_live_count(&caller), 2);
+    f.call(&caller, 21, [3; 32]).expect_aborted().expect_exit_code(ERR_OPERATING_RESERVE_UNFUNDED);
+    let owner = f.owner.address().clone();
+    f.send_from(&owner, ServiceActorContract::withdraw_revenue(22, 0).unwrap())
+        .expect_aborted()
+        .expect_exit_code(ERR_INSUFFICIENT_REVENUE);
+}
+
+#[test]
+fn solvency_payouts_require_execution_budget() {
+    for operation in ["refund", "sweep", "withdrawal"] {
+        let mut f = Fixture::solvency();
+        let caller = f.caller.address().clone();
+        let owner = f.owner.address().clone();
+        f.call(&caller, 1, [1; 32]).expect_success();
+        let request = f.request(0).unwrap();
+        let (payer, body, principal) = match operation {
+            "refund" => {
+                f.bc.set_now(request.response_deadline as u32);
+                f.expire(&caller, 2, 0).expect_success();
+                (
+                    caller.clone(),
+                    ServiceActorContract::claim_refund(3, 0, &caller).unwrap(),
+                    request.price,
+                )
+            }
+            "sweep" => {
+                f.bc.set_now(request.refund_claim_deadline as u32);
+                (
+                    caller.clone(),
+                    ServiceActorContract::sweep_expired_request(3, 0).unwrap(),
+                    request.cleanup_bounty,
+                )
+            }
+            _ => {
+                f.respond(2, 0, [2; 32]).expect_success();
+                (
+                    owner,
+                    ServiceActorContract::withdraw_revenue(3, request.price).unwrap(),
+                    request.price,
+                )
+            }
+        };
+        let before = f.state_hash();
+        f.send_from_with_value(&payer, body.clone(), PAYOUT_GAS_ALLOWANCE.checked_sub(1).unwrap())
+            .expect_aborted()
+            .expect_exit_code(ERR_INSUFFICIENT_EXECUTION_PAYMENT);
+        assert_eq!(f.state_hash(), before, "underfunded payout consumed an entry");
+        let backing = f.balance(&f.service);
+        let result = f.no_bounce(&payer, PAYOUT_GAS_ALLOWANCE, body);
+        expect_payment_and_change(&result, &payer, &payer, principal, PAYOUT_GAS_ALLOWANCE);
+        assert_eq!(
+            f.balance(&f.service),
+            backing.checked_sub(principal).unwrap().checked_sub(storage_fees(&result)).unwrap(),
+            "payout spent more than its entitlement"
+        );
+    }
+}
+
+#[test]
+fn solvency_refund_never_haircuts_principal_when_fees_rise() {
+    let mut f = Fixture::solvency();
+    let caller = f.caller.address().clone();
+    f.call(&caller, 1, [1; 32]).expect_success();
+    f.bc.set_now(f.request(0).unwrap().response_deadline as u32);
+    f.expire(&caller, 2, 0).expect_success();
+    let body = ServiceActorContract::claim_refund(3, 0, &caller).unwrap();
+    let snapshot = f.bc.snapshot();
+    let trial = f.no_bounce(&caller, PAYOUT_GAS_ALLOWANCE, body.clone());
+    trial.expect_success();
+    let chain_block::TrComputePhase::Vm(vm) = trial.read_primary_description().compute_ph else {
+        panic!("expected VM computation");
+    };
+    f.bc.restore(snapshot.clone());
+    let original_config = f.bc.config_params().clone();
+    let mut config = original_config.clone();
+    let mut prices = config.fwd_prices(true).unwrap();
+    // One carry-all send could pay this fee by taking half the refund's
+    // principal. An exact principal send must abort instead, even when the
+    // allowance passed its early check and the operator has ample excess.
+    prices.lump_price = PAYOUT_GAS_ALLOWANCE
+        .checked_sub(vm.gas_fees.as_u64().unwrap())
+        .unwrap()
+        .checked_add(f.init.price_per_call / 2)
+        .unwrap();
+    config.set_config(chain_block::ConfigParamEnum::ConfigParam24(prices)).unwrap();
+    if config.config(31).unwrap().is_none() {
+        config
+            .set_config(chain_block::ConfigParamEnum::ConfigParam31(chain_block::ConfigParam31 {
+                fundamental_smc_addr: chain_block::FundamentalSmcAddresses::default(),
+            }))
+            .unwrap();
+    }
+    f.bc.set_config(config).unwrap();
+    let before = f.state_hash();
+    let result = f.no_bounce(&caller, PAYOUT_GAS_ALLOWANCE, body.clone());
+    expect_solvency_action_failure(&result);
+    assert_eq!(
+        result.read_primary_description().action.unwrap().result_arg,
+        Some(1),
+        "principal send was the failing action"
+    );
+    assert_eq!(f.state_hash(), before, "failed action consumed the refund");
+    assert!(f.refund(0).is_some());
+
+    // Now make one forwarding fee affordable, but two unaffordable. The first
+    // send must also disappear when the later change send fails.
+    f.bc.restore(snapshot);
+    let mut config = original_config.clone();
+    let mut prices = config.fwd_prices(true).unwrap();
+    prices.lump_price = PAYOUT_GAS_ALLOWANCE
+        .checked_sub(vm.gas_fees.as_u64().unwrap())
+        .unwrap()
+        .checked_mul(3)
+        .unwrap()
+        .checked_div(4)
+        .unwrap();
+    config.set_config(chain_block::ConfigParamEnum::ConfigParam24(prices)).unwrap();
+    if config.config(31).unwrap().is_none() {
+        config
+            .set_config(chain_block::ConfigParamEnum::ConfigParam31(chain_block::ConfigParam31 {
+                fundamental_smc_addr: chain_block::FundamentalSmcAddresses::default(),
+            }))
+            .unwrap();
+    }
+    f.bc.set_config(config).unwrap();
+    let result = f.no_bounce(&caller, PAYOUT_GAS_ALLOWANCE, body.clone());
+    expect_solvency_action_failure(&result);
+    assert_eq!(
+        result.read_primary_description().action.unwrap().result_arg,
+        Some(2),
+        "change send was the failing action"
+    );
+    assert_eq!(f.state_hash(), before, "second action failure consumed the refund");
+    assert!(f.refund(0).is_some());
+    // Restoring fees and retrying the same claim must pay its full principal.
+    let mut config = original_config;
+    if config.config(31).unwrap().is_none() {
+        config
+            .set_config(chain_block::ConfigParamEnum::ConfigParam31(chain_block::ConfigParam31 {
+                fundamental_smc_addr: chain_block::FundamentalSmcAddresses::default(),
+            }))
+            .unwrap();
+    }
+    f.bc.set_config(config).unwrap();
+    let result = f.no_bounce(&caller, PAYOUT_GAS_ALLOWANCE, body);
+    expect_payment_and_change(
+        &result,
+        &caller,
+        &caller,
+        f.init.price_per_call,
+        PAYOUT_GAS_ALLOWANCE,
+    );
+}
+
+#[test]
+fn solvency_sweep_after_real_rent_preserves_other_entries() {
+    for refund in [false, true] {
+        let mut f = Fixture::solvency();
+        let caller = f.caller.address().clone();
+        let sweeper = f.outsider.address().clone();
+        for id in 0..3 {
+            f.call(&caller, id, [1; 32]).expect_success();
+        }
+        let request = f.request(0).unwrap();
+        f.bc.set_now(request.response_deadline as u32);
+        f.send_from(&caller, ServiceActorContract::expire(4, 1).unwrap()).expect_success();
+        let target = if refund { 1 } else { 0 };
+        let floor_after = f.floor() - f.init.price_per_call - f.init.storage_fee;
+        let cap = floor_after + f.init.cleanup_bounty;
+        let before = f.state_hash();
+        // Real storage-phase charges, with all three entries still in storage.
+        let mut day = 0;
+        while f.balance(&f.service) >= cap - TOS / 5 {
+            day += 1;
+            assert!(day < 1000, "rent failed to erode the balance");
+            f.bc.set_now(request.refund_claim_deadline as u32 + day * 86400);
+            f.no_bounce(&sweeper, 1_000_000, Cell::default()).expect_success();
+        }
+        assert_eq!(f.state_hash(), before);
+        let body = ServiceActorContract::sweep_expired_request(5, target).unwrap();
+        // The sweeper's execution budget does not repair insolvency as a side
+        // effect. A top-up is a separate, explicit operation.
+        f.send_from_with_value(&sweeper, body.clone(), TOS)
+            .expect_aborted()
+            .expect_exit_code(ERR_INSUFFICIENT_BALANCE);
+        assert_eq!(f.state_hash(), before, "failed sweep removed an entry or caller slot");
+        f.no_bounce(&sweeper, TOS, Cell::default()).expect_success();
+        assert_eq!(f.state_hash(), before, "top-up changed service data");
+        let backing = f.balance(&f.service);
+        let result = f.no_bounce(&sweeper, PAYOUT_GAS_ALLOWANCE, body);
+        expect_payment_and_change(
+            &result,
+            &sweeper,
+            &sweeper,
+            f.init.cleanup_bounty,
+            PAYOUT_GAS_ALLOWANCE,
+        );
+        assert_eq!(
+            f.balance(&f.service),
+            backing
+                .checked_sub(f.init.cleanup_bounty)
+                .unwrap()
+                .checked_sub(storage_fees(&result))
+                .unwrap(),
+            "sweep spent protected backing"
+        );
+        assert_eq!(f.data().live_count, 2);
+        assert!(f.request(2).is_some());
+        assert!(f.balance(&f.service) >= f.floor());
+    }
+}
+// This measures deliberately large, coherent stress states. It is not a proof
+// that the production account-cell limits admit 100,000 independent requests.
+
+const GAS_STRESS_LIVE: u32 = 99_999;
+const GAS_STRESS_PRICE: u128 = 1_u128 << 100;
+const GAS_STRESS_STORAGE: u128 = 1_u128 << 99;
+const GAS_STRESS_SPARE: u128 = 1_u128 << 110;
+const GAS_STRESS_NEXT_ID: u64 = u64::MAX - 1;
+const GAS_STRESS_PENDING_ID: u64 = u64::MAX - 2;
+const GAS_STRESS_REFUND_ID: u64 = u64::MAX - 4;
+const GAS_STRESS_PERIOD: u32 = 2_592_000;
+
+struct GasStressSeed {
+    data: Cell,
+    balance: u128,
+    created_at: u32,
+    deadline: u32,
+    current_terms: [u8; 32],
+}
+
+fn gas_stress_terms(
+    init: &ServiceActorInit,
+    version: u32,
+    price: u128,
+    storage: u128,
+    sla: u32,
+    window: u32,
+) -> [u8; 32] {
+    let mut tail = BuilderData::new();
+    tail.append_u256(&init.metadata_hash).unwrap();
+    tail.append_u256(&init.proof_scheme_hash).unwrap();
+    tail.append_bit_zero().unwrap();
+    tail.append_u256(&[0; 32]).unwrap();
+    let mut root = BuilderData::new();
+    root.append_u32(version).unwrap();
+    coins(price).write_to(&mut root).unwrap();
+    coins(storage).write_to(&mut root).unwrap();
+    coins(u128::from(init.cleanup_bounty)).write_to(&mut root).unwrap();
+    root.append_u32(sla).unwrap();
+    root.append_u32(window).unwrap();
+    root.checked_append_reference(tail.into_cell().unwrap()).unwrap();
+    *root.into_cell().unwrap().repr_hash().as_array()
+}
+
+fn gas_stress_key(id: u64) -> SliceData {
+    let mut key = BuilderData::new();
+    key.append_u64(id).unwrap();
+    SliceData::load_builder(key).unwrap()
+}
+
+fn gas_stress_seed(f: &Fixture) -> &'static GasStressSeed {
+    use chain_block::{HashmapE, HashmapType};
+    static SEED: std::sync::OnceLock<GasStressSeed> = std::sync::OnceLock::new();
+    SEED.get_or_init(|| {
+        let created_at = f.bc.now();
+        // These requests were admitted one maximum SLA before the snapshot.
+        // Refund entries have just expired; pending entries may still await
+        // permissionless expiry. They reach 60 days of age at `deadline`.
+        let response_deadline = created_at;
+        let deadline = response_deadline.checked_add(GAS_STRESS_PERIOD).unwrap();
+        let old_terms = gas_stress_terms(
+            &f.init,
+            0,
+            GAS_STRESS_PRICE,
+            GAS_STRESS_STORAGE,
+            GAS_STRESS_PERIOD,
+            GAS_STRESS_PERIOD,
+        );
+        let current_terms = gas_stress_terms(
+            &f.init,
+            1,
+            u128::from(f.init.price_per_call),
+            u128::from(f.init.storage_fee),
+            f.init.response_sla,
+            f.init.refund_claim_window,
+        );
+        let mut commitments = BuilderData::new();
+        commitments.append_u256(&[0x79; 32]).unwrap();
+        commitments.append_u256(&old_terms).unwrap();
+        commitments.append_bit_zero().unwrap();
+        commitments.append_u256(&[0; 32]).unwrap();
+        let commitments = commitments.into_cell().unwrap();
+
+        // Each populated trie has a long path near the uint64 limit, modeling
+        // sparse survivors after older request IDs have been removed. All IDs
+        // are below next_request_id and each is present in exactly one map.
+        let mut sparse = Vec::new();
+        for (target, is_refund) in [(GAS_STRESS_PENDING_ID, false), (GAS_STRESS_REFUND_ID, true)] {
+            sparse.push((target, is_refund));
+            for bit in 0..64 {
+                let mask = 1_u64.checked_shl(bit).unwrap();
+                if target & mask != 0 {
+                    sparse.push((target ^ mask, is_refund));
+                }
+            }
+        }
+        let mut sparse_keys = std::collections::BTreeSet::new();
+        sparse.retain(|(id, _)| sparse_keys.insert(*id));
+        let dense_count =
+            usize::try_from(GAS_STRESS_LIVE).unwrap().checked_sub(sparse.len()).unwrap();
+        let mut entries: Vec<(u64, bool)> =
+            (0..dense_count).map(|id| (u64::try_from(id).unwrap(), id % 2 == 0)).collect();
+        entries.extend(sparse);
+        let mut unique = std::collections::BTreeSet::new();
+        let mut pending = HashmapE::with_bit_len(64);
+        let mut refunds = HashmapE::with_bit_len(64);
+        let mut callers = HashmapE::with_bit_len(256);
+        let mut pending_count = 0_u32;
+        let mut refund_count = 0_u32;
+        for (index, (id, is_refund)) in entries.into_iter().enumerate() {
+            assert!(id < GAS_STRESS_NEXT_ID && unique.insert(id), "unique historical ID");
+            let caller = if index >= 99_000 {
+                f.caller.address().clone()
+            } else {
+                let mut address = [0xC7; 32];
+                address[24..].copy_from_slice(&u64::try_from(index).unwrap().to_be_bytes());
+                MsgAddressInt::standard(-1, address)
+            };
+            // Every caller has one live entry except the existing caller whose
+            // 999 entries exercise the final available per-caller slot.
+            if index < 99_000 || index == 99_000 {
+                let key = address_slice(&caller).into_cell().unwrap().repr_hash();
+                let mut key_bits = BuilderData::new();
+                key_bits.append_u256(key.as_array()).unwrap();
+                let mut count = BuilderData::new();
+                count.append_u32(if index < 99_000 { 1 } else { 999 }).unwrap();
+                assert!(
+                    callers
+                        .set_builder(SliceData::load_builder(key_bits).unwrap(), &count)
+                        .unwrap()
+                        .is_none()
+                );
+            }
+            let mut entry = BuilderData::new();
+            caller.write_to(&mut entry).unwrap();
+            coins(GAS_STRESS_PRICE).write_to(&mut entry).unwrap();
+            coins(GAS_STRESS_STORAGE).write_to(&mut entry).unwrap();
+            coins(u128::from(f.init.cleanup_bounty)).write_to(&mut entry).unwrap();
+            if is_refund {
+                entry.append_u64(u64::from(deadline)).unwrap();
+                assert!(
+                    refunds
+                        .setref(gas_stress_key(id), entry.into_cell().unwrap())
+                        .unwrap()
+                        .is_none()
+                );
+                refund_count = refund_count.checked_add(1).unwrap();
+            } else {
+                entry.append_u64(u64::from(response_deadline)).unwrap();
+                entry.append_u64(u64::from(deadline)).unwrap();
+                entry.append_u32(0).unwrap();
+                entry.checked_append_reference(commitments.clone()).unwrap();
+                assert!(
+                    pending
+                        .setref(gas_stress_key(id), entry.into_cell().unwrap())
+                        .unwrap()
+                        .is_none()
+                );
+                pending_count = pending_count.checked_add(1).unwrap();
+            }
+        }
+        assert_eq!(pending_count.checked_add(refund_count).unwrap(), GAS_STRESS_LIVE);
+        assert_eq!(pending.len().unwrap(), usize::try_from(pending_count).unwrap());
+        assert_eq!(refunds.len().unwrap(), usize::try_from(refund_count).unwrap());
+        assert_eq!(callers.len().unwrap(), 99_001);
+        let mut dicts = BuilderData::new();
+        pending.write_hashmap_data(&mut dicts).unwrap();
+        refunds.write_hashmap_data(&mut dicts).unwrap();
+        callers.write_hashmap_data(&mut dicts).unwrap();
+        let accounting = Accounting {
+            withdrawable_revenue: u128::from(TOS),
+            locked_storage_fees: GAS_STRESS_STORAGE
+                .checked_mul(u128::from(GAS_STRESS_LIVE))
+                .unwrap(),
+            pending_liability: GAS_STRESS_PRICE.checked_mul(u128::from(pending_count)).unwrap(),
+            refundable_liability: GAS_STRESS_PRICE.checked_mul(u128::from(refund_count)).unwrap(),
+            call_day: created_at / 86_400,
+            calls_today: GAS_STRESS_LIVE,
+        };
+        let balance = accounting
+            .pending_liability
+            .checked_add(accounting.refundable_liability)
+            .and_then(|v| v.checked_add(accounting.locked_storage_fees))
+            .and_then(|v| v.checked_add(GAS_STRESS_SPARE))
+            .unwrap();
+        assert!(balance < MAX_COINS);
+
+        // Version 0 was the wide-valued historical policy; version 1 is the
+        // current ordinary policy. Preserve every other policy field/ref.
+        let original = ServiceActorContract::build_data(&f.init).unwrap();
+        let mut policy = SliceData::load_cell(original.reference(0).unwrap()).unwrap();
+        assert_eq!(policy.get_next_u32().unwrap(), 0);
+        let mut updated_policy = BuilderData::new();
+        updated_policy.append_u32(1).unwrap();
+        updated_policy.checked_append_references_and_data(&policy).unwrap();
+        let mut data = BuilderData::new();
+        f.owner.address().write_to(&mut data).unwrap();
+        data.append_bit_one().unwrap();
+        data.append_u64(GAS_STRESS_NEXT_ID).unwrap();
+        data.append_u32(pending_count).unwrap();
+        data.append_u32(GAS_STRESS_LIVE).unwrap();
+        data.checked_append_reference(updated_policy.into_cell().unwrap()).unwrap();
+        data.checked_append_reference(write_accounting(&accounting)).unwrap();
+        data.checked_append_reference(dicts.into_cell().unwrap()).unwrap();
+        GasStressSeed {
+            data: data.into_cell().unwrap(),
+            balance,
+            created_at,
+            deadline,
+            current_terms,
+        }
+    })
+}
+
+fn gas_stress_fixture() -> (Fixture, &'static GasStressSeed) {
+    let mut f = Fixture::solvency();
+    let seed = gas_stress_seed(&f);
+    assert_eq!(f.bc.now(), seed.created_at, "stress seed uses deterministic sandbox time");
+    let mut account = f.bc.get_account(&f.service).unwrap().clone();
+    assert!(account.set_data(seed.data.clone()));
+    account.set_balance(chain_block::CurrencyCollection {
+        coins: coins(seed.balance),
+        ..Default::default()
+    });
+    account.set_last_paid(seed.created_at);
+    // Replacing persistent data invalidated the old account's storage usage.
+    // Recompute it before asking init_storage_stat to validate the snapshot.
+    account.update_storage_stat(26).unwrap();
+    account.init_storage_stat(26).unwrap();
+    let cell_count = account.storage_info_cells();
+    // Only lift the account-size cap so the contract's declared 100,000-entry
+    // boundary can be measured. Keep real gas, storage and forwarding prices.
+    // The stock 2,048 masterchain / 65,536 basechain limits can reject smaller
+    // real-world states; this fixture does not claim otherwise.
+    let mut limits = f.bc.config_params().size_limits_config().unwrap();
+    let stress_cap = u32::try_from(cell_count.checked_add(1_024).unwrap()).unwrap();
+    limits.max_acc_state_cells = limits.max_acc_state_cells.max(stress_cap);
+    limits.max_mc_acc_state_cells = limits.max_mc_acc_state_cells.max(stress_cap);
+    f.bc.set_size_limits_config(limits).unwrap();
+    eprintln!(
+        "service gas stress: live={GAS_STRESS_LIVE}, callers=99001, unique_cells={cell_count}, test_state_cap={stress_cap}"
+    );
+    f.bc.set_account(f.service.clone(), account);
+    assert_eq!(f.live_count(), u64::from(GAS_STRESS_LIVE));
+    assert_eq!(f.caller_live_count(f.caller.address()), 999);
+    assert_eq!(f.caller_live_count(f.caller2.address()), 0);
+    (f, seed)
+}
+
+fn gas_stress_balance(f: &Fixture) -> u128 {
+    f.bc.get_account(&f.service).unwrap().balance().unwrap().coins.as_u128()
+}
+
+// total_fwd_fees already contains its action-fee component; do not add the
+// separately reported total_action_fees again. Storage rent is operator-funded
+// and reported separately from the incoming execution allowance.
+fn gas_stress_measure(label: &str, result: &SendResult, allowance: u64) -> (u128, u128) {
+    let desc = result.read_primary_description();
+    let compute = match &desc.compute_ph {
+        chain_block::TrComputePhase::Vm(vm) => vm,
+        skipped => panic!("{label}: compute skipped: {skipped:?}"),
+    };
+    let gas = compute.gas_fees.as_u128();
+    let rent = desc.storage_ph.as_ref().map(|s| s.storage_fees_collected.as_u128()).unwrap_or(0);
+    let forwarding = desc
+        .action
+        .as_ref()
+        .and_then(|a| a.total_fwd_fees.as_ref())
+        .map(chain_block::Coins::as_u128)
+        .unwrap_or(0);
+    let action = desc
+        .action
+        .as_ref()
+        .and_then(|a| a.total_action_fees.as_ref())
+        .map(chain_block::Coins::as_u128)
+        .unwrap_or(0);
+    let cost = gas.checked_add(forwarding).unwrap();
+    eprintln!(
+        "service gas trace {label}: used={} gas={gas} forwarding={forwarding} action_component={action} rent={rent} execution_cost={cost} allowance={allowance} exit={} action_result={:?}",
+        compute.gas_used.as_u64(),
+        compute.exit_code,
+        desc.action.as_ref().map(|a| a.result_code)
+    );
+    result.expect_success();
+    assert!(
+        cost.checked_mul(4).unwrap() <= u128::from(allowance).checked_mul(3).unwrap(),
+        "{label}: measured execution cost must leave at least 25% allowance headroom"
+    );
+    (cost, rent)
+}
+
+#[test]
+fn solvency_admission_gas_at_capacity_with_sparse_ids_and_wide_accounting() {
+    use contracts::service_actor::protocol_constants::ADMISSION_GAS_ALLOWANCE;
+    for existing in [false, true] {
+        let (mut f, seed) = gas_stress_fixture();
+        // Entries are almost their full permitted 60-day age; storage rent is
+        // actually charged using their initialized storage statistics.
+        f.bc.set_now(seed.deadline.checked_sub(1).unwrap());
+        let caller = if existing { f.caller.address() } else { f.caller2.address() }.clone();
+        let before = gas_stress_balance(&f);
+        let principal = f.init.price_per_call.checked_add(f.init.storage_fee).unwrap();
+        let value = principal.checked_add(ADMISSION_GAS_ALLOWANCE).unwrap();
+        let result = f.no_bounce(
+            &caller,
+            value,
+            ServiceActorContract::call(77, [0x77; 32], seed.current_terms).unwrap(),
+        );
+        let label = if existing { "admit/existing-caller" } else { "admit/new-caller" };
+        let (cost, rent) = gas_stress_measure(label, &result, ADMISSION_GAS_ALLOWANCE);
+        result.expect_out_msgs(1);
+        assert_eq!(f.live_count(), 100_000);
+        assert_eq!(f.caller_live_count(&caller), if existing { 1000 } else { 1 });
+        assert_eq!(
+            gas_stress_balance(&f),
+            before.checked_sub(rent).unwrap().checked_add(u128::from(principal)).unwrap(),
+            "successful admission cannot spend preexisting backing on execution"
+        );
+        let outgoing = result.first_transaction().unwrap().get_out_msg(0).unwrap().unwrap();
+        assert_eq!(
+            outgoing.int_header().unwrap().value.coins.as_u128(),
+            u128::from(ADMISSION_GAS_ALLOWANCE).checked_sub(cost).unwrap()
+        );
+    }
+}
+
+#[test]
+fn solvency_payout_gas_at_capacity_with_sparse_ids_and_wide_coins() {
+    use contracts::service_actor::protocol_constants::PAYOUT_GAS_ALLOWANCE;
+    let (mut f, seed) = gas_stress_fixture();
+    let snapshot = f.bc.get_account(&f.service).unwrap().clone();
+    for operation in ["refund", "sweep-pending", "sweep-refund", "withdraw"] {
+        f.bc.set_account(f.service.clone(), snapshot.clone());
+        f.bc.set_now(if operation == "refund" {
+            seed.deadline.checked_sub(1).unwrap()
+        } else {
+            seed.deadline
+        });
+        let caller = f.caller.address().clone();
+        let outsider = f.outsider.address().clone();
+        let owner = f.owner.address().clone();
+        let (sender, body, amount) = match operation {
+            "refund" => (
+                caller.clone(),
+                ServiceActorContract::claim_refund(80, GAS_STRESS_REFUND_ID, &outsider).unwrap(),
+                GAS_STRESS_PRICE,
+            ),
+            "sweep-pending" => (
+                outsider.clone(),
+                ServiceActorContract::sweep_expired_request(81, GAS_STRESS_PENDING_ID).unwrap(),
+                u128::from(f.init.cleanup_bounty),
+            ),
+            "sweep-refund" => (
+                outsider.clone(),
+                ServiceActorContract::sweep_expired_request(82, GAS_STRESS_REFUND_ID).unwrap(),
+                u128::from(f.init.cleanup_bounty),
+            ),
+            "withdraw" => {
+                (owner, ServiceActorContract::withdraw_revenue(83, TOS).unwrap(), u128::from(TOS))
+            }
+            _ => unreachable!(),
+        };
+        let before = gas_stress_balance(&f);
+        let result = f.no_bounce(&sender, PAYOUT_GAS_ALLOWANCE, body);
+        let (cost, rent) = gas_stress_measure(operation, &result, PAYOUT_GAS_ALLOWANCE);
+        result.expect_out_msgs(2);
+        assert_eq!(
+            gas_stress_balance(&f),
+            before.checked_sub(rent).unwrap().checked_sub(amount).unwrap(),
+            "successful payout cannot spend any backing beyond its authorized principal"
+        );
+        let transaction = result.first_transaction().unwrap();
+        let paid = transaction.get_out_msg(0).unwrap().unwrap();
+        let change = transaction.get_out_msg(1).unwrap().unwrap();
+        assert_eq!(
+            paid.int_header().unwrap().value.coins.as_u128(),
+            amount,
+            "principal must be exact"
+        );
+        assert_eq!(
+            change.int_header().unwrap().value.coins.as_u128(),
+            u128::from(PAYOUT_GAS_ALLOWANCE).checked_sub(cost).unwrap(),
+            "only unused execution funding returns as change"
+        );
+    }
+}
+
+#[test]
+fn solvency_change_does_not_transfer_preexisting_extra_currencies() {
+    use contracts::service_actor::protocol_constants::{
+        ADMISSION_GAS_ALLOWANCE, PAYOUT_GAS_ALLOWANCE,
+    };
+    let mut f = Fixture::solvency();
+    // The supported current executor (global version 16) implements currency
+    // v2: carry-all mode 128 carries native coins only. Nonempty RAWRESERVEX is
+    // deliberately rejected there, so reserving extra currencies would break
+    // this otherwise native-only settlement. Pin this real behavior explicitly.
+    assert_eq!(f.bc.config_params().global_version(), current_network::global_version());
+    assert!(current_network::global_version() >= 10, "currency-v2 settlement is required");
+    let mut account = f.bc.get_account(&f.service).unwrap().clone();
+    let mut balance = account.balance().unwrap().clone();
+    balance.set_other(0x71_53, 123_456).unwrap();
+    let extras = balance.other.clone();
+    account.set_balance(balance);
+    account.update_storage_stat(26).unwrap();
+    f.bc.set_account(f.service.clone(), account);
+    let caller = f.caller.address().clone();
+    let destination = f.outsider.address().clone();
+    let value = f
+        .init
+        .price_per_call
+        .checked_add(f.init.storage_fee)
+        .and_then(|v| v.checked_add(ADMISSION_GAS_ALLOWANCE))
+        .unwrap();
+    let body = ServiceActorContract::call(90, [0x90; 32], f.terms()).unwrap();
+    let admission = f.no_bounce(&caller, value, body);
+    admission.expect_success();
+    assert_eq!(f.bc.get_account(&f.service).unwrap().balance().unwrap().other, extras);
+    admission
+        .first_transaction()
+        .unwrap()
+        .iterate_out_msgs(|message| {
+            assert!(
+                message.get_value().unwrap().other.is_empty(),
+                "change must not sweep unrelated currencies"
+            );
+            Ok(true)
+        })
+        .unwrap();
+
+    f.bc.set_now(u32::try_from(f.request(0).unwrap().response_deadline).unwrap());
+    f.expire(&caller, 91, 0).expect_success();
+    let refund = f.no_bounce(
+        &caller,
+        PAYOUT_GAS_ALLOWANCE,
+        ServiceActorContract::claim_refund(92, 0, &destination).unwrap(),
+    );
+    refund.expect_success();
+    assert_eq!(f.bc.get_account(&f.service).unwrap().balance().unwrap().other, extras);
+    refund
+        .first_transaction()
+        .unwrap()
+        .iterate_out_msgs(|message| {
+            assert!(
+                message.get_value().unwrap().other.is_empty(),
+                "principal and change carry native coins only"
+            );
+            Ok(true)
+        })
+        .unwrap();
 }

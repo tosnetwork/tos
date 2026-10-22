@@ -8,12 +8,16 @@ on:
       - 'CMakeLists.txt'
       - 'validator/**'
       - 'validator-engine/**'
+      - 'validator-engine-console/**'
+      - 'metrics/ext-message-*.h'
+      - 'tl/generate/scheme/tos_api.tl'
       - 'test/test-ext-message-*.cpp'
       - 'test/test-validator-options.cpp'
       - 'test/pq-native/data/c04-pq-genesis.boc'
       - 'test/wallet-quantum/post-accept-probe.boc'
       - 'test/wallet-quantum/post-accept-probe.fc'
       - 'test/wallet-quantum/checker-gas-probe.fc'
+      - 'test/wallet-quantum/admission-action-probe.fc'
       - 'crypto/smartcont/**'
       - 'crypto/fift/**'
       - 'crypto/func/**'
@@ -24,6 +28,7 @@ on:
       - 'crypto/block/transaction.*'
       - 'crypto/vm/**'
       - 'scripts/check-ext-message-*.py'
+      - 'scripts/check-ext-admission-release.py'
       - 'tdutils/td/utils/misc.h'
 
 concurrency:
@@ -56,11 +61,12 @@ jobs:
       - name: Build and run native boundaries
         run: |
           cmake -S . -B build-admission -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
-          cmake --build build-admission --target test-validator-options test-ext-message-admission-budget test-ext-message-pool test-ext-message-manager test-ext-message-generated-checker validator-engine -j2
+          cmake --build build-admission --target test-validator-options test-ext-message-admission-budget test-ext-message-pool test-ext-message-expiry test-ext-message-manager test-ext-message-generated-checker validator-engine -j2
           mkdir -p artifacts/admission
           build-admission/test-validator-options 2>&1 | tee artifacts/admission/options.log
           build-admission/test-ext-message-admission-budget 2>&1 | tee artifacts/admission/budget.log
           build-admission/test-ext-message-pool 2>&1 | tee artifacts/admission/pool.log
+          build-admission/test-ext-message-expiry 2>&1 | tee artifacts/admission/expiry.log
           build-admission/test-ext-message-manager 2>&1 | tee artifacts/admission/manager.log
           python3 scripts/check-ext-message-work-cli.py --engine build-admission/validator-engine/validator-engine --output-dir artifacts/admission/cli
       - name: Configuration deletion controls

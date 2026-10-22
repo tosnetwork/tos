@@ -110,6 +110,8 @@ const int err::terms_mismatch = 1926;
 ;; messages produces such a state, so it is never a caller's refusal code; it
 ;; can only come from an accounting cell or dictionary supplied at deploy time.
 const int err::amount_range = 1927;
+const int err::operating_reserve_unfunded = 1928;
+const int err::insufficient_execution_payment = 1929;
 
 ;; ---- Coin arithmetic ------------------------------------------------------
 ;; Every addition and subtraction of a coin amount goes through these two
@@ -151,10 +153,17 @@ const int MAXIMUM_CLEANUP_BOUNTY = 1000000000; ;; 1 TOS, 10x the floor
 ;; on top of which cleanup_bounty is added (storage_fee >= this + bounty).
 const int MINIMUM_STORAGE_FEE = 100000000; ;; 0.1 TOS
 
-;; Standing balance floor below which no value-moving operation may push the
-;; contract's own get_balance(); a generous multiple of a single send's cost
-;; so ordinary passive storage-fee accrual cannot strand the contract.
+;; Operator-funded buffer required for admission, sweeps and withdrawals.
+;; Refund principal and other customers' funds rank ahead of this buffer.
+;; Rent can still erode customer backing after the operator's buffer runs out.
 const int MINIMUM_OPERATING_RESERVE = 1000000000; ;; 1 TOS
+
+;; Execution funding is additional to escrow principal and storage fees.
+;; The sandbox fee-bound tests measure populated dictionaries and sparse paths
+;; under the current fee configuration. Exact action reserves remain the safety
+;; boundary if network fees change: insufficient funding rolls back the action.
+const int ADMISSION_GAS_ALLOWANCE = 200000000; ;; 0.2 TOS, unused value returned
+const int PAYOUT_GAS_ALLOWANCE = 200000000; ;; 0.2 TOS, unused value returned
 
 ;; response_sla / refund_claim_window bounds. The lower bounds mirror
 ;; min_review_period in task-escrow-code.fc (same "genuine reaction time"
@@ -180,6 +189,41 @@ const int MAX_LIVE_PER_CALLER = 1000;
     .store_tomis(amount)
     .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
   .end_cell(), mode);
+}
+
+;; The compute-phase balance includes this message's value, but not its gas.
+;; Exclude that value once, before checking or settling preexisting obligations.
+;; For a non-bounceable message, storage charges can already exceed old backing.
+int message_backing(int msg_value, int refusal) impure inline {
+  int balance = get_balance().pair_first();
+  throw_unless(refusal, balance >= msg_value);
+  return checked_sub_amount(balance, msg_value);
+}
+
+;; Subtract rather than sum obligations, preserving coded refusals even when
+;; their aggregate would not fit Coins. The original backing stays immutable.
+() require_backing(int backing, int pending, int refundable, int locked,
+                   int reserve, int refusal) impure inline {
+  throw_unless(refusal, backing >= pending);
+  backing = checked_sub_amount(backing, pending);
+  throw_unless(refusal, backing >= refundable);
+  backing = checked_sub_amount(backing, refundable);
+  throw_unless(refusal, backing >= locked);
+  backing = checked_sub_amount(backing, locked);
+  throw_unless(refusal, backing >= reserve);
+}
+
+;; Reserve preexisting backing minus ONLY the authorized payout. Pay principal
+;; exactly, then return the unused execution funding to its sender. Combining
+;; these sends into one mode-128 transfer could silently take fees out of owed
+;; principal. No ignore-errors flag: either both sends and state commit, or all
+;; roll back. A zero payout still returns change without spending old backing.
+() pay_with_change(slice destination, slice payer, int backing, int amount) impure inline {
+  raw_reserve(checked_sub_amount(backing, amount), 0);
+  if (amount > 0) {
+    send_value(destination, amount, 1);
+  }
+  send_value(payer, 0, 128);
 }
 
 ;; ---- terms_hash / attestation domain ------------------------------------
@@ -489,6 +533,9 @@ cell caller_live_decr(cell caller_live_counts, slice caller) inline {
     throw_unless(err::insufficient_payment, msg_value >= price_per_call);
     int payment_after_price = checked_sub_amount(msg_value, price_per_call);
     throw_unless(err::insufficient_payment, payment_after_price >= storage_fee);
+    int execution_payment = checked_sub_amount(payment_after_price, storage_fee);
+    throw_unless(err::insufficient_execution_payment,
+      execution_payment >= ADMISSION_GAS_ALLOWANCE);
     throw_unless(err::capacity_exceeded_global, live_count < MAX_LIVE_GLOBAL);
     throw_unless(err::capacity_exceeded_caller,
       caller_live_count(caller_live_counts, sender) < MAX_LIVE_PER_CALLER);
@@ -527,20 +574,24 @@ cell caller_live_decr(cell caller_live_counts, slice caller) inline {
         attestor_pubkey));
     caller_live_counts = caller_live_incr(caller_live_counts, sender);
 
-    ;; Only price_per_call + storage_fee is ever owed; refund the excess so a
-    ;; caller who overpays (rounding, a wallet's gas-margin padding, a client
-    ;; bug) does not permanently lose the difference.
-    int overpayment = checked_sub_amount(payment_after_price, storage_fee);
-    if (overpayment > 0) {
-      send_value(sender, overpayment, 1);
-    }
+    ;; Preserve ALL preexisting backing, not just the minimum floor. Escrow
+    ;; principal and storage are added in full; only this message's remaining
+    ;; value pays execution and the change transfer. The caller receives the
+    ;; unused budget, so successful calls cannot consume the operator's excess.
+    int admitted_pending = checked_add_amount(pending_liability, price_per_call);
+    int admitted_locked = checked_add_amount(locked_storage_fees, storage_fee);
+    int backing = message_backing(msg_value, err::operating_reserve_unfunded);
+    require_backing(backing, pending_liability, refundable_liability, locked_storage_fees,
+      MINIMUM_OPERATING_RESERVE, err::operating_reserve_unfunded);
+    int retained = checked_add_amount(checked_add_amount(backing, price_per_call), storage_fee);
+    raw_reserve(retained, 0);
+    send_value(sender, 0, 128);
 
     save_state(owner, active, next_request_id + 1, pending_count + 1, live_count + 1,
       policy_version, price_per_call, storage_fee, cleanup_bounty, response_sla,
       refund_claim_window, open_access, has_authorized_caller, authorized_caller,
       rate_limit_per_day, metadata_hash, proof_scheme_hash, has_attestor, attestor_pubkey,
-      withdrawable_revenue, checked_add_amount(locked_storage_fees, storage_fee),
-      checked_add_amount(pending_liability, price_per_call),
+      withdrawable_revenue, admitted_locked, admitted_pending,
       refundable_liability, call_day, calls_today, pending_requests, refunds, caller_live_counts);
     return ();
   }
@@ -623,17 +674,22 @@ cell caller_live_decr(cell caller_live_counts, slice caller) inline {
      int refund_claim_deadline) = unpack_refund(entry);
     throw_unless(err::not_refund_caller, equal_slice_bits(sender, caller));
     throw_unless(err::refund_claim_expired, now() < refund_claim_deadline);
-    ;; The only failure mode this design claims to handle atomically: the
-    ;; contract cannot afford to send `price`. Checked, and the entry left
-    ;; untouched on failure, before any state mutation below. Destination-side
-    ;; failure after this point is out of scope -- see the design doc.
-    throw_unless(err::insufficient_balance, price <= get_balance().pair_first());
+    ;; Refusing an insolvent payout preserves the claim and every other entry.
+    int backing = message_backing(msg_value, err::insufficient_balance);
+    throw_unless(err::insufficient_balance, backing >= price);
+    int remaining = checked_sub_amount(backing, price);
+    int remaining_refundable = checked_sub_amount(refundable_liability, price);
+    int remaining_locked = checked_sub_amount(locked_storage_fees, req_storage_fee);
+    ;; Customers rank ahead of the operator's buffer, but this caller cannot
+    ;; take another customer's principal or storage backing. Attached execution
+    ;; funding cannot hide a preexisting shortfall in those obligations.
+    require_backing(remaining, pending_liability, remaining_refundable, remaining_locked,
+      0, err::insufficient_balance);
+    throw_unless(err::insufficient_execution_payment, msg_value >= PAYOUT_GAS_ALLOWANCE);
 
     (refunds, _) = refunds.udict_delete?(64, request_id);
     caller_live_counts = caller_live_decr(caller_live_counts, caller);
-    if (price > 0) {
-      send_value(destination, price, 1);
-    }
+    pay_with_change(destination, sender, backing, price);
 
     save_state(owner, active, next_request_id, pending_count, live_count - 1, policy_version,
       price_per_call, storage_fee, cleanup_bounty, response_sla, refund_claim_window, open_access,
@@ -694,9 +750,9 @@ cell caller_live_decr(cell caller_live_counts, slice caller) inline {
     ;; their liabilities first, and the remaining obligations are then subtracted from the
     ;; balance one at a time, so no intermediate sum is formed that the final state would
     ;; not hold, and an unaffordable sweep is refused as insufficient balance.
-    int balance = get_balance().pair_first();
-    throw_unless(err::insufficient_balance, balance >= req_cleanup_bounty);
-    int remaining = checked_sub_amount(balance, req_cleanup_bounty);
+    int backing = message_backing(msg_value, err::insufficient_balance);
+    throw_unless(err::insufficient_balance, backing >= req_cleanup_bounty);
+    int remaining = checked_sub_amount(backing, req_cleanup_bounty);
     int remaining_pending = pending_liability;
     int remaining_refundable = refundable_liability;
     if (came_from_pending) {
@@ -705,13 +761,9 @@ cell caller_live_decr(cell caller_live_counts, slice caller) inline {
       remaining_refundable = checked_sub_amount(refundable_liability, price);
     }
     int remaining_locked = checked_sub_amount(locked_storage_fees, req_storage_fee);
-    throw_unless(err::insufficient_balance, remaining >= remaining_pending);
-    remaining = checked_sub_amount(remaining, remaining_pending);
-    throw_unless(err::insufficient_balance, remaining >= remaining_refundable);
-    remaining = checked_sub_amount(remaining, remaining_refundable);
-    throw_unless(err::insufficient_balance, remaining >= remaining_locked);
-    remaining = checked_sub_amount(remaining, remaining_locked);
-    throw_unless(err::insufficient_balance, remaining >= MINIMUM_OPERATING_RESERVE);
+    require_backing(remaining, remaining_pending, remaining_refundable, remaining_locked,
+      MINIMUM_OPERATING_RESERVE, err::insufficient_balance);
+    throw_unless(err::insufficient_execution_payment, msg_value >= PAYOUT_GAS_ALLOWANCE);
 
     if (came_from_pending) {
       (pending_requests, _) = pending_requests.udict_delete?(64, request_id);
@@ -727,9 +779,7 @@ cell caller_live_decr(cell caller_live_counts, slice caller) inline {
     int revenue_credit = checked_add_amount(price, checked_sub_amount(req_storage_fee, req_cleanup_bounty));
     withdrawable_revenue = checked_add_amount(withdrawable_revenue, revenue_credit);
     locked_storage_fees = remaining_locked;
-    if (req_cleanup_bounty > 0) {
-      send_value(sender, req_cleanup_bounty, 1);
-    }
+    pay_with_change(sender, sender, backing, req_cleanup_bounty);
 
     save_state(owner, active, next_request_id, pending_count, live_count - 1, policy_version,
       price_per_call, storage_fee, cleanup_bounty, response_sla, refund_claim_window, open_access,
@@ -819,7 +869,8 @@ cell caller_live_decr(cell caller_live_counts, slice caller) inline {
     ;; The obligations are subtracted from the balance one at a time: a balance that does
     ;; not cover them refuses every withdrawal, the zero one included, as insufficient
     ;; revenue, and no sum of obligations is formed along the way.
-    int remaining = get_balance().pair_first();
+    int backing = message_backing(msg_value, err::insufficient_revenue);
+    int remaining = backing;
     throw_unless(err::insufficient_revenue, remaining >= pending_liability);
     remaining = checked_sub_amount(remaining, pending_liability);
     throw_unless(err::insufficient_revenue, remaining >= refundable_liability);
@@ -830,9 +881,8 @@ cell caller_live_decr(cell caller_live_counts, slice caller) inline {
     remaining = checked_sub_amount(remaining, MINIMUM_OPERATING_RESERVE);
     int withdrawable_now = min(withdrawable_revenue, remaining);
     throw_unless(err::insufficient_revenue, amount <= withdrawable_now);
-    if (amount > 0) {
-      send_value(owner, amount, 1);
-    }
+    throw_unless(err::insufficient_execution_payment, msg_value >= PAYOUT_GAS_ALLOWANCE);
+    pay_with_change(owner, sender, backing, amount);
     save_state(owner, active, next_request_id, pending_count, live_count, policy_version,
       price_per_call, storage_fee, cleanup_bounty, response_sla, refund_claim_window, open_access,
       has_authorized_caller, authorized_caller, rate_limit_per_day, metadata_hash,

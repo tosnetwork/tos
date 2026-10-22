@@ -2,6 +2,7 @@
 #include <utility>
 
 #include "auto/tl/tos_api.hpp"
+#include "common/errorcode.h"
 #include "td/actor/coro_utils.h"
 #include "td/utils/Heap.h"
 #include "td/utils/as.h"
@@ -13,6 +14,10 @@ namespace tos::quic {
 
 static td::uint32 get_magic(const td::BufferSlice &data) {
   return data.size() >= 4 ? td::as<td::uint32>(data.data()) : 0;
+}
+
+static td::Status connection_wait_timeout() {
+  return td::Status::Error(ErrorCode::timeout, "timeout while waiting for a connection");
 }
 
 static td::Result<adnl::AdnlNodeIdShort> parse_peer_id(td::Slice peer_public_key) {
@@ -340,7 +345,9 @@ class QuicSender::ServerCallback final : public QuicServer::Callback {
     QuicBudgetSource source;
     std::map<QuicStreamID, StreamState> streams;
   };
-  std::map<QuicConnectionId, Connection> connections_;
+  // Node-based: StreamState lives in these Connections and the timeout heap holds raw pointers to
+  // it, and callers hold a Connection& across stream work, so entries must not move.
+  td::NodeHashMap<QuicConnectionId, Connection> connections_;
   td::KHeap<double> timeout_heap_;
   std::function<td::uint64(adnl::AdnlNodeIdShort, adnl::AdnlNodeIdShort)> get_peer_mtu_;
 
@@ -608,14 +615,35 @@ QuicSender::Connection::~Connection() {
 
 void QuicSender::start_up() {
   AdnlSenderInterface::start_up();
-  alarm_timestamp() = td::Timestamp::now();
+  next_memory_diagnostics_ = td::Timestamp::now();
+  update_alarm();
 }
 
 void QuicSender::alarm() {
-  alarm_timestamp() = td::Timestamp::in(60.0);
-  if (td::memory_tracker_enabled()) {
+  std::vector<td::Promise<td::Unit>> expired;
+  auto now = td::Timestamp::now();
+  while (!waiter_timeouts_.empty() && waiter_timeouts_.top_key().is_in_past(now)) {
+    expired.push_back(take_waiter(*static_cast<Waiter *>(waiter_timeouts_.pop())));
+  }
+  bool log_memory = next_memory_diagnostics_.is_in_past(now);
+  if (log_memory) {
+    next_memory_diagnostics_ = td::Timestamp::in(60.0);
+  }
+  update_alarm();
+  for (auto &promise : expired) {
+    promise.set_error(connection_wait_timeout());
+  }
+  if (log_memory && td::memory_tracker_enabled()) {
     log_memory_diagnostics().start_immediate().detach("quic:memory-diagnostics");
   }
+}
+
+void QuicSender::update_alarm() {
+  auto next = next_memory_diagnostics_;
+  if (!waiter_timeouts_.empty() && waiter_timeouts_.top_key() < next) {
+    next = waiter_timeouts_.top_key();
+  }
+  alarm_timestamp() = next;
 }
 
 td::actor::Task<> QuicSender::log_memory_diagnostics() {
@@ -649,10 +677,12 @@ td::actor::Task<td::Unit> QuicSender::send_message_coro(adnl::AdnlNodeIdShort sr
   auto R = co_await send_message_coro_inner(src, dst, std::move(data)).wrap();
   if (R.is_error()) {
     // Idle expiry races with queued broadcasts are normal for a datagram
-    // transport.  Keep these at DEBUG so a burst cannot fill journald; real
+    // transport, as is dropping the oldest waiter of a connection that is still
+    // handshaking.  Keep these at DEBUG so a burst cannot fill journald; real
     // protocol/serialization failures remain visible at WARNING.
     auto message = R.error().message().str();
-    if (message == "connection closed" || message == "Connection not found") {
+    if (message == "connection closed" || message == "Connection not found" ||
+        message == "dropped waiting for a connection") {
       LOG(DEBUG) << "Failed to send message: " << src << " -> " << dst << " size=" << size
                  << " magic=" << td::format::as_hex(magic) << " " << R.error();
     } else {
@@ -665,13 +695,13 @@ td::actor::Task<td::Unit> QuicSender::send_message_coro(adnl::AdnlNodeIdShort sr
 
 td::actor::Task<td::Unit> QuicSender::send_message_coro_inner(adnl::AdnlNodeIdShort src, adnl::AdnlNodeIdShort dst,
                                                               td::BufferSlice data) {
-  // A connection can be closed between find_or_create_connection() and the
+  // A connection can be closed between wait_connection_ready() and the
   // actor message that queues the stream.  This is expected during QUIC idle
   // expiry, but retrying on a fresh connection prevents a burst of consensus
   // messages from all failing against the stale CID.
   for (int attempt = 0; attempt != 2; ++attempt) {
     auto path = AdnlPath{src, dst};
-    auto conn = co_await find_or_create_connection(path);
+    auto conn = co_await wait_connection_ready(get_or_create_connection(path));
     td::BufferSlice wire_data = create_serialize_tl_object<tos_api::quic_message>(data.clone());
     auto result = co_await td::actor::ask(conn->server, &QuicServer::send_stream, conn->cid,
                                           StreamOptions{get_peer_mtu(src, dst)}, std::move(wire_data), true)
@@ -697,8 +727,12 @@ td::actor::Task<td::Unit> QuicSender::send_message_coro_inner(adnl::AdnlNodeIdSh
 td::actor::Task<td::BufferSlice> QuicSender::send_query_coro(adnl::AdnlNodeIdShort src, adnl::AdnlNodeIdShort dst,
                                                              std::string name, td::Timestamp timeout,
                                                              td::BufferSlice data, std::optional<td::uint64> limit) {
+  if (timeout && timeout.is_in_past()) {
+    co_return connection_wait_timeout();
+  }
   td::MemoryTrackerToken memory_token(td::MemoryTrackerCategory::QuicOutbound, data.size());
-  auto conn = co_await find_or_create_connection({src, dst});
+  // Connection setup counts against the caller's deadline.
+  auto conn = co_await wait_connection_ready(get_or_create_connection({src, dst}), timeout);
   auto query_size = data.size();
   auto query_magic = get_magic(data);
   td::BufferSlice wire_data = create_serialize_tl_object<tos_api::quic_query>(std::move(data));
@@ -721,7 +755,7 @@ td::actor::Task<td::BufferSlice> QuicSender::send_query_coro(adnl::AdnlNodeIdSho
 }
 
 td::actor::Task<std::string> QuicSender::get_conn_ip_str_coro(adnl::AdnlNodeIdShort l_id, adnl::AdnlNodeIdShort p_id) {
-  auto conn = co_await find_or_create_connection({l_id, p_id});
+  auto conn = co_await wait_connection_ready(get_or_create_connection({l_id, p_id}));
   co_return "<quic connection>";
 }
 
@@ -767,31 +801,72 @@ td::actor::Task<> QuicSender::add_local_id_coro(adnl::AdnlNodeIdShort local_id) 
   co_return td::Unit{};
 }
 
-td::actor::Task<std::shared_ptr<QuicSender::Connection>> QuicSender::find_or_create_connection(AdnlPath path) {
-  std::shared_ptr<Connection> connection;
+std::shared_ptr<QuicSender::Connection> QuicSender::get_or_create_connection(AdnlPath path) {
+  if (!waiter_timeouts_.empty() && waiter_timeouts_.top_key().is_in_past()) {
+    alarm();
+  }
   auto iter = outbound_.find(path);
   if (iter == outbound_.end()) {
-    connection = std::make_shared<Connection>();
+    auto connection = std::make_shared<Connection>();
     connection->is_outbound = true;
+    connection->path = path;
     CHECK(outbound_.emplace(path, connection).second);
-  } else {
-    connection = iter->second;
+    return connection;
   }
+  return iter->second;
+}
 
+td::actor::Task<std::shared_ptr<QuicSender::Connection>> QuicSender::wait_connection_ready(
+    std::shared_ptr<Connection> connection, td::Timestamp timeout) {
+  if (timeout && timeout.is_in_past()) {
+    if (!connection->init_started) {
+      CHECK(outbound_.erase(connection->path) == 1);
+    }
+    co_return connection_wait_timeout();
+  }
   if (connection->is_ready) {
     co_return connection;
   }
   auto [future, promise] = td::actor::StartedTask<td::Unit>::make_bridge();
-  connection->waiting_ready.push_back(std::move(promise));
+  auto &waiting = connection->waiting_ready;
+  CHECK(waiting.size() <= Connection::MAX_WAITERS);
+  td::Promise<td::Unit> dropped;
+  if (waiting.size() == Connection::MAX_WAITERS) {
+    dropped = take_waiter(waiting.front());
+  }
+  auto waiter = waiting.emplace(waiting.end(), waiting, std::move(promise));
+  waiter->position = waiter;
+  if (timeout) {
+    waiter_timeouts_.insert(timeout, &*waiter);
+  }
+  update_alarm();
 
   if (!connection->init_started) {
     connection->init_started = true;
-    init_connection(path, connection).start().detach("init connection");
+    init_connection(connection->path, connection).start().detach("init connection");
   }
-
-  co_await std::move(future);
-
+  if (dropped) {
+    // Promise callbacks run inline; defer so retries cannot recurse through evictions.
+    td::actor::send_lambda_later(actor_id(this), [promise = std::move(dropped)]() mutable {
+      promise.set_error(td::Status::Error("dropped waiting for a connection"));
+    });
+  }
+  auto result = co_await std::move(future).wrap();
+  if (timeout && timeout.is_in_past()) {
+    co_return connection_wait_timeout();
+  }
+  co_await std::move(result);
   co_return connection;
+}
+
+td::Promise<td::Unit> QuicSender::take_waiter(Waiter &waiter) {
+  if (waiter.in_heap()) {
+    waiter_timeouts_.erase(&waiter);
+  }
+  CHECK(&*waiter.position == &waiter);
+  auto promise = std::move(waiter.promise);
+  waiter.queue.erase(waiter.position);
+  return promise;
 }
 
 td::actor::Task<td::Unit> QuicSender::init_connection(AdnlPath path, std::shared_ptr<Connection> connection) {
@@ -839,9 +914,15 @@ td::actor::Task<td::Unit> QuicSender::init_connection_inner(AdnlPath path, std::
 }
 
 void QuicSender::finish_connection_init(const std::shared_ptr<Connection> &connection, td::Result<td::Unit> result) {
-  auto promises = std::move(connection->waiting_ready);
-  for (auto &promise : promises) {
-    promise.set_result(result.clone());
+  auto waiters = std::exchange(connection->waiting_ready, {});
+  for (auto &waiter : waiters) {
+    if (waiter.in_heap()) {
+      waiter_timeouts_.erase(&waiter);
+    }
+  }
+  update_alarm();
+  for (auto &waiter : waiters) {
+    waiter.promise.set_result(result.clone());
   }
 }
 

@@ -128,6 +128,9 @@ class BroadcastsPlumtree {
   void add_peer_state_for_test(adnl::AdnlNodeIdShort peer);
   void remove_peer_state_for_test(adnl::AdnlNodeIdShort peer);
   bool has_peer_state_for_test(adnl::AdnlNodeIdShort peer) const;
+  // Marks an eager peer of the first slot as last active `inactive_for` seconds ago, runs the
+  // inactive-eager pruning on that slot, and returns whether the peer is still eager there.
+  bool prune_inactive_eager_for_test(OverlayImpl *overlay, adnl::AdnlNodeIdShort peer, double inactive_for);
   PlumtreeRepairDiagnostics repair_diagnostics_for_test() const;
   void flush_repairs_for_test(OverlayImpl *overlay);
 

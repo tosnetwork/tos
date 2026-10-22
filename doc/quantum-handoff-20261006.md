@@ -1,5 +1,12 @@
 ## Handoff status — 2026-10-06
 
+Configuration update (2026-10-21): new genesis and Rust defaults now grant CP21
+20,000 and retain CP20 10,000. Historical receipts below are unchanged. The
+fixture flag still isolates the frozen AUTH namespace; it no longer raises
+credit. This is not approval for public-network activation before node admission
+work protections ship.
+
+
 This is a **draft implementation and testing handoff**, not merge, production-custody or default-network activation clearance. The owner wants a complete Quantum wallet with V5R1-equivalent transaction functionality and strictness. A simplified receiver is not the deliverable.
 
 **Code location:** all current implementation, tested node changes, unfinished client WIP and this handoff document are committed on **`feat/quantum-rescue`**, the branch of this PR. A third party only needs this branch:
@@ -56,13 +63,13 @@ Source: [design at memo commit 106ed7ee](https://github.com/tosnetwork/memo/blob
 | T21–T24 | Full pre-ACCEPT fee fit with all guards; suite parity/interop; distinct V5R1/R2 identities/coexistence; fixed H20/W4 encoding and terminal/slot boundaries |
 | T25–T28 | Crash/concurrent/restored-device/no-OTS-reuse behavior; accepted failures/bounces/skipped sends cannot refund chargeable leaves; bounded preparation/partial deployment/fee rollover; mnemonic-only fee-state loss and stale-device damage bound |
 
-R0 freezes wire semantics/allocations and compiled identities/vectors. R1 covers crypto/tariffs/real input fit. R2 covers full wallet/module/vault/policy and guard sensitivity. R3 covers SDK/CLI/**iOS/Android** creation, restore, POP, staged rotation, durable signer and readiness. R4 requires independent final-head security review/CI, deployment confirmation and explicit acceptance of custody/funding/consensus assumptions. **Do not default-switch before the required release gates pass.**
+R0 freezes wire semantics/allocations and compiled identities/vectors. R1 covers crypto/tariffs/real input fit. R2 covers full wallet/module/vault/policy and guard sensitivity. R3 covers SDK/CLI/**iOS/Android** creation, restore, POP, staged rotation, durable signer and readiness. R4 requires independent final-head security review/CI, deployment confirmation and explicit acceptance of custody/funding/consensus assumptions. **Do not activate a public network before the required release gates pass.**
 
 ## Gas plan: GAS-ADMISSION-SOLUTION-20261006.md
 
 Source: [gas plan at memo commit 106ed7ee](https://github.com/tosnetwork/memo/blob/106ed7eede080b8bde5288e8fbcde1ce3e2dbc0a/wallet-slhdsa-rescue/GAS-ADMISSION-SOLUTION-20261006.md), blob `b69213369c878f55093b6f50306b49ffdd948c42`. Its investigation reviewed older TOS head `91a8f31d…`; it is a diagnosis/proposal, not a declaration that later code or deployment passed.
 
-- Ordinary external `gas_credit=10,000` bounds unpaid execution before acceptance. It is not a flat fee, transaction total gas cap, signature security parameter or TPS quota. The actual initial credit also depends on available balance/gas limits.
+- Basechain external `gas_credit=20,000` (masterchain: 10,000) bounds unpaid execution before acceptance. It is not a flat fee, transaction total gas cap, signature security parameter or TPS quota. The actual initial credit also depends on available balance/gas limits.
 - Recorded complete fee paths at the older diagnostic profile require AUTH **12,600**, POP **13,190**, PREP **13,515** gas; fixed LMS work is **6,135** (`500 + 3 × 1,067` plus cell/instruction costs). Thus the old credit blocks intact requests before ACCEPT.
 - Candidate solution: **basechain ConfigParam 21 credit 20,000**, masterchain ConfigParam 20 credit **10,000**, basechain gas limit **30,000,000**, block gas limit **60,000,000**; keep the fixed LMS profile and current crypto tariffs/guards. Candidate acceptance margin is selected complete legal paths **≤18,000 gas including ACCEPT**, leaving ≥2,000. This is a regression target, not a formal universal worst-case proof.
 - Couple the configuration change with shared all-source admission-work charging, bounded input/queues/state and removal of default failed-VM diagnostic replay. Credit 20,000 applies to all relevant ordinary basechain external contracts, so a vault-only benchmark is insufficient.
@@ -88,7 +95,7 @@ These claims apply to the stated source/fixture boundaries; they do not establis
 - Full V5 action engine, frozen V5R1 compatibility, strict R2 storage/role-bound AUTH/epochs/counters/lock/configure/migration and canonical module/vault pairing. Local/global retirement preserves SLH rescue and cannot be bypassed through generic fee configuration.
 - Native PQ signing, deterministic enrollment, separate POP domains, encrypted role-separated custody, exclusive durable LMS journals/tree caches, verified cached retry and restart barriers. CLI can stage/fund successors, collect both POPs and jointly hold old/new custody through migration. Live proof acquisition/broadcast/finality is not established.
 - Shared nonrefundable node work bucket and explicit `--ext-message-work-profile`; all dispatches charge work, including failures. Fresh post-wait snapshot, preserved tokens on reviewed rebind, no disable through unrelated options, rate/cost restart requirement, bounded retained bytes and shutdown/cancellation cleanup. Failure executes VM once.
-- Canonical and localnet explicit version-18 candidate; namespace required before key generation; basechain credit 20,000 / MC 10,000; matching gas cells and direct Rust config loading. **Default genesis/fallback gas tables remain old profiles; Rust defaults still credit 10,000, so G01 is not closed.**
+- Canonical and localnet explicit version-18 candidate; namespace required before key generation; basechain credit 20,000 / MC 10,000; matching gas cells and direct Rust config loading. **This dated receipt predates the default-credit update described above.**
 - Falcon's dedicated/generic gates restored to 19 in both VMs. 84 boundary cases per VM, 80 four-suite version cases, 39 frozen suite cases, early/late mutation controls and client tests pass locally.
 - Unchanged generated config: 10 PQ availability/rejection transactions match; selected full-wallet AUTH/POP/recovery corpus has **138** matching transactions and actual new-route recipient data/balance changes. Selected successful fee-path maximum is **15,556 gas**. It is not the complete worst-case corpus.
 - SDK-generated StateInit deploys all three initial accounts in emulator transactions; native cached-signature recovery has **67** matching transactions, six persistent fee signatures and zero additional signing on exact retries. Bad intent/key, restore barrier and corrupted backend/leaf-burn controls pass. Dropping configured global ID or namespace trips route checks. Initial funding/time/keys are test fixtures, not live funding or backup-derived production custody.

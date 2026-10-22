@@ -23,6 +23,7 @@
 #include <cinttypes>
 
 #include "crypto/common/bitstring.h"
+#include "td/utils/PersistentTreap.h"
 #include "td/utils/Slice.h"
 #include "td/utils/UInt.h"
 #include "td/utils/Variant.h"
@@ -544,9 +545,12 @@ struct GeneratedCandidate {
   bool is_cached = false;
   bool self_collated = false;
   td::Bits256 collator_node_id = td::Bits256::zero();
+  // Normalized hashes of the external messages the collation took, including those it carried in
+  // from CollateParams. The block producer passes it to the next slot of the same leader window.
+  td::PersistentTreap<td::Bits256, td::Unit> processed_external_messages = {};
 
   GeneratedCandidate clone() const {
-    return {candidate.clone(), is_cached, self_collated, collator_node_id};
+    return {candidate.clone(), is_cached, self_collated, collator_node_id, processed_external_messages};
   }
 };
 

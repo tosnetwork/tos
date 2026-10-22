@@ -317,6 +317,7 @@ class BroadcastsPlumtree::Impl {
   void add_peer_state_for_test(adnl::AdnlNodeIdShort peer);
   void remove_peer_state_for_test(adnl::AdnlNodeIdShort peer);
   bool has_peer_state_for_test(adnl::AdnlNodeIdShort peer) const;
+  bool prune_inactive_eager_for_test(OverlayImpl *overlay, adnl::AdnlNodeIdShort peer, double inactive_for);
   PlumtreeRepairDiagnostics repair_diagnostics_for_test() const;
   void flush_repairs_for_test(OverlayImpl *overlay);
 
@@ -599,7 +600,7 @@ void BroadcastsPlumtree::Impl::remove_inactive_eager_peers(OverlayImpl *overlay,
   bool mtu_peers_changed = false;
   auto now = td::Timestamp::now();
   for (auto it = slot.eager.begin(); it != slot.eager.end();) {
-    if (!is_inactive_eager_peer(*it, now, overlay->peer_receives_broadcasts(*it))) {
+    if (!is_inactive_eager_peer(*it, now, overlay->peer_receives_plumtree_broadcasts(*it))) {
       ++it;
       continue;
     }
@@ -739,6 +740,16 @@ void BroadcastsPlumtree::Impl::add_peer_state_for_test(adnl::AdnlNodeIdShort pee
 
 void BroadcastsPlumtree::Impl::remove_peer_state_for_test(adnl::AdnlNodeIdShort peer) {
   remove_peer_state(peer);
+}
+
+bool BroadcastsPlumtree::Impl::prune_inactive_eager_for_test(OverlayImpl *overlay, adnl::AdnlNodeIdShort peer,
+                                                             double inactive_for) {
+  CHECK(!slots_.empty());
+  auto it = eager_peer_activity_.find(peer);
+  CHECK(it != eager_peer_activity_.end());
+  it->second.last_active_at = td::Timestamp::in(-inactive_for);
+  remove_inactive_eager_peers(overlay, slots_.front());
+  return slots_.front().eager.contains(peer);
 }
 
 PlumtreeRepairDiagnostics BroadcastsPlumtree::Impl::repair_diagnostics_for_test() const {
@@ -2281,6 +2292,11 @@ void BroadcastsPlumtree::remove_peer_state_for_test(adnl::AdnlNodeIdShort peer) 
 
 bool BroadcastsPlumtree::has_peer_state_for_test(adnl::AdnlNodeIdShort peer) const {
   return impl_->has_peer_state_for_test(peer);
+}
+
+bool BroadcastsPlumtree::prune_inactive_eager_for_test(OverlayImpl *overlay, adnl::AdnlNodeIdShort peer,
+                                                       double inactive_for) {
+  return impl_->prune_inactive_eager_for_test(overlay, peer, inactive_for);
 }
 
 PlumtreeRepairDiagnostics BroadcastsPlumtree::repair_diagnostics_for_test() const {

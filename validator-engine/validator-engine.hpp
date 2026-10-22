@@ -133,6 +133,7 @@ struct Config {
   std::vector<tos::ShardIdFull> shards_to_monitor;
   std::vector<FastSyncOverlayClient> fast_sync_overlay_clients;
   std::optional<PqConsensus> pq_consensus;
+  tos::tl_object_ptr<tos::tos_api::engine_validator_extMessagePoolConfig> ext_message_pool_config;
 
   bool state_serializer_enabled = true;
   std::vector<std::pair<tos::adnl::AdnlNodeIdShort, tos::overlay::OverlayMemberCertificate>>
@@ -186,7 +187,7 @@ struct Config {
   tos::tl_object_ptr<tos::tos_api::engine_validator_config> tl() const;
 
   Config();
-  Config(const tos::tos_api::engine_validator_config &config);
+  Config(tos::tos_api::engine_validator_config config);
 };
 
 class ValidatorEngine : public td::actor::Actor {
@@ -304,7 +305,6 @@ class ValidatorEngine : public td::actor::Actor {
   // --disable-validator-consensus-cleanup is given.
   bool validator_consensus_cleanup_ = true;
   bool test_crash_cleanup_before_erase_ = false;
-  size_t max_mempool_num_ = 0;
   td::optional<tos::validator::ExtMessageWorkProfile> ext_message_work_profile_;
   double block_ttl_ = 0;
   double sync_ttl_ = 0;
@@ -384,9 +384,6 @@ class ValidatorEngine : public td::actor::Actor {
   }
   void set_ext_message_work_profile(tos::validator::ExtMessageWorkProfile profile) {
     ext_message_work_profile_ = std::move(profile);
-  }
-  void set_max_mempool_num(size_t t) {
-    max_mempool_num_ = t;
   }
   void set_block_ttl(double t) {
     block_ttl_ = t;
@@ -905,6 +902,9 @@ class ValidatorEngine : public td::actor::Actor {
                          tos::PublicKeyHash src, td::uint32 perm, td::Promise<td::BufferSlice> promise);
   void run_control_query(tos::tos_api::engine_validator_getConfigProposal &query, td::BufferSlice data,
                          tos::PublicKeyHash src, td::uint32 perm, td::Promise<td::BufferSlice> promise);
+  void run_control_query(tos::tos_api::engine_validator_setExtMessagePoolOptions &query, td::BufferSlice data,
+                         tos::PublicKeyHash src, td::uint32 perm, td::Promise<td::BufferSlice> promise);
+
   template <class T>
   void run_control_query(T &query, td::BufferSlice data, tos::PublicKeyHash src, td::uint32 perm,
                          td::Promise<td::BufferSlice> promise) {

@@ -170,7 +170,10 @@ void AdnlNetworkManagerImpl::receive_udp_message(td::UdpMessage message, size_t 
   if (message.data.size() >= get_mtu() + 128) {
     VLOG(ADNL_NOTICE) << this << ": received huge packet of size " << message.data.size();
   }
-  CHECK(idx < udp_sockets_.size());
+  if (idx >= udp_sockets_.size()) {
+    VLOG(ADNL_ERROR) << this << ": dropping message to unknown socket #" << idx;
+    return;
+  }
   auto &socket = udp_sockets_[idx];
   AdnlCategoryMask cat_mask;
   bool from_proxy = false;
@@ -295,7 +298,11 @@ void AdnlNetworkManagerImpl::send_udp_packet(AdnlNodeIdShort src_id, AdnlNodeIdS
     M.address = dst_addr;
     M.data = std::move(data);
 
-    CHECK(M.data.size() <= get_mtu());
+    if (M.data.size() > get_mtu()) {
+      VLOG(ADNL_ERROR) << this << ": dropping OUT message [" << src_id << "->" << dst_id
+                       << "]: too big: size=" << M.data.size() << " mtu=" << get_mtu();
+      return;
+    }
 
     td::actor::send_closure(socket.server, &td::UdpServer::send, std::move(M));
   } else {

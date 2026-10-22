@@ -67,11 +67,12 @@ unrelated peer-authentication checks.
 ## Disposable candidate network launcher
 
 `localnet-jsonrpc.py --quantum-admission-candidate` explicitly selects a **fresh
-isolated test network** with version 18, global ID 1, namespace `42` repeated
+isolated test network** with version 16, global ID 1, namespace `42` repeated
 32 bytes, deployment fee schedule and candidate ConfigParam21 credit 20,000.
-ConfigParam20 retains credit 10,000. Ordinary launcher defaults are unchanged.
+ConfigParam20 retains credit 10,000. Ordinary launcher basechain credit is now
+also 20,000; the flag retains fixture isolation, not a credit override.
 The flag refuses `--reuse`, an existing saved network, a conflicting namespace
-or a conflicting `TOS_GLOBAL_VERSION`. It does not switch deployed defaults.
+or a conflicting `TOS_GLOBAL_VERSION`. It does not change existing networks.
 
 Example after building the Linux node tools, using an unused owned scratch path:
 

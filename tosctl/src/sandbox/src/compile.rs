@@ -23,35 +23,7 @@ use std::process::Command;
 use chain_block::{read_single_root_boc, Cell};
 
 use crate::error::{SandboxError, SandboxResult};
-
-/// Locate the TOS build directory by checking common paths.
-fn find_tos_root() -> Option<PathBuf> {
-    // 1. Check TOS_ROOT env var
-    if let Ok(root) = env::var("TOS_ROOT") {
-        let p = PathBuf::from(root);
-        if p.join("build/crypto/func").exists() {
-            return Some(p);
-        }
-    }
-
-    // 2. Check ~/tos
-    if let Ok(home) = env::var("HOME") {
-        let p = PathBuf::from(&home).join("tos");
-        if p.join("build/crypto/func").exists() {
-            return Some(p);
-        }
-    }
-
-    // 3. Check relative to current dir (common in workspace)
-    for candidate in &[".", "..", "../..", "../../.."] {
-        let p = PathBuf::from(candidate);
-        if p.join("build/crypto/func").exists() {
-            return Some(p);
-        }
-    }
-
-    None
-}
+use crate::find_tos_root;
 
 /// Compile one or more FunC source files into a TVM code [`Cell`].
 ///
@@ -69,7 +41,7 @@ fn find_tos_root() -> Option<PathBuf> {
 ///
 /// # Environment
 /// * `TOS_ROOT` — if set, used to locate `build/crypto/func`, `build/crypto/fift`,
-///   and `crypto/fift/lib`.  Falls back to `~/tos` or relative paths.
+///   and `crypto/fift/lib`.  Falls back to the enclosing checkout, then `~/tos`.
 /// * `FUNC_PATH` — override the path to the `func` binary.
 /// * `FIFT_PATH` — override the path to the `fift` binary.
 ///

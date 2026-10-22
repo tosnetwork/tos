@@ -74,17 +74,17 @@ fn admission_candidate_executor_loads_the_generated_chain_configuration() {
     }
 }
 
-/// Selecting an instruction version does not select a new network fee profile.
-/// The candidate must come from a generated, explicitly selected configuration.
+/// Selecting an instruction version does not change the chain credit defaults.
 #[test]
-fn changing_the_vm_version_does_not_activate_the_candidate_credit() {
+fn changing_the_vm_version_preserves_the_chain_credit_defaults() {
     let default = tos_executor::BlockchainConfig::default_with_global_version(16)
         .expect("explicit version with the default gas profile");
     assert_eq!(default.global_version(), 16);
     for masterchain in [false, true] {
         let raw = default.raw_config().gas_prices(masterchain).expect("default raw gas prices");
-        assert_eq!(raw.gas_credit, 10000, "version selection activated candidate credit");
-        assert_eq!(default.get_gas_config(masterchain).gas_credit, 10000);
+        let expected = if masterchain { 10000 } else { 20000 };
+        assert_eq!(raw.gas_credit, expected);
+        assert_eq!(default.get_gas_config(masterchain).gas_credit, expected);
     }
 }
 
@@ -116,6 +116,14 @@ fn zerostate_config() -> chain_block::ConfigParams {
         .expect("a masterchain zero state")
         .config
         .clone()
+}
+
+/// Read both credits from the generated default, without the fixture profile flag.
+#[test]
+fn generated_default_credits_are_workchain_specific() {
+    let zero = zerostate_config();
+    assert_eq!(zero.gas_prices(false).expect("basechain prices").gas_credit, 20000);
+    assert_eq!(zero.gas_prices(true).expect("masterchain prices").gas_credit, 10000);
 }
 
 /// What the zero state grants, field by field, against what the executor's

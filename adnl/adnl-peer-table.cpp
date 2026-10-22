@@ -125,10 +125,13 @@ AdnlPeerTableImpl::PeerPair *AdnlPeerTableImpl::get_peer_pair_if_exists(AdnlNode
 }
 
 void AdnlPeerTableImpl::receive_decrypted_packet(AdnlNodeIdShort dst, AdnlPacket packet, td::uint64 serialized_size) {
-  packet.run_basic_checks().ensure();
+  if (auto S = packet.run_basic_checks(); S.is_error()) {
+    VLOG(ADNL_INFO) << this << ": dropping IN message [?->" << dst << "]: " << S;
+    return;
+  }
 
   if (!packet.inited_from_short()) {
-    VLOG(ADNL_INFO) << this << ": dropping IN message [?->" << dst << "]: destination not set";
+    VLOG(ADNL_INFO) << this << ": dropping IN message [?->" << dst << "]: src not set";
     return;
   }
   AdnlNodeIdShort src = packet.from_short();

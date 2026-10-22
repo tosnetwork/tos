@@ -1,5 +1,6 @@
 #include <atomic>
 #include <chrono>
+#include <utility>
 
 #include "td/actor/actor.h"
 #include "td/utils/Timer.h"
@@ -451,6 +452,9 @@ bool QuicServer::handle_expiry(ConnectionState &state) {
     case QuicConnectionPImpl::ExpiryAction::IdleClose:
       LOG(INFO) << "expiry IdleClose for " << state.remote_address;
       return true;
+    case QuicConnectionPImpl::ExpiryAction::HandshakeTimeout:
+      LOG(INFO) << "expiry HandshakeTimeout for " << state.remote_address;
+      return true;
     case QuicConnectionPImpl::ExpiryAction::Close:
       LOG(INFO) << "expiry Close for " << state.remote_address;
       on_connection_updated(state);  // should we?..
@@ -529,7 +533,8 @@ void QuicServer::handle_timeouts() {
       to_erase_connections_.push_back(state->cid);
     }
   }
-
+  // A queued datagram must not revive a connection that just timed out.
+  erase_pending_connections();
   StreamShutdownList shutdown;
   callback_->loop(td::Timestamp::now(), shutdown);
   for (auto &e : shutdown.entries) {
@@ -546,10 +551,10 @@ void QuicServer::handle_timeouts() {
 }
 
 void QuicServer::erase_pending_connections() {
-  for (auto cid : to_erase_connections_) {
+  // Take the list first: closing runs callbacks that may queue further erasures.
+  for (auto cid : std::exchange(to_erase_connections_, {})) {
     on_connection_closed(cid);
   }
-  to_erase_connections_.clear();
 }
 
 void QuicServer::log_stats(std::string reason) {

@@ -610,6 +610,9 @@ target_link_libraries(test-ed25519 PRIVATE tos_crypto keys)
 add_executable(test-vm test/test-td-main.cpp ${TOSVM_TEST_SOURCE})
 target_link_libraries(test-vm PRIVATE tos_crypto fift-lib)
 
+add_executable(test-external-credit test/test-td-main.cpp crypto/test/test-external-credit.cpp)
+target_link_libraries(test-external-credit PRIVATE smc-envelope fift-lib)
+
 add_executable(test-smartcont test/test-td-main.cpp ${SMARTCONT_TEST_SOURCE})
 target_link_libraries(test-smartcont PRIVATE smc-envelope fift-lib tos_db tos_pq_consensus_signer tos_pq_consensus)
 target_compile_definitions(test-smartcont PRIVATE TOS_CRYPTO_BUILD_DIR="${CMAKE_CURRENT_BINARY_DIR}/crypto")
@@ -682,6 +685,8 @@ add_executable(test-adnl test/test-adnl.cpp)
 target_link_libraries(test-adnl adnl adnltest dht tl_api)
 add_executable(test-adnl-peer-pair-cap test/test-adnl-peer-pair-cap.cpp)
 target_link_libraries(test-adnl-peer-pair-cap adnl adnltest dht tl_api)
+add_executable(test-adnl-peer-pair-hardening test/test-td-main.cpp test/test-adnl-peer-pair-hardening.cpp)
+target_link_libraries(test-adnl-peer-pair-hardening adnl dht tl_api tdutils)
 add_executable(test-dht test/test-dht.cpp)
 target_link_libraries(test-dht adnl adnltest dht tl_api)
 add_executable(test-rldp2 test/test-rldp2.cpp)
@@ -771,6 +776,9 @@ add_dependencies(all-tests plumtree-graph-sim)
 add_executable(test-tos-collator test/test-tos-collator.cpp)
 target_link_libraries(test-tos-collator overlay tdutils tdactor adnl tl_api dht
   validator-disk tos_validator validator-disk )
+
+add_executable(test-ext-message-expiry test/test-td-main.cpp test/test-ext-message-expiry.cpp)
+target_link_libraries(test-ext-message-expiry PRIVATE tos_validator validator-common tos_crypto common tdactor tdutils)
 
 add_executable(test-ext-message-pool test/test-td-main.cpp test/test-ext-message-pool.cpp)
 target_link_libraries(test-ext-message-pool PRIVATE tos_validator validator-common tos_crypto common tdactor tdutils)
@@ -1726,6 +1734,7 @@ endif()
 if (NOT TOS_ONLY_TOSLIB)
 tos_test(test-adnl)
 tos_test(test-adnl-peer-pair-cap)
+tos_test(test-adnl-peer-pair-hardening)
 tos_test(test-dht)
 tos_test(test-rldp2)
 tos_test(test-rldp2-connection-cap)
@@ -2093,7 +2102,12 @@ set_tests_properties(test-bridge-retirement-nonzero PROPERTIES PASS_REGULAR_EXPR
 tos_test(test-block-accepter)
 set_tests_properties(test-block-accepter PROPERTIES PASS_REGULAR_EXPRESSION "BLOCK_ACCEPTER_OK")
 tos_test(test-rldp2-refusal-lifetime)
+add_test(NAME ext-admission-release-source
+  COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-ext-admission-release.py)
+set_tests_properties(ext-admission-release-source PROPERTIES LABELS "source-guard")
+
 tos_test(test-ext-message-pool)
+tos_test(test-ext-message-expiry)
 tos_test(test-ext-message-manager)
 tos_test(test-ext-message-ingress)
 tos_test(test-ext-message-admission-budget)
@@ -2216,6 +2230,7 @@ if(TARGET proof-persisted-fsync-shim)
   add_dependencies(all-tests proof-persisted-fsync-shim)
 endif()
 tos_test(test-emulator)
+tos_test(test-external-credit)
 # Keep the fee regressions in the PR selection without running the full emulator suite.
 add_test(NAME json-rpc-import-fee
   COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/scripts/run-jsonrpc-import-fee-tests.py $<TARGET_FILE:test-emulator>)
@@ -2300,6 +2315,32 @@ add_test(NAME quic-transport-budget COMMAND test-quic-sender
   -p 49000 -d tmp-dir-test-quic-transport-budget -f QuicTransportBudget)
 add_test(NAME quic-source-share COMMAND test-quic-sender
   -p 51000 -d tmp-dir-test-quic-source-share -f QuicSourceShare)
+add_test(NAME quic-query-expired-deadline COMMAND test-quic-sender
+  -p 53000 -d tmp-dir-test-quic-expired-deadline -f QueryExpiredDeadline)
+add_test(NAME quic-expired-waiter-ownership COMMAND test-quic-sender
+  -p 55000 -d tmp-dir-test-quic-waiter-ownership -f ExpiredWaiterReleasesOnlyUnstartedConnection)
+add_test(NAME quic-connection-waiter-limits COMMAND test-quic-sender
+  -p 57000 -d tmp-dir-test-quic-waiter-limits -f ConnectionWaiter)
+add_test(NAME quic-connection-id-keyed-hash COMMAND test-quic-sender
+  -p 59000 -d tmp-dir-test-quic-cid-hash -f KeyedHashSpreadsIds)
+add_test(NAME quic-transport-error-names COMMAND test-quic-sender
+  -p 59500 -d tmp-dir-test-quic-error-names -f BlockedOpenReportsTransportErrorName)
+# Connection-setup regressions on the path the bounded connection wait rewrote: plain queries,
+# handshake failure, response deadlines, and restarts of either side. Each entry keeps its ports
+# (and their QUIC offset) away from every other entry's range. All of them also run under
+# AddressSanitizer in the network-safety job. The restart cases take about two minutes in a release
+# build and longer there.
+add_test(NAME quic-sender-basic COMMAND test-quic-sender
+  -p 3000 -d tmp-dir-test-quic-basic -f Test_QuicSender_BasicQuery)
+add_test(NAME quic-sender-wrong-public-key COMMAND test-quic-sender
+  -p 5000 -d tmp-dir-test-quic-wrong-key -f WrongPublicKey)
+add_test(NAME quic-sender-tls-key-mismatch COMMAND test-quic-sender
+  -p 7000 -d tmp-dir-test-quic-tls-mismatch -f TlsKeyMismatchDoesNotPoisonOutboundPath)
+add_test(NAME quic-sender-response-timeouts COMMAND test-quic-sender
+  -p 9000 -d tmp-dir-test-quic-response-timeouts -f ResponseTimeout)
+add_test(NAME quic-sender-restart COMMAND test-quic-sender
+  -p 11000 -d tmp-dir-test-quic-restart -f Test_QuicSender_Restart)
+set_tests_properties(quic-sender-restart PROPERTIES TIMEOUT 600)
 set_tests_properties(
   quic-inbound-stream-timeout
   quic-outbound-query-deadline
@@ -2309,7 +2350,18 @@ set_tests_properties(
   quic-inbound-budget
   quic-transport-budget
   quic-source-share
+  quic-query-expired-deadline
+  quic-expired-waiter-ownership
+  quic-connection-waiter-limits
+  quic-connection-id-keyed-hash
+  quic-transport-error-names
+  quic-sender-basic
+  quic-sender-wrong-public-key
+  quic-sender-tls-key-mismatch
+  quic-sender-response-timeouts
+  quic-sender-restart
   test-adnl-peer-pair-cap
+  test-adnl-peer-pair-hardening
   test-overlay-broadcast-capacity
   test-http-server-limits
   test-json-rpc-transport

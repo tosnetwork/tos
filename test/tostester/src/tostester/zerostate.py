@@ -543,9 +543,8 @@ def fee_schedule_for(config: "NetworkConfig") -> dict[str, str]:
             "Quantum admission candidate requires version 16, deployment fees and the frozen 0x42 AUTH network tag"
         )
     if config.deployment_fee_schedule:
-        credit = 20000 if config.quantum_admission_candidate else 10000
         return {
-            "gas_prices": f"436907 2 *M 2 *M {credit} 20 *M TM$0.1 TM$1.0 100 667 config.gas_prices!",
+            "gas_prices": "436907 2 *M 2 *M 20000 20 *M TM$0.1 TM$1.0 100 667 config.gas_prices!",
             "mc_gas_prices": "32768000 1 *M 70 *M 10000 2500000 TM$0.1 TM$1.0 100 50000"
             " config.mc_gas_prices!",
             "fwd_prices": "66667 4369067 436906667 3/2 sg*/ 1/3 sg*/ 1/3 sg*/ config.fwd_prices!",
@@ -554,7 +553,7 @@ def fee_schedule_for(config: "NetworkConfig") -> dict[str, str]:
         }
     return {
         "gas_prices": "// DEV-SPECIFIC: cheaper gas for tests (deployment: 436907/32768000)\n"
-        "10 sg* 1 *M dup   10000 1000 *M TM$0.1 TM$1.0 100 1000 config.gas_prices!",
+        "10 sg* 1 *M dup   20000 1000 *M TM$0.1 TM$1.0 100 1000 config.gas_prices!",
         "mc_gas_prices": "10 sg* 1 *M 20 *M 10000 1000 *M TM$0.1 TM$1.0 100 1000 config.mc_gas_prices!",
         "fwd_prices": "// DEV-SPECIFIC: cheaper forwarding for tests (deployment: 66667/500000)\n"
         "100 10 sg* 10 sg* 3/2 sg*/ 1/3 sg*/ 1/3 sg*/ config.fwd_prices!",

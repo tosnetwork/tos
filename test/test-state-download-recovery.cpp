@@ -480,7 +480,7 @@ class RootServices final : public RootDb {
 };
 
 td::Ref<ValidatorManagerOptions> cell_options() {
-  auto options = ValidatorManagerOptions::create({}, {}, false, 0, 0, 0, 0, 0, 0, true);
+  auto options = ValidatorManagerOptions::create({}, {}, false, 0, 0, 0, 0, 0, true);
   options.write().set_disable_rocksdb_stats(true);
   options.write().set_celldb_compress_depth(0);
   options.write().set_celldb_v2(false);

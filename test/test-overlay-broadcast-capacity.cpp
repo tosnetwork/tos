@@ -56,6 +56,11 @@ class OverlayImplBroadcastCapacityTest {
   static BroadcastsTwostep &twostep(OverlayImpl &overlay) {
     return overlay.broadcasts_twostep_;
   }
+  // The constructor turns two-step sending off without a two-step sender actor; the source check
+  // only reads the option, so the test sets it directly.
+  static void set_send_twostep(OverlayImpl &overlay, bool value) {
+    overlay.opts_.send_twostep_broadcast_ = value;
+  }
 };
 
 class BroadcastsFecTestAccess {
@@ -75,6 +80,12 @@ class BroadcastsFecTestAccess {
   static td::Status try_process_fresh(BroadcastsFec &b, OverlayImpl &overlay, Overlay::BroadcastHash hash,
                                       bool is_ours) {
     return b.try_process_fresh_for_test(&overlay, hash, is_ours);
+  }
+  static void inject_ready(BroadcastsFec &b, Overlay::BroadcastHash hash, td::uint32 date, td::BufferSlice data) {
+    b.inject_ready_for_test(hash, date, std::move(data));
+  }
+  static td::uint32 symbols_count(const BroadcastsFec &b, Overlay::BroadcastHash hash) {
+    return b.symbols_count_for_test(hash);
   }
 };
 
@@ -254,6 +265,78 @@ TEST(OverlayBroadcastCapacity, FecProcessConsultsAdmissionGate) {
     ASSERT_EQ(status.error().code(), static_cast<int>(tos::ErrorCode::notready));
     ASSERT_EQ(Access::count(fec), cap);
   });
+}
+
+// A short part names its symbol by seqno, and the receiver regenerates that symbol from its own
+// encoder before checking anything else about the part. The seqno is bounded the same way as a
+// full part's, so a peer cannot make the receiver encode arbitrary symbols of a finished broadcast.
+TEST(OverlayBroadcastCapacity, FecShortPartSeqnoIsBounded) {
+  using Access = tos::overlay::BroadcastsFecTestAccess;
+  with_overlay([](tos::overlay::OverlayImpl &overlay) {
+    auto &fec = tos::overlay::OverlayImplBroadcastCapacityTest::fec(overlay);
+    auto hash = hash_from_index(1);
+    Access::inject_ready(fec, hash, now_sec(), td::BufferSlice(std::string(4096, 'x')));
+    // Full parts accept seqno < symbols_count * 2 + 4; short parts must use the same bound.
+    auto bound = static_cast<td::int32>(Access::symbols_count(fec, hash) * 2 + 4);
+    ASSERT_TRUE(bound > 4);
+    auto short_part = [&](td::int32 seqno) {
+      return tos::create_tl_object<tos::tos_api::overlay_broadcastFecShort>(
+          tos::PublicKey{tos::pubkeys::Ed25519{td::Bits256::zero()}}.tl(), tos::overlay::Certificate::empty_tl(), hash,
+          td::Bits256::zero(), seqno, td::BufferSlice());
+    };
+    td::Bits256 peer_bits;
+    peer_bits.as_slice().fill('p');
+    auto peer = tos::adnl::AdnlNodeIdShort{peer_bits};
+
+    for (td::int32 seqno : {bound, 1 << 23, -1}) {
+      auto status = fec.process_broadcast(&overlay, peer, short_part(seqno));
+      ASSERT_TRUE(status.is_error());
+      ASSERT_EQ(status.message(), td::Slice("too big seqno"));
+    }
+    // In range, the part reaches the data-hash check instead.
+    auto status = fec.process_broadcast(&overlay, peer, short_part(bound - 1));
+    ASSERT_TRUE(status.is_error());
+    ASSERT_EQ(status.message(), td::Slice("wrong part data hash"));
+  });
+}
+
+// A two-step broadcast is checked by its receivers as coming from a named sender, even when the
+// AnySender flag is set. The local source check before sending must use the same rule, or a source
+// that the receivers accept is refused locally.
+TEST(OverlayBroadcastCapacity, FecSenderCheckFollowsTheSelectedPath) {
+  using tos::overlay::OverlayImpl;
+  using tos::overlay::Overlays;
+  auto any = Overlays::BroadcastFlagAnySender();
+  auto no_twostep = Overlays::BroadcastFlagNoTwostep();
+  ASSERT_TRUE(!OverlayImpl::fec_source_checked_as_any_sender(true, any));
+  ASSERT_TRUE(OverlayImpl::fec_source_checked_as_any_sender(true, any | no_twostep));
+  ASSERT_TRUE(OverlayImpl::fec_source_checked_as_any_sender(false, any));
+  ASSERT_TRUE(!OverlayImpl::fec_source_checked_as_any_sender(true, 0));
+  ASSERT_TRUE(!OverlayImpl::fec_source_checked_as_any_sender(false, 0));
+
+  // The rule decides real eligibility: with no authorized keys, a source may send FEC broadcasts
+  // up to 1 MiB as a named sender and none with AnySender.
+  td::Bits256 local_bits;
+  local_bits.as_slice().fill('l');
+  tos::overlay::OverlayOptions options;
+  options.max_neighbours_ = 0;
+  options.enable_plumtree_broadcast_ = false;
+  OverlayImpl overlay({}, {}, {}, {}, tos::adnl::AdnlNodeIdShort{local_bits},
+                      tos::overlay::OverlayIdFull{td::BufferSlice{"fec-sender-check-test"}},
+                      tos::overlay::OverlayType::Public, {}, {}, {},
+                      std::make_unique<tos::overlay::Overlays::Callback>(),
+                      tos::overlay::OverlayPrivacyRules{1 << 20, tos::overlay::CertificateFlags::AllowFec, {}},
+                      "fec-sender-check-test", std::move(options));
+  td::Bits256 source_bits;
+  source_bits.as_slice().fill('s');
+  tos::PublicKeyHash source{source_bits};
+  ASSERT_TRUE(overlay.can_send_broadcast_fec(source, 1000, 0));
+  ASSERT_TRUE(!overlay.can_send_broadcast_fec(source, 1000, any));
+  // With two-step sending, the same AnySender broadcast passes, as the receivers will accept it;
+  // NoTwostep keeps the plain FEC rule.
+  tos::overlay::OverlayImplBroadcastCapacityTest::set_send_twostep(overlay, true);
+  ASSERT_TRUE(overlay.can_send_broadcast_fec(source, 1000, any));
+  ASSERT_TRUE(!overlay.can_send_broadcast_fec(source, 1000, any | no_twostep));
 }
 
 TEST(OverlayBroadcastCapacity, TwostepRefusesNewBroadcastWhenFull) {

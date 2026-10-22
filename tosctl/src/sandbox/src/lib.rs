@@ -11,6 +11,7 @@ pub mod contract;
 pub mod error;
 pub mod genesis;
 pub mod message_builder;
+mod paths;
 pub mod result;
 pub mod snapshot;
 #[cfg(test)]
@@ -23,6 +24,7 @@ pub use contract::{ContractProvider, SandboxContract};
 pub use error::{SandboxError, SandboxResult};
 pub use genesis::{generate_zerostate_state, generate_zerostate_total_balance};
 pub use message_builder::MessageBuilder;
+pub use paths::find_tos_root;
 pub use result::{GetMethodResult, SendResult};
 pub use snapshot::BlockchainSnapshot;
 pub use treasury::Treasury;

@@ -351,22 +351,25 @@ tree, plus the loopback test in `test-adnl-probe.py`:
    `get_ipv4()` / `adnl.address.udp`, and the implicit-source-address rule
    (`AdnlAddressList::add_udp_adnl_address`) returns an error for anything
    that is not IPv4.
-3. **The TL schema and address list can carry IPv6** (`adnl.address.udp6`,
-   `AdnlAddressUdp6` creates a connection actor), but the transport cannot
-   deliver to it: when tested on `::1`, handing a udp6 candidate to the
-   connection layer made the first send go through the IPv4 socket and
-   **abort the process** inside the UDP server
-   (`PollableFd.h: Check '!was_locked' failed`, SIGABRT) — the send-error
-   path there is not survivable. The probe therefore filters non-IPv4
-   candidates/targets up front instead of passing them into the stack:
-   `dial` whose candidates are all IPv6 completes with
-   `failed` / `unsupported-candidate`, and `punch` skips IPv6 targets
-   (logged to stderr).
+3. **The TL schema and address list can carry IPv6** (`adnl.address.udp6`),
+   but the peer layer refuses it twice before the IPv4 socket is used.
+   `AdnlPeerPairImpl::update_addr_list` drops a peer's whole address list if
+   any address in it is IPv6, so no connection is built for it. If a udp6
+   address still reached the connection layer,
+   `AdnlAddressUdp6::create_connection` returns `ipv6 is not supported` and
+   no connection actor is created. Before these refusals, the udp6 address
+   created a connection actor and, when tested on `::1` (2026-08-20), its
+   first send went through the IPv4 socket and **aborted the process**
+   inside the UDP server
+   (`PollableFd.h: Check '!was_locked' failed`, SIGABRT). The probe still
+   filters non-IPv4 candidates/targets up front: `dial` whose candidates are
+   all IPv6 completes with `failed` / `unsupported-candidate`, and `punch`
+   skips IPv6 targets (logged to stderr).
 
-**Observed result on ::1 (2026-08-20, this tree):** `listen` on `::1:0`
-fails with the explicit IPv4-only error; a raw `::1` dial candidate crashes
-the native stack if forwarded (hence the filter), so `dial` with only `::1`
-candidates completes with `failed` / `unsupported-candidate`. IPv6 is **not
+**Observed result on ::1:** `listen` on `::1:0` fails with the explicit
+IPv4-only error, and `dial` with only `::1` candidates completes with
+`failed` / `unsupported-candidate`. A udp6 candidate that reaches the
+connection layer is refused there rather than crashing. IPv6 is **not
 functional** in the native ADNL transport; any cross-validation matrix must
 treat native IPv6 cells as unsupported-by-implementation rather than as
 network failures.

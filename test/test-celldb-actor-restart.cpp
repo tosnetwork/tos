@@ -94,16 +94,14 @@ std::string unique_tmp_root(td::Slice suffix) {
 }
 
 td::Ref<tos::validator::ValidatorManagerOptions> make_options() {
-  auto opts = tos::validator::ValidatorManagerOptions::create(
-      tos::BlockIdExt{}, tos::BlockIdExt{},
-      /*allow_blockchain_init=*/false,
-      /*sync_blocks_before=*/0.0,
-      /*block_ttl=*/0.0,
-      /*state_ttl=*/0.0,
-      /*archive_ttl=*/0.0,
-      /*key_proof_ttl=*/0.0,
-      /*max_mempool_num=*/0,
-      /*initial_sync_disabled=*/true);
+  auto opts = tos::validator::ValidatorManagerOptions::create(tos::BlockIdExt{}, tos::BlockIdExt{},
+                                                              /*allow_blockchain_init=*/false,
+                                                              /*sync_blocks_before=*/0.0,
+                                                              /*block_ttl=*/0.0,
+                                                              /*state_ttl=*/0.0,
+                                                              /*archive_ttl=*/0.0,
+                                                              /*key_proof_ttl=*/0.0,
+                                                              /*initial_sync_disabled=*/true);
   auto& writable = opts.write();
   writable.set_disable_rocksdb_stats(true);
   writable.set_celldb_compress_depth(0);

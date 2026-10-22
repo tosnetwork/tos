@@ -1042,7 +1042,7 @@ def test_canonical_genesis_auth_policy_profile_is_explicit(tmp_path):
         wc_gas = ConfigParam21.deserialize(cfg[21].copy())
         assert mc_gas.other is not None and wc_gas.other is not None
         assert mc_gas.other.gas_credit == 10000
-        assert wc_gas.other.gas_credit == (20000 if admission else 10000)
+        assert wc_gas.other.gas_credit == 20000
         wc_fields = dict(vars(wc_gas.other))
         wc_fields.pop("gas_credit")
         wc_fields.update(flat_gas_limit=wc_gas.flat_gas_limit, flat_gas_price=wc_gas.flat_gas_price)
