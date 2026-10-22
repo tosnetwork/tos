@@ -121,7 +121,7 @@ struct Outcome {
 };
 
 Outcome run_case(const td::Ref<vm::Cell>& code, td::optional<td::uint64> precompiled_gas, bool external,
-                 bool dont_run_precompiled, td::int64 balance = 100'000'000'000LL) {
+                 bool dont_run_precompiled, td::int64 balance = 100'000'000'000LL, td::uint64 gas_limit = kGasLimit) {
   ensure_vm_ready();
   const tos::UnixTime now = 1750000000;
   const tos::LogicalTime lt = 1000;
@@ -156,8 +156,8 @@ Outcome run_case(const td::Ref<vm::Cell>& code, td::optional<td::uint64> precomp
   CHECK(trans.prepare_storage_phase(storage_cfg, /*force_collect=*/true));
 
   block::ComputePhaseConfig cfg;
-  cfg.gas_limit = kGasLimit;
-  cfg.special_gas_limit = kGasLimit;
+  cfg.gas_limit = gas_limit;
+  cfg.special_gas_limit = gas_limit;
   cfg.gas_credit = kGasCredit;
   cfg.set_gas_price(1000);
   cfg.global_version = 16;
@@ -214,6 +214,24 @@ TEST(PrecompiledExternalMessage, NotAcceptedWithoutAccept) {
   CHECK(!r.skipped);
   CHECK(!r.accepted);
   CHECK(!r.success);
+}
+
+TEST(PrecompiledExternalMessage, CreditAboveUint32StillRequiresAccept) {
+  for (td::uint64 limit : {(td::uint64{1} << 32) - 1, td::uint64{1} << 32, (td::uint64{1} << 32) + 1}) {
+    for (bool dont_run : {false, true}) {
+      auto unaccepted = run_case(no_accept_code(), td::uint64{5000}, true, dont_run, 100'000'000'000LL, limit);
+      CHECK(unaccepted.prepared);
+      CHECK(!unaccepted.skipped);
+      CHECK(!unaccepted.accepted);
+      CHECK(!unaccepted.success);
+      auto accepted = run_case(accept_code(), td::uint64{5000}, true, dont_run, 100'000'000'000LL, limit);
+      CHECK(accepted.prepared);
+      CHECK(!accepted.skipped);
+      CHECK(accepted.accepted);
+      CHECK(accepted.success);
+      CHECK(accepted.gas_used == 5000);
+    }
+  }
 }
 
 TEST(PrecompiledExternalMessage, UnacceptedExternalRunsOnCreditOnly) {

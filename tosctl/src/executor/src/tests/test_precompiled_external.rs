@@ -116,6 +116,10 @@ enum Outcome {
 
 fn run(code: Cell, gas_usage: Option<u64>, message: Cell, balance: u64) -> Outcome {
     let cfg = config(&code, gas_usage);
+    run_with_config(code, message, balance, cfg)
+}
+
+fn run_with_config(code: Cell, message: Cell, balance: u64, cfg: BlockchainConfig) -> Outcome {
     let mut acc = account(code, balance);
     let params = ExecuteParams {
         block_unixtime: 1_750_000_000,
@@ -167,6 +171,28 @@ fn an_external_that_does_not_accept_is_refused() {
         run(no_accept_code(), Some(5000), external(), BALANCE),
         Outcome::NotAccepted(0)
     ));
+}
+
+#[test]
+fn precompiled_credit_above_u32_does_not_imply_acceptance() {
+    for limit in [(1u64 << 32) - 1, 1u64 << 32, (1u64 << 32) + 1] {
+        for (contract, accepts) in [(no_accept_code(), false), (accept_code(), true)] {
+            let mut params = config(&contract, Some(5000)).raw_config().clone();
+            let mut gas = params.gas_prices(false).expect("gas prices");
+            gas.gas_limit = limit;
+            params.set_config(ConfigParamEnum::ConfigParam21(gas)).expect("param 21");
+            let cfg = BlockchainConfig::with_config(params).expect("a configuration");
+            let outcome = run_with_config(contract, external(), BALANCE, cfg);
+            if accepts {
+                assert!(
+                    matches!(outcome, Outcome::Ran { gas_used: 5000, success: true }),
+                    "gas limit {limit}"
+                );
+            } else {
+                assert!(matches!(outcome, Outcome::NotAccepted(0)), "gas limit {limit}");
+            }
+        }
+    }
 }
 
 #[test]

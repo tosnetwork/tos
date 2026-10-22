@@ -62,6 +62,23 @@ def with_precompiled(configuration, contract, usage):
     return make_dict(entries, 32)
 
 
+def with_gas_limit(configuration, limit):
+    entries = read_dict(configuration, 32)
+    prices = entries[21].refs[0].slice()
+    updated = Cell()
+    tag = prices.uint(8)
+    if tag == 0xD1:
+        updated.uint(tag, 8).uint(prices.uint(128), 128)
+        tag = prices.uint(8)
+    assert tag == 0xDE
+    updated.uint(tag, 8).uint(prices.uint(64), 64)  # Preserve the gas price.
+    prices.uint(64)  # Replace the ordinary gas limit.
+    updated.uint(limit, 64).uint(prices.uint(5 * 64), 5 * 64)
+    assert not prices.bits and not prices.refs
+    entries[21] = Cell().ref(updated)
+    return make_dict(entries, 32)
+
+
 def native_row(name, result):
     if not result["success"]:
         return f"{name}\trejected"
@@ -94,19 +111,26 @@ def main():
 
     external = native.external(PROBE, Cell())
     internal = native.internal(SENDER, PROBE, Cell())
-    # name, code, listed usage, message, expected
+    # name, code, listed usage, message, expected, optional gas limit
     cases = [
-        ("ext-accept", ACCEPT, USAGE, external, f"true\t{USAGE}"),
-        ("ext-no-accept", NO_ACCEPT, USAGE, external, "rejected"),
-        ("ext-over-gas-max", ACCEPT, limit + 1, external, "rejected"),
-        ("ext-burn-under-credit", burn_then_accept(under), 0, external, "true\t0"),
-        ("ext-burn-over-credit", burn_then_accept(over), 0, external, "rejected"),
-        ("int-accept", ACCEPT, USAGE, internal, f"true\t{USAGE}"),
+        ("ext-accept", ACCEPT, USAGE, external, f"true\t{USAGE}", None),
+        ("ext-no-accept", NO_ACCEPT, USAGE, external, "rejected", None),
+        ("ext-over-gas-max", ACCEPT, limit + 1, external, "rejected", None),
+        ("ext-burn-under-credit", burn_then_accept(under), 0, external, "true\t0", None),
+        ("ext-burn-over-credit", burn_then_accept(over), 0, external, "rejected", None),
+        ("int-accept", ACCEPT, USAGE, internal, f"true\t{USAGE}", None),
     ]
+    for boundary in [(1 << 32) - 1, 1 << 32, (1 << 32) + 1]:
+        cases += [
+            (f"ext-no-accept-credit-{boundary}", NO_ACCEPT, USAGE, external, "rejected", boundary),
+            (f"ext-accept-credit-{boundary}", ACCEPT, USAGE, external, f"true\t{USAGE}", boundary),
+        ]
     failures, report = [], {}
     fixture = from_boc((ROOT / "tosctl/src/executor/real_boc/default_config.boc").read_bytes())
-    for name, contract, usage, message, expected in cases:
+    for name, contract, usage, message, expected, custom_limit in cases:
         configuration = with_precompiled(base, contract, usage)
+        if custom_limit is not None:
+            configuration = with_gas_limit(configuration, custom_limit)
         emulator = native.Emulator.from_config(configuration)
         try:
             shard = native.active_account(PROBE, contract, Cell())

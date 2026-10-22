@@ -481,7 +481,10 @@ pub trait TransactionExecutor {
 
         // calc gas fees
         let gas = vm.get_gas();
-        let credit = gas.get_gas_credit() as u32;
+        // The fallback for a precompiled contract uses the full configured
+        // gas limit as credit, which can exceed the serialized credit width.
+        // Acceptance depends on the complete VM credit being zero.
+        let credit = gas.get_gas_credit();
         //for external messages gas will not be exacted if VM throws the exception and gas_credit != 0
         if let Some(precompiled) = precompiled.as_ref() {
             vm_phase.gas_used = precompiled.gas_usage.try_into()?;
