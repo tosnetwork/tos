@@ -4566,6 +4566,7 @@ bool Collator::process_dispatch_queue() {
       if (out_msg_queue_reached_hard_limit(out_msg_queue_size_, new_msgs_from_dispatch,
                                            out_msg_queue_size_hard_limit_)) {
         LOG(INFO) << "out msg queue size too big, stop processing dispatch queue";
+        have_unprocessed_account_dispatch_queue_ = false;
         return true;
       }
       block_full_ = !block_limit_status_->fits(block::ParamLimits::cl_normal);
