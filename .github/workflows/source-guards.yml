@@ -44,6 +44,7 @@ jobs:
           python3 scripts/test_ci_ctest.py
           python3 scripts/test_ci_efficiency.py
           python3 scripts/test_clean_closed_pr_caches.py
+          python3 scripts/test_check_ext_message_stop_accept.py
 
       - name: Configure the CTest registry
         run: cmake -S . -B build-source-guards -G Ninja -DCMAKE_BUILD_TYPE=Release
@@ -76,6 +77,10 @@ jobs:
 
       - name: Set up uv
         uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+
+      # The replay tool's only dependency, at the version its launcher pins.
+      - name: Local CI replay parallelism tests
+        run: uv run --no-project --with 'pyyaml==6.0.3' python scripts/local-ci/test_local_ci.py
 
       - name: Prepare generated Python API and dependencies
         run: |

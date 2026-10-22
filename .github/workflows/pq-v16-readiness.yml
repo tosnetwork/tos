@@ -80,11 +80,11 @@ jobs:
       - name: Build native candidate tools and Rust opcode execution
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-          cmake --build build --target func fift tol emulator test-pq-v16-parity -j2
+          cmake --build build --target func fift tol emulator test-pq-v16-parity -j"$(nproc)"
           cmake -S crypto/pq/tools -B build-pq-key -G Ninja -DCMAKE_BUILD_TYPE=Release
-          cmake --build build-pq-key -j2
+          cmake --build build-pq-key -j"$(nproc)"
           cmake -S test/mldsa-auth -B build-auth-signer -G Ninja -DCMAKE_BUILD_TYPE=Release
-          cmake --build build-auth-signer -j2
+          cmake --build build-auth-signer -j"$(nproc)"
           cargo build --manifest-path tosctl/src/Cargo.toml --locked --release -p tos_vm --example pq-parity
           cargo build --manifest-path tosctl/src/Cargo.toml --locked --release \
             -p tos_executor --example pq-tx-parity

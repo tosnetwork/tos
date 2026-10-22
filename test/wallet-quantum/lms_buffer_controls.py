@@ -31,7 +31,7 @@ def main():
 
     def build(label):
         code, log = command(
-            label, ["cmake", "--build", str(args.build.resolve()), "--target", "emulator", "-j2"]
+            label, ["cmake", "--build", str(args.build.resolve()), "--target", "emulator"]
         )
         assert code == 0, log[-3000:]
 

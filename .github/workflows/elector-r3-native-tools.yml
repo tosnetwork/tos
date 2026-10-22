@@ -29,9 +29,9 @@ jobs:
       - name: Configure and build native tools
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-          cmake --build build --target func fift create-state gen_fif tos-pq-controller tos-pq-vote -j2
+          cmake --build build --target func fift create-state gen_fif tos-pq-controller tos-pq-vote -j"$(nproc)"
           cmake -S crypto/pq/tools -B build-pq-key -G Ninja -DCMAKE_BUILD_TYPE=Release
-          cmake --build build-pq-key -j2
+          cmake --build build-pq-key -j"$(nproc)"
       - name: Package exact source and tools
         run: |
           set -euo pipefail

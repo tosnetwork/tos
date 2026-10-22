@@ -16,7 +16,7 @@ class NativeExecutorCheckTests(unittest.TestCase):
             (
                 (
                     "build",
-                    ["cmake", "--build", "build", "--target", "test-fift", "test-cells", "-j2"],
+                    ["cmake", "--build", "build", "--target", "test-fift", "test-cells"],
                 ),
                 ("test-fift", ["./build/test-fift"]),
                 ("test-cells", ["./build/test-cells"]),

@@ -11,9 +11,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def run(build: Path, vectors: Path):
     def rebuild():
-        subprocess.run(
-            ["cmake", "--build", str(build), "--target", "test-pq-mldsa44", "-j2"], check=True
-        )
+        subprocess.run(["cmake", "--build", str(build), "--target", "test-pq-mldsa44"], check=True)
 
     def check(output: Path):
         return subprocess.run(

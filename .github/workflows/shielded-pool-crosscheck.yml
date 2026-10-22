@@ -116,7 +116,7 @@ jobs:
       # with `POSEIDON2_HASH7:-?`, which looks like a broken contract and is a
       # missing toolchain.
       - name: Build FunC and Fift
-        run: cmake --build build --target func fift -j2
+        run: cmake --build build --target func fift -j"$(nproc)"
 
       # TOS_ROOT locates that toolchain. The sources under test come from the
       # checkout through each crate's manifest, so the two are the same

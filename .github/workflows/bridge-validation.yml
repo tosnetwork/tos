@@ -73,7 +73,7 @@ jobs:
                 -DCMAKE_CXX_COMPILER=clang++-21 \
                 -DTOS_USE_JEMALLOC=ON \
                 -DCMAKE_BUILD_TYPE=Release &&
-              cmake --build build-bridge --target func fift -- -j2
+              cmake --build build-bridge --target func fift -- -j"$(nproc)"
             '
 
       - name: Reproducibly compile all TVM bridge variants
