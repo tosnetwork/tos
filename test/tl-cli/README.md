@@ -30,6 +30,11 @@ cmake --build build --parallel 2 --target test-tl-cli-fixtures
 build/test-tl-cli-fixtures > build/tl-fixtures.tsv
 cmp test/tl-cli/fixtures.tsv build/tl-fixtures.tsv
 build/test-tl-cli-fixtures --verify test/tl-cli/fixtures.tsv
+# The nested workspace owns a separate lockfile; the outer build cannot validate it.
+for manifest in tosctl/src/tl/Cargo.toml tosctl/src/tl/api/Cargo.toml tosctl/src/tl/codegen/Cargo.toml; do
+  cargo metadata --manifest-path "$manifest" --format-version 1 --locked > /dev/null
+done
+cargo test --manifest-path tosctl/src/tl/Cargo.toml --workspace --all-targets --locked
 cargo test --manifest-path tosctl/src/Cargo.toml -p tl_codegen --lib --locked
 TL_CLI_REVERSE_OUTPUT="$PWD/build/tl-reverse.tsv" cargo test \
   --manifest-path tosctl/src/Cargo.toml -p tl_api --test cli_wire_parity --locked
@@ -44,6 +49,15 @@ ctest --test-dir build -L source-guard --output-on-failure --no-tests=error
 python3 scripts/check-classical-carrier-sites.py .
 python3 test/pq-native/test_classical_carrier_inventory.py
 ```
+
+The branch CI runs the standalone workspace commands separately from the outer
+workspace checks. With Rust 1.97.1 and dependencies cached, all three metadata
+entry points pass at base `3071c6746707e555523af6d2ad1b4efa2fb2c040`, fail with
+exit 101 at `32e1446526097fe5e2998b64cef22fb33ad370e2`, and pass after synchronizing
+the nested lockfile. Restoring that head's lockfile also makes the complete new
+CI step fail at metadata resolution; restoring the fix makes it pass, including
+all four codegen tests and six API tests. Local macOS runs require GNU `date`
+on `PATH`, as the inherited build scripts use its epoch syntax.
 
 The 98 frozen byte sequences are produced by `fixtures.cpp`, not by Rust or by a
 handwritten byte encoder. Native generated classes and store/fetch utilities cover
