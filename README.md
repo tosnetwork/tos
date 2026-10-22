@@ -6,13 +6,15 @@
 [![PQ chain and Python tests](https://github.com/tosnetwork/tos/actions/workflows/branch-chain-python.yml/badge.svg?branch=main&event=push)](https://github.com/tosnetwork/tos/actions/workflows/branch-chain-python.yml?query=branch%3Amain)
 [![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 
-**Post-quantum validator signatures. Shielded native-asset transfers.**
+**Post-quantum consensus, wallets and contracts. Shielded native-asset transfers.**
 
 TOS is an open-source Layer-1 blockchain with a masterchain, shardchains and
 native TVM smart-contract execution. Its canonical genesis uses **ML-DSA-44
-validator signatures**, while its shielded-pool implementation combines
-zero-knowledge transaction proofs with **post-quantum note authorization and
-encrypted note delivery**.
+validator signatures**. Contracts can verify **four post-quantum signature
+suites**: ML-DSA-44, Falcon-512, SLH-DSA-SHA2-128s and an LMS fee profile.
+The PQ wallets use them for daily authorization, recovery and fee payment. The
+shielded-pool implementation combines zero-knowledge transaction proofs with
+**post-quantum note authorization and encrypted note delivery**.
 
 [Technical overview (PDF)](doc/pq.pdf) · [Overview source](doc/pq.tex) ·
 [Documentation](doc/README.md) · [Build guide](BUILD.md)
@@ -27,7 +29,9 @@ quantum resistant.
 | --- | --- | --- |
 | Validator consensus | ML-DSA-44, algorithm ID 1 | Authenticity of PQ validator consensus signatures |
 | Validator authority | Stable controller identity, separate root and consensus keys | Controller authorization and key rotation within the contract's rules |
-| Contract verification | Native `PQCHECKSIG_MLDSA44` instruction | Explicit PQ authorization in contracts that use it |
+| Contract verification | Native `PQCHECKSIG_SUITE` for suites 1–4, plus dedicated `PQCHECKSIG_MLDSA44`, `PQCHECKSIG_FALCON512_PADDED` and `LMSCHECKFEEHASH` | Explicit PQ authorization in contracts that use it |
+| Quantum wallet | ML-DSA-44 primary key, SLH-DSA-SHA2-128s protection and recovery key | Asset authority and recovery of a PQ-only wallet |
+| Wallet fees | LMS fee profile (hash-based, stateful) | Payment of the specified fee classes only; no asset authority |
 | Shielded note spending | One-time ML-DSA-44 key per note | Authorization bound to the private transaction intent |
 | Shielded note delivery | ML-KEM-768 + XChaCha20-Poly1305 | Confidential, authenticated delivery of note secrets |
 | Shielded transaction validity | Groth16 over BLS12-381; Poseidon2 commitments and trees | Private witness verification, value constraints and double-spend prevention |
@@ -37,6 +41,26 @@ system**. The V1 profile defers a PQ-soundness migration. PQ consensus and
 note encryption do not turn the complete privacy system into a fully
 quantum-resistant protocol. Network metadata and transparent transfers also
 remain visible within their respective interfaces.
+
+## Post-quantum signature suites
+
+All four suites are active from global version 16, the genesis version. Each
+verifier charges gas for every input byte and fails closed on an unknown suite
+or profile.
+
+| Suite | Algorithm | Used by | Status |
+| --- | --- | --- | --- |
+| 1 | ML-DSA-44 (FIPS 204) | Validator consensus keys, Quantum wallet primary key, one-time shielded note keys | Canonical |
+| 2 | Falcon-512, padded original profile | Falcon wallet authorization module | Experimental; formal FN-DSA will be a separately versioned profile |
+| 3 | SLH-DSA-SHA2-128s (FIPS 205) | Quantum wallet protection and recovery key | Implemented |
+| 4 | LMS fee profile | Quantum wallet fee authorization | Implemented; authorizes fees only |
+
+Validator consensus uses ML-DSA-44 only. The wallet suites are implemented and
+tested in this repository; production custody and default activation still
+depend on the release gates in the
+[Quantum wallet status](doc/wallet-quantum-release-status.md) and the
+[Falcon profile](doc/wallet-falcon-fndsa.md). Do not infer that those gates are
+complete from this README.
 
 ## Post-quantum consensus from genesis
 
@@ -55,9 +79,10 @@ The canonical generator rejects the legacy classical bootstrap key file.
 
 Operators supply public identities through `validator-pq.pub`; private keys
 remain with their operators. See the [PQ genesis ceremony and parameters](doc/validator-genesis-bootstrap.md)
-and [validator guide](doc/Validator.md). Existing wallets and administrative
-paths must be assessed separately: a PQ validator set does not automatically
-replace their authentication schemes.
+and [validator guide](doc/Validator.md). Wallets and administrative paths must
+be assessed separately: a PQ validator set does not automatically replace their
+authentication schemes. Accounts gain PQ protection by using the PQ wallets
+described above.
 
 ## Privacy with shielded TOS
 
@@ -144,8 +169,9 @@ fixtures are never production keys.
 
 | Path | Contents |
 | --- | --- |
-| `crypto/pq/` | PQ identities, signing, verification and key provisioning |
-| `crypto/smartcont/` | Contracts, shielded primitives and canonical genesis |
+| `crypto/pq/` | PQ identities, signing, verification and key provisioning for all four suites |
+| `crypto/vm/pqops.*` | TVM PQ signature instructions |
+| `crypto/smartcont/` | Contracts (including the Quantum and Falcon wallets), shielded primitives and canonical genesis |
 | `validator/`, `validator-engine/` | Consensus, chain validation and node services |
 | `tools/shielded-pool-{circuit,wallet,ceremony,genesis}/` | Privacy circuit, wallet, setup and deployment tools |
 | `tools/node-health-monitor/` | Bounded collection and health query services |
