@@ -196,7 +196,7 @@ TEST(OutMsgQueueLimits, ConfigWithoutQueueLimitsIsRefused) {
 namespace tos::validator {
 
 // Exercise the real ordered import loop, transaction commit, queue dictionaries,
-// frontier update and final-cap gate without network/state-fetch actors.
+// frontier update and transit admission without network/state-fetch actors.
 class CollatorQueueLimitsTestAccess {
  public:
   struct Options {
@@ -204,7 +204,6 @@ class CollatorQueueLimitsTestAccess {
     td::uint64 old_size = 2;
     unsigned transit = 1;
     unsigned local = 1;
-    bool strict = false;
     bool size_recorded = true;
     bool stop_after_transit = false;
     bool timed_out = false;
@@ -218,11 +217,9 @@ class CollatorQueueLimitsTestAccess {
     tos::LogicalTime frontier;
     unsigned transactions;
     bool empty;
-    bool borrowed;
-    bool accepted;
+    // The final size satisfies the rule a validator applies to the candidate.
+    bool valid;
     bool stopped;
-    bool retry_strict;
-    int retry_attempt;
   };
 
   static Result run(Options options) {
@@ -250,7 +247,6 @@ class CollatorQueueLimitsTestAccess {
     }
     CollateParams params;
     params.shard = relay;
-    params.strict_transit_capacity = options.strict;
     params.hard_timeout = td::Timestamp::in(60);
     params.soft_timeout = td::Timestamp::in(60);
     Collator collator(std::move(params), {}, {}, {});
@@ -336,8 +332,9 @@ class CollatorQueueLimitsTestAccess {
       CHECK(collator.process_new_messages(enqueue_only));
       CHECK(collator.new_msgs_from_dispatch == 0 && collator.new_msgs.empty());
     }
-    auto retry = collator.next_collation_params();
-    bool accepted = collator.check_out_msg_queue_size();
+    bool valid = !out_msg_queue_exceeds_hard_limit(
+        collator.out_msg_queue_size_, options.hard,
+        options.size_recorded ? std::optional<td::uint64>{options.old_size} : std::nullopt);
     td::uint64 count = 0;
     CHECK(collator.out_msg_queue_->check_for_each([&](Ref<vm::CellSlice>, td::ConstBitPtr, int) {
       ++count;
@@ -348,11 +345,8 @@ class CollatorQueueLimitsTestAccess {
             collator.last_proc_int_msg_.first,
             collator.block_limit_status_->transactions,
             collator.inbound_queues_empty_,
-            collator.borrowed_transit_capacity_,
-            accepted,
-            context.get_stop(),
-            retry.strict_transit_capacity,
-            retry.attempt_idx};
+            valid,
+            context.get_stop()};
   }
 
  private:
@@ -390,67 +384,76 @@ class CollatorQueueLimitsTestAccess {
 };
 }  // namespace tos::validator
 
-TEST(OutMsgQueueLimits, RealCollatorPreservesTransitThenLocalDrain) {
+TEST(OutMsgQueueLimits, RealCollatorPostponesTransitAtCapacity) {
   using Access = CollatorQueueLimitsTestAccess;
   for (unsigned count : {1u, 2u, 3u}) {
     auto result = Access::run({.hard = 4, .old_size = 4, .transit = count, .local = count});
     CHECK(result.queue_size == 4 && result.dictionary_size == 4);
-    CHECK(result.frontier == 99 + count && result.transactions == count && result.empty);
-    CHECK(result.borrowed && result.accepted && !result.stopped);
-    CHECK(result.retry_strict && result.retry_attempt == 1);
+    CHECK(result.frontier == 0 && result.transactions == 0 && !result.empty);
+    CHECK(result.valid && !result.stopped);
   }
   auto full = Access::run({.hard = 18000, .old_size = 18000});
   CHECK(full.queue_size == 18000 && full.dictionary_size == 18000);
-  CHECK(full.frontier == 100 && full.transactions == 1 && full.accepted && full.borrowed);
+  CHECK(full.frontier == 0 && full.transactions == 0 && !full.empty && full.valid && !full.stopped);
 }
 
-TEST(OutMsgQueueLimits, RealCollatorRejectsUnrepaidTransitAndKeepsStrictFrontier) {
+TEST(OutMsgQueueLimits, RealCollatorImportsTransitBelowCapacity) {
   using Access = CollatorQueueLimitsTestAccess;
-  auto debt = Access::run({.local = 0});
-  CHECK(debt.queue_size == 3 && debt.dictionary_size == 3 && debt.frontier == 10);
-  CHECK(debt.borrowed && !debt.accepted && debt.stopped && debt.retry_strict);
-  auto strict = Access::run({.strict = true});
-  CHECK(strict.queue_size == 2 && strict.dictionary_size == 2 && strict.frontier == 0);
-  CHECK(!strict.empty && !strict.borrowed && strict.accepted && !strict.stopped && strict.retry_strict);
+  auto room = Access::run({.hard = 3, .old_size = 2});
+  CHECK(room.queue_size == 2 && room.dictionary_size == 2 && room.frontier == 100);
+  CHECK(room.transactions == 1 && room.empty && room.valid && !room.stopped);
+  // The first transit takes the last free slot; the second waits for a later block.
+  auto last_slot = Access::run({.hard = 3, .old_size = 2, .transit = 2, .local = 0});
+  CHECK(last_slot.queue_size == 3 && last_slot.dictionary_size == 3 && last_slot.frontier == 10);
+  CHECK(last_slot.transactions == 0 && !last_slot.empty && last_slot.valid && !last_slot.stopped);
 }
 
-TEST(OutMsgQueueLimits, RealCollatorRespectsBudgetsAndChecksFinalCapacity) {
+TEST(OutMsgQueueLimits, RealCollatorRespectsBlockBudgets) {
   using Access = CollatorQueueLimitsTestAccess;
-  auto full = Access::run({.stop_after_transit = true});
+  auto full = Access::run({.hard = 3, .old_size = 2, .stop_after_transit = true});
   CHECK(full.queue_size == 3 && full.frontier == 10 && full.transactions == 0 && !full.empty);
-  CHECK(full.borrowed && !full.accepted && full.stopped && full.retry_strict);
-  auto timed = Access::run({.timed_out = true});
-  CHECK(timed.queue_size == 2 && timed.frontier == 0 && !timed.empty && !timed.borrowed);
-  CHECK(timed.accepted && !timed.stopped);
+  CHECK(full.valid && !full.stopped);
+  auto timed = Access::run({.hard = 3, .old_size = 2, .timed_out = true});
+  CHECK(timed.queue_size == 2 && timed.frontier == 0 && timed.transactions == 0 && !timed.empty);
+  CHECK(timed.valid && !timed.stopped);
 }
 
 TEST(OutMsgQueueLimits, RealCollatorReservesDispatchedMessages) {
   using Access = CollatorQueueLimitsTestAccess;
-  auto strict = Access::run({.hard = 2, .old_size = 1, .local = 0, .strict = true, .dispatch = true});
-  CHECK(strict.queue_size == 2 && strict.dictionary_size == 2 && strict.frontier == 0);
-  CHECK(!strict.empty && !strict.borrowed && strict.accepted);
-  auto debt = Access::run({.hard = 2, .old_size = 1, .local = 0, .dispatch = true});
-  CHECK(debt.queue_size == 3 && debt.dictionary_size == 3 && debt.frontier == 10);
-  CHECK(debt.borrowed && !debt.accepted && debt.stopped && debt.retry_strict);
+  auto reserved = Access::run({.hard = 2, .old_size = 1, .local = 0, .dispatch = true});
+  CHECK(reserved.queue_size == 2 && reserved.dictionary_size == 2 && reserved.frontier == 0);
+  CHECK(!reserved.empty && reserved.valid && !reserved.stopped);
+  auto unreserved = Access::run({.hard = 2, .old_size = 1, .local = 0});
+  CHECK(unreserved.queue_size == 2 && unreserved.dictionary_size == 2 && unreserved.frontier == 10);
+  CHECK(unreserved.empty && unreserved.valid && !unreserved.stopped);
 }
 
-TEST(OutMsgQueueLimits, RealCollatorUsesRecordedPreviousSizeAllowance) {
+TEST(OutMsgQueueLimits, RealCollatorKeepsOversizedQueueFromGrowing) {
   using Access = CollatorQueueLimitsTestAccess;
-  auto recorded = Access::run({.hard = 2, .old_size = 4});
-  CHECK(recorded.queue_size == 4 && recorded.accepted && recorded.borrowed);
-  auto missing = Access::run({.hard = 2, .old_size = 4, .size_recorded = false});
-  CHECK(missing.queue_size == 4 && !missing.accepted && missing.stopped && missing.retry_strict);
+  auto oversized = Access::run({.hard = 2, .old_size = 4});
+  CHECK(oversized.queue_size == 4 && oversized.dictionary_size == 4 && oversized.frontier == 0);
+  CHECK(!oversized.empty && oversized.valid && !oversized.stopped);
 }
 
 TEST(OutMsgQueueLimits, RealCollatorAllowsNeutralImportsAtCapacity) {
   using Access = CollatorQueueLimitsTestAccess;
-  auto requeue = Access::run({.transit = 0, .local = 0, .strict = true, .requeue = true});
+  auto requeue = Access::run({.transit = 0, .local = 0, .requeue = true});
   CHECK(requeue.queue_size == 2 && requeue.dictionary_size == 2 && requeue.frontier == 90);
-  CHECK(requeue.transactions == 0 && requeue.empty && !requeue.borrowed && requeue.accepted);
-  auto final = Access::run({.transit = 0, .local = 0, .strict = true, .foreign_final = true});
+  CHECK(requeue.transactions == 0 && requeue.empty && requeue.valid && !requeue.stopped);
+  auto final = Access::run({.transit = 0, .local = 0, .foreign_final = true});
   CHECK(final.queue_size == 2 && final.dictionary_size == 2 && final.frontier == 50);
-  CHECK(final.transactions == 1 && final.empty && !final.borrowed && final.accepted);
+  CHECK(final.transactions == 1 && final.empty && final.valid && !final.stopped);
+  auto local = Access::run({.transit = 0});
+  CHECK(local.queue_size == 1 && local.dictionary_size == 1 && local.frontier == 100);
+  CHECK(local.transactions == 1 && local.empty && local.valid && !local.stopped);
+}
+
+// Known limitation: a postponed transit also holds back later messages in the
+// merged input order, including deliveries that would free a queue slot. They
+// wait for a block in which neighbours have consumed part of this shard's queue.
+TEST(OutMsgQueueLimits, RealCollatorStopsAtFirstPostponedTransit) {
+  using Access = CollatorQueueLimitsTestAccess;
   auto mixed = Access::run({.foreign_final = true});
-  CHECK(mixed.queue_size == 2 && mixed.dictionary_size == 2 && mixed.frontier == 100);
-  CHECK(mixed.transactions == 2 && mixed.empty && mixed.borrowed && mixed.accepted);
+  CHECK(mixed.queue_size == 2 && mixed.dictionary_size == 2 && mixed.frontier == 0);
+  CHECK(mixed.transactions == 0 && !mixed.empty && mixed.valid && !mixed.stopped);
 }

@@ -5,45 +5,48 @@ the conditional acceptance of the corrections in
 [the initial review](a-class-review-20261022.md). The adjacent JSON records
 source hashes, test commands, and bounded failure receipts for this repair.
 
-## Ordered queue admission
+## Queue admission: speculative pass withdrawn
 
-The state limit applies to the final queue, not each intermediate insertion.
-Stopping at a full queue's earliest foreign transit also blocked a later local
-delivery that could release capacity. For example, `18000 -> 18001 -> 18000`
-is valid at the final capacity boundary and must remain available in input order.
+`b687d122d` replaced the strict transit admission of `c93b956aa` with a
+speculative pass: transits could borrow capacity, an oversized final queue
+failed the collation, and the repeated collation used strict admission. That
+design is withdrawn by owner decision; the strict admission of `c93b956aa` is
+restored unchanged.
 
-The initial collation pass now keeps that order and the existing block, proof,
-time and cancellation limits. It records whether a transit borrowed capacity,
-including capacity reserved for dispatched messages. After inbound processing,
-and again after all generated and tock messages are handled, the collator checks
-the same final-size predicate as the validator. The effective cap is the greater
-of the configured hard limit and the previous size **recorded in state**. The
-check is enabled under the same queue-size storage capability as validation.
+The repeated collation copies the original `CollateParams`, whose deadlines are
+absolute. A shard block producer sets `soft_timeout` and `wait_externals_until`
+to the slot start, so the collator's internal-message and queue-cleanup
+deadlines are that instant. A retry starts after the speculative pass has used
+the slot, so its inbound loop stops before the first message and its cleanup
+before the first entry. It produces an almost empty block that does not shrink
+the queue, and the next slot repeats the overflow from nearly the same state.
+The speculative tests gave both passes 60-second deadlines and so could not
+reach this path.
 
-An oversized result is discarded before state/block serialization or candidate
-publication. The existing retry mechanism starts a new collator from the previous
-state; any pass that borrowed capacity makes subsequent retries use strict
-admission. This also applies if the speculative pass fails for another reason.
-Strict admission includes pending dispatch reservations, and never advances the
-merger or processed frontier past a postponed message. Existing attempt limits,
-deadlines, cancellation and hardfork restrictions are retained.
+Strict admission stops at the first foreign transit that would need a slot
+when the queue, plus messages reserved for dispatch, is at the configured hard
+limit. It never advances the merger or the processed frontier past that
+message. Final deliveries, own requeues and already processed messages do not
+grow the queue and remain admitted. The known cost is head-of-line blocking: a
+later delivery that would free a slot waits until neighbours consume part of
+this shard's queue. That limitation is follow-up 1 of the initial review.
 
-The early final-size check is safe because later stages cannot delete an old
-outbound queue entry. It checks the actual size, not size plus pending dispatch:
-when inbound queues are empty, a pending dispatch can still be delivered locally.
+The real-collator harness is kept, with expectations for strict admission:
+transits postponed at capacity (including 18000 entries), imported below it
+(the last free slot taken, the next transit postponed), block-size and timeout
+budgets, dispatch reservations, a recorded oversized queue that may not grow,
+neutral imports at capacity, and the head-of-line stop. Every case also checks
+that the final size satisfies the validator's hard-limit rule.
 
-The new tests call the real collator's ordered inbound loop, ordinary transaction
-commit, queue dictionary operations, dispatch extraction/flush, processed-frontier
-update, final-size check and retry-parameter construction. Cases cover:
-
-- One or multiple transits followed by local drains, including 18000 actual entries.
-- Unrepaid capacity, strict retry without frontier advancement, and dispatch reservations.
-- Block-size exhaustion, timeout, recorded old-size allowance and absent size records.
-- Queue-neutral own requeues and foreign final deliveries at capacity.
-
-Four independently compiled production mutations must fail: restoring the
-unconditional queue-head stop, removing the final cap, losing strict retry state,
-and ignoring dispatch reservations.
+Local receipt (Linux x86-64, `tos-builder-local:24`, Release, clang 21): the
+`queue-codec` inventory and its three CTest entries pass, with 15 cases in
+`test-out-msg-queue-limits`. Three collator mutations, each rebuilt and run
+alone, fail the expected case: skipping the admission check
+(`RealCollatorPostponesTransitAtCapacity`), ignoring dispatch reservations
+(`RealCollatorReservesDispatchedMessages`), and advancing the processed
+frontier past a postponed transit (`RealCollatorPostponesTransitAtCapacity`).
+The restored source passes again. Remote x86-64, arm64 and ASan CI must still
+pass on the pushed commit.
 
 ## Lossless codec compatibility
 
@@ -89,10 +92,9 @@ runner checks reject missing, empty, ignored, incomplete or failed selections.
 CI success must be checked on the final pushed commit; local results are not a
 claim that those remote gates have passed.
 
-No persistent collection, cache, actor, thread, file or timer is added. Queue
-speculation adds two booleans across the request/actor and retains the existing
-input-work, block/proof-size and deadline bounds; failed state is released with
-the old actor. Retry count is unchanged. Codec work can double only on the
+No persistent collection, cache, actor, thread, file or timer is added. Strict
+queue admission adds no state beyond a per-message flag and retains the existing
+input-work, block/proof-size and deadline bounds. Codec work can double only on the
 specified compatibility path; its configured maximum allocation is unchanged.
 
 The real-collator tests are not a complete historical-state or serialized

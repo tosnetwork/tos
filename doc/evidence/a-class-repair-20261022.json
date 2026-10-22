@@ -249,5 +249,6 @@
       "bytes": 1204
     }
   },
-  "local_logs_note": "Temporary local logs are not committed and have no retention guarantee. Reproduction uses committed tests, fixtures and commands; bounded failure assertions are included above."
+  "local_logs_note": "Temporary local logs are not committed and have no retention guarantee. Reproduction uses committed tests, fixtures and commands; bounded failure assertions are included above.",
+  "queue_admission_status": "Superseded: the speculative queue admission recorded in queue_red_controls was withdrawn by owner decision; strict admission from c93b956aa is restored. See the Markdown report."
 }

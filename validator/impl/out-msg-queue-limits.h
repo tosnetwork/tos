@@ -18,8 +18,8 @@ inline bool out_msg_queue_reached_hard_limit(td::uint64 queue_size, td::uint64 p
   return queue_size + pending >= hard_limit;
 }
 
-// Conservative retry admission: a foreign transit needs a new outbound entry.
-// Stop when all slots are occupied or reserved for dispatched messages.
+// A foreign transit message needs a new outbound queue entry. Stop before
+// importing it when all slots are occupied or reserved for dispatched messages.
 // Already processed messages, final deliveries and requeues of our own messages
 // do not grow the queue and must remain available even when the queue is full.
 inline bool out_msg_queue_postpone_transit(bool already_processed, bool from_our_queue, bool to_us,
@@ -28,17 +28,15 @@ inline bool out_msg_queue_postpone_transit(bool already_processed, bool from_our
          out_msg_queue_reached_hard_limit(queue_size, pending, hard_limit);
 }
 
-// A queue already above the configured limit (for example after a merge) may
-// retain its recorded size. Both admission on retry and final validation use it.
-inline td::uint64 out_msg_queue_effective_hard_limit(td::uint64 hard_limit,
-                                                     std::optional<td::uint64> old_size_in_state) {
-  return old_size_in_state && *old_size_in_state > hard_limit ? *old_size_in_state : hard_limit;
-}
-
-// The limit applies to the final state, not intermediate changes within a block.
+// True when a new queue size breaks the hard limit. A queue that already exceeded the
+// limit in the previous state (it can after a merge) may not grow beyond that size.
 inline bool out_msg_queue_exceeds_hard_limit(td::uint64 new_size, td::uint64 hard_limit,
                                              std::optional<td::uint64> old_size_in_state) {
-  return new_size > out_msg_queue_effective_hard_limit(hard_limit, old_size_in_state);
+  td::uint64 limit = hard_limit;
+  if (old_size_in_state && *old_size_in_state > limit) {
+    limit = *old_size_in_state;
+  }
+  return new_size > limit;
 }
 
 // True when the previous queue is so long that any outbound message may be deferred,

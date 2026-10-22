@@ -407,13 +407,6 @@ std::string show_shard(const tos::ShardIdFull blk_id) {
   return show_shard(blk_id.workchain, blk_id.shard);
 }
 
-CollateParams Collator::next_collation_params() const {
-  CollateParams next = params_;
-  next.strict_transit_capacity |= borrowed_transit_capacity_;
-  ++next.attempt_idx;
-  return next;
-}
-
 /**
  * Handles a fatal error encountered during block candidate generation.
  *
@@ -429,7 +422,8 @@ bool Collator::fatal_error(td::Status error) {
         !params_.is_hardfork && !timeout_.is_in_past()) {
       td::actor::send_closure(manager, &ValidatorManager::log_collation_external_stats, shard_,
                               stats_.external_messages());
-      CollateParams new_params = next_collation_params();
+      CollateParams new_params = params_;
+      ++new_params.attempt_idx;
       LOG(WARNING) << "Repeating collation (attempt #" << new_params.attempt_idx << ")";
       run_collate_query_generated(std::move(new_params), manager, std::move(cancellation_token_),
                                   std::move(main_promise));
@@ -2516,10 +2510,6 @@ td::actor::Task<> Collator::do_collate_inner() {
   if (!process_inbound_internal_messages()) {
     co_return td::Status::Error("cannot process inbound internal messages");
   }
-  // Later stages can enqueue messages, but cannot drain the old outbound queue.
-  if (!check_out_msg_queue_size()) {
-    co_return td::Status::Error("inbound messages exceed final outbound queue capacity");
-  }
   timer_guard.reset();
   // 5-6. import inbound external messages and process newly created messages (if space&gas left)
   co_await process_external_and_new_messages();
@@ -2548,10 +2538,6 @@ td::actor::Task<> Collator::do_collate_inner() {
   bool enqueue_only = true;
   if (!process_new_messages(enqueue_only)) {
     co_return td::Status::Error("cannot process newly-generated outbound messages");
-  }
-  // No candidate or externally visible result may contain an oversized queue.
-  if (!check_out_msg_queue_size()) {
-    co_return td::Status::Error("new messages exceed final outbound queue capacity");
   }
   // 10. check block overload/underload
   LOG(DEBUG) << "check block overload/underload";
@@ -4215,20 +4201,12 @@ bool Collator::process_inbound_message(Ref<vm::CellSlice> enq_msg, tos::LogicalT
                                         env.emitted_lt ? env.emitted_lt.value() : info.created_lt, enqueued_lt,
                                         env.msg->get_hash().bits()};
   bool already_processed = processed_upto_->already_processed(enq_msg_descr);
-  auto queue_limit = out_msg_queue_effective_hard_limit(
-      out_msg_queue_size_hard_limit_,
-      have_out_msg_queue_size_in_state_ ? std::optional<td::uint64>{old_out_msg_queue_size_} : std::nullopt);
-  if (store_out_msg_queue_size_ && out_msg_queue_postpone_transit(already_processed, our, to_us, out_msg_queue_size_,
-                                                                  new_msgs_from_dispatch, queue_limit)) {
-    if (params_.strict_transit_capacity) {
-      // A failed speculative pass retries from the previous state. Keep its
-      // frontier before this message; skipping it would violate input order.
-      postponed = true;
-      return true;
-    }
-    // A later own-queue delivery can release this slot. Preserve input order
-    // and existing block/time limits; only a valid final size may be published.
-    borrowed_transit_capacity_ = true;
+  if (out_msg_queue_postpone_transit(already_processed, our, to_us, out_msg_queue_size_, new_msgs_from_dispatch,
+                                     out_msg_queue_size_hard_limit_)) {
+    // Do not advance ProcessedUpTo or the inbound merger: importing a later
+    // message would skip this one, and importing this one would exceed the cap.
+    postponed = true;
+    return true;
   }
   if (!update_last_proc_int_msg(std::pair<tos::LogicalTime, tos::Bits256>(lt, env.msg->get_hash().bits()))) {
     return fatal_error("processing a message AFTER a newer message has been processed");
@@ -4398,20 +4376,6 @@ bool Collator::process_inbound_internal_messages() {
   }
   inbound_queues_empty_ = nb_out_msgs_->is_eof();
   return true;
-}
-
-bool Collator::check_out_msg_queue_size() {
-  if (!store_out_msg_queue_size_ ||
-      !out_msg_queue_exceeds_hard_limit(
-          out_msg_queue_size_, out_msg_queue_size_hard_limit_,
-          have_out_msg_queue_size_in_state_ ? std::optional<td::uint64>{old_out_msg_queue_size_} : std::nullopt)) {
-    return true;
-  }
-  // fatal_error discards this actor's state and uses the bounded retry policy.
-  // A retry after borrowed capacity uses strict admission, never another loan.
-  return fatal_error(PSTRING() << "final outbound message queue size " << out_msg_queue_size_
-                               << " exceeds its limit; previous size " << old_out_msg_queue_size_
-                               << ", configured limit " << out_msg_queue_size_hard_limit_);
 }
 
 /**
