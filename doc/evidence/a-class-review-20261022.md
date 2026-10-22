@@ -1,5 +1,9 @@
 # A-class port review, 2026-10-22
 
+The conditional acceptance below is historical. Follow-up review found two
+regressions in the corrections; their repairs and new validation are recorded
+in [the follow-up repair report](a-class-repair-20261022.md).
+
 ## Scope and verdict
 
 Reviewed source: `08018e3b361d26ed42a44bd60ee448d209b08c4b`, based on

@@ -2199,6 +2199,8 @@ set_tests_properties(test-http-listen-address PROPERTIES SKIP_RETURN_CODE 77)
 tos_test(test-wallet-message-processor)
 tos_test(test-vm-exception-hardening)
 tos_test(test-validate-query-rules)
+set_tests_properties(test-validate-query-rules PROPERTIES FAIL_REGULAR_EXPRESSION "(^|[^0-9])0 test\\(s\\) passed")
+set_property(TEST test-validate-query-rules APPEND PROPERTY LABELS queue-codec)
 tos_test(test-celldb-streaming-import)
 tos_test(test-celldb-actor-restart)
 tos_test(test-inmemory-celldb-dec)
@@ -2259,6 +2261,12 @@ tos_regression_test(test-tddb)
 set_tests_properties(test-tddb PROPERTIES ENVIRONMENT
   "TOS_ROCKSDB_BLOCK_CACHE_SIZE=33554432;TOS_ROCKSDB_CRITICAL_WRITE_BUFFER_SIZE=67108864;TOS_ROCKSDB_CRITICAL_WRITE_BUFFER_ALLOW_STALL=1;TOS_ROCKSDB_GLOBAL_WRITE_BUFFER_SIZE=134217728;TOS_ROCKSDB_GLOBAL_WRITE_BUFFER_ALLOW_STALL=1")
 tos_regression_test(test-db)
+# Run the compression cases in PR CI without the unrelated database stress tests.
+add_test(NAME boc-compression
+  COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/scripts/run-boc-compression-tests.py
+    --native-binary $<TARGET_FILE:test-db>)
+set_tests_properties(boc-compression PROPERTIES TIMEOUT 180)
+set_property(TEST boc-compression APPEND PROPERTY LABELS queue-codec)
 add_test(NAME benchmark-exclusion-source
   COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-benchmark-exclusion.sh ${CMAKE_CURRENT_SOURCE_DIR})
 set_tests_properties(benchmark-exclusion-source PROPERTIES LABELS "source-guard")
@@ -2402,9 +2410,12 @@ if (NOT TOS_ONLY_TOSLIB AND NOT USE_EMSCRIPTEN AND NOT EMSCRIPTEN)
   # ConfigParam 43 outbound queue limits through the real parser, and the
   # deferral, rejection and merge rules the collator and validator share.
   add_executable(test-out-msg-queue-limits test/test-td-main.cpp test/test-out-msg-queue-limits.cpp)
-  target_include_directories(test-out-msg-queue-limits PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
-  target_link_libraries(test-out-msg-queue-limits PRIVATE tos_block tos_crypto tdutils)
+  target_include_directories(test-out-msg-queue-limits PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/crypto ${CMAKE_CURRENT_SOURCE_DIR}/common)
+  target_link_libraries(test-out-msg-queue-limits PRIVATE tos_validator tos_block tos_crypto tdutils)
   tos_test(test-out-msg-queue-limits)
+  set_tests_properties(test-out-msg-queue-limits PROPERTIES FAIL_REGULAR_EXPRESSION "(^|[^0-9])0 test\\(s\\) passed")
+  set_property(TEST test-out-msg-queue-limits APPEND PROPERTY LABELS queue-codec)
 
   add_executable(test-archive-prune test/test-archive-prune.cpp)
   target_include_directories(test-archive-prune PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/crypto)

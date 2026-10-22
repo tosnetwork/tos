@@ -281,6 +281,60 @@ of the same document gives the bound and the order the two move in.
 | 44 | `SuspendedAddressList` | suspended (blocked) addresses |
 | 45 | `PrecompiledContractsConfig` | precompiled-contract registry |
 
+### Queue-limit proposals and collator settings
+
+ConfigParam 43's outbound queue limits are coupled to block admission and message
+deferral. The canonical genesis uses `hard = 18000` and `soft = 12000`. A previous
+queue at or below `soft` does not generally permit deferring the first output of
+a transaction or outputs of a fundamental masterchain account. An account's
+existing deferred messages provide a separate exception. A queue already above
+the hard limit after a merge or a parameter change may not grow beyond its old
+size. See [GlobalVersions.md](GlobalVersions.md#version-16-unified-development-baseline)
+for the baseline rules.
+
+A positive `hard - soft` is not by itself a capacity guarantee. The capacity
+review must cover all outputs that cannot be deferred, pending dispatch entries,
+the final transaction admitted before a block becomes full, and forced
+masterchain tick/tock and mint/recovery transactions. Different accounts can
+share logical time, and a bounce can produce an output without compute gas;
+neither the LT delta nor the gas limit alone bounds the aggregate message burst.
+The serialized block byte limits in ConfigParams 22/23 are part of that review.
+
+The existing [queue review evidence](evidence/a-class-review-20261022.md) is limited
+to the canonical genesis and default collator options: deferring enabled, local
+deferral threshold 2048, and an empty whitelist. Its source review and helper
+tests are not a full candidate replay for arbitrary configurations.
+Increasing the local threshold, disabling optional deferral, or whitelisting
+senders changes how much capacity optional messages can consume. These local
+changes need a capacity review even when no ConfigParam 43 vote is proposed.
+Changing ConfigParam 12 routing/split limits, ConfigParam 31 fundamental accounts,
+message-metadata capabilities, or block byte limits also invalidates assumptions
+of the existing review. Deeper splits or additional routed workchains need a
+separate saturation-and-recovery test for multi-hop transit queues.
+
+Before approving a queue-related configuration proposal or local collator change:
+
+- Record the old and proposed hard/soft limits, ConfigParams 22/23 byte limits,
+  dispatch threshold, fundamental accounts, routing topology, and local deferral
+  options. Review the transition from an existing queue as well as an empty state.
+- Establish enough capacity for every output that cannot be deferred under the
+  proposed settings, including pending dispatch entries and forced tail
+  transactions. Do not reuse a first-output-only or LT-only bound. Preserve the
+  canonical settings until the changed assumptions have been validated.
+- Exercise a queue at the soft limit, a queue at the hard limit, an existing
+  queue larger than a reduced limit, dispatch backlog, zero-gas bounces, and
+  special-account bursts. Check the actual collator candidate with the validator;
+  parser acceptance, helper tests and a positive gap do not establish liveness.
+- Record the exact build, inputs and passing/failing controls. A change outside
+  the canonical/default-options review requires new evidence before activation.
+- Document recovery prerequisites. A corrective on-chain vote requires the
+  masterchain and configuration contract to remain usable; do not assume it will
+  recover a halted masterchain. Verify the recovery path before activation.
+
+This is an operational review checklist, not an additional consensus rule.
+TL-B shape checks and configuration parsing do not by themselves enforce these
+cross-parameter capacity and recovery conditions.
+
 **External-chain bridges**
 
 These slots select which counterparty chain a bridge contract serves. The contract planes live in `crosschain/`; see each bridge's `SECURITY.md` for the gates that apply before a slot may be populated. **No slot below is enabled or populated by this build**, and none is mandatory.

@@ -535,7 +535,12 @@ fn is_merkle_update_node(is_special: bool, builder: &BuilderData) -> bool {
     builder.data().first().copied() == Some(0x04)
 }
 
-/// Extracts coins value from a DepthBalanceInfo cell.
+struct DepthBalanceCoins {
+    value: u128,
+    canonical: bool,
+}
+
+/// Extracts the coins value and encoding form from a DepthBalanceInfo cell.
 ///
 /// # DepthBalanceInfo Format (TL-B)
 /// ```text
@@ -554,12 +559,12 @@ fn is_merkle_update_node(is_special: bool, builder: &BuilderData) -> bool {
 /// ```
 ///
 /// # Returns
-/// `Some(coins)` if the cell matches the expected format, `None` otherwise.
+/// `Some(balance)` if the cell matches the expected format, `None` otherwise.
 ///
 /// # Note on Integer Size
 /// TOS Coins is `VarUInteger 16` (up to 15 bytes = 120 bits), so `u128` is sufficient.
 /// Intermediate differences fit in `i128` since we only add/subtract coins values.
-fn extract_depth_balance_coins(cell: &Cell) -> Option<u128> {
+fn parse_depth_balance_coins(cell: &Cell) -> Option<DepthBalanceCoins> {
     let mut cs = SliceData::load_cell_ref(cell).ok()?;
 
     // Check for empty HmLabel ('00' = 2 zero bits)
@@ -579,14 +584,12 @@ fn extract_depth_balance_coins(cell: &Cell) -> Option<u128> {
         return None;
     }
 
-    // Elision rewrites the balance using its shortest encoding. Contract data
-    // may resemble a balance while using leading zero bytes; preserve those
-    // payloads verbatim instead of changing their cell hash on decompression.
+    // Decoding older streams needs the numeric value even when the original
+    // balance used leading zero bytes. Encoding must keep that distinction:
+    // elision reconstructs the shortest representation and can change its hash.
     let mut encoded_coins = cs.clone();
     let coin_bytes = encoded_coins.get_next_int(4).ok()?;
-    if coin_bytes != 0 && encoded_coins.get_next_int(8).ok()? == 0 {
-        return None;
-    }
+    let canonical = coin_bytes == 0 || encoded_coins.get_next_int(8).ok()? != 0;
 
     // Parse CurrencyCollection
     let balance = CurrencyCollection::construct_from(&mut cs).ok()?;
@@ -601,24 +604,66 @@ fn extract_depth_balance_coins(cell: &Cell) -> Option<u128> {
         return None;
     }
 
-    Some(balance.coins.as_u128())
+    Some(DepthBalanceCoins { value: balance.coins.as_u128(), canonical })
 }
 
-/// Computes the coins difference between paired left/right DepthBalanceInfo cells.
-///
-/// This is used during MerkleUpdate subtree reconstruction to accumulate diffs.
-///
-/// # C++ Reference
-/// ```cpp
-/// td::RefInt256 process_shard_accounts_vertex(vm::CellSlice& cs_left, vm::CellSlice& cs_right)
-/// ```
-///
-/// # Returns
-/// `Some(right_coins - left_coins)` if both cells are valid DepthBalanceInfo, `None` otherwise.
-fn process_shard_accounts_vertex(left: &Cell, right: &Cell) -> Option<i128> {
-    let left_coins = extract_depth_balance_coins(left)? as i128;
-    let right_coins = extract_depth_balance_coins(right)? as i128;
-    Some(right_coins - left_coins)
+struct DepthBalanceDecoder {
+    canonical_only: bool,
+    saw_noncanonical: bool,
+}
+
+impl DepthBalanceDecoder {
+    fn coins(&mut self, cell: &Cell) -> Option<u128> {
+        let balance = parse_depth_balance_coins(cell)?;
+        if !balance.canonical {
+            self.saw_noncanonical = true;
+            if self.canonical_only {
+                return None;
+            }
+        }
+        Some(balance.value)
+    }
+
+    fn vertex_diff(&mut self, left: &Cell, right: &Cell) -> Option<i128> {
+        let left_coins = self.coins(left)? as i128;
+        let right_coins = self.coins(right)? as i128;
+        right_coins.checked_sub(left_coins)
+    }
+}
+
+struct EncodingBalanceDiff {
+    numeric: i128,
+    canonical: Option<i128>,
+}
+
+fn encoding_balance_diff(left: &Cell, right: &Cell) -> Option<EncodingBalanceDiff> {
+    let left = parse_depth_balance_coins(left)?;
+    let right = parse_depth_balance_coins(right)?;
+    let numeric = (right.value as i128).checked_sub(left.value as i128)?;
+    let canonical = if left.canonical && right.canonical { Some(numeric) } else { None };
+    Some(EncodingBalanceDiff { numeric, canonical })
+}
+
+#[derive(Default)]
+struct EncodingBalanceSums {
+    numeric: i128,
+    canonical: i128,
+}
+
+impl EncodingBalanceSums {
+    fn add(&mut self, diff: &EncodingBalanceDiff) -> Result<()> {
+        self.numeric = self
+            .numeric
+            .checked_add(diff.numeric)
+            .ok_or_else(|| error!("BOC compression failed: integer overflow"))?;
+        if let Some(canonical) = diff.canonical {
+            self.canonical = self
+                .canonical
+                .checked_add(canonical)
+                .ok_or_else(|| error!("BOC compression failed: integer overflow"))?;
+        }
+        Ok(())
+    }
 }
 
 /// Writes a DepthBalanceInfo structure containing only coins.
@@ -739,6 +784,24 @@ fn set_special_cell_type_from_data(builder: &mut BuilderData, is_special: bool) 
 pub fn boc_decompress_improved_structure_lz4(
     compressed: Vec<u8>,
     max_size: usize,
+) -> Result<Vec<Cell>> {
+    let mut balances = DepthBalanceDecoder { canonical_only: true, saw_noncanonical: false };
+    let result = decompress_improved_structure_lz4(&compressed, max_size, &mut balances);
+    if result.is_err() && balances.saw_noncanonical {
+        // Earlier streams included leading-zero balances in numeric deltas.
+        // Retry that single interpretation only after the canonical pass fails.
+        // The first pass has released its graph; both passes retain the same
+        // size limits and mandatory cell/MerkleUpdate hash validation.
+        balances.canonical_only = false;
+        return decompress_improved_structure_lz4(&compressed, max_size, &mut balances);
+    }
+    result
+}
+
+fn decompress_improved_structure_lz4(
+    compressed: &[u8],
+    max_size: usize,
+    balances: &mut DepthBalanceDecoder,
 ) -> Result<Vec<Cell>> {
     // Maximum cell data length in bits (TOS limit)
     const K_MAX_CELL_DATA_LENGTH_BITS: usize = 1024;
@@ -1294,6 +1357,7 @@ pub fn boc_decompress_improved_structure_lz4(
         is_depth_balance: &[bool],
         cell_refs_cnt: &[usize],
         boc_graph: &[[usize; 4]],
+        balances: &mut DepthBalanceDecoder,
         finalize_node: &mut impl FnMut(
             usize,
             &Vec<Option<Cell>>,
@@ -1305,7 +1369,7 @@ pub fn boc_decompress_improved_structure_lz4(
         if nodes[right_idx].is_some() {
             if let (Some(left_idx), Some(sum_out)) = (left_idx, sum_diff_out) {
                 if let (Some(left_cell), Some(right_cell)) = (&nodes[left_idx], &nodes[right_idx]) {
-                    if let Some(diff) = process_shard_accounts_vertex(left_cell, right_cell) {
+                    if let Some(diff) = balances.vertex_diff(left_cell, right_cell) {
                         *sum_out = sum_out
                             .checked_add(diff)
                             .ok_or_else(|| error!("BOC decompression failed: integer overflow"))?;
@@ -1337,6 +1401,7 @@ pub fn boc_decompress_improved_structure_lz4(
                 is_depth_balance,
                 cell_refs_cnt,
                 boc_graph,
+                balances,
                 finalize_node,
             )?;
         }
@@ -1353,7 +1418,7 @@ pub fn boc_decompress_improved_structure_lz4(
             let left_cell = nodes[left_idx]
                 .as_ref()
                 .ok_or_else(|| error!("BOC decompression failed: child cell not yet built"))?;
-            let left_coins = extract_depth_balance_coins(left_cell).ok_or_else(|| {
+            let left_coins = balances.coins(left_cell).ok_or_else(|| {
                 error!("BOC decompression failed: depth-balance left vertex has no coins")
             })?;
             let expected = (left_coins as i128)
@@ -1376,7 +1441,7 @@ pub fn boc_decompress_improved_structure_lz4(
         if cur_right_left_diff.is_none() {
             if let Some(left_idx) = left_idx {
                 if let (Some(left_cell), Some(right_cell)) = (&nodes[left_idx], &nodes[right_idx]) {
-                    cur_right_left_diff = process_shard_accounts_vertex(left_cell, right_cell);
+                    cur_right_left_diff = balances.vertex_diff(left_cell, right_cell);
                 }
             }
         }
@@ -1408,6 +1473,7 @@ pub fn boc_decompress_improved_structure_lz4(
         is_depth_balance: &[bool],
         cell_refs_cnt: &[usize],
         boc_graph: &[[usize; 4]],
+        balances: &mut DepthBalanceDecoder,
         finalize_node: &mut impl FnMut(
             usize,
             &Vec<Option<Cell>>,
@@ -1438,6 +1504,7 @@ pub fn boc_decompress_improved_structure_lz4(
                     is_depth_balance,
                     cell_refs_cnt,
                     boc_graph,
+                    balances,
                     finalize_node,
                 )?;
 
@@ -1451,6 +1518,7 @@ pub fn boc_decompress_improved_structure_lz4(
                     is_depth_balance,
                     cell_refs_cnt,
                     boc_graph,
+                    balances,
                     finalize_node,
                 )?;
 
@@ -1471,6 +1539,7 @@ pub fn boc_decompress_improved_structure_lz4(
                 is_depth_balance,
                 cell_refs_cnt,
                 boc_graph,
+                balances,
                 finalize_node,
             )?;
         }
@@ -1495,6 +1564,7 @@ pub fn boc_decompress_improved_structure_lz4(
             &is_depth_balance,
             &cell_refs_cnt,
             &boc_graph,
+            balances,
             &mut finalize_node,
         )?;
     }
@@ -1556,7 +1626,7 @@ fn build_graph_recursive(
     main_mu_hash: Option<&UInt256>,
     left_cell: Option<&Cell>,
     under_mu_right: bool,
-    sum_diff_out: Option<&mut i128>,
+    sum_diff_out: Option<&mut EncodingBalanceSums>,
     graph: &mut Vec<[usize; 4]>,
     refs_cnt: &mut Vec<usize>,
     cell_data: &mut Vec<CellBits>,
@@ -1573,10 +1643,8 @@ fn build_graph_recursive(
         // node paired with this particular occurrence.
         if under_mu_right {
             if let (Some(left), Some(out)) = (left_cell, sum_diff_out) {
-                if let Some(vd) = process_shard_accounts_vertex(left, cell) {
-                    *out = out
-                        .checked_add(vd)
-                        .ok_or_else(|| error!("BOC compression failed: integer overflow"))?;
+                if let Some(diff) = encoding_balance_diff(left, cell) {
+                    out.add(&diff)?;
                 }
             }
         }
@@ -1675,7 +1743,7 @@ fn build_graph_recursive(
     } else if under_mu_right && left_cell.is_some() {
         // We're in the right subtree of a MerkleUpdate, paired with left_cell
         let left = left_cell.unwrap();
-        let mut sum_child_diff: i128 = 0;
+        let mut sum_child_diff = EncodingBalanceSums::default();
 
         // Recursively process children paired with left's children
         let left_refs = left.references_count();
@@ -1700,20 +1768,22 @@ fn build_graph_recursive(
         }
 
         // Compute this vertex's diff and check if we can elide
-        let vertex_diff = process_shard_accounts_vertex(left, cell);
+        let vertex_diff = encoding_balance_diff(left, cell);
         if !is_special {
-            if let Some(vd) = vertex_diff {
-                if vd == sum_child_diff {
-                    // Can elide this cell's data - it can be reconstructed
+            if let Some(vd) = vertex_diff.as_ref().and_then(|diff| diff.canonical) {
+                // Numeric decoders accept leading zero balances; canonical
+                // decoders ignore them when summing child diffs. Elide only
+                // when both interpretations reconstruct the same cell data.
+                if vd == sum_child_diff.numeric && vd == sum_child_diff.canonical {
                     cell_data[current_cell_id] = CellBits::new(vec![], 0);
                     pruned_branch_level[current_cell_id] = 9;
                 }
             }
         }
 
-        // Propagate diff to parent
-        if let (Some(out), Some(vd)) = (sum_diff_out, vertex_diff) {
-            *out += vd;
+        // Propagate both interpretations to the parent, once per edge.
+        if let (Some(out), Some(diff)) = (sum_diff_out, vertex_diff.as_ref()) {
+            out.add(diff)?;
         }
     } else {
         // Normal traversal

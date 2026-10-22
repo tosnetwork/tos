@@ -4,9 +4,13 @@
 // validator share.
 #include <optional>
 
+#include "block/block-auto.h"
+#include "block/block-parse.h"
 #include "block/block.h"
 #include "block/mc-config.h"
+#include "td/actor/core/ActorExecuteContext.h"
 #include "td/utils/tests.h"
+#include "validator/impl/collator-impl.h"
 #include "validator/impl/out-msg-queue-limits.h"
 #include "vm/cells/CellBuilder.h"
 
@@ -187,4 +191,266 @@ TEST(OutMsgQueueLimits, ConfigWithoutQueueLimitsIsRefused) {
   vm::CellBuilder truncated;
   truncated.store_bits(cs.data_bits(), cs.size() - 64);
   CHECK(block::Config::do_get_size_limits_config(vm::load_cell_slice_ref(truncated.finalize())).is_error());
+}
+
+namespace tos::validator {
+
+// Exercise the real ordered import loop, transaction commit, queue dictionaries,
+// frontier update and final-cap gate without network/state-fetch actors.
+class CollatorQueueLimitsTestAccess {
+ public:
+  struct Options {
+    td::uint64 hard = 2;
+    td::uint64 old_size = 2;
+    unsigned transit = 1;
+    unsigned local = 1;
+    bool strict = false;
+    bool size_recorded = true;
+    bool stop_after_transit = false;
+    bool timed_out = false;
+    bool dispatch = false;
+    bool requeue = false;
+    bool foreign_final = false;
+  };
+  struct Result {
+    td::uint64 queue_size;
+    td::uint64 dictionary_size;
+    tos::LogicalTime frontier;
+    unsigned transactions;
+    bool empty;
+    bool borrowed;
+    bool accepted;
+    bool stopped;
+    bool retry_strict;
+    int retry_attempt;
+  };
+
+  static Result run(Options options) {
+    const tos::ShardIdFull source{0, 0x0400000000000000ULL};
+    const tos::ShardIdFull relay{0, 0xf400000000000000ULL};
+    vm::AugmentedDictionary foreign{352, block::tlb::aug_OutMsgQueue};
+    vm::AugmentedDictionary own{352, block::tlb::aug_OutMsgQueue};
+    CHECK(options.local + static_cast<unsigned>(options.requeue) <= options.old_size);
+    for (unsigned i = 0; i < options.transit; ++i) {
+      put(foreign, source, 0, 0xf800000000000000ULL, 10 + i);
+    }
+    for (unsigned i = 0; i < options.local; ++i) {
+      put(own, relay, 0xf000000000000000ULL, 0xf100000000000000ULL, 100 + i);
+    }
+    if (options.requeue) {
+      // After a merge, an old intermediate address may now lie inside our shard.
+      put(own, relay, 0xf000000000000000ULL, 0xf800000000000000ULL, 90, true);
+    }
+    if (options.foreign_final) {
+      put(foreign, source, 0, 0xf100000000000000ULL, 50);
+    }
+    // These entries belong to the outbound queue but not our inbound merger.
+    for (td::uint64 i = options.local + static_cast<unsigned>(options.requeue); i < options.old_size; ++i) {
+      put(own, relay, 0xf000000000000000ULL, 0xf800000000000000ULL, 200 + i);
+    }
+    CollateParams params;
+    params.shard = relay;
+    params.strict_transit_capacity = options.strict;
+    params.hard_timeout = td::Timestamp::in(60);
+    params.soft_timeout = td::Timestamp::in(60);
+    Collator collator(std::move(params), {}, {}, {});
+    td::actor::core::ActorExecuteContext context(&collator);
+    td::actor::core::ActorExecuteContext::Guard context_guard(&context);
+    collator.start_lt = collator.max_lt = 50000;
+    collator.now_ = 1750000000;
+    collator.internal_msg_timeout_ = options.timed_out ? td::Timestamp::in(-1) : td::Timestamp::in(60);
+    collator.last_proc_int_msg_ = {0, td::Bits256::zero()};
+    collator.out_msg_queue_size_ = collator.old_out_msg_queue_size_ = options.old_size;
+    collator.out_msg_queue_size_hard_limit_ = options.hard;
+    collator.have_out_msg_queue_size_in_state_ = options.size_recorded;
+    collator.store_out_msg_queue_size_ = true;
+    collator.state_usage_tree_ = std::make_shared<vm::CellUsageTree>();
+    collator.block_limits_ = std::make_unique<block::BlockLimits>();
+    auto& limits = *collator.block_limits_;
+    limits.bytes = options.stop_after_transit ? block::ParamLimits{1000, 2100, 4200}
+                                              : block::ParamLimits{1 << 18, 1 << 20, 2 << 20};
+    limits.gas = {2000000, 10000000, 20000000};
+    limits.lt_delta = {1000, 5000, 10000};
+    limits.collated_data = {1 << 18, 1 << 20, 2 << 20};
+    limits.start_lt = collator.start_lt;
+    limits.usage_tree = collator.state_usage_tree_.get();
+    collator.block_limit_status_ = std::make_unique<block::BlockLimitStatus>(limits);
+    collator.aug_InMsgDescr.global_version = collator.aug_OutMsgDescr.global_version = 16;
+    collator.in_msg_dict = std::make_unique<vm::AugmentedDictionary>(256, collator.aug_InMsgDescr);
+    collator.out_msg_dict = std::make_unique<vm::AugmentedDictionary>(256, collator.aug_OutMsgDescr);
+    collator.out_msg_queue_ = std::make_unique<vm::AugmentedDictionary>(own);
+    collator.dispatch_queue_ = std::make_unique<vm::AugmentedDictionary>(256, block::tlb::aug_DispatchQueue);
+    collator.account_dict_estimator_ = std::make_unique<vm::AugmentedDictionary>(256, block::tlb::aug_ShardAccounts);
+    collator.processed_upto_ = std::make_shared<block::MsgProcessedUptoCollection>(relay);
+    collator.processed_upto_->valid = true;
+    collator.neighbors_.emplace_back(tos::BlockIdExt{tos::BlockId{source, 1}}, 1, 20000);
+    collator.neighbors_.emplace_back(tos::BlockIdExt{tos::BlockId{relay, 1}}, 1, 20000);
+    collator.stats_.neighbors.resize(2);
+    collator.nb_out_msgs_ = std::make_unique<block::OutputQueueMerger>(
+        relay, std::vector<block::OutputQueueMerger::Neighbor>{{collator.neighbors_[0].blk_, foreign.get_root_cell()},
+                                                               {collator.neighbors_[1].blk_, own.get_root_cell()}});
+    auto addr = address(0xf100000000000000ULL);
+    auto account = std::make_unique<block::Account>(0, addr.cbits());
+    CHECK(account->init_new(collator.now_));
+    account->block_lt = collator.start_lt;
+    collator.accounts.emplace(addr, std::move(account));
+    collator.storage_phase_cfg_.global_version = 16;
+    collator.compute_phase_cfg_.global_version = 16;
+    collator.compute_phase_cfg_.gas_limit = 1000000;
+    collator.compute_phase_cfg_.special_gas_limit = 1000000;
+    collator.compute_phase_cfg_.gas_credit = 10000;
+    collator.compute_phase_cfg_.set_gas_price(1000);
+    collator.compute_phase_cfg_.libraries = std::make_unique<vm::Dictionary>(256);
+    collator.action_phase_cfg_.global_version = 16;
+    collator.action_phase_cfg_.fwd_std = collator.action_phase_cfg_.fwd_mc = block::MsgPrices(0, 0, 0, 0, 0, 0);
+    collator.serialize_cfg_.global_version = 16;
+    if (options.dispatch) {
+      auto msg = message(0xf000000000000000ULL, 0xf800000000000000ULL, 50);
+      block::tlb::MsgEnvelope::Record_std env{0, 0, td::zero_refint(), msg, {}, {}};
+      Ref<vm::Cell> envelope;
+      CHECK(block::tlb::t_MsgEnvelope.pack_cell(envelope, env));
+      vm::CellBuilder cb;
+      CHECK(cb.store_long_bool(50, 64) && cb.store_ref_bool(envelope));
+      auto enqueued = cb.finalize();
+      vm::Dictionary dispatch{64};
+      td::BitArray<64> key;
+      key.store_ulong(50);
+      CHECK(dispatch.set(key, vm::load_cell_slice_ref(enqueued)));
+      auto src = address(0xf000000000000000ULL);
+      CHECK(collator.dispatch_queue_->set(src, block::pack_account_dispatch_queue(dispatch, 1)));
+      td::optional<block::MsgMetadata> metadata;
+      CHECK(collator.process_deferred_message(vm::load_cell_slice_ref(enqueued), src, 50, metadata));
+      CHECK(collator.new_msgs_from_dispatch == 1);
+    }
+    CHECK(collator.process_inbound_internal_messages());
+    CHECK(collator.update_processed_upto());
+    if (collator.last_proc_int_msg_.first == 0) {
+      CHECK(collator.processed_upto_->list.empty());
+    } else {
+      CHECK(collator.processed_upto_->list.size() == 1);
+      CHECK(collator.processed_upto_->list[0].last_inmsg_lt == collator.last_proc_int_msg_.first);
+      CHECK(collator.processed_upto_->list[0].last_inmsg_hash == collator.last_proc_int_msg_.second);
+    }
+    if (options.dispatch) {
+      bool enqueue_only = !collator.inbound_queues_empty_;
+      CHECK(collator.process_new_messages(enqueue_only));
+      CHECK(collator.new_msgs_from_dispatch == 0 && collator.new_msgs.empty());
+    }
+    auto retry = collator.next_collation_params();
+    bool accepted = collator.check_out_msg_queue_size();
+    td::uint64 count = 0;
+    CHECK(collator.out_msg_queue_->check_for_each([&](Ref<vm::CellSlice>, td::ConstBitPtr, int) {
+      ++count;
+      return true;
+    }));
+    return {collator.out_msg_queue_size_,
+            count,
+            collator.last_proc_int_msg_.first,
+            collator.block_limit_status_->transactions,
+            collator.inbound_queues_empty_,
+            collator.borrowed_transit_capacity_,
+            accepted,
+            context.get_stop(),
+            retry.strict_transit_capacity,
+            retry.attempt_idx};
+  }
+
+ private:
+  static tos::StdSmcAddress address(td::uint64 prefix) {
+    auto result = tos::StdSmcAddress::zero();
+    result.bits().store_uint(prefix, 64);
+    return result;
+  }
+  static Ref<vm::Cell> message(td::uint64 src, td::uint64 dst, tos::LogicalTime lt) {
+    vm::CellBuilder cb;
+    CHECK(cb.store_long_bool(4, 4));  // internal, ihr-disabled, non-bouncing
+    CHECK(cb.store_long_bool(0x400, 11) && cb.store_bits_bool(address(src)));
+    CHECK(cb.store_long_bool(0x400, 11) && cb.store_bits_bool(address(dst)));
+    CHECK(block::CurrencyCollection(1000000).store(cb));
+    CHECK(cb.store_zeroes_bool(8));
+    CHECK(cb.store_long_bool(lt, 64) && cb.store_long_bool(1750000000, 32) && cb.store_zeroes_bool(2));
+    auto result = cb.finalize();
+    CHECK(block::gen::t_Message_Any.validate_ref(result));
+    return result;
+  }
+  static void put(vm::AugmentedDictionary& dict, tos::ShardIdFull source, td::uint64 src, td::uint64 dst,
+                  tos::LogicalTime lt, bool requeue = false) {
+    auto msg = message(src, dst, lt);
+    auto route = block::perform_hypercube_routing({0, src}, {0, dst}, source);
+    block::tlb::MsgEnvelope::Record_std record{
+        requeue ? 0 : route.first, requeue ? 36 : route.second, td::zero_refint(), msg, {}, {}};
+    Ref<vm::Cell> envelope;
+    CHECK(block::tlb::t_MsgEnvelope.pack_cell(envelope, record));
+    vm::CellBuilder cb;
+    CHECK(cb.store_long_bool(lt, 64) && cb.store_ref_bool(envelope));
+    td::BitArray<352> key;
+    CHECK(block::compute_out_msg_queue_key(envelope, key));
+    CHECK(dict.set_builder(key, cb, vm::Dictionary::SetMode::Add));
+  }
+};
+}  // namespace tos::validator
+
+TEST(OutMsgQueueLimits, RealCollatorPreservesTransitThenLocalDrain) {
+  using Access = CollatorQueueLimitsTestAccess;
+  for (unsigned count : {1u, 2u, 3u}) {
+    auto result = Access::run({.hard = 4, .old_size = 4, .transit = count, .local = count});
+    CHECK(result.queue_size == 4 && result.dictionary_size == 4);
+    CHECK(result.frontier == 99 + count && result.transactions == count && result.empty);
+    CHECK(result.borrowed && result.accepted && !result.stopped);
+    CHECK(result.retry_strict && result.retry_attempt == 1);
+  }
+  auto full = Access::run({.hard = 18000, .old_size = 18000});
+  CHECK(full.queue_size == 18000 && full.dictionary_size == 18000);
+  CHECK(full.frontier == 100 && full.transactions == 1 && full.accepted && full.borrowed);
+}
+
+TEST(OutMsgQueueLimits, RealCollatorRejectsUnrepaidTransitAndKeepsStrictFrontier) {
+  using Access = CollatorQueueLimitsTestAccess;
+  auto debt = Access::run({.local = 0});
+  CHECK(debt.queue_size == 3 && debt.dictionary_size == 3 && debt.frontier == 10);
+  CHECK(debt.borrowed && !debt.accepted && debt.stopped && debt.retry_strict);
+  auto strict = Access::run({.strict = true});
+  CHECK(strict.queue_size == 2 && strict.dictionary_size == 2 && strict.frontier == 0);
+  CHECK(!strict.empty && !strict.borrowed && strict.accepted && !strict.stopped && strict.retry_strict);
+}
+
+TEST(OutMsgQueueLimits, RealCollatorRespectsBudgetsAndChecksFinalCapacity) {
+  using Access = CollatorQueueLimitsTestAccess;
+  auto full = Access::run({.stop_after_transit = true});
+  CHECK(full.queue_size == 3 && full.frontier == 10 && full.transactions == 0 && !full.empty);
+  CHECK(full.borrowed && !full.accepted && full.stopped && full.retry_strict);
+  auto timed = Access::run({.timed_out = true});
+  CHECK(timed.queue_size == 2 && timed.frontier == 0 && !timed.empty && !timed.borrowed);
+  CHECK(timed.accepted && !timed.stopped);
+}
+
+TEST(OutMsgQueueLimits, RealCollatorReservesDispatchedMessages) {
+  using Access = CollatorQueueLimitsTestAccess;
+  auto strict = Access::run({.hard = 2, .old_size = 1, .local = 0, .strict = true, .dispatch = true});
+  CHECK(strict.queue_size == 2 && strict.dictionary_size == 2 && strict.frontier == 0);
+  CHECK(!strict.empty && !strict.borrowed && strict.accepted);
+  auto debt = Access::run({.hard = 2, .old_size = 1, .local = 0, .dispatch = true});
+  CHECK(debt.queue_size == 3 && debt.dictionary_size == 3 && debt.frontier == 10);
+  CHECK(debt.borrowed && !debt.accepted && debt.stopped && debt.retry_strict);
+}
+
+TEST(OutMsgQueueLimits, RealCollatorUsesRecordedPreviousSizeAllowance) {
+  using Access = CollatorQueueLimitsTestAccess;
+  auto recorded = Access::run({.hard = 2, .old_size = 4});
+  CHECK(recorded.queue_size == 4 && recorded.accepted && recorded.borrowed);
+  auto missing = Access::run({.hard = 2, .old_size = 4, .size_recorded = false});
+  CHECK(missing.queue_size == 4 && !missing.accepted && missing.stopped && missing.retry_strict);
+}
+
+TEST(OutMsgQueueLimits, RealCollatorAllowsNeutralImportsAtCapacity) {
+  using Access = CollatorQueueLimitsTestAccess;
+  auto requeue = Access::run({.transit = 0, .local = 0, .strict = true, .requeue = true});
+  CHECK(requeue.queue_size == 2 && requeue.dictionary_size == 2 && requeue.frontier == 90);
+  CHECK(requeue.transactions == 0 && requeue.empty && !requeue.borrowed && requeue.accepted);
+  auto final = Access::run({.transit = 0, .local = 0, .strict = true, .foreign_final = true});
+  CHECK(final.queue_size == 2 && final.dictionary_size == 2 && final.frontier == 50);
+  CHECK(final.transactions == 1 && final.empty && !final.borrowed && final.accepted);
+  auto mixed = Access::run({.foreign_final = true});
+  CHECK(mixed.queue_size == 2 && mixed.dictionary_size == 2 && mixed.frontier == 100);
+  CHECK(mixed.transactions == 2 && mixed.empty && mixed.borrowed && mixed.accepted);
 }

@@ -45,6 +45,8 @@ namespace validator {
 using td::Ref;
 
 class Collator final : public td::actor::Actor {
+  friend class CollatorQueueLimitsTestAccess;
+
  public:
   static constexpr int supported_version() {
     return SUPPORTED_VERSION;
@@ -82,6 +84,7 @@ class Collator final : public td::actor::Actor {
   td::Timestamp queue_cleanup_timeout_, external_msg_timeout_, internal_msg_timeout_;
   td::Promise<GeneratedCandidate> main_promise;
   bool allow_repeat_collation_ = false;
+  bool borrowed_transit_capacity_ = false;
   tos::BlockSeqno last_block_seqno{0};
   tos::BlockSeqno prev_mc_block_seqno{0};
   tos::BlockSeqno new_block_seqno{0};
@@ -284,6 +287,7 @@ class Collator final : public td::actor::Actor {
   bool init_lt();
   bool fetch_config_params();
   bool fatal_error(td::Status error);
+  CollateParams next_collation_params() const;
   bool fatal_error(int err_code, std::string err_msg);
   bool fatal_error(std::string err_msg, int err_code = -666);
   void check_pending();
@@ -365,6 +369,7 @@ class Collator final : public td::actor::Actor {
   bool process_new_messages(bool& enqueue_only);
   int process_one_new_message(block::NewOutMsg msg, bool enqueue_only = false, Ref<vm::Cell>* is_special = nullptr);
   bool process_inbound_internal_messages();
+  bool check_out_msg_queue_size();
   bool precheck_inbound_message(Ref<vm::CellSlice> msg, tos::LogicalTime lt);
   bool process_inbound_message(Ref<vm::CellSlice> msg, tos::LogicalTime lt, td::ConstBitPtr key, int src_nb_idx,
                                bool& postponed);
