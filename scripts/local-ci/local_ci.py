@@ -1336,7 +1336,11 @@ fi
             new = line
             if re.search(r"\b(cmake|ninja|make)\b", line):
                 new = re.sub(r"(?<![\w-])-j\s?(?:\d+|\"\$\(nproc\)\"|\$\(nproc\))", f"-j{n}", new)
-                new = re.sub(r"--parallel\s+\d+", f"--parallel {n}", new)
+                new = re.sub(
+                    r"--parallel\s+(?:\d+|\"\$\((?:nproc|getconf _NPROCESSORS_ONLN)\)\")",
+                    f"--parallel {n}",
+                    new,
+                )
             if new != line:
                 changes.append(f"{line.strip()}  =>  {new.strip()}")
             out_lines.append(new)

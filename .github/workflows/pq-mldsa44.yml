@@ -60,7 +60,7 @@ jobs:
             test-pq-consensus test-pq-signer test-pq-bytes test-validator-descr-tags \
             test-validator-identity test-node-consensus-membership test-config43 test-authorisation-preimage \
             test-controller-auth test-pq-block-signature-conformance \
-            test-pq-block-signature-vectors func fift tol -j2
+            test-pq-block-signature-vectors func fift tol -j"$(nproc)"
       - name: Verify PQ consensus identity, signer and PQBytes codec
         id: consensus-identity
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
@@ -146,7 +146,7 @@ jobs:
             '-DCMAKE_C_FLAGS=-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer' \
             '-DCMAKE_CXX_FLAGS=-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer' \
             '-DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address,undefined'
-          cmake --build build-pq --target test-pq-mldsa44-wrapper test-pq-consensus test-pq-signer -j2
+          cmake --build build-pq --target test-pq-mldsa44-wrapper test-pq-consensus test-pq-signer -j"$(nproc)"
       - name: Execute public vectors under sanitizers
         run: |
           python3 test/pq-mldsa44/prepare_vectors.py --out pq-results
@@ -184,7 +184,7 @@ jobs:
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DTOS_USE_ASAN=ON -DTOS_USE_UBSAN=ON \
             -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
-          cmake --build build --target test-pq-mldsa44 test-pq-bytes -j2
+          cmake --build build --target test-pq-mldsa44 test-pq-bytes -j"$(nproc)"
       - name: Run native vectors and parser boundaries under sanitizers
         env:
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1

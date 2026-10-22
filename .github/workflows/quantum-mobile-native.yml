@@ -37,7 +37,7 @@ jobs:
       - name: Build fixed-profile native API and run assertions
         run: |
           cmake -S sdk/native/quantum -B "$RUNNER_TEMP/quantum-native" -DCMAKE_BUILD_TYPE=Release
-          cmake --build "$RUNNER_TEMP/quantum-native" --parallel 2
+          cmake --build "$RUNNER_TEMP/quantum-native" --parallel "$(getconf _NPROCESSORS_ONLN)"
           ctest --test-dir "$RUNNER_TEMP/quantum-native" --output-on-failure
       - name: Shared durable fee state and real process handoff
         working-directory: tosctl/src

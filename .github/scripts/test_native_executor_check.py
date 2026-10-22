@@ -1,6 +1,7 @@
 """Prove diagnostic reporting cannot hide a failed or missing native test."""
 
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -10,13 +11,24 @@ import native_executor_check as check
 
 
 class NativeExecutorCheckTests(unittest.TestCase):
+    def test_build_uses_every_runner_cpu(self):
+        self.assertEqual(check.BUILD_JOBS, f"-j{os.cpu_count() or 2}")
+
     def test_original_native_commands_are_retained(self):
         self.assertEqual(
             check.PHASES,
             (
                 (
                     "build",
-                    ["cmake", "--build", "build", "--target", "test-fift", "test-cells", "-j2"],
+                    [
+                        "cmake",
+                        "--build",
+                        "build",
+                        "--target",
+                        "test-fift",
+                        "test-cells",
+                        check.BUILD_JOBS,
+                    ],
                 ),
                 ("test-fift", ["./build/test-fift"]),
                 ("test-cells", ["./build/test-cells"]),

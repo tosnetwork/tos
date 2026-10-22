@@ -106,7 +106,7 @@ jobs:
       - name: Build native Release tools and both Rust drivers
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-          cmake --build build --target func fift tlbc create-state emulator test-fee-native-cost test-pq-suite-parity test-pq-falcon512-parity test-wallet-pq-signer-fixture -j2
+          cmake --build build --target func fift tlbc create-state emulator test-fee-native-cost test-pq-suite-parity test-pq-falcon512-parity test-wallet-pq-signer-fixture -j"$(nproc)"
           sh test/rescue-fee-gate/tools/build.sh build-signers
           cargo build --manifest-path tosctl/src/Cargo.toml --locked -p tos_vm -p tos_executor \
             --example fee-native-cost --example suite-parity --example falcon-parity --example pq-tx-parity
@@ -531,13 +531,13 @@ jobs:
       - name: Native ingress parser boundary controls
         if: contains(fromJSON('["vm-ingress"]'), matrix.suite)
         run: |
-          cmake --build build --target test-ext-message-pool -j2
+          cmake --build build --target test-ext-message-pool -j"$(nproc)"
           build/test-ext-message-pool
           python test/wallet-quantum/admission_budget_controls.py --build build --pool-controls \
             --output artifacts/context/quantum-admission-byte-budget-controls
           python test/wallet-quantum/ingress_boundary_controls.py --build build \
             --output artifacts/context/quantum-ingress-boundary-controls
-          cmake --build build --target test-ext-message-ingress-fixtures -j2
+          cmake --build build --target test-ext-message-ingress-fixtures -j"$(nproc)"
           python test/wallet-quantum/test_ingress_fixture_probe.py
           python test/wallet-quantum/ingress_fixture_probe.py \
             --fixtures artifacts/context/quantum-fee-prepare \

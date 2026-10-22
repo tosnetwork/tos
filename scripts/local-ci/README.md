@@ -113,8 +113,8 @@ cannot run here.
 - Job containers get `net.unix.max_dgram_qlen=512`, the value a systemd host
   (and the hosted runner VM) sets; a fresh Docker network namespace has 10,
   which makes bursts over Unix datagram sockets drop.
-- With `--jobs`, build parallelism differs from the workflow's `-j2`; test
-  invocations are not changed.
+- With `--jobs`, build parallelism differs from the workflow's one job per
+  runner CPU (`-j"$(nproc)"`); test invocations are not changed.
 - `timeout-minutes` and `concurrency` are not enforced.
 - Not replayed, because they need GitHub itself: jobs on arm64 runners and
   the macOS leg of the wallet C API workflow; reusable workflow calls;

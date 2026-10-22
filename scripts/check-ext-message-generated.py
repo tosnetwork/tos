@@ -177,7 +177,7 @@ def main():
                 "test-ext-message-generated-checker",
                 "test-ext-message-pool",
                 "test-ext-message-expiry",
-                "-j2",
+                f"-j{os.cpu_count() or 2}",
             ],
         )
 

@@ -6,6 +6,7 @@ Run exclusively; the execution-config source is restored and rebuilt in finally.
 import argparse
 import hashlib
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -61,7 +62,14 @@ def main():
             subprocess.run(["docker", "exec", args.container, "touch", target], check=True)
         assert (
             run(
-                ["cmake", "--build", args.build_dir, "--target", "test-ext-message-pool", "-j2"],
+                [
+                    "cmake",
+                    "--build",
+                    args.build_dir,
+                    "--target",
+                    "test-ext-message-pool",
+                    f"-j{os.cpu_count() or 2}",
+                ],
                 label + "-build",
             )
             == 0
