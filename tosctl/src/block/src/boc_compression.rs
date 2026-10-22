@@ -579,6 +579,15 @@ fn extract_depth_balance_coins(cell: &Cell) -> Option<u128> {
         return None;
     }
 
+    // Elision rewrites the balance using its shortest encoding. Contract data
+    // may resemble a balance while using leading zero bytes; preserve those
+    // payloads verbatim instead of changing their cell hash on decompression.
+    let mut encoded_coins = cs.clone();
+    let coin_bytes = encoded_coins.get_next_int(4).ok()?;
+    if coin_bytes != 0 && encoded_coins.get_next_int(8).ok()? == 0 {
+        return None;
+    }
+
     // Parse CurrencyCollection
     let balance = CurrencyCollection::construct_from(&mut cs).ok()?;
 
@@ -1544,6 +1553,7 @@ pub fn boc_decompress_improved_structure_lz4(
 #[allow(clippy::too_many_arguments)]
 fn build_graph_recursive(
     cell: &Cell,
+    main_mu_hash: Option<&UInt256>,
     left_cell: Option<&Cell>,
     under_mu_right: bool,
     sum_diff_out: Option<&mut i128>,
@@ -1556,6 +1566,7 @@ fn build_graph_recursive(
 ) -> Result<usize> {
     // Check if already visited (DAG deduplication)
     let cell_hash = cell.repr_hash();
+    let is_main_mu = main_mu_hash == Some(&cell_hash);
     if let Some(&id) = visited.get(&cell_hash) {
         // The graph node is stored only once, but balance aggregation is per edge.
         // A repeated right node must still contribute its diff against the left
@@ -1625,7 +1636,7 @@ fn build_graph_recursive(
     // Process cell references with MerkleUpdate optimization
     let is_special = special_type != CellType::Ordinary;
 
-    if special_type == CellType::MerkleUpdate && size_refs == 2 {
+    if special_type == CellType::MerkleUpdate && size_refs == 2 && is_main_mu {
         // MerkleUpdate: traverse left normally, right with paired left for optimization
         let left_child = cell.reference(0)?;
         let right_child = cell.reference(1)?;
@@ -1633,6 +1644,7 @@ fn build_graph_recursive(
         // Left branch: traverse normally
         let left_child_id = build_graph_recursive(
             &left_child,
+            main_mu_hash,
             None,
             false,
             None,
@@ -1648,6 +1660,7 @@ fn build_graph_recursive(
         // Right branch: traverse paired with left for depth-balance optimization
         let right_child_id = build_graph_recursive(
             &right_child,
+            main_mu_hash,
             Some(&left_child),
             true,
             None,
@@ -1672,6 +1685,7 @@ fn build_graph_recursive(
 
             let child_id = build_graph_recursive(
                 &child,
+                main_mu_hash,
                 left_child.as_ref(),
                 true,
                 Some(&mut sum_child_diff),
@@ -1707,6 +1721,7 @@ fn build_graph_recursive(
             let child = cell.reference(i)?;
             let child_id = build_graph_recursive(
                 &child,
+                main_mu_hash,
                 None,
                 false,
                 None,
@@ -1766,8 +1781,13 @@ pub fn boc_compress_improved_structure_lz4(boc_roots: Vec<Cell>) -> Result<Vec<u
     let mut visited: HashMap<UInt256, usize> = HashMap::new();
 
     for root in &boc_roots {
+        // The wire decoder pairs subtrees only for a root's third reference.
+        // Other MerkleUpdate cells must retain their payloads verbatim.
+        let main_mu_hash =
+            if root.references_count() > 2 { Some(root.reference(2)?.repr_hash()) } else { None };
         let root_cell_id = build_graph_recursive(
             root,
+            main_mu_hash.as_ref(),
             None,  // left_cell
             false, // under_mu_right
             None,  // sum_diff_out

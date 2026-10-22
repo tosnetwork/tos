@@ -1382,6 +1382,18 @@ mod per_edge_balance {
         b.into_cell().unwrap()
     }
 
+    fn noncanonical_balance(coins: u8, refs: &[Cell]) -> Cell {
+        let mut b = BuilderData::new();
+        b.append_bits(0, 7).unwrap(); // Empty label and zero split depth.
+        b.append_bits(2, 4).unwrap(); // A one-byte value encoded in two bytes.
+        b.append_u16(u16::from(coins)).unwrap();
+        b.append_bit_zero().unwrap(); // No extra currencies.
+        for r in refs {
+            b.checked_append_reference(r.clone()).unwrap();
+        }
+        b.into_cell().unwrap()
+    }
+
     // A block-shaped root whose third reference is a MerkleUpdate carrying the complete old
     // and new trees, so the pairing under test does not depend on pruning.
     fn block_with_state_update(old_payload: Cell, new_payload: Cell) -> Cell {
@@ -1458,6 +1470,39 @@ mod per_edge_balance {
             let new_parent = balance(parent_new, &vec![new_child; multiplicity]);
             assert_round_trip(name, &block_with_state_update(old_parent, new_parent), expected);
         }
+    }
+
+    #[test]
+    fn noncanonical_balance_encoding_is_not_elided() {
+        let tail = plain(0x7700000c, &[]);
+        let old_child = balance(0, &[tail.clone()]);
+        let new_child = balance(5, &[tail]);
+        // The corrected per-edge sum is ten. These parent payloads have that
+        // numerical delta, but reconstructing them canonically changes their bits.
+        let old_parent = noncanonical_balance(100, &[old_child.clone(), old_child]);
+        let new_parent = noncanonical_balance(110, &[new_child.clone(), new_child]);
+        assert_round_trip(
+            "noncanonical parent with duplicate child edges",
+            &block_with_state_update(old_parent, new_parent),
+            0,
+        );
+    }
+
+    #[test]
+    fn only_the_block_root_merkle_update_is_elided() {
+        let tail = plain(0x77000010, &[]);
+        let old_child = balance(0, &[tail.clone()]);
+        let new_child = balance(5, &[tail]);
+        let block = block_with_state_update(
+            balance(100, &[old_child.clone(), old_child]),
+            balance(110, &[new_child.clone(), new_child]),
+        );
+        assert_round_trip("block root third reference", &block, 1);
+        let mu = block.reference(2).unwrap();
+        // The native wire decoder does not pair these update subtrees. A type-9
+        // marker here would make otherwise valid encoded BOCs undecodable.
+        assert_round_trip("standalone update root", &mu, 0);
+        assert_round_trip("update outside the third reference", &plain(0x71000000, &[mu]), 0);
     }
 
     #[test]
