@@ -111,7 +111,14 @@ impl Monitor {
             "operation is outside task allocation inventory"
         );
         let used = allocated(roots)?;
-        admit(policy, &[used], reserve, operation.space()?)?;
+        admit(
+            policy,
+            &[used],
+            reserve,
+            operation.space().with_context(|| {
+                format!("probe allocation free space at {}", operation.path.display())
+            })?,
+        )?;
         STOP_NEW_WORK.store(false, Ordering::Release);
         let roots = roots.to_vec();
         let probe = operation.path.clone();
@@ -126,7 +133,14 @@ impl Monitor {
                         started.elapsed() < Duration::from_secs(OPERATION_SECONDS),
                         "operation reached two-hour work deadline"
                     );
-                    check_probe(&policy, allocated(&roots)?, || Root::open(&probe)?.space())
+                    check_probe(&policy, allocated(&roots)?, || {
+                        let root = Root::open(&probe).with_context(|| {
+                            format!("open allocation space probe {}", probe.display())
+                        })?;
+                        root.space().with_context(|| {
+                            format!("probe allocation free space at {}", probe.display())
+                        })
+                    })
                 })();
                 if let Err(error) = result {
                     eprintln!("task allocation monitor: {error:#}");
@@ -151,32 +165,348 @@ impl Drop for Monitor {
     }
 }
 
+/// Sample physical allocation while allowing listed descendants to disappear.
+/// Required roots must retain their identity throughout the sample. This is not
+/// an atomic snapshot: allocations created during a walk may enter the next one.
 pub fn allocated(roots: &[PathBuf]) -> Result<u64> {
-    use std::os::unix::fs::MetadataExt;
-    fn visit(
+    AllocationWalk::default().sample(roots)
+}
+const MAX_ALLOCATION_ENTRIES: usize = 2_000_000;
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum WalkStep {
+    Metadata,
+    OpenDirectory,
+    ReadEntry,
+}
+#[cfg(test)]
+type WalkHook = Box<dyn FnMut(&Path, WalkStep) -> std::io::Result<()>>;
+
+#[derive(Default)]
+struct AllocationWalk {
+    seen: std::collections::BTreeSet<(u64, u64)>,
+    count: usize,
+    #[cfg(test)]
+    hook: Option<WalkHook>,
+    #[cfg(test)]
+    entry_limit: Option<usize>,
+}
+impl AllocationWalk {
+    #[cfg(test)]
+    fn event(&mut self, path: &Path, step: WalkStep) -> std::io::Result<()> {
+        match self.hook.as_mut() {
+            Some(hook) => hook(path, step),
+            None => Ok(()),
+        }
+    }
+    fn metadata(&mut self, path: &Path) -> std::io::Result<std::fs::Metadata> {
+        #[cfg(test)]
+        self.event(path, WalkStep::Metadata)?;
+        path.symlink_metadata()
+    }
+    fn open_directory(&mut self, path: &Path) -> std::io::Result<std::fs::ReadDir> {
+        #[cfg(test)]
+        self.event(path, WalkStep::OpenDirectory)?;
+        std::fs::read_dir(path)
+    }
+    fn listed_result<T>(
+        result: std::io::Result<T>,
+        required: bool,
+        action: &str,
         path: &Path,
-        seen: &mut std::collections::BTreeSet<(u64, u64)>,
-        count: &mut usize,
-    ) -> Result<u64> {
-        let metadata = path.symlink_metadata()?;
-        *count = count.checked_add(1).context("allocation count overflow")?;
-        ensure!(*count <= 2_000_000, "task allocation inventory count limit");
-        if !seen.insert((metadata.dev(), metadata.ino())) {
+    ) -> Result<Option<T>> {
+        match result {
+            Ok(value) => Ok(Some(value)),
+            Err(error) if !required && error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error).with_context(|| format!("{action} {}", path.display())),
+        }
+    }
+    fn visit(&mut self, path: &Path, required: bool) -> Result<u64> {
+        use std::os::unix::fs::MetadataExt;
+        // Count attempts before lookup, including entries removed by other writers.
+        self.count = self.count.checked_add(1).context("allocation count overflow")?;
+        let limit = MAX_ALLOCATION_ENTRIES;
+        #[cfg(test)]
+        let limit = self.entry_limit.unwrap_or(limit);
+        ensure!(self.count <= limit, "task allocation inventory count limit at {}", path.display());
+        let metadata = self.metadata(path);
+        let Some(metadata) =
+            Self::listed_result(metadata, required, "stat allocation entry", path)?
+        else {
+            return Ok(0);
+        };
+        if !self.seen.insert((metadata.dev(), metadata.ino())) {
             return Ok(0);
         }
         let mut bytes = metadata.blocks().checked_mul(512).context("allocation overflow")?;
         if metadata.file_type().is_dir() {
-            for entry in std::fs::read_dir(path)? {
+            let entries = self.open_directory(path);
+            let Some(entries) =
+                Self::listed_result(entries, required, "open allocation directory", path)?
+            else {
+                return Ok(0);
+            };
+            for entry in entries {
+                #[cfg(test)]
+                self.event(path, WalkStep::ReadEntry).with_context(|| {
+                    format!("read allocation directory entry in {}", path.display())
+                })?;
+                // An iterator error does not identify a vanished child; do not hide it.
+                let entry = entry.with_context(|| {
+                    format!("read allocation directory entry in {}", path.display())
+                })?;
                 bytes = bytes
-                    .checked_add(visit(&entry?.path(), seen, count)?)
+                    .checked_add(self.visit(&entry.path(), false)?)
                     .context("allocation overflow")?;
             }
         }
         Ok(bytes)
     }
-    let mut seen = std::collections::BTreeSet::new();
-    let mut count = 0;
-    roots.iter().try_fold(0_u64, |sum, root| {
-        sum.checked_add(visit(root, &mut seen, &mut count)?).context("task allocation overflow")
-    })
+    fn sample(&mut self, roots: &[PathBuf]) -> Result<u64> {
+        use std::os::unix::fs::MetadataExt;
+        let mut identities = Vec::new();
+        let mut bytes = 0_u64;
+        for root in roots {
+            let metadata = root
+                .symlink_metadata()
+                .with_context(|| format!("stat required allocation root {}", root.display()))?;
+            identities.push((root, metadata.dev(), metadata.ino()));
+            bytes =
+                bytes.checked_add(self.visit(root, true)?).context("task allocation overflow")?;
+        }
+        // Recheck all roots, including roots visited before later roots changed.
+        for (root, device, inode) in identities {
+            let metadata = root
+                .symlink_metadata()
+                .with_context(|| format!("recheck required allocation root {}", root.display()))?;
+            ensure!(
+                (metadata.dev(), metadata.ino()) == (device, inode),
+                "required allocation root replaced during sample: {}",
+                root.display()
+            );
+        }
+        Ok(bytes)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{io, os::unix::fs::MetadataExt};
+
+    #[test]
+    fn vanished_listed_children_are_zero_and_siblings_are_counted() -> Result<()> {
+        for (directory, step) in [
+            (false, WalkStep::Metadata),
+            (true, WalkStep::Metadata),
+            (true, WalkStep::OpenDirectory),
+        ] {
+            let root = tempfile::tempdir()?;
+            let gone = root.path().join("vanishing");
+            let kept = root.path().join("kept");
+            std::fs::write(&kept, [7; 8192])?;
+            if directory {
+                std::fs::create_dir(&gone)?;
+                std::fs::write(gone.join("WAL"), [1; 4096])?;
+            } else {
+                std::fs::write(&gone, [1; 4096])?;
+            }
+            let doomed = gone.clone();
+            let mut walker = AllocationWalk {
+                hook: Some(Box::new(move |path, event| {
+                    if path == doomed && event == step {
+                        if directory {
+                            std::fs::remove_dir_all(path)?;
+                        } else {
+                            std::fs::remove_file(path)?;
+                        }
+                    }
+                    Ok(())
+                })),
+                ..Default::default()
+            };
+            let bytes = walker
+                .sample(&[root.path().to_path_buf()])
+                .with_context(|| format!("listed child disappearance must succeed at {step:?}"))?;
+            let expected = root
+                .path()
+                .symlink_metadata()?
+                .blocks()
+                .checked_add(kept.symlink_metadata()?.blocks())
+                .and_then(|n| n.checked_mul(512))
+                .context("test allocation overflow")?;
+            assert_eq!(
+                bytes, expected,
+                "vanished subtree must contribute zero; sibling must remain"
+            );
+            assert_eq!(walker.count, 3, "vanished child must use an entry slot");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn required_roots_cannot_disappear_or_be_replaced() -> Result<()> {
+        let parent = tempfile::tempdir()?;
+        let missing = parent.path().join("missing");
+        let error =
+            allocated(std::slice::from_ref(&missing)).expect_err("missing root must refuse");
+        assert!(
+            format!("{error:#}")
+                .contains(&format!("stat required allocation root {}", missing.display()))
+        );
+        for replace in [false, true] {
+            let root = parent.path().join("root");
+            std::fs::create_dir(&root)?;
+            let old = parent.path().join("old");
+            let selected = root.clone();
+            let mut walker = AllocationWalk {
+                hook: Some(Box::new(move |path, step| {
+                    if path == selected && step == WalkStep::OpenDirectory {
+                        std::fs::rename(path, &old)?;
+                        if replace {
+                            std::fs::create_dir(path)?;
+                        }
+                    }
+                    Ok(())
+                })),
+                ..Default::default()
+            };
+            let error =
+                walker.sample(std::slice::from_ref(&root)).expect_err("root change must refuse");
+            let message = format!("{error:#}");
+            assert!(message.contains(&root.display().to_string()), "{message}");
+            assert!(
+                message.contains(if replace {
+                    "required allocation root replaced"
+                } else {
+                    "open allocation directory"
+                }),
+                "{message}"
+            );
+            if root.exists() {
+                std::fs::remove_dir(&root)?;
+            }
+            std::fs::remove_dir_all(parent.path().join("old"))?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn root_disappearing_while_a_child_is_visited_is_fatal() -> Result<()> {
+        let parent = tempfile::tempdir()?;
+        let root = parent.path().join("root");
+        std::fs::create_dir(&root)?;
+        let child = root.join("child");
+        std::fs::write(&child, [1; 4096])?;
+        let selected = root.clone();
+        let mut walker = AllocationWalk {
+            hook: Some(Box::new(move |path, step| {
+                if path == child && step == WalkStep::Metadata {
+                    std::fs::remove_dir_all(&selected)?;
+                }
+                Ok(())
+            })),
+            ..Default::default()
+        };
+        let error = walker.sample(std::slice::from_ref(&root)).expect_err(
+            "missing required root must refuse even when child disappearance is allowed",
+        );
+        assert!(
+            format!("{error:#}")
+                .contains(&format!("recheck required allocation root {}", root.display()))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn allocation_errors_name_the_action_and_exact_path() -> Result<()> {
+        for step in [WalkStep::Metadata, WalkStep::OpenDirectory, WalkStep::ReadEntry] {
+            for kind in
+                [io::ErrorKind::PermissionDenied, io::ErrorKind::Other, io::ErrorKind::NotFound]
+            {
+                let root = tempfile::tempdir()?;
+                let child = root.path().join("db");
+                std::fs::create_dir(&child)?;
+                std::fs::write(child.join("kept"), [0; 4096])?;
+                let selected = if kind == io::ErrorKind::NotFound && step != WalkStep::ReadEntry {
+                    root.path().to_path_buf()
+                } else {
+                    child
+                };
+                let path = selected.clone();
+                let mut walker = AllocationWalk {
+                    hook: Some(Box::new(move |entry, event| {
+                        if entry == selected && event == step {
+                            return Err(io::Error::new(kind, "injected filesystem error"));
+                        }
+                        Ok(())
+                    })),
+                    ..Default::default()
+                };
+                let error = walker
+                    .sample(&[root.path().to_path_buf()])
+                    .expect_err("non-child-disappearance errors must refuse");
+                let message = format!("{error:#}");
+                let action = match step {
+                    WalkStep::Metadata => "stat allocation entry",
+                    WalkStep::OpenDirectory => "open allocation directory",
+                    WalkStep::ReadEntry => "read allocation directory entry",
+                };
+                assert!(
+                    message.contains(action)
+                        && message.contains(&path.display().to_string())
+                        && message.contains("injected filesystem error"),
+                    "{message}"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn vanished_children_still_exhaust_the_walk_limit() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        for name in ["one", "two"] {
+            std::fs::write(root.path().join(name), [1; 4096])?;
+        }
+        let parent = root.path().to_path_buf();
+        let mut walker = AllocationWalk {
+            entry_limit: Some(2),
+            hook: Some(Box::new(move |path, step| {
+                if step == WalkStep::Metadata && path != parent {
+                    std::fs::remove_file(path)?;
+                }
+                Ok(())
+            })),
+            ..Default::default()
+        };
+        let error = walker
+            .sample(&[root.path().to_path_buf()])
+            .expect_err("vanished entries must not bypass the count bound");
+        assert!(format!("{error:#}").contains("task allocation inventory count limit"));
+        assert_eq!(walker.count, 3);
+        Ok(())
+    }
+
+    #[test]
+    fn allocation_deduplicates_hard_links_and_does_not_follow_symlinks() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let external = tempfile::tempdir()?;
+        let file = root.path().join("file");
+        std::fs::write(&file, [1; 8192])?;
+        std::fs::hard_link(&file, root.path().join("linked"))?;
+        let link = root.path().join("symlink");
+        std::os::unix::fs::symlink(external.path(), &link)?;
+        std::fs::write(external.path().join("outside"), [1; 8192])?;
+        let expected = [root.path(), &file, &link]
+            .iter()
+            .try_fold(0_u64, |n, p| {
+                n.checked_add(p.symlink_metadata()?.blocks()).context("test blocks overflow")
+            })?
+            .checked_mul(512)
+            .context("test bytes overflow")?;
+        assert_eq!(allocated(&[root.path().to_path_buf()])?, expected);
+        Ok(())
+    }
 }

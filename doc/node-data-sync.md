@@ -159,7 +159,15 @@ placeholder below with independently held local values:
 List every task-owned source, retained operation, cache, staging and build root
 in `budget_roots`, without overlaps. They must exist. Allocation accounting
 counts physical blocks and deduplicates hard-linked build artifacts; payload
-handling refuses links. `disk_policy.max_owned_bytes` is a required, non-zero
+handling refuses links. A listed descendant that disappears during a sample
+contributes zero; a missing or replaced configured root, or any other filesystem
+error, refuses with the operation and path. The walker counts attempted entries,
+including vanished ones, and refuses above 2,000,000 entries. It imposes no
+elapsed-time failure on a slow disk. Samples do not overlap and are not atomic
+snapshots; newly created files can appear in the next sample. Prefer dedicated
+operation roots plus their actual shared dependencies over an unrelated workspace,
+without excluding any source, target, cache, stage or retained original tree.
+`disk_policy.max_owned_bytes` is a required, non-zero
 aggregate ceiling in bytes, below filesystem capacity. Include the retained
 original tree and every earlier operation. Missing input refuses with that field's
 name; it is not inferred from this development host. The example sets 80 GiB;
