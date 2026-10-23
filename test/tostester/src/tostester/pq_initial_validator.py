@@ -18,7 +18,7 @@ _DOMAIN = b"tos-test-pq-initial-validator-v1\x00"
 
 
 def deterministic_pq_initial_validator_seed(index: int) -> bytes:
-    """Return the stable test-only consensus seed before a controller is derived."""
+    """Return the stable test-only consensus seed for one initial validator."""
     if isinstance(index, bool) or not 0 <= index < 2**32:
         raise ValueError(f"post-quantum initial validator index is outside uint32: {index!r}")
     encoded_index = index.to_bytes(4, "big")
@@ -38,7 +38,7 @@ def _deterministic_identity(index: int, validator_id: bytes | None) -> tuple[byt
 def make_deterministic_pq_initial_validator(
     node: InitialPqValidatorNode, index: int, *, validator_id: bytes | None = None
 ) -> None:
-    """Provision a stable Genesis key, optionally bound to its controller address."""
+    """Provision a stable Genesis key, optionally bound to the account that stakes for it."""
     validator_id, seed = _deterministic_identity(index, validator_id)
     node.make_initial_pq_validator(validator_id, seed)
 

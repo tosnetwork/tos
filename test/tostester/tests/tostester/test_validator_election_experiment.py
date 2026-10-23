@@ -10,6 +10,9 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from contract.pq_auth import byte_chain as stage_a_byte_chain
+from pytosiq_core import Builder
+from tostester.pq_election_fixture import parse_stake_order
 
 REPO = Path(__file__).resolve().parents[4]
 SCRIPT = REPO / "scripts/validator-election-stage-a.py"
@@ -60,13 +63,16 @@ def test_pq_full_genesis_faucet_is_budgeted_and_checked_before_elections(tmp_pat
         pq_election=True,
         pq_full=True,
     )
-    rehearsal.controller_code = stage_a.Cell.empty()
     config = SimpleNamespace()
+    with pytest.raises(AssertionError, match="pools were not derived before Genesis"):
+        rehearsal.configure_network_profile(config)
+    rehearsal.pools = [object()] * 4
     rehearsal.configure_network_profile(config)
+    assert config.global_version == 16
+    assert not hasattr(config, "validator_controller_code_hash")
     expected = (
         4 * stage_a.VALIDATOR_WALLET_FUNDING
         + stage_a.NEGATIVE_WALLET_FUNDING
-        + 4 * 10 * stage_a.NANO
         + 2 * 4 * (stage_a.PQ_STAKE_MESSAGE_VALUE + 40 * stage_a.NANO)
         + 2 * 1_000 * stage_a.NANO
     )
@@ -129,11 +135,9 @@ def test_pq_stake_reply_queries_are_distinct_across_elections(tmp_path, monkeypa
         pq_election=True,
         pq_full=True,
     )
-    address = stage_a.Address((-1, bytes([0x11]) * 32))
     pool_address = stage_a.Address((-1, bytes([0x22]) * 32))
     rehearsal.wallets = [object()]
     rehearsal.pools = [SimpleNamespace(address=pool_address)]
-    rehearsal.controllers = [SimpleNamespace(address=address)]
     rehearsal.artifacts_dir.mkdir(parents=True)
     calls = []
 
@@ -153,7 +157,8 @@ def test_pq_stake_reply_queries_are_distinct_across_elections(tmp_path, monkeypa
         return 1_700_001_000
 
     async def exact_input(source, query_id):
-        assert source == address
+        # The pool, not the operator wallet, is the account the elector hears from.
+        assert source == pool_address
         calls.append(("elector_input", query_id))
         return SimpleNamespace(
             data=stage_a.Cell.empty().to_boc(),
@@ -161,7 +166,8 @@ def test_pq_stake_reply_queries_are_distinct_across_elections(tmp_path, monkeypa
             utime=1_700_000_000,
         )
 
-    async def method(name, controller_id):
+    async def method(name, member_id):
+        assert member_id == "0x" + pool_address.hash_part.hex()
         return stage_a.EFFECTIVE_STAKE
 
     async def retry(fn, **kwargs):
@@ -193,9 +199,7 @@ def test_pq_stake_reply_queries_are_distinct_across_elections(tmp_path, monkeypa
     assert len({call[1] for call in calls if call[0] == "send"}) == 3
 
 
-def test_shared_pq_pool_order_binds_node_authorization_to_controller_and_pool(
-    tmp_path, monkeypatch
-):
+def test_shared_pq_pool_order_binds_node_authorization_to_the_pool(tmp_path, monkeypatch):
     """Drive the composition, not merely each of its checked inputs."""
     rehearsal = stage_a.ValidatorElectionRehearsal(
         run_dir=tmp_path / "pq",
@@ -205,16 +209,15 @@ def test_shared_pq_pool_order_binds_node_authorization_to_controller_and_pool(
         profile=stage_a.PROFILES["a"],
         pq_election=True,
     )
-    controller_id = bytes([0x11]) * 32
+    other_id = bytes([0x11]) * 32
     pool_id = bytes([0x22]) * 32
     key_id = bytes([0x33]) * 32
     public_key = bytes([0x44]) * 1312
     signature = bytes([0x55]) * 2420
     adnl_id = bytes([0x66]) * 32
-    witness = stage_a.Cell.empty()
-    built_order = stage_a.Builder().store_uint(0xCAFE, 16).end_cell()
+    built_order = Builder().store_uint(0xCAFE, 16).end_cell()
     authorization = stage_a.tos_api.Engine_validator_pqStakeAuthorization(
-        validator_id=controller_id,
+        validator_id=pool_id,
         key_id=key_id,
         algorithm_id=1,
         public_key=public_key,
@@ -235,17 +238,11 @@ def test_shared_pq_pool_order_binds_node_authorization_to_controller_and_pool(
             engine_console=FakeConsole(),
             process_id=os.getpid(),
             transport_ports=(26_002, 26_003, 26_004),
+            pq_initial_validator=SimpleNamespace(key_id=key_id, public_key=public_key),
         )
     ]
     rehearsal.artifacts_dir.mkdir(parents=True)
     rehearsal.pools = [SimpleNamespace(address=stage_a.Address((-1, pool_id)))]
-    rehearsal.controllers = [
-        SimpleNamespace(
-            address=stage_a.Address((-1, controller_id)),
-            consensus=SimpleNamespace(key_id=key_id, public_key=public_key),
-            birth_witness=witness,
-        )
-    ]
 
     def fake_builder(path, **fields):
         seen["path"] = path
@@ -256,7 +253,7 @@ def test_shared_pq_pool_order_binds_node_authorization_to_controller_and_pool(
     body, actual_key = asyncio.run(rehearsal.authorized_pq_pool_order(0, 1_700_000_000, 19))
     assert body == built_order and actual_key == key_id
     assert seen["request"].election_date == 1_700_000_000
-    assert seen["request"].stake_owner == pool_id
+    assert seen["request"].src_addr == pool_id
     assert seen["request"].adnl_addr == adnl_id
     assert seen["path"].name == "pq_pool_stake_order"
     assert seen["fields"] == {
@@ -268,13 +265,10 @@ def test_shared_pq_pool_order_binds_node_authorization_to_controller_and_pool(
         "algorithm_id": 1,
         "public_key": public_key,
         "signature": signature,
-        "witness": witness,
     }
     record_path = rehearsal.artifacts_dir / "pq-authorization-1700000000-validator-1-query-19.json"
     record = json.loads(record_path.read_text())
-    assert (
-        record["validator_id_hex"] == controller_id.hex() and record["key_id_hex"] == key_id.hex()
-    )
+    assert record["validator_id_hex"] == pool_id.hex() and record["key_id_hex"] == key_id.hex()
     assert record["public_key_hex"] == public_key.hex() and record["control_port"] == 26_004
     assert record["node_pid"] == os.getpid() and record["node_start_ticks"] > 0
     assert [item["path"] for item in rehearsal.pq_authorization_records[1_700_000_000]["1"]] == [
@@ -291,6 +285,12 @@ def test_shared_pq_pool_order_binds_node_authorization_to_controller_and_pool(
     ).exists(), "a mismatched authorization was retained as the node's answer"
 
     authorization.key_id = key_id
+    authorization.validator_id = other_id
+    with pytest.raises(AssertionError, match="configured for another account"):
+        asyncio.run(rehearsal.authorized_pq_pool_order(0, 1_700_000_000, 22))
+    assert "fields" not in seen, "a node configured for another account reached the builder"
+
+    authorization.validator_id = pool_id
     asyncio.run(
         rehearsal.authorized_pq_pool_order(
             0, 1_700_000_000, 21, corrupt_signature_for_negative=True
@@ -311,17 +311,15 @@ def test_pq_first_round_negatives_pin_three_elector_reasons_and_unchanged_stake(
         profile=stage_a.PROFILES["a"],
         pq_election=True,
     )
-    controller = stage_a.Address((-1, bytes([0x11]) * 32))
     pool = stage_a.Address((-1, bytes([0x22]) * 32))
-    rehearsal.controllers = [SimpleNamespace(address=controller)]
     rehearsal.pools = [SimpleNamespace(address=pool)]
     rehearsal.wallets = [object()]
     seen = []
     reasons = {101: 5, 102: 3, 103: 1}
 
-    async def current_stake(method, controller_id):
+    async def current_stake(method, member_id):
         assert method == "participates_in"
-        assert controller_id == "0x" + controller.hash_part.hex()
+        assert member_id == "0x" + pool.hash_part.hex()
         return 0
 
     async def make_order(index, election_id, query_id, **options):
@@ -376,6 +374,121 @@ def test_pq_first_round_negatives_pin_three_elector_reasons_and_unchanged_stake(
     reasons[103] = 8
     with pytest.raises(AssertionError, match="invalid-signature.*expected elector return reason 1"):
         asyncio.run(rehearsal.assert_pq_first_round_negative_cases(1_700_000_000))
+
+
+def test_stake_authorized_for_the_pool_is_refused_from_another_wallet(tmp_path, monkeypatch):
+    """The node signs for the pool; the wallet sends the elector body itself."""
+    rehearsal = stage_a.ValidatorElectionRehearsal(
+        run_dir=tmp_path / "pq-misdirected",
+        base_port=26_000,
+        build_dir=REPO / "build",
+        sample_interval=10,
+        profile=stage_a.PROFILES["a"],
+        pq_election=True,
+    )
+    pool = stage_a.Address((-1, bytes([0x22]) * 32))
+    wallet = SimpleNamespace(address=stage_a.Address((-1, bytes([0x77]) * 32)))
+    adnl_id = bytes([0x66]) * 32
+    public_key = bytes([0x44]) * 1312
+    signature = bytes([0x55]) * 2420
+    rehearsal.pools = [SimpleNamespace(address=pool)]
+    rehearsal.negative_wallet = wallet
+    seen: dict[str, Any] = {"sent": []}
+
+    class FakeConsole:
+        async def request(self, request):
+            seen["request"] = request
+            return stage_a.tos_api.Engine_validator_pqStakeAuthorization(
+                validator_id=pool.hash_part,
+                key_id=bytes([0x33]) * 32,
+                algorithm_id=1,
+                public_key=public_key,
+                signature=signature,
+            ).to_dict()
+
+    rehearsal.nodes = [
+        SimpleNamespace(
+            validator_key=SimpleNamespace(id=adnl_id),
+            engine_console=FakeConsole(),
+            pq_initial_validator=SimpleNamespace(
+                validator_id=pool.hash_part, public_key=public_key
+            ),
+        )
+    ]
+
+    def fake_builder(path, **fields):
+        seen["fields"] = fields
+        pq_bytes = lambda data: (  # noqa: E731
+            Builder().store_uint(len(data), 32).store_ref(stage_a_byte_chain(data)).end_cell()
+        )
+        return (
+            Builder()
+            .store_uint(0x4E73744B, 32)
+            .store_uint(fields["query_id"], 64)
+            .store_coins(fields["stake_amount"])
+            .store_uint(1, 16)
+            .store_ref(pq_bytes(fields["public_key"]))
+            .store_uint(fields["stake_at"], 32)
+            .store_uint(fields["max_factor"], 32)
+            .store_bytes(fields["adnl_addr"])
+            .store_ref(pq_bytes(fields["signature"]))
+            .end_cell()
+        )
+
+    async def participation(method, member_id):
+        assert method == "participates_in"
+        return 0
+
+    async def send(sender, *, dest, amount, body, label):
+        seen["sent"].append((sender, dest, amount, body))
+
+    answer = [stage_a.STAKE_RETURNED_OP, 1]
+
+    async def reply(sender, query_id, *, description):
+        assert sender is wallet and query_id == 0xE1EC7
+        return answer[0], answer[1], None
+
+    monkeypatch.setattr(stage_a, "build_production_pool_stake_order", fake_builder)
+    monkeypatch.setattr(rehearsal, "runmethod_int", participation)
+    monkeypatch.setattr(rehearsal, "send_from_wallet", send)
+    monkeypatch.setattr(rehearsal, "wait_wallet_elector_reply", reply)
+    asyncio.run(rehearsal.assert_misdirected_stake_refused(1_700_000_000))
+
+    assert seen["request"].src_addr == pool.hash_part, "the node must sign for the pool"
+    sender, dest, amount, body = seen["sent"][0]
+    assert sender is wallet and dest == stage_a.ELECTOR
+    assert amount == stage_a.PQ_STAKE_MESSAGE_VALUE
+    order = parse_stake_order(body, with_amount=False)
+    assert order.signature == signature and order.stake_at == 1_700_000_000
+    assert rehearsal.events[-1]["reason"] == 1
+
+    answer[1] = 3
+    with pytest.raises(AssertionError, match="expected elector return reason 1"):
+        asyncio.run(rehearsal.assert_misdirected_stake_refused(1_700_000_000))
+
+    # A second account is signed for offline with the same key, never by the node,
+    # which signs only for the account it is configured as.
+    seen.pop("request")
+    offline = []
+
+    def offline_signature(index, global_id, election_id, src_addr):
+        offline.append((index, global_id, election_id, src_addr))
+        return bytes([0x56]) * 2420
+
+    monkeypatch.setattr(rehearsal, "offline_stake_signature", offline_signature)
+
+    async def config_param(number):
+        assert number == 19
+        return Builder().store_int(-7, 32).end_cell()
+
+    rehearsal.client = SimpleNamespace(get_config_param=config_param)
+    body = asyncio.run(
+        rehearsal.direct_elector_stake_body(0, 1_700_000_000, 0xE1EC8, wallet.address.hash_part)
+    )
+    assert "request" not in seen, "the node was asked to sign for another account"
+    assert offline == [(0, -7, 1_700_000_000, wallet.address.hash_part)]
+    order = parse_stake_order(body, with_amount=False)
+    assert order.signature == bytes([0x56]) * 2420 and order.public_key == public_key
 
 
 def test_restarted_pq_node_retries_only_pre_send_authorization_transients(tmp_path):
@@ -478,7 +591,7 @@ def test_pq_config34_requires_identity_adnl_pairs_not_just_two_sets():
         .replace("CC" * 32, second_adnl)
     )
     assert set(config(swapped).adnl_ids) == {first_adnl, second_adnl}
-    with pytest.raises(AssertionError, match="controller-to-ADNL association differs"):
+    with pytest.raises(AssertionError, match="member-to-ADNL association differs"):
         stage_a.require_pq_config34_associations(config(swapped), expected)
     with pytest.raises(ValueError, match="has 0 ADNL IDs"):
         stage_a.parse_pq_validator_adnl_pairs(output.replace(second_adnl, ""))
@@ -594,7 +707,7 @@ def test_experiment_pool_capital_supports_three_concurrent_unrecovered_stakes(
 
     launch_config = stage_a.NetworkConfig()
     experiment_config = stage_a.NetworkConfig()
-    experiment.controller_code = stage_a.Cell.empty()
+    launch_gate.pools = experiment.pools = [object()] * 4
     launch_gate.configure_network_profile(launch_config)
     experiment.configure_network_profile(experiment_config)
     assert launch_config.validator_election_experiment_faucet_balance_nanotos is None
@@ -605,7 +718,6 @@ def test_experiment_pool_capital_supports_three_concurrent_unrecovered_stakes(
     assert stage_a.EXPERIMENT_GENESIS_FAUCET_FUNDING == (
         4 * stage_a.EXPERIMENT_VALIDATOR_WALLET_FUNDING
         + stage_a.NEGATIVE_WALLET_FUNDING
-        + 4 * 10 * stage_a.NANO
         + stage_a.EXPERIMENT_FAUCET_FEE_RESERVE
     )
 
@@ -621,17 +733,15 @@ def test_experiment_candidate_records_node_authorized_pool_owner(tmp_path, monke
     )
     wallet = stage_a.Address((-1, bytes([0x11]) * 32))
     pool = stage_a.Address((-1, bytes([0x22]) * 32))
-    controller = stage_a.Address((-1, bytes([0x33]) * 32))
     adnl = bytes([0x44]) * 32
     rehearsal.wallets = [SimpleNamespace(address=wallet)]
     rehearsal.pools = [SimpleNamespace(address=pool)]
-    rehearsal.controllers = [
+    rehearsal.nodes = [
         SimpleNamespace(
-            address=controller,
-            consensus=SimpleNamespace(key_id=bytes([0x55]) * 32),
+            validator_key=SimpleNamespace(id=adnl),
+            pq_initial_validator=SimpleNamespace(key_id=bytes([0x55]) * 32),
         )
     ]
-    rehearsal.nodes = [SimpleNamespace(validator_key=SimpleNamespace(id=adnl))]
 
     async def balance(address):
         return 50 * stage_a.NANO if address == wallet else stage_a.PQ_EXPERIMENT_POOL_CAPITAL
@@ -650,7 +760,9 @@ def test_experiment_candidate_records_node_authorized_pool_owner(tmp_path, monke
     monkeypatch.setattr(rehearsal, "publish_allocation_evidence", lambda status: None)
     asyncio.run(rehearsal.submit_experiment_candidate(index=0, election_id=100, round_number=1))
     candidate = rehearsal.election_allocations[100]["validators"]["1"]
-    assert candidate["controller_id_hex"] == controller.hash_part.hex()
+    # The verifier-fixed key holds the election member id, which is the pool.
+    assert candidate["controller_id_hex"] == pool.hash_part.hex()
+    assert candidate["consensus_key_id_hex"] == (bytes([0x55]) * 32).hex()
     assert candidate["pool_stake_owner_raw"] == stage_a.raw_address(pool)
     assert candidate["recovery_destination_raw"] == stage_a.raw_address(pool)
     assert candidate["operator_wallet_raw"] == stage_a.raw_address(wallet)
@@ -674,10 +786,8 @@ def test_experiment_recovery_credits_pool_and_requires_mature_reply(
     )
     wallets = [stage_a.Address((-1, bytes([0x10 + index]) * 32)) for index in range(4)]
     pools = [stage_a.Address((-1, bytes([0x20 + index]) * 32)) for index in range(4)]
-    controllers = [stage_a.Address((-1, bytes([0x30 + index]) * 32)) for index in range(4)]
     rehearsal.wallets = [SimpleNamespace(address=value) for value in wallets]
     rehearsal.pools = [SimpleNamespace(address=value) for value in pools]
-    rehearsal.controllers = [SimpleNamespace(address=value) for value in controllers]
     rehearsal.nodes = [
         SimpleNamespace(validator_key=SimpleNamespace(id=bytes([0x40 + index]) * 32))
         for index in range(4)
@@ -715,7 +825,7 @@ def test_experiment_recovery_credits_pool_and_requires_mature_reply(
         return 100 * stage_a.NANO + (credit - stage_a.NANO if sent else 0)
 
     async def recovery_body(label):
-        return stage_a.Builder().store_uint(0x47657424, 32).store_uint(77, 64).end_cell()
+        return Builder().store_uint(0x47657424, 32).store_uint(77, 64).end_cell()
 
     async def send(wallet, *, dest, amount, body, label):
         nonlocal sent
@@ -753,11 +863,11 @@ def test_experiment_recovery_credits_pool_and_requires_mature_reply(
         assert record["elector_reply_opcode"] == "0xf96f7324"
 
 
-@pytest.mark.parametrize("swap_controller_adnl", [False, True])
-def test_experiment_activation_joins_pq_controllers_by_adnl_not_zero_public_key(
+@pytest.mark.parametrize("swap_pool_adnl", [False, True])
+def test_experiment_activation_joins_pq_pools_by_adnl_not_zero_public_key(
     tmp_path,
     monkeypatch,
-    swap_controller_adnl,
+    swap_pool_adnl,
 ):
     rehearsal = stage_a.ValidatorElectionRehearsal(
         run_dir=tmp_path,
@@ -767,16 +877,13 @@ def test_experiment_activation_joins_pq_controllers_by_adnl_not_zero_public_key(
         profile=stage_a.PROFILES["a"],
         experiment=stage_a.ExperimentProfile(600, 600, "127.0.0.1", 8111),
     )
-    controllers = [stage_a.Address((-1, bytes([0x31 + index]) * 32)) for index in range(4)]
+    pools = [stage_a.Address((-1, bytes([0x31 + index]) * 32)) for index in range(4)]
     adnl = [bytes([0x41 + index]) * 32 for index in range(4)]
-    rehearsal.controllers = [SimpleNamespace(address=value) for value in controllers]
+    rehearsal.pools = [SimpleNamespace(address=value) for value in pools]
     rehearsal.nodes = [SimpleNamespace(validator_key=SimpleNamespace(id=value)) for value in adnl]
     rehearsal.artifacts_dir.mkdir()
-    pairs = [
-        (controller.hash_part.hex().upper(), key.hex().upper())
-        for controller, key in zip(controllers, adnl)
-    ]
-    if swap_controller_adnl:
+    pairs = [(pool.hash_part.hex().upper(), key.hex().upper()) for pool, key in zip(pools, adnl)]
+    if swap_pool_adnl:
         pairs[0], pairs[1] = (pairs[0][0], pairs[1][1]), (pairs[1][0], pairs[0][1])
     config = stage_a.Config34(
         utime_since=100,
@@ -795,7 +902,7 @@ def test_experiment_activation_joins_pq_controllers_by_adnl_not_zero_public_key(
             "selection_status": "pending",
             "validators": {
                 str(index + 1): {
-                    "controller_id_hex": controllers[index].hash_part.hex(),
+                    "controller_id_hex": pools[index].hash_part.hex(),
                     "adnl_id_hex": adnl[index].hex(),
                 }
                 for index in range(4)
@@ -855,10 +962,10 @@ def test_experiment_activation_joins_pq_controllers_by_adnl_not_zero_public_key(
         return {"stage_a_verdict": "X02_CONFIG34_SAME_BLOCK_PROOF_OK", "election_id": election_id}
 
     monkeypatch.setattr(rehearsal, "capture_config34_same_block_proof", capture_proof)
-    if swap_controller_adnl:
-        with pytest.raises(AssertionError, match="controller.*ADNL|association"):
+    if swap_pool_adnl:
+        with pytest.raises(AssertionError, match="member-to-ADNL association differs"):
             asyncio.run(rehearsal.observe_experiment_activation())
-        assert proofs == [], "a set with a swapped controller/ADNL association reached the proof"
+        assert proofs == [], "a set with a swapped pool/ADNL association reached the proof"
     else:
         assert asyncio.run(rehearsal.observe_experiment_activation()) is True
         allocation: dict[str, Any] = rehearsal.election_allocations[100]
@@ -889,10 +996,8 @@ def test_experiment_pool_credit_includes_matured_rollover_without_greedy_attribu
     )
     wallets = [stage_a.Address((-1, bytes([0x50 + index]) * 32)) for index in range(4)]
     pools = [stage_a.Address((-1, bytes([0x60 + index]) * 32)) for index in range(4)]
-    controllers = [stage_a.Address((-1, bytes([0x70 + index]) * 32)) for index in range(4)]
     rehearsal.wallets = [SimpleNamespace(address=value) for value in wallets]
     rehearsal.pools = [SimpleNamespace(address=value) for value in pools]
-    rehearsal.controllers = [SimpleNamespace(address=value) for value in controllers]
     rehearsal.nodes = [
         SimpleNamespace(validator_key=SimpleNamespace(id=bytes([0x80 + index]) * 32))
         for index in range(4)
@@ -960,7 +1065,7 @@ def test_experiment_pool_credit_includes_matured_rollover_without_greedy_attribu
         return value
 
     async def recovery_body(label):
-        return stage_a.Builder().store_uint(0x47657424, 32).store_uint(78, 64).end_cell()
+        return Builder().store_uint(0x47657424, 32).store_uint(78, 64).end_cell()
 
     async def reply(index, query_id, **kwargs):
         assert (index, query_id) == (0, 78)

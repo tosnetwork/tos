@@ -1,104 +1,96 @@
-"""The controller identity is fixed before a node joins the Genesis committee."""
+"""The staking account is fixed before a node joins the Genesis committee, and the
+stake orders the rehearsals send are the production builder's bytes."""
 
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 from typing import TypedDict
 
 import pytest
+from contract.pq_auth import byte_chain
 from pytosiq_core import Address, Builder, Cell
 from pytosiq_core.tlb.tlb import require
 from tosapi import tos_api, toslib_api
-from tostester.install import Install
 from tostester.pq_election_fixture import (
-    assert_controller_identity,
-    build_pool_stake_order,
+    assert_staking_identity,
     build_production_pool_stake_order,
+    elector_body_from_pool_order,
     elector_reply,
     elector_return_reason,
-    make_controller_fixture,
     make_pool_fixture,
+    parse_stake_order,
     participant_ids_from_runmethod,
     require_pq_stake_authorization_binding,
 )
 
 ROOT = Path(__file__).resolve().parents[4]
-
-
-def test_bound_pool_results_require_the_real_controller_and_domain_query():
-    controller = Address((-1, bytes([0x51]) * 32))
-    query = 127
-    body = (
-        Builder()
-        .store_uint(0x50516232, 32)
-        .store_uint(query | (1 << 63), 64)
-        .store_uint(7, 256)
-        .store_coins(10_002_000_000_000)
-        .store_coins(10_001_000_000_000)
-        .store_uint(0, 32)
-        .store_uint(1, 1)
-        .store_coins(1_000_000_000)
-        .store_coins(2_058_960_000)
-        .store_ref(Builder().store_address(controller).end_cell())
-        .end_cell()
-        .to_boc()
+STAKE_ORDER_BUILDER = Path(
+    os.environ.get(
+        "TOS_PQ_POOL_STAKE_ORDER",
+        ROOT / "tosctl/src/target/debug/examples/pq_pool_stake_order",
     )
-    tx = SimpleNamespace(
+)
+
+
+def _pq_bytes(data: bytes) -> Cell:
+    return Builder().store_uint(len(data), 32).store_ref(byte_chain(data)).end_cell()
+
+
+def _order_fields(query_id: int = 19) -> dict:
+    return {
+        "query_id": query_id,
+        "stake_amount": 10_000_000_000_000,
+        "stake_at": 1_700_000_000,
+        "max_factor": 65_536,
+        "adnl_addr": bytes([0x22]) * 32,
+        "public_key": bytes([0x11]) * 1312,
+        "signature": bytes([0x33]) * 2420,
+    }
+
+
+def _hand_built_pool_order(fields: dict) -> Cell:
+    """The single-nominator parser order, written out once to test the reader."""
+    return (
+        Builder()
+        .store_uint(0x4E73744B, 32)
+        .store_uint(fields["query_id"], 64)
+        .store_coins(fields["stake_amount"])
+        .store_uint(1, 16)
+        .store_ref(_pq_bytes(fields["public_key"]))
+        .store_uint(fields["stake_at"], 32)
+        .store_uint(fields["max_factor"], 32)
+        .store_bytes(fields["adnl_addr"])
+        .store_ref(_pq_bytes(fields["signature"]))
+        .end_cell()
+    )
+
+
+def _from(source: Address, body: Cell) -> SimpleNamespace:
+    return SimpleNamespace(
         in_msg=SimpleNamespace(
-            source=toslib_api.AccountAddress(controller.to_str()),
-            msg_data=toslib_api.Msg_dataRaw(body=body),
+            source=toslib_api.AccountAddress(source.to_str()),
+            msg_data=toslib_api.Msg_dataRaw(body=body.to_boc()),
         )
     )
-    assert elector_reply([tx], query, controller=controller) == (0xF374484C, 0)
-    assert elector_reply([tx], query + 1, controller=controller) is None
-    assert elector_reply([tx], query, controller=Address((-1, bytes([0x52]) * 32))) is None
-    assert elector_reply([tx], query) is None
 
 
-def test_direct_recovery_amount_is_parsed_as_coins_and_not_as_a_reason():
+def test_elector_recovery_answer_has_no_trailing_amount():
     elector = Address((-1, bytes.fromhex("33" * 32)))
-    body = (
-        Builder()
-        .store_uint(0xF96F7324, 32)
-        .store_uint(9, 64)
-        .store_coins(50_000_000_000)
-        .end_cell()
-        .to_boc()
-    )
-    tx = SimpleNamespace(
-        in_msg=SimpleNamespace(
-            source=toslib_api.AccountAddress(elector.to_str()),
-            msg_data=toslib_api.Msg_dataRaw(body=body),
-        )
-    )
-    assert elector_reply([tx], 9) == (0xF96F7324, 0)
+    bare = Builder().store_uint(0xF96F7324, 32).store_uint(9, 64).end_cell()
+    assert elector_reply([_from(elector, bare)], 9) == (0xF96F7324, 0)
+    with_amount = Builder().store_uint(0xF96F7324, 32).store_uint(9, 64).store_coins(5).end_cell()
+    assert elector_reply([_from(elector, with_amount)], 9) is None
 
 
-def test_bound_pool_result_reader_rejects_inconsistent_amounts():
-    controller = Address((-1, bytes([0x51]) * 32))
-    body = (
-        Builder()
-        .store_uint(0x50516232, 32)
-        .store_uint(127 | (1 << 63), 64)
-        .store_uint(7, 256)
-        .store_coins(10_002_000_000_000)
-        .store_coins(10_001_000_000_001)
-        .store_uint(0, 32)
-        .store_uint(1, 1)
-        .store_coins(1_000_000_000)
-        .store_coins(2_058_960_000)
-        .store_ref(Builder().store_address(controller).end_cell())
-        .end_cell()
-        .to_boc()
+def test_only_the_elector_answers_a_stake():
+    pool = Address((-1, bytes([0x51]) * 32))
+    accepted = Builder().store_uint(0xF374484C, 32).store_uint(127, 64).store_uint(0, 32).end_cell()
+    assert elector_reply([_from(pool, accepted)], 127) is None
+    assert elector_reply([_from(Address((-1, bytes.fromhex("33" * 32))), accepted)], 127) == (
+        0xF374484C,
+        0,
     )
-    tx = SimpleNamespace(
-        in_msg=SimpleNamespace(
-            source=toslib_api.AccountAddress(controller.to_str()),
-            msg_data=toslib_api.Msg_dataRaw(body=body),
-        )
-    )
-    with pytest.raises(ValueError, match="inconsistent relay result amounts"):
-        elector_reply([tx], 127, controller=controller)
 
 
 def test_pq_stake_authorization_generated_binding_is_complete():
@@ -123,83 +115,67 @@ def test_participant_ids_use_decimal_outer_ids_not_hex_text():
         participant_ids_from_runmethod("result: [ 123 120 100 230 () 0 0 ]")
 
 
-def test_controller_identity_and_pool_roles_are_bound_by_state_init(tmp_path):
-    controller = make_controller_fixture(
-        Install(ROOT / "build", ROOT), tmp_path / "keys", Cell.empty(), 0
-    )
-    assert len(controller.birth_witness.bits) == 544
-    assert controller.address.hash_part == controller.state_init.serialize().hash
-
-    held = SimpleNamespace(
-        validator_id=controller.address.hash_part,
-        key_id=controller.consensus.key_id,
-    )
-    node = SimpleNamespace(pq_initial_validator=held)
-    assert_controller_identity(node, controller, index=1)
-
-    held.validator_id = bytes(32)
-    with pytest.raises(AssertionError, match="controller address and PQ validator_id differ"):
-        assert_controller_identity(node, controller, index=1)
-    held.validator_id = controller.address.hash_part
-    held.key_id = bytes(32)
-    with pytest.raises(AssertionError, match="controller-bound consensus key and node key differ"):
-        assert_controller_identity(node, controller, index=1)
-
+def test_staking_identity_and_pool_roles_are_bound_by_state_init():
     owner = Address((-1, bytes([0x55]) * 32))
-    pool = make_pool_fixture(Cell.empty(), owner, controller.address)
+    validator = Address((-1, bytes([0x66]) * 32))
+    pool = make_pool_fixture(Cell.empty(), owner, validator)
+    assert pool.address.hash_part == pool.state_init.serialize().hash
     roles = require(pool.state_init.data).begin_parse()
     assert roles.load_address() == owner
-    assert roles.load_address() == owner
-    assert roles.load_address() == controller.address
+    assert roles.load_address() == validator
     assert roles.remaining_bits == 0 and roles.remaining_refs == 0
+    with pytest.raises(ValueError, match="masterchain"):
+        make_pool_fixture(Cell.empty(), Address((0, bytes(32))), validator)
+
+    held = SimpleNamespace(validator_id=pool.address.hash_part, key_id=bytes([7]) * 32)
+    node = SimpleNamespace(pq_initial_validator=held)
+    assert_staking_identity(node, pool.address, index=1)
+    held.validator_id = validator.hash_part
+    with pytest.raises(AssertionError, match="staking account and PQ validator_id differ"):
+        assert_staking_identity(node, pool.address, index=1)
+    with pytest.raises(AssertionError, match="no PQ consensus identity"):
+        assert_staking_identity(SimpleNamespace(pq_initial_validator=None), pool.address, index=1)
 
 
-def test_pool_stake_order_round_trips_every_field_in_contract_parser_order():
-    """A shape-only pool parse cannot catch adjacent fixed-width field swaps."""
+def test_stake_order_reader_follows_the_pool_and_elector_parser_order():
+    """A shape-only parse cannot catch adjacent fixed-width field swaps."""
+    fields = _order_fields()
+    order = _hand_built_pool_order(fields)
+    parsed = parse_stake_order(order, with_amount=True)
+    assert parsed.query_id == 19
+    assert parsed.stake_amount == fields["stake_amount"]
+    assert parsed.algorithm_id == 1
+    assert parsed.public_key == fields["public_key"]
+    assert parsed.stake_at == fields["stake_at"]
+    assert parsed.max_factor == fields["max_factor"]
+    assert parsed.adnl_addr == fields["adnl_addr"]
+    assert parsed.signature == fields["signature"]
 
-    def pq_bytes(cell: Cell) -> bytes:
-        root = cell.begin_parse()
-        remaining = root.load_uint(32)
-        assert root.remaining_bits == 0 and root.remaining_refs == 1
-        chunk = root.load_ref()
-        data = bytearray()
-        while remaining:
-            part = chunk.begin_parse()
-            take = min(127, remaining)
-            data.extend(part.load_bytes(take))
-            remaining -= take
-            assert part.remaining_bits == 0
-            if remaining:
-                assert part.remaining_refs == 1
-                chunk = part.load_ref()
-            else:
-                assert part.remaining_refs == 0
-        return bytes(data)
+    direct = elector_body_from_pool_order(order)
+    forwarded = parse_stake_order(direct, with_amount=False)
+    assert forwarded.stake_amount is None
+    assert forwarded == parsed.__class__(**{**parsed.__dict__, "stake_amount": None})
+    with pytest.raises(ValueError, match="trailing data"):
+        parse_stake_order(Builder().store_cell(order).store_uint(0, 1).end_cell(), with_amount=True)
+    with pytest.raises(ValueError):
+        parse_stake_order(order, with_amount=False)
 
-    witness = Cell.empty()
-    body = build_pool_stake_order(
-        query_id=19,
-        stake_amount=10_000_000_000_000,
-        stake_at=1_700_000_000,
-        max_factor=65_536,
-        adnl_addr=bytes([0x22]) * 32,
-        algorithm_id=1,
-        public_key=bytes([0x11]) * 1312,
-        signature=bytes([0x33]) * 2420,
-        witness=witness,
+
+@pytest.mark.skipif(
+    not STAKE_ORDER_BUILDER.is_file(),
+    reason="production pool order builder not built "
+    "(cargo build -p contracts --example pq_pool_stake_order)",
+)
+def test_production_builder_writes_the_pool_parser_order():
+    fields = _order_fields(23)
+    built = build_production_pool_stake_order(STAKE_ORDER_BUILDER, algorithm_id=1, **fields)
+    assert built.hash == _hand_built_pool_order(fields).hash
+    parsed = parse_stake_order(built, with_amount=True)
+    assert (parsed.stake_at, parsed.max_factor, parsed.adnl_addr) == (
+        fields["stake_at"],
+        fields["max_factor"],
+        fields["adnl_addr"],
     )
-    view = body.begin_parse()
-    assert view.load_uint(32) == 0x4E73744B, "wrong pool NEW_STAKE opcode"
-    assert view.load_uint(64) == 19, "wrong stake query ID"
-    assert view.load_coins() == 10_000_000_000_000, "wrong declared pool stake"
-    assert view.load_uint(32) == 1_700_000_000, "stake_at moved from pool parser order"
-    assert view.load_uint(32) == 65_536, "max_factor moved from pool parser order"
-    assert view.load_bytes(32) == bytes([0x22]) * 32, "ADNL moved from pool parser order"
-    assert view.load_uint(16) == 1, "algorithm_id moved from pool parser order"
-    assert pq_bytes(view.load_ref()) == bytes([0x11]) * 1312, "public key changed"
-    assert pq_bytes(view.load_ref()) == bytes([0x33]) * 2420, "signature changed"
-    assert view.load_maybe_ref() == witness, "birth witness is not the trailing maybe-ref"
-    assert view.remaining_bits == 0 and view.remaining_refs == 0, "pool order has trailing data"
 
 
 def test_live_rehearsal_arguments_reach_the_production_builder_bridge(monkeypatch):
@@ -213,7 +189,6 @@ def test_live_rehearsal_arguments_reach_the_production_builder_bridge(monkeypatc
         return SimpleNamespace(returncode=0, stdout=Cell.empty().to_boc().hex(), stderr="")
 
     monkeypatch.setattr("tostester.pq_election_fixture.subprocess.run", fake_run)
-    witness = Builder().store_uint(7, 32).end_cell()
 
     class StakeArguments(TypedDict):
         query_id: int
@@ -223,7 +198,6 @@ def test_live_rehearsal_arguments_reach_the_production_builder_bridge(monkeypatc
         adnl_addr: bytes
         public_key: bytes
         signature: bytes
-        witness: Cell
 
     args: StakeArguments = {
         "query_id": 3,
@@ -233,17 +207,24 @@ def test_live_rehearsal_arguments_reach_the_production_builder_bridge(monkeypatc
         "adnl_addr": bytes([34]) * 32,
         "public_key": bytes([17]) * 1312,
         "signature": bytes([51]) * 2420,
-        "witness": witness,
     }
     result = build_production_pool_stake_order(
         Path("/diagnostic/pq_pool_stake_order"), algorithm_id=1, **args
     )
     assert result == Cell.empty()
+    assert set(seen) == {
+        "query_id",
+        "stake_amount",
+        "stake_at",
+        "max_factor",
+        "adnl_addr_hex",
+        "public_key_hex",
+        "signature_hex",
+    }
     assert seen["query_id"] == 3 and seen["stake_at"] == 1_700_000_000
     assert seen["adnl_addr_hex"] == (bytes([0x22]) * 32).hex()
     assert seen["public_key_hex"] == (bytes([0x11]) * 1312).hex()
     assert seen["signature_hex"] == (bytes([0x33]) * 2420).hex()
-    assert seen["witness_boc_hex"] == witness.to_boc().hex()
     with pytest.raises(ValueError, match="algorithm 1"):
         build_production_pool_stake_order(
             Path("/diagnostic/pq_pool_stake_order"), algorithm_id=2, **args

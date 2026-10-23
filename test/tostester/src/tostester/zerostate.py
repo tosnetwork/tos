@@ -72,7 +72,7 @@ class NetworkConfig:
     genesis_wallet_seed: bytes | None = field(default=None, repr=False)
     # TEST-HARNESS chain discriminator.  Three preserves the historical local
     # genesis byte-for-byte; isolated same-key multi-genesis experiments must
-    # choose another int32 so controller signatures cannot cross replay.
+    # choose another int32 so stake and vote signatures cannot cross replay.
     global_id: int = 3
     monitor_min_split: int = 0
     split: int = 0
@@ -143,9 +143,6 @@ class NetworkConfig:
     # override (60 s minimum storage, one win) to rehearse governance
     # activation of ordinary parameters.
     enable_config_voting: bool = False
-    # A launch-gate rehearsal may admit the exact production Controller code
-    # through the ordinary Genesis config! dictionary, never by patching a node.
-    validator_controller_code_hash: bytes | None = None
 
 
 @dataclass
@@ -446,7 +443,6 @@ config.param_proposals_setup!
 // single-validator localnet can carry an ordinary proposal to acceptance
 // in one voting round. Empty unless the profile opts in.
 {voting_config_param}
-{controller_policy_param}
 
 // deposit bit_pps cell_pps
 TM$100 1 500 config.complaint_prices!
@@ -838,15 +834,6 @@ def create_zerostate(
     else:
         voting_config_param = ""
 
-    if config.validator_controller_code_hash is not None:
-        if len(config.validator_controller_code_hash) != 32:
-            raise ValueError("validator controller code hash must be 32 bytes")
-        controller_policy_param = (
-            f"0x{config.validator_controller_code_hash.hex()} config.validator_controller_code!\n"
-        )
-    else:
-        controller_policy_param = ""
-
     if config.global_id < -(1 << 31) or config.global_id >= (1 << 31):
         raise ValueError("global_id must fit a signed int32")
 
@@ -896,7 +883,6 @@ def create_zerostate(
             dns_config_param=dns_config_param,
             voting_config_param=voting_config_param,
             **fee_schedule,
-            controller_policy_param=controller_policy_param,
             **profile,
         ),
         state_dir,

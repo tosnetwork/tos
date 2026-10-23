@@ -101,12 +101,11 @@ def main() -> int:
 
     code_cells, code_bits = measure_cells(args.code)
 
-    # save_data's scalars, plus the config sub-cell it always carries. The config holds two
-    # accounts: the validator the pool serves, and the controller its stake is relayed
-    # through.
+    # save_data's scalars, plus the config sub-cell it always carries. The config holds one
+    # account, the validator wallet that orders the pool's stakes.
     data_cells, data_bits = (
         2,
-        (8 + 16 + 128 + 128 + 32 + 256 + 8 + 32 + 32 + 3 + (256 + 256 + 16 + 16 + 128 + 128)),
+        (8 + 16 + 128 + 128 + 32 + 256 + 8 + 32 + 32 + 3 + (256 + 16 + 16 + 128 + 128)),
     )
     # Each nominator entry stores two Coins amounts.
     nominator_cells, nominator_bits = dictionary_cost(args.nominators, 128 + 128)

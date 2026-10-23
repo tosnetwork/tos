@@ -73,21 +73,25 @@ def stand_in(artifacts: Path, rows=None):
         process_id=os.getpid(),
         transport_ports=(1, 2, 30604),
         validator_key=SimpleNamespace(id=bytes(range(32))),
+        pq_initial_validator=SimpleNamespace(key_id=b"\x22" * 32),
     )
-    controller = SimpleNamespace(
-        address=SimpleNamespace(hash_part=b"\x11" * 32),
-        consensus=SimpleNamespace(key_id=b"\x22" * 32),
-    )
-    nodes, controllers = [node] * 4, [controller] * 4
+    # The election member id is the staking pool's address; the verifier's row key
+    # for it keeps its pinned name.
+    pool = SimpleNamespace(address=SimpleNamespace(hash_part=b"\x11" * 32))
+    nodes, pools = [node] * 4, [pool] * 4
     if rows is not None:
         nodes = [
-            SimpleNamespace(validator_key=SimpleNamespace(id=bytes.fromhex(r["adnl_id_hex"])))
+            SimpleNamespace(
+                validator_key=SimpleNamespace(id=bytes.fromhex(r["adnl_id_hex"])),
+                pq_initial_validator=SimpleNamespace(
+                    key_id=bytes.fromhex(r["consensus_key_id_hex"])
+                ),
+            )
             for r in rows
         ]
-        controllers = [
+        pools = [
             SimpleNamespace(
-                address=SimpleNamespace(hash_part=bytes.fromhex(r["controller_id_hex"])),
-                consensus=SimpleNamespace(key_id=bytes.fromhex(r["consensus_key_id_hex"])),
+                address=SimpleNamespace(hash_part=bytes.fromhex(r["controller_id_hex"]))
             )
             for r in rows
         ]
@@ -102,7 +106,7 @@ def stand_in(artifacts: Path, rows=None):
 
     fake = SimpleNamespace(
         nodes=nodes,
-        controllers=controllers,
+        pools=pools,
         artifacts_dir=artifacts,
         pq_authorization_records={},
         file_provenance=Rehearsal.file_provenance,
