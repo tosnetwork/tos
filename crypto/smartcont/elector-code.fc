@@ -212,25 +212,30 @@ int bounded_participant_count(cell members) inline_ref {
   return count;
 }
 
-;; The member of an open election that states a transport address, or zero. Members are
-;; bounded by `participant_limit`, so the walk is bounded.
-int election_address_holder(cell members, int adnl_addr) inline_ref {
-  int holder = 0;
+;; Whether another member of an open election registered this key (1) or states this
+;; transport address (2), or neither (0). A member record holds the member's key_id where
+;; upstream holds its source address, since a member is named by that address. Members
+;; are bounded by `participant_limit`, so the walk is bounded.
+int election_conflict(cell members, int validator_id, int key_id, int adnl_addr) inline_ref {
+  int conflict = 0;
   int id = -1;
   int more = true;
   do {
     (id, slice ms, int found) = members.udict_get_next?(256, id);
-    if (found) {
+    if (found & (id != validator_id)) {
       ms~load_tomis();
-      ms~skip_bits(32 + 32 + 256);   ;; time, max_factor, src_addr
-      if (ms.preload_uint(256) == adnl_addr) {
-        holder = id;
+      ms~skip_bits(32 + 32);   ;; time, max_factor
+      if (ms~load_uint(256) == key_id) {
+        conflict = 1;
+        found = false;
+      } elseif (ms.preload_uint(256) == adnl_addr) {
+        conflict = 2;
         found = false;
       }
     }
     more = found;
   } until (~ more);
-  return holder;
+  return conflict;
 }
 
 ;; The validator of a stored set that holds a transport address, or zero. `vset` is a
@@ -291,7 +296,9 @@ int address_held_by_another_validator(int validator_id, int adnl_addr) inline {
   var adnl_addr = cs~load_uint(256);
   var signature = cs~load_ref();
   cs.end_parse();
-  var validator_id = pq::key_id(algorithm_id, public_key);
+  ;; a member is named by the account that sends its stake, and its key by key_id
+  var validator_id = src_addr;
+  var key_id = pq::key_id(algorithm_id, public_key);
   (_, cell key) = pq::stored_key(algorithm_id, public_key);
   ifnot (pq_check_mldsa44(pq::stake_preimage(stake_at, max_factor, src_addr, adnl_addr),
                           pq::election_context(), pq::stored_signature(algorithm_id, signature), key)) {
@@ -324,14 +331,14 @@ int address_held_by_another_validator(int validator_id, int adnl_addr) inline {
     return return_stake(s_addr, query_id, 0);
   }
   var (mem, found) = members.udict_get?(256, validator_id);
-  var known = found;
   if (found) {
-    ;; entry found, merge stakes
+    ;; entry found, merge stakes; the key, factor and address are restated
     msg_value += mem~load_tomis();
-    mem~load_uint(64);   ;; skip timestamp and max_factor
-    found = (src_addr != mem~load_uint(256));
   }
-  if (found) {
+  ;; a set in which two validators share a key or a transport address is refused by the
+  ;; configuration as a whole, so both are settled per candidate
+  int conflict = election_conflict(members, validator_id, key_id, adnl_addr);
+  if (conflict == 1) {
     ;; can make stakes for a public key from one address only
     return return_stake(s_addr, query_id, 4);
   }
@@ -339,19 +346,16 @@ int address_held_by_another_validator(int validator_id, int adnl_addr) inline {
     ;; stake too small, return it
     return return_stake(s_addr, query_id, 5);
   }
-  ;; a set in which two validators state the same transport address is refused by the
-  ;; configuration as a whole, so the address is settled per candidate: one another
-  ;; member of this election states, or one a validator of the current or next set holds
-  ;; under another identity, is refused with the stake
-  int stated_by = election_address_holder(members, adnl_addr);
-  if ((stated_by != 0) & (stated_by != validator_id)) {
+  if (conflict == 2) {
+    ;; another member of this election states this transport address
     return return_stake(s_addr, query_id, 17);
   }
   if (address_held_by_another_validator(validator_id, adnl_addr)) {
+    ;; a validator of the current or next set holds this address under another identity
     return return_stake(s_addr, query_id, 18);
   }
   ;; every member carries a full post-quantum key, so the number of members is bounded
-  ifnot (known) {
+  ifnot (found) {
     if (bounded_participant_count(members) >= participant_limit) {
       return return_stake(s_addr, query_id, 16);
     }
@@ -363,7 +367,7 @@ int address_held_by_another_validator(int validator_id, int adnl_addr) inline {
     .store_tomis(msg_value)
     .store_uint(now(), 32)
     .store_uint(max_factor, 32)
-    .store_uint(src_addr, 256)
+    .store_uint(key_id, 256)
     .store_uint(adnl_addr, 256)
     .store_uint(algorithm_id, 16)
     .store_ref(public_key));
@@ -871,11 +875,11 @@ _ compute_total_stake(l, n, m_stake) inline_ref {
     ;; lookup source address and key first
     var (val, f) = members.udict_get?(256, validator_id);
     throw_unless(61, f);
-    ;; the principal owed back is what was placed, not the stake capped at max_stake
+    ;; the principal owed back is what was placed, not the stake capped at max_stake;
+    ;; a member is named by the account that sent its stake
     var placed = val~load_tomis();
-    val~skip_bits(64);
-    var src_addr = val~load_uint(256);
-    val~skip_bits(256);
+    val~skip_bits(64 + 256 + 256);   ;; time, max_factor, key_id, adnl_addr
+    var src_addr = validator_id;
     var (algorithm_id, public_key) = (val~load_uint(16), val~load_ref());
     if (i < m) {
       ;; one of the first m members, include into validator set
@@ -1172,6 +1176,7 @@ _ participant_list() method_id {
 }
 
 ;; returns the list of all participants of current elections with their data
+;; a member is named by the account that sent its stake; `addr` is the member's key_id
 _ participant_list_extended() method_id {
   var elect = get_data().begin_parse().preload_dict();
   if (elect.null?()) {

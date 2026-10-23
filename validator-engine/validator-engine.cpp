@@ -1060,12 +1060,12 @@ std::string pq_identity_hex(const td::Bits256 &value) {
 class PqStakeAuthorizationCreator : public td::actor::Actor {
  public:
   PqStakeAuthorizationCreator(td::uint32 election_date, td::uint32 max_factor, td::Bits256 adnl_addr,
-                              td::Bits256 stake_owner, std::optional<tos::ConsensusKeyId> requested_key,
+                              td::Bits256 src_addr, std::optional<tos::ConsensusKeyId> requested_key,
                               td::actor::ActorId<ValidatorEngine> engine, td::Promise<td::BufferSlice> promise)
       : election_date_(election_date)
       , max_factor_(max_factor)
       , adnl_addr_(adnl_addr)
-      , stake_owner_(stake_owner)
+      , src_addr_(src_addr)
       , requested_key_(std::move(requested_key))
       , engine_(engine)
       , promise_(std::move(promise)) {
@@ -1091,8 +1091,14 @@ class PqStakeAuthorizationCreator : public td::actor::Actor {
       abort_query(td::Status::Error("a validator is reachable at an address it states"));
       return;
     }
-    if (stake_owner_.is_zero()) {
-      abort_query(td::Status::Error("a stake belongs to an account, and zero is not one"));
+    if (src_addr_.is_zero()) {
+      abort_query(td::Status::Error("a stake is sent from an account, and zero is not one"));
+      return;
+    }
+    // The elector names a member by the account that sends its stake, so a stake sent
+    // from any other account would elect a validator this node does not answer for.
+    if (src_addr_ != self.validator_id.value) {
+      abort_query(td::Status::Error("a stake is sent from this node's validator_id account"));
       return;
     }
     if (max_factor_ < 0x10000) {
@@ -1105,7 +1111,7 @@ class PqStakeAuthorizationCreator : public td::actor::Actor {
     // election domain the elector shares with complaint votes and with nothing a wallet
     // ever signs. A stake consults no validator set: this is a node's first entry into one.
     auto authorization = tos::pq::sign_stake_authorization(*self.signer, self.global_id, election_date_, max_factor_,
-                                                           self.validator_id.value, adnl_addr_, stake_owner_);
+                                                           src_addr_, adnl_addr_);
     if (!authorization.has_value()) {
       abort_query(td::Status::Error("the post-quantum consensus key could not sign this stake"));
       return;
@@ -1127,7 +1133,7 @@ class PqStakeAuthorizationCreator : public td::actor::Actor {
   td::uint32 election_date_;
   td::uint32 max_factor_;
   td::Bits256 adnl_addr_;
-  td::Bits256 stake_owner_;
+  td::Bits256 src_addr_;
   std::optional<tos::ConsensusKeyId> requested_key_;
   td::actor::ActorId<ValidatorEngine> engine_;
   td::Promise<td::BufferSlice> promise_;
@@ -5025,7 +5031,7 @@ void ValidatorEngine::run_control_query(tos::tos_api::engine_validator_createPqS
   // No key is named: the key schedule picks the one for this election.
   td::actor::create_actor<PqStakeAuthorizationCreator>(
       "stakeauth", static_cast<td::uint32>(query.election_date_), static_cast<td::uint32>(query.max_factor_),
-      query.adnl_addr_, query.stake_owner_, std::nullopt, actor_id(this), std::move(promise))
+      query.adnl_addr_, query.src_addr_, std::nullopt, actor_id(this), std::move(promise))
       .release();
 }
 
@@ -5049,7 +5055,7 @@ void ValidatorEngine::run_control_query(tos::tos_api::engine_validator_createPqS
 
   td::actor::create_actor<PqStakeAuthorizationCreator>(
       "stakeauth", static_cast<td::uint32>(query.election_date_), static_cast<td::uint32>(query.max_factor_),
-      query.adnl_addr_, query.stake_owner_, tos::ConsensusKeyId{query.key_id_}, actor_id(this), std::move(promise))
+      query.adnl_addr_, query.src_addr_, tos::ConsensusKeyId{query.key_id_}, actor_id(this), std::move(promise))
       .release();
 }
 

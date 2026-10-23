@@ -31,17 +31,17 @@ struct StakeAuthorization {
   ConsensusPQSignature signature;
 };
 
-// Sign a stake for `election` under the election domain, naming `owner` as the account
-// the money belongs to. Nothing here consults a validator set: a stake is how a node
-// enters one, so it must be signable before the node is in any.
+// Sign a stake for `election` under the election domain, for the masterchain account
+// `src_addr` that will send it. Nothing here consults a validator set: a stake is how a
+// node enters one, so it must be signable before the node is in any.
 //
-// Returns nullopt on a zero transport address or owner, a weight factor below one, or a
+// Returns nullopt on a zero transport address or sender, a weight factor below one, or a
 // backend failure -- the same preconditions the node and the tool enforced separately,
 // now enforced once.
 inline std::optional<StakeAuthorization> sign_stake_authorization(
     const ValidatorPQKeyStore& store, std::int32_t global_id, std::uint32_t election, std::uint32_t max_factor,
-    const td::Bits256& validator_id, const td::Bits256& adnl, const td::Bits256& owner) noexcept {
-  if (adnl.is_zero() || owner.is_zero() || max_factor < 0x10000) {
+    const td::Bits256& src_addr, const td::Bits256& adnl) noexcept {
+  if (adnl.is_zero() || src_addr.is_zero() || max_factor < 0x10000) {
     return std::nullopt;
   }
   // The key identity, from the signer. `ConsensusPQKey::key_id` is the 32-byte array, so
@@ -50,8 +50,7 @@ inline std::optional<StakeAuthorization> sign_stake_authorization(
   td::Bits256 key_id;
   std::memcpy(key_id.data(), derived.data(), derived.size());
 
-  const auto preimage = stake_preimage(global_id, election, max_factor, validator_id, owner,
-                                       static_cast<std::uint16_t>(PQAlgorithmId::mldsa44), key_id, adnl);
+  const auto preimage = stake_preimage(global_id, election, max_factor, src_addr, adnl);
   auto signature = store.sign_election(preimage);
   if (!signature.has_value()) {
     return std::nullopt;

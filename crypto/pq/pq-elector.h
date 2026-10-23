@@ -22,8 +22,8 @@
 namespace tos::pq {
 
 // Internal message operations, lowercase; signed-preimage domains, uppercase.
-inline constexpr std::uint32_t elector_pq_stake_op = 0x50517374;            // "PQst"
-inline constexpr std::uint32_t elector_pq_stake_sign_tag = 0x50515354;      // "PQST"
+inline constexpr std::uint32_t elector_pq_stake_op = 0x4e73744b;            // the upstream new_stake
+inline constexpr std::uint32_t elector_pq_stake_sign_tag = 0x654c5074;      // the upstream election request
 inline constexpr std::uint32_t config_pq_vote_op = 0x5051766f;              // "PQvo"
 inline constexpr std::uint32_t config_pq_vote_sign_tag = 0x5051564f;        // "PQVO"
 inline constexpr std::uint32_t elector_pq_complaint_op = 0x5051636f;        // "PQco"
@@ -40,30 +40,22 @@ inline void append_bits256(std::string& out, const td::Bits256& value) {
 }
 }  // namespace detail
 
-// What a stake request signs. The validator identity is the controlling account the
-// contract saw, and the key identity is derived by the contract from the key presented:
-// neither is taken from the request, and binding both is what stops a request naming one
-// validator while carrying another's key.
-//
-// The stake owner is the account the money came from, which need not be the validator: a
-// pool holds nominators' funds and has no authority, and a controller has authority and
-// need not hold the funds. It is bound here so an authorisation issued for one funding
-// account cannot be presented by another. The contract reads it from the sender rather
-// than from the request, so a signature and a sender that disagree do not verify.
+// What a stake request signs: the upstream election request
+//   tag u32 | stake_at u32 | max_factor u32 | src_addr u256 | adnl_addr u256
+// followed by global_id i32, so a request signed for one network does not verify on
+// another. 84 bytes. `src_addr` is the masterchain account that sends the stake; the
+// contract reads it from the sender, so a signature made for one account does not verify
+// when another presents it. The key is the signer's own, so it is not repeated here.
 inline std::string stake_preimage(std::int32_t global_id, std::uint32_t stake_at, std::uint32_t max_factor,
-                                  const td::Bits256& validator_id, const td::Bits256& stake_owner,
-                                  std::uint16_t algorithm_id, const td::Bits256& key_id, const td::Bits256& adnl_addr) {
+                                  const td::Bits256& src_addr, const td::Bits256& adnl_addr) {
   std::string out;
-  out.reserve(146);
+  out.reserve(84);
   detail::append_be(out, elector_pq_stake_sign_tag, 4);
-  detail::append_be(out, static_cast<std::uint32_t>(global_id), 4);
   detail::append_be(out, stake_at, 4);
   detail::append_be(out, max_factor, 4);
-  detail::append_bits256(out, validator_id);
-  detail::append_bits256(out, stake_owner);
-  detail::append_be(out, algorithm_id, 2);
-  detail::append_bits256(out, key_id);
+  detail::append_bits256(out, src_addr);
   detail::append_bits256(out, adnl_addr);
+  detail::append_be(out, static_cast<std::uint32_t>(global_id), 4);
   return out;
 }
 

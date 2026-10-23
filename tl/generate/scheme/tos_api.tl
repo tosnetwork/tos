@@ -896,12 +896,12 @@ engine.validator.getConfig = engine.validator.JsonConfig;
 
 engine.validator.setVerbosity verbosity:int = engine.validator.Success;
 
-engine.validator.createPqStakeAuthorization election_date:int max_factor:int adnl_addr:int256 stake_owner:int256 = engine.validator.PqStakeAuthorization;
+engine.validator.createPqStakeAuthorization election_date:int max_factor:int adnl_addr:int256 src_addr:int256 = engine.validator.PqStakeAuthorization;
 // The same authorization, with the caller's statement of which key it expects to sign:
 // refused unless that is the key the schedule assigns to the election (which is then the
 // one used). There is no override; this only makes a disagreement loud.
 engine.validator.createPqStakeAuthorizationWithKey election_date:int max_factor:int adnl_addr:int256
-    stake_owner:int256 key_id:int256 = engine.validator.PqStakeAuthorization;
+    src_addr:int256 key_id:int256 = engine.validator.PqStakeAuthorization;
 // Consensus key rotation while the node runs. add loads the seed under the same rules as
 // at startup and refuses a key that would make the schedule ambiguous; del refuses the
 // last key and an unexpired key a current, previous or next validator set lists for
