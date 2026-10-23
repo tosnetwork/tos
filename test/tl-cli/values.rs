@@ -353,7 +353,7 @@ pub(crate) fn make_tos_api_engine_validator_createpqstakeauthorization(
         election_date: 3,
         max_factor: 4,
         adnl_addr: chain_block::UInt256::with_array([37; 32]),
-        stake_owner: chain_block::UInt256::with_array([7; 32]),
+        src_addr: chain_block::UInt256::with_array([7; 32]),
     }
 }
 pub(crate) fn make_tos_api_engine_validator_customoverlay(

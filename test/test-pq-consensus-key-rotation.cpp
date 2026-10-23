@@ -417,7 +417,8 @@ void deadline_checks() {
   check("deadline_refuses_an_election_signature", !store->sign_election("after").has_value());
   check("deadline_counts_each_refusal", store->signatures_refused_after_expiry() == 3);
   const auto adnl = filled(0x61);
-  check("deadline_refuses_a_stake", !pq::sign_stake_authorization(*store, 1, 5, 0x10000, filled(0x51), adnl).has_value());
+  check("deadline_refuses_a_stake",
+        !pq::sign_stake_authorization(*store, 1, 5, 0x10000, filled(0x51), adnl).has_value());
   // Moving the store keeps its deadline.
   auto moved = std::move(*store);
   check("deadline_survives_a_move", moved.expired_now() && !moved.sign_consensus("moved").has_value());

@@ -15,18 +15,16 @@ use common::{
     app_config::{BindingStatus, ElectionsConfig, NodeBinding, StakePolicy},
     chain_utils::nanotos_to_dec_string,
     snapshot::{
-        ElectionsParticipantSnapshot, ElectionsSnapshot, ElectionsStatus,
-        OurElectionParticipant, ParticipationStatus, SnapshotStore,
-        StakeSubmission, TimeRange, ValidatorNodeSnapshot, ValidatorsSnapshot,
+        ElectionsParticipantSnapshot, ElectionsSnapshot, ElectionsStatus, OurElectionParticipant,
+        ParticipationStatus, SnapshotStore, StakeSubmission, TimeRange, ValidatorNodeSnapshot,
+        ValidatorsSnapshot,
     },
     task_cancellation::CancellationCtx,
     time_format,
 };
 use contracts::{
     ElectionsInfo, ElectorWrapper, NominatorWrapper, Participant, Wallet,
-    control_reads::ElectorSnapshot,
-    elector::PastElections,
-    nominator,
+    control_reads::ElectorSnapshot, elector::PastElections, nominator,
 };
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
@@ -712,7 +710,8 @@ impl ElectionRunner {
             Some(_) => fee,
             None => stake.checked_add(fee).context("stake value overflow")?,
         };
-        let required = send_value.checked_add(WALLET_COMPUTE_FEE).context("stake value overflow")?;
+        let required =
+            send_value.checked_add(WALLET_COMPUTE_FEE).context("stake value overflow")?;
         let wallet_balance = node.wallet_balance().await?;
         if wallet_balance < required {
             anyhow::bail!(
@@ -1438,4 +1437,3 @@ async fn find_validator_entries(
 
     Ok((current_entry, is_in_next))
 }
-

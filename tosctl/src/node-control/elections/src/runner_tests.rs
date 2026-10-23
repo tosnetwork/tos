@@ -211,11 +211,8 @@ fn validate_message_parameters(
     via_pool: bool,
 ) -> bool {
     let fee = ELECTOR_STAKE_FEE + NPOOL_COMPUTE_FEE;
-    let (expected_dest, expected_value) = if via_pool {
-        (pool_address(), fee)
-    } else {
-        (elector_address(), expected_stake + fee)
-    };
+    let (expected_dest, expected_value) =
+        if via_pool { (pool_address(), fee) } else { (elector_address(), expected_stake + fee) };
     if *dest != expected_dest {
         eprintln!("withf: dest mismatch: expected {}, got {}", expected_dest, dest);
         return false;
@@ -241,7 +238,11 @@ fn validate_message_parameters(
             return false;
         };
         if coins.as_u128() != expected_stake as u128 {
-            eprintln!("withf: stake mismatch: expected={}, got={}", expected_stake, coins.as_u128());
+            eprintln!(
+                "withf: stake mismatch: expected={}, got={}",
+                expected_stake,
+                coins.as_u128()
+            );
             return false;
         }
     }
@@ -283,12 +284,7 @@ fn validate_message_parameters(
 // ---- Builder helpers ----
 
 fn default_binding(enable: bool) -> NodeBinding {
-    NodeBinding {
-        wallet: "wallet".to_string(),
-        pool: None,
-        enable,
-        status: Default::default(),
-    }
+    NodeBinding { wallet: "wallet".to_string(), pool: None, enable, status: Default::default() }
 }
 
 struct TestHarness {

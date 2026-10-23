@@ -776,7 +776,7 @@ td::Status CreatePqStakeAuthorizationQuery::run() {
   TRY_RESULT_ASSIGN(date_, tokenizer_.get_token<td::uint32>());
   TRY_RESULT_ASSIGN(max_factor_, tokenizer_.get_token<td::uint32>());
   TRY_RESULT_ASSIGN(adnl_addr_, tokenizer_.get_token<tos::Bits256>());
-  TRY_RESULT_ASSIGN(stake_owner_, tokenizer_.get_token<tos::Bits256>());
+  TRY_RESULT_ASSIGN(src_addr_, tokenizer_.get_token<tos::Bits256>());
   TRY_RESULT_ASSIGN(fname_, tokenizer_.get_token<std::string>());
   TRY_STATUS(tokenizer_.check_endl());
   return td::Status::OK();
@@ -784,7 +784,7 @@ td::Status CreatePqStakeAuthorizationQuery::run() {
 
 td::Status CreatePqStakeAuthorizationQuery::send() {
   auto b = tos::create_serialize_tl_object<tos::tos_api::engine_validator_createPqStakeAuthorization>(
-      date_, max_factor_, adnl_addr_, stake_owner_);
+      date_, max_factor_, adnl_addr_, src_addr_);
   td::actor::send_closure(console_, &ValidatorEngineConsole::envelope_send_query, std::move(b), create_promise());
   return td::Status::OK();
 }
@@ -801,7 +801,7 @@ td::Status CreatePqStakeAuthorizationWithKeyQuery::run() {
   TRY_RESULT_ASSIGN(date_, tokenizer_.get_token<td::uint32>());
   TRY_RESULT_ASSIGN(max_factor_, tokenizer_.get_token<td::uint32>());
   TRY_RESULT_ASSIGN(adnl_addr_, tokenizer_.get_token<tos::Bits256>());
-  TRY_RESULT_ASSIGN(stake_owner_, tokenizer_.get_token<tos::Bits256>());
+  TRY_RESULT_ASSIGN(src_addr_, tokenizer_.get_token<tos::Bits256>());
   TRY_RESULT_ASSIGN(key_id_, tokenizer_.get_token<tos::Bits256>());
   TRY_RESULT_ASSIGN(fname_, tokenizer_.get_token<std::string>());
   TRY_STATUS(tokenizer_.check_endl());
@@ -810,7 +810,7 @@ td::Status CreatePqStakeAuthorizationWithKeyQuery::run() {
 
 td::Status CreatePqStakeAuthorizationWithKeyQuery::send() {
   auto b = tos::create_serialize_tl_object<tos::tos_api::engine_validator_createPqStakeAuthorizationWithKey>(
-      date_, max_factor_, adnl_addr_, stake_owner_, key_id_);
+      date_, max_factor_, adnl_addr_, src_addr_, key_id_);
   td::actor::send_closure(console_, &ValidatorEngineConsole::envelope_send_query, std::move(b), create_promise());
   return td::Status::OK();
 }

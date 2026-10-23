@@ -38,9 +38,10 @@ struct StakeAuthorization {
 // Returns nullopt on a zero transport address or sender, a weight factor below one, or a
 // backend failure -- the same preconditions the node and the tool enforced separately,
 // now enforced once.
-inline std::optional<StakeAuthorization> sign_stake_authorization(
-    const ValidatorPQKeyStore& store, std::int32_t global_id, std::uint32_t election, std::uint32_t max_factor,
-    const td::Bits256& src_addr, const td::Bits256& adnl) noexcept {
+inline std::optional<StakeAuthorization> sign_stake_authorization(const ValidatorPQKeyStore& store,
+                                                                  std::int32_t global_id, std::uint32_t election,
+                                                                  std::uint32_t max_factor, const td::Bits256& src_addr,
+                                                                  const td::Bits256& adnl) noexcept {
   if (adnl.is_zero() || src_addr.is_zero() || max_factor < 0x10000) {
     return std::nullopt;
   }

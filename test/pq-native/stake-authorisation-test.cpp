@@ -77,22 +77,20 @@ int main() {
   // The signature is bound to the account that sends the stake: another sender cannot
   // present it, which is what makes the elector's reading of the sender meaningful.
   const auto other_sender_preimage = tos::pq::stake_preimage(global_id, election, max_factor, fill(0xa2), adnl);
-  assert(tos::pq::verify_mldsa44(other_sender_preimage, tos::pq::validator_election_context,
-                                 auth->signature.signature, public_key) != tos::pq::VerifyResult::valid &&
+  assert(tos::pq::verify_mldsa44(other_sender_preimage, tos::pq::validator_election_context, auth->signature.signature,
+                                 public_key) != tos::pq::VerifyResult::valid &&
          "a stake signature verifies with the sender changed");
 
   // And to the transport address it states.
   const auto other_address_preimage = tos::pq::stake_preimage(global_id, election, max_factor, src_addr, fill(0xb3));
-  assert(tos::pq::verify_mldsa44(other_address_preimage, tos::pq::validator_election_context,
-                                 auth->signature.signature, public_key) != tos::pq::VerifyResult::valid &&
+  assert(tos::pq::verify_mldsa44(other_address_preimage, tos::pq::validator_election_context, auth->signature.signature,
+                                 public_key) != tos::pq::VerifyResult::valid &&
          "a stake signature verifies with the transport address changed");
 
   // Preconditions, enforced once for both call sites. Each must refuse, returning nothing.
-  assert(!tos::pq::sign_stake_authorization(store, global_id, election, max_factor, src_addr, fill(0x00))
-              .has_value() &&
+  assert(!tos::pq::sign_stake_authorization(store, global_id, election, max_factor, src_addr, fill(0x00)).has_value() &&
          "a zero transport address is refused");
-  assert(!tos::pq::sign_stake_authorization(store, global_id, election, max_factor, fill(0x00), adnl)
-              .has_value() &&
+  assert(!tos::pq::sign_stake_authorization(store, global_id, election, max_factor, fill(0x00), adnl).has_value() &&
          "a zero sender is refused");
   assert(!tos::pq::sign_stake_authorization(store, global_id, election, 0xffff, src_addr, adnl).has_value() &&
          "a weight factor below one is refused");

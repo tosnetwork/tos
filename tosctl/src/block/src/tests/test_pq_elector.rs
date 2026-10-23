@@ -63,7 +63,10 @@ fn builds_exactly_the_bytes_the_other_implementation_builds() {
         "stake-other-factor",
         stake_preimage(-239, 1_789_434_000, 0x10001, &fill(0xa1), &fill(0xc3)),
     );
-    check("stake-other-network", stake_preimage(-1, 1_789_434_000, 0x10000, &fill(0xa1), &fill(0xc3)));
+    check(
+        "stake-other-network",
+        stake_preimage(-1, 1_789_434_000, 0x10000, &fill(0xa1), &fill(0xc3)),
+    );
     check(
         "config-vote-other-set",
         config_vote_preimage(-239, &fill(0xd5), &fill(0xa1), 7, &fill(0xe5)),

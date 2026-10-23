@@ -92,8 +92,7 @@ int main(int argc, char** argv) {
       // query so the tool a review can run and the producer it stands in for cannot drift.
       // It derives the key identity from the seed store, rejects a zero address or sender
       // and a factor below one, and signs under the election domain.
-      auto authorization =
-          tos::pq::sign_stake_authorization(store, global_id, election_id, max_factor, src_addr, adnl);
+      auto authorization = tos::pq::sign_stake_authorization(store, global_id, election_id, max_factor, src_addr, adnl);
       if (!authorization.has_value()) {
         throw std::runtime_error("the consensus key could not sign this stake, or its arguments were out of range");
       }

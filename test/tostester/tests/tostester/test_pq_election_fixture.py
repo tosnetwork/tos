@@ -5,7 +5,8 @@ import json
 import os
 from pathlib import Path
 from types import SimpleNamespace
-from typing import TypedDict
+import dataclasses
+from typing import Any, TypedDict
 
 import pytest
 from contract.pq_auth import byte_chain
@@ -37,7 +38,7 @@ def _pq_bytes(data: bytes) -> Cell:
     return Builder().store_uint(len(data), 32).store_ref(byte_chain(data)).end_cell()
 
 
-def _order_fields(query_id: int = 19) -> dict:
+def _order_fields(query_id: int = 19) -> dict[str, Any]:
     return {
         "query_id": query_id,
         "stake_amount": 10_000_000_000_000,
@@ -49,7 +50,7 @@ def _order_fields(query_id: int = 19) -> dict:
     }
 
 
-def _hand_built_pool_order(fields: dict) -> Cell:
+def _hand_built_pool_order(fields: dict[str, Any]) -> Cell:
     """The single-nominator parser order, written out once to test the reader."""
     return (
         Builder()
@@ -154,7 +155,7 @@ def test_stake_order_reader_follows_the_pool_and_elector_parser_order():
     direct = elector_body_from_pool_order(order)
     forwarded = parse_stake_order(direct, with_amount=False)
     assert forwarded.stake_amount is None
-    assert forwarded == parsed.__class__(**{**parsed.__dict__, "stake_amount": None})
+    assert forwarded == dataclasses.replace(parsed, stake_amount=None)
     with pytest.raises(ValueError, match="trailing data"):
         parse_stake_order(Builder().store_cell(order).store_uint(0, 1).end_cell(), with_amount=True)
     with pytest.raises(ValueError):

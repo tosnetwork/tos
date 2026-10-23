@@ -1524,10 +1524,7 @@ mod tests {
         let cfg: PoolConfig = serde_json::from_value(value).unwrap();
         assert_eq!(
             cfg,
-            PoolConfig::SNP {
-                address: Some(addr.to_string()),
-                owner: Some(owner.to_string()),
-            }
+            PoolConfig::SNP { address: Some(addr.to_string()), owner: Some(owner.to_string()) }
         );
 
         let json = serde_json::to_value(&cfg).unwrap();
@@ -1544,13 +1541,7 @@ mod tests {
             "address": addr,
         });
         let cfg: PoolConfig = serde_json::from_value(value).unwrap();
-        assert_eq!(
-            cfg,
-            PoolConfig::SNP {
-                address: Some(addr.to_string()),
-                owner: None,
-            }
-        );
+        assert_eq!(cfg, PoolConfig::SNP { address: Some(addr.to_string()), owner: None });
 
         let json = serde_json::to_value(&cfg).unwrap();
         assert_eq!(json["kind"], "snp");

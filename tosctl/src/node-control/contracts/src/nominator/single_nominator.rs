@@ -10,8 +10,7 @@ use super::{NominatorRoles, NominatorWrapper, PoolConfig, PoolData};
 use crate::{ContractProvider, SmartContract};
 use anyhow::Context;
 use chain_block::{
-    BuilderData, Deserializable, MsgAddressInt, Serializable, StateInit,
-    read_single_root_boc,
+    BuilderData, Deserializable, MsgAddressInt, Serializable, StateInit, read_single_root_boc,
 };
 use common::tvm_stack_parser::TvmStackParser;
 use std::sync::Arc;

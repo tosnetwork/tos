@@ -199,7 +199,6 @@ fn pool_data_stack(fixture: &PoolFixture) -> common::tvm_stack_parser::TvmStackP
         number("0"),
         number("2000"),
         number("0xabc"),
-        number("0xdef"),
         number("4000"),
         number("40"),
         number("1000"),
@@ -1510,7 +1509,7 @@ fn verifier_backed_provider(
         "log": dir.join("requests.jsonl").display().to_string(),
         "stacks": {
             "get_pool_data": [
-                int("0"), int("1"), int("0"), int("2000"), int("171"), int("205"), int("4000"),
+                int("0"), int("1"), int("0"), int("2000"), int("171"), int("4000"),
                 int("40"), int("1000"), int("100"), nil.clone(), nil.clone(), int("999"),
                 int("17"), int("0"), int("1234"), int("3600"), nil.clone(),
             ],

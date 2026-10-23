@@ -165,7 +165,6 @@ impl ElectionsProvider for DefaultElectionsProvider {
         Ok(Some(cell.repr_hash().inner()))
     }
 
-
     async fn get_next_vset(&mut self) -> anyhow::Result<Option<ValidatorSet>> {
         self.chain_provider
             .get_optional_config_param(36)
