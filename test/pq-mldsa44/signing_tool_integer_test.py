@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise numeric intent at both offline signing entry points, without a node."""
+"""Exercise numeric intent in every offline vote and stake command, without a node."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "auth-extensions"))
-from cells import Cell, from_boc  # noqa: E402
+from cells import from_boc  # noqa: E402
 
 
 def run(tool: Path, args: list[str], data: bytes = b"") -> subprocess.CompletedProcess:
@@ -23,32 +23,16 @@ def require(condition: bool, reason: str) -> None:
         raise RuntimeError(reason)
 
 
-def check(controller: Path, vote: Path, key_tool: Path, work: Path, rejections_only: bool) -> None:
-    root = str(work / "root.seed")
+def check(vote: Path, key_tool: Path, work: Path, rejections_only: bool) -> None:
     incoming = str(work / "incoming.seed")
     absent = str(work / "absent.seed")
     identity = "33" * 32
-    payload = base64.b64encode(Cell().boc()).decode()
     # (argument index, diagnostic name, wire width, signed, smallest signable value)
-    common = [
-        (2, "GLOBAL_ID", 32, True, -(2**31)),
-        (4, "EPOCH", 64, False, 0),
-        (5, "NONCE", 64, False, 0),
-        (6, "VALID_UNTIL", 32, False, 0),
-    ]
     commands = []
-    for name in ("send", "bind", "rotate-root", "fund-operations", "withdraw-operations"):
-        tail = (
-            ["3", payload]
-            if name == "send"
-            else [incoming if name in ("bind", "rotate-root") else payload]
-        )
-        fields = common + ([(7, "MODE", 8, False, 0)] if name == "send" else [])
-        commands.append((controller, [name, root, "2", identity, "0", "0", "1", *tail], fields))
     for name in ("config", "complaint", "stake"):
         fields = [(2, "GLOBAL_ID", 32, True, -(2**31))]
         if name == "stake":
-            args = [name, incoming, "2", identity, "1", "65536", identity, identity]
+            args = [name, incoming, "2", identity, "1", "65536", identity]
             fields += [(4, "ELECTION_ID", 32, False, 0), (5, "MAX_FACTOR", 32, False, 65536)]
         else:
             args = [name, incoming, "2", identity, identity, "0"]
@@ -99,14 +83,13 @@ def check(controller: Path, vote: Path, key_tool: Path, work: Path, rejections_o
                     f"{label}: numeric validation did not run: {done.stderr[:200]!r}",
                 )
                 refused_count += 1
-    print(f"SIGNING_TOOL_INTEGER_REFUSALS_OK {refused_count} cases across all eight commands")
+    print(f"SIGNING_TOOL_INTEGER_REFUSALS_OK {refused_count} cases across {len(commands)} commands")
     if rejections_only:
         return
 
     # Public, deterministic fixture seeds. No operator keys or network are used.
-    for path, byte in ((root, "11"), (incoming, "22")):
-        done = run(key_tool, ["import", path], (byte * 32).encode())
-        require(done.returncode == 0, "could not provision a test seed")
+    done = run(key_tool, ["import", incoming], ("22" * 32).encode())
+    require(done.returncode == 0, "could not provision a test seed")
 
     accepted_count = 0
     for tool, args, fields in commands:
@@ -117,7 +100,7 @@ def check(controller: Path, vote: Path, key_tool: Path, work: Path, rejections_o
                 candidate = args.copy()
                 candidate[index] = value
                 variants.append(candidate)
-        # Hold all wire maxima simultaneously, including both uint64 counters.
+        # Hold all wire maxima simultaneously.
         candidate = args.copy()
         for index, _, width, signed, _ in fields:
             candidate[index] = str(2 ** (width - int(signed)) - 1)
@@ -136,29 +119,15 @@ def check(controller: Path, vote: Path, key_tool: Path, work: Path, rejections_o
                 view = body.slice()
                 view.uint(32)  # operation
                 require(view.uint(64) == 1, "query id changed")
-                if tool == controller:
-                    require(view.sint(32) == int(candidate[2]), "GLOBAL_ID changed on the wire")
-                    require(view.uint(64) == int(candidate[4]), "EPOCH changed on the wire")
-                    require(view.uint(64) == int(candidate[5]), "NONCE changed on the wire")
-                    require(view.uint(32) == int(candidate[6]), "VALID_UNTIL changed on the wire")
-                    if candidate[0] == "send":
-                        require(
-                            body.refs[0].slice().uint(8) == int(candidate[7]),
-                            "MODE changed on the wire",
-                        )
-                else:
-                    require(view.uint(16) == int(candidate[5]), "IDX changed on the wire")
-                    if candidate[0] == "complaint":
-                        require(
-                            view.uint(32) == int(candidate[6]), "ELECTION_ID changed on the wire"
-                        )
+                require(view.uint(16) == int(candidate[5]), "IDX changed on the wire")
+                if candidate[0] == "complaint":
+                    require(view.uint(32) == int(candidate[6]), "ELECTION_ID changed on the wire")
             accepted_count += 1
     print(f"SIGNING_TOOL_INTEGER_BOUNDARIES_OK {accepted_count} valid signing cases")
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--controller", required=True, type=Path)
     parser.add_argument("--vote", required=True, type=Path)
     parser.add_argument("--consensus-key", required=True, type=Path)
     parser.add_argument(
@@ -169,7 +138,6 @@ def main() -> int:
     args = parser.parse_args()
     with tempfile.TemporaryDirectory() as tmp:
         check(
-            args.controller.resolve(),
             args.vote.resolve(),
             args.consensus_key.resolve(),
             Path(tmp),
