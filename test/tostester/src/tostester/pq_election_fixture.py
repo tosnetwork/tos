@@ -1,31 +1,34 @@
-"""Test-only accounts for a real PQ pool -> controller -> elector rehearsal.
+"""Test-only accounts for a real PQ stake through a single-nominator pool to the elector.
 
-The contracts come from their production sources. This module does not install
-ConfigParam 47; that must be done through the chain's configuration contract.
+A member of an election is named by the account that sends its stake to the elector.
+Here that is an upstream single-nominator pool: its operator wallet orders the stake,
+the pool forwards the elector body unchanged, and the node's configured validator id
+must be the pool's address. The pool and elector bodies come from the production Rust
+builder, never from a second Python encoder.
 """
 
 from __future__ import annotations
 
-import hashlib
 import inspect
 import json
-import os
 import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from contract.pq_auth import byte_chain
 from pytosiq_core import Address, Builder, Cell, StateInit
 from tosapi import toslib_api
 
-from .install import Install
-from .pq_initial_validator import deterministic_pq_initial_validator_seed
+ELECTOR = Address((-1, bytes.fromhex("33" * 32)))
+NEW_STAKE_OP = 0x4E73744B
+STAKE_ACCEPTED_OP = 0xF374484C
+STAKE_RETURNED_OP = 0xEE6F454C
+RECOVERED_OP = 0xF96F7324
+MLDSA44_ALGORITHM_ID = 1
+MLDSA44_PUBLIC_KEY_BYTES = 1312
+MLDSA44_SIGNATURE_BYTES = 2420
 
-_ROOT_DOMAIN = b"tos-test-pq-election-controller-root-v1\x00"
-_KEY_ID = re.compile(r"^key_id\s+([0-9a-f]{64})$", re.MULTILINE)
-_PUBLIC = re.compile(r"^public\s+([0-9a-f]{2624})$", re.MULTILINE)
 _AUTHORIZATION_FIELDS = {
     "validator_id",
     "key_id",
@@ -47,130 +50,36 @@ def require_pq_stake_authorization_binding(response_type: type) -> None:
 
 
 @dataclass(frozen=True)
-class FixtureKey:
-    seed: bytes
-    key_id: bytes
-    public_key: bytes
-
-
-@dataclass(frozen=True)
-class ControllerFixture:
-    address: Address
-    state_init: StateInit
-    birth_witness: Cell
-    consensus: FixtureKey
-
-
-@dataclass(frozen=True)
 class PoolFixture:
     address: Address
     state_init: StateInit
 
 
-def _import_key(install: Install, output: Path, seed: bytes) -> FixtureKey:
-    if len(seed) != 32:
-        raise ValueError("PQ fixture seed must be 32 bytes")
-    output.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    output.parent.chmod(0o700)
-    result = subprocess.run(
-        [str(install.pq_consensus_key_exe), "import", str(output)],
-        input=seed.hex() + "\n",
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    if result.returncode != 0:
-        raise RuntimeError(f"PQ fixture key import failed: {result.stderr.strip()}")
-    key_id = _KEY_ID.search(result.stdout)
-    public = _PUBLIC.search(result.stdout)
-    if key_id is None or public is None:
-        raise RuntimeError("PQ fixture key tool did not report key_id and public key")
-    return FixtureKey(seed, bytes.fromhex(key_id.group(1)), bytes.fromhex(public.group(1)))
+@dataclass(frozen=True)
+class StakeOrder:
+    """The fields of a pool NEW_STAKE order, in the order the pool and elector parse them."""
+
+    query_id: int
+    stake_amount: int | None
+    algorithm_id: int
+    public_key: bytes
+    stake_at: int
+    max_factor: int
+    adnl_addr: bytes
+    signature: bytes
 
 
-def compile_controller_code(install: Install, output_dir: Path) -> Cell:
-    """Compile the production controller, including its PQ Fift instruction."""
-    output_dir = output_dir.resolve()
-    output_dir.mkdir(parents=True, exist_ok=True)
-    compiled_fif = output_dir / "validator-controller-v1.fif"
-    compiled_boc = output_dir / "validator-controller-v1.boc"
-    source = install.source_dir / "crypto/smartcont"
-    subprocess.run(
-        [
-            str(install.build_dir / "crypto/func"),
-            "-W",
-            str(compiled_boc),
-            "-AP",
-            "-o",
-            str(compiled_fif),
-            str(source / "stdlib.fc"),
-            str(source / "validator-controller-v1.fc"),
-        ],
-        cwd=install.source_dir,
-        check=True,
-    )
-    generated = compiled_fif.read_text()
-    if not generated.startswith('"Asm.fif" include\n'):
-        raise RuntimeError("controller compiler changed its Fift preamble")
-    compiled_fif.write_text(generated.replace('"Asm.fif" include\n', '"PQ.fif" include\n', 1))
-    environment = os.environ.copy()
-    environment["FIFTPATH"] = str(install.source_dir / "crypto/fift/lib")
-    subprocess.run(
-        [str(install.build_dir / "crypto/fift"), str(compiled_fif)],
-        cwd=install.source_dir,
-        env=environment,
-        check=True,
-    )
-    return Cell.one_from_boc(compiled_boc.read_bytes())
+def make_pool_fixture(code: Cell, owner: Address, validator: Address) -> PoolFixture:
+    """An upstream single-nominator pool: storage is exactly (owner, validator).
 
-
-def _packed_key(public_key: bytes) -> Cell:
-    if len(public_key) != 1312:
-        raise ValueError(f"controller root key must be 1312 bytes, got {len(public_key)}")
-    return Builder().store_uint(len(public_key), 32).store_ref(byte_chain(public_key)).end_cell()
-
-
-def build_pool_stake_order(
-    *,
-    query_id: int,
-    stake_amount: int,
-    stake_at: int,
-    max_factor: int,
-    adnl_addr: bytes,
-    algorithm_id: int,
-    public_key: bytes,
-    signature: bytes,
-    witness: Cell | None,
-) -> Cell:
-    """NEW_STAKE as consumed by single-nominator's check_new_stake_msg.
-
-    This is a pool order, never an elector-directed body. The value-round-trip
-    test pins every field to the contract parser's order.
+    The validator wallet is the one that may order a stake; the pool itself is the
+    account that reaches the elector, so its address is the election member id.
     """
-    if query_id <= 0 or stake_amount <= 0:
-        raise ValueError("pool stake order needs a positive query ID and amount")
-    if len(adnl_addr) != 32:
-        raise ValueError(f"stake ADNL address must be 32 bytes, got {len(adnl_addr)}")
-    if algorithm_id != 1:
-        raise ValueError(f"pool stake order requires ML-DSA-44 algorithm 1, got {algorithm_id}")
-    if len(signature) != 2420:
-        raise ValueError(f"ML-DSA-44 signature must be 2420 bytes, got {len(signature)}")
-    return (
-        Builder()
-        .store_uint(0x4E73744B, 32)
-        .store_uint(query_id, 64)
-        .store_coins(stake_amount)
-        .store_uint(stake_at, 32)
-        .store_uint(max_factor, 32)
-        .store_bytes(adnl_addr)
-        .store_uint(algorithm_id, 16)
-        .store_ref(_packed_key(public_key))
-        .store_ref(
-            Builder().store_uint(len(signature), 32).store_ref(byte_chain(signature)).end_cell()
-        )
-        .store_maybe_ref(witness)
-        .end_cell()
-    )
+    if owner.wc != -1 or validator.wc != -1:
+        raise ValueError("PQ election fixture needs masterchain owner and validator wallets")
+    data = Builder().store_address(owner).store_address(validator).end_cell()
+    init = StateInit(code=code, data=data)
+    return PoolFixture(Address((-1, init.serialize().hash)), init)
 
 
 def build_production_pool_stake_order(
@@ -184,13 +93,14 @@ def build_production_pool_stake_order(
     algorithm_id: int,
     public_key: bytes,
     signature: bytes,
-    witness: Cell,
 ) -> Cell:
-    """Invoke Rust nominator::new_stake_with_witness, not a second Python encoder."""
-    if algorithm_id != 1:
+    """Invoke the Rust nominator::new_stake builder, not a second Python encoder."""
+    if algorithm_id != MLDSA44_ALGORITHM_ID:
         raise ValueError(
             f"production pool order requires ML-DSA-44 algorithm 1, got {algorithm_id}"
         )
+    if query_id <= 0 or stake_amount <= 0:
+        raise ValueError("pool stake order needs a positive query ID and amount")
     payload = {
         "query_id": query_id,
         "stake_amount": stake_amount,
@@ -199,7 +109,6 @@ def build_production_pool_stake_order(
         "adnl_addr_hex": adnl_addr.hex(),
         "public_key_hex": public_key.hex(),
         "signature_hex": signature.hex(),
-        "witness_boc_hex": witness.to_boc().hex(),
     }
     result = subprocess.run(
         [str(executable)],
@@ -218,61 +127,91 @@ def build_production_pool_stake_order(
         raise RuntimeError("production PQ pool stake builder returned invalid BOC hex") from error
 
 
-def elector_reply(
-    transactions: list[Any], query_id: int, *, controller: Address | None = None
-) -> tuple[int, int] | None:
-    """Find a bound business result, ignoring other sources and request IDs.
+def _pq_bytes(cell: Cell, expected: int, label: str) -> bytes:
+    root = cell.begin_parse()
+    remaining = root.load_uint(32)
+    if remaining != expected:
+        raise ValueError(f"{label} is {remaining} bytes, expected {expected}")
+    if root.remaining_bits or root.remaining_refs != 1:
+        raise ValueError(f"{label} root is not a length and one chunk reference")
+    chunk = root.load_ref()
+    data = bytearray()
+    while remaining:
+        part = chunk.begin_parse()
+        take = min(127, remaining)
+        data.extend(part.load_bytes(take))
+        remaining -= take
+        if part.remaining_bits:
+            raise ValueError(f"{label} chunk has trailing bits")
+        if remaining:
+            if part.remaining_refs != 1:
+                raise ValueError(f"{label} chunk chain ends early")
+            chunk = part.load_ref()
+        elif part.remaining_refs:
+            raise ValueError(f"{label} chunk chain continues past its length")
+    return bytes(data)
 
-    Controller receipts are mapped to the existing acceptance/refusal result
-    tags for callers; the transaction body remains the actual relay-v2 wire.
-    Direct owner recoveries still come from the elector.
+
+def parse_stake_order(body: Cell, *, with_amount: bool) -> StakeOrder:
+    """Read a NEW_STAKE body in the parser order of the pool (with_amount) or the elector."""
+    view = body.begin_parse()
+    if view.load_uint(32) != NEW_STAKE_OP:
+        raise ValueError("body is not a NEW_STAKE order")
+    query_id = view.load_uint(64)
+    stake_amount = view.load_coins() if with_amount else None
+    algorithm_id = view.load_uint(16)
+    public_key = _pq_bytes(view.load_ref(), MLDSA44_PUBLIC_KEY_BYTES, "public key")
+    stake_at = view.load_uint(32)
+    max_factor = view.load_uint(32)
+    adnl_addr = view.load_bytes(32)
+    signature = _pq_bytes(view.load_ref(), MLDSA44_SIGNATURE_BYTES, "signature")
+    if view.remaining_bits or view.remaining_refs:
+        raise ValueError("NEW_STAKE order has trailing data")
+    return StakeOrder(
+        query_id, stake_amount, algorithm_id, public_key, stake_at, max_factor, adnl_addr, signature
+    )
+
+
+def elector_body_from_pool_order(order: Cell) -> Cell:
+    """The body a pool forwards: the order without its leading stake amount.
+
+    A wallet that stakes directly sends exactly this body, with the stake as the value.
     """
-    elector = Address((-1, bytes.fromhex("33" * 32)))
+    view = order.begin_parse()
+    if view.load_uint(32) != NEW_STAKE_OP:
+        raise ValueError("pool order is not a NEW_STAKE order")
+    query_id = view.load_uint(64)
+    view.load_coins()
+    return (
+        Builder().store_uint(NEW_STAKE_OP, 32).store_uint(query_id, 64).store_slice(view).end_cell()
+    )
+
+
+def elector_reply(transactions: list[Any], query_id: int) -> tuple[int, int] | None:
+    """Find the elector's answer to one request, ignoring other sources and request IDs.
+
+    Answers carry op and query_id; acceptance, refusal and error answers add a 32-bit
+    detail, a recovery adds nothing.
+    """
     for transaction in transactions:
         message = transaction.in_msg
         if message is None or message.source is None:
             continue
         source_text = message.source.account_address
-        if not source_text:
+        if not source_text or Address(source_text) != ELECTOR:
             continue
-        source = Address(source_text)
         if not isinstance(message.msg_data, toslib_api.Msg_dataRaw):
             continue
         reply = Cell.one_from_boc(message.msg_data.body).begin_parse()
         if reply.remaining_bits < 96:
             continue
         opcode = reply.load_uint(32)
-        if controller is not None and source == controller and opcode == 0x50516232:
-            if reply.load_uint(64) != (query_id | (1 << 63)):
-                continue
-            reply.load_uint(256)  # full request commitment; the pool verifies it on-chain
-            forwarded = reply.load_coins()
-            accepted = reply.load_coins()
-            reason = reply.load_uint(32)
-            success = reply.load_uint(1)
-            business_return = reply.load_coins()  # actual debt, not a balance delta
-            reply.load_coins()  # this delivery's callback budget
-            payer = reply.load_ref().begin_parse()
-            if payer.load_address() is None or payer.remaining_bits or payer.remaining_refs:
-                raise ValueError("invalid relay fee payer")
-            if business_return > (1_000_000_000 if success else forwarded):
-                raise ValueError("inconsistent relay business return")
-            if reply.remaining_bits or reply.remaining_refs:
-                raise ValueError("trailing relay result fields")
-            if accepted != (forwarded - 1_000_000_000 if success else 0) or (success and reason):
-                raise ValueError("inconsistent relay result amounts")
-            return (0xF374484C if success else 0xEE6F454C), reason
-        if source != elector:
-            continue
         if reply.load_uint(64) != query_id:
             continue
-        # Direct recovery optionally includes its exact gross credit; older
-        # direct bodies have only opcode + query_id. Refusals carry a reason.
-        if opcode == 0xF96F7324:
-            if reply.remaining_bits:
-                reply.load_coins()  # gross credit, excluding the caller's remaining fees
+        if opcode == RECOVERED_OP:
             if not reply.remaining_bits and not reply.remaining_refs:
                 return opcode, 0
+            continue
         if reply.remaining_bits >= 32:
             return opcode, reply.load_uint(32)
     return None
@@ -280,7 +219,7 @@ def elector_reply(
 
 def elector_return_reason(transactions: list[Any], query_id: int) -> int | None:
     reply = elector_reply(transactions, query_id)
-    return reply[1] if reply is not None and reply[0] == 0xEE6F454C else None
+    return reply[1] if reply is not None and reply[0] == STAKE_RETURNED_OP else None
 
 
 def participant_ids_from_runmethod(output: str) -> set[int]:
@@ -318,68 +257,14 @@ def parse_past_elections_list(output: str) -> dict[int, dict[str, int]]:
     return parsed
 
 
-def _birth_witness(code: Cell, data: Cell) -> Cell:
-    """The exact four-number controller_birth_witness_v1 sent to the elector."""
-    return (
-        Builder()
-        .store_bytes(code.hash)
-        .store_uint(code.get_depth(0), 16)
-        .store_bytes(data.hash)
-        .store_uint(data.get_depth(0), 16)
-        .end_cell()
-    )
-
-
-def make_controller_fixture(
-    install: Install, key_dir: Path, code: Cell, index: int
-) -> ControllerFixture:
-    consensus = _import_key(
-        install, key_dir / f"consensus-{index}.seed", deterministic_pq_initial_validator_seed(index)
-    )
-    root_seed = hashlib.sha256(_ROOT_DOMAIN + index.to_bytes(4, "big")).digest()
-    root = _import_key(install, key_dir / f"root-{index}.seed", root_seed)
-    if root.key_id == consensus.key_id:
-        raise AssertionError(f"controller {index} root and consensus key unexpectedly coincide")
-    data = (
-        Builder()
-        .store_uint(0, 64)  # authority epoch
-        .store_uint(0, 64)  # root nonce
-        .store_uint(1, 16)  # bound ML-DSA-44 consensus key
-        .store_bytes(consensus.key_id)
-        .store_ref(_packed_key(root.public_key))
-        .end_cell()
-    )
-    init = StateInit(code=code, data=data)
-    address = Address((-1, init.serialize().hash))
-    return ControllerFixture(address, init, _birth_witness(code, data), consensus)
-
-
-def make_pool_fixture(code: Cell, owner: Address, controller: Address) -> PoolFixture:
-    if owner.wc != -1 or controller.wc != -1:
-        raise ValueError("PQ election fixture needs masterchain owner and controller")
-    data = (
-        Builder()
-        .store_address(owner)
-        .store_address(owner)  # operator wallet may order a stake
-        .store_address(controller)
-        .end_cell()
-    )
-    init = StateInit(code=code, data=data)
-    return PoolFixture(Address((-1, init.serialize().hash)), init)
-
-
-def assert_controller_identity(node, controller: ControllerFixture, *, index: int) -> None:
+def assert_staking_identity(node, staking_account: Address, *, index: int) -> None:
+    """The node's configured validator id must be the account that sends its stake."""
     held = node.pq_initial_validator
     if held is None:
         raise AssertionError(f"validator {index} has no PQ consensus identity")
-    expected = controller.address.hash_part
+    expected = staking_account.hash_part
     if held.validator_id != expected:
         raise AssertionError(
-            f"validator {index} controller address and PQ validator_id differ: "
-            f"controller={expected.hex()} validator_id={held.validator_id.hex()}"
-        )
-    if held.key_id != controller.consensus.key_id:
-        raise AssertionError(
-            f"validator {index} controller-bound consensus key and node key differ: "
-            f"controller={controller.consensus.key_id.hex()} node={held.key_id.hex()}"
+            f"validator {index} staking account and PQ validator_id differ: "
+            f"staking_account={expected.hex()} validator_id={held.validator_id.hex()}"
         )

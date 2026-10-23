@@ -32,7 +32,7 @@ def load_seed(monkeypatch):
     return module
 
 
-def test_negative_workchain_controller_is_one_cli_argument(monkeypatch):
+def test_pool_creation_names_owner_and_validator_wallets_only(monkeypatch):
     seed = load_seed(monkeypatch)
     calls = []
     created = False
@@ -59,10 +59,12 @@ def test_negative_workchain_controller_is_one_cli_argument(monkeypatch):
     seeder.fund = lambda *_: None
     seeder.address_active = lambda *_: True
     seeder.rpc_call = lambda *_args, **_kwargs: ["already deposited"]
-    controller = "-1:" + "00" * 32
-    seeder.ensure_nominator_pool("atlas-owner", "nova-provider", controller)
-    assert f"--controller={controller}" in calls[0]
-    assert controller not in calls[0]
+    seeder.ensure_nominator_pool("atlas-owner", "nova-provider")
+    create = calls[0]
+    assert create[:5] == ("pool", "nominator", "create", "-n", "toscan-staking")
+    assert create[create.index("--owner") + 1] == "atlas-owner"
+    assert create[create.index("--validator") + 1] == "nova-provider"
+    assert not any(argument.startswith("--controller") for argument in create)
 
 
 def rpc_error(localnet, message):

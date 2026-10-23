@@ -57,7 +57,7 @@ def main() -> int:
     if "default='launch-gate'" not in cli_text:
         fail("the historical launch-gate is no longer the default CLI route")
     if "pq_election=args.mode in ('launch-gate', 'pq-election', 'pq-launch-gate')" not in main_text:
-        fail("the default launch-gate no longer provisions PQ controller/pool fixtures")
+        fail("the default launch-gate no longer provisions the PQ staking pool fixtures")
     if "pq_full=args.mode in ('launch-gate', 'pq-launch-gate')" not in main_text:
         fail("the default launch-gate no longer runs the complete multi-round PQ rehearsal")
     genesis_profile = method(tree, "configure_network_profile")
@@ -90,13 +90,13 @@ def main() -> int:
         for node in ast.walk(execute)
         if isinstance(node, ast.If)
         and ast.unparse(node.test) == "self.fixture_only or self.pq_election"
-        and any(call_lines(child, "assert_controller_identity") for child in node.body)
+        and any(call_lines(child, "assert_staking_identity") for child in node.body)
     ]
     if len(fixture_branches) != 1:
-        fail("fixture provisioning branch with controller identity assertion is absent")
+        fail("fixture provisioning branch with staking identity assertion is absent")
     fixture_body = ast.Module(body=fixture_branches[0].body, type_ignores=[])
     provision = one_call(fixture_body, "make_deterministic_pq_initial_validator")
-    identity = one_call(fixture_body, "assert_controller_identity")
+    identity = one_call(fixture_body, "assert_staking_identity")
     provisioning_calls = [
         node
         for node in ast.walk(fixture_body)
@@ -109,9 +109,28 @@ def main() -> int:
     ]
     if (
         len(identity_keywords) != 1
-        or ast.unparse(identity_keywords[0].value) != "controller.address.hash_part"
+        or ast.unparse(identity_keywords[0].value) != "pool.address.hash_part"
     ):
-        fail("fixture node validator_id is not derived from the controller address")
+        fail("fixture node validator_id is not derived from the staking pool address")
+    identity_calls = [
+        node
+        for node in ast.walk(fixture_body)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "assert_staking_identity"
+    ]
+    if [ast.unparse(argument) for argument in identity_calls[0].args] != ["node", "pool.address"]:
+        fail("node staking identity is not asserted against its own pool address")
+    pool_derivation = ast.unparse(execute)
+    if (
+        "make_pool_fixture(self.pool_code, blueprint.address, blueprint.address)"
+        not in pool_derivation
+        or "for blueprint in self.operator_blueprints" not in pool_derivation
+    ):
+        fail("pools are not derived before Genesis from the pre-generated operator wallet keys")
+    wallet_setup = ast.unparse(method(tree, "setup_wallets"))
+    if "blueprints = self.operator_blueprints or" not in wallet_setup:
+        fail("operator wallets deployed after Genesis are not the keys the pools were derived from")
     # `run` also appears in the subprocess and experiment setup. Require the
     # immediately visible node boot to follow the binding, not a text regex for
     # a particular indentation or spelling of the node collection.
@@ -125,7 +144,7 @@ def main() -> int:
         and node.func.attr == "run"
     ]
     if not node_boots or not provision < identity < min(node_boots):
-        fail("controller address equality is not asserted after provisioning and before node boot")
+        fail("staking identity is not asserted after provisioning and before node boot")
     binding_preflight = one_call(execute, "require_pq_stake_authorization_binding")
     if not binding_preflight < one_call(execute, "prepare_artifact_snapshot") < min(node_boots):
         fail("generated Python TL binding is not checked before snapshot and PQ node boot")
@@ -142,11 +161,11 @@ def main() -> int:
             "artifact snapshot no longer retains and hashes the PQ authorization TL schema and generated binding"
         )
     client = one_call(execute, "toslib_client")
-    policy = one_call(execute, "verify_live_controller_policy")
+    version = one_call(execute, "verify_live_global_version")
     wallets = one_call(execute, "setup_wallets")
     deploy = one_call(execute, "deploy_pq_fixture_accounts")
-    if not client < policy < wallets < deploy:
-        fail("live controller policy read-back does not precede fixture account deployment")
+    if not client < version < wallets < deploy:
+        fail("live global version read-back does not precede fixture account deployment")
 
     profile = method(tree, "configure_network_profile")
     fields = [
@@ -158,24 +177,18 @@ def main() -> int:
         and isinstance(target.value, ast.Name)
         and target.value.id == "config"
     ]
-    for required in ("validator_controller_code_hash", "global_version"):
-        if required not in fields:
-            fail(f"fixture profile does not set {required}")
-
-    fift = (root / "crypto/fift/lib/Config.fif").read_text()
-    helper = re.search(
-        r"\{(?P<body>[^{}]*)\}\s*:\s*config\.validator_controller_code!",
-        fift,
-    )
-    body = "" if helper is None else re.sub(r"//[^\n]*", "", helper.group("body"))
-    if not re.search(r"\b47\s+config!(?:\s|$)", body):
-        fail("named Genesis helper no longer installs ConfigParam 47 with config!")
-    genesis = (root / "test/tostester/src/tostester/zerostate.py").read_text()
-    if (
-        "{controller_policy_param}" not in genesis
-        or "config.validator_controller_code!" not in genesis
+    if "global_version" not in fields:
+        fail("fixture profile does not set global_version")
+    # Admission is by signature over the sending account; no code-admission policy exists.
+    for relative in (
+        "scripts/validator-election-stage-a.py",
+        "test/tostester/src/tostester/zerostate.py",
+        "crypto/fift/lib/Config.fif",
     ):
-        fail("zerostate no longer invokes the Config.fif policy helper")
+        text = (root / relative).read_text()
+        for retired in ("validator_controller_code", "controller_policy", "get_config_param(47)"):
+            if retired in text:
+                fail(f"{relative} still carries the retired controller admission: {retired}")
     console = (root / "toslib/toslib/EngineConsoleClient.cpp").read_text()
     if "case tos::tos_api::engine_validator_createPqStakeAuthorization::ID:" not in console:
         fail("Python engine-console transport no longer admits the PQ stake authorization query")
@@ -209,10 +222,10 @@ def main() -> int:
     bridge = (
         root / "tosctl/src/node-control/contracts/examples/pq_pool_stake_order.rs"
     ).read_text()
-    if not re.search(r"\blet body\s*=\s*new_stake_with_witness\s*\(", bridge):
-        fail("live PQ pool-order bridge no longer calls nominator::new_stake_with_witness")
-    if "Some(&witness)" not in bridge:
-        fail("live PQ pool-order bridge no longer carries the controller birth witness")
+    if not re.search(r"\blet body\s*=\s*new_stake\s*\(", bridge):
+        fail("live PQ pool-order bridge no longer calls nominator::new_stake")
+    if "witness" in bridge:
+        fail("live PQ pool-order bridge still carries a witness")
     if any(
         call_lines(path, "election_body") or call_lines(path, "sign") for path in (order, candidate)
     ):
@@ -220,7 +233,8 @@ def main() -> int:
     order_text = ast.unparse(order)
     candidate_text = ast.unparse(candidate)
     for expression, property_name in (
-        ("stake_owner=pool.address.hash_part", "pool-owned authorization"),
+        ("src_addr=pool.address.hash_part", "authorization for the pool as sending account"),
+        ("auth.validator_id != pool.address.hash_part", "node configured for the pool"),
         ("signature = auth.signature", "node-produced PQ signature source"),
         ("signature=signature", "node-produced PQ signature in the pool body"),
     ):
@@ -244,34 +258,39 @@ def main() -> int:
         for node in ast.walk(candidate)
     ):
         fail("PQ candidate no longer refuses a reply other than STAKE_ACCEPTED")
-    negative = method(tree, "assert_unwitnessed_wallet_stake_refused")
+    direct = method(tree, "direct_elector_stake_body")
+    if (
+        len(call_lines(direct, "Engine_validator_createPqStakeAuthorizationRequest")) != 1
+        or len(call_lines(direct, "build_production_pool_stake_order")) != 1
+        or len(call_lines(direct, "elector_body_from_pool_order")) != 1
+        or "src_addr=src_addr" not in ast.unparse(direct)
+        or "if src_addr == held.validator_id:" not in ast.unparse(direct)
+        or "asyncio.to_thread(self.offline_stake_signature, index, global_id, election_id, src_addr)"
+        not in ast.unparse(direct)
+    ):
+        fail(
+            "direct elector stakes are not production-builder bodies signed by the node for its "
+            "own account and offline for any other"
+        )
+    if "'crypto/tos-pq-vote'" not in ast.unparse(method(tree, "offline_stake_signature")):
+        fail("a stake for a second account is no longer signed by the offline stake tool")
+    negative = method(tree, "assert_misdirected_stake_refused")
     negative_text = ast.unparse(negative)
-    if "reason != 8" not in negative_text or not call_lines(negative, "elector_reply"):
-        fail("negative wallet no longer pins elector admission reason 8")
-    if not any(
-        isinstance(node, ast.Compare)
-        and isinstance(node.left, ast.Name)
-        and node.left.id == "opcode"
-        and len(node.ops) == 1
-        and isinstance(node.ops[0], ast.NotEq)
-        and len(node.comparators) == 1
-        and isinstance(node.comparators[0], ast.Constant)
-        and node.comparators[0].value == 0xEE6F454C
-        for node in ast.walk(negative)
+    if (
+        "reason != 1" not in negative_text
+        or "opcode != STAKE_RETURNED_OP" not in negative_text
+        or "self.direct_elector_stake_body(0, election_id, query_id, self.pools[0].address.hash_part)"
+        not in negative_text
+        or "dest=ELECTOR" not in negative_text
+        or "wallet = self.negative_wallet" not in negative_text
+        or "after != before" not in negative_text
     ):
-        fail("negative wallet no longer requires an elector return-stake opcode")
-    if not any(
-        isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr == "store_uint"
-        and len(node.args) >= 1
-        and isinstance(node.args[0], ast.Constant)
-        and node.args[0].value == 0x50517374
-        for node in ast.walk(negative)
-    ):
-        fail("negative wallet no longer uses the elector PQst opcode")
+        fail(
+            "misdirected stake negative no longer sends a pool-authorized body from another "
+            "wallet and pins elector return reason 1 with unchanged participation"
+        )
     election = method(tree, "run_pq_first_election")
-    negative_line = one_call(election, "assert_unwitnessed_wallet_stake_refused")
+    negative_line = one_call(election, "assert_misdirected_stake_refused")
     positive_lines = sorted(call_lines(election, "submit_pq_candidate"))
     if len(positive_lines) != 2:
         fail(
@@ -336,14 +355,14 @@ def main() -> int:
         fail("PQ duplicate-key control is not bound to the first accepted stake")
     election_text = ast.unparse(election)
     if "participant_ids != expected_ids" not in election_text:
-        fail("PQ election no longer requires exactly the four controller participants")
+        fail("PQ election no longer requires exactly the four pool participants")
     if "value.utime_since == self.first_election_id" not in election_text:
         fail("PQ election no longer requires live ConfigParam 34 activation")
     if (
         "actual_ids != expected_ids_hex" not in election_text
         or "self.first_config34.total != VALIDATOR_COUNT" not in election_text
     ):
-        fail("PQ election no longer requires exactly four controller IDs in live ConfigParam 34")
+        fail("PQ election no longer requires exactly four pool IDs in live ConfigParam 34")
     if (
         "three_ids != expected_three" not in election_text
         or "three_stake < VALIDATOR_COUNT * EFFECTIVE_STAKE" not in election_text
@@ -369,7 +388,7 @@ def main() -> int:
         )
     if len(call_lines(election, "require_pq_config34_associations")) != 1:
         fail(
-            "PQ election no longer checks controller-to-ADNL pairs from the same ConfigParam 34 records"
+            "PQ election no longer checks member-to-ADNL pairs from the same ConfigParam 34 records"
         )
     association = method(tree, "require_pq_config34_associations")
     if "actual != expected" not in ast.unparse(association):
@@ -393,6 +412,8 @@ def main() -> int:
     elector_input_text = ast.unparse(elector_input)
     if (
         "reason != 4" not in duplicate_text
+        or "self.direct_elector_stake_body(0, election_id, query_id, wallet.address.hash_part)"
+        not in duplicate_text
         or "after != before" not in duplicate_text
         or "input_transaction.utime >= elect_close" not in duplicate_text
         or "pq-duplicate-key-elector-input-transaction.boc" not in duplicate_text
@@ -413,7 +434,7 @@ def main() -> int:
     ]
     if (
         one_call(positive, "require_open_pq_election") >= one_call(positive, "send_from_wallet")
-        or "self.exact_pq_elector_input(controller.address, query_id)" not in positive_text
+        or "self.exact_pq_elector_input(pool.address, query_id)" not in positive_text
         or len(inbound_guards) != 1
         or "pq_candidate_elector_input_observed" not in positive_text
     ):
@@ -514,16 +535,16 @@ def main() -> int:
         "self.pq_election = pq_election or (experiment is not None and (not soak_mode))"
         not in constructor
     ):
-        fail("the election experiment no longer provisions the PQ controller/pool fixture")
+        fail("the election experiment no longer provisions the PQ staking pool fixture")
     if one_call(execute, "deploy_pq_fixture_accounts") >= one_call(execute, "run_experiment"):
-        fail("the election experiment no longer starts after PQ controller/pool deployment")
+        fail("the election experiment no longer starts after PQ pool deployment")
     experiment_candidate = method(tree, "submit_experiment_candidate")
     if len(call_lines(experiment_candidate, "submit_pq_candidate")) != 1:
         fail("the election experiment no longer obtains a node-authorized production pool order")
     experiment_activation = method(tree, "observe_experiment_activation")
     if len(call_lines(experiment_activation, "require_pq_config34_associations")) != 1:
         fail(
-            "the election experiment no longer binds controller identities to ADNL IDs in live ConfigParam 34"
+            "the election experiment no longer binds pool identities to ADNL IDs in live ConfigParam 34"
         )
     activation_source = ast.unparse(experiment_activation)
     for marker in (
@@ -566,24 +587,33 @@ def main() -> int:
         "validator-elect-signed.fif",
         "0x654C5074",
         ".key.sign(",
+        "0x50517374",
+        "store_uint(0x4E73744B",
+        "store_uint(NEW_STAKE_OP",
+        "birth_witness",
+        "stake_owner=",
     ):
         if obsolete in source:
             fail(f"the election script still contains a classical stake producer: {obsolete}")
     print(
-        "PQ_ELECTION_FIXTURE_SOURCE_OK: controller identity is asserted before boot; "
-        "the live Param 47 read-back call precedes deployment; "
-        "the Genesis helper contains 47 config!; "
+        "PQ_ELECTION_FIXTURE_SOURCE_OK: each node's validator id is its pool's address, derived "
+        "before Genesis from the pre-generated operator wallet and asserted before boot; "
+        "no controller code admission remains in the script, zerostate or Config.fif; "
+        "the live global version read-back precedes deployment; "
         "Python engine-console transport admits the PQ authorization query; "
         "generated TL response fields are checked before snapshot/node boot and hashed in the snapshot; "
-        "PQ candidates call the shared node-authorized, keyword-compatible Rust nominator::new_stake_with_witness pool-order path; "
+        "PQ candidates call the shared node-authorized (src_addr = pool), keyword-compatible "
+        "Rust nominator::new_stake pool-order path and send to the pool; "
+        "direct elector bodies are the production order without its amount; "
+        "a pool-authorized stake sent by another wallet is refused with reason 1; "
         "the three exact pool-route refusals precede the first accepted stake and duplicate-key refusal, then three accepted stakes and a restarted fourth stake with bounded pre-send authorization retry; "
-        "STAKE_ACCEPTED, exact controller participants, and activated ConfigParam 34 with paired controller/ADNL identities are required; "
+        "STAKE_ACCEPTED, exact pool participants, and activated ConfigParam 34 with paired pool/ADNL identities are required; "
         "three-of-four liveness and pool-owned early recovery checks follow activation; "
         "the default and explicit full PQ routes budget their faucet in Genesis before the first election and retain "
         "second/rollover activation, pool-owned recovery, duplicate refusal and two-of-four halt; "
-        "experiment uses the PQ fixture, node-authorized pool orders, controller/ADNL activation, "
+        "experiment uses the PQ fixture, node-authorized pool orders, pool/ADNL activation, "
         "live Config34/past_elections_list retention classification and pool-owned v4 recovery; "
-        "no classical Fift stake producer remains in this script"
+        "no classical or hand-built stake producer remains in this script"
     )
     return 0
 

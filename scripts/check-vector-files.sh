@@ -7,11 +7,8 @@
 # supposed to be able to produce the file no longer can. The next person to regenerate
 # then gets a diff nobody can explain.
 #
-# Two rows are pinned rather than generated: a real ML-DSA-44 root public key and a
-# signature over the base preimage. The node's libraries deliberately cannot sign with a
-# controller root -- that key lives on an operator machine -- so no program in this build
-# can reproduce them. They are named here, one by one, and a row that is neither generated
-# nor named fails.
+# A row that no program in this build can reproduce may be pinned instead, named one by
+# one below; a row that is neither generated nor named fails. None is pinned at present.
 #
 # One file is produced by the operator tooling rather than by this build, and is listed
 # below so that its absence from the generator list is a stated fact rather than an
@@ -24,7 +21,6 @@ emit_generators() {
   cat <<'PAIRS'
 authorisation-preimage-vectors-gen	test/pq-native/authorisation-preimage-vectors.tsv
 vote-carrier-vectors-gen	test/pq-native/vote-carrier-vectors.tsv
-controller-auth-vectors-gen	test/pq-native/controller-auth-vectors.tsv
 descriptor-verdict-vectors-gen	test/pq-native/descriptor-verdict-vectors.tsv
 config43-vectors-gen	test/pq-native/config43-vectors.tsv
 validator-descr-vectors-gen	test/pq-native/validator-descr-vectors.txt
@@ -50,8 +46,6 @@ generators="$(emit_generators)"
 
 # The rows no program in this build can produce, and why.
 pinned=$(cat <<'PINNED'
-test/pq-native/controller-auth-vectors.tsv	root-public-key	a real controller root key, generated outside this build
-test/pq-native/controller-auth-vectors.tsv	root-signature	signed by that key, which nothing here can hold
 PINNED
 )
 

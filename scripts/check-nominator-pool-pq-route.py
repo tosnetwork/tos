@@ -44,20 +44,27 @@ def keyword(call: ast.Call, name: str) -> str | None:
     return values[0] if len(values) == 1 else None
 
 
-def validate(source: str) -> None:
+def validate(source: str, root: Path) -> None:
     tree = ast.parse(source)
     assignments = {
         target.id: ast.unparse(node.value)
         for node in tree.body if isinstance(node, ast.Assign)
         for target in node.targets if isinstance(target, ast.Name)
     }
-    require(assignments.get("CONTROLLER_FORWARDING_ALLOWANCE") == "1 * NANO",
-            "controller forwarding allowance is not one TOS")
+    require(assignments.get("ELECTOR_CONFIRMATION_ALLOWANCE") == "1 * NANO",
+            "Elector confirmation allowance is not one TOS")
     require(assignments.get("POOL_STAKE_VALUE") ==
-            "NETWORK_MIN_STAKE + ELECTOR_CONFIRMATION_ALLOWANCE + CONTROLLER_FORWARDING_ALLOWANCE",
-            "pool stake no longer includes both Elector and controller forwarding allowances")
-    for legacy in ("validator-elect-req.fif", "validator-elect-signed.fif", "validator-elect-req>B"):
-        require(legacy not in source, f"multi-nominator lifecycle still calls classical {legacy}")
+            "NETWORK_MIN_STAKE + ELECTOR_CONFIRMATION_ALLOWANCE",
+            "pool stake is no longer the network minimum plus the Elector confirmation")
+    for legacy in ("validator-elect-req.fif", "validator-elect-signed.fif", "validator-elect-req>B",
+                   ".key.sign(", "0x654C5074"):
+        require(legacy not in source, f"multi-nominator lifecycle still has a classical stake producer: {legacy}")
+    # The stake is sent by the pool and named by it: nothing stands between the
+    # pool and the Elector, and nothing but the node signs the authorization.
+    for retired in ("controller_code", "self.controllers", "birth_witness", "witness=",
+                    "get_config_param(47)", "next_relay_query", "stake_owner=",
+                    "validator_controller_code_hash"):
+        require(retired not in source, f"multi-nominator lifecycle still names {retired!r}")
     prepare = method(tree, "prepare_pq_election_fixture")
     bring_up = method(tree, "bring_up_network")
     deploy = method(tree, "deploy_pool")
@@ -79,20 +86,39 @@ def validate(source: str) -> None:
 
     require(bool(calls(prepare, "require_pq_stake_authorization_binding")),
             "PQ authorization TL binding is not preflighted")
-    require("for index in range(5)" in ast.unparse(prepare),
-            "fixture no longer prepares five controller identities")
-    require("network.config.validator_controller_code_hash = self.controller_code.hash" in ast.unparse(bring_up),
-            "Genesis no longer admits the compiled controller code")
+    prepare_text = ast.unparse(prepare)
+    require("self.validator_blueprints = [WalletV1Blueprint(workchain=-1) for _ in range(5)]" in prepare_text
+            and "validator_account=self.validator_blueprints[0].address.hash_part" in prepare_text
+            and "self.staking_accounts = [self.pool_address]" in prepare_text
+            and "self.staking_accounts.append(pool.address)" in prepare_text
+            and "for index in range(1, 5)" in prepare_text,
+            "the five staking pools are no longer derived from wallet keys fixed before Genesis")
+    support_fixture = one_call(prepare, "make_pool_fixture")
+    require([ast.unparse(arg) for arg in support_fixture.args]
+            == ["self.single_pool_code", "wallet_address", "wallet_address"],
+            "support pools are not upstream single-nominator pools ordered by their operator wallet")
+    fund = method(tree, "fund_wallets")
+    validator_deploys = [
+        call for call in calls(fund, "deploy")
+        if call.args and ast.unparse(call.args[0]).startswith("self.validator_blueprints")
+    ]
+    require(len(validator_deploys) == 1
+            and ast.unparse(validator_deploys[0].args[0]) == "self.validator_blueprints[index]"
+            and "is not at its Genesis-bound address" in ast.unparse(fund),
+            "funded validator wallets are not the Genesis-bound wallet keys")
     require("network.config.bootstrap_validator_set_valid_for = 1200" in ast.unparse(bring_up),
             "pool fixture no longer leaves a 1200-second first-set stake window")
     require("network.config.validator_election_stage_a_elected_for = 600" in ast.unparse(bring_up),
             "pool fixture no longer leaves a recovery-to-next-election stake window")
     provision = one_call(bring_up, "make_deterministic_pq_initial_validator")
     spare = one_call(bring_up, "make_deterministic_pq_spare_validator")
-    require(keyword(provision, "validator_id") == "controller.address.hash_part",
-            "PQ validator_id is not bound to the controller address")
-    require(keyword(spare, "validator_id") == "controller.address.hash_part",
-            "spare PQ validator_id is not bound to its controller address")
+    require(keyword(provision, "validator_id") == "staking_account.hash_part",
+            "PQ validator_id is not bound to the staking pool address")
+    require(keyword(spare, "validator_id") == "staking_account.hash_part",
+            "spare PQ validator_id is not bound to its staking pool address")
+    require("for validator_index, staking_account in enumerate(self.staking_accounts)"
+            in ast.unparse(bring_up),
+            "node identities are not taken from the staking pools")
     branches = [
         node for node in ast.walk(bring_up)
         if isinstance(node, ast.If) and ast.unparse(node.test) == "validator_index < 4"
@@ -111,31 +137,61 @@ def validate(source: str) -> None:
         and isinstance(call.func.value, ast.Name)
         and call.func.value.id == "node"
     ]
-    require(bool(node_boots) and one_call(bring_up, "assert_controller_identity").lineno < min(node_boots),
-            "controller identity is not asserted before node boot")
-    require(one_call(bring_up, "verify_live_controller_policy").lineno > one_call(bring_up, "toslib_client").lineno,
-            "ConfigParam 47 is not read back after client creation")
-    require("controller_account=self.controllers[0].address.hash_part" in ast.unparse(deploy),
-            "multi-nominator pool is not bound to controller zero")
-    require(bool(calls(deploy, "make_pool_fixture")),
-            "supporting validators lack controller-backed pools")
+    identity = one_call(bring_up, "assert_staking_identity")
+    require([ast.unparse(arg) for arg in identity.args] == ["node", "staking_account"],
+            "node identity is not compared with its own staking pool")
+    require(bool(node_boots) and identity.lineno < min(node_boots),
+            "staking identity is not asserted before node boot")
+    deploy_text = ast.unparse(deploy)
+    require("state_init = self.primary_pool_state_init" in deploy_text
+            and "Address((-1, state_init.serialize().hash)) != self.staking_accounts[0]" in deploy_text
+            and "pool.address != self.staking_accounts[index]" in deploy_text,
+            "deployed pools are not the Genesis-bound staking accounts")
+    require("controller" not in deploy_text and not calls(deploy, "make_pool_fixture"),
+            "pool deployment derives a pool other than the Genesis-bound one")
     request = one_call(order, "Engine_validator_createPqStakeAuthorizationRequest")
-    require(keyword(request, "stake_owner") == "pool_address.hash_part",
-            "node signs for an owner other than the destination pool")
+    require(keyword(request, "src_addr") == "pool_address.hash_part",
+            "node signs for a sender other than the destination pool")
     require(bool(calls(order, "parse_result")), "node authorization response is not parsed")
+    order_text = ast.unparse(order)
+    require("auth.validator_id != pool_address.hash_part" in order_text
+            and "auth.key_id != held.key_id" in order_text
+            and "auth.public_key != held.public_key" in order_text,
+            "authorization is not checked against the pool and the node's held key")
     builder = one_call(order, "build_production_pool_stake_order")
     for field, expected in {
         "public_key": "auth.public_key",
         "signature": "auth.signature",
-        "witness": "controller.birth_witness",
         "adnl_addr": "node.validator_key.id",
         "stake_amount": "POOL_STAKE_VALUE",
+        "stake_at": "election_id",
+        "algorithm_id": "auth.algorithm_id",
+        "max_factor": "MAX_FACTOR",
     }.items():
         require(keyword(builder, field) == expected,
-                f"production pool builder {field} is not bound to node/controller data")
+                f"production pool builder {field} is not bound to node authorization data")
+    fixture = (root / "test/tostester/src/tostester/pq_election_fixture.py")
+    fixture_builder = method(ast.parse(fixture.read_text()), "build_production_pool_stake_order")
+    accepted = {argument.arg for argument in fixture_builder.args.kwonlyargs}
+    passed = {item.arg for item in builder.keywords}
+    require(passed == accepted,
+            f"pool order and the Rust builder bridge disagree: missing={sorted(accepted - passed)} "
+            f"unexpected={sorted(passed - accepted)}")
+    bridge = (root / "tosctl/src/node-control/contracts/examples/pq_pool_stake_order.rs").read_text()
+    require("let body = new_stake(&NewStakeParams {" in bridge and "witness" not in bridge,
+            "the pool order bridge no longer calls the production nominator::new_stake builder")
+    require(bool(calls(order, "parse_stake_order"))
+            and "(election_id, node.validator_key.id, auth.signature)" in order_text,
+            "the built order is not read back against the authorization")
     require(bool(calls(support, "authorized_pool_order")) and bool(calls(primary, "authorized_pool_order")),
             "a pool stake route bypasses the shared node-authorized order")
-    require(keyword(builder, "query_id") == "await self.next_relay_query(index) if query_id is None else query_id"
+    require("dest=pool.address" in ast.unparse(support)
+            and "dest=self.pool_address" in ast.unparse(primary)
+            and "ELECTOR" not in ast.unparse(support) + ast.unparse(primary),
+            "a stake order goes somewhere other than its pool; the pool must be the Elector's sender")
+    require("pool_id in ids" in ast.unparse(support),
+            "support stake acceptance is not read as the pool's own Elector participation")
+    require(keyword(builder, "query_id") == "self.next_query_id() if query_id is None else query_id"
             and keyword(one_call(primary, "authorized_pool_order"), "query_id") == "query_id"
             and "return query_id" in ast.unparse(primary),
             "primary pool order no longer binds a recorded query ID to its body")
@@ -145,9 +201,8 @@ def validate(source: str) -> None:
             and "cursor = previous" in ast.unparse(history),
             "second-stake feedback no longer pages raw transactions to the pre-order cursor")
     require(all(calls(feedback, name) for name in (
-        "elector_reply", "pool_controller_bounce", "controller_relay_result",
-        "_pool_order_transaction_lt",
-    )), "second-stake feedback no longer reads Elector reply, controller bounce and relay")
+        "elector_reply", "pool_elector_bounce", "_pool_order_transaction_lt",
+    )), "second-stake feedback no longer reads the Elector reply and bounce")
     require("INCONCLUSIVE" in ast.unparse(feedback)
             and "pool_order_transaction_lt" in ast.unparse(feedback)
             and "pool_window_complete" in ast.unparse(feedback),
@@ -217,7 +272,7 @@ def validate(source: str) -> None:
             and final_retries[0].lineno < rechecks[0].lineno < final_orders[0].lineno,
             "final pool order is not preceded by a same-election live-window recheck")
     require(bool(calls(upkeep, "stake_support_pool")) and not calls(upkeep, "stake_directly"),
-            "election upkeep bypasses controller-backed support pools")
+            "election upkeep bypasses the support pools")
     snapshot_text = ast.unparse(support_snapshot)
     require(all(token in snapshot_text for token in (
         "'getconfig 34'", "'past_elections_list'", "'participant_list_extended'",
@@ -255,7 +310,9 @@ def validate(source: str) -> None:
             "support keeper spends another principal before attempting mature pool credit recovery")
     selection_text = ast.unparse(selection)
     require("self.config34_selection" in selection_text and "validator_adnl_pairs" in selection_text,
-            "live ConfigParam 34 no longer checks controller/ADNL pairing")
+            "live ConfigParam 34 no longer checks pool/ADNL pairing")
+    require("validator_id = self.pool_address.hash_part.hex()" in selection_text,
+            "the elected primary validator is not identified by the pool address")
     require("SUPPORT_POOL_CAPITAL = 2 * POOL_STAKE_VALUE + 20 * NANO" in source,
             "supporting pool capital no longer reserves two stake principals")
     require("capital = SUPPORT_POOL_CAPITAL" in ast.unparse(deploy),
@@ -272,17 +329,33 @@ def validate(source: str) -> None:
             and "the Elector no longer holds a recoverable primary-pool credit" in recover_text,
             "recovery no longer confirms the Elector consumed the primary pool credit")
     require(one_call(execute, "prepare_pq_election_fixture").lineno < one_call(execute, "bring_up_network").lineno,
-            "controller policy is not prepared before Genesis")
+            "staking pools are not fixed before Genesis")
 
 
-def self_test(source: str) -> None:
+def self_test(source: str, root: Path) -> None:
     mutations = {
-        "wrong stake owner": ("stake_owner=pool_address.hash_part", "stake_owner=controller.address.hash_part"),
-        "missing witness": ("witness=controller.birth_witness", "witness=None"),
-        "wrong key source": ("public_key=auth.public_key", "public_key=controller.consensus.public_key"),
+        "wrong stake sender": ("src_addr=pool_address.hash_part", "src_addr=held.key_id"),
+        "witness reintroduced": ("signature=auth.signature,\n        )", "signature=auth.signature, witness=None,\n        )"),
+        "wrong key source": ("public_key=auth.public_key", "public_key=held.public_key"),
+        "authorized account unchecked": ("auth.validator_id != pool_address.hash_part", "False"),
+        "order not read back": ("order = parse_stake_order(body, with_amount=True)", "order = body"),
+        "validator id not the pool": ("validator_id=staking_account.hash_part\n                )\n            else",
+                                      "validator_id=bytes(32)\n                )\n            else"),
+        "identity assertion removed": ("assert_staking_identity(node, staking_account, index=validator_index + 1)",
+                                       "node.pq_initial_validator"),
+        "support pool owned by a stranger": ("make_pool_fixture(self.single_pool_code, wallet_address, wallet_address)",
+                                             "make_pool_fixture(self.single_pool_code, wallet_address, ELECTOR)"),
+        "fresh wallet key after Genesis": ("                self.validator_blueprints[index],\n",
+                                           "                WalletV1Blueprint(workchain=-1),\n"),
+        "support stake sent to the Elector": ("self.wallets[index], dest=pool.address, amount=POOL_STAKE_GAS",
+                                              "self.wallets[index], dest=ELECTOR, amount=POOL_STAKE_GAS"),
+        "ConfigParam 47 read back": ("version = ConfigParam8.deserialize((await self.client.get_config_param(8))",
+                                     "version = ConfigParam8.deserialize((await self.client.get_config_param(47))"),
         "no support stake": ("await self.stake_support_pool(index, election_id)", "await self.elector_participant_ids()"),
-        "classical Fift call": ("return build_production_pool_stake_order(",
-                                 "# validator-elect-req.fif\n        return build_production_pool_stake_order("),
+        "classical Fift call": ("body = build_production_pool_stake_order(",
+                                 "# validator-elect-req.fif\n        body = build_production_pool_stake_order("),
+        "local classical signature": ("body = build_production_pool_stake_order(",
+                                      "self.key.sign(b'')\n        body = build_production_pool_stake_order("),
         "five Genesis validators": ("validator_index < 4", "validator_index < 5"),
         "spare made initial": ("make_deterministic_pq_spare_validator(\n", "make_deterministic_pq_initial_validator(\n"),
         "budget bypassed": ("**require_lifecycle_funding_budget(", "**dict("),
@@ -292,10 +365,11 @@ def self_test(source: str) -> None:
             "description=\"Elector consumed the primary pool's recovered credit\",\n            predicate=lambda value: value == 0",
             "description=\"Elector consumed the primary pool's recovered credit\",\n            predicate=lambda value: value >= 0",
         ),
-        "controller allowance omitted":
-            (" + CONTROLLER_FORWARDING_ALLOWANCE\n", "\n"),
-        "controller allowance zeroed":
-            ("CONTROLLER_FORWARDING_ALLOWANCE = 1 * NANO", "CONTROLLER_FORWARDING_ALLOWANCE = 0 * NANO"),
+        "confirmation allowance omitted":
+            ("POOL_STAKE_VALUE = NETWORK_MIN_STAKE + ELECTOR_CONFIRMATION_ALLOWANCE\n",
+             "POOL_STAKE_VALUE = NETWORK_MIN_STAKE\n"),
+        "confirmation allowance zeroed":
+            ("ELECTOR_CONFIRMATION_ALLOWANCE = 1 * NANO", "ELECTOR_CONFIRMATION_ALLOWANCE = 0 * NANO"),
         "stake builder bypasses budgeted amount":
             ("stake_amount=POOL_STAKE_VALUE", "stake_amount=NETWORK_MIN_STAKE"),
         "unbound second stake query":
@@ -303,16 +377,14 @@ def self_test(source: str) -> None:
         "second stake feedback removed":
             ("await self.record_pool_stake_feedback(\n                    final_query_id", "await self.pool_data(\n                    final_query_id"),
         "Elector reply ignored":
-            ("elector_reply(pool_transactions, query_id, controller=controller_address)", "None"),
-        "controller bounce ignored":
-            ("pool_controller_bounce(\n                pool_transactions", "ignored_bounce(\n                pool_transactions"),
-        "controller relay ignored":
-            ("controller_relay_result(\n                controller_transactions", "ignored_relay(\n                controller_transactions"),
+            ("elector_reply(pool_transactions, query_id)", "None"),
+        "Elector bounce ignored":
+            ("pool_elector_bounce(pool_transactions, query_id)", "None"),
         "history stops after one page":
             ("cursor = previous\n", "return transactions, pages, False, latest_cursor\n"),
         "first closed election selected by nonzero ID":
-            ("self.stakeable_election_id,\n                timeout=900,\n                description=\"an election has a live stake acceptance window\"",
-             "self.active_election_id,\n                timeout=900,\n                description=\"an election has a live stake acceptance window\""),
+            ("self.stakeable_election_id,\n                timeout=1200,\n                description=\"an election has a live stake acceptance window\"",
+             "self.active_election_id,\n                timeout=1200,\n                description=\"an election has a live stake acceptance window\""),
         "first pool order window recheck removed":
             ("if await self.stakeable_election_id(capture_query_id=query_id) != election_id:\n            raise RuntimeError(\n                f\"pool stake election window closed or changed before send: {election_id}\"",
              "if False and await self.stakeable_election_id(capture_query_id=query_id) != election_id:\n            raise RuntimeError(\n                f\"pool stake election window closed or changed before send: {election_id}\""),
@@ -365,7 +437,7 @@ def self_test(source: str) -> None:
     for label, (before, after) in mutations.items():
         require(source.count(before) == 1, f"self-test {label} mutation target is not unique")
         try:
-            validate(source.replace(before, after, 1))
+            validate(source.replace(before, after, 1), root)
         except RuntimeError:
             continue
         raise RuntimeError(f"NOMINATOR_POOL_PQ_ROUTE_FAILURE: self-test survived {label}")
@@ -374,9 +446,9 @@ def self_test(source: str) -> None:
 def main() -> None:
     root = Path(sys.argv[1]).resolve() if len(sys.argv) == 2 else Path(__file__).resolve().parents[1]
     source = (root / "scripts/nominator-pool-lifecycle-e2e.py").read_text()
-    validate(source)
-    self_test(source)
-    print("NOMINATOR_POOL_PQ_ROUTE_OK: fixture identity and PQ pool-order wiring checked; support recovery is gated by live Config34, observed retired past-election unfreeze, deleted record, owner credit and exact Elector reply; first, queued-refusal and final stake selection require an open window, with same-ID send rechecks; no live queued refusal is claimed")
+    validate(source, root)
+    self_test(source, root)
+    print("NOMINATOR_POOL_PQ_ROUTE_OK: each validator id is its own pool, fixed before Genesis and asserted before boot; the node authorizes the pool as sender and the Rust builder writes the order the pool forwards to the Elector; support recovery is gated by live Config34, observed retired past-election unfreeze, deleted record, owner credit and exact Elector reply; first, queued-refusal and final stake selection require an open window, with same-ID send rechecks; no live queued refusal is claimed")
 
 
 if __name__ == "__main__":

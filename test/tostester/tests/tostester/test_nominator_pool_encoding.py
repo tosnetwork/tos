@@ -22,6 +22,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from contract.pq_auth import byte_chain
 from pytosiq_core import Address, Builder, Cell, CurrencyCollection, InternalMsgInfo, MessageAny
 from tosapi import toslib_api
 from tostester.zerostate import NetworkConfig
@@ -31,12 +32,11 @@ REPO = Path(__file__).resolve().parents[4]
 # Same parameters as pool_address_derivation_is_pinned in
 # tosctl/src/node-control/contracts/src/nominator_pool/pool_impl.rs
 VALIDATOR_ACCOUNT = bytes([0xAB] * 32)
-CONTROLLER_ACCOUNT = bytes([0xCD] * 32)
 REWARD_SHARE_BPS = 4000
 MAX_NOMINATORS = 40
 MIN_VALIDATOR_STAKE = 5_000_000_000_000
 MIN_NOMINATOR_STAKE = 100_000_000_000
-EXPECTED_ADDRESS = "-1:5d78980307adfc43eb8e18a487305b51fa5fb76116dde11343193f5eaed18024"
+EXPECTED_ADDRESS = "-1:585da41f2ea1ee25048e8618ef4e6299f6ca641d170fde6a73c7cbad8260e2ec"
 
 POOL_CODE = REPO / "crypto/smartcont/artifacts/nominator-pool-v1.boc"
 
@@ -55,7 +55,7 @@ def _lifecycle_module():
 lifecycle = _lifecycle_module()
 
 
-def test_product_relay_adnl_reader_uses_the_bound_v2_reference(monkeypatch):
+def _first_stake_module():
     spec = importlib.util.spec_from_file_location(
         "pq_config_wallet_first_stake_e2e", REPO / "scripts/pq-config-wallet-first-stake-e2e.py"
     )
@@ -63,28 +63,53 @@ def test_product_relay_adnl_reader_uses_the_bound_v2_reference(monkeypatch):
     module: Any = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
-    pool = Address((-1, bytes([0x31]) * 32))
-    controller = Address((-1, bytes([0x42]) * 32))
-    terms = Builder().store_uint(123, 32).store_uint(0x10000, 32).store_uint(0xA5, 256).end_cell()
-    body = (
-        Builder()
-        .store_uint(0x50517232, 32)
-        .store_uint((1 << 63) | 17, 64)
-        .store_uint(12345, 160)
-        .store_coins(10_002_000_000_000)
-        .store_uint(0x33, 256)
-        .store_ref(terms)
-        .end_cell()
-    )
-    message = _relay_message(pool, controller, 17, bounced=False)
-    message.body = body
-    tx = SimpleNamespace(in_msg=message)
+    return module
+
+
+def test_product_first_stake_reads_the_adnl_the_elector_received(monkeypatch):
+    module = _first_stake_module()
+    wallet = Address((-1, bytes([0x31]) * 32))
+    stranger = Address((-1, bytes([0x42]) * 32))
+    adnl = bytes([0xA5]) * 32
+
+    def stake(query_id):
+        return (
+            Builder()
+            .store_uint(0x4E73744B, 32)
+            .store_uint(query_id, 64)
+            .store_uint(1, 16)
+            .store_ref(_pq_bytes(bytes([0x11]) * 1312))
+            .store_uint(123, 32)
+            .store_uint(0x10000, 32)
+            .store_bytes(adnl)
+            .store_ref(_pq_bytes(bytes([0x22]) * 2420))
+            .end_cell()
+        )
+
+    def received(source, body):
+        return SimpleNamespace(
+            in_msg=_internal_message(source, lifecycle.ELECTOR, body, bounced=False)
+        )
+
+    recover = Builder().store_uint(0x47657424, 32).store_uint(17, 64).end_cell()
+    transactions = [
+        received(wallet, stake(17)),
+        received(stranger, stake(18)),
+        received(wallet, recover),
+    ]
     monkeypatch.setattr(module.lifecycle_module, "_decoded_transaction", lambda raw: raw)
-    assert module.adnl_from_controller_relay([tx], pool, 17) == (0xA5).to_bytes(32, "big")
-    with pytest.raises(RuntimeError, match="found 0"):
-        module.adnl_from_controller_relay([tx], pool, 18)
-    with pytest.raises(RuntimeError, match="found 0"):
-        module.adnl_from_controller_relay([tx], controller, 17)
+    assert module.wallet_elector_stakes(transactions, wallet) == [(17, adnl)]
+    assert module.wallet_elector_stakes(transactions, stranger) == [(18, adnl)]
+    with pytest.raises(ValueError, match="trailing data"):
+        module.wallet_elector_stakes(
+            [received(wallet, Builder().store_cell(stake(19)).store_uint(1, 1).end_cell())], wallet
+        )
+    printed = (
+        "\n OK Wallet 'operator' created\n\n  Address:  -1:" + "31" * 32 + "\n  Version:  V1R3\n"
+    )
+    assert module.created_wallet_address(printed) == wallet
+    with pytest.raises(RuntimeError, match="printed 0 addresses"):
+        module.created_wallet_address("OK")
 
 
 @pytest.mark.asyncio
@@ -127,7 +152,6 @@ def test_pool_address_matches_the_operator_tool():
     state_init = lifecycle.build_pool_state_init(
         code,
         validator_account=VALIDATOR_ACCOUNT,
-        controller_account=CONTROLLER_ACCOUNT,
         reward_share_bps=REWARD_SHARE_BPS,
         max_nominators=MAX_NOMINATORS,
         min_validator_stake=MIN_VALIDATOR_STAKE,
@@ -151,11 +175,7 @@ def test_a_withdrawal_request_uses_the_same_shape():
     assert body.load_uint(8) == ord("w")
 
 
-def _relay_message(source, target, query_id, *, bounced):
-    body = Builder()
-    if bounced:
-        body.store_uint(0xFFFFFFFF, 32)
-    body.store_uint(0x50517232, 32).store_uint(query_id | (1 << 63), 64)
+def _internal_message(source, target, body, *, bounced):
     return MessageAny(
         info=InternalMsgInfo(
             ihr_disabled=True,
@@ -170,45 +190,56 @@ def _relay_message(source, target, query_id, *, bounced):
             created_at=0,
         ),
         init=None,
-        body=body.end_cell(),
+        body=body,
     )
 
 
-def test_second_stake_feedback_distinguishes_exact_controller_bounce_from_relay_abort(monkeypatch):
+def _bounced_stake(query_id):
+    return (
+        Builder()
+        .store_uint(0xFFFFFFFF, 32)
+        .store_uint(0x4E73744B, 32)
+        .store_uint(query_id, 64)
+        .end_cell()
+    )
+
+
+def test_second_stake_feedback_finds_only_this_orders_bounce_from_the_elector(monkeypatch):
     pool = Address((-1, bytes([0x31]) * 32))
-    controller = Address((-1, bytes([0x42]) * 32))
+    stranger = Address((-1, bytes([0x42]) * 32))
     query_id = 123456
-    bounce = SimpleNamespace(
-        in_msg=SimpleNamespace(source=toslib_api.AccountAddress(controller.to_str())),
-        data=b"recorded",
-        decoded=SimpleNamespace(
-            lt=77,
-            in_msg=_relay_message(controller, pool, query_id, bounced=True),
-            description=SimpleNamespace(aborted=False),
-        ),
-    )
-    aborted = SimpleNamespace(
-        in_msg=SimpleNamespace(source=toslib_api.AccountAddress(pool.to_str())),
-        data=b"recorded",
-        decoded=SimpleNamespace(
-            lt=78,
-            in_msg=_relay_message(pool, controller, query_id, bounced=False),
-            description=SimpleNamespace(aborted=True),
-        ),
-    )
+
+    def transaction(source, body, *, bounced, lt):
+        return SimpleNamespace(
+            in_msg=SimpleNamespace(source=toslib_api.AccountAddress(source.to_str())),
+            data=b"recorded",
+            decoded=SimpleNamespace(
+                lt=lt,
+                in_msg=_internal_message(source, pool, body, bounced=bounced),
+                description=SimpleNamespace(aborted=False),
+            ),
+        )
+
+    bounce = transaction(lifecycle.ELECTOR, _bounced_stake(query_id), bounced=True, lt=77)
     monkeypatch.setattr(lifecycle, "_decoded_transaction", lambda raw: raw.decoded)
-    assert lifecycle.pool_controller_bounce([bounce], controller, query_id) == {
+    assert lifecycle.pool_elector_bounce([bounce], query_id) == {
         "transaction_lt": "77",
         "bounced": True,
     }
-    assert lifecycle.controller_relay_result([aborted], pool, query_id) == {
-        "transaction_lt": "78",
-        "aborted": True,
-    }
-    assert lifecycle.pool_controller_bounce([bounce], controller, query_id + 1) is None
-    assert lifecycle.controller_relay_result([aborted], pool, query_id + 1) is None
-    assert lifecycle.pool_controller_bounce([aborted], controller, query_id) is None
-    assert lifecycle.controller_relay_result([bounce], pool, query_id) is None
+    assert lifecycle.pool_elector_bounce([bounce], query_id + 1) is None
+    not_bounced = transaction(lifecycle.ELECTOR, _bounced_stake(query_id), bounced=False, lt=78)
+    assert lifecycle.pool_elector_bounce([not_bounced], query_id) is None
+    elsewhere = transaction(stranger, _bounced_stake(query_id), bounced=True, lt=79)
+    assert lifecycle.pool_elector_bounce([elsewhere], query_id) is None
+    recover = (
+        Builder()
+        .store_uint(0xFFFFFFFF, 32)
+        .store_uint(0x47657424, 32)
+        .store_uint(query_id, 64)
+        .end_cell()
+    )
+    other_op = transaction(lifecycle.ELECTOR, recover, bounced=True, lt=80)
+    assert lifecycle.pool_elector_bounce([other_op], query_id) is None
 
 
 @pytest.mark.asyncio
@@ -661,11 +692,6 @@ async def test_second_stake_query_id_is_bound_to_builder_and_report(tmp_path):
     async def send(*args, **kwargs):
         seen["sent"] = kwargs["label"]
 
-    async def relay_query(index):
-        assert index == 0
-        return (1 << 63) | 2
-
-    runner.next_relay_query = relay_query
     runner.authorized_pool_order = build
     runner.send = send
 
@@ -674,7 +700,6 @@ async def test_second_stake_query_id_is_bound_to_builder_and_report(tmp_path):
         return 123
 
     runner.stakeable_election_id = stakeable
-    runner.controllers = [SimpleNamespace(address=Address((-1, bytes([0x56]) * 32)))]
     baseline = toslib_api.Internal_transactionId(lt=10, hash=bytes([0x11]) * 32)
 
     class FakeClient:
@@ -683,10 +708,11 @@ async def test_second_stake_query_id_is_bound_to_builder_and_report(tmp_path):
 
     runner.client = FakeClient()
     query_id = await runner.stake_through_pool(123, label="pool-stake-after-drain")
-    assert query_id == seen["built"]
+    assert query_id == seen["built"] and 0 < query_id < (1 << 63)
     assert seen["sent"] == "pool-stake-after-drain"
     assert runner.report.events[-1]["query_id"] == query_id
-    assert runner.stake_feedback_baselines[query_id] == (baseline, baseline)
+    assert runner.stake_feedback_baselines[query_id] == baseline
+    assert runner.next_query_id() > query_id, "a later order never reuses a query id"
 
 
 @pytest.mark.asyncio
@@ -694,7 +720,6 @@ async def test_pool_stake_refuses_if_window_closes_after_authorization(tmp_path)
     runner = lifecycle.PoolLifecycle(None, tmp_path, 0, campaign_run_id="closed-after-auth-test")
     runner.pool_address = Address((-1, bytes([0x55]) * 32))
     runner.wallets = [object()]
-    runner.controllers = [SimpleNamespace(address=Address((-1, bytes([0x56]) * 32)))]
     baseline = toslib_api.Internal_transactionId(lt=10, hash=bytes([0x11]) * 32)
 
     class FakeClient:
@@ -712,12 +737,6 @@ async def test_pool_stake_refuses_if_window_closes_after_authorization(tmp_path)
         raise AssertionError("closed-window stake was sent")
 
     runner.client = FakeClient()
-
-    async def relay_query(index):
-        assert index == 0
-        return (1 << 63) | 2
-
-    runner.next_relay_query = relay_query
     runner.authorized_pool_order = build
     runner.stakeable_election_id = stakeable
     runner.send = send
@@ -727,14 +746,10 @@ async def test_pool_stake_refuses_if_window_closes_after_authorization(tmp_path)
 
 
 @pytest.mark.asyncio
-async def test_second_stake_feedback_records_exact_elector_reason_and_relay_result(
-    tmp_path, monkeypatch
-):
+async def test_second_stake_feedback_records_exact_elector_reason(tmp_path, monkeypatch):
     runner = lifecycle.PoolLifecycle(None, tmp_path, 0, campaign_run_id="stake-feedback-test")
     pool = Address((-1, bytes([0x51]) * 32))
-    controller = Address((-1, bytes([0x52]) * 32))
     runner.pool_address = pool
-    runner.controllers = [SimpleNamespace(address=controller)]
     query_id = 7001
     elector_body = (
         Builder()
@@ -779,43 +794,25 @@ async def test_second_stake_feedback_records_exact_elector_reason_and_relay_resu
         transaction_id=toslib_api.Internal_transactionId(lt=70, hash=bytes([0x70]) * 32),
         in_msg=SimpleNamespace(source=toslib_api.AccountAddress(wallet.to_str())),
     )
-    relay_transaction = SimpleNamespace(
-        transaction_id=toslib_api.Internal_transactionId(lt=80, hash=bytes([0x80]) * 32),
-        data=b"recorded",
-        decoded=SimpleNamespace(
-            lt=80,
-            in_msg=_relay_message(pool, controller, query_id, bounced=False),
-            description=SimpleNamespace(aborted=False),
-        ),
-        in_msg=SimpleNamespace(source=toslib_api.AccountAddress(pool.to_str())),
-    )
     baseline = toslib_api.Internal_transactionId(lt=40, hash=bytes([0x40]) * 32)
-    cursors = {
-        pool: toslib_api.Internal_transactionId(lt=90, hash=bytes([0x90]) * 32),
-        controller: toslib_api.Internal_transactionId(lt=80, hash=bytes([0x80]) * 32),
-    }
+    cursors = {pool: toslib_api.Internal_transactionId(lt=90, hash=bytes([0x90]) * 32)}
     pool_second_page = toslib_api.Internal_transactionId(lt=75, hash=bytes([0x75]) * 32)
-    transactions = {controller: [relay_transaction]}
-    runner.stake_feedback_baselines[query_id] = (baseline, baseline)
+    runner.stake_feedback_baselines[query_id] = baseline
 
     class FakeClient:
         async def raw_get_account_state(self, address):
             return SimpleNamespace(last_transaction_id=cursors[address])
 
         async def raw_get_transactions(self, address, cursor):
-            if address == pool:
-                if cursor is cursors[pool]:
-                    return SimpleNamespace(
-                        transactions=[elector_transaction],
-                        previous_transaction_id=pool_second_page,
-                    )
-                assert cursor is pool_second_page
+            assert address == pool
+            if cursor is cursors[pool]:
                 return SimpleNamespace(
-                    transactions=[order_transaction], previous_transaction_id=baseline
+                    transactions=[elector_transaction],
+                    previous_transaction_id=pool_second_page,
                 )
-            assert cursor is cursors[controller]
+            assert cursor is pool_second_page
             return SimpleNamespace(
-                transactions=transactions[address], previous_transaction_id=baseline
+                transactions=[order_transaction], previous_transaction_id=baseline
             )
 
     runner.client = FakeClient()
@@ -825,12 +822,10 @@ async def test_second_stake_feedback_records_exact_elector_reason_and_relay_resu
     assert event["event"] == "pool_stake_feedback"
     assert event["query_id"] == query_id
     assert event["elector_reply"] == (0xEE6F454C, 5)
-    assert event["controller_bounce"] is None
-    assert event["controller_relay"] == {"transaction_lt": "80", "aborted": False}
+    assert event["elector_bounce"] is None
     assert event["pool_transactions_scanned"] == 2
     assert event["pool_pages_scanned"] == 2
     assert event["pool_window_complete"] is True
-    assert event["controller_window_complete"] is True
     assert event["pool_order_transaction_lt"] == "70"
     assert event["classification"] == "ELECTOR_REPLY_OBSERVED"
 
@@ -858,38 +853,40 @@ async def test_second_stake_feedback_records_exact_elector_reason_and_relay_resu
     partial = runner.report.events[-1]
     assert partial["elector_reply"] is None
     assert partial["collection_errors"]["pool"] == "RuntimeError('pool lite query unavailable')"
-    assert partial["controller_relay"] == {"transaction_lt": "80", "aborted": False}
+    assert partial["classification"] == "INCONCLUSIVE"
 
 
 def test_config34_pq_identity_and_adnl_stay_in_one_record():
-    controller_a = "11" * 32
-    controller_b = "22" * 32
+    validator_a = "11" * 32
+    validator_b = "22" * 32
     adnl_a = "33" * 32
     adnl_b = "44" * 32
     text = (
-        f"validator_pq validator_id:x{controller_a} adnl_addr:x{adnl_a} weight:7\n"
-        f"validator_pq validator_id:x{controller_b} adnl_addr:x{adnl_b} weight:9"
+        f"validator_pq validator_id:x{validator_a} adnl_addr:x{adnl_a} weight:7\n"
+        f"validator_pq validator_id:x{validator_b} adnl_addr:x{adnl_b} weight:9"
     )
     assert lifecycle.parse_pq_validator_adnl_pairs(text) == [
-        (controller_a, adnl_a),
-        (controller_b, adnl_b),
+        (validator_a, adnl_a),
+        (validator_b, adnl_b),
     ]
     with pytest.raises(ValueError, match="ADNL IDs"):
         lifecycle.parse_pq_validator_adnl_pairs(
-            f"validator_pq validator_id:x{controller_a} weight:7"
+            f"validator_pq validator_id:x{validator_a} weight:7"
         )
 
 
-def test_multi_nominator_stake_order_uses_bound_node_authorization_and_birth_witness(monkeypatch):
-    controller_address = Address((-1, bytes([0x11]) * 32))
+def _pq_bytes(data):
+    return Builder().store_uint(len(data), 32).store_ref(byte_chain(data)).end_cell()
+
+
+def test_multi_nominator_stake_order_is_authorized_for_the_pool_itself(monkeypatch):
     pool_address = Address((-1, bytes([0x22]) * 32))
     adnl = bytes([0x33]) * 32
     key_id = bytes([0x44]) * 32
     public_key = bytes([0x55]) * 1312
     signature = bytes([0x66]) * 2420
-    witness = Builder().store_uint(47, 16).end_cell()
     authorization = SimpleNamespace(
-        validator_id=controller_address.hash_part,
+        validator_id=pool_address.hash_part,
         key_id=key_id,
         algorithm_id=1,
         public_key=public_key,
@@ -910,66 +907,73 @@ def test_multi_nominator_stake_order_uses_bound_node_authorization_and_birth_wit
 
     def fake_builder(_executable, **kwargs):
         seen["builder"] = kwargs
-        return Cell.empty()
+        return (
+            Builder()
+            .store_uint(0x4E73744B, 32)
+            .store_uint(kwargs["query_id"], 64)
+            .store_coins(kwargs["stake_amount"])
+            .store_uint(1, 16)
+            .store_ref(_pq_bytes(kwargs["public_key"]))
+            .store_uint(kwargs["stake_at"], 32)
+            .store_uint(kwargs["max_factor"], 32)
+            .store_bytes(kwargs["adnl_addr"])
+            .store_ref(_pq_bytes(seen.get("sign_as", kwargs["signature"])))
+            .end_cell()
+        )
 
     monkeypatch.setattr(
         lifecycle.tos_api, "Engine_validator_createPqStakeAuthorizationRequest", FakeRequest
     )
     monkeypatch.setattr(lifecycle, "build_production_pool_stake_order", fake_builder)
     subject = object.__new__(lifecycle.PoolLifecycle)
+    subject.last_query_id = 0
     subject.nodes = [
         SimpleNamespace(
             validator_key=SimpleNamespace(id=adnl),
             engine_console=SimpleNamespace(request=request),
+            pq_initial_validator=SimpleNamespace(key_id=key_id, public_key=public_key),
         )
     ]
-    subject.controllers = [
-        SimpleNamespace(
-            address=controller_address,
-            consensus=SimpleNamespace(key_id=key_id, public_key=public_key),
-            birth_witness=witness,
-        )
-    ]
-
-    async def runmethod(address, method):
-        assert address == controller_address.to_str(is_user_friendly=False)
-        assert method == "next_relay_query"
-        return f"result: [ {(1 << 63) | 1} ]"
-
-    subject.runmethod = runmethod
-    assert (
-        asyncio.run(subject.authorized_pool_order(0, 1_700_000_000, pool_address)) == Cell.empty()
-    )
-    assert seen["builder"]["query_id"] == (1 << 63) | 1
+    body = asyncio.run(subject.authorized_pool_order(0, 1_700_000_000, pool_address))
+    assert 0 < seen["builder"]["query_id"] < (1 << 63)
     assert seen["request"] == {
         "election_date": 1_700_000_000,
         "max_factor": lifecycle.MAX_FACTOR,
         "adnl_addr": adnl,
-        "stake_owner": pool_address.hash_part,
+        "src_addr": pool_address.hash_part,
     }
+    assert "witness" not in seen["builder"]
     assert seen["builder"]["public_key"] == public_key
     assert seen["builder"]["signature"] == signature
-    assert seen["builder"]["witness"] == witness
     assert seen["builder"]["adnl_addr"] == adnl
+    assert seen["builder"]["stake_amount"] == lifecycle.POOL_STAKE_VALUE
+    assert body.begin_parse().load_uint(32) == 0x4E73744B
+
+    seen["sign_as"] = bytes([0x67]) * 2420
+    with pytest.raises(AssertionError, match="pool order differs from its authorization"):
+        asyncio.run(subject.authorized_pool_order(0, 1_700_000_000, pool_address))
+    del seen["sign_as"]
 
     authorization.validator_id = bytes([0x77]) * 32
-    with pytest.raises(AssertionError, match="wrong controller"):
+    with pytest.raises(AssertionError, match="account other than its pool"):
+        asyncio.run(subject.authorized_pool_order(0, 1_700_000_000, pool_address))
+    authorization.validator_id = pool_address.hash_part
+    authorization.key_id = bytes([0x78]) * 32
+    with pytest.raises(AssertionError, match="wrong consensus key"):
         asyncio.run(subject.authorized_pool_order(0, 1_700_000_000, pool_address))
 
 
 def test_lifecycle_budget_covers_genesis_and_two_support_principals(monkeypatch):
-    assert lifecycle.CONTROLLER_FORWARDING_ALLOWANCE == lifecycle.NANO
+    assert lifecycle.ELECTOR_CONFIRMATION_ALLOWANCE == lifecycle.NANO
     assert lifecycle.POOL_STAKE_VALUE == (
-        lifecycle.NETWORK_MIN_STAKE
-        + lifecycle.ELECTOR_CONFIRMATION_ALLOWANCE
-        + lifecycle.CONTROLLER_FORWARDING_ALLOWANCE
+        lifecycle.NETWORK_MIN_STAKE + lifecycle.ELECTOR_CONFIRMATION_ALLOWANCE
     )
     ordinary = lifecycle.require_lifecycle_funding_budget(
         integrated=False, agent_count=lifecycle.OPENFOX_AGENT_COUNT
     )
     assert ordinary["faucet_nanotos"] == 100_000 * lifecycle.NANO
-    assert ordinary["committed_nanotos"] == 96_400 * lifecycle.NANO
-    assert ordinary["faucet_uncommitted_nanotos"] == 3_600 * lifecycle.NANO
+    assert ordinary["committed_nanotos"] == 96_350 * lifecycle.NANO
+    assert ordinary["faucet_uncommitted_nanotos"] == 3_650 * lifecycle.NANO
     assert ordinary["support_pool_capital_nanotos"] == (
         2 * lifecycle.POOL_STAKE_VALUE + 20 * lifecycle.NANO
     )
@@ -979,7 +983,7 @@ def test_lifecycle_budget_covers_genesis_and_two_support_principals(monkeypatch)
         integrated=True, agent_count=lifecycle.OPENFOX_AGENT_COUNT
     )
     assert integrated["faucet_nanotos"] == 2_000_000 * lifecycle.NANO
-    assert integrated["committed_nanotos"] == 1_211_387 * lifecycle.NANO
+    assert integrated["committed_nanotos"] == 1_211_337 * lifecycle.NANO
 
     monkeypatch.setattr(lifecycle, "DIRECT_VALIDATOR_FUNDING", 20_000 * lifecycle.NANO)
     with pytest.raises(ValueError, match="support wallet cannot fund"):
@@ -2095,20 +2099,3 @@ def test_integrated_claim_limits_name_scripted_custody_and_single_host(tmp_path)
         == 30 * lifecycle.NANO
     )
     assert report["agent_nominator_rewards"][0]["wallet_funding_nanotos"] == (29 * lifecycle.NANO)
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "reply",
-    ["result: [ -1 ]", "result: [ 1 ]", f"result: [ {1 << 64} ]", "result: [ 2 3 ]", "error"],
-)
-async def test_relay_query_requires_authoritative_in_domain_scalar(tmp_path, reply):
-    runner = lifecycle.PoolLifecycle(None, tmp_path, 0, campaign_run_id="query-refusal")
-    runner.controllers = [SimpleNamespace(address=Address((-1, bytes([0x56]) * 32)))]
-
-    async def runmethod(*args):
-        return reply
-
-    runner.runmethod = runmethod
-    with pytest.raises(RuntimeError):
-        await runner.next_relay_query(0)
