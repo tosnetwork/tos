@@ -12,7 +12,9 @@ const PUBLIC_KEY_BYTES: usize = 1312;
 const SIGNATURE_BYTES: usize = 2420;
 const MAX_MESSAGE_BYTES: usize = 8192;
 const MAX_CONTEXT_BYTES: usize = 255;
-const BASE_GAS: i64 = 50_000;
+// Charged like the Ed25519 check (Engine::register_chksgn_call); the key and signature
+// bytes are paid by ordinary cell-load gas.
+const BYTE_GAS: i64 = 0;
 const CHUNK_BYTES: usize = 127;
 
 extern "C" {
@@ -30,7 +32,7 @@ extern "C" {
 }
 
 fn read_bytes(engine: &mut Engine, cell: Cell, limit: usize) -> Result<Vec<u8>> {
-    read_bytes_priced(engine, cell, limit, 1)
+    read_bytes_priced(engine, cell, limit, BYTE_GAS)
 }
 
 fn read_bytes_priced(
@@ -89,7 +91,6 @@ pub(super) fn execute_pq_mldsa44(engine: &mut Engine) -> Status {
     if engine.cc.stack.depth() < 4 {
         fail!(ExceptionCode::StackUnderflow);
     }
-    engine.try_use_gas(BASE_GAS)?;
     fetch_stack(engine, 4)?;
     // Type-check all four values before decoding any, in top-to-bottom order.
     let key = engine.cmd.var(0).as_cell()?.clone();
@@ -100,6 +101,7 @@ pub(super) fn execute_pq_mldsa44(engine: &mut Engine) -> Status {
     let signature = read_bytes(engine, signature, SIGNATURE_BYTES)?;
     let context = read_bytes(engine, context, MAX_CONTEXT_BYTES)?;
     let message = read_bytes(engine, message, MAX_MESSAGE_BYTES)?;
+    engine.register_chksgn_call()?;
     if key.len() != PUBLIC_KEY_BYTES || signature.len() != SIGNATURE_BYTES {
         fail!(ExceptionCode::CellUnderflow, "incorrect ML-DSA-44 input length");
     }
@@ -125,7 +127,7 @@ pub(super) fn execute_pq_mldsa44(engine: &mut Engine) -> Status {
     } else {
         fail!(ExceptionCode::FatalError, "ML-DSA verifier backend failure");
     };
-    // Deliberately do not consult chksig_always_succeed or the classic free-call allowance.
+    // Deliberately do not consult chksig_always_succeed.
     engine.cc.stack.push(StackItem::boolean(valid));
     Ok(())
 }
@@ -163,9 +165,9 @@ pub(super) fn execute_pq_falcon512(engine: &mut Engine) -> Status {
     let key = engine.cmd.var(0).as_cell()?.clone();
     let signature = engine.cmd.var(1).as_cell()?.clone();
     let message = engine.cmd.var(2).as_cell()?.clone();
-    let key = read_bytes(engine, key, 897)?;
-    let signature = read_bytes(engine, signature, 666)?;
-    let message = read_bytes(engine, message, 8192)?;
+    let key = read_bytes_priced(engine, key, 897, FALCON512_BYTE_GAS)?;
+    let signature = read_bytes_priced(engine, signature, 666, FALCON512_BYTE_GAS)?;
+    let message = read_bytes_priced(engine, message, 8192, FALCON512_BYTE_GAS)?;
     if key.len() != 897 || signature.len() != 666 {
         fail!(ExceptionCode::CellUnderflow, "incorrect Falcon-512 padded length");
     }
@@ -214,6 +216,7 @@ const SUITE_FALCON512: i32 = 2;
 const SUITE_SLHDSA128S: i32 = 3;
 const SUITE_LMS_FEE: i32 = 4;
 const SLH_BASE_GAS: i64 = 750_000;
+const SLH_BYTE_GAS: i64 = 1;
 const SLH_PUBLIC_KEY_BYTES: usize = 32;
 const SLH_SIGNATURE_BYTES: usize = 7856;
 const LMS_BASE_GAS: i64 = 500;
@@ -231,6 +234,7 @@ fn push_outcome(engine: &mut Engine, valid: Option<bool>, name: &str) -> Status 
 
 const SUITE_MIN_VERSION: u32 = 16;
 const FALCON512_MIN_VERSION: u32 = 16;
+const FALCON512_BYTE_GAS: i64 = 1;
 const LMS_FEE_HASH_MIN_VERSION: u32 = 16;
 
 pub(super) fn execute_pq_suite(engine: &mut Engine) -> Status {
@@ -254,11 +258,11 @@ pub(super) fn execute_pq_suite(engine: &mut Engine) -> Status {
     let message = engine.cmd.var(4).as_cell()?.clone();
     match suite {
         SUITE_MLDSA44 => {
-            engine.try_use_gas(BASE_GAS)?;
             let key = read_bytes(engine, key, PUBLIC_KEY_BYTES)?;
             let signature = read_bytes(engine, signature, SIGNATURE_BYTES)?;
             let context = read_bytes(engine, context, MAX_CONTEXT_BYTES)?;
             let message = read_bytes(engine, message, MAX_MESSAGE_BYTES)?;
+            engine.register_chksgn_call()?;
             if key.len() != PUBLIC_KEY_BYTES || signature.len() != SIGNATURE_BYTES {
                 fail!(ExceptionCode::CellUnderflow, "malformed ML-DSA-44 input");
             }
@@ -290,10 +294,10 @@ pub(super) fn execute_pq_suite(engine: &mut Engine) -> Status {
             }
             engine.try_use_gas(20_000)?;
             // Falcon has no context parameter; only the empty context is accepted.
-            read_bytes(engine, context, 0)?;
-            let key = read_bytes(engine, key, 897)?;
-            let signature = read_bytes(engine, signature, 666)?;
-            let message = read_bytes(engine, message, 8192)?;
+            read_bytes_priced(engine, context, 0, FALCON512_BYTE_GAS)?;
+            let key = read_bytes_priced(engine, key, 897, FALCON512_BYTE_GAS)?;
+            let signature = read_bytes_priced(engine, signature, 666, FALCON512_BYTE_GAS)?;
+            let message = read_bytes_priced(engine, message, 8192, FALCON512_BYTE_GAS)?;
             // SAFETY: bounded owned buffers outlive this synchronous, verify-only call.
             let result = unsafe {
                 tos_falcon512_padded_verify(
@@ -314,10 +318,11 @@ pub(super) fn execute_pq_suite(engine: &mut Engine) -> Status {
         }
         SUITE_SLHDSA128S => {
             engine.try_use_gas(SLH_BASE_GAS)?;
-            let key = read_bytes(engine, key, SLH_PUBLIC_KEY_BYTES)?;
-            let signature = read_bytes(engine, signature, SLH_SIGNATURE_BYTES)?;
-            let context = read_bytes(engine, context, MAX_CONTEXT_BYTES)?;
-            let message = read_bytes(engine, message, MAX_MESSAGE_BYTES)?;
+            let key = read_bytes_priced(engine, key, SLH_PUBLIC_KEY_BYTES, SLH_BYTE_GAS)?;
+            let signature =
+                read_bytes_priced(engine, signature, SLH_SIGNATURE_BYTES, SLH_BYTE_GAS)?;
+            let context = read_bytes_priced(engine, context, MAX_CONTEXT_BYTES, SLH_BYTE_GAS)?;
+            let message = read_bytes_priced(engine, message, MAX_MESSAGE_BYTES, SLH_BYTE_GAS)?;
             if key.len() != SLH_PUBLIC_KEY_BYTES || signature.len() != SLH_SIGNATURE_BYTES {
                 return push_outcome(engine, None, "SLH-DSA-SHA2-128s");
             }

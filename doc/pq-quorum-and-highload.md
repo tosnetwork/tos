@@ -34,10 +34,12 @@ These come from `doc/tvm-mldsa44.md` and the C++ executor.
   - context: 0..255 bytes.
 - **Operand shape.** Every operand is a canonical byte chain. A wrong length or encoding
   throws 9; an invalid signature returns 0.
-- **Gas.** 50,000 per call before decoding, plus 1 per decoded byte, plus cell loads. One
-  verification with a 32-byte message therefore costs on the order of 57,000 gas.
-  - That exceeds both the 20,000-gas basechain and 10,000-gas masterchain external admission credit, so neither deliverable may
-    verify before ACCEPT in an external message.
+- **Gas.** Priced as the Ed25519 check: the first 10 signature checks of a transaction
+  are free, later ones cost 4,000 each, and the operand bytes are paid as cell loads. One
+  first verification with a 32-byte message and a 21-byte context costs 3,339 gas, nearly all of it cell loads.
+  - The quorum figures below (745,000–850,000 gas, the 250,000 margin, `MAX_QUORUM`) were
+    measured under the former 50,000-gas tariff and must be re-measured before relying on
+    them.
 - **Gas limit of an internal message without ACCEPT.** It is the smaller of what the
   inbound value buys and what the account's balance buys, capped by the configured limit
   (`transaction.cpp` around the gas-limit computation). The basechain per-transaction

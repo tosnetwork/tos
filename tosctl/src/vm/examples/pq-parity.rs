@@ -21,7 +21,7 @@ fn main() -> anyhow::Result<()> {
         let version = f[1].parse::<u32>()?;
         let budget = f[2].parse::<i64>()?;
         let repeats = f[4].parse::<usize>()?;
-        anyhow::ensure!((1..=11).contains(&repeats) && budget >= 0, "invalid limits");
+        anyhow::ensure!((1..=12).contains(&repeats) && budget >= 0, "invalid limits");
         let mut stack = Stack::new();
         for _ in 0..repeats {
             for field in &f[6..10] {

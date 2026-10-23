@@ -31,8 +31,10 @@ def main():
         if ident=='openssl-auth-commitment':good=cs
     if good is None: raise ValueError('missing independent positive control')
     add('version-15',good,version=15);add('version-0',good,version=0)
-    add('eleven-paid-calls',good,repeats=11)
-    for n in (0,9,10,33,34,50033,50034,54000,57000,60000): add('gas-'+str(n),good,budget=n)
+    # Priced as the Ed25519 check: ten free calls per transaction, then 4,000 gas each.
+    for n in (9,10,11,12):
+        add(f'calls-{n}',good,repeats=n)
+    for n in (0,9,10,33,34,133,134,1000,2000,3000,3500,4000): add('gas-'+str(n),good,budget=n)
     for i in range(4):
         cs=good.copy();cs[i]='int';add('wrong-type-'+str(i),cs)
         cs=good.copy();cs[i]='skip';add('underflow-'+str(i),cs)
@@ -55,6 +57,12 @@ def main():
             expected = 'E-14' if budget < 60 else 'E6'
             add(f'preactivation-budget-{version}-{budget}',good,
                 version=version,budget=budget,expected=expected)
+    # A child VM with isolated gas pays the parent's free signature gas when it starts:
+    # DROP the entry id, one free check, DROP, then RUNVM an empty child with
+    # 0 stack entries, with (128) and without (0) gas isolation.
+    for name,mode in (('runvm-isolated',128),('runvm-shared',0)):
+        code=Cell().uint(0x30,8).uint(0xf93100,24).uint(0x30,8).uint(0x70,8).uint(0x8b08,16).uint(0xdb4,12).uint(mode,12)
+        add(name,good,program=code.boc().hex())
     # The rows above run raw opcodes, which never reach the assembler. These run
     # the programs the shipped bindings actually compile to, on both VMs.
     for entry in a.program:
@@ -64,6 +72,6 @@ def main():
         cs=good.copy();cs[2]=chain(bytes(2420));add(f'{name}-binding-bad-signature',cs,program=code,expected='I')
         cs=good.copy();cs[3]=Cell().uint(1,1);add(f'{name}-binding-unaligned-key',cs,program=code,expected='M')
         add(f'{name}-binding-version-15',good,version=15,program=code,expected='E6')
-        add(f'{name}-binding-out-of-gas',good,budget=50_033,program=code,expected='E-14')
+        add(f'{name}-binding-out-of-gas',good,budget=133,program=code,expected='E-14')
     a.out.write_text('\n'.join(rows)+'\n');print(f'{len(rows)} scenarios')
 if __name__=='__main__':main()

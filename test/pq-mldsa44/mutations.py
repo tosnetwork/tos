@@ -35,16 +35,16 @@ def run(build: Path, vectors: Path):
             "->require_version(15)",
         ),
         (
-            "base-gas",
+            "signature-charge",
             ROOT / "crypto/vm/pqops.cpp",
-            "stack.check_underflow(4);\n  // Charge on every call; do not inherit the classic signature free allowance.\n  st->consume_gas_chk(pq_mldsa44_base_gas);",
-            "stack.check_underflow(4);\n  // Charge on every call; do not inherit the classic signature free allowance.\n  st->consume_gas_chk(0);",
+            "  // the verifier runs.\n  st->register_chksgn_call();",
+            "  // the verifier runs.",
         ),
         (
             "byte-gas",
-            ROOT / "crypto/vm/pqops.cpp",
-            "long long byte_gas = pq_mldsa44_byte_gas",
-            "long long byte_gas = 0",
+            ROOT / "crypto/vm/pqops.h",
+            "inline constexpr long long pq_mldsa44_byte_gas = 0;",
+            "inline constexpr long long pq_mldsa44_byte_gas = 1;",
         ),
         (
             "message-bound",

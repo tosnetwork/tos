@@ -77,18 +77,22 @@ A valid signature returns `-1`; a mathematically invalid signature returns `0`.
 Incorrect lengths or cell encodings throw cell-underflow (9). Stack underflow
 and wrong types retain VM errors (2 and 7). A backend operational failure is
 not reported as an invalid proof: it throws VM fatal error (12). Out-of-gas
-stops execution, not verification-false. The instruction neither honors
-`chksig_always_succeed` nor uses the classic free-signature-call allowance.
+stops execution, not verification-false. The instruction does not honor
+`chksig_always_succeed`.
 
 ## Deterministic gas
 
-Every invocation with sufficient stack depth pays **50,000 gas before operand
-decoding**, then **1 gas per decoded byte before copying**, plus ordinary VM
-cell-load/reload and instruction overhead. Invalid proofs pay the same base.
-For a raw one-instruction program, ordinary overhead is 34 instruction gas,
-5 implicit-return gas, and 100/25 gas for first/repeated cell loads. Loads are
-identified by representation hash, not pointer identity. Compiled programs may
-add their own dispatch overhead. Bounds constrain memory, hashing and traversal.
+ML-DSA-44 verifies about as fast as Ed25519, so it is priced exactly as the Ed25519
+check is. After its operands are decoded, each invocation is counted by the same
+per-transaction signature counter as `CHKSIGNU`/`CHKSIGNS`: the first 10 checks of a
+transaction (of either kind) are free gas, and every later one costs **4,000 gas**.
+A child VM with isolated gas pays the parent's free signature gas and starts its own
+count from zero. Key, signature, context and message bytes are paid only as ordinary
+cell loads: 100/25 gas for first/repeated loads, identified by representation hash,
+not pointer identity. For a raw one-instruction program, ordinary overhead is 34
+instruction gas and 5 implicit-return gas. Invalid proofs pay the same as valid ones.
+Compiled programs may add their own dispatch overhead. Bounds constrain memory,
+hashing and traversal.
 
 The price is fixed protocol data, never derived from a validator's CPU clock.
 The validation workflow measures full-VM CPU cost across valid and invalid
@@ -97,11 +101,9 @@ workloads. The executable checks live under
 [`test/pq-readiness/`](../test/pq-readiness/). Runner measurements do not replace
 production-hardware load testing or protocol approval before activation.
 
-The base fee exceeds the ordinary 10,000-gas external admission credit. A PQ
-Auth Module needs an explicit funded-internal-message/relayer design, including
-replay and fee-abuse policy. Do not ACCEPT unauthenticated external traffic just
-to bypass the credit or raise network limits to make a test pass. The module's
-authority, funding and transaction/action-phase lifecycle are separate scope.
+A first verification with a 32-byte message and a 21-byte context costs 3,339 gas, nearly all of it cell loads, so an ML-DSA-signed
+external message can be authenticated before ACCEPT within the ordinary external
+credit, as an Ed25519-signed one is.
 
 ## Dependency and build
 

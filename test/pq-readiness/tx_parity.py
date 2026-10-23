@@ -113,14 +113,42 @@ def main():
         return (Cell().sint(GLOBAL_ID, 32).addr(account).uint(1, 64).uint(0, 64)
                 .uint(valid_until, 32).uint(kind, 8).ref(Cell().uint(7, 32)))
 
-    def submit(name, req, signature=None, value=10_000_000_000, balance=100_000_000_000):
+    def scenario(req, signature=None, value=10_000_000_000, balance=100_000_000_000):
         envelope = Cell().uint(AUTH, 32).ref(req).maybe(None)
         if signature is None:
             _, signature = signer.sign(commitment(req), CONTEXT, 0)
         body = submission(envelope, signature)
         shard = active_account(module, module_code, module_data_cell, balance)
-        message = internal((wc, 17), module, body, value)
-        scenarios.append((name, shard, message))
+        return shard, internal((wc, 17), module, body, value)
+
+    def submit(name, req, signature=None, value=10_000_000_000, balance=100_000_000_000):
+        scenarios.append((name, *scenario(req, signature, value, balance)))
+
+    def outcome(value):
+        probe = Emulator(16)
+        try:
+            result = probe.send(*scenario(good, value=value))
+        finally:
+            probe.close()
+        assert result['success'], 'emulator error while sizing the forwarding scenario'
+        details = result.get('details', result)
+        return details.get('exit'), (details.get('action') or {}).get('code', 0)
+
+    def verify_only_value():
+        # The smallest inbound value the compute phase completes with leaves nothing to
+        # forward, whatever the current prices make verification cost.
+        low, high = 0, 10_000_000_000
+        if outcome(high)[0] != 0:
+            raise ValueError('the module does not complete with the default value')
+        while high - low > 1:
+            middle = (low + high) // 2
+            if outcome(middle)[0] == 0:
+                high = middle
+            else:
+                low = middle
+        if outcome(high)[1] == 0:
+            raise ValueError('the smallest completing value still forwards')
+        return high
 
     good = request()
     submit('module-accepts-and-relays', good)
@@ -129,7 +157,7 @@ def main():
     submit('module-refuses-a-stale-request', request(valid_until=NOW - 1))
     # Enough to verify, too little to forward: the action phase is the one that
     # fails, and only a whole-transaction comparison can see the difference.
-    submit('module-verifies-but-cannot-forward', good, value=66_000_000)
+    submit('module-verifies-but-cannot-forward', good, value=verify_only_value())
 
     emulator = Emulator(16)
     logical_times = []

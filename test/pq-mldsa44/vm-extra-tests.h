@@ -2,13 +2,14 @@
 // Included by test.cpp inside its anonymous namespace, after the shared harness.
 // Prices here are specification literals, deliberately NOT implementation constants.
 long long expected_raw_gas(const Cells& input) {
-  long long gas = 50000 + 34 + 5;  // base, 24-bit instruction, implicit return
+  // The first signature check of a transaction is free, as for Ed25519; key and signature
+  // bytes are paid only as cell loads.
+  long long gas = 34 + 5;  // 24-bit instruction, implicit return
   std::set<std::string> loaded;
   for (auto cell : input) {
     while (cell.not_null()) {
       gas += loaded.insert(cell->get_hash().to_hex()).second ? 100 : 25;
       const auto slice = vm::load_cell_slice(cell);
-      gas += slice.size() / 8;
       cell = slice.size_refs() ? slice.prefetch_ref() : Cell{};
     }
   }
@@ -72,7 +73,7 @@ void extended_boundaries(const Vector& good, Cell compiled, std::ostream& out) {
       require(!state.committed(), "stack rejection committed state");
       out << "stack-error-" << count << '\t' << result << '\t' << state.gas_consumed() << '\n';
     }
-    auto during_load = invoke(canonical, 16, 50133);
+    auto during_load = invoke(canonical, 16, 34 + 99);
     require(during_load.exit == -14 && !during_load.committed, "operand-load gas was not charged");
     print_execution(out, "oog-during-first-cell-load", during_load);
   }
@@ -95,7 +96,8 @@ double median_microseconds(Work work, int batch = 8) {
 void calibrate_gas(const std::vector<Vector>& vectors, const std::string& report_path) {
   // TEST-ONLY fixed key, never wallet material. Only the benchmark signs; the
   // consensus library remains verify-only. Compare against the same Ed25519
-  // implementation that CHKSIG uses, priced at its paid-call tariff (4,000).
+  // implementation that CHKSIG uses. Both are priced at the paid-call tariff (4,000), so the
+  // ratio is ML-DSA's time in the VM over Ed25519's: above 1 the shared price undercharges.
   const std::string seed(32, '\x42');
   const std::string message(32, '\x24');
   td::Ed25519::PrivateKey sk{td::SecureString{td::Slice{seed}}};
@@ -124,9 +126,9 @@ void calibrate_gas(const std::vector<Vector>& vectors, const std::string& report
     const auto baseline = execute(input);
     check_execution(v, baseline);
     const double us = median_microseconds([&] { check_execution(v, execute(input)); });
-    // Charge only the 50,000 base here: disregarding byte/load fees makes this
-    // headroom estimate conservative. Runtime never changes consensus prices.
-    const double ratio = (us / 50000.0) / (ed_us / 4000.0);
+    // Charge only the paid-call price: disregarding load fees makes this estimate
+    // conservative. Runtime never changes consensus prices.
+    const double ratio = (us / 4000.0) / (ed_us / 4000.0);
     if (ratio > worst_ratio) { worst_ratio = ratio; worst_id = v.id; }
     require(v.id.find_first_of("\"\\\r\n") == std::string::npos, "unsafe calibration case ID");
     if (!first) report << ",\n";
@@ -144,8 +146,9 @@ void calibrate_gas(const std::vector<Vector>& vectors, const std::string& report
     if (v.id != "openssl-auth-commitment" && v.id != "openssl-maxima" && v.id != "signature-bit-0") continue;
     const auto input = cells(v);
     const auto single = execute(input);
-    const int calls = static_cast<int>(1000000 / single.gas);
-    require(calls > 0 && calls <= 24, "unexpected model workload size");
+    // 24 calls (32 bits each) fit one code cell and pass the free allowance of ten.
+    const int calls = 24;
+    require(single.gas > 0, "unexpected model workload size");
     vm::CellBuilder builder;
     for (int i = 0; i < calls; ++i) {
       builder.store_long(0xf93100, 24);

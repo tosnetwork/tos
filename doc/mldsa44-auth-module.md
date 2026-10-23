@@ -138,8 +138,9 @@ Under the test configuration's gas prices, for a minimal `kind` 0 request with a
 
 The masterchain figure is an order of magnitude higher because its gas price is,
 so a single number without a workchain is meaningless. Roughly 64,400 of the
-compute gas a successful submission uses is the module itself, of which 50,000 is
-the flat post-quantum tariff: this floor is set by verification, not by message
+compute gas a successful submission uses is the module itself, of which 50,000 was
+the flat post-quantum tariff in force when this was measured (ML-DSA is now priced as
+the Ed25519 check, so these figures must be re-measured): this floor is set by verification, not by message
 handling, and will not resemble a classical-signature relay. None of these values
 include what the destination account then spends. They are observations under one
 configuration, not network constants; re-measure against the prices in force

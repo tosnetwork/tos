@@ -62,8 +62,6 @@ int exec_pq_mldsa44(VmState* st) {
   VM_LOG(st) << "execute PQCHECKSIG_MLDSA44";
   auto& stack = st->get_stack();
   stack.check_underflow(4);
-  // Charge on every call; do not inherit the classic signature free allowance.
-  st->consume_gas_chk(pq_mldsa44_base_gas);
   auto public_key_cell = stack.pop_cell();
   auto signature_cell = stack.pop_cell();
   auto context_cell = stack.pop_cell();
@@ -72,6 +70,9 @@ int exec_pq_mldsa44(VmState* st) {
   const auto signature = read_pq_bytes(st, signature_cell, tos::pq::mldsa44_signature_bytes);
   const auto context = read_pq_bytes(st, context_cell, tos::pq::mldsa44_max_context_bytes);
   const auto message = read_pq_bytes(st, message_cell, tos::pq::mldsa44_max_message_bytes);
+  // Counted and charged as the Ed25519 check is: after the operands are decoded, before
+  // the verifier runs.
+  st->register_chksgn_call();
   switch (tos::pq::verify_mldsa44(message, context, signature, public_key)) {
     case tos::pq::VerifyResult::valid:
       stack.push_bool(true);
@@ -139,11 +140,11 @@ int exec_pq_suite(VmState* st) {
   auto message_cell = stack.pop_cell();
   switch (suite) {
     case pq_suite_mldsa44: {
-      st->consume_gas_chk(pq_mldsa44_base_gas);
       const auto public_key = read_pq_bytes(st, public_key_cell, tos::pq::mldsa44_public_key_bytes);
       const auto signature = read_pq_bytes(st, signature_cell, tos::pq::mldsa44_signature_bytes);
       const auto context = read_pq_bytes(st, context_cell, tos::pq::mldsa44_max_context_bytes);
       const auto message = read_pq_bytes(st, message_cell, tos::pq::mldsa44_max_message_bytes);
+      st->register_chksgn_call();
       push_verify_result(stack, tos::pq::verify_mldsa44(message, context, signature, public_key), "ML-DSA-44");
       return 0;
     }

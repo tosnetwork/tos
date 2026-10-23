@@ -173,11 +173,20 @@ class Controls(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             root=Path(d);binary='1'*64
             # Two identical execution transcripts: the parity generator's own output.
-            rows=[f'case-{i}\t0\t57124\t-1\t1\tAB\tCD' for i in range(20)]
+            rows=[f'case-{i}\t0\t3339\t-1\t1\tAB\tCD' for i in range(20)]
+            # The repeated-call rows the comparison requires: ten free checks, then
+            # 4,000 gas for each later one.
+            calls={9:10355,10:11232,11:16109,12:20986}
+            rows+=[f'calls-{n}\t0\t{gas}\t-1\t1\tAB\tCD' for n,gas in calls.items()]
+            # An isolated child VM pays the parent's free signature gas.
+            runvm={'runvm-isolated':7494,'runvm-shared':3494}
+            rows+=[f'{name}\t0\t{gas}\t0\t1\tAB\tCD' for name,gas in runvm.items()]
             # One row carries a compiled binding, which the comparison requires.
+            names=[f'case-{i}' for i in range(20)]+[f'calls-{n}' for n in calls]+list(runvm)
             (root/'scenarios.tsv').write_text('\n'.join(
-                '\t'.join([f'case-{i}','x','x','x','x','V','x','x','x','x']+(['ff'] if i==0 else []))
-                for i in range(20)))
+                '\t'.join([name,'x','x','x','x','V' if name.startswith('case-') else '?',
+                            'x','x','x','x']+(['ff'] if name=='case-0' else []))
+                for name in names))
             (root/'cpp.tsv').write_text('\n'.join(rows));(root/'rust.tsv').write_text('\n'.join(rows))
             report=parity_report(root/'scenarios.tsv',root/'cpp.tsv',root/'rust.tsv')
             commit=report['source_commit']

@@ -387,8 +387,9 @@ Activation on a particular network must be checked against its ConfigParam 8.
 ### New TVM instructions
 - `PQCHECKSIG_MLDSA44` (`message context signature public_key - valid`) - FIPS 204
   Pure ML-DSA-44 verification over canonical ordinary byte-chain cells. 1312-byte key,
-  2420-byte signature, message up to 8192 bytes, context up to 255 bytes. Gas: 50,000
-  plus 1 per decoded byte. Versions 0-15 reject the opcode as invalid (exit 6). See
+  2420-byte signature, message up to 8192 bytes, context up to 255 bytes. Gas: priced as
+  the Ed25519 check (shared per-transaction counter, 10 free, then 4,000 each), plus
+  ordinary cell loads. Versions 0-15 reject the opcode as invalid (exit 6). See
   [tvm-mldsa44.md](tvm-mldsa44.md).
 
 ### Transaction changes

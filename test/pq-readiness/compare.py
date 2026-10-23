@@ -38,6 +38,8 @@ def check(scenarios: Path, cpp: Path, rust: Path) -> dict:
     if differences:
         raise ValueError('execution divergence: '+repr(differences[:12]))
     positive = negative = malformed = 0
+    calls = {}
+    runvm = {}
     for case, text in zip(source, a):
         fields = text.split('\t')
         if fields[0] != case[0]:
@@ -65,14 +67,31 @@ def check(scenarios: Path, cpp: Path, rust: Path) -> dict:
                     else 2 if name.startswith('underflow-') else 9 if name.startswith(('unaligned-','two-refs-','empty-prefix-','canonical-partition')) else None)
         if required is not None and exit_code != required:raise ValueError('missing guard: '+name)
         if name=='bad-signature-ignore-classic' and (exit_code,value)!=(0,0):raise ValueError('classic bypass affected PQ')
-        if name=='eleven-paid-calls' and (exit_code!=0 or gas<550_000):raise ValueError('PQ free-call allowance')
-        if name.startswith('gas-') and int(case[2])<57000 and exit_code!=-14:raise ValueError('gas guard not enforced')
+        if name.startswith('runvm-'):
+            if (exit_code,value)!=(0,0):
+                raise ValueError('child VM scenario failed: '+name)
+            runvm[name]=gas
+        if name.startswith('calls-'):
+            if exit_code!=0:
+                raise ValueError('repeated verification failed: '+name)
+            calls[int(name[len('calls-'):])]=gas
+        if name.startswith('gas-') and int(case[2])<=3000 and exit_code!=-14:raise ValueError('gas guard not enforced')
         if name.startswith('preactivation-budget-'):
             version, budget = int(case[1]), int(case[2])
             required_gas = 10 if version >= 4 and budget < 10 else 60
             if gas != required_gas:
                 raise ValueError('wrong historical exception metering: '+name)
     if positive<3:raise ValueError('independent positive controls missing')
+    # Priced as the Ed25519 check: calls 9 and 10 are free, 11 and 12 cost 4,000 more.
+    if sorted(calls)!=[9,10,11,12]:
+        raise ValueError('repeated-call scenarios missing')
+    free_step=calls[10]-calls[9]
+    if free_step>=4000 or calls[11]-calls[10]-free_step!=4000 or calls[12]-calls[11]!=calls[11]-calls[10]:
+        raise ValueError('PQ verification not charged like the Ed25519 check')
+    if sorted(runvm)!=['runvm-isolated','runvm-shared']:
+        raise ValueError('child VM scenarios missing')
+    if runvm['runvm-isolated']-runvm['runvm-shared']!=4000:
+        raise ValueError('an isolated child VM did not pay the parent\'s free signature gas')
     # Opcode-for-opcode agreement is a property of the two builds, not of any
     # chain, so it is declared network-independent rather than given a network.
     return {'success':True,'network':None,'scope':'network-independent',
