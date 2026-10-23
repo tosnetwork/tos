@@ -42,7 +42,27 @@
   {
     "guard": "stake-participant-limit",
     "killed": true,
-    "test": "elector_sandbox::an_additional_identity_is_refused_at_the_participant_bound_before_state_changes"
+    "test": "elector_sandbox::a_larger_stake_displaces_the_smallest_member_of_a_full_election"
+  },
+  {
+    "guard": "full-election-tie-keeps-the-member",
+    "killed": true,
+    "test": "elector_sandbox::a_full_election_refuses_a_stake_no_larger_than_its_smallest"
+  },
+  {
+    "guard": "displaced-stake-is-credited",
+    "killed": true,
+    "test": "elector_sandbox::a_larger_stake_displaces_the_smallest_member_of_a_full_election"
+  },
+  {
+    "guard": "displaced-stake-leaves-the-total",
+    "killed": true,
+    "test": "elector_sandbox::a_larger_stake_displaces_the_smallest_member_of_a_full_election"
+  },
+  {
+    "guard": "zero-account-refused",
+    "killed": true,
+    "test": "elector_sandbox::a_stake_from_the_zero_account_is_returned"
   },
   {
     "guard": "selection-refunds-placed-principal",

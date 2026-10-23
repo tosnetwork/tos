@@ -259,19 +259,74 @@ fn the_participant_bound_covers_selection_refusal_failure_and_unfreeze() {
 }
 
 #[test]
-fn an_additional_identity_is_refused_at_the_participant_bound_before_state_changes() {
+fn a_full_election_refuses_a_stake_no_larger_than_its_smallest() {
     let (mut chain, sender, election) = open_election("bounded-registration", 400_000 * TOS);
     require_post_quantum_version(&chain);
     install_synthetic_book(&mut chain, 256, 11_000 * TOS);
     let before = chain.blockchain.get_account(&chain.elector).expect("elector").get_data();
+    // 11,001 TOS less the 1 TOS confirmation is 11,000: equal to the smallest, not larger.
     let result =
-        pq_stake(&mut chain, &sender, &PqValidator::new(0xcd), election, 901, 12_000 * TOS);
-    assert_eq!(reply(&result), (0xee6f454c, 16), "the 257th identity must be refused");
+        pq_stake(&mut chain, &sender, &PqValidator::new(0xcd), election, 901, 11_001 * TOS);
+    assert_eq!(reply(&result), (0xee6f454c, 16), "an equal stake must not displace a member");
     assert_eq!(
         chain.blockchain.get_account(&chain.elector).expect("elector").get_data(),
         before,
-        "a full book must not consume or replace somebody else's registration"
+        "a refused stake must not consume or replace somebody else's registration"
     );
+}
+
+/// A full election makes room for a larger stake by dropping its smallest one, which is
+/// credited back to the account that sent it; the running total follows.
+#[test]
+fn a_larger_stake_displaces_the_smallest_member_of_a_full_election() {
+    let (mut chain, sender, election) = open_election("displacing-registration", 400_000 * TOS);
+    require_post_quantum_version(&chain);
+    let stake_of = |i: u16| (11_000 + u64::from(i)) * TOS;
+    install_synthetic_book_full(&mut chain, 256, &refund_owner, &stake_of);
+    let placed: u128 = (0..256).map(|i| u128::from(stake_of(i))).sum();
+    assert_eq!(declared_total_stake(&chain), placed);
+    let smallest = refund_owner(0);
+    assert_eq!(owed(&chain, &smallest), 0, "nothing is owed before the displacement");
+
+    let result =
+        pq_stake(&mut chain, &sender, &PqValidator::new(0xcd), election, 902, 20_000 * TOS);
+    assert_eq!(reply(&result), (STAKE_ACCEPTED, 0), "the larger stake was refused");
+    let book = pq_book(&chain);
+    assert_eq!(book.len().expect("member count"), 256, "the book grew past its bound");
+    let key = chain_block::SliceData::load_builder(
+        chain_block::BuilderData::with_raw(smallest.to_vec(), 256).expect("key"),
+    )
+    .expect("key slice");
+    assert!(book.get(key).expect("lookup").is_none(), "the smallest member is still there");
+    assert_eq!(owed(&chain, &smallest), u128::from(stake_of(0)), "its stake was not credited");
+    assert_eq!(
+        declared_total_stake(&chain),
+        placed - u128::from(stake_of(0)) + u128::from(19_999 * TOS),
+        "the running total did not follow the displacement"
+    );
+}
+
+/// No validator descriptor may name the zero account, and selection would refuse it after
+/// the election had closed; the stake is returned when it arrives instead.
+#[test]
+fn a_stake_from_the_zero_account_is_returned() {
+    let (mut chain, _sender, election) = open_election("zero-account", 400_000 * TOS);
+    require_post_quantum_version(&chain);
+    let validator = PqValidator::new(0xd0);
+    let zero = chain_block::UInt256::default();
+    // Signed for the zero account, so only the account itself can be the refusal.
+    let preimage = pq_stake_preimage(global_id(&chain), election, 0x10000, &zero, &validator.adnl);
+    let signature = validator.sign(&preimage);
+    let body = pq_stake_body(903, &validator, election, 0x10000, &signature);
+    let from = chain_block::MsgAddressInt::with_standart(None, -1, zero.clone().into())
+        .expect("the zero account");
+    let message = tos_sandbox::MessageBuilder::internal(&from, &chain.elector, 20_000 * TOS)
+        .bounce(true)
+        .body(body)
+        .build();
+    let result = chain.blockchain.send_message(message).expect("delivered");
+    assert_eq!(reply(&result), (STAKE_RETURNED, 0), "the zero account was admitted");
+    assert!(pq_book(&chain).is_empty(), "the zero account was registered");
 }
 
 #[test]
@@ -293,7 +348,8 @@ fn the_last_admitted_participant_can_top_up_without_occupying_another_slot() {
     assert_eq!(pq_stake_of(&chain, &sender), initial + u128::from(11_999 * TOS));
     assert_eq!(pq_book(&chain).len().expect("member count"), 256);
     let other = chain.blockchain.treasury("participant-overflow", 40_000 * TOS).expect("a wallet");
-    let result = pq_stake(&mut chain, &other, &PqValidator::new(0xcf), election, 912, 12_000 * TOS);
+    // No larger than the smallest member, so it cannot displace anyone.
+    let result = pq_stake(&mut chain, &other, &PqValidator::new(0xcf), election, 912, 11_001 * TOS);
     assert_eq!(reply(&result), (STAKE_RETURNED, 16));
     assert_eq!(pq_book(&chain).len().expect("member count"), 256);
 }

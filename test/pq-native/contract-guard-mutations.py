@@ -97,7 +97,42 @@ MUTANTS = [
         "    if (bounded_participant_count(members) >= participant_limit) {",
         "    if (false) {",
         "elector_sandbox",
-        "an_additional_identity_is_refused_at_the_participant_bound_before_state_changes",
+        "a_larger_stake_displaces_the_smallest_member_of_a_full_election",
+    ),
+    # A full election admits a newcomer only for a stake strictly larger than its smallest.
+    (
+        "full-election-tie-keeps-the-member",
+        "elector-code.fc",
+        "      if (msg_value <= evicted_stake) {",
+        "      if (msg_value < evicted_stake) {",
+        "elector_sandbox",
+        "a_full_election_refuses_a_stake_no_larger_than_its_smallest",
+    ),
+    # The displaced member's stake is credited back to the account that sent it.
+    (
+        "displaced-stake-is-credited",
+        "elector-code.fc",
+        "    credits~credit_to(evicted, evicted_stake);",
+        "    credits~credit_to(evicted, 0);",
+        "elector_sandbox",
+        "a_larger_stake_displaces_the_smallest_member_of_a_full_election",
+    ),
+    (
+        "displaced-stake-leaves-the-total",
+        "elector-code.fc",
+        "    total_stake -= evicted_stake;",
+        "    total_stake -= 0;",
+        "elector_sandbox",
+        "a_larger_stake_displaces_the_smallest_member_of_a_full_election",
+    ),
+    # No validator descriptor may name the zero account.
+    (
+        "zero-account-refused",
+        "elector-code.fc",
+        "  if (elect.null?() | (src_wc + 1) | (src_addr == 0)) {",
+        "  if (elect.null?() | (src_wc + 1)) {",
+        "elector_sandbox",
+        "a_stake_from_the_zero_account_is_returned",
     ),
     # The principal owed back is what was placed, not the stake capped at max_stake.
     (
