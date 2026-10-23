@@ -126,14 +126,15 @@ impl Node {
     }
     async fn stake_balance(&mut self, gas_fee: u64) -> anyhow::Result<u64> {
         match self.pool.as_ref() {
-            Some(pool) => self.api.account(&pool.address().to_string()).await.map(|x| x.balance()),
-            None => self
-                .api
-                .account(&self.wallet.address().to_string())
-                .await
-                .map(|x| x.balance().saturating_sub(gas_fee)),
+            Some(pool) => self.api.account(&pool.address().to_string()).await.map(|x| {
+                x.balance()
+                    .saturating_sub(pool.stake_storage_reserve())
+                    .saturating_sub(pool.stake_confirmation_fee())
+            }),
+            None => self.api.account(&self.wallet.address().to_string()).await.map(|x| {
+                x.balance().saturating_sub(gas_fee).saturating_sub(MIN_NANOTOS_FOR_STORAGE)
+            }),
         }
-        .map(|b| b.saturating_sub(MIN_NANOTOS_FOR_STORAGE))
     }
     async fn wallet_balance(&mut self) -> anyhow::Result<u64> {
         self.api.account(&self.wallet.address().to_string()).await.map(|x| x.balance())
@@ -784,7 +785,13 @@ impl ElectionRunner {
         );
         let params = nominator::NewStakeParams {
             query_id: UnixTime::now(),
-            stake_amount: participant.stake,
+            stake_amount: match &node.pool {
+                Some(pool) => participant
+                    .stake
+                    .checked_add(pool.stake_confirmation_fee())
+                    .context("pool stake value overflow")?,
+                None => participant.stake,
+            },
             validator_pubkey: authorization.public_key.as_slice(),
             stake_at: participant.election_id as u32,
             max_factor: participant.max_factor,

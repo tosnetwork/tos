@@ -2742,6 +2742,7 @@ struct MultiNominatorStakeProbe {
     elector_reply: Option<(u32, u32)>,
     pool_state: u8,
     pool_registered: bool,
+    registered_stake: Option<u128>,
 }
 
 fn multi_nominator_first_stake_probe(stake_amount: u64) -> MultiNominatorStakeProbe {
@@ -2754,7 +2755,7 @@ fn multi_nominator_first_stake_probe(stake_amount: u64) -> MultiNominatorStakePr
     let order = pool_stake_order(&chain, &pool, &key, election, stake_amount);
     let result = chain
         .blockchain
-        .send_message(operator.build_message(&pool, 20 * TOS, true, Some(order)))
+        .send_message(operator.build_message(&pool, TOS + TOS / 5, true, Some(order)))
         .expect("order delivered");
     result.expect_success();
 
@@ -2799,6 +2800,7 @@ fn multi_nominator_first_stake_probe(stake_amount: u64) -> MultiNominatorStakePr
         .parse()
         .expect("numeric pool state");
     let pool_registered = pq_member_key_id_at(&chain, &pool).is_some();
+    let registered_stake = pq_member_at(&chain, &pool).map(|member| member.stake);
     eprintln!(
         "multi-pool stake order={stake_amount}: pool_to_elector={:?} \
          elector_aborted={elector_aborted:?} elector_reply={elector_reply:?} \
@@ -2812,6 +2814,7 @@ fn multi_nominator_first_stake_probe(stake_amount: u64) -> MultiNominatorStakePr
         elector_reply,
         pool_state,
         pool_registered,
+        registered_stake,
     }
 }
 
@@ -2830,12 +2833,13 @@ fn a_multi_nominator_first_stake_exposes_the_exact_refusal() {
 
 #[test]
 fn a_multi_nominator_first_stake_with_the_confirmation_allowance_is_accepted() {
-    let probe = multi_nominator_first_stake_probe(10_002 * TOS);
-    assert_eq!(probe.pool_to_elector, Some(u128::from(10_002 * TOS)));
+    let probe = multi_nominator_first_stake_probe(10_001 * TOS);
+    assert_eq!(probe.pool_to_elector, Some(u128::from(10_001 * TOS)));
     assert_eq!(probe.elector_aborted, Some(false));
     assert_eq!(probe.elector_reply, Some((STAKE_ACCEPTED, 0)));
     assert_eq!(probe.pool_state, 2, "the pool did not record the accepted stake");
     assert!(probe.pool_registered, "the elector did not register the pool");
+    assert_eq!(probe.registered_stake, Some(u128::from(10_000 * TOS)));
 }
 
 #[test]

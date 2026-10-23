@@ -989,6 +989,105 @@ async fn test_pool_stake_signed_for_another_account_refuses_before_wallet_messag
     );
 }
 
+struct UnusedPoolProvider;
+
+#[async_trait::async_trait]
+impl contracts::ContractProvider for UnusedPoolProvider {
+    async fn get_method(
+        &self,
+        _address: String,
+        _method: &str,
+        _stack: Vec<tl_api::tos::tvm::StackEntry>,
+    ) -> anyhow::Result<common::tvm_stack_parser::TvmStackParser> {
+        anyhow::bail!("building a stake must not query pool state")
+    }
+
+    async fn balance(&self, _address: &MsgAddressInt) -> anyhow::Result<u64> {
+        anyhow::bail!("the runner reads balances through its node provider")
+    }
+}
+
+fn multi_pool_stake_runner(pool_balance: u64, expect_send: bool) -> ElectionRunner {
+    let mut harness = TestHarness::new();
+    harness.elector_mock.expect_address().returning(elector_address);
+    harness.wallet_mock.expect_address().returning(wallet_address);
+    setup_default_provider(&mut harness.provider_mock, WALLET_BALANCE, Some(pool_balance));
+    if expect_send {
+        harness
+            .wallet_mock
+            .expect_message()
+            .times(1)
+            .withf(|dest, value, payload| {
+                validate_message_parameters(
+                    dest,
+                    value,
+                    payload,
+                    MIN_STAKE + ELECTOR_STAKE_FEE,
+                    true,
+                )
+            })
+            .returning(|_, _, _| Ok(dummy_cell()));
+    } else {
+        harness.wallet_mock.expect_message().times(0);
+    }
+    let mut runner = harness.build("node-1");
+    let node = runner.nodes.get_mut("node-1").expect("node");
+    node.pool = Some(Arc::new(contracts::NominatorPoolWrapperImpl::new(
+        Arc::new(UnusedPoolProvider),
+        pool_address(),
+    )));
+    node.elections_address = pool_address();
+    node.participant = Some(Participant {
+        stake: MIN_STAKE,
+        election_id: ELECTION_ID,
+        max_factor: 196608,
+        adnl_addr: ADNL_ADDR.to_vec(),
+        wallet_addr: POOL_ADDR.to_vec(),
+        ..Default::default()
+    });
+    runner
+}
+
+#[tokio::test]
+async fn a_multi_pool_order_funds_the_confirmation_above_the_target_stake() {
+    let mut runner = multi_pool_stake_runner(POOL_BALANCE, true);
+    let node = runner.nodes.get_mut("node-1").expect("node");
+    ElectionRunner::send_stake("node-1", node, MIN_STAKE).await.expect("funded stake");
+    assert_eq!(node.participant.as_ref().expect("participant").stake, MIN_STAKE);
+    assert_eq!(node.stake_submissions[0].stake, MIN_STAKE);
+}
+
+#[tokio::test]
+async fn a_multi_pool_without_the_confirmation_allowance_sends_nothing() {
+    let mut runner = multi_pool_stake_runner(MIN_STAKE + 10_000_000_000, false);
+    let node = runner.nodes.get_mut("node-1").expect("node");
+    let error = ElectionRunner::send_stake("node-1", node, MIN_STAKE).await.unwrap_err();
+    assert!(error.to_string().contains("low stake balance"), "wrong refusal: {error}");
+    assert!(node.stake_submissions.is_empty());
+}
+
+#[tokio::test]
+async fn a_multi_pool_confirmation_overflow_sends_nothing() {
+    let mut runner = multi_pool_stake_runner(u64::MAX, false);
+    let node = runner.nodes.get_mut("node-1").expect("node");
+    node.participant.as_mut().expect("participant").stake = u64::MAX;
+    let error = ElectionRunner::send_stake("node-1", node, u64::MAX).await.unwrap_err();
+    assert!(error.to_string().contains("pool stake value overflow"), "wrong refusal: {error}");
+    assert!(node.stake_submissions.is_empty());
+}
+
+#[tokio::test]
+async fn a_multi_pool_stake_policy_reserves_storage_and_confirmation() {
+    let mut runner = multi_pool_stake_runner(POOL_BALANCE, false);
+    let node = runner.nodes.get_mut("node-1").expect("node");
+    node.stake_policy = StakePolicy::Fixed(u64::MAX);
+    let stake = ElectionRunner::calc_stake(node, "node-1", &[], 0, MIN_STAKE)
+        .await
+        .expect("the available stake");
+    // The contract requires ten TOS to remain and deducts one from the order.
+    assert_eq!(stake, POOL_BALANCE - 11_000_000_000);
+}
+
 // =====================================================
 // TEST: participate with existing key (re-stake)
 // =====================================================

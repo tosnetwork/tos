@@ -327,13 +327,22 @@ impl SmartContract for NominatorPoolWrapperImpl {
 
 /// The elections daemon drives every pool kind through `NominatorWrapper`.
 ///
-/// That sharing is sound rather than merely convenient: the single-nominator
-/// contract and pool.fc accept byte-identical `new_stake` and `recover_stake`
-/// bodies, so the same election payloads reach the Elector either way. What
-/// differs is the preconditions each contract enforces before forwarding, and
-/// those live with the caller.
+/// Both pool kinds accept the same `new_stake` and `recover_stake` body layouts.
+/// This pool forwards exactly the ordered amount, so its stake order must also
+/// fund the Elector's confirmation. Other forwarding preconditions remain with
+/// the caller.
 #[async_trait::async_trait]
 impl crate::nominator::NominatorWrapper for NominatorPoolWrapperImpl {
+    fn stake_confirmation_fee(&self) -> u64 {
+        // This pool forwards exactly the order amount; the elector deducts its
+        // confirmation from that value before recording the stake.
+        1_000_000_000
+    }
+
+    fn stake_storage_reserve(&self) -> u64 {
+        10_000_000_000
+    }
+
     async fn get_roles(&self) -> anyhow::Result<crate::nominator::NominatorRoles> {
         // pool.fc records a validator address but has no owner: the funds
         // belong to the nominators, and no single account can withdraw them.
