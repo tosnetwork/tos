@@ -48,6 +48,7 @@ def check(scenarios: Path, cpp: Path, rust: Path) -> dict:
     positive = negative = malformed = 0
     calls = {}
     runvm = {}
+    unpaid = None
     for case, text in zip(source, a):
         fields = text.split("\t")
         if fields[0] != case[0]:
@@ -89,6 +90,8 @@ def check(scenarios: Path, cpp: Path, rust: Path) -> dict:
             raise ValueError("missing guard: " + name)
         if name == "bad-signature-ignore-classic" and (exit_code, value) != (0, 0):
             raise ValueError("classic bypass affected PQ")
+        if name == "unpaid-isolated-runvm":
+            unpaid = exit_code
         if name.startswith("runvm-"):
             if (exit_code, value) != (0, 0):
                 raise ValueError("child VM scenario failed: " + name)
@@ -120,6 +123,8 @@ def check(scenarios: Path, cpp: Path, rust: Path) -> dict:
         raise ValueError("child VM scenarios missing")
     if runvm["runvm-isolated"] - runvm["runvm-shared"] != 4000:
         raise ValueError("an isolated child VM did not pay the parent's free signature gas")
+    if unpaid is None:
+        raise ValueError("unpaid isolated child VM scenario missing")
     # Opcode-for-opcode agreement is a property of the two builds, not of any
     # chain, so it is declared network-independent rather than given a network.
     return {

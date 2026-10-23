@@ -383,8 +383,15 @@ class Controls(unittest.TestCase):
             # An isolated child VM pays the parent's free signature gas.
             runvm = {"runvm-isolated": 7494, "runvm-shared": 3494}
             rows += [f"{name}\t0\t{gas}\t0\t1\tAB\tCD" for name, gas in runvm.items()]
+            # A parent that cannot pay that gas stops out of gas.
+            rows += ["unpaid-isolated-runvm\t-14\t7484\t99\t0\t-\t-"]
             # One row carries a compiled binding, which the comparison requires.
-            names = [f"case-{i}" for i in range(20)] + [f"calls-{n}" for n in calls] + list(runvm)
+            names = (
+                [f"case-{i}" for i in range(20)]
+                + [f"calls-{n}" for n in calls]
+                + list(runvm)
+                + ["unpaid-isolated-runvm"]
+            )
             (root / "scenarios.tsv").write_text(
                 "\n".join(
                     "\t".join(

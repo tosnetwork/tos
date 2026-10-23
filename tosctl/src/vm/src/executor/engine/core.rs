@@ -1061,8 +1061,13 @@ impl Engine {
     pub(crate) fn run_child_vm(&mut self, params: RunChildVm) -> Status {
         if params.isolate_gas {
             // The free allowance does not cross an isolation boundary: what the parent got
-            // for free is paid now, and the child starts counting from zero.
-            self.use_gas(self.free_gas_consumed);
+            // for free is paid now, and the child starts counting from zero. From version 4
+            // the charge is checked, so a parent that cannot pay stops here out of gas.
+            if self.block_version >= 4 {
+                self.try_use_gas(self.free_gas_consumed)?;
+            } else {
+                self.use_gas(self.free_gas_consumed);
+            }
             self.checked_signatures_count = 0;
             self.free_gas_consumed = 0;
         }

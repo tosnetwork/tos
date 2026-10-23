@@ -115,6 +115,16 @@ def main():
             .uint(mode, 12)
         )
         add(name, good, program=code.boc().hex())
+        if mode == 128:
+            # A parent that cannot pay the free gas it owes stops out of gas before the
+            # child starts: 5,000 covers the checks and the shared child, not the charge.
+            add(
+                "unpaid-isolated-runvm",
+                good,
+                budget=5000,
+                program=code.boc().hex(),
+                expected="E-14",
+            )
     # The rows above run raw opcodes, which never reach the assembler. These run
     # the programs the shipped bindings actually compile to, on both VMs.
     for entry in a.program:
