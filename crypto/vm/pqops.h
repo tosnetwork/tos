@@ -4,8 +4,10 @@ namespace vm {
 class OpcodeTable;
 inline constexpr unsigned pq_mldsa44_opcode = 0xf93100;
 inline constexpr int pq_mldsa44_min_version = 16;
-inline constexpr long long pq_mldsa44_base_gas = 50000;
-inline constexpr long long pq_mldsa44_byte_gas = 1;
+// ML-DSA-44 verifies about as fast as Ed25519, so it is charged exactly as the Ed25519
+// check is: through VmState::register_chksgn_call(), sharing its per-transaction counter,
+// free allowance and price. The key and signature bytes are paid by ordinary cell-load gas.
+inline constexpr long long pq_mldsa44_byte_gas = 0;
 // Falcon-512 padded verification; enabled at the genesis version. Tariff is a prototype value.
 inline constexpr unsigned pq_falcon512_opcode = 0xf93101;
 inline constexpr int pq_falcon512_min_version = 16;

@@ -11,8 +11,8 @@
  */
 use super::*;
 use chain_block::{
-    base64_decode, read_single_root_boc, tos_method_id, Coins, CurrencyCollection,
-    InternalMessageHeader, Message, MsgAddressInt, ShardAccount,
+    tos_method_id, Coins, CurrencyCollection, InternalMessageHeader, Message, MsgAddressInt,
+    ShardAccount,
 };
 
 #[test]
@@ -121,98 +121,17 @@ fn test_run_get_method_seqno_with_elector() {
     assert_eq!(result.stack[0].number().unwrap().number(), "0x14c97");
 }
 
-fn extract_account_boc<'a>(json: &'a str, account_id: &str) -> Option<&'a str> {
-    let id_key = format!("\"id\": \"{}\"", account_id);
-    let id_pos = json.find(&id_key)?;
-    let boc_key = "\"boc\": \"";
-    let boc_start = json[id_pos..].find(boc_key)? + id_pos + boc_key.len();
-    let rest = &json[boc_start..];
-    let boc_end = rest.find('"')?;
-    Some(&rest[..boc_end])
-}
+/// The Elector as this repository's zerostate deploys it, and the same Elector holding one
+/// accepted post-quantum stake. Both are produced from the real zerostate and kept current
+/// by `vm_getter_fixtures_match_the_deployed_elector` in the contracts crate.
+const ELECTOR_AT_ZEROSTATE: &str = "elector-zerostate.boc";
+const ELECTOR_WITH_ONE_STAKE: &str = "elector-one-stake.boc";
 
-fn extract_json_string_field(json: &str, field: &str) -> anyhow::Result<String> {
-    let value: serde_json::Value =
-        serde_json::from_str(json).map_err(|err| anyhow::anyhow!("invalid json: {err}"))?;
-    value
-        .get(field)
-        .and_then(serde_json::Value::as_str)
-        .map(str::to_owned)
-        .ok_or_else(|| anyhow::anyhow!("missing string field `{field}`"))
-}
-
-fn should_dump_external_boc_response() -> bool {
-    std::env::var("TOS_VM_DUMP_ELECTOR_RESPONSE")
-        .map(|value| {
-            let value = value.trim();
-            value == "1" || value.eq_ignore_ascii_case("true") || value.eq_ignore_ascii_case("yes")
-        })
-        .unwrap_or(false)
-}
-
-fn stack_entry_to_json(entry: &tl_api::tos::tvm::StackEntry) -> serde_json::Value {
-    match entry {
-        tl_api::tos::tvm::StackEntry::Tvm_StackEntryNumber(number) => serde_json::json!({
-            "type": "num",
-            "value": number.number.number(),
-        }),
-        tl_api::tos::tvm::StackEntry::Tvm_StackEntryCell(cell) => serde_json::json!({
-            "type": "cell",
-            "value": cell.cell.bytes.clone(),
-        }),
-        tl_api::tos::tvm::StackEntry::Tvm_StackEntrySlice(slice) => serde_json::json!({
-            "type": "slice",
-            "value": slice.slice.bytes.clone(),
-        }),
-        tl_api::tos::tvm::StackEntry::Tvm_StackEntryTuple(tuple) => serde_json::json!({
-            "type": "tuple",
-            "elements": tuple.tuple.elements().iter().map(stack_entry_to_json).collect::<Vec<_>>(),
-        }),
-        tl_api::tos::tvm::StackEntry::Tvm_StackEntryList(list) => serde_json::json!({
-            "type": "list",
-            "elements": list.list.elements().iter().map(stack_entry_to_json).collect::<Vec<_>>(),
-        }),
-        tl_api::tos::tvm::StackEntry::Tvm_StackEntryUnsupported => serde_json::json!({
-            "type": "unsupported",
-        }),
-    }
-}
-
-fn stack_to_json(stack: &[tl_api::tos::tvm::StackEntry]) -> serde_json::Value {
-    serde_json::Value::Array(stack.iter().map(stack_entry_to_json).collect())
-}
-
-fn maybe_dump_external_boc_response(result: &tl_api::tos::smc::runresult::RunResult) {
-    if !should_dump_external_boc_response() {
-        return;
-    }
-
-    let output_path = format!("{}/src/tests/elector_response.json", env!("CARGO_MANIFEST_DIR"));
-    let payload = serde_json::json!({
-        "exit_code": result.exit_code,
-        "gas_used": result.gas_used,
-        "method": "participant_list_extended",
-        "method_id": tos_method_id("participant_list_extended"),
-        "stack": stack_to_json(&result.stack),
-    });
-    let pretty = serde_json::to_string_pretty(&payload).expect("serialize response to json");
-    std::fs::write(&output_path, pretty).expect("write elector response json");
-    println!("saved run_get_method response to {output_path}");
-}
-
-fn load_elector_shard_account() -> ShardAccount {
-    let manifest_dir = env!("CARGO_MANIFEST_DIR");
-    let json_path =
-        format!("{}/../node/tests/test_run_net_py/zerostate_blank_elections.json", manifest_dir);
-    let json = std::fs::read_to_string(json_path).unwrap();
-    let boc_b64 = extract_account_boc(
-        &json,
-        "-1:3333333333333333333333333333333333333333333333333333333333333333",
-    )
-    .expect("elector account boc not found");
-    let boc = base64_decode(boc_b64).unwrap();
-    let account_cell = read_single_root_boc(boc).unwrap();
-    ShardAccount::with_account_root(account_cell, Default::default(), 0)
+fn load_elector_fixture(name: &str) -> ShardAccount {
+    let path = format!("{}/src/tests/data/{name}", env!("CARGO_MANIFEST_DIR"));
+    let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("{path}: {e}"));
+    let account = chain_block::Account::construct_from_bytes(&bytes).unwrap();
+    ShardAccount::with_params(&account, Default::default(), 0).unwrap()
 }
 
 fn load_mc_state_cell() -> Cell {
@@ -221,10 +140,11 @@ fn load_mc_state_cell() -> Cell {
 }
 
 fn run_elector_method(
+    fixture: &str,
     method: &str,
     stack: Vec<tl_api::tos::tvm::StackEntry>,
 ) -> tl_api::tos::smc::runresult::RunResult {
-    let shard_account = load_elector_shard_account();
+    let shard_account = load_elector_fixture(fixture);
     let mc_state_cell = load_mc_state_cell();
     let mc_state = ShardStateUnsplit::construct_from_cell(mc_state_cell.clone()).unwrap();
     let method_id = tos_method_id(method);
@@ -252,196 +172,127 @@ fn stack_number_from_str(value: &str) -> tl_api::tos::tvm::StackEntry {
     items.into_iter().next().unwrap()
 }
 
-fn load_external_elector_shard_account() -> ShardAccount {
-    let manifest_dir = env!("CARGO_MANIFEST_DIR");
-    let json_path = format!("{manifest_dir}/src/tests/elector.json");
-    let json = std::fs::read_to_string(&json_path).unwrap();
-    let boc_b64 = extract_json_string_field(&json, "boc").expect("missing boc field");
-
-    let account_bytes = base64_decode(&boc_b64).unwrap();
-    let account = chain_block::Account::construct_from_bytes(&account_bytes).unwrap();
-    ShardAccount::with_params(&account, Default::default(), 0).unwrap()
+fn number(entry: &tl_api::tos::tvm::StackEntry) -> String {
+    entry.number().expect("a number").number().to_owned()
 }
 
-fn run_external_elector_method(
-    method: &str,
-    stack: Vec<tl_api::tos::tvm::StackEntry>,
-) -> tl_api::tos::smc::runresult::RunResult {
-    let shard_account = load_external_elector_shard_account();
-    let mc_state_cell = load_mc_state_cell();
-    let mc_state = ShardStateUnsplit::construct_from_cell(mc_state_cell.clone()).unwrap();
-    let method_id = tos_method_id(method);
-    run_smc_method(
-        &shard_account.read_account().unwrap(),
-        mc_state_cell,
-        method_id,
-        stack,
-        mc_state.gen_time(),
-        mc_state.gen_lt(),
-    )
-    .unwrap()
-    .into_run_result()
-    .unwrap()
-}
-
-fn first_external_participant_pubkey_and_wallet() -> (String, String) {
-    let result = run_external_elector_method("participant_list_extended", Vec::new());
+/// `participant_list_extended` returns the election summary with the member list at index
+/// 4. Each member is `[validator_id, [stake, max_factor, validator_id, adnl_addr,
+/// algorithm_id, key_id]]`.
+fn members(
+    result: &tl_api::tos::smc::runresult::RunResult,
+) -> Vec<(String, Vec<tl_api::tos::tvm::StackEntry>)> {
     assert_eq!(result.exit_code, 0);
-    assert!(result.stack.len() >= 5);
-
-    let participants = match &result.stack[4] {
+    assert_eq!(result.stack.len(), 7, "the election summary has seven fields");
+    let list = match &result.stack[4] {
         tl_api::tos::tvm::StackEntry::Tvm_StackEntryList(list) => list.list.elements(),
-        other => panic!("expected participants list at stack[4], got {:?}", other),
+        other => panic!("expected the member list at stack[4], got {:?}", other),
     };
-    assert!(!participants.is_empty(), "participants list is empty");
+    list.iter()
+        .map(|member| {
+            let fields = match member {
+                tl_api::tos::tvm::StackEntry::Tvm_StackEntryTuple(tuple) => tuple.tuple.elements(),
+                other => panic!("expected a member tuple, got {:?}", other),
+            };
+            assert_eq!(fields.len(), 2, "a member is [validator_id, arguments]");
+            let arguments = match &fields[1] {
+                tl_api::tos::tvm::StackEntry::Tvm_StackEntryTuple(tuple) => tuple.tuple.elements(),
+                other => panic!("expected the member arguments, got {:?}", other),
+            };
+            assert_eq!(arguments.len(), 6, "member arguments have six fields");
+            (number(&fields[0]), arguments.to_vec())
+        })
+        .collect()
+}
 
-    let participant_fields = match &participants[0] {
-        tl_api::tos::tvm::StackEntry::Tvm_StackEntryTuple(tuple) => tuple.tuple.elements(),
-        other => panic!("expected participant tuple, got {:?}", other),
-    };
-    assert_eq!(participant_fields.len(), 2, "participant must be tuple(pubkey, args)");
-
-    let pubkey = participant_fields[0]
-        .number()
-        .expect("participant pubkey must be number")
-        .number()
-        .to_owned();
-
-    let args = match &participant_fields[1] {
-        tl_api::tos::tvm::StackEntry::Tvm_StackEntryTuple(tuple) => tuple.tuple.elements(),
-        other => panic!("expected participant args tuple, got {:?}", other),
-    };
-    assert_eq!(args.len(), 4, "participant args must contain 4 fields");
-
-    let wallet_addr =
-        args[2].number().expect("participant wallet addr must be number").number().to_owned();
-
-    (pubkey, wallet_addr)
+/// The one member of the staked fixture.
+fn staked_member() -> (String, Vec<tl_api::tos::tvm::StackEntry>) {
+    let result =
+        run_elector_method(ELECTOR_WITH_ONE_STAKE, "participant_list_extended", Vec::new());
+    let mut list = members(&result);
+    assert_eq!(list.len(), 1, "the fixture holds exactly one stake");
+    list.remove(0)
 }
 
 #[test]
 fn test_run_get_method_participant_list_extended_empty_list() {
-    let result = run_elector_method("participant_list_extended", Vec::new());
-    assert_eq!(result.exit_code, 0);
-    assert!(result.stack.len() >= 5);
-    match &result.stack[4] {
-        tl_api::tos::tvm::StackEntry::Tvm_StackEntryList(list) => {
-            assert!(list.list.elements().is_empty());
-        }
-        other => panic!("expected list, got {:?}", other),
-    }
+    let result = run_elector_method(ELECTOR_AT_ZEROSTATE, "participant_list_extended", Vec::new());
+    assert!(members(&result).is_empty());
 }
 
 #[test]
 fn test_run_get_method_elector_active_election_id() {
-    let result = run_elector_method("active_election_id", Vec::new());
+    let result = run_elector_method(ELECTOR_AT_ZEROSTATE, "active_election_id", Vec::new());
     assert_eq!(result.exit_code, 0);
     assert_eq!(result.stack.len(), 1);
-    assert_eq!(result.stack[0].number().unwrap().number(), "0x0");
+    assert_eq!(number(&result.stack[0]), "0x0");
+
+    // With a stake placed, the open election is the one the summary names.
+    let summary =
+        run_elector_method(ELECTOR_WITH_ONE_STAKE, "participant_list_extended", Vec::new());
+    let open = run_elector_method(ELECTOR_WITH_ONE_STAKE, "active_election_id", Vec::new());
+    assert_eq!(open.exit_code, 0);
+    assert_ne!(number(&open.stack[0]), "0x0", "the staked fixture has an election open");
+    assert_eq!(number(&open.stack[0]), number(&summary.stack[0]));
 }
 
 #[test]
 fn test_run_get_method_elector_compute_returned_stake_zero_addr() {
-    let result = run_elector_method("compute_returned_stake", vec![stack_number(0)]);
+    let result =
+        run_elector_method(ELECTOR_AT_ZEROSTATE, "compute_returned_stake", vec![stack_number(0)]);
     assert_eq!(result.exit_code, 0);
     assert_eq!(result.stack.len(), 1);
-    assert_eq!(result.stack[0].number().unwrap().number(), "0x0");
+    assert_eq!(number(&result.stack[0]), "0x0");
 }
 
 #[test]
 fn test_run_get_method_elector_participates_in_zero_pubkey() {
-    let result = run_elector_method("participates_in", vec![stack_number(0)]);
+    let result = run_elector_method(ELECTOR_AT_ZEROSTATE, "participates_in", vec![stack_number(0)]);
     assert_eq!(result.exit_code, 0);
-    assert!(result.stack.len() >= 1);
-    assert!(result.stack[0].number().is_some());
+    assert_eq!(result.stack.len(), 1);
+    assert_eq!(number(&result.stack[0]), "0x0");
 }
 
 #[test]
-fn test_run_get_method_participant_list_extended_from_external_boc_keeps_pubkey() {
-    let result = run_external_elector_method("participant_list_extended", Vec::new());
-    maybe_dump_external_boc_response(&result);
-
-    assert_eq!(result.exit_code, 0);
-    assert!(result.stack.len() >= 5);
-
-    let participants = match &result.stack[4] {
-        tl_api::tos::tvm::StackEntry::Tvm_StackEntryList(list) => list.list.elements(),
-        other => panic!("expected participants list at stack[4], got {:?}", other),
-    };
-    assert!(!participants.is_empty(), "participants list is empty");
-
-    let first = &participants[0];
-    let participant_fields = match first {
-        tl_api::tos::tvm::StackEntry::Tvm_StackEntryTuple(tuple) => tuple.tuple.elements(),
-        other => panic!("expected participant tuple, got {:?}", other),
-    };
-    assert_eq!(participant_fields.len(), 2, "participant must be tuple(pubkey, args)");
-    assert!(
-        matches!(participant_fields[0], tl_api::tos::tvm::StackEntry::Tvm_StackEntryNumber(_)),
-        "participant pubkey must be number"
+fn test_run_get_method_participant_list_extended_one_stake_keeps_member_shape() {
+    let (validator_id, arguments) = staked_member();
+    assert_ne!(validator_id, "0x0");
+    assert_ne!(number(&arguments[0]), "0x0", "the member's stake");
+    assert_eq!(number(&arguments[2]), validator_id, "the member names itself");
+    assert_ne!(number(&arguments[3]), "0x0", "the member's ADNL address");
+    assert_eq!(
+        number(&arguments[4]),
+        format!("{:#x}", chain_block::validators::MLDSA44_ALGORITHM_ID),
+        "the member's key is ML-DSA-44"
     );
-
-    let args = match &participant_fields[1] {
-        tl_api::tos::tvm::StackEntry::Tvm_StackEntryTuple(tuple) => tuple.tuple.elements(),
-        other => panic!("expected participant args tuple, got {:?}", other),
-    };
-    assert_eq!(args.len(), 4, "participant args must contain 4 fields");
-    assert!(
-        args.iter().all(|entry| {
-            matches!(entry, tl_api::tos::tvm::StackEntry::Tvm_StackEntryNumber(_))
-        }),
-        "all participant args fields must be numbers"
-    );
+    assert_ne!(number(&arguments[5]), "0x0", "the member's key id");
 }
 
 #[test]
-fn test_run_get_method_participates_in_from_external_boc_existing_pubkey() {
-    let (pubkey, _) = first_external_participant_pubkey_and_wallet();
-    assert_eq!(
-        pubkey, "0x6a258fe61308a122a4e781aa9cf6e18af017fb5536ffbceead903616b40fb0",
-        "unexpected first participant pubkey in elector snapshot"
+fn test_run_get_method_participates_in_one_stake_member() {
+    let (validator_id, arguments) = staked_member();
+    let result = run_elector_method(
+        ELECTOR_WITH_ONE_STAKE,
+        "participates_in",
+        vec![stack_number_from_str(&validator_id)],
     );
-
-    let result =
-        run_external_elector_method("participates_in", vec![stack_number_from_str(&pubkey)]);
-
     assert_eq!(result.exit_code, 0);
-    assert!(!result.stack.is_empty(), "participates_in must return non-empty stack");
-    let value = result.stack[0]
-        .number()
-        .expect("participates_in first result entry must be number")
-        .number()
-        .to_owned();
-    assert_eq!(
-        value, "0x363841cca8800",
-        "unexpected participates_in result for first participant pubkey"
-    );
+    assert_eq!(result.stack.len(), 1);
+    assert_eq!(number(&result.stack[0]), number(&arguments[0]), "participates_in is the stake");
 }
 
 #[test]
-fn test_run_get_method_compute_returned_stake_from_external_boc_existing_wallet() {
-    let (_, wallet_addr) = first_external_participant_pubkey_and_wallet();
-    assert_eq!(
-        wallet_addr, "0x121871ca1f8e4c8ab479a12a8dcacc43767fdfb4f0efda0837a9f6ec92076a66",
-        "unexpected first participant wallet in elector snapshot"
-    );
-
-    let result = run_external_elector_method(
+fn test_run_get_method_compute_returned_stake_one_stake_member() {
+    // A stake in an open election is not yet a credit the member could recover.
+    let (validator_id, _) = staked_member();
+    let result = run_elector_method(
+        ELECTOR_WITH_ONE_STAKE,
         "compute_returned_stake",
-        vec![stack_number_from_str(&wallet_addr)],
+        vec![stack_number_from_str(&validator_id)],
     );
-
     assert_eq!(result.exit_code, 0);
-    assert_eq!(result.stack.len(), 1, "compute_returned_stake must return one value");
-    let value = result.stack[0]
-        .number()
-        .expect("compute_returned_stake result must be number")
-        .number()
-        .to_owned();
-    assert_eq!(
-        value, "0x0",
-        "unexpected compute_returned_stake result for first participant wallet"
-    );
+    assert_eq!(result.stack.len(), 1);
+    assert_eq!(number(&result.stack[0]), "0x0");
 }
 
 #[test]

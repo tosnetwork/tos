@@ -54,11 +54,12 @@ const int QUERY_ID_BITS = 23;
 const int CREATED_AT_BITS = 64;
 const int TIMEOUT_BITS = 22;
 
-;; Historical empty-extra measurement: 79,546 base + 2,708/action at afb2e27f9.
+;; Empty-extra measurement on the dense worst-state wallet, with ML-DSA verification
+;; priced as the Ed25519 check: 25,937 base + 3,136/action.
 ;; Per-action allowance includes preflight bookkeeping. A fixed reserve covers all
 ;; eight extra entries and live-config reads. It is refunded when unused, not charged
 ;; as a flat fee. Real-executor profile and exact-quote tests gate these allowances.
-const int fee::base_gas = 87600;
+const int fee::base_gas = 28600;
 const int fee::gas_per_action = 3300;
 const int fee::extra_gas = 60000;
 

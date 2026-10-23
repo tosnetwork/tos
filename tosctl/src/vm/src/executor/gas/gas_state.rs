@@ -189,6 +189,10 @@ impl Gas {
         }
     }
 
+    pub const fn check_signature_gas_price() -> i64 {
+        CHECK_SIGNATURE_GAS_PRICE
+    }
+
     pub const fn check_p256_signature_price() -> i64 {
         CHECK_P256_SIGNATURE_GAS_PRICE
     }

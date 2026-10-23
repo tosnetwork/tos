@@ -2345,7 +2345,7 @@ fn governance_accepts_the_launch_boundary_and_refuses_every_ceiling_above_it() {
 /// A vote brings the price of the verification it asks for.
 ///
 /// Anyone can send one. Without this, an unauthorised sender could make every
-/// masterchain block pay fifty thousand gas per message, for as many messages as it
+/// masterchain block pay for a post-quantum verification per message, for as many messages as it
 /// cared to send, and the signatures would never have to be valid.
 #[test]
 fn a_vote_costs_what_the_verification_it_asks_for_costs() {
@@ -3320,11 +3320,11 @@ fn a_contract_can_send_the_witness_but_not_the_proof_it_replaced() {
 // ---------------------------------------------------------------------------
 // What a vote must bring, and what an invalid one cannot take
 //
-// Both vote paths verify an ML-DSA-44 signature, which costs about fifty thousand gas
-// and cannot be made cheaper by being wrong: an invalid signature is found only by
-// performing the verification. Anyone may send a vote, so the sender has to pay for it
-// before it happens, and a sender who keeps sending invalid ones must not be able to
-// spend the contract's own balance doing it.
+// Both vote paths verify an ML-DSA-44 signature, whose cost cannot be made cheaper by
+// being wrong: an invalid signature is found only by performing the verification.
+// Anyone may send a vote, so the sender has to pay for it before it happens, and a sender
+// who keeps sending invalid ones must not be able to spend the contract's own balance
+// doing it.
 //
 // The minimum is found by searching for it rather than by recomputing the contract's
 // rule here. A test that derives the boundary the same way the contract does would agree
@@ -3482,7 +3482,7 @@ fn the_minimum_value_a_complaint_vote_must_carry() {
 ///
 /// This is the cheapest message an unauthorised sender can repeat without limit: it
 /// carries far less than a verification costs, and its signature is wrong, so nothing
-/// about it is worth the fifty thousand gas it would take to find that out.
+/// about it is worth the verification it would take to find that out.
 ///
 /// What is measured is the work, not a balance. The configuration contract's balance
 /// does not move for any of these messages -- not for a refusal, and not for a vote that
@@ -5774,6 +5774,34 @@ impl PqValidator {
         assert_eq!(public_key.len(), MLDSA44_PUBLIC_KEY_BYTES);
         // Distinct per index, and never a uniform byte pattern: the sandbox genesis set
         // states uniform addresses, and a candidate restating one of those is refused.
+        let mut adnl = [0xd0 ^ index; 32];
+        adnl[0] = 0xad;
+        PqValidator { key_file, public_key, adnl }
+    }
+
+    /// A validator whose key is derived from a fixed public seed, so every machine derives
+    /// the same key. `new` generates a random key per machine, which is enough for a test
+    /// that only needs some key, but not for output that is compared byte for byte.
+    fn from_seed(index: u8, seed: [u8; 32]) -> Self {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        static SCRATCH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let scratch = SCRATCH.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let key_file = std::env::temp_dir()
+            .join(format!("tos-pq-seeded-{}-{scratch}.key", std::process::id()));
+        // The key tool reads only an owner-only regular file.
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&key_file)
+            .expect("a private seed file");
+        file.write_all(&seed).expect("write the seed");
+        drop(file);
+        let public_key =
+            hex::decode(&run_key_tool(&["public", key_file.to_str().expect("path")])[0])
+                .expect("hex");
+        assert_eq!(public_key.len(), MLDSA44_PUBLIC_KEY_BYTES);
         let mut adnl = [0xd0 ^ index; 32];
         adnl[0] = 0xad;
         PqValidator { key_file, public_key, adnl }
@@ -8715,4 +8743,64 @@ fn the_round_cap_alone_ends_a_proposal_after_its_seventh_round() {
     turn_round(&mut chain);
     assert_eq!(touch_round(&mut chain, &validators[0], &p, 0xb080), VOTE_DISCARDED);
     assert_eq!(proposal_counters(&chain, &p), None, "the proposal outlived max_tot_rounds");
+}
+
+// ---------------------------------------------------------------------------
+// Get-method fixtures for the VM crate
+//
+// The VM crate tests its get-method runner against the Elector, but cannot build a
+// zerostate. It reads two Elector accounts this test produces from the real zerostate:
+// one as deployed, with no election open, and one holding a single accepted stake. They
+// are checked byte for byte here, so a change to the Elector or the zerostate that is
+// not carried into the fixtures fails here rather than leaving the VM tests exercising
+// an Elector this repository no longer deploys. Set TOS_REGENERATE_FIXTURES=1 to rewrite
+// them.
+// ---------------------------------------------------------------------------
+
+/// Where the VM crate reads the fixtures from.
+fn vm_getter_fixture(name: &str) -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../vm/src/tests/data").join(name)
+}
+
+fn elector_account_boc(chain: &Chain) -> Vec<u8> {
+    use chain_block::Serializable;
+    chain
+        .blockchain
+        .get_account(&chain.elector)
+        .expect("the Elector account")
+        .write_to_bytes()
+        .expect("the Elector account serializes")
+}
+
+fn check_vm_getter_fixture(name: &str, generated: &[u8]) {
+    let path = vm_getter_fixture(name);
+    if std::env::var_os("TOS_REGENERATE_FIXTURES").is_some() {
+        std::fs::write(&path, generated).expect("write the fixture");
+        return;
+    }
+    let committed = std::fs::read(&path)
+        .unwrap_or_else(|e| panic!("{} is missing ({e}); regenerate it", path.display()));
+    assert!(
+        committed == generated,
+        "{} no longer matches the Elector this repository deploys; rerun with \
+         TOS_REGENERATE_FIXTURES=1",
+        path.display()
+    );
+}
+
+#[test]
+fn vm_getter_fixtures_match_the_deployed_elector() {
+    let chain = launch();
+    assert_eq!(active_election_id(&chain), 0, "the deployed Elector has an election open");
+    check_vm_getter_fixture("elector-zerostate.boc", &elector_account_boc(&chain));
+
+    let (mut chain, _treasury, election) = open_election("vm-getter-fixture", 200_000 * TOS);
+    require_post_quantum_version(&mut chain);
+    let account =
+        chain.blockchain.treasury("vm-getter-fixture-validator", 40_000 * TOS).expect("an account");
+    // PUBLIC TEST ONLY seed: the fixture must not depend on a key generated per machine.
+    let validator = PqValidator::from_seed(0x70, [0x70; 32]);
+    let result = pq_stake(&mut chain, &account, &validator, election, 70, 11_000 * TOS);
+    assert_eq!(reply(&result), (STAKE_ACCEPTED, 0), "the fixture stake was refused");
+    check_vm_getter_fixture("elector-one-stake.boc", &elector_account_boc(&chain));
 }

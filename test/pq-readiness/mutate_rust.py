@@ -32,7 +32,12 @@ def main():
             "status == invalid_signature {\n        true",
         ),
         ("version", mldsa_guard, mldsa_guard.replace("engine.block_version() < 16", "false")),
-        ("base-gas", "const BASE_GAS: i64 = 50_000;", "const BASE_GAS: i64 = 49_999;"),
+        (
+            "signature-charge",
+            "MAX_MESSAGE_BYTES)?;\n    engine.register_chksgn_call()?;\n    if key.len()",
+            "MAX_MESSAGE_BYTES)?;\n    if key.len()",
+        ),
+        ("byte-gas", "const BYTE_GAS: i64 = 0;", "const BYTE_GAS: i64 = 1;"),
         ("canonical-chunk", "(refs != 0 && size != CHUNK_BYTES)", "(false)"),
         (
             "preactivation-gas",

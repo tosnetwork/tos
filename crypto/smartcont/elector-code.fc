@@ -544,10 +544,9 @@ int address_held_by_another_validator(int validator_id, int adnl_addr) inline {
                                       .store_uint(stake_owner, 256).end_cell().begin_parse()
                                   : s_addr;
 
-  ;; Everything that can be decided without the key is decided first. Verifying a
-  ;; post-quantum signature costs an order of magnitude more than the whole rest of this
-  ;; function, and a request that is refused for its election, its factor or its address
-  ;; must not be able to spend that on the way out.
+  ;; Everything that can be decided without the key is decided first, so a request that is
+  ;; refused for its election, its factor or its address never makes the node load and
+  ;; verify a post-quantum key and signature on the way out.
   if (max_factor < 0x10000) {
     ;; factor must be >= 1. = 65536/65536
     return return_stake(owner_addr, query_id, 6);

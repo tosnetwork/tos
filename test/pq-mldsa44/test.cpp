@@ -161,15 +161,15 @@ void vm_boundaries(const Vector& good, std::ostream& out) {
   const auto canonical = cells(good);
   const auto baseline = execute(canonical);
   check_execution(good, baseline);
-  // The base fee is independently asserted, not inferred from the implementation.
-  const long long floor = 50000 + good.message.size() + good.context.size() + good.signature.size() + good.key.size();
-  require(baseline.gas > floor && baseline.gas < floor + 10000, "base gas schedule changed");
+  // Priced as the Ed25519 check is: the first call of a transaction is free, so one call
+  // costs less than one paid signature check (4,000 gas, upstream's chksgn_gas_price).
+  require(baseline.gas < 4000, "the first verification of a transaction was charged");
   for (int version : {0, 6, 14, 15}) {
     auto r = execute(canonical, version);
     require(r.exit == 6, "instruction accepted before version 16");
     print_execution(out, "version-" + std::to_string(version), r);
   }
-  for (long long budget : {49999LL, baseline.gas - 1}) {
+  for (long long budget : {baseline.gas / 2, baseline.gas - 1}) {
     auto r = execute(canonical, 16, budget);
     require(r.exit == -14, "out-of-gas must not return a verification result");
     print_execution(out, "gas-" + std::to_string(budget), r);
@@ -214,15 +214,26 @@ void vm_boundaries(const Vector& good, std::ostream& out) {
   require(transported.gas == baseline.gas, "BOC roundtrip changed gas");
   print_execution(out, "boc-roundtrip", transported);
 
-  vm::CellBuilder repeated;
-  for (int i = 0; i < 11; ++i) {
-    repeated.store_long(0xf93100, 24);
-    if (i != 10) repeated.store_long(0x30, 8);  // DROP the previous result.
-  }
-  auto eleven = execute(canonical, 16, 1000000, false, repeated.finalize(), false, 11);
-  check_execution(good, eleven);
-  require(eleven.gas >= 11 * floor, "verification received a free-call allowance");
-  print_execution(out, "eleven-paid-calls", eleven);
+  auto calls = [&](int n) {
+    vm::CellBuilder repeated;
+    for (int i = 0; i < n; ++i) {
+      repeated.store_long(0xf93100, 24);
+      if (i != n - 1)
+        repeated.store_long(0x30, 8);  // DROP the previous result.
+    }
+    auto r = execute(canonical, 16, 1000000, false, repeated.finalize(), false, n);
+    check_execution(good, r);
+    return r;
+  };
+  // Every call costs the same except for the signature charge, so the step from the tenth
+  // to the eleventh call exceeds the step from the ninth to the tenth by exactly one paid
+  // check: ten free calls, as for Ed25519, then 4,000 gas each.
+  const auto nine = calls(9), ten = calls(10), eleven = calls(11);
+  const long long free_step = ten.gas - nine.gas, paid_step = eleven.gas - ten.gas;
+  require(free_step < 4000, "a verification within the free allowance was charged");
+  require(paid_step - free_step == 4000, "the eleventh verification was not charged 4,000 gas");
+  print_execution(out, "ten-free-calls", ten);
+  print_execution(out, "eleventh-paid-call", eleven);
 }
 
 #include "vm-extra-tests.h"

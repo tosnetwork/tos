@@ -291,6 +291,24 @@ impl Engine {
         self.gas.use_gas(gas)
     }
 
+    /// Counts one signature check and charges it: the first checks of a transaction are
+    /// recorded as free gas, later ones are paid. Shared by every signature instruction
+    /// priced like the Ed25519 check.
+    pub(in crate::executor) fn register_chksgn_call(&mut self) -> Result<()> {
+        if self.block_version < 4 {
+            return Ok(());
+        }
+        self.checked_signatures_count = self.checked_signatures_count.saturating_add(1);
+        let price = Gas::check_signature_price(self.checked_signatures_count);
+        if price > 0 {
+            self.try_use_gas(price)
+        } else {
+            self.free_gas_consumed =
+                self.free_gas_consumed.saturating_add(Gas::check_signature_gas_price());
+            Ok(())
+        }
+    }
+
     pub fn gas_used(&self) -> i64 {
         self.gas.get_gas_used_full()
     }
@@ -1041,6 +1059,18 @@ impl Engine {
     }
 
     pub(crate) fn run_child_vm(&mut self, params: RunChildVm) -> Status {
+        if params.isolate_gas {
+            // The free allowance does not cross an isolation boundary: what the parent got
+            // for free is paid now, and the child starts counting from zero. From version 4
+            // the charge is checked, so a parent that cannot pay stops here out of gas.
+            if self.block_version >= 4 {
+                self.try_use_gas(self.free_gas_consumed)?;
+            } else {
+                self.use_gas(self.free_gas_consumed);
+            }
+            self.checked_signatures_count = 0;
+            self.free_gas_consumed = 0;
+        }
         let (visited_cells, checked_signatures_count, free_gas_consumed) = if params.isolate_gas {
             (HashSet::new(), 0, 0)
         } else {
@@ -1167,6 +1197,8 @@ impl Engine {
         if !params.isolate_gas {
             self.visited_cells = child.visited_cells;
         }
+        self.checked_signatures_count = child.checked_signatures_count;
+        self.free_gas_consumed = child.free_gas_consumed;
         debug_assert!(self.block_version >= 11 || (!params.return_data && !params.return_actions));
         let (data, actions) = child.cstate.unwrap_or_default();
         if params.return_data {

@@ -462,8 +462,8 @@ cell ctl::record(int owner, int elector, int hash, int forwarded, int debt,
   throw_unless(ctl::error::bad_operation, op == ctl::op);
   in_msg_body~load_uint(64);  ;; query_id, echoed by nothing: this account answers no one
 
-  ;; Everything decidable without the key is decided before the verification, which costs
-  ;; about fifty thousand gas. An unauthorized request pays for the parse and nothing more.
+  ;; Everything decidable without the key is decided before the verification. An
+  ;; unauthorized request pays for the parse and nothing more.
   int global_id = in_msg_body~load_int(32);
   int epoch = in_msg_body~load_uint(64);
   int nonce = in_msg_body~load_uint(64);

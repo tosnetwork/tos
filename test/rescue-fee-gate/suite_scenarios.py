@@ -91,8 +91,11 @@ def main(out):
     add("s1-bitflip", "I", "int:1", msg, CTX_ML, flip(msig), mpk)
     add("s1-other-context", "I", "int:1", msg, CTX_AUTH, msig, mpk)
     add("s1-short-key", "E9", "int:1", msg, CTX_ML, msig, mpk[:-1])
-    add("s1-out-of-gas-base", "E-14", "int:1", msg, CTX_ML, msig, mpk, budget=49_000)
-    add("s1-out-of-gas-reading", "E-14", "int:1", msg, CTX_ML, msig, mpk, budget=51_500)
+    # Priced as the Ed25519 check: the first check of a transaction is free, so what s1
+    # costs is its operand cell loads. 3,338 is one gas short of s1-valid's measured 3,339;
+    # 1,000 runs out while the operands are still being loaded.
+    add("s1-out-of-gas", "E-14", "int:1", msg, CTX_ML, msig, mpk, budget=3_338)
+    add("s1-out-of-gas-loading", "E-14", "int:1", msg, CTX_ML, msig, mpk, budget=1_000)
 
     # Suite 2: Falcon-512 padded, a known-valid vector from the Falcon suite.
     falcon = json.loads((ROOT / "test/pq-falcon512/vectors.json").read_text())["vectors"]

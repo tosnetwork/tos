@@ -148,6 +148,7 @@ fn check_signature(engine: &mut Engine, name: &'static str, hash: bool) -> Statu
         }
         engine.cmd.var(2).as_slice()?.get_bytestring(0)
     };
+    engine.register_chksgn_call()?;
     let Ok(pub_key) = Ed25519PublicKey::from_bytes(pub_key.as_slice().try_into()?) else {
         engine.cc.stack.push(boolean!(false));
         return Ok(());
@@ -157,8 +158,6 @@ fn check_signature(engine: &mut Engine, name: &'static str, hash: bool) -> Statu
         engine.cc.stack.push(boolean!(false));
         return Ok(());
     };
-    engine.checked_signatures_count = engine.checked_signatures_count.saturating_add(1);
-    engine.try_use_gas(Gas::check_signature_price(engine.checked_signatures_count))?;
     let result = engine.modifiers.chksig_always_succeed
         || pub_key.verify(&data, &signature[..ED25519_SIGNATURE_LENGTH].try_into()?);
     engine.cc.stack.push(boolean!(result));

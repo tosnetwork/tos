@@ -32,7 +32,8 @@ int main(int argc,char** argv) {
       // driver synthesizes raw opcodes, which never exercises the assembler.
       const std::string program = f.size()==11 ? f[10] : std::string();
       int version=std::stoi(f[1]), repeats=std::stoi(f[4]); long long budget=std::stoll(f[2]);
-      if(repeats<1||repeats>11||budget<0)throw std::runtime_error("invalid limits");
+      if (repeats < 1 || repeats > 12 || budget < 0)
+        throw std::runtime_error("invalid limits");
       td::Ref<vm::Stack> stack{true};
       for(int j=0;j<repeats;++j)for(int i=6;i<10;++i) {
         if(f[i]=="skip")continue;

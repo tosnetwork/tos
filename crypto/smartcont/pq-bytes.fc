@@ -99,8 +99,8 @@ slice pq::parse_ordinary(cell c) inline {
 const int pq::mldsa44_signature_bytes = 2420;
 
 ;; A signature travels in the same shape a key is stored in: a length and a chain. The
-;; length is checked here, before the verification that costs fifty thousand gas, so a
-;; malformed signature is refused cheaply rather than paid for.
+;; length is checked here, before the verification, so a malformed signature is refused
+;; cheaply rather than verified.
 cell pq::stored_signature(int algorithm_id, cell stored) {
   throw_unless(pq::error::algorithm, pq::admitted_algorithm?(algorithm_id));
   slice cs = stored.pq::parse_ordinary();
