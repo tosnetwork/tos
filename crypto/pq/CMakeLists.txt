@@ -70,16 +70,6 @@ target_compile_definitions(tos_pq_consensus_signer_test_clock PRIVATE MLD_CONFIG
 target_link_libraries(tos_pq_consensus_signer_test_clock PUBLIC tos_pq_consensus
                       PRIVATE tos_pq_consensus_signer_backend OpenSSL::Crypto)
 
-# The offline controller-root domain. A separate library on purpose: the boundary the offline-root split
-# created is between two machines, so it is a link boundary here. validator-engine links
-# tos_pq_consensus_signer and must never link this, which
-# scripts/check-root-authority-off-the-node.sh enforces.
-add_library(tos_pq_controller_root STATIC controller-root-signer.cpp controller-root-file.cpp)
-set_target_properties(tos_pq_controller_root PROPERTIES POSITION_INDEPENDENT_CODE ON)
-target_compile_features(tos_pq_controller_root PUBLIC cxx_std_20)
-target_include_directories(tos_pq_controller_root PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}" PRIVATE "${TOS_MLDSA_SOURCE_DIR}/mldsa")
-target_compile_definitions(tos_pq_controller_root PRIVATE MLD_CONFIG_FILE="consensus-signer-config.h")
-target_link_libraries(tos_pq_controller_root PUBLIC tos_pq_consensus PRIVATE tos_pq_consensus_signer_backend OpenSSL::Crypto)
 
 # Provisioning for the node's consensus key. It links the same library the node loads
 # the key with, so the two cannot disagree about what a valid key file is, and the
@@ -203,18 +193,6 @@ if(TARGET tos_crypto)
     VOTE_CARRIER_VECTORS_FILE="${CMAKE_CURRENT_SOURCE_DIR}/../../test/pq-native/vote-carrier-vectors.tsv"
     VOTE_CARRIER_TOOLING_FILE="${CMAKE_CURRENT_SOURCE_DIR}/../../test/pq-native/vote-carrier-vectors-tooling.tsv")
   add_test(NAME vote-carrier-vectors COMMAND test-vote-carrier)
-  # What a validator controller's post-quantum root signs.
-  add_executable(controller-auth-vectors-gen
-    "${CMAKE_CURRENT_SOURCE_DIR}/../../test/pq-native/controller-auth-vectors-gen.cpp")
-  set_target_properties(controller-auth-vectors-gen PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
-  target_link_libraries(controller-auth-vectors-gen PRIVATE tos_block tos_crypto)
-  add_executable(test-controller-auth
-    "${CMAKE_CURRENT_SOURCE_DIR}/../../test/pq-native/controller-auth-test.cpp")
-  set_target_properties(test-controller-auth PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
-  target_link_libraries(test-controller-auth PRIVATE tos_block tos_crypto tos_mldsa44)
-  target_compile_definitions(test-controller-auth PRIVATE
-    CONTROLLER_AUTH_VECTORS_FILE="${CMAKE_CURRENT_SOURCE_DIR}/../../test/pq-native/controller-auth-vectors.tsv")
-  add_test(NAME controller-auth-vectors COMMAND test-controller-auth)
   # The one routine the node and the operator tool both call to sign a stake.
   add_executable(test-stake-authorisation "${CMAKE_CURRENT_SOURCE_DIR}/../../test/pq-native/stake-authorisation-test.cpp")
   set_target_properties(test-stake-authorisation PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)

@@ -563,9 +563,7 @@ if (NOT CMAKE_CROSSCOMPILING OR USE_EMSCRIPTEN)
   # The libraries it includes are part of what it compiles to. Without them here, editing
   # one leaves this artifact stale and every test reads the previous version of the rule.
   GenFif(DEST smartcont/auto/elector-code SOURCE smartcont/elector-code.fc NAME elector-code
-    EXTRA_DEPS smartcont/pq.fc smartcont/pq-validator.fc smartcont/pq-bytes.fc smartcont/stake-relay.fc)
-  GenFif(DEST smartcont/auto/validator-controller-v1-code SOURCE smartcont/validator-controller-v1.fc NAME validator-controller-v1
-    EXTRA_DEPS smartcont/pq.fc smartcont/pq-validator.fc smartcont/pq-bytes.fc smartcont/stake-relay.fc)
+    EXTRA_DEPS smartcont/pq.fc smartcont/pq-validator.fc smartcont/pq-bytes.fc)
   GenFif(DEST smartcont/auto/multisig-code SOURCE smartcont/multisig-code.fc NAME multisig
     EXTRA_DEPS smartcont/strong-ed25519-key.fc)
   GenFif(DEST smartcont/auto/restricted-wallet-code SOURCE smartcont/restricted-wallet-code.fc NAME restricted-wallet EXTRA_DEPS smartcont/strong-ed25519-key.fc)
@@ -650,19 +648,11 @@ endif()
 
 # The node's own vote producer, reachable from a command line so the bytes it makes can
 # be handed to the real contract and required to be counted. It signs a vote and nothing
-# else, and it holds no controller root.
+# else.
 add_executable(tos-pq-vote pq/vote-tool.cpp)
 target_include_directories(tos-pq-vote PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/..>)
 target_link_libraries(tos-pq-vote PUBLIC tos_crypto tos_pq_consensus_signer)
-
-# The operator's root-authorisation tool. It links the offline root library and no node
-# code, which is the boundary itself rather than a note about one: the only program in
-# this build that can sign a controller authorisation is the one an operator runs.
-add_executable(tos-pq-controller pq/controller-tool.cpp)
-target_include_directories(tos-pq-controller PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/..>)
-target_link_libraries(tos-pq-controller PUBLIC tos_crypto tos_pq_controller_root)
 
 add_executable(dump-block block/dump-block.cpp)
 target_include_directories(dump-block PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
@@ -703,21 +693,15 @@ install(DIRECTORY smartcont DESTINATION share/tos)
 
 add_subdirectory(pq)
 
-# The controller's deployment commands. Seeds for the test are placed with the
-# consensus-key tool, which writes the same 32-byte seed file the root is loaded from.
+# The signing tools' integer arguments. Seeds for the test are placed with the
+# consensus-key tool.
 if(TARGET tos-pq-consensus-key)
   add_test(NAME pq-signing-tool-integers
            COMMAND "${CMAKE_COMMAND}" -E env python3
                    "${CMAKE_CURRENT_SOURCE_DIR}/../test/pq-mldsa44/signing_tool_integer_test.py"
-                   --controller "$<TARGET_FILE:tos-pq-controller>"
                    --vote "$<TARGET_FILE:tos-pq-vote>"
                    --consensus-key "$<TARGET_FILE:tos-pq-consensus-key>")
   set_tests_properties(pq-signing-tool-integers PROPERTIES TIMEOUT 120)
-  add_test(NAME controller-tool
-           COMMAND "${CMAKE_COMMAND}" -E env python3
-                   "${CMAKE_CURRENT_SOURCE_DIR}/../test/pq-mldsa44/controller_tool_test.py"
-                   --controller "$<TARGET_FILE:tos-pq-controller>"
-                   --consensus-key "$<TARGET_FILE:tos-pq-consensus-key>")
 endif()
 
 if(TARGET tos_crypto)

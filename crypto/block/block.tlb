@@ -863,13 +863,6 @@ precompiled_smc#b0 gas_usage:uint64 = PrecompiledSmc;
 precompiled_contracts_config#c0 list:(HashmapE 256 PrecompiledSmc) = PrecompiledContractsConfig;
 _ PrecompiledContractsConfig = ConfigParam 45;
 
-// The controller codes a validator's account may have been born with. A validator's
-// authority is rooted in its controller account, and what makes that account
-// post-quantum is the code it was deployed with, so this is the list of codes that
-// count. The configuration contract refuses more than eight.
-validator_controller_policy_v1#_ controller_codes:(HashmapE 256 True) = ValidatorControllerPolicy;
-_ ValidatorControllerPolicy = ConfigParam 47;
-
 // Mandatory Quantum daily-auth retirement policy. Semantic checks enforce profile,
 // admitted suites and monotonic transitions in addition to this wire shape.
 auth_policy_v1#a1 network_tag:bits256 policy_sequence:uint64
