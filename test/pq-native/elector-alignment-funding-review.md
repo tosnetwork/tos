@@ -36,8 +36,8 @@ export FIFT_PATH="$PWD/build-review/crypto/fift"
 export CREATE_STATE_PATH="$PWD/build-review/crypto/create-state"
 export PQ_VOTE_TOOL="$PWD/build-review/crypto/tos-pq-vote"
 # PQ_KEY_TOOL points to the existing tos-pq-key fixture generator (unchanged source).
-export PQ_KEY_TOOL=/Users/tomisetsu/tos/build-pq-key/tos-pq-key
-export CARGO_TARGET_DIR=/private/tmp/tos-review-target
+export PQ_KEY_TOOL="$TOS_ROOT/build-pq-key/tos-pq-key"
+export CARGO_TARGET_DIR="$TMPDIR/tos-review-target"
 cargo test --manifest-path tosctl/src/Cargo.toml --locked -p elections -p contracts --lib --no-fail-fast
 cargo test --manifest-path tosctl/src/Cargo.toml --locked -p contracts --test elector_sandbox --test single_nominator_sandbox --test nominator_pool_sandbox --test pq_validator_lib_sandbox --no-fail-fast
 ctest --test-dir build-review --output-on-failure -R '^(pq-stake-auth-response-source|tosctl-pq-stake-builder-source|tosctl-election-chain-reads-source|stake-authorisation|authorisation-preimage-vectors|pq-signing-tool-integers)$'
@@ -71,13 +71,13 @@ The existing mutation harness was run unchanged except for selecting the native
 build directory, with the same environment as above:
 
 ```python
-import importlib.util, subprocess, sys
+import importlib.util, os, subprocess, sys
 from pathlib import Path
 spec = importlib.util.spec_from_file_location("guards", "test/pq-native/contract-guard-mutations.py")
 m = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(m)
 m.build = lambda: subprocess.run(["cmake", "--build", "build-review", "--target", "gen_fif", "-j4"], check=True, capture_output=True)
-sys.argv = ["guards", "--out", "/private/tmp/pr284-contract-mutations.json"]
+sys.argv = ["guards", "--out", os.path.join(os.environ["TMPDIR"], "pr284-contract-mutations.json")]
 assert m.main() == 0
 ```
 
@@ -100,7 +100,7 @@ assert m.main() == 0
 - Remote CI must be read again for the repair commit. Older runs and these local
   checks do not establish final Linux CI or authorize a merge.
 
-Scratch logs are under `/private/tmp/pr284-*` and have no guaranteed retention.
+Scratch logs are under `$TMPDIR/pr284-*` and have no guaranteed retention.
 The bounded red/green results above and committed tests are the durable receipt;
 raw logs and generated binaries are intentionally not committed.
 
