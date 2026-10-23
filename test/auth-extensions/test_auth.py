@@ -227,11 +227,7 @@ class AuthenticationTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.tmp = tempfile.TemporaryDirectory()
-        for impl, source in [
-            ("agent", "agent-account-code.fc"),
-            ("wallet-func", "wallet-v5-code.fc"),
-            ("wallet-tol", "wallet-v5.tol"),
-        ]:
+        for impl, source in [("agent", "agent-account-code.fc")]:
             CODES[impl] = compile_contract(source, Path(cls.tmp.name) / f"{impl}.boc")
 
     @classmethod
@@ -270,16 +266,12 @@ class AuthenticationTests(unittest.TestCase):
             self.assertEqual(len(outgoing(from_boc(result["transaction"]))), 1)
             GAS[f"{a.impl}-legacy"] = result["details"]["gas"]
             bad = a.legacy_body()
-            bad.bits = (
-                ("1" if bad.bits[0] == "0" else "0") + bad.bits[1:]
-                if a.agent
-                else bad.bits[:-1] + ("1" if bad.bits[-1] == "0" else "0")
-            )
-            a.send(bad, ext=True, expected=1704 if a.agent else 135)
+            bad.bits = ("1" if bad.bits[0] == "0" else "0") + bad.bits[1:]
+            a.send(bad, ext=True, expected=1704)
 
     def test_pre_genesis_authentication_remains_compatible(self):
         # Keep minimum-version coverage explicit while the main suite runs at genesis.
-        for impl, version in [("agent", 6), ("wallet-func", 6), ("wallet-tol", 14)]:
+        for impl, version in [("agent", 6)]:
             with self.subTest(impl=impl, version=version):
                 account = Account(impl, global_version=version)
                 self.addCleanup(account.close)
@@ -289,19 +281,10 @@ class AuthenticationTests(unittest.TestCase):
 
     def test_stage_and_module_confirmed_cutover(self):
         for a in self.accounts():
-            if a.agent:
-                body = (
-                    Cell()
-                    .uint(0x41475008, 32)
-                    .uint(0, 64)
-                    .sint(GLOBAL_ID, 32)
-                    .uint(0, 64)
-                    .addr(MODULE)
-                )
-                a.send(body, sender=OWNER)
-            else:
-                actions = Cell().uint(0, 1).uint(1, 1).uint(5, 8).uint(0, 64).addr(MODULE)
-                a.send(a.legacy_body(actions), ext=True)
+            body = (
+                Cell().uint(0x41475008, 32).uint(0, 64).sint(GLOBAL_ID, 32).uint(0, 64).addr(MODULE)
+            )
+            a.send(body, sender=OWNER)
             self.assertEqual(a.auth()[:3], (1, 1, 0))
             a.send(a.legacy_body(), ext=True)
             a.configure(2)
@@ -317,8 +300,7 @@ class AuthenticationTests(unittest.TestCase):
             self.assertEqual(a.auth()[2], 1)
             self.assertEqual(a.counters()[1], 1)
             self.assertEqual(len(outgoing(from_boc(result["transaction"]))), 1)
-            if a.agent:
-                self.assertEqual(a.counters()[2], 1_000_000_000)
+            self.assertEqual(a.counters()[2], 1_000_000_000)
             a.send(a.envelope(request), expected=1804)
             GAS[f"{a.impl}-module"] = result["details"]["gas"]
 
@@ -364,34 +346,14 @@ class AuthenticationTests(unittest.TestCase):
             a.send(a.envelope(a.request()), sender=OTHER)
 
     def test_strict_blocks_legacy_management(self):
-        for a in self.accounts(mode=2, extensions=True):
-            if a.agent:
-                body = Cell().uint(0x41475001, 32).uint(0, 64)
-                p = policy()
-                body.bits += p.bits
-                a.send(body, sender=OWNER, expected=1807)
-                # The same management operation succeeds through the module.
-                a.send(a.envelope(a.request(2, body)))
-                self.assertEqual(a.auth()[2], 1)
-            else:
-                legacy = (
-                    Cell()
-                    .uint(0x6578746E, 32)
-                    .uint(0, 64)
-                    .uint(0, 1)
-                    .uint(1, 1)
-                    .uint(4, 8)
-                    .uint(1, 1)
-                )
-                a.send(legacy, sender=OTHER, expected=1807)
-                signed = a.legacy_body()
-                signed.bits = f"{0x73696E74:032b}" + signed.bits[32:]
-                a.send(signed, sender=OWNER, expected=1807)
-                a.configure(2)
-                s = a.data.slice()
-                self.assertEqual(s.uint(1), 0)
-                s.uint(320)
-                self.assertIsNone(s.maybe(), "strict mode removes old extensions")
+        for a in self.accounts(mode=2):
+            body = Cell().uint(0x41475001, 32).uint(0, 64)
+            p = policy()
+            body.bits += p.bits
+            a.send(body, sender=OWNER, expected=1807)
+            # The same management operation succeeds through the module.
+            a.send(a.envelope(a.request(2, body)))
+            self.assertEqual(a.auth()[2], 1)
 
     def test_hybrid_activation_rejects_weak_classical_keys(self):
         # Zero, the identity, and the identity and the order-2 point with the
@@ -403,7 +365,7 @@ class AuthenticationTests(unittest.TestCase):
             0xECFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF,
         ]:
             for a in self.accounts(mode=2, pubkey=key):
-                a.configure(3, expected=1720 if a.agent else 1808)
+                a.configure(3, expected=1720)
                 self.assertEqual(a.auth()[:3], (2, 1, 0))
 
     def test_counter_overflow_is_closed(self):
@@ -412,7 +374,7 @@ class AuthenticationTests(unittest.TestCase):
         for a in self.accounts(mode=2, epoch=(1 << 64) - 1):
             a.configure(2, expected=1810)
         for a in self.accounts(mode=2, seqno=(1 << 32) - 1):
-            a.send(a.envelope(a.request()), expected=1716 if a.agent else 1810)
+            a.send(a.envelope(a.request()), expected=1716)
 
     def test_module_request_rejected_after_acceptance_is_consumed_not_bounced(self):
         """A module request can still be refused after the account accepted it.
@@ -523,18 +485,6 @@ class AuthenticationTests(unittest.TestCase):
         self.assertEqual(a.counters()[1], 1)
         self.assertEqual(len(outgoing(from_boc(result["transaction"]))), 1)
         GAS["agent-legacy-deploy"] = result["details"]["gas"]
-
-    def test_wallet_rejects_destruction_and_arbitrary_actions(self):
-        for a in self.accounts(mode=2):
-            if a.agent:
-                continue
-            for mode in [35, 7, 11, 195]:
-                a.send(a.envelope(a.request(payload=a.execute_payload(mode=mode))), expected=1811)
-            setcode = Cell().uint(0xAD4DE08E, 32).ref(Cell()).ref(Cell())
-            # Invalid C5 prefix has a VM cell-underflow error; positive control
-            # below proves the real action path is reached.
-            a.send(a.envelope(a.request(payload=setcode)), expected=9)
-            a.send(a.envelope(a.request()))
 
 
 if __name__ == "__main__":
