@@ -30,6 +30,8 @@ on:
       - "tosctl/src/node-control/service/src/indexer/**"
       - "test/proven-snapshot/**"
       - "tosctl/src/sandbox/**"
+      # The VM crate's get-method tests read Elector fixtures the sandbox writes.
+      - "tosctl/src/vm/**"
       # The executor and block crates decide every sandbox transaction's
       # outcome, including the outbound message size limits.
       - "tosctl/src/executor/**"
@@ -88,6 +90,8 @@ on:
       - "tosctl/src/node-control/service/src/indexer/**"
       - "test/proven-snapshot/**"
       - "tosctl/src/sandbox/**"
+      # The VM crate's get-method tests read Elector fixtures the sandbox writes.
+      - "tosctl/src/vm/**"
       # The executor and block crates decide every sandbox transaction's
       # outcome, including the outbound message size limits.
       - "tosctl/src/executor/**"
@@ -404,6 +408,11 @@ jobs:
         # that broke four deploy sandbox tests showed up here as three stale
         # hash assertions and nothing else.
         run: cargo test --manifest-path tosctl/src/Cargo.toml -p contracts --locked --no-fail-fast
+
+      # Every VM crate test, not a filtered subset: its get-method tests run against the
+      # Elector fixtures the contracts suite above checks against the zerostate.
+      - name: VM crate suites
+        run: cargo test --manifest-path tosctl/src/Cargo.toml -p tos_vm --locked --no-fail-fast
 
       - name: Service Actor solvency guard controls
         env:

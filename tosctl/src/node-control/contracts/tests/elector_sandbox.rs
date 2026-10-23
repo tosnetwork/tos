@@ -8716,3 +8716,62 @@ fn the_round_cap_alone_ends_a_proposal_after_its_seventh_round() {
     assert_eq!(touch_round(&mut chain, &validators[0], &p, 0xb080), VOTE_DISCARDED);
     assert_eq!(proposal_counters(&chain, &p), None, "the proposal outlived max_tot_rounds");
 }
+
+// ---------------------------------------------------------------------------
+// Get-method fixtures for the VM crate
+//
+// The VM crate tests its get-method runner against the Elector, but cannot build a
+// zerostate. It reads two Elector accounts this test produces from the real zerostate:
+// one as deployed, with no election open, and one holding a single accepted stake. They
+// are checked byte for byte here, so a change to the Elector or the zerostate that is
+// not carried into the fixtures fails here rather than leaving the VM tests exercising
+// an Elector this repository no longer deploys. Set TOS_REGENERATE_FIXTURES=1 to rewrite
+// them.
+// ---------------------------------------------------------------------------
+
+/// Where the VM crate reads the fixtures from.
+fn vm_getter_fixture(name: &str) -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../vm/src/tests/data").join(name)
+}
+
+fn elector_account_boc(chain: &Chain) -> Vec<u8> {
+    use chain_block::Serializable;
+    chain
+        .blockchain
+        .get_account(&chain.elector)
+        .expect("the Elector account")
+        .write_to_bytes()
+        .expect("the Elector account serializes")
+}
+
+fn check_vm_getter_fixture(name: &str, generated: &[u8]) {
+    let path = vm_getter_fixture(name);
+    if std::env::var_os("TOS_REGENERATE_FIXTURES").is_some() {
+        std::fs::write(&path, generated).expect("write the fixture");
+        return;
+    }
+    let committed = std::fs::read(&path)
+        .unwrap_or_else(|e| panic!("{} is missing ({e}); regenerate it", path.display()));
+    assert!(
+        committed == generated,
+        "{} no longer matches the Elector this repository deploys; rerun with \
+         TOS_REGENERATE_FIXTURES=1",
+        path.display()
+    );
+}
+
+#[test]
+fn vm_getter_fixtures_match_the_deployed_elector() {
+    let chain = launch();
+    assert_eq!(active_election_id(&chain), 0, "the deployed Elector has an election open");
+    check_vm_getter_fixture("elector-zerostate.boc", &elector_account_boc(&chain));
+
+    let (mut chain, _treasury, election) = open_election("vm-getter-fixture", 200_000 * TOS);
+    require_post_quantum_version(&mut chain);
+    let account =
+        chain.blockchain.treasury("vm-getter-fixture-validator", 40_000 * TOS).expect("an account");
+    let result =
+        pq_stake(&mut chain, &account, &PqValidator::new(0x70), election, 70, 11_000 * TOS);
+    assert_eq!(reply(&result), (STAKE_ACCEPTED, 0), "the fixture stake was refused");
+    check_vm_getter_fixture("elector-one-stake.boc", &elector_account_boc(&chain));
+}
