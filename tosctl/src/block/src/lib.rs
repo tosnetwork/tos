@@ -22,7 +22,6 @@ pub use dictionary::*;
 
 pub mod boc;
 
-pub mod pq_controller;
 pub mod pq_elector;
 pub use pq_elector::*;
 

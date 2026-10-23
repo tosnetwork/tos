@@ -73,7 +73,7 @@ cell pq::config_vote_context() inline {
 ;; The bytes a stake request signs: the upstream election request
 ;;   0x654c5074 u32 | stake_at u32 | max_factor u32 | src_addr u256 | adnl_addr u256
 ;; followed by global_id i32, so a request signed for one network does not verify on
-;; another. 84 bytes, one cell, signed under the election context.
+;; another. 80 bytes, one cell, signed under the election context.
 cell pq::stake_preimage(int stake_at, int max_factor, int src_addr, int adnl_addr) inline {
   return begin_cell()
     .store_uint(pq::tag::stake_sign, 32)

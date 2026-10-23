@@ -239,16 +239,13 @@ void custody_checks() {
   check("the_stake_for_the_next_election_is_signed_with_b", stake_signer.is_ok() && stake_signer.ok() == key_b);
   if (stake_signer.is_ok()) {
     const auto adnl = filled(0x61);
-    const auto owner = filled(0x62);
     const td::int32 global_id = 77;
     auto signed_stake =
-        pq::sign_stake_authorization(*stake_signer.ok(), global_id, election, 0x10000, validator_id.value, adnl, owner);
+        pq::sign_stake_authorization(*stake_signer.ok(), global_id, election, 0x10000, validator_id.value, adnl);
     check("the_stake_signature_is_made", signed_stake.has_value());
     if (signed_stake) {
       check("the_stake_names_key_b", signed_stake->key_id == id_b.value);
-      const auto preimage =
-          pq::stake_preimage(global_id, election, 0x10000, validator_id.value, owner,
-                             static_cast<std::uint16_t>(pq::PQAlgorithmId::mldsa44), id_b.value, adnl);
+      const auto preimage = pq::stake_preimage(global_id, election, 0x10000, validator_id.value, adnl);
       check("the_stake_verifies_under_b",
             pq::verify_mldsa44(preimage, pq::validator_election_context, signed_stake->signature.signature,
                                key_b->consensus_key().public_key) == pq::VerifyResult::valid);
@@ -420,9 +417,7 @@ void deadline_checks() {
   check("deadline_refuses_an_election_signature", !store->sign_election("after").has_value());
   check("deadline_counts_each_refusal", store->signatures_refused_after_expiry() == 3);
   const auto adnl = filled(0x61);
-  const auto owner = filled(0x62);
-  check("deadline_refuses_a_stake",
-        !pq::sign_stake_authorization(*store, 1, 5, 0x10000, filled(0x51), adnl, owner).has_value());
+  check("deadline_refuses_a_stake", !pq::sign_stake_authorization(*store, 1, 5, 0x10000, filled(0x51), adnl).has_value());
   // Moving the store keeps its deadline.
   auto moved = std::move(*store);
   check("deadline_survives_a_move", moved.expired_now() && !moved.sign_consensus("moved").has_value());

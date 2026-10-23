@@ -43,13 +43,13 @@ inline void append_bits256(std::string& out, const td::Bits256& value) {
 // What a stake request signs: the upstream election request
 //   tag u32 | stake_at u32 | max_factor u32 | src_addr u256 | adnl_addr u256
 // followed by global_id i32, so a request signed for one network does not verify on
-// another. 84 bytes. `src_addr` is the masterchain account that sends the stake; the
+// another. 80 bytes. `src_addr` is the masterchain account that sends the stake; the
 // contract reads it from the sender, so a signature made for one account does not verify
 // when another presents it. The key is the signer's own, so it is not repeated here.
 inline std::string stake_preimage(std::int32_t global_id, std::uint32_t stake_at, std::uint32_t max_factor,
                                   const td::Bits256& src_addr, const td::Bits256& adnl_addr) {
   std::string out;
-  out.reserve(84);
+  out.reserve(80);
   detail::append_be(out, elector_pq_stake_sign_tag, 4);
   detail::append_be(out, stake_at, 4);
   detail::append_be(out, max_factor, 4);

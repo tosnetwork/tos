@@ -65,20 +65,13 @@ int main() {
     expected.erase(it);
   };
 
-  check("stake",
-        tos::pq::stake_preimage(-239, 1789434000u, 0x10000u, fill(0xa1), fill(0xd7), 1, fill(0xb2), fill(0xc3)));
+  check("stake", tos::pq::stake_preimage(-239, 1789434000u, 0x10000u, fill(0xa1), fill(0xc3)));
   check("config-vote", tos::pq::config_vote_preimage(-239, fill(0xd4), fill(0xa1), 7, fill(0xe5)));
   check("complaint-vote", tos::pq::complaint_vote_preimage(-239, fill(0xd4), fill(0xa1), 7, 1789434000u, fill(0xf6)));
-  check("stake-other-key",
-        tos::pq::stake_preimage(-239, 1789434000u, 0x10000u, fill(0xa1), fill(0xd7), 1, fill(0xb3), fill(0xc3)));
-  check("stake-other-validator",
-        tos::pq::stake_preimage(-239, 1789434000u, 0x10000u, fill(0xa2), fill(0xd7), 1, fill(0xb2), fill(0xc3)));
-  check("stake-other-algorithm",
-        tos::pq::stake_preimage(-239, 1789434000u, 0x10000u, fill(0xa1), fill(0xd7), 2, fill(0xb2), fill(0xc3)));
-  check("stake-other-owner",
-        tos::pq::stake_preimage(-239, 1789434000u, 0x10000u, fill(0xa1), fill(0xd8), 1, fill(0xb2), fill(0xc3)));
-  check("stake-other-network",
-        tos::pq::stake_preimage(-1, 1789434000u, 0x10000u, fill(0xa1), fill(0xd7), 1, fill(0xb2), fill(0xc3)));
+  check("stake-other-sender", tos::pq::stake_preimage(-239, 1789434000u, 0x10000u, fill(0xa2), fill(0xc3)));
+  check("stake-other-address", tos::pq::stake_preimage(-239, 1789434000u, 0x10000u, fill(0xa1), fill(0xc4)));
+  check("stake-other-factor", tos::pq::stake_preimage(-239, 1789434000u, 0x10001u, fill(0xa1), fill(0xc3)));
+  check("stake-other-network", tos::pq::stake_preimage(-1, 1789434000u, 0x10000u, fill(0xa1), fill(0xc3)));
   check("config-vote-other-set", tos::pq::config_vote_preimage(-239, fill(0xd5), fill(0xa1), 7, fill(0xe5)));
   check("config-vote-other-index", tos::pq::config_vote_preimage(-239, fill(0xd4), fill(0xa1), 8, fill(0xe5)));
   check("complaint-vote-other-election",
@@ -90,8 +83,8 @@ int main() {
 
   // The three domains must not collide, and neither must two requests that differ in one
   // field: a preimage that dropped a field would make these equal.
-  const auto a = tos::pq::stake_preimage(-239, 1, 0x10000u, fill(0xa1), fill(0xd7), 1, fill(0xb2), fill(0xc3));
-  const auto b = tos::pq::stake_preimage(-239, 1, 0x10000u, fill(0xa1), fill(0xd7), 1, fill(0xb3), fill(0xc3));
+  const auto a = tos::pq::stake_preimage(-239, 1, 0x10000u, fill(0xa1), fill(0xc3));
+  const auto b = tos::pq::stake_preimage(-239, 1, 0x10000u, fill(0xa2), fill(0xc3));
   assert(a != b);
   const auto vote = tos::pq::config_vote_preimage(-239, fill(0xd4), fill(0xa1), 7, fill(0xe5));
   const auto complaint = tos::pq::complaint_vote_preimage(-239, fill(0xd4), fill(0xa1), 7, 1, fill(0xe5));
