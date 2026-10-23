@@ -130,9 +130,14 @@ def sign(key, message, context):
 
 
 def details_of(result):
-    """The transaction outcome, or an assertion if the emulator refused to run it."""
+    """The transaction outcome, or an assertion if the emulator refused to run it. It also
+    counts the post-quantum verifications the VM log shows were executed: a verification
+    is free gas within a transaction's signature allowance, so gas alone cannot show
+    whether one ran."""
     assert result["success"], f"emulator refused the message: {result.get('error')}"
-    return result["details"]
+    details = dict(result["details"])
+    details["verifications"] = result.get("vm_log", "").count("execute PQCHECKSIG")
+    return details
 
 
 def run(report, argv, results_path=None, report_path=None):

@@ -282,16 +282,18 @@ class PqHighloadTest(unittest.TestCase):
         self.assertExit(w.submit(request(sends, 12, timeout=TIMEOUT + 1)), "wrong_timeout")
         self.assertNotIn(12, processed_ids(w.shard))
 
-    def first_verification_gas(self, w, query_id):
+    def first_verification(self, w, query_id):
         """Gas of a well-formed request that fails verification: one verification paid."""
         d = w.submit(request([(1, pay(10**9, 1))], query_id), key=1)
         self.assertExit(d, "invalid_signature")
-        return d["gas"]
+        return d
 
     def assertRefusedBeforeVerification(self, w, details, name, query_id):
         self.assertExit(details, name)
         self.assertNotIn(query_id, processed_ids(w.shard))
-        self.assertLess(details["gas"] + 40_000, self.first_verification_gas(w, query_id), details)
+        # The log has to be able to show a verification before its silence means anything.
+        self.assertGreaterEqual(self.first_verification(w, query_id)["verifications"], 1)
+        self.assertEqual(details["verifications"], 0, details)
 
     def test_malformed_batches_refused_whole_before_verification(self):
         w = Wallet()

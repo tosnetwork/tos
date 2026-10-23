@@ -135,7 +135,7 @@ def configured_limit(tag, count=2):
 
 class MessagePolicyTest(unittest.TestCase):
     assertExit = wallet.PqHighloadTest.assertExit
-    first_verification_gas = wallet.PqHighloadTest.first_verification_gas
+    first_verification = wallet.PqHighloadTest.first_verification
     assertRefusedBeforeVerification = wallet.PqHighloadTest.assertRefusedBeforeVerification
 
     def new_wallet(self, version=16, dense=False):

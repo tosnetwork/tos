@@ -33,7 +33,6 @@ GLOBAL_ID = native.GLOBAL_ID
 ADDRESS = (0, 0x5151 << 240)
 SENDER = (0, 0x7777 << 240)
 FUNDING = 100_000_000_000
-VERIFICATION_GAS = 50_000  # the instruction's base charge, paid before decoding anything
 
 ERR = {
     "invalid_config": 0x1B01,
@@ -138,7 +137,7 @@ class PqQuorumTest(unittest.TestCase):
         else:
             self.assertFalse(details["data_changed"], details)
 
-    def first_verification_gas(self, h, message):
+    def first_verification(self, h, message):
         """Gas of a well-formed 3-of-5 request whose first verified entry is invalid: one
         verification paid. A request refused earlier must cost clearly less."""
         signers = [0, 1, 2]
@@ -151,14 +150,12 @@ class PqQuorumTest(unittest.TestCase):
         )
         d = h.check(message, make_dict(entries, 256))
         self.assertExit(d, "invalid_signature")
-        return d["gas"]
+        return d
 
     def assertNoVerification(self, h, message, details):
-        self.assertLess(
-            details["gas"] + VERIFICATION_GAS - 10_000,
-            self.first_verification_gas(h, message),
-            details,
-        )
+        # The log has to be able to show a verification before its silence means anything.
+        self.assertGreaterEqual(self.first_verification(h, message)["verifications"], 1)
+        self.assertEqual(details["verifications"], 0, details)
 
     def configured(self, keys, quorum):
         h = Harness()
