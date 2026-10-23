@@ -1,128 +1,53 @@
 [
   {
-    "guard": "controller-network",
+    "guard": "stake-signature",
     "killed": true,
-    "test": "validator_controller_sandbox::every_field_of_an_authorisation"
+    "test": "elector_sandbox::a_post_quantum_stake_signed_by_another_key_is_returned"
   },
   {
-    "guard": "controller-epoch",
+    "guard": "stake-bound-to-its-sender",
     "killed": true,
-    "test": "validator_controller_sandbox::every_field_of_an_authorisation"
+    "test": "elector_sandbox::every_signed_field_of_a_stake_is_covered_by_its_signature"
   },
   {
-    "guard": "controller-nonce",
+    "guard": "stake-factor-at-least-one",
     "killed": true,
-    "test": "validator_controller_sandbox::an_authorised_send_happens_once"
+    "test": "elector_sandbox::a_stake_stating_a_factor_below_one_is_returned"
   },
   {
-    "guard": "controller-expiry-past",
+    "guard": "stake-needs-a-transport-address",
     "killed": true,
-    "test": "validator_controller_sandbox::every_field_of_an_authorisation"
+    "test": "elector_sandbox::a_post_quantum_stake_without_a_transport_address_is_returned"
   },
   {
-    "guard": "controller-expiry-window",
+    "guard": "stake-key-held-by-another-member",
     "killed": true,
-    "test": "validator_controller_sandbox::every_field_of_an_authorisation"
+    "test": "elector_sandbox::a_key_already_registered_by_another_member_is_returned"
   },
   {
-    "guard": "controller-kind",
+    "guard": "stake-member-scan-skips-itself",
     "killed": true,
-    "test": "validator_controller_sandbox::every_field_of_an_authorisation"
+    "test": "elector_sandbox::a_member_may_restate_its_own_address_and_nobody_else_may"
   },
   {
-    "guard": "controller-stray-cosignature",
+    "guard": "stake-address-stated-by-another-candidate",
     "killed": true,
-    "test": "validator_controller_sandbox::every_field_of_an_authorisation"
+    "test": "elector_sandbox::a_stake_restating_another_candidates_address_is_refused_at_registration"
   },
   {
-    "guard": "controller-destroy-mode",
+    "guard": "stake-address-held-by-an-incumbent",
     "killed": true,
-    "test": "validator_controller_sandbox::every_field_of_an_authorisation"
+    "test": "elector_sandbox::a_stake_restating_an_incumbents_address_is_refused_at_registration"
   },
   {
-    "guard": "controller-root-signature",
+    "guard": "stake-participant-limit",
     "killed": true,
-    "test": "validator_controller_sandbox::every_field_of_an_authorisation"
+    "test": "elector_sandbox::an_additional_identity_is_refused_at_the_participant_bound_before_state_changes"
   },
   {
-    "guard": "controller-successor-proof",
+    "guard": "selection-refunds-placed-principal",
     "killed": true,
-    "test": "validator_controller_sandbox::a_root_rotation_needs_both"
-  },
-  {
-    "guard": "witness-shape-bits",
-    "killed": true,
-    "test": "controller_admission_sandbox::each_refusal_is_reachable"
-  },
-  {
-    "guard": "witness-shape-refs",
-    "killed": true,
-    "test": "controller_admission_sandbox::each_refusal_is_reachable"
-  },
-  {
-    "guard": "witness-code-depth-bound",
-    "killed": true,
-    "test": "controller_admission_sandbox::each_refusal_is_reachable"
-  },
-  {
-    "guard": "witness-data-depth-bound",
-    "killed": true,
-    "test": "controller_admission_sandbox::each_refusal_is_reachable"
-  },
-  {
-    "guard": "witness-branch-type",
-    "killed": true,
-    "test": "controller_admission_sandbox::each_refusal_is_reachable"
-  },
-  {
-    "guard": "witness-branch-level",
-    "killed": true,
-    "test": "controller_admission_sandbox::each_refusal_is_reachable"
-  },
-  {
-    "guard": "witness-state-init-shape",
-    "killed": true,
-    "test": "controller_admission_sandbox::each_refusal_is_reachable"
-  },
-  {
-    "guard": "witness-address-binding",
-    "killed": true,
-    "test": "elector_sandbox::a_stake_carrying_another_accounts_witness"
-  },
-  {
-    "guard": "witness-level-zero-hash",
-    "killed": true,
-    "test": "controller_admission_sandbox::each_refusal_is_reachable"
-  },
-  {
-    "guard": "policy-absent-fails-closed",
-    "killed": true,
-    "test": "elector_sandbox::a_stake_from_an_unadmitted_controller"
-  },
-  {
-    "guard": "policy-lookup",
-    "killed": true,
-    "test": "elector_sandbox::a_stake_from_an_unadmitted_controller"
-  },
-  {
-    "guard": "elector-witness-required",
-    "killed": true,
-    "test": "elector_sandbox::a_stake_carrying_another_accounts_witness"
-  },
-  {
-    "guard": "elector-retirement",
-    "killed": true,
-    "test": "elector_sandbox::retiring_a_controller_code"
-  },
-  {
-    "guard": "elector-effective-floor",
-    "killed": true,
-    "test": "elector_sandbox::a_retired_profile_stops_raising"
-  },
-  {
-    "guard": "config-ceiling",
-    "killed": true,
-    "test": "elector_sandbox::the_controller_policy_cannot_grow"
+    "test": "elector_sandbox::over_cap_principal_is_conserved_for_winners_and_losers"
   },
   {
     "guard": "vote-signature",
@@ -148,16 +73,6 @@
     "guard": "vote-minimum-value",
     "killed": true,
     "test": "elector_sandbox::the_minimum_value_a_configuration_vote_must_carry"
-  },
-  {
-    "guard": "complaint-vote-funding",
-    "killed": true,
-    "test": "elector_sandbox::an_underfunded_complaint_vote_is_refused_before_the_verification"
-  },
-  {
-    "guard": "complaint-vote-minimum-value",
-    "killed": true,
-    "test": "elector_sandbox::the_minimum_value_a_complaint_vote_must_carry"
   },
   {
     "guard": "complaint-vote-signature",
@@ -198,10 +113,5 @@
     "guard": "no-external-authority",
     "killed": true,
     "test": "elector_sandbox::an_external_validator_vote_has_no_authorization_path"
-  },
-  {
-    "guard": "readiness-on-effective-stake",
-    "killed": true,
-    "test": "elector_sandbox::a_retired_profile_cannot_make_an_election_look_ready"
   }
 ]
