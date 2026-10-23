@@ -83,7 +83,7 @@ fn elector_snapshot_preserves_existing_shapes_and_full_identity() -> anyhow::Res
     assert!(snapshot.elections.failed);
     assert!(snapshot.elections.finished);
     let p = &snapshot.elections.participants[0];
-    assert_eq!(p.pub_key, vec![1; 32]);
+    assert_eq!(p.pub_key, vec![3; 32]);
     assert_eq!(p.wallet_addr, vec![1; 32]);
     assert_eq!(p.adnl_addr, vec![2; 32]);
     assert_eq!(p.stake, 7);

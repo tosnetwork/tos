@@ -5,6 +5,7 @@
 #include <future>
 #include <limits>
 #include <mutex>
+#include <set>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -91,7 +92,54 @@ std::string error(const td::BufferSlice& value) {
   auto decoded = tos::fetch_tl_object<tos::tos_api::engine_validator_controlQueryError>(value, true);
   return decoded.is_ok() ? decoded.ok()->message_ : "not a control error";
 }
+// A member is keyed by the account that sent its stake; its record carries
+// stake, time, max_factor, key_id, adnl, algorithm and the key itself. The
+// node's elector read must return each account as the participant id and the
+// record's key identity separately, for one, a few and the full book.
+void participant_identity_test() {
+  auto saved = split(load(fixtures + "/elector-data.boc"));
+  CellSlice es = load_cell_slice(saved.elect);
+  require(es.advance(64), "elect_at, elect_close");
+  vm_amount_skip(es);
+  vm_amount_skip(es);
+  Ref<Cell> members;
+  require(es.fetch_maybe_ref(members), "member book");
+  CellSlice record = *first_value(members, 256);
+  vm_amount_skip(record);
+  td::Bits256 key_id, adnl;
+  require(record.advance(64) && record.fetch_bits_to(key_id) && record.fetch_bits_to(adnl), "member record");
+  for (int count : {1, 21, 256}) {
+    auto grown = saved;
+    grown.elect = grow_members(saved.elect, count, Book::Hashed);
+    auto state = production_build(zero, fixtures, "", 17, true, join(grown), {});
+    auto snap = must(cg::Snapshot::create(state.id, state.root), "identity snapshot");
+    auto reply = cg::read(*snap, cg::Request{cg::ReadKind::Elector, {}, {}});
+    if (reply.is_error()) {
+      setup_failed("identity read: " + reply.error().message().str());
+    }
+    auto decoded = tos::fetch_tl_object<tos::tos_api::engine_validator_electorState>(reply.move_as_ok(), true);
+    if (decoded.is_error()) {
+      setup_failed("identity reply");
+    }
+    const auto& participants = decoded.ok()->participants_;
+    std::set<td::Bits256> expected;
+    for (int i = 0; i < count; ++i) {
+      expected.insert(td::Bits256(hashed_key("member-", i)));
+    }
+    std::set<td::Bits256> accounts;
+    bool records = true;
+    for (const auto& participant : participants) {
+      accounts.insert(participant->id_);
+      records = records && participant->key_id_ == key_id && participant->adnl_ == adnl &&
+                participant->id_ != participant->key_id_;
+    }
+    auto name = "participant-identity-" + std::to_string(count);
+    check(name.c_str(), participants.size() == static_cast<std::size_t>(count) && accounts == expected && records);
+  }
+}
+
 void service_test() {
+  participant_identity_test();
   auto saved = split(load(fixtures + "/elector-data.boc"));
   saved.elect = grow_members(saved.elect, 256, Book::DeepestMaxStake);
   saved.past = past_shape(saved.past, 16, 256, true);
