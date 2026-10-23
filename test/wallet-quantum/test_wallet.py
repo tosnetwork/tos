@@ -55,6 +55,41 @@ def run(code, data, module, req, expected=0, signature=None, shard=None, sender=
         e.close()
 
 
+def compile_fixture(out, work):
+    for name in [
+        "wallet-quantum-code.fc",
+        "wallet-quantum-auth.fc",
+        "wallet-quantum-fee-identity.fc",
+        "wallet-quantum-state.fc",
+        "wallet-quantum-identity.fc",
+        "wallet-quantum-common.fc",
+        "auth-policy.fc",
+        "pq-bytes.fc",
+        "wallet-action-list.fc",
+    ]:
+        shutil.copyfile(ROOT / "crypto/smartcont" / name, work / name)
+    (work / "vault.fc").write_text("() recv_internal(slice body) impure { }\n")
+    vault_code = native.compile_contract(str(work / "vault.fc"), out / "vault-fixture.boc")
+    module_code = native.compile_contract("rescue-dual-module.fc", out / "module-fixture.boc")
+    driver = work / "driver.fc"
+    driver.write_text(
+        f'#include "wallet-quantum-code.fc";\nint quantumwallet_network() inline {{ return 123; }}\nint quantumwallet_module_hash() inline {{ return 0x{module_code.hash.hex()}; }}\ncell fixture_vault_code() asm "B{{{vault_code.boc().hex()}}} B>boc PUSHREF";\ncell quantumwallet_vault_code() inline {{ return fixture_vault_code(); }}\n'
+    )
+    try:
+        code = native.compile_contract(str(driver), out / "wallet.boc")
+    except Exception as e:
+        if hasattr(e, "stderr"):
+            print(e.stderr.decode())
+        raise
+    for compiled in ["wallet.fif"]:
+        assembly = (out / compiled).read_text()
+        assert "CHKSIGN" not in assembly and "auth_require_strong_classical_key" not in assembly
+    module = native.state_init(module_code, module_data())
+    root = int.from_bytes(module.hash, "big")
+    base = state(module, seqno=0, epoch=1, primary=0, rescue=0, retired=0, key=0)
+    return code, vault_code, module_code, module, root, base
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--output", type=Path, required=True)
@@ -62,37 +97,8 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp)
-        for name in [
-            "wallet-quantum-code.fc",
-            "wallet-quantum-auth.fc",
-            "wallet-quantum-fee-identity.fc",
-            "wallet-quantum-state.fc",
-            "wallet-quantum-identity.fc",
-            "wallet-quantum-common.fc",
-            "auth-policy.fc",
-            "pq-bytes.fc",
-            "wallet-v5-action-list.fc",
-        ]:
-            shutil.copyfile(ROOT / "crypto/smartcont" / name, work / name)
-        (work / "vault.fc").write_text("() recv_internal(slice body) impure { }\n")
-        vault_code = native.compile_contract(str(work / "vault.fc"), out / "vault-fixture.boc")
-        module_code = native.compile_contract("rescue-dual-module.fc", out / "module-fixture.boc")
+        code, vault_code, module_code, module, root, base = compile_fixture(out, work)
         driver = work / "driver.fc"
-        driver.write_text(
-            f'#include "wallet-quantum-code.fc";\nint quantumwallet_network() inline {{ return 123; }}\nint quantumwallet_module_hash() inline {{ return 0x{module_code.hash.hex()}; }}\ncell fixture_vault_code() asm "B{{{vault_code.boc().hex()}}} B>boc PUSHREF";\ncell quantumwallet_vault_code() inline {{ return fixture_vault_code(); }}\n'
-        )
-        try:
-            code = native.compile_contract(str(driver), out / "wallet.boc")
-        except Exception as e:
-            if hasattr(e, "stderr"):
-                print(e.stderr.decode())
-            raise
-        for compiled in ["wallet.fif"]:
-            assembly = (out / compiled).read_text()
-            assert "CHKSIGN" not in assembly and "auth_require_strong_classical_key" not in assembly
-        module = native.state_init(module_code, module_data())
-        root = int.from_bytes(module.hash, "big")
-        base = state(module, seqno=0, epoch=1, primary=0, rescue=0, retired=0, key=0)
         cases = 0
         for mode in range(256):
             req = request(root=root, body=payload(send_mode=mode))

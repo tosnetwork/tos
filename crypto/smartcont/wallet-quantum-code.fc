@@ -6,7 +6,7 @@ int quantumwallet_module_hash();
 cell quantumwallet_vault_code();
 #include "wallet-quantum-auth.fc";
 #include "wallet-quantum-fee-identity.fc";
-#include "wallet-v5-action-list.fc";
+#include "wallet-action-list.fc";
 
 () quantumwallet_successor(cell module, cell metadata, cell vault, int retired) impure inline_ref {
   var (policy, _, _) = quantumid_module(module, quantumwallet_module_hash(), cell_hash(module),

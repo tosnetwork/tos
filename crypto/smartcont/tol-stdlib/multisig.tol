@@ -238,7 +238,7 @@ fun multisigAddPendingProposal(pending: dict, queryId: uint64): dict {
 
 fun multisigValidateActions(actions: cell, isExternal: bool): cell {
     try {
-        return walletV5VerifyC5Actions(actions, isExternal);
+        return walletVerifyC5Actions(actions, isExternal);
     } catch (_) {
         throw MULTISIG_FUNC_THROW_INVALID_ACTIONS;
     }

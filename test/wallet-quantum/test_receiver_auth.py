@@ -169,7 +169,7 @@ def compile_driver(work, output, mutation=None):
         "wallet-quantum-auth.fc",
         "wallet-quantum-common.fc",
         "auth-policy.fc",
-        "wallet-v5-action-list.fc",
+        "wallet-action-list.fc",
     ]:
         shutil.copyfile(ROOT / "crypto/smartcont" / name, work / name)
     if mutation:

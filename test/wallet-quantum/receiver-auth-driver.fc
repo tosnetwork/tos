@@ -2,7 +2,7 @@
 ;; No PQ module, canonical StateInit validation or successor installation is
 ;; simulated here; these tests exercise authenticated-module relays only.
 #include "wallet-quantum-auth.fc";
-#include "wallet-v5-action-list.fc";
+#include "wallet-action-list.fc";
 
 () recv_external(slice body) impure { throw(auth::legacy_disabled); }
 

@@ -96,7 +96,7 @@ def run(out, delete_recipient_update=False, chain_config_path=None):
             "auth-policy.fc",
             "pq-bytes.fc",
             "pq.fc",
-            "wallet-v5-action-list.fc",
+            "wallet-action-list.fc",
         ]:
             shutil.copyfile(ROOT / "crypto/smartcont" / name, work / name)
         vault = native.compile_contract(

@@ -1483,7 +1483,7 @@ slice1_func_to_boc(${SLICE1_GAS_PARITY_WALLET_V5_FUNC_BOC}
                    ${CMAKE_CURRENT_SOURCE_DIR}/crypto/smartcont/stdlib.fc
                    ${CMAKE_CURRENT_SOURCE_DIR}/crypto/smartcont/wallet-v5-code.fc
                    INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/crypto/smartcont/auth-extension.fc
-                            ${CMAKE_CURRENT_SOURCE_DIR}/crypto/smartcont/wallet-v5-action-list.fc
+                            ${CMAKE_CURRENT_SOURCE_DIR}/crypto/smartcont/wallet-action-list.fc
                             ${CMAKE_CURRENT_SOURCE_DIR}/crypto/smartcont/strong-ed25519-key.fc)
 
 # Compile a production FunC contract from crypto/smartcont to a .boc, with

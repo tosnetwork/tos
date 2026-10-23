@@ -18,7 +18,7 @@ Its current code hash is
 recompiled and checked against both SDK embeddings on 2026-10-06. The earlier
 shared-engine baseline had hash `086a86aa9913c0ec52277adbb7e4b5695964dbb8c817ad0c305cdd345bbfac69`
 before the subsequent main security merge.
-The shared `wallet-v5-action-list.fc` is extracted directly from that implementation;
+The shared engine, now named `wallet-action-list.fc`, was extracted from that implementation;
 the extraction produces exactly the same V5R1 code hash and frozen SDK BOC.
 
 The Quantum implementation must use that shared full action engine. It must not replace
@@ -90,7 +90,7 @@ EMULATOR_PATH to this checkout's tools. Install `cryptography==46.0.4` in a test
 python scripts/update-auth-contract-code.py --check
 python test/auth-extensions/test_auth.py
 python test/auth-extensions/mutations.py
-python test/wallet-quantum/test_v5r1_action_baseline.py --output /path/to/retained-baseline
+python test/wallet-quantum/test_wallet_action_list.py --output /path/to/retained-actions
 ```
 
 The last runner compiles each guard-deletion mutant and requires the intended
@@ -3849,3 +3849,31 @@ Ruff checks pass for 194 selected Python files and workspace rustfmt passes.
 records the corresponding tests, semantic-control receipts and the explicit
 scope of the disposable-chain run. Relevant final-head CI and all production
 release gates remain distinct from these working-tree checks.
+
+## Neutral shared action names
+
+The shared action engine uses `wallet_action::` names. The library and its
+manifest use `WALLET_*`, `wallet*`, `WalletStdlibStorage`,
+`WalletSignedRequestHeader` and `WalletStorage.*`. Numeric constants and wire
+layouts are unchanged. Active callers and build dependencies use the neutral
+file name; dated result indexes retain their original source identities.
+
+The action runner now exercises the production Quantum receiver with funded
+local fixture module/vault dependencies: all 256 mode bytes, action counts
+0/1/254/255/256, malformed lists and three guard-deletion controls. Its separate
+external-only helper caller is helper coverage, not a Quantum external entry
+point. The full receiver suite retains its migration and retirement controls.
+The authentication embedding check independently retains the still-live
+classical host bytecode control until retirement.
+
+Measured candidate code-cell identities before and after the name change:
+
+| Component | Before | After |
+| --- | --- | --- |
+| Wallet | `06203e98d4d8bf97b0cab37523ec435f5ab0e1d6d2c5253926eebf20ef1712f5` | unchanged |
+| Module | `f818dd311152d6ea13ef7f38002eb6f7390fac06bbe5df71bb8a2dd0c09c5b6d` | unchanged |
+| Vault | `9fa07637d49c4176766847251cfd820d5a11ade70fe92a45e11e419dba0452a0` | unchanged |
+
+The current candidate manifest updates the helper path/source digest, wallet
+include source digest and neutral ABI constant inventory together. Configuration
+and code identities are preserved. Historical baselines are not regenerated.

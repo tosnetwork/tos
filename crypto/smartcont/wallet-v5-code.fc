@@ -57,7 +57,7 @@ slice get_last_bits(slice s, int l) asm "SDCUTLAST";
 ;;; returns all but the last 0 ≤ l ≤ 1023 bits of s.
 slice remove_last_bits(slice s, int l) asm "SDSKIPLAST";
 
-#include "wallet-v5-action-list.fc";
+#include "wallet-action-list.fc";
 
 cell wallet_auth_state() inline {
   slice ds = get_data().begin_parse().skip_bits(321);

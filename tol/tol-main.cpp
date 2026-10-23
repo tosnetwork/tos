@@ -310,12 +310,12 @@ struct {{NAME}}Storage {
     extensions: dict;
 }
 
-struct (WALLET_V5_PREFIX_EXTENSION_ACTION) {{NAME}}ExtensionAction {
+struct (WALLET_PREFIX_EXTENSION_ACTION) {{NAME}}ExtensionAction {
     queryId: uint64;
     actions: RemainingBitsAndRefs;
 }
 
-struct (WALLET_V5_PREFIX_SIGNED_INTERNAL) {{NAME}}SignedInternal {
+struct (WALLET_PREFIX_SIGNED_INTERNAL) {{NAME}}SignedInternal {
     signedBody: RemainingBitsAndRefs;
 }
 
@@ -333,19 +333,19 @@ contract {{NAME}} {
         var actions = msg.actions;
         val c5Actions = actions.loadMaybeRef();
         if (c5Actions != null) {
-            walletV5VerifyC5Actions(c5Actions!, false);
+            walletVerifyC5Actions(c5Actions!, false);
         }
     }
 
     receive(msg: {{NAME}}SignedInternal) {
-        if (in.body.remainingBitsCount() < WALLET_V5_SIZE_MESSAGE_OPERATION_PREFIX + WALLET_V5_SIZE_GLOBAL_ID + WALLET_V5_SIZE_WALLET_ID + WALLET_V5_SIZE_VALID_UNTIL + WALLET_V5_SIZE_SEQNO + WALLET_V5_SIZE_SIGNATURE) {
+        if (in.body.remainingBitsCount() < WALLET_SIZE_MESSAGE_OPERATION_PREFIX + WALLET_SIZE_GLOBAL_ID + WALLET_SIZE_WALLET_ID + WALLET_SIZE_VALID_UNTIL + WALLET_SIZE_SEQNO + WALLET_SIZE_SIGNATURE) {
             return;
         }
-        walletV5ParseSignedRequestHeader(in.body);
+        walletParseSignedRequestHeader(in.body);
     }
 
     receive_external(msg: UnknownOpcode) {
-        throw WALLET_V5_FUNC_THROW_INVALID_MESSAGE_OPERATION;
+        throw WALLET_FUNC_THROW_INVALID_MESSAGE_OPERATION;
     }
 }
 )TOL";
@@ -937,9 +937,9 @@ static std::string scaffold_opcode_map(const std::string& pattern) {
   if (pattern == "wallet") {
     return R"JSON({
   "opcodes": [
-    {"name": "WALLET_V5_PREFIX_SIGNED_EXTERNAL", "hex": "0x7369676e"},
-    {"name": "WALLET_V5_PREFIX_SIGNED_INTERNAL", "hex": "0x73696e74"},
-    {"name": "WALLET_V5_PREFIX_EXTENSION_ACTION", "hex": "0x6578746e"}
+    {"name": "WALLET_PREFIX_SIGNED_EXTERNAL", "hex": "0x7369676e"},
+    {"name": "WALLET_PREFIX_SIGNED_INTERNAL", "hex": "0x73696e74"},
+    {"name": "WALLET_PREFIX_EXTENSION_ACTION", "hex": "0x6578746e"}
   ]
 }
 )JSON";

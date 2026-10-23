@@ -218,7 +218,7 @@ def main():
         work = Path(tmp)
         for src in (ROOT / "crypto/smartcont").glob("wallet-quantum-*.fc"):
             shutil.copyfile(src, work / src.name)
-        for name in ["auth-policy.fc", "pq.fc", "pq-bytes.fc", "wallet-v5-action-list.fc"]:
+        for name in ["auth-policy.fc", "pq.fc", "pq-bytes.fc", "wallet-action-list.fc"]:
             shutil.copyfile(ROOT / "crypto/smartcont" / name, work / name)
         if options.recovery_delete_transition:
             src = work / "wallet-quantum-code.fc"

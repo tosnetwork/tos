@@ -65,7 +65,7 @@ jobs:
           python3 scripts/update-auth-contract-code.py --check
           python3 test/auth-extensions/test_auth.py
           python3 test/auth-extensions/mutations.py
-          python3 test/wallet-quantum/test_v5r1_action_baseline.py --output "$RUNNER_TEMP/v5r1-baseline"
+          python3 test/wallet-quantum/test_wallet_action_list.py --output "$RUNNER_TEMP/wallet-actions"
           python3 test/wallet-quantum/test_auth_policy.py --output "$RUNNER_TEMP/auth-policy"
           python3 test/wallet-quantum/test_receiver_auth.py --output "$RUNNER_TEMP/quantum-receiver-auth"
           python3 test/wallet-quantum/test_identity.py --output "$RUNNER_TEMP/quantum-identity"
@@ -96,7 +96,7 @@ jobs:
         if: (always()) && steps.snapshot.outputs.run-tests == 'true'
         with:
           name: v5r1-action-baseline
-          path: ${{ runner.temp }}/v5r1-baseline/results.json
+          path: ${{ runner.temp }}/wallet-actions/results.json
           retention-days: 14
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: (always()) && steps.snapshot.outputs.run-tests == 'true'

@@ -103,10 +103,10 @@ fun test_expiry_actions_and_error_mapping(): int {
         assert(code == MULTISIG_FUNC_THROW_PROPOSAL_REPLAY) throw 142;
     }
 
-    val action = walletV5BuildActionSendMsg(2, outMsgCell(), createEmptyCell());
+    val action = walletBuildActionSendMsg(2, outMsgCell(), createEmptyCell());
     assert(multisigValidateActions(action, true).hash() == action.hash()) throw 143;
     try {
-        multisigValidateActions(walletV5BuildActionSendMsg(0, outMsgCell(), createEmptyCell()), true);
+        multisigValidateActions(walletBuildActionSendMsg(0, outMsgCell(), createEmptyCell()), true);
     } catch (code) {
         assert(code == MULTISIG_FUNC_THROW_INVALID_ACTIONS) throw 144;
     }

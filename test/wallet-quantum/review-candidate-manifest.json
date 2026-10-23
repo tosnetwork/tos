@@ -56,8 +56,8 @@
   },
   "files": {
     "abi/contract-constants.json": {
-      "bytes": 3968,
-      "sha256": "9e36acbf845a86ff7e0a0b96b5532275a42b18f5c35c892a1a713ba90ac0a101"
+      "bytes": 3974,
+      "sha256": "db5aa8fd17f34041852454bb755e02c8971e4c430bbfa8351aa22302f0d2f996"
     },
     "code/module.boc": {
       "bytes": 3055,
@@ -123,13 +123,17 @@
       "bytes": 37585,
       "sha256": "77d121550d99c533cffe10d5f479c04777e6e7c34b712421473cfe6a24615717"
     },
+    "repository/crypto/smartcont/wallet-action-list.fc": {
+      "bytes": 2259,
+      "sha256": "6ff7c472d67809f9b9ab48952a03425f3f99ea059b1da7554b1d530001a6b431"
+    },
     "repository/crypto/smartcont/wallet-quantum-auth.fc": {
       "bytes": 5109,
       "sha256": "2f08b2d44505b6dae340aadef3e21aa38c4c8c094c7e94768388c6867b66d0dd"
     },
     "repository/crypto/smartcont/wallet-quantum-code.fc": {
-      "bytes": 4730,
-      "sha256": "5e28748896c38521c10062dafe41abd8ffb2e66e5c8b32d0235ff7de01742c2c"
+      "bytes": 4727,
+      "sha256": "d67336c47722e83d2a400dc4b23695dbb4f261077888808ae3e01629d41afadf"
     },
     "repository/crypto/smartcont/wallet-quantum-common.fc": {
       "bytes": 764,
@@ -162,10 +166,6 @@
     "repository/crypto/smartcont/wallet-quantum-state.fc": {
       "bytes": 3386,
       "sha256": "df5687bdd2b45f3f739b1c788788765a2bf05c8f43371dff0e57bf278cd66a67"
-    },
-    "repository/crypto/smartcont/wallet-v5-action-list.fc": {
-      "bytes": 2230,
-      "sha256": "9d5dd51a9c37ffeedf4482b229af84cf9303532bf80fe2bfb3b740a704338cbb"
     },
     "repository/crypto/vm/excno.hpp": {
       "bytes": 4609,

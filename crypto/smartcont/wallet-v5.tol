@@ -105,25 +105,25 @@ const PREFIX_ADD_EXTENSION = 0x02
 const PREFIX_REMOVE_EXTENSION = 0x03
 const PREFIX_SET_SIGNATURE_ALLOWED = 0x04
 
-const WALLET_V5_ERROR_SIGNATURE_DISABLED = 1132
-const WALLET_V5_ERROR_INVALID_SEQNO = 1133
-const WALLET_V5_ERROR_INVALID_WALLET_ID = 1134
-const WALLET_V5_ERROR_INVALID_SIGNATURE = 1135
-const WALLET_V5_ERROR_EXPIRED = 1136
-const WALLET_V5_ERROR_EXTERNAL_SEND_MODE = 1137
-const WALLET_V5_ERROR_INVALID_MESSAGE_OPERATION = 1138
-const WALLET_V5_ERROR_ADD_EXTENSION = 1139
-const WALLET_V5_ERROR_REMOVE_EXTENSION = 1140
-const WALLET_V5_ERROR_UNSUPPORTED_ACTION = 1141
-const WALLET_V5_ERROR_DISABLE_SIGNATURE_WITHOUT_EXTENSIONS = 1142
-const WALLET_V5_ERROR_SIGNATURE_MODE_ALREADY_SET = 1143
-const WALLET_V5_ERROR_REMOVE_LAST_EXTENSION_SIGNATURE_DISABLED = 1144
-const WALLET_V5_ERROR_EXTENSION_WRONG_WORKCHAIN = 1145
-const WALLET_V5_ERROR_ONLY_EXTENSION_CAN_CHANGE_SIGNATURE_MODE = 1146
-const WALLET_V5_ERROR_INVALID_C5 = 1147
-const WALLET_V5_ERROR_INVALID_GLOBAL_ID = 1148
+const WALLET_ERROR_SIGNATURE_DISABLED = 1132
+const WALLET_ERROR_INVALID_SEQNO = 1133
+const WALLET_ERROR_INVALID_WALLET_ID = 1134
+const WALLET_ERROR_INVALID_SIGNATURE = 1135
+const WALLET_ERROR_EXPIRED = 1136
+const WALLET_ERROR_EXTERNAL_SEND_MODE = 1137
+const WALLET_ERROR_INVALID_MESSAGE_OPERATION = 1138
+const WALLET_ERROR_ADD_EXTENSION = 1139
+const WALLET_ERROR_REMOVE_EXTENSION = 1140
+const WALLET_ERROR_UNSUPPORTED_ACTION = 1141
+const WALLET_ERROR_DISABLE_SIGNATURE_WITHOUT_EXTENSIONS = 1142
+const WALLET_ERROR_SIGNATURE_MODE_ALREADY_SET = 1143
+const WALLET_ERROR_REMOVE_LAST_EXTENSION_SIGNATURE_DISABLED = 1144
+const WALLET_ERROR_EXTENSION_WRONG_WORKCHAIN = 1145
+const WALLET_ERROR_ONLY_EXTENSION_CAN_CHANGE_SIGNATURE_MODE = 1146
+const WALLET_ERROR_INVALID_C5 = 1147
+const WALLET_ERROR_INVALID_GLOBAL_ID = 1148
 
-struct WalletV5Storage {
+struct WalletStorage {
     isSignatureAllowed: bool;
     seqno: uint32;
     walletId: uint32;
@@ -189,22 +189,22 @@ fun packWalletV5Data(
     publicKey: int,
     extensions: dict
 ): cell {
-    return walletV5PackData(isSignatureAllowed, seqno, walletId, publicKey, extensions);
+    return walletPackData(isSignatureAllowed, seqno, walletId, publicKey, extensions);
 }
 
 @pure
-fun walletV5ErrorForThrow(funcThrow: int, originalOp: uint32, queryId: uint64): Error {
-    return walletV5ErrorForFuncThrow(funcThrow, originalOp, queryId);
+fun walletErrorForThrow(funcThrow: int, originalOp: uint32, queryId: uint64): Error {
+    return walletErrorForFuncThrow(funcThrow, originalOp, queryId);
 }
 
 @pure
 fun splitSignedRequestBody(body: slice): (slice, slice) {
-    return walletV5SplitSignedRequestBody(body);
+    return walletSplitSignedRequestBody(body);
 }
 
 @pure
 fun parseSignedRequestHeader(body: slice): SignedRequestHeader {
-    val header = walletV5ParseSignedRequestHeader(body);
+    val header = walletParseSignedRequestHeader(body);
     return SignedRequestHeader {
         opcode: header.opcode,
         globalId: header.globalId,
@@ -217,16 +217,16 @@ fun parseSignedRequestHeader(body: slice): SignedRequestHeader {
 
 @pure
 fun buildExtensionActionBody(queryId: uint64, actions: RemainingBitsAndRefs): cell {
-    return walletV5BuildExtensionActionBody(queryId, actions);
+    return walletBuildExtensionActionBody(queryId, actions);
 }
 
 @pure
 fun buildActionSendMsg(mode: int, outMsg: cell, next: cell): cell {
-    return walletV5BuildActionSendMsg(mode, outMsg, next);
+    return walletBuildActionSendMsg(mode, outMsg, next);
 }
 
 fun verifyC5Actions(c5: cell, isExternal: bool): cell {
-    return walletV5VerifyC5Actions(c5, isExternal);
+    return walletVerifyC5Actions(c5, isExternal);
 }
 
 // Optional trailing reference leaves legacy initialization bytes unchanged.
@@ -557,7 +557,7 @@ fun processSignedRequest(inMsgBody: slice, isExternal: bool): void {
 
 @on_bounced_policy("manual")
 contract WalletV5 {
-    storage: WalletV5Storage
+    storage: WalletStorage
     @unknown_silent_drop;
 
     @disclaim_query_id
