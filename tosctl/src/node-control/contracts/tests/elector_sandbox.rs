@@ -2345,7 +2345,7 @@ fn governance_accepts_the_launch_boundary_and_refuses_every_ceiling_above_it() {
 /// A vote brings the price of the verification it asks for.
 ///
 /// Anyone can send one. Without this, an unauthorised sender could make every
-/// masterchain block pay fifty thousand gas per message, for as many messages as it
+/// masterchain block pay for a post-quantum verification per message, for as many messages as it
 /// cared to send, and the signatures would never have to be valid.
 #[test]
 fn a_vote_costs_what_the_verification_it_asks_for_costs() {
@@ -3320,11 +3320,11 @@ fn a_contract_can_send_the_witness_but_not_the_proof_it_replaced() {
 // ---------------------------------------------------------------------------
 // What a vote must bring, and what an invalid one cannot take
 //
-// Both vote paths verify an ML-DSA-44 signature, which costs about fifty thousand gas
-// and cannot be made cheaper by being wrong: an invalid signature is found only by
-// performing the verification. Anyone may send a vote, so the sender has to pay for it
-// before it happens, and a sender who keeps sending invalid ones must not be able to
-// spend the contract's own balance doing it.
+// Both vote paths verify an ML-DSA-44 signature, whose cost cannot be made cheaper by
+// being wrong: an invalid signature is found only by performing the verification.
+// Anyone may send a vote, so the sender has to pay for it before it happens, and a sender
+// who keeps sending invalid ones must not be able to spend the contract's own balance
+// doing it.
 //
 // The minimum is found by searching for it rather than by recomputing the contract's
 // rule here. A test that derives the boundary the same way the contract does would agree
@@ -3482,7 +3482,7 @@ fn the_minimum_value_a_complaint_vote_must_carry() {
 ///
 /// This is the cheapest message an unauthorised sender can repeat without limit: it
 /// carries far less than a verification costs, and its signature is wrong, so nothing
-/// about it is worth the fifty thousand gas it would take to find that out.
+/// about it is worth the verification it would take to find that out.
 ///
 /// What is measured is the work, not a balance. The configuration contract's balance
 /// does not move for any of these messages -- not for a refusal, and not for a vote that
