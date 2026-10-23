@@ -1357,7 +1357,7 @@ engine.validator.setConsensusNoncriticalParamsOverrides overrides:consensus.nonc
 engine.validator.getConsensusNoncriticalParamsOverrides = consensus.NoncriticalParamsOverrideList;
 
 ---types---
-engine.validator.electionParticipant id:int256 stake:bytes max_factor:int adnl:int256 algorithm:int key_id:int256 = engine.validator.ElectionParticipant;
+engine.validator.electionParticipant id:int256 stake:bytes max_factor:int adnl:int256 key_id:int256 = engine.validator.ElectionParticipant;
 engine.validator.frozenStake id:int256 owner:int256 weight:long stake:bytes banned:Bool = engine.validator.FrozenStake;
 engine.validator.pastElection election_id:int unfreeze_at:int stake_held:int vset_hash:int256 total_stake:bytes bonuses:bytes frozen:(vector engine.validator.frozenStake) = engine.validator.PastElection;
 engine.validator.returnedStake wallet:int256 amount:bytes = engine.validator.ReturnedStake;

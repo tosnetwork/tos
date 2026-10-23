@@ -61,7 +61,6 @@ fn unsigned_fields_and_frozen_weights() -> anyhow::Result<()> {
     value.elect_close = -1;
     value.participants.push(wire::electionparticipant::ElectionParticipant {
         max_factor: -1,
-        algorithm: 2,
         ..Default::default()
     });
     let mut p = wire::pastelection::PastElection {
@@ -84,7 +83,6 @@ fn unsigned_fields_and_frozen_weights() -> anyhow::Result<()> {
     assert_eq!(value.elect_at, 1u32 << 31);
     assert_eq!(value.elect_close, u32::MAX);
     assert_eq!(value.participants[0].max_factor, u32::MAX);
-    assert_eq!(value.participants[0].algorithm, 2);
     assert_eq!(value.past_elections[0].election_id, u32::MAX);
     assert_eq!(value.past_elections[0].unfreeze_at, 1u32 << 31);
     assert_eq!(value.past_elections[0].stake_held, u32::MAX);

@@ -17,7 +17,6 @@ fn state() -> anyhow::Result<ElectorState> {
         id: UInt256::from([1; 32]),
         adnl: UInt256::from([2; 32]),
         key_id: UInt256::from([3; 32]),
-        algorithm: 2,
         stake: vec![7],
         max_factor: -1,
     };
@@ -74,7 +73,6 @@ fn meta() -> anyhow::Result<ConfigProposalMeta> {
 #[test]
 fn elector_snapshot_preserves_existing_shapes_and_full_identity() -> anyhow::Result<()> {
     let raw = state()?;
-    assert_eq!(raw.participants[0].algorithm, 2);
     assert_eq!(raw.participants[0].key_id, [3; 32]);
     let snapshot = ElectorSnapshot::try_from(raw)?;
     assert_eq!(snapshot.block, block());

@@ -575,7 +575,6 @@ auto make_tos_api_engine_validator_electionparticipant(std::size_t length)
   out->stake_ = td::BufferSlice(std::string(length, char(6)));
   out->max_factor_ = 4;
   out->adnl_ = bits(3);
-  out->algorithm_ = 2;
   out->key_id_ = bits(40);
   return out;
 }

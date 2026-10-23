@@ -405,7 +405,6 @@ pub(crate) fn make_tos_api_engine_validator_electionparticipant(
         stake: vec![6; length],
         max_factor: 4,
         adnl: chain_block::UInt256::with_array([3; 32]),
-        algorithm: 2,
         key_id: chain_block::UInt256::with_array([40; 32]),
     }
 }

@@ -116,7 +116,6 @@ impl Subscriber for ControlReplies {
                         id: UInt256::from(id),
                         adnl: UInt256::from([2; 32]),
                         key_id: UInt256::from([3; 32]),
-                        algorithm: 2,
                         max_factor: 65536,
                         stake: if reply.overflow {
                             vec![1, 0, 0, 0, 0, 0, 0, 0, 0]

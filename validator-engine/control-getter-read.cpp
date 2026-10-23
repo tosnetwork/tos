@@ -269,19 +269,16 @@ td::Result<td::BufferSlice> elector(const Snapshot& snapshot, const Request& req
       if (key == td::Bits256::ones()) {
         return td::Status::Error("elector list includes exclusive maximum-id sentinel");
       }
-      TRY_RESULT(fields, tuple(pair->at(1), 6));
+      // A member is keyed by the account that sent its stake; the field that names
+      // the sender in a classical elector carries its post-quantum key identity.
+      TRY_RESULT(fields, tuple(pair->at(1), 4));
       TRY_RESULT(stake, coins(fields->at(0)));
       TRY_RESULT(factor, u32(fields->at(1)));
-      TRY_RESULT(owner, id(fields->at(2)));
-      if (owner != key) {
-        return td::Status::Error("elector participant owner differs from its id");
-      }
+      TRY_RESULT(consensus_key, id(fields->at(2)));
       TRY_RESULT(adnl, id(fields->at(3)));
-      TRY_RESULT(algorithm_number, integer(fields->at(4), 16));
-      TRY_RESULT(consensus_key, id(fields->at(5)));
-      TRY_STATUS(bytes.reserve(104 + tl_bytes(stake.size())));
-      participants.push_back(create_tl_object<engine_validator_electionParticipant>(
-          key, std::move(stake), factor, adnl, static_cast<td::int32>(algorithm_number->to_long()), consensus_key));
+      TRY_STATUS(bytes.reserve(100 + tl_bytes(stake.size())));
+      participants.push_back(
+          create_tl_object<engine_validator_electionParticipant>(key, std::move(stake), factor, adnl, consensus_key));
       return td::Status::OK();
     }));
     if (elect_at == 0 &&
