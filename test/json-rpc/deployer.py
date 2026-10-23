@@ -7,6 +7,7 @@ scripts + the JSON-RPC ``sendBoc`` endpoint — no lite-client needed.
 """
 
 import base64
+import binascii
 import hashlib
 import json
 import os
@@ -975,6 +976,36 @@ def _ensure_pool_compiled() -> None:
         run_fift(fift_script)
 
 
+def _pool_config(data_fift: str) -> tuple[int, ...]:
+    """Run the pool's own get_pool_data on a data cell in the Fift VM.
+
+    Returns the five config fields (validator address, reward share, maximum
+    nominators, minimum validator and nominator stake) the contract reads,
+    so a data layout the contract does not expect is caught before deploying.
+    """
+    method_id = (binascii.crc_hqx(b"get_pool_data", 0) & 0xFFFF) | 0x10000
+    script = f"""\
+"TosUtil.fif" include
+"Asm.fif" include
+"{_POOL_BOC}" file>B B>boc <s constant pool_code
+{data_fift} constant pool_data
+{method_id} pool_code pool_data runvm drop
+dup 0= not abort"get_pool_data failed on the pool data"
+drop 17 tuple constant result
+."CONFIG:" result 4 [] . result 5 [] . result 6 [] . result 7 [] . result 8 [] . cr
+"""
+    for line in run_fift(script).splitlines():
+        if line.startswith("CONFIG:"):
+            return tuple(int(value) for value in line[7:].split())
+    raise RuntimeError("get_pool_data returned no config")
+
+
+def _require_pool_config(data_fift: str, expected: tuple[int, ...]) -> None:
+    actual = _pool_config(data_fift)
+    if actual != expected:
+        raise RuntimeError(f"pool data decodes to config {actual}, expected {expected}")
+
+
 def deploy_nominator_pool(
     endpoint: str,
     dest_wc: int = 0,
@@ -1005,7 +1036,7 @@ def deploy_nominator_pool(
     #   stake_held_for(32) + config_proposal_votings(dict)
     #
     # Config cell:
-    #   validator_address(256) + controller_address(256) +
+    #   validator_address(256) +
     #   validator_reward_share(16) + max_nominators_count(16) +
     #   min_validator_stake(Grams) + min_nominator_stake(Grams)
     #
@@ -1031,7 +1062,6 @@ constant nominators_dict
   0 Tomi,                            // validator_amount = 0
   <b                                  // config cell
     0 256 u,                          // validator_address (zero hash = fake)
-    0 256 u,                          // controller_address (zero hash = fake)
     {validator_reward_share} 16 u,
     {max_nominators} 16 u,
     {min_validator_stake} Tomi,
@@ -1048,6 +1078,10 @@ constant nominators_dict
 b>"""
 
     code_fift = f'"{_POOL_BOC}" file>B B>boc'
+    _require_pool_config(
+        data_fift,
+        (0, validator_reward_share, max_nominators, min_validator_stake, min_nominator_stake),
+    )
 
     info = deploy_generic_contract(
         endpoint,
@@ -1103,7 +1137,6 @@ constant withdraw_dict
   0 Tomi,                            // validator_amount = 0
   <b
     0 256 u,                          // validator_address (fake)
-    0 256 u,                          // controller_address (fake)
     4000 16 u,
     40 16 u,
     1000000000 Tomi,
@@ -1120,6 +1153,7 @@ constant withdraw_dict
 b>"""
 
     code_fift = f'"{_POOL_BOC}" file>B B>boc'
+    _require_pool_config(data_fift, (0, 4000, 40, 1000000000, 100000000))
 
     info = deploy_generic_contract(
         endpoint,
