@@ -29,8 +29,8 @@ MUTATIONS = {
     ),
     "Falcon suite accepts a non-empty context": (
         PQ,
-        "            read_bytes(engine, context, 0)?;",
-        "            read_bytes(engine, context, 1)?;",
+        "            read_bytes_priced(engine, context, 0, FALCON512_BYTE_GAS)?;",
+        "            read_bytes_priced(engine, context, 1, FALCON512_BYTE_GAS)?;",
     ),
     "suite enabled before version 16": (
         PQ,
