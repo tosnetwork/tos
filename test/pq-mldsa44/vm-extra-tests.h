@@ -129,7 +129,7 @@ void calibrate_gas(const std::vector<Vector>& vectors, const std::string& report
     // CPU per gas of a paid call against the paid Ed25519 check: a paid ML-DSA call is
     // charged the 4,000 a paid check is plus its operands' cell loads, and the Ed25519
     // control is held to its 4,000 alone. Runtime never changes consensus prices.
-    const double ratio = (us / (4000.0 + baseline.gas)) / (ed_us / 4000.0);
+    const double ratio = (us / (4000.0 + static_cast<double>(baseline.gas))) / (ed_us / 4000.0);
     if (ratio > worst_ratio) { worst_ratio = ratio; worst_id = v.id; }
     require(v.id.find_first_of("\"\\\r\n") == std::string::npos, "unsafe calibration case ID");
     if (!first) report << ",\n";
