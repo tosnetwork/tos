@@ -241,7 +241,6 @@ schema-versioned decoded fields for:
 - Config 8: committed VM version and exact capability bits.
 - Config 43: the message/state limits relevant to large PQ payloads; expose only
   actual source-defined fields, not a guessed security or fee estimate.
-- Config 47: the bounded validator-controller code allowlist.
 - Config 48: network tag, policy sequence, retired-suite flags, primary deadline
   and frozen specification hash.
 
@@ -249,7 +248,7 @@ Return decoded fields and proof/block metadata from the same cell observation.
 Missing optional policy on a legacy chain remains distinguishable from malformed
 policy or transport failure. Config 48 is mandatory at VM 17 and later. Compute
 retirement status, if provided, using authenticated chain time at that observation,
-not wall-clock time. Validate the exact frozen AUTH profile and controller limits.
+not wall-clock time. Validate the exact frozen AUTH profile.
 
 Verifier availability, network admission and account authorization are separate.
 ML-DSA/SLH-DSA/HSS-LMS verifier gates start at VM 16, fee-hash admission at VM 17,

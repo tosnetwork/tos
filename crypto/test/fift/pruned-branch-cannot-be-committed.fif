@@ -5,8 +5,8 @@
 // storage. `try_commit` requires the action list and the data cell to have level zero,
 // and a pruned branch has level one.
 //
-// This decides whether an account can prove its own birth code by forwarding a pruned
-// proof of its state init. It cannot, and the refusal is not the send instruction's: the
+// This decides whether an account can prove a state it holds by forwarding a pruned
+// proof of it. It cannot, and the refusal is not the send instruction's: the
 // send succeeds and the commit at the end of the run fails, which is why it reports as a
 // cell overflow with nothing sent.
 //

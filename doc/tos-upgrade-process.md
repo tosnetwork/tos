@@ -221,7 +221,7 @@ compared with the zerostate time, not treated as having no predecessor; only
 the input config's init block is exempt from that comparison. If no eligible
 block or zerostate timestamp evidence is available, the tool refuses without
 writing. Timestamp eligibility does not establish snapshot availability. See
-[the operator procedure](validator-operator-guide.md#11-refresh-the-global-configs-init-block)
+[the operator procedure](validator-operator-guide.md#9-refresh-the-global-configs-init-block)
 for source checks and retry guidance. The release authenticates the refreshed
 file by digest and attestation; the tool does not authenticate its node.
 

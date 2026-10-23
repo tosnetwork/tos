@@ -78,13 +78,12 @@ external applications become post-quantum merely by connecting to TOS.
 The canonical zerostate generator selects global protocol version 16 in
 ConfigParam 8, and creates four equally weighted post-quantum genesis
 validator descriptors. These use \code{validator\_pq\_addr\#b3} and algorithm
-identifier 1 for ML-DSA-44. ConfigParam 47 binds controller admission to the
-approved controller code. The Simplex transport configuration selects its
+identifier 1 for ML-DSA-44. The Simplex transport configuration selects its
 v2 QUIC profile; that transport version is distinct from global protocol
 version 16.
 
 The public bootstrap manifest is \code{validator-pq.pub}. It binds each
-validator's controller identity, ADNL identity, and consensus public key.
+validator's identity, ADNL identity, and consensus public key.
 The canonical generator rejects the classical bootstrap-file format and
 checks duplicate identities. Private keys remain operator material and must
 not be placed in the public manifest or committed to the repository.
@@ -98,12 +97,12 @@ suite uses a 1,312-byte public key and a 2,420-byte signature. Protocol-specific
 message encodings and domain separation remain essential: algorithm security
 does not make a signature valid for another role, network, or request.
 
-A stable controller identity separates validator identity from individual
-keys. Root authority and consensus signing have different responsibilities;
-ADNL identity is also distinct. Rotation and admission follow the controller
-and network rules, rather than an assumption that every address or key is
-interchangeable. Operators must provision, protect, and recover the correct
-key for each role.
+A validator is identified by its staking account, the wallet or nominator pool
+that sends its stake, not by any key. Each stake carries an ML-DSA-44
+authorization over that account, the election, the weight factor and the ADNL
+address, so a consensus key can be rotated by staking with the new key while
+the identity stays the same; ADNL identity is also distinct. Operators must
+provision, protect, and recover the correct key for each role.
 
 Validator consensus keys use ML-DSA-44 only. The other suites described in
 Section~\ref{sec:suites} are available to contracts and wallets, not to

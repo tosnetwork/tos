@@ -543,7 +543,7 @@ on JSON-RPC and REST identically, before forwarding to a liteserver.
 ```
 
 `include_decoded` defaults false. `param` uses the existing parameter selector;
-new v1 typed views are defined only for 8, 43, 47 and 48. A new `block_id`
+new v1 typed views are defined only for 8, 43 and 48. A new `block_id`
 selector requires `include_decoded:true`; the pre-existing `with_proof` flag
 remains valid without typed decoding. Existing validator-set
 fields for 32/34/36 remain unchanged. For other parameters retain the raw result;
@@ -554,7 +554,7 @@ When a v1 typed view is requested, preserve the existing `config` object and add
 ```typescript
 interface DecodedConfigV1 {
   schema_version: 1;
-  param: 8 | 43 | 47 | 48;
+  param: 8 | 43 | 48;
   presence: "present" | "absent";
   observation: {
     block_id: BlockId;
@@ -562,7 +562,7 @@ interface DecodedConfigV1 {
     chain_time: U32;
     vm_version: U32;
   };
-  value: GlobalVersion | SizeLimits | ControllerPolicy | AuthPolicy | null;
+  value: GlobalVersion | SizeLimits | AuthPolicy | null;
 }
 ```
 
@@ -574,7 +574,7 @@ for permitted absence in the opt-in result; an absence proof must authenticate t
 missing dictionary key, not just omit bytes. For `include_decoded:false`, preserve
 existing raw missing-parameter errors and result shapes.
 
-Only 43, 47, and legacy 48 can have `presence:"absent"`. Config 8 absence or Config
+Only 43 and legacy 48 can have `presence:"absent"`. Config 8 absence or Config
 48 absence at VM 17+ is `STATE_INVALID`. Unknown tag/layout/profile is also an error,
 not absence or a successful partial typed value.
 
@@ -583,7 +583,6 @@ not absence or a successful partial typed value.
 | Param / kind | Required decoded fields |
 | --- | --- |
 | 8 / `global_version` | `version:U32`, `capabilities:U64` from exact tag 0xc4 / 104-bit layout |
-| 47 / `validator_controller_policy_v1` | `controller_codes:Bits256[]`, canonical order by raw unsigned 256-bit value, maximum eight, exact `HashmapE 256 True` units |
 | 48 / `auth_policy_v1` | `network_tag:Bits256`, `policy_sequence:U64`, `retired_flags:U16`, `primary_deadline:U32|null`, `policy_spec_hash:Bits256`, `primary_status:"not_retired"|"retired"` |
 
 Config 48 uses tag 0xa1, exact 601 root bits, frozen profile hash and reference
@@ -601,8 +600,7 @@ else primary_status = not_retired
 
 Absence on VM <17 returns null policy, not a computed "not retired" policy. Retirement here concerns daily AUTH and does not disable the consensus ML-DSA
 verifier. A single snapshot cannot attest monotonic policy transitions; that remains native chain
-validation. The controller allowlist similarly says nothing by itself about a
-particular deployed controller's accepted authority.
+validation.
 
 ### 6.3 Config 43 fields and defaults
 
@@ -651,7 +649,7 @@ this response introduces no "all PQ algorithms enabled" boolean.
 | Selector helper in RPC shared code | Parse canonical selectors, resolve immutable full ID, compare upstream identities |
 | Native proof/signature adapters | Reuse existing effective-set, trust-chain, candidate and cryptographic validation |
 | Public account decoder/registry | Code identity, bounded exact storage union, immutable public DTO |
-| Native config adapters | Native Config 8/43/47/48 decode, dependency observation and authenticated absence |
+| Native config adapters | Native Config 8/43/48 decode, dependency observation and authenticated absence |
 | JSON renderers | Bounded serialization only; no network I/O, registry mutation or verification |
 | Shared proof transport | Named route parity using the existing allowlisted handler |
 
@@ -676,7 +674,7 @@ projection changes are a separate client rollout with their own compatibility te
 | Proof binding | Ordinary predecessor with backward-to-key plus forward-to-target links; direct key/zerostate source; verified set transition | Assuming every predecessor is a key block, skipping a backward ancestor proof, incomplete target container, repeated/non-progressing anchor pages, latest-set/current-session substitution, wrong full endpoint or missing/ambiguous target carrier |
 | Account identity | Registered code with canonical live state | Unknown code with copied layout; recognized code with malformed/exotic/trailing state |
 | Quantum roles | Complete wallet/module/vault state | Nonzero inert legacy key, wrong module witness, wrong fee profile, counter truncation |
-| Config | Complete Config 43 v1/v2/v3 and absent default projections; eight distinct controller codes | Missing/version-inappropriate configured fields, false default provenance, nine distinct codes versus two duplicate codes, wrong tags/profile/refs, contradictory retirement status, VM 17+ missing policy |
+| Config | Complete Config 43 v1/v2/v3 and absent default projections | Missing/version-inappropriate configured fields, false default provenance, wrong tags/profile/refs, contradictory retirement status, VM 17+ missing policy |
 | Proof route | Identical allowed query/reply bytes | Forbidden/nested query, extra TL bytes, oversized lists/query/reply |
 | Resource lifecycle | Maximum valid carrier; two blocked workers retain permits after client timeout and release once on actual completion | A third job starts while canceled workers still run; cumulative byte/query/link overflow, deadline reset, late double settlement, unbounded queue/cache |
 | Compatibility | Frozen ordinary/simplex and old account/config responses | New opt-in disabled must not reclassify legacy requests |
@@ -721,7 +719,7 @@ red/green outcomes are recorded in the [audit receipt](explorer-pq-rpc-audit.md)
 The runner validates the Draft 2020-12 schema and synthetic request/result vectors.
 Targeted sensitivity controls remove individual guards and require the intended
 rejection assertion to fail, then pass again with the original guard restored.
-They cover nonempty certificates, the distinct-controller count, Config 43 version
+They cover nonempty certificates, Config 43 version
 and presence constraints, and retirement status. Tests use no real keys or proofs.
 Native crypto/proof checks, worker cancellation, decoded U64 range, selector
 equality, canonical pad bits, effective values, set transitions and policy deadline

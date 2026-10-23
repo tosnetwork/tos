@@ -34,9 +34,8 @@ Adapted for TOS. The contract uses `load_coins()`/`store_coins()` throughout (ne
 system stdlib where these are aliased to `LDTOMIS`/`STTOMIS`. Constants renamed:
 legacy unit constants -> TOS unit constants.
 
-The pool's config carries a second account beside the validator: the validator controller
-its stake is relayed through, since the elector takes a stake from a post-quantum
-controller and from nowhere else. That account is part of the config cell and therefore of
-the pool's address.
+The pool sends the stake to the elector itself, so the elector registers the pool's
+address as the validator, and the validator's node signs its ML-DSA-44 stake
+authorization for that address.
 
 Compile with the TOS FunC compiler.

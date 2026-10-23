@@ -1,9 +1,9 @@
 # Running a TOS Validator
 
 This guide describes the operator view of the validator stack in this repository.
-The step-by-step path for a post-quantum validator (consensus key, controller,
-node binding, elections, operating authorization, key rotation, configuration
-votes and global config refresh) is in
+The step-by-step path for a post-quantum validator (consensus key, staking
+account, node binding, elections, key rotation, configuration votes and global
+config refresh) is in
 [validator-operator-guide.md](validator-operator-guide.md).
 
 Validators are the verification backbone for AI actor workflows. Agent runners, service operators, and verifier processes may query validators, but validator nodes remain responsible only for protocol validation, consensus, and serving verified chain state.
@@ -22,33 +22,15 @@ Validators are the verification backbone for AI actor workflows. Agent runners, 
 ## Required Artifacts
 
 - global config, with a recent `validator.init_block`
-  ([refresh](validator-operator-guide.md#11-refresh-the-global-configs-init-block))
+  ([refresh](validator-operator-guide.md#9-refresh-the-global-configs-init-block))
 - local validator config (read only to create `<db>/config.json`)
 - the ML-DSA-44 consensus key file, owned by the node's service account
   (`tos-pq-consensus-key generate`), bound in `<db>/config.json` as
   `extraconfig.pq_consensus` (`tos-pq-consensus-key bind-node`)
-- a deployed validator controller, whose root key stays offline
+- a masterchain staking account: the operator wallet, or a nominator pool that
+  sends the stake; its account id is the validator id the node is bound to
 - persistent database directory
 - Fift scripts directory
-
-## Controller funding for elections
-
-A deployed PQ controller needs explicit root-authorized operating funding before
-it can relay a pool stake. Account balance alone is not spending authorization.
-Keep operator capital for the storage floor and fees separate from the recorded
-operating funds and pool principal. The controller root key signs an
-operating authorization (action kind 4, `tos-pq-controller fund-operations`)
-offline. A deposit is added to the recorded funds and every other field is
-replaced, so renew by deficit and read the state back after each change.
-`tosctl controller operations status --controller <addr>` reports funds,
-allowance, expiry and runway; `tosctl controller operations plan` prepares the
-renewal by deficit and prints the offline signing command and the bounceable
-`tosctl wallet send ... --bounce` that delivers it. When the balance is short of
-funds + floor + a storage forecast through the expiry, the plan is blocking: it
-prints the plain capital transfer to send first and withholds both commands
-until a re-run reads the funded balance. The elections task of
-`tosctl service` warns when the authorization is missing, expiring or low. See
-[validator-operator-guide.md](validator-operator-guide.md#8-fund-the-controllers-operations).
 
 ## Production Hardware Requirements
 
@@ -436,7 +418,7 @@ The engine reads its configuration from `<db>/config.json`; `-c` is read only
 when that file does not exist yet, to create it (the engine then exits so that
 the new file can be checked). The engine holds `<db>/config.json.lock` while it
 runs, and exits with status 2 if another process holds it. A validator's
-`config.json` names its consensus key and controller in
+`config.json` names its consensus key and staking account in
 `extraconfig.pq_consensus`; for every key it holds the engine logs `post-quantum consensus custody:
 validator_id <hex> key_id <hex> valid_from <t> expire_at <t>` at start-up and refuses to start if a key cannot
 be loaded.
@@ -486,7 +468,7 @@ Use the console for:
 
 - rotate keys deliberately and document every change; a consensus-key rotation
   is safe only in a verified interval in which the old key has no signing
-  obligation (see [validator-operator-guide.md](validator-operator-guide.md#10-rotate-the-consensus-key))
+  obligation (see [validator-operator-guide.md](validator-operator-guide.md#8-rotate-the-consensus-key))
 - separate node identity, validator keys, and operator credentials
 - pin logs and DB paths explicitly
 - monitor sync status before attempting validator operations

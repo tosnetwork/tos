@@ -2,8 +2,8 @@
 
 This guide takes an operator from a synchronized node to a post-quantum (PQ)
 validator that stands in elections, and covers what has to be done to keep it
-there: funding the controller's operations, key rotation, consensus-database
-cleanup, upgrades, configuration votes and the global config's init block.
+there: key rotation, consensus-database cleanup, upgrades, configuration votes
+and the global config's init block.
 
 It is generic: it names no network, host, port or amount. Take those from the
 network you join. Resource sizing, retention flags and memory tuning are in
@@ -13,19 +13,19 @@ network you join. Resource sizing, retention flags and memory tuning are in
 
 ## Keys and where they live
 
-A PQ validator has three independent authorities. Keep them apart.
+A PQ validator has two independent authorities. Keep them apart.
 
 | Authority | Created with | Lives on | Signs |
 |---|---|---|---|
 | Consensus key (ML-DSA-44, 32-byte seed) | `tos-pq-consensus-key generate` | the validator host, readable only by the node's service account | blocks, stake authorizations, configuration and complaint votes |
-| Controller root key (ML-DSA-44 seed) | `tos-pq-key keygen` | an offline machine | controller actions: binding a consensus key, operating authorizations, root rotation, withdrawals |
-| Wallet keys | `tosctl key add` (vault) | wherever the operator's wallets are kept | transfers that carry the above to the chain |
+| Wallet keys | `tosctl key add` (vault) | wherever the operator's wallets are kept | transfers, including the stake itself |
 
-The validator controller is a masterchain contract. Its account id is the
-validator id the chain records, and the elector accepts a stake only from such
-a controller. The controller is born bound to one consensus key, so the
-consensus seed never has to leave the validator host for the first
-deployment.
+The validator is named by its staking account: the masterchain account that
+sends the stake to the elector. That is the operator's wallet when it stakes
+directly, or a nominator pool when the stake comes from one. Its account id is
+the validator id the chain records. The elector accepts a stake only with an
+ML-DSA-44 authorization, made by the consensus key, over that account, the
+election, the weight factor and the node's ADNL address.
 
 ## 1. Install the tools
 
@@ -35,15 +35,11 @@ Linux release archives (x86_64 and arm64) and the node image ship, next to
 | Tool | Purpose |
 |---|---|
 | `tos-pq-consensus-key` | create, import, show, export the consensus key; bind it into a stopped node |
-| `tos-pq-key` | create the controller root key and print its public key (offline) |
-| `tos-pq-controller` | build the controller's initial data and StateInit; sign controller actions (offline) |
 | `tos-pq-vote` | sign configuration votes, complaint votes and stake authorizations with the consensus key |
 
-In the image they are in `/usr/local/bin`. From source, `tos-pq-consensus-key`,
-`tos-pq-controller` and `tos-pq-vote` are targets of the main build;
-`tos-pq-key` is a separate CMake project in `crypto/pq/tools`, so that the
-root signer links into no node binary. The key tools handle files with POSIX
-semantics and are not shipped for Windows or macOS.
+In the image they are in `/usr/local/bin`. From source, `tos-pq-consensus-key`
+and `tos-pq-vote` are targets of the main build. The key tools handle files
+with POSIX semantics and are not shipped for Windows or macOS.
 
 ## 2. Run a full node first
 
@@ -88,60 +84,25 @@ tos-pq-consensus-key export KEYDIR/pq-consensus.seed | ENCRYPT > BACKUP
 `DECRYPT < BACKUP | tos-pq-consensus-key import KEYFILE` (64 hex digits on
 standard input).
 
-## 4. Create the controller root key (offline)
+## 4. Choose the staking account
 
-On the offline machine:
+The staking account is the validator's identity on chain. Pick it before
+binding the node, because the node signs every stake authorization for it and
+the elector refuses a stake signed for any other account:
 
-```bash
-tos-pq-key keygen ROOTSEED      # prints the 2624-hex-digit root public key
-tos-pq-key public ROOTSEED      # prints it again
-```
+- **A wallet.** A masterchain operator wallet (`tosctl config wallet add`, or a
+  wallet created with `--workchain -1`) sends the stake itself, with the stake
+  as the message value.
+- **A single-nominator pool.** The pool holds the principal and sends it; the
+  operator wallet sends only the fees. Its address is derived from its owner
+  and its validator wallet, so it is fixed before deployment
+  (`tosctl config pool add`, or `tosctl deploy pool` to deploy it). Fund the
+  pool from its owner.
 
-The root seed never goes to the validator host.
+A consensus key stands for one staking account per election: the elector
+refuses a stake whose key another member already uses.
 
-## 5. Deploy the controller
-
-1. Build the controller code from the release source and encode it:
-
-   ```bash
-   func -W controller.boc -AP -o controller.fif \
-     crypto/smartcont/stdlib.fc crypto/smartcont/validator-controller-v1.fc
-   FIFTPATH=crypto/fift/lib fift controller.fif
-   base64 -w0 controller.boc
-   ```
-
-   Its code hash must be one the network admits in ConfigParam 47.
-
-2. Build the initial data from the root public key (or the root seed file)
-   and the consensus `key_id` from step 3. It refuses a zero key id and a key id
-   equal to the root's own:
-
-   ```bash
-   tos-pq-controller init-data ROOT_PUBLIC_HEX CONSENSUS_KEY_ID_HEX
-   ```
-
-3. Build the StateInit. The BOC goes to standard output; the controller
-   address and code hash go to standard error:
-
-   ```bash
-   tos-pq-controller state-init CODE_BOC_B64 INITIAL_DATA_BOC_B64
-   ```
-
-4. Deploy it from an operator wallet with a non-bouncing internal message
-   (no `--bounce`) and an empty body:
-
-   ```bash
-   tosctl wallet send --from WALLET --to=-1:CONTROLLER_HEX --amount TOS \
-     --state-init-boc STATE_INIT_BOC_B64
-   ```
-
-5. Keep the raw BOC of the deployment transaction (the controller account's
-   first transaction; JSON-RPC `getTransactions` returns it base64-encoded in
-   `data`). A first stake carries the birth witness derived from it; see
-   [section 7](#7-stand-in-elections). `tos-pq-controller witness CODE_BOC_B64
-   INITIAL_DATA_BOC_B64` prints that witness for inspection.
-
-## 6. Bind the node to the controller
+## 5. Bind the node to the staking account
 
 Stop the node, then, as the node's service account:
 
@@ -150,7 +111,7 @@ tos-pq-consensus-key bind-node DB_ROOT KEYDIR/pq-consensus.seed VALIDATOR_ID
 ```
 
 `DB_ROOT` is the node's `-D` directory; the tool edits `DB_ROOT/config.json`.
-`VALIDATOR_ID` is the controller's account id, as 64 hex digits or
+`VALIDATOR_ID` is the staking account's id, as 64 hex digits or
 `-1:<64 hex digits>`. The key path must be absolute; the key is checked under
 the node's own rules. The tool:
 
@@ -179,121 +140,32 @@ and stops instead of starting as an observer if the key cannot be
 loaded. In the container image the binding is made from `VALIDATOR_ID` and
 `PQ_CONSENSUS_KEY_FILE`; see [docker/README.md](../docker/README.md#run-a-validator).
 
-## 7. Stand in elections
+## 6. Stand in elections
 
-The stake path is wallet → single-nominator pool → controller → elector. The
-pool's address is derived from its owner, its validator wallet and its
-controller, so deploy the controller first. Configure `tosctl`
-([tosctl README](../tosctl/src/node-control/README.md)): the node's control
-connection (`config node add`), the validator wallet (`config wallet add`), the
-pool (`config pool add --controller`, or `deploy pool --controller` to deploy
-it), and the binding (`config bind add --pool`). Pass a raw masterchain address
-to `--to`, `--owner`, `--controller` or `--address` of these commands either as
-`--flag -1:<hex>` or `--flag=-1:<hex>`; address flags accept a value starting with a hyphen, and
-refuse anything that is not an address. Then import the controller's
-birth from the transaction kept in step 5:
-
-```bash
-tosctl config bind import-birth --node NODE \
-  --transaction-boc DEPLOYMENT_TX.boc --output /ABSOLUTE/PATH/controller-birth.boc
-```
+Configure `tosctl` ([tosctl README](../tosctl/src/node-control/README.md)): the
+node's control connection (`config node add`), the validator wallet
+(`config wallet add`), the pool if there is one (`config pool add`, or
+`deploy pool`), and the binding (`config bind add`, with `--pool` when a pool
+stakes). Pass a raw masterchain address to `--to`, `--owner` or `--address` of
+these commands either as `--flag -1:<hex>` or `--flag=-1:<hex>`; address flags
+accept a value starting with a hyphen, and refuse anything that is not an
+address.
 
 Enable the binding (`tosctl config elections enable NODE`) and run
 `tosctl service`. Its elections task asks the node to sign each stake
-authorization with the consensus key, so the node must be bound and running.
+authorization with the consensus key for the binding's staking account, so the
+node must be bound to that account and running; it refuses, before any wallet
+message, an authorization the node made for another account. Without a pool it
+sends the stake from the wallet to the elector; with a pool it sends the pool
+the order and only the fees. `tosctl config wallet stake --binding NODE` does
+the same once, by hand.
+
 The task does not create temporary validator keys: on the PQ chain the node is
-matched to its validator-set entry only through the consensus key.
+matched to its validator-set entry only through the consensus key. Recovered
+stakes are credited to the staking account, and the task asks the elector for
+them after each validation round.
 
-A pool's stake is relayed only if the controller holds a current operating
-authorization ([section 8](#8-fund-the-controllers-operations)). The elections task re-reads
-it every five minutes, logs missing, expired or low authorizations, repeats the
-warning when it stakes, and publishes it per node as `operating_authorization`
-in `/v1/validators`. It only reports; it cannot renew. Thresholds are set in the
-`tosctl` configuration:
-
-```json
-"elections": {
-  "operating_authorization": {
-    "target_days": 30,
-    "warn_percent": 25,
-    "expiry_warn_days": 7
-  }
-}
-```
-
-## 8. Fund the controller's operations
-
-A controller relays a stake only against a root-signed operating authorization
-(action kind 4). Each relay charges a grant, priced from ConfigParam 20 and 24,
-against both the recorded funds and the allowance, and is refused once the
-authorization has expired. The account balance alone authorizes nothing; keep
-capital for the storage floor and fees separate from the recorded funds and
-from pool principal.
-
-Check it:
-
-```bash
-tosctl controller operations status --controller -1:CONTROLLER_HEX
-```
-
-It prints funds, allowance, per-request limit, storage floor, expiry, payer,
-the live grant, stakes remaining and the runway at the ConfigParam 15 election
-interval. `--target-days`, `--warn-percent` and `--expiry-warn-days` set the
-warnings (defaults 30, 25, 7); `--strict` exits non-zero on any warning, for
-monitoring; `--format json` is available.
-
-Renew it:
-
-```bash
-tosctl controller operations plan --controller -1:CONTROLLER_HEX \
-  --payer PAYER_ADDRESS [--floor-nanotos N]
-```
-
-A deposit is added to the recorded funds and every other field replaces the
-stored one, so the plan renews by deficit. `--floor-nanotos` is required for a
-first authorization. `--expiry-only` renews only the expiry. The plan refuses
-while a relay is pending or retry fees are held, when the payer would change
-unless `--allow-payer-change` is given, when the controller account is frozen or
-uninitialized, and when the node does not serve the controller's storage
-metadata. It signs and sends nothing.
-
-Each relay requires the controller's balance to keep `funds + floor`, and the
-deposit cannot supply that: it raises the balance and the recorded funds alike.
-The plan therefore requires `funds + floor + storage forecast`, where the
-forecast is the storage the controller will be charged from its last payment
-through the authorization's expiry, plus any recorded storage debt, at the
-occupancy and prices of the block the plan read. It is a forecast, not a
-guarantee: the request rewrites the controller's data, relays add state, and
-prices can change.
-
-While the balance is short of that requirement the plan is **BLOCKING**. It
-prints a plain transfer to send first: the net amount to retain, plus
-`--capital-margin-nanotos` (discretionary headroom, default one live
-`control_value`), plus the fee the controller pays from its own balance to
-receive the transfer. It prints the kind 4 payload only as a preview and no
-signing or send command. Send the transfer, then run the plan again: it reads
-the balance, the storage metadata and the authorization afresh, and prints the
-commands once the capital is there. Once it does, it prints the payload and two
-commands:
-
-1. the exact `tos-pq-controller fund-operations ROOTSEED GLOBAL_ID
-   CONTROLLER_HEX EPOCH NONCE VALID_UNTIL PAYLOAD_BOC_B64` line, with the live
-   epoch and nonce and a `valid_until` within the contract's window (`--valid-for`,
-   default 1800 seconds, at most 3600), to run on the offline machine;
-2. the send from the payer wallet, with exactly the printed value:
-
-   ```bash
-   tosctl wallet send --from PAYER_WALLET --to=-1:CONTROLLER_HEX \
-     --amount-nanotos VALUE --body-boc SIGNED_BODY_B64 --bounce
-   ```
-
-   `--bounce` makes a refused request return its value. A masterchain
-   destination can be given as `--to -1:...` or `--to=-1:...`.
-
-Run `status` again and check that the nonce advanced and the recorded values
-are the planned ones.
-
-## 9. Retired consensus databases
+## 7. Retired consensus databases
 
 Each validator-set session leaves a RocksDB directory under `<db>/consensus/`.
 The engine deletes a retired session's directory once it is provably obsolete;
@@ -302,7 +174,7 @@ keeps them (for forensics) and makes the disk grow without bound. See
 [Validator.md](Validator.md#retired-consensus-databases) for the conditions and
 log lines.
 
-## 10. Rotate the consensus key
+## 8. Rotate the consensus key
 
 A node can hold several consensus keys for its validator at once, so a
 rotation from key A to key B needs no downtime. Each key has a window:
@@ -334,7 +206,7 @@ a node restarted with its wall clock rolled back before a configured key's
 `expire_at` loads that key again by its window. The deadline is read from the host's wall clock, so clock skew
 shifts it by the skew: run NTP. Set it after
 the `utime_until` of every set that lists the key, or leave it at 0 and remove
-the key instead (step 7).
+the key instead (step 6).
 
 In `config.json` a single key valid for every election is written as
 `consensus_key_file`; any other set of keys is written in `keys` alone, with
@@ -356,27 +228,25 @@ configuration is flushed to disk.
 
    Confirm with `get-pq-consensus-keys` (or `tos-pq-consensus-key
    list-node-keys DB_ROOT`) that both keys are held.
-4. Offline, before the stake for election E is due: `tos-pq-controller bind
-   ROOTSEED GLOBAL_ID CONTROLLER_HEX EPOCH NONCE VALID_UNTIL NEXT.seed`; send
-   the body from a wallet and check that the controller now shows key B.
-5. The stake for election E is signed with B. Confirm the elector accepted it.
-   Until then, A keeps signing every block and vote of the running set.
-6. Keep A until no validator set lists it: the set that lists A has ended (its
+4. The stake for election E is signed with B and carries B; nothing else
+   changes, the staking account stays the same. Confirm the elector accepted
+   it. Until then, A keeps signing every block and vote of the running set.
+5. Keep A until no validator set lists it: the set that lists A has ended (its
    `utime_until` has passed, and ConfigParam 34, and ConfigParam 36 while a
-   next set is pending, list this controller with B) and no stake is still held
+   next set is pending, list this validator with B) and no stake is still held
    under A.
-7. Remove A: `del-pq-consensus-key <A key_id>` on the running node (it refuses
+6. Remove A: `del-pq-consensus-key <A key_id>` on the running node (it refuses
    while a current, previous or next set lists A, and refuses the last key),
    or `tos-pq-consensus-key remove-node-key DB_ROOT <A key_id or file>` on a
-   stopped one (it cannot see validator sets: check step 6 yourself).
-8. Keep B's seed where the node reads it and in its encrypted offline backup.
+   stopped one (it cannot see validator sets: check step 5 yourself).
+7. Keep B's seed where the node reads it and in its encrypted offline backup.
    Delete `NEXT.seed`, `MEDIUM` and A's seed file; destroy A's backup when you
    no longer need to be able to sign with A.
 
 `bind-node` refuses a node that holds more than one key, even with
 `--replace`: remove the extra keys first.
 
-## 11. Refresh the global config's init block
+## 9. Refresh the global config's init block
 
 A node or client proves its way forward from the global config's
 `validator.init_block` through every later key block. Nodes drop old key
@@ -414,7 +284,7 @@ a second trusted node, and authenticate the published file through the release
 that carries it. A chain with no eligible key block is not refreshed to the
 zerostate as a fallback.
 
-## 12. Upgrade a validator
+## 10. Upgrade a validator
 
 Upgrade one validator at a time and keep the quorum: see
 [Validator.md](Validator.md#recommended-upgrade-procedure). Stop the old
@@ -425,7 +295,7 @@ for changed defaults: for example, consensus-database cleanup is now on unless
 together are refused with status 2. The change process is in
 [tos-upgrade-process.md](tos-upgrade-process.md).
 
-## 13. Configuration proposals and votes
+## 11. Configuration proposals and votes
 
 Protocol changes are activated by configuration votes.
 
@@ -456,11 +326,12 @@ Protocol changes are activated by configuration votes.
   ```
 
   `SET_ID_HEX` is the hash of the current ConfigParam 34 cell, `IDX` this
-  validator's index in it, and `VALIDATOR_ID_HEX` the controller id. The tool
+  validator's index in it, and `VALIDATOR_ID_HEX` the staking account id. The tool
   prints a message body; send it from a wallet as an internal message to the
   configuration contract (ConfigParam 0). The contract refuses, before it checks
   the signature, a vote that brings less than the masterchain compute fee for
-  50,000 gas, so send that plus enough for the message's own processing.
+  one ML-DSA-44 verification (4,000 gas), so send that plus enough for the
+  message's own processing.
   `tosctl vote offer cast` does not send PQ votes: it explains why and stops.
 
 A proposal passes after enough rounds in which validators holding strictly
@@ -477,4 +348,3 @@ parameters).
 | `validator-engine` | 2 | option error, both cleanup flags given, or `<db>/config.json.lock` held by another process |
 | `tos-pq-consensus-key bind-node` | 1 / 3 | refused, nothing written / written but not confirmed durable |
 | container entrypoint | 4 | validator role refused (see [docker/README.md](../docker/README.md#run-a-validator)) |
-| `tosctl controller operations status --strict` | non-zero | a warning was raised |
