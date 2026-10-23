@@ -381,7 +381,13 @@ def main():
             )["result"]
             assert by_get["decoded"]["observation"]["block_id"] == observation
             assert "config_proof" in by_get
-            for param in (8, 43, 47, 48):
+            # ConfigParam 47, the retired controller code list, is not in the genesis.
+            request(
+                "getConfigParam",
+                {"param": 47, "block_id": observation, "include_decoded": True},
+                error=(-32004, "CONFIG_PARAM_ABSENT"),
+            )
+            for param in (8, 43, 48):
                 typed = request(
                     "getConfigParam",
                     {
