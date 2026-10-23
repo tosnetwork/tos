@@ -90,7 +90,6 @@ struct PoolValues {
   static constexpr unsigned long long stake_amount_sent = 3000000000000ULL;
   static constexpr unsigned long long validator_amount = 500000000000ULL;
   static constexpr unsigned char validator_byte = 0xAB;
-  static constexpr unsigned char controller_byte = 0xCD;
   static constexpr int reward_share = 4000;
   static constexpr int max_nominators = 40;
   static constexpr unsigned long long min_validator_stake = 100000000000ULL;
@@ -126,7 +125,6 @@ td::Ref<vm::Cell> pool_data() {
   using V = PoolValues;
   vm::CellBuilder config;
   require(config.store_bits_bool(filled(V::validator_byte).cbits(), 256) &&
-              config.store_bits_bool(filled(V::controller_byte).cbits(), 256) &&
               config.store_long_bool(V::reward_share, 16) && config.store_long_bool(V::max_nominators, 16),
           "pool config");
   store_coins(config, V::min_validator_stake);

@@ -265,7 +265,7 @@ pub trait ClientAPI: Send + Sync {
         election_date: u32,
         max_factor: u32,
         adnl_addr: &[u8],
-        stake_owner: &[u8],
+        src_addr: &[u8],
     ) -> anyhow::Result<PqStakeAuthorization>;
     async fn generate_key_pair(&mut self) -> anyhow::Result<Vec<u8>>;
     async fn export_key_pub(&mut self, key_hash: &[u8]) -> anyhow::Result<Vec<u8>>;

@@ -59,8 +59,10 @@ Written by `test-proven-pool-fixture` (`test/proven-snapshot/pool-snapshot-fixtu
 test-proven-pool-fixture <zerostate file> <current pool code BOC> <out dir>
 ```
 
-with the same zerostate as above and the pool code from `NOMINATOR_POOL_CODE`
-(code hash `adda03fa…a2be`). The chain is synthetic but genuinely signed with
+with the public testnet epoch-4 zerostate (file SHA-256 `616ae866…8a0b`; the
+network above was reset and its zerostate file is gone, and the synthetic chain
+signs its own anchor, so only the base state differs) and the pool code from
+`NOMINATOR_POOL_CODE` (code hash `b15199f4…3844`). The chain is synthetic but genuinely signed with
 ML-DSA-44 keys: key-block anchor `anchor.json` (seqno 1), a key block rotating
 from authority A to authority B (seqno 2), and the target `target.json`
 (seqno 3), whose header commits by Merkle update to the zerostate extended

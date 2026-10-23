@@ -84,11 +84,6 @@
         },
         {
           "artifact": "tos-x86_64-linux",
-          "path": "tos-pq-controller",
-          "name": "tos-pq-controller-linux-x86_64"
-        },
-        {
-          "artifact": "tos-x86_64-linux",
           "path": "tos-pq-key",
           "name": "tos-pq-key-linux-x86_64"
         },
@@ -166,11 +161,6 @@
           "artifact": "tos-arm64-linux",
           "path": "tos-pq-consensus-key",
           "name": "tos-pq-consensus-key-linux-arm64"
-        },
-        {
-          "artifact": "tos-arm64-linux",
-          "path": "tos-pq-controller",
-          "name": "tos-pq-controller-linux-arm64"
         },
         {
           "artifact": "tos-arm64-linux",

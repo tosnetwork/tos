@@ -8,10 +8,9 @@
 // accept, and a key it refuses is one the node would have refused at startup.
 //
 // Nothing prints the expanded secret, and only one command prints the seed: `export`,
-// which exists for the offline ceremony that binds a new key to its controller (the
-// controller's `bind` needs the incoming key to cosign). It writes to a pipe and nowhere
-// else, so the seed goes into `import` on the other side, or into an encryption program,
-// and never onto a screen or into a file left behind by a redirect.
+// which exists to move a key generated offline onto the validator host. It writes to a
+// pipe and nowhere else, so the seed goes into `import` on the other side, or into an
+// encryption program, and never onto a screen or into a file left behind by a redirect.
 //
 // It also points a stopped node at its key: `bind-node` writes the validator id and the
 // key file into the node's configuration, after checking the key the way the node will;
@@ -134,7 +133,8 @@ int usage() {
       "bind-node sets extraconfig.pq_consensus in DB_ROOT/config.json, where DB_ROOT is\n"
       "the node's -D directory. Run it as the node's service account: it checks KEYFILE\n"
       "(an absolute path) under the rules the node loads it by. VALIDATOR_ID is the\n"
-      "controller's account id, as 64 hex digits or -1:<64 hex digits>. A different\n"
+      "staking account's id (the wallet or pool that sends the stake), as 64 hex digits\n"
+      "or -1:<64 hex digits>. A different\n"
       "binding already there is replaced only with --replace. It holds\n"
       "DB_ROOT/config.json.lock for the whole edit; a running node holds the same lock,\n"
       "so bind-node refuses while the node runs and the node refuses to start meanwhile.\n"
@@ -157,7 +157,7 @@ int usage() {
       "the last key and a removal that would leave only expired keys.\n"
       "list-node-keys reads without the lock and works beside a running node.\n"
       "\n"
-      "Rotating the consensus key from A to B (a kind 3 bind) without downtime. The node\n"
+      "Rotating the consensus key from A to B without downtime. The node\n"
       "holds A and B together: A keeps signing for every validator set that lists A,\n"
       "and B signs every stake from the next election on.\n"
       "  1. offline:   tos-pq-consensus-key generate NEXT.seed   (note its key_id, B)\n"
@@ -171,20 +171,16 @@ int usage() {
       "       stopped node:  tos-pq-consensus-key add-node-key DB_ROOT\n"
       "                        KEYDIR/pq-consensus-next.seed E\n"
       "     and confirm with get-pq-consensus-keys (or list-node-keys) that both are held.\n"
-      "  4. offline, before the stake for election E is due:\n"
-      "                tos-pq-controller bind ROOTSEED GLOBAL_ID CONTROLLER_HEX EPOCH\n"
-      "                  NONCE VALID_UNTIL NEXT.seed   and send the body from a wallet;\n"
-      "     check that the controller_state getter shows B\n"
-      "  5. the stake for election E is signed with B: the schedule assigns it by its\n"
-      "     window, with no override (create-stake-authorization-with-key E ... B only\n"
-      "     asserts it, and is refused if the schedule names another key).\n"
-      "     Confirm the elector accepted it.\n"
-      "  6. keep A until no validator set lists it any more: the set that lists A has\n"
+      "  4. the stake for election E is signed with B and carries B: the schedule assigns\n"
+      "     it by its window, with no override (create-stake-authorization-with-key E ...\n"
+      "     B only asserts it, and is refused if the schedule names another key).\n"
+      "     Confirm the elector accepted it under the same staking account.\n"
+      "  5. keep A until no validator set lists it any more: the set that lists A has\n"
       "     ended (its utime_until has passed and Config34, and Config36 while a next set\n"
-      "     is pending, list this controller with B) and no stake is still held under A.\n"
-      "  7. remove A: del-pq-consensus-key A on the running node (it refuses while a\n"
+      "     is pending, list this validator with B) and no stake is still held under A.\n"
+      "  6. remove A: del-pq-consensus-key A on the running node (it refuses while a\n"
       "     current, previous or next set lists A), or remove-node-key on a stopped one.\n"
-      "  8. destroy every other copy of A's seed and of B's seed except the encrypted\n"
+      "  7. destroy every other copy of A's seed and of B's seed except the encrypted\n"
       "     offline backup of B.\n",
       stderr);
   return 2;

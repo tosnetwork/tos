@@ -112,7 +112,7 @@ fn production_request_serializers_match_cpp_and_have_complete_coverage() {
             election_date: q.election_date as u32,
             max_factor: q.max_factor as u32,
             adnl_addr: q.adnl_addr.as_slice().to_vec(),
-            stake_owner: q.stake_owner.as_slice().to_vec()
+            src_addr: q.src_addr.as_slice().to_vec()
         }
     );
     unit!(GenerateKeyPairRqRs, "engine.validator.generateKeyPair");

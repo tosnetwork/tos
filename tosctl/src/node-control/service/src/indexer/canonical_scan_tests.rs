@@ -253,7 +253,6 @@ fn snapshot_of(fixture: &PoolFixture, checkpoint: MasterchainCheckpoint) -> Nomi
             stake_amount_sent: 0,
             validator_amount: 2000,
             validator_address: [0xab; 32],
-            controller_address: [0xcd; 32],
             validator_reward_share: 4000,
             max_nominators_count: 40,
             min_validator_stake: 1000,

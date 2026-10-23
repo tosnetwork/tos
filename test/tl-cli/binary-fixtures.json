@@ -10,11 +10,11 @@
   "tosctl/src/node-control/contracts/tests/fixtures/proven-reads/live-638326/exec-config.tl": "7fd2b0de2f113318a99246d31a3ff3c5ccea2929ff4cf026e9fd7f97fce6d946",
   "tosctl/src/node-control/contracts/tests/fixtures/proven-reads/live-638326/masterchain-info.tl": "e18af8bf00d60a54ea69989ab264bfcb0f08cb608d4d4f7b0ca110aa00dcfcfa",
   "tosctl/src/node-control/contracts/tests/fixtures/proven-reads/pool-account-638197.tl": "6d95d95331f254dc77999f467f4bc359d4338da3a76d4dbc7cfd1014007a3531",
-  "tosctl/src/node-control/contracts/tests/fixtures/proven-reads/synthetic-pool/chain-0000.tl": "f01b4297427ef2867a2369cba041ee41435b8b8a122e268df769f3b59aeb95e7",
-  "tosctl/src/node-control/contracts/tests/fixtures/proven-reads/synthetic-pool/exec-config.tl": "2ea1b95a25db7c777893487f5a9c1b8dae8229c5137cd4c1edad7ed09df9e01f",
-  "tosctl/src/node-control/contracts/tests/fixtures/proven-reads/synthetic-pool/libraries-other-block.tl": "92eabd6e48972c6ce095b7fbfaf0c4736ff1cc877e6fa3223af39d10b845fbfc",
-  "tosctl/src/node-control/contracts/tests/fixtures/proven-reads/synthetic-pool/libraries-substituted.tl": "32b7ad63232e721e1fb03831051b19fb85b1a55f3abae0d8d62c36fa16caf728",
-  "tosctl/src/node-control/contracts/tests/fixtures/proven-reads/synthetic-pool/libraries.tl": "3c1d79744ab48bc2e5015fa62863f609e502a6877f5ad5d6fb725ead35981af2",
-  "tosctl/src/node-control/contracts/tests/fixtures/proven-reads/synthetic-pool/library-pool-account.tl": "36f258aedf19d6e0950906553211c4cd7f77e350e4099ee0a53c1254739e93c9",
-  "tosctl/src/node-control/contracts/tests/fixtures/proven-reads/synthetic-pool/pool-account.tl": "885afab0e6dcd0e9a69220c30ab6a563bedcf41a49b08638ddac8fe858defb75"
+  "tosctl/src/node-control/contracts/tests/fixtures/proven-reads/synthetic-pool/chain-0000.tl": "81b3ab377b1d74c3584fac4f1e3331dd9272ef1e7073bae8653f521fb7cfd449",
+  "tosctl/src/node-control/contracts/tests/fixtures/proven-reads/synthetic-pool/exec-config.tl": "3fe1d478eda518298d6c02811d82ba991611355c50eeccc022d34352533f6417",
+  "tosctl/src/node-control/contracts/tests/fixtures/proven-reads/synthetic-pool/libraries-other-block.tl": "6ce5d3f80f6605915ef613e887453dba282b83240256c8a1da2414adf881501d",
+  "tosctl/src/node-control/contracts/tests/fixtures/proven-reads/synthetic-pool/libraries-substituted.tl": "dc14705b7e8c894614d40a3ed4a894b15630cc637c5097ef8c8ceb9d5d5c753c",
+  "tosctl/src/node-control/contracts/tests/fixtures/proven-reads/synthetic-pool/libraries.tl": "87d69f44509b18753dc2b8f446d01a78954f9ee3e2168e5283b3a1f68e562c60",
+  "tosctl/src/node-control/contracts/tests/fixtures/proven-reads/synthetic-pool/library-pool-account.tl": "08e1394b9e655357100f776fb1c502474f195830e6488df91ae51f2100ddfb99",
+  "tosctl/src/node-control/contracts/tests/fixtures/proven-reads/synthetic-pool/pool-account.tl": "254cc46fad77923fadcb53e54f860d7e74565c5b085abbdcf5e14735a80a0579"
 }

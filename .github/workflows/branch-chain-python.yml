@@ -98,7 +98,7 @@ jobs:
           ccache --zero-stats
           cmake --build build --parallel 4 --target \
             gen_fif create-state toslibjson func fift emulator \
-            generate-random-id tos-pq-consensus-key tos-pq-controller \
+            generate-random-id tos-pq-consensus-key \
             dht-server validator-engine-console validator-engine test-node-store-fixture \
             create-hardfork test-tos-collator test-apply-block-readback-latency \
             test-pq-lite-forward-proof test-pending-finality-cache test-c04-real-state-proof \

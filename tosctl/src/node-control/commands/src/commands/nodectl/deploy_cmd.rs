@@ -75,12 +75,6 @@ pub(crate) struct DeployPoolCmd {
     verbose: bool,
     #[arg(allow_hyphen_values = true, long = "owner", help = "Address of the pool owner")]
     owner: MsgAddressInt,
-    #[arg(
-        allow_hyphen_values = true,
-        long = "controller",
-        help = "Validator controller address the pool relays its stake through"
-    )]
-    controller: MsgAddressInt,
     #[arg(long = "amount", help = "Amount to transfer")]
     amount: f64,
     #[arg(long = "node", help = "Node ID")]
@@ -346,13 +340,9 @@ impl DeployPoolCmd {
             anyhow::bail!("Task cancelled");
         }
 
-        let pool_address = NominatorWrapperImpl::calculate_address(
-            -1,
-            &self.owner,
-            &wallet_address,
-            &self.controller,
-        )
-        .map_err(set_err)?;
+        let pool_address =
+            NominatorWrapperImpl::calculate_address(-1, &self.owner, &wallet_address)
+                .map_err(set_err)?;
         res.borrow_mut().address = pool_address.to_string();
 
         if self.verbose {
@@ -411,11 +401,7 @@ impl DeployPoolCmd {
                     false,
                     wallet_info.seqno,
                     None,
-                    Some(NominatorWrapperImpl::build_state_init(
-                        &self.owner,
-                        &wallet_address,
-                        &self.controller,
-                    )?),
+                    Some(NominatorWrapperImpl::build_state_init(&self.owner, &wallet_address)?),
                 )
                 .await
                 .map_err(set_err)?,

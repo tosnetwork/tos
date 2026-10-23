@@ -124,6 +124,18 @@ pub struct MasterchainCheckpoint {
     pub file_hash: String,
 }
 
+/// The current masterchain head as a checkpoint, for reads that must all come from
+/// one block.
+pub async fn latest_checkpoint(chain: &dyn ChainProvider) -> anyhow::Result<MasterchainCheckpoint> {
+    let last = chain.get_masterchain_info().await?.last;
+    anyhow::ensure!(last.workchain == -1, "the masterchain head is not a masterchain block");
+    Ok(MasterchainCheckpoint {
+        seqno: last.seqno,
+        root_hash: hex::encode(&last.root_hash),
+        file_hash: hex::encode(&last.file_hash),
+    })
+}
+
 // ─── Trait ─────────────────────────────────────────────────────────────────
 
 /// TOS chain RPC provider trait.

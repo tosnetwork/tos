@@ -108,21 +108,10 @@ pub fn upgrade(query_id: u64, new_code: Cell) -> anyhow::Result<Cell> {
     builder.into_cell()
 }
 
-/// Build new stake message body
-///
-/// Sends stake to the single-nominator pool for the next validation cycle.
-/// The pool's `check_new_stake_msg` consumes stake_at, max_factor, adnl_addr,
-/// algorithm_id, public-key ref, signature ref, then optional witness. The
-/// elector consumes a different field order and an owner declaration; this is
-/// deliberately not an elector-directed body.
-pub fn new_stake(params: &NewStakeParams) -> anyhow::Result<Cell> {
-    new_stake_with_witness(params, None)
-}
-
-pub fn new_stake_with_witness(
-    params: &NewStakeParams,
-    witness: Option<&Cell>,
-) -> anyhow::Result<Cell> {
+/// Appends the stake fields the elector parses after `op` and `query_id`: algorithm
+/// id, ^public key, stake_at, max_factor, ADNL address, ^signature. A pool forwards
+/// these bits unchanged, so both the pool and the direct body end with them.
+fn append_stake_fields(builder: &mut BuilderData, params: &NewStakeParams) -> anyhow::Result<()> {
     if params.validator_pubkey.len() != MLDSA44_PUBLIC_KEY_BYTES {
         anyhow::bail!(
             "a stake authorization needs an ML-DSA-44 public key of {MLDSA44_PUBLIC_KEY_BYTES} bytes, not {}",
@@ -142,22 +131,37 @@ pub fn new_stake_with_witness(
     let public_key_cell =
         pq_bytes::pack_pq_bytes(params.validator_pubkey, MLDSA44_PUBLIC_KEY_BYTES)?;
     let signature_cell = pq_bytes::pack_pq_bytes(params.signature, MLDSA44_SIGNATURE_BYTES)?;
+    builder
+        .append_u16(MLDSA44_ALGORITHM_ID)?
+        .checked_append_reference(public_key_cell)?
+        .append_u32(params.stake_at)?
+        .append_u32(params.max_factor)?
+        .append_raw(params.adnl_addr, 256)?
+        .checked_append_reference(signature_cell)?;
+    Ok(())
+}
+
+/// Build new stake message body for a nominator pool
+///
+/// The pool reads the stake amount, checks the remaining fields with
+/// `check_new_stake_msg`, and forwards them to the elector unchanged.
+pub fn new_stake(params: &NewStakeParams) -> anyhow::Result<Cell> {
     let mut builder = BuilderData::new();
     builder
         .append_u32(opcodes::NEW_STAKE)?
         .append_u64(params.query_id)?
-        .append_builder(&build_coins(params.stake_amount)?)?
-        .append_u32(params.stake_at)?
-        .append_u32(params.max_factor)?
-        .append_raw(params.adnl_addr, 256)?
-        .append_u16(MLDSA44_ALGORITHM_ID)?
-        .checked_append_reference(public_key_cell)?
-        .checked_append_reference(signature_cell)?;
-    if let Some(witness) = witness {
-        builder.append_bit_one()?.checked_append_reference(witness.clone())?;
-    } else {
-        builder.append_bit_zero()?;
-    }
+        .append_builder(&build_coins(params.stake_amount)?)?;
+    append_stake_fields(&mut builder, params)?;
+    builder.into_cell()
+}
+
+/// Build new stake message body sent by a wallet straight to the elector
+///
+/// The stake is the message value, so the body carries no amount.
+pub fn elector_new_stake(params: &NewStakeParams) -> anyhow::Result<Cell> {
+    let mut builder = BuilderData::new();
+    builder.append_u32(opcodes::NEW_STAKE)?.append_u64(params.query_id)?;
+    append_stake_fields(&mut builder, params)?;
     builder.into_cell()
 }
 
@@ -257,61 +261,60 @@ mod tests {
         assert_eq!(ref_cell.repr_hash(), new_code.repr_hash());
     }
 
-    #[test]
-    fn test_build_new_stake_message() {
-        let signature = vec![0x33u8; MLDSA44_SIGNATURE_BYTES];
-        let params = NewStakeParams {
+    fn stake_params(signature: &[u8]) -> NewStakeParams<'_> {
+        NewStakeParams {
             query_id: 33333u64,
             stake_amount: 10_000_000_000_000u64,
             validator_pubkey: &[0x11u8; MLDSA44_PUBLIC_KEY_BYTES],
             stake_at: 1700000000u32,
             max_factor: 65536u32,
             adnl_addr: &[0x22u8; 32],
-            signature: &signature,
-        };
+            signature,
+        }
+    }
 
-        let cell = new_stake(&params).unwrap();
-        let mut slice = SliceData::load_cell(cell).unwrap();
-
-        let opcode = slice.get_next_u32().unwrap();
-        assert_eq!(opcode, opcodes::NEW_STAKE);
-
-        let parsed_query_id = slice.get_next_u64().unwrap();
-        assert_eq!(parsed_query_id, params.query_id);
-
-        let coins = Coins::construct_from(&mut slice).unwrap();
-        assert_eq!(coins.as_u128(), params.stake_amount as u128);
-
-        // This value round trip is the ordering gate. The compiled pool contract
-        // accepts adjacent fixed-width fields even when transposed, because it
-        // parses but does not interpret their contents. Its sandbox test alone
-        // cannot detect that mistake. This is pool order, not elector order.
-        let parsed_stake_at = slice.get_next_u32().unwrap();
-        assert_eq!(parsed_stake_at, params.stake_at);
-
-        let parsed_max_factor = slice.get_next_u32().unwrap();
-        assert_eq!(parsed_max_factor, params.max_factor);
-
-        let adnl = slice.get_next_bits(256).unwrap();
-        assert_eq!(adnl, params.adnl_addr.to_vec());
-
-        let algorithm_id = slice.get_next_u16().unwrap();
-        assert_eq!(algorithm_id, MLDSA44_ALGORITHM_ID);
-
+    /// Reads the fields the elector parses, in its order, and checks nothing is left.
+    /// The pool parses the same fields without interpreting them, so a transposition
+    /// of two fixed-width fields is caught only by this value round trip.
+    fn assert_elector_fields(slice: &mut SliceData, params: &NewStakeParams) {
+        assert_eq!(slice.get_next_u16().unwrap(), MLDSA44_ALGORITHM_ID);
         let key_cell = slice.checked_drain_reference().unwrap();
         assert_eq!(
             pq_bytes::unpack_pq_bytes(&key_cell, MLDSA44_PUBLIC_KEY_BYTES).unwrap(),
             params.validator_pubkey
         );
-
+        assert_eq!(slice.get_next_u32().unwrap(), params.stake_at);
+        assert_eq!(slice.get_next_u32().unwrap(), params.max_factor);
+        assert_eq!(slice.get_next_bits(256).unwrap(), params.adnl_addr.to_vec());
         let sig_cell = slice.checked_drain_reference().unwrap();
         assert_eq!(
             pq_bytes::unpack_pq_bytes(&sig_cell, MLDSA44_SIGNATURE_BYTES).unwrap(),
             params.signature
         );
-        assert!(!slice.get_next_bit().unwrap());
         assert_eq!(slice.remaining_bits(), 0);
         assert_eq!(slice.remaining_references(), 0);
+    }
+
+    #[test]
+    fn test_build_new_stake_message() {
+        let signature = vec![0x33u8; MLDSA44_SIGNATURE_BYTES];
+        let params = stake_params(&signature);
+        let mut slice = SliceData::load_cell(new_stake(&params).unwrap()).unwrap();
+        assert_eq!(slice.get_next_u32().unwrap(), opcodes::NEW_STAKE);
+        assert_eq!(slice.get_next_u64().unwrap(), params.query_id);
+        let coins = Coins::construct_from(&mut slice).unwrap();
+        assert_eq!(coins.as_u128(), params.stake_amount as u128);
+        assert_elector_fields(&mut slice, &params);
+    }
+
+    #[test]
+    fn test_build_elector_new_stake_message_has_no_amount() {
+        let signature = vec![0x33u8; MLDSA44_SIGNATURE_BYTES];
+        let params = stake_params(&signature);
+        let mut slice = SliceData::load_cell(elector_new_stake(&params).unwrap()).unwrap();
+        assert_eq!(slice.get_next_u32().unwrap(), opcodes::NEW_STAKE);
+        assert_eq!(slice.get_next_u64().unwrap(), params.query_id);
+        assert_elector_fields(&mut slice, &params);
     }
 
     #[test]
@@ -348,36 +351,6 @@ mod tests {
         assert!(error.contains("ML-DSA-44 public key"), "wrong refusal: {error}");
         assert!(error.contains("1312"), "wrong refusal: {error}");
         assert!(error.contains("32"), "wrong refusal: {error}");
-    }
-
-    #[test]
-    fn test_pool_stake_optional_witness_is_a_final_reference() {
-        let signature = vec![0x33; MLDSA44_SIGNATURE_BYTES];
-        let params = NewStakeParams {
-            query_id: 1,
-            stake_amount: 1,
-            validator_pubkey: &[0x11; MLDSA44_PUBLIC_KEY_BYTES],
-            stake_at: 2,
-            max_factor: 65536,
-            adnl_addr: &[0x22; 32],
-            signature: &signature,
-        };
-        let witness = BuilderData::new().into_cell().unwrap();
-        let mut slice =
-            SliceData::load_cell(new_stake_with_witness(&params, Some(&witness)).unwrap()).unwrap();
-        assert_eq!(slice.get_next_u32().unwrap(), opcodes::NEW_STAKE);
-        assert_eq!(slice.get_next_u64().unwrap(), params.query_id);
-        let _stake_amount = Coins::construct_from(&mut slice).unwrap();
-        assert_eq!(slice.get_next_u32().unwrap(), params.stake_at);
-        assert_eq!(slice.get_next_u32().unwrap(), params.max_factor);
-        assert_eq!(slice.get_next_bits(256).unwrap(), params.adnl_addr);
-        assert_eq!(slice.get_next_u16().unwrap(), MLDSA44_ALGORITHM_ID);
-        let _key = slice.checked_drain_reference().unwrap();
-        let _signature = slice.checked_drain_reference().unwrap();
-        assert!(slice.get_next_bit().unwrap());
-        assert_eq!(slice.checked_drain_reference().unwrap().repr_hash(), witness.repr_hash());
-        assert_eq!(slice.remaining_bits(), 0);
-        assert_eq!(slice.remaining_references(), 0);
     }
 
     #[test]

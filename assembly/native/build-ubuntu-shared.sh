@@ -71,8 +71,8 @@ ninja storage-daemon storage-daemon-cli fift func tol toslib toslibjson toslib-c
       test $? -eq 0 || { echo "Can't compile tos"; exit 1; }
 fi
 
-# The controller root key tool is a separate CMake project, so the root signer
-# stays out of every node target's link graph. It links the static OpenSSL the
+# The post-quantum key tool is a separate CMake project, so its signer stays out
+# of every node target's link graph. It links the static OpenSSL the
 # main build just produced and therefore needs no system libcrypto.
 rm -rf pq-key
 cmake -GNinja -S ../crypto/pq/tools -B pq-key \

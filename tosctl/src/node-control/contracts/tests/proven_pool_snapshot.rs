@@ -714,7 +714,7 @@ fn pool_stacks() -> serde_json::Value {
     let nominator = |key: &str, amount: &str| serde_json::json!({"type": "tuple", "items": [int(key), int(amount), int("25"), int("0")]});
     serde_json::json!({
         "get_pool_data": [
-            int("1"), int("2"), int("3000"), int("2000"), int("2748"), int("3567"),
+            int("1"), int("2"), int("3000"), int("2000"), int("2748"),
             int("4000"), int("40"), int("1000"), int("100"), nil.clone(), nil.clone(),
             int("999"), int("17"), int("2"), int("1234"), int("3600"), nil.clone(),
         ],
@@ -761,7 +761,6 @@ async fn a_bound_answer_becomes_a_pool_snapshot() {
         assert_eq!(snapshot.pool.nominators_count, 2);
         assert_eq!(snapshot.pool.stake_amount_sent, 3000);
         assert_eq!(snapshot.pool.validator_address[31], 0xbc);
-        assert_eq!(snapshot.pool.controller_address[31], 0xef);
         assert_eq!(snapshot.pool.stake_held_for, 3600);
         assert_eq!(snapshot.nominators.len(), 2);
         assert_eq!(snapshot.nominators[0].amount, 700);
@@ -1019,7 +1018,6 @@ fn expected_pool_data_hash() -> String {
     };
     let mut config = BuilderData::new();
     config.append_raw(&[0xAB; 32], 256).unwrap();
-    config.append_raw(&[0xCD; 32], 256).unwrap();
     config.append_u16(4000).unwrap();
     config.append_u16(40).unwrap();
     Coins::new(100_000_000_000).write_to(&mut config).unwrap();
@@ -1061,7 +1059,6 @@ fn assert_expected_pool(snapshot: &contracts::NominatorPoolSnapshot) {
     assert_eq!(pool.stake_amount_sent, 3_000_000_000_000);
     assert_eq!(pool.validator_amount, 500_000_000_000);
     assert_eq!(pool.validator_address, [0xAB; 32]);
-    assert_eq!(pool.controller_address, [0xCD; 32]);
     assert_eq!(pool.validator_reward_share, 4000);
     assert_eq!(pool.max_nominators_count, 40);
     assert_eq!(pool.min_validator_stake, 100_000_000_000);

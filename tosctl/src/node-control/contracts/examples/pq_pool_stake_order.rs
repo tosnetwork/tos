@@ -2,8 +2,8 @@
 //! No key or signing operation is performed here; the node supplies the authorization.
 
 use anyhow::{Context, Result};
-use chain_block::{read_single_root_boc, write_boc};
-use contracts::nominator::{NewStakeParams, new_stake_with_witness};
+use chain_block::write_boc;
+use contracts::nominator::{NewStakeParams, new_stake};
 use serde::Deserialize;
 use std::io::Read;
 
@@ -16,7 +16,6 @@ struct OrderInput {
     adnl_addr_hex: String,
     public_key_hex: String,
     signature_hex: String,
-    witness_boc_hex: String,
 }
 
 fn main() -> Result<()> {
@@ -26,22 +25,15 @@ fn main() -> Result<()> {
     let adnl = hex::decode(&input.adnl_addr_hex).context("ADNL address hex")?;
     let public_key = hex::decode(&input.public_key_hex).context("PQ public key hex")?;
     let signature = hex::decode(&input.signature_hex).context("PQ signature hex")?;
-    let witness = read_single_root_boc(
-        hex::decode(&input.witness_boc_hex).context("controller witness hex")?,
-    )
-    .context("controller birth witness BOC")?;
-    let body = new_stake_with_witness(
-        &NewStakeParams {
-            query_id: input.query_id,
-            stake_amount: input.stake_amount,
-            validator_pubkey: &public_key,
-            stake_at: input.stake_at,
-            max_factor: input.max_factor,
-            adnl_addr: &adnl,
-            signature: &signature,
-        },
-        Some(&witness),
-    )?;
+    let body = new_stake(&NewStakeParams {
+        query_id: input.query_id,
+        stake_amount: input.stake_amount,
+        validator_pubkey: &public_key,
+        stake_at: input.stake_at,
+        max_factor: input.max_factor,
+        adnl_addr: &adnl,
+        signature: &signature,
+    })?;
     println!("{}", hex::encode(write_boc(&body)?));
     Ok(())
 }

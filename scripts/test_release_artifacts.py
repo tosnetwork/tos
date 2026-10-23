@@ -1012,18 +1012,17 @@ class PqToolPackagingTest(unittest.TestCase):
     """A Linux release and the node image carry the post-quantum key tools.
 
     Without them an operator installing from a release cannot create the
-    consensus key a validator loads, nor sign controller actions offline.
+    consensus key a validator loads, nor sign its stake and votes.
     """
 
     TOOLS = {
         # tool -> where the packaging scripts find it, relative to the build dir
         "tos-pq-consensus-key": "crypto/pq/tos-pq-consensus-key",
-        "tos-pq-controller": "crypto/tos-pq-controller",
         "tos-pq-vote": "crypto/tos-pq-vote",
-        # A separate CMake project, so the root signer links into no node target.
+        # A separate CMake project, so its signer links into no node target.
         "tos-pq-key": "pq-key/tos-pq-key",
     }
-    IN_TREE_TARGETS = ("tos-pq-consensus-key", "tos-pq-controller", "tos-pq-vote")
+    IN_TREE_TARGETS = ("tos-pq-consensus-key", "tos-pq-vote")
     LINUX_ARTIFACTS = {"tos-x86_64-linux": "linux-x86_64", "tos-arm64-linux": "linux-arm64"}
     LINUX_SCRIPTS = (
         "build-ubuntu-appimages.sh",

@@ -93,17 +93,20 @@ impl ElectorWrapper for ElectorWrapperImpl {
             let nodes = stack.list_or_empty(4)?;
             let mut participants = Vec::new();
             for i in 0..nodes.stack.len() {
+                // A member is named by the account that sent its stake; the field
+                // that names the sender in a classical elector carries the identity
+                // of the member's post-quantum key here.
                 let pair = nodes.tuple(i)?;
-                let pub_key = pair.number_bytes(0, 32)?;
+                let validator_id = pair.number_bytes(0, 32)?;
                 let args = pair.tuple(1)?;
                 let stake = args.i64(0)? as u64;
                 let max_factor = args.i64(1)? as u32;
-                let addr = args.number_bytes(2, 32)?;
+                let key_id = args.number_bytes(2, 32)?;
                 let adnl_addr = args.number_bytes(3, 32)?;
                 participants.push(Participant {
-                    pub_key,
+                    pub_key: key_id,
                     adnl_addr: adnl_addr.to_vec(),
-                    wallet_addr: addr.to_vec(),
+                    wallet_addr: validator_id.to_vec(),
                     max_factor,
                     election_id,
                     stake,
