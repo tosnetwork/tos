@@ -236,9 +236,9 @@ def main() -> int:
             "Python harness encodes a NEW_STAKE body instead of using the production builder: "
             f"expected={PYTHON_STAKE_ENCODERS_EXPECTED} actual={encoders}"
         )
-    bridge = (
-        root / "tosctl/src/node-control/contracts/examples/pq_pool_stake_order.rs"
-    ).read_text(encoding="utf-8")
+    bridge = (root / "tosctl/src/node-control/contracts/examples/pq_pool_stake_order.rs").read_text(
+        encoding="utf-8"
+    )
     if not re.search(r"\blet body\s*=\s*new_stake\(\s*&NewStakeParams\b", bridge) or re.search(
         r"\.sign\(|witness", bridge
     ):

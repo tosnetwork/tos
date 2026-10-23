@@ -55,7 +55,9 @@ def main() -> None:
     payload = wallet.find("build_manual_stake_payload(")
     message = wallet.find("let msg = wallet.message(")
     if not (0 <= roles_read < payload < message):
-        fail("config-wallet does not check live pool roles and build the order before the wallet message")
+        fail(
+            "config-wallet does not check live pool roles and build the order before the wallet message"
+        )
     stake_command = wallet.split("impl WalletStakeCmd", 1)[1]
     seqno_check = stake_command.find("let initial_seqno = require_observable_wallet_seqno(")
     broadcast = stake_command.find("provider.send_boc(&msg_boc).await")

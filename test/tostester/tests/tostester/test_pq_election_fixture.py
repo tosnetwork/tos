@@ -1,11 +1,11 @@
 """The staking account is fixed before a node joins the Genesis committee, and the
 stake orders the rehearsals send are the production builder's bytes."""
 
+import dataclasses
 import json
 import os
 from pathlib import Path
 from types import SimpleNamespace
-import dataclasses
 from typing import Any, TypedDict
 
 import pytest

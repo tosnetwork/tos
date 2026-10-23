@@ -96,7 +96,9 @@ def wallet_elector_stakes(transactions: list, wallet: Address) -> list[tuple[int
 
 
 def created_wallet_address(output: str) -> Address:
-    lines = [line.split()[-1] for line in output.splitlines() if line.strip().startswith("Address:")]
+    lines = [
+        line.split()[-1] for line in output.splitlines() if line.strip().startswith("Address:")
+    ]
     if len(lines) != 1:
         raise RuntimeError(f"tosctl wallet create printed {len(lines)} addresses")
     return Address(lines[0])
@@ -250,7 +252,10 @@ async def product_run(args: argparse.Namespace, run_dir: Path, report: dict) -> 
         config.write_text(json.dumps(document, indent=2) + "\n")
         config.chmod(0o600)
         listed = json.loads(await cli(binary, config, env, "wallet", "ls", "--format", "json"))
-        if Address(next(item["address"] for item in listed if item["name"] == "operator")) != wallet:
+        if (
+            Address(next(item["address"] for item in listed if item["name"] == "operator"))
+            != wallet
+        ):
             raise AssertionError("tosctl lists the operator wallet at another address")
         faucet = life.network.zerostate.main_wallet(life.client)
         await life.send(
@@ -427,10 +432,13 @@ async def product_run(args: argparse.Namespace, run_dir: Path, report: dict) -> 
                 "block_id": str(getattr(elector_state, "block_id", None)),
             }
 
-        elector_txs, elector_pages, elector_complete, _ = (
-            await lifecycle_module._transactions_since(
-                life.client, lifecycle_module.ELECTOR, elector_baseline
-            )
+        (
+            elector_txs,
+            elector_pages,
+            elector_complete,
+            _,
+        ) = await lifecycle_module._transactions_since(
+            life.client, lifecycle_module.ELECTOR, elector_baseline
         )
         report["transaction_coverage"] = {
             "elector_count": len(elector_txs),
@@ -460,9 +468,12 @@ async def product_run(args: argparse.Namespace, run_dir: Path, report: dict) -> 
         wallet_complete = False
         feedback_deadline = time.monotonic() + 45
         while True:
-            wallet_txs, wallet_pages, wallet_complete, _ = (
-                await lifecycle_module._transactions_since(life.client, wallet, wallet_baseline)
-            )
+            (
+                wallet_txs,
+                wallet_pages,
+                wallet_complete,
+                _,
+            ) = await lifecycle_module._transactions_since(life.client, wallet, wallet_baseline)
             if not wallet_complete:
                 raise RuntimeError("wallet feedback transaction window is incomplete")
             reply = lifecycle_module.elector_reply(wallet_txs, query_id)
