@@ -641,7 +641,6 @@ mod tests {
                     number("0"),
                     number("2000"),
                     number("0xabc"),
-                    number("0xdef"),
                     number("4000"),
                     number("40"),
                     number("1000"),

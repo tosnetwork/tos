@@ -39,7 +39,6 @@ while IFS=$'\t' read -r file pattern meaning; do
     failed=1
   fi
 done <<'SITES'
-crypto/smartcont/elector-code.fc	0x4e73744b	the classical stake operation is back
 crypto/smartcont/elector-code.fc	0x56744370	the classical complaint-vote operation is back
 crypto/smartcont/elector-code.fc	check_data_signature	the elector authorises something with Ed25519 again
 crypto/smartcont/config-code.fc	0x566f7465	the classical configuration-vote operation is back

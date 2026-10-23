@@ -6,18 +6,14 @@
 
 //! The single-nominator pool, run rather than read.
 //!
-//! Three roles: a cold owner holds the funds, a validator wallet may spend them on a stake
-//! and on nothing else, and a controller is the account that stands in the election. The
-//! elector takes a stake from a controller and from nowhere else, so this contract sends
-//! its stake there rather than straight on.
-//!
-//! The test that used to be here asserted the opposite -- that a stake reached the elector
-//! and was answered with the unknown-query tag, leaving the round silently missed. It is
-//! inverted below, which is what it was written for.
+//! Two roles: a cold owner holds the funds, and a validator wallet may spend them on a
+//! stake and on nothing else. The pool forwards the stake terms to the elector unchanged,
+//! so the elector sees the pool as the sender: the stake is signed for the pool's address
+//! and registered under it, and everything the election owes comes back to the pool.
 
 use chain_block::{
-    Account, BuilderData, Cell, Coins, ConfigParams, IBitstring, MsgAddressInt, Serializable,
-    ShardStateUnsplit, StateInit, TransactionTickTock,
+    Account, BuilderData, Cell, Coins, ConfigParams, Deserializable, IBitstring, MsgAddressInt,
+    Serializable, ShardStateUnsplit, SliceData, StateInit, TransactionTickTock,
 };
 use contracts::nominator::{NewStakeParams, new_stake};
 use tos_sandbox::{Blockchain, MessageBuilder, compile_func_with_stdlib, generate_zerostate_state};
@@ -25,12 +21,14 @@ use tos_sandbox::{Blockchain, MessageBuilder, compile_func_with_stdlib, generate
 const TOS: u64 = 1_000_000_000;
 
 const NEW_STAKE: u32 = 0x4e73_744b;
-const RELAY_STAKE: u32 = 0x5051_7232;
 const RECOVER_STAKE: u32 = 0x4765_7424;
 const WITHDRAW: u32 = 0x1000;
 const UNKNOWN_QUERY: u32 = 0xffff_ffff;
 const NEW_STAKE_OK: u32 = 0xf374_484c;
 const NEW_STAKE_ERROR: u32 = 0xee6f_454c;
+/// `return_stake` reason 1: the signature did not verify.
+const REASON_BAD_SIGNATURE: u32 = 1;
+const ELECTION_CONTEXT: &[u8] = b"TOS-VALIDATOR-ELECTION-v1";
 
 fn repo_root() -> std::path::PathBuf {
     std::env::var("TOS_ROOT").map(std::path::PathBuf::from).unwrap_or_else(|_| {
@@ -80,17 +78,56 @@ fn nominator_code() -> Cell {
     .expect("the single-nominator contract compiles")
 }
 
-/// Its whole storage: who owns the money, who may stake it, and through whom.
-fn nominator_data(
-    owner: &MsgAddressInt,
-    validator: &MsgAddressInt,
-    controller: &MsgAddressInt,
-) -> Cell {
+/// Its whole storage: who owns the money, and who may stake it.
+fn nominator_data(owner: &MsgAddressInt, validator: &MsgAddressInt) -> Cell {
     let mut data = BuilderData::new();
     owner.write_to(&mut data).expect("owner address");
     validator.write_to(&mut data).expect("validator address");
-    controller.write_to(&mut data).expect("controller address");
     data.into_cell().expect("nominator data")
+}
+
+/// The ML-DSA-44 key tool from `crypto/pq/tools`, which is how a test signs: signing is
+/// deliberately absent from the node's libraries.
+fn key_tool() -> std::path::PathBuf {
+    if let Ok(path) = std::env::var("PQ_KEY_TOOL") {
+        return std::path::PathBuf::from(path);
+    }
+    for candidate in ["build-pq-key/tos-pq-key", "build/tos-pq-key"] {
+        let path = repo_root().join(candidate);
+        if path.exists() {
+            return path;
+        }
+    }
+    panic!(
+        "the ML-DSA-44 key tool is needed: build it with `cmake -S crypto/pq/tools -B \
+         build-pq-key && cmake --build build-pq-key`, or point PQ_KEY_TOOL at it"
+    );
+}
+
+fn run_key_tool(args: &[&str]) -> Vec<String> {
+    let out =
+        std::process::Command::new(key_tool()).args(args).output().expect("the key tool runs");
+    assert!(out.status.success(), "the key tool failed: {}", String::from_utf8_lossy(&out.stderr));
+    String::from_utf8_lossy(&out.stdout).lines().map(|line| line.trim().to_string()).collect()
+}
+
+/// A consensus key of the pool's validator, generated once per process.
+struct ConsensusKey {
+    file: std::path::PathBuf,
+    public_key: Vec<u8>,
+}
+
+fn consensus_key() -> &'static ConsensusKey {
+    static KEY: std::sync::OnceLock<ConsensusKey> = std::sync::OnceLock::new();
+    KEY.get_or_init(|| {
+        let dir = tempfile::tempdir().expect("a scratch directory").keep();
+        let file = dir.join("single-nominator-validator.key");
+        run_key_tool(&["keygen", file.to_str().expect("path")]);
+        let public_key =
+            hex::decode(&run_key_tool(&["public", file.to_str().expect("path")])[0]).expect("hex");
+        assert_eq!(public_key.len(), 1312, "an ML-DSA-44 public key");
+        ConsensusKey { file, public_key }
+    })
 }
 
 struct Pooled {
@@ -99,7 +136,6 @@ struct Pooled {
     nominator: MsgAddressInt,
     owner: MsgAddressInt,
     validator: MsgAddressInt,
-    controller: MsgAddressInt,
 }
 
 fn launch(balance: u64) -> Pooled {
@@ -125,15 +161,9 @@ fn launch(balance: u64) -> Pooled {
     let validator = chain.treasury("validator-wallet", 100_000 * TOS).expect("the hot wallet");
     let validator_address = validator.address().clone();
 
-    // The controller the stake goes through. A real one is a deployed Validator
-    // Controller; what this suite judges is that the stake is sent there and nowhere
-    // else, so an address is enough.
-    let controller = chain.treasury("validator-controller", 10_000 * TOS).expect("a controller");
-    let controller_address = controller.address().clone();
-
     let init = StateInit::with_code_and_data(
         nominator_code(),
-        nominator_data(&owner_address, &validator_address, &controller_address),
+        nominator_data(&owner_address, &validator_address),
     );
     let nominator = MsgAddressInt::with_params(
         -1,
@@ -154,31 +184,53 @@ fn launch(balance: u64) -> Pooled {
         .expect("the nominator deploys")
         .expect_success();
 
-    Pooled {
-        chain,
-        elector,
-        nominator,
-        owner: owner_address,
-        validator: validator_address,
-        controller: controller_address,
-    }
+    Pooled { chain, elector, nominator, owner: owner_address, validator: validator_address }
 }
 
-/// Exercise the production Rust builder against the compiled pool contract's
-/// `check_new_stake_msg`, not a second hand-built encoding of its fields. This
-/// proves that the contract accepts the body; it cannot detect a transposition
-/// of adjacent fixed-width fields the contract parses but does not interpret.
-/// The builder's unit test round-trips field *values* in pool-parser order to
-/// guard that semantic property.
-fn stake_order(query_id: u64, amount: u64, election: u32) -> Cell {
+const ADNL: [u8; 32] = [0xa5; 32];
+
+/// The order the validator wallet gives the pool, from the production Rust builder: the
+/// same body the pool's `check_new_stake_msg` parses and forwards unchanged.
+///
+/// The stake is signed for `signed_for`, which for a stake the elector should take is the
+/// pool itself: the pool is the account the elector sees send it.
+fn stake_order(
+    pooled: &Pooled,
+    signed_for: &MsgAddressInt,
+    query_id: u64,
+    amount: u64,
+    election: u32,
+) -> Cell {
+    let global_id = match pooled.chain.config_params().config(19).expect("parameter 19") {
+        Some(chain_block::ConfigParamEnum::ConfigParam19(id)) => id as i32,
+        _ => panic!("the chain states no network id, so nothing can sign for it"),
+    };
+    let src_addr = chain_block::UInt256::from_slice(&signed_for.address().get_bytestring(0));
+    let preimage = chain_block::pq_elector::stake_preimage(
+        global_id,
+        election,
+        0x10000,
+        &src_addr,
+        &chain_block::UInt256::from(ADNL),
+    );
+    let key = consensus_key();
+    let signature = hex::decode(
+        &run_key_tool(&[
+            "sign",
+            key.file.to_str().expect("path"),
+            &hex::encode(preimage),
+            &hex::encode(ELECTION_CONTEXT),
+        ])[0],
+    )
+    .expect("hex");
     new_stake(&NewStakeParams {
         query_id,
         stake_amount: amount,
-        validator_pubkey: &[0x11; 1312],
+        validator_pubkey: &key.public_key,
         stake_at: election,
         max_factor: 0x10000,
-        adnl_addr: &[0xa5; 32],
-        signature: &[0x33; 2420],
+        adnl_addr: &ADNL,
+        signature: &signature,
     })
     .expect("PQ stake order for the pool parser")
 }
@@ -302,15 +354,47 @@ fn elector_verdict(result: &tos_sandbox::SendResult, elector: &MsgAddressInt) ->
     (aborted, tags)
 }
 
+/// The open election's member registered under an address, as `(stake, key_id)`.
+///
+/// The record is `stake time max_factor key_id adnl_addr algorithm_id ^public_key`, keyed
+/// by the account that sent the stake.
+fn member(pooled: &Pooled, address: &MsgAddressInt) -> Option<(u128, [u8; 32])> {
+    let data = pooled.chain.get_account(&pooled.elector)?.get_data()?;
+    let mut storage = SliceData::load_cell(data).expect("storage");
+    let elect = storage.get_next_bit().expect("an election flag");
+    if !elect {
+        return None;
+    }
+    let mut election =
+        SliceData::load_cell(storage.checked_drain_reference().expect("the election"))
+            .expect("the election");
+    election.get_next_u32().expect("elect_at");
+    election.get_next_u32().expect("elect_close");
+    Coins::construct_from(&mut election).expect("min_stake");
+    Coins::construct_from(&mut election).expect("total_stake");
+    let members = if election.get_next_bit().expect("members presence") {
+        Some(election.checked_drain_reference().expect("the members"))
+    } else {
+        None
+    };
+    let members = chain_block::HashmapE::with_hashmap(256, members);
+    let mut record = members.get(address.address().clone()).expect("lookup")?;
+    let stake = Coins::construct_from(&mut record).expect("stake").as_u128();
+    record.get_next_u32().expect("time");
+    record.get_next_u32().expect("max_factor");
+    let key_id = record.get_next_bits(256).expect("key_id").try_into().expect("32 bytes");
+    Some((stake, key_id))
+}
+
 #[test]
-fn the_nominator_deploys_and_reports_its_three_roles() {
+fn the_nominator_deploys_and_reports_its_two_roles() {
     let pooled = launch(20_000 * TOS);
     let result = pooled
         .chain
         .run_get_method(&pooled.nominator, "get_roles", vec![])
         .expect("the nominator answers");
     assert_eq!(result.exit_code, 0, "get_roles failed");
-    assert_eq!(result.stack.len(), 3, "a single nominator has exactly three roles");
+    assert_eq!(result.stack.len(), 2, "a single nominator has exactly two roles");
 }
 
 /// The role separation this contract exists for, and the proof that the harness reaches
@@ -335,39 +419,86 @@ fn the_owner_takes_the_money_home_and_the_validator_cannot() {
     );
 }
 
-/// A stake goes to the controller, carrying the money and the terms unchanged.
-///
-/// This test was written the other way round: it asserted that the stake reached the
-/// elector, which answered with its unknown-query tag, and that the round was therefore
-/// missed in silence. That is what the elector does with a stake from anywhere but a
-/// controller, and it is why this contract could not stake at all.
+/// A stake goes to the elector carrying the money and the terms unchanged, and the elector
+/// registers the pool: the account that sent it, and the one the stake was signed for.
 #[test]
-fn a_stake_goes_to_the_controller_carrying_the_money_and_the_terms() {
+fn a_stake_reaches_the_elector_and_registers_the_pool() {
     let mut pooled = launch(20_000 * TOS);
     let election = pooled.election();
-    let controller = pooled.controller.clone();
+    let elector = pooled.elector.clone();
+    let nominator = pooled.nominator.clone();
 
-    let result =
-        pooled.from(&pooled.validator.clone(), stake_order(1, 1_000 * TOS, election), 20 * TOS);
+    let order = stake_order(&pooled, &nominator, 1, 11_000 * TOS, election);
+    let result = pooled.from(&pooled.validator.clone(), order, 20 * TOS);
 
     let (to, tag, value) = sent(&result).expect("the nominator sent nothing on");
-    assert_eq!(tag, RELAY_STAKE, "the nominator did not send a stake to relay");
-    assert_eq!(to, controller, "the stake went somewhere that is not the controller");
-    assert!(value > u128::from(900 * TOS), "the stake carried {value} rather than the money");
+    assert_eq!(tag, NEW_STAKE, "the nominator did not send a stake");
+    assert_eq!(to, elector, "the stake went somewhere that is not the elector");
+    assert!(value >= u128::from(11_000 * TOS), "the stake carried {value} rather than the money");
 
-    // And nothing went to the elector, which would refuse it.
+    let (aborted, answered) = elector_verdict(&result, &elector);
+    assert!(!aborted, "the elector aborted on the pool's stake");
     assert!(
-        !reply_tags(&result).contains(&NEW_STAKE),
-        "the classical stake operation is still being sent"
+        answered.contains(&NEW_STAKE_OK),
+        "the elector did not take the stake: {answered:02x?}"
+    );
+    let (stake, key_id) = member(&pooled, &nominator).expect("the pool is not a member");
+    assert_eq!(
+        key_id,
+        chain_block::derive_consensus_key_id(1, &consensus_key().public_key).inner(),
+        "the pool is registered with another key"
+    );
+    assert!(stake >= u128::from(11_000 * TOS - TOS), "the pool is registered with {stake}");
+    assert!(
+        member(&pooled, &pooled.validator.clone()).is_none(),
+        "the wallet that ordered the stake became a member"
+    );
+}
+
+/// A stake signed for an account other than the pool authorises nothing: the elector
+/// rebuilds the signed bytes with the pool's address, refuses the stake, and the money
+/// goes back to the pool.
+#[test]
+fn a_stake_signed_for_another_account_comes_back_to_the_pool() {
+    let mut pooled = launch(20_000 * TOS);
+    let election = pooled.election();
+    let elector = pooled.elector.clone();
+    let nominator = pooled.nominator.clone();
+    let before = pooled.balance(&nominator);
+
+    let order = stake_order(&pooled, &pooled.validator.clone(), 1, 11_000 * TOS, election);
+    let result = pooled.from(&pooled.validator.clone(), order, 20 * TOS);
+
+    let (aborted, answered) = elector_verdict(&result, &elector);
+    assert!(!aborted, "the elector aborted rather than refusing");
+    assert!(answered.contains(&NEW_STAKE_ERROR), "the elector took the stake: {answered:02x?}");
+    let mut reason = None;
+    for transaction in result.transactions_for(&elector) {
+        transaction
+            .iterate_out_msgs(|message| {
+                let mut body = message.body().expect("a reply").clone();
+                if body.get_next_u32().ok() == Some(NEW_STAKE_ERROR) {
+                    body.get_next_u64().expect("query id");
+                    reason = body.get_next_u32().ok();
+                }
+                Ok(true)
+            })
+            .expect("out messages");
+    }
+    assert_eq!(reason, Some(REASON_BAD_SIGNATURE), "refused for another reason");
+    assert!(member(&pooled, &nominator).is_none(), "the refused stake registered the pool");
+    assert!(
+        pooled.balance(&nominator) + TOS > before,
+        "the refused stake did not come back to the pool"
     );
 }
 
 /// Terms that are not the shape of a stake are refused, and nothing is sent.
 ///
-/// This contract reads neither the key nor the signature -- the controller compares the
-/// key and the elector verifies the signature -- but it does check that what it is
-/// forwarding has a stake's shape. Without that it would relay anything an operator
-/// typed, and the refusal would arrive two contracts later.
+/// This contract reads neither the key nor the signature -- the elector verifies the
+/// signature -- but it does check that what it is forwarding has a stake's shape. Without
+/// that it would forward anything an operator typed, and the refusal would arrive from
+/// the elector instead.
 #[test]
 fn terms_that_are_not_a_stake_are_refused_before_anything_is_sent() {
     let mut pooled = launch(20_000 * TOS);
@@ -386,14 +517,14 @@ fn terms_that_are_not_a_stake_are_refused_before_anything_is_sent() {
         body.into_cell().expect("a truncated order"),
         20 * TOS,
     );
-    assert!(sent(&result).is_none(), "a stake with no terms was relayed anyway");
+    assert!(sent(&result).is_none(), "a stake with no terms was forwarded anyway");
 }
 
 /// The retired single-pool Fift tool wrote Validator.fif's Ed25519 layout:
 /// a raw 256-bit key before the election terms and one 64-byte signature ref.
-/// A syntactically complete classical order must not be relayed as a PQ stake.
+/// A syntactically complete classical order must not be forwarded as a PQ stake.
 #[test]
-fn classical_single_nominator_order_is_refused_before_controller_relay() {
+fn classical_single_nominator_order_is_refused_before_it_reaches_the_elector() {
     let mut pooled = launch(20_000 * TOS);
     let election = pooled.election();
     let mut body = BuilderData::new();
@@ -420,8 +551,8 @@ fn classical_single_nominator_order_is_refused_before_controller_relay() {
         "the PQ pool accepted a classical Ed25519 stake body",
     );
     assert!(
-        !reply_tags(&result).contains(&RELAY_STAKE),
-        "the PQ pool relayed a classical Ed25519 stake body to the controller",
+        !reply_tags(&result).contains(&NEW_STAKE),
+        "the PQ pool forwarded a classical Ed25519 stake body to the elector",
     );
 }
 
@@ -431,24 +562,28 @@ fn classical_single_nominator_order_is_refused_before_controller_relay() {
 fn a_stake_spends_what_it_was_told_to_and_only_the_validator_may_order_one() {
     let mut pooled = launch(20_000 * TOS);
     let election = pooled.election();
-    let before = pooled.balance(&pooled.nominator.clone());
+    let nominator = pooled.nominator.clone();
+    let before = pooled.balance(&nominator);
 
-    pooled.from(&pooled.validator.clone(), stake_order(1, 1_000 * TOS, election), 20 * TOS);
-    let after = pooled.balance(&pooled.nominator.clone());
-    let spent = before - after;
-    assert!(spent >= 980 * TOS, "the stake sent {spent} rather than the amount ordered");
-    assert!(spent < 1_100 * TOS, "the stake sent {spent}, which is more than it was told to");
+    let order = stake_order(&pooled, &nominator, 1, 11_000 * TOS, election);
+    let result = pooled.from(&pooled.validator.clone(), order, 20 * TOS);
+    assert!(
+        elector_verdict(&result, &pooled.elector.clone()).1.contains(&NEW_STAKE_OK),
+        "the fixture needs a stake the elector keeps"
+    );
+    // What left is the stake; what came back is the elector's one-TOS confirmation.
+    let spent = before - pooled.balance(&nominator);
+    assert!(spent >= 10_980 * TOS, "the stake sent {spent} rather than the amount ordered");
+    assert!(spent < 11_100 * TOS, "the stake sent {spent}, which is more than it was told to");
 
     // The owner's own wallet cannot order one: that role holds the funds and does not
     // decide when they stand in an election.
-    let refused =
-        pooled.from(&pooled.owner.clone(), stake_order(2, 1_000 * TOS, election), 20 * TOS);
+    let order = stake_order(&pooled, &nominator, 2, 1_000 * TOS, election);
+    let refused = pooled.from(&pooled.owner.clone(), order, 20 * TOS);
     assert!(sent(&refused).is_none(), "the owner ordered a stake");
 }
 
-/// Recovering a stake still reaches the elector, because that operation was not removed.
-/// Only the way in is gone, which is what makes the failure a missed round rather than
-/// stranded capital.
+/// Recovering a stake reaches the elector, which knows the operation and answers it.
 #[test]
 fn recovering_a_stake_still_reaches_the_elector() {
     let mut pooled = launch(20_000 * TOS);

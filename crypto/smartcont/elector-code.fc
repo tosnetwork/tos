@@ -222,15 +222,18 @@ int election_conflict(cell members, int validator_id, int key_id, int adnl_addr)
   int more = true;
   do {
     (id, slice ms, int found) = members.udict_get_next?(256, id);
-    if (found & (id != validator_id)) {
-      ms~load_tomis();
-      ms~skip_bits(32 + 32);   ;; time, max_factor
-      if (ms~load_uint(256) == key_id) {
-        conflict = 1;
-        found = false;
-      } elseif (ms.preload_uint(256) == adnl_addr) {
-        conflict = 2;
-        found = false;
+    ;; `&` does not short-circuit, and `id` is null once the walk ends
+    if (found) {
+      if (id != validator_id) {
+        ms~load_tomis();
+        ms~skip_bits(32 + 32);   ;; time, max_factor
+        if (ms~load_uint(256) == key_id) {
+          conflict = 1;
+          found = false;
+        } elseif (ms.preload_uint(256) == adnl_addr) {
+          conflict = 2;
+          found = false;
+        }
       }
     }
     more = found;

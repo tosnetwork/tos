@@ -30,7 +30,7 @@ use chain_block::{Cell, HashmapE, HashmapType, SliceData, read_single_root_boc};
 pub const SUPPORTED_CONFIG_CODE_HASHES: [[u8; 32]; 1] = [CONFIG_CODE_HASH];
 
 const CONFIG_CODE_HASH: [u8; 32] =
-    hex_literal("51ac2ce83a98d99dcb755faf3a04ec4816c1fb00e901aefd91913342ed206731");
+    hex_literal("0a529a33313678a4f7751afc87591b757328c37f2ad53b97f02241915d8fb42b");
 
 /// The hash `list_proposals` starts its downward walk from, exclusive.
 const LIST_SENTINEL: ProposalHash = [0xff; 32];

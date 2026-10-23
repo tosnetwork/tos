@@ -251,9 +251,13 @@ mod tests {
     }
 
     #[test]
-    fn a_fee_beyond_the_coin_range_is_refused() {
-        let prices = GasLimitsPrices { gas_price: u64::MAX, ..Default::default() };
-        assert!(gas_fee(&prices, u64::MAX).is_err());
+    fn a_forward_fee_that_overflows_is_refused() {
+        // Both products at their maximum sum past u128; gas_fee cannot leave the coin
+        // range from u64 inputs, so the forwarding fee is where the guard is reachable.
+        let prices =
+            MsgForwardPrices { bit_price: u64::MAX, cell_price: u64::MAX, ..Default::default() };
+        assert!(forward_fee(&prices, u64::MAX, u64::MAX).is_err());
+        assert!(forward_fee(&prices, 1, 1).is_ok());
     }
 
     fn leaf(word: u32) -> Cell {

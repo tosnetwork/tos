@@ -177,8 +177,8 @@ fn number(entry: &tl_api::tos::tvm::StackEntry) -> String {
 }
 
 /// `participant_list_extended` returns the election summary with the member list at index
-/// 4. Each member is `[validator_id, [stake, max_factor, validator_id, adnl_addr,
-/// algorithm_id, key_id]]`.
+/// 4. Each member is `[validator_id, [stake, max_factor, key_id, adnl_addr]]`: the upstream
+/// shape, with the member's key identity where the sender address would be.
 fn members(
     result: &tl_api::tos::smc::runresult::RunResult,
 ) -> Vec<(String, Vec<tl_api::tos::tvm::StackEntry>)> {
@@ -199,7 +199,7 @@ fn members(
                 tl_api::tos::tvm::StackEntry::Tvm_StackEntryTuple(tuple) => tuple.tuple.elements(),
                 other => panic!("expected the member arguments, got {:?}", other),
             };
-            assert_eq!(arguments.len(), 6, "member arguments have six fields");
+            assert_eq!(arguments.len(), 4, "member arguments have four fields");
             (number(&fields[0]), arguments.to_vec())
         })
         .collect()
@@ -258,14 +258,10 @@ fn test_run_get_method_participant_list_extended_one_stake_keeps_member_shape() 
     let (validator_id, arguments) = staked_member();
     assert_ne!(validator_id, "0x0");
     assert_ne!(number(&arguments[0]), "0x0", "the member's stake");
-    assert_eq!(number(&arguments[2]), validator_id, "the member names itself");
+    assert_ne!(number(&arguments[1]), "0x0", "the member's weight factor");
+    assert_ne!(number(&arguments[2]), "0x0", "the member's key id");
+    assert_ne!(number(&arguments[2]), validator_id, "the key id is not the staking account");
     assert_ne!(number(&arguments[3]), "0x0", "the member's ADNL address");
-    assert_eq!(
-        number(&arguments[4]),
-        format!("{:#x}", chain_block::validators::MLDSA44_ALGORITHM_ID),
-        "the member's key is ML-DSA-44"
-    );
-    assert_ne!(number(&arguments[5]), "0x0", "the member's key id");
 }
 
 #[test]
