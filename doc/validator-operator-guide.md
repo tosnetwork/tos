@@ -161,9 +161,14 @@ the order and only the fees. `tosctl config wallet stake --binding NODE` does
 the same once, by hand.
 
 The task does not create temporary validator keys: on the PQ chain the node is
-matched to its validator-set entry only through the consensus key. Recovered
-stakes are credited to the staking account, and the task asks the elector for
-them after each validation round.
+matched to its validator-set entry only through the consensus key. For each
+election it does ask the node for a new ADNL address, the one the stake names,
+and attaches it to a new Ed25519 permanent-key entry. That entry never signs.
+It is the task's record of the election (a restarted task finds the address it
+staked with by the election date), and the node removes it after the term. Its
+log reads `generate new validator key`. Recovered stakes are credited to the
+staking account, and the task asks the elector for them after each validation
+round.
 
 ## 7. Retired consensus databases
 
