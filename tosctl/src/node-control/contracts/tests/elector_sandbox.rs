@@ -5779,6 +5779,34 @@ impl PqValidator {
         PqValidator { key_file, public_key, adnl }
     }
 
+    /// A validator whose key is derived from a fixed public seed, so every machine derives
+    /// the same key. `new` generates a random key per machine, which is enough for a test
+    /// that only needs some key, but not for output that is compared byte for byte.
+    fn from_seed(index: u8, seed: [u8; 32]) -> Self {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        static SCRATCH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let scratch = SCRATCH.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let key_file = std::env::temp_dir()
+            .join(format!("tos-pq-seeded-{}-{scratch}.key", std::process::id()));
+        // The key tool reads only an owner-only regular file.
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&key_file)
+            .expect("a private seed file");
+        file.write_all(&seed).expect("write the seed");
+        drop(file);
+        let public_key =
+            hex::decode(&run_key_tool(&["public", key_file.to_str().expect("path")])[0])
+                .expect("hex");
+        assert_eq!(public_key.len(), MLDSA44_PUBLIC_KEY_BYTES);
+        let mut adnl = [0xd0 ^ index; 32];
+        adnl[0] = 0xad;
+        PqValidator { key_file, public_key, adnl }
+    }
+
     fn sign(&self, message: &[u8]) -> Vec<u8> {
         self.sign_under(message, ELECTION_CONTEXT)
     }
@@ -8770,8 +8798,9 @@ fn vm_getter_fixtures_match_the_deployed_elector() {
     require_post_quantum_version(&mut chain);
     let account =
         chain.blockchain.treasury("vm-getter-fixture-validator", 40_000 * TOS).expect("an account");
-    let result =
-        pq_stake(&mut chain, &account, &PqValidator::new(0x70), election, 70, 11_000 * TOS);
+    // PUBLIC TEST ONLY seed: the fixture must not depend on a key generated per machine.
+    let validator = PqValidator::from_seed(0x70, [0x70; 32]);
+    let result = pq_stake(&mut chain, &account, &validator, election, 70, 11_000 * TOS);
     assert_eq!(reply(&result), (STAKE_ACCEPTED, 0), "the fixture stake was refused");
     check_vm_getter_fixture("elector-one-stake.boc", &elector_account_boc(&chain));
 }
