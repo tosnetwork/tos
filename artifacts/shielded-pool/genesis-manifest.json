@@ -4,9 +4,9 @@
     "source_commit": "unknown",
     "source_blob": "unknown",
     "path": "artifacts/shielded-pool/PROFILE.md",
-    "bytes": 76524,
-    "file_sha256": "a513b05b6f8655fb0d76b2d2228de67c91aeb83541e28ab5e6d998c54f9c72f9",
-    "profile_hash": "ad94219a2db8cb24493754ac6bdf0b9cfff4cb014ebe0d2610650e4631d19beb"
+    "bytes": 76777,
+    "file_sha256": "346418671543d02f686e02653caddfb54efd3d428680e2c32e35bd418c45911c",
+    "profile_hash": "952299fb459234dd60c43c5bee164ac5b2d777d705f955da6c56d5c9492e951e"
   },
   "poseidon2": {
     "manifest_bytes": 19007,
@@ -34,6 +34,6 @@
     "native_liability": "0",
     "frontier": "twelve zero levels, seven slots each",
     "anchor_rings": "two empty dictionaries",
-    "hash": "98ad6837d7df44ba0b6c906b4e8183f0db4e2cdb066b9df84479b8c8a6edfab4"
+    "hash": "0282755fb820a95257d5cf9cf37a1ddcf4d762ec49ae325e351136db295c1f70"
   }
 }

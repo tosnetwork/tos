@@ -561,7 +561,7 @@ async def run(args) -> int:
         # under ConfigParam 21 as `gen-zerostate.fif` writes it, so a fee
         # measured under the test schedule is a fee on a chain nobody runs;
         # and the test schedule grants a transaction 1,000,000 gas, which is
-        # below the pool's own transact ceiling of 1,510,000 -- under it a
+        # below the pool's own transact ceiling of 1,380,000 -- under it a
         # withdrawal is not slow, it is refused.
         network.config.deployment_fee_schedule = True
         # The chain's global id is eight of the eighteen public inputs, by way

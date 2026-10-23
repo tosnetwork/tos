@@ -160,7 +160,7 @@ CASES = [
     # The corner the two ends of a pool's life do not contain. Full anchor
     # rings make a transact dearer and a higher leaf index makes it slightly
     # cheaper, so the dearest *reachable* state is full rings on the youngest
-    # tree that can have them. 1,465,000 clears the rule against a fresh pool
+    # tree that can have them. 1,333,000 clears the rule against a fresh pool
     # and against the worst leaf index, and fails it only there -- so only the
     # measurement taken at that corner can kill it. The ceiling itself no
     # longer comes from that corner, or from any other reachable one:
@@ -170,8 +170,8 @@ CASES = [
         "transact-ceiling-misses-the-corner",
         "the transact ceiling is set from the two ends of a pool's life",
         POOL,
-        'int transact_gas_ceiling() asm "1510000 PUSHINT";',
-        'int transact_gas_ceiling() asm "1465000 PUSHINT";',
+        'int transact_gas_ceiling() asm "1380000 PUSHINT";',
+        'int transact_gas_ceiling() asm "1333000 PUSHINT";',
         MATURE_TRANSACT_TEST,
         MATURE_TRANSACT_SUITE,
         CROSSCHECK,
@@ -565,7 +565,7 @@ CASES = [
         "transact-gas-ceiling",
         "the ceiling is below what the path needs",
         POOL,
-        'int transact_gas_ceiling() asm "1510000 PUSHINT";',
+        'int transact_gas_ceiling() asm "1380000 PUSHINT";',
         'int transact_gas_ceiling() asm "5000 PUSHINT";',
         ORDER_TEST,
         TRANSACT_SUITE,

@@ -1616,7 +1616,7 @@ Gas/fee constants:
 
 ```text
 DEPOSIT_GAS_CEILING    = 230_000
-TRANSACT_GAS_CEILING   = 1_510_000
+TRANSACT_GAS_CEILING   = 1_380_000
 BOUNCE_GAS_CEILING     = 240_000
 TOPUP_GAS_CEILING      = 10_000
 RECOVERY_FEE_MARGIN    = 0
@@ -1649,7 +1649,10 @@ sum describes need not be reachable; an upper bound is not required to be attain
 
 These four values were derived that way on 2026-09-23, against bounds of 176,694 / 1,205,003 / 186,991 / 2,480 for
 deposit / transact / bounce / top-up, and re-derived on 2026-10-04 after the recovery-leaf reservation of §5 entered
-the handlers, against 177,395 / 1,206,163 / 187,127 / 2,480; the rule gives the same four ceilings. An implementation MUST re-derive them, not re-measure them, whenever the
+the handlers, against 177,395 / 1,206,163 / 187,127 / 2,480; the rule gives the same four ceilings. They were
+re-derived on 2026-10-23 after ML-DSA-44 verification was priced as the Ed25519 check, against 177,395 /
+1,098,421-1,098,579 / 187,127 / 2,480 (the transact bound across two runs); only the transact ceiling moves, from
+1,510,000 to 1,380,000. An implementation MUST re-derive them, not re-measure them, whenever the
 Poseidon2 tariff, the denomination list, the handler code or the basechain gas schedule moves. The rule is stated as
 an equality and MUST be read as one: below it a legal path can be cut off inside a contract whose code hash is its
 address, and above it every sender on that path is charged `get_compute_fee(ceiling)` for compute nobody spends.
