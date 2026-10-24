@@ -328,8 +328,19 @@ def main():
                 error=(-32009, "BLOCK_ID_MISMATCH"),
             )
             assert wrong["error"]["data"]["retryable"] is False
-            # Pin one newer observation so the basechain genesis is available everywhere.
-            observation = request("getMasterchainInfo", {})["result"]["last"]
+            # Account state is read through the basechain block a masterchain block
+            # references. Until the first basechain block reaches the masterchain, that
+            # reference is the basechain zero state, which has no block data, so every
+            # account read at such a block is refused. Pin the first observation that
+            # references a real basechain block.
+            while True:
+                observation = request("getMasterchainInfo", {})["result"]["last"]
+                shards = request("getShards", {"seqno": observation["seqno"]})["result"]["shards"]
+                basechain = [shard["seqno"] for shard in shards if shard["workchain"] == 0]
+                if basechain and min(basechain) >= 1:
+                    break
+                assert time.monotonic() < deadline, ("basechain block startup timeout", observation)
+                time.sleep(0.5)
             for name, address in addresses.items():
                 params = {
                     "address": address,
