@@ -316,7 +316,11 @@ class AuthenticationTests(unittest.TestCase):
                     )
                     self.assertEqual(a.counters()[1], 0)
 
-    def test_request_failing_after_an_extension_change_keeps_no_part_of_it(self):
+    def test_request_refused_at_its_second_extension_change_keeps_neither(self):
+        # The FunC build applies the first addition and then throws on the
+        # second, so this exercises its rollback. The Tol build refuses the
+        # chain in validateActions, on a simulated dictionary, before
+        # processActions changes anything; there it checks the refusal point.
         def extensions(a):
             s = a.data.slice()
             s.uint(1 + 32 + 32 + 256)
@@ -329,12 +333,12 @@ class AuthenticationTests(unittest.TestCase):
             if a.agent:
                 continue
             with self.subTest(impl=a.impl):
-                # Internal: nothing is committed, so the first, valid addition
-                # is reverted together with the seqno.
+                # Internal: nothing is committed, so no addition and no seqno
+                # advance survives.
                 a.send(a.legacy_body(twice, prefix=SIGNED_INTERNAL), sender=OTHER, expected=139)
                 self.assertIsNone(extensions(a))
                 self.assertEqual(a.counters()[1], 0)
-                # External: only the consumed seqno survives the refusal.
+                # External: only the committed seqno survives the refusal.
                 a.send(a.legacy_body(twice), ext=True, expected=139, commits=True)
                 self.assertIsNone(extensions(a))
                 self.assertEqual(a.counters()[1], 1)
