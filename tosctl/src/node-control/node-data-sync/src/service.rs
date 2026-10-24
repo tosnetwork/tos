@@ -120,7 +120,7 @@ impl Service {
         let checked = self.describe(expected)?;
         ensure!(
             !checked.indexed,
-            "wallet-indexed nodes (--json-rpc-address) are not supported by restore in this version; the standard validator configuration does not run the index; see doc/node-data-sync.md#supported-targets"
+            "wallet-indexed nodes (--json-rpc-address without --json-rpc-without-wallet-index) are not supported by restore in this version; the standard validator configuration does not run the index; see doc/node-data-sync.md#supported-targets"
         );
         crate::paths::restore_root(&self.database)
     }
@@ -439,15 +439,17 @@ fn indexed_exec(value: &str) -> Result<bool> {
     let (_, rest) = value.split_once("argv[]=").context("service command missing")?;
     let (argv, _) = rest.split_once(" ; ").context("service command encoding")?;
     let mut tokens = argv.split_whitespace().skip(1);
-    let mut indexed = false;
+    let (mut json_rpc, mut without_index) = (false, false);
     while let Some(option) = tokens.next() {
         let (name, takes_value) = canonical_option(option)?;
-        indexed |= name == "json-rpc-address";
+        json_rpc |= name == "json-rpc-address";
+        without_index |= name == "json-rpc-without-wallet-index";
         if takes_value {
             tokens.next().context("service option requires value")?;
         }
     }
-    Ok(indexed)
+    // JSON-RPC opens the wallet index unless the engine is told not to.
+    Ok(json_rpc && !without_index)
 }
 
 // A deliberately restricted spelling/arity subset of the native option table, not a
@@ -473,6 +475,7 @@ const SAFE_OPTIONS: &[(&str, &str, bool)] = &[
     ("", "enable-validator-consensus-cleanup", false),
     ("", "disable-validator-consensus-cleanup", false),
     ("", "json-rpc-readonly", false),
+    ("", "json-rpc-without-wallet-index", false),
 ];
 fn canonical_option(option: &str) -> Result<(&'static str, bool)> {
     for &(short, long, takes_value) in SAFE_OPTIONS {
@@ -497,6 +500,12 @@ mod tests {
         )?);
         assert!(!indexed_exec("{ argv[]=/engine --logname --json-rpc-address ; running }")?);
         assert!(!indexed_exec("{ argv[]=/engine --db /db ; running }")?);
+        assert!(!indexed_exec(
+            "{ argv[]=/engine --db /db --json-rpc-address 127.0.0.1:8081 --json-rpc-without-wallet-index ; running }"
+        )?);
+        assert!(indexed_exec(
+            "{ argv[]=/engine --db /db --logname --json-rpc-without-wallet-index --json-rpc-address 127.0.0.1:8081 ; running }"
+        )?);
         Ok(())
     }
     #[test]

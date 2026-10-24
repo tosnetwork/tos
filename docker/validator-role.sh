@@ -251,6 +251,7 @@ LONG_OPTIONS_WITHOUT_ARGUMENT="
   health-native-core-v3
   health-core-metrics
   json-rpc-readonly
+  json-rpc-without-wallet-index
   json-rpc-expose-consensus-status
   json-rpc-trust-proxy-headers
   persistent-state-allow-oversize-single-file

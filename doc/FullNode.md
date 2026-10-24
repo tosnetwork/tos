@@ -88,7 +88,11 @@ Use dedicated storage paths and monitor disk growth continuously.
 A node started with `--json-rpc-address` keeps a basechain wallet index under
 `<db root>/wc0-index` for the account-index JSON-RPC methods
 (`getAccountTokens`, `getAccountNfts`, `getAccountEvents`,
-`getAccountEvent`). The index is built in the background, so the token lists
+`getAccountEvent`). The index belongs to RPC nodes. A validator serves its
+operator tool over loopback JSON-RPC with `--json-rpc-without-wallet-index`. It
+then never opens or creates `wc0-index`, and the four account-index methods
+answer -32601 "wallet index disabled on this node". The operator tool calls
+none of them. The index is built in the background, so the token lists
 from `getAccountTokens` and `getAccountNfts` carry an `index_state`; read
 `"complete": false` as "this list may be missing entries", not as the whole
 truth.
@@ -136,8 +140,8 @@ truth.
   fault, or a schema it cannot migrate), the node runs without indexing, logs
   the reason once at startup, and these methods answer with error -32603
   "wallet index unavailable on this node: ...". A node started without
-  `--json-rpc-address` keeps no index, and these methods answer -32601
-  "wallet index disabled on this node".
+  `--json-rpc-address`, or with `--json-rpc-without-wallet-index`, keeps no
+  index, and these methods answer -32601 "wallet index disabled on this node".
 
 ## Full-Node Masters and Slaves
 
