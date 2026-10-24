@@ -21,11 +21,34 @@ def main():
                 "throw_unless(auth::bad_nonce, cs~load_uint(64) == nonce);",
                 "cs~load_uint(64);",
             ),
+            (
+                "wallet-func",
+                "wallet-v5-code.fc",
+                "auth-extension.fc",
+                "throw_unless(auth::bad_nonce, cs~load_uint(64) == nonce);",
+                "cs~load_uint(64);",
+            ),
+            (
+                "wallet-tol",
+                "wallet-v5.tol",
+                "auth-extension.tol",
+                "assert (cs.loadUint(64) == nonce) throw 1804;",
+                "cs.loadUint(64);",
+            ),
         ]:
             original = CODES[impl]
             with tempfile.TemporaryDirectory() as work:
                 work = Path(work)
                 shutil.copy2(ROOT / "crypto/smartcont" / source, work / source)
+                if impl == "wallet-func":
+                    shutil.copy2(
+                        ROOT / "crypto/smartcont/wallet-action-list.fc",
+                        work / "wallet-action-list.fc",
+                    )
+                    shutil.copy2(
+                        ROOT / "crypto/smartcont/strong-ed25519-key.fc",
+                        work / "strong-ed25519-key.fc",
+                    )
                 text = (ROOT / "crypto/smartcont" / helper).read_text()
                 assert text.count(before) == 1
                 (work / helper).write_text(text.replace(before, after))
