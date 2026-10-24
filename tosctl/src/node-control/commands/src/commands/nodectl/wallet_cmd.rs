@@ -2003,6 +2003,10 @@ mod wallet_version_choice_tests {
                 "config wallet add",
                 &["-n", "w", "-s", "secret"],
             ),
+            version_is_explicit::<super::super::master_wallet_cmd::MasterWalletSetCmd>(
+                "config master-wallet set",
+                &["-s", "secret"],
+            ),
         ]
         .into_iter()
         .flatten()
