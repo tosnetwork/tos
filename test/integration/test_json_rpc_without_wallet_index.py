@@ -15,6 +15,7 @@ import logging
 import socket
 import urllib.request
 from pathlib import Path
+from typing import Any
 
 from tostester.install import Install
 from tostester.network import FullNode, Network, StartOptions
@@ -38,7 +39,7 @@ def ports_free(base: int, count: int) -> bool:
     return True
 
 
-def call(address: str, method: str, params: dict | None = None) -> dict:
+def call(address: str, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
     payload = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params or {}})
     request = urllib.request.Request(
         f"http://{address}/jsonRPC",
@@ -51,7 +52,9 @@ def call(address: str, method: str, params: dict | None = None) -> dict:
     return document
 
 
-async def answered(address: str, method: str, params: dict | None = None) -> dict:
+async def answered(
+    address: str, method: str, params: dict[str, Any] | None = None
+) -> dict[str, Any]:
     """The node's answer once its JSON-RPC server is up."""
     for _ in range(120):
         try:
