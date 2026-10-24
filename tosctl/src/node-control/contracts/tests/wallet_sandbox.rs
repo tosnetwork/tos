@@ -448,3 +448,95 @@ async fn v4_send_reserve_covers_outstanding_storage_debt() {
 async fn v5_send_reserve_covers_outstanding_storage_debt() {
     the_send_reserve_covers_the_wallet_charge(WalletVersion::V5R1, 2 * TOS).await;
 }
+
+/// A body that throws after ACCEPT still consumes its seqno. If the seqno were
+/// saved only at the end, the failed execution would roll it back while the fee
+/// is charged, and anyone could replay the same signed message until it expires,
+/// draining the wallet in fees. The contract is compiled from source so the test
+/// exercises the code in this tree, not the embedded copy.
+#[test]
+fn v4_body_that_fails_after_accept_cannot_be_replayed() {
+    let code = compile_func_with_stdlib(&[smartcont("wallet-v4-code.fc")]).expect("compile v4");
+    let mut bc = Blockchain::new().expect("blockchain");
+    bc.set_workchain(WORKCHAIN as i8);
+    let funder = bc.treasury("funder", 1_000 * TOS).expect("funder");
+    let target = bc.treasury("target", 1_000 * TOS).expect("target");
+    let key = SigningKey::from_bytes(&[0x42; 32]);
+
+    let mut data = BuilderData::new();
+    data.append_u32(0).expect("seqno");
+    data.append_u32(SUBWALLET_ID).expect("subwallet");
+    data.append_raw(&key.verifying_key().to_bytes(), 256).expect("public key");
+    data.append_bit_zero().expect("no plugins");
+    let init = StateInit::with_code_and_data(code, data.into_cell().expect("data"));
+    let hash = init.write_to_new_cell().expect("init").into_cell().expect("init cell").hash(0);
+    let address = MsgAddressInt::with_params(WORKCHAIN, hash).expect("address");
+    bc.send_message(
+        MessageBuilder::internal(funder.address(), &address, 100 * TOS)
+            .bounce(false)
+            .state_init(init)
+            .build(),
+    )
+    .expect("deploy")
+    .expect_success();
+    let seqno = |bc: &Blockchain| {
+        bc.run_get_method(&address, "seqno", vec![]).expect("seqno").expect_success().int_at(0)
+    };
+    let balance = |bc: &Blockchain, account: &MsgAddressInt| {
+        bc.get_account(account)
+            .and_then(|account| account.balance().cloned())
+            .and_then(|balance| balance.coins.as_u64())
+            .expect("account balance")
+    };
+    assert_eq!(seqno(&bc), 0);
+
+    // op 0 sends each (mode, message) pair; the second reference has no mode
+    // byte, so the loop underflows (exit 9) after ACCEPT and after one send was
+    // queued.
+    let transfer = MessageBuilder::internal(&address, target.address(), TOS)
+        .build()
+        .serialize()
+        .expect("transfer cell");
+    let mut body = BuilderData::new();
+    body.append_i32(GLOBAL_ID).expect("global id");
+    body.append_u32(SUBWALLET_ID).expect("subwallet");
+    body.append_u32(bc.now() + 100).expect("valid until");
+    body.append_u32(0).expect("seqno");
+    body.append_u8(0).expect("op");
+    body.append_u8(3).expect("mode");
+    body.checked_append_reference(transfer).expect("transfer ref");
+    body.checked_append_reference(Cell::default()).expect("ref without a mode byte");
+    let body = body.into_cell().expect("body");
+    let signature = key.sign(body.hash(0).as_slice()).to_bytes();
+    let mut packet = BuilderData::new();
+    packet.append_raw(&signature, 512).expect("signature");
+    packet
+        .append_builder(
+            &SliceData::load_cell(body).expect("body slice").as_builder().expect("body"),
+        )
+        .expect("signed body");
+    let message = MessageBuilder::external(&address)
+        .body_slice(SliceData::load_cell(packet.into_cell().expect("packet")).expect("packet"))
+        .build();
+
+    let target_before = balance(&bc, target.address());
+    let wallet_before = balance(&bc, &address);
+    let first = bc.send_message(message.clone()).expect("an accepted body is executed");
+    first.expect_exit_code(9).expect_out_msgs(0);
+    let chain_block::TrComputePhase::Vm(vm) = first.read_primary_description().compute_ph else {
+        panic!("expected VM computation");
+    };
+    assert!(vm.gas_fees.as_u64().expect("gas fees") > 0, "the accepted body is charged");
+    assert_eq!(seqno(&bc), 1, "the accepted body must consume its seqno despite the throw");
+    let wallet_after_first = balance(&bc, &address);
+    assert!(wallet_after_first < wallet_before, "the accepted body pays its fee");
+
+    let replay = match bc.send_message(message) {
+        Ok(_) => panic!("a replayed body must be refused before ACCEPT"),
+        Err(error) => error.to_string(),
+    };
+    assert!(replay.contains("exit code: 33"), "replay must fail the seqno check: {replay}");
+    assert_eq!(balance(&bc, &address), wallet_after_first, "a refused replay costs nothing");
+    assert_eq!(seqno(&bc), 1);
+    assert_eq!(balance(&bc, target.address()), target_before, "the failed body sent nothing");
+}

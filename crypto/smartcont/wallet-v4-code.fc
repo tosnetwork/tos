@@ -78,6 +78,10 @@ slice pack_plugin_key(int wc, int addr_hash) inline {
   throw_if(35, weak_ed25519_key?(public_key));
   throw_unless(35, check_signature(slice_hash(in_msg), signature, public_key));
   accept_message();
+  ;; Consume the seqno before executing: a throw below must not roll it back
+  ;; and let the same signed message be replayed for fees.
+  save_data(stored_seqno + 1, stored_subwallet, public_key, plugins);
+  commit();
 
   if (op == 0) {
     ;; simple send
