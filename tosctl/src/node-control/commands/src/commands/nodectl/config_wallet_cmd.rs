@@ -72,8 +72,7 @@ pub struct WalletAddCmd {
     #[arg(
         short = 'v',
         long = "version",
-        default_value = "V3R2",
-        help = "Wallet version (case insensitive) [possible values: V1R3, V3R2, V4R2, V5R1]"
+        help = "Wallet version, required (case insensitive) [possible values: V1R3, V3R2, V4R2, V5R1; V3R2 only for bootstrap and operating keys]"
     )]
     version: WalletVersion,
     #[arg(short = 'i', long = "subwallet-id", default_value = "42", help = "Subwallet ID")]

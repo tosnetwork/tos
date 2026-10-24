@@ -45,6 +45,11 @@ use zeroize::Zeroize;
 #[cfg(unix)]
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 
+/// No wallet version is implied: wallet v3 serves only the genesis bootstrap
+/// and bounded operating keys, so it must never be chosen by omission.
+pub(crate) const WALLET_VERSION_HELP: &str =
+    "Wallet version, required (V3R2 only for bootstrap and operating keys, V4R2, V5R1)";
+
 #[derive(clap::Args, Clone)]
 #[command(about = "Manage wallets")]
 pub struct WalletCmd {
@@ -123,7 +128,7 @@ pub enum WalletAction {
 pub struct WalletCreateCmd {
     #[arg(short = 'n', long = "name", help = "Wallet name")]
     name: String,
-    #[arg(short = 'v', long = "version", default_value = "V3R2", help = "Wallet version")]
+    #[arg(short = 'v', long = "version", help = WALLET_VERSION_HELP)]
     version: String,
     #[arg(
         short = 'w',
@@ -170,7 +175,7 @@ pub struct WalletImportCmd {
     name: String,
     #[command(flatten)]
     private_key: super::key_cmd::PrivateKeyInput,
-    #[arg(short = 'v', long = "version", default_value = "V3R2")]
+    #[arg(short = 'v', long = "version", help = WALLET_VERSION_HELP)]
     version: String,
     #[arg(short = 'w', long = "workchain", allow_negative_numbers = true, default_value_t = super::utils::USER_CONTRACT_WORKCHAIN)]
     workchain: i32,
@@ -183,7 +188,7 @@ pub struct WalletImportCmd {
 pub struct WalletMnemonicGenerateCmd {
     #[arg(long, default_value = "24", help = "Mnemonic word count (12 or 24)")]
     words: usize,
-    #[arg(short = 'v', long = "version", default_value = "V3R2")]
+    #[arg(short = 'v', long = "version", help = WALLET_VERSION_HELP)]
     version: String,
     #[arg(short = 'w', long = "workchain", allow_negative_numbers = true, default_value_t = super::utils::USER_CONTRACT_WORKCHAIN)]
     workchain: i32,
@@ -212,7 +217,7 @@ pub struct WalletMnemonicImportCmd {
                 and above). Neither option: prompt without echo"
     )]
     mnemonic_fd: Option<i32>,
-    #[arg(short = 'v', long = "version", default_value = "V3R2")]
+    #[arg(short = 'v', long = "version", help = WALLET_VERSION_HELP)]
     version: String,
     #[arg(short = 'w', long = "workchain", allow_negative_numbers = true, default_value_t = super::utils::USER_CONTRACT_WORKCHAIN)]
     workchain: i32,
@@ -263,7 +268,7 @@ pub struct WalletTestFixtureCmd {
     roles: Vec<String>,
     #[arg(long, default_value = "24", help = "Mnemonic word count (12 or 24)")]
     words: usize,
-    #[arg(short = 'v', long = "version", default_value = "V3R2")]
+    #[arg(short = 'v', long = "version", help = WALLET_VERSION_HELP)]
     version: String,
     #[arg(short = 'w', long = "workchain", allow_negative_numbers = true, default_value_t = super::utils::USER_CONTRACT_WORKCHAIN)]
     workchain: i32,
@@ -1862,7 +1867,7 @@ mod wallet_secret_input_tests {
     use std::os::unix::fs::PermissionsExt;
 
     fn mnemonic_import(args: &[&str]) -> WalletMnemonicImportCmd {
-        let mut argv = vec!["mnemonic-import", "-n", "w"];
+        let mut argv = vec!["mnemonic-import", "-n", "w", "-v", "V3R2"];
         argv.extend_from_slice(args);
         let matches = WalletMnemonicImportCmd::augment_args(Command::new("mnemonic-import"))
             .try_get_matches_from(argv)
@@ -1929,11 +1934,79 @@ mod wallet_secret_input_tests {
     fn wallet_import_refuses_the_legacy_private_key_argument() {
         let key = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=";
         let matches = WalletImportCmd::augment_args(Command::new("import"))
-            .try_get_matches_from(["import", "-n", "w", "-k", key])
+            .try_get_matches_from(["import", "-n", "w", "-v", "V3R2", "-k", key])
             .expect("parse");
         let cmd = WalletImportCmd::from_arg_matches(&matches).expect("args");
         let text = format!("{:#}", cmd.private_key.read().expect_err("must refuse"));
         assert!(text.contains("--private-key-file"), "{text}");
         assert!(!text.contains(key), "{text}");
+    }
+}
+
+#[cfg(test)]
+mod wallet_version_choice_tests {
+    use clap::{Args, Command, error::ErrorKind};
+
+    /// The `version` argument of `T` is required and carries no default, and an
+    /// invocation that omits it is refused while parsing, before any command runs.
+    fn version_is_explicit<T: Args>(name: &str, other_args: &[&str]) -> Vec<String> {
+        let command = T::augment_args(Command::new("t"));
+        let mut failures = Vec::new();
+        match command.get_arguments().find(|arg| arg.get_id().as_str() == "version") {
+            None => failures.push(format!("{name}: no version argument")),
+            Some(arg) => {
+                if !arg.is_required_set() {
+                    failures.push(format!("{name}: version is optional"));
+                }
+                if !arg.get_default_values().is_empty() {
+                    failures.push(format!(
+                        "{name}: version defaults to {:?}",
+                        arg.get_default_values()
+                    ));
+                }
+            }
+        }
+        let mut argv = vec!["t"];
+        argv.extend_from_slice(other_args);
+        match command.clone().try_get_matches_from(&argv) {
+            Ok(_) => failures.push(format!("{name}: parsed without a version")),
+            Err(error)
+                if error.kind() == ErrorKind::MissingRequiredArgument
+                    && error.to_string().contains("--version") => {}
+            Err(error) => failures.push(format!("{name}: {error}")),
+        }
+        argv.extend_from_slice(&["-v", "V3R2"]);
+        if let Err(error) = command.try_get_matches_from(&argv) {
+            failures.push(format!("{name}: explicit V3R2 refused: {}", error.kind()));
+        }
+        failures
+    }
+
+    #[test]
+    fn no_wallet_command_implies_a_version() {
+        let failures: Vec<String> = [
+            version_is_explicit::<super::WalletCreateCmd>("wallet create", &["-n", "w"]),
+            version_is_explicit::<super::WalletImportCmd>("wallet import", &["-n", "w"]),
+            version_is_explicit::<super::WalletMnemonicGenerateCmd>(
+                "wallet mnemonic generate",
+                &[],
+            ),
+            version_is_explicit::<super::WalletMnemonicImportCmd>(
+                "wallet mnemonic import",
+                &["-n", "w"],
+            ),
+            version_is_explicit::<super::WalletTestFixtureCmd>(
+                "wallet test-fixture",
+                &["--output", "fixture.json"],
+            ),
+            version_is_explicit::<super::super::config_wallet_cmd::WalletAddCmd>(
+                "config wallet add",
+                &["-n", "w", "-s", "secret"],
+            ),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        assert!(failures.is_empty(), "{failures:#?}");
     }
 }
