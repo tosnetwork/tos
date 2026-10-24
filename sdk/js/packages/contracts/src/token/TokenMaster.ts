@@ -12,6 +12,24 @@ const Opcodes = {
 } as const;
 
 /**
+ * Least TOS (nanoTOS) a mint forwards to the recipient's token wallet: the
+ * wallet code's own budget for receiving tokens, `min_toss_for_storage` plus
+ * `gas_consumption` (0.01 TOS each in token-wallet.fc). The minter does not
+ * check this. A new wallet given less can fail to record the tokens while the
+ * minter has already added them to the total supply. This is an SDK policy
+ * floor, not a fee estimate: higher network prices can need more.
+ */
+export const TOKEN_MINT_MIN_WALLET_VALUE = 20_000_000n;
+
+/**
+ * Least TOS (nanoTOS) a mint must attach beyond what it forwards. The minter
+ * pays its own compute and the forwarding fee from this rather than from its
+ * balance. The same 0.01 TOS per-message budget as token-wallet.fc's
+ * `gas_consumption`; a policy floor, not a fee estimate.
+ */
+export const TOKEN_MINT_MINTER_RESERVE = 10_000_000n;
+
+/**
  * Token Master / Minter contract wrapper (TOS Token V1).
  *
  * Provides read helpers for the standard `get_token_data` and
@@ -124,11 +142,18 @@ export class TokenMaster implements Contract {
     /**
      * Send a mint transaction to the Token Minter.
      *
+     * The message attaches `value`; the minter forwards `walletValue` of it to
+     * the recipient's token wallet and pays its own fees from the rest.
+     *
      * @param provider - injected by `open()`
      * @param via      - the signing sender
-     * @param args.to     - destination owner address for the newly minted tokens
-     * @param args.amount - amount of tokens to mint (in indivisible units)
-     * @param args.value  - amount of TOS (in nanoTOS) attached to the message
+     * @param args.to          - destination owner address for the newly minted tokens
+     * @param args.amount      - amount of tokens to mint (in indivisible units), > 0
+     * @param args.walletValue - TOS (nanoTOS) forwarded to the recipient's token
+     *                           wallet, at least {@link TOKEN_MINT_MIN_WALLET_VALUE}
+     * @param args.value       - TOS (nanoTOS) attached to the message, at least
+     *                           `walletValue` + {@link TOKEN_MINT_MINTER_RESERVE}
+     * @throws RangeError before anything is signed when an argument is below its floor
      */
     async sendMint(
         provider: ContractProvider,
@@ -136,17 +161,31 @@ export class TokenMaster implements Contract {
         args: {
             to: Address;
             amount: bigint;
+            walletValue: bigint;
             value: bigint;
             queryId?: bigint;
         },
     ): Promise<void> {
+        if (args.amount <= 0n) {
+            throw new RangeError(`mint amount must be positive, got ${args.amount}`);
+        }
+        if (args.walletValue < TOKEN_MINT_MIN_WALLET_VALUE) {
+            throw new RangeError(
+                `mint walletValue must be at least ${TOKEN_MINT_MIN_WALLET_VALUE} nanoTOS, got ${args.walletValue}`,
+            );
+        }
+        if (args.value < args.walletValue + TOKEN_MINT_MINTER_RESERVE) {
+            throw new RangeError(
+                `mint value must cover walletValue plus ${TOKEN_MINT_MINTER_RESERVE} nanoTOS, got ${args.value}`,
+            );
+        }
         const queryId = args.queryId ?? 0n;
 
         const mintBody = beginCell()
             .storeUint(Opcodes.mint, 32)
             .storeUint(queryId, 64)
             .storeAddress(args.to)
-            .storeCoins(args.value)
+            .storeCoins(args.walletValue)
             .storeRef(
                 beginCell()
                     .storeUint(Opcodes.internalTransfer, 32)

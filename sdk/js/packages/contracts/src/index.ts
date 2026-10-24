@@ -1,5 +1,5 @@
 // Token (TOS Token V1)
-export { TokenMaster } from './token/TokenMaster';
+export { TokenMaster, TOKEN_MINT_MIN_WALLET_VALUE, TOKEN_MINT_MINTER_RESERVE } from './token/TokenMaster';
 export { TokenWallet } from './token/TokenWallet';
 export { TOKEN_MASTER_CODE_HEX, TOKEN_WALLET_CODE_HEX } from './token/codes';
 export type { FungibleTokenData, TokenContent } from './token/types';
