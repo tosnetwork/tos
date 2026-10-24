@@ -7,6 +7,8 @@
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
 
+use common::WalletVersion;
+
 /// Install and setup commands
 #[derive(clap::Args, Clone)]
 #[command(about = "Installation and setup utilities")]
@@ -36,8 +38,8 @@ impl InstallCmd {
 impl InstallWizardCmd {
     pub async fn run(&self) -> anyhow::Result<()> {
         use colored::Colorize;
+        use common::app_config::KeyConfig;
         use common::app_config::{AppConfig, ElectionsConfig, HttpConfig, LogConfig, WalletConfig};
-        use common::{WalletVersion, app_config::KeyConfig};
         use std::collections::HashMap;
         use std::path::Path;
 
@@ -121,11 +123,9 @@ impl InstallWizardCmd {
 
             let wallet_name = prompt_with_default("  Wallet name", "validator")?;
 
-            let wallet_version_str = prompt_with_default("  Wallet version (v3r2 / v4r2)", "v3r2")?;
-            let wallet_version = match wallet_version_str.to_lowercase().as_str() {
-                "v4r2" | "v4" => WalletVersion::V4R2,
-                _ => WalletVersion::V3R2,
-            };
+            let wallet_version = parse_wallet_version_choice(&prompt_required(
+                "  Wallet version (v3r2 only for bootstrap and operating keys / v4r2)",
+            )?)?;
 
             let workchain_str = prompt_with_default(
                 "  Wallet workchain (-1 for masterchain, 0 for basechain)",
@@ -257,6 +257,27 @@ fn which_exists(name: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// The wizard's wallet version: an explicit, supported answer. No version is
+/// implied by an empty or unrecognised answer, so nothing defaults to v3.
+fn parse_wallet_version_choice(answer: &str) -> anyhow::Result<WalletVersion> {
+    match answer.trim().to_lowercase().as_str() {
+        "v3r2" | "v3" => Ok(WalletVersion::V3R2),
+        "v4r2" | "v4" => Ok(WalletVersion::V4R2),
+        "" => anyhow::bail!("a wallet version is required: answer v3r2 or v4r2"),
+        other => anyhow::bail!("unsupported wallet version '{other}': answer v3r2 or v4r2"),
+    }
+}
+
+/// Prompt the user for an answer that has no default
+fn prompt_required(prompt: &str) -> anyhow::Result<String> {
+    use std::io::Write;
+    print!("{}: ", prompt);
+    std::io::stdout().flush()?;
+    let mut input = String::new();
+    std::io::stdin().read_line(&mut input)?;
+    Ok(input.trim().to_string())
+}
+
 /// Prompt the user with a default value
 fn prompt_with_default(prompt: &str, default: &str) -> anyhow::Result<String> {
     use std::io::Write;
@@ -279,5 +300,26 @@ fn prompt_optional_secret(prompt: &str) -> anyhow::Result<Option<String>> {
         )),
         Err(SecretInputError::Empty) => Ok(None),
         Err(error) => Err(error.into()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wallet_version_answer_must_be_explicit_and_supported() {
+        for (answer, version) in [
+            ("v3r2", WalletVersion::V3R2),
+            ("V3", WalletVersion::V3R2),
+            (" v4r2 ", WalletVersion::V4R2),
+            ("v4", WalletVersion::V4R2),
+        ] {
+            assert_eq!(parse_wallet_version_choice(answer).expect(answer), version, "{answer}");
+        }
+        for answer in ["", "   ", "v5r1", "v3r1", "quantum", "yes"] {
+            let error = parse_wallet_version_choice(answer).expect_err(answer).to_string();
+            assert!(error.contains("v3r2 or v4r2"), "{answer:?}: {error}");
+        }
     }
 }
