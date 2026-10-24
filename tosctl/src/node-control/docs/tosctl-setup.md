@@ -213,8 +213,7 @@ Before configuring the master wallet, nodes, wallets, and pools, create all requ
 Make sure the `VAULT_URL` environment variable is set (see [Step 2](#step-2-configure-secretsvault)).
 
 ```bash
-# Create the master wallet key if your config names one
-# (a generated config names no master wallet)
+# Create the master wallet key (configured in Step 6)
 tosctl key add -n "master-wallet-secret"
 
 # Create wallet keys (one per validator node you plan to add)
@@ -262,15 +261,25 @@ The **master wallet** is a central funding source that the service uses to:
 - Automatically deploy validator wallets and nominator pools
 - Periodically top up validator wallets when their balance drops below the threshold (5 TOS)
 
-When you created the configuration file in [Step 3](#step-3-create-tosctl-configuration), a `master_wallet` section was included automatically. The `key.name` field contains the vault secret name — this key was created in [Step 5](#step-5-create-secrets-in-vault).
+A generated configuration names no master wallet, and the service refuses to start without one. Configure it with the vault key created in [Step 5](#step-5-create-secrets-in-vault), naming the wallet version explicitly; there is no default version:
 
-View master wallet information:
+```bash
+tosctl config master-wallet set \
+  --secret-name "master-wallet-secret" \
+  --version V4R2 \
+  --subwallet-id 42 \
+  --workchain 0
+```
+
+The secret name, version, subwallet ID and workchain together determine the wallet address. `--subwallet-id` defaults to `42` and `--workchain` to `0`; they are shown here so the address-defining choice is visible. An already configured master wallet is replaced only with `--force`. The command changes the configuration only: it creates no key and sends nothing.
+
+Check the resulting master wallet before funding it:
 
 ```bash
 tosctl config master-wallet info
 ```
 
-This shows the wallet address, balance, state, and public key.
+This shows the wallet address, balance, state, and public key. Make sure the address is the one you intend to fund.
 
 **Fund the master wallet address** with enough TOS to cover deployment costs and ongoing wallet top-ups. Each wallet/pool deployment costs ~1 TOS, and the service sends 10 TOS when topping up wallets.
 

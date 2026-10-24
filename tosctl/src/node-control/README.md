@@ -411,7 +411,29 @@ tosctl config chain-rpc set \
 
 #### `config master-wallet`
 
-Manage the master wallet configuration.
+Manage the master wallet configuration. A generated configuration names no master wallet; the service refuses to start until one is set.
+
+##### `config master-wallet set`
+
+Configure the master wallet. The version is required; there is no default. The secret name, version, subwallet ID and workchain determine the address, so check it with `config master-wallet info` before funding it.
+
+| Flag | Short form | Description |
+|------|------------|-------------|
+| `--secret-name <NAME>` | `-s` | Vault secret name for the master wallet key |
+| `--version <VERSION>` | `-v` | Wallet version, required: `V3R2` (bootstrap and operating keys only), `V4R2`, `V5R1` |
+| `--subwallet-id <ID>` | `-i` | Subwallet ID (default: `42`) |
+| `--workchain <ID>` | `-w` | Workchain ID (default: `0`) |
+| `--force` | | Replace an already configured master wallet |
+
+```bash
+tosctl config master-wallet set \
+  --secret-name "master-wallet-secret" \
+  --version V4R2 \
+  --subwallet-id 42 \
+  --workchain 0
+```
+
+It changes the configuration only: no key is created and nothing is sent.
 
 ##### `config master-wallet info`
 
@@ -1412,9 +1434,9 @@ REST API authentication settings. **Authentication is enabled by default** — a
 - `jwt_secret` — base64-encoded JWT signing key (optional; falls back to vault secret `auth.jwt-signing-key`)
 - `users` — list of user entries (managed via `tosctl auth` commands)
 
-#### `master_wallet` (optional)
+#### `master_wallet` (required by the service)
 
-Master wallet configuration, used for administrative operations. Same structure as wallet entries in the `wallets` section.
+Master wallet configuration, used for administrative operations. Same structure as wallet entries in the `wallets` section. The configuration file may omit it (`null`), but the service refuses to start without one; set it with `config master-wallet set`, which requires an explicit version.
 
 #### `elections` (optional)
 
