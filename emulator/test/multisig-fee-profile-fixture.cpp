@@ -38,7 +38,10 @@
 //      every measured compute phase, both measured messages and the order's
 //      measured state over its lifetime, priced from the configuration. This
 //      is the property the profile exists for, and the one a profile measured
-//      at a single small point silently lacked.
+//      at a single small point silently lacked;
+//   3. at the basechain gas limit, requiring an order the profile admits to
+//      execute and the next larger one to be refused at proposal. The config
+//      carries the genesis gas limits for this; prices stay the fixture's.
 //
 // When check 1 fails after an intentional change, update fee_profile() from
 // the "measured" lines this test prints.
@@ -46,9 +49,12 @@
 
 #include <algorithm>
 #include <deque>
+#include <fstream>
 #include <map>
 #include <set>
+#include <sstream>
 #include <string>
+#include <tuple>
 #include <vector>
 
 #include "block/block-auto.h"
@@ -74,7 +80,80 @@ namespace {
 #error "MULTISIG_ORDER_BOC must be defined by CMake"
 #endif
 
-using fee_fixture::config;
+#ifndef TOS_GENESIS_ZEROSTATE_FIF
+#error "TOS_GENESIS_ZEROSTATE_FIF must be defined by CMake"
+#endif
+
+// gas_limit and special_gas_limit of the one genesis line ending in "config.gas_prices!"
+// (the basechain ConfigParam 21), written as plain numbers or as "N *M".
+std::pair<td::uint64, td::uint64> genesis_basechain_gas_limits() {
+  std::ifstream in(TOS_GENESIS_ZEROSTATE_FIF);
+  CHECK(in.good());
+  std::string line;
+  std::vector<std::pair<td::uint64, td::uint64>> found;
+  while (std::getline(in, line)) {
+    auto trimmed = td::trim(td::Slice(line)).str();
+    if (td::begins_with(trimmed, "//") || !td::ends_with(trimmed, " config.gas_prices!")) {
+      continue;
+    }
+    std::istringstream words(trimmed);
+    // gas_price gas_limit special_gas_limit gas_credit ...; reading up to the fourth
+    // value applies any multiplier that follows the third
+    std::vector<td::uint64> values;
+    std::string word;
+    while (values.size() < 4 && words >> word) {
+      if (word == "*M") {
+        CHECK(!values.empty());
+        values.back() *= 1'000'000;
+      } else {
+        values.push_back(std::stoull(word));
+      }
+    }
+    CHECK(values.size() == 4);
+    found.emplace_back(values[1], values[2]);
+  }
+  CHECK(found.size() == 1);
+  return found[0];
+}
+
+// The shared fixture config with the genesis basechain gas limits. A proposal is
+// refused when a phase of its order would need more gas than ConfigParam 21 allows,
+// so the limit in force has to be the one the chain runs; prices stay the fixture's.
+std::string multisig_config_boc() {
+  static const std::string boc = [] {
+    auto prices = fee_fixture::config()->get_gas_limits_prices(false).move_as_ok();
+    std::tie(prices.gas_limit, prices.special_gas_limit) = genesis_basechain_gas_limits();
+    vm::CellBuilder cb;
+    if (prices.flat_gas_limit != 0 || prices.flat_gas_price != 0) {
+      cb.store_long(0xd1, 8).store_long(prices.flat_gas_limit, 64).store_long(prices.flat_gas_price, 64);
+    }
+    cb.store_long(0xde, 8)
+        .store_long(prices.gas_price, 64)
+        .store_long(prices.gas_limit, 64)
+        .store_long(prices.special_gas_limit, 64)
+        .store_long(prices.gas_credit, 64)
+        .store_long(prices.block_gas_limit, 64)
+        .store_long(prices.freeze_due_limit, 64)
+        .store_long(prices.delete_due_limit, 64);
+    auto root = vm::std_boc_deserialize(td::base64_decode(fee_fixture::tos_versioned_config_boc()).move_as_ok());
+    CHECK(root.is_ok());
+    vm::Dictionary params{root.move_as_ok(), 32};
+    td::BitArray<32> key;
+    key.store_ulong(21);
+    CHECK(params.set_ref(key, cb.finalize()));
+    return td::base64_encode(vm::std_boc_serialize(params.get_root_cell()).move_as_ok());
+  }();
+  return boc;
+}
+
+std::shared_ptr<const block::Config> config() {
+  static std::shared_ptr<const block::Config> cfg = [] {
+    auto raw = static_cast<block::Config *>(emulator_config_create(multisig_config_boc().c_str()));
+    CHECK(raw != nullptr);
+    return std::shared_ptr<const block::Config>(raw);
+  }();
+  return cfg;
+}
 
 constexpr td::uint32 kOpNewOrder = 0x27bace9f;
 constexpr td::uint32 kOpApprove = 0x9c205aee;
@@ -370,12 +449,16 @@ std::vector<td::int64> contract_profile() {
 }
 
 constexpr td::int64 kLifetime = 86'400;  // run_path proposes orders expiring a day after kNow
+// The estimate getter validates the whole chain, which for orders near the transaction
+// gas limit takes more than the default getter allowance of 1,000,000 gas.
+const vm::GasLimits kGetterGasLimits{10'000'000, 10'000'000};
 
 td::int64 estimate(int signers, td::Ref<vm::Cell> chain) {
   auto contract = tos::SmartContract::create(tos::SmartContract::State{wallet_code(), parent_data(0, signers)});
   auto answer = contract.write().run_get_method(tos::SmartContract::Args()
                                                     .set_method_id(td::Slice("get_order_estimate"))
                                                     .set_stack({chain, td::make_refint(kNow + kLifetime)})
+                                                    .set_limits(kGetterGasLimits)
                                                     .set_address(parent())
                                                     .set_now(kNow)
                                                     .set_config(config()));
@@ -544,7 +627,7 @@ struct Outcome {
 class Executor {
  public:
   Executor() {
-    static const auto boc = fee_fixture::tos_versioned_config_boc();
+    static const auto boc = multisig_config_boc();
     emulator_ = transaction_emulator_create(boc.c_str(), 0);
     CHECK(emulator_ != nullptr);
     CHECK(transaction_emulator_set_unixtime(emulator_, kNow));
@@ -731,4 +814,153 @@ TEST(MultisigFeeProfile, QuoteFundedOrdersExecuteWithoutWalletSubsidy) {
     CHECK(paid == c.sends);
     CHECK(td::cmp(after + payouts, before) >= 0);
   }
+}
+
+namespace {
+
+constexpr td::uint32 kOpExecuteInternal = 0xead7f19d;
+constexpr td::int32 kErrorOrderTooLarge = 0x1a0c;
+
+// Deploys a wallet of `signers` signers holding 1000 coins; returns it and its first order.
+std::pair<block::StdAddress, block::StdAddress> open_wallet(Executor &chain, int signers) {
+  vm::CellBuilder init;
+  init.store_long(0, 2).store_ones(1).store_ref(wallet_code()).store_ones(1).store_ref(parent_data(0, signers));
+  init.store_zeroes(1);
+  const auto wallet_init = init.finalize();
+  const block::StdAddress wallet(0, wallet_init->get_hash().bits());
+  chain.contract(wallet);
+  chain.settle(Executor::external_sender_message(std_address(0x01), wallet, 1000 * kCoin, vm::CellBuilder().finalize(),
+                                                 wallet_init));
+  vm::CellBuilder order_data;
+  store_std_address(order_data, wallet);
+  order_data.store_long(0, 64);
+  vm::CellBuilder order_init;
+  order_init.store_long(0, 2).store_ones(1).store_ref(order_code()).store_ones(1).store_ref(order_data.finalize());
+  order_init.store_zeroes(1);
+  const block::StdAddress order(0, order_init.finalize()->get_hash().bits());
+  chain.contract(order);
+  return {wallet, order};
+}
+
+void propose(Executor &chain, const block::StdAddress &wallet, td::uint64 value, td::Ref<vm::Cell> chain_actions) {
+  vm::CellBuilder proposal;
+  proposal.store_long(kOpNewOrder, 32).store_long(1, 64).store_long(static_cast<long long>(kNextSeqno), 64);
+  proposal.store_long(0, 1).store_long(0, 8).store_long(kNow + kLifetime, 32).store_ref(std::move(chain_actions));
+  chain.settle(Executor::external_sender_message(proposer(), wallet, value, proposal.finalize()));
+}
+
+void approve_to_threshold(Executor &chain, const block::StdAddress &order) {
+  for (int index : {0, 1}) {  // the wallet's threshold is 2
+    vm::CellBuilder approve;
+    approve.store_long(kOpApprove, 32).store_long(7, 64).store_long(index, 8);
+    chain.settle(Executor::external_sender_message(signer(index), order, kCoin, approve.finalize()));
+  }
+}
+
+td::int32 estimate_exit(int signers, td::Ref<vm::Cell> chain) {
+  auto contract = tos::SmartContract::create(tos::SmartContract::State{wallet_code(), parent_data(0, signers)});
+  return contract.write()
+      .run_get_method(tos::SmartContract::Args()
+                          .set_method_id(td::Slice("get_order_estimate"))
+                          .set_stack({std::move(chain), td::make_refint(kNow + kLifetime)})
+                          .set_limits(kGetterGasLimits)
+                          .set_address(parent())
+                          .set_now(kNow)
+                          .set_config(config()))
+      .code;
+}
+
+int paid_transfers(const Executor &chain) {
+  int paid = 0;
+  for (const auto &d : chain.delivered) {
+    paid += d.to == std_address(0x77) && td::cmp(d.value, td::make_refint(kCoin / 1000)) == 0;
+  }
+  return paid;
+}
+
+td::int64 basechain_gas_limit() {
+  return static_cast<td::int64>(config()->get_gas_limits_prices(false).move_as_ok().gas_limit);
+}
+
+// The most signers each of four updates may install, ahead of 251 sends (255 actions),
+// for the parent's execute to stay within `gas_limit` under the profile.
+int largest_admitted_install(const std::vector<td::int64> &p, td::int64 gas_limit) {
+  return static_cast<int>((gas_limit - p[kParentExecuteGas] - 255 * p[kParentExecuteGasPerAction]) /
+                          (4 * p[kParentGasPerUpdatedSigner]));
+}
+
+}  // namespace
+
+// An approved order is marked executed before its execute message reaches the wallet, so
+// an order whose execution cannot fit one transaction must be refused at proposal. Four
+// updates installing the same large set ahead of 251 sends reach the limit long before
+// the 255-action cap does.
+TEST(MultisigFeeProfile, GasLimitBoundsAdmission) {
+  const auto p = contract_profile();
+  const auto gas_limit = basechain_gas_limit();
+  const int install = largest_admitted_install(p, gas_limit);
+  LOG(INFO) << "multisig admission at gas limit " << gas_limit << ": four updates of up to " << install
+            << " signers ahead of 251 sends";
+
+  {
+    auto within = actions(251, install, 0, 4);
+    CHECK(estimate_exit(3, within) == 0);
+    Executor chain;
+    auto [wallet, order] = open_wallet(chain, 3);
+    propose(chain, wallet, static_cast<td::uint64>(estimate(3, within)), within);
+    approve_to_threshold(chain, order);
+    for (const auto &outcome : chain.outcomes) {
+      CHECK(outcome.compute_success && outcome.action_success);
+    }
+    CHECK(paid_transfers(chain) == 251);
+  }
+  {
+    auto beyond = actions(251, install + 1, 0, 4);
+    CHECK(estimate_exit(3, beyond) == kErrorOrderTooLarge);
+    Executor chain;
+    auto [wallet, order] = open_wallet(chain, 3);
+    propose(chain, wallet, 100 * kCoin, beyond);
+    // the deployment, then the refused proposal; no order is deployed
+    CHECK(chain.outcomes.size() == 2);
+    CHECK(chain.outcomes[1].account == wallet && !chain.outcomes[1].compute_success);
+    int bounced = 0;
+    for (const auto &d : chain.delivered) {
+      bounced += d.to == proposer();
+    }
+    CHECK(bounced == 1);
+  }
+}
+
+// The bound covers the order's own actions only. A send to the wallet itself carrying
+// execute_internal is message data when the order is opened; its batch runs in a later
+// transaction that admission does not bound, and that transaction can still run out of
+// gas after the order has been executed. This pins the boundary the contracts document.
+// The nested batch installs the largest signer set four times: more than one transaction
+// can execute, not merely more than the profile admits.
+TEST(MultisigFeeProfile, GasLimitDoesNotCoverExecuteInternalBatches) {
+  auto nested = actions(251, 255, 0, 4);
+  CHECK(estimate_exit(3, nested) == kErrorOrderTooLarge);
+
+  Executor chain;
+  auto [wallet, order] = open_wallet(chain, 3);
+  vm::CellBuilder body;
+  body.store_long(kOpExecuteInternal, 32).store_long(0, 64).store_ref(nested);
+  vm::CellBuilder msg;
+  msg.store_long(0b0100, 4).store_zeroes(2);  // int_msg_info$0 ihr_disabled, src addr_none
+  store_std_address(msg, wallet);
+  store_coins(msg, kCoin);
+  msg.store_zeroes(1 + 4 + 4 + 64 + 32 + 1).store_ones(1).store_ref(body.finalize());
+  vm::CellBuilder outer;
+  outer.store_long(kActionSend, 32).store_long(1, 8).store_ref(msg.finalize()).store_zeroes(1);
+  const auto chain_actions = outer.finalize();
+
+  CHECK(estimate_exit(3, chain_actions) == 0);
+  propose(chain, wallet, static_cast<td::uint64>(estimate(3, chain_actions)), chain_actions);
+  approve_to_threshold(chain, order);
+  CHECK(chain.outcomes.size() >= 2);
+  for (size_t i = 0; i + 1 < chain.outcomes.size(); i++) {
+    CHECK(chain.outcomes[i].compute_success && chain.outcomes[i].action_success);
+  }
+  CHECK(chain.outcomes.back().account == wallet && !chain.outcomes.back().compute_success);
+  CHECK(paid_transfers(chain) == 0);
 }

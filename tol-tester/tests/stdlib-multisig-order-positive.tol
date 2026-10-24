@@ -235,14 +235,17 @@ fun test_proposer_authorization(): int {
 //   gas fee(g)          = 100000 + (g - 100) * 1000          (g > 100)
 //   forward fee(b, c)   = 400000 + b + 100 * c
 //   storage fee(s,b,c)  = (b + 500 * c) * s                  (basechain)
-fun installFeeConfig(): void {
+fun gasPrices(constructor: int): slice {
+    return beginCell().storeUint(constructor, 8).storeUint(65536 * 1000, 64).storeUint(1000000, 64)
+        .storeUint(1000000, 64).storeUint(10000, 64).storeUint(10000000, 64).storeUint(100000000, 64)
+        .storeUint(1000000000, 64).endCell().beginParse();
+}
+
+// The gas limit is 1000000, behind the flat-price prefix unless `gas` replaces it.
+fun installFeeConfigWith(gas: slice): void {
     val storage = beginCell().storeUint(0xcc, 8).storeUint(0, 32)
         .storeUint(65536, 64).storeUint(65536 * 500, 64)
         .storeUint(65536 * 2, 64).storeUint(65536 * 1000, 64).endCell().beginParse();
-    val gas = beginCell().storeUint(0xd1, 8).storeUint(100, 64).storeUint(100000, 64)
-        .storeUint(0xde, 8).storeUint(65536 * 1000, 64).storeUint(1000000, 64).storeUint(1000000, 64)
-        .storeUint(10000, 64).storeUint(10000000, 64).storeUint(100000000, 64).storeUint(1000000000, 64)
-        .endCell().beginParse();
     val msg = beginCell().storeUint(0xea, 8).storeUint(400000, 64).storeUint(65536, 64)
         .storeUint(65536 * 100, 64).storeUint(98304, 32).storeUint(21845, 16).storeUint(21845, 16)
         .endCell().beginParse();
@@ -265,6 +268,11 @@ fun installFeeConfig(): void {
     var c7: array<unknown> = [];
     c7.push(params);
     setC7(c7);
+}
+
+fun installFeeConfig(): void {
+    installFeeConfigWith(beginCell().storeUint(0xd1, 8).storeUint(100, 64).storeUint(100000, 64)
+        .storeSlice(gasPrices(0xde)).endCell().beginParse());
 }
 
 fun feeProfile(): MultisigOrderFeeProfile {
@@ -435,6 +443,31 @@ fun test_signer_sets_are_ordered_and_distinct(): int {
     return 16;
 }
 
+@method_id(117)
+fun test_parent_gas_limit_admission(): int {
+    installFeeConfig();
+    val p = feeProfile();
+    // two actions installing 4960 signers: parent execute 7000 + 1000 + 992000 = 1000000 and
+    // proposal 5000 + 2000 + 992000 = 999000, both within the limit
+    assert(p.requiredValueForSizes(100, 2, 800, 5, 2, 4960, 10, 0) > 0) throw 252;
+    // 1000 gas of counting brings the proposal to the limit exactly
+    assert(p.requiredValueForSizes(100, 2, 800, 5, 2, 4960, 10, 1000) > 0) throw 253;
+    var rejected = 0;
+    // one more installed signer: the parent execute would need 1000200
+    try { p.requiredValueForSizes(100, 2, 800, 5, 2, 4961, 10, 0); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_ORDER_TOO_LARGE, 254); rejected += 1; }
+    // one more gas of counting: the proposal would need 1000001
+    try { p.requiredValueForSizes(100, 2, 800, 5, 2, 4960, 10, 1001); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_ORDER_TOO_LARGE, 255); rejected += 1; }
+    // the same limit without the flat-price prefix
+    installFeeConfigWith(gasPrices(0xde));
+    assert(p.requiredValueForSizes(100, 2, 800, 5, 2, 4960, 10, 0) > 0) throw 256;
+    try { p.requiredValueForSizes(100, 2, 800, 5, 2, 4961, 10, 0); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_ORDER_TOO_LARGE, 257); rejected += 1; }
+    // a gas price record of an unknown constructor
+    installFeeConfigWith(gasPrices(0xdc));
+    try { p.requiredValueForSizes(100, 2, 800, 5, 1, 0, 10, 0); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_INVALID_CONFIG, 258); rejected += 1; }
+    assert(rejected == 4) throw 259;
+    return 17;
+}
+
 /**
 @testcase | 101 | | 1
 @testcase | 102 | | 2
@@ -452,4 +485,5 @@ fun test_signer_sets_are_ordered_and_distinct(): int {
 @testcase | 109 | | 12739493716426086653603001419376314880446471976331329098592251646104014986521
 @testcase | 115 | | 15
 @testcase | 116 | | 16
+@testcase | 117 | | 17
  */

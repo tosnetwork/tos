@@ -235,14 +235,17 @@ int test_proposer_authorization() method_id(110) {
 ;;   gas fee(g)          = 100000 + (g - 100) * 1000          (g > 100)
 ;;   forward fee(b, c)   = 400000 + b + 100 * c
 ;;   storage fee(s,b,c)  = (b + 500 * c) * s                  (basechain)
-() install_fee_config() impure {
+slice gas_prices(int constructor) {
+  return begin_cell().store_uint(constructor, 8).store_uint(65536 * 1000, 64).store_uint(1000000, 64)
+    .store_uint(1000000, 64).store_uint(10000, 64).store_uint(10000000, 64).store_uint(100000000, 64)
+    .store_uint(1000000000, 64).end_cell().begin_parse();
+}
+
+;; The gas limit is 1000000, behind the flat-price prefix unless `gas` replaces it.
+() install_fee_config_with(slice gas) impure {
   slice storage = begin_cell().store_uint(0xcc, 8).store_uint(0, 32)
     .store_uint(65536, 64).store_uint(65536 * 500, 64)
     .store_uint(65536 * 2, 64).store_uint(65536 * 1000, 64).end_cell().begin_parse();
-  slice gas = begin_cell().store_uint(0xd1, 8).store_uint(100, 64).store_uint(100000, 64)
-    .store_uint(0xde, 8).store_uint(65536 * 1000, 64).store_uint(1000000, 64).store_uint(1000000, 64)
-    .store_uint(10000, 64).store_uint(10000000, 64).store_uint(100000000, 64).store_uint(1000000000, 64)
-    .end_cell().begin_parse();
   slice msg = begin_cell().store_uint(0xea, 8).store_uint(400000, 64).store_uint(65536, 64)
     .store_uint(65536 * 100, 64).store_uint(98304, 32).store_uint(21845, 16).store_uint(21845, 16)
     .end_cell().begin_parse();
@@ -269,6 +272,11 @@ int test_proposer_authorization() method_id(110) {
   tuple c7 = empty_tuple();
   c7~tpush(params);
   set_c7(c7);
+}
+
+() install_fee_config() impure {
+  install_fee_config_with(begin_cell().store_uint(0xd1, 8).store_uint(100, 64).store_uint(100000, 64)
+    .store_slice(gas_prices(0xde)).end_cell().begin_parse());
 }
 
 tuple fee_profile() {
@@ -420,6 +428,30 @@ int test_signer_sets_are_ordered_and_distinct() method_id(116) {
   return 16;
 }
 
+int test_parent_gas_limit_admission() method_id(117) {
+  install_fee_config();
+  tuple p = fee_profile();
+  ;; two actions installing 4960 signers: parent execute 7000 + 1000 + 992000 = 1000000 and
+  ;; proposal 5000 + 2000 + 992000 = 999000, both within the limit
+  throw_unless(252, multisig_order::required_value_for_sizes(p, 100, 2, 800, 5, 2, 4960, 10, 0) > 0);
+  ;; 1000 gas of counting brings the proposal to the limit exactly
+  throw_unless(253, multisig_order::required_value_for_sizes(p, 100, 2, 800, 5, 2, 4960, 10, 1000) > 0);
+  int rejected = 0;
+  ;; one more installed signer: the parent execute would need 1000200
+  try { multisig_order::required_value_for_sizes(p, 100, 2, 800, 5, 2, 4961, 10, 0); } catch (_, code) { expect_throw(code, multisig_order::error::order_too_large, 254); rejected += 1; }
+  ;; one more gas of counting: the proposal would need 1000001
+  try { multisig_order::required_value_for_sizes(p, 100, 2, 800, 5, 2, 4960, 10, 1001); } catch (_, code) { expect_throw(code, multisig_order::error::order_too_large, 255); rejected += 1; }
+  ;; the same limit without the flat-price prefix
+  install_fee_config_with(gas_prices(0xde));
+  throw_unless(256, multisig_order::required_value_for_sizes(p, 100, 2, 800, 5, 2, 4960, 10, 0) > 0);
+  try { multisig_order::required_value_for_sizes(p, 100, 2, 800, 5, 2, 4961, 10, 0); } catch (_, code) { expect_throw(code, multisig_order::error::order_too_large, 257); rejected += 1; }
+  ;; a gas price record of an unknown constructor
+  install_fee_config_with(gas_prices(0xdc));
+  try { multisig_order::required_value_for_sizes(p, 100, 2, 800, 5, 1, 0, 10, 0); } catch (_, code) { expect_throw(code, multisig_order::error::invalid_config, 258); rejected += 1; }
+  throw_unless(259, rejected == 4);
+  return 17;
+}
+
 {-
 TESTCASE | 101 | | 1
 TESTCASE | 102 | | 2
@@ -437,4 +469,5 @@ TESTCASE | 114 | | 14
 TESTCASE | 109 | | 12739493716426086653603001419376314880446471976331329098592251646104014986521
 TESTCASE | 115 | | 15
 TESTCASE | 116 | | 16
+TESTCASE | 117 | | 17
 -}

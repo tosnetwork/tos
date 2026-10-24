@@ -401,11 +401,39 @@ fun MultisigOrderFeeProfile.requireValid(self): void {
     }
 }
 
+fun multisigOrderBasechainGasPrices(): slice
+    asm "14 GETPARAMLONG" "3 INDEX"
+
+/// The basechain per-transaction gas limit from ConfigParam 21 in the VM's
+/// unpacked configuration. No balance buys more gas than this, so a compute
+/// phase that needs more can never complete however well it is funded.
+fun multisigOrderBasechainGasLimit(): int {
+    var prices = multisigOrderBasechainGasPrices();
+    var tag = prices.loadUint(8);
+    if (tag == 0xd1) {
+        prices.skipBits(128);
+        tag = prices.loadUint(8);
+    }
+    if (tag != 0xdd && tag != 0xde) {
+        throw MULTISIG_ORDER_THROW_INVALID_CONFIG;
+    }
+    prices.skipBits(64);
+    return prices.preloadUint(64);
+}
+
 /// The seven-component cost for an order whose action and signer set have
 /// the given sizes, living `lifetimeSeconds`. The parent's two compute phases
 /// grow with the number of actions and with the size of any signer set an
 /// update action installs; `extraParentGas` is gas the parent spends beyond
 /// the profile, such as counting sizes.
+///
+/// Throws order-too-large when either parent phase would need more gas than
+/// the current basechain gas limit: the order would be paid for, approved and
+/// marked executed, and then its execution would abort. This holds for the
+/// limit in force at proposal; a later lower limit can still strand an open
+/// order. Only this order's own actions are counted: a send whose body
+/// carries an execute_internal batch runs that batch in a later transaction
+/// of the wallet, which this bound does not cover.
 fun MultisigOrderFeeProfile.requiredValueForSizes(
     self,
     actionBits: int,
@@ -425,16 +453,16 @@ fun MultisigOrderFeeProfile.requiredValueForSizes(
         throw MULTISIG_ORDER_THROW_INVALID_CONFIG;
     }
     val signerGas = self.parentGasPerUpdatedSigner * updatedSignerCount;
-    val compute = calculateGasFee(
-            BASECHAIN,
-            self.parentNewOrderGas + self.parentNewOrderGasPerAction * actionCount + signerGas + extraParentGas
-        )
+    val newOrderGas = self.parentNewOrderGas + self.parentNewOrderGasPerAction * actionCount + signerGas + extraParentGas;
+    val executeGas = self.parentExecuteGas + self.parentExecuteGasPerAction * actionCount + signerGas;
+    val gasLimit = multisigOrderBasechainGasLimit();
+    if (newOrderGas > gasLimit || executeGas > gasLimit) {
+        throw MULTISIG_ORDER_THROW_ORDER_TOO_LARGE;
+    }
+    val compute = calculateGasFee(BASECHAIN, newOrderGas)
         + calculateGasFee(BASECHAIN, self.orderInitGas)
         + calculateGasFee(BASECHAIN, self.orderExecuteGas)
-        + calculateGasFee(
-            BASECHAIN,
-            self.parentExecuteGas + self.parentExecuteGasPerAction * actionCount + signerGas
-        );
+        + calculateGasFee(BASECHAIN, executeGas);
     val forward = calculateForwardFee(
             BASECHAIN,
             self.initMessageBits + actionBits + signerBits,
