@@ -35,6 +35,8 @@ KEY = int.from_bytes(SECRET.public_key().public_bytes(Encoding.Raw, PublicFormat
 OTHER_SECRET = Ed25519PrivateKey.from_private_bytes(bytes([0x43]) * 32)
 OWNER, MODULE, OTHER, TARGET = (-1, 17), (-1, 18), (-1, 19), (-1, 20)
 AUTH = 0x41555448
+SIGNED_EXTERNAL, SIGNED_INTERNAL = 0x7369676E, 0x73696E74
+EXTENSION = (-1, 21)
 DOMAIN = int("ede715a9852fbba2c3c234ed0d27329ae34d6263a82cfb6215da87c91683b471", 16)
 CODES = {}
 GAS = {}
@@ -187,7 +189,7 @@ class Account:
         message = internal(self.address, TARGET, Cell(), value)
         return Cell().uint(0x0EC3C86D, 32).uint(mode, 8).ref(Cell()).ref(message)
 
-    def legacy_body(self, payload=None):
+    def legacy_body(self, payload=None, signature=None, prefix=SIGNED_EXTERNAL):
         if self.agent:
             payload = payload or self.execute_payload()
             digest = (
@@ -204,7 +206,7 @@ class Account:
             )
         body = (
             Cell()
-            .uint(0x7369676E, 32)
+            .uint(prefix, 32)
             .sint(GLOBAL_ID, 32)
             .uint(0, 32)
             .uint(NOW + 600, 32)
@@ -215,7 +217,8 @@ class Account:
         else:
             body.bits += payload.bits
             body.refs.extend(payload.refs)
-        return Cell(body.bits + "".join(f"{x:08b}" for x in SECRET.sign(body.hash)), body.refs)
+        signature = SECRET.sign(body.hash) if signature is None else signature
+        return Cell(body.bits + "".join(f"{x:08b}" for x in signature), body.refs)
 
     def configure(self, mode, module=MODULE, expected=0):
         req = self.request(1, Cell().uint(mode, 2).addr(module))
@@ -276,6 +279,69 @@ class AuthenticationTests(unittest.TestCase):
                 else bad.bits[:-1] + ("1" if bad.bits[-1] == "0" else "0")
             )
             a.send(bad, ext=True, expected=1704 if a.agent else 135)
+
+    def test_request_refused_by_action_checks_consumes_its_seqno(self):
+        # External sends without the ignore-errors bit are refused after the
+        # wallet accepted the request. Both builds must have committed the
+        # consumed seqno by then, so the wallet pays for the request once and
+        # the same signed body is dead on its second delivery.
+        for a in self.accounts():
+            if a.agent:
+                continue
+            body = a.legacy_body(Cell().maybe(a.execute_payload(mode=1)).uint(0, 1))
+            before = account_data(a.shard)[1]
+            result = a.send(body, ext=True, expected=137, commits=True)
+            self.assertEqual(len(outgoing(from_boc(result["transaction"]))), 0)
+            charged = account_data(a.shard)[1]
+            self.assertLess(charged, before)
+            self.assertEqual(a.counters()[1], 1)
+            a.send(body, ext=True, expected=133)
+            self.assertEqual(account_data(a.shard)[1], charged)
+
+    def test_weak_key_cannot_authorize_a_signed_request(self):
+        # For an identity key A, R = identity and S = 0 satisfy S*B = R + h*A
+        # for every message, so no private key is involved. The canonical
+        # identity is also refused by the VM; its sign-bit alias is not.
+        signature = (1 << 248).to_bytes(32, "big") + bytes(32)
+        for key in [1 << 248, (1 << 248) | 0x80]:
+            for a in self.accounts(pubkey=key):
+                if a.agent:
+                    continue
+                with self.subTest(impl=a.impl, key=hex(key)):
+                    a.send(a.legacy_body(signature=signature), ext=True, expected=135)
+                    a.send(
+                        a.legacy_body(signature=signature, prefix=SIGNED_INTERNAL),
+                        sender=OTHER,
+                        expected=135,
+                    )
+                    self.assertEqual(a.counters()[1], 0)
+
+    def test_request_failing_after_an_extension_change_keeps_no_part_of_it(self):
+        def extensions(a):
+            s = a.data.slice()
+            s.uint(1 + 32 + 32 + 256)
+            return s.maybe()
+
+        add = Cell().uint(2, 8).addr(EXTENSION)
+        twice = Cell().uint(0, 1).uint(1, 1).uint(2, 8).addr(EXTENSION).ref(add)
+        once = Cell().uint(0, 1).uint(1, 1).uint(2, 8).addr(EXTENSION)
+        for a in self.accounts():
+            if a.agent:
+                continue
+            with self.subTest(impl=a.impl):
+                # Internal: nothing is committed, so the first, valid addition
+                # is reverted together with the seqno.
+                a.send(a.legacy_body(twice, prefix=SIGNED_INTERNAL), sender=OTHER, expected=139)
+                self.assertIsNone(extensions(a))
+                self.assertEqual(a.counters()[1], 0)
+                # External: only the consumed seqno survives the refusal.
+                a.send(a.legacy_body(twice), ext=True, expected=139, commits=True)
+                self.assertIsNone(extensions(a))
+                self.assertEqual(a.counters()[1], 1)
+                # Positive control: the same addition alone is applied.
+                a.send(a.legacy_body(once, prefix=SIGNED_INTERNAL), sender=OTHER)
+                self.assertIsNotNone(extensions(a))
+                self.assertEqual(a.counters()[1], 2)
 
     def test_pre_genesis_authentication_remains_compatible(self):
         # Keep minimum-version coverage explicit while the main suite runs at genesis.
