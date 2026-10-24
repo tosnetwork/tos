@@ -45,11 +45,11 @@ def test_deterministic_pq_initial_validator_rejects_invalid_index(index: int) ->
 
 
 def test_spare_has_same_deterministic_key_but_never_enters_initial_registration() -> None:
-    controller = bytes([0x42]) * 32
+    staking_account = bytes([0x42]) * 32
     initial = FakeNode()
     spare = FakeNode()
-    make_deterministic_pq_initial_validator(initial, 4, validator_id=controller)
-    make_deterministic_pq_spare_validator(spare, 4, validator_id=controller)
+    make_deterministic_pq_initial_validator(initial, 4, validator_id=staking_account)
+    make_deterministic_pq_spare_validator(spare, 4, validator_id=staking_account)
     assert initial.calls == spare.spare_calls
     assert spare.calls == []
 
@@ -57,11 +57,11 @@ def test_spare_has_same_deterministic_key_but_never_enters_initial_registration(
 def test_four_genesis_one_spare_topology_is_constructed_by_distinct_calls() -> None:
     nodes = [FakeNode() for _ in range(5)]
     for index, node in enumerate(nodes):
-        controller = bytes([index + 1]) * 32
+        staking_account = bytes([index + 1]) * 32
         if index < 4:
-            make_deterministic_pq_initial_validator(node, index, validator_id=controller)
+            make_deterministic_pq_initial_validator(node, index, validator_id=staking_account)
         else:
-            make_deterministic_pq_spare_validator(node, index, validator_id=controller)
+            make_deterministic_pq_spare_validator(node, index, validator_id=staking_account)
     assert sum(bool(node.calls) for node in nodes) == 4
     assert sum(bool(node.spare_calls) for node in nodes) == 1
     assert nodes[4].calls == []

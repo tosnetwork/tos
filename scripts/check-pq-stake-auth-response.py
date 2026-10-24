@@ -12,7 +12,7 @@ DECLARATION = (
 )
 FUNCTION = (
     "engine.validator.createPqStakeAuthorization election_date:int max_factor:int "
-    "adnl_addr:int256 stake_owner:int256 = engine.validator.PqStakeAuthorization;"
+    "adnl_addr:int256 src_addr:int256 = engine.validator.PqStakeAuthorization;"
 )
 
 

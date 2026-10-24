@@ -154,10 +154,8 @@ fn every_address_flag_accepts_a_raw_masterchain_address() {
         ),
         check::<super::config_pool_cmd::PoolAddCmd>("config_pool_cmd::PoolAddCmd", "address"),
         check::<super::config_pool_cmd::PoolAddCmd>("config_pool_cmd::PoolAddCmd", "owner"),
-        check::<super::config_pool_cmd::PoolAddCmd>("config_pool_cmd::PoolAddCmd", "controller"),
         check::<super::config_wallet_cmd::WalletSendCmd>("config_wallet_cmd::WalletSendCmd", "to"),
         check::<super::deploy_cmd::DeployPoolCmd>("deploy_cmd::DeployPoolCmd", "owner"),
-        check::<super::deploy_cmd::DeployPoolCmd>("deploy_cmd::DeployPoolCmd", "controller"),
         check::<super::deploy_cmd::DeployContractCmd>("deploy_cmd::DeployContractCmd", "address"),
         check::<super::dispute_cmd::DisputeDeployCmd>("dispute_cmd::DisputeDeployCmd", "claimant"),
         check::<super::dispute_cmd::DisputeDeployCmd>(
@@ -167,15 +165,6 @@ fn every_address_flag_accepts_a_raw_masterchain_address() {
         check::<super::dispute_cmd::DisputeShowCmd>("dispute_cmd::DisputeShowCmd", "address"),
         check::<super::dispute_cmd::DisputeSendCmd>("dispute_cmd::DisputeSendCmd", "address"),
         check::<super::pool_cmd::PoolImportCmd>("pool_cmd::PoolImportCmd", "address"),
-        check::<super::pool_cmd::PoolImportCmd>("pool_cmd::PoolImportCmd", "controller"),
-        check::<super::pool_cmd::PoolNominatorCreateCmd>(
-            "pool_cmd::PoolNominatorCreateCmd",
-            "controller",
-        ),
-        check::<super::pool_cmd::PoolSingleCreateCmd>(
-            "pool_cmd::PoolSingleCreateCmd",
-            "controller",
-        ),
         check::<super::proof_attestation_cmd::ProofAttestationDeployCmd>(
             "proof_attestation_cmd::ProofAttestationDeployCmd",
             "owner",
@@ -223,18 +212,6 @@ fn every_address_flag_accepts_a_raw_masterchain_address() {
         check::<super::tx_cmd::TxBuildIntentCmd>("tx_cmd::TxBuildIntentCmd", "address"),
         check::<super::tx_cmd::TxSigningPayloadCmd>("tx_cmd::TxSigningPayloadCmd", "address"),
         check::<super::wallet_cmd::WalletSendCmd>("wallet_cmd::WalletSendCmd", "to"),
-        check::<super::controller_cmd::ControllerOperationsStatusCmd>(
-            "controller_cmd::ControllerOperationsStatusCmd",
-            "controller",
-        ),
-        check::<super::controller_cmd::ControllerOperationsPlanCmd>(
-            "controller_cmd::ControllerOperationsPlanCmd",
-            "controller",
-        ),
-        check::<super::controller_cmd::ControllerOperationsPlanCmd>(
-            "controller_cmd::ControllerOperationsPlanCmd",
-            "payer",
-        ),
         check::<super::agent_cmd::AgentAccountShowCmd>("agent_cmd::AgentAccountShowCmd", "address"),
     ]
     .into_iter()
@@ -365,10 +342,6 @@ fn every_address_flag_refuses_an_option_or_a_non_address_as_its_value() {
             "config_pool_cmd::PoolAddCmd",
             "owner",
         ),
-        refuses_non_address::<super::config_pool_cmd::PoolAddCmd>(
-            "config_pool_cmd::PoolAddCmd",
-            "controller",
-        ),
         refuses_non_address::<super::config_wallet_cmd::WalletSendCmd>(
             "config_wallet_cmd::WalletSendCmd",
             "to",
@@ -376,10 +349,6 @@ fn every_address_flag_refuses_an_option_or_a_non_address_as_its_value() {
         refuses_non_address::<super::deploy_cmd::DeployPoolCmd>(
             "deploy_cmd::DeployPoolCmd",
             "owner",
-        ),
-        refuses_non_address::<super::deploy_cmd::DeployPoolCmd>(
-            "deploy_cmd::DeployPoolCmd",
-            "controller",
         ),
         refuses_non_address::<super::deploy_cmd::DeployContractCmd>(
             "deploy_cmd::DeployContractCmd",
@@ -402,18 +371,6 @@ fn every_address_flag_refuses_an_option_or_a_non_address_as_its_value() {
             "address",
         ),
         refuses_non_address::<super::pool_cmd::PoolImportCmd>("pool_cmd::PoolImportCmd", "address"),
-        refuses_non_address::<super::pool_cmd::PoolImportCmd>(
-            "pool_cmd::PoolImportCmd",
-            "controller",
-        ),
-        refuses_non_address::<super::pool_cmd::PoolNominatorCreateCmd>(
-            "pool_cmd::PoolNominatorCreateCmd",
-            "controller",
-        ),
-        refuses_non_address::<super::pool_cmd::PoolSingleCreateCmd>(
-            "pool_cmd::PoolSingleCreateCmd",
-            "controller",
-        ),
         refuses_non_address::<super::proof_attestation_cmd::ProofAttestationDeployCmd>(
             "proof_attestation_cmd::ProofAttestationDeployCmd",
             "owner",
@@ -467,18 +424,6 @@ fn every_address_flag_refuses_an_option_or_a_non_address_as_its_value() {
             "address",
         ),
         refuses_non_address::<super::wallet_cmd::WalletSendCmd>("wallet_cmd::WalletSendCmd", "to"),
-        refuses_non_address::<super::controller_cmd::ControllerOperationsStatusCmd>(
-            "controller_cmd::ControllerOperationsStatusCmd",
-            "controller",
-        ),
-        refuses_non_address::<super::controller_cmd::ControllerOperationsPlanCmd>(
-            "controller_cmd::ControllerOperationsPlanCmd",
-            "controller",
-        ),
-        refuses_non_address::<super::controller_cmd::ControllerOperationsPlanCmd>(
-            "controller_cmd::ControllerOperationsPlanCmd",
-            "payer",
-        ),
         refuses_non_address::<super::agent_cmd::AgentAccountShowCmd>(
             "agent_cmd::AgentAccountShowCmd",
             "address",
@@ -530,33 +475,12 @@ fn a_missing_address_does_not_swallow_the_next_option() {
 #[test]
 fn wallet_name_flags_take_names() {
     use clap::FromArgMatches;
-    let controller = MASTERCHAIN;
     let single = super::pool_cmd::PoolSingleCreateCmd::augment_args(Command::new("create"))
-        .try_get_matches_from([
-            "create",
-            "--name",
-            "p",
-            "--owner",
-            "alice",
-            "--validator",
-            "bob",
-            "--controller",
-            controller,
-        ])
+        .try_get_matches_from(["create", "--name", "p", "--owner", "alice", "--validator", "bob"])
         .expect("single-nominator create takes wallet names");
     assert!(super::pool_cmd::PoolSingleCreateCmd::from_arg_matches(&single).is_ok());
     let nominator = super::pool_cmd::PoolNominatorCreateCmd::augment_args(Command::new("create"))
-        .try_get_matches_from([
-            "create",
-            "--name",
-            "p",
-            "--owner",
-            "alice",
-            "--validator",
-            "bob",
-            "--controller",
-            controller,
-        ])
+        .try_get_matches_from(["create", "--name", "p", "--owner", "alice", "--validator", "bob"])
         .expect("nominator-pool create takes wallet names");
     assert!(super::pool_cmd::PoolNominatorCreateCmd::from_arg_matches(&nominator).is_ok());
 }
@@ -569,7 +493,7 @@ fn an_address_with_surrounding_whitespace_is_trimmed() {
     assert_eq!(super::utils::address_arg(&padded), Ok(MASTERCHAIN.to_owned()));
     let matches = super::config_pool_cmd::PoolAddCmd::augment_args(Command::new("add"))
         .ignore_errors(true)
-        .try_get_matches_from(["add", "--controller", padded.as_str()])
+        .try_get_matches_from(["add", "--owner", padded.as_str()])
         .expect("parses");
-    assert_eq!(matches.get_one::<String>("controller").map(String::as_str), Some(MASTERCHAIN));
+    assert_eq!(matches.get_one::<String>("owner").map(String::as_str), Some(MASTERCHAIN));
 }

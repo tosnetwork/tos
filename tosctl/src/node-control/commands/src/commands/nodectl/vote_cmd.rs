@@ -672,7 +672,7 @@ async fn pinned_wallet_reserve(
     use chain_block::ConfigParamEnum;
     use contracts::ChainProvider;
     use contracts::wallet::send_fees::{SendFeeInputs, wallet_send_reserve};
-    let checkpoint = contracts::validator_controller::latest_checkpoint(chain).await?;
+    let checkpoint = contracts::chain_provider::latest_checkpoint(chain).await?;
     let account = chain.get_address_info_at_unverified(wallet, &checkpoint).await?;
     let storage = wallet_storage_from_rpc(wallet, &account)?;
     let gas = match chain.get_config_param_at_unverified(20, &checkpoint).await? {
@@ -1781,7 +1781,7 @@ impl VoteElectionCastCmd {
         }
 
         anyhow::bail!(
-            "a wallet cannot stake directly to the PQ elector: configure a single-nominator pool and an admitted validator controller, then use the pool bid command"
+            "this command only reports the active election; stake with `tosctl config wallet stake --binding <node>`, which sends from the bound wallet directly to the elector, or through the bound single-nominator pool"
         )
     }
 }

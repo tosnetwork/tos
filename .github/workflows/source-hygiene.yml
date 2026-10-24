@@ -41,7 +41,7 @@ jobs:
         run: scripts/check-nominator-pool-code-lock.sh
       - name: Verify the single-nominator code lock
         run: scripts/check-single-nominator-code-lock.sh
-      - name: Verify a validator node cannot authorise a controller
+      - name: Verify a validator node signs only for its own validator id
         run: scripts/check-root-authority-off-the-node.sh
       - name: Verify generated intermediates stay in the build tree
         run: |

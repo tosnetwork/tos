@@ -71,7 +71,7 @@ fn transact_gas_ceiling() -> i64 {
 /// dearest anchor kind, full rings, a turning epoch, the leaf index whose
 /// base-seven digits are all zero and the more expensive nullifier order at
 /// once. The bound adds each of those spans to one real withdrawal.
-const TRANSACT_DERIVED_BOUND_GAS: i64 = 1_204_845;
+const TRANSACT_DERIVED_BOUND_GAS: i64 = 1_098_421;
 /// The basechain compute fee for `gas`, priced as ConfigParam21 prices it: a
 /// flat 667 for the first hundred gas, then 436,907 per 65,536 gas with the
 /// division rounded up.

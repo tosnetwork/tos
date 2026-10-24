@@ -215,8 +215,7 @@ impl InstallWizardCmd {
         println!("  {} Create and activate a staking pool:", "4.".white().bold(),);
         println!(
             "     {}",
-            "tosctl pool single create --name my-pool --owner validator --validator validator \
-             --controller <validator-controller-address>"
+            "tosctl pool single create --name my-pool --owner validator --validator validator"
                 .yellow()
         );
         println!("     {}", "tosctl pool single activate --name my-pool".yellow());

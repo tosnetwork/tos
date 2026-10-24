@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """A guard nothing reaches is decoration, whatever its comment says.
 
-Each mutation below removes one rule the validator-controller work added and requires a
-test to go red for it. A mutation that survives is reported as a failure: either the rule
+Each mutation below removes one rule the post-quantum elector, configuration contract
+and their library add or rely on, and requires a test to go red for it. A mutation that survives is reported as a failure: either the rule
 is unreachable, or nothing is holding it.
 """
 
@@ -20,277 +20,128 @@ MANIFEST = ROOT / "tosctl/src/Cargo.toml"
 
 # name, file, the text a rule lives in, what removing it looks like, test binary, filter
 MUTANTS = [
+    # A stake registers only under a signature by the key it carries.
     (
-        "controller-network",
-        "validator-controller-v1.fc",
-        "throw_unless(ctl::error::wrong_network, global_id == pq::global_id());",
-        "throw_unless(ctl::error::wrong_network, true);",
-        "validator_controller_sandbox",
-        "every_field_of_an_authorisation",
-    ),
-    (
-        "controller-epoch",
-        "validator-controller-v1.fc",
-        "throw_unless(ctl::error::stale_epoch, epoch == stored_epoch);",
-        "throw_unless(ctl::error::stale_epoch, true);",
-        "validator_controller_sandbox",
-        "every_field_of_an_authorisation",
-    ),
-    (
-        "controller-nonce",
-        "validator-controller-v1.fc",
-        "throw_unless(ctl::error::bad_nonce, nonce == stored_nonce);",
-        "throw_unless(ctl::error::bad_nonce, true);",
-        "validator_controller_sandbox",
-        "an_authorised_send_happens_once",
-    ),
-    (
-        "controller-expiry-past",
-        "validator-controller-v1.fc",
-        "throw_unless(ctl::error::expired, valid_until > now());",
-        "throw_unless(ctl::error::expired, true);",
-        "validator_controller_sandbox",
-        "every_field_of_an_authorisation",
-    ),
-    (
-        "controller-expiry-window",
-        "validator-controller-v1.fc",
-        "throw_unless(ctl::error::expired, valid_until <= now() + ctl::max_ttl);",
-        "throw_unless(ctl::error::expired, true);",
-        "validator_controller_sandbox",
-        "every_field_of_an_authorisation",
-    ),
-    (
-        "controller-kind",
-        "validator-controller-v1.fc",
-        "  throw_unless(ctl::error::bad_kind, (kind == ctl::kind::send) | (kind == ctl::kind::rotate_root)\n"
-        "                                     | (kind == ctl::kind::bind_consensus) | (kind == ctl::kind::fund_operations) | (kind == ctl::kind::withdraw_operations));",
-        "  throw_unless(ctl::error::bad_kind, true);",
-        "validator_controller_sandbox",
-        "every_field_of_an_authorisation",
-    ),
-    # A stake owner is a masterchain account. The relay reads its sender's account id and
-    # the elector answers `-1:` that id, so a sender in another workchain would have its
-    # money owed to an account that is not its own.
-    (
-        "controller-owner-masterchain",
-        "validator-controller-v1.fc",
-        "  throw_unless(ctl::error::owner_not_masterchain, (wc == -1) & owner);",
-        "  throw_unless(ctl::error::owner_not_masterchain, owner);",
-        "validator_controller_sandbox",
-        "outside_the_masterchain",
-    ),
-    # ---------------------------------------------------------------------------
-    # Whose money a stake is, once placed
-    #
-    # A member's stake_owner is set by its first stake and refused any change after. A
-    # consensus key that could rename it would be a hot key able to move a pool's capital,
-    # which is the boundary the whole custody design exists to keep.
-    # ---------------------------------------------------------------------------
-    (
-        "elector-owner-fixed",
+        "stake-signature",
         "elector-code.fc",
-        "    if (held_owner != stake_owner) {\n      return return_stake(owner_addr, query_id, 15);\n    }",
-        "    if (false) {\n      return return_stake(owner_addr, query_id, 15);\n    }",
+        "  ifnot (pq_check_mldsa44(pq::stake_preimage(stake_at, max_factor, src_addr, adnl_addr),",
+        "  ifnot (true | pq_check_mldsa44(pq::stake_preimage(stake_at, max_factor, src_addr, adnl_addr),",
         "elector_sandbox",
-        "a_members_stake_owner_is_fixed",
+        "a_post_quantum_stake_signed_by_another_key_is_returned",
     ),
+    # The signature names the account the stake comes from, which is the validator id.
     (
-        "book-owner-fixed",
+        "stake-bound-to-its-sender",
         "pq-validator.fc",
-        "    throw_unless(pq::error::owner_changed, held_owner == stake_owner);",
-        "    throw_unless(pq::error::owner_changed, true);",
-        "pq_elector_state_sandbox",
-        "a_members_owner_cannot_be_changed",
-    ),
-    (
-        "controller-stray-cosignature",
-        "validator-controller-v1.fc",
-        "throw_unless(ctl::error::bad_cosignature, cell_null?(cosignature));",
-        "throw_unless(ctl::error::bad_cosignature, true);",
-        "validator_controller_sandbox",
-        "every_field_of_an_authorisation",
-    ),
-    (
-        "controller-destroy-mode",
-        "validator-controller-v1.fc",
-        "throw_if(ctl::error::bad_action, mode & 44);",
-        "throw_if(ctl::error::bad_action, false);",
-        "validator_controller_sandbox",
-        "every_field_of_an_authorisation",
-    ),
-    (
-        "controller-root-signature",
-        "validator-controller-v1.fc",
-        "    throw(ctl::error::bad_signature);",
-        "    return ();",
-        "validator_controller_sandbox",
-        "every_field_of_an_authorisation",
-    ),
-    # Two rules, not one, and each anchored on the line above it.
-    #
-    # There is a cosignature proof in the rotation path and another in the consensus-key
-    # binding path, and they are written identically. A single rule anchored on the throw
-    # alone matched both, and this harness refuses an ambiguous anchor rather than mutating
-    # whichever it finds first -- so from the day the second proof was added until this was
-    # split, the harness could not start, and nothing here was being checked at all.
-    (
-        "controller-successor-proof",
-        "validator-controller-v1.fc",
-        "                          next_chain)) {\n    throw(ctl::error::bad_cosignature);",
-        "                          next_chain)) {\n    return ();",
-        "validator_controller_sandbox",
-        "a_root_rotation_needs_both",
-    ),
-    (
-        "controller-consensus-key-proof",
-        "validator-controller-v1.fc",
-        "                            pq::stored_signature(next_algorithm, cosignature), next_chain)) {\n"
-        "      throw(ctl::error::bad_cosignature);",
-        "                            pq::stored_signature(next_algorithm, cosignature), next_chain)) {\n"
-        "      return ();",
-        "validator_controller_sandbox",
-        "binding_a_consensus_key_needs_the_root_and_the_key_itself",
-    ),
-    # ---------------------------------------------------------------------------
-    # The birth witness
-    #
-    # A first stake carries four numbers and the elector rebuilds the state init its
-    # sender was deployed with. Each rule below is one the reconstruction rests on, and
-    # none of them announces itself when it stops holding: a witness that is believed
-    # rather than checked admits an account nobody deployed as a validator controller.
-    # ---------------------------------------------------------------------------
-    (
-        "witness-shape-bits",
-        "pq-validator.fc",
-        "  if (cs.slice_bits() != pq::witness_bits) {",
-        "  if (false) {",
-        "controller_admission_sandbox",
-        "each_refusal_is_reachable",
-    ),
-    (
-        "witness-shape-refs",
-        "pq-validator.fc",
-        "  if (cs.slice_refs() != 0) {",
-        "  if (false) {",
-        "controller_admission_sandbox",
-        "each_refusal_is_reachable",
-    ),
-    # The rule that a witness must be ordinary has no mutation here, because no input
-    # kills it. An exotic cell cannot be 544 bits with no references: a pruned branch is
-    # 288 or 560, a library reference is 264, and the two Merkle types carry references.
-    # So the bit and reference rules refuse every exotic witness first, and the machine
-    # refuses a pruned one before the contract sees it at all. The check stays -- it is
-    # cheap and says what is meant -- but a mutation of it would survive, and a surviving
-    # mutation in the list is worth less than this sentence.
-    (
-        "witness-code-depth-bound",
-        "pq-validator.fc",
-        "  if (code_depth > pq::max_child_depth) {",
-        "  if (false) {",
-        "controller_admission_sandbox",
-        "each_refusal_is_reachable",
-    ),
-    (
-        "witness-data-depth-bound",
-        "pq-validator.fc",
-        "  if (data_depth > pq::max_child_depth) {",
-        "  if (false) {",
-        "controller_admission_sandbox",
-        "each_refusal_is_reachable",
-    ),
-    (
-        "witness-branch-type",
-        "pq-validator.fc",
-        "    .store_uint(1, 8)      ;; PrunedBranch",
-        "    .store_uint(2, 8)      ;; PrunedBranch",
-        "controller_admission_sandbox",
-        "each_refusal_is_reachable",
-    ),
-    (
-        "witness-branch-level",
-        "pq-validator.fc",
-        "    .store_uint(1, 8)      ;; one level",
-        "    .store_uint(3, 8)      ;; one level",
-        "controller_admission_sandbox",
-        "each_refusal_is_reachable",
-    ),
-    (
-        "witness-state-init-shape",
-        "pq-validator.fc",
-        "    .store_uint(pq::state_init_shape, 5)",
-        "    .store_uint(0, 5)",
-        "controller_admission_sandbox",
-        "each_refusal_is_reachable",
-    ),
-    (
-        "witness-address-binding",
-        "pq-validator.fc",
-        "  if (pq::hash_level0(rebuilt) != expected_address) {",
-        "  if (false) {",
+        "    .store_uint(src_addr, 256)\n    .store_uint(adnl_addr, 256)",
+        "    .store_uint(0, 256)\n    .store_uint(adnl_addr, 256)",
         "elector_sandbox",
-        "a_stake_carrying_another_accounts_witness",
+        "every_signed_field_of_a_stake_is_covered_by_its_signature",
     ),
     (
-        # The reconstruction must commit at level zero. `cell_hash` is the highest-level
-        # hash, which for a tree holding pruned branches is a different number, and using
-        # it would make every honest witness fail while an attacker's choice of depth
-        # stopped mattering.
-        "witness-level-zero-hash",
-        "pq-validator.fc",
-        "  if (pq::hash_level0(rebuilt) != expected_address) {",
-        "  if (cell_hash(rebuilt) != expected_address) {",
-        "controller_admission_sandbox",
-        "each_refusal_is_reachable",
-    ),
-    (
-        "policy-absent-fails-closed",
-        "pq-validator.fc",
-        "    return (null(), false);",
-        "    return (null(), true);",
-        "elector_sandbox",
-        "a_stake_from_an_unadmitted_controller",
-    ),
-    (
-        "policy-lookup",
-        "pq-validator.fc",
-        "int pq::controller_admitted?(cell codes, int code_hash) inline {\n  (_, int found) = codes.udict_get?(256, code_hash);\n  return found;\n}",
-        "int pq::controller_admitted?(cell codes, int code_hash) inline {\n  (_, int found) = codes.udict_get?(256, code_hash);\n  return true;\n}",
-        "elector_sandbox",
-        "a_stake_from_an_unadmitted_controller",
-    ),
-    (
-        "elector-witness-required",
+        "stake-factor-at-least-one",
         "elector-code.fc",
-        "    if (cell_null?(controller_birth_witness)) {\n      return return_stake(owner_addr, query_id, 8);\n    }",
-        "    if (false) {\n      return return_stake(owner_addr, query_id, 8);\n    }",
+        "  if (max_factor < 0x10000) {",
+        "  if (false) {",
         "elector_sandbox",
-        "a_stake_carrying_another_accounts_witness",
+        "a_stake_stating_a_factor_below_one_is_returned",
     ),
+    # A post-quantum descriptor needs a transport address; a zero one is refused here
+    # rather than by the configuration, which would refuse the whole set.
     (
-        "elector-retirement",
+        "stake-needs-a-transport-address",
         "elector-code.fc",
-        "    ifnot (pq::controller_admitted?(admitted_codes, held_code)) {\n      return return_stake(owner_addr, query_id, 12);\n    }",
-        "    ifnot (true) {\n      return return_stake(owner_addr, query_id, 12);\n    }",
+        "  if (adnl_addr == 0) {",
+        "  if (false) {",
         "elector_sandbox",
-        "retiring_a_controller_code",
+        "a_post_quantum_stake_without_a_transport_address_is_returned",
     ),
+    # Two members with one key would make the configuration refuse the whole set.
     (
-        "elector-effective-floor",
+        "stake-key-held-by-another-member",
         "elector-code.fc",
-        "  int effective = pq::effective_stake(pq_by_code, admitted_codes);",
-        "  int effective = total_stake;",
+        "  if (conflict == 1) {",
+        "  if (false) {",
         "elector_sandbox",
-        "a_retired_profile_stops_raising",
+        "a_key_already_registered_by_another_member_is_returned",
     ),
-    # One rule, reached by the administrator action and by an accepted proposal alike.
+    # A member restating its own key and address is a top-up, not a conflict with itself.
     (
-        "config-ceiling",
-        "config-code.fc",
-        "    ifnot (valid_controller_policy?(param_val)) {",
-        "    ifnot (false) {",
+        "stake-member-scan-skips-itself",
+        "elector-code.fc",
+        "      if (id != validator_id) {",
+        "      if (true) {",
         "elector_sandbox",
-        "the_controller_policy_cannot_grow",
+        "a_member_may_restate_its_own_address_and_nobody_else_may",
+    ),
+    (
+        "stake-address-stated-by-another-candidate",
+        "elector-code.fc",
+        "  if (conflict == 2) {",
+        "  if (false) {",
+        "elector_sandbox",
+        "a_stake_restating_another_candidates_address_is_refused_at_registration",
+    ),
+    (
+        "stake-address-held-by-an-incumbent",
+        "elector-code.fc",
+        "  if (address_held_by_another_validator(validator_id, adnl_addr)) {",
+        "  if (false) {",
+        "elector_sandbox",
+        "a_stake_restating_an_incumbents_address_is_refused_at_registration",
+    ),
+    # Every member carries a full post-quantum key, so the member count is bounded.
+    (
+        "stake-participant-limit",
+        "elector-code.fc",
+        "    if (bounded_participant_count(members) >= participant_limit) {",
+        "    if (false) {",
+        "elector_sandbox",
+        "a_larger_stake_displaces_the_smallest_member_of_a_full_election",
+    ),
+    # A full election admits a newcomer only for a stake strictly larger than its smallest.
+    (
+        "full-election-tie-keeps-the-member",
+        "elector-code.fc",
+        "      if (msg_value <= evicted_stake) {",
+        "      if (msg_value < evicted_stake) {",
+        "elector_sandbox",
+        "a_full_election_refuses_a_stake_no_larger_than_its_smallest",
+    ),
+    # The displaced member's stake is credited back to the account that sent it.
+    (
+        "displaced-stake-is-credited",
+        "elector-code.fc",
+        "    credits~credit_to(evicted, evicted_stake);",
+        "    credits~credit_to(evicted, 0);",
+        "elector_sandbox",
+        "a_larger_stake_displaces_the_smallest_member_of_a_full_election",
+    ),
+    (
+        "displaced-stake-leaves-the-total",
+        "elector-code.fc",
+        "    total_stake -= evicted_stake;",
+        "    total_stake -= 0;",
+        "elector_sandbox",
+        "a_larger_stake_displaces_the_smallest_member_of_a_full_election",
+    ),
+    # No validator descriptor may name the zero account.
+    (
+        "zero-account-refused",
+        "elector-code.fc",
+        "  if (elect.null?() | (src_wc + 1) | (src_addr == 0)) {",
+        "  if (elect.null?() | (src_wc + 1)) {",
+        "elector_sandbox",
+        "a_stake_from_the_zero_account_is_returned",
+    ),
+    # The principal owed back is what was placed, not the stake capped at max_stake.
+    (
+        "selection-refunds-placed-principal",
+        "elector-code.fc",
+        "      placed -= true_stake;",
+        "      placed = stake - true_stake;",
+        "elector_sandbox",
+        "over_cap_principal_is_conserved_for_winners_and_losers",
     ),
     # ---------------------------------------------------------------------------
     # The post-quantum authority cutover
@@ -344,18 +195,10 @@ MUTANTS = [
     (
         "complaint-vote-funding",
         "elector-code.fc",
-        "    throw_unless(47, msg_value >= pq::verification_value(-1));\n\n    (cell vset, int total_weight, cell list) = get_current_vset();",
-        "    throw_unless(47, true);\n\n    (cell vset, int total_weight, cell list) = get_current_vset();",
+        "    throw_unless(47, msg_value >= pq::verification_value(-1));\n    var (vset, total_weight, list) = get_current_vset();",
+        "    throw_unless(47, true);\n    var (vset, total_weight, list) = get_current_vset();",
         "elector_sandbox",
         "an_underfunded_complaint_vote_is_refused_before_the_verification",
-    ),
-    (
-        "complaint-vote-minimum-value",
-        "elector-code.fc",
-        "    throw_unless(47, msg_value >= pq::verification_value(-1));\n\n    (cell vset, int total_weight, cell list) = get_current_vset();",
-        "    throw_unless(47, true);\n\n    (cell vset, int total_weight, cell list) = get_current_vset();",
-        "elector_sandbox",
-        "the_minimum_value_a_complaint_vote_must_carry",
     ),
     (
         "complaint-vote-signature",
@@ -420,14 +263,6 @@ MUTANTS = [
         "() recv_external(slice in_msg) impure {\n  accept_message();\n}",
         "elector_sandbox",
         "an_external_validator_vote_has_no_authorization_path",
-    ),
-    (
-        "readiness-on-effective-stake",
-        "elector-code.fc",
-        "  if (pq::effective_stake(pq_by_code, admitted_codes) < min_total_stake) {",
-        "  if (total_stake < min_total_stake) {",
-        "elector_sandbox",
-        "a_retired_profile_cannot_make_an_election_look_ready",
     ),
 ]
 

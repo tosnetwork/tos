@@ -46,11 +46,10 @@ td::Bits256 bits256_from_hex(const std::string& text) {
       "  tos-pq-vote config SEEDFILE GLOBAL_ID SET_ID_HEX VALIDATOR_ID_HEX IDX PROPOSAL_HEX\n"
       "  tos-pq-vote complaint SEEDFILE GLOBAL_ID SET_ID_HEX VALIDATOR_ID_HEX IDX ELECTION_ID "
       "COMPLAINT_HEX\n"
-      "  tos-pq-vote stake SEEDFILE GLOBAL_ID VALIDATOR_ID_HEX ELECTION_ID MAX_FACTOR ADNL_HEX "
-      "OWNER_HEX\n"
+      "  tos-pq-vote stake SEEDFILE GLOBAL_ID SRC_ADDR_HEX ELECTION_ID MAX_FACTOR ADNL_HEX\n"
       "\n"
       "A vote prints a base64 message body. A stake prints the 2420 signature bytes in hex:\n"
-      "the body that carries them is built by the pool or controller that relays the stake.");
+      "the body that carries them is built by the wallet or pool that sends the stake.");
 }
 
 }  // namespace
@@ -66,7 +65,7 @@ int main(int argc, char** argv) {
     if (!complaint && !stake && kind != "config") {
       usage();
     }
-    if (argc != (complaint || stake ? 9 : 8)) {
+    if (argc != (complaint ? 9 : 8)) {
       usage();
     }
 
@@ -84,18 +83,16 @@ int main(int argc, char** argv) {
     const auto& store = std::get<tos::pq::ValidatorPQKeyStore>(loaded);
 
     if (stake) {
-      // The identity is the configured controller account and the key is whatever the
-      // seed derives, exactly as the node resolves them for its own stake: nothing here
-      // asks which set the validator is in, because the answer is meant to be none yet.
-      const auto validator_id = bits256_from_hex(argv[4]);
+      // The masterchain account that sends the stake, and the key the seed derives,
+      // exactly as the node resolves them for its own stake: nothing here asks which set
+      // the validator is in, because the answer is meant to be none yet.
+      const auto src_addr = bits256_from_hex(argv[4]);
       const auto adnl = bits256_from_hex(argv[7]);
-      const auto owner = bits256_from_hex(argv[8]);
       // The one routine that assembles and signs a stake, shared with the node's control
       // query so the tool a review can run and the producer it stands in for cannot drift.
-      // It derives the key identity from the seed store, rejects a zero address or owner and
-      // a factor below one, and signs under the election domain.
-      auto authorization =
-          tos::pq::sign_stake_authorization(store, global_id, election_id, max_factor, validator_id, adnl, owner);
+      // It derives the key identity from the seed store, rejects a zero address or sender
+      // and a factor below one, and signs under the election domain.
+      auto authorization = tos::pq::sign_stake_authorization(store, global_id, election_id, max_factor, src_addr, adnl);
       if (!authorization.has_value()) {
         throw std::runtime_error("the consensus key could not sign this stake, or its arguments were out of range");
       }

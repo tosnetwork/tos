@@ -18,8 +18,8 @@
 use crate::UInt256;
 
 /// Internal message operations, lowercase; signed-preimage domains, uppercase.
-pub const ELECTOR_PQ_STAKE_OP: u32 = 0x5051_7374; // "PQst"
-pub const ELECTOR_PQ_STAKE_SIGN_TAG: u32 = 0x5051_5354; // "PQST"
+pub const ELECTOR_PQ_STAKE_OP: u32 = 0x4e73_744b; // the upstream new_stake
+pub const ELECTOR_PQ_STAKE_SIGN_TAG: u32 = 0x654c_5074; // the upstream election request
 pub const CONFIG_PQ_VOTE_OP: u32 = 0x5051_766f; // "PQvo"
 pub const CONFIG_PQ_VOTE_SIGN_TAG: u32 = 0x5051_564f; // "PQVO"
 pub const ELECTOR_PQ_COMPLAINT_OP: u32 = 0x5051_636f; // "PQco"
@@ -27,36 +27,26 @@ pub const ELECTOR_PQ_COMPLAINT_SIGN_TAG: u32 = 0x5051_434f; // "PQCO"
 
 /// What a stake request signs.
 ///
-/// The validator identity is the controlling account the contract saw, and the key
-/// identity is derived by the contract from the key presented: neither is taken from the
-/// request, and binding both is what stops a request naming one validator while carrying
-/// another's key.
-///
-/// The stake owner is the account the money came from, which need not be the validator: a
-/// pool holds nominators' funds and has no authority, and a controller has authority and
-/// need not hold the funds. It is bound here so an authorisation issued for one funding
-/// account cannot be presented by another. The contract reads it from the sender rather
-/// than from the request, so a signature and a sender that disagree do not verify.
+/// What a stake request signs: the upstream election request
+///   tag u32 | stake_at u32 | max_factor u32 | src_addr u256 | adnl_addr u256
+/// followed by global_id i32, so a request signed for one network does not verify on
+/// another. 80 bytes. `src_addr` is the masterchain account that sends the stake; the
+/// contract reads it from the sender, so a signature made for one account does not verify
+/// when another presents it.
 pub fn stake_preimage(
     global_id: i32,
     stake_at: u32,
     max_factor: u32,
-    validator_id: &UInt256,
-    stake_owner: &UInt256,
-    algorithm_id: u16,
-    key_id: &UInt256,
+    src_addr: &UInt256,
     adnl_addr: &UInt256,
 ) -> Vec<u8> {
-    let mut out = Vec::with_capacity(146);
+    let mut out = Vec::with_capacity(80);
     out.extend_from_slice(&ELECTOR_PQ_STAKE_SIGN_TAG.to_be_bytes());
-    out.extend_from_slice(&global_id.to_be_bytes());
     out.extend_from_slice(&stake_at.to_be_bytes());
     out.extend_from_slice(&max_factor.to_be_bytes());
-    out.extend_from_slice(validator_id.as_slice());
-    out.extend_from_slice(stake_owner.as_slice());
-    out.extend_from_slice(&algorithm_id.to_be_bytes());
-    out.extend_from_slice(key_id.as_slice());
+    out.extend_from_slice(src_addr.as_slice());
     out.extend_from_slice(adnl_addr.as_slice());
+    out.extend_from_slice(&global_id.to_be_bytes());
     out
 }
 

@@ -1,263 +1,44 @@
 ;; Elector smartcontract
 #include "pq.fc";
 #include "pq-validator.fc";
-#include "stake-relay.fc";
 
-global int stake_reply_bound;
-global int stake_reply_hash;
-global int stake_reply_received;
-global slice stake_reply_destination;
-
-const int recover::request = 0x47657432;
-const int recover::reply = 0xf96f7332;
-const int recover::ack = 0x47656132;
-const int recover::metadata_tag = 0x52435632;
-
-;; Keep the public root prefix intact. The optional recovery receipt book is
-;; preserved by every ordinary election write; old, unused roots have no suffix.
-cell recovery_metadata() inline_ref {
-  slice cs = get_data().begin_parse();
-  cs~load_dict(); cs~load_dict(); cs~load_dict(); cs~load_tomis(); cs~load_uint(32); cs~load_uint(256);
-  cell extra = cs.slice_empty?() ? null() : cs~load_maybe_ref(); cs.end_parse(); return extra;
-}
+;; cur_elect credits past_elections tomis active_id active_hash
 (cell, cell, cell, int, int, int) load_data() inline_ref {
-  slice cs = get_data().begin_parse();
-  var result = (cs~load_dict(), cs~load_dict(), cs~load_dict(), cs~load_tomis(), cs~load_uint(32), cs~load_uint(256));
-  ifnot (cs.slice_empty?()) { cs~load_maybe_ref(); }
-  cs.end_parse(); return result;
+  var cs = get_data().begin_parse();
+  var res = (cs~load_dict(), cs~load_dict(), cs~load_dict(), cs~load_tomis(), cs~load_uint(32), cs~load_uint(256));
+  cs.end_parse();
+  return res;
 }
-() store_data_with_recovery(cell elect, cell credits, cell past, int purse, int active_id, int active_hash, cell extra) impure inline_ref {
-  builder data = begin_cell().store_dict(elect).store_dict(credits).store_dict(past)
-    .store_tomis(purse).store_uint(active_id, 32).store_uint(active_hash, 256);
-  ifnot (extra.null?()) { data = data.store_maybe_ref(extra); }
-  set_data(data.end_cell());
-}
+
+;; cur_elect credits past_elections tomis active_id active_hash
 () store_data(elect, credits, past_elections, tomis, active_id, active_hash) impure inline_ref {
-  store_data_with_recovery(elect, credits, past_elections, tomis, active_id, active_hash, recovery_metadata());
-}
-(int, cell) recovery_book() inline_ref {
-  cell extra = recovery_metadata();
-  if (extra.null?()) { return (0, null()); }
-  slice cs = extra.begin_parse();
-  throw_unless(sr::error, cs~load_uint(32) == recover::metadata_tag);
-  var result = (cs~load_uint(32), cs~load_dict());
-  ifnot (cs.slice_empty?()) { cs~load_maybe_ref(); }
-  cs.end_parse(); return result;
-}
-cell relay_returns() inline_ref {
-  cell extra = recovery_metadata();
-  if (extra.null?()) { return null(); }
-  slice cs = extra.begin_parse(); cs~load_uint(32); cs~load_uint(32); cs~load_dict();
-  cell book = cs.slice_empty?() ? null() : cs~load_maybe_ref(); cs.end_parse(); return book;
-}
-cell recovery_pack(int count, cell receipts) inline_ref {
-  throw_unless(sr::error, (count >= 0) & (count < (1 << 32)));
-  builder packed = begin_cell().store_uint(recover::metadata_tag, 32).store_uint(count, 32).store_dict(receipts);
-  cell returns = relay_returns();
-  ifnot (returns.null?()) { packed = packed.store_maybe_ref(returns); }
-  return packed.end_cell();
+  set_data(begin_cell()
+    .store_dict(elect)
+    .store_dict(credits)
+    .store_dict(past_elections)
+    .store_tomis(tomis)
+    .store_uint(active_id, 32)
+    .store_uint(active_hash, 256)
+  .end_cell());
 }
 
-;; One return record per immutable controller. IN_FLIGHT is not permission
-;; to pay again: only a native bounce can restore an amount to RETURNED.
-;; The latest acknowledged query remains a replay tombstone across rounds.
-(int, cell) relay_return_book() inline_ref {
-  cell book = relay_returns();
-  if (book.null?()) { return (0, null()); }
-  slice cs = book.begin_parse();
-  var result = (cs~load_uint(32), cs~load_dict()); cs.end_parse(); return result;
-}
-() save_relay_returns(int count, cell book) impure inline_ref {
-  var (elect, credits, past, purse, active_id, active_hash) = load_data();
-  var (recovering, receipts) = recovery_book();
-  cell extra = begin_cell().store_uint(recover::metadata_tag, 32).store_uint(recovering, 32)
-    .store_dict(receipts).store_maybe_ref(begin_cell().store_uint(count, 32).store_dict(book).end_cell()).end_cell();
-  store_data_with_recovery(elect, credits, past, purse, active_id, active_hash, extra);
-}
-cell relay_return_record(int query, int hash, int phase, int amount, cell result, int fee_credit, slice payer) inline_ref {
-  return begin_cell().store_uint(query, 64).store_uint(hash, 256).store_uint(phase, 2)
-    .store_coins(sr::coins(amount)).store_ref(result)
-    .store_ref(begin_cell().store_coins(sr::coins(fee_credit)).store_slice(payer).end_cell()).end_cell();
-}
-(int, int, int, int, cell, int, slice) unpack_relay_return(slice cs) inline_ref {
-  var (query, hash, phase, amount, result) = (cs~load_uint(64), cs~load_uint(256), cs~load_uint(2), cs~load_coins(), cs~load_ref());
-  slice fees = cs~load_ref().begin_parse(); cs.end_parse();
-  var (credit, payer) = (fees~load_coins(), fees~load_msg_addr()); fees.end_parse();
-  return (query, hash, phase, amount, result, credit, payer);
-}
-cell relay_return_body(cell result, int budget, slice payer) inline_ref {
-  return begin_cell().store_slice(result.begin_parse()).store_coins(budget)
-    .store_ref(begin_cell().store_slice(payer).end_cell()).end_cell();
-}
-() remember_relay_return(int query, int amount, cell result) impure inline_ref {
-  var (_, controller) = parse_std_addr(stake_reply_destination);
-  var (count, book) = relay_return_book();
-  var (old, found) = book.udict_get_ref?(256, controller);
-  if (found) {
-    var (previous, _, phase, _, _, fee_credit, _) = unpack_relay_return(old.begin_parse());
-    throw_unless(sr::error, (query > previous) & (fee_credit == 0) & (phase != 1));
-    ;; A later query from the admitted immutable controller also proves its
-    ;; previous request completed. No root send can enter this namespace.
-    if (phase != 2) { count = sr::sub(count, 1); }
-  }
-  book~udict_set_ref(256, controller, relay_return_record(query, stake_reply_hash, 0, amount, result, 0, stake_reply_destination));
-  save_relay_returns(sr::add(count, 1), book);
-}
-() bounce_relay_return(slice sender, int msg_value, slice cs) impure inline_ref {
-  if (cs.slice_bits() < 288) { return (); }
-  if (cs~load_uint(32) != 0xffffffff) { return (); }
-  int prefix = cs~load_uint(256);
-  var (wc, controller) = parse_std_addr(sender);
-  if (wc != -1) { return (); }
-  var (count, book) = relay_return_book();
-  var (entry, found) = book.udict_get_ref?(256, controller);
-  ifnot (found) { return (); }
-  var (query, hash, phase, amount, result, _, payer) = unpack_relay_return(entry.begin_parse());
-  if ((phase != 0) | (prefix != result.begin_parse().preload_uint(256))) { return (); }
-  ;; Actual returned cash, never the gross amount claimed in an old body.
-  int restored = min(amount, msg_value);
-  book~udict_set_ref(256, controller, relay_return_record(query, hash, 1, restored, result, sr::sub(msg_value, restored), payer));
-  save_relay_returns(count, book);
-}
-() retry_relay_return(slice sender, int msg_value, int query, slice cs) impure inline_ref {
-  int token = cs~load_uint(160);
-  int hash = cs~load_uint(256);
-  slice payer = cs~load_msg_addr(); cs.end_parse();
-  var (wc, controller) = parse_std_addr(sender);
-  throw_unless(sr::error, wc == -1);
-  var (count, book) = relay_return_book();
-  var (entry, found) = book.udict_get_ref?(256, controller);
-  throw_unless(sr::error, found);
-  var (expected_query, expected_hash, phase, amount, result, fee_credit, previous_payer) = unpack_relay_return(entry.begin_parse());
-  if (query < expected_query) {
-    ;; A later admitted request can overtake an earlier paid repair message.
-    raw_reserve(sr::sub(pair_first(get_balance()), msg_value), 0);
-    send_raw_message(sr::message(sender, 0, begin_cell().store_uint(sr::retry_fees, 32)
-      .store_uint(query, 64).store_uint(token, 160).end_cell(), false), 144);
-    return ();
-  }
-  throw_unless(sr::error, (query == expected_query) & (hash == expected_hash));
-  int budget = sr::automatic_value();
-  throw_unless(sr::error, msg_value >= sr::return_retry_value());
-  set_gas_limit(sr::control_gas);
-  int payment = phase == 1 ? sr::add(amount, fee_credit) : 0;
-  raw_reserve(sr::sub(sr::sub(pair_first(get_balance()), msg_value), payment), 0);
-  if (phase == 1) {
-    book~udict_set_ref(256, controller, relay_return_record(query, hash, 0, amount, result, 0, payer));
-    save_relay_returns(count, book);
-    if (fee_credit) {
-      send_raw_message(sr::message(previous_payer, fee_credit,
-        begin_cell().store_uint(sr::excess, 32).store_uint(query, 64).end_cell(), false), 17);
-    }
-    send_raw_message(sr::message(sender, sr::add(amount, budget), relay_return_body(result, budget, payer), true), 17);
-  }
-  send_raw_message(sr::message(sender, 0, begin_cell().store_uint(sr::retry_fees, 32)
-    .store_uint(query, 64).store_uint(token, 160).end_cell(), false), 144);
-}
-() acknowledge_relay_return(slice sender, int msg_value, int query, slice cs) impure inline_ref {
-  int hash = cs~load_uint(256);
-  slice destination = cs~load_ref().begin_parse();
-  slice payer = destination~load_msg_addr(); destination.end_parse(); cs.end_parse();
-  var (wc, controller) = parse_std_addr(sender);
-  throw_unless(sr::error, wc == -1);
-  var (count, book) = relay_return_book();
-  var (entry, found) = book.udict_get_ref?(256, controller);
-  ifnot (found) { return (); }
-  var (expected_query, expected_hash, phase, _, result, _, _) = unpack_relay_return(entry.begin_parse());
-  if (query < expected_query) {
-    raw_reserve(sr::sub(pair_first(get_balance()), msg_value), 0);
-    send_raw_message(sr::message(payer, 0, begin_cell().store_uint(sr::excess, 32).store_uint(query, 64).end_cell(), false), 128);
-    return ();
-  }
-  throw_unless(sr::error, (query == expected_query) & (hash == expected_hash) & (phase != 1));
-  if (phase == 0) {
-    book~udict_set_ref(256, controller, relay_return_record(query, hash, 2, 0, result, 0, payer));
-    save_relay_returns(sr::sub(count, 1), book);
-  }
-  raw_reserve(sr::sub(pair_first(get_balance()), msg_value), 0);
-  send_raw_message(sr::message(payer, 0,
-    begin_cell().store_uint(sr::excess, 32).store_uint(query, 64).end_cell(), false), 128);
-}
-
-;; elect -> elect_at elect_close min_stake total_stake failed finished
-;;          pq_members pq_key_owner pq_by_code
-;;
-;; The post-quantum book lives in the active election rather than in the contract's root,
-;; because a registration belongs to the election it was made for and is forgotten with
-;; it. `pq_members` is keyed by the controlling account, and `pq_key_owner` is the reverse
-;; index that keeps one consensus key to one controller.
-;;
-;; There is no second book. Membership is post-quantum or it does not exist, so no
-;; accumulated stake and no stored identity here can come from a classical registration.
-;; `total_stake` is what has been placed; what an election is judged on is the stake
-;; standing behind codes the configuration still admits, which is derived from
-;; `pq_by_code` at the point of decision rather than carried here.
-_ unpack_elect_with_retry(elect) inline_ref {
-  var es = elect.begin_parse();
-  var (elect_at, elect_close, min_stake, total_stake, failed, finished) =
-    (es~load_uint(32), es~load_uint(32), es~load_tomis(), es~load_tomis(), es~load_int(1), es~load_int(1));
-  ;; A classical election has its member dictionary before the flags, and only
-  ;; three remaining presence/flag bits in total. It must never be accepted as
-  ;; an empty PQ book: doing so discards its owners while retaining its total.
-  throw_unless(65, es.slice_bits() >= 3);
-  cell pq_members = es~load_dict();
-  cell pq_key_owner = es~load_dict();
-  cell pq_by_code = es~load_dict();
-  ;; Old records have no cache. A failed record stores the inputs of its last attempt.
-  int failed_inputs = -1;
-  ifnot (es.slice_empty?()) {
-    failed_inputs = es~load_uint(256);
-  }
-  es.end_parse();
-  return (elect_at, elect_close, min_stake, total_stake, failed, finished, pq_members,
-          pq_key_owner, pq_by_code, failed_inputs);
-}
-
+;; elect -> elect_at elect_close min_stake total_stake members failed finished
 _ unpack_elect(elect) inline_ref {
-  var (elect_at, elect_close, min_stake, total_stake, failed, finished, pq_members,
-       pq_key_owner, pq_by_code, _) = unpack_elect_with_retry(elect);
-  return (elect_at, elect_close, min_stake, total_stake, failed, finished, pq_members,
-          pq_key_owner, pq_by_code);
+  var es = elect.begin_parse();
+  var res = (es~load_uint(32), es~load_uint(32), es~load_tomis(), es~load_tomis(), es~load_dict(), es~load_int(1), es~load_int(1));
+  es.end_parse();
+  return res;
 }
 
-;; Selection depends on the member book, code totals and configuration 16/17/47.
-;; Nullable cell references preserve the difference between missing and empty policy.
-int election_inputs_hash(cell pq_members, cell pq_by_code) inline_ref {
-  return begin_cell().store_uint(0x50514649, 32)
-    .store_ref(begin_cell().store_dict(pq_members).store_dict(pq_by_code).end_cell())
-    .store_dict(config_param(16)).store_dict(config_param(17)).store_dict(config_param(47))
-  .end_cell().cell_hash();
-}
-
-;; Registration count, rather than the number eventually seated, bounds sorting,
-;; refunding and cancellation work. Stop at the first excess entry even for a
-;; pre-existing oversized book; never traverse an unbounded book to reject it.
-const pq_participant_limit = 256;
-int bounded_participant_count(cell members) inline_ref {
-  int count = 0;
-  int id = -1;
-  int present = true;
-  while (present & (count <= pq_participant_limit)) {
-    (id, _, present) = members.udict_get_next?(256, id);
-    if (present) { count += 1; }
-  }
-  return count;
-}
-
-cell pack_elect(elect_at, elect_close, min_stake, total_stake, failed, finished, pq_members,
-                pq_key_owner, pq_by_code) inline_ref {
+cell pack_elect(elect_at, elect_close, min_stake, total_stake, members, failed, finished) inline_ref {
   return begin_cell()
     .store_uint(elect_at, 32)
     .store_uint(elect_close, 32)
     .store_tomis(min_stake)
     .store_tomis(total_stake)
+    .store_dict(members)
     .store_int(failed, 1)
     .store_int(finished, 1)
-    .store_dict(pq_members)
-    .store_dict(pq_key_owner)
-    ;; The stake standing behind each admitted controller code, so retiring one takes its
-    ;; stake out of the election without walking every member.
-    .store_dict(pq_by_code)
   .end_cell();
 }
 
@@ -298,11 +79,6 @@ builder pack_complaint_status(cell complaint, cell voters, int vset_id, int weig
 }
 
 ;; validator_complaint#bc validator_id:uint256 description:^ComplaintDescr
-;;
-;; The accused is named by its stable validator identity -- the controlling account
-;; the elector saw -- which is the key the frozen record is stored under. It is not a
-;; consensus key: the key a validator held may be replaced while its stake is frozen,
-;; and a complaint naming one would stop matching the validator it was made about.
 ;;   created_at:uint32 severity:uint8 reward_addr:uint256 paid:Tomis suggested_fine:Tomis
 ;;   suggested_fine_part:uint32 = ValidatorComplaint;
 _ unpack_complaint(slice cs) inline_ref {
@@ -361,18 +137,19 @@ builder pack_complaint(int validator_id, cell description, int created_at, int s
   return (vset, total_weight, dict);
 }
 
-;; The validator at an index: who it is, what key speaks for it, and what it weighs.
-;;
-;; All three come from the set, never from the message being checked.
-;;
-;; The key comes back as the byte chain the verification instruction takes, not as the
-;; length-prefixed cell the descriptor stores it in. Handing the instruction the wrapper
-;; would make it read a length where it expects a key.
+(slice, int) get_validator_descr(int idx) inline_ref {
+  var (vset, total_weight, dict) = get_current_vset();
+  var (value, _) = dict.udict_get?(16, idx);
+  return (value, total_weight);
+}
+
 (int, int, cell, int) unpack_validator_descr(slice cs) inline {
-  (int validator_id, int algorithm_id, _, cell stored, int weight, _) =
-    pq::parse_descriptor(cs);
-  (_, cell key_chain) = pq::stored_key(algorithm_id, stored);
-  return (validator_id, algorithm_id, key_chain, weight);
+  ;; validator_pq#b3 validator_id:bits256 algorithm_id:uint16 key_id:bits256
+  ;;   public_key:^Cell weight:uint64 adnl_addr:bits256 = ValidatorDescr;
+  ;; the key comes back as the byte chain the verification instruction takes
+  (int validator_id, int algorithm_id, _, cell stored, int weight, _) = pq::parse_descriptor(cs);
+  (_, cell key) = pq::stored_key(algorithm_id, stored);
+  return (validator_id, algorithm_id, key, weight);
 }
 
 () send_message_back(addr, ans_tag, query_id, body, tomis, mode) impure inline_ref {
@@ -391,26 +168,10 @@ builder pack_complaint(int validator_id, cell description, int created_at, int s
 }
 
 () return_stake(addr, query_id, reason) impure inline_ref {
-  if (stake_reply_bound) {
-    cell body = begin_cell().store_uint(sr::error_reply, 32).store_uint(query_id, 64)
-      .store_uint(stake_reply_hash >> 96, 160).store_uint(reason, 32).store_coins(0).store_coins(stake_reply_received)
-      .store_uint(stake_reply_hash, 256).end_cell();
-    remember_relay_return(query_id, stake_reply_received, body);
-    send_raw_message(sr::message(stake_reply_destination, 0, relay_return_body(body, 0, stake_reply_destination), true), 64);
-    return ();
-  }
   return send_message_back(addr, 0xee6f454c, query_id, reason, 0, 64);
 }
 
 () send_confirmation(addr, query_id, comment) impure inline_ref {
-  if (stake_reply_bound) {
-    cell body = begin_cell().store_uint(sr::ok, 32).store_uint(query_id, 64)
-      .store_uint(stake_reply_hash >> 96, 160).store_uint(0, 32).store_coins(sr::sub(stake_reply_received, sr::confirmation))
-      .store_coins(stake_reply_received).store_uint(stake_reply_hash, 256).end_cell();
-    remember_relay_return(query_id, sr::confirmation, body);
-    send_raw_message(sr::message(stake_reply_destination, sr::confirmation, relay_return_body(body, 0, stake_reply_destination), true), 1);
-    return ();
-  }
   return send_message_back(addr, 0xf374484c, query_id, comment, 1000000000, 2);
 }
 
@@ -436,25 +197,69 @@ _ ~credit_to(credits, addr, amount) inline_ref {
   return (credits, ());
 }
 
-;; The member of an open election that states a transport address, or zero. Members are
-;; bounded by `pq_participant_limit`, so the walk is a bounded cost, paid before the
-;; signature is.
-int election_address_holder(cell members, int adnl_addr) inline_ref {
-  int holder = 0;
-  int id = (1 << 255) + ((1 << 255) - 1);
+;; Registration count, rather than the number eventually seated, bounds sorting,
+;; refunding and cancellation work. Stop at the first excess entry; never traverse an
+;; unbounded book to reject it.
+const participant_limit = 256;
+int bounded_participant_count(cell members) inline_ref {
+  int count = 0;
+  int id = -1;
+  int present = true;
+  while (present & (count <= participant_limit)) {
+    (id, _, present) = members.udict_get_next?(256, id);
+    if (present) { count += 1; }
+  }
+  return count;
+}
+
+;; Whether another member of an open election registered this key (1) or states this
+;; transport address (2), or neither (0). A member record holds the member's key_id where
+;; upstream holds its source address, since a member is named by that address. Members
+;; are bounded by `participant_limit`, so the walk is bounded.
+(int, int) smallest_member(cell members) inline_ref {
+  ;; The member with the smallest stake, and that stake; the lowest identity on a tie.
+  ;; Members are bounded by `participant_limit`, so the walk is bounded.
+  int smallest = -1;
+  int smallest_stake = -1;
+  int id = -1;
   int more = true;
   do {
-    (id, slice ms, int found) = members.udict_get_prev?(256, id);
+    (id, slice ms, int found) = members.udict_get_next?(256, id);
     if (found) {
-      (_, _, _, _, _, _, int stated, _, _) = pq::unpack_member(ms);
-      if (stated == adnl_addr) {
-        holder = id;
-        found = false;
+      int stake = ms~load_tomis();
+      if ((smallest_stake < 0) | (stake < smallest_stake)) {
+        smallest = id;
+        smallest_stake = stake;
       }
     }
     more = found;
   } until (~ more);
-  return holder;
+  return (smallest, smallest_stake);
+}
+
+int election_conflict(cell members, int validator_id, int key_id, int adnl_addr) inline_ref {
+  int conflict = 0;
+  int id = -1;
+  int more = true;
+  do {
+    (id, slice ms, int found) = members.udict_get_next?(256, id);
+    ;; `&` does not short-circuit, and `id` is null once the walk ends
+    if (found) {
+      if (id != validator_id) {
+        ms~load_tomis();
+        ms~skip_bits(32 + 32);   ;; time, max_factor
+        if (ms~load_uint(256) == key_id) {
+          conflict = 1;
+          found = false;
+        } elseif (ms.preload_uint(256) == adnl_addr) {
+          conflict = 2;
+          found = false;
+        }
+      }
+    }
+    more = found;
+  } until (~ more);
+  return conflict;
 }
 
 ;; The validator of a stored set that holds a transport address, or zero. `vset` is a
@@ -496,202 +301,122 @@ int address_held_by_another_validator(int validator_id, int adnl_addr) inline {
   return (holder != 0) & (holder != validator_id);
 }
 
-() process_pq_stake(s_addr, msg_value, cs, query_id) impure inline_ref {
+() process_new_stake(s_addr, msg_value, cs, query_id) impure inline_ref {
   var (src_wc, src_addr) = parse_std_addr(s_addr);
   var ds = get_data().begin_parse();
   var elect = ds~load_dict();
-  if (elect.null?() | (src_wc + 1)) {
-    ;; no elections active, or the sender is not in the masterchain
+  if (elect.null?() | (src_wc + 1) | (src_addr == 0)) {
+    ;; no elections active, or source is not in masterchain, or the source is the zero
+    ;; account, which no validator descriptor may name; bounce message
     return return_stake(s_addr, query_id, 0);
   }
-  int algorithm_id = cs~load_uint(16);
-  cell public_key = cs~load_ref();
-  int stake_at = cs~load_uint(32);
-  int max_factor = cs~load_uint(32);
-  int adnl_addr = cs~load_uint(256);
-  cell signature = cs~load_ref();
-  cell controller_birth_witness = cs~load_maybe_ref();
-  int states_owner = cs~load_uint(1);
-  int stated_owner = states_owner ? cs~load_uint(256) : 0;
+  ;; parse the remainder of new stake message
+  ;; a post-quantum key does not fit 256 bits: it travels as a stored byte chain, and the
+  ;; validator is named by the key identity derived from it
+  var algorithm_id = cs~load_uint(16);
+  var public_key = cs~load_ref();
+  var stake_at = cs~load_uint(32);
+  var max_factor = cs~load_uint(32);
+  var adnl_addr = cs~load_uint(256);
+  var signature = cs~load_ref();
   cs.end_parse();
-
-  ;; The validator identity is the contract's own: the account that sent this. The key
-  ;; identity is derived from the key presented, below. Neither is read from the request,
-  ;; so a request cannot name one validator while carrying another's key.
-  int validator_id = src_addr;
-
-  ;; Whose money this is. A controller staking its own funds says nothing and is its own
-  ;; owner; a controller relaying a pool's stake states the account the funds came from,
-  ;; which it read from its own sender and this contract cannot see.
-  ;;
-  ;; That this may be stated rests on the same thing `validator_id` rests on: only code
-  ;; ConfigParam 47 admits can stake at all, and the admitted code is what reads its true
-  ;; sender. It is not believed for free either -- it is signed over, so a controller
-  ;; stating an account the authorisation was not issued for produces bytes that do not
-  ;; verify.
-  int stake_owner = states_owner ? stated_owner : validator_id;
-  if (states_owner & (stated_owner == 0)) {
-    ;; Zero is not an account, and crediting it would strand the money.
-    return return_stake(s_addr, query_id, 14);
+  ;; a member is named by the account that sends its stake, and its key by key_id
+  var validator_id = src_addr;
+  var key_id = pq::key_id(algorithm_id, public_key);
+  (_, cell key) = pq::stored_key(algorithm_id, public_key);
+  ifnot (pq_check_mldsa44(pq::stake_preimage(stake_at, max_factor, src_addr, adnl_addr),
+                          pq::election_context(), pq::stored_signature(algorithm_id, signature), key)) {
+    ;; incorrect signature, return stake
+    return return_stake(s_addr, query_id, 1);
   }
-
-  ;; Everything this request is answered with goes to the account whose money it is, not
-  ;; to the account that carried it. A relay holds nothing and keeps nothing: were the
-  ;; refusal and the money to go back to it, a pool would be left waiting for an answer
-  ;; that stopped one account short of it, with its capital stranded at a contract that
-  ;; has no way to return it.
-  slice owner_addr = states_owner ? begin_cell().store_uint(4, 3).store_int(-1, 8)
-                                      .store_uint(stake_owner, 256).end_cell().begin_parse()
-                                  : s_addr;
-
-  ;; Everything that can be decided without the key is decided first, so a request that is
-  ;; refused for its election, its factor or its address never makes the node load and
-  ;; verify a post-quantum key and signature on the way out.
   if (max_factor < 0x10000) {
     ;; factor must be >= 1. = 65536/65536
-    return return_stake(owner_addr, query_id, 6);
+    return return_stake(s_addr, query_id, 6);
   }
   if (adnl_addr == 0) {
-    ;; a post-quantum validator is reachable at an address it states; a consensus key is
-    ;; never a transport identity, so there is nothing to fall back to
-    return return_stake(owner_addr, query_id, 7);
+    ;; a post-quantum validator descriptor requires a transport address
+    return return_stake(s_addr, query_id, 7);
   }
-
-  var (elect_at, elect_close, min_stake, total_stake, failed, finished, pq_members, pq_key_owner, pq_by_code) = elect.unpack_elect();
+  ;; parse current election data
+  var (elect_at, elect_close, min_stake, total_stake, members, failed, finished) = elect.unpack_elect();
+  ;; elect_at~dump();
   msg_value -= 1000000000;   ;; deduct TM$1 for sending confirmation
+  if ((msg_value << 12) < total_stake) {
+    ;; stake smaller than 1/4096 of the total accumulated stakes, return
+    return return_stake(s_addr, query_id, 2);
+  }
+  total_stake += msg_value;  ;; (provisionally) increase total stake
   if (stake_at != elect_at) {
-    return return_stake(owner_addr, query_id, 3);
+    ;; stake for some other elections, return
+    return return_stake(s_addr, query_id, 3);
   }
   if (finished) {
-    return return_stake(owner_addr, query_id, 0);
+    ;; elections already finished, return stake
+    return return_stake(s_addr, query_id, 0);
   }
-  ;; An election is closed from the moment it may be conducted, which is the condition
-  ;; `conduct_elections` itself uses. Admitting a stake until the tick that happens to
-  ;; run afterwards would make membership depend on when that tick lands rather than on
-  ;; the election's own boundary, and a rotation is a membership change like any other.
-  ;; This refusal is what makes a closed election unable to recover by itself: the
-  ;; inherited rule postponed an under-staked election until new stake arrived, and none
-  ;; can arrive now. `postpone_or_cancel` is the other half of this rule.
-  if (now() >= elect_close) {
-    return return_stake(owner_addr, query_id, 0);
+  var (mem, found) = members.udict_get?(256, validator_id);
+  if (found) {
+    ;; entry found, merge stakes; the key, factor and address are restated
+    msg_value += mem~load_tomis();
   }
-  (_, cell key_chain) = pq::stored_key(algorithm_id, public_key);
-  int key_id = pq::key_id(algorithm_id, public_key);
-  ;; A key another controller registered is refused here rather than thrown, so the stake
-  ;; goes back instead of bouncing with the reason lost.
-  int holder = pq::key_holder(pq_key_owner, key_id);
-  if (holder) {
-    if (holder != validator_id) {
-      return return_stake(owner_addr, query_id, 4);
-    }
-  }
-  ;; A transport address names one node, and a set in which two validators state the same
-  ;; address is refused by the configuration as a whole, which returns every stake. Left
-  ;; to the set, that would let one candidate restating another's address cancel each
-  ;; election for the price of its fee. So the address is settled per candidate, here,
-  ;; after the key and before the signature is paid for: an address another member of this election states,
-  ;; or one a validator of the current or next set holds under another identity, is
-  ;; refused with the money. A validator keeps its own address across elections and
-  ;; top-ups, and may move to a fresh one. A validator that moves to a new controller
-  ;; while its old controller still stands in the current or next set must state a fresh
-  ;; address as well: to this contract the new controller is another identity.
-  int stated_by = election_address_holder(pq_members, adnl_addr);
-  if ((stated_by != 0) & (stated_by != validator_id)) {
-    return return_stake(owner_addr, query_id, 17);
-  }
-  if (address_held_by_another_validator(validator_id, adnl_addr)) {
-    return return_stake(owner_addr, query_id, 18);
-  }
-  ;; Whether this account may hold validator authority at all. The controller is the
-  ;; root of it, and what makes a controller post-quantum is the code it was deployed
-  ;; with, so a first registration proves that code and every later action re-checks that
-  ;; it is still admitted. A profile retired after a controller registered therefore
-  ;; stops it changing anything, rather than merely turning away newcomers.
-  var (existing, registered) = pq_members.udict_get?(256, validator_id);
-  ifnot (registered) {
-    if (bounded_participant_count(pq_members) >= pq_participant_limit) {
-      return return_stake(owner_addr, query_id, 16);
-    }
-  }
-  (cell admitted_codes, int have_policy) = pq::controller_policy();
-  ifnot (have_policy) {
-    return return_stake(owner_addr, query_id, 11);
-  }
-  ;; The floor under a stake is measured against the stake this election actually
-  ;; counts: what stands behind codes the configuration still admits. Classical stake
-  ;; cannot raise it, and neither can a profile that has been retired.
-  int effective = pq::effective_stake(pq_by_code, admitted_codes);
-  if ((msg_value << 12) < effective) {
-    ;; stake smaller than 1/4096 of the post-quantum stake already placed, return
-    return return_stake(owner_addr, query_id, 2);
-  }
-  total_stake += msg_value;
-  int controller_code = 0;
-  int placed_before = 0;
-  if (registered) {
-    (int placed, _, _, _, _, _, _, int held_owner, int held_code) = pq::unpack_member(existing);
-    placed_before = placed;
-    ;; Whose money a member's stake is was settled by the first stake and does not move
-    ;; for the rest of the election. A later request from the same validator naming a
-    ;; different owner is refused with the money it brought, and changes nothing: were it
-    ;; taken, the stake already placed would follow the new name at unfreeze, and a
-    ;; consensus key -- the hot key, the one a validator can lose -- would be able to
-    ;; redirect a pool's capital to an account of its holder's choosing for the price of
-    ;; one qualifying top-up.
-    if (held_owner != stake_owner) {
-      return return_stake(owner_addr, query_id, 15);
-    }
-    ifnot (pq::controller_admitted?(admitted_codes, held_code)) {
-      return return_stake(owner_addr, query_id, 12);
-    }
-    controller_code = held_code;
-    ;; A controller topping up or rotating keeps the stake it already placed.
-    msg_value += placed;
-  } else {
-    if (cell_null?(controller_birth_witness)) {
-      return return_stake(owner_addr, query_id, 8);
-    }
-    (int proved_code, int witness_status) =
-      pq::controller_code_hash?(controller_birth_witness, validator_id);
-    ;; A witness that is the wrong shape is a different mistake from one whose numbers do
-    ;; not describe this account, and the sender is told which: the first is a malformed
-    ;; request, the second is a claim about an account it was not deployed as.
-    if (witness_status == pq::witness::bad_shape) {
-      return return_stake(owner_addr, query_id, 9);
-    }
-    if (witness_status == pq::witness::bad_address) {
-      return return_stake(owner_addr, query_id, 13);
-    }
-    ifnot (pq::controller_admitted?(admitted_codes, proved_code)) {
-      return return_stake(owner_addr, query_id, 10);
-    }
-    controller_code = proved_code;
+  ;; a set in which two validators share a key or a transport address is refused by the
+  ;; configuration as a whole, so both are settled per candidate
+  int conflict = election_conflict(members, validator_id, key_id, adnl_addr);
+  if (conflict == 1) {
+    ;; can make stakes for a public key from one address only
+    return return_stake(s_addr, query_id, 4);
   }
   if (msg_value < min_stake) {
-    return return_stake(owner_addr, query_id, 5);
+    ;; stake too small, return it
+    return return_stake(s_addr, query_id, 5);
+  }
+  if (conflict == 2) {
+    ;; another member of this election states this transport address
+    return return_stake(s_addr, query_id, 17);
+  }
+  if (address_held_by_another_validator(validator_id, adnl_addr)) {
+    ;; a validator of the current or next set holds this address under another identity
+    return return_stake(s_addr, query_id, 18);
+  }
+  ;; every member carries a full post-quantum key, so the number of members is bounded;
+  ;; a full election makes room by dropping its smallest stake, credited back to the
+  ;; account that sent it, so a larger stake is never shut out by smaller ones
+  int evict = false;
+  int evicted = 0;
+  int evicted_stake = 0;
+  ifnot (found) {
+    if (bounded_participant_count(members) >= participant_limit) {
+      (evicted, evicted_stake) = smallest_member(members);
+      if (msg_value <= evicted_stake) {
+        return return_stake(s_addr, query_id, 16);
+      }
+      evict = true;
+    }
   }
   throw_unless(44, msg_value);
-
-  ;; The signature is checked last, when nothing else can refuse this stake: it is the
-  ;; only step whose cost an unauthorised sender could otherwise impose at will.
-  cell signature_chain = pq::stored_signature(algorithm_id, signature);
-  ifnot (pq_check_mldsa44(
-      pq::stake_preimage(stake_at, max_factor, validator_id, stake_owner, algorithm_id, key_id, adnl_addr),
-      pq::election_context(), signature_chain, key_chain)) {
-    return return_stake(owner_addr, query_id, 1);
-  }
   accept_message();
-
-  ;; Only the money this message brings moves the aggregate: what the member already
-  ;; placed is already counted under the same code.
-  pq_by_code = pq::add_stake_by_code(pq_by_code, controller_code, msg_value - placed_before);
-  (pq_members, pq_key_owner) = pq::register_member(pq_members, pq_key_owner, validator_id, msg_value,
-                                                   now(), max_factor, algorithm_id, public_key, adnl_addr,
-                                                   stake_owner, controller_code);
-  elect = pack_elect(elect_at, elect_close, min_stake, total_stake, false, false, pq_members, pq_key_owner, pq_by_code);
+  if (evict) {
+    (members, _) = members.udict_delete?(256, evicted);
+    total_stake -= evicted_stake;
+    var credits = ds~load_dict();
+    credits~credit_to(evicted, evicted_stake);
+    ds = begin_cell().store_dict(credits).store_slice(ds).end_cell().begin_parse();
+  }
+  ;; store stake in the dictionary
+  members~udict_set_builder(256, validator_id, begin_cell()
+    .store_tomis(msg_value)
+    .store_uint(now(), 32)
+    .store_uint(max_factor, 32)
+    .store_uint(key_id, 256)
+    .store_uint(adnl_addr, 256)
+    .store_uint(algorithm_id, 16)
+    .store_ref(public_key));
+  ;; gather and save election data
+  elect = pack_elect(elect_at, elect_close, min_stake, total_stake, members, false, false);
   set_data(begin_cell().store_dict(elect).store_slice(ds).end_cell());
+  ;; return confirmation message
   if (query_id) {
-    return send_confirmation(owner_addr, query_id, 0);
+    return send_confirmation(s_addr, query_id, 0);
   }
   return ();
 }
@@ -775,7 +500,7 @@ _ unfreeze_all(credits, past_elections, elect_id) inline_ref {
     ;; or no elections active (or just completed)
     return ();
   }
-  var (elect_at, elect_close, min_stake, total_stake, failed, finished, pq_members, pq_key_owner, pq_by_code) = elect.unpack_elect();
+  var (elect_at, elect_close, min_stake, total_stake, members, failed, finished) = elect.unpack_elect();
   if ((elect_at != query_id) | ~ finished) {
     ;; not these elections, or elections not finished yet
     return ();
@@ -839,98 +564,16 @@ _ unfreeze_all(credits, past_elections, elect_id) inline_ref {
   set_data(begin_cell().store_dict(elect).store_dict(credits).store_slice(ds).end_cell());
   ;; send amount to sender in a new message
   send_raw_message(begin_cell()
-    .store_uint(0x10, 6)
+    .store_uint(0x18, 6)
     .store_slice(s_addr)
     .store_tomis(amount)
     .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
     .store_uint(0xf96f7324, 32)
     .store_uint(query_id, 64)
-    .store_coins(amount)
   .end_cell(), 64);
 }
 
-() recover_with_receipt(slice sender, slice cs, int query) impure inline_ref {
-  cs.end_parse();
-  var (wc, owner) = parse_std_addr(sender);
-  throw_unless(sr::error, (wc == -1) & owner & (query >= sr::domain));
-  var (count, receipts) = recovery_book();
-  var (entry, found) = receipts.udict_get?(256, owner);
-  int amount = 0;
-  int previous_query = 0;
-  int outstanding = false;
-  if (found) {
-    previous_query = entry~load_uint(64); amount = entry~load_coins();
-    outstanding = entry~load_uint(1); entry.end_parse();
-    if (query == previous_query) {
-      if (outstanding) {
-        cell reply = begin_cell().store_uint(recover::reply, 32).store_uint(query, 64).store_coins(amount).end_cell();
-        send_raw_message(sr::message(sender, 0, reply, false), 64);
-      }
-      return ();
-    }
-    throw_unless(sr::error, (query > previous_query) & (outstanding == 0));
-  }
-  var (elect, credits, past, purse, active_id, active_hash) = load_data();
-  var (credit, have_credit) = credits~udict_delete_get?(256, owner);
-  ifnot (have_credit) { return send_message_back(sender, 0xfffffffe, query, recover::request, 0, 64); }
-  amount = credit~load_tomis(); credit.end_parse();
-  receipts~udict_set_builder(256, owner, begin_cell().store_uint(query, 64).store_coins(amount).store_uint(1, 1));
-  store_data_with_recovery(elect, credits, past, purse, active_id, active_hash, recovery_pack(count + 1, receipts));
-  cell reply = begin_cell().store_uint(recover::reply, 32).store_uint(query, 64).store_coins(amount).end_cell();
-  ;; PAID and credit deletion commit only if the real payment action succeeds.
-  ;; Non-bounce value stays with the creditor even when its receive code aborts.
-  send_raw_message(sr::message(sender, amount, reply, false), 64);
-}
-() acknowledge_recovery(slice sender, slice cs, int query) impure inline_ref {
-  cs.end_parse();
-  var (wc, owner) = parse_std_addr(sender);
-  throw_unless(sr::error, wc == -1);
-  var (count, receipts) = recovery_book();
-  var (entry, found) = receipts.udict_get?(256, owner);
-  ifnot (found) { return (); }
-  int previous_query = entry~load_uint(64); entry~load_coins(); int outstanding = entry~load_uint(1); entry.end_parse();
-  if (query != previous_query) { return (); }
-  if (outstanding == 0) {
-    send_raw_message(sr::message(sender, 0, begin_cell().store_uint(0x47656133, 32).store_uint(query, 64).end_cell(), false), 64);
-    return ();
-  }
-  ;; Retain only the last sequence as a replay tombstone, never the old claim amount.
-  receipts~udict_set_builder(256, owner, begin_cell().store_uint(query, 64).store_coins(0).store_uint(0, 1));
-  var (elect, credits, past, purse, active_id, active_hash) = load_data();
-  store_data_with_recovery(elect, credits, past, purse, active_id, active_hash, recovery_pack(count - 1, receipts));
-  send_raw_message(sr::message(sender, 0, begin_cell().store_uint(0x47656133, 32).store_uint(query, 64).end_cell(), false), 64);
-}
-
-;; Stable compatibility entry point. This must remain a real dictionary call:
-;; upgrade_code invokes it through the target c3 before installing that code.
-;; The tag promises retention of the owner/query tombstones and ACK confirmation
-;; semantics, not permission to discard them when the outstanding count is zero.
-cell recovery_upgrade_actions() impure asm "c5 PUSH";
-
-int recovery_upgrade_format() impure method_id(1667) {
-  return recover::metadata_tag;
-}
-
-int relay_return_upgrade_format() impure method_id(1668) { return 0x52525634; }
-
-;; Upgrades wait on what the elector still owes: an election, unclaimed
-;; credits, frozen stakes and relay returns in flight. A recovery receipt
-;; awaiting its owner's ACK is not one of them: the receipt is written by the
-;; transaction whose action phase paid it, so it exists only once paid. It
-;; keeps its ACK and replay protection across the upgrade instead -- the target
-;; must declare the same recovery format and keep the metadata unchanged
-;; (upgrade_code) -- so an owner who never ACKs cannot veto upgrades.
-int upgrade_ready() method_id {
-  var (elect, credits, past, _, _, _) = load_data();
-  var (returning, _) = relay_return_book();
-  return elect.null?() & credits.null?() & past.null?() & (returning == 0);
-}
-
 () after_code_upgrade(slice s_addr, slice cs, int query_id) impure method_id(1666) {
-  ;; The installation tool always supplies a hook marker. No format conversion
-  ;; is implicit: finish elections, unfreeze and pay out all credits first.
-  ;; Paid recovery receipts carry over unchanged (upgrade_code checks them).
-  throw_unless(66, upgrade_ready());
   var op = 0x4e436f64;
   return send_message_back(s_addr, 0xce436f64, query_id, op, 0, 64);
 }
@@ -947,37 +590,12 @@ int upgrade_code(s_addr, cs, query_id) inline_ref {
     ;; not from configuration smart contract, return error
     return false;
   }
-  ifnot (upgrade_ready()) { return false; }
   accept_message();
   var code = cs~load_ref();
-  cell preserved_data = get_data();
-  cell preserved_actions = recovery_upgrade_actions();
-  cell preserved_recovery = recovery_metadata();
-  int has_relay_returns = ~ relay_returns().null?();
-  cont previous_code = get_c3();
-  ifnot (preserved_recovery.null?()) {
-    ;; A cleared local receipt may still owe its remote owner a confirmation.
-    ;; Never erase it, including on a same-code installation. A target without
-    ;; this fixed entry point cannot take over a nonempty recovery history.
-    set_c3(code.begin_parse().bless());
-    int target_format = recovery_upgrade_format();
-    int return_format = has_relay_returns ? relay_return_upgrade_format() : 0x52525634;
-    set_c3(previous_code);
-    throw_unless(67, (target_format == recover::metadata_tag) & (return_format == 0x52525634));
-    ;; The compatibility entry point is a read-only declaration, not a migration.
-    throw_unless(67, cell_hash(get_data()) == cell_hash(preserved_data));
-    throw_unless(67, cell_hash(recovery_upgrade_actions()) == cell_hash(preserved_actions));
-  }
   set_code(code);
   ifnot(cs.slice_empty?()) {
     set_c3(code.begin_parse().bless());
     after_code_upgrade(s_addr, cs, query_id);
-    set_c3(previous_code);
-    ifnot (preserved_recovery.null?()) {
-      cell retained = recovery_metadata();
-      throw_unless(67, ~ retained.null?());
-      throw_unless(67, cell_hash(retained) == cell_hash(preserved_recovery));
-    }
     throw(0);
   }
   return true;
@@ -1128,11 +746,11 @@ int proceed_register_vote(election_id, chash, idx, weight) impure inline_ref {
 
 () recv_internal(int msg_value, cell in_msg_cell, slice in_msg) impure {
   ;; do nothing for internal messages
-  stake_reply_bound = false;
   var cs = in_msg_cell.begin_parse();
   var flags = cs~load_uint(4);  ;; int_msg_info$0 ihr_disabled:Bool bounce:Bool bounced:Bool
   if (flags & 1) {
-    return bounce_relay_return(cs~load_msg_addr(), msg_value, in_msg);
+    ;; ignore all bounced messages
+    return ();
   }
   var s_addr = cs~load_msg_addr();
   if (in_msg.slice_empty?()) {
@@ -1145,50 +763,10 @@ int proceed_register_vote(election_id, chash, idx, weight) impure inline_ref {
     return process_simple_transfer(s_addr, msg_value);
   }
   int query_id = in_msg~load_uint(64);
-  if (op == sr::return_retry) { return retry_relay_return(s_addr, msg_value, query_id, in_msg); }
-  if (op == sr::return_ack) { return acknowledge_relay_return(s_addr, msg_value, query_id, in_msg); }
-  if (op == sr::stake) {
-    var (wc, controller) = parse_std_addr(s_addr);
-    throw_unless(sr::error, (wc == -1) & (query_id >= sr::domain));
-    int commitment = in_msg~load_uint(160);
-    cell payload = begin_cell().store_slice(in_msg).end_cell();
-    throw_unless(sr::error, commitment == (cell_hash(payload) >> 96));
-    ;; Only an admitted immutable controller may allocate durable return history.
-    ;; Malformed/unadmitted requests use the native bounce path without a record.
-    slice admission = payload.begin_parse();
-    admission~load_uint(16); admission~load_ref(); admission~load_uint(32);
-    admission~load_uint(32); admission~load_uint(256); admission~load_ref();
-    cell witness = admission~load_maybe_ref();
-    var (codes, policy) = pq::controller_policy();
-    throw_unless(sr::error, policy);
-    int admitted = false;
-    ifnot (witness.null?()) {
-      var (code_hash, status) = pq::controller_code_hash?(witness, controller);
-      admitted = (status == 0) & pq::controller_admitted?(codes, code_hash);
-    }
-    ifnot (admitted) {
-      var (elect, _, _, _, _, _) = load_data();
-      throw_unless(sr::error, ~ elect.null?());
-      var (_, _, _, _, _, _, members, _, _) = unpack_elect(elect);
-      var (member, found) = members.udict_get?(256, controller);
-      throw_unless(sr::error, found);
-      var (_, _, _, _, _, _, _, _, code_hash) = pq::unpack_member(member);
-      throw_unless(sr::error, pq::controller_admitted?(codes, code_hash));
-    }
-    stake_reply_bound = true;
-    stake_reply_hash = sr::request_hash(controller, query_id, payload);
-    stake_reply_received = msg_value;
-    stake_reply_destination = s_addr;
-    return process_pq_stake(s_addr, msg_value, in_msg, query_id);
-  }
   if (op == pq::tag::stake_op) {
-    ;; The only stake operation. The classical one is not refused here by name: the
-    ;; contract no longer knows that opcode, so it falls through to the unknown-query
-    ;; answer below and the money it carried goes back with it.
-    return process_pq_stake(s_addr, msg_value, in_msg, query_id);
+    ;; new stake message
+    return process_new_stake(s_addr, msg_value, in_msg, query_id);
   }
-  if (op == recover::request) { return recover_with_receipt(s_addr, in_msg, query_id); }
-  if (op == recover::ack) { return acknowledge_recovery(s_addr, in_msg, query_id); }
   if (op == 0x47657424) {
     ;; recover stake request
     return recover_stake(op, s_addr, in_msg, query_id);
@@ -1217,34 +795,22 @@ int proceed_register_vote(election_id, chash, idx, weight) impure inline_ref {
     return send_message_back(s_addr, ans_tag + 0xf2676350, query_id, op, 0, mode);
   }
   if (op == pq::tag::complaint_op) {
-    ;; A validator of the current set votes to punish a validator of a past election.
-    ;;
-    ;; Who is voting is read from the set at `idx`, never from the message.
-    int idx = in_msg~load_uint(16);
-    int elect_id = in_msg~load_uint(32);
-    int chash = in_msg~load_uint(256);
-    cell signature = in_msg~load_ref();
+    ;; vote for a complaint
+    ;; the voter is read from the current set at `idx`; the signature covers the set and
+    ;; the election, so it does not verify under another set or against another election
+    var (idx, elect_id, chash) = (in_msg~load_uint(16), in_msg~load_uint(32), in_msg~load_uint(256));
+    var signature = in_msg~load_ref();
     in_msg.end_parse();
-
-    ;; The verification is paid for before it is performed. Anyone may send this message,
-    ;; and a verification reached before this gate is one an unauthorised sender could
-    ;; make the chain perform at its own expense.
+    ;; the verification is paid for before it is performed: anyone may send this message,
+    ;; and the elector's gas does not depend on the value it carries
     throw_unless(47, msg_value >= pq::verification_value(-1));
-
-    (cell vset, int total_weight, cell list) = get_current_vset();
-    (slice descr, int present) = list.udict_get?(16, idx);
-    throw_unless(41, present);
-    (int validator_id, int algorithm_id, cell public_key, int weight) =
-      unpack_validator_descr(descr);
-
-    ;; The set and the election are both signed over: a signature made under an earlier
-    ;; set, or against a different election, is different bytes and does not verify.
+    var (vset, total_weight, list) = get_current_vset();
+    var (vdescr, found) = list.udict_get?(16, idx);
+    throw_unless(41, found);
+    var (validator_id, algorithm_id, key, weight) = unpack_validator_descr(vdescr);
     throw_unless(34, pq_check_mldsa44(
       pq::complaint_vote_preimage(vset.cell_hash(), validator_id, idx, elect_id, chash),
-      pq::election_context(),
-      pq::stored_signature(algorithm_id, signature),
-      public_key));
-
+      pq::election_context(), pq::stored_signature(algorithm_id, signature), key));
     int res = proceed_register_vote(elect_id, chash, idx, weight);
     return send_message_back(s_addr, res + 0xd6745240, query_id, op, 0, 64);
   }
@@ -1261,40 +827,6 @@ int postpone_elections() impure {
   return false;
 }
 
-;; A closed election that cannot be conducted is postponed only while the validator set
-;; it was meant to replace is still in office. Nobody can join it after `elect_close`,
-;; but the configuration can still change what the placed stake is worth -- a controller
-;; profile retired after its stake arrived may be admitted again -- so until `elect_at`
-;; every tick tries once more. From `elect_at` on, postponing costs the chain: the
-;; previous set runs past its `utime_until`, no key block is produced, state garbage
-;; collection stops behind the last one, and no message can end that, because no stake
-;; can arrive any more. The election is therefore cancelled: every member's stake goes
-;; back to its owner as credit, the record is dropped, and the next tick announces a
-;; fresh election with a fresh window. Nothing was frozen: freezing happens only when an
-;; election is conducted.
-;;
-;; `credits` must not already carry refunds for these members, or they would be paid
-;; twice.
-int postpone_or_cancel(ds, elect_at, credits, pq_members) impure {
-  if (now() < elect_at) {
-    return postpone_elections();
-  }
-  var validator_id = -1;
-  do {
-    (validator_id, var ms, var f) = pq_members.udict_get_next?(256, validator_id);
-    if (f) {
-      var (stake, _, _, _, _, _, _, stake_owner, _) = pq::unpack_member(ms);
-      credits~credit_to(stake_owner, stake);
-    }
-  } until (~ f);
-  set_data(begin_cell()
-    .store_int(false, 1)   ;; no election
-    .store_dict(credits)
-    .store_slice(ds)
-  .end_cell());
-  return true;
-}
-
 ;; computes the total stake out of the first n entries of list l
 _ compute_total_stake(l, n, m_stake) inline_ref {
   int tot_stake = 0;
@@ -1308,46 +840,31 @@ _ compute_total_stake(l, n, m_stake) inline_ref {
   return tot_stake;
 }
 
-;; Selection.
-;;
-;; Take the largest stakes, cap each by the factor it asked for against the smallest
-;; selected, weight by stake.
-;; Members are named by the controller that placed them rather than by a key, so a
-;; rotation during the election changes nothing here, and a controller whose code the
-;; configuration no longer admits takes no part: its stake is refunded through the same
-;; path as any stake that is not selected, rather than being stranded or counted.
-(cell, cell, int, cell, int, int) try_elect_pq(credits, pq_members, admitted_codes, min_stake,
-                                              max_stake, min_total_stake, max_stake_factor) {
+(cell, cell, int, cell, int, int) try_elect(credits, members, min_stake, max_stake, min_total_stake, max_stake_factor) {
   var cs = 16.config_param().begin_parse();
   var (max_validators, _, min_validators) = (cs~load_uint(16), cs~load_uint(16), cs~load_uint(16));
   cs.end_parse();
   min_validators = max(min_validators, 1);
   int n = 0;
-  int total_placed = 0;
-  int total_refunded = 0;
   var sdict = new_dict();
-  var validator_id = -1;
+  var pubkey = -1;
   do {
-    (validator_id, var ms, var f) = pq_members.udict_get_next?(256, validator_id);
+    (pubkey, var cs, var f) = members.udict_get_next?(256, pubkey);
     if (f) {
-      var (stake, registered_at, max_factor, algorithm_id, key_id, public_key, adnl_addr,
-           stake_owner, code_hash) = pq::unpack_member(ms);
-      total_placed += stake;
-      ifnot (pq::controller_admitted?(admitted_codes, code_hash)) {
-        ;; A retired profile: out of the election entirely, and its money goes home to
-        ;; whoever put it up rather than to the identity that could no longer use it.
-        credits~credit_to(stake_owner, stake);
-        total_refunded += stake;
-      } else {
-        var key = begin_cell()
-          .store_uint(stake, 128)
-          .store_int(- registered_at, 32)
-          .store_uint(validator_id, 256)
-        .end_cell().begin_parse();
-        sdict~dict_set_builder(128 + 32 + 256, key,
-            begin_cell().store_uint(min(max_factor, max_stake_factor), 32));
-        n += 1;
-      }
+      var (stake, time, max_factor, addr, adnl_addr) = (cs~load_tomis(), cs~load_uint(32), cs~load_uint(32), cs~load_uint(256), cs~load_uint(256));
+      cs~skip_bits(16);   ;; algorithm_id
+      cs~load_ref();      ;; public_key
+      cs.end_parse();
+      var key = begin_cell()
+        .store_uint(stake, 128)
+        .store_int(- time, 32)
+        .store_uint(pubkey, 256)
+      .end_cell().begin_parse();
+      sdict~dict_set_builder(128 + 32 + 256, key, begin_cell()
+          .store_uint(min(max_factor, max_stake_factor), 32)
+          .store_uint(addr, 256)
+          .store_uint(adnl_addr, 256));
+      n += 1;
     }
   } until (~ f);
   n = min(n, max_validators);
@@ -1358,8 +875,9 @@ _ compute_total_stake(l, n, m_stake) inline_ref {
   do {
     var (key, cs, f) = sdict~dict::delete_get_min(128 + 32 + 256);
     if (f) {
-      var (stake, _, id) = (min(key~load_uint(128), max_stake), key~load_uint(32), key.preload_uint(256));
-      l = cons([stake, cs.preload_uint(32), id], l);
+      var (stake, _, pubkey) = (min(key~load_uint(128), max_stake), key~load_uint(32), key.preload_uint(256));
+      var (max_f, _, adnl_addr) = (cs~load_uint(32), cs~load_uint(256), cs.preload_uint(256));
+      l = cons([stake, max_f, pubkey, adnl_addr], l);
     }
   } until (~ f);
   ;; l is the list of all stakes in decreasing order
@@ -1382,68 +900,62 @@ _ compute_total_stake(l, n, m_stake) inline_ref {
   if ((m == 0) | (best_stake < min_total_stake)) {
     return (credits, new_dict(), 0, new_dict(), 0, 0);
   }
+  ;; we have to select first m validators from list l
   l1 = touch(l);
+  ;; l1~dump();  ;; DEBUG
   repeat (m - 1) {
     l1 = cdr(l1);
   }
   var m_stake = car(l1).at(0);  ;; minimal stake
+  ;; create both the new validator set and the refund set
   int i = 0;
   var tot_stake = 0;
   var tot_weight = 0;
   var vset = new_dict();
   var frozen = new_dict();
   do {
-    var [stake, max_f, id] = l~list_next();
-    ;; The key material comes back from the book rather than being carried through the
-    ;; sort, the way the classical path looks its source address up again.
-    var (ms, found) = pq_members.udict_get?(256, id);
-    throw_unless(61, found);
-    var (original_stake, _, _, algorithm_id, _, public_key, adnl_addr, stake_owner, _) = pq::unpack_member(ms);
-    ;; Selection caps the effective stake, never the principal owed to its owner.
-    int refund = original_stake;
+    var [stake, max_f, validator_id, adnl_addr] = l~list_next();
+    ;; lookup source address and key first
+    var (val, f) = members.udict_get?(256, validator_id);
+    throw_unless(61, f);
+    ;; the principal owed back is what was placed, not the stake capped at max_stake;
+    ;; a member is named by the account that sent its stake
+    var placed = val~load_tomis();
+    val~skip_bits(64 + 256 + 256);   ;; time, max_factor, key_id, adnl_addr
+    var src_addr = validator_id;
+    var (algorithm_id, public_key) = (val~load_uint(16), val~load_ref());
     if (i < m) {
+      ;; one of the first m members, include into validator set
       var true_stake = min(stake, (max_f * m_stake) >> 16);
-      refund -= true_stake;
+      placed -= true_stake;
+      ;; validator_pq#b3 validator_id:bits256 algorithm_id:uint16 key_id:bits256
+      ;;   public_key:^Cell weight:uint64 adnl_addr:bits256 = ValidatorDescr;
       var weight = (true_stake << 60) / best_stake;
       tot_stake += true_stake;
       tot_weight += weight;
-      ;; The descriptor is packed by the same library the node's decoder is held to, which
-      ;; re-derives the key identity rather than believing the one stored beside it.
-      vset~udict_set_builder(16, i,
-        pq::pack_descriptor(id, algorithm_id, public_key, weight, adnl_addr));
-      ;; Frozen under the stable identity, not under a key: the key may be replaced while
-      ;; the stake is held. What the record holds is the account the money came from,
-      ;; which is who it goes back to -- a validator's authority and a validator's capital
-      ;; are two things, and a pool has the second without the first.
-      frozen~udict_set_builder(256, id, begin_cell()
-        .store_uint(stake_owner, 256)
+      vset~udict_set_builder(16, i, pq::pack_descriptor(validator_id, algorithm_id, public_key, weight, adnl_addr));
+      frozen~udict_set_builder(256, validator_id, begin_cell()
+        .store_uint(src_addr, 256)
         .store_uint(weight, 64)
         .store_tomis(true_stake)
         .store_int(false, 1));
     }
-    throw_unless(62, refund >= 0);
-    if (refund) {
-      credits~credit_to(stake_owner, refund);
-      total_refunded += refund;
+    if (placed) {
+      ;; non-zero unused part of the stake, credit to the source address
+      credits~credit_to(src_addr, placed);
     }
     i += 1;
   } until (l.null?());
   throw_unless(49, tot_stake == best_stake);
-  ;; Only this selection's credits are counted; previously owed money is separate.
-  throw_unless(63, total_placed == tot_stake + total_refunded);
   return (credits, vset, tot_weight, frozen, tot_stake, m);
 }
 
 int conduct_elections(ds, elect, credits) impure {
-  var (elect_at, elect_close, min_stake, total_stake, failed, finished, pq_members,
-       pq_key_owner, pq_by_code, failed_inputs) = unpack_elect_with_retry(elect);
+  var (elect_at, elect_close, min_stake, total_stake, members, failed, finished) = elect.unpack_elect();
   if (now() < elect_close) {
     ;; elections not finished yet
     return false;
   }
-  ;; An oversized imported election needs an explicit migration, not a tick that
-  ;; exhausts its gas partway through distributing other people's principal.
-  throw_unless(64, bounded_participant_count(pq_members) <= pq_participant_limit);
   if (config_param(0).null?()) {
     ;; no configuration smart contract to send result to
     return postpone_elections();
@@ -1454,45 +966,27 @@ int conduct_elections(ds, elect, credits) impure {
   var min_total_stake = cs~load_tomis();
   var max_stake_factor = cs~load_uint(32);
   cs.end_parse();
-  ;; What the election is judged ready on is the stake it can still stand behind: the
-  ;; money placed under controller codes the configuration admits today. A profile
-  ;; retired since the stake arrived keeps its money and carries no weight here, and an
-  ;; absent policy admits nobody, so authority fails closed rather than open.
+  if (total_stake < min_total_stake) {
+    ;; insufficient total stake, postpone elections
+    return postpone_elections();
+  }
+  if (failed) {
+    ;; do not retry failed elections until new stakes arrive
+    return postpone_elections();
+  }
   if (finished) {
-    ;; elections finished; the set is with the configuration contract and the stakes
-    ;; are frozen, so nothing below may run against this record
+    ;; elections finished
     return false;
   }
-  (cell admitted_codes, int have_policy) = pq::controller_policy();
-  ifnot (have_policy) {
-    return postpone_or_cancel(ds, elect_at, credits, pq_members);
-  }
-  if (pq::effective_stake(pq_by_code, admitted_codes) < min_total_stake) {
-    ;; insufficient effective stake, postpone elections
-    return postpone_or_cancel(ds, elect_at, credits, pq_members);
-  }
-  int inputs_hash = election_inputs_hash(pq_members, pq_by_code);
-  if (failed & (failed_inputs == inputs_hash)) {
-    ;; An unchanged failure stays cached; governance changes permit a new attempt.
-    return postpone_or_cancel(ds, elect_at, credits, pq_members);
-  }
-  ;; The refunds a failed attempt credits are not kept. Nothing leaves an election that is
-  ;; still standing, and when it is cancelled every member's stake goes back at once.
-  var placed_credits = credits;
-  (credits, var vdict, var total_weight, var frozen, var total_stakes, var cnt) = try_elect_pq(
-      credits, pq_members, admitted_codes, min_stake, max_stake, min_total_stake, max_stake_factor);
+  (credits, var vdict, var total_weight, var frozen, var total_stakes, var cnt) = try_elect(credits, members, min_stake, max_stake, min_total_stake, max_stake_factor);
   ;; pack elections; if cnt==0, set failed=true, finished=false.
   failed = (cnt == 0);
   finished = ~ failed;
-  elect = pack_elect(elect_at, elect_close, min_stake, total_stake, failed, finished, pq_members, pq_key_owner, pq_by_code);
+  elect = pack_elect(elect_at, elect_close, min_stake, total_stake, members, failed, finished);
   ifnot (cnt) {
-    if (postpone_or_cancel(ds, elect_at, placed_credits, pq_members)) {
-      return true;
-    }
-    ;; Tentative refunds are discarded. Cache only an actual unsuccessful selection.
-    elect = begin_cell().store_slice(elect.begin_parse()).store_uint(inputs_hash, 256).end_cell();
-    set_data(begin_cell().store_dict(elect).store_dict(placed_credits).store_slice(ds).end_cell());
-    return false;
+    ;; elections failed, set elect_failed to true
+    set_data(begin_cell().store_dict(elect).store_dict(credits).store_slice(ds).end_cell());
+    return postpone_elections();
   }
   ;; serialize a query to the configuration smart contract
   ;; to install the computed validator set as the next validator set
@@ -1584,7 +1078,7 @@ int cell_hash_eq?(cell vset, int expected_vset_hash) inline_ref {
 }
 
 int validator_set_installed(ds, elect, credits) impure {
-  var (elect_at, elect_close, min_stake, total_stake, failed, finished, pq_members, pq_key_owner, pq_by_code) = elect.unpack_elect();
+  var (elect_at, elect_close, min_stake, total_stake, members, failed, finished) = elect.unpack_elect();
   ifnot (finished) {
     ;; elections not finished yet
     return false;
@@ -1667,7 +1161,7 @@ int announce_new_elections(ds, elect, credits) {
   var elect_at = t + elect_begin_before;
   ;; elect_at~dump();
   var elect_close = elect_at - elect_end_before;
-  elect = pack_elect(elect_at, elect_close, min_stake, 0, false, false, new_dict(), new_dict(), new_dict());
+  elect = pack_elect(elect_at, elect_close, min_stake, 0, new_dict(), false, false);
   set_data(begin_cell().store_dict(elect).store_dict(credits).store_slice(ds).end_cell());
   return true;
 }
@@ -1695,23 +1189,15 @@ int active_election_id() method_id {
   return elect.null?() ? 0 : elect.begin_parse().preload_uint(32);
 }
 
-;; The stake a controller has placed in the current election, or zero.
-;;
-;; A member is named by the account that placed the stake, not by a key: the key it
-;; registered may be replaced while the election is open, and asking about a key would
-;; give a different answer either side of a rotation.
+;; checks whether a public key participates in current elections
 int participates_in(int validator_id) method_id {
   var elect = get_data().begin_parse().preload_dict();
   if (elect.null?()) {
     return 0;
   }
-  var (elect_at, elect_close, min_stake, total_stake, failed, finished, pq_members, pq_key_owner, pq_by_code) = elect.unpack_elect();
-  var (mem, found) = pq_members.udict_get?(256, validator_id);
-  ifnot (found) {
-    return 0;
-  }
-  (int stake, _, _, _, _, _, _, _, _) = pq::unpack_member(mem);
-  return stake;
+  var (elect_at, elect_close, min_stake, total_stake, members, failed, finished) = elect.unpack_elect();
+  var (mem, found) = members.udict_get?(256, validator_id);
+  return found ? mem~load_tomis() : 0;
 }
 
 ;; returns the list of all participants of current elections with their stakes
@@ -1720,40 +1206,36 @@ _ participant_list() method_id {
   if (elect.null?()) {
     return nil;
   }
-  var (elect_at, elect_close, min_stake, total_stake, failed, finished, pq_members, pq_key_owner, pq_by_code) = elect.unpack_elect();
+  var (elect_at, elect_close, min_stake, total_stake, members, failed, finished) = elect.unpack_elect();
   var l = nil;
   var id = (1 << 255) + ((1 << 255) - 1);
   do {
-    (id, var ms, var f) = pq_members.udict_get_prev?(256, id);
+    (id, var fs, var f) = members.udict_get_prev?(256, id);
     if (f) {
-      (int stake, _, _, _, _, _, _, _, _) = pq::unpack_member(ms);
-      l = cons([id, stake], l);
+      l = cons([id, fs~load_tomis()], l);
     }
   } until (~ f);
   return l;
 }
 
 ;; returns the list of all participants of current elections with their data
-;;
-;; Each entry is keyed by the controlling account. The address that placed the stake is
-;; that same account, so it is reported rather than left out: a caller matching on the
-;; address it staked from keeps working without having to know they are now one value.
-;; `key_id` is the consensus key currently registered, which a rotation changes while the
-;; entry's key does not.
+;; a member is named by the account that sent its stake; `addr` is the member's key_id
 _ participant_list_extended() method_id {
   var elect = get_data().begin_parse().preload_dict();
   if (elect.null?()) {
     return (0, 0, 0, 0, nil, 0, 0);
   }
-  var (elect_at, elect_close, min_stake, total_stake, failed, finished, pq_members, pq_key_owner, pq_by_code) = elect.unpack_elect();
+  var (elect_at, elect_close, min_stake, total_stake, members, failed, finished) = elect.unpack_elect();
   var l = nil;
   var id = (1 << 255) + ((1 << 255) - 1);
   do {
-    (id, var ms, var f) = pq_members.udict_get_prev?(256, id);
+    (id, var cs, var f) = members.udict_get_prev?(256, id);
     if (f) {
-      (int stake, _, int max_factor, int algorithm_id, int key_id, _, int adnl_addr, _, _) =
-        pq::unpack_member(ms);
-      l = cons([id, [stake, max_factor, id, adnl_addr, algorithm_id, key_id]], l);
+      var (stake, time, max_factor, addr, adnl_addr) = (cs~load_tomis(), cs~load_uint(32), cs~load_uint(32), cs~load_uint(256), cs~load_uint(256));
+      cs~skip_bits(16);   ;; algorithm_id
+      cs~load_ref();      ;; public_key
+      cs.end_parse();
+      l = cons([id, [stake, max_factor, addr, adnl_addr]], l);
     }
   } until (~ f);
   return (elect_at, elect_close, min_stake, total_stake, l, failed, finished);

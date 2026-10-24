@@ -190,7 +190,7 @@ Use the console and lite client to confirm:
 - Pin a consistent global config per environment, and use one whose
   `validator.init_block` is a recent key block: a new node cannot prove its way
   forward from blocks its peers no longer keep (see
-  [validator-operator-guide.md](validator-operator-guide.md#11-refresh-the-global-configs-init-block))
+  [validator-operator-guide.md](validator-operator-guide.md#9-refresh-the-global-configs-init-block))
 - Upgrade binaries and configs together, not independently
 
 ## AI Actor Operations

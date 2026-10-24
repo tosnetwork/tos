@@ -222,7 +222,7 @@ fn the_executor_default_and_the_zero_state_charge_the_same_to_forward() {
 
 /// What this chain grants a basechain transaction is deliberately twice the
 /// 1,000,000 gas mainnet-scale networks grant: the shielded pool's transact
-/// ceiling (1,510,000) does not fit under 1,000,000. Pinning it here means a
+/// ceiling (1,380,000) does not fit under 1,000,000. Pinning it here means a
 /// later change -- up or down -- is a test to update and not a surprise in a
 /// measurement.
 #[test]
@@ -232,7 +232,7 @@ fn this_chains_basechain_grants_twice_the_mainnet_scale_limit() {
     const MAINNET_SCALE_BASECHAIN_GAS_LIMIT: u64 = 1_000_000;
     /// The pool's own per-transaction ceiling, from
     /// crypto/smartcont/tos-shielded-pool-v1.fc (transact_gas_ceiling).
-    const SHIELDED_POOL_TRANSACT_GAS_CEILING: u64 = 1_510_000;
+    const SHIELDED_POOL_TRANSACT_GAS_CEILING: u64 = 1_380_000;
 
     let zero = zerostate_config();
     let wc: GasLimitsPrices = match zero.config(21).expect("param 21").expect("param 21") {

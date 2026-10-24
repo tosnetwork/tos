@@ -261,33 +261,6 @@ td::Result<std::string> decode_config(int param, td::Ref<vm::Cell> cell, td::uin
       out << ",\"policy_spec_hash\":\"" << td::base64_encode(profile.as_slice()) << "\",\"primary_status\":\""
           << (((policy.retired & 2) || (policy.deadline && now >= policy.deadline)) ? "retired" : "not_retired")
           << "\"}";
-    } else if (param == 47) {
-      if (cell.is_null())
-        return std::string("null");
-      block::gen::ValidatorControllerPolicy::Record record;
-      if (!tlb::unpack_cell(cell, record))
-        return error(Failure::StateInvalid);
-      vm::Dictionary dictionary{record.controller_codes->prefetch_ref(), 256};
-      std::vector<td::Bits256> codes;
-      if (!dictionary.check_for_each([&](td::Ref<vm::CellSlice> value, td::ConstBitPtr key, int bits) {
-            if (bits != 256 || !value->empty_ext() || codes.size() >= 8)
-              return false;
-            td::Bits256 hash;
-            hash.bits().copy_from(key, 256);
-            codes.push_back(hash);
-            return true;
-          }))
-        return error(Failure::StateInvalid);
-      std::sort(codes.begin(), codes.end());
-      out << "{\"kind\":\"validator_controller_policy_v1\",\"controller_codes\":[";
-      bool first = true;
-      for (const auto& code : codes) {
-        if (!first)
-          out << ",";
-        first = false;
-        out << "\"" << td::base64_encode(code.as_slice()) << "\"";
-      }
-      out << "]}";
     } else if (param == 43) {
       td::Ref<vm::CellSlice> slice;
       unsigned wire = 0;

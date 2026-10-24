@@ -199,7 +199,6 @@ fn pool_data_stack(fixture: &PoolFixture) -> common::tvm_stack_parser::TvmStackP
         number("0"),
         number("2000"),
         number("0xabc"),
-        number("0xdef"),
         number("4000"),
         number("40"),
         number("1000"),
@@ -253,7 +252,6 @@ fn snapshot_of(fixture: &PoolFixture, checkpoint: MasterchainCheckpoint) -> Nomi
             stake_amount_sent: 0,
             validator_amount: 2000,
             validator_address: [0xab; 32],
-            controller_address: [0xcd; 32],
             validator_reward_share: 4000,
             max_nominators_count: 40,
             min_validator_stake: 1000,
@@ -1511,7 +1509,7 @@ fn verifier_backed_provider(
         "log": dir.join("requests.jsonl").display().to_string(),
         "stacks": {
             "get_pool_data": [
-                int("0"), int("1"), int("0"), int("2000"), int("171"), int("205"), int("4000"),
+                int("0"), int("1"), int("0"), int("2000"), int("171"), int("4000"),
                 int("40"), int("1000"), int("100"), nil.clone(), nil.clone(), int("999"),
                 int("17"), int("0"), int("1234"), int("3600"), nil.clone(),
             ],

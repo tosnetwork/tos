@@ -32,8 +32,8 @@ disposable development network; nothing in them is secret.
 
 The configuration contract's code as the generated zerostate deploys it
 (representation hash
-`51ac2ce83a98d99dcb755faf3a04ec4816c1fb00e901aefd91913342ed206731`; file SHA-256
-`40eb213cb8a11688ade5ca4c492743d59b8021f14170f09753a866b085832620`), serialized the
+`0a529a33313678a4f7751afc87591b757328c37f2ad53b97f02241915d8fb42b`; file SHA-256
+`b0af9179154fd10d0bb93faa1ac71585241849d988b173400d566f26a596eef8`), serialized the
 way an account query returns it. The stored-state reader interprets storage only
 under this code; `config_list_proposals_sandbox.rs` checks the fixture against the
 zerostate, so a change to the contract is a change to this file and to the hash the
@@ -81,7 +81,8 @@ both representations is an explicit error. Paginated or incremental state reads
 are the remaining capacity work.
 
 The config-code fixture follows the contract: ConfigParam 48 monotonic AUTH policy
-validation and the removal of the `seqno` getter each changed the code without
-changing the proposal storage layout. The decoder accepts exactly the current code
+validation, the removal of the `seqno` getter and the removal of the ConfigParam 47
+controller-policy rules each changed the code without changing the proposal storage
+layout. The decoder accepts exactly the current code
 hash and refuses any other; the genesis-code test checks both hash membership and
 exact BOC bytes.

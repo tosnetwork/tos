@@ -527,7 +527,7 @@ auto make_tos_api_engine_validator_createpqstakeauthorization(std::size_t length
   out->election_date_ = 3;
   out->max_factor_ = 4;
   out->adnl_addr_ = bits(37);
-  out->stake_owner_ = bits(7);
+  out->src_addr_ = bits(7);
   return out;
 }
 auto make_tos_api_engine_validator_customoverlay(std::size_t length)
@@ -575,7 +575,6 @@ auto make_tos_api_engine_validator_electionparticipant(std::size_t length)
   out->stake_ = td::BufferSlice(std::string(length, char(6)));
   out->max_factor_ = 4;
   out->adnl_ = bits(3);
-  out->algorithm_ = 2;
   out->key_id_ = bits(40);
   return out;
 }

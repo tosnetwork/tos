@@ -57,7 +57,7 @@ Below is the list of supported arguments and their default values:
 | CONSOLE_PORT      | This TCP port is used to access validator's console. Not necessarily to be opened for external access.                                                                                    |     no     |                          30002                          |
 | LITE_PORT         | Lite-server's TCP port. Used by lite-client.                                                                                                                                              |     no     |                          30003                          |
 | LITESERVER        | Any non-empty value starts a lite-server; leave it unset for none. Refused together with the validator role.                                                                              |     no     |                         unset                           |
-| VALIDATOR_ID      | Validator role: the controller account's 256-bit id, 64 hex digits or `-1:<64 hex digits>`. Requires PQ_CONSENSUS_KEY_FILE. See [Run a validator](#run-a-validator).                    |     no     |                                                         |
+| VALIDATOR_ID      | Validator role: the staking account's 256-bit id (the wallet or pool that sends the stake), 64 hex digits or `-1:<64 hex digits>`. Requires PQ_CONSENSUS_KEY_FILE. See [Run a validator](#run-a-validator).                    |     no     |                                                         |
 | PQ_CONSENSUS_KEY_FILE | Validator role: absolute path, inside the container, of the mounted 32-byte consensus seed. Requires VALIDATOR_ID.                                                                   |     no     |                                                         |
 | STATE_TTL         | Node's state will be gc'd after this time (in seconds).                                                                                                                                   |     no     |                          86400                          |
 | ARCHIVE_TTL       | Node's archived blocks will be deleted after this time (in seconds).                                                                                                                      |     no     |                          86400                          |
@@ -110,8 +110,9 @@ Check your firewall configuration and make sure that customized ports (443/udp, 
 
 ### Run a validator
 The image runs a full node unless the validator role is requested. The role
-needs two things the image cannot provide: the controller account the
-validator is registered as, and its post-quantum consensus key.
+needs two things the image cannot provide: the staking account the
+validator is registered as (the wallet or pool that sends its stake), and
+its post-quantum consensus key.
 
 Generate the key once, on the validator host, with the `tos-pq-consensus-key`
 tool shipped in the image and in the release archives. It refuses to
@@ -123,12 +124,12 @@ install -d -m 700 /data/keys
 docker run --rm -v /data/keys:/keys --entrypoint tos-pq-consensus-key \
   <IMAGE> generate /keys/pq-consensus.seed
 ```
-Mount the key read-only and name it together with the controller id:
+Mount the key read-only and name it together with the staking account id:
 ```
 docker run -d --name tos-validator -v /data/db:/var/tos-work/db \
 -v /data/keys/pq-consensus.seed:/var/tos-work/keys/pq-consensus.seed:ro \
 -e "PUBLIC_IP=<PUBLIC_IP>" \
--e "VALIDATOR_ID=<64 hex digits of the controller account id>" \
+-e "VALIDATOR_ID=<64 hex digits of the staking account id>" \
 -e "PQ_CONSENSUS_KEY_FILE=/var/tos-work/keys/pq-consensus.seed" \
 -p 30001:30001/udp \
 -it <IMAGE>
@@ -179,9 +180,7 @@ option. An unknown option, a value given to a flag, or a missing value is
 refused, as the node would refuse it. `STATE_TTL`, `ARCHIVE_TTL`, `THREADS`,
 `VERBOSITY` and the port settings must be decimal numbers.
 
-Back the seed up offline and encrypted, never on the host. The controller root
-key (`tos-pq-key`) and the controller actions it signs (`tos-pq-controller`)
-belong to an offline machine, not to the validator host.
+Back the seed up offline and encrypted, never on the host.
 
 ### Database snapshots
 A new node can start from a database snapshot instead of synchronizing from
@@ -354,8 +353,8 @@ the lock. Stop the running container before starting a replacement, and before
 running any tool that edits `config.json`.
 
 ### Validator operations
-The full procedure for a post-quantum validator (controller deployment,
-elections, operating authorization, configuration votes) is in
+The full procedure for a post-quantum validator (staking account, elections,
+configuration votes) is in
 [doc/validator-operator-guide.md](../doc/validator-operator-guide.md). Points
 specific to the image:
 
@@ -366,8 +365,6 @@ specific to the image:
 - The key tools (`tos-pq-consensus-key`, `tos-pq-vote`) run in a one-off
   container with the same volumes and user as the node, for example
   `docker run --rm -v /data/keys:/var/tos-work/keys --entrypoint tos-pq-vote <IMAGE> ...`.
-  `tos-pq-key` and `tos-pq-controller` sign with the controller root key and
-  belong on an offline machine.
 - To rotate the consensus key, stop the container, mount the new key file,
   and run
   `tos-pq-consensus-key bind-node --replace /var/tos-work/db <new key path> <VALIDATOR_ID>`

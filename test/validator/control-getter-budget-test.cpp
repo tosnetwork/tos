@@ -72,7 +72,7 @@ int main(int argc, char** argv) {
         auto result = cg::walk_cons(stack[2], cg::kMaxElectorParticipants, [&](const vm::StackEntry& head) {
           require(head.is_tuple() && head.as_tuple()->size() == 2, "participant pair");
           auto entry = head.as_tuple()->at(1);
-          require(entry.is_tuple() && entry.as_tuple()->size() == 6, "participant six fields");
+          require(entry.is_tuple() && entry.as_tuple()->size() == 4, "participant four fields");
           if (shape == Book::DeepestMaxStake) {
             auto expected = (td::make_refint(1) << 120) - td::make_refint(1);
             require(entry.as_tuple()->at(0).is_int() && td::cmp(entry.as_tuple()->at(0).as_int(), expected) == 0,
@@ -182,7 +182,12 @@ int main(int argc, char** argv) {
             << 100.0 * static_cast<double>(aggregate_margin) / static_cast<double>(aggregate.used())
             << " unused_percent="
             << 100.0 * static_cast<double>(aggregate_margin) / static_cast<double>(cg::kElectorStateGasLimit) << '\n';
-  cg::GasBudget injected{1114595 + 19528 + 26804 - 1};
+  // One gas short of the participant and history reads plus the deepest returned-stake
+  // lookup, so only the aggregate charge can refuse the third read.
+  cg::GasBudget measured{cg::kElectorStateGasLimit};
+  cg::run(*combined.snapshot, combined.account, cg::Getter::Participants, {}, measured, discard).ensure();
+  cg::run(*combined.snapshot, combined.account, cg::Getter::PastElections, {}, measured, discard).ensure();
+  cg::GasBudget injected{measured.used() + 26804 - 1};
   cg::run(*combined.snapshot, combined.account, cg::Getter::Participants, {}, injected, discard).ensure();
   cg::run(*combined.snapshot, combined.account, cg::Getter::PastElections, {}, injected, discard).ensure();
   bool accepted = false;

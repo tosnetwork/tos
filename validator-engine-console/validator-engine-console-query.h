@@ -950,9 +950,9 @@ class CreatePqStakeAuthorizationQuery : public Query {
     return "create-stake-authorization";
   }
   static std::string get_help() {
-    return "create-stake-authorization <election-date> <max-factor> <adnl-addr> <stake-owner> "
-           "<fname>\tsign this validator's permission to stand in an election with that account's "
-           "money";
+    return "create-stake-authorization <election-date> <max-factor> <adnl-addr> <src-addr> "
+           "<fname>\tsign this validator's stake for the account that sends it, which must be "
+           "the node's validator id";
   }
   std::string name() const override {
     return get_name();
@@ -962,7 +962,7 @@ class CreatePqStakeAuthorizationQuery : public Query {
   td::uint32 date_;
   td::uint32 max_factor_;
   tos::Bits256 adnl_addr_;
-  tos::Bits256 stake_owner_;
+  tos::Bits256 src_addr_;
   std::string fname_;
 };
 
@@ -980,7 +980,7 @@ class CreatePqStakeAuthorizationWithKeyQuery : public Query {
     return "create-stake-authorization-with-key";
   }
   static std::string get_help() {
-    return "create-stake-authorization-with-key <election-date> <max-factor> <adnl-addr> <stake-owner> <key-id> "
+    return "create-stake-authorization-with-key <election-date> <max-factor> <adnl-addr> <src-addr> <key-id> "
            "<fname>\tas create-stake-authorization, refused unless <key-id> is the key the schedule assigns to the "
            "election";
   }
@@ -992,7 +992,7 @@ class CreatePqStakeAuthorizationWithKeyQuery : public Query {
   td::uint32 date_;
   td::uint32 max_factor_;
   tos::Bits256 adnl_addr_;
-  tos::Bits256 stake_owner_;
+  tos::Bits256 src_addr_;
   tos::Bits256 key_id_;
   std::string fname_;
 };

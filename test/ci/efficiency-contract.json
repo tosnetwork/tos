@@ -1,6 +1,6 @@
 {
   "baseline": "c253e9e9c7cd9c1aaa6f9a6ca6ee223621529efe",
-  "original_assembly_sha256": "37da69c682f3dee1171372608e8793acc1a06ee4e30305f894316550da984a22",
+  "original_assembly_sha256": "778ea51f4aa0d62119276ad8b78886a4f8d6894d665f3f89401bf142e2deb78c",
   "steps": [
     {
       "workflow": "build-tos-linux-x86-64-werror.yml",
@@ -178,7 +178,7 @@
       "job": "native",
       "name": "Build node and genesis configuration paths",
       "original_sha256": "6a9977f3a257c8d686aafbe9d03550862ffd92e00c7fb5e06eeabe508fc103bc",
-      "run_sha256": "3670e9a8748c6b15497e944af75b97b7b931b67c6fd4a1ffa550bf622e28d7a0",
+      "run_sha256": "905112b5745846b46a85f6f03ea0cdad03e06f49fd9422b51a16bd3800694301",
       "original_if": null,
       "deduplicated": true
     },

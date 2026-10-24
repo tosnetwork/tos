@@ -35,10 +35,19 @@ pub struct PoolMaintenance {
 /// by separating the owner role (cold wallet) from the validator role (hot wallet).
 #[async_trait::async_trait]
 pub trait NominatorWrapper: SmartContract + Send + Sync {
+    /// Confirmation value funded by the pool in addition to the net stake.
+    /// The single nominator instead forwards the caller's fee allowance.
+    fn stake_confirmation_fee(&self) -> u64 {
+        0
+    }
+
+    /// Balance the pool must retain when it forwards a stake, in nanotos.
+    fn stake_storage_reserve(&self) -> u64 {
+        1_000_000_000
+    }
+
     /// Get the owner and validator addresses stored in the contract
     async fn get_roles(&self) -> anyhow::Result<NominatorRoles>;
-    /// Read the controller-authoritative next relay ID; do not derive it from wall time.
-    async fn next_relay_query(&self) -> anyhow::Result<u64>;
     /// Get pool data (parsed persistent storage of nominator)
     async fn get_pool_data(&self) -> anyhow::Result<PoolData>;
     /// Return the state_init used for deploying this contract (if available).
@@ -67,8 +76,6 @@ pub struct NominatorRoles {
     pub owner_address: MsgAddressInt,
     /// Validator address (can stake or recover funds to/from elector)
     pub validator_address: MsgAddressInt,
-    /// Validator controller address (the account a stake is relayed through)
-    pub controller_address: MsgAddressInt,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]

@@ -15,19 +15,16 @@ use common::{
     app_config::{BindingStatus, ElectionsConfig, NodeBinding, StakePolicy},
     chain_utils::nanotos_to_dec_string,
     snapshot::{
-        ElectionsParticipantSnapshot, ElectionsSnapshot, ElectionsStatus,
-        OperatingAuthorizationSnapshot, OurElectionParticipant, ParticipationStatus, SnapshotStore,
-        StakeSubmission, TimeRange, ValidatorNodeSnapshot, ValidatorsSnapshot,
+        ElectionsParticipantSnapshot, ElectionsSnapshot, ElectionsStatus, OurElectionParticipant,
+        ParticipationStatus, SnapshotStore, StakeSubmission, TimeRange, ValidatorNodeSnapshot,
+        ValidatorsSnapshot,
     },
     task_cancellation::CancellationCtx,
     time_format,
 };
 use contracts::{
     ElectionsInfo, ElectorWrapper, NominatorWrapper, Participant, Wallet,
-    control_reads::ElectorSnapshot,
-    elector::PastElections,
-    nominator,
-    validator_controller::{ControllerOperations, OperatingThresholds},
+    control_reads::ElectorSnapshot, elector::PastElections, nominator,
 };
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
@@ -40,18 +37,16 @@ use std::{
 mod runner_tests;
 
 const EXPIRED_LAG: u64 = 300; // 5 minutes
-/// Caller-funded relay budget for the native profile: verification, callbacks and ACK.
-/// The contracts derive the required amount from the live gas/forwarding schedule;
-/// unused funds return to the pool. This is an envelope, not a new protocol fee.
-const POOL_RELAY_BUDGET: u64 = 20_000_000_000;
+/// Value the elector keeps from a stake message to pay for its confirmation.
+const ELECTOR_STAKE_FEE: u64 = 1_000_000_000;
+/// Gas fee consumed by nominator pool.
+const NPOOL_COMPUTE_FEE: u64 = 200_000_000;
 /// Caller funds for a direct, owner-authorized recovery.
 const RECOVER_FEE: u64 = 200_000_000;
 /// Gas fee consumed by validator wallet.
 const WALLET_COMPUTE_FEE: u64 = 200_000_000;
 /// Reserved minimum balance on the wallet (or pool) for stake calculations.
 const MIN_NANOTOS_FOR_STORAGE: u64 = 1_000_000_000;
-/// How often the pool controller's operating authorization is re-read.
-const OPERATING_CHECK_INTERVAL: u64 = 300;
 
 type OnStatusChange = Arc<dyn Fn(HashMap<String, BindingStatus>) + Send + Sync>;
 
@@ -91,8 +86,6 @@ struct Node {
     wallet: Arc<dyn Wallet>,
     /// Nominator pool instance. Optional.
     pool: Option<Arc<dyn NominatorWrapper>>,
-    /// Public original deployment StateInit BOC, supplied by the binding.
-    controller_birth_state_init_boc: Option<String>,
     /// Address to which to send commands: stake & recover.
     /// It can be an elector address or a nominator pool address.
     elections_address: MsgAddressInt,
@@ -108,8 +101,6 @@ struct Node {
     binding_status: BindingStatus,
     /// Amount to recover from elector, computed each tick.
     last_recover_amount: u64,
-    /// The pool controller's operating authorization, as last read.
-    operating_authorization: Option<OperatingAuthorizationSnapshot>,
 }
 
 impl Node {
@@ -126,13 +117,6 @@ impl Node {
     fn elections_addr(&self) -> MsgAddressInt {
         self.elections_address.clone()
     }
-    async fn elector_validator_id(&self) -> anyhow::Result<Option<Vec<u8>>> {
-        let Some(pool) = &self.pool else {
-            return Ok(None);
-        };
-        let roles = pool.get_roles().await?;
-        Ok(Some(roles.controller_address.address().get_bytestring(0)))
-    }
     fn reset_participation(&mut self) {
         self.participant = None;
         self.submission_time = None;
@@ -142,14 +126,15 @@ impl Node {
     }
     async fn stake_balance(&mut self, gas_fee: u64) -> anyhow::Result<u64> {
         match self.pool.as_ref() {
-            Some(pool) => self.api.account(&pool.address().to_string()).await.map(|x| x.balance()),
-            None => self
-                .api
-                .account(&self.wallet.address().to_string())
-                .await
-                .map(|x| x.balance().saturating_sub(gas_fee)),
+            Some(pool) => self.api.account(&pool.address().to_string()).await.map(|x| {
+                x.balance()
+                    .saturating_sub(pool.stake_storage_reserve())
+                    .saturating_sub(pool.stake_confirmation_fee())
+            }),
+            None => self.api.account(&self.wallet.address().to_string()).await.map(|x| {
+                x.balance().saturating_sub(gas_fee).saturating_sub(MIN_NANOTOS_FOR_STORAGE)
+            }),
         }
-        .map(|b| b.saturating_sub(MIN_NANOTOS_FOR_STORAGE))
     }
     async fn wallet_balance(&mut self) -> anyhow::Result<u64> {
         self.api.account(&self.wallet.address().to_string()).await.map(|x| x.balance())
@@ -180,8 +165,6 @@ pub(crate) struct ElectionRunner {
     default_max_factor: f32,
     default_stake_policy: StakePolicy,
     past_elections: Vec<PastElections>,
-    /// When a controller's operating authorization is reported as running low.
-    operating_thresholds: OperatingThresholds,
     // Snapshot cache updated during tick execution and published to SnapshotStore in run_loop().
     snapshot_cache: SnapshotCache,
 }
@@ -259,9 +242,6 @@ impl ElectionRunner {
                                 .unwrap_or_else(|| elector.address()),
                             wallet,
                             pool,
-                            controller_birth_state_init_boc: binding.and_then(|binding| {
-                                binding.controller_birth_state_init_boc.clone()
-                            }),
                             excluded,
                             stake_policy,
                             key_id: vec![],
@@ -276,12 +256,10 @@ impl ElectionRunner {
                             validator_config: ValidatorConfig::new(),
                             binding_status,
                             last_recover_amount: 0,
-                            operating_authorization: None,
                         },
                     ))
                 })
                 .collect::<HashMap<String, Node>>(),
-            operating_thresholds: operating_thresholds(elections_config),
             snapshot_cache: SnapshotCache::default(),
             past_elections: vec![],
         }
@@ -322,7 +300,6 @@ impl ElectionRunner {
                     self.refresh_validator_set().await;
                     self.refresh_next_validator_set().await;
                     self.refresh_validator_configs().await;
-                    self.refresh_operating_authorizations().await;
 
                     if let Err(e) = &self.run_with_snapshot(snapshot).await {
                         tracing::error!("runner tick error: {:#}", e);
@@ -440,11 +417,9 @@ impl ElectionRunner {
                 // Reset previous state; only mark as accepted if present in current participants
                 node.stake_accepted = false;
                 node.accepted_stake_amount = None;
-                let validator_id = node.elector_validator_id().await?;
-                if let Some(p) = elections_info
-                    .participants
-                    .iter()
-                    .find(|p| validator_id.as_deref() == Some(p.pub_key.as_slice()))
+                let validator_id = node.wallet_addr();
+                if let Some(p) =
+                    elections_info.participants.iter().find(|p| p.wallet_addr == validator_id)
                 {
                     node.stake_accepted = true;
                     node.accepted_stake_amount = Some(p.stake);
@@ -577,15 +552,11 @@ impl ElectionRunner {
         let mut node = self.nodes.get_mut(node_id).expect("node not found");
         // Find validator key for current elections in the validator config
         let validator_key = node.find_election_key(election_id).await;
-        // A PQ participant is keyed by its controller/validator identity. The
-        // election key below is only an Ed25519 transport key for ADNL.
-        let validator_id = node.elector_validator_id().await?;
+        // A member is named by the account that sends its stake: the pool when
+        // there is one, otherwise the wallet.
+        let validator_id = node.wallet_addr();
         let participant = validator_key.as_ref().and_then(|_| {
-            elections_info
-                .participants
-                .iter()
-                .find(|p| validator_id.as_deref() == Some(p.pub_key.as_slice()))
-                .cloned()
+            elections_info.participants.iter().find(|p| p.wallet_addr == validator_id).cloned()
         });
         let stake = Self::calc_stake(
             &mut node,
@@ -652,7 +623,6 @@ impl ElectionRunner {
                     max_factor,
                 });
                 node.key_id = key_id;
-                warn_operating_authorization(node_id, node);
                 Self::send_stake(node_id, node, stake).await?;
                 Ok(())
             }
@@ -715,7 +685,6 @@ impl ElectionRunner {
                         if let Some(p) = node.participant.as_mut() {
                             p.stake = stake;
                         }
-                        warn_operating_authorization(node_id, node);
                         Self::send_stake(node_id, node, stake).await?;
                     }
                 }
@@ -725,15 +694,9 @@ impl ElectionRunner {
     }
 
     async fn send_stake(node_id: &str, node: &mut Node, stake: u64) -> anyhow::Result<()> {
-        if node.pool.is_none() {
-            anyhow::bail!(
-                "node [{node_id}] cannot stake directly from a wallet to the PQ elector: an admitted validator controller and pool are required"
-            );
-        }
         tracing::info!("node [{}] build stake message", node_id);
         let payload = Self::build_new_stake_payload(node_id, node).await?;
-        // For simplicity we always assume that the node has nominator pool.
-        let fee = POOL_RELAY_BUDGET;
+        let fee = ELECTOR_STAKE_FEE.checked_add(NPOOL_COMPUTE_FEE).context("stake fee overflow")?;
         let stake_balance = node.stake_balance(fee).await?;
         if stake_balance < stake {
             anyhow::bail!(
@@ -742,17 +705,23 @@ impl ElectionRunner {
                 stake_balance as f64 / 1_000_000_000.0
             );
         }
+        // A pool holds the stake and the wallet sends only the fees; without a pool
+        // the wallet sends the stake itself.
+        let send_value = match node.pool {
+            Some(_) => fee,
+            None => stake.checked_add(fee).context("stake value overflow")?,
+        };
+        let required =
+            send_value.checked_add(WALLET_COMPUTE_FEE).context("stake value overflow")?;
         let wallet_balance = node.wallet_balance().await?;
-        if wallet_balance < fee + WALLET_COMPUTE_FEE {
+        if wallet_balance < required {
             anyhow::bail!(
                 "low wallet balance: required={} TOS, available={} TOS",
-                (fee + WALLET_COMPUTE_FEE) as f64 / 1_000_000_000.0,
+                required as f64 / 1_000_000_000.0,
                 wallet_balance as f64 / 1_000_000_000.0
             );
         }
 
-        // The pool holds the stake; the operator wallet sends only relay gas.
-        let send_value = fee;
         let msg_boc =
             write_boc(&node.wallet.message(node.elections_addr(), send_value, payload).await?)?;
         tracing::debug!("wallet external message: boc={}", hex::encode(&msg_boc));
@@ -773,6 +742,9 @@ impl ElectionRunner {
     }
 
     async fn build_new_stake_payload(node_id: &str, node: &mut Node) -> anyhow::Result<Cell> {
+        // The elector checks the signature against the account the stake arrives
+        // from, so the node signs for the pool when there is one.
+        let src_addr = node.wallet_addr();
         let Some(participant) = &mut node.participant else {
             anyhow::bail!("node [{}] no participant info", node_id);
         };
@@ -791,17 +763,13 @@ impl ElectionRunner {
         if !(1.0..=3.0).contains(&(participant.max_factor as f32 / 65536.0)) {
             anyhow::bail!("<max-factor> must be a real number 1..3");
         }
-        let pool = node.pool.as_ref().ok_or_else(|| {
-            anyhow::anyhow!("node [{node_id}] needs a PQ validator pool and controller to stake")
-        })?;
-        let stake_owner = pool.address().address().get_bytestring(0);
         let authorization = node
             .api
             .create_pq_stake_authorization(
                 participant.election_id as u32,
                 participant.max_factor,
                 &participant.adnl_addr,
-                &stake_owner,
+                &src_addr,
             )
             .await?;
         anyhow::ensure!(
@@ -809,40 +777,31 @@ impl ElectionRunner {
             "node returned unsupported PQ stake algorithm {}",
             authorization.algorithm_id
         );
-        let controller_address = pool.get_roles().await?.controller_address;
         anyhow::ensure!(
-            controller_address.workchain_id() == -1,
-            "pool validator controller must be a masterchain account"
+            authorization.validator_id == src_addr,
+            "node [{node_id}] signs as validator {} but stakes from {}; set the node's validator id to the staking account",
+            hex::encode(&authorization.validator_id),
+            hex::encode(&src_addr)
         );
-        let expected_validator_id = controller_address.address().get_bytestring(0);
-        let artifact_path = node.controller_birth_state_init_boc.as_deref().ok_or_else(|| {
-            anyhow::anyhow!("node [{node_id}] has no controller birth StateInit BOC configured; first PQ stake refused locally")
-        })?;
-        let node_id_bytes: [u8; 32] = authorization
-            .validator_id
-            .as_slice()
-            .try_into()
-            .map_err(|_| anyhow::anyhow!("node PQ stake validator_id is not 32 bytes"))?;
-        let pool_id_bytes: [u8; 32] = expected_validator_id
-            .as_slice()
-            .try_into()
-            .map_err(|_| anyhow::anyhow!("pool validator controller ID is not 32 bytes"))?;
-        let live_policy = node.api.live_controller_policy().await?;
-        let body = nominator::new_stake_from_birth_artifact(
-            &nominator::NewStakeParams {
-                query_id: pool.next_relay_query().await?,
-                stake_amount: participant.stake,
-                validator_pubkey: authorization.public_key.as_slice(),
-                stake_at: participant.election_id as u32,
-                max_factor: participant.max_factor,
-                adnl_addr: participant.adnl_addr.as_slice(),
-                signature: authorization.signature.as_slice(),
+        let params = nominator::NewStakeParams {
+            query_id: UnixTime::now(),
+            stake_amount: match &node.pool {
+                Some(pool) => participant
+                    .stake
+                    .checked_add(pool.stake_confirmation_fee())
+                    .context("pool stake value overflow")?,
+                None => participant.stake,
             },
-            std::path::Path::new(artifact_path),
-            &node_id_bytes,
-            &pool_id_bytes,
-            &live_policy,
-        )?;
+            validator_pubkey: authorization.public_key.as_slice(),
+            stake_at: participant.election_id as u32,
+            max_factor: participant.max_factor,
+            adnl_addr: participant.adnl_addr.as_slice(),
+            signature: authorization.signature.as_slice(),
+        };
+        let body = match node.pool {
+            Some(_) => nominator::new_stake(&params)?,
+            None => nominator::elector_new_stake(&params)?,
+        };
 
         tracing::debug!("message body {}", body);
         Ok(body)
@@ -994,24 +953,22 @@ impl ElectionRunner {
         min_stake: u64,
     ) -> anyhow::Result<u64> {
         tracing::info!("node [{}] calc stake", node_id);
-        let fee = POOL_RELAY_BUDGET;
-        let mut frozen_stake = 0;
-        // Calculate frozen stake from past elections
+        let fee = ELECTOR_STAKE_FEE.checked_add(NPOOL_COMPUTE_FEE).context("stake fee overflow")?;
+        // Frozen stake from past elections, which the elector keys by the staking account
+        let validator_id = <[u8; 32]>::try_from(node.wallet_addr())
+            .map_err(|_| anyhow::anyhow!("staking account is not 256 bits"))?;
+        let mut frozen_stake: u64 = 0;
         for election in past_elections {
-            let validator_entry = node.find_election_key(election.election_id).await;
-            // If validator key is found in the past election, add frozen stake to the total
-            if let Some(entry) = validator_entry {
-                let mut pubkey_array = [0u8; 32];
-                pubkey_array.copy_from_slice(&entry.public_key);
-                // Fetch frozen stake from the past election by validator public key
-                frozen_stake +=
-                    election.frozen_map.get(&pubkey_array).map(|frozen| frozen.stake).unwrap_or(0);
-            }
+            let frozen = election.frozen_map.get(&validator_id).map(|f| f.stake).unwrap_or(0);
+            frozen_stake = frozen_stake.checked_add(frozen).context("frozen stake overflow")?;
         }
 
         // Get pool free balance
         let pool_free_balance = node.stake_balance(fee).await?;
-        let total_balance = frozen_stake + pool_free_balance + elections_stake;
+        let total_balance = frozen_stake
+            .checked_add(pool_free_balance)
+            .and_then(|sum| sum.checked_add(elections_stake))
+            .context("stake balance overflow")?;
         tracing::info!(
             "node [{}] frozen_stake={} TOS, pool_balance={} TOS, elections_stake={} TOS, total_balance={} TOS",
             node_id,
@@ -1097,43 +1054,6 @@ impl ElectionRunner {
             }
         }
         self.snapshot_cache.last_next_validator_set = None;
-    }
-
-    /// Reads each pool controller's operating authorization (kind 4) and reports it.
-    /// Only reads: the authorization is signed offline by the controller root, so a
-    /// shortfall is logged and published, never repaired here.
-    pub(crate) async fn refresh_operating_authorizations(&mut self) {
-        let now = time_format::now();
-        let thresholds = self.operating_thresholds;
-        for (node_id, node) in self.nodes.iter_mut() {
-            let Some(pool) = node.pool.clone() else {
-                continue;
-            };
-            let fresh = node.operating_authorization.as_ref().is_some_and(|last| {
-                last.error.is_none()
-                    && now.saturating_sub(last.checked_at) < OPERATING_CHECK_INTERVAL
-            });
-            if fresh {
-                continue;
-            }
-            let previous = node.operating_authorization.as_ref();
-            let controller = match pool.get_roles().await {
-                Ok(roles) => roles.controller_address,
-                Err(e) => {
-                    let error = format!("cannot read the pool's controller: {e:#}");
-                    let snapshot = failed_operating_snapshot(previous, None, error, now);
-                    log_operating_authorization(node_id, &snapshot);
-                    node.operating_authorization = Some(snapshot);
-                    continue;
-                }
-            };
-            let reading = node.api.controller_operations(&controller).await;
-            let snapshot = operating_snapshot(&controller, reading, previous, now, &thresholds);
-            if let Some(snapshot) = &snapshot {
-                log_operating_authorization(node_id, snapshot);
-            }
-            node.operating_authorization = snapshot;
-        }
     }
 
     async fn refresh_validator_configs(&mut self) {
@@ -1286,7 +1206,6 @@ impl ElectionRunner {
                 stake_accepted: node.stake_accepted,
                 last_error: node.last_error.clone(),
                 binding_status: node.binding_status,
-                operating_authorization: node.operating_authorization.clone(),
             });
         }
 
@@ -1524,164 +1443,4 @@ async fn find_validator_entries(
     }
 
     Ok((current_entry, is_in_next))
-}
-
-fn operating_thresholds(config: &ElectionsConfig) -> OperatingThresholds {
-    let warnings = &config.operating_authorization;
-    let day = 86_400_u64;
-    OperatingThresholds {
-        target_runway_secs: u64::from(warnings.target_days).saturating_mul(day),
-        runway_warn_percent: warnings.warn_percent,
-        expiry_warn_secs: u64::from(warnings.expiry_warn_days).saturating_mul(day),
-    }
-}
-
-/// What the elections task publishes about a controller's operating authorization.
-/// `None` when the provider cannot read it at all.
-/// A failed read. The last successful values, if any, stay visible but are marked
-/// historical; a reader must not take them for the current state.
-pub(crate) fn failed_operating_snapshot(
-    previous: Option<&OperatingAuthorizationSnapshot>,
-    controller: Option<&MsgAddressInt>,
-    error: String,
-    now: u64,
-) -> OperatingAuthorizationSnapshot {
-    let mut snapshot = match previous {
-        Some(previous) => previous.clone(),
-        None => OperatingAuthorizationSnapshot::default(),
-    };
-    // The values keep the identity they were read for. A failed read for another
-    // controller is named separately, never written over them.
-    snapshot.attempted_controller = controller
-        .map(ToString::to_string)
-        .filter(|attempted| previous.is_none() || *attempted != snapshot.controller);
-    if previous.is_none() {
-        snapshot.controller = snapshot.attempted_controller.clone().unwrap_or_default();
-    }
-    snapshot.stale = snapshot.checked_at > 0;
-    snapshot.attempted_at = now;
-    snapshot.error = Some(error);
-    snapshot
-}
-
-pub(crate) fn operating_snapshot(
-    controller: &MsgAddressInt,
-    reading: anyhow::Result<Option<ControllerOperations>>,
-    previous: Option<&OperatingAuthorizationSnapshot>,
-    now: u64,
-    thresholds: &OperatingThresholds,
-) -> Option<OperatingAuthorizationSnapshot> {
-    let failed = |error: String| failed_operating_snapshot(previous, Some(controller), error, now);
-    let operations = match reading {
-        Ok(Some(operations)) => operations,
-        Ok(None) => return None,
-        Err(e) => return Some(failed(format!("{e:#}"))),
-    };
-    let assessment = match operations.assess(controller, now, thresholds) {
-        Ok(assessment) => assessment,
-        Err(e) => return Some(failed(format!("{e:#}"))),
-    };
-    let state = &operations.state;
-    Some(OperatingAuthorizationSnapshot {
-        controller: controller.to_string(),
-        checked_at: now,
-        block_seqno: operations.checkpoint.seqno,
-        attempted_at: now,
-        error: None,
-        stale: false,
-        attempted_controller: None,
-        funds: state.funds.to_string(),
-        allowance: state.allowance.to_string(),
-        per_request_limit: state.limit.to_string(),
-        storage_floor: state.floor.to_string(),
-        expires: state.expires,
-        payer: state.payer.to_string(),
-        grant: assessment.grant.to_string(),
-        stakes_remaining: assessment.stakes_remaining.to_string(),
-        runway_secs: assessment.runway_secs,
-        expires_in_secs: assessment.expires_in_secs,
-        relay_pending: operations.relay_pending || operations.retry_fees_held,
-        blocks_next_stake: assessment.blocks_next_stake(),
-        warnings: assessment.warnings.iter().map(ToString::to_string).collect(),
-    })
-}
-
-const RENEWAL_HINT: &str = "prepare a renewal with `tosctl controller operations plan` and sign it offline with the controller root";
-
-fn log_operating_authorization(node_id: &str, snapshot: &OperatingAuthorizationSnapshot) {
-    if let Some(error) = &snapshot.error {
-        if snapshot.stale {
-            tracing::warn!(
-                "node [{}] controller {} operating authorization could not be checked: {}; the published values are from {} and may be out of date",
-                node_id,
-                snapshot.controller,
-                error,
-                time_format::format_ts(snapshot.checked_at)
-            );
-        } else {
-            tracing::warn!(
-                "node [{}] controller {} operating authorization could not be checked: {}",
-                node_id,
-                snapshot.controller,
-                error
-            );
-        }
-        return;
-    }
-    tracing::info!(
-        "node [{}] controller {} operating authorization: funds={} allowance={} limit={} expires={} grant={} stakes_remaining={} runway_secs={}",
-        node_id,
-        snapshot.controller,
-        snapshot.funds,
-        snapshot.allowance,
-        snapshot.per_request_limit,
-        snapshot.expires,
-        snapshot.grant,
-        snapshot.stakes_remaining,
-        snapshot.runway_secs
-    );
-    for warning in &snapshot.warnings {
-        if snapshot.blocks_next_stake {
-            tracing::error!(
-                "node [{}] controller {} operating authorization: {}; {}",
-                node_id,
-                snapshot.controller,
-                warning,
-                RENEWAL_HINT
-            );
-        } else {
-            tracing::warn!(
-                "node [{}] controller {} operating authorization: {}; {}",
-                node_id,
-                snapshot.controller,
-                warning,
-                RENEWAL_HINT
-            );
-        }
-    }
-}
-
-/// Repeats, at the moment of staking, why the relay is expected to be refused.
-/// The stake is still sent: this task cannot renew the authorization, and a stake
-/// the controller refuses comes back to the pool.
-fn warn_operating_authorization(node_id: &str, node: &Node) {
-    let Some(snapshot) = &node.operating_authorization else {
-        return;
-    };
-    if snapshot.blocks_next_stake {
-        tracing::error!(
-            "node [{}] staking although controller {} operating authorization will refuse the relay: {}; {}",
-            node_id,
-            snapshot.controller,
-            snapshot.warnings.join("; "),
-            RENEWAL_HINT
-        );
-    } else if !snapshot.warnings.is_empty() {
-        tracing::warn!(
-            "node [{}] staking with controller {} operating authorization warnings: {}",
-            node_id,
-            snapshot.controller,
-            snapshot.warnings.join("; ")
-        );
-    }
 }

@@ -136,13 +136,14 @@ async def stake(node, election: int, key_id: bytes | None = None):
         election_date: int
         max_factor: int
         adnl_addr: bytes
-        stake_owner: bytes
+        src_addr: bytes
 
     common: StakeArguments = {
         "election_date": election,
         "max_factor": 0x10000,
         "adnl_addr": node.validator_key.id,
-        "stake_owner": bytes([0x77]) * 32,
+        # The node signs only for the account it is bound to.
+        "src_addr": FIXED_VALIDATOR_ID,
     }
     if key_id is None:
         request = tos_api.Engine_validator_createPqStakeAuthorizationRequest(**common)

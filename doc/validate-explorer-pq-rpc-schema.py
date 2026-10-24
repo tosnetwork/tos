@@ -59,10 +59,6 @@ SIZE_V3 = SIZE_V2 + (
 )
 
 
-def controller_codes(count):
-    return [base64.b64encode(i.to_bytes(32, "big")).decode() for i in range(count)]
-
-
 def size_limits(version):
     fields = {None: (), 1: SIZE_V1, 2: SIZE_V2, 3: SIZE_V3}[version]
     effective = dict.fromkeys(SIZE_V3, 1)
@@ -289,16 +285,6 @@ def main(schema=SCHEMA):
             True,
         ),
         (
-            "ControllerPolicy",
-            {"kind": "validator_controller_policy_v1", "controller_codes": []},
-            True,
-        ),
-        (
-            "ControllerPolicy",
-            {"kind": "validator_controller_policy_v1", "controller_codes": controller_codes(9)},
-            False,
-        ),
-        (
             "FeeMetadata",
             dict(
                 schema_version=1,
@@ -418,20 +404,8 @@ def main(schema=SCHEMA):
         value=dict(kind="global_version", version=16, capabilities="18446744073709551615"),
     )
     cases.append(("DecodedConfig", global_config, True))
-    cases.append(("DecodedConfig", {**global_config, "param": 47}, False))
+    cases.append(("DecodedConfig", {**global_config, "param": 43}, False))
     cases.extend(size_limit_cases(block))
-    controller_max = dict(
-        kind="validator_controller_policy_v1", controller_codes=controller_codes(8)
-    )
-    controller_duplicate = dict(
-        kind="validator_controller_policy_v1", controller_codes=[encoded(32)] * 2
-    )
-    cases.extend(
-        [
-            ("ControllerPolicy", controller_max, True),
-            ("ControllerPolicy", controller_duplicate, False),
-        ]
-    )
     policy = dict(
         kind="auth_policy_v1",
         network_tag=encoded(32),
@@ -464,18 +438,6 @@ def main(schema=SCHEMA):
             "nonempty-certificate",
         ),
         (
-            "ControllerPolicy",
-            {**controller_max, "controller_codes": controller_codes(9)},
-            ["$defs", "ControllerPolicy", "properties", "controller_codes", "maxItems"],
-            "distinct-controller-count",
-        ),
-        (
-            "ControllerPolicy",
-            controller_duplicate,
-            ["$defs", "ControllerPolicy", "properties", "controller_codes", "uniqueItems"],
-            "controller-uniqueness",
-        ),
-        (
             "SizeLimits",
             {**size_limits(1), "configured": {}},
             ["$defs", "ConfiguredSizeLimitsV1", "allOf", 1, "required"],
@@ -490,7 +452,7 @@ def main(schema=SCHEMA):
         (
             "DecodedConfig",
             decoded_sizes(size_limits(None), block, "present"),
-            ["$defs", "DecodedConfig", "allOf", 7],
+            ["$defs", "DecodedConfig", "allOf", 6],
             "size-present-wire-version",
         ),
         (

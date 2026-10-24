@@ -178,7 +178,7 @@ class Seeder:
         print(f"  {name}: {address}")
         return address
 
-    def ensure_nominator_pool(self, owner_name: str, validator_name: str, controller: str):
+    def ensure_nominator_pool(self, owner_name: str, validator_name: str):
         """Deploy the canonical pool and enter through its real deposit path."""
         pool_name = "toscan-staking"
         if pool_name not in self.config_data().get("pools", {}):
@@ -192,7 +192,6 @@ class Seeder:
                 owner_name,
                 "--validator",
                 validator_name,
-                f"--controller={controller}",
                 "--validator-reward-share",
                 "4000",
                 "--max-nominators",
@@ -416,12 +415,9 @@ class Seeder:
                 "--yes",
             ],
         )
-        # A stand-in for the validator controller a stake is relayed through. This seed
-        # deploys no controller, so the pool it produces can hold deposits and be read but
-        # cannot carry a stake to the elector.
-        nominator_pool = self.ensure_nominator_pool(
-            "atlas-owner", "nova-provider", "-1:" + "00" * 32
-        )
+        # The explorer needs a pool with a real deposit to read; staking it would also
+        # need a node whose validator id is this pool, which a dev seed does not run.
+        nominator_pool = self.ensure_nominator_pool("atlas-owner", "nova-provider")
 
         value = {
             "chain_id": chain_id,

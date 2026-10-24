@@ -150,7 +150,7 @@ struct CreatePqStakeAuthorizationRq {
     election_date: u32,
     max_factor: u32,
     adnl_addr: Vec<u8>,
-    stake_owner: Vec<u8>,
+    src_addr: Vec<u8>,
 }
 
 impl ToFromTL for CreatePqStakeAuthorizationRqRs {
@@ -159,12 +159,12 @@ impl ToFromTL for CreatePqStakeAuthorizationRqRs {
 
     fn serialize(rq: &Self::Rq) -> anyhow::Result<TLObject> {
         anyhow::ensure!(rq.adnl_addr.len() == 32, "PQ stake ADNL address must be 32 bytes");
-        anyhow::ensure!(rq.stake_owner.len() == 32, "PQ stake owner must be 32 bytes");
+        anyhow::ensure!(rq.src_addr.len() == 32, "PQ stake source address must be 32 bytes");
         Ok(tos::rpc::engine::validator::CreatePqStakeAuthorization {
             election_date: i32::try_from(rq.election_date)?,
             max_factor: i32::try_from(rq.max_factor)?,
             adnl_addr: UInt256::from_raw(rq.adnl_addr.clone(), 256),
-            stake_owner: UInt256::from_raw(rq.stake_owner.clone(), 256),
+            src_addr: UInt256::from_raw(rq.src_addr.clone(), 256),
         }
         .into_tl_object())
     }
@@ -874,13 +874,13 @@ impl ClientAPI for ControlClientAdnl {
         election_date: u32,
         max_factor: u32,
         adnl_addr: &[u8],
-        stake_owner: &[u8],
+        src_addr: &[u8],
     ) -> anyhow::Result<PqStakeAuthorization> {
         self.do_rq::<CreatePqStakeAuthorizationRqRs>(&CreatePqStakeAuthorizationRq {
             election_date,
             max_factor,
             adnl_addr: adnl_addr.to_vec(),
-            stake_owner: stake_owner.to_vec(),
+            src_addr: src_addr.to_vec(),
         })
         .await
     }

@@ -73,12 +73,6 @@ pub struct PoolImportCmd {
         help = "Pool contract address"
     )]
     address: String,
-    #[arg(
-        allow_hyphen_values = true, value_parser = super::utils::address_arg,
-        long,
-        help = "Validator controller address the pool relays its stake through"
-    )]
-    controller: String,
 }
 
 #[derive(clap::Args, Clone)]
@@ -125,12 +119,6 @@ pub struct PoolNominatorCreateCmd {
     owner: String,
     #[arg(long, help = "Validator wallet name from config (usually the node's wallet)")]
     validator: String,
-    #[arg(
-        allow_hyphen_values = true, value_parser = super::utils::address_arg,
-        long,
-        help = "Validator controller address the pool relays its stake through (-1:<hex>)"
-    )]
-    controller: String,
     #[arg(
         long,
         help = "Validator reward share in basis points (e.g. 4000 = 40%)",
@@ -266,12 +254,6 @@ pub struct PoolSingleCreateCmd {
     owner: String,
     #[arg(long, help = "Validator wallet name from config (usually the node's wallet)")]
     validator: String,
-    #[arg(
-        allow_hyphen_values = true, value_parser = super::utils::address_arg,
-        long,
-        help = "Validator controller address the pool relays its stake through"
-    )]
-    controller: String,
 }
 
 #[derive(clap::Args, Clone)]
@@ -461,11 +443,7 @@ impl PoolImportCmd {
             );
         }
 
-        let pool_config = PoolConfig::SNP {
-            address: Some(addr_trimmed.to_string()),
-            owner: None,
-            controller: self.controller.clone(),
-        };
+        let pool_config = PoolConfig::SNP { address: Some(addr_trimmed.to_string()), owner: None };
         config.pools.insert(self.name.clone(), pool_config);
         super::utils::save_config(&config, config_path)?;
 
@@ -502,7 +480,7 @@ impl PoolGetCmd {
 
         if self.format == super::output_format::OutputFormat::Json {
             let json_val = match pool {
-                PoolConfig::SNP { address, owner, controller } => {
+                PoolConfig::SNP { address, owner } => {
                     let mut obj = serde_json::json!({
                         "name": self.name,
                         "type": "single-nominator",
@@ -545,7 +523,6 @@ impl PoolGetCmd {
                 PoolConfig::NominatorPool {
                     address,
                     owner,
-                    controller,
                     validator_reward_share,
                     max_nominators,
                     min_validator_stake,
@@ -554,7 +531,6 @@ impl PoolGetCmd {
                     let mut obj = serde_json::json!({
                         "name": self.name,
                         "type": "nominator-pool",
-                        "controller": controller,
                         "validator_reward_share": *validator_reward_share as f64 / 100.0,
                         "max_nominators": max_nominators,
                         "min_validator_stake_tos": *min_validator_stake as f64 / 1_000_000_000.0,
@@ -588,7 +564,7 @@ impl PoolGetCmd {
             println!("{}", serde_json::to_string_pretty(&json_val)?);
         } else {
             match pool {
-                PoolConfig::SNP { address, owner, controller } => {
+                PoolConfig::SNP { address, owner } => {
                     println!("\n{} Pool '{}' (single-nominator)", "Pool".cyan().bold(), self.name);
                     println!("  {}", "\u{2500}".repeat(56).dimmed());
 
@@ -634,7 +610,6 @@ impl PoolGetCmd {
                 PoolConfig::NominatorPool {
                     address,
                     owner,
-                    controller,
                     validator_reward_share,
                     max_nominators,
                     min_validator_stake,
@@ -642,7 +617,6 @@ impl PoolGetCmd {
                 } => {
                     println!("\n{} Pool '{}' (nominator-pool)", "Pool".cyan().bold(), self.name);
                     println!("  {}", "\u{2500}".repeat(56).dimmed());
-                    println!("  {:<24} {}", "Validator controller:".cyan(), controller);
                     println!(
                         "  {:<24} {}%",
                         "Validator reward share:".cyan(),
@@ -699,7 +673,6 @@ impl PoolNominatorCmd {
 
 impl PoolNominatorCreateCmd {
     pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
-        use chain_block::MsgAddressInt;
         use colored::Colorize;
         use common::app_config::PoolConfig;
         use common::chain_utils::tos_to_nanotos;
@@ -733,23 +706,6 @@ impl PoolNominatorCreateCmd {
             arr
         };
 
-        // The controller the pool's stake will travel through. It is part of the pool's
-        // initial data, so it is part of the address, and it is recorded in the config
-        // because nothing later can recover it from the address alone.
-        use std::str::FromStr;
-        let controller_addr = MsgAddressInt::from_str(&self.controller).map_err(|e| {
-            anyhow::anyhow!("invalid controller address '{}': {}", self.controller, e)
-        })?;
-        let controller_addr_bytes: [u8; 32] = {
-            let hash = controller_addr.address().get_bytestring(0);
-            let mut arr = [0u8; 32];
-            if hash.len() != arr.len() {
-                anyhow::bail!("controller address must be a 256-bit account id");
-            }
-            arr.copy_from_slice(&hash);
-            arr
-        };
-
         let min_validator_nanotos = tos_to_nanotos(self.min_validator_stake);
         let min_nominator_nanotos = tos_to_nanotos(self.min_nominator_stake);
 
@@ -757,7 +713,6 @@ impl PoolNominatorCreateCmd {
         let pool_addr = NominatorPoolWrapperImpl::calculate_address(
             NOMINATOR_POOL_WORKCHAIN,
             &validator_addr_bytes,
-            &controller_addr_bytes,
             self.validator_reward_share,
             self.max_nominators,
             min_validator_nanotos,
@@ -788,7 +743,6 @@ impl PoolNominatorCreateCmd {
         let pool_config = PoolConfig::NominatorPool {
             address: Some(pool_addr_str.clone()),
             owner: Some(self.owner.clone()),
-            controller: controller_addr.to_string(),
             validator_reward_share: self.validator_reward_share,
             max_nominators: self.max_nominators,
             min_validator_stake: min_validator_nanotos,
@@ -835,7 +789,6 @@ impl PoolNominatorActivateCmd {
         let (
             pool_addr_str,
             owner_name,
-            controller,
             validator_reward_share,
             max_nominators,
             min_validator_stake,
@@ -844,7 +797,6 @@ impl PoolNominatorActivateCmd {
             PoolConfig::NominatorPool {
                 address,
                 owner,
-                controller,
                 validator_reward_share,
                 max_nominators,
                 min_validator_stake,
@@ -865,7 +817,6 @@ impl PoolNominatorActivateCmd {
                 (
                     addr.clone(),
                     owner_name.clone(),
-                    controller.clone(),
                     *validator_reward_share,
                     *max_nominators,
                     *min_validator_stake,
@@ -902,21 +853,6 @@ impl PoolNominatorActivateCmd {
         let (owner_addr, owner_secret) =
             super::utils::wallet_address(owner_wallet_cfg, vault.clone()).await?;
 
-        // The controller recorded when the pool was created. It is part of the initial
-        // data, so deploying with a different one would deploy to a different address
-        // than the one being funded.
-        let controller_addr = MsgAddressInt::from_str(&controller)
-            .map_err(|e| anyhow::anyhow!("invalid controller address '{}': {}", controller, e))?;
-        let controller_addr_bytes: [u8; 32] = {
-            let hash = controller_addr.address().get_bytestring(0);
-            let mut arr = [0u8; 32];
-            if hash.len() != arr.len() {
-                anyhow::bail!("controller address must be a 256-bit account id");
-            }
-            arr.copy_from_slice(&hash);
-            arr
-        };
-
         // Find the validator address by searching bindings referencing this pool,
         // or by iterating wallets to find a match.
         let binding = config.bindings.iter().find(|(_, b)| b.pool.as_deref() == Some(&self.name));
@@ -947,7 +883,6 @@ impl PoolNominatorActivateCmd {
                     if let Ok(candidate) = NominatorPoolWrapperImpl::calculate_address(
                         -1,
                         &arr,
-                        &controller_addr_bytes,
                         validator_reward_share,
                         max_nominators,
                         min_validator_stake,
@@ -972,7 +907,6 @@ impl PoolNominatorActivateCmd {
         // Build state_init
         let state_init = NominatorPoolWrapperImpl::build_state_init(
             &validator_addr_bytes,
-            &controller_addr_bytes,
             validator_reward_share,
             max_nominators,
             min_validator_stake,
@@ -1406,12 +1340,10 @@ impl PoolSingleCmd {
 
 impl PoolSingleCreateCmd {
     pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
-        use chain_block::MsgAddressInt;
         use colored::Colorize;
         use common::app_config::PoolConfig;
         use contracts::nominator::{NOMINATOR_POOL_WORKCHAIN, NominatorWrapperImpl};
         use std::path::Path;
-        use std::str::FromStr;
 
         let config_path = Path::new(config_path);
         let (mut config, vault) = super::utils::load_config_vault(config_path).await?;
@@ -1440,17 +1372,11 @@ impl PoolSingleCreateCmd {
         let (validator_addr, _) =
             super::utils::wallet_address(&validator_wallet_cfg, vault.clone()).await?;
 
-        // The controller is part of the contract's storage and therefore of its address.
-        let controller_addr = MsgAddressInt::from_str(&self.controller).map_err(|e| {
-            anyhow::anyhow!("invalid controller address '{}': {}", self.controller, e)
-        })?;
-
         // Calculate pool address
         let pool_addr = NominatorWrapperImpl::calculate_address(
             NOMINATOR_POOL_WORKCHAIN,
             &owner_addr,
             &validator_addr,
-            &controller_addr,
         )?;
 
         let pool_addr_str = pool_addr.to_string();
@@ -1459,7 +1385,6 @@ impl PoolSingleCreateCmd {
         let pool_config = PoolConfig::SNP {
             address: Some(pool_addr_str.clone()),
             owner: Some(self.owner.clone()),
-            controller: controller_addr.to_string(),
         };
         config.pools.insert(self.name.clone(), pool_config);
         super::utils::save_config(&config, config_path)?;
@@ -1501,15 +1426,15 @@ impl PoolSingleActivateCmd {
             .get(&self.name)
             .ok_or_else(|| anyhow::anyhow!("Pool '{}' not found in config", self.name))?;
 
-        let (pool_addr_str, owner_name, controller) = match pool {
-            PoolConfig::SNP { address, owner, controller } => {
+        let (pool_addr_str, owner_name) = match pool {
+            PoolConfig::SNP { address, owner } => {
                 let addr = address.as_ref().ok_or_else(|| {
                     anyhow::anyhow!("Pool '{}' has no address configured", self.name)
                 })?;
                 let owner_name = owner.as_ref().ok_or_else(|| {
                     anyhow::anyhow!("Pool '{}' has no owner configured", self.name)
                 })?;
-                (addr.clone(), owner_name.clone(), controller.clone())
+                (addr.clone(), owner_name.clone())
             }
             _ => anyhow::bail!("Pool '{}' is not a single-nominator pool", self.name),
         };
@@ -1541,11 +1466,6 @@ impl PoolSingleActivateCmd {
         let (owner_addr, owner_secret) =
             super::utils::wallet_address(owner_wallet_cfg, vault.clone()).await?;
 
-        // Recorded when the pool was created, and part of what its address is derived
-        // from, so deploying with any other one would deploy somewhere else.
-        let controller_addr = MsgAddressInt::from_str(&controller)
-            .map_err(|e| anyhow::anyhow!("invalid controller address '{}': {}", controller, e))?;
-
         // We also need the validator address to build state_init.
         // Derive it from the pool address by finding which wallet produces the matching address.
         // The simplest approach: iterate config wallets to find the validator.
@@ -1561,7 +1481,6 @@ impl PoolSingleActivateCmd {
                     NOMINATOR_POOL_WORKCHAIN,
                     &owner_addr,
                     &waddr,
-                    &controller_addr,
                 ) {
                     if candidate == pool_addr {
                         validator_addr = Some(waddr);
@@ -1580,8 +1499,7 @@ impl PoolSingleActivateCmd {
         })?;
 
         // Build state_init
-        let state_init =
-            NominatorWrapperImpl::build_state_init(&owner_addr, &validator_addr, &controller_addr)?;
+        let state_init = NominatorWrapperImpl::build_state_init(&owner_addr, &validator_addr)?;
 
         // Check pool balance (must have funds to deploy)
         if pool_info.balance < 1_000_000_000 {
@@ -1669,7 +1587,7 @@ impl PoolSingleWithdrawCmd {
             .ok_or_else(|| anyhow::anyhow!("Pool '{}' not found in config", self.name))?;
 
         let (pool_addr_str, owner_name) = match pool {
-            PoolConfig::SNP { address, owner, controller } => {
+            PoolConfig::SNP { address, owner } => {
                 let addr = address.as_ref().ok_or_else(|| {
                     anyhow::anyhow!("Pool '{}' has no address configured", self.name)
                 })?;
@@ -1865,7 +1783,6 @@ mod tests {
             stake_amount_sent: 9_007_199_254_740_993,
             validator_amount: 4_000_000_000,
             validator_address: [0x11; 32],
-            controller_address: [0x22; 32],
             validator_reward_share: 4000,
             max_nominators_count: 40,
             min_validator_stake: 10_000_000_000_000,

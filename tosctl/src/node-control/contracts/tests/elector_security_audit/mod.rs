@@ -11,13 +11,9 @@ fn counts(chain: &mut Chain, max: u16, min: u16) {
     set_contract_parameter(chain, 16, value.into_cell().expect("count configuration"));
 }
 
-fn synthetic_code(index: u16) -> chain_block::UInt256 {
-    let mut bytes = [0x7c; 32];
-    bytes[30..].copy_from_slice(&index.to_be_bytes());
-    chain_block::UInt256::from_slice(&bytes)
-}
-
-fn failed_record(chain: &Chain) -> (bool, bool, Option<Vec<u8>>) {
+/// The open election's `failed` and `finished` flags, read from storage, with the record
+/// required to be exactly the shape the contract writes.
+fn failed_record(chain: &Chain) -> (bool, bool) {
     let data =
         chain.blockchain.get_account(&chain.elector).expect("elector").get_data().expect("storage");
     let mut root = SliceData::load_cell(data).expect("storage slice");
@@ -28,19 +24,11 @@ fn failed_record(chain: &Chain) -> (bool, bool, Option<Vec<u8>>) {
     fields.get_next_u32().expect("close");
     next_coins(&mut fields);
     next_coins(&mut fields);
+    next_dictionary(&mut fields, 256);
     let failed = fields.get_next_bit().expect("failed");
     let finished = fields.get_next_bit().expect("finished");
-    for _ in 0..3 {
-        next_dictionary(&mut fields, 256);
-    }
-    let cache = if fields.remaining_bits() == 0 {
-        None
-    } else {
-        assert_eq!(fields.remaining_bits(), 256, "exact failed-input cache");
-        Some(fields.get_next_bits(256).expect("fingerprint"))
-    };
-    assert_eq!(fields.remaining_references(), 0);
-    (failed, finished, cache)
+    assert_eq!((fields.remaining_bits(), fields.remaining_references()), (0, 0));
+    (failed, finished)
 }
 
 fn dictionary(builder: &mut BuilderData, value: &chain_block::HashmapE) {
@@ -50,49 +38,6 @@ fn dictionary(builder: &mut BuilderData, value: &chain_block::HashmapE) {
     } else {
         builder.append_bit_zero().expect("empty dictionary");
     }
-}
-
-fn align_declared_total_with_the_synthetic_book(chain: &mut Chain) {
-    let (members, _) = pq_book(chain);
-    let mut total = 0u128;
-    HashmapType::iterate_slices(&members, |_, mut member| {
-        total = total.checked_add(next_coins(&mut member)).expect("fixture total");
-        Ok(true)
-    })
-    .expect("member book");
-    let mut account = chain.blockchain.get_account(&chain.elector).expect("elector").clone();
-    let mut root = SliceData::load_cell(account.get_data().expect("data")).expect("slice");
-    let active = next_dictionary(&mut root, 32);
-    let mut fields =
-        SliceData::load_cell(HashmapType::data(&active).expect("active").clone()).expect("fields");
-    let mut record = BuilderData::new();
-    record.append_u32(fields.get_next_u32().expect("time")).expect("time");
-    record.append_u32(fields.get_next_u32().expect("close")).expect("close");
-    chain_block::Coins::new(u64::try_from(next_coins(&mut fields)).expect("minimum"))
-        .write_to(&mut record)
-        .expect("minimum");
-    next_coins(&mut fields);
-    chain_block::Coins::new(u64::try_from(total).expect("bounded fixture total"))
-        .write_to(&mut record)
-        .expect("total");
-    record.checked_append_references_and_data(&fields).expect("flags and books");
-    let mut rebuilt = BuilderData::new();
-    rebuilt.append_bit_one().expect("election");
-    rebuilt.checked_append_reference(record.into_cell().expect("record")).expect("record");
-    rebuilt.checked_append_references_and_data(&root).expect("liabilities");
-    account.set_data(rebuilt.into_cell().expect("data"));
-    chain.blockchain.set_account(chain.elector.clone(), account);
-    let mut stored = SliceData::load_cell(
-        chain.blockchain.get_account(&chain.elector).expect("elector").get_data().expect("data"),
-    )
-    .expect("slice");
-    let active = next_dictionary(&mut stored, 32);
-    let mut record =
-        SliceData::load_cell(HashmapType::data(&active).expect("active").clone()).expect("record");
-    record.get_next_u32().expect("time");
-    record.get_next_u32().expect("close");
-    next_coins(&mut record);
-    assert_eq!(next_coins(&mut record), total, "fixture must preserve the complete principal book");
 }
 
 fn seed_history(chain: &mut Chain, owners: &[(u16, u64)]) {
@@ -122,13 +67,13 @@ fn every_cap_boundary_conserves_the_increment_without_consuming_historic_credits
     for target in [90_000, 100_000, 110_000] {
         for selected in [false, true] {
             let (mut chain, _, election) = open_election("cap-boundary", 400_000 * TOS);
-            require_post_quantum_version(&mut chain);
+            require_post_quantum_version(&chain);
             let stakes = if selected {
                 [target, 80_000, 70_000, 60_000]
             } else {
                 [target, 140_000, 130_000, 80_000]
             };
-            install_synthetic_book_full(&mut chain, 4, 1, &|i, _| refund_owner(i), &|i| {
+            install_synthetic_book_full(&mut chain, 4, &refund_owner, &|i| {
                 stakes[usize::from(i)] * TOS
             });
             counts(&mut chain, 2, 2);
@@ -165,7 +110,7 @@ fn real_pq_single_and_split_stakes_match_at_each_cap_boundary() {
     for target in [90_000, 100_000, 110_000] {
         for split in [false, true] {
             let (mut chain, _, election) = open_election("pq-cap-boundary", 400_000 * TOS);
-            require_post_quantum_version(&mut chain);
+            require_post_quantum_version(&chain);
             let mut owners = Vec::new();
             for i in 0..4u8 {
                 let sender = chain
@@ -212,7 +157,7 @@ fn real_pq_single_and_split_stakes_match_at_each_cap_boundary() {
 fn participant_cost_profile_uses_registration_count_not_seated_count() {
     for count in [21u16, 1024, 4097, 8192] {
         let (mut chain, _, election) = open_election("registration-profile", 400_000 * TOS);
-        require_post_quantum_version(&mut chain);
+        require_post_quantum_version(&chain);
         raise_validator_ceiling(&mut chain, 21);
         install_synthetic_book(&mut chain, count, 11_000 * TOS);
         chain.blockchain.set_now(election - chain.elect_end_before);
@@ -229,25 +174,22 @@ fn participant_cost_profile_uses_registration_count_not_seated_count() {
     }
 }
 
+/// Registration count bounds every walk over the book: selection, the refund of members
+/// not seated, the refund of a refused set, and the release of the frozen stakes. Each is
+/// driven at the 256-member bound and has to keep gas headroom and every member's
+/// principal. A selection that fails seats nobody and moves no money.
 #[test]
-fn the_participant_bound_covers_selection_retirement_cancellation_and_unfreeze() {
-    for path in ["all-selected", "mostly-refunded", "retired", "failed"] {
+fn the_participant_bound_covers_selection_refusal_failure_and_unfreeze() {
+    for path in ["all-selected", "mostly-refunded", "failed"] {
         let (mut chain, _, election) = open_election(path, 400_000 * TOS);
-        require_post_quantum_version(&mut chain);
-        install_synthetic_book_full(
-            &mut chain,
-            256,
-            if path == "retired" { 64 } else { 256 },
-            &|i, _| refund_owner(i),
-            &|i| (11_000 + u64::from(i)) * TOS,
-        );
-        align_declared_total_with_the_synthetic_book(&mut chain);
-        counts(&mut chain, if path == "all-selected" { 256 } else { 21 }, 1);
-        if path == "retired" {
-            admit_only_the_first_synthetic_profile(&mut chain);
-        }
-        if path == "failed" {
-            counts(&mut chain, 257, 257);
+        require_post_quantum_version(&chain);
+        install_synthetic_book_full(&mut chain, 256, &refund_owner, &|i| {
+            (11_000 + u64::from(i)) * TOS
+        });
+        match path {
+            "all-selected" => counts(&mut chain, 256, 1),
+            "mostly-refunded" => counts(&mut chain, 21, 1),
+            _ => counts(&mut chain, 257, 257),
         }
         chain.blockchain.set_now(election - chain.elect_end_before);
         let result = chain
@@ -262,16 +204,19 @@ fn the_participant_bound_covers_selection_retirement_cancellation_and_unfreeze()
         );
         assert!(gas < 50_000_000, "selection must retain gas headroom: {path}, {gas}");
         if path == "failed" {
-            assert!(failed_record(&chain).0);
-            chain.blockchain.set_now(election);
-            let result = chain
+            assert_eq!(failed_record(&chain), (true, false), "the selection did not fail");
+            let later = chain
                 .blockchain
                 .tick_tock(&chain.elector, TransactionTickTock::Tick)
-                .expect("cancellation tick");
-            result.expect_success();
-            eprintln!("participant-bound cancellation-gas={}", tick_gas(&result));
-            assert!(tick_gas(&result) < 50_000_000);
-        } else if has_past_election(&chain, election) {
+                .expect("a later tick");
+            later.expect_success();
+            assert!(tick_gas(&later) < 50_000_000);
+            for i in 0..256u16 {
+                assert_eq!(owed(&chain, &refund_owner(i)), 0, "a failed selection paid owner {i}");
+            }
+            continue;
+        }
+        if has_past_election(&chain, election) {
             let frozen = frozen_by_owner(&chain, election);
             for i in 0..256u16 {
                 assert_eq!(
@@ -314,92 +259,99 @@ fn the_participant_bound_covers_selection_retirement_cancellation_and_unfreeze()
 }
 
 #[test]
-fn an_additional_identity_is_refused_at_the_participant_bound_before_state_changes() {
+fn a_full_election_refuses_a_stake_no_larger_than_its_smallest() {
     let (mut chain, sender, election) = open_election("bounded-registration", 400_000 * TOS);
-    require_post_quantum_version(&mut chain);
+    require_post_quantum_version(&chain);
     install_synthetic_book(&mut chain, 256, 11_000 * TOS);
-    align_declared_total_with_the_synthetic_book(&mut chain);
-    admit_sender_code(&mut chain, &sender);
     let before = chain.blockchain.get_account(&chain.elector).expect("elector").get_data();
+    // 11,001 TOS less the 1 TOS confirmation is 11,000: equal to the smallest, not larger.
     let result =
-        pq_stake(&mut chain, &sender, &PqValidator::new(0xcd), election, 901, 12_000 * TOS);
-    assert_eq!(reply(&result), (0xee6f454c, 16), "the 257th identity must be refused");
+        pq_stake(&mut chain, &sender, &PqValidator::new(0xcd), election, 901, 11_001 * TOS);
+    assert_eq!(reply(&result), (0xee6f454c, 16), "an equal stake must not displace a member");
     assert_eq!(
         chain.blockchain.get_account(&chain.elector).expect("elector").get_data(),
         before,
-        "a full book must not consume or replace somebody else's registration"
+        "a refused stake must not consume or replace somebody else's registration"
     );
+}
+
+/// A full election makes room for a larger stake by dropping its smallest one, which is
+/// credited back to the account that sent it; the running total follows.
+#[test]
+fn a_larger_stake_displaces_the_smallest_member_of_a_full_election() {
+    let (mut chain, sender, election) = open_election("displacing-registration", 400_000 * TOS);
+    require_post_quantum_version(&chain);
+    let stake_of = |i: u16| (11_000 + u64::from(i)) * TOS;
+    install_synthetic_book_full(&mut chain, 256, &refund_owner, &stake_of);
+    let placed: u128 = (0..256).map(|i| u128::from(stake_of(i))).sum();
+    assert_eq!(declared_total_stake(&chain), placed);
+    let smallest = refund_owner(0);
+    assert_eq!(owed(&chain, &smallest), 0, "nothing is owed before the displacement");
+
+    let result =
+        pq_stake(&mut chain, &sender, &PqValidator::new(0xcd), election, 902, 20_000 * TOS);
+    assert_eq!(reply(&result), (STAKE_ACCEPTED, 0), "the larger stake was refused");
+    let book = pq_book(&chain);
+    assert_eq!(book.len().expect("member count"), 256, "the book grew past its bound");
+    let key = chain_block::SliceData::load_builder(
+        chain_block::BuilderData::with_raw(smallest.to_vec(), 256).expect("key"),
+    )
+    .expect("key slice");
+    assert!(book.get(key).expect("lookup").is_none(), "the smallest member is still there");
+    assert_eq!(owed(&chain, &smallest), u128::from(stake_of(0)), "its stake was not credited");
+    assert_eq!(
+        declared_total_stake(&chain),
+        placed - u128::from(stake_of(0)) + u128::from(19_999 * TOS),
+        "the running total did not follow the displacement"
+    );
+}
+
+/// No validator descriptor may name the zero account, and selection would refuse it after
+/// the election had closed; the stake is returned when it arrives instead.
+#[test]
+fn a_stake_from_the_zero_account_is_returned() {
+    let (mut chain, _sender, election) = open_election("zero-account", 400_000 * TOS);
+    require_post_quantum_version(&chain);
+    let validator = PqValidator::new(0xd0);
+    let zero = chain_block::UInt256::default();
+    // Signed for the zero account, so only the account itself can be the refusal.
+    let preimage = pq_stake_preimage(global_id(&chain), election, 0x10000, &zero, &validator.adnl);
+    let signature = validator.sign(&preimage);
+    let body = pq_stake_body(903, &validator, election, 0x10000, &signature);
+    let from = chain_block::MsgAddressInt::with_standart(None, -1, zero.clone().into())
+        .expect("the zero account");
+    let message = tos_sandbox::MessageBuilder::internal(&from, &chain.elector, 20_000 * TOS)
+        .bounce(true)
+        .body(body)
+        .build();
+    let result = chain.blockchain.send_message(message).expect("delivered");
+    assert_eq!(reply(&result), (STAKE_RETURNED, 0), "the zero account was admitted");
+    assert!(pq_book(&chain).is_empty(), "the zero account was registered");
 }
 
 #[test]
 fn the_last_admitted_participant_can_top_up_without_occupying_another_slot() {
     let (mut chain, sender, election) = open_election("last-participant", 400_000 * TOS);
-    require_post_quantum_version(&mut chain);
+    require_post_quantum_version(&chain);
     let key = PqValidator::new(0xce);
     install_synthetic_book(&mut chain, 255, 11_000 * TOS);
-    align_declared_total_with_the_synthetic_book(&mut chain);
-    // Keep the synthetic profile admitted while adding the real funding wallet's code.
-    let code = chain
-        .blockchain
-        .get_account(sender.address())
-        .expect("wallet")
-        .get_code()
-        .expect("wallet code")
-        .repr_hash();
-    let mut codes = chain_block::HashmapE::with_bit_len(256);
-    for hash in [synthetic_code(0), code] {
-        codes
-            .set(
-                SliceData::load_builder(
-                    BuilderData::with_raw(hash.as_slice().to_vec(), 256).expect("code"),
-                )
-                .expect("key"),
-                &SliceData::default(),
-            )
-            .expect("admission");
-    }
-    let mut policy = BuilderData::new();
-    dictionary(&mut policy, &codes);
-    set_contract_parameter(&mut chain, 47, policy.into_cell().expect("policy"));
     let result = pq_stake(&mut chain, &sender, &key, election, 910, 12_000 * TOS);
     assert_eq!(reply(&result), (STAKE_ACCEPTED, 0), "the 256th identity must remain admissible");
-    let (members, _) = pq_book(&chain);
-    assert_eq!(members.len().expect("member count"), 256);
+    assert_eq!(pq_book(&chain).len().expect("member count"), 256);
     let initial = pq_stake_of(&chain, &sender);
     let result = pq_stake(&mut chain, &sender, &key, election, 911, 12_000 * TOS);
     assert_eq!(
         reply(&result),
         (STAKE_ACCEPTED, 0),
-        "an existing owner must still be able to top up"
+        "an existing member must still be able to top up"
     );
     assert_eq!(pq_stake_of(&chain, &sender), initial + u128::from(11_999 * TOS));
-    assert_eq!(pq_book(&chain).0.len().expect("member count"), 256);
-    let other = chain.blockchain.treasury("participant-overflow", 40_000 * TOS).expect("owner");
-    let result = pq_stake(&mut chain, &other, &PqValidator::new(0xcf), election, 912, 12_000 * TOS);
+    assert_eq!(pq_book(&chain).len().expect("member count"), 256);
+    let other = chain.blockchain.treasury("participant-overflow", 40_000 * TOS).expect("a wallet");
+    // No larger than the smallest member, so it cannot displace anyone.
+    let result = pq_stake(&mut chain, &other, &PqValidator::new(0xcf), election, 912, 11_001 * TOS);
     assert_eq!(reply(&result), (STAKE_RETURNED, 16));
-    assert_eq!(pq_book(&chain).0.len().expect("member count"), 256);
-}
-
-#[test]
-fn an_oversized_import_is_refused_before_a_tick_can_spend_its_gas_budget() {
-    let (mut chain, _, election) = open_election("oversized-import", 400_000 * TOS);
-    require_post_quantum_version(&mut chain);
-    install_synthetic_book(&mut chain, 4097, 11_000 * TOS);
-    align_declared_total_with_the_synthetic_book(&mut chain);
-    let data = chain.blockchain.get_account(&chain.elector).expect("elector").get_data();
-    chain.blockchain.set_now(election - chain.elect_end_before);
-    let result =
-        chain.blockchain.tick_tock(&chain.elector, TransactionTickTock::Tick).expect("tick");
-    result.expect_aborted().expect_exit_code(64);
-    assert!(
-        tick_gas(&result) < 1_000_000,
-        "import refusal must traverse at most one bounded prefix"
-    );
-    assert_eq!(
-        chain.blockchain.get_account(&chain.elector).expect("elector").get_data(),
-        data,
-        "a refused import must retain every owner's original claim for explicit migration"
-    );
+    assert_eq!(pq_book(&chain).len().expect("member count"), 256);
 }
 
 #[test]
@@ -409,7 +361,7 @@ fn a_candidate_restating_anothers_address_is_refused_and_late_installed_replies_
     // configuration's own refusal of such a set stays as a backstop. The late duplicate
     // installation replies below must move no money.
     let (mut chain, _, election) = open_election("configuration-refund", 400_000 * TOS);
-    require_post_quantum_version(&mut chain);
+    require_post_quantum_version(&chain);
     let mut owners = Vec::new();
     let mut shared_adnl = None;
     for i in 0..5u8 {
@@ -585,235 +537,16 @@ fn a_fine_is_partitioned_between_claimant_and_purse_once_with_real_transaction_f
     assert_eq!(elector_purse_and_active_set(&chain).0 - purse_before, fine - expected_reward);
 }
 
-fn historical_elector_code() -> chain_block::Cell {
-    static CODE: std::sync::OnceLock<chain_block::Cell> = std::sync::OnceLock::new();
-    CODE.get_or_init(|| {
-        let output = std::process::Command::new("git")
-            .current_dir(repo_root())
-            .args([
-                "show",
-                "40a0aa4c9a207ccc06bc2d3d0c9259d56b21100a:crypto/smartcont/elector-code.fc",
-            ])
-            .output()
-            .expect("historical source");
-        assert!(output.status.success(), "the exact classic source must be available");
-        let source = String::from_utf8(output.stdout).expect("FunC source");
-        let directory = std::process::Command::new("git")
-            .current_dir(repo_root())
-            .args([
-                "rev-parse",
-                "--path-format=absolute",
-                "--git-path",
-                "elector-security-audit-artifacts/completion",
-            ])
-            .output()
-            .expect("artifact directory");
-        assert!(directory.status.success());
-        let directory =
-            std::path::PathBuf::from(String::from_utf8(directory.stdout).expect("path").trim());
-        std::fs::create_dir_all(&directory).expect("retained artifact directory");
-        let file = directory.join("classic-elector.fc");
-        std::fs::write(&file, source).expect("retained source");
-        tos_sandbox::compile_func(&[repo_root().join("crypto/smartcont/stdlib.fc"), file])
-            .expect("the genuine classic elector compiles")
-    })
-    .clone()
-}
-
-fn code_upgrade(
-    chain: &mut Chain,
-    code: chain_block::Cell,
-    marker: bool,
-) -> tos_sandbox::SendResult {
-    let mut body = BuilderData::new();
-    body.append_u32(0x4e436f64).expect("upgrade");
-    body.append_u64(800).expect("query");
-    body.checked_append_reference(code).expect("new code");
-    if marker {
-        body.append_bit_one().expect("installation hook");
-    }
-    chain
-        .blockchain
-        .send_message(
-            tos_sandbox::MessageBuilder::internal(&chain.config_contract, &chain.elector, TOS)
-                .body(body.into_cell().expect("upgrade body"))
-                .build(),
-        )
-        .expect("configuration upgrade message")
-}
-
+/// Over-cap principal is conserved for the members seated and the members left out: a
+/// seated member's stake above the cap is credited at once, and a member left out is
+/// credited all of it.
 #[test]
-fn a_real_classic_book_and_creditor_survive_explicit_installation_refusal() {
-    let (mut chain, _, election) = open_election("classic-principal", 40_000 * TOS);
-    let current_code =
-        chain.blockchain.get_account(&chain.elector).expect("elector").get_code().expect("code");
-    let owner = refund_owner(17);
-    let mut account = chain.blockchain.get_account(&chain.elector).expect("elector").clone();
-    let mut root = SliceData::load_cell(account.get_data().expect("data")).expect("slice");
-    let active = next_dictionary(&mut root, 32);
-    let mut original = SliceData::load_cell(HashmapType::data(&active).expect("election").clone())
-        .expect("election fields");
-    let at = original.get_next_u32().expect("time");
-    let close = original.get_next_u32().expect("close");
-    let minimum = next_coins(&mut original);
-    let mut members = chain_block::HashmapE::with_bit_len(256);
-    let key = SliceData::load_builder(BuilderData::with_raw(vec![0x23; 32], 256).expect("key"))
-        .expect("member key");
-    let mut member = BuilderData::new();
-    chain_block::Coins::new(11_000 * TOS).write_to(&mut member).expect("principal");
-    member.append_u32(chain.blockchain.now()).expect("registered");
-    member.append_u32(0x10000).expect("factor");
-    member.append_raw(&owner, 256).expect("funding account");
-    member.append_raw(&[0x24; 32], 256).expect("transport");
-    members.set_builder(key, &member).expect("classic member");
-    let mut legacy = BuilderData::new();
-    legacy.append_u32(at).expect("time");
-    legacy.append_u32(close).expect("close");
-    chain_block::Coins::new(u64::try_from(minimum).expect("fixture minimum"))
-        .write_to(&mut legacy)
-        .expect("minimum");
-    chain_block::Coins::new(11_000 * TOS).write_to(&mut legacy).expect("principal total");
-    dictionary(&mut legacy, &members);
-    legacy.append_bit_zero().expect("not failed");
-    legacy.append_bit_zero().expect("not finished");
-    let mut rebuilt = BuilderData::new();
-    rebuilt.append_bit_one().expect("election");
-    rebuilt.checked_append_reference(legacy.into_cell().expect("classic record")).expect("record");
-    rebuilt.checked_append_references_and_data(&root).expect("other liabilities");
-    account.set_data(rebuilt.into_cell().expect("storage"));
-    account.set_code(historical_elector_code());
-    chain.blockchain.set_account(chain.elector.clone(), account);
-    seed_history(&mut chain, &[(17, 37 * TOS)]);
-    let valid = chain
-        .blockchain
-        .run_get_method(&chain.elector, "participant_list", vec![])
-        .expect("classic getter");
-    assert_eq!(valid.exit_code, 0, "fixture must be valid for the genuine old reader");
-    let old_data = chain.blockchain.get_account(&chain.elector).expect("elector").get_data();
-    let old_code = chain.blockchain.get_account(&chain.elector).expect("elector").get_code();
-    let result = code_upgrade(&mut chain, current_code.clone(), true);
-    result.expect_aborted().expect_exit_code(66);
-    assert_eq!(
-        chain.blockchain.get_account(&chain.elector).expect("elector").get_data(),
-        old_data,
-        "failed installation must preserve classic members and existing creditor balances"
-    );
-    assert_eq!(chain.blockchain.get_account(&chain.elector).expect("elector").get_code(), old_code);
-    assert_eq!(owed(&chain, &owner), u128::from(37 * TOS));
-    // Even bypassing the installer never grants the new parser permission to erase this book.
-    let mut account = chain.blockchain.get_account(&chain.elector).expect("elector").clone();
-    account.set_code(current_code);
-    chain.blockchain.set_account(chain.elector.clone(), account);
-    let decoded = chain
-        .blockchain
-        .run_get_method(&chain.elector, "participant_list_extended", vec![])
-        .expect("new reader");
-    assert_eq!(decoded.exit_code, 65, "classic presence/flag layout must be refused explicitly");
-    assert_eq!(active_election_id_for_classic_fixture(&chain), election);
-    assert_eq!(chain.blockchain.get_account(&chain.elector).expect("elector").get_data(), old_data);
-}
-
-fn active_election_id_for_classic_fixture(chain: &Chain) -> u32 {
-    let mut root = SliceData::load_cell(
-        chain.blockchain.get_account(&chain.elector).expect("elector").get_data().expect("data"),
-    )
-    .expect("slice");
-    let active = next_dictionary(&mut root, 32);
-    SliceData::load_cell(HashmapType::data(&active).expect("election").clone())
-        .expect("record")
-        .get_next_u32()
-        .expect("original election id")
-}
-
-#[test]
-fn upgrades_and_rollbacks_require_a_debt_free_boundary_and_preserve_the_root() {
-    let mut fresh = launch();
-    let code =
-        fresh.blockchain.get_account(&fresh.elector).expect("elector").get_code().expect("code");
-    let data = fresh.blockchain.get_account(&fresh.elector).expect("elector").get_data();
-    let ready = fresh
-        .blockchain
-        .run_get_method(&fresh.elector, "upgrade_ready", vec![])
-        .expect("readiness");
-    assert_eq!(ready.exit_code, 0);
-    let result = code_upgrade(&mut fresh, historical_elector_code(), false);
-    result.expect_success();
-    assert_eq!(reply(&result).0, 0xce436f64);
-    assert_eq!(fresh.blockchain.get_account(&fresh.elector).expect("elector").get_data(), data);
-    let result = code_upgrade(&mut fresh, code.clone(), true);
-    result.expect_success();
-    assert_eq!(
-        fresh.blockchain.get_account(&fresh.elector).expect("elector").get_code(),
-        Some(code)
-    );
-    assert_eq!(fresh.blockchain.get_account(&fresh.elector).expect("elector").get_data(), data);
-    for (outcome, phase) in [
-        (Outcome::FailedSelection, "cached"),
-        (Outcome::Seated, "frozen-only"),
-        (Outcome::FailedSelection, "credits-only"),
-        (Outcome::Empty, "open"),
-    ] {
-        let Scenario { mut chain, election, .. } = scenario(outcome);
-        if phase == "frozen-only" {
-            install_synthetic_book_owned(&mut chain, 4, 11_000 * TOS, 1, &|i, _| refund_owner(i));
-            align_declared_total_with_the_synthetic_book(&mut chain);
-        }
-        if outcome != Outcome::Empty {
-            tick_at_close(&mut chain, election, "pre-upgrade");
-        }
-        if phase == "frozen-only" {
-            let mut account =
-                chain.blockchain.get_account(&chain.elector).expect("elector").clone();
-            let mut root = SliceData::load_cell(account.get_data().expect("data")).expect("slice");
-            next_dictionary(&mut root, 32);
-            let mut rebuilt = BuilderData::new();
-            rebuilt.append_bit_zero().expect("no active book");
-            rebuilt.checked_append_references_and_data(&root).expect("frozen liabilities");
-            account.set_data(rebuilt.into_cell().expect("data"));
-            chain.blockchain.set_account(chain.elector.clone(), account);
-            assert_eq!(active_election_id(&chain), 0);
-            assert!(has_past_election(&chain, election));
-            let mut root = SliceData::load_cell(
-                chain
-                    .blockchain
-                    .get_account(&chain.elector)
-                    .expect("elector")
-                    .get_data()
-                    .expect("data"),
-            )
-            .expect("slice");
-            next_dictionary(&mut root, 32);
-            assert_eq!(
-                next_dictionary(&mut root, 256).len().expect("credit count"),
-                0,
-                "frozen-only control must not be masked by another creditor gate"
-            );
-        }
-        if phase == "credits-only" {
-            tick_at(&mut chain, election, "cancelled");
-            assert_eq!(active_election_id(&chain), 0);
-            assert!(!has_past_election(&chain, election));
-            assert!(owed(&chain, &refund_owner(0)) > 0);
-        }
-        let code = chain.blockchain.get_account(&chain.elector).expect("elector").get_code();
-        let data = chain.blockchain.get_account(&chain.elector).expect("elector").get_data();
-        let result = code_upgrade(&mut chain, historical_elector_code(), false);
-        result.expect_success();
-        assert_eq!(reply(&result).0, 0xffffffff, "live liabilities must refuse rollback: {phase}");
-        assert_eq!(chain.blockchain.get_account(&chain.elector).expect("elector").get_code(), code);
-        assert_eq!(chain.blockchain.get_account(&chain.elector).expect("elector").get_data(), data);
-    }
-}
-
-#[test]
-fn over_cap_principal_is_conserved_for_winners_losers_and_shared_owners() {
+fn over_cap_principal_is_conserved_for_winners_and_losers() {
     let (mut chain, _, election) = open_election("principal-cap", 400_000 * TOS);
-    require_post_quantum_version(&mut chain);
-    install_synthetic_book_full(&mut chain, 6, 2, &|i, _| refund_owner(i % 2), &|i| {
-        (100_000 - u64::from(i) * 10_000) * TOS
-    });
+    require_post_quantum_version(&chain);
+    let stake_of = |i: u16| (100_000 - u64::from(i) * 10_000) * TOS;
+    install_synthetic_book_full(&mut chain, 6, &refund_owner, &stake_of);
     counts(&mut chain, 2, 2);
-    admit_only_the_first_synthetic_profile(&mut chain);
     set_contract_parameter(
         &mut chain,
         17,
@@ -822,17 +555,14 @@ fn over_cap_principal_is_conserved_for_winners_losers_and_shared_owners() {
     assert!(tick_at_close(&mut chain, election, "close").next_set_installed);
     let frozen = frozen_by_owner(&chain, election);
     assert_eq!(frozen.values().sum::<u128>(), 40_000 * u128::from(TOS));
-    for owner in 0..2u16 {
-        let original: u128 = (0..6u16)
-            .filter(|i| i % 2 == owner)
-            .map(|i| u128::from((100_000 - u64::from(i) * 10_000) * TOS))
-            .sum();
-        let address = refund_owner(owner);
+    assert_eq!(frozen.len(), 2, "two members are seated");
+    for i in 0..6u16 {
+        let address = refund_owner(i);
         let frozen_amount = frozen.get(&address).copied().unwrap_or(0);
         assert_eq!(
             owed(&chain, &address) + frozen_amount,
-            original,
-            "owner principal not conserved across selected, losing and retired entries"
+            u128::from(stake_of(i)),
+            "member {i}'s principal not conserved across selected and losing entries"
         );
     }
 }
@@ -840,7 +570,7 @@ fn over_cap_principal_is_conserved_for_winners_losers_and_shared_owners() {
 #[test]
 fn real_pq_top_up_above_a_lowered_cap_returns_all_surplus() {
     let (mut chain, _, election) = open_election("signed-cap", 400_000 * TOS);
-    require_post_quantum_version(&mut chain);
+    require_post_quantum_version(&chain);
     let mut owners = Vec::new();
     for i in 0..4u8 {
         let sender = chain
@@ -866,117 +596,3 @@ fn real_pq_top_up_above_a_lowered_cap_returns_all_surplus() {
         assert_eq!(owed(&chain, &owner), 50_000 * u128::from(TOS), "whole top-up surplus credited");
     }
 }
-
-#[test]
-fn a_failed_selection_retries_after_each_decisive_configuration_change() {
-    for parameter in [16, 17, 47] {
-        let (mut chain, _, election) = open_election(&format!("retry-{parameter}"), 400_000 * TOS);
-        require_post_quantum_version(&mut chain);
-        let members = if parameter == 16 { 3 } else { 4 };
-        install_synthetic_book_over(&mut chain, members, 30_000 * TOS, 2);
-        counts(&mut chain, 4, 4);
-        if parameter == 17 {
-            set_contract_parameter(
-                &mut chain,
-                17,
-                stake_limits(10_000 * TOS, 10_000 * TOS, 80_000 * TOS, 0x10000),
-            );
-        } else if parameter == 47 {
-            admit_only_the_first_synthetic_profile(&mut chain);
-        }
-        tick_at_close(&mut chain, election, "failed attempt");
-        let (failed, finished, fingerprint) = failed_record(&chain);
-        assert!(failed && !finished, "fixture must reach a real failed selection");
-        assert!(fingerprint.is_some());
-        match parameter {
-            16 => counts(&mut chain, 4, 3),
-            17 => set_contract_parameter(
-                &mut chain,
-                17,
-                stake_limits(10_000 * TOS, 30_000 * TOS, 80_000 * TOS, 0x10000),
-            ),
-            47 => set_policy(&mut chain, &[synthetic_code(0), synthetic_code(1)]),
-            _ => unreachable!(),
-        }
-        tick(&mut chain);
-        assert!(
-            observe(&chain, "retry").next_set_installed,
-            "configuration {parameter} changed but a cached failure prevented selection"
-        );
-        let (failed, finished, cache) = failed_record(&chain);
-        assert!(!failed && finished && cache.is_none(), "success clears failed-input cache");
-    }
-}
-
-#[test]
-fn identical_failed_inputs_skip_selection_and_cancel_without_double_credit() {
-    let (mut chain, _, election) = open_election("cached-failure", 400_000 * TOS);
-    require_post_quantum_version(&mut chain);
-    install_synthetic_book_owned(&mut chain, 21, 30_000 * TOS, 1, &|i, _| refund_owner(i));
-    counts(&mut chain, 31, 22);
-    chain.blockchain.set_now(election - chain.elect_end_before);
-    let first_gas = tick_gas(&tick(&mut chain));
-    let record = failed_record(&chain);
-    assert!(record.0 && record.2.is_some(), "selection must have failed and cached its inputs");
-    let cached_gas = tick_gas(&tick(&mut chain));
-    assert_eq!(failed_record(&chain), record);
-    assert!(
-        cached_gas < first_gas / 2,
-        "unchanged selection ran again: first={first_gas}, cached={cached_gas}"
-    );
-    eprintln!("failed-selection gas: first={first_gas}, cached={cached_gas}");
-    for i in 0..21 {
-        assert_eq!(owed(&chain, &refund_owner(i)), 0);
-    }
-    chain.blockchain.set_now(election);
-    tick(&mut chain);
-    assert_eq!(active_election_id(&chain), 0);
-    for i in 0..21 {
-        assert_eq!(owed(&chain, &refund_owner(i)), 30_000 * u128::from(TOS));
-    }
-    tick(&mut chain);
-    for i in 0..21 {
-        assert_eq!(owed(&chain, &refund_owner(i)), 30_000 * u128::from(TOS));
-    }
-}
-
-#[test]
-fn a_legacy_failed_record_without_fingerprint_gets_one_new_attempt() {
-    let (mut chain, _, election) = open_election("legacy-failure", 400_000 * TOS);
-    require_post_quantum_version(&mut chain);
-    install_synthetic_book(&mut chain, 3, 30_000 * TOS);
-    counts(&mut chain, 4, 4);
-    tick_at_close(&mut chain, election, "failed selection");
-    assert!(failed_record(&chain).2.is_some());
-
-    // Recreate the exact pre-cache wire: the same failed flag and three PQ books,
-    // with no uint256 suffix. This changes neither stake nor configuration.
-    let mut account = chain.blockchain.get_account(&chain.elector).expect("elector").clone();
-    let mut root = SliceData::load_cell(account.get_data().expect("storage")).expect("slice");
-    let election_dict = next_dictionary(&mut root, 32);
-    let mut old = SliceData::load_cell(HashmapType::data(&election_dict).expect("open").clone())
-        .expect("election slice");
-    let prefix_bits = old.remaining_bits().checked_sub(256).expect("cached suffix");
-    old.shrink_data(..prefix_bits);
-    let mut old_cell = BuilderData::new();
-    old_cell.checked_append_references_and_data(&old).expect("original PQ record");
-    let mut replacement = BuilderData::new();
-    replacement.append_bit_one().expect("open election");
-    replacement
-        .checked_append_reference(old_cell.into_cell().expect("legacy record"))
-        .expect("election");
-    replacement.checked_append_references_and_data(&root).expect("unchanged remaining state");
-    account.set_data(replacement.into_cell().expect("storage"));
-    chain.blockchain.set_account(chain.elector.clone(), account);
-    assert_eq!(failed_record(&chain), (true, false, None));
-
-    let first = tick_gas(&tick(&mut chain));
-    assert!(failed_record(&chain).2.is_some(), "legacy failure re-evaluated and cached");
-    let cached = tick_gas(&tick(&mut chain));
-    assert!(cached < first, "second identical legacy retry must be skipped");
-    counts(&mut chain, 4, 3);
-    tick(&mut chain);
-    assert!(observe(&chain, "legacy retry").next_set_installed);
-}
-
-mod relay;

@@ -72,32 +72,18 @@ def test_launch_validator_count_boundary_is_explicit():
         _launch_validator_counts(22, 21)
 
 
-def test_controller_policy_uses_genesis_config_dictionary(tmp_path):
-    code_hash = bytes(range(32))
+def test_genesis_installs_no_stake_admission_policy(tmp_path):
+    """Any account may stake; Genesis carries no code admission parameter for stakers."""
     zerostate = create_zerostate(
         Install(BUILD_DIR, REPO),
         tmp_path,
-        NetworkConfig(validator_controller_code_hash=code_hash),
+        NetworkConfig(),
         [Key()],
     )
     state = _load_masterchain_state(zerostate.masterchain.file)
-    policy = _config_cells(state)[47].copy()
-    admitted = policy.load_dict(256)
-    assert admitted is not None
-    assert set(admitted) == {int.from_bytes(code_hash, "big")}, (
-        "genesis ConfigParam 47 did not admit exactly the controller code hash"
-    )
-    assert policy.remaining_bits == 0 and policy.remaining_refs == 0, (
-        "genesis ConfigParam 47 has trailing data"
-    )
-
-    with pytest.raises(ValueError, match="controller code hash must be 32 bytes"):
-        create_zerostate(
-            Install(BUILD_DIR, REPO),
-            tmp_path / "invalid",
-            NetworkConfig(validator_controller_code_hash=b"short"),
-            [Key()],
-        )
+    assert 47 not in _config_cells(state)
+    assert 47 not in require(_config(state, 9, ConfigParam9).mandatory_params)
+    assert 47 not in require(_config(state, 10, ConfigParam10).critical_params)
 
 
 def test_local_genesis_builds_21_validators_and_refuses_22_before_fift(tmp_path):
@@ -657,9 +643,9 @@ def _write_pq_manifest(directory):
         assert public_match is not None and key_match is not None
         public = bytes.fromhex(public_match[1])
         key_id = bytes.fromhex(key_match[1])
-        controller = hashlib.sha256(f"controller-{index}".encode()).digest()
+        validator_id = hashlib.sha256(f"staking-account-{index}".encode()).digest()
         adnl = hashlib.sha256(f"adnl-{index}".encode()).digest()
-        records.append((controller, adnl, public, key_id))
+        records.append((validator_id, adnl, public, key_id))
     (directory / "validator-pq.pub").write_bytes(b"".join(c + a + p for c, a, p, _ in records))
     return records
 
@@ -830,36 +816,19 @@ def test_canonical_genesis_script_accepts_only_four_validator_keys(tmp_path):
     assert _config(state, 8, ConfigParam8).version == 16
     validator_set = decode_validator_set(_config_cells(state)[34].copy().to_cell())
     assert validator_set["total"] == EXPECTED_VALIDATOR_COUNT
-    for actual, (controller, adnl, public, key_id) in zip(validator_set["validators"], keys):
+    for actual, (validator_id, adnl, public, key_id) in zip(validator_set["validators"], keys):
         assert actual["public_key_sha256"] == hashlib.sha256(public).hexdigest()
         assert actual["algorithm_id"] == 1
-        assert actual["controller_id_hex"] == controller.hex()
+        # The pinned Config34 decoder names the validator id field controller_id_hex.
+        assert actual["controller_id_hex"] == validator_id.hex()
         assert actual["adnl_id_hex"] == adnl.hex()
         assert actual["consensus_key_id_hex"] == key_id.hex()
         assert actual["weight"] == 17
-    assert 47 in _config_cells(state)
-    admitted = _config_cells(state)[47].copy().load_dict(256)
-    # Independently compile the same admission artifact and compare its code hash.
-    probe = tmp_path / "controller-hash.fif"
-    probe.write_text('"PQ.fif" include "auto/validator-controller-v1-code.fif" include hashu . cr')
-    compiled = subprocess.run(
-        [
-            str(BUILD_DIR / "crypto/fift"),
-            "-I",
-            str(REPO / "crypto/fift/lib"),
-            "-I",
-            str(BUILD_DIR / "crypto/smartcont"),
-            "-s",
-            str(probe),
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    assert set(admitted) == {int(compiled.stdout.strip())}
-    for parameter in (8, 47):
-        assert parameter in require(_config(state, 9, ConfigParam9).mandatory_params)
-        assert parameter in require(_config(state, 10, ConfigParam10).critical_params)
+    assert 47 not in _config_cells(state)
+    assert 8 in require(_config(state, 9, ConfigParam9).mandatory_params)
+    assert 8 in require(_config(state, 10, ConfigParam10).critical_params)
+    assert 47 not in require(_config(state, 9, ConfigParam9).mandatory_params)
+    assert 47 not in require(_config(state, 10, ConfigParam10).critical_params)
 
     (tmp_path / "validator-pq.pub").write_bytes(b"".join(c + a + p for c, a, p, _ in keys[:3]))
     failed = subprocess.run(
@@ -1021,7 +990,7 @@ def test_pq_genesis_rejects_legacy_vm_version(tmp_path, version):
 def test_public_pq_manifest_packer_roundtrip_and_rejections(tmp_path):
     keys = _write_pq_manifest(tmp_path)
     records = [
-        dict(controller_id=c.hex(), adnl_id=a.hex(), public_key=p.hex()) for c, a, p, _ in keys
+        dict(validator_id=v.hex(), adnl_id=a.hex(), public_key=p.hex()) for v, a, p, _ in keys
     ]
     source = tmp_path / "operators.json"
     source.write_text(json.dumps(records))
@@ -1038,7 +1007,7 @@ def test_public_pq_manifest_packer_roundtrip_and_rejections(tmp_path):
     assert dest.read_bytes() == (tmp_path / "validator-pq.pub").read_bytes()
     assert subprocess.run(command, capture_output=True).returncode != 0
     dest.unlink()
-    records[1]["controller_id"] = records[0]["controller_id"]
+    records[1]["validator_id"] = records[0]["validator_id"]
     source.write_text(json.dumps(records))
     assert subprocess.run(command, capture_output=True).returncode != 0
     assert not dest.exists()

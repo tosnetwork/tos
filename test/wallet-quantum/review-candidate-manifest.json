@@ -36,7 +36,7 @@
     }
   },
   "config": {
-    "bytes": 7483,
+    "bytes": 7425,
     "gas": {
       "20": {
         "block_gas_limit": 2500000,
@@ -51,13 +51,13 @@
     },
     "global_id": 1,
     "network": "4242424242424242424242424242424242424242424242424242424242424242",
-    "sha256": "b1b8ef24ab92f60bd0a812465b2c330e6f3633d017f36c30d885c148d4b2f157",
+    "sha256": "59880ee43f99c6e103bb60a99af4696bbadaff0dc7c064c04b438cc0a904d800",
     "version": 16
   },
   "files": {
     "abi/contract-constants.json": {
       "bytes": 3968,
-      "sha256": "220ad3c6e348873364614d3e4b63d976ffa1b6a98722c9f0db632e71c22a6ce4"
+      "sha256": "9e36acbf845a86ff7e0a0b96b5532275a42b18f5c35c892a1a713ba90ac0a101"
     },
     "code/module.boc": {
       "bytes": 3055,
@@ -72,8 +72,8 @@
       "sha256": "96ba6f8b91ad961e9c2fd62be9fb6e662ebf77cc2cf72eb6c276f96e738ce4ec"
     },
     "config.boc": {
-      "bytes": 7483,
-      "sha256": "b1b8ef24ab92f60bd0a812465b2c330e6f3633d017f36c30d885c148d4b2f157"
+      "bytes": 7425,
+      "sha256": "59880ee43f99c6e103bb60a99af4696bbadaff0dc7c064c04b438cc0a904d800"
     },
     "repository/LICENSE": {
       "bytes": 35149,
@@ -84,8 +84,8 @@
       "sha256": "4e30874f0e49807d6d8d6d967649332c9370bda0449c8727a7e6bdebf3453d75"
     },
     "repository/crypto/block/block.tlb": {
-      "bytes": 45317,
-      "sha256": "ce56ba9858e9379b8a3dd173c9905e90ac12f53ec3d8c0d3e013498a5ba8ca46"
+      "bytes": 44862,
+      "sha256": "aa279109ba159b0472e230168820a3b28af476b5fdd63a6e40d0b4dd260a7a94"
     },
     "repository/crypto/fift/lib/Asm.fif": {
       "bytes": 49768,
@@ -112,8 +112,8 @@
       "sha256": "8cbe92ade5089e39785292cdc7643246c6e17a4001773366e7d5c3f260769e10"
     },
     "repository/crypto/smartcont/pq-bytes.fc": {
-      "bytes": 6787,
-      "sha256": "f1d3ea2fe6a9038e0284d271d9ca60c66684887fb4fcf412ba23623a48645dbc"
+      "bytes": 6842,
+      "sha256": "4ba7d80363b073325406dea3f64a5b0626a4f58b9af99508551131777f10ecef"
     },
     "repository/crypto/smartcont/pq.fc": {
       "bytes": 844,

@@ -36,8 +36,9 @@ impl TryFrom<ElectorState> for ElectorSnapshot {
             .into_iter()
             .map(|p| {
                 Ok(Participant {
-                    // The getter keys participants by the account that controls the stake.
-                    pub_key: p.id.to_vec(),
+                    // A member is keyed by the account that sent its stake and names its
+                    // post-quantum key by identity, as the public getter reader does.
+                    pub_key: p.key_id.to_vec(),
                     wallet_addr: p.id.to_vec(),
                     adnl_addr: p.adnl.to_vec(),
                     stake: p.stake.checked_u64("participant stake")?,

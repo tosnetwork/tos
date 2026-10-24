@@ -59,7 +59,7 @@ jobs:
           cmake --build build --target test-pq-mldsa44 test-pq-mldsa44-wrapper \
             test-pq-consensus test-pq-signer test-pq-bytes test-validator-descr-tags \
             test-validator-identity test-node-consensus-membership test-config43 test-authorisation-preimage \
-            test-controller-auth test-pq-block-signature-conformance \
+            test-pq-block-signature-conformance \
             test-pq-block-signature-vectors func fift tol -j"$(nproc)"
       - name: Verify PQ consensus identity, signer and PQBytes codec
         id: consensus-identity
@@ -75,7 +75,6 @@ jobs:
           build/crypto/pq/test-validator-identity
           build/crypto/pq/test-config43
           build/crypto/pq/test-authorisation-preimage
-          build/crypto/pq/test-controller-auth
           build/test-node-consensus-membership
       - name: Verify native block signature parsers and case counts
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}

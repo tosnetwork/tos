@@ -11,9 +11,51 @@
 //! bits, last paid, due payment), never from an estimate: code and data alone omit
 //! the account's library dictionary, its extra currencies under older global
 //! versions, and any debt.
-use crate::validator_controller::{forward_fee, gas_fee};
 use chain_block::{Account, Cell, GasLimitsPrices, MsgForwardPrices, StoragePrices, UInt256};
 use std::collections::HashSet;
+
+/// Coin values are VarUInteger16: anything at or above 2^120 cannot be sent.
+const COINS_LIMIT: u128 = 1 << 120;
+
+fn coins(value: u128, what: &str) -> anyhow::Result<u128> {
+    anyhow::ensure!(value < COINS_LIMIT, "{what} exceeds the VarUInteger16 range");
+    Ok(value)
+}
+
+/// `GETGASFEE`: the flat part, then the remainder at `gas_price` (a 16.16 fixed-point
+/// value), rounded up.
+pub fn gas_fee(prices: &GasLimitsPrices, gas: u64) -> anyhow::Result<u128> {
+    let flat = u128::from(prices.flat_gas_price);
+    if gas <= prices.flat_gas_limit {
+        return coins(flat, "gas fee");
+    }
+    let metered = u128::from(gas.saturating_sub(prices.flat_gas_limit))
+        .checked_mul(u128::from(prices.gas_price))
+        .and_then(|value| value.checked_add(0xffff))
+        .ok_or_else(|| anyhow::anyhow!("gas fee overflows"))?
+        >> 16;
+    coins(flat.checked_add(metered).ok_or_else(|| anyhow::anyhow!("gas fee overflows"))?, "gas fee")
+}
+
+/// `GETFORWARDFEE`: the lump price plus the per-bit and per-cell prices (16.16 fixed
+/// point), rounded up.
+pub fn forward_fee(prices: &MsgForwardPrices, bits: u64, cells: u64) -> anyhow::Result<u128> {
+    let variable = u128::from(bits)
+        .checked_mul(u128::from(prices.bit_price))
+        .and_then(|value| {
+            u128::from(cells)
+                .checked_mul(u128::from(prices.cell_price))
+                .and_then(|cell| value.checked_add(cell).and_then(|sum| sum.checked_add(0xffff)))
+        })
+        .ok_or_else(|| anyhow::anyhow!("forward fee overflows"))?
+        >> 16;
+    coins(
+        u128::from(prices.lump_price)
+            .checked_add(variable)
+            .ok_or_else(|| anyhow::anyhow!("forward fee overflows"))?,
+        "forward fee",
+    )
+}
 
 /// An upper bound for the computation of any supported wallet sending one message.
 pub const WALLET_SEND_GAS_BOUND: u64 = 20_000;
@@ -190,6 +232,33 @@ pub fn wallet_send_reserve(inputs: &SendFeeInputs<'_>) -> anyhow::Result<u128> {
 mod tests {
     use super::*;
     use chain_block::{BuilderData, IBitstring};
+
+    #[test]
+    fn gas_fee_rounds_up_and_honours_the_flat_part() {
+        let prices = GasLimitsPrices {
+            gas_price: 3,
+            flat_gas_limit: 100,
+            flat_gas_price: 50_000,
+            ..Default::default()
+        };
+        assert_eq!(gas_fee(&prices, 0).unwrap(), 50_000);
+        assert_eq!(gas_fee(&prices, 100).unwrap(), 50_000);
+        // One metered unit at 3/65536 rounds up to one nano.
+        assert_eq!(gas_fee(&prices, 101).unwrap(), 50_001);
+        let fwd = MsgForwardPrices { lump_price: 7, bit_price: 1, ..Default::default() };
+        assert_eq!(forward_fee(&fwd, 1, 0).unwrap(), 8);
+        assert_eq!(forward_fee(&fwd, 0, 0).unwrap(), 7);
+    }
+
+    #[test]
+    fn a_forward_fee_that_overflows_is_refused() {
+        // Both products at their maximum sum past u128; gas_fee cannot leave the coin
+        // range from u64 inputs, so the forwarding fee is where the guard is reachable.
+        let prices =
+            MsgForwardPrices { bit_price: u64::MAX, cell_price: u64::MAX, ..Default::default() };
+        assert!(forward_fee(&prices, u64::MAX, u64::MAX).is_err());
+        assert!(forward_fee(&prices, 1, 1).is_ok());
+    }
 
     fn leaf(word: u32) -> Cell {
         let mut b = BuilderData::new();

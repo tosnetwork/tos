@@ -610,11 +610,6 @@ pub enum PoolConfig {
         address: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         owner: Option<String>,
-        /// The validator controller this pool relays its stake through.
-        ///
-        /// Part of the contract's storage and therefore of its address, like the other
-        /// two roles.
-        controller: String,
     },
     #[serde(rename = "core")]
     CorePool { addresses: [String; 2], validator_share: u64 },
@@ -624,12 +619,6 @@ pub enum PoolConfig {
         address: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         owner: Option<String>,
-        /// The validator controller this pool relays its stake through.
-        ///
-        /// A pool no longer reaches the elector by itself, so this is part of what its
-        /// address is derived from: a pool named without it is a different account than
-        /// the one the operator means, and there is nothing to fall back on.
-        controller: String,
         validator_reward_share: u16,
         max_nominators: u16,
         min_validator_stake: u64,
@@ -805,46 +794,6 @@ pub struct ElectionsConfig {
     /// Interval for elections runner in seconds
     #[serde(default = "default_tick_interval")]
     pub tick_interval: u64,
-    /// When the pool controller's operating authorization is reported as running low.
-    #[serde(default)]
-    pub operating_authorization: OperatingAuthorizationWarnings,
-}
-
-/// Warning thresholds for a controller's operating authorization (kind 4). The
-/// elections task only reports; renewal is signed offline by the controller root.
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq)]
-pub struct OperatingAuthorizationWarnings {
-    /// The runway an authorization is sized for, in days.
-    #[serde(default = "default_operating_target_days")]
-    pub target_days: u32,
-    /// Warn when the funded runway falls below this percentage of the target.
-    #[serde(default = "default_operating_warn_percent")]
-    pub warn_percent: u8,
-    /// Warn when the authorization expires within this many days.
-    #[serde(default = "default_operating_expiry_warn_days")]
-    pub expiry_warn_days: u32,
-}
-
-fn default_operating_target_days() -> u32 {
-    30
-}
-
-fn default_operating_warn_percent() -> u8 {
-    25
-}
-
-fn default_operating_expiry_warn_days() -> u32 {
-    7
-}
-
-impl Default for OperatingAuthorizationWarnings {
-    fn default() -> Self {
-        Self {
-            target_days: default_operating_target_days(),
-            warn_percent: default_operating_warn_percent(),
-            expiry_warn_days: default_operating_expiry_warn_days(),
-        }
-    }
 }
 
 impl ElectionsConfig {
@@ -858,13 +807,6 @@ impl ElectionsConfig {
         if !(1.0..=3.0).contains(&self.max_factor) {
             anyhow::bail!("max_factor must be in range [1.0..3.0]");
         }
-        let warnings = &self.operating_authorization;
-        if warnings.target_days == 0 {
-            anyhow::bail!("operating_authorization.target_days must be positive");
-        }
-        if !(1..=100).contains(&warnings.warn_percent) {
-            anyhow::bail!("operating_authorization.warn_percent must be in range [1..100]");
-        }
         Ok(())
     }
 }
@@ -876,7 +818,6 @@ impl Default for ElectionsConfig {
             policy_overrides: HashMap::new(),
             max_factor: default_max_factor(),
             tick_interval: default_tick_interval(),
-            operating_authorization: OperatingAuthorizationWarnings::default(),
         }
     }
 }
@@ -924,10 +865,6 @@ pub struct NodeBinding {
     pub wallet: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pool: Option<String>,
-    /// Absolute path to the controller's original, public deployment StateInit BOC.
-    /// Old bindings remain readable; a missing artifact refuses first PQ stake locally.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub controller_birth_state_init_boc: Option<String>,
     /// Whether this binding participates in elections. Defaults to `false`.
     #[serde(default)]
     pub enable: bool,
@@ -1420,8 +1357,6 @@ mod tests {
         "-1:bd313e9e1114bbbe7af6f28ef59be0ff3f02ac795423f10397a70dc16396c4ea";
     const OWNER: &'static str =
         "0:c5770dc489bef32419959c174b787ab95ff9109e0e43239c18059509819697fb";
-    const CONTROLLER: &'static str =
-        "-1:1a6b2f0e4d8c7b5a39e2c1f04b8d6a7e5c3910284f6b7d1e8a2c4f60b3d597e1";
 
     fn minimal_config_json() -> serde_json::Value {
         serde_json::json!({
@@ -1585,39 +1520,17 @@ mod tests {
             "kind": "snp",
             "address": addr,
             "owner": owner,
-            "controller": CONTROLLER,
         });
         let cfg: PoolConfig = serde_json::from_value(value).unwrap();
         assert_eq!(
             cfg,
-            PoolConfig::SNP {
-                address: Some(addr.to_string()),
-                owner: Some(owner.to_string()),
-                controller: CONTROLLER.to_string(),
-            }
+            PoolConfig::SNP { address: Some(addr.to_string()), owner: Some(owner.to_string()) }
         );
 
         let json = serde_json::to_value(&cfg).unwrap();
         assert_eq!(json["kind"], "snp");
         assert_eq!(json["address"], addr);
         assert_eq!(json["owner"], owner);
-        assert_eq!(json["controller"], CONTROLLER);
-    }
-
-    /// A pool written before a stake travelled through a controller.
-    ///
-    /// Such a config describes a contract that no longer exists: the controller is part of
-    /// the storage the address is derived from, so there is nothing to default to and the
-    /// only honest answer is to refuse the file and say which field is missing.
-    #[test]
-    fn a_pool_without_a_controller_is_refused_rather_than_guessed() {
-        let value = serde_json::json!({
-            "kind": "snp",
-            "address": ADDR,
-            "owner": OWNER,
-        });
-        let err = serde_json::from_value::<PoolConfig>(value).unwrap_err().to_string();
-        assert!(err.contains("controller"), "the refusal did not name the missing field: {err}");
     }
 
     #[test]
@@ -1626,17 +1539,9 @@ mod tests {
         let value = serde_json::json!({
             "kind": "snp",
             "address": addr,
-            "controller": CONTROLLER,
         });
         let cfg: PoolConfig = serde_json::from_value(value).unwrap();
-        assert_eq!(
-            cfg,
-            PoolConfig::SNP {
-                address: Some(addr.to_string()),
-                owner: None,
-                controller: CONTROLLER.to_string(),
-            }
-        );
+        assert_eq!(cfg, PoolConfig::SNP { address: Some(addr.to_string()), owner: None });
 
         let json = serde_json::to_value(&cfg).unwrap();
         assert_eq!(json["kind"], "snp");
@@ -1700,17 +1605,15 @@ mod tests {
         let binding = NodeBinding {
             wallet: "w1".to_string(),
             pool: Some("p1".to_string()),
-            controller_birth_state_init_boc: None,
             enable: true,
             status: BindingStatus::Validating,
         };
         let json = serde_json::to_value(&binding).unwrap();
-        assert!(json.get("controller_birth_state_init_boc").is_none());
         let old: NodeBinding = serde_json::from_value(serde_json::json!({
             "wallet": "w1", "pool": "p1", "enable": true, "status": "validating"
         }))
         .unwrap();
-        assert!(old.controller_birth_state_init_boc.is_none());
+        assert_eq!(old.status, BindingStatus::Validating);
         assert_eq!(json["enable"], true);
         assert_eq!(json["status"], "validating");
         assert_eq!(json["wallet"], "w1");

@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Exercise one launch-facing tosctl first-stake caller, not a fixture signer.
 
-The fixture only provisions the chain, admitted controllers, pools and funds.
-The product CLI creates/activates its wallet and imports the controller's
-actual deployment transaction. The selected caller (interactive command or
-election daemon) asks the node to authorize and sends the stake. Neither mode
-is a production-duration or independently hosted network claim.
+The fixture only provisions the chain, the support pools and funds. The product
+CLI creates its operator wallet before Genesis, so the spare node can be
+configured with that wallet as its validator id, then activates it. The selected
+caller (interactive command or election daemon) asks the node to authorize the
+wallet as the stake's sender and sends the stake straight to the Elector.
+Neither mode is a production-duration or independently hosted network claim.
 """
 
 from __future__ import annotations
@@ -31,7 +32,11 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "test/tostester/src"))
 from pytosiq_core import Address, Cell  # noqa: E402
 from tostester.install import Install  # noqa: E402
-from tostester.pq_election_fixture import make_pool_fixture  # noqa: E402
+from tostester.pq_election_fixture import (  # noqa: E402
+    NEW_STAKE_OP,
+    STAKE_ACCEPTED_OP,
+    parse_stake_order,
+)
 
 spec = importlib.util.spec_from_file_location(
     "nominator_pool_lifecycle", REPO / "scripts/nominator-pool-lifecycle-e2e.py"
@@ -43,6 +48,12 @@ spec.loader.exec_module(lifecycle_module)
 
 NANO = 1_000_000_000
 STAKE = lifecycle_module.POOL_STAKE_VALUE
+# Covers the wallet's activation, the stake message's forwarding and its gas.
+PRODUCT_WALLET_FEES = 100 * NANO
+# The spare node is outside Genesis, so its validator id can be the wallet the
+# product CLI creates.
+PRODUCT_NODE = 4
+PRODUCT_BINDING = "validator-5"
 
 
 def sha256(path: Path) -> str:
@@ -61,38 +72,13 @@ def reserve_ports(*ports: int) -> None:
             sock.close()
 
 
-def adnl_from_controller_relay(transactions: list, pool: Address, query_id: int) -> bytes:
-    """Read the ADNL address from the exact on-chain pool→controller message."""
-    matching = []
-    for raw in transactions:
-        tx = lifecycle_module._decoded_transaction(raw)
-        message = tx.in_msg
-        if (
-            message is None
-            or not isinstance(message.info, lifecycle_module.InternalMsgInfo)
-            or message.info.src != pool
-        ):
-            continue
-        body = message.body.begin_parse()
-        if body.remaining_bits < 32 + 64 + 160 + 4 + 256:
-            continue
-        if body.load_uint(32) != 0x50517232 or body.load_uint(64) != (query_id | (1 << 63)):
-            continue
-        body.load_uint(160)  # full relay commitment prefix
-        body.load_coins()  # exact forwarded value
-        body.load_uint(256)  # pinned elector
-        terms = body.load_ref().begin_parse()
-        terms.load_uint(32)  # stake_at
-        terms.load_uint(32)  # max_factor
-        matching.append(terms.load_uint(256).to_bytes(32, "big"))
-    if len(matching) != 1:
-        raise RuntimeError(f"expected one exact controller relay, found {len(matching)}")
-    return matching[0]
+def wallet_elector_stakes(transactions: list, wallet: Address) -> list[tuple[int, bytes]]:
+    """Each NEW_STAKE the product wallet sent straight to the Elector: (query ID, ADNL).
 
-
-def wallet_pool_stake_orders(transactions: list, wallet: Address) -> list[int]:
-    """Only count NEW_STAKE messages sent by the configured product wallet."""
-    orders = []
+    The ADNL comes from the body the Elector parsed, because the CLI may create a
+    fresh transport address rather than use the fixture's.
+    """
+    stakes = []
     for raw in transactions:
         message = lifecycle_module._decoded_transaction(raw).in_msg
         if (
@@ -101,10 +87,21 @@ def wallet_pool_stake_orders(transactions: list, wallet: Address) -> list[int]:
             or message.info.src != wallet
         ):
             continue
-        body = message.body.begin_parse()
-        if body.remaining_bits >= 96 and body.load_uint(32) == 0x4E73744B:
-            orders.append(body.load_uint(64))
-    return orders
+        view = message.body.begin_parse()
+        if view.remaining_bits < 96 or view.load_uint(32) != NEW_STAKE_OP:
+            continue
+        order = parse_stake_order(message.body, with_amount=False)
+        stakes.append((order.query_id, order.adnl_addr))
+    return stakes
+
+
+def created_wallet_address(output: str) -> Address:
+    lines = [
+        line.split()[-1] for line in output.splitlines() if line.strip().startswith("Address:")
+    ]
+    if len(lines) != 1:
+        raise RuntimeError(f"tosctl wallet create printed {len(lines)} addresses")
+    return Address(lines[0])
 
 
 def observed_json_rpc(address: str, method: str, params: dict) -> dict:
@@ -188,91 +185,91 @@ async def product_run(args: argparse.Namespace, run_dir: Path, report: dict) -> 
     }
     report["caller"] = args.caller
     report["claim_boundary"] = (
-        f"one product {args.caller} first stake through a real pool/controller on an "
-        "accelerated co-located PQ chain; no other caller or scale claim"
+        f"one product {args.caller} first stake sent by the operator wallet straight to the "
+        "Elector on an accelerated co-located PQ chain; no other caller or scale claim"
     )
     report["test_only_genesis_faucet_nanotos"] = 150_000 * NANO
     try:
         life.artifacts_dir.mkdir(parents=True, exist_ok=True)
-        life.prepare_pq_election_fixture()
-        await life.bring_up_network()
-        await life.fund_wallets()
-        await life.deploy_pool()
-        assert life.client is not None and life.network is not None
-
-        # Import the *chain's* original deployment transaction, not the
-        # fixture's in-memory StateInit. The import command verifies account,
-        # destination, status, and original StateInit before saving the BOC.
-        controller = life.controllers[0]
-        state = await life.client.raw_get_account_state(controller.address)
-        assert state.last_transaction_id is not None
-        history = await life.client.raw_get_transactions(
-            controller.address, state.last_transaction_id
-        )
-        if len(history.transactions) != 1:
-            raise RuntimeError(
-                "controller has more than one transaction before product stake; "
-                "deployment transaction selection must be made explicitly"
-            )
-        deployment_tx = history.transactions[0]
-        deployment_path = run_dir / "controller-deployment-transaction.boc"
-        deployment_path.write_bytes(deployment_tx.data)
-        report["deployment_transaction"] = {
-            "path": str(deployment_path),
-            "sha256": sha256(deployment_path),
-            "lt": str(deployment_tx.transaction_id.lt),
-            "hash": deployment_tx.transaction_id.hash.hex(),
-        }
-
         subprocess.run(
             [str(binary), "config", "generate", "-o", str(config)],
             check=True,
             capture_output=True,
             text=True,
         )
+        config.chmod(0o600)
+        # The wallet key and address exist before Genesis: the spare node is
+        # configured with the wallet as its validator id, because the Elector
+        # names a member by the account that sends its stake.
+        wallet = created_wallet_address(
+            await cli(
+                binary,
+                config,
+                env,
+                "wallet",
+                "create",
+                "--name",
+                "operator",
+                "--version",
+                "V1R3",
+                "--workchain=-1",
+            )
+        )
+        report["product_wallet"] = lifecycle_module.raw_address(wallet)
+        life.prepare_pq_election_fixture()
+        life.stake_spare_directly(wallet)
+        await life.bring_up_network()
+        await life.fund_wallets()
+        await life.deploy_pool()
+        assert life.client is not None and life.network is not None
+        node = life.nodes[PRODUCT_NODE]
+        held = node.pq_initial_validator
+        if held is None or held.validator_id != wallet.hash_part:
+            raise AssertionError("the product node's validator id is not the product wallet")
+
         document = json.loads(config.read_text())
         document["chain_rpc"] = {
             "urls": [f"http://127.0.0.1:{args.rpc_port}/jsonRPC"],
             "api_key": None,
         }
         document["master_wallet"] = None
-        document["nodes"]["validator-1"] = {
-            "server_address": life.nodes[0]._engine_console_addr.address,
+        document["nodes"][PRODUCT_BINDING] = {
+            "server_address": node._engine_console_addr.address,
             "server_key": {
                 "type_id": 0,
                 "pub_key": base64.b64encode(
-                    life.nodes[0]._engine_console_server_key.public_key.key
+                    node._engine_console_server_key.public_key.key
                 ).decode(),
             },
             "client_key": {
                 "type_id": 0,
                 "pvt_key": base64.b64encode(
-                    life.nodes[0]._engine_console_client_key.private_key.key
+                    node._engine_console_client_key.private_key.key
                 ).decode(),
             },
             "timeouts": 10,
         }
         config.write_text(json.dumps(document, indent=2) + "\n")
         config.chmod(0o600)
-        await cli(
-            binary,
-            config,
-            env,
-            "wallet",
-            "create",
-            "--name",
-            "operator",
-            "--version",
-            "V1R3",
-            "--workchain=-1",
-        )
         listed = json.loads(await cli(binary, config, env, "wallet", "ls", "--format", "json"))
-        wallet_text = next(item["address"] for item in listed if item["name"] == "operator")
-        wallet = Address(wallet_text)
-        report["product_wallet"] = lifecycle_module.raw_address(wallet)
+        if (
+            Address(next(item["address"] for item in listed if item["name"] == "operator"))
+            != wallet
+        ):
+            raise AssertionError("tosctl lists the operator wallet at another address")
         faucet = life.network.zerostate.main_wallet(life.client)
         await life.send(
-            faucet, dest=wallet, amount=100 * NANO, body=Cell.empty(), label="product-wallet-fund"
+            faucet,
+            dest=wallet,
+            amount=STAKE + PRODUCT_WALLET_FEES,
+            body=Cell.empty(),
+            label="product-wallet-fund",
+        )
+        await life.retry(
+            lambda: life.balance(wallet),
+            timeout=60,
+            description="product wallet funded",
+            predicate=lambda value: value >= STAKE + PRODUCT_WALLET_FEES,
         )
         await cli(binary, config, env, "wallet", "activate", "--name", "operator")
         active = await life.retry(
@@ -283,94 +280,27 @@ async def product_run(args: argparse.Namespace, run_dir: Path, report: dict) -> 
         )
         report["product_wallet_code_sha256"] = hashlib.sha256(active.code).hexdigest()
 
-        pool = make_pool_fixture(life.single_pool_code, wallet, controller.address)
-        await life.send(
-            faucet,
-            dest=pool.address,
-            amount=10 * NANO,
-            body=Cell.empty(),
-            init=pool.state_init,
-            label="product-single-pool-deploy",
-        )
-        await life.retry(
-            lambda: life.client.raw_get_account_state(pool.address),
-            timeout=60,
-            description="product single-nominator pool active",
-            predicate=lambda value: bool(value.code),
-        )
-        # Capital provisioning is fixture work, not the product stake path.
-        # The real operator wallet must still authorize and send the stake.
-        await life.send(
-            faucet,
-            dest=pool.address,
-            amount=lifecycle_module.SUPPORT_POOL_CAPITAL,
-            body=Cell.empty(),
-            label="product-single-pool-capital",
-        )
-        pool_capital = await life.retry(
-            lambda: life.balance(pool.address),
-            timeout=60,
-            description="product pool capital",
-            predicate=lambda value: value >= STAKE,
-        )
-        report["product_pool_capital_nanotos"] = pool_capital
-
         document = json.loads(config.read_text())
-        document["pools"]["product-pool"] = {
-            "kind": "snp",
-            "address": lifecycle_module.raw_address(pool.address),
-            "owner": lifecycle_module.raw_address(wallet),
-            "controller": lifecycle_module.raw_address(controller.address),
-        }
-        document["bindings"]["validator-1"] = {
+        document["bindings"][PRODUCT_BINDING] = {
             "wallet": "operator",
-            "pool": "product-pool",
             "enable": False,
             "status": "idle",
         }
-        config.write_text(json.dumps(document, indent=2) + "\n")
-        birth = run_dir / "controller-birth-state-init.boc"
-        report["birth_import_output"] = await cli(
-            binary,
-            config,
-            env,
-            "config",
-            "bind",
-            "import-birth",
-            "--node",
-            "validator-1",
-            "--transaction-boc",
-            str(deployment_path),
-            "--output",
-            str(birth),
-        )
-        report["birth_artifact"] = {"path": str(birth), "sha256": sha256(birth)}
-        document = json.loads(config.read_text())
-        if document["bindings"]["validator-1"]["controller_birth_state_init_boc"] != str(birth):
-            raise AssertionError("import did not bind birth artifact to product operator config")
-        report["live_param47"] = {
-            "admitted_code_hash": life.controller_code.hash.hex(),
-            "read_back": True,  # life.bring_up_network verified the complete live dictionary
-        }
-        param47_path = run_dir / "live-config47.txt"
-        param47_path.write_text(await life.lite("time", "getconfig 47"))
-        report["live_param47"]["raw_path"] = str(param47_path)
-        report["live_param47"]["raw_sha256"] = sha256(param47_path)
-
         if args.caller == "daemon":
-            document = json.loads(config.read_text())
             document["master_wallet"] = document["wallets"]["operator"]
-            document["bindings"]["validator-1"]["enable"] = True
+            document["bindings"][PRODUCT_BINDING]["enable"] = True
             document["elections"]["policy"] = "minimum"
             document["elections"]["tick_interval"] = 40
             document["tick_interval"] = 40
             document["http"]["bind"] = f"127.0.0.1:{args.service_port}"
-            config.write_text(json.dumps(document, indent=2) + "\n")
-            config.chmod(0o600)
+        config.write_text(json.dumps(document, indent=2) + "\n")
+        config.chmod(0o600)
 
+        # The first election opens 180 s before the 1200 s Genesis set expires; this
+        # fixture reaches here within a minute or two of Genesis.
         election = await life.retry(
             life.stakeable_election_id,
-            timeout=900,
+            timeout=1200,
             description="open Elector acceptance window",
             predicate=lambda value: value > 0,
             interval=1,
@@ -397,11 +327,11 @@ async def product_run(args: argparse.Namespace, run_dir: Path, report: dict) -> 
             "exit_code": participant_raw["result"]["exit_code"],
             "index4_type": raw_stack[4]["@type"],
         }
-        pool_baseline = (await life.client.raw_get_account_state(pool.address)).last_transaction_id
-        controller_baseline = (
-            await life.client.raw_get_account_state(controller.address)
+        elector_baseline = (
+            await life.client.raw_get_account_state(lifecycle_module.ELECTOR)
         ).last_transaction_id
-        if pool_baseline is None or controller_baseline is None:
+        wallet_baseline = (await life.client.raw_get_account_state(wallet)).last_transaction_id
+        if elector_baseline is None or wallet_baseline is None:
             raise RuntimeError("cannot bound product stake transaction history")
         # The CLI may fail after the wallet message is included. Keep the
         # exact contract feedback in that case instead of ending observation
@@ -417,7 +347,7 @@ async def product_run(args: argparse.Namespace, run_dir: Path, report: dict) -> 
                     "wallet",
                     "stake",
                     "--binding",
-                    "validator-1",
+                    PRODUCT_BINDING,
                     "--amount",
                     f"{STAKE / NANO:.9f}",
                     answers=b"y\ny\n",
@@ -444,19 +374,19 @@ async def product_run(args: argparse.Namespace, run_dir: Path, report: dict) -> 
             while time.monotonic() < deadline:
                 if daemon.returncode is not None:
                     raise RuntimeError(f"tosctl service exited before a stake: {daemon.returncode}")
-                pool_probe, _, complete, _ = await lifecycle_module._transactions_since(
-                    life.client, pool.address, pool_baseline
+                elector_probe, _, complete, _ = await lifecycle_module._transactions_since(
+                    life.client, lifecycle_module.ELECTOR, elector_baseline
                 )
                 if not complete:
-                    raise RuntimeError("daemon pool-order transaction window is incomplete")
-                if wallet_pool_stake_orders(pool_probe, wallet):
+                    raise RuntimeError("daemon Elector transaction window is incomplete")
+                if wallet_elector_stakes(elector_probe, wallet):
                     break
                 await asyncio.sleep(1)
             else:
-                raise RuntimeError("daemon did not send a wallet-to-pool NEW_STAKE within 150s")
+                raise RuntimeError("daemon did not send a wallet-to-Elector NEW_STAKE within 150s")
             log_text = log_path.read_text(errors="replace")
-            if "node [validator-1] send stake" not in log_text:
-                raise RuntimeError("pool order observed but daemon send-stake log is absent")
+            if f"node [{PRODUCT_BINDING}] send stake" not in log_text:
+                raise RuntimeError("Elector stake observed but daemon send-stake log is absent")
             report["daemon"]["send_stake_log_seen"] = True
 
         participant_params = {
@@ -502,74 +432,70 @@ async def product_run(args: argparse.Namespace, run_dir: Path, report: dict) -> 
                 "block_id": str(getattr(elector_state, "block_id", None)),
             }
 
-        pool_txs, pool_pages, pool_complete, _ = await lifecycle_module._transactions_since(
-            life.client, pool.address, pool_baseline
-        )
         (
-            controller_txs,
-            controller_pages,
-            controller_complete,
+            elector_txs,
+            elector_pages,
+            elector_complete,
             _,
         ) = await lifecycle_module._transactions_since(
-            life.client, controller.address, controller_baseline
+            life.client, lifecycle_module.ELECTOR, elector_baseline
         )
         report["transaction_coverage"] = {
-            "pool_count": len(pool_txs),
-            "pool_pages": pool_pages,
-            "pool_complete": pool_complete,
-            "controller_count": len(controller_txs),
-            "controller_pages": controller_pages,
-            "controller_complete": controller_complete,
+            "elector_count": len(elector_txs),
+            "elector_pages": elector_pages,
+            "elector_complete": elector_complete,
         }
-        for name, transactions in (("pool", pool_txs), ("controller", controller_txs)):
+        if not elector_complete:
+            raise RuntimeError("product stake transaction window is incomplete")
+        # A product first-stake acknowledgement must be located by the exact
+        # query id of the wallet's stake as the Elector received it.
+        stakes = wallet_elector_stakes(elector_txs, wallet)
+        report["stake_feedback"] = {"elector_stake_query_ids": [query for query, _ in stakes]}
+        if cli_error is not None and len(stakes) != 1:
+            raise RuntimeError(
+                f"product CLI failed before an exact Elector stake was observed: {cli_error}"
+            )
+        if len(stakes) != 1:
+            raise RuntimeError(f"expected one product stake, found {len(stakes)}")
+        query_id, adnl = stakes[0]
+        # The Elector answers the sender, so its reply is in the wallet's history.
+        # A CLI parse failure can occur before that answer arrives; give the exact
+        # query a bounded observation window, and an absent answer at the boundary
+        # is still inconclusive.
+        reply = None
+        wallet_txs: list = []
+        wallet_pages = 0
+        wallet_complete = False
+        feedback_deadline = time.monotonic() + 45
+        while True:
+            (
+                wallet_txs,
+                wallet_pages,
+                wallet_complete,
+                _,
+            ) = await lifecycle_module._transactions_since(life.client, wallet, wallet_baseline)
+            if not wallet_complete:
+                raise RuntimeError("wallet feedback transaction window is incomplete")
+            reply = lifecycle_module.elector_reply(wallet_txs, query_id)
+            if reply is not None or time.monotonic() >= feedback_deadline:
+                break
+            await asyncio.sleep(1)
+        for name, transactions in (("elector", elector_txs), ("wallet", wallet_txs)):
             path = run_dir / f"product-stake-{name}-transactions.json"
             path.write_text(json.dumps([tx.to_dict() for tx in transactions], indent=2) + "\n")
             report["transaction_coverage"][f"{name}_raw_path"] = str(path)
             report["transaction_coverage"][f"{name}_raw_sha256"] = sha256(path)
-        if not pool_complete or not controller_complete:
-            raise RuntimeError("product stake transaction window is incomplete")
-        # A product first-stake acknowledgement must be located by the exact
-        # query id extracted from the pool's order, then joined to the Elector.
-        orders = wallet_pool_stake_orders(pool_txs, wallet)
-        report["stake_feedback"] = {"pool_order_query_ids": orders}
-        if cli_error is not None and len(orders) != 1:
-            raise RuntimeError(
-                f"product CLI failed before an exact pool order was observed: {cli_error}"
-            )
-        if len(orders) != 1:
-            raise RuntimeError(f"expected one product stake order, found {len(orders)}")
-        query_id = orders[0]
-        # The bound elector result reaches the controller, which pays the
-        # pool and forwards its exact business result. Both histories are kept.
-        reply = lifecycle_module.elector_reply(pool_txs, query_id, controller=controller.address)
-        # A CLI parse failure can occur before the asynchronous Elector answer
-        # reaches the controller. Give that exact query a bounded observation
-        # window; an absent answer at the boundary is still inconclusive.
-        feedback_deadline = time.monotonic() + 45
-        while reply is None and time.monotonic() < feedback_deadline:
-            await asyncio.sleep(1)
-            pool_txs, pool_pages, pool_complete, _ = await lifecycle_module._transactions_since(
-                life.client, pool.address, pool_baseline
-            )
-            if not pool_complete:
-                raise RuntimeError("pool feedback transaction window is incomplete")
-            reply = lifecycle_module.elector_reply(
-                pool_txs, query_id, controller=controller.address
-            )
-        pool_path = run_dir / "product-stake-pool-transactions.json"
-        pool_path.write_text(json.dumps([tx.to_dict() for tx in pool_txs], indent=2) + "\n")
         report["transaction_coverage"].update(
             {
-                "pool_count": len(pool_txs),
-                "pool_pages": pool_pages,
-                "pool_complete": pool_complete,
-                "pool_raw_sha256": sha256(pool_path),
+                "wallet_count": len(wallet_txs),
+                "wallet_pages": wallet_pages,
+                "wallet_complete": wallet_complete,
             }
         )
         report["stake_feedback"] = {
             "query_id": query_id,
             "elector_reply": reply,
-            "pool_order_seen": True,
+            "elector_stake_seen": True,
             "feedback_window_seconds": 45,
             "classification": "ELECTOR_REPLY_OBSERVED" if reply is not None else "INCONCLUSIVE",
         }
@@ -591,28 +517,25 @@ async def product_run(args: argparse.Namespace, run_dir: Path, report: dict) -> 
             and "Stake accepted by elector" not in report["stake_cli_output"]
         ):
             raise RuntimeError("product command did not report Elector participant acceptance")
-        if reply is None or reply[0] != 0xF374484C:
+        if reply is None or reply[0] != STAKE_ACCEPTED_OP:
             raise RuntimeError(f"exact Elector STAKE_ACCEPTED not observed: {reply}")
 
         for index in (1, 2, 3):
             await life.stake_support_pool(index, election)
-        controller_hex = controller.address.hash_part.hex()
-        # The CLI may generate a fresh Ed25519 transport address. Read the
-        # actual controller relay message, not fixture node.validator_key.
-        adnl = adnl_from_controller_relay(controller_txs, pool.address, query_id)
+        wallet_hex = wallet.hash_part.hex()
         selection = await life.retry(
             life.config34_selection,
             timeout=900,
-            description="product controller and ADNL paired in live Config34",
+            description="product wallet and ADNL paired in live Config34",
             predicate=lambda value: (
                 value.utime_since == election
-                and (controller_hex, adnl.hex()) in value.validator_adnl_pairs
+                and (wallet_hex, adnl.hex()) in value.validator_adnl_pairs
             ),
             interval=5,
         )
         report["live_config34"] = {
             "utime_since": selection.utime_since,
-            "controller_id": controller_hex,
+            "validator_id": wallet_hex,
             "adnl_id": adnl.hex(),
             "pairs": selection.validator_adnl_pairs,
         }
@@ -654,7 +577,7 @@ async def main() -> int:
     run_dir = (args.run_root / datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")).resolve()
     run_dir.mkdir(parents=True, exist_ok=False)
     report = {
-        "schema": "tos.pq.product-first-stake.v2",
+        "schema": "tos.pq.product-first-stake.v3",
         "passed": False,
         "run_dir": str(run_dir),
         "failures": [],

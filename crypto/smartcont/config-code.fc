@@ -249,20 +249,6 @@ _ get_vote_config(int critical?) inline {
 () after_code_upgrade(slice param, cont old_code) impure method_id(1666) {
 }
 
-;; ---------------------------------------------------------------------------
-;; ConfigParam 47 -- the validator controller codes an account may have been born
-;; with. A validator's authority is rooted in its controller account, and what makes
-;; that account post-quantum is the code it was deployed with, so this parameter is
-;; the list of codes that count.
-;;
-;; The bound is part of the parameter rather than a note about it: a hashmap carries no
-;; cardinality of its own, and an authority registry nobody can see growing is one that
-;; grows. Eight is the frozen ceiling.
-;; ---------------------------------------------------------------------------
-
-const int config::validator_controller_policy = 47;
-const int config::max_controller_codes = 8;
-
 ;; The proposal that used to appoint or depose a single administrator. It is named here
 ;; so it can be refused by name rather than merely happening not to be handled.
 const int config::appoint_administrator_param = -999;
@@ -271,38 +257,6 @@ const int config::appoint_administrator_param = -999;
 ;; accepted proposal alike, so the rules about what may be installed live once. A rule
 ;; each path carries its own copy of is a rule one of them will eventually be missing.
 (cell, int) install_param(cell cfg_dict, int param_id, cell param_val) inline_ref;
-
-int valid_controller_policy?(cell value) inline_ref {
-  if (cell_null?(value)) {
-    ;; Removing the parameter is allowed by this check; admission then fails closed,
-    ;; because no code is admitted rather than every code being admitted.
-    return true;
-  }
-  slice cs = value.begin_parse();
-  cell codes = cs~load_dict();
-  ifnot (cs.slice_empty?()) {
-    return false;  ;; trailing data: not this parameter's shape
-  }
-  int count = 0;
-  int key = -1;
-  int scanning = true;
-  while (scanning) {
-    (int next, slice entry, int found) = codes.udict_get_next?(256, key);
-    if (found) {
-      ifnot (entry.slice_empty?()) {
-        return false;  ;; the value is True, which carries nothing
-      }
-      count += 1;
-      if (count > config::max_controller_codes) {
-        return false;
-      }
-      key = next;
-    } else {
-      scanning = false;
-    }
-  }
-  return true;
-}
 
 (cell, int) install_param(cell cfg_dict, int param_id, cell param_val) inline_ref {
   ;; Governance may change what this chain does. It may not vote itself something that
@@ -324,11 +278,6 @@ int valid_controller_policy?(cell value) inline_ref {
     ifnot (auth_policy_transition_valid(cfg_dict.idict_get_ref(32, param_id), param_val)
       & auth_policy_membership_valid(cfg_dict.idict_get_ref(32, 9))
       & auth_policy_membership_valid(cfg_dict.idict_get_ref(32, 10))) {
-      return (cfg_dict, false);
-    }
-  }
-  if (param_id == config::validator_controller_policy) {
-    ifnot (valid_controller_policy?(param_val)) {
       return (cfg_dict, false);
     }
   }

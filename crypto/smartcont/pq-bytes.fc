@@ -135,8 +135,8 @@ int pq::key_id(int algorithm_id, cell stored) {
 ;; message body can never be mistaken for a preimage.
 ;; ---------------------------------------------------------------------------
 
-const int pq::tag::stake_op = 0x50517374;         ;; "PQst"
-const int pq::tag::stake_sign = 0x50515354;       ;; "PQST"
+const int pq::tag::stake_op = 0x4e73744b;         ;; "NstK", the upstream new_stake
+const int pq::tag::stake_sign = 0x654c5074;       ;; "eLPt", the upstream election request
 const int pq::tag::config_vote_op = 0x5051766f;   ;; "PQvo"
 const int pq::tag::config_vote_sign = 0x5051564f; ;; "PQVO"
 const int pq::tag::complaint_op = 0x5051636f;     ;; "PQco"

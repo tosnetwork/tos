@@ -104,7 +104,6 @@ pub struct ElectionParticipant {
     pub stake: CoinsAmount,
     pub max_factor: u32,
     pub adnl: [u8; 32],
-    pub algorithm: u32,
     pub key_id: [u8; 32],
 }
 #[derive(Debug, Clone)]
@@ -175,7 +174,6 @@ impl TryFrom<wire::electorstate::ElectorState> for ElectorState {
                     stake: CoinsAmount::from_bytes(&p.stake)?,
                     max_factor: unsigned_int(p.max_factor),
                     adnl: hash(&p.adnl),
-                    algorithm: unsigned_int(p.algorithm),
                     key_id: hash(&p.key_id),
                 })
             })

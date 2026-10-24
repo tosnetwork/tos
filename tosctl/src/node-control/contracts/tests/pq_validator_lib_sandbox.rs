@@ -75,10 +75,8 @@ cell probe_election_context() method_id {
 cell probe_config_vote_context() method_id {
   return pq::config_vote_context();
 }
-cell probe_stake_preimage(int stake_at, int max_factor, int validator_id, int stake_owner,
-                          int algorithm_id, int key_id, int adnl_addr) method_id {
-  return pq::stake_preimage(stake_at, max_factor, validator_id, stake_owner, algorithm_id, key_id,
-                            adnl_addr);
+cell probe_stake_preimage(int stake_at, int max_factor, int src_addr, int adnl_addr) method_id {
+  return pq::stake_preimage(stake_at, max_factor, src_addr, adnl_addr);
 }
 cell probe_config_vote_preimage(int validator_set_id, int validator_id, int idx,
                                 int proposal_hash) method_id {
@@ -464,9 +462,38 @@ fn the_contract_builds_the_bytes_the_vectors_freeze() {
                 StackItem::integer(IntegerData::from_u32(1_789_434_000)),
                 StackItem::integer(IntegerData::from_u32(0x10000)),
                 StackItem::integer(fill(0xa1)),
-                StackItem::integer(fill(0xd7)),
-                StackItem::integer(IntegerData::from_u32(1)),
-                StackItem::integer(fill(0xb2)),
+                StackItem::integer(fill(0xc3)),
+            ],
+        ),
+        // Each signed field moved on its own, so a contract that dropped one from the
+        // preimage, or swapped two of the same width, builds bytes the vectors refuse.
+        (
+            "stake-other-sender",
+            "probe_stake_preimage",
+            vec![
+                StackItem::integer(IntegerData::from_u32(1_789_434_000)),
+                StackItem::integer(IntegerData::from_u32(0x10000)),
+                StackItem::integer(fill(0xa2)),
+                StackItem::integer(fill(0xc3)),
+            ],
+        ),
+        (
+            "stake-other-address",
+            "probe_stake_preimage",
+            vec![
+                StackItem::integer(IntegerData::from_u32(1_789_434_000)),
+                StackItem::integer(IntegerData::from_u32(0x10000)),
+                StackItem::integer(fill(0xa1)),
+                StackItem::integer(fill(0xc4)),
+            ],
+        ),
+        (
+            "stake-other-factor",
+            "probe_stake_preimage",
+            vec![
+                StackItem::integer(IntegerData::from_u32(1_789_434_000)),
+                StackItem::integer(IntegerData::from_u32(0x10001)),
+                StackItem::integer(fill(0xa1)),
                 StackItem::integer(fill(0xc3)),
             ],
         ),

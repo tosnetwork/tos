@@ -161,7 +161,7 @@ documented limits. Operator workflows never fall back to it.
 
 ```
 engine.validator.electionParticipant
-    id:int256 stake:bytes max_factor:int adnl:int256 algorithm:int key_id:int256
+    id:int256 stake:bytes max_factor:int adnl:int256 key_id:int256
     = engine.validator.ElectionParticipant;
 engine.validator.frozenStake
     id:int256 owner:int256 weight:long stake:bytes banned:Bool
@@ -276,8 +276,8 @@ is checked by executing the original VM path because the wire reply has no gas f
 
   | Getter (per run) | What its cost depends on | Measured production-context worst case | Budget | Headroom `(budget − gas) / gas` |
   | --- | --- | --- | --- | --- |
-  | `participant_list_extended` | members (protocol cap 256) and the member dictionary's path length | 1,114,595 at 256 on the deepest path (345,395 C++ / 368,795 Rust sandbox with random-like keys); a maximum-width stake (2^120 − 1, the record's only variable-width field) costs the same | `kElectorParticipantsGasLimit = 1,500,000` | 34.6 % |
-  | `past_elections` | retained past elections K (≈ 0.9k each; independent of frozen entries, returned as a cell) | 19,528 on deep-path election ids at K = 16, F = 256 (4,096 frozen entries); hashed ids 17,878; contiguous ids 15,953 | `kPastElectionsGasLimit = 50,000` | 156.0 % |
+  | `participant_list_extended` | members (protocol cap 256) and the member dictionary's path length | 1,048,271 at 256 on the deepest path (279,071 C++ with random-like keys), measured on the staking-account elector with `test/validator/fixtures/control-getter`; the earlier PQ member record measured 1,114,595 (368,795 Rust sandbox with random-like keys). A maximum-width stake (2^120 − 1, the record's only variable-width field) costs the same | `kElectorParticipantsGasLimit = 1,500,000` | 43.1 % |
+  | `past_elections` | retained past elections K (≈ 0.9k each; independent of frozen entries, returned as a cell) | 19,399 on deep-path election ids at K = 16, F = 256 (4,096 frozen entries); hashed ids 17,749; contiguous ids 16,399 (same fixture) | `kPastElectionsGasLimit = 50,000` | 157.7 % |
   | `compute_returned_stake` | credits dictionary path length | 2,896 at 65,536 random credits; 26,804 on the deepest path 256-bit keys allow | `kReturnedStakeGasLimit = 40,000` per wallet | 49.2 % |
   | `list_proposals` / `get_proposal` | proposals, voters | — | `kConfigProposalsGasLimit = 10,000,000`, an operational ceiling, not a capacity claim | Measured operational cases below; oversized states are refused, not truncated |
 

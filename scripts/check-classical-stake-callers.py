@@ -4,7 +4,8 @@
 This is deliberately narrower than "all classical stake producers": it
 discovers references to the two base Fift tools and their library word in
 source files, including the retained test-only codec. Rust legacy vectors
-and prose are not callers.
+and prose are not callers. It also requires that no Python harness signs a
+stake or encodes a stake body of its own.
 """
 
 from __future__ import annotations
@@ -63,6 +64,41 @@ NON_CALLER_SOURCE_GUARDS = {
     # multi-nominator lifecycle route; it does not invoke either Fift tool.
     "scripts/check-nominator-pool-pq-route.py",
 }
+
+
+# Python harnesses send stakes, but never encode or sign one: every NEW_STAKE body comes
+# from the production Rust builder and every signature from the node. The one exception
+# re-wraps a builder-made pool order into the body a wallet sends straight to the elector.
+PYTHON_HARNESS_ROOTS = ("scripts", "test/tostester/src")
+PYTHON_STAKE_ENCODER = re.compile(r"store_uint\(\s*(?:0x4e73744b|NEW_STAKE_OP)\b", re.IGNORECASE)
+PYTHON_STAKE_PREIMAGE = re.compile(r"0x654c5074", re.IGNORECASE)
+PYTHON_STAKE_ENCODERS_EXPECTED = {
+    "test/tostester/src/tostester/pq_election_fixture.py": 1,
+}
+# Guards quote these literals in order to forbid them.
+PYTHON_MARKER_GUARDS = {
+    "scripts/check-classical-stake-callers.py",
+    "scripts/check-pq-election-fixture-source.py",
+    "scripts/check-nominator-pool-pq-route.py",
+    "scripts/check-tosctl-pq-stake-builder.py",
+}
+
+
+def python_stake_encoders(root: Path) -> tuple[dict[str, int], list[str]]:
+    encoders: dict[str, int] = {}
+    preimages: list[str] = []
+    for directory in PYTHON_HARNESS_ROOTS:
+        for path in sorted((root / directory).rglob("*.py")):
+            relative = path.relative_to(root).as_posix()
+            if relative in PYTHON_MARKER_GUARDS or path.name.startswith("test_"):
+                continue
+            source = path.read_text(encoding="utf-8", errors="replace")
+            count = len(PYTHON_STAKE_ENCODER.findall(source))
+            if count:
+                encoders[relative] = count
+            if PYTHON_STAKE_PREIMAGE.search(source):
+                preimages.append(relative)
+    return encoders, preimages
 
 
 def fail(message: str) -> None:
@@ -192,6 +228,21 @@ def main() -> int:
         fail(
             f"literal Fift caller inventory changed: missing={missing} unexpected={unexpected} wrong={wrong}"
         )
+    encoders, preimages = python_stake_encoders(root)
+    if preimages:
+        fail(f"Python harness carries the stake preimage tag and could sign a stake: {preimages}")
+    if encoders != PYTHON_STAKE_ENCODERS_EXPECTED:
+        fail(
+            "Python harness encodes a NEW_STAKE body instead of using the production builder: "
+            f"expected={PYTHON_STAKE_ENCODERS_EXPECTED} actual={encoders}"
+        )
+    bridge = (root / "tosctl/src/node-control/contracts/examples/pq_pool_stake_order.rs").read_text(
+        encoding="utf-8"
+    )
+    if not re.search(r"\blet body\s*=\s*new_stake\(\s*&NewStakeParams\b", bridge) or re.search(
+        r"\.sign\(|witness", bridge
+    ):
+        fail("the Python harnesses' pool-order bridge no longer calls only the production builder")
     document = (root / "test/pq-native/fixtures/T2-PQ-LAUNCH-GATE-MIGRATION.md").read_text()
     undocumented = sorted(path for path in EXPECTED if f"`{path}`" not in document)
     if undocumented:
@@ -203,7 +254,8 @@ def main() -> int:
         "no scanned product .py/.fif/.fc/.cpp/.rs source names a classical stake body word; "
         "the base Fift byte tests load test-only "
         "fixtures, proposal smoke has no classical stake dependency, the parity codec is test-local, "
-        "and the migration map names each"
+        "and the migration map names each; Python harnesses neither sign a stake nor encode a "
+        "NEW_STAKE body beyond re-wrapping the production builder's pool order"
     )
     return 0
 

@@ -276,17 +276,13 @@ TEST(JsonRpcExplorer, config_absence_defaults_and_retirement_are_exact) {
   auto decoded = decode_config(48, policy, 16, 1000);
   ASSERT_TRUE(decoded.is_ok());
   ASSERT_TRUE(decoded.ok().find("\"primary_status\":\"retired\"") != std::string::npos);
-  vm::Dictionary controllers(256);
-  for (unsigned i = 0; i < 9; ++i) {
-    td::Bits256 hash;
-    hash.set_zero();
-    hash.as_slice()[31] = static_cast<char>(i);
-    ASSERT_TRUE(controllers.set(hash.cbits(), 256, vm::load_cell_slice_ref(vm::CellBuilder().finalize())));
-    vm::CellBuilder builder;
-    ASSERT_TRUE(builder.store_maybe_ref(controllers.get_root_cell()));
-    auto cell = builder.finalize();
+  // ConfigParam 47 is retired: it has no typed view, present or absent.
+  vm::CellBuilder retired;
+  ASSERT_TRUE(retired.store_maybe_ref({}));
+  for (td::Ref<vm::Cell> cell : {td::Ref<vm::Cell>{}, td::Ref<vm::Cell>{retired.finalize()}}) {
     auto result = decode_config(47, cell, 17, 1000);
-    ASSERT_EQ(result.is_ok(), i < 8);
+    ASSERT_TRUE(result.is_error());
+    ASSERT_EQ(result.error().code(), static_cast<int>(Failure::InvalidArgument));
   }
 }
 TEST(JsonRpcExplorer, policy_deadline_uses_authenticated_chain_time) {

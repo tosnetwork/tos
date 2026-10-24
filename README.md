@@ -28,7 +28,7 @@ quantum resistant.
 | Layer | Implemented mechanism | What it protects |
 | --- | --- | --- |
 | Validator consensus | ML-DSA-44, algorithm ID 1 | Authenticity of PQ validator consensus signatures |
-| Validator authority | Stable controller identity, separate root and consensus keys | Controller authorization and key rotation within the contract's rules |
+| Validator stake | ML-DSA-44 stake authorization over the staking account, election and ADNL | A stake registers only for the account that sends it and the key that signed it |
 | Contract verification | Native `PQCHECKSIG_SUITE` for suites 1–4, plus dedicated `PQCHECKSIG_MLDSA44`, `PQCHECKSIG_FALCON512_PADDED` and `LMSCHECKFEEHASH` | Explicit PQ authorization in contracts that use it |
 | Quantum wallet | ML-DSA-44 primary key, SLH-DSA-SHA2-128s protection and recovery key | Asset authority and recovery of a PQ-only wallet |
 | Wallet fees | LMS fee profile (hash-based, stateful) | Payment of the specified fee classes only; no asset authority |
@@ -69,8 +69,8 @@ The canonical genesis profile uses:
 - ConfigParam 8 **version 16** and four equally weighted PQ validators;
 - `validator_pq_addr#b3` descriptors with **ML-DSA-44** public keys;
 - **Simplex version 2 over QUIC**, distinct from the VM/global protocol version;
-- independent controller, consensus-key and ADNL transport identities;
-- ConfigParam 47 admission of the compiled PQ controller for later elections.
+- independent staking-account, consensus-key and ADNL transport identities;
+- elections in which a wallet or nominator pool stakes directly with the Elector.
 
 An ML-DSA-44 public key is 1,312 bytes and a signature is 2,420 bytes. Those
 larger objects require bounded encodings, validation and resource budgets;

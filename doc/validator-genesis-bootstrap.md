@@ -9,7 +9,7 @@ elections. The monetary parameters are specified in
 
 - Genesis contains exactly four original validators in ConfigParam 34.
 - The four entries have equal weight and unique ML-DSA-44 consensus keys.
-- Every PQ entry includes its stable controller ID and independent ADNL identity.
+- Every PQ entry includes its validator ID (the staking account) and independent ADNL identity.
 - For an Ed25519 ADNL transport key, its ADNL identity is the SHA-256 of
   the serialized `pub.ed25519` TL object (`c6 b4 13 48` plus the transport
   public key). This is not the PQ consensus key ID.
@@ -50,9 +50,8 @@ existing Elector process.
 | ConfigParam 11 proposal voting | ordinary 2/6/2/5, critical 4/7/3/5 (min_tot_rounds/max_tot_rounds/min_wins/max_losses) | A proposal can be voted on for 7 (ordinary) or 8 (critical) rounds, because the registering round counts; it is accepted at 2 / 3 winning rounds and removed after its sixth lost round |
 | ConfigParam 12 basechain | `workchain_v2`, `min_split` 0, `max_split` 2, persistent-state split depth 4 | One basechain shard at genesis; load may split it into at most four |
 | ConfigParam 30 | Simplex version 2, QUIC enabled, 400 ms target rate, 700 ms first-block timeout, 300 ms minimum block interval; leader windows of 4 slots (masterchain) and 16 slots (shards) | Consensus protocol; distinct from ConfigParam 8 |
-| ConfigParam 47 | Compiled controller v1 code hash | Admission for subsequent controller-based elections |
 
-ConfigParams 8 and 47 are mandatory and critical. Changing a VM version is not
+ConfigParam 8 is mandatory and critical. Changing a VM version is not
 itself enough to change the signing scheme: the validator descriptors and node
 keys must also be PQ. ADNL transport identities remain separate from consensus
 keys and are not converted to ML-DSA by this configuration.
@@ -76,19 +75,18 @@ build/crypto/pq/tos-pq-consensus-key generate operator-key/consensus.seed
 ```
 
 The tool prints `algorithm`, `key_id` and the 1,312-byte `public` key in hex;
-it does not print the private seed. The controller account ID must be the
-operator's intended stable masterchain validator identity, derived from the
-controller StateInit with its separate root authority. The ADNL ID must match
-the node's configured transport identity. Neither ID is inferred from the PQ
-public key. Verify operator identity and proof of possession before accepting
-public submissions; packing a manifest does not prove possession or deploy a
-controller.
+it does not print the private seed. The validator ID must be the operator's
+masterchain staking account: the wallet or nominator pool that will send its
+stakes in later elections. The ADNL ID must match the node's configured
+transport identity. Neither ID is inferred from the PQ public key. Verify
+operator identity and proof of possession before accepting public submissions;
+packing a manifest does not prove possession.
 
 The coordinator creates an ordered JSON array of exactly four records:
 
 ```json
 [
-  {"controller_id": "<64 hex characters>",
+  {"validator_id": "<64 hex characters>",
    "adnl_id": "<64 hex characters>",
    "public_key": "<2624 hex characters>"}
 ]
@@ -100,10 +98,10 @@ The example shows one record's shape; four records are required. Pack it with:
 python3 scripts/prepare-pq-genesis-manifest.py operators.json validator-pq.pub
 ```
 
-The output is public-only and is never overwritten. Each record is controller
+The output is public-only and is never overwritten. Each record is validator
 ID (32 bytes), ADNL ID (32 bytes), then ML-DSA-44 public key (1,312 bytes), for
 **5,504 bytes** total. Order determines validator indices. The production Fift
-generator independently checks the exact size and uniqueness of controller,
+generator independently checks the exact size and uniqueness of validator,
 consensus-key and ADNL identities. It derives the key ID as
 `SHA256("TOS-PQ-CONSENSUS-KEY-v1" || 0x0100 || public_key)`; the algorithm field
 in this hash uses little-endian encoding as in the native key tool.
@@ -116,7 +114,7 @@ to VM version 16 and refuses PQ fixtures below the supported launch profile.
 
 ## Generate and inspect the zerostate
 
-Build the generator and current system/controller artifacts:
+Build the generator and current system artifacts:
 
 ```bash
 cmake --build build --target create-state gen_fif tos-pq-consensus-key
@@ -134,12 +132,9 @@ SOURCE_DATE_EPOCH=1789434000 "$TOS_REPO/build/crypto/create-state" \
 ```
 
 The generator emits zerostates, their hashes, and bootstrap wallet/configuration
-keys. Protect those private files according to the launch ceremony. The generated
-ConfigParam 47 admits the exact controller artifact compiled from this checkout;
-it does not initialize any controller's operating authorization or deploy its
-account; both are part of each operator's validator onboarding.
+keys. Protect those private files according to the launch ceremony.
 
-Independently decode the generated BOC and verify ConfigParams 8/19/30/34/47,
+Independently decode the generated BOC and verify ConfigParams 8/19/30/34,
 the four published identities, algorithm 1, weight 17 each, and exact public-key
 hashes. On a running node also inspect Config34 via `tos-lite-client getconfig 34`.
 Check ConfigParams 14/15/16/17/28 and balances against the economic specification.
@@ -197,8 +192,7 @@ recovery. Observing only ConfigParam 34 or `funds_created` is insufficient.
 ## Regression verification
 
 The native `create-state` tests generate real zerostate BOCs with public keys
-from `tos-pq-consensus-key`, then decode version 16, PQ identities and the exact
-controller admission hash. They also reject legacy manifests, duplicate IDs,
+from `tos-pq-consensus-key`, then decode version 16 and the PQ identities. They also reject legacy manifests, duplicate IDs,
 wrong timestamps and pre-16 PQ test profiles:
 
 ```bash

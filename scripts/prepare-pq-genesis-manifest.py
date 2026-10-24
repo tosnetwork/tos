@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Pack four operators' public PQ bootstrap identities for create-state."""
+"""Pack four operators' public PQ bootstrap identities for create-state.
+
+Each validator_id is the 256-bit address of the account that will send that
+validator's stakes to the elector: its operator wallet or its nominator pool.
+"""
 
 import argparse
 import json
@@ -9,12 +13,12 @@ from pathlib import Path
 def pack_manifest(records):
     if not isinstance(records, list) or len(records) != 4:
         raise ValueError("exactly four PQ validator records are required")
-    fields = (("controller_id", 32), ("adnl_id", 32), ("public_key", 1312))
+    fields = (("validator_id", 32), ("adnl_id", 32), ("public_key", 1312))
     seen = {name: set() for name, _ in fields}
     packed = []
     for record in records:
         if not isinstance(record, dict) or set(record) != set(seen):
-            raise ValueError("each record requires only controller_id, adnl_id and public_key")
+            raise ValueError("each record requires only validator_id, adnl_id and public_key")
         for name, size in fields:
             value = record[name]
             if not isinstance(value, str) or len(value) != size * 2:

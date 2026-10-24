@@ -10,9 +10,8 @@ use super::traits::ElectionsProvider;
 use crate::providers::traits::{Account, ValidatorConfig, ValidatorEntry};
 use adnl::client::AdnlClientConfig;
 use anyhow::Context;
-use chain_block::{Cell, ConfigParam15, ConfigParamEnum, MsgAddressInt, ValidatorSet};
+use chain_block::{ConfigParam15, ConfigParamEnum, MsgAddressInt, ValidatorSet};
 use contracts::ChainProvider;
-use contracts::validator_controller::{ControllerOperations, read_controller_operations};
 use control_client::{
     client_adnl::ControlClientAdnl,
     client_api::{
@@ -134,12 +133,6 @@ impl ElectionsProvider for DefaultElectionsProvider {
     async fn election_parameters(&mut self) -> anyhow::Result<ConfigParam15> {
         election_parameters_from_live_config(self.chain_provider.get_config_param(15).await?)
     }
-    async fn live_controller_policy(&mut self) -> anyhow::Result<Cell> {
-        match self.chain_provider.get_config_param(47).await? {
-            ConfigParamEnum::ConfigParamAny(47, cell) => Ok(cell),
-            other => anyhow::bail!("live ConfigParam 47 has unexpected representation: {other:?}"),
-        }
-    }
     async fn send_boc(&mut self, msg_boc: &[u8]) -> anyhow::Result<()> {
         self.chain_provider.send_boc(msg_boc).await
     }
@@ -151,10 +144,10 @@ impl ElectionsProvider for DefaultElectionsProvider {
         election_date: u32,
         max_factor: u32,
         adnl_addr: &[u8],
-        stake_owner: &[u8],
+        src_addr: &[u8],
     ) -> anyhow::Result<control_client::client_api::PqStakeAuthorization> {
         self.client
-            .create_pq_stake_authorization(election_date, max_factor, adnl_addr, stake_owner)
+            .create_pq_stake_authorization(election_date, max_factor, adnl_addr, src_addr)
             .await
     }
     async fn account(&mut self, address: &str) -> anyhow::Result<Account> {
@@ -170,13 +163,6 @@ impl ElectionsProvider for DefaultElectionsProvider {
     async fn get_current_vset_hash(&mut self) -> anyhow::Result<Option<[u8; 32]>> {
         let cell = self.chain_provider.get_config_param_cell(34).await?;
         Ok(Some(cell.repr_hash().inner()))
-    }
-
-    async fn controller_operations(
-        &mut self,
-        controller: &MsgAddressInt,
-    ) -> anyhow::Result<Option<ControllerOperations>> {
-        Ok(Some(read_controller_operations(self.chain_provider.as_ref(), controller).await?))
     }
 
     async fn get_next_vset(&mut self) -> anyhow::Result<Option<ValidatorSet>> {
@@ -266,7 +252,7 @@ mod tests {
                 .unwrap(),
             expected
         );
-        let wrong = ConfigParamEnum::ConfigParamAny(47, Cell::default());
+        let wrong = ConfigParamEnum::ConfigParamAny(99, chain_block::Cell::default());
         assert!(
             election_parameters_from_live_config(wrong)
                 .unwrap_err()

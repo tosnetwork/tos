@@ -14,8 +14,8 @@ validator_descr_pq_tag	179
 validator_set_hash_magic_v2	2041471698
 # The operation and signed-domain tags. Frozen here before anything is written
 # against them, because this is the last point at which changing one is cheap.
-elector_pq_stake_op	1347515252
-elector_pq_stake_sign_tag	1347507028
+elector_pq_stake_op	1316189259
+elector_pq_stake_sign_tag	1699500148
 config_pq_vote_op	1347516015
 config_pq_vote_sign_tag	1347507791
 elector_pq_complaint_op	1347511151

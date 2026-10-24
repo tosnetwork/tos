@@ -116,7 +116,6 @@ impl Subscriber for ControlReplies {
                         id: UInt256::from(id),
                         adnl: UInt256::from([2; 32]),
                         key_id: UInt256::from([3; 32]),
-                        algorithm: 2,
                         max_factor: 65536,
                         stake: if reply.overflow {
                             vec![1, 0, 0, 0, 0, 0, 0, 0, 0]
@@ -146,7 +145,8 @@ impl Subscriber for ControlReplies {
                 total_stake: vec![11],
                 bonuses: vec![2],
                 frozen: vec![tos::engine::validator::frozenstake::FrozenStake {
-                    id: UInt256::from([5; 32]),
+                    // The elector keys a frozen stake by the account that sent it.
+                    id: UInt256::from(reply.frozen_owner),
                     owner: UInt256::from(reply.frozen_owner),
                     weight: -1,
                     stake: if reply.frozen_overflow {

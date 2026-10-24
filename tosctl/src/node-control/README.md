@@ -786,7 +786,6 @@ Deploy a Single Nominator Pool contract.
 | `--config <FILE>` | `-c` | Path to the configuration file. Can also be set as an environment variable CONFIG_PATH |
 | `--node <NAME>` | | Node ID (the wallet of this node is used to deploy the pool) |
 | `--owner <ADDRESS>` | | Address of the pool owner |
-| `--controller <ADDRESS>` | | Validator controller the pool relays its stake through |
 | `--amount <TOS>` | | Amount of TOS to transfer to the pool contract for deployment |
 | `--verbose` | | Print deployment progress |
 
@@ -795,11 +794,10 @@ tosctl deploy pool \
   --config config.json \
   --node node0 \
   --owner "-1:owner_address_here" \
-  --controller "-1:validator_controller_address_here" \
   --amount 1.5
 ```
 
-The command calculates the pool address from the owner wallet, the validator wallet and the validator controller, sends a deploy message with the specified amount, and waits for the contract to become active. All three are part of the contract's storage, so naming a different controller produces a different address. The result is printed as JSON with the pool address and deployment status.
+The command calculates the pool address from the owner wallet and the validator wallet, sends a deploy message with the specified amount, and waits for the contract to become active. Both are part of the contract's storage, so the address is fixed by them. The pool's address is the validator id the elector registers, so the node must be configured with it. The result is printed as JSON with the pool address and deployment status.
 
 > **Note**: The validator wallet must be in the `Active` state and have enough balance to cover the transfer amount. If the pool is already deployed, the command exits without sending a transaction.
 

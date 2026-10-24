@@ -133,7 +133,7 @@ inline Ref<Cell> grow_members(Ref<Cell> elect, int n, Book shape) {
   require(es.advance(64), "elect_at, elect_close");
   vm_amount_skip(es);
   vm_amount_skip(es);
-  require(es.advance(2), "failed, finished");
+  // The member book precedes the failed and finished flags, which stay in the tail.
   int prefix_bits = static_cast<int>(orig.size() - es.size());
   Ref<Cell> members;
   require(es.fetch_maybe_ref(members), "member book");

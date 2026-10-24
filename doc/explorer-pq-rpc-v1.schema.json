@@ -1255,28 +1255,6 @@
       ],
       "additionalProperties": false
     },
-    "ControllerPolicy": {
-      "type": "object",
-      "properties": {
-        "kind": {
-          "const": "validator_controller_policy_v1"
-        },
-        "controller_codes": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/Bits256"
-          },
-          "minItems": 0,
-          "maxItems": 8,
-          "uniqueItems": true
-        }
-      },
-      "required": [
-        "kind",
-        "controller_codes"
-      ],
-      "additionalProperties": false
-    },
     "AuthPolicy": {
       "type": "object",
       "properties": {
@@ -1729,7 +1707,6 @@
           "enum": [
             8,
             43,
-            47,
             48
           ]
         },
@@ -1751,9 +1728,6 @@
                 },
                 {
                   "$ref": "#/$defs/SizeLimits"
-                },
-                {
-                  "$ref": "#/$defs/ControllerPolicy"
                 },
                 {
                   "$ref": "#/$defs/AuthPolicy"
@@ -1817,25 +1791,6 @@
           "if": {
             "properties": {
               "param": {
-                "const": 47
-              },
-              "presence": {
-                "const": "present"
-              }
-            }
-          },
-          "then": {
-            "properties": {
-              "value": {
-                "$ref": "#/$defs/ControllerPolicy"
-              }
-            }
-          }
-        },
-        {
-          "if": {
-            "properties": {
-              "param": {
                 "const": 48
               },
               "presence": {
@@ -1864,7 +1819,6 @@
               "param": {
                 "enum": [
                   43,
-                  47,
                   48
                 ]
               }

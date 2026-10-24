@@ -1,72 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# A validator node must not be able to authorise a controller action.
+# A validator node spends its consensus key only for the account it answers for.
 #
-# The offline-root split separated two secrets so that compromising the machine that validates costs an
-# operator the key it can rotate and not the authority that rotates it. That separation
-# is only real while the node cannot sign a controller authorisation -- not "does not",
-# but cannot, because the code that would is not in it.
-#
-# So this checks the two things that would end it: the node linking the offline root
-# library, and the node's own sources reaching for the root's header, loader, signer or
-# signing context. A node that gains any of those has lost the boundary, and would have
-# lost it silently: nothing else in the tree fails when a library is added to a link
-# line.
+# The elector names a member by the account that sends its stake, and the node signs the
+# stake over that account's address. A node that signed for any account it was asked
+# about would let a client elect a validator under someone else's identity, so the
+# signing surfaces are gated as authority and the stake creator refuses every account
+# but the node's configured validator id. Each of these fails silently when lost: nothing
+# else in the tree breaks when a gate or a comparison is removed.
 
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 status=0
 
-# The node's own code. validator-engine loads and installs the consensus key; everything
-# under validator/ runs on the validating host.
-NODE_PATHS=(validator-engine validator validator-session adnl overlay catchain)
-
-# What only the offline domain may name.
-ROOT_SYMBOLS=(
-  "ValidatorControllerRootKeyStore"
-  "controller-root-signer.h"
-  "controller-root-file.h"
-  "load_controller_root_key"
-  "sign_controller_authorization"
-  "controller_auth_context"
-  "tos_pq_controller_root"
-)
-
-for symbol in "${ROOT_SYMBOLS[@]}"; do
-  found=$(cd "$REPO_ROOT" && grep -rIl --fixed-strings "$symbol" "${NODE_PATHS[@]}" 2>/dev/null || true)
-  if [[ -n "$found" ]]; then
-    echo "a validator node names the controller root: $symbol" >&2
-    printf '  %s\n' $found >&2
-    status=1
-  fi
-done
-
-# The link line itself. A library reached transitively is still linked, so this reads
-# what CMake records rather than what a CMakeLists file appears to say.
-ENGINE_LINKS=$(cd "$REPO_ROOT" && grep -rn "target_link_libraries(validator-engine" -A 6 \
-  validator-engine/CMakeLists.txt CMakeLists.txt 2>/dev/null || true)
-if grep -q "tos_pq_controller_root" <<<"$ENGINE_LINKS"; then
-  echo "validator-engine links the offline controller-root library" >&2
-  status=1
-fi
-
-# And the reverse: the offline library must not drag node code in, or "offline" would
-# only describe where the file sits.
-OFFLINE_SOURCES=(crypto/pq/controller-root-signer.cpp crypto/pq/controller-root-file.cpp
-                 crypto/pq/controller-tool.cpp)
-for source in "${OFFLINE_SOURCES[@]}"; do
-  if [[ ! -f "$REPO_ROOT/$source" ]]; then
-    echo "the offline controller-root domain is missing $source" >&2
-    status=1
-    continue
-  fi
-  if grep -qE '#include "(validator|adnl|overlay|catchain)/' "$REPO_ROOT/$source"; then
-    echo "$source reaches into node code" >&2
-    status=1
-  fi
-done
-
-# The consensus key is authority too, and the node's surfaces that spend it are gated as
+# The consensus key is authority, and the node's surfaces that spend it are gated as
 # such. A client permitted only to read the node must not be able to have it commit a
 # stake, cast a vote, or change which consensus keys the node signs with.
 ENGINE="$REPO_ROOT/validator-engine/validator-engine.cpp"
@@ -105,6 +52,18 @@ elif ! grep -q "get_local_pq_identity" <<<"$CREATOR"; then
   status=1
 fi
 
+# The signed preimage carries the sending account, and the node signs only for its own.
+if [[ -n "$CREATOR" ]]; then
+  if ! grep -q "src_addr_ != self.validator_id.value" <<<"$CREATOR"; then
+    echo "the stake authorisation creator signs for an account other than the node's validator id" >&2
+    status=1
+  fi
+  if ! grep -qE "sign_stake_authorization\([^;]*[ ,(]src_addr_[,)][^;]*;" <<<"$(tr -d '\n' <<<"$CREATOR")"; then
+    echo "the stake authorisation creator does not sign over the sending account" >&2
+    status=1
+  fi
+fi
+
 # The node and the operator tool must sign a stake through the one shared routine, so the
 # path a review can run and the path a real validator takes cannot diverge. The creator
 # delegates to it and assembles no preimage of its own; a bespoke stake_preimage call here
@@ -136,7 +95,7 @@ if ! grep -q "load_consensus_key" "$REPO_ROOT/validator-engine/validator-engine.
 fi
 
 if [[ "$status" -eq 0 ]]; then
-  echo "the node holds a consensus key and no way to authorise a controller"
+  echo "the node signs stakes and votes only through gated surfaces, and only for its own validator id"
 fi
 
 exit "$status"
