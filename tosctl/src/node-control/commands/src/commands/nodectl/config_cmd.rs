@@ -14,11 +14,7 @@ use super::{
 };
 use anyhow::Context;
 use common::{
-    WalletVersion,
-    app_config::{
-        AppConfig, ChainRpcConfig, ElectionsConfig, HttpConfig, KeyConfig, LogConfig, StakePolicy,
-        WalletConfig,
-    },
+    app_config::{AppConfig, ChainRpcConfig, ElectionsConfig, HttpConfig, LogConfig, StakePolicy},
     chain_utils::tos_to_nanotos,
     task_cancellation::CancellationCtx,
 };
@@ -138,12 +134,9 @@ impl GenerateCmd {
             elections: Some(ElectionsConfig::default()),
             voting: None,
             http: HttpConfig::default(),
-            master_wallet: Some(WalletConfig {
-                key: KeyConfig::VaultKey { name: "master-wallet-secret".to_string() },
-                version: WalletVersion::V3R2,
-                subwallet_id: 42,
-                workchain: 0,
-            }),
+            // No wallet is implied: a generated config names no master wallet
+            // until the operator configures one with an explicit version.
+            master_wallet: None,
             tick_interval: 40,
             indexer_retention_blocks: common::app_config::default_indexer_retention_blocks(),
             indexer_enabled: common::app_config::default_indexer_enabled(),
