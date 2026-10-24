@@ -4338,6 +4338,73 @@ fn a_complaint_vote_signed_by_another_validator_is_refused() {
         .expect_exit_code(ERROR_BAD_VOTE_SIGNATURE);
 }
 
+/// An underfunded complaint vote is refused before the verification it asks for.
+///
+/// Anyone may send a complaint vote naming an index of the current set, and the elector's
+/// gas does not depend on the value a message carries, so without the gate a stream of
+/// cheap, wrongly signed votes would each buy a full ML-DSA verification. The work is
+/// measured in gas, as for configuration votes.
+#[test]
+fn an_underfunded_complaint_vote_is_refused_before_the_verification() {
+    let (mut chain, validators, election) = elect_install_and_rotate();
+    let accused = validator_id_at(&chain, index_of(&chain, &validators[3]));
+    let complainant =
+        chain.blockchain.treasury("complainant-c", 1_000 * TOS).expect("a funded account");
+    let result = chain
+        .blockchain
+        .send_message(complainant.build_message(
+            &chain.elector,
+            300 * TOS,
+            true,
+            Some(complaint_body(1, election, &accused)),
+        ))
+        .expect("the complaint is delivered");
+    assert!(replies(&result).contains(&COMPLAINT_ACCEPTED), "the complaint was refused");
+    let complaint = complaint_hashes(&chain, election)[0];
+    let idx = index_of(&chain, &validators[0]);
+    // Valid in every respect except who signed it.
+    let stolen = validators[1].sign(&complaint_vote_preimage(&chain, idx, election, &complaint));
+    let relay = chain.blockchain.treasury("complaint-drain", 1_000_000 * TOS).expect("an account");
+    let too_little = TOS / 2_000;
+
+    let verified = chain
+        .blockchain
+        .send_message(relay.build_message(
+            &chain.elector,
+            VOTE_VALUE,
+            true,
+            Some(complaint_vote_body(499, &stolen, idx, election, &complaint)),
+        ))
+        .expect("the vote is delivered");
+    assert_eq!(exit_code_of(&verified), ERROR_BAD_VOTE_SIGNATURE, "the fixture needs a refusal");
+    let cost_of_verifying = compute_gas(&verified);
+
+    let mut refusal = 0u64;
+    for round in 0..16u64 {
+        let result = chain
+            .blockchain
+            .send_message(relay.build_message(
+                &chain.elector,
+                too_little,
+                true,
+                Some(complaint_vote_body(500 + round, &stolen, idx, election, &complaint)),
+            ))
+            .expect("the vote is delivered");
+        result.expect_aborted().expect_exit_code(ERROR_VOTE_UNDERFUNDED);
+        refusal = compute_gas(&result);
+    }
+    assert!(
+        refusal * 8 < cost_of_verifying,
+        "refusing an underfunded complaint vote costs {refusal} gas against \
+         {cost_of_verifying} for one that is verified, so the verification happens first"
+    );
+    assert!(refusal > 0, "the refusal cost nothing, so the contract never ran");
+    assert!(
+        complaint_voters(&chain, election, &complaint).is_empty(),
+        "an invalid complaint vote was registered"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Post-quantum staking
 //

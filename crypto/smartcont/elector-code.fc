@@ -801,6 +801,9 @@ int proceed_register_vote(election_id, chash, idx, weight) impure inline_ref {
     var (idx, elect_id, chash) = (in_msg~load_uint(16), in_msg~load_uint(32), in_msg~load_uint(256));
     var signature = in_msg~load_ref();
     in_msg.end_parse();
+    ;; the verification is paid for before it is performed: anyone may send this message,
+    ;; and the elector's gas does not depend on the value it carries
+    throw_unless(47, msg_value >= pq::verification_value(-1));
     var (vset, total_weight, list) = get_current_vset();
     var (vdescr, found) = list.udict_get?(16, idx);
     throw_unless(41, found);

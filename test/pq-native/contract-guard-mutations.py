@@ -193,6 +193,14 @@ MUTANTS = [
         "the_minimum_value_a_configuration_vote_must_carry",
     ),
     (
+        "complaint-vote-funding",
+        "elector-code.fc",
+        "    throw_unless(47, msg_value >= pq::verification_value(-1));\n    var (vset, total_weight, list) = get_current_vset();",
+        "    throw_unless(47, true);\n    var (vset, total_weight, list) = get_current_vset();",
+        "elector_sandbox",
+        "an_underfunded_complaint_vote_is_refused_before_the_verification",
+    ),
+    (
         "complaint-vote-signature",
         "elector-code.fc",
         "    throw_unless(34, pq_check_mldsa44(\n      pq::complaint_vote_preimage(vset.cell_hash(), validator_id, idx, elect_id, chash),",

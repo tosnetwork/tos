@@ -95,6 +95,11 @@
     "test": "elector_sandbox::the_minimum_value_a_configuration_vote_must_carry"
   },
   {
+    "guard": "complaint-vote-funding",
+    "killed": true,
+    "test": "elector_sandbox::an_underfunded_complaint_vote_is_refused_before_the_verification"
+  },
+  {
     "guard": "complaint-vote-signature",
     "killed": true,
     "test": "elector_sandbox::a_complaint_vote_signed_by_another_validator_is_refused"
