@@ -520,13 +520,16 @@ fn v4_body_that_fails_after_accept_cannot_be_replayed() {
         .build();
 
     let target_before = balance(&bc, target.address());
-    bc.send_message(message.clone())
-        .expect("an accepted body is executed")
-        .expect_exit_code(9)
-        .expect_out_msgs(0);
+    let wallet_before = balance(&bc, &address);
+    let first = bc.send_message(message.clone()).expect("an accepted body is executed");
+    first.expect_exit_code(9).expect_out_msgs(0);
+    let chain_block::TrComputePhase::Vm(vm) = first.read_primary_description().compute_ph else {
+        panic!("expected VM computation");
+    };
+    assert!(vm.gas_fees.as_u64().expect("gas fees") > 0, "the accepted body is charged");
     assert_eq!(seqno(&bc), 1, "the accepted body must consume its seqno despite the throw");
     let wallet_after_first = balance(&bc, &address);
-    assert!(wallet_after_first < 100 * TOS, "the accepted body pays its fee");
+    assert!(wallet_after_first < wallet_before, "the accepted body pays its fee");
 
     let replay = match bc.send_message(message) {
         Ok(_) => panic!("a replayed body must be refused before ACCEPT"),
