@@ -13,9 +13,11 @@ the separate local qualification run. They have not been qualified by unit tests
 ## Supported targets
 
 Restore supports non-indexed nodes only. Wallet-indexed RPC nodes are a later
-milestone: `--json-rpc-address` enables the wallet index, and either that configured
-or running flag, or an existing `wc0-index` directory, refuses restore. The
-standard validator configuration does not run the index. Dropping the flag alone
+milestone: `--json-rpc-address` enables the wallet index unless
+`--json-rpc-without-wallet-index` is also given. Restore is refused when the configured
+or running command enables the index, or when a `wc0-index` directory exists. The
+standard validator configuration does not run the index: it serves JSON-RPC with
+`--json-rpc-without-wallet-index`. Dropping the flag alone
 does not make an indexed target supported: a retired `wc0-index` must be removed
 by the operator before restore; the tool never deletes it. Do not temporarily
 disable indexing to bypass this restriction. Preserving an old index would leave

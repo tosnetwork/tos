@@ -489,6 +489,10 @@ jobs:
       - name: Boot a four-validator PQ chain and exercise a transfer
         run: uv run python test/integration/test_basic.py
 
+      # The validator layout: loopback JSON-RPC for the operator tool and no wallet index.
+      - name: Serve validator JSON-RPC without the wallet index
+        run: uv run python test/integration/test_json_rpc_without_wallet_index.py --working-dir build/json-rpc-without-wallet-index
+
       # A local recovery tag must never become a PQ signing session. The
       # process gate first proves zero rotation still records successful
       # masterchain stats, then

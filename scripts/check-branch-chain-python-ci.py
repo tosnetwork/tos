@@ -503,6 +503,10 @@ def main() -> int:
         "four-validator PQ chain regression is absent",
     )
     require(
+        "uv run python test/integration/test_json_rpc_without_wallet_index.py" in text,
+        "validator JSON-RPC without the wallet index gate is absent",
+    )
+    require(
         "ctest --test-dir build --output-on-failure -R '^test-pq-lite-forward-proof$'" in text,
         "PQ key-block proof context behavior gate is absent",
     )

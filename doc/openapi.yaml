@@ -56,6 +56,10 @@ info:
     `/jsonRPC` and `POST /getNodeConsensusStatus` only when the operator starts the engine with
     --json-rpc-expose-consensus-status; otherwise it answers METHOD_NOT_FOUND. It has no GET route.
 
+    Account-index methods (getAccountTokens, getAccountNfts, getAccountEvents, getAccountEvent) need the wallet
+    index. A node started with --json-rpc-without-wallet-index (the validator layout) serves every other method and
+    answers these with METHOD_NOT_FOUND (-32601) "wallet index disabled on this node".
+
     Write methods (sendBoc, sendBocReturnHash, sendBocReturnHashNoError, sendQuery, submitSignedTransaction
     and the
     grant/revoke methods) answer WRITE_DISABLED (-32601) when the server runs in read-only mode.

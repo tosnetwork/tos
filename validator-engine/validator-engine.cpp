@@ -2694,7 +2694,10 @@ void ValidatorEngine::start_validator() {
   // started and no hook installed: a worker with nothing to mark into would
   // hold queued blocks forever, and the account-index RPC reports the index
   // unavailable instead.
-  if (json_rpc_addr_ && tos_wallet_index::open_wallet_index_db(db_root_) &&
+  // --json-rpc-without-wallet-index keeps JSON-RPC and never opens the index: no worker,
+  // no hook, nothing created under the db root, and the account-index methods answer
+  // that the index is disabled on this node.
+  if (json_rpc_addr_ && json_rpc_wallet_index_ && tos_wallet_index::open_wallet_index_db(db_root_) &&
       tos_wallet_index::start_wc0_index_worker(true)) {
     tos::validator::g_wc0_block_index_hook = &tos_wallet_index::enqueue_wc0_index_block;
   }
@@ -6622,6 +6625,10 @@ void ValidatorEngine::set_json_rpc_readonly(bool readonly) {
   json_rpc_opts_.readonly = readonly;
 }
 
+void ValidatorEngine::set_json_rpc_wallet_index(bool enabled) {
+  json_rpc_wallet_index_ = enabled;
+}
+
 void ValidatorEngine::set_json_rpc_expose_consensus_status(bool expose) {
   json_rpc_opts_.expose_consensus_status = expose;
 }
@@ -7429,6 +7436,14 @@ int main(int argc, char *argv[]) {
     json_rpc_readonly = true;
     acts.push_back([&x] { td::actor::send_closure(x, &ValidatorEngine::set_json_rpc_readonly, true); });
   });
+  p.add_option(
+      '\0', "json-rpc-without-wallet-index",
+      "serve JSON-RPC without the wallet index: never open or create <db>/wc0-index; the "
+      "account-index methods (getAccountTokens, getAccountNfts, getAccountEvents, getAccountEvent) "
+      "answer that the index is disabled. For validators, whose wallet index belongs to RPC nodes",
+      [&]() {
+        acts.push_back([&x] { td::actor::send_closure(x, &ValidatorEngine::set_json_rpc_wallet_index, false); });
+      });
   p.add_option('\0', "json-rpc-expose-consensus-status",
                "expose the read-only getNodeConsensusStatus admin method (applied/consensus block, key block, "
                "validator-set membership). Default off. This flag does NOT enforce a loopback-only listener: "

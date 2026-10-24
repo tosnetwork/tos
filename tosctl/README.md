@@ -780,6 +780,7 @@ Optional runtime flags on the validator-engine side:
 |------|---------|
 | `--json-rpc-address` | Bind address for the JSON-RPC server (loopback only unless `--json-rpc-readonly`) |
 | `--json-rpc-readonly` | Disable `sendBoc` and other write methods |
+| `--json-rpc-without-wallet-index` | Serve JSON-RPC without the wallet index (validators); account-index methods answer -32601 |
 | `--json-rpc-cors-origin` | Set allowed CORS origin |
 | `--json-rpc-readyz-threshold` | Sync lag seconds before readyz fails |
 
