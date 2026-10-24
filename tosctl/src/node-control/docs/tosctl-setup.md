@@ -213,7 +213,8 @@ Before configuring the master wallet, nodes, wallets, and pools, create all requ
 Make sure the `VAULT_URL` environment variable is set (see [Step 2](#step-2-configure-secretsvault)).
 
 ```bash
-# Create the master wallet key (the default config references "master-wallet-secret")
+# Create the master wallet key if your config names one
+# (a generated config names no master wallet)
 tosctl key add -n "master-wallet-secret"
 
 # Create wallet keys (one per validator node you plan to add)
@@ -329,7 +330,7 @@ pass `--workchain -1` explicitly.
 Add a validator wallet for each node. Each wallet needs a unique name and a vault secret name for its private key. The key was created in [Step 5](#step-5-create-secrets-in-vault).
 
 ```bash
-tosctl config wallet add -n wallet1 -s "wallet1-secret"
+tosctl config wallet add -n wallet1 -s "wallet1-secret" -v V3R2
 ```
 
 **Options:**
@@ -338,16 +339,16 @@ tosctl config wallet add -n wallet1 -s "wallet1-secret"
 |--------|-------------|
 | `-n, --name` | Unique wallet name |
 | `-s, --secret-name` | Vault secret name for wallet private key |
-| `-v, --version` | Wallet version: `V3R2` (default), `V4R2`, `V5R1` |
+| `-v, --version` | Wallet version, required: `V3R2` (bootstrap and operating keys only), `V4R2`, `V5R1` |
 | `-w, --workchain` | Workchain ID (default: `-1`) |
 | `-i, --subwallet-id` | Subwallet ID (default: `42`) |
 
 Example for multiple nodes:
 
 ```bash
-tosctl config wallet add -n wallet1 -s "wallet1-secret"
-tosctl config wallet add -n wallet2 -s "wallet2-secret"
-tosctl config wallet add -n wallet3 -s "wallet3-secret"
+tosctl config wallet add -n wallet1 -s "wallet1-secret" -v V3R2
+tosctl config wallet add -n wallet2 -s "wallet2-secret" -v V3R2
+tosctl config wallet add -n wallet3 -s "wallet3-secret" -v V3R2
 ```
 
 List configured wallets:

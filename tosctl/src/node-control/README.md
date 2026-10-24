@@ -216,7 +216,7 @@ Add a wallet to the configuration. The wallet key is stored in the vault and ref
 |------|------------|-------------|
 | `--name <NAME>` | `-n` | Wallet name (unique identifier) |
 | `--secret-name <NAME>` | `-s` | Vault secret name for wallet key |
-| `--version <VERSION>` | `-v` | Wallet version: `V3R2`, `V4R2`, `V5R1` (default: `V3R2`) |
+| `--version <VERSION>` | `-v` | Wallet version, required: `V3R2` (bootstrap and operating keys only), `V4R2`, `V5R1` |
 | `--subwallet-id <ID>` | `-i` | Subwallet ID (default: `42`) |
 | `--workchain <ID>` | `-w` | Workchain ID (default: `-1`) |
 
@@ -1479,14 +1479,7 @@ The key is read when the service starts; restart the service after changing it. 
     "bind": "127.0.0.1:8080",
     "enable_swagger": true
   },
-  "master_wallet": {
-    "key": {
-      "name": "master-wallet-secret"
-    },
-    "version": "V3R2",
-    "subwallet_id": 42,
-    "workchain": 0
-  },
+  "master_wallet": null,
   "tick_interval": 40,
   "indexer_enabled": true,
   "log": {
@@ -1585,7 +1578,8 @@ tosctl config node add \
 # Add a wallet
 tosctl config wallet add \
   --name wallet0 \
-  --secret-name "wallet0-key"
+  --secret-name "wallet0-key" \
+  --version V3R2
 
 # Bind wallet to node
 tosctl config bind add \
