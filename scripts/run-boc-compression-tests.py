@@ -70,7 +70,8 @@ def run_rust() -> None:
     ]
     listed = run([*command, "--", "--list"], 1800)
     expected = require_cases(re.findall(r"(?m)^(\S+): test$", listed), RUST_REQUIRED)
-    output = run([*command, "--", "--nocapture"], 1800)
+    # Captured output keeps concurrent tests from splitting the "test ... ok" lines.
+    output = run(command, 1800)
     passed = require_cases(re.findall(r"(?m)^test (\S+) \.\.\. ok$", output), expected)
     summaries = re.findall(r"test result: ok\. (\d+) passed; 0 failed; 0 ignored;", output)
     if passed != expected or summaries != [str(len(expected))]:
