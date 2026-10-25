@@ -8,8 +8,10 @@
 ;; directly, and the order sends `execute` back once the threshold is reached. The parent
 ;; runs the order's actions only after multisig-order.fc's four admission checks: the
 ;; derived sender address, the current signer set, the current threshold, and expiry. It
-;; then accepts the message and pays for execution from its own balance, so an order is
-;; never consumed by running out of gas half-way through its actions.
+;; then accepts the message and pays for execution from its own balance. A proposal whose
+;; execution would need more gas than the basechain gas limit is refused when it is opened
+;; (multisig_order::required_value_for_sizes), so under the limit in force then an order is
+;; not consumed by running out of gas half-way through its actions.
 ;;
 ;; Actions are a chain of cells, each `tag:uint32 ... next:(Maybe ^Cell)`:
 ;;   send#94f8724f   mode:uint8 message:^Cell                                 next
@@ -18,7 +20,8 @@
 ;; could never execute is refused up front instead of being funded and left stranded; it is
 ;; validated again on execution against the parameters in force then. More actions than one
 ;; order holds run as a send to this wallet itself with `execute_internal`, which the wallet
-;; accepts only from itself. Signer and proposer sets may not contain this wallet's own
+;; accepts only from itself. That batch is opaque message data when the order is opened: it
+;; runs in a later transaction, and neither its validity nor its gas is checked up front. Signer and proposer sets may not contain this wallet's own
 ;; address, so it can never approve or propose by a message to itself.
 ;;
 ;; Each signer is one vote. A signer set lists distinct plain addresses in increasing order
@@ -57,8 +60,8 @@ const int send_mode::carry_remaining_value = 64;
 const int send_mode::bounce_on_action_fail = 16;
 
 ;; About 10% above what emulator/test/multisig-fee-profile-fixture.cpp measured on the C++
-;; TVM (2026-10-02) at 3 signers and 1 action: proposal 19165, order init 3481, firing
-;; approval 9643 and parent execute 7851 gas; init message 8638 bits / 16 cells, order
+;; TVM (2026-10-24) at 3 signers and 1 action: proposal 20384 (it reads the gas limit to
+;; bound the order), order init 3481, firing approval 9643 and parent execute 7805 gas; init message 8638 bits / 16 cells, order
 ;; state 8793 bits / 14 cells and execute message 456 bits / 1 cell beyond the action and
 ;; signer set; per action 834 gas at proposal and 1805 at execution; 1881 gas per signer an
 ;; update installs (applied to installed proposers too, which cost less). The fixture fails if a build makes any value lower than its measurement
@@ -66,7 +69,7 @@ const int send_mode::bounce_on_action_fail = 16;
 ;; 255-action orders.
 tuple fee_profile() inline {
   return multisig_order::fee_profile(
-      21000, ;; parent_new_order_gas
+      22500, ;; parent_new_order_gas
       3850,  ;; order_init_gas
       10600, ;; order_execute_gas
       8600,  ;; parent_execute_gas

@@ -374,10 +374,33 @@ tuple multisig_order::fee_profile(int parent_new_order_gas, int order_init_gas, 
   }
 }
 
+slice multisig_order::basechain_gas_prices() asm "14 GETPARAMLONG" "3 INDEX";
+
+;; The basechain per-transaction gas limit from ConfigParam 21 in the VM's unpacked
+;; configuration. No balance buys more gas than this, so a compute phase that needs more
+;; can never complete however well it is funded.
+int multisig_order::basechain_gas_limit() impure inline {
+  slice prices = multisig_order::basechain_gas_prices();
+  int tag = prices~load_uint(8);
+  if (tag == 0xd1) {
+    prices~skip_bits(128);
+    tag = prices~load_uint(8);
+  }
+  throw_unless(multisig_order::error::invalid_config, (tag == 0xdd) | (tag == 0xde));
+  return prices.skip_bits(64).preload_uint(64);
+}
+
 ;; The seven-component cost for an order whose action and signer set have the given sizes,
 ;; living `lifetime_seconds`. The parent's two compute phases grow with the number of actions
 ;; and with the size of any signer set an update action installs; `extra_parent_gas` is gas
 ;; the parent spends beyond the profile, such as counting sizes.
+;;
+;; Throws order_too_large when either parent phase would need more gas than the current
+;; basechain gas limit: the order would be paid for, approved and marked executed, and then
+;; its execution would abort. This holds for the limit in force at proposal; a later lower
+;; limit can still strand an open order. Only this order's own actions are counted: a send
+;; whose body carries an execute_internal batch runs that batch in a later transaction of
+;; the wallet, which this bound does not cover.
 int multisig_order::required_value_for_sizes(tuple profile, int action_bits, int action_cells,
                                              int signer_bits, int signer_cells,
                                              int action_count, int updated_signer_count,
@@ -386,16 +409,18 @@ int multisig_order::required_value_for_sizes(tuple profile, int action_bits, int
   throw_unless(multisig_order::error::expired, lifetime_seconds > 0);
   throw_unless(multisig_order::error::invalid_config, (action_count > 0) & (updated_signer_count >= 0));
   int signer_gas = profile.multisig_order::field(multisig_order::parent_gas_per_updated_signer) * updated_signer_count;
-  int compute = get_compute_fee(multisig_order::basechain,
-                                profile.multisig_order::field(multisig_order::parent_new_order_gas)
-                                + profile.multisig_order::field(multisig_order::parent_new_order_gas_per_action) * action_count
-                                + signer_gas + extra_parent_gas)
+  int new_order_gas = profile.multisig_order::field(multisig_order::parent_new_order_gas)
+      + profile.multisig_order::field(multisig_order::parent_new_order_gas_per_action) * action_count
+      + signer_gas + extra_parent_gas;
+  int execute_gas = profile.multisig_order::field(multisig_order::parent_execute_gas)
+      + profile.multisig_order::field(multisig_order::parent_execute_gas_per_action) * action_count
+      + signer_gas;
+  int gas_limit = multisig_order::basechain_gas_limit();
+  throw_if(multisig_order::error::order_too_large, (new_order_gas > gas_limit) | (execute_gas > gas_limit));
+  int compute = get_compute_fee(multisig_order::basechain, new_order_gas)
       + get_compute_fee(multisig_order::basechain, profile.multisig_order::field(multisig_order::order_init_gas))
       + get_compute_fee(multisig_order::basechain, profile.multisig_order::field(multisig_order::order_execute_gas))
-      + get_compute_fee(multisig_order::basechain,
-                        profile.multisig_order::field(multisig_order::parent_execute_gas)
-                        + profile.multisig_order::field(multisig_order::parent_execute_gas_per_action) * action_count
-                        + signer_gas);
+      + get_compute_fee(multisig_order::basechain, execute_gas);
   int forward = get_forward_fee(multisig_order::basechain,
                                 profile.multisig_order::field(multisig_order::init_message_bits) + action_bits + signer_bits,
                                 profile.multisig_order::field(multisig_order::init_message_cells) + action_cells + signer_cells)
