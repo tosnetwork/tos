@@ -1,37 +1,45 @@
 # Cross-architecture epoch replay (REL-02)
 
-This offline corpus contains 248 original public epoch-4 blocks and the original
-proof/account/state-update cells needed to execute their transactions. There are
-564 transactions. The manifest and all BOCs total about 5.30 MB, below the 20 MB
+This offline corpus contains 340 original public epoch-5 blocks (global id 2;
+183 masterchain, 157 basechain) and the original cells needed to execute their
+475 transactions. The manifest and all BOCs total about 4.51 MB, below the 20 MB
 budget. No network, validator database, private key, or node service is needed to
 run it. The corpus contains no generated positive chain fixtures.
 
 ## Coverage
 
 Rows are disjoint. Block identifiers and input SHA-256 values are in
-`corpus/manifest.json`; its expected records come from decoding the original
-transaction/block BOCs, independently of the native emulator.
+`corpus/manifest.json` (each block's `case` names its row); its expected records
+come from decoding the original transaction/block BOCs, independently of the
+native emulator.
 
 | Cases | Blocks | Transactions | Coverage |
 | --- | ---: | ---: | --- |
-| Consecutive masterchain 269566–269765 | 200 | 429 | Real state transitions, special-contract ticks/tocks and ordinary transactions |
-| Masterchain 309465 and 309734 | 2 | 10 | CP20/CP24 adoption, key blocks and configuration messages |
-| Masterchain 317043/317044/317143/317144 | 4 | 28 | Operator, pool, controller and Elector; stake bid and recover/return paths, PQ verification |
-| Masterchain 328605–328607 | 3 | 8 | Successful election result, configuration acknowledgement and subsequent tick |
-| Masterchain 357884 and 387273 | 2 | 4 | October 20 insufficient-participant/postponed election attempts (three submitted stakes) |
-| Masterchain 361394/361395/361424/390905/390906/390929 | 6 | 21 | Actual cancellation, fresh election window, and node-1 refund for both failed rounds |
-| Masterchain 234331 | 1 | 8 | Real aborted transaction, nonzero compute exit and bounced message |
-| Exact modern masterchain contexts | 6 | 12 | Contexts 431391–431396 referenced by the empty shard blocks |
-| Exact load-test masterchain contexts | 8 | 17 | Contexts 356489/356491/356493/356494/356496/356497/356499/356501 |
-| Shard 448307–448314 | 8 | 0 | Empty shard blocks, codec/state updates and exact masterchain binding |
-| Busy shard blocks 363868/363872/363874/363875/363877/363878/363880/363882 | 8 | 27 | Actual wallet/relayer execution and plain internal transfers |
+| `tok01`: consecutive masterchain 117753–117895 | 143 | 294 | Every masterchain block of the Token/NFT run: ticks/tocks, configuration and elector traffic |
+| `tok01`: basechain 118260–118404 registered by those blocks | 140 | 42 | Collection deploy, mint 1000 and 100, transfer to an existing and to an undeployed wallet, transfer with payload notification, insufficient balance (exit 706, aborted, bounced), burn, admin change, NFT mint, NFT transfer, NFT transfer by a non-owner (exit 401, aborted, bounced); 128 empty blocks between them |
+| `cp15`: masterchain 151331, 151410, 151706, 151780, 151828, 151876 | 6 | 28 | ConfigParam 15 critical proposal registration through the Config contract, a proposer-wallet transaction with no outgoing message, round-1 votes |
+| `cp15`: masterchain 161046, 161094 | 2 | 10 | Round-2 votes |
+| `cp15`: masterchain 194882–194884 | 3 | 6 | Validator rotation key block 194883 (ConfigParam 32/34) before round 3 |
+| `cp15`: masterchain 195411, 195426, 195440, 195453–195455 | 6 | 24 | Round-3 votes and the adoption key block 195454 that installs the new ConfigParam 15 |
+| `shard-exits`: basechain 152032, 152121, 152207, 152292, 152470, 152559 | 6 | 23 | Basechain service traffic during round 1 with contract-defined compute exits 1800, 1803 and 1808 (aborted) |
+| `rotation`: masterchain 230373–230384 and basechain 231429–231440 | 23 | 25 | The first two-hour validator rotation: key block 230378 (ConfigParam 32/34) and the blocks around it |
+| `context`: masterchain 117750, 117752, 151333, 151421, 151510, 151596, 151772, 151861, 230370–230372 | 11 | 23 | Exact masterchain contexts referenced by the selected basechain blocks |
 
-Three selected blocks are key blocks. The close-time cases are postponed
-election attempts; the deadline/refund cases cover the later cancellation and
-return, without inventing an elected set for a failed round. No real
-Token/NFT transaction was located in the retained evidence used for this corpus;
-those transaction types are **not covered**. Split/merge blocks are also not
-covered; the harness refuses them rather than guessing a predecessor state.
+Three selected blocks are key blocks (194883, 195454, 230378). Split/merge
+blocks are not covered; the harness refuses them rather than guessing a
+predecessor state.
+
+Excluded, because no two-validator full id exists for them in the id captures:
+
+- Basechain 118263, the token master deploy. A `shards` reply names only the
+  newest basechain block a masterchain block registers, and masterchain 117756
+  registers 118265; 118263 is reachable from it only through the hash links of
+  118264 and 118265. Its contract code is used as an original cell source (bound
+  by hash), not replayed.
+- Empty basechain 118261, 118264, 118286, 118313 and 231435, and basechain
+  152381 (service traffic), for the same reason.
+- Masterchain 160950 and 160997, the first two round-2 votes: outside the
+  captured range 161000–161250.
 
 ## What is checked
 
@@ -69,24 +77,31 @@ prefix matches. The final workflow job also requires both matrix jobs to succeed
 
 ## Provenance and files
 
-Every original block's root and file hash was checked against full block IDs from
-two validators. [Capture commands and receipts](CAPTURE.md) include the exact
-archive programs, retrieval index and fresh two-validator responses. Existing
-coordinator captures were reused where available; new archive reads used immutable package files only. No live database was opened.
+Every replayed block's root and file hash equals the full block ids returned by
+validators node-1 and node-3. [Capture commands and receipts](CAPTURE.md) describe
+the local, read-only capture from the archive packages of a full node synced
+from genesis; no host was contacted and no live database was opened.
 `files` records each block's source ID and SHA-256. One native multi-root BOC,
-`state-parts.boc`, packs the original supplemental cells, reducing the fixture
-count to 249 inputs. Its file entry records SHA-256 and source block IDs;
-`supplement_roots` records each original root's hashes and provenance. The 1,686
-original roots were independently checked for identical hashes, bits and
-referenced hashes after packing.
+`state-parts.boc`, packs the original supplemental cells, so the corpus has 341
+inputs. Its file entry records SHA-256 and source block IDs; `supplement_roots`
+records each of its 758 original roots with hashes and provenance:
 
-An `original_state_update` root is the original cell extracted from an acquired
-block; `source_cell_hash` and `source_file_sha256` bind it to that block. Other
-roots are original RPC proof or public account code/data cells. Re-encoding the
-BOC container creates no new state values. Copied source/unit-test captures are
-excluded; only known actual epoch captures supply account cells.
+- 756 `original_state_update` roots: the whole state-update cell of an archived
+  block (751 masterchain blocks 3–230369 and basechain 105530, 118263, 150944,
+  151779 and 152381). The configuration,
+  previous-block VM context and account cells the replay reads but that a
+  selected block's own Merkle update prunes come from these.
+- One `original_block_extra` root: key block 154916's extra, whose configuration
+  holds cells the elector and Config contract read.
+- One `zero_state` root: the genesis zero state, for cells unchanged since
+  genesis. Its hashes equal the initial block id node-1 and node-3 return.
 
-The new files have separate purposes:
+292 roots come from blocks with node-1/node-3 ids (`verified_rpc_nodes`); the
+others are bound by hash only, which is sufficient for their use: a cell is
+accepted only where a verified block's state holds a pruned branch of the same
+level-zero hash. Re-encoding the BOC container creates no new state values.
+
+The files have separate purposes:
 
 - `emulator/test/epoch-replay.cpp` is a small entry point into existing native
   execution libraries. Existing replay tools require node databases or complete
@@ -98,18 +113,15 @@ The new files have separate purposes:
 - `test_run.py` exercises failure reporting and refuses incomplete/malformed
   comparison results. It adds no synthetic positive chain fixtures.
 - `corpus/manifest.json` records the oracle and provenance; the BOCs are its inputs.
-- `CAPTURE.md`, `capture-index.json` and `capture-commands.json` retain bounded
-  acquisition commands, exact source locations and independent full-ID replies.
-  They remain auditable after the live archive expires.
+- `CAPTURE.md`, `capture-index.json` and `capture-commands.json` retain the local
+  capture programs, exact archive locations and the independent full-id replies.
+  They remain auditable after the archive and the id captures are gone.
 - `VALIDATION.json` records source/data hashes and the execution-control
   sensitivity receipt; hosted runs repeat the controls on both architectures.
 - `.github/workflows/epoch-replay.yml` provides one bounded two-architecture
-  matrix and a dependent artifact comparison. Existing architecture workflows
-  do not compare these execution artifacts with each other. It runs manually
-  only for now: this epoch-4 corpus carries the ConfigParam 43 layout without
-  the outbound-queue limits, which the node no longer reads. Re-capture the
-  corpus from epoch 5 and restore the workflow's pull_request and push triggers.
-  The block files remain inputs of `test-lite-proof-content`.
+  matrix and a dependent artifact comparison, on pull requests and pushes to
+  main. Existing architecture workflows do not compare these execution artifacts
+  with each other. The block files are also inputs of `test-lite-proof-content`.
 
 ## Run
 
