@@ -481,7 +481,8 @@ PATH7 adds no separate transaction-engine change.
   dispatches suite 1 ML-DSA-44, suite 2 Falcon-512 padded, suite 3
   SLH-DSA-SHA2-128s and suite 4 the one-level HSS/LMS fee verifier. Suite 2 shares
   `F93101`'s version gate.
-- Suite 3 charges a flat 4,500 gas before reading any operand, then ordinary cell
+- Suite 3 charges a flat 4,500 gas after the stack and type checks and before
+  reading any operand cell, then ordinary cell
   loads; there is no per-byte charge. Valid, invalid and malformed signatures
   cost the same up to the point of failure. One complete check with operands
   pushed on the stack costs 11,039 gas
@@ -492,8 +493,9 @@ PATH7 adds no separate transaction-engine change.
   the check returns false, its operands are malformed, or it runs out of gas. A
   second attempt fails with a range check (exit 5) before its base charge and
   before any operand is loaded. The count (`slh_counter`) is passed to every
-  child VM, including isolated ones, and copied back to the parent when the
-  child ends, on every exit and before the parent is charged for the child's gas.
+  child VM, including isolated ones, and copied back to the parent whenever the
+  parent resumes after the child, before the parent is charged for the child's
+  gas.
   Any future mechanism that creates a VM state inside an execution must carry
   `slh_counter` the same way.
 - The suite 3 tariff assumes validators verify with SHA-NI, which is a hardware
