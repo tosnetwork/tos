@@ -66,7 +66,7 @@ fn main() -> anyhow::Result<()> {
         } else {
             99
         };
-        println!("{}\t{}\t{}\t{}", f[0], exit, engine.gas_used(), value);
+        println!("{}\t{}\t{}\t{}\t{}", f[0], exit, engine.gas_used(), value, engine.steps());
         count += 1;
     }
     anyhow::ensure!(count >= 20, "incomplete scenario set");

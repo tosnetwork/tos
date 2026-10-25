@@ -277,6 +277,13 @@ def main(out):
     add("stack-underflow", "E2", "int:1", None, CTX_ML, msig, mpk)
     add("version-15", "E6", "int:1", msg, CTX_ML, msig, mpk, version=15)
 
+    # Steps: the VM counts one step for every instruction it fetches, also for one that fails
+    # before it is decoded. Each row pushes 7 first, so a correct count is 3 (PUSHINT, the
+    # failing instruction, the exception).
+    add_program("steps-unassigned-opcode", "E6", prog(pushint(7), op([0xF4, 0xFF])))
+    add_program("steps-truncated-prefix-ff", "E6", prog(pushint(7), op([0xFF])))
+    add_program("steps-truncated-prefix-f9", "E6", prog(pushint(7), op([0xF9])))
+
     Path(out).write_text("\n".join("\t".join(r) for r in rows) + "\n")
     print(f"{len(rows)} scenarios")
 

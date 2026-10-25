@@ -597,6 +597,10 @@ impl Engine {
                 break result;
             }
             self.cmd_code = SliceProto::from(self.cc.code());
+            // One step per fetched instruction, like the C++ VM's step(): also for an
+            // instruction that fails before it is decoded (an unassigned opcode, a
+            // version gate, a truncated prefix).
+            self.step += 1;
             let execution_result = match HANDLERS_CP0.get_handler(self) {
                 Err(err) => match self.basic_use_gas(8) {
                     Err(err) => Some(err),
@@ -1227,7 +1231,6 @@ impl Engine {
         self.cmd.proto = proto;
         self.cmd.params.clear();
         self.cmd.vars.clear();
-        self.step += 1;
         self.extract_instruction()
     }
 

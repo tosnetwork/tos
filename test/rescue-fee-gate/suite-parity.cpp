@@ -101,7 +101,8 @@ int main(int argc, char** argv) {
         }
         value = st.get_stack().pop_int_finite()->to_long();
       }
-      std::cout << f[0] << '\t' << exit << '\t' << st.gas_consumed() << '\t' << value << '\n';
+      std::cout << f[0] << '\t' << exit << '\t' << st.gas_consumed() << '\t' << value << '\t' << st.get_steps_count()
+                << '\n';
       ++count;
     }
     if (file.bad() || count < 20) {

@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parents[2]
 CARGO = ROOT / "tosctl/src"
 PQ = CARGO / "vm/src/executor/pq.rs"
 LMS = CARGO / "vm/src/executor/lms_fee.rs"
+CORE = CARGO / "vm/src/executor/engine/core.rs"
 
 
 class Mutation(NamedTuple):
@@ -66,6 +67,26 @@ MUTATIONS = {
         PQ,
         [("const SLH_BASE_GAS: i64 = 750_000;", "const SLH_BASE_GAS: i64 = 749_999;")],
         ("s3-valid", "s3-out-of-gas-base"),
+    ),
+    "instruction step not counted on fetch": Mutation(
+        CORE,
+        [
+            (
+                "            self.step += 1;\n            let execution_result = match HANDLERS_CP0.get_handler(self) {\n",
+                "            let execution_result = match HANDLERS_CP0.get_handler(self) {\n",
+            )
+        ],
+        ("s1-valid", "steps-unassigned-opcode", "steps-truncated-prefix-ff"),
+    ),
+    "instruction step counted again on decode": Mutation(
+        CORE,
+        [
+            (
+                "        self.cmd.vars.clear();\n        self.extract_instruction()\n",
+                "        self.cmd.vars.clear();\n        self.step += 1;\n        self.extract_instruction()\n",
+            )
+        ],
+        ("s1-valid", "s3-valid"),
     ),
 }
 

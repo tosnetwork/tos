@@ -1,5 +1,7 @@
 """Check complete result rows against intended outcomes and exact cross-VM parity.
 
+Output rows are: id, exit code, gas, result, steps.
+
 Usage: compare.py <scenarios.tsv> <cpp.tsv> <rust.tsv> [frozen-expected.tsv]
 """
 
@@ -27,19 +29,20 @@ def intended(outcome):
 
 def main(scenarios, cpp, rust, expected=None):
     inputs = read(scenarios, 9, 10)
-    outputs = [read(cpp, 4), read(rust, 4)]
+    outputs = [read(cpp, 5), read(rust, 5)]
     ids = [row[0] for row in inputs]
     for path, rows in zip((cpp, rust), outputs):
         assert [row[0] for row in rows] == ids, f"missing/reordered/extra rows: {path}"
         for scenario, row in zip(inputs, rows):
-            name, exit_code, gas, result = row
+            name, exit_code, gas, result, steps = row
             actual = (int(exit_code), int(result))
             want = intended(scenario[3])
             assert actual == want, f"{path}: {name}: expected {want}, got {actual}"
             assert int(gas) > 0, f"{path}: {name}: missing gas charge"
-    assert outputs[0] == outputs[1], "C++/Rust exit, gas or result mismatch"
+            assert int(steps) > 0, f"{path}: {name}: missing step count"
+    assert outputs[0] == outputs[1], "C++/Rust exit, gas, result or step mismatch"
     if expected is not None:
-        assert outputs[0] == read(expected, 4), "frozen exit, gas or result mismatch"
+        assert outputs[0] == read(expected, 5), "frozen exit, gas, result or step mismatch"
     print(f"PASS: {len(inputs)} expected outcomes and exact C++/Rust rows")
 
 
