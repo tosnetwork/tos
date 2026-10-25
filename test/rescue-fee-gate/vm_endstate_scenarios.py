@@ -24,6 +24,7 @@ JMPX = op([0xD9])
 PUSHNULL = op([0x6D])
 PUSHNAN = op([0x83, 0xFF])
 UNASSIGNED = op([0xF4, 0xFF])
+BOOLEVAL = op([0xED, 0xF9])
 AGAIN_FOREVER = (op([0x90]), op([0xEA]))  # PUSHCONT {} AGAIN
 
 
@@ -73,6 +74,9 @@ def scenarios():
         "handler-nargs-3-vm-error", prog(*handler_with_nargs(3, pushint(9)), pushint(7), UNASSIGNED)
     )
     add("handler-nargs-3-throw-6", prog(*handler_with_nargs(3, pushint(9)), pushint(7), throw(6)))
+    # BOOLEVAL returns through implicit PUSHINT continuations, which are not counted as steps.
+    add("booleval-true", prog(op([0x91, 0x77]), BOOLEVAL))
+    add("booleval-false", prog(op([0x92, 0xDB, 0x31]), BOOLEVAL))
 
 
 KNOWN = [

@@ -667,7 +667,6 @@ impl Engine {
         Ok(None)
     }
     fn step_pushint(&mut self, code: i32) -> Result<Option<i32>> {
-        self.step += 1;
         self.log_string = Some("implicit PUSHINT");
         self.cc.stack.push_int(code);
         switch(self, ctrl!(0))?;
