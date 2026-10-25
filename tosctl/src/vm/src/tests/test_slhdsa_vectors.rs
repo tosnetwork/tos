@@ -4,12 +4,26 @@
 // whichever SHA-256 backend this build selected. Every signature must verify; flipping a byte of
 // the randomizer, of the last hypertree layer or of the message must not.
 // TOS_REQUIRE_SHA_NI=1 also requires the SHA-NI path to be the one executing.
+//
+// The shim interface and the FIPS 205 lengths are declared here, not imported from
+// executor/pq.rs: that file is pinned byte-for-byte by the wallet review manifest.
 
-use super::tos_rust_slhdsa128s_verify;
 use std::ffi::CStr;
 use std::os::raw::c_char;
 
+const SLH_PUBLIC_KEY_BYTES: usize = 32;
+const SLH_SIGNATURE_BYTES: usize = 7856;
+
 extern "C" {
+    fn tos_rust_slhdsa128s_verify(
+        message: *const u8,
+        message_len: usize,
+        signature: *const u8,
+        signature_len: usize,
+        context: *const u8,
+        context_len: usize,
+        public_key: *const u8,
+    ) -> i32;
     fn tos_rust_slhdsa_sha256_backend() -> *const c_char;
 }
 
@@ -22,7 +36,7 @@ fn backend() -> String {
 }
 
 fn verify(message: &[u8], context: &[u8], signature: &[u8], key: &[u8]) -> i32 {
-    assert_eq!(key.len(), super::SLH_PUBLIC_KEY_BYTES);
+    assert_eq!(key.len(), SLH_PUBLIC_KEY_BYTES);
     // SAFETY: borrowed buffers outlive this synchronous, verify-only call; the key length is
     // checked above and the shim checks the signature length itself.
     unsafe {
@@ -64,7 +78,7 @@ fn slhdsa_fixture_vectors() {
         let fields: Vec<Vec<u8>> = line.split_whitespace().map(from_hex).collect();
         assert_eq!(fields.len(), 4, "public_key context message signature");
         let (key, context, message, signature) = (&fields[0], &fields[1], &fields[2], &fields[3]);
-        assert_eq!(signature.len(), super::SLH_SIGNATURE_BYTES);
+        assert_eq!(signature.len(), SLH_SIGNATURE_BYTES);
 
         assert_eq!(verify(message, context, signature, key), 1);
         for at in [0, signature.len() - 1] {

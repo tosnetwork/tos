@@ -211,10 +211,6 @@ extern "C" {
 // Generic instruction F93102, enabled at the development genesis version 16: message context signature
 // public_key suite -> bool. Order of pops, charges and errors follows the C++ VM exactly; the
 // parity scenarios check that. Suite 2 keeps F93101's own version gate.
-#[cfg(test)]
-#[path = "../tests/test_slhdsa_vectors.rs"]
-mod slhdsa_vector_tests;
-
 const SUITE_MLDSA44: i32 = 1;
 const SUITE_FALCON512: i32 = 2;
 const SUITE_SLHDSA128S: i32 = 3;

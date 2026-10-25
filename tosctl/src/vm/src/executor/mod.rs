@@ -44,6 +44,10 @@ pub use engine::*;
 #[path = "../tests/test_executor.rs"]
 mod tests;
 
+#[cfg(test)]
+#[path = "../tests/test_slhdsa_vectors.rs"]
+mod slhdsa_vector_tests;
+
 fn serialize_coins(coins: u128) -> Result<BuilderData> {
     let bytes = 16 - coins.leading_zeros() as usize / 8;
     let mut builder = BuilderData::with_raw(vec![(bytes as u8) << 4], 4)?;
