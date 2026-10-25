@@ -1091,8 +1091,30 @@ void JsonRpcServer::dispatch_method_impl(const std::string &method, td::JsonObje
     promise.set_value(make_json_rpc_error(-32601, PSTRING() << "Method not found: " << method, req_id));
     return;
   }
-  if (opts_.index_query_sender && (method == "getAccountTokens" || method == "getAccountNfts" ||
-                                   method == "getAccountEvents" || method == "getAccountEvent")) {
+  if (is_write_method(method) && !opts_.submission_query_sender) {
+    if (opts_.lite_query_sender) {
+      promise.set_value(make_json_rpc_error(json_rpc::kWriteDisabled, "No attributed submission backend", req_id));
+      return;
+    }
+    if (params.has_field("_tos_relay_source")) {
+      auto claimed = params.get_required_string_field("_tos_relay_source");
+      if (!opts_.trust_proxy_headers || claimed.is_error() || claimed.ok() != source_ip) {
+        promise.set_value(
+            make_json_rpc_error(-32603, "Submission backend requires trusted client attribution", req_id));
+        return;
+      }
+    }
+  }
+  auto *forward = is_write_method(method) ? &opts_.submission_query_sender : &opts_.index_query_sender;
+  if (*forward && (is_write_method(method) || method == "getAccountTokens" || method == "getAccountNfts" ||
+                   method == "getAccountEvents" || method == "getAccountEvent")) {
+    if (is_write_method(method)) {
+      auto &fields = params.field_values_;
+      fields.erase(std::remove_if(fields.begin(), fields.end(),
+                                  [](const auto &field) { return field.first == "_tos_relay_source"; }),
+                   fields.end());
+      fields.emplace_back("_tos_relay_source", td::JsonValue::create_string(td::MutableSlice(source_ip)));
+    }
     td::JsonBuilder builder;
     {
       auto object = builder.enter_object();
@@ -1102,17 +1124,17 @@ void JsonRpcServer::dispatch_method_impl(const std::string &method, td::JsonObje
       object("params", td::JsonValue::make_object(std::move(params)));
     }
     auto body = builder.string_builder().as_cslice().str();
-    opts_.index_query_sender(std::move(body), [promise = std::move(promise), req_id,
-                                               cors = opts_.cors_origin](td::Result<std::string> r) mutable {
-      if (r.is_error()) {
-        promise.set_value(
-            r.error().code() == 429
-                ? make_json_rpc_error(json_rpc::kRateLimited, "Wallet index service rate limit exceeded", req_id, cors)
-                : make_json_rpc_error(-32603, "Wallet index service unavailable", req_id, cors));
-      } else {
-        promise.set_value(make_raw_json_response(r.move_as_ok(), cors));
-      }
-    });
+    (*forward)(std::move(body), source_ip,
+               [promise = std::move(promise), req_id, cors = opts_.cors_origin](td::Result<std::string> r) mutable {
+                 if (r.is_error()) {
+                   promise.set_value(r.error().code() == 429
+                                         ? make_json_rpc_error(json_rpc::kRateLimited,
+                                                               "Backend service rate limit exceeded", req_id, cors)
+                                         : make_json_rpc_error(-32603, "Backend service unavailable", req_id, cors));
+                 } else {
+                   promise.set_value(make_raw_json_response(r.move_as_ok(), cors));
+                 }
+               });
     return;
   }
   entry->invoke(*this, params, std::move(req_id), source_ip, std::move(promise));
@@ -1339,6 +1361,12 @@ const JsonRpcServer::MethodEntry *JsonRpcServer::find_method(td::Slice name) {
 }
 
 bool JsonRpcServer::serves(const MethodEntry &entry) const {
+  if (opts_.lite_query_sender) {
+    td::Slice name(entry.name);
+    if (name == "getConsensusBlock" || name == "getMasterchainBlockSignatures" || name == "getNodeConsensusStatus") {
+      return false;
+    }
+  }
   if (opts_.index_only) {
     td::Slice name(entry.name);
     return name == "getAccountTokens" || name == "getAccountNfts" || name == "getAccountEvents" ||
@@ -1431,6 +1459,10 @@ void JsonRpcServer::send_attributed_liteserver_query(td::BufferSlice query, adnl
         });
   }
   if (opts_.lite_query_sender) {
+    if (!source.is_zero()) {
+      promise.set_error(td::Status::Error("standalone submissions require an attributed HTTP backend"));
+      return;
+    }
     opts_.lite_query_sender(std::move(query), std::move(promise));
     return;
   }

@@ -186,11 +186,12 @@ struct InitialIntentInput {
 class JsonRpcServer final : public td::actor::Actor, public virtual metrics::AsyncCollector {
  public:
   using LiteQuerySender = std::function<void(td::BufferSlice, td::Promise<td::BufferSlice>)>;
-  using IndexQuerySender = std::function<void(std::string, td::Promise<std::string>)>;
+  using IndexQuerySender = std::function<void(std::string, std::string, td::Promise<std::string>)>;
   struct Options {
     // Standalone services supply transports instead of a local validator actor.
     LiteQuerySender lite_query_sender;
     IndexQuerySender index_query_sender;
+    IndexQuerySender submission_query_sender;
     bool index_only = false;
     std::function<bool()> index_ready;
     std::function<std::string()> index_progress;

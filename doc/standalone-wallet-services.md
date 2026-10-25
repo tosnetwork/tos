@@ -23,8 +23,17 @@ build/services/tos-wallet-index \
 build/services/tos-rpc \
   --global-config /etc/tos/liteservers.json \
   --index-address 127.0.0.1:8081 \
+  --submission-address 127.0.0.1:8082 \
   --listen 127.0.0.1:8080
 ```
+
+The submission backend is the same-version node's private operator RPC, configured
+with `--json-rpc-address 127.0.0.1:8082 --json-rpc-trust-proxy-headers`.
+Use a non-validating full-node replica for this endpoint when possible. The public
+RPC forwards only write methods there; chain reads continue through liteservers.
+A write-enabled `tos-rpc` requires `--submission-address`; use `--readonly` when no
+submission backend is configured. The backend must belong to the same network as
+the liteservers and index. These internal endpoints must not be public proxy routes.
 
 Use a full-node replica for the source when possible, so read I/O does not compete
 with consensus. Mount the source database read-only in the index process's mount
@@ -47,6 +56,22 @@ from the RPC server, configurable 1–300 seconds). The internal index endpoint 
 loopback-only and serves only `getAccountTokens`, `getAccountNfts`,
 `getAccountEvents` and `getAccountEvent`; keep it out of public proxy routes.
 Omitting `--index-address` makes the aggregate methods report index disabled.
+
+The frontend resolves the client IP using its trusted-proxy policy, then replaces
+forwarded identity with that validated IP on each internal HTTP hop. The index
+listener trusts loopback proxy headers. The submission backend must also enable
+proxy attribution: a reserved `_tos_relay_source` assertion is overwritten by the
+frontend and checked against the backend's resolved source before submission.
+A mismatched or disabled backend proxy policy returns an RPC error. The backend
+retains its per-client mempool submission limits; the shared liteserver connection
+is never used for writes. Keep loopback listeners accessible only to trusted local
+processes, and use the same service/node release for this assertion protocol.
+If using a TLS reverse proxy, enable `--trust-proxy-headers` on `tos-rpc` and ensure
+the proxy replaces client-supplied identity headers.
+
+`getConsensusBlock`, `getMasterchainBlockSignatures`, and `getNodeConsensusStatus`
+require a local validator manager and are not served by `tos-rpc`. They return
+method-not-found and are omitted from its `/api-info` listing.
 
 ## Replay, retention and restarts
 
@@ -98,16 +123,22 @@ The new index replays history; it does not merely erase the old warning.
 ## Limits and failure handling
 
 The RPC transport admits at most 128 outstanding liteserver queries (each request
-at most 4 MiB) and 16 index HTTP queries. Index HTTP responses are bounded by the
+at most 4 MiB), 16 index HTTP queries and 16 submission HTTP queries, each with a
+4 MiB request ceiling. These are separate aggregate concurrency budgets, not
+per-client rate buckets. Each HTTP response is bounded by the
 HTTP parser and an additional 16 MiB accumulation ceiling; timeout or disconnect
 releases the request actor and its connection. Writes are not retried by the RPC
 adapter. Saturation/backend failure returns an RPC error; it does not fall back
 to an embedded validator index.
 
 Replay holds one source request at a time, at most 4096 shard identities per
-masterchain interval, and opens at most 128 archive packages. Its cell block cache
+masterchain interval, and configures an archive LRU eviction target of 128 files. This is not a hard
+ceiling: the newest normal/key/temp slices are permanent, and package files open
+before eviction. File descriptors and transient usage can exceed this target. Its cell block cache
 is configured to 128 MiB. A source request that fails to finish within 30 seconds
-stops the service with exit status 1; restart resumes its durable cursor. The existing bounded token
+stops the service with exit status 1; restart resumes its durable cursor.
+Cancellation refuses new source requests, clears undispatched mailbox entries and
+stops the current bounded candidate drain without losing its persisted work. The existing bounded token
 backlog and per-block verification gas budgets remain in effect. Disk usage for
 indexed owners follows the account population; event retention is bounded as
 before. Monitor process memory, source archive retention, cursor lag and disk space.

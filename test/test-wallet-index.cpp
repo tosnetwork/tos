@@ -2036,6 +2036,7 @@ void reset_index_singletons() {
   tos_wallet_index::set_wc0_index_marking_stall_for_testing(false);
   tos_wallet_index::stop_wc0_index_worker();
   tos_wallet_index::set_wc0_index_block_fetcher(nullptr);
+  tos_wallet_index::set_wc0_index_state_fetcher(nullptr);
   tos_wallet_index::set_wc0_index_fetch_timeout_for_testing(std::chrono::seconds(60));
   tos_wallet_index::set_wallet_index_db(nullptr);
   tos_wallet_index::set_wallet_index_unavailable("");
@@ -4072,4 +4073,74 @@ TEST(WalletIndex, ReplayReceiptCommitsWithBlockAndSkipsAnAlreadyCommittedBlock) 
               tos_wallet_index::Wc0IndexResult::NotDone);
   reset_index_singletons();
   td::rmrf(path).ensure();
+}
+
+TEST(WalletIndexWorker, StandaloneReplayRefreshesSuccessiveCandidateBlocksWithoutRestart) {
+  reset_index_singletons();
+  auto path = std::string("test-wallet-index-db-standalone-refresh");
+  td::rmrf(path).ignore();
+  auto &db = install_db(path);
+  NewestState newest;
+  tos_wallet_index::set_wc0_index_state_fetcher(newest.fetcher());
+  for (unsigned round = 1; round <= 2; ++round) {
+    auto wallet = token_address(100 + round, 0x11);
+    auto owner = token_address(200 + round, 0x12);
+    auto master = token_address(300 + round, 0x13);
+    auto item = token_address(400, 0x14);
+    auto collection = token_address(500, 0x15);
+    auto lt = static_cast<uint64_t>(round) * 1000;
+    newest.set(round, lt + 100,
+               wallet_index_fixture::shard_state({wallet_index_fixture::token_wallet(wallet, owner, master),
+                                                  wallet_index_fixture::token_master(master, wallet),
+                                                  wallet_index_fixture::nft_item(item, collection, owner),
+                                                  wallet_index_fixture::nft_collection(collection, item)}));
+    auto root = wallet_index_fixture::block(round, lt, 1000,
+                                            {{wallet, lt - 1, kTokenTransferOp}, {item, lt - 2, kNftTransferOp}});
+    ASSERT_TRUE(tos_wallet_index::wc0_index_block(root, {}, worker_block_id(round), true) ==
+                tos_wallet_index::Wc0IndexResult::Done);
+    for (int attempt = 0; attempt < 10 && !is_complete(db); ++attempt)
+      tos_wallet_index::drain_wc0_index();
+    ASSERT_TRUE(is_complete(db));
+    td::Bits256 found_owner, found_master;
+    ASSERT_TRUE(db.get_token_wallet(wallet, found_owner, found_master).move_as_ok());
+    ASSERT_EQ(found_owner, owner);
+    ASSERT_EQ(found_master, master);
+    ASSERT_TRUE(db.get_nft_owner(item, found_owner).move_as_ok());
+    ASSERT_EQ(found_owner, owner);
+  }
+  ASSERT_TRUE(newest.calls.load() >= 2);
+  tos_wallet_index::set_wc0_index_state_fetcher(nullptr);
+  tos_wallet_index::release_wc0_index_state();
+  reset_index_singletons();
+  td::rmrf(path).ignore();
+}
+
+TEST(WalletIndexWorker, StandaloneCancellationPreservesPendingCandidates) {
+  reset_index_singletons();
+  auto path = std::string("test-wallet-index-db-standalone-cancel");
+  td::rmrf(path).ignore();
+  auto &db = install_db(path);
+  auto id = worker_block_id(70);
+  tos_wallet_index::WalletIndexDb::PendingBlock pending;
+  pending.end_lt = 5000;
+  for (unsigned i = 0; i < 8; ++i)
+    pending.remaining.push_back({{TokenKind::Fungible, token_address(600 + i, 0x11)}, 0, 5000});
+  db.begin_batch().ensure();
+  db.put_pending_block(id, pending).ensure();
+  db.commit_batch().ensure();
+  std::atomic<bool> cancelled{false};
+  int calls = 0;
+  tos_wallet_index::set_wc0_index_state_fetcher([&](const td::Bits256 &, auto done) {
+    ++calls;
+    cancelled = true;
+    done(td::Status::Error("source cancelled"));
+  });
+  ASSERT_TRUE(!tos_wallet_index::drain_wc0_index(&cancelled));
+  ASSERT_EQ(calls, 1);
+  ASSERT_EQ(db.get_pending_block(id).move_as_ok().value().remaining.size(), pending.remaining.size());
+  ASSERT_TRUE(!tos_wallet_index::drain_wc0_index(&cancelled));
+  ASSERT_EQ(calls, 1);
+  tos_wallet_index::set_wc0_index_state_fetcher(nullptr);
+  reset_index_singletons();
+  td::rmrf(path).ignore();
 }

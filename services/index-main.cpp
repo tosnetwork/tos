@@ -83,7 +83,7 @@ class Replay {
         TRY_RESULT(block, reader_.block(handle));
         auto result = wc0_index_block(std::move(block), {}, handle->id(), true);
         if (result != Wc0IndexResult::Done) {
-          if (drain_wc0_index() && result == Wc0IndexResult::AtPendingCap)
+          if (drain_wc0_index(&stop_requested) && result == Wc0IndexResult::AtPendingCap)
             return td::Status::OK();
           return td::Status::Error("index block not committed; retrying from checkpoint");
         }
@@ -97,7 +97,9 @@ class Replay {
       checkpoint_ = committed;
       progress_.cursor = committed.committed.seqno();
     }
-    background_progress_ = drain_wc0_index();
+    if (stop_requested.load())
+      return td::Status::Error("replay interrupted");
+    background_progress_ = drain_wc0_index(&stop_requested);
     // HTTP handlers independently report the persisted token backlog. This
     // flag only says the block replay has reached the observed source tip.
     progress_.checked_at = td::Time::now();
@@ -201,6 +203,7 @@ int main(int argc, char** argv) {
                                                     source_path.string(), options, td::DbOpenMode::db_secondary);
     JsonRpcServer::Options rpc;
     rpc.index_only = true;
+    rpc.trust_proxy_headers = true;
     rpc.readonly = true;
     rpc.index_ready = [&] { return progress.is_ready(); };
     rpc.index_progress = [&] { return progress.json(); };

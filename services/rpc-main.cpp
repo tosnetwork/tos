@@ -12,7 +12,7 @@ int main(int argc, char **argv) {
   using namespace tos;
   SET_VERBOSITY_LEVEL(verbosity_WARNING);
   std::string config, key_file;
-  td::IPAddress listen, index;
+  td::IPAddress listen, index, submission;
   listen.init_host_port("127.0.0.1:8080").ensure();
   JsonRpcServer::Options options;
   int threads = 4;
@@ -27,6 +27,8 @@ int main(int argc, char **argv) {
                             [&](td::Slice v) { return listen.init_host_port(v.str()); });
   parser.add_checked_option('\0', "index-address", "internal wallet index HTTP address (loopback only)",
                             [&](td::Slice v) { return index.init_host_port(v.str()); });
+  parser.add_checked_option('\0', "submission-address", "trusted loopback operator RPC with proxy attribution enabled",
+                            [&](td::Slice v) { return submission.init_host_port(v.str()); });
   parser.add_option('\0', "readonly", "disable transaction submission", [&] { options.readonly = true; });
   parser.add_option('\0', "api-key-file", "read HTTP API key from a file", [&](td::Slice v) { key_file = v.str(); });
   parser.add_option('\0', "cors-origin", "allowed browser origin", [&](td::Slice v) { options.cors_origin = v.str(); });
@@ -66,6 +68,11 @@ int main(int argc, char **argv) {
     LOG(ERROR) << "index-address must be loopback; use a local authenticated tunnel for remote services";
     return 2;
   }
+  if ((!options.readonly && !submission.is_valid()) ||
+      (submission.is_valid() && !json_rpc::is_loopback_bind_address(submission))) {
+    LOG(ERROR) << "write access requires a loopback submission-address with trusted proxy attribution";
+    return 2;
+  }
   if (!key_file.empty()) {
     auto key = td::read_file(key_file);
     if (key.is_error()) {
@@ -89,6 +96,8 @@ int main(int argc, char **argv) {
     options.lite_query_sender = services::lite_sender(client.get(), options.request_timeout);
     if (index.is_valid())
       options.index_query_sender = services::index_sender(index, options.request_timeout);
+    if (submission.is_valid())
+      options.submission_query_sender = services::index_sender(submission, options.request_timeout);
     server = JsonRpcServer::create({}, std::move(options));
     td::actor::send_closure(server, &JsonRpcServer::listen, listen);
   });

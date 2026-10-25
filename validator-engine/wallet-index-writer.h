@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <functional>
@@ -90,7 +91,7 @@ Wc0IndexResult wc0_index_block(td::Ref<vm::Cell> block_root, td::Ref<vm::Cell> s
                                bool replay = false);
 // One bounded background pass, for the standalone replay thread. Never call
 // concurrently with the legacy queue worker.
-bool drain_wc0_index();
+bool drain_wc0_index(const std::atomic<bool>* cancelled = nullptr);
 // Release cached lazy source cells before destroying the source scheduler.
 void release_wc0_index_state();
 

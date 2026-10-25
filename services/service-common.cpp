@@ -60,9 +60,14 @@ class ClientCallback final : public http::HttpClient::Callback {
 
 class IndexRequest final : public td::actor::Actor {
  public:
-  IndexRequest(td::IPAddress address, double timeout, std::string body, td::Promise<std::string> promise,
-               std::shared_ptr<std::atomic<unsigned>> active)
-      : address_(address), timeout_(timeout), body_(std::move(body)), promise_(std::move(promise)), active_(active) {
+  IndexRequest(td::IPAddress address, double timeout, std::string body, std::string source,
+               td::Promise<std::string> promise, std::shared_ptr<std::atomic<unsigned>> active)
+      : address_(address)
+      , timeout_(timeout)
+      , body_(std::move(body))
+      , source_(std::move(source))
+      , promise_(std::move(promise))
+      , active_(active) {
   }
   ~IndexRequest() override {
     active_->fetch_sub(1);
@@ -73,6 +78,7 @@ class IndexRequest final : public td::actor::Actor {
     auto request = http::HttpRequest::create("POST", "/jsonRPC", "HTTP/1.1").move_as_ok();
     request->add_header({"Host", address_.get_ip_str().str()}).ensure();
     request->add_header({"Content-Type", "application/json"}).ensure();
+    request->add_header({"X-Real-IP", source_}).ensure();
     request->add_header({"Content-Length", std::to_string(body_.size())}).ensure();
     request->complete_parse_header().ensure();
     auto payload = request->create_empty_payload().move_as_ok();
@@ -155,7 +161,7 @@ class IndexRequest final : public td::actor::Actor {
   }
   td::IPAddress address_;
   double timeout_;
-  std::string body_, result_;
+  std::string body_, source_, result_;
   td::Promise<std::string> promise_;
   std::shared_ptr<std::atomic<unsigned>> active_;
   td::actor::ActorOwn<http::HttpClient> client_;
@@ -165,15 +171,15 @@ class IndexRequest final : public td::actor::Actor {
 
 JsonRpcServer::IndexQuerySender index_sender(td::IPAddress address, double timeout) {
   auto active = std::make_shared<std::atomic<unsigned>>(0);
-  return [address, timeout, active](std::string body, td::Promise<std::string> promise) {
+  return [address, timeout, active](std::string body, std::string source, td::Promise<std::string> promise) {
     if (body.size() > (4u << 20) || active->fetch_add(1) >= 16) {
       if (body.size() <= (4u << 20))
         active->fetch_sub(1);
       promise.set_error(td::Status::Error("index transport capacity exceeded"));
       return;
     }
-    td::actor::create_actor<IndexRequest>("index-request", address, timeout, std::move(body), std::move(promise),
-                                          active)
+    td::actor::create_actor<IndexRequest>("index-request", address, timeout, std::move(body), std::move(source),
+                                          std::move(promise), active)
         .release();
   };
 }

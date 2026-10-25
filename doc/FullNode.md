@@ -89,7 +89,7 @@ Wallet indexing and public JSON-RPC run as separate executables:
 
 - `tos-wallet-index` reads a local node database through secondary database handles,
   owns its writable index directory, and serves four account-index methods on loopback.
-- `tos-rpc` serves wallet HTTP requests, sends chain queries to configured liteservers,
+- `tos-rpc` serves wallet HTTP requests, sends chain reads to configured liteservers and attributed submissions to private operator RPC,
   and forwards account-index requests to the index service.
 - `validator-engine --json-rpc-address` is restricted to loopback for operator tooling.
   It never opens a wallet index. `--json-rpc-without-wallet-index` is a deprecated no-op.

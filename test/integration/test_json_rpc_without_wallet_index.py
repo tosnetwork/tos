@@ -6,16 +6,19 @@ then kill and restart the index while the source continues producing blocks.
 
 import argparse
 import asyncio
+import base64
 import hashlib
 import json
 import logging
 import signal
 import socket
+import time
 import urllib.request
 from pathlib import Path
 from typing import Any
 
 from contract import WalletV1Blueprint, tos
+from pytosiq_core import MessageAny
 from tostester.install import Install
 from tostester.network import FullNode, Network, StartOptions
 
@@ -38,13 +41,17 @@ def ports_free(base: int, count: int) -> bool:
     return True
 
 
-def call(address: str, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+def call(
+    address: str, method: str, params: dict[str, Any] | None = None, source: str = ""
+) -> dict[str, Any]:
     payload = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params or {}})
     request = urllib.request.Request(
         f"http://{address}/jsonRPC",
         data=payload.encode(),
         headers={"Content-Type": "application/json"},
     )
+    if source:
+        request.add_header("X-Real-IP", source)
     with urllib.request.urlopen(request, timeout=10) as response:
         document = json.loads(response.read().decode())
     require(isinstance(document, dict), f"{address} {method}: not a JSON-RPC answer")
@@ -99,7 +106,12 @@ async def main(args: argparse.Namespace) -> None:
                 validators[0].run(
                     StartOptions(
                         verbosity=2,
-                        args=["--json-rpc-address", unindexed, "--json-rpc-without-wallet-index"],
+                        args=[
+                            "--json-rpc-address",
+                            unindexed,
+                            "--json-rpc-without-wallet-index",
+                            "--json-rpc-trust-proxy-headers",
+                        ],
                     )
                 )
             )
@@ -153,6 +165,9 @@ async def main(args: argparse.Namespace) -> None:
                 str(config),
                 "--listen",
                 public,
+                "--trust-proxy-headers",
+                "--submission-address",
+                unindexed,
                 "--index-address",
                 index_address,
                 stdout=rpc_log,
@@ -161,6 +176,65 @@ async def main(args: argparse.Namespace) -> None:
             processes.append(rpc_process)
             info = await answered(public, "getMasterchainInfo")
             require("result" in info, f"standalone chain query: {info}")
+            for method in ("getConsensusBlock", "getMasterchainBlockSignatures"):
+                response = await answered(public, method)
+                require(
+                    response.get("error", {}).get("code") == -32601,
+                    f"unsafe standalone method: {response}",
+                )
+                require(rpc_process.returncode is None, "standalone RPC exited on manager method")
+
+            recipient = WalletV1Blueprint(workchain=0)
+
+            class RpcProvider:
+                @property
+                def latest_state_reader(self):
+                    return client.latest_state_reader
+
+                async def send_external(self, message: MessageAny) -> None:
+                    require(
+                        time.monotonic() - submission_window < 10,
+                        "submission isolation window elapsed",
+                    )
+                    response = await asyncio.to_thread(
+                        call,
+                        public,
+                        "sendBoc",
+                        {"boc": base64.b64encode(message.serialize().to_boc()).decode()},
+                        "198.51.100.2",
+                    )
+                    require("result" in response, f"victim's valid transfer refused: {response}")
+
+            payer = network.zerostate.main_wallet(RpcProvider())
+            payer_seqno = (await payer.current).seqno
+            submission_window = time.monotonic()
+            # Different public clients retain independent production mempool source budgets.
+            for attempt in range(31):
+                response = await asyncio.to_thread(
+                    call,
+                    public,
+                    "sendBoc",
+                    {"boc": base64.b64encode(f"invalid-relay-message-{attempt}".encode()).decode()},
+                    "198.51.100.1",
+                )
+                limited = "source rate limit exceeded" in json.dumps(response)
+                require(
+                    limited == (attempt == 30),
+                    f"unexpected submission admission {attempt}: {response}",
+                )
+            victim = await asyncio.to_thread(
+                call,
+                public,
+                "sendBoc",
+                {"boc": base64.b64encode(b"independent-client").decode()},
+                "198.51.100.2",
+            )
+            require(
+                "source rate limit exceeded" not in json.dumps(victim),
+                f"shared submission bucket: {victim}",
+            )
+            require("error" in victim, f"invalid message unexpectedly accepted: {victim}")
+            await payer.deploy(recipient, tos(5), payer_seqno)
 
             async def caught_up(minimum=1):
                 result: dict[str, Any] = {}
@@ -181,8 +255,6 @@ async def main(args: argparse.Namespace) -> None:
                     await asyncio.sleep(1)
                 raise AssertionError(f"index did not catch up: {result}")
 
-            recipient = WalletV1Blueprint(workchain=0)
-            await network.zerostate.main_wallet(client).deploy(recipient, tos(5))
             recipient_address = recipient.address.to_str(is_user_friendly=False)
 
             async def recipient_events():
