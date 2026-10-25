@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from suite_scenarios import DROP, op, prog, pushint  # noqa: E402
+from suite_scenarios import DROP, op, prog, pushint, runvm  # noqa: E402
 
 VERSION = 16
 BUDGET = 1_000_000
@@ -30,6 +30,15 @@ INC = op([0xA4])
 DEC = op([0xA5])
 NEGATE = op([0xA3])
 SETGASLIMIT = op([0xF8, 0x01])
+POP_C4 = op([0xED, 0x54])
+POP_C5 = op([0xED, 0x55])
+COMMIT = op([0xF8, 0x0F])
+RETALT = op([0xDB, 0x31])
+
+
+def cell_of_depth(depth):
+    """An empty cell wrapped depth times: NEWC ENDC, then depth times NEWC STREF ENDC."""
+    return (op([0xC8, 0xC9]), pushint(depth), op([0x93, 0xC8, 0xCC, 0xC9]), op([0xE4]))
 
 
 def pushpow2(n):
@@ -126,6 +135,23 @@ def scenarios():
     add("setgaslimit-nan", prog(pushint(7), PUSHNAN, SETGASLIMIT))
     add("setgaslimit-null", prog(pushint(7), PUSHNULL, SETGASLIMIT))
     add("setgaslimit-empty", prog(SETGASLIMIT))
+    # Automatic commit at a normal end: data or actions deeper than 512 cells cannot be
+    # committed, which clears the stack, leaves 0 and ends with cell overflow (8), keeping any
+    # state committed before. An explicit COMMIT that fails is an ordinary exception.
+    for depth in (512, 513):
+        add(f"autocommit-c4-depth-{depth}", prog(*cell_of_depth(depth), POP_C4, pushint(7)))
+        add(f"autocommit-c5-depth-{depth}", prog(*cell_of_depth(depth), POP_C5, pushint(7)))
+    add("autocommit-alt-exit-c4-depth-513", prog(*cell_of_depth(513), POP_C4, pushint(7), RETALT))
+    add("autocommit-throw-0-c4-depth-513", prog(*cell_of_depth(513), POP_C4, pushint(7), throw(0)))
+    add("commit-c4-depth-513", prog(*cell_of_depth(513), POP_C4, pushint(7), COMMIT))
+    add(
+        "autocommit-fails-after-commit",
+        prog(COMMIT, *cell_of_depth(513), POP_C4, pushint(7)),
+    )
+    child = prog(*cell_of_depth(513), POP_C4, pushint(7))
+    add("child-autocommit-c4-depth-513", prog(*runvm(child, 4 | 32)))
+    child = prog(*cell_of_depth(512), POP_C4, pushint(7))
+    add("child-autocommit-c4-depth-512", prog(*runvm(child, 4 | 32)))
 
 
 # Rows that may differ only in the final stack and the error argument; exit code, gas, steps

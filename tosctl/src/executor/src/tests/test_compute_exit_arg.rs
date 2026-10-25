@@ -155,3 +155,15 @@ fn a_gas_limit_below_the_gas_used_reports_the_gas_consumed() {
     let gas_used = i32::try_from(vm.gas_used.as_u64()).expect("gas used fits");
     assert_eq!((vm.exit_code, vm.success, vm.exit_arg), (-14, false, Some(gas_used)));
 }
+
+#[test]
+fn a_failed_automatic_commit_reports_cell_overflow_and_no_exit_argument() {
+    // An empty cell wrapped 513 times, deeper than data may be (NEWC ENDC, 513 times
+    // NEWC STREF ENDC), set as c4; then 7, and a normal end. The commit fails, the VM leaves
+    // 0 alone on the stack and ends with cell overflow.
+    let deep = [0xc8, 0xc9, 0x81, 0x02, 0x01, 0x93, 0xc8, 0xcc, 0xc9, 0xe4, 0xed, 0x54];
+    assert_eq!(run(code(&[&deep[..], &[0x77]].concat())), (8, false, None));
+    // 512 levels commit.
+    let shallow = [0xc8, 0xc9, 0x81, 0x02, 0x00, 0x93, 0xc8, 0xcc, 0xc9, 0xe4, 0xed, 0x54];
+    assert_eq!(run(code(&[&shallow[..], &[0x77]].concat())), (0, true, None));
+}

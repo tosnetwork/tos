@@ -384,6 +384,24 @@ MUTATIONS = {
         (),
         ("setgaslimit-minus-2-pow-200",),
     ),
+    "failed automatic commit keeps the stack": Mutation(
+        CORE,
+        [
+            (
+                "            self.cc.stack = Stack::new();\n            self.cc.stack.push_int(0);\n"
+                '            fail!(ExceptionCode::CellOverflow, "automatic commit failed: {}", err)\n',
+                '            fail!(ExceptionCode::CellOverflow, "automatic commit failed: {}", err)\n',
+            )
+        ],
+        (),
+        (),
+        (
+            "autocommit-c4-depth-513",
+            "autocommit-c5-depth-513",
+            "autocommit-fails-after-commit",
+            "child-autocommit-c4-depth-513",
+        ),
+    ),
     "RUNVM before version 4": Mutation(
         CONTINUATION,
         [("    if engine.block_version() < 4 {\n", "    if engine.block_version() < 3 {\n")],

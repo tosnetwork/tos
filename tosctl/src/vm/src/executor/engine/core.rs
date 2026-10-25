@@ -674,7 +674,15 @@ impl Engine {
             self.gas_used(),
             Some("NORMAL TERMINATION".to_string()),
         );
-        self.try_commit()?;
+        // A normal end commits the data and actions. When they cannot be committed the VM
+        // ends with cell overflow and 0 alone on the stack, without the exception handler,
+        // keeping any state committed before. c4 and c5 always hold cells (writing them is
+        // type-checked), so the only failure is a cell too deep or of a nonzero level.
+        if let Err(err) = self.try_commit() {
+            self.cc.stack = Stack::new();
+            self.cc.stack.push_int(0);
+            fail!(ExceptionCode::CellOverflow, "automatic commit failed: {}", err)
+        }
         Ok(result)
     }
 
