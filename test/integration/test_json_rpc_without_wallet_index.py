@@ -163,6 +163,7 @@ async def main(args: argparse.Namespace) -> None:
             require("result" in info, f"standalone chain query: {info}")
 
             async def caught_up(minimum=1):
+                result: dict[str, Any] = {}
                 for _ in range(120):
                     require(
                         index_process.returncode is None,
@@ -185,6 +186,7 @@ async def main(args: argparse.Namespace) -> None:
             recipient_address = recipient.address.to_str(is_user_friendly=False)
 
             async def recipient_events():
+                result: dict[str, Any] = {}
                 for _ in range(90):
                     result = await answered(
                         public, "getAccountEvents", {"address": recipient_address}
