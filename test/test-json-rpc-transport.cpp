@@ -1477,6 +1477,7 @@ void standalone_method_refusal(const std::string &method) {
   for (bool readonly : {false, true}) {
     auto options = options_for(false);
     options.readonly = readonly;
+    options.expose_consensus_status = true;
     options.lite_query_sender = [](td::BufferSlice, td::Promise<td::BufferSlice> p) {
       p.set_error(td::Status::Error("unexpected backend query"));
     };
