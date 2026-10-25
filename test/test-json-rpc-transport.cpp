@@ -1472,23 +1472,38 @@ TEST(JsonRpcTransport, standalone_backend_transports_bound_and_release_inflight_
   }
 }
 
-TEST(JsonRpcTransport, standalone_manager_methods_are_refused_over_http) {
-  auto options = options_for(false);
-  options.lite_query_sender = [](td::BufferSlice, td::Promise<td::BufferSlice> p) {
-    p.set_error(td::Status::Error("unexpected backend query"));
-  };
-  with_json_rpc(std::move(options), [&](int port) {
-    for (auto method : {"getConsensusBlock", "getMasterchainBlockSignatures", "getNodeConsensusStatus"}) {
+namespace {
+void standalone_method_refusal(const std::string &method) {
+  for (bool readonly : {false, true}) {
+    auto options = options_for(false);
+    options.readonly = readonly;
+    options.lite_query_sender = [](td::BufferSlice, td::Promise<td::BufferSlice> p) {
+      p.set_error(td::Status::Error("unexpected backend query"));
+    };
+    with_json_rpc(std::move(options), [&](int port) {
       Client client(port, 0);
       ASSERT_TRUE(client.connect());
       ASSERT_TRUE(client.send_all(
-          post("{\"jsonrpc\":\"2.0\",\"id\":17,\"method\":\"" + std::string(method) + "\",\"params\":{}}", false)));
+          post("{\"jsonrpc\":\"2.0\",\"id\":17,\"method\":\"" + method + "\",\"params\":{\"seqno\":1}}", false)));
       std::string status, body;
       ASSERT_TRUE(client.read_response(5000, status, body));
       ASSERT_TRUE(body.find("-32601") != std::string::npos);
       ASSERT_TRUE(body.find("\"id\":17") != std::string::npos);
-    }
-  });
+    });
+  }
+}
+}  // namespace
+
+TEST(JsonRpcTransport, standalone_manager_methods_consensus_refused) {
+  standalone_method_refusal("getConsensusBlock");
+}
+
+TEST(JsonRpcTransport, standalone_manager_methods_signatures_refused) {
+  standalone_method_refusal("getMasterchainBlockSignatures");
+}
+
+TEST(JsonRpcTransport, standalone_manager_methods_admin_refused) {
+  standalone_method_refusal("getNodeConsensusStatus");
 }
 
 TEST(JsonRpcTransport, standalone_index_hop_keeps_client_rate_buckets) {

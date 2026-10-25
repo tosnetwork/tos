@@ -177,7 +177,7 @@ async def main(args: argparse.Namespace) -> None:
             info = await answered(public, "getMasterchainInfo")
             require("result" in info, f"standalone chain query: {info}")
             for method in ("getConsensusBlock", "getMasterchainBlockSignatures"):
-                response = await answered(public, method)
+                response = await answered(public, method, {"seqno": 1})
                 require(
                     response.get("error", {}).get("code") == -32601,
                     f"unsafe standalone method: {response}",
