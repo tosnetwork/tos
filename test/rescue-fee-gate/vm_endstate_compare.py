@@ -13,10 +13,12 @@ continuation carries, the values of its saved registers (only which are set), an
 specific to loop continuations. Equal text therefore does not prove equal continuations.
 
 --known <ids> lists scenarios whose difference is known and accepted (comma-separated); each must
-still differ, so that a fixed difference is noticed. --expected <file> also requires the C++
-output to equal a frozen file.
+still differ, so that a fixed difference is noticed. --known-stack <ids> lists scenarios that may
+differ only in the final stack and the error argument; everything else must still be equal, and
+they too must still differ. --expected <file> also requires the C++ output to equal a frozen file.
 
-Usage: vm_endstate_compare.py <cpp-output> <rust-output> [--known a,b] [--expected <file>]
+Usage: vm_endstate_compare.py <cpp-output> <rust-output> [--known a,b] [--known-stack c,d]
+                              [--expected <file>]
 """
 
 import argparse
@@ -24,6 +26,7 @@ import sys
 from pathlib import Path
 
 COMMON = 8  # id exit gas steps committed c4 c5 stack
+STACK_ONLY = ("stack:", "error argument:")
 
 
 def read(path, fields):
@@ -72,13 +75,16 @@ def main():
     parser.add_argument("cpp")
     parser.add_argument("rust")
     parser.add_argument("--known", default="")
+    parser.add_argument("--known-stack", default="")
     parser.add_argument("--expected")
     args = parser.parse_args()
     cpp = read(args.cpp, COMMON)
     rust = read(args.rust, COMMON + 2)
     assert [r[0] for r in cpp] == [r[0] for r in rust], "scenario ids differ"
     known = {k for k in args.known.split(",") if k}
-    unknown = known - {r[0] for r in cpp}
+    known_stack = {k for k in args.known_stack.split(",") if k}
+    assert not known & known_stack, f"listed twice: {sorted(known & known_stack)}"
+    unknown = (known | known_stack) - {r[0] for r in cpp}
     assert not unknown, f"known differences not in the scenarios: {sorted(unknown)}"
     failed = False
     for cpp_row, rust_row in zip(cpp, rust):
@@ -89,6 +95,11 @@ def main():
                 print(f"{name}: listed as a known difference but now equal")
                 failed = True
             continue
+        if name in known_stack:
+            if not found:
+                print(f"{name}: listed as a known stack difference but now equal")
+                failed = True
+            found = [line for line in found if not line.startswith(STACK_ONLY)]
         for line in found:
             print(f"{name}: {line}")
         failed |= bool(found)
@@ -98,7 +109,10 @@ def main():
             failed = True
     if failed:
         sys.exit(1)
-    print(f"PASS: {len(cpp)} scenarios, {len(known)} known differences still present")
+    print(
+        f"PASS: {len(cpp)} scenarios, {len(known)} known differences and"
+        f" {len(known_stack)} known stack differences still present"
+    )
 
 
 if __name__ == "__main__":

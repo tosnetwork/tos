@@ -2,11 +2,11 @@
 Rust error argument) the C++ and Rust VMs must agree on; compared by vm_endstate_compare.py.
 
 Writes rows in the scenario format of suite_scenarios.py, always with a program and no operands.
-KNOWN lists the rows whose difference is still open; vm_endstate_compare.py requires each of them
-to differ, so a fix must remove its rows from the list.
+KNOWN and KNOWN_STACK list the rows whose difference is still open; vm_endstate_compare.py
+requires each of them to differ, so a fix must remove its rows from the lists.
 
-Usage: vm_endstate_scenarios.py <out.tsv> [--known]
---known prints KNOWN as one comma-separated line instead.
+Usage: vm_endstate_scenarios.py <out.tsv> | --known | --known-stack
+--known and --known-stack print that list as one comma-separated line instead.
 """
 
 import sys
@@ -25,6 +25,9 @@ PUSHNULL = op([0x6D])
 PUSHNAN = op([0x83, 0xFF])
 UNASSIGNED = op([0xF4, 0xFF])
 BOOLEVAL = op([0xED, 0xF9])
+SETCPX = op([0xFF, 0xF0])
+INC = op([0xA4])
+DEC = op([0xA5])
 AGAIN_FOREVER = (op([0x90]), op([0xEA]))  # PUSHCONT {} AGAIN
 
 
@@ -77,10 +80,26 @@ def scenarios():
     # BOOLEVAL returns through implicit PUSHINT continuations, which are not counted as steps.
     add("booleval-true", prog(op([0x91, 0x77]), BOOLEVAL))
     add("booleval-false", prog(op([0x92, 0xDB, 0x31]), BOOLEVAL))
+    # Only codepage 0 exists. Selecting any other is an invalid opcode; SETCPX takes a signed
+    # 16-bit codepage.
+    add("setcp-0", prog(pushint(7), op([0xFF, 0x00])))
+    add("setcp-1", prog(pushint(7), op([0xFF, 0x01])))
+    add("setcp-minus-1", prog(pushint(7), op([0xFF, 0xFF])))
+    add("setcpx-0", prog(pushint(7), pushint(0), SETCPX))
+    add("setcpx-1", prog(pushint(7), pushint(1), SETCPX))
+    add("setcpx-16384", prog(pushint(7), pushint(16384), SETCPX))
+    add("setcpx-32767", prog(pushint(7), pushint(32767), SETCPX))
+    add("setcpx-32768", prog(pushint(7), pushint(32767), INC, SETCPX))
+    add("setcpx-minus-32768", prog(pushint(7), pushint(-32768), SETCPX))
+    add("setcpx-minus-32769", prog(pushint(7), pushint(-32768), DEC, SETCPX))
+    add("setcpx-nan", prog(pushint(7), PUSHNAN, SETCPX))
+    add("setcpx-null", prog(pushint(7), PUSHNULL, SETCPX))
+    add("setcpx-empty", prog(SETCPX))
 
 
-KNOWN = [
-    # The Rust VM leaves the exit code on the stack and its error carries no argument.
+# Rows that differ only in the termination contract: the Rust VM leaves the exit code on the
+# stack and its error carries no argument. Exit code, gas, steps and committed state must be equal.
+KNOWN_STACK = [
     "end-throw-6",
     "end-throwarg-5-42",
     "end-unassigned-opcode",
@@ -92,6 +111,21 @@ KNOWN = [
     "excquit-not-an-integer",
     "excquit-out-of-range",
     "excquit-nan",
+    "setcp-1",
+    "setcp-minus-1",
+    "setcpx-1",
+    "setcpx-16384",
+    "setcpx-32767",
+    "setcpx-32768",
+    "setcpx-minus-32768",
+    "setcpx-minus-32769",
+    "setcpx-nan",
+    "setcpx-null",
+    "setcpx-empty",
+]
+
+# Rows that differ in more than that.
+KNOWN = [
     # The Rust VM removes c2 and runs the handler with two arguments despite its nargs.
     "handler-nargs-3-vm-error",
     "handler-nargs-3-throw-6",
@@ -100,8 +134,8 @@ KNOWN = [
 
 def main(args):
     scenarios()
-    if args == ["--known"]:
-        print(",".join(KNOWN))
+    if args in (["--known"], ["--known-stack"]):
+        print(",".join(KNOWN if args == ["--known"] else KNOWN_STACK))
         return
     (out,) = args
     rows = [row[:9] + [row[9].boc().hex()] for row in ROWS]

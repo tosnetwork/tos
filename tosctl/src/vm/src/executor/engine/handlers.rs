@@ -37,7 +37,7 @@ use crate::{
     },
     stack::integer::behavior::{Quiet, Signaling},
 };
-use chain_block::{Result, Status};
+use chain_block::{fail, ExceptionCode, Result, Status};
 use std::{fmt, ops::Range};
 
 // ( - )
@@ -50,14 +50,21 @@ fn execute_setcp(engine: &mut Engine) -> Status {
         Instruction::new("SETCP").set_opts(InstructionOptions::Integer(-15..240)),
     )?;
     let code_page = engine.cmd.integer();
-    *engine.code_page_mut() = code_page;
-    Ok(())
+    set_code_page(engine, code_page)
 }
 
 fn execute_setcpx(engine: &mut Engine) -> Status {
     engine.load_instruction(Instruction::new("SETCPX"))?;
     fetch_stack(engine, 1)?;
-    let code_page = engine.cmd.var(0).as_integer_value(-1 << 15..=1 << (15 - 1))?;
+    let code_page = engine.cmd.var(0).as_integer_value(i16::MIN as isize..=i16::MAX as isize)?;
+    set_code_page(engine, code_page)
+}
+
+// Codepage 0 is the only one; selecting any other is an invalid opcode.
+fn set_code_page(engine: &mut Engine, code_page: isize) -> Status {
+    if code_page != 0 {
+        fail!(ExceptionCode::InvalidOpcode, "unsupported codepage {}", code_page);
+    }
     *engine.code_page_mut() = code_page;
     Ok(())
 }
