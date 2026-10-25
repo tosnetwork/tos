@@ -94,7 +94,13 @@ void tos_slhdsa_sha256_force_portable(int on)
 }
 #endif
 
-/* === SHA-NI compression (FIPS 180-4 round function in hardware). */
+/* === SHA-NI compression (FIPS 180-4 round function in hardware).
+ *
+ * The instruction sequence is the one Intel published for its SHA extensions: the same ABEF/CDGH
+ * state shuffle, two sha256rnds2 per four rounds, and sha256msg1/sha256msg2 for the schedule.
+ * Only the surroundings differ: the imported state layout keeps the chaining value as big-endian
+ * bytes, so it is byte-swapped on load and store, and the 64 rounds are a loop the compiler
+ * unrolls. The backend test checks it against the imported portable function. */
 
 static const uint32_t sha_ni_k[64] = {
     0x428A2F98, 0x71374491, 0xB5C0FBCF, 0xE9B5DBA5, 0x3956C25B, 0x59F111F1,
