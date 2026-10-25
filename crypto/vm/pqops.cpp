@@ -164,6 +164,7 @@ int exec_pq_suite(VmState* st) {
       return 0;
     }
     case pq_suite_slhdsa128s: {
+      st->register_slh_attempt(pq_slhdsa128s_max_per_execution);
       st->consume_gas_chk(pq_slhdsa128s_base_gas);
       const auto key = read_pq_bytes(st, public_key_cell, tos::pq::slhdsa128s_public_key_bytes, pq_slhdsa128s_byte_gas);
       const auto signature =

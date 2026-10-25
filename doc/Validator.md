@@ -42,6 +42,7 @@ running unrelated workloads.
 | Resource | Testnet / development minimum | Recommended production configuration (aligned with mainnet-scale networks) |
 |----------|-----------------------|---------------------------------------|
 | CPU | 2 physical or virtual cores | 16 dedicated cores (32 threads preferred); 8 cores / 16 threads is the lower baseline of the reference implementation |
+| CPU instruction set | x86-64 with SHA (SHA-NI), SSSE3, SSE4.1 and SSE4.2 visible to the host or guest; see [CPU instruction set](#cpu-instruction-set) | Same as testnet; validators without SHA-NI are not allowed |
 | Memory | 4 GB RAM | 128 GB RAM |
 | Storage | 100 GB SSD | 2 × 1.92 TB enterprise NVMe SSD; target at least 250k read IOPS and 83k write IOPS per device |
 | Network | 10 Mbps symmetric bandwidth; a public IPv4 address is strongly preferred | 1 Gbps symmetric bandwidth with a fixed public IP |
@@ -57,6 +58,39 @@ loaded development network. It is not a capacity guarantee for a busy
 production network. Operators must leave free disk capacity for the RocksDB
 database, logs, snapshots, temporary synchronization data, and future chain
 growth; do not provision a disk that is already close to full.
+
+### CPU instruction set
+
+Every validator, on testnet and in production, must run on an x86-64 CPU that
+exposes SHA (SHA-NI), SSSE3, SSE4.1 and SSE4.2. Validators without SHA-NI are
+not allowed. The SLH-DSA rescue check (TVM `PQCHECKSIG_SUITE` suite 3) is priced
+for the SHA-NI SHA-256 backend: 4,500 gas plus its cell loads, against roughly
+210-360 µs for an adversarially chosen signature. The portable backend takes
+about three times as long. A validator using it would spend far more time on
+these checks than the gas they pay for, and could fall behind on blocks full of
+them.
+
+The backend is chosen at run time from CPUID (`crypto/pq/slhdsa-sha256.c`). Linux
+x86-64 builds with GCC or Clang include the SHA-NI backend by default
+(`TOS_SLHDSA_SHA_NI` in `crypto/pq/CMakeLists.txt`). A CPU that supports the
+instructions does not prove that the deployed binary uses them: a build with
+`TOS_SLHDSA_SHA_NI=OFF`, or a hypervisor that hides the flags from the guest,
+silently falls back to the portable backend. The node does not check this at
+startup. Each validator therefore keeps a deployment receipt with:
+
+1. The CPU flags the validator host sees:
+   `grep -o -w -E 'sha_ni|ssse3|sse4_1|sse4_2' /proc/cpuinfo | sort -u` must
+   print all four.
+2. The binary identity: the SHA-256 of the deployed `validator-engine`, the
+   source commit, and `TOS_SLHDSA_SHA_NI` from that build's `CMakeCache.txt`.
+3. The backend actually used: `TOS_REQUIRE_SHA_NI=1 test-pq-slhdsa-vectors
+   test/pq-slhdsa/slh-verify-vectors.txt`, run on the validator host, prints
+   `SLH-DSA SHA-256 backend: sha-ni` and fails if any other backend is
+   selected. Record how this test binary corresponds to the deployed one: the
+   same build directory, commit and configuration. A test program built
+   separately does not show which backend the deployed binary uses.
+
+Repeat the receipt after every hardware, hypervisor or binary change.
 
 ### Production operating profile
 

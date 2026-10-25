@@ -215,8 +215,12 @@ const SUITE_MLDSA44: i32 = 1;
 const SUITE_FALCON512: i32 = 2;
 const SUITE_SLHDSA128S: i32 = 3;
 const SUITE_LMS_FEE: i32 = 4;
-const SLH_BASE_GAS: i64 = 750_000;
-const SLH_BYTE_GAS: i64 = 1;
+// Flat charge; the bytes are paid by cell loads. Repeated verification of loaded cells would
+// cost only reload gas, so one top-level execution and all its child VMs share at most
+// SLH_MAX_PER_EXECUTION attempts, consumed before any SLH gas is charged.
+const SLH_BASE_GAS: i64 = 4_500;
+const SLH_BYTE_GAS: i64 = 0;
+const SLH_MAX_PER_EXECUTION: u32 = 1;
 const SLH_PUBLIC_KEY_BYTES: usize = 32;
 const SLH_SIGNATURE_BYTES: usize = 7856;
 const LMS_BASE_GAS: i64 = 500;
@@ -317,6 +321,13 @@ pub(super) fn execute_pq_suite(engine: &mut Engine) -> Status {
             }
         }
         SUITE_SLHDSA128S => {
+            if engine.slh_counter >= SLH_MAX_PER_EXECUTION {
+                fail!(
+                    ExceptionCode::RangeCheckError,
+                    "SLH-DSA verification limit of this execution reached"
+                );
+            }
+            engine.slh_counter = engine.slh_counter.saturating_add(1);
             engine.try_use_gas(SLH_BASE_GAS)?;
             let key = read_bytes_priced(engine, key, SLH_PUBLIC_KEY_BYTES, SLH_BYTE_GAS)?;
             let signature =

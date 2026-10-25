@@ -27,10 +27,16 @@ inline constexpr int pq_suite_mldsa44 = 1;
 inline constexpr int pq_suite_falcon512 = 2;
 inline constexpr int pq_suite_slhdsa128s = 3;
 inline constexpr int pq_suite_lms_fee = 4;
-// Rescue root, Pure SLH-DSA-SHA2-128s. The design's unapproved estimate, charged flat before
-// verification so that false and true results cost the same; the tariff is an R1 deliverable.
-inline constexpr long long pq_slhdsa128s_base_gas = 750000;
-inline constexpr long long pq_slhdsa128s_byte_gas = 1;
+// Rescue root, Pure SLH-DSA-SHA2-128s. Charged flat before verification so that false and true
+// results cost the same. One verification of an adversarially chosen signature takes about
+// 210-360 us with SHA-NI (required on validators); 4,500 plus the cold loads of the 65 operand
+// cells (about 6,500) prices it near the Ed25519 rate. The bytes are paid by those cell loads.
+// Repeated verification of already loaded cells would cost only reload gas, so a top-level
+// execution and all of its child VMs share at most pq_slhdsa128s_max_per_execution attempts
+// (VmState::register_slh_attempt).
+inline constexpr long long pq_slhdsa128s_base_gas = 4500;
+inline constexpr long long pq_slhdsa128s_byte_gas = 0;
+inline constexpr unsigned pq_slhdsa128s_max_per_execution = 1;
 // Interpreter-rate pricing: about 0.12-0.14 us per SHA-256 compression with SHA-NI, at about
 // 48 ns per gas for ordinary instructions on the measuring host, gives ~3 gas per compression.
 inline constexpr long long pq_lms_fee_base_gas = 500;

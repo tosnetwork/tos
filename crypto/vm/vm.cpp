@@ -751,6 +751,7 @@ void VmState::run_child_vm(VmState&& new_state, bool return_data, bool return_ac
     new_state.libraries = std::move(libraries);
   }
   new_state.chksgn_counter = chksgn_counter;
+  new_state.slh_counter = slh_counter;  // not reset by isolate_gas
   new_state.free_gas_consumed = free_gas_consumed;
   new_state.get_extra_balance_counter = get_extra_balance_counter;
   if (global_version >= 10) {
@@ -774,6 +775,8 @@ void VmState::restore_parent_vm(int res) {
   CHECK(parent);
   VmState child_state = std::move(*this);
   *this = std::move(parent->state);
+  // Before anything below can throw (the child gas charge may run out of gas).
+  slh_counter = child_state.slh_counter;
   log = std::move(child_state.log);
   libraries = std::move(child_state.libraries);
   loaded_libraries = std::move(child_state.loaded_libraries);
