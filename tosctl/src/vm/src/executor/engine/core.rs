@@ -300,6 +300,17 @@ impl Engine {
         self.gas.use_gas(gas)
     }
 
+    /// Charges gas as the C++ VM's consume_gas does: from version 4 running out stops at once,
+    /// before that it is only noticed later.
+    pub(in crate::executor) fn consume_gas(&mut self, gas: i64) -> Result<()> {
+        if self.block_version >= 4 {
+            self.try_use_gas(gas)
+        } else {
+            self.use_gas(gas);
+            Ok(())
+        }
+    }
+
     /// Counts one signature check and charges it: the first checks of a transaction are
     /// recorded as free gas, later ones are paid. Shared by every signature instruction
     /// priced like the Ed25519 check.
@@ -643,7 +654,7 @@ impl Engine {
                 Ok(width) => match HANDLERS_CP0.get_handler(self) {
                     // The prefix is complete, so the code ends inside the instruction's data:
                     // the C++ VM charges the prefix and the instruction finds its data short.
-                    Err(err) => match self.try_use_gas(Gas::basic_gas_price(width, 0)) {
+                    Err(err) => match self.consume_gas(Gas::basic_gas_price(width, 0)) {
                         Err(err) => Some(err),
                         Ok(_) => Some(err),
                     },
@@ -661,7 +672,7 @@ impl Engine {
                     Ok(None) => {
                         let code = self.last_cmd();
                         log::trace!(target: "tvm", "Invalid code: {} ({:#X})\n", code, code);
-                        if let Err(err) = self.try_use_gas(Gas::basic_gas_price(0, 0)) {
+                        if let Err(err) = self.consume_gas(Gas::basic_gas_price(0, 0)) {
                             Some(err)
                         } else {
                             Some(error!(ExceptionCode::InvalidOpcode))
@@ -707,11 +718,11 @@ impl Engine {
             fail!(ExceptionCode::FatalError, "opcode {:06x} is not in codepage 0", opcode)
         };
         if width == 0 || self.block_version < u32::from(version) {
-            self.try_use_gas(Gas::basic_gas_price(0, 0))?;
+            self.consume_gas(Gas::basic_gas_price(0, 0))?;
             fail!(ExceptionCode::InvalidOpcode, "invalid opcode {:06x}", opcode)
         }
         if bits < usize::from(width) {
-            self.try_use_gas(Gas::basic_gas_price(usize::from(width), 0))?;
+            self.consume_gas(Gas::basic_gas_price(usize::from(width), 0))?;
             fail!(ExceptionCode::InvalidOpcode, "too short opcode {:06x}", opcode)
         }
         Ok(usize::from(width))

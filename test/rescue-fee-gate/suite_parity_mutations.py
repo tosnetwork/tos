@@ -26,6 +26,7 @@ CARGO = ROOT / "tosctl/src"
 PQ = CARGO / "vm/src/executor/pq.rs"
 LMS = CARGO / "vm/src/executor/lms_fee.rs"
 CORE = CARGO / "vm/src/executor/engine/core.rs"
+TABLE = CARGO / "vm/src/executor/engine/cp0_prefixes.rs"
 ERROR = CARGO / "vm/src/error.rs"
 HANDLERS = CARGO / "vm/src/executor/engine/handlers.rs"
 GAS = CARGO / "vm/src/executor/gas/mod.rs"
@@ -64,14 +65,15 @@ MUTATIONS = {
         ],
         ("s2-nonempty-context",),
     ),
+    # The PQ instructions' version is their codepage 0 entry (F93100-F93103).
     "suite enabled before version 16": Mutation(
-        PQ,
-        [("const SUITE_MIN_VERSION: u32 = 16;", "const SUITE_MIN_VERSION: u32 = 15;")],
+        TABLE,
+        [("    (0xf93100, 24, 16),\n", "    (0xf93100, 24, 15),\n")],
         ("s2-refused-before-genesis", "version-15"),
     ),
     "suite enabled only from version 17": Mutation(
-        PQ,
-        [("const SUITE_MIN_VERSION: u32 = 16;", "const SUITE_MIN_VERSION: u32 = 17;")],
+        TABLE,
+        [("    (0xf93100, 24, 16),\n", "    (0xf93100, 24, 17),\n")],
         ("s1-valid", "s2-valid", "s3-valid", "s4-h20w4-valid"),
     ),
     "Falcon generic gate differs from the dedicated gate": Mutation(
@@ -482,7 +484,7 @@ MUTATIONS = {
         CORE,
         [
             (
-                "Err(err) => match self.try_use_gas(Gas::basic_gas_price(width, 0)) {",
+                "Err(err) => match self.consume_gas(Gas::basic_gas_price(width, 0)) {",
                 "Err(err) => match self.basic_use_gas(8) {",
             )
         ],

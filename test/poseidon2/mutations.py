@@ -27,6 +27,8 @@ CPP_HEADER = ROOT / "crypto/vm/poseidon2ops.h"
 RS_PARAMS = ROOT / "tosctl/src/block/src/poseidon2_params.rs"
 RS_PERM = ROOT / "tosctl/src/block/src/poseidon2.rs"
 RS_OPS = ROOT / "tosctl/src/vm/src/executor/poseidon2.rs"
+# Rust's opcode versions: the table generated from the C++ VM's codepage 0.
+RS_TABLE = ROOT / "tosctl/src/vm/src/executor/engine/cp0_prefixes.rs"
 CARGO_ROOT = ROOT / "tosctl/src"
 
 
@@ -271,11 +273,8 @@ CASES = [
         "the version gate removed, Rust",
         [
             (
-                RS_OPS,
-                replace(
-                    "pub(super) const MIN_VERSION: u32 = 16;",
-                    "pub(super) const MIN_VERSION: u32 = 0;",
-                ),
+                RS_TABLE,
+                replace("    (0xf93200, 24, 16),", "    (0xf93200, 24, 0),"),
             )
         ],
         expect_red={"vm": ["neither_instruction_exists_before_its_version"]},

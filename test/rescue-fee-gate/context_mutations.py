@@ -58,9 +58,10 @@ def main():
         ),
         (
             "rust_version",
-            "tosctl/src/vm/src/executor/pq.rs",
-            "const LMS_FEE_HASH_MIN_VERSION: u32 = 16;",
-            "const LMS_FEE_HASH_MIN_VERSION: u32 = 15;",
+            # The F931 opcodes' codepage 0 entry, which decides their version in Rust.
+            "tosctl/src/vm/src/executor/engine/cp0_prefixes.rs",
+            "    (0xf93100, 24, 16),",
+            "    (0xf93100, 24, 15),",
             "version_15",
         ),
         (
