@@ -17,22 +17,22 @@
       "sha256": "0a8dd10e6450a3e469e86572fc52b49bfc64e10fe2cd61071747f4ba4922e38e"
     },
     "wallet": {
-      "bytes": 3410,
-      "cells": 59,
-      "code_hash": "06203e98d4d8bf97b0cab37523ec435f5ab0e1d6d2c5253926eebf20ef1712f5",
+      "bytes": 3446,
+      "cells": 60,
+      "code_hash": "18252490f90f12149832b6067ca60f3f0216f23a97d71e7afcd8017eeb75e61f",
       "depth": 14,
       "external_libraries": 0,
-      "sha256": "96ba6f8b91ad961e9c2fd62be9fb6e662ebf77cc2cf72eb6c276f96e738ce4ec"
+      "sha256": "ca804d2c2162b79ec47691da2889e991b6001c90336226f37967a3aca6ca3089"
     }
   },
   "compiler_binaries": {
     "FIFT_PATH": {
-      "bytes": 7484008,
-      "sha256": "276b62834a8d8aee4ba8ab40601e7cc4ad6b3637d98b0cf30ff7f395291131a6"
+      "bytes": 10985728,
+      "sha256": "00a35d05c3595d97782145ad92a3a13489af6e3301c2ffee53fb2f426a4afb80"
     },
     "FUNC_PATH": {
-      "bytes": 1717352,
-      "sha256": "063e5c2fc8f576ff863bda7ebc69ac4cafa4833e9d283c59ecf34d2f77792997"
+      "bytes": 1094416,
+      "sha256": "1ba8e7f24fb7000f0908bd0bf11bf647e4251df119fc4011ace72308e849e8f1"
     }
   },
   "config": {
@@ -68,8 +68,8 @@
       "sha256": "0a8dd10e6450a3e469e86572fc52b49bfc64e10fe2cd61071747f4ba4922e38e"
     },
     "code/wallet.boc": {
-      "bytes": 3410,
-      "sha256": "96ba6f8b91ad961e9c2fd62be9fb6e662ebf77cc2cf72eb6c276f96e738ce4ec"
+      "bytes": 3446,
+      "sha256": "ca804d2c2162b79ec47691da2889e991b6001c90336226f37967a3aca6ca3089"
     },
     "config.boc": {
       "bytes": 7425,
@@ -164,8 +164,8 @@
       "sha256": "df5687bdd2b45f3f739b1c788788765a2bf05c8f43371dff0e57bf278cd66a67"
     },
     "repository/crypto/smartcont/wallet-v5-action-list.fc": {
-      "bytes": 2230,
-      "sha256": "9d5dd51a9c37ffeedf4482b229af84cf9303532bf80fe2bfb3b740a704338cbb"
+      "bytes": 3303,
+      "sha256": "8f8a60733c2233cad1b3e3c2364f652aaabc99debb02c1ef40a612618e92ddba"
     },
     "repository/crypto/vm/excno.hpp": {
       "bytes": 4609,
@@ -365,7 +365,7 @@
     "final-head CI and activation approval"
   ],
   "scope": "Build or reproduce a reviewable Quantum candidate from an explicit chain config.\n\nThe bundle contains ordinary, self-contained code, its exact source and public\nwire/crypto/KDF vectors. It is not a reviewed release, a wallet enrollment, a\ncustody backup, or authorization to activate the candidate configuration.\n",
-  "source_revision": "e952feb325a969ebd2c2d000c9627e60b6a369b7",
+  "source_revision": "6ad4680b644d6afb96074df2cf8db334640f7de6",
   "status": "unapproved-review-candidate",
   "tracked_working_tree_changes": false
 }

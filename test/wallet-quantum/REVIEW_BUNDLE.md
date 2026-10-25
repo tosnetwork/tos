@@ -18,7 +18,7 @@ needs its own reviewed code/configuration identities.
 | --- | --- | --- |
 | Fee vault | 690 | `9fa07637d49c4176766847251cfd820d5a11ade70fe92a45e11e419dba0452a0` |
 | Module | 3,055 | `f818dd311152d6ea13ef7f38002eb6f7390fac06bbe5df71bb8a2dd0c09c5b6d` |
-| Wallet | 3,410 | `06203e98d4d8bf97b0cab37523ec435f5ab0e1d6d2c5253926eebf20ef1712f5` |
+| Wallet | 3,446 | `18252490f90f12149832b6067ca60f3f0216f23a97d71e7afcd8017eeb75e61f` |
 
 These match the code exercised by the selected generated-config fee and PRIMARY
 transaction corpora. The decoder rejects exotic/library cells at every depth;
