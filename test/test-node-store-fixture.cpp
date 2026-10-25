@@ -32,8 +32,9 @@ const tos::BlockIdExt block{tos::masterchainId, static_cast<tos::ShardId>(0x8000
 class Fixture {
  public:
   explicit Fixture(const std::string& path) : scheduler_({1}) {
-    scheduler_.run_in_context(
-        [&] { db_ = td::actor::create_actor<StateDb>("state", td::actor::ActorId<RootDb>{}, path); });
+    scheduler_.run_in_context([&] {
+      db_ = td::actor::create_actor<StateDb>("state", td::actor::ActorId<RootDb>{}, path, td::DbOpenMode::db_primary);
+    });
   }
   template <class T, class Send>
   T ask(Send send) {

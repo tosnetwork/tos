@@ -60,13 +60,13 @@ test $? -eq 0 || { echo "Can't configure tos"; exit 1; }
 
 if [ "$with_tests" = true ]; then
 ninja storage-daemon storage-daemon-cli fift func tol toslib toslibjson toslib-cli \
-      validator-engine lite-client validator-engine-console blockchain-explorer \
+      validator-engine tos-rpc tos-wallet-index lite-client validator-engine-console blockchain-explorer \
       generate-random-id json2tlo dht-server http-proxy rldp-http-proxy dht-ping-servers dht-resolve \
  create-state emulator proxy-liteserver tos-pq-consensus-key tos-pq-vote all-tests
       test $? -eq 0 || { echo "Can't compile tos"; exit 1; }
 else
 ninja storage-daemon storage-daemon-cli fift func tol toslib toslibjson toslib-cli \
-      validator-engine lite-client validator-engine-console blockchain-explorer \
+      validator-engine tos-rpc tos-wallet-index lite-client validator-engine-console blockchain-explorer \
       generate-random-id json2tlo dht-server http-proxy rldp-http-proxy \
  create-state emulator proxy-liteserver tos-pq-consensus-key tos-pq-vote dht-ping-servers dht-resolve
       test $? -eq 0 || { echo "Can't compile tos"; exit 1; }
@@ -100,6 +100,7 @@ if [ "$with_artifacts" = true ]; then
      build/validator-engine-console/validator-engine-console build/toslib/toslib-cli build/utils/proxy-liteserver \
      build/toslib/libtoslibjson.so build/http/http-proxy build/rldp-http-proxy/rldp-http-proxy \
      build/dht-server/dht-server build/lite-client/lite-client build/validator-engine/validator-engine \
+     build/services/tos-rpc build/services/tos-wallet-index \
      build/utils/generate-random-id build/utils/json2tlo build/emulator/libemulator.so \
      build/dht/dht-ping-servers build/dht/dht-resolve \
      build/crypto/pq/tos-pq-consensus-key build/crypto/tos-pq-vote \

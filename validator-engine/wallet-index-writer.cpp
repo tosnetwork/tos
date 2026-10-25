@@ -29,6 +29,7 @@
 #include "block/block-parse.h"
 #include "block/block.h"
 #include "smc-envelope/SmartContract.h"
+#include "td/utils/ScopeGuard.h"
 #include "td/utils/logging.h"
 #include "vm/cells.h"
 #include "vm/dict.h"
@@ -40,6 +41,12 @@
 namespace tos_wallet_index {
 
 namespace {
+
+// Scoped to a synchronous standalone drain; never retained beyond that call.
+thread_local const std::atomic<bool>* drain_cancelled = nullptr;
+bool drain_is_cancelled() {
+  return drain_cancelled && drain_cancelled->load();
+}
 
 // TOS Token V1 token ops handled by the token-wallet contract itself.
 constexpr unsigned long long kTokenTransfer = 0x0f8a7ea5ULL;
@@ -755,6 +762,8 @@ void abort_block_fetch() {
 // one is at hand, so a verification that failed against an older state can
 // meet a newer one.
 td::optional<IndexContext> context_for(const td::Bits256& address, uint64_t min_lt, bool refresh) {
+  if (drain_is_cancelled())
+    return {};
   auto context = current_context();
   bool usable =
       context && context.value().end_lt >= min_lt &&
@@ -966,6 +975,8 @@ td::Status verify_scheduled(WalletIndexDb* db, StateAccounts& state,
   // be able to abort the rest of the block's token indexing.
   return db->process_token_candidates(
       scheduled, [&](const ScheduledTokenCandidate& scheduled_candidate, size_t remaining) {
+        if (drain_is_cancelled())
+          return TokenVerifyOutcome::Retry;
         verification_budget.begin_candidate(remaining);
         const auto& candidate = scheduled_candidate.candidate;
         if (candidate.kind == TokenKind::Fungible) {
@@ -1017,6 +1028,8 @@ bool resume_pending_block_locked(WalletIndexDb* db, const tos::BlockIdExt& block
       rest.remaining.push_back(pending.remaining[i]);
     }
     for (size_t i = 0; i < take; ++i) {
+      if (drain_is_cancelled())
+        return td::Status::Error("candidate drain cancelled");
       const auto& entry = pending.remaining[i];
       uint64_t end_lt = 0;
       StateAccounts* state = states.state_for(entry.candidate.address, end_lt);
@@ -1106,6 +1119,8 @@ bool retry_parked_locked(WalletIndexDb* db) {
     size_t remaining = parked.size();
     PassStates states(0, true);
     for (const auto& entry : parked) {
+      if (drain_is_cancelled())
+        return td::Status::Error("candidate drain cancelled");
       budget.begin_candidate(remaining--);
       uint64_t end_lt = 0;
       auto* state = states.state_for(entry.candidate.address, end_lt);
@@ -1145,7 +1160,8 @@ bool retry_parked_locked(WalletIndexDb* db) {
 
 }  // namespace
 
-Wc0IndexResult wc0_index_block(td::Ref<vm::Cell> block_root, td::Ref<vm::Cell> state_root, tos::BlockIdExt block_id) {
+Wc0IndexResult wc0_index_block(td::Ref<vm::Cell> block_root, td::Ref<vm::Cell> state_root, tos::BlockIdExt block_id,
+                               bool replay) {
   auto* db = wallet_index_db();
   // A block whose data could not be obtained keeps the recovery mark the
   // queue gave it, so startup recovery retries it.
@@ -1161,6 +1177,13 @@ Wc0IndexResult wc0_index_block(td::Ref<vm::Cell> block_root, td::Ref<vm::Cell> s
   // the write batch below is a single unsynchronized object: serialize
   // whole-block passes.
   std::lock_guard<std::mutex> guard(db->write_mutex());
+  if (replay) {
+    auto recorded = db->replay_block_committed(block_id);
+    if (recorded.is_error())
+      return Wc0IndexResult::NotDone;
+    if (recorded.ok())
+      return Wc0IndexResult::Done;
+  }
   // A block indexed before whose remaining candidates are persisted with it:
   // nothing of the block itself is needed again. Its state, being at hand,
   // verifies them now.
@@ -1349,6 +1372,13 @@ Wc0IndexResult wc0_index_block(td::Ref<vm::Cell> block_root, td::Ref<vm::Cell> s
     db->abort_batch();
     return Wc0IndexResult::NotDone;
   }
+  if (replay) {
+    auto recorded = db->record_replay_block(block_id);
+    if (recorded.is_error()) {
+      db->abort_batch();
+      return Wc0IndexResult::NotDone;
+    }
+  }
   auto s = db->commit_batch();
   if (s.is_error()) {
     LOG(WARNING) << "wc0-index: commit failed for block seqno=" << seqno << ": " << s.message();
@@ -1371,7 +1401,7 @@ namespace {
 // candidate was taken.
 bool drain_backlog_for(WalletIndexDb* db, const td::Bits256& address) {
   std::lock_guard<std::mutex> guard(db->write_mutex());
-  PassStates states(0, false);
+  PassStates states(0, true);
   uint64_t end_lt = 0;
   tos::ShardIdFull shard{0, tos::shardIdAll};
   auto* state = states.state_for(address, end_lt, &shard);
@@ -1634,6 +1664,8 @@ bool recover_one_marked_block(bool& at_cap) {
 // one unfinished block in turn, and retry parked candidates. Returns whether
 // anything moved.
 bool index_idle_step() {
+  if (drain_is_cancelled())
+    return false;
   auto* db = wallet_index_db();
   if (db == nullptr) {
     return false;
@@ -2011,6 +2043,19 @@ uint64_t take_wc0_index_drop_report(uint64_t dropped_total, uint64_t& reported,
 
 void set_wc0_index_marking_fault_for_testing(bool fail) {
   g_marking_fault.store(fail);
+}
+
+void release_wc0_index_state() {
+  forget_context();
+}
+
+bool drain_wc0_index(const std::atomic<bool>* cancelled) {
+  auto previous = drain_cancelled;
+  drain_cancelled = cancelled;
+  SCOPE_EXIT {
+    drain_cancelled = previous;
+  };
+  return index_idle_step();
 }
 
 }  // namespace tos_wallet_index

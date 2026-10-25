@@ -2036,6 +2036,7 @@ void reset_index_singletons() {
   tos_wallet_index::set_wc0_index_marking_stall_for_testing(false);
   tos_wallet_index::stop_wc0_index_worker();
   tos_wallet_index::set_wc0_index_block_fetcher(nullptr);
+  tos_wallet_index::set_wc0_index_state_fetcher(nullptr);
   tos_wallet_index::set_wc0_index_fetch_timeout_for_testing(std::chrono::seconds(60));
   tos_wallet_index::set_wallet_index_db(nullptr);
   tos_wallet_index::set_wallet_index_unavailable("");
@@ -3997,6 +3998,149 @@ TEST(WalletIndexWorker, HandOversBeyondTheRecorderStayBoundedAndAreReported) {
     ASSERT_TRUE(eventually([&] { return backlog_stats(db).needs_rebuild; }));
   }
   tos_wallet_index::set_wc0_index_tracking_capacity_for_testing(4096);
+  reset_index_singletons();
+  td::rmrf(path).ignore();
+}
+
+TEST(WalletIndex, ReplayCheckpointAndReceiptsSurviveRestartAtomically) {
+  const std::string path = "test-wallet-index-replay";
+  auto db = open_fresh_db(path);
+  auto anchor = make_test_block_id(-1, tos::shardIdAll, 1, 1, 2);
+  auto shard = make_test_block_id(0, tos::shardIdAll, 1, 3, 4);
+  db->initialize_replay(anchor).ensure();
+  auto checkpoint = db->replay_checkpoint().move_as_ok().value();
+  ASSERT_EQ(checkpoint.committed.seqno(), 0u);
+  // An interrupted write must not leave a receipt claiming its block exists.
+  db->begin_batch().ensure();
+  db->record_replay_block(shard).ensure();
+  db->abort_batch();
+  ASSERT_TRUE(!db->replay_block_committed(shard).move_as_ok());
+  db->begin_batch().ensure();
+  db->record_replay_block(shard).ensure();
+  db->commit_batch().ensure();
+  db.reset();
+  db = tos_wallet_index::WalletIndexDb::open(path).move_as_ok();
+  ASSERT_TRUE(db->replay_block_committed(shard).move_as_ok());
+  ASSERT_EQ(db->replay_checkpoint().move_as_ok().value().committed.seqno(), 0u);
+  checkpoint.committed = anchor;
+  db->commit_replay_checkpoint(checkpoint).ensure();
+  db.reset();
+  db = tos_wallet_index::WalletIndexDb::open(path).move_as_ok();
+  ASSERT_TRUE(!db->replay_block_committed(shard).move_as_ok());
+  ASSERT_TRUE(db->replay_checkpoint().move_as_ok().value().committed == anchor);
+  auto foreign = anchor;
+  foreign.root_hash.as_slice()[0] ^= 1;
+  ASSERT_TRUE(db->initialize_replay(foreign).is_error());
+  db.reset();
+  td::rmrf(path).ensure();
+}
+
+TEST(WalletIndex, ReplayRejectsEmbeddedDatabaseWithoutCursor) {
+  const std::string path = "test-wallet-index-legacy-replay";
+  auto db = open_fresh_db(path);
+  auto shard = make_test_block_id(0, tos::shardIdAll, 1, 3, 4);
+  db->put_incomplete_block(shard).ensure();
+  auto anchor = make_test_block_id(-1, tos::shardIdAll, 1, 1, 2);
+  ASSERT_TRUE(db->initialize_replay(anchor).is_error());
+  ASSERT_TRUE(!db->replay_checkpoint().move_as_ok());
+  db.reset();
+  td::rmrf(path).ensure();
+}
+
+TEST(WalletIndex, ReplayReceiptCommitsWithBlockAndSkipsAnAlreadyCommittedBlock) {
+  reset_index_singletons();
+  const std::string path = "test-wallet-index-replay-block";
+  td::rmrf(path).ignore();
+  auto &db = install_db(path);
+  auto anchor = make_test_block_id(-1, tos::shardIdAll, 1, 1, 2);
+  db.initialize_replay(anchor).ensure();
+  auto id = worker_block_id(1);
+  auto root = wallet_index_fixture::block(1, 100, 1000, {});
+  tos_wallet_index::set_wc0_index_commit_faults_for_testing(1);
+  ASSERT_TRUE(tos_wallet_index::wc0_index_block(root, {}, id, true) == tos_wallet_index::Wc0IndexResult::NotDone);
+  ASSERT_TRUE(!db.replay_block_committed(id).move_as_ok());
+  ASSERT_TRUE(tos_wallet_index::wc0_index_block(root, {}, id, true) == tos_wallet_index::Wc0IndexResult::Done);
+  ASSERT_TRUE(db.replay_block_committed(id).move_as_ok());
+  tos_wallet_index::set_wallet_index_db(nullptr);
+  auto &reopened = install_db(path);
+  tos_wallet_index::set_wc0_index_commit_faults_for_testing(1);
+  ASSERT_TRUE(tos_wallet_index::wc0_index_block(root, {}, id, true) == tos_wallet_index::Wc0IndexResult::Done);
+  ASSERT_TRUE(reopened.replay_block_committed(id).move_as_ok());
+  // The fault remains armed: the receipt skipped the entire write, not merely
+  // its result. A different block still encounters the injected disk error.
+  auto next = wallet_index_fixture::block(2, 200, 1001, {});
+  ASSERT_TRUE(tos_wallet_index::wc0_index_block(next, {}, worker_block_id(2), true) ==
+              tos_wallet_index::Wc0IndexResult::NotDone);
+  reset_index_singletons();
+  td::rmrf(path).ensure();
+}
+
+TEST(WalletIndexWorker, StandaloneReplayRefreshesSuccessiveCandidateBlocksWithoutRestart) {
+  reset_index_singletons();
+  auto path = std::string("test-wallet-index-db-standalone-refresh");
+  td::rmrf(path).ignore();
+  auto &db = install_db(path);
+  NewestState newest;
+  tos_wallet_index::set_wc0_index_state_fetcher(newest.fetcher());
+  for (unsigned round = 1; round <= 2; ++round) {
+    auto wallet = token_address(100 + round, 0x11);
+    auto owner = token_address(200 + round, 0x12);
+    auto master = token_address(300 + round, 0x13);
+    auto item = token_address(400, 0x14);
+    auto collection = token_address(500, 0x15);
+    auto lt = static_cast<uint64_t>(round) * 1000;
+    newest.set(round, lt + 100,
+               wallet_index_fixture::shard_state({wallet_index_fixture::token_wallet(wallet, owner, master),
+                                                  wallet_index_fixture::token_master(master, wallet),
+                                                  wallet_index_fixture::nft_item(item, collection, owner),
+                                                  wallet_index_fixture::nft_collection(collection, item)}));
+    auto root = wallet_index_fixture::block(round, lt, 1000,
+                                            {{wallet, lt - 1, kTokenTransferOp}, {item, lt - 2, kNftTransferOp}});
+    ASSERT_TRUE(tos_wallet_index::wc0_index_block(root, {}, worker_block_id(round), true) ==
+                tos_wallet_index::Wc0IndexResult::Done);
+    for (int attempt = 0; attempt < 10 && !is_complete(db); ++attempt)
+      tos_wallet_index::drain_wc0_index();
+    ASSERT_TRUE(is_complete(db));
+    td::Bits256 found_owner, found_master;
+    ASSERT_TRUE(db.get_token_wallet(wallet, found_owner, found_master).move_as_ok());
+    ASSERT_EQ(found_owner, owner);
+    ASSERT_EQ(found_master, master);
+    ASSERT_TRUE(db.get_nft_owner(item, found_owner).move_as_ok());
+    ASSERT_EQ(found_owner, owner);
+  }
+  ASSERT_TRUE(newest.calls.load() >= 2);
+  tos_wallet_index::set_wc0_index_state_fetcher(nullptr);
+  tos_wallet_index::release_wc0_index_state();
+  reset_index_singletons();
+  td::rmrf(path).ignore();
+}
+
+TEST(WalletIndexWorker, StandaloneCancellationPreservesPendingCandidates) {
+  reset_index_singletons();
+  auto path = std::string("test-wallet-index-db-standalone-cancel");
+  td::rmrf(path).ignore();
+  auto &db = install_db(path);
+  auto id = worker_block_id(70);
+  tos_wallet_index::WalletIndexDb::PendingBlock pending;
+  pending.end_lt = 5000;
+  for (unsigned i = 0; i < 8; ++i)
+    pending.remaining.push_back({{TokenKind::Fungible, token_address(600 + i, 0x11)}, 0, 5000});
+  db.begin_batch().ensure();
+  db.put_pending_block(id, pending).ensure();
+  db.commit_batch().ensure();
+  std::atomic<bool> cancelled{false};
+  int calls = 0;
+  tos_wallet_index::set_wc0_index_state_fetcher([&](const td::Bits256 &, auto done) {
+    ++calls;
+    cancelled = true;
+    done(td::Status::Error("source cancelled"));
+  });
+  ASSERT_TRUE(!tos_wallet_index::drain_wc0_index(&cancelled));
+  ASSERT_EQ(calls, 1);
+  ASSERT_EQ(db.get_pending_block(id).move_as_ok().value().remaining.size(), pending.remaining.size());
+  ASSERT_TRUE(!tos_wallet_index::drain_wc0_index(&cancelled));
+  ASSERT_EQ(calls, 1);
+  tos_wallet_index::set_wc0_index_state_fetcher(nullptr);
   reset_index_singletons();
   td::rmrf(path).ignore();
 }

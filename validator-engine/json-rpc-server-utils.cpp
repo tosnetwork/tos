@@ -210,6 +210,13 @@ void JsonRpcServer::cache_readyz_answer(int status_code, std::string status_text
 }
 
 void JsonRpcServer::handle_readyz(td::Promise<HttpReturn> promise) {
+  if (opts_.index_only) {
+    bool ready = opts_.index_ready && opts_.index_ready();
+    auto body = opts_.index_progress ? opts_.index_progress() : "{}";
+    promise.set_value(build_readyz_response(ready ? 200 : 503, ready ? "OK" : "Service Unavailable", std::move(body),
+                                            opts_.cors_origin));
+    return;
+  }
   if (readyz_cached_status_ != 0 && !readyz_cached_until_.is_in_past()) {
     promise.set_value(build_readyz_response(readyz_cached_status_, readyz_cached_status_text_,
                                             readyz_cached_body_, opts_.cors_origin));

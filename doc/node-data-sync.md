@@ -1,5 +1,10 @@
 # Trusted node-data recovery
 
+> The standalone-services release never creates an embedded index, even with
+> operator JSON-RPC enabled. The restore tooling below retains its conservative
+> compatibility checks for older node binaries; keep the accepted no-op
+> `--json-rpc-without-wallet-index` flag when using that tooling.
+
 This is an administrative recovery lane for an **existing** node. It trusts an
 independently pinned publisher key and the publisher's chain database. Hashes,
 native reopen checks and reference equality do not make a database dump trustless.

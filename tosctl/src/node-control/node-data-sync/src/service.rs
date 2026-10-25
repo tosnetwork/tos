@@ -610,10 +610,14 @@ mod tests {
             let needle = format!("\"{long}\"");
             let registration =
                 source.split("p.add_").find(|part| part.contains(&needle)).expect(long);
-            let callback = registration.find("[&]").expect("native callback");
+            let callback = registration
+                .find("[&]")
+                .or_else(|| registration.find("[]"))
+                .expect("native callback");
             let tail = &registration[callback..];
+            let parameters = tail.split_once(']').expect("lambda capture end").1;
             assert_eq!(
-                tail.starts_with("[&](td::Slice"),
+                parameters.starts_with("(td::Slice"),
                 takes_value,
                 "native arity changed: {long}"
             );

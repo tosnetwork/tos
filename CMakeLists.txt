@@ -584,6 +584,7 @@ if (NOT USE_EMSCRIPTEN AND NOT EMSCRIPTEN)
 endif()
 add_subdirectory(storage)
 add_subdirectory(validator-engine)
+add_subdirectory(services)
 add_subdirectory(validator-engine-console)
 add_subdirectory(create-hardfork)
 add_subdirectory(dht-server)
@@ -1007,10 +1008,9 @@ target_include_directories(test-adnl-ext-input-budget PRIVATE ${CMAKE_CURRENT_SO
                            ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
 target_link_libraries(test-adnl-ext-input-budget PRIVATE adnl dht keyring keys tl_api tdutils tdactor)
 
-# Block application never waits for the wallet index: real ApplyBlock with the
-# index's read, WAL sync or queue blocked.
+# Production block application never calls the retired index embedding seam.
 add_executable(test-wallet-index-apply test/test-td-main.cpp test/validator/wallet-index-apply-test.cpp
-  validator-engine/wallet-index.cpp validator-engine/wallet-index-writer.cpp)
+  validator/wc0-block-hook.cpp)
 target_include_directories(test-wallet-index-apply PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
                            ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
 target_link_libraries(test-wallet-index-apply PRIVATE validator-disk validator-common validator-db
@@ -1062,10 +1062,9 @@ add_dependencies(all-tests test-lite-proof-content)
 add_test(NAME lite-proof-content
   COMMAND test-lite-proof-content ${CMAKE_CURRENT_SOURCE_DIR}/test/rel02/corpus/blocks)
 
-# Measurement tool, not a gate: apply completion when the wallet index must
-# read a block's data itself, against the same apply with no index.
+# Measurement tool: legacy hook settings must have no effect on apply latency.
 add_executable(test-apply-block-readback-latency test/validator/apply-block-readback-latency.cpp
-  validator-engine/wallet-index.cpp validator-engine/wallet-index-writer.cpp)
+  validator/wc0-block-hook.cpp validator-engine/wallet-index.cpp validator-engine/wallet-index-writer.cpp)
 target_include_directories(test-apply-block-readback-latency PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
                            ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
 target_link_libraries(test-apply-block-readback-latency PRIVATE validator-disk validator-common validator-db
@@ -1144,7 +1143,7 @@ target_link_libraries(test-http-server-limits PRIVATE toshttp tdactor tdutils)
 
 # The real JSON-RPC server and listener, driven over loopback TCP.
 add_executable(test-json-rpc-transport test/test-td-main.cpp test/test-json-rpc-transport.cpp)
-target_link_libraries(test-json-rpc-transport PRIVATE validator-engine-json-rpc)
+target_link_libraries(test-json-rpc-transport PRIVATE validator-engine-json-rpc tos-service-common)
 # The restricted-wallet delegation views the account-capability handlers call,
 # against a fake liteserver.
 add_executable(test-json-rpc-account-capability test/test-td-main.cpp test/test-json-rpc-account-capability.cpp)

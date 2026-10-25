@@ -814,12 +814,11 @@ td::Status WalletIndexDb::migrate_schema() {
                                        << "; refusing to open");
   }
   // Any other version, or none, is reset: the index is dropped whole and
-  // starts again, fresh and forward-only, from the blocks applied from now
-  // on. Nothing written under another layout is imported or served; the
-  // index is derived data outside consensus, and keeps no history it did not
-  // index itself. Atomic and WAL-synced, before the index is used.
+  // starts again empty. No records from another layout are served. The
+  // standalone service detects the missing replay checkpoint and replays
+  // history before reporting catch-up. Atomic and WAL-synced before use.
   LOG(WARNING) << "wc0-index: on-disk schema version " << version << " is not " << kWalletIndexSchemaVersion
-               << "; resetting the index (it restarts empty and forward-only from new blocks)";
+               << "; resetting the index (standalone replay restarts from its anchor)";
   TRY_STATUS(db_->begin_write_batch());
   auto migrate = [&]() -> td::Status {
     const char begin[1] = {static_cast<char>(0x00)};
@@ -2144,6 +2143,84 @@ td::Status WalletIndexDb::for_each_deferred_token_candidate(size_t limit,
         return cb(scheduled.candidate);
       });
   return limit_reached ? td::Status::OK() : std::move(status);
+}
+
+// Standalone service metadata is separate from the embedded index's run marker.
+// Values have a fixed size and are checked before decoding.
+namespace {
+constexpr char kReplayCheckpointKey[] = {0, 0x20};
+constexpr uint8_t kReplayReceiptTag = 0x30;
+}  // namespace
+
+td::Result<td::optional<WalletIndexDb::ReplayCheckpoint>> WalletIndexDb::replay_checkpoint() {
+  std::string value;
+  TRY_RESULT(status, db_->get(td::Slice(kReplayCheckpointKey, 2), value));
+  if (status == td::KeyValue::GetStatus::NotFound)
+    return td::optional<ReplayCheckpoint>{};
+  if (value.size() != 2 * kIncompleteBlockKeyLen)
+    return td::Status::Error("invalid replay checkpoint");
+  ReplayCheckpoint result{parse_block_key(td::Slice(value).substr(0, kIncompleteBlockKeyLen)),
+                          parse_block_key(td::Slice(value).substr(kIncompleteBlockKeyLen))};
+  if (!result.anchor.is_masterchain() || result.anchor.seqno() == 0 || !result.committed.is_masterchain() ||
+      result.committed.seqno() < result.anchor.seqno() - 1) {
+    return td::Status::Error("invalid replay checkpoint identity");
+  }
+  return td::optional<ReplayCheckpoint>(result);
+}
+
+td::Status WalletIndexDb::initialize_replay(const tos::BlockIdExt& anchor) {
+  if (!anchor.is_masterchain() || anchor.seqno() != 1) {
+    return td::Status::Error("replay must start at masterchain block 1");
+  }
+  std::lock_guard<std::mutex> guard(write_mutex());
+  TRY_RESULT(existing, replay_checkpoint());
+  if (existing) {
+    return existing.value().anchor == anchor ? td::Status::OK() : td::Status::Error("replay source identity changed");
+  }
+  TRY_STATUS(db_->for_each([&](td::Slice key, td::Slice) {
+    if (key != td::Slice("\0\1", 2)) {
+      return td::Status::Error("use a fresh index directory; an embedded index has no replay checkpoint");
+    }
+    return td::Status::OK();
+  }));
+  auto committed = anchor;
+  committed.id.seqno = anchor.seqno() - 1;
+  committed.root_hash.set_zero();
+  committed.file_hash.set_zero();
+  return commit_replay_checkpoint({anchor, committed});
+}
+
+td::Status WalletIndexDb::commit_replay_checkpoint(const ReplayCheckpoint& checkpoint) {
+  // Caller holds write_mutex. Every interval's receipt is in the same DB as
+  // its indexed records; advancing the cursor and clearing receipts is atomic.
+  TRY_STATUS(begin_batch());
+  char value[2 * kIncompleteBlockKeyLen];
+  make_block_key(0, checkpoint.anchor, value);
+  make_block_key(0, checkpoint.committed, value + kIncompleteBlockKeyLen);
+  auto status = db_->set(td::Slice(kReplayCheckpointKey, 2), td::Slice(value, sizeof(value)));
+  if (status.is_ok())
+    status = db_->erase_range(td::Slice("\x30", 1), td::Slice("\x31", 1));
+  if (status.is_error()) {
+    abort_batch();
+    return status;
+  }
+  return commit_batch();
+}
+
+td::Result<bool> WalletIndexDb::replay_block_committed(const tos::BlockIdExt& id) {
+  char key[kIncompleteBlockKeyLen];
+  make_block_key(kReplayReceiptTag, id, key);
+  std::string value;
+  TRY_RESULT(status, db_->get(td::Slice(key, sizeof(key)), value));
+  return status == td::KeyValue::GetStatus::Ok;
+}
+
+td::Status WalletIndexDb::record_replay_block(const tos::BlockIdExt& id) {
+  if (!batch_open_)
+    return td::Status::Error("replay receipt requires an index write batch");
+  char key[kIncompleteBlockKeyLen];
+  make_block_key(kReplayReceiptTag, id, key);
+  return db_->set(td::Slice(key, sizeof(key)), td::Slice("1"));
 }
 
 // --- per-block batched writes ---

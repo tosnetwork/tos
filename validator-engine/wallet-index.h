@@ -201,6 +201,18 @@ class WalletIndexSnapshot;
 
 class WalletIndexDb {
  public:
+  // Standalone replay owns its progress. Receipts for the current masterchain
+  // interval commit with the block's index writes and are removed with the
+  // next checkpoint, so neither crashes nor chain age grow this journal.
+  struct ReplayCheckpoint {
+    tos::BlockIdExt anchor;
+    tos::BlockIdExt committed;
+  };
+  td::Result<td::optional<ReplayCheckpoint>> replay_checkpoint();
+  td::Status initialize_replay(const tos::BlockIdExt& anchor);
+  td::Status commit_replay_checkpoint(const ReplayCheckpoint& checkpoint);
+  td::Result<bool> replay_block_committed(const tos::BlockIdExt& id);
+  td::Status record_replay_block(const tos::BlockIdExt& id);
   // Open (or create) the index DB at `path`. The directory is created if needed.
   static td::Result<std::unique_ptr<WalletIndexDb>> open(std::string path);
 

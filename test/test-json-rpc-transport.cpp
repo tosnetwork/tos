@@ -36,6 +36,8 @@
 
 #include "auto/tl/lite_api.hpp"
 #include "http/http-inbound-connection.h"
+#include "services/index-reader.h"
+#include "services/service-common.h"
 #include "td/actor/actor.h"
 #include "td/utils/base64.h"
 #include "td/utils/buffer.h"
@@ -1347,4 +1349,252 @@ TEST(JsonRpcTransport, api_info_and_early_refusals_follow_the_contract) {
   auto limited_body = drain(limited);
   ASSERT_EQ(limited_body,
             tos::json_rpc::error_body("null", tos::json_rpc::kRateLimited, "Rate limit exceeded (per-IP)"));
+}
+
+TEST(JsonRpcTransport, standalone_index_route_preserves_envelope_and_backend_failure) {
+  auto options = options_for(false);
+  std::atomic<int> calls{0};
+  options.index_query_sender = [&](std::string request, std::string source, td::Promise<std::string> promise) {
+    auto document = td::json_decode(td::MutableSlice(request)).move_as_ok();
+    auto &object = document.get_object();
+    ASSERT_EQ(object.get_required_string_field("method").move_as_ok(), "getAccountEvents");
+    auto params = object.extract_required_field("params", td::JsonValue::Type::Object).move_as_ok();
+    ASSERT_EQ(params.get_object().get_required_string_field("address").move_as_ok(), "test-address");
+    auto call = calls.fetch_add(1);
+    if (call == 0) {
+      promise.set_value(R"({"jsonrpc":"2.0","id":"escaped\"id","result":{"events":[]}})");
+    } else {
+      promise.set_error(call == 1 ? td::Status::Error(429, "rate limited") : td::Status::Error("disconnected"));
+    }
+  };
+  with_json_rpc(std::move(options), [&](int port) {
+    for (int i = 0; i < 3; ++i) {
+      Client client(port, 0);
+      ASSERT_TRUE(client.connect());
+      ASSERT_TRUE(client.send_all(post(
+          R"({"jsonrpc":"2.0","id":"escaped\"id","method":"getAccountEvents","params":{"address":"test-address"}})",
+          false)));
+      std::string status, body;
+      ASSERT_TRUE(client.read_response(5000, status, body));
+      auto document = td::json_decode(td::MutableSlice(body)).move_as_ok();
+      ASSERT_EQ(document.get_object().get_required_string_field("id").move_as_ok(), "escaped\"id");
+      ASSERT_TRUE(body.find(i == 0 ? "events" : (i == 1 ? "rate limit exceeded" : "unavailable")) != std::string::npos);
+    }
+  });
+  ASSERT_EQ(calls.load(), 3);
+}
+
+TEST(JsonRpcTransport, standalone_backend_transports_bound_and_release_inflight_requests) {
+  class HeldLite final : public liteclient::ExtClient {
+   public:
+    explicit HeldLite(std::atomic<int> *received) : received_(received) {
+    }
+    void send_query(std::string, td::BufferSlice, td::Timestamp, td::Promise<td::BufferSlice> promise) override {
+      received_->fetch_add(1);
+      if (released_)
+        promise.set_value(td::BufferSlice("ok"));
+      else
+        held_.push_back(std::move(promise));
+    }
+    void finish() {
+      released_ = true;
+      for (auto &promise : held_)
+        promise.set_value(td::BufferSlice("ok"));
+      held_.clear();
+    }
+
+   private:
+    std::atomic<int> *received_;
+    bool released_ = false;
+    std::vector<td::Promise<td::BufferSlice>> held_;
+  };
+  td::actor::Scheduler scheduler({2});
+  td::actor::ActorOwn<HeldLite> backend;
+  std::atomic<int> received{0}, success{0}, refused{0}, index_done{0}, index_full{0};
+  tos::JsonRpcServer::LiteQuerySender sender;
+  tos::JsonRpcServer::IndexQuerySender index_sender;
+  PortReservation reservation;
+  td::IPAddress addr;
+  addr.init_ipv4_port("127.0.0.1", reservation.port()).ensure();
+  scheduler.run_in_context([&] {
+    backend = td::actor::create_actor<HeldLite>("held-lite", &received);
+    sender = tos::services::lite_sender(backend.get(), 1);
+    auto answer = [&](td::Result<td::BufferSlice> r) {
+      if (r.is_ok())
+        ++success;
+      else
+        ++refused;
+    };
+    for (int i = 0; i < 129; ++i)
+      sender(td::BufferSlice("query"), answer);
+    sender(td::BufferSlice((4u << 20) + 1), answer);
+    index_sender = tos::services::index_sender(addr, .1);
+    for (int i = 0; i < 17; ++i) {
+      index_sender("{}", "127.0.0.1", [&](td::Result<std::string> r) {
+        ASSERT_TRUE(r.is_error());
+        if (r.error().message().str().find("capacity") != std::string::npos)
+          ++index_full;
+        ++index_done;
+      });
+    }
+  });
+  auto deadline = Clock::now() + std::chrono::seconds(5);
+  while ((received != 128 || index_done != 17) && Clock::now() < deadline)
+    scheduler.run(.01);
+  ASSERT_EQ(received.load(), 128);
+  ASSERT_EQ(refused.load(), 2);
+  ASSERT_EQ(index_full.load(), 1);
+  ASSERT_EQ(index_done.load(), 17);
+  scheduler.run_in_context([&] { td::actor::send_closure(backend, &HeldLite::finish); });
+  while (success != 128 && Clock::now() < deadline)
+    scheduler.run(.01);
+  ASSERT_EQ(success.load(), 128);
+  scheduler.run_in_context([&] {
+    sender(td::BufferSlice("query"), [&](td::Result<td::BufferSlice> r) {
+      ASSERT_TRUE(r.is_ok());
+      ++success;
+    });
+    index_sender("{}", "127.0.0.1", [&](td::Result<std::string> r) {
+      ASSERT_TRUE(r.is_error());
+      ASSERT_TRUE(r.error().message().str().find("capacity") == std::string::npos);
+      ++index_done;
+    });
+  });
+  while ((success != 129 || index_done != 18) && Clock::now() < deadline)
+    scheduler.run(.01);
+  ASSERT_EQ(success.load(), 129);
+  ASSERT_EQ(index_done.load(), 18);
+  scheduler.run_in_context([&] {
+    backend.reset();
+    scheduler.stop();
+  });
+  while (scheduler.run(.01)) {
+  }
+}
+
+namespace {
+void standalone_method_refusal(const std::string &method) {
+  for (bool readonly : {false, true}) {
+    auto options = options_for(false);
+    options.readonly = readonly;
+    options.expose_consensus_status = true;
+    options.lite_query_sender = [](td::BufferSlice, td::Promise<td::BufferSlice> p) {
+      p.set_error(td::Status::Error("unexpected backend query"));
+    };
+    with_json_rpc(std::move(options), [&](int port) {
+      Client client(port, 0);
+      ASSERT_TRUE(client.connect());
+      ASSERT_TRUE(client.send_all(
+          post("{\"jsonrpc\":\"2.0\",\"id\":17,\"method\":\"" + method + "\",\"params\":{\"seqno\":1}}", false)));
+      std::string status, body;
+      ASSERT_TRUE(client.read_response(5000, status, body));
+      ASSERT_TRUE(body.find("-32601") != std::string::npos);
+      ASSERT_TRUE(body.find("\"id\":17") != std::string::npos);
+    });
+  }
+}
+}  // namespace
+
+TEST(JsonRpcTransport, standalone_manager_methods_consensus_refused) {
+  standalone_method_refusal("getConsensusBlock");
+}
+
+TEST(JsonRpcTransport, standalone_manager_methods_signatures_refused) {
+  standalone_method_refusal("getMasterchainBlockSignatures");
+}
+
+TEST(JsonRpcTransport, standalone_manager_methods_admin_refused) {
+  standalone_method_refusal("getNodeConsensusStatus");
+}
+
+TEST(JsonRpcTransport, standalone_index_hop_keeps_client_rate_buckets) {
+  auto backend = options_for(false);
+  backend.trust_proxy_headers = true;
+  backend.index_only = true;
+  backend.per_ip_rate_window = 300;
+  backend.per_ip_ingress_window = 300;
+  backend.index_query_sender = [](std::string, std::string source, td::Promise<std::string> p) {
+    ASSERT_TRUE(source == "198.51.100.1" || source == "198.51.100.2");
+    p.set_value(R"({"jsonrpc":"2.0","id":1,"result":{"events":[]}})");
+  };
+  with_json_rpc(std::move(backend), [&](int backend_port) {
+    td::IPAddress address;
+    address.init_ipv4_port("127.0.0.1", backend_port).ensure();
+    auto front = options_for(false);
+    front.trust_proxy_headers = true;
+    front.per_ip_rate_window = 300;
+    front.per_ip_ingress_window = 300;
+    front.index_query_sender = tos::services::index_sender(address, 5);
+    with_json_rpc(std::move(front), [&](int port) {
+      for (int i = 0; i < 601; ++i) {
+        Client client(port, 0);
+        ASSERT_TRUE(client.connect());
+        auto request = post(R"({"jsonrpc":"2.0","id":1,"method":"getAccountEvents","params":{}})", false);
+        request.insert(request.find("Content-Type:"),
+                       std::string("X-Real-IP: ") + (i % 2 ? "198.51.100.1" : "198.51.100.2") + "\r\n");
+        ASSERT_TRUE(client.send_all(request));
+        std::string status, body;
+        ASSERT_TRUE(client.read_response(5000, status, body));
+        ASSERT_TRUE(body.find("\"events\":[]") != std::string::npos);
+      }
+    });
+  });
+}
+
+TEST(JsonRpcTransport, standalone_source_cancellation_clears_mailbox) {
+  using namespace tos::services;
+  stop_requested = true;
+  IndexReader reader({});
+  int dispatched = 0;
+  auto call = [&](auto, td::Promise<int> p) {
+    ++dispatched;
+    p.set_value(1);
+  };
+  for (int i = 0; i < 8; ++i)
+    ASSERT_TRUE(reader.query<int>(call).is_error());
+  reader.dispatch();
+  ASSERT_EQ(dispatched, 0);
+  stop_requested = false;
+  IndexReader timeout_reader({}, std::chrono::milliseconds(1));
+  ASSERT_TRUE(timeout_reader.query<int>(call).is_error());
+  ASSERT_TRUE(timeout_reader.timed_out());
+  for (int i = 0; i < 8; ++i)
+    ASSERT_TRUE(timeout_reader.query<int>(call).is_error());
+  timeout_reader.dispatch();
+  ASSERT_EQ(dispatched, 0);
+  stop_requested = false;
+  // The cancelled undispatched closure is gone, including after a new service lifecycle.
+  timeout_reader.dispatch();
+  ASSERT_EQ(dispatched, 0);
+}
+
+TEST(JsonRpcTransport, standalone_submission_requires_backend_proxy_attribution) {
+  for (bool trusted : {false, true}) {
+    auto backend = options_for(false);
+    backend.readonly = false;
+    backend.trust_proxy_headers = trusted;
+    with_json_rpc(std::move(backend), [&](int backend_port) {
+      td::IPAddress address;
+      address.init_ipv4_port("127.0.0.1", backend_port).ensure();
+      auto front = options_for(false);
+      front.readonly = false;
+      front.trust_proxy_headers = true;
+      front.submission_query_sender = tos::services::index_sender(address, 5);
+      front.lite_query_sender = [](td::BufferSlice, td::Promise<td::BufferSlice>) {
+        CHECK(false);  // Submissions must never use the shared liteserver identity.
+      };
+      with_json_rpc(std::move(front), [&](int port) {
+        Client client(port, 0);
+        ASSERT_TRUE(client.connect());
+        auto request = post(
+            R"({"jsonrpc":"2.0","id":9,"method":"sendBoc","params":{"boc":"!","_tos_relay_source":"forged"}})", false);
+        request.insert(request.find("Content-Type:"), "X-Real-IP: 198.51.100.9\r\n");
+        ASSERT_TRUE(client.send_all(request));
+        std::string status, body;
+        ASSERT_TRUE(client.read_response(5000, status, body));
+        ASSERT_TRUE(body.find(trusted ? "Invalid base64" : "requires trusted client attribution") != std::string::npos);
+        ASSERT_TRUE(body.find("\"id\":9") != std::string::npos);
+      });
+    });
+  }
 }

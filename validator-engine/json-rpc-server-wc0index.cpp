@@ -255,10 +255,18 @@ td::Result<AccountEventId> parse_event_id(td::Slice value) {
 // Token lists come from candidates verified as blocks apply; some may still
 // be waiting, and some may have been given up. Say so alongside the list, so
 // an empty or short answer is not read as the whole truth.
-static td::Result<std::string> token_index_state_json(tos_wallet_index::WalletIndexSnapshot &view) {
+static td::Result<std::string> token_index_state_json(tos_wallet_index::WalletIndexSnapshot &view,
+                                                      const JsonRpcServer::Options &options) {
   TRY_RESULT(stats, view.token_backlog_stats());
   stats.needs_rebuild = stats.needs_rebuild || tos_wallet_index::wc0_index_degraded();
-  return tos_wallet_index::format_token_index_state(stats);
+  if (options.index_ready && !options.index_ready())
+    stats.unfinished_block = true;
+  auto result = tos_wallet_index::format_token_index_state(stats);
+  if (options.index_progress) {
+    result.pop_back();
+    result += ",\"replay\":" + options.index_progress() + "}";
+  }
+  return result;
 }
 
 void JsonRpcServer::handle_getAccountTokens(td::JsonObject &params, std::string req_id,
@@ -288,7 +296,7 @@ void JsonRpcServer::handle_getAccountTokens(td::JsonObject &params, std::string 
     return;
   }
   auto view = view_r.move_as_ok();
-  auto index_state_r = token_index_state_json(view);
+  auto index_state_r = token_index_state_json(view, opts_);
   if (index_state_r.is_error()) {
     promise.set_value(make_json_rpc_error(-32603, index_state_r.error().message().str(), req_id));
     return;
@@ -358,7 +366,11 @@ void JsonRpcServer::handle_getAccountEvents(td::JsonObject &params, std::string 
     return;
   }
   td::StringBuilder sb;
-  sb << "{\"@type\":\"wallet.accountEvents\",\"events\":[";
+  sb << "{\"@type\":\"wallet.accountEvents\",";
+  if (opts_.index_progress) {
+    sb << "\"replay\":" << opts_.index_progress() << ",";
+  }
+  sb << "\"events\":[";
   bool first = true;
   size_t seen = 0;
   uint64_t last_lt = 0;
@@ -470,7 +482,7 @@ void JsonRpcServer::handle_getAccountNfts(td::JsonObject &params, std::string re
     return;
   }
   auto view = view_r.move_as_ok();
-  auto index_state_r = token_index_state_json(view);
+  auto index_state_r = token_index_state_json(view, opts_);
   if (index_state_r.is_error()) {
     promise.set_value(make_json_rpc_error(-32603, index_state_r.error().message().str(), req_id));
     return;

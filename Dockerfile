@@ -17,7 +17,7 @@ RUN mkdir build && \
         ninja storage-daemon storage-daemon-cli toslibjson fift func gen_fif validator-engine validator-engine-console \
     generate-random-id dht-server lite-client tol rldp-http-proxy dht-server proxy-liteserver create-state \
     blockchain-explorer emulator toslibjson http-proxy dht-ping-servers dht-resolve \
-    tos-pq-consensus-key tos-pq-vote && \
+    tos-pq-consensus-key tos-pq-vote tos-rpc tos-wallet-index && \
         cmake -S /tos/crypto/pq/tools -B /tos/build-pq-key -GNinja -DCMAKE_BUILD_TYPE=Release \
         -DOPENSSL_ROOT_DIR=/tos/build/third-party/openssl -DOPENSSL_USE_STATIC_LIBS=TRUE && \
         ninja -C /tos/build-pq-key tos-pq-key
@@ -35,6 +35,8 @@ COPY --from=builder /tos/build/storage/storage-daemon/storage-daemon /usr/local/
 COPY --from=builder /tos/build/storage/storage-daemon/storage-daemon-cli /usr/local/bin/
 COPY --from=builder /tos/build/lite-client/lite-client /usr/local/bin/
 COPY --from=builder /tos/build/validator-engine/validator-engine /usr/local/bin/
+COPY --from=builder /tos/build/services/tos-rpc /usr/local/bin/
+COPY --from=builder /tos/build/services/tos-wallet-index /usr/local/bin/
 COPY --from=builder /tos/build/validator-engine-console/validator-engine-console /usr/local/bin/
 COPY --from=builder /tos/build/utils/generate-random-id /usr/local/bin/
 COPY --from=builder /tos/build/blockchain-explorer/blockchain-explorer /usr/local/bin/

@@ -83,65 +83,19 @@ Plan separately for:
 
 Use dedicated storage paths and monitor disk growth continuously.
 
-## Wallet Index
+## Wallet Index and Public RPC
 
-A node started with `--json-rpc-address` keeps a basechain wallet index under
-`<db root>/wc0-index` for the account-index JSON-RPC methods
-(`getAccountTokens`, `getAccountNfts`, `getAccountEvents`,
-`getAccountEvent`). The index belongs to RPC nodes. A validator serves its
-operator tool over loopback JSON-RPC with `--json-rpc-without-wallet-index`. It
-then never opens or creates `wc0-index`, and the four account-index methods
-answer -32601 "wallet index disabled on this node". The operator tool calls
-none of them. The index is built in the background, so the token lists
-from `getAccountTokens` and `getAccountNfts` carry an `index_state`; read
-`"complete": false` as "this list may be missing entries", not as the whole
-truth.
+Wallet indexing and public JSON-RPC run as separate executables:
 
-- **Token candidates are never dropped for lack of room.** Candidates a block
-  cannot verify at once wait in a bounded backlog (`pending`). When the
-  backlog is full, the rest of the block's candidates are stored with the
-  block, which stays unfinished (`unfinished_block`); the indexing worker
-  verifies them by itself, against the newest state the node has, also after
-  a restart and with no new block arriving. At most 1024 blocks can be
-  unfinished this way; past that the worker finishes them before indexing
-  more. A candidate whose verification stays indeterminate through every
-  attempt, or needs the state of another shard the node does not have yet
-  (a token master or NFT collection elsewhere), is `parked`: it is kept,
-  retried by the worker in bounded rounds against each shard's newest state,
-  and released only on a definite result. Any of these keeps
-  `"complete": false`.
-- **The index holds back archive pruning for blocks it has yet to read.** A
-  block applied but not yet indexed (still queued, or only marked because
-  the indexer was behind) is kept by the archive, past `--archive-ttl` if
-  need be, until its token candidates are indexed or stored with it. On the
-  next start the indexer reads such blocks back and indexes them first.
-  Pruning also never deletes a package that may hold a block still being
-  applied or not yet applied (one referenced at or after the shard client's
-  masterchain block).
-- **An index written by another schema version is reset.** When the node
-  opens an index database of any other layout, it empties it and starts a
-  fresh, forward-only index from the blocks applied from then on. Nothing of
-  the old database is imported or served, and no earlier history is
-  recovered.
-- **Stopping the node marks the index as incomplete.** Only an exit that
-  happens after block application has stopped records the indexing run as
-  finished. `systemctl stop` (SIGTERM), a crash, an out-of-memory kill and a
-  scheduled shutdown do not. The next start then reports `"needs_rebuild":
-  true` and `"complete": false` from then on, because a block applied just
-  before the stop may never have reached the index.
-- **There is no rebuild, only a reset.** Nothing recovers the entries such an
-  index may be missing. Deleting `<db root>/wc0-index` while the node is
-  stopped resets it to a fresh, forward-only index: the warning goes away,
-  but the new index holds only blocks applied after the reset. Entries for
-  earlier blocks, including any the old index was missing, are not recovered,
-  because the index never replays history.
-- **An index that cannot be opened is reported, not hidden.** If the index
-  database fails to open (for example a lock held by another process, a disk
-  fault, or a schema it cannot migrate), the node runs without indexing, logs
-  the reason once at startup, and these methods answer with error -32603
-  "wallet index unavailable on this node: ...". A node started without
-  `--json-rpc-address`, or with `--json-rpc-without-wallet-index`, keeps no
-  index, and these methods answer -32601 "wallet index disabled on this node".
+- `tos-wallet-index` reads a local node database through secondary database handles,
+  owns its writable index directory, and serves four account-index methods on loopback.
+- `tos-rpc` serves wallet HTTP requests, sends chain reads to configured liteservers and attributed submissions to private operator RPC,
+  and forwards account-index requests to the index service.
+- `validator-engine --json-rpc-address` is restricted to loopback for operator tooling.
+  It never opens a wallet index. `--json-rpc-without-wallet-index` is a deprecated no-op.
+
+See [Standalone wallet services](standalone-wallet-services.md) for setup, data retention,
+rebuilds and migration from the embedded index.
 
 ## Full-Node Masters and Slaves
 
