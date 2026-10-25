@@ -53,11 +53,10 @@ fn savelist(save: &SaveList) -> String {
     }
 }
 
-// Named as the C++ VM names its continuation classes. A try-catch handler is an ordinary
-// continuation there.
+// Named as the C++ VM names its continuation classes.
 fn continuation(cont: &ContinuationData) -> anyhow::Result<String> {
     let name = match &cont.type_of {
-        ContinuationType::Ordinary | ContinuationType::TryCatch => "vmc_std".to_string(),
+        ContinuationType::Ordinary => "vmc_std".to_string(),
         ContinuationType::Quit(_) => "vmc_quit".to_string(),
         ContinuationType::ExcQuit => "vmc_quit_exc".to_string(),
         ContinuationType::PushInt(_) => "vmc_pushint".to_string(),

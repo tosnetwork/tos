@@ -34,6 +34,18 @@ POP_C4 = op([0xED, 0x54])
 POP_C5 = op([0xED, 0x55])
 COMMIT = op([0xF8, 0x0F])
 RETALT = op([0xDB, 0x31])
+POP_C0 = op([0xED, 0x50])
+POP_C1 = op([0xED, 0x51])
+SETCONTCTR_C0 = op([0xED, 0x60])
+SETCONTCTR_C2 = op([0xED, 0x62])
+TRY = op([0xF2, 0xFF])
+TRYARGS_1_1 = op([0xF3, 0x11])
+IFJMP = op([0xE0])
+
+
+def cont(*body):
+    """PUSHREFCONT { body }."""
+    return op([0x8A], prog(*body))
 
 
 def cell_of_depth(depth):
@@ -152,6 +164,49 @@ def scenarios():
     add("child-autocommit-c4-depth-513", prog(*runvm(child, 4 | 32)))
     child = prog(*cell_of_depth(512), POP_C4, pushint(7))
     add("child-autocommit-c4-depth-512", prog(*runvm(child, 4 | 32)))
+    # Throwing jumps to c2 and leaves it in place, so a handler that throws enters itself again
+    # unless entering it restored another c2. TRY saves c0, c1 and c2 in the return continuation
+    # (c1 is quit1 inside the body) and gives the handler c0 and c2 only where it has none.
+    add("handler-rethrows-until-out-of-gas", prog(cont(throw(5)), POP_C2, throw(5)), budget=2000)
+    rethrow_once = cont(op([0xC0, 5]), cont(throw(7)), IFJMP)
+    add("handler-rethrows-once", prog(rethrow_once, POP_C2, pushint(3), throw(5)))
+    inner = (cont(throw(5)), cont(throw(6)), TRY)
+    add("nested-try-rethrow-reaches-outer-handler", prog(cont(*inner), cont(pushint(9)), TRY))
+    add("throw-after-try-returns", prog(cont(pushint(1)), cont(pushint(9)), TRY, throw(6)))
+    add(
+        "throw-after-try-returns-to-own-handler",
+        prog(cont(pushint(8)), POP_C2, cont(pushint(1)), cont(pushint(9)), TRY, throw(6)),
+    )
+    add(
+        "try-handler-defines-c2",
+        prog(cont(throw(5)), cont(pushint(8)), cont(throw(7)), SETCONTCTR_C2, TRY, pushint(3)),
+    )
+    add(
+        "try-body-alt-exit",
+        prog(
+            cont(pushint(77)), POP_C1, cont(pushint(5), RETALT), cont(pushint(9)), TRY, pushint(3)
+        ),
+    )
+    add(
+        "try-handler-replaces-c0-then-throws",
+        prog(cont(pushint(8), RETALT), POP_C2, cont(throw(5)), cont(cont(throw(6)), POP_C0), TRY),
+    )
+    add(
+        "try-handler-defines-c0",
+        prog(cont(throw(5)), cont(pushint(4)), cont(pushint(9)), SETCONTCTR_C0, TRY, pushint(3)),
+    )
+    # A body's own c0 and c2 replace the return continuation and the handler.
+    add(
+        "try-body-defines-c0",
+        prog(cont(pushint(4)), cont(pushint(1)), SETCONTCTR_C0, cont(pushint(9)), TRY, pushint(3)),
+    )
+    add(
+        "try-body-defines-c2",
+        prog(cont(pushint(8)), cont(throw(5)), SETCONTCTR_C2, cont(pushint(9)), TRY, pushint(3)),
+    )
+    # TRYARGS 1,1 passes one value to the body and keeps one of its results or the handler's.
+    add("tryargs-returns", prog(pushint(5), pushint(6), cont(INC), cont(pushint(9)), TRYARGS_1_1))
+    add("tryargs-handler", prog(pushint(5), pushint(6), cont(throw(5)), cont(INC), TRYARGS_1_1))
 
 
 # Rows that may differ only in the final stack and the error argument; exit code, gas, steps

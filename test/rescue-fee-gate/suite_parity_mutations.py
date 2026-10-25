@@ -30,6 +30,7 @@ CONTINUATION = CARGO / "vm/src/executor/continuation.rs"
 ERROR = CARGO / "vm/src/error.rs"
 HANDLERS = CARGO / "vm/src/executor/engine/handlers.rs"
 GAS = CARGO / "vm/src/executor/gas/mod.rs"
+EXCEPTIONS = CARGO / "vm/src/executor/exceptions.rs"
 CHILD_STACK_TEST = (
     "executor::engine::core::nesting_depth_tests::child_out_of_gas_leaves_only_the_gas_consumed"
 )
@@ -401,6 +402,56 @@ MUTATIONS = {
             "autocommit-fails-after-commit",
             "child-autocommit-c4-depth-513",
         ),
+    ),
+    "throwing removes c2": Mutation(
+        CORE,
+        [
+            (
+                "let Some(c2) = self.ctrls.get(2).cloned() else {",
+                "let Some(c2) = self.ctrls.remove(2) else {",
+            )
+        ],
+        (),
+        (),
+        ("handler-rethrows-until-out-of-gas", "handler-rethrows-once"),
+    ),
+    "TRY body keeps the outer c1": Mutation(
+        EXCEPTIONS,
+        [
+            (
+                "        engine.ctrls.put(1, StackItem::continuation(ContinuationData::with_type(quit1)))?\n",
+                "        engine.ctrls.get(1).cloned()\n",
+            )
+        ],
+        (),
+        (),
+        ("try-body-alt-exit",),
+    ),
+    "TRY overwrites the handler's c2": Mutation(
+        EXCEPTIONS,
+        [("        if handler.savelist.get(2).is_none() {\n", "        {\n")],
+        (),
+        (),
+        ("try-handler-defines-c2",),
+    ),
+    "TRY overwrites the handler's c0": Mutation(
+        EXCEPTIONS,
+        [("    if handler_cont.savelist.get(0).is_none() {\n", "    {\n")],
+        (),
+        (),
+        ("try-handler-defines-c0",),
+    ),
+    "TRY drops the body's c0": Mutation(
+        EXCEPTIONS,
+        [
+            (
+                "    if let Some(c0) = body_c0 {\n        engine.ctrls.put(0, c0)?;\n    }\n",
+                "    drop(body_c0);\n",
+            )
+        ],
+        (),
+        (),
+        ("try-body-defines-c0",),
     ),
     "RUNVM before version 4": Mutation(
         CONTINUATION,

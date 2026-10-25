@@ -710,14 +710,6 @@ impl Engine {
         switch(self, ctrl!(0))?;
         Ok(None)
     }
-    fn step_try_catch(&mut self) -> Result<Option<i32>> {
-        self.step += 1;
-        self.log_string = Some("IMPLICIT RET FROM TRY-CATCH");
-        self.try_use_gas(Gas::implicit_ret_price())?;
-        self.ctrls.remove(2);
-        switch(self, ctrl!(0))?;
-        Ok(None)
-    }
     fn step_while_loop(&mut self, body: SliceData, cond: SliceData) -> Result<Option<i32>> {
         match self.check_while_loop_condition() {
             Ok(true) => {
@@ -820,7 +812,6 @@ impl Engine {
                     ContinuationType::Ordinary => self.step_ordinary(),
                     ContinuationType::PushInt(code) => self.step_pushint(code),
                     ContinuationType::Quit(exit_code) => Ok(Some(exit_code)),
-                    ContinuationType::TryCatch => self.step_try_catch(),
                     ContinuationType::WhileLoopCondition(body, cond) => {
                         self.step_while_loop(body, cond)
                     }
@@ -1674,7 +1665,9 @@ impl Engine {
             self.gas_used(),
             Some(format!("EXCEPTION: {:?}", err)),
         );
-        let Some(c2) = self.ctrls.remove(2) else {
+        // c2 stays where it is: a handler that throws enters itself again unless entering it
+        // restored another c2.
+        let Some(c2) = self.ctrls.get(2).cloned() else {
             return Err(err);
         };
         let (exception, value) = tvm_exception_full(err).inspect_err(
@@ -1710,7 +1703,6 @@ impl Engine {
                 // The handler was not entered and the control registers are as they were; the
                 // stack keeps the argument and the exit code.
                 self.cmd.vars.truncate(n);
-                self.ctrls.put(2, c2)?;
                 if retry {
                     self.dispatch_exception(err, false)
                 } else {
