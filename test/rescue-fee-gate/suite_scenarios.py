@@ -181,8 +181,8 @@ def main(out):
             + ([] if code is None else [code.boc().hex()])
         )
 
-    def add_program(name, expect, code, budget=BUDGET):
-        add(name, expect, "skip", None, None, None, None, budget=budget, code=code)
+    def add_program(name, expect, code, budget=BUDGET, version=VERSION):
+        add(name, expect, "skip", None, None, None, None, budget=budget, version=version, code=code)
 
     tmp = Path(tempfile.mkdtemp())
     msg = bytes(range(32))
@@ -360,6 +360,19 @@ def main(out):
     error = children["exception-price"][0]
     add_program("child-error-exit", "R2", prog(runvm(error, 8, 1_000), exit_code))
     add_program("child-too-few-values-exit", "R-3", prog(runvm(prog(), 264, 1_000, 3), exit_code))
+    # A child that jumps to its default exception handler with an exit code it chose: 13 is not
+    # out of gas. The handler pops only the exit code; what is below it is returned. A non-integer
+    # exit code fails the type check (7) and is consumed.
+    c2_jump = (op([0xED, 0x42]), op([0xD9]))  # PUSH c2, JMPX
+    exits_13 = prog(pushint(5), pushint(7), pushint(13), c2_jump)
+    add_program("child-exits-13-via-c2-exit", "R13", prog(runvm(exits_13, 8, 1_000), exit_code))
+    add_program("child-exits-13-via-c2-value", "R7", prog(runvm(exits_13, 8, 1_000), value))
+    add_program("child-exits-13-via-c2-depth", "R3", prog(runvm(exits_13, 8, 1_000), depth))
+    exits_null = prog(pushint(5), op([0x6D]), c2_jump)  # PUSHNULL
+    add_program("child-exits-null-via-c2-exit", "R7", prog(runvm(exits_null, 8, 1_000), exit_code))
+    add_program("child-exits-null-via-c2-value", "R5", prog(runvm(exits_null, 8, 1_000), value))
+    add_program("exits-13-via-c2", "E13", prog(pushint(7), pushint(13), c2_jump))
+    add_program("throw-13", "E13", prog(pushint(7), op([0xF2, 0x0D])))
 
     # Data and actions (+4, +32) of a child: what it last committed, or from version 11 null if
     # it never committed. Each child stores a byte in a cell for c4 or c5; a cell costs 500 gas.
@@ -384,6 +397,21 @@ def main(out):
         add_program(
             f"child-ends-normally-{name}", "R0", prog(runvm(prog(), 8 | flag, 1_000), is_null)
         )
+
+    # RUNVM exists from version 4; data and actions can be returned before version 11.
+    enough = prog(runvm(sevens, 8, 10_000), DROP, ONLYTOP)
+    add_program("runvm-version-3", "E6", enough, version=3)
+    add_program("runvm-version-4", "R0", enough, version=4)
+    add_program(
+        "runvmx-version-3",
+        "E6",
+        prog(pushint(0), op([0x89], sevens), pushint(0), op([0xDB, 0x50]), ONLYTOP),
+        version=3,
+    )
+    committed_data = prog(runvm(committed, 12, 5_000), byte)
+    add_program("child-oog-committed-data-version-10", "R42", committed_data, version=10)
+    ends_normally = prog(runvm(prog(), 12, 1_000), is_null)
+    add_program("child-ends-normally-data-version-10", "R0", ends_normally, version=10)
 
     Path(out).write_text("\n".join("\t".join(r) for r in rows) + "\n")
     print(f"{len(rows)} scenarios")

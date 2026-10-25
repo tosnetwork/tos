@@ -20,6 +20,10 @@ CARGO = ROOT / "tosctl/src"
 PQ = CARGO / "vm/src/executor/pq.rs"
 LMS = CARGO / "vm/src/executor/lms_fee.rs"
 CORE = CARGO / "vm/src/executor/engine/core.rs"
+CONTINUATION = CARGO / "vm/src/executor/continuation.rs"
+CHILD_STACK_TEST = (
+    "executor::engine::core::nesting_depth_tests::child_out_of_gas_leaves_only_the_gas_consumed"
+)
 
 
 class Mutation(NamedTuple):
@@ -109,7 +113,7 @@ MUTATIONS = {
             )
         ],
         (),
-        ("child_out_of_gas_leaves_only_the_gas_consumed",),
+        (CHILD_STACK_TEST,),
     ),
     "child out of gas returns 0, not the gas it consumed": Mutation(
         CORE,
@@ -120,7 +124,7 @@ MUTATIONS = {
             )
         ],
         ("child-oog-instruction-value", "child-oog-c2-switch-value"),
-        ("child_out_of_gas_leaves_only_the_gas_consumed",),
+        (CHILD_STACK_TEST,),
     ),
     "+8 returns the gas used capped at the limit": Mutation(
         CORE,
@@ -172,6 +176,39 @@ MUTATIONS = {
         ],
         ("child-oog-committed-data", "child-oog-uncommitted-actions"),
     ),
+    "default exception handler reports exit code 13 as out of gas": Mutation(
+        CORE,
+        [
+            (
+                "        let exception = Exception::from_number(number, String::new(), file!(), line!());\n",
+                "        let exception = match ExceptionCode::from_i32(number) {\n"
+                "            Some(code) => Exception::from_code(code, String::new(), file!(), line!()),\n"
+                "            None => Exception::from_number(number, String::new(), file!(), line!()),\n"
+                "        };\n",
+            )
+        ],
+        ("child-exits-13-via-c2-exit", "exits-13-via-c2"),
+    ),
+    "default exception handler leaves its exit code on the returned stack": Mutation(
+        CORE,
+        [
+            (
+                "        self.cc.stack.push_int(number);\n",
+                "        self.cc.stack.push_int(number);\n        self.cc.stack.push_int(number);\n",
+            )
+        ],
+        ("child-exits-13-via-c2-value", "child-exits-null-via-c2-value"),
+    ),
+    "RUNVM before version 4": Mutation(
+        CONTINUATION,
+        [("    if engine.block_version() < 4 {\n", "    if engine.block_version() < 3 {\n")],
+        ("runvm-version-3", "runvmx-version-3"),
+    ),
+    "RUNVM only from version 5": Mutation(
+        CONTINUATION,
+        [("    if engine.block_version() < 4 {\n", "    if engine.block_version() < 5 {\n")],
+        ("runvm-version-4",),
+    ),
 }
 
 
@@ -192,17 +229,26 @@ def rust_output(scenarios, target):
     ).stdout
 
 
-def unit_test_fails(name, target):
+def unit_test_passes(name, target):
+    """Runs exactly the named Rust unit test; a build failure, or no test run, is not a result."""
     env = dict(os.environ, CARGO_TARGET_DIR=str(target))
     run = subprocess.run(
-        ["cargo", "test", "--locked", "-q", "-p", "tos_vm", "--lib", name],
+        ["cargo", "test", "--locked", "-q", "-p", "tos_vm", "--lib", "--", "--exact", name],
         cwd=CARGO,
         env=env,
         capture_output=True,
         text=True,
     )
-    # A build failure is not a failing test: require the test itself to have run and failed.
-    return "test result: FAILED. 0 passed; 1 failed" in run.stdout
+    if run.returncode == 0 and "test result: ok. 1 passed; 0 failed" in run.stdout:
+        return True
+    if run.returncode != 0 and "test result: FAILED. 0 passed; 1 failed" in run.stdout:
+        return False
+    sys.exit(f"unit test {name} did not run exactly once (exit {run.returncode})")
+
+
+def unit_tests_pass(target):
+    tests = sorted({t for m in MUTATIONS.values() for t in m.tests})
+    return [t for t in tests if not unit_test_passes(t, target)]
 
 
 def main(scenarios, cpp_output, target, *flags):
@@ -214,6 +260,10 @@ def main(scenarios, cpp_output, target, *flags):
     if rust_output(scenarios, target) != cpp:
         sys.exit("baseline differs: fix parity before measuring sensitivity")
     print("baseline: identical")
+    # A test that already fails would make every mutation naming it look caught.
+    if failing := unit_tests_pass(target):
+        sys.exit(f"named unit tests fail before mutation: {failing}")
+    print("named unit tests: pass")
     ids = [line.split("\t")[0] for line in cpp.splitlines()]
     failed = False
     for name, m in MUTATIONS.items():
@@ -228,7 +278,7 @@ def main(scenarios, cpp_output, target, *flags):
         m.path.write_text(mutated)
         try:
             out = rust_output(scenarios, target)
-            failing = [t for t in m.tests if unit_test_fails(t, target)]
+            failing = [t for t in m.tests if not unit_test_passes(t, target)]
         finally:
             m.path.write_text(text)
         if len(out.splitlines()) != len(cpp.splitlines()):
@@ -248,7 +298,9 @@ def main(scenarios, cpp_output, target, *flags):
         failed |= not ok
     if rust_output(scenarios, target) != cpp:
         sys.exit("restored baseline differs")
-    print("restored baseline: identical")
+    if failing := unit_tests_pass(target):
+        sys.exit(f"named unit tests fail after restoring: {failing}")
+    print("restored baseline: identical; named unit tests: pass")
     sys.exit(1 if failed else 0)
 
 

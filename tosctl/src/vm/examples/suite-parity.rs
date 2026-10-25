@@ -4,7 +4,7 @@
 use chain_block::{read_single_root_boc, BuilderData, ExceptionCode};
 use std::{env, fs};
 use tos_vm::{
-    error::tvm_exception_code,
+    error::{tvm_exception_code, tvm_exception_or_custom_code},
     executor::{gas::gas_state::Gas, Engine},
     stack::{integer::IntegerData, savelist::SaveList, Stack, StackItem},
 };
@@ -54,10 +54,10 @@ fn main() -> anyhow::Result<()> {
         engine.set_block_version(version);
         let exit = match engine.execute() {
             Ok(code) => code,
+            // As the executor reports it: a custom code as is, out of gas as -14.
             Err(e) => match tvm_exception_code(&e) {
                 Some(ExceptionCode::OutOfGas) => -14,
-                Some(code) => code as i32,
-                None => return Err(e),
+                _ => tvm_exception_or_custom_code(&e),
             },
         };
         let value = if exit == 0 {

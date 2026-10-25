@@ -747,21 +747,27 @@ impl Engine {
         }
     }
 
+    // The default exception handler, entered by a jump: the exit code is popped from the stack,
+    // or is the error popping it raised, and everything below it stays, as in the C++ VM. The
+    // exit code is chosen by the program, so it is reported as a custom code: 13 is not out of
+    // gas. It is pushed back for whoever ends the VM, as a raised exception leaves its code.
     fn make_external_error(&mut self) -> Result<Option<i32>> {
-        let number = self.cc.stack.drop(0)?.as_integer_value(0..=0xffffi32)?;
+        let number = match self.cc.stack.drop(0) {
+            Ok(item) => item.as_integer_value(0..=0xffffi32),
+            Err(err) => Err(err),
+        }
+        .unwrap_or_else(|err| tvm_exception_or_custom_code(&err));
         if number == ExceptionCode::NormalTermination as i32
             || number == ExceptionCode::AlternativeTermination as i32
         {
             return Ok(Some(number));
         }
-        let value = match self.cc.stack.drop(0) {
+        let value = match self.cc.stack.get(0) {
             Ok(item) => item.as_integer().cloned().unwrap_or_default(),
             Err(_) => IntegerData::zero(),
         };
-        let exception = match ExceptionCode::from_i32(number) {
-            Some(code) => Exception::from_code(code, String::new(), file!(), line!()),
-            None => Exception::from_number(number, String::new(), file!(), line!()),
-        };
+        self.cc.stack.push_int(number);
+        let exception = Exception::from_number(number, String::new(), file!(), line!());
         fail!(TvmError::new(exception, StackItem::int(value)))
     }
 
@@ -1191,9 +1197,9 @@ impl Engine {
         }
         self.checked_signatures_count = child.checked_signatures_count;
         self.free_gas_consumed = child.free_gas_consumed;
-        debug_assert!(self.block_version >= 11 || (!params.return_data && !params.return_actions));
         // From version 11 a child that never committed returns null for its data and actions,
-        // not empty cells.
+        // not empty cells. Before it, the C++ VM pushes a cell entry holding no cell, which is
+        // not reproduced: an empty cell is returned.
         match child.cstate {
             None if self.block_version >= 11 => {
                 if params.return_data {

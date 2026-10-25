@@ -1315,7 +1315,6 @@ pub(super) fn execute_whileend_break(engine: &mut Engine) -> Status {
 }
 
 fn run_vm(engine: &mut Engine, mode: isize) -> Status {
-    debug_assert!(engine.block_version() >= 10, "But block version is {}", engine.block_version());
     if mode >= 512 {
         fail!(ExceptionCode::RangeCheckError, "invalid flags {mode:#x}");
     }
@@ -1369,7 +1368,18 @@ fn run_vm(engine: &mut Engine, mode: isize) -> Status {
     Ok(())
 }
 
+// RUNVM and RUNVMX exist from version 4, as in the C++ VM. Before that they are invalid
+// opcodes, charged as one is at those versions.
+fn runvm_before_version_4(engine: &mut Engine) -> Status {
+    if engine.block_version() < 4 {
+        engine.use_gas(Gas::basic_gas_price(0, 0));
+        fail!(ExceptionCode::InvalidOpcode);
+    }
+    Ok(())
+}
+
 pub(super) fn execute_runvm(engine: &mut Engine) -> Status {
+    runvm_before_version_4(engine)?;
     let opts = InstructionOptions::Integer(0..0x1000);
     engine.load_instruction(Instruction::new("RUNVM").set_opts(opts))?;
     let mode = engine.cmd.integer();
@@ -1377,6 +1387,7 @@ pub(super) fn execute_runvm(engine: &mut Engine) -> Status {
 }
 
 pub(super) fn execute_runvmx(engine: &mut Engine) -> Status {
+    runvm_before_version_4(engine)?;
     engine.load_instruction(Instruction::new("RUNVMX"))?;
     let mode = engine.cc.stack.pop()?.as_integer_value(0..=0xFFF)?;
     run_vm(engine, mode)
