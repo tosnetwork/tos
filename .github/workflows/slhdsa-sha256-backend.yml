@@ -9,6 +9,7 @@ on:
       - 'tosctl/src/common/build/slhdsa_sha256.rs'
       - 'tosctl/src/vm/build.rs'
       - 'tosctl/src/vm/slh-shim.c'
+      - 'tosctl/src/vm/src/executor/mod.rs'
       - 'tosctl/src/vm/src/executor/pq.rs'
       - 'tosctl/src/vm/src/tests/test_slhdsa_vectors.rs'
       - 'tosctl/src/wallet-pq-signer/build.rs'
