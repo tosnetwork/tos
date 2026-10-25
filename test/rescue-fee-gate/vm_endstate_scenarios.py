@@ -41,6 +41,8 @@ SETCONTCTR_C2 = op([0xED, 0x62])
 TRY = op([0xF2, 0xFF])
 TRYARGS_1_1 = op([0xF3, 0x11])
 IFJMP = op([0xE0])
+PUSH_C3 = op([0xED, 0x43])
+CALLDICT_5 = op([0xF0, 0x05])
 
 
 def cont(*body):
@@ -164,6 +166,12 @@ def scenarios():
     add("child-autocommit-c4-depth-513", prog(*runvm(child, 4 | 32)))
     child = prog(*cell_of_depth(512), POP_C4, pushint(7))
     add("child-autocommit-c4-depth-512", prog(*runvm(child, 4 | 32)))
+    # Only exits 0 and 1 commit. c3 starts as quit(11), so a CALLDICT or a jump to c3 ends the
+    # VM with 11 and leaves the data uncommitted; a child run without its own c3 does the same.
+    calldict = prog(*cell_of_depth(1), POP_C4, pushint(7), CALLDICT_5)
+    add("calldict-quits-with-11", calldict)
+    add("c3-jump-quits-with-11", prog(*cell_of_depth(1), POP_C4, pushint(7), PUSH_C3, JMPX))
+    add("child-calldict-quits-with-11", prog(*runvm(calldict, 4 | 32)))
     # Throwing jumps to c2 and leaves it in place, so a handler that throws enters itself again
     # unless entering it restored another c2. TRY saves c0, c1 and c2 in the return continuation
     # (c1 is quit1 inside the body) and gives the handler c0 and c2 only where it has none.

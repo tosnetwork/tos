@@ -404,6 +404,18 @@ MUTATIONS = {
             "child-autocommit-c4-depth-513",
         ),
     ),
+    "every exit code commits": Mutation(
+        CORE,
+        [
+            (
+                "if let Err(err) = if commits { self.try_commit() } else { Ok(()) } {",
+                "if let Err(err) = self.try_commit() {",
+            )
+        ],
+        (),
+        (),
+        ("calldict-quits-with-11", "c3-jump-quits-with-11", "child-calldict-quits-with-11"),
+    ),
     "throwing removes c2": Mutation(
         CORE,
         [
