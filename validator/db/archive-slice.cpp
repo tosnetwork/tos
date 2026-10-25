@@ -1019,7 +1019,7 @@ td::Status ArchiveSlice::try_catch_up_with_primary_impl(CatchUpMode mode) {
           CHECK(sscanf(value.c_str(), "%u.%d:%016llx", &seqno, &shard_prefix.workchain, &shard) == 3);
           shard_prefix.shard = shard;
         } else {
-          seqno = archive_id_ + slice_size_ * i;
+          seqno = static_cast<td::uint32>(archive_id_ + slice_size_ * i);
           shard_prefix = ShardIdFull{masterchainId};
         }
         if (!add_package(seqno, shard_prefix, len, ver)) {
