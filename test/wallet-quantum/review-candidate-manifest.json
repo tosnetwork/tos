@@ -212,12 +212,12 @@
       "sha256": "e521f4cbfd2a641a01ce87356fe45d316b62475176f93a291acdca90f4ff67fe"
     },
     "repository/test/rescue-fee-gate/suite-expected.tsv": {
-      "bytes": 1019,
-      "sha256": "5c030c19866fac95cbd81207523d676cd793427b1282c1dbb118e15ee5164791"
+      "bytes": 3376,
+      "sha256": "17315f74a3240b930f573cb692dcc6fc9f9074400b7b56f51cc327dd00a368ce"
     },
     "repository/test/rescue-fee-gate/suite-scenarios.tsv": {
-      "bytes": 316781,
-      "sha256": "9de5dca2b7b5cedac0aae6aa713c78ba60c4d0b0a2a22d2ed4d6c314b80c0375"
+      "bytes": 325339,
+      "sha256": "6cb2bfe12e4640f88f2faac9220a21da5720d95037ed178acc959eda05a8a416"
     },
     "repository/tosctl/src/node-control/contracts/src/wallet_quantum.rs": {
       "bytes": 15289,

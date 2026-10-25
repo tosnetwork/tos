@@ -4,7 +4,7 @@
 use chain_block::{read_single_root_boc, BuilderData, ExceptionCode};
 use std::{env, fs};
 use tos_vm::{
-    error::tvm_exception_code,
+    error::{tvm_exception_code, tvm_exception_or_custom_code},
     executor::{gas::gas_state::Gas, Engine},
     stack::{integer::IntegerData, savelist::SaveList, Stack, StackItem},
 };
@@ -28,7 +28,7 @@ fn main() -> anyhow::Result<()> {
     let mut count = 0;
     for line in data.lines() {
         let f: Vec<_> = line.split('\t').collect();
-        anyhow::ensure!(f.len() == 9, "invalid scenario");
+        anyhow::ensure!(f.len() == 9 || f.len() == 10, "invalid scenario");
         let version = f[1].parse::<u32>()?;
         let budget = f[2].parse::<i64>()?;
         let mut stack = Stack::new();
@@ -36,10 +36,16 @@ fn main() -> anyhow::Result<()> {
             push(&mut stack, field)?;
         }
         push(&mut stack, f[4])?;
-        let mut code = BuilderData::new();
-        code.append_raw(&[0xf9, 0x31, 0x02], 24)?;
+        let code = match f.get(9) {
+            Some(boc) => read_single_root_boc(hex::decode(boc)?)?,
+            None => {
+                let mut code = BuilderData::new();
+                code.append_raw(&[0xf9, 0x31, 0x02], 24)?;
+                code.into_cell()?
+            }
+        };
         let mut engine = Engine::with_capabilities(0).setup_checked(
-            code.into_cell()?,
+            code,
             SaveList::new(),
             stack,
             Gas::test_with_limit(budget),
@@ -48,19 +54,19 @@ fn main() -> anyhow::Result<()> {
         engine.set_block_version(version);
         let exit = match engine.execute() {
             Ok(code) => code,
+            // As the executor reports it: a custom code as is, out of gas as -14.
             Err(e) => match tvm_exception_code(&e) {
                 Some(ExceptionCode::OutOfGas) => -14,
-                Some(code) => code as i32,
-                None => return Err(e),
+                _ => tvm_exception_or_custom_code(&e),
             },
         };
         let value = if exit == 0 {
             anyhow::ensure!(engine.stack().depth() == 1, "unexpected stack");
-            engine.stack().get(0)?.as_integer_value(-1i64..=0i64)?
+            engine.stack().get(0)?.as_integer_value(i64::MIN..=i64::MAX)?
         } else {
             99
         };
-        println!("{}\t{}\t{}\t{}", f[0], exit, engine.gas_used(), value);
+        println!("{}\t{}\t{}\t{}\t{}", f[0], exit, engine.gas_used(), value, engine.steps());
         count += 1;
     }
     anyhow::ensure!(count >= 20, "incomplete scenario set");

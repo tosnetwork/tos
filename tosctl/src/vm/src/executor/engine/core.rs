@@ -458,7 +458,7 @@ impl Engine {
                 log::info!(target: "tvm", "stack: [ {} ]\n", self.get_stack_result_fift());
             }
             if self.trace_bit(Engine::TRACE_CODE) {
-                log::info!(target: "tvm", "code cell hash: {:X} offset: {}\n", info.cmd_code.cell().unwrap().repr_hash(), info.cmd_code.pos());
+                log::info!(target: "tvm", "code cell hash: {} offset: {}\n", code_cell_hash(&info.cmd_code), info.cmd_code.pos());
                 let cmd_str = match info.cmd_str.as_str() {
                     "POP s0" => "POP",
                     "POP s1" => "NIP",
@@ -481,8 +481,8 @@ impl Engine {
     pub fn emulator_trace_callback(&self, info: &EngineTraceInfo) {
         if info.has_cmd() {
             if self.trace_bit(Engine::TRACE_CODE) {
-                log::info!(target: "executor", "code cell hash: {:X} offset: {}\n",
-                    info.cmd_code.cell().unwrap().repr_hash(), info.cmd_code.pos());
+                log::info!(target: "executor", "code cell hash: {} offset: {}\n",
+                    code_cell_hash(&info.cmd_code), info.cmd_code.pos());
                 log::info!(target: "executor", "{}\n", info.cmd_str);
             }
             if self.trace_bit(Engine::TRACE_STACK) {
@@ -502,7 +502,8 @@ impl Engine {
     #[allow(dead_code)]
     fn dump_stack_result(stack: &Stack) -> String {
         static PREV_STACK: LazyLock<Mutex<Stack>> = LazyLock::new(|| Mutex::new(Stack::new()));
-        let mut prev_stack = PREV_STACK.lock().unwrap();
+        // The previous stack only shortens the next dump, so a poisoned lock is still usable.
+        let mut prev_stack = PREV_STACK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut result = String::new();
         let mut iter = prev_stack.iter();
         let mut same = false;
@@ -597,6 +598,10 @@ impl Engine {
                 break result;
             }
             self.cmd_code = SliceProto::from(self.cc.code());
+            // One step per fetched instruction, like the C++ VM's step(): also for an
+            // instruction that fails before it is decoded (an unassigned opcode, a
+            // version gate, a truncated prefix).
+            self.step += 1;
             let execution_result = match HANDLERS_CP0.get_handler(self) {
                 Err(err) => match self.basic_use_gas(8) {
                     Err(err) => Some(err),
@@ -742,21 +747,27 @@ impl Engine {
         }
     }
 
+    // The default exception handler, entered by a jump: the exit code is popped from the stack,
+    // or is the error popping it raised, and everything below it stays, as in the C++ VM. The
+    // exit code is chosen by the program, so it is reported as a custom code: 13 is not out of
+    // gas. It is pushed back for whoever ends the VM, as a raised exception leaves its code.
     fn make_external_error(&mut self) -> Result<Option<i32>> {
-        let number = self.cc.stack.drop(0)?.as_integer_value(0..=0xffffi32)?;
+        let number = match self.cc.stack.drop(0) {
+            Ok(item) => item.as_integer_value(0..=0xffffi32),
+            Err(err) => Err(err),
+        }
+        .unwrap_or_else(|err| tvm_exception_or_custom_code(&err));
         if number == ExceptionCode::NormalTermination as i32
             || number == ExceptionCode::AlternativeTermination as i32
         {
             return Ok(Some(number));
         }
-        let value = match self.cc.stack.drop(0) {
+        let value = match self.cc.stack.get(0) {
             Ok(item) => item.as_integer().cloned().unwrap_or_default(),
             Err(_) => IntegerData::zero(),
         };
-        let exception = match ExceptionCode::from_i32(number) {
-            Some(code) => Exception::from_code(code, String::new(), file!(), line!()),
-            None => Exception::from_number(number, String::new(), file!(), line!()),
-        };
+        self.cc.stack.push_int(number);
+        let exception = Exception::from_number(number, String::new(), file!(), line!());
         fail!(TvmError::new(exception, StackItem::int(value)))
     }
 
@@ -1139,21 +1150,7 @@ impl Engine {
         const STACK_GROW: usize = 2 * 1024 * 1024;
         let mut result = match stacker::maybe_grow(RED_ZONE, STACK_GROW, || child.execute()) {
             Ok(result) => result,
-            Err(err) => {
-                // in case of error we have copy of code on stack
-                match child.cc.stack.pop().and_then(|x| x.as_integer_value(0..=0xFFF)) {
-                    Ok(code) => {
-                        debug_assert_eq!(code, tvm_exception_or_custom_code(&err));
-                    }
-                    Err(err) => {
-                        log::error!(
-                            target: "tvm",
-                            "Failed to pop error code from stack {err:?}",
-                        );
-                    }
-                }
-                tvm_exception_or_custom_code(&err)
-            }
+            Err(err) => child.child_exit_after_error(&err),
         };
         // let mut result = child.execute().unwrap_or_else(|err| tvm_exception_or_custom_code(&err));
         log::debug!(
@@ -1163,7 +1160,8 @@ impl Engine {
         );
 
         self.step += child.step;
-        self.use_gas(child.gas_used().min(child.gas.get_gas_limit() + 1)); // +1?
+        let child_gas_used = child.gas_used();
+        self.use_gas(child_gas_used.min(child.gas.get_gas_limit() + 1)); // +1?
         let ret_vals = if result == 0 || result == 1 {
             if params.ret_vals >= 0 {
                 if params.ret_vals as usize <= child.cc.stack.depth() {
@@ -1199,18 +1197,56 @@ impl Engine {
         }
         self.checked_signatures_count = child.checked_signatures_count;
         self.free_gas_consumed = child.free_gas_consumed;
-        debug_assert!(self.block_version >= 11 || (!params.return_data && !params.return_actions));
-        let (data, actions) = child.cstate.unwrap_or_default();
-        if params.return_data {
-            self.cc.stack.push_cell(data);
-        }
-        if params.return_actions {
-            self.cc.stack.push_cell(actions);
+        // From version 11 a child that never committed returns null for its data and actions,
+        // not empty cells. Before it, the C++ VM pushes a cell entry holding no cell, which is
+        // not reproduced: an empty cell is returned.
+        match child.cstate {
+            None if self.block_version >= 11 => {
+                if params.return_data {
+                    self.cc.stack.push_null();
+                }
+                if params.return_actions {
+                    self.cc.stack.push_null();
+                }
+            }
+            cstate => {
+                let (data, actions) = cstate.unwrap_or_default();
+                if params.return_data {
+                    self.cc.stack.push_cell(data);
+                }
+                if params.return_actions {
+                    self.cc.stack.push_cell(actions);
+                }
+            }
         }
         if params.return_gas {
-            self.cc.stack.push_int(child.gas.get_gas_used());
+            self.cc.stack.push_int(child_gas_used);
         }
         Ok(())
+    }
+
+    /// The exit code of a child VM that stopped with `err`, leaving on its stack what the
+    /// parent receives. A child out of gas keeps only the gas it consumed and exits with the
+    /// complemented out-of-gas code, whatever its stack held. Any other error left its code
+    /// on top of the stack, which is dropped.
+    fn child_exit_after_error(&mut self, err: &Error) -> i32 {
+        if tvm_exception_code(err) == Some(ExceptionCode::OutOfGas) {
+            self.cc.stack = Stack::new();
+            self.cc.stack.push_int(self.gas_used());
+            return !(ExceptionCode::OutOfGas as i32);
+        }
+        match self.cc.stack.pop().and_then(|x| x.as_integer_value(0..=0xFFF)) {
+            Ok(code) => {
+                debug_assert_eq!(code, tvm_exception_or_custom_code(err));
+            }
+            Err(err) => {
+                log::error!(
+                    target: "tvm",
+                    "Failed to pop error code from stack {err:?}",
+                );
+            }
+        }
+        tvm_exception_or_custom_code(err)
     }
 
     // Internal API ***********************************************************
@@ -1227,7 +1263,6 @@ impl Engine {
         self.cmd.proto = proto;
         self.cmd.params.clear();
         self.cmd.vars.clear();
-        self.step += 1;
         self.extract_instruction()
     }
 
@@ -1625,7 +1660,7 @@ impl Engine {
                     self.cmd.push_var(StackItem::Continuation(Arc::new(cont)));
                     self.cc.stack.push(value);
                     self.cmd.vars[n].as_continuation_mut()?.nargs = 1;
-                    switch(self, var!(n))?;
+                    self.switch_counting_out_of_gas(n)?;
                     return Ok(None);
                 } else {
                     self.cc.stack = Stack::new();
@@ -1639,8 +1674,20 @@ impl Engine {
         self.cc.stack.push(value);
         self.cc.stack.push(int!(exception.exception_or_custom_code()));
         self.cmd.vars[n].as_continuation_mut()?.nargs = 2;
-        switch(self, var!(n))?;
+        self.switch_counting_out_of_gas(n)?;
         Ok(None)
+    }
+
+    // Switches to the exception handler. Running out of gas there ends the VM with one more
+    // step than the exception itself, as running out of gas anywhere else does.
+    fn switch_counting_out_of_gas(&mut self, n: usize) -> Status {
+        let result = switch(self, var!(n));
+        if let Err(err) = &result {
+            if tvm_exception_code(err) == Some(ExceptionCode::OutOfGas) {
+                self.step += 1;
+            }
+        }
+        result
     }
 
     pub(in crate::executor) fn last_cmd(&self) -> u8 {
@@ -1750,6 +1797,14 @@ impl Engine {
     }
 }
 
+// The hash of the code cell a trace line points into, or why it is unavailable.
+fn code_cell_hash(code: &SliceData) -> String {
+    match code.cell() {
+        Ok(cell) => format!("{:X}", cell.repr_hash()),
+        Err(err) => format!("unavailable ({err})"),
+    }
+}
+
 #[cfg(test)]
 mod nesting_depth_tests {
     use super::*;
@@ -1793,6 +1848,35 @@ mod nesting_depth_tests {
                 "nesting at the former cap must not be refused for depth"
             );
         }
+    }
+
+    // A parent sees only the top of an erroring child's stack, so it cannot tell a stack of
+    // just the consumed gas from one where the gas sits on the child's own values. This checks
+    // the child's whole stack.
+    #[test]
+    fn child_out_of_gas_leaves_only_the_gas_consumed() -> Status {
+        let mut child = Engine::with_capabilities(0);
+        child.set_gas(Gas::test_with_limit(100));
+        for sentinel in [7, 5000, 7] {
+            child.cc.stack.push_int(sentinel);
+        }
+        let err = child
+            .try_use_gas(108)
+            .err()
+            .ok_or_else(|| error!("108 gas must not fit a limit of 100"))?;
+        assert_eq!(child.child_exit_after_error(&err), !(ExceptionCode::OutOfGas as i32));
+        assert_eq!(child.cc.stack.depth(), 1);
+        assert_eq!(child.cc.stack.get(0)?.as_integer_value(0..=i64::MAX)?, 108);
+        assert_eq!(child.gas_used(), 108);
+        Ok(())
+    }
+
+    #[test]
+    fn trace_names_the_code_cell_by_its_hash() -> Status {
+        let cell = BuilderData::with_raw(vec![0x77], 8)?.into_cell()?;
+        let code = SliceData::load_cell(cell.clone())?;
+        assert_eq!(code_cell_hash(&code), format!("{:X}", cell.repr_hash()));
+        Ok(())
     }
 
     #[test]

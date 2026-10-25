@@ -68,7 +68,7 @@ int main(int argc, char** argv) {
       for (std::string x; std::getline(row, x, '\t');) {
         f.push_back(x);
       }
-      if (f.size() != 9) {
+      if (f.size() != 9 && f.size() != 10) {
         throw std::runtime_error("invalid scenario");
       }
       const int version = std::stoi(f[1]);
@@ -78,9 +78,20 @@ int main(int argc, char** argv) {
         push(stack, f[i]);
       }
       push(stack, f[4]);
-      vm::CellBuilder code;
-      code.store_long(0xf93102, 24);
-      vm::VmState st{vm::load_cell_slice_ref(code.finalize()), version, std::move(stack),
+      td::Ref<vm::Cell> code;
+      if (f.size() == 10) {
+        auto bytes = unhex(f[9]);
+        auto c = vm::std_boc_deserialize(td::Slice(bytes), false, true);
+        if (c.is_error()) {
+          throw std::runtime_error("invalid code BOC");
+        }
+        code = c.move_as_ok();
+      } else {
+        vm::CellBuilder cb;
+        cb.store_long(0xf93102, 24);
+        code = cb.finalize();
+      }
+      vm::VmState st{vm::load_cell_slice_ref(std::move(code)), version, std::move(stack),
                      vm::GasLimits{budget, budget}};
       const int exit = ~st.run();
       long long value = 99;
@@ -90,7 +101,8 @@ int main(int argc, char** argv) {
         }
         value = st.get_stack().pop_int_finite()->to_long();
       }
-      std::cout << f[0] << '\t' << exit << '\t' << st.gas_consumed() << '\t' << value << '\n';
+      std::cout << f[0] << '\t' << exit << '\t' << st.gas_consumed() << '\t' << value << '\t' << st.get_steps_count()
+                << '\n';
       ++count;
     }
     if (file.bad() || count < 20) {

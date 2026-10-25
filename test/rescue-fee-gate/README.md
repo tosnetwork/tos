@@ -44,6 +44,13 @@ What it adds:
   vectors), checked against RFC 8554 Test Case 2 in Python and through `tools/lms_tool`.
 - `suite_scenarios.py`, `suite-scenarios.tsv`, `suite-expected.tsv`, `suite-parity.cpp`,
   `tosctl/src/vm/examples/suite-parity.rs`, `suite_parity_mutations.py`: C++/Rust parity.
+  A scenario may carry a whole program as a code BOC in an optional tenth column, and may
+  expect `R<n>` (normal exit with `n` alone on the stack). Each mutation names the rows that
+  must change, and may name Rust unit tests (by exact path) that must fail for what no row can
+  observe; those tests must pass before the first mutation and after restoring. The
+  `child-*` rows run a child VM with RUNVM inside a parent that ends normally, so each observes
+  what the child returned; their gas values were measured with the C++ VM. Regenerating draws fresh keys for the five `s4-*-random-key` rows; the other
+  rows are deterministic, so keep the committed random-key rows unless they are what changes.
 - Test signers in `tools/`: `build.sh <dir>` builds `slh_tool`, `mldsa_tool` and `lms_tool`
   (RFC 8554 Appendix A key generation from SEED and I, parallel).
 
