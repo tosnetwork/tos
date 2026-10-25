@@ -1,0 +1,94 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="1290" viewBox="0 0 1440 1290" role="img" aria-labelledby="title desc">
+  <title id="title">TOS PR #296 — SLH-DSA SHA-256 Optimization</title>
+  <desc id="desc">Before: SLH-DSA uses portable SHA-256 in sha2_256.c. After, when enabled: slhdsa-sha256.c selects SHA-NI compression or portable fallback by CPU capability at runtime. The SLH-DSA high-level algorithm, verification results, serialization and gas are unchanged. PR-reported median verification times are 746 to 204, 769 to 206, and 410 to 119 microseconds.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8" fill="none" stroke="#64748b" stroke-width="1.5"/></marker>
+    <style>
+      text { font-family: Arial, Helvetica, sans-serif; fill: #14243b; }
+      .title { font-size: 38px; font-weight: 700; }
+      .heading { font-size: 26px; font-weight: 700; }
+      .body { font-size: 21px; }
+      .small { font-size: 18px; }
+      .muted { fill: #52647b; }
+      .mono { font-family: Consolas, Menlo, monospace; font-size: 20px; }
+      .label { font-size: 16px; font-weight: 700; letter-spacing: 1.2px; }
+      .green { fill: #087b5a; }
+      .line { fill: none; stroke: #64748b; stroke-width: 2.5; marker-end: url(#arrow); }
+    </style>
+  </defs>
+  <rect width="1440" height="1290" fill="#f4f7fb"/>
+  <text x="56" y="64" class="label muted">TOS • PR #296 • SLH-DSA-SHA2-128s</text>
+  <text x="56" y="115" class="title">SLH-DSA SHA-256 Optimization</text>
+  <text x="56" y="153" class="body muted">Same cryptographic algorithm. Faster SHA-256 compression on supported CPUs.</text>
+  <rect x="1040" y="49" width="344" height="42" rx="21" fill="#daf4ea"/>
+  <text x="1212" y="76" text-anchor="middle" class="label green">GREEN = CHANGED BACKEND</text>
+
+  <rect x="48" y="191" width="652" height="700" rx="20" fill="#fff" stroke="#d7e0ec"/>
+  <rect x="740" y="191" width="652" height="700" rx="20" fill="#fff" stroke="#a3d8c5" stroke-width="2"/>
+  <text x="80" y="237" class="heading">BEFORE</text>
+  <text x="80" y="268" class="body muted">Imported portable SHA-256</text>
+  <text x="772" y="237" class="heading green">AFTER</text>
+  <text x="772" y="268" class="body muted">TOS_SLHDSA_SHA_NI=ON</text>
+
+  <rect x="80" y="296" width="588" height="105" rx="12" fill="#edf2f8"/>
+  <rect x="772" y="296" width="588" height="105" rx="12" fill="#edf2f8"/>
+  <text x="374" y="332" text-anchor="middle" class="body" font-weight="700">SLH-DSA high-level verification</text>
+  <text x="374" y="366" text-anchor="middle" class="small muted">Message hashing • FORS • WOTS+ • hypertree</text>
+  <text x="1066" y="332" text-anchor="middle" class="body" font-weight="700">SLH-DSA high-level verification</text>
+  <text x="1066" y="366" text-anchor="middle" class="small muted">Message hashing • FORS • WOTS+ • hypertree</text>
+  <path d="M374 402 V438" class="line"/>
+  <path d="M1066 402 V438" class="line"/>
+
+  <rect x="80" y="444" width="588" height="320" rx="12" fill="#f8fafc" stroke="#cbd5e1" stroke-width="2"/>
+  <text x="108" y="479" class="label muted">SHA-256 BACKEND</text>
+  <text x="374" y="522" text-anchor="middle" class="mono">third-party/slhdsa-c/sha2_256.c</text>
+  <text x="374" y="564" text-anchor="middle" class="body muted">Buffering / padding / SHA-256 API</text>
+  <path d="M374 580 V622" class="line"/>
+  <rect x="122" y="638" width="504" height="82" rx="10" fill="#e5ebf3"/>
+  <text x="374" y="671" text-anchor="middle" class="body" font-weight="700">Portable compression</text>
+  <text x="374" y="701" text-anchor="middle" class="small muted">SHA-256 rounds in software</text>
+
+  <rect x="772" y="444" width="588" height="320" rx="12" fill="#edfbf5" stroke="#12a176" stroke-width="3"/>
+  <text x="800" y="479" class="label green">REPLACEMENT • CHANGED</text>
+  <text x="1066" y="518" text-anchor="middle" class="mono" font-weight="700">crypto/pq/slhdsa-sha256.c</text>
+  <text x="1066" y="550" text-anchor="middle" class="small muted">Same API / state layout; buffering and padding copied unchanged</text>
+  <rect x="866" y="571" width="400" height="48" rx="9" fill="#d1f1e3"/>
+  <text x="1066" y="602" text-anchor="middle" class="body" font-weight="700">CPU SHA-NI runtime dispatch</text>
+  <path d="M1066 619 V632 H927 V655" class="line"/>
+  <path d="M1066 632 H1205 V655" class="line"/>
+  <rect x="797" y="663" width="260" height="76" rx="10" fill="#087b5a"/>
+  <rect x="1075" y="663" width="260" height="76" rx="10" fill="#fff" stroke="#93b5a8"/>
+  <text x="927" y="694" text-anchor="middle" class="body" style="fill:#fff" font-weight="700">SHA-NI compression</text>
+  <text x="927" y="721" text-anchor="middle" class="small" style="fill:#fff">Supported CPU</text>
+  <text x="1205" y="694" text-anchor="middle" class="body" font-weight="700">Portable fallback</text>
+  <text x="1205" y="721" text-anchor="middle" class="small muted">Imported compression</text>
+
+  <path d="M374 764 V798" class="line"/>
+  <path d="M1066 764 V798" class="line"/>
+  <rect x="80" y="808" width="588" height="58" rx="10" fill="#edf2f8"/>
+  <rect x="772" y="808" width="588" height="58" rx="10" fill="#edf2f8"/>
+  <text x="374" y="844" text-anchor="middle" class="body">Verification result • serialization • gas</text>
+  <text x="1066" y="844" text-anchor="middle" class="body" font-weight="700">Identical result • serialization • gas</text>
+  <rect x="642" y="311" width="156" height="33" rx="16" fill="#dce5f0"/>
+  <text x="720" y="333" text-anchor="middle" class="label">UNCHANGED</text>
+
+  <text x="56" y="925" class="small muted">Build OFF: original sha2_256.c. Default ON: Linux x86-64, GCC/Clang; OFF elsewhere (macOS, arm64, mobile).</text>
+  <text x="56" y="953" class="small muted">Import remains untouched. CPUID selection is cached per process. CMake and Cargo follow the same build selection.</text>
+
+  <text x="56" y="1005" class="heading">PR-reported measurements</text>
+  <text x="56" y="1035" class="small muted">Standalone median verification time • portable → SHA-NI • lower is better</text>
+  <rect x="48" y="1057" width="432" height="131" rx="14" fill="#fff" stroke="#d7e0ec"/>
+  <rect x="504" y="1057" width="432" height="131" rx="14" fill="#fff" stroke="#d7e0ec"/>
+  <rect x="960" y="1057" width="432" height="131" rx="14" fill="#fff" stroke="#d7e0ec"/>
+  <text x="76" y="1092" class="body" font-weight="700">public-testnet node-1</text>
+  <text x="532" y="1092" class="body" font-weight="700">public-testnet node-3</text>
+  <text x="988" y="1092" class="body" font-weight="700">toserver (Xeon 8455C)</text>
+  <text x="76" y="1144" font-size="36" font-weight="700">746 → <tspan fill="#087b5a">204 µs</tspan></text>
+  <text x="532" y="1144" font-size="36" font-weight="700">769 → <tspan fill="#087b5a">206 µs</tspan></text>
+  <text x="988" y="1144" font-size="36" font-weight="700">410 → <tspan fill="#087b5a">119 µs</tspan></text>
+  <text x="76" y="1172" class="small muted">Icelake KVM • 6 vCPU</text>
+  <text x="532" y="1172" class="small muted">Public testnet VM</text>
+  <text x="988" y="1172" class="small muted">Shared host</text>
+  <text x="56" y="1226" class="small muted">NON-RELEASE measurements: VMs / shared host, not S14 hardware; 32 OpenSSL-generated signatures.</text>
+  <text x="56" y="1255" class="small muted">Source: github.com/tosnetwork/tos/pull/296 • Values reproduced from the PR; not independently remeasured.</text>
+</svg>
