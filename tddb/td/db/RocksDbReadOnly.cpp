@@ -12,7 +12,11 @@
     along with TOS Blockchain Library.  If not, see <http://www.gnu.org/licenses/>.
     Copyright 2017-2020 Telegram Systems LLP
 */
+// The bundled database header triggers this conversion warning.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wimplicit-int-float-conversion"
 #include "rocksdb/db.h"
+#pragma GCC diagnostic pop
 #include "rocksdb/filter_policy.h"
 #include "rocksdb/statistics.h"
 #include "rocksdb/table.h"
