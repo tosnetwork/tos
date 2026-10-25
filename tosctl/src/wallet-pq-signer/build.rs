@@ -1,6 +1,8 @@
 // Copyright 2026 TOS Blockchain Teams. SPDX-License-Identifier: LGPL-2.0-or-later
 use std::{env, path::PathBuf};
 
+include!("../common/build/slhdsa_sha256.rs");
+
 fn main() {
     let manifest = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("manifest directory"));
     let root = manifest.join("../../..");
@@ -12,9 +14,13 @@ fn main() {
     }
     let lms = root.join("third-party/lms-reference");
     println!("cargo:rerun-if-changed={}", lms.display());
+    let sha256 = slhdsa_sha256(&root);
     let openssl = env::var_os("DEP_OPENSSL_INCLUDE").expect("OpenSSL dependency include path");
     let mut signing = cc::Build::new();
     signing.cpp(true).std("c++17").include(&pq).include(&ml).include(&slh).include(&lms);
+    if sha256.sha_ni {
+        signing.define("TOS_SLHDSA_SHA_NI", None);
+    }
     for path in env::split_paths(&openssl) {
         signing.include(path);
     }
@@ -67,8 +73,15 @@ fn main() {
     }
     fee.compile("tos_wallet_lms_primitives");
     let mut build = cc::Build::new();
-    for source in ["slh_dsa.c", "slh_sha2.c", "sha2_256.c", "sha2_512.c"] {
+    for source in ["slh_dsa.c", "slh_sha2.c", "sha2_512.c"] {
         build.file(slh.join(source));
     }
-    build.include(&slh).std("c99").warnings(false).compile("tos_wallet_slh");
+    build
+        .file(&sha256.source)
+        .include(&slh)
+        .include(&pq)
+        .std("c99")
+        .warnings(false)
+        .compile("tos_wallet_slh");
+    sha256.compile_sha_ni("tos_wallet_slh");
 }
