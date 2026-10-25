@@ -1,7 +1,6 @@
 /* Copyright 2026 TOS Blockchain Teams. SPDX-License-Identifier: GPL-3.0-or-later */
 #include <filesystem>
 #include <iostream>
-#include <set>
 #include <thread>
 
 #include "block/block-auto.h"
@@ -12,6 +11,7 @@
 #include "validator/validator-options.hpp"
 
 #include "index-reader.h"
+#include "index-replay.h"
 
 namespace tos::services {
 namespace {
@@ -34,7 +34,11 @@ class Replay {
  public:
   Replay(IndexReader& reader, Progress& progress) : reader_(reader), progress_(progress) {
   }
+  bool idle() const {
+    return progress_.ready.load() && !background_progress_;
+  }
   td::Status step() {
+    background_progress_ = false;
     TRY_RESULT(tip, reader_.tip());
     if (!tip.is_masterchain() || !tip.seqno())
       return td::Status::Error("source has no applied masterchain block");
@@ -72,40 +76,15 @@ class Replay {
       }
       TRY_RESULT(root, reader_.block(master));
       TRY_RESULT(todo, index_shard_heads(root));
-      std::set<BlockIdExt> visited;
-      std::vector<validator::BlockHandle> blocks;
-      while (!todo.empty()) {
-        auto id = todo.back();
-        todo.pop_back();
-        if (!id.seqno() || !visited.insert(id).second)
-          continue;
-        if (visited.size() > 4096)
-          return td::Status::Error("masterchain interval exceeds 4096 shard blocks");
-        TRY_RESULT(handle, reader_.handle(id));
-        if (!handle->is_applied() || !handle->inited_masterchain_ref_block()) {
-          return td::Status::Error("shard block has not been applied");
-        }
-        if (handle->masterchain_ref_block() < next)
-          continue;
-        if (handle->masterchain_ref_block() > next || !handle->inited_prev()) {
-          return td::Status::Error("invalid shard ancestry for masterchain interval");
-        }
-        for (auto parent : handle->prev()) {
-          if (parent.seqno() >= id.seqno())
-            return td::Status::Error("nondecreasing shard ancestry");
-          todo.push_back(parent);
-        }
-        blocks.push_back(std::move(handle));
-      }
-      std::sort(blocks.begin(), blocks.end(),
-                [](const auto& a, const auto& b) { return a->id().seqno() < b->id().seqno(); });
+      TRY_RESULT(blocks, replay_interval(std::move(todo), next, [&](BlockIdExt id) { return reader_.handle(id); }));
       for (auto& handle : blocks) {
         if (stop_requested.load())
           return td::Status::Error("replay interrupted");
         TRY_RESULT(block, reader_.block(handle));
         auto result = wc0_index_block(std::move(block), {}, handle->id(), true);
         if (result != Wc0IndexResult::Done) {
-          drain_wc0_index();
+          if (drain_wc0_index() && result == Wc0IndexResult::AtPendingCap)
+            return td::Status::OK();
           return td::Status::Error("index block not committed; retrying from checkpoint");
         }
       }
@@ -118,7 +97,7 @@ class Replay {
       checkpoint_ = committed;
       progress_.cursor = committed.committed.seqno();
     }
-    drain_wc0_index();
+    background_progress_ = drain_wc0_index();
     // HTTP handlers independently report the persisted token backlog. This
     // flag only says the block replay has reached the observed source tip.
     progress_.checked_at = td::Time::now();
@@ -143,6 +122,7 @@ class Replay {
   IndexReader& reader_;
   Progress& progress_;
   bool initialized_ = false;
+  bool background_progress_ = false;
   WalletIndexDb::ReplayCheckpoint checkpoint_;
   std::vector<BlockIdExt> heads_;
 };
@@ -238,7 +218,7 @@ int main(int argc, char** argv) {
         progress.ready = false;
         LOG(WARNING) << "replay paused: " << status;
       }
-      if (status.is_error() || progress.ready.load()) {
+      if (status.is_error() || replay.idle()) {
         for (int i = 0; i < (status.is_error() ? 50 : 10) && !stop_requested.load(); ++i)
           std::this_thread::sleep_for(std::chrono::milliseconds(100));
       }

@@ -9,6 +9,7 @@
 #include <thread>
 #include <vector>
 
+#include "services/index-replay.h"
 #include "td/actor/actor.h"
 #include "td/utils/Time.h"
 #include "td/utils/logging.h"
@@ -221,4 +222,59 @@ TEST(WalletIndexApply, ApplicationDoesNotCallTheRetiredIndexHookOrLeaseForIt) {
   ASSERT_EQ(calls.load(), 0);
   ASSERT_EQ(g_apply_reads.load(), 0);
   tos::validator::reset_archive_retention_for_testing();
+}
+
+TEST(WalletIndexReplay, IntervalBoundAndParentOrder) {
+  auto lookup = [](tos::BlockIdExt id) -> td::Result<BlockHandle> {
+    auto handle = stored_block(id.seqno(), basechain_id(id.seqno() - 1));
+    handle->set_applied();
+    handle->set_masterchain_ref_block(1);
+    handle->flushed_upto(handle->version());
+    return handle;
+  };
+  auto at_bound = tos::services::replay_interval({basechain_id(4096)}, 1, lookup).move_as_ok();
+  ASSERT_EQ(at_bound.size(), 4096u);
+  ASSERT_EQ(at_bound.front()->id().seqno(), 1u);
+  ASSERT_EQ(at_bound.back()->id().seqno(), 4096u);
+  unsigned reads = 0;
+  auto beyond = tos::services::replay_interval({basechain_id(4097)}, 1, [&](auto id) {
+    ++reads;
+    return lookup(id);
+  });
+  ASSERT_TRUE(beyond.is_error());
+  ASSERT_EQ(reads, 4096u);
+}
+
+TEST(WalletIndexReplay, SplitMergeDeduplicationAndMissingSource) {
+  auto old = basechain_id(1);
+  auto left = basechain_id(2), right = basechain_id(2), merged = basechain_id(3);
+  left.id.shard = tos::shardIdAll >> 1;
+  right.id.shard = tos::shardIdAll | (tos::shardIdAll >> 1);
+  std::map<tos::BlockIdExt, BlockHandle> handles;
+  auto add = [&](auto id, std::vector<tos::BlockIdExt> parents, uint32_t ref) {
+    auto handle = BlockHandleImpl::create_empty(id);
+    handle->set_merge(parents.size() == 2);
+    for (auto parent : parents)
+      handle->set_prev(parent);
+    handle->set_applied();
+    handle->set_masterchain_ref_block(ref);
+    handle->flushed_upto(handle->version());
+    handles[id] = handle;
+  };
+  add(old, {basechain_id(0)}, 1);
+  add(left, {old}, 2);
+  add(right, {old}, 2);
+  add(merged, {left, right}, 2);
+  auto lookup = [&](tos::BlockIdExt id) -> td::Result<BlockHandle> {
+    auto found = handles.find(id);
+    if (found == handles.end())
+      return td::Status::Error("source missing");
+    return found->second;
+  };
+  auto blocks = tos::services::replay_interval({merged, left, right}, 2, lookup).move_as_ok();
+  ASSERT_EQ(blocks.size(), 3u);
+  ASSERT_TRUE(blocks.back()->id() == merged);
+  ASSERT_EQ(blocks.front()->id().seqno(), 2u);
+  handles.erase(right);
+  ASSERT_TRUE(tos::services::replay_interval({merged}, 2, lookup).is_error());
 }
