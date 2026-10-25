@@ -1,97 +1,115 @@
 # Capture and verification receipt
 
-The durable source index is `capture-index.json`. It records every selected block
-and every source block from which an original state-update cell was extracted:
-full block ID, archive package/entry/range, payload SHA-256 and size, and the actual
-independent `lookupBlock` replies from validator roles 1 and 3. `case: null` means
-an extraction source, not an additional replay case. The original selected BOCs
-and required cells are retained in `corpus/`; archive expiration does not remove
-them from the test.
+The corpus was captured offline, from local read-only copies. No host was
+contacted, no node RPC was queried and no live database was opened. The inputs
+were:
 
-`capture-commands.json` retains the exact read-only remote programs and their
-command/stdout/stderr hashes. The earlier 200-block capture used the recorded
-entry-scan template on roles 1 and 3 and compared both payloads byte-for-byte.
-The new capture read named immutable package files, at idle I/O/CPU priority,
-then checked both full IDs. Historical `stop_at` deadlines are deliberately
-preserved in this record; these are audit transcripts, not an instruction to
-ignore a current read window. No live database was opened.
+- `$ARCHIVE_DIR`: the archive packages of a throwaway full node that synced the
+  epoch-5 public testnet (global id 2) from genesis to masterchain 242,333, with
+  their `$ARCHIVE_SHA256SUMS` list. Every package was checked against that list
+  before use.
+- `$IDS_DIR`: full block ids from validators node-1 and node-3, captured with
+  `lookupBlock` and `shards` per masterchain sequence number (TOK-01 117,700–117,950;
+  ConfigParam 15 rounds 151,200–152,000, 161,000–161,250 and 194,800–195,800), and
+  `named-supplement.json`, with node-1/node-3 `lookupBlock` replies for nine named
+  blocks no `shards` reply covers. `$IDS_DIR/SHA256SUMS` lists every id file.
+- `$CON01_RAW`: the rotation capture with node-1/node-3 `lookupBlock`, `shards` and
+  `getMasterchainInfo` replies for masterchain 230,278–230,477.
+- `$GENESIS_ZEROSTATE`: the published genesis zero state, bound by the initial
+  block id: its root and file hashes equal the `init` id that node-1 and node-3
+  return in the rotation capture's `getMasterchainInfo` replies.
 
-The archive retention is finite. A fresh acquisition can fail because a package
-or RPC header is no longer served. That is a failure to reacquire, not evidence
-that different bytes are valid. The committed BOCs, full-ID replies and hashes
-preserve the original observation. The node endpoints/SSH credentials are supplied
-by an authorized operator; they are not embedded in the repository.
+`capture-index.json` is the durable source index. For every selected block and
+every source of original cells it records the full block id, the package, entry
+name, offset, size and SHA-256 of the archive entry, and the node-1 and node-3
+replies (with the SHA-256 of each reply's canonical JSON). `case: null` marks a
+cell source, not a replay case. `capture-commands.json` records the exact local
+programs (text and SHA-256), the order they ran in, their exit codes and the
+hashes of their inputs and outputs.
 
-## Reacquire one indexed entry
+## Selection rule
 
-Run from the repository root, with `ARCHIVE_HOST` naming an authorized archive
-holder and `OUT` a new coordinator scratch file. Under the original collection
-limits use roles 1–2 for payloads, one SSH read at a time per node, at least two
-seconds apart, and no reads during the excluded rotation windows or after the
-approved deadline. Role 3 is used only for the independent RPC ID check.
+A block is a replay case only when node-1 and node-3 each returned exactly one
+full id for it and both equal the root hash and file hash of the archive bytes.
+Masterchain ids come from `lookupBlock`; basechain ids come from the `shards`
+reply of a masterchain block, which names only the newest basechain block it
+registers, or from a named `lookupBlock` capture for the other basechain blocks.
+A basechain block also needs its exact masterchain context in the corpus. A
+planned block without such an id would be excluded and listed in the README;
+none is.
 
-This is the same archive-header/entry read as the recorded programs, scoped to
-one named package and exact entry. It creates no remote file:
+## Original cells
+
+A block's Merkle update carries only the cells its collation visited; the rest
+are pruned. The configuration, the previous-block VM context and some account
+cells read by the replay are therefore pruned in the selected blocks themselves.
+The replay supplies them from other original chain data, matched only by
+level-zero hash, so a supplied cell cannot change any value:
+
+1. `build_index.py` indexes every full ordinary cell of every archived block (the
+   old-state and new-state trees of its state update, and its other cells) by
+   level-zero hash. Every cell of a later state was created by some block, whose
+   new-state tree holds it in full; cells never rewritten since genesis exist only
+   in the zero state.
+2. `resolve.py` runs a diagnostic build of the replay (`epoch-replay.cpp` with the
+   recorded `diagnostic.patch`, which only reports each pruned cell read, including
+   in a shard block's masterchain context, and continues with the next block). For
+   each reported hash it adds the archive block that holds the full cell: a block
+   already selected, else one with a two-validator id, else the nearest. It repeats
+   until no block fails. Only the parts it selects are given to the replay: the
+   whole state-update cell of each source block, the block extra where a cell came
+   from a key block's configuration, and the zero state.
+3. `assemble.py write` packs exactly those roots into `corpus/state-parts.boc`. Each
+   `supplement_roots` entry names its kind, its source block id and the SHA-256 of
+   the archive entry it was taken from. Sources with node-1/node-3 ids carry
+   `verified_rpc_nodes`; the others are bound by hash only.
+
+The diagnostic build is used for this search only. Every result in
+`VALIDATION.json` comes from the unmodified `emulator/test/epoch-replay.cpp`.
+
+## Reproduce
+
+Use a Python 3.14 environment with the codec dependencies of `test/tostester`
+(`bitarray`, `pynacl`, `pycryptodome`). The programs are stored in
+`capture-commands.json`; write every `scripts` entry, under its name, into one new
+directory and run `capture.py` there with these variables set:
 
 ```sh
-ARCHIVE_HOST="$AUTHORIZED_ARCHIVE_HOST" OUT="$SCRATCH_BLOCK" python3 - <<'PY'
-import hashlib, json, os, subprocess, time
-from pathlib import Path
-index = json.loads(Path('test/rel02/capture-index.json').read_text())
-item = next(x for x in index['blocks'] if x['case'] == 'blocks/-1-309465.boc')
-source = next((s for s in item['sources'] if s['node'] in (1, 2)), item['sources'][0])
-host = os.environ['ARCHIVE_HOST']
-assert host and not host.startswith('-')
-program = 'package=' + repr(source['archive_file']) + '\nentry=' + repr(source['entry']) + '\n' + r'''
-import re, struct, sys
-assert re.fullmatch(r'/var/lib/tos/validator/archive/packages/arch\d{4}/archive\.\d+(?:\.-?\d+[_:][0-9a-fA-F]+)?\.pack', package)
-with open(package, 'rb') as f:
-    assert f.read(4) == struct.pack('<I', 0xae8fdd01)
-    while True:
-        header = f.read(8)
-        if not header:
-            raise SystemExit('indexed entry is not served by this package')
-        a, size = struct.unpack('<II', header)
-        assert a & 65535 == 0x1e8b
-        name = f.read(a >> 16).decode()
-        if name == entry:
-            assert size <= 8 * 1024 * 1024
-            data = f.read(size)
-            assert len(data) == size
-            sys.stdout.buffer.write(data)
-            break
-        f.seek(size, 1)
-'''
-result = subprocess.run(['ssh', '-T', '-oBatchMode=yes', host,
-    'ionice -c3 nice -n19 python3 -B -'], input=program.encode(),
-    capture_output=True, timeout=180, check=True)
-assert len(result.stdout) == item['size']
-assert hashlib.sha256(result.stdout).hexdigest() == item['sha256']
-with Path(os.environ['OUT']).open('xb') as f:
-    f.write(result.stdout)
-time.sleep(2)
-PY
+export REPO_DIR="$PWD" ARCHIVE_DIR=... ARCHIVE_SHA256SUMS=... IDS_DIR=... \
+  CON01_RAW=... GENESIS_ZEROSTATE=... WORK_DIR=... REPLAY_DIAG=...
+python3 capture.py
 ```
 
-## Independently check the full IDs
+`REPLAY_DIAG` is the command that runs the diagnostic build (built from this tree
+with `diagnostic.patch` applied, in the `Dockerfile.builder` environment).
+`capture.py` writes `capture-log.json` in `$WORK_DIR`; its entries are the
+`steps` of `capture-commands.json`.
 
-With the existing Python codec dependencies installed, set `RPC_A` and `RPC_B`
-to two distinct authorized validator endpoints (including `/jsonRPC`). On the
-coordinator the recorded roles used ports 18381 and 18383. This sends only
-`lookupBlock`, spaces each endpoint by at least 1.1 seconds, and independently
-computes each committed block's root/file hashes:
+## Check the full ids and the committed bytes
+
+With only the committed files and the id captures:
 
 ```sh
-RPC_A="$AUTHORIZED_RPC_A" RPC_B="$AUTHORIZED_RPC_B" python3 - <<'PY'
-import base64, hashlib, json, os, sys, time, urllib.request
+IDS_DIR=... CON01_RAW=... python3 - <<'PY'
+import base64, hashlib, json, os, sys
 from pathlib import Path
 sys.path.insert(0, 'test/tostester/src')
 from pytosiq_core.boc import Cell
 root = Path('test/rel02/corpus')
 m = json.loads((root / 'manifest.json').read_text())
-urls = [os.environ['RPC_A'], os.environ['RPC_B']]
-assert len(set(urls)) == 2
-last = {u: 0.0 for u in urls}
+replies = {}
+for path in sorted(Path(os.environ['IDS_DIR']).glob('*.json')):
+    for node, per in json.loads(path.read_text()).items():
+        for seq, rec in per.items():
+            shards = rec['shards']['result']['shards'] if 'shards' in rec else []
+            for r in [rec['lookup']['result']] + shards:
+                replies.setdefault((r['workchain'], int(r['seqno'])), {}).setdefault(node, r)
+con = json.loads(Path(os.environ['CON01_RAW']).read_text())
+for node in ('node-1', 'node-3'):
+    for seq, rec in con['nodes'][node]['lookup'].items():
+        rs = [rec['response']['result']] + con['nodes'][node]['shards'][seq]['response']['result']['shards']
+        for r in rs:
+            replies.setdefault((r['workchain'], int(r['seqno'])), {}).setdefault(node, r)
 for entry in m['files']:
     if entry['kind'] != 'block':
         continue
@@ -99,38 +117,19 @@ for entry in m['files']:
     data = (root / entry['path']).read_bytes()
     assert hashlib.sha256(data).hexdigest().upper() == b['file_hash']
     assert Cell.one_from_boc(data).get_hash(0).hex().upper() == b['root_hash']
-    for url in urls:
-        time.sleep(max(0, 1.1 - (time.monotonic() - last[url])))
-        last[url] = time.monotonic()
-        request = {'jsonrpc': '2.0', 'id': 1, 'method': 'lookupBlock', 'params': {
-            'workchain': b['workchain'], 'shard': str(b['shard']), 'seqno': b['seqno']}}
-        req = urllib.request.Request(url, json.dumps(request).encode(),
-            {'Content-Type': 'application/json'})
-        with urllib.request.urlopen(req, timeout=30) as response:
-            answer = json.load(response)
-        assert 'error' not in answer, answer
-        got = answer['result']
-        if isinstance(got.get('id'), dict):
-            got = got['id']
-        normalized = {k: base64.b64decode(got[k]).hex().upper()
-            if k in ('root_hash', 'file_hash') else int(got[k]) for k in b}
-        assert normalized == b, (url, entry['path'], normalized, b)
-print('all full IDs match two validators and the committed bytes')
+    got = replies[(b['workchain'], b['seqno'])]
+    for node in ('node-1', 'node-3'):
+        r = got[node]
+        assert base64.b64decode(r['root_hash']).hex().upper() == b['root_hash'], (node, b)
+        assert base64.b64decode(r['file_hash']).hex().upper() == b['file_hash'], (node, b)
+print('every block equals the node-1 and node-3 full ids')
 PY
 ```
 
-The exact original state-update extraction was:
-
-```fift
-"source-block.boc" file>B B>boc <s ref@+ drop ref@+ drop ref@
-31 boc+>B "state-update.boc" B>file
-```
-
-Its root was checked against the original block's third reference before packing.
 `check_oracle.py` independently checks every packed root's recorded hashes and
-re-decodes the original transaction oracle. `run.py --controls` also performs the
-actual empty-code execution control, in addition to the byte/expected-value
-controls; receipts are uploaded with each architecture's CI result. The negative
-operation shares the normal replay/emulation path and only replaces contract
-code before the emulator call. Removing that replacement must make `--controls`
-fail with `execution control did not change a consensus result`.
+re-decodes the original transaction oracle. `run.py --controls` performs the
+corpus-byte, expected-state and empty-code execution controls; receipts are
+uploaded with each architecture's CI result. The negative operation shares the
+normal replay/emulation path and only replaces contract code before the emulator
+call. Removing that replacement must make `--controls` fail with
+`execution control did not change a consensus result`.

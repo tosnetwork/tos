@@ -3,19 +3,30 @@
   "tested_content": {
     "emulator/test/epoch-replay.cpp": "4a52fc93c335f3b709d13c7c68b795868daa3192dbea3b4db2a4e56d0746b5b0",
     "test/rel02/run.py": "2c6a66529def92bbdacbfcc455bba7ac3451f1e4fcde1e333c8906055e7383c5",
-    "test/rel02/corpus/manifest.json": "f887fb462aaf6367e377aeb6916afa7552b305506d7973019a9401eed7d24324",
-    "test/rel02/corpus/state-parts.boc": "edb28b8889fa7b346c25e3b01e28b0424f355731132f9b4c3f4b663332b7b856",
-    "test/rel02/capture-index.json": "30f4472112ab2eccee3a5f7e21738383a303c67d0ea656ed75c3e5d1868a1cd7",
-    "test/rel02/capture-commands.json": "f8036db5edfd612ec0f55291c1f6f14c1f42982f3d555ab5f2f974fa8bf528a8"
+    "test/rel02/check_oracle.py": "a896cb4b3814c8f4f14a43fc6e622077be77ee0df9e166dad887e84994685190",
+    "test/rel02/corpus/manifest.json": "ec34f70f645a46d04511f9c2a965d4ec6f1d448ca190b072804cfe5ade4a6f80",
+    "test/rel02/corpus/state-parts.boc": "a8516a455b90344b11612b007bd7e12861ddd389ca78cb62765c8dc3c8f07f4c",
+    "test/rel02/capture-index.json": "9a67e463874b822d89b34ddc8d8c6d085b2c7fce6a3fab7df6d2ec158d56fba1",
+    "test/rel02/capture-commands.json": "e09837d9deff252c42b189e8bf0aa82d8f37ab5ccb31e1888a2cce83e736b52a"
   },
-  "environment": "Dockerfile.builder, LLVM 21.1.8, x86_64; Release, jemalloc, x86-64-v2",
-  "command": "cmake --build build --target test-epoch-replay --parallel 8 && python3 test/rel02/run.py --executable build/emulator/test-epoch-replay --output result/outputs.jsonl --controls",
+  "base": "f58402109",
+  "environment": "Dockerfile.builder (builder-24), LLVM 21.1.8, x86_64; Release, jemalloc, x86-64-v2",
+  "command": "cmake --build build --target test-epoch-replay --parallel 16 && python3 test/rel02/test_run.py && python3 test/rel02/run.py --executable build/emulator/test-epoch-replay --output result/outputs.jsonl --metrics result/metrics.json --controls && python3 test/rel02/check_oracle.py",
+  "binary_sha256": "77edac846a07a1cece80c49855159e1dae7977170b86efbaa4689ab3004bbe61",
   "positive_exit": 0,
+  "outputs": {
+    "blocks": 351,
+    "records": 845,
+    "sha256": "ed331f01844cc4fc07511f2a6e3b6eeca692670d89f193b5bc02322e533d4a13"
+  },
+  "check_oracle": "PASS: 351 blocks, 845 original records",
+  "test_run": "8 tests OK",
+  "lite_proof_content": "test-lite-proof-content test/rel02/corpus/blocks: exit 0",
   "controls": [
     {
       "control": "corpus-byte",
       "exit": 1,
-      "reason": "corpus SHA-256/size mismatch: blocks/-1-269566.boc"
+      "reason": "corpus SHA-256/size mismatch: blocks/-1-117750.boc"
     },
     {
       "control": "corpus-byte-restored",
@@ -24,7 +35,7 @@
     {
       "control": "expected-state",
       "exit": 1,
-      "reason": "on-chain oracle: first differing item/field $[0].new_state_hash: expected \"0000000000000000000000000000000000000000000000000000000000000000\", got \"0FDF1E26B26D830150BB98568AA4782C2A1B33FB6BC5AF75B3580D0E28DA850B\""
+      "reason": "on-chain oracle: first differing item/field $[0].new_state_hash: expected \"0000000000000000000000000000000000000000000000000000000000000000\", got \"26B4424BF886CB6F6AB7B1519FEC7113D2729C274C1F4E7BDC83A33575A211F6\""
     },
     {
       "control": "expected-state-restored",
@@ -35,7 +46,7 @@
       "operation": "--run-empty-code-control",
       "exit": 1,
       "native_exit": 1,
-      "reason": "on-chain oracle: first differing item/field $[1].account_hash: expected \"B644257EC3B67BC72BA743A97C08DF3F21C6BF79FE305630DBA24452987B1C6D\", got \"4322A88B1BAC0CFEA4BE4999A51310C8724DCF09879FAEF43EA990261A3A621A\""
+      "reason": "on-chain oracle: first differing item/field $[1].account_hash: expected \"B80BC0BA154981F67009442B9EC6E477DA9F0AA2C8702863DCFDF9EDB048C0A7\", got \"C10072CFB6DABE0FD1DC0D7DAF56D0146D40FCCEF5ACC3D4E87272BA5AFE66D4\""
     },
     {
       "control": "execution-code-restored",
@@ -47,7 +58,8 @@
     "red_exit": 1,
     "restored_exit": 0,
     "assertion": "execution control did not change a consensus result",
-    "source_restored_sha256": "4a52fc93c335f3b709d13c7c68b795868daa3192dbea3b4db2a4e56d0746b5b0"
+    "source_restored_sha256": "4a52fc93c335f3b709d13c7c68b795868daa3192dbea3b4db2a4e56d0746b5b0",
+    "restored_outputs_sha256": "ed331f01844cc4fc07511f2a6e3b6eeca692670d89f193b5bc02322e533d4a13"
   },
   "sensitivity_reproduction": [
     "In a disposable checkout, replace the if (empty_code_control) / account.code = vm::CellBuilder{}.finalize(); block with (void)empty_code_control;",
@@ -56,5 +68,5 @@
   ],
   "hosted_workflow": ".github/workflows/epoch-replay.yml",
   "hosted_artifacts": "epoch-replay-x86-64 and epoch-replay-arm64, retained 30 days; contain outputs.jsonl, metrics.json and outputs.controls.json",
-  "scope": "State-update application and transaction execution, not full block validation. No real Token/NFT or split/merge case is claimed."
+  "scope": "State-update application and transaction execution, not full block validation. Epoch-5 public testnet (global id 2). No split/merge case is claimed."
 }
