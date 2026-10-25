@@ -106,6 +106,13 @@ def scenarios():
     add("setcpx-nan", prog(pushint(7), PUSHNAN, SETCPX))
     add("setcpx-null", prog(pushint(7), PUSHNULL, SETCPX))
     add("setcpx-empty", prog(SETCPX))
+    add("setcp-5", prog(pushint(7), op([0xFF, 0x05])))
+    add("setcpx-20000", prog(pushint(7), pushint(20000), SETCPX))
+    # A refused SETCP caught by TRY: execution goes on in codepage 0.
+    add(
+        "setcp-1-caught-by-try",
+        prog(op([0x92, 0xFF, 0x01]), op([0x92, 0x5B, 0x79]), op([0xF2, 0xFF]), pushint(7)),
+    )
     # SETGASLIMIT: at most 0 means 0, 2^63 and more mean unlimited (capped by the maximum), NaN is
     # an integer overflow. A limit below the gas already used is out of gas.
     add("setgaslimit-5000", prog(pushint(5000), SETGASLIMIT, pushint(7)))

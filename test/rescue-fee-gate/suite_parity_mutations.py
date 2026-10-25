@@ -343,7 +343,15 @@ MUTATIONS = {
         [("    if code_page != 0 {\n", "    if false {\n")],
         (),
         (),
-        ("setcp-1", "setcp-minus-1", "setcpx-1", "setcpx-minus-32768"),
+        (
+            "setcp-1",
+            "setcp-minus-1",
+            "setcp-5",
+            "setcpx-1",
+            "setcpx-20000",
+            "setcpx-minus-32768",
+            "setcp-1-caught-by-try",
+        ),
     ),
     "SETCPX limited to 16384": Mutation(
         HANDLERS,
