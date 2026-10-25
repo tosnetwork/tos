@@ -69,10 +69,71 @@ MUTATIONS = {
         [("const FALCON512_MIN_VERSION: u32 = 16;", "const FALCON512_MIN_VERSION: u32 = 17;")],
         ("s2-valid",),
     ),
-    "SLH base gas 750,000 -> 749,999": Mutation(
+    "SLH base gas 4,500 -> 4,499": Mutation(
         PQ,
-        [("const SLH_BASE_GAS: i64 = 750_000;", "const SLH_BASE_GAS: i64 = 749_999;")],
-        ("s3-valid", "s3-out-of-gas-base"),
+        [("const SLH_BASE_GAS: i64 = 4_500;", "const SLH_BASE_GAS: i64 = 4_499;")],
+        ("s3-valid", "s3-out-of-gas-base-last", "p-child-oog-base-value"),
+    ),
+    "SLH byte gas 0 -> 1": Mutation(
+        PQ,
+        [("const SLH_BYTE_GAS: i64 = 0;", "const SLH_BYTE_GAS: i64 = 1;")],
+        ("s3-valid", "p-child-oog-load-value"),
+    ),
+    "SLH attempts per execution 1 -> 2": Mutation(
+        PQ,
+        [("const SLH_MAX_PER_EXECUTION: u32 = 1;", "const SLH_MAX_PER_EXECUTION: u32 = 2;")],
+        ("p-two-calls", "p-child-then-parent", "p-restore-oog-then-parent"),
+    ),
+    "SLH attempt not counted": Mutation(
+        PQ,
+        [("            engine.slh_counter = engine.slh_counter.saturating_add(1);\n", "")],
+        ("p-two-calls", "p-child-oog-base-then-parent"),
+    ),
+    "SLH attempt taken after the base charge": Mutation(
+        PQ,
+        [
+            (
+                "            engine.slh_counter = engine.slh_counter.saturating_add(1);\n"
+                "            engine.try_use_gas(SLH_BASE_GAS)?;\n",
+                "            engine.try_use_gas(SLH_BASE_GAS)?;\n"
+                "            engine.slh_counter = engine.slh_counter.saturating_add(1);\n",
+            )
+        ],
+        ("p-child-oog-base-then-parent",),
+    ),
+    "SLH attempt taken after the operands load": Mutation(
+        PQ,
+        [
+            ("            engine.slh_counter = engine.slh_counter.saturating_add(1);\n", ""),
+            (
+                "            let message = read_bytes_priced(engine, message, MAX_MESSAGE_BYTES, "
+                "SLH_BYTE_GAS)?;\n",
+                "            let message = read_bytes_priced(engine, message, MAX_MESSAGE_BYTES, "
+                "SLH_BYTE_GAS)?;\n"
+                "            engine.slh_counter = engine.slh_counter.saturating_add(1);\n",
+            ),
+        ],
+        ("p-child-oog-load-then-parent", "p-try-malformed-then-retry"),
+    ),
+    "SLH count reset on child entry": Mutation(
+        CORE,
+        [("            slh_counter: self.slh_counter,", "            slh_counter: 0,")],
+        ("p-parent-then-child", "p-parent-empty-child-then-parent"),
+    ),
+    "SLH count not written back from the child": Mutation(
+        CORE,
+        [("        self.slh_counter = child.slh_counter;\n", "")],
+        ("p-child-then-parent", "p-child-isolated-then-parent", "p-restore-oog-then-parent"),
+    ),
+    "SLH count reset by isolate_gas": Mutation(
+        CORE,
+        [
+            (
+                "            self.checked_signatures_count = 0;\n",
+                "            self.checked_signatures_count = 0;\n            self.slh_counter = 0;\n",
+            )
+        ],
+        ("p-parent-then-child-isolated", "p-parent-empty-child-isolated-then-parent"),
     ),
     "instruction step not counted on fetch": Mutation(
         CORE,

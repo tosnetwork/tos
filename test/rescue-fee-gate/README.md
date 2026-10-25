@@ -31,7 +31,8 @@ What it adds:
 - `crypto/vm/pqops.{h,cpp}` and `tosctl/src/vm/src/executor/{pq.rs,lms_fee.rs}`, `tosctl/src/vm/slh-shim.c`:
   `PQCHECKSIG_SUITE` — `message context signature public_key suite -> bool` — in both VMs.
   Suite 1 ML-DSA-44 and suite 2 Falcon-512 dispatch to the existing verifiers; suite 3 is
-  Pure SLH-DSA-SHA2-128s, charged a flat 750,000 gas before verification (unapproved estimate);
+  Pure SLH-DSA-SHA2-128s, charged a flat 4,500 gas before its operands are loaded, at most one
+  attempt per top-level execution including child VMs (see `doc/GlobalVersions.md`);
   suite 4 is the fee gate, charged 500 + 3 gas per worst-case compression before the signature
   is read (prototype tariff). The Rust suite 4 is an independent port.
 - `crypto/smartcont/rescue-fee-vault-slot.fc`: the time-slot fee vault — pinned target, value
@@ -43,7 +44,8 @@ What it adds:
 - `fee_key.py`, `fee-kdf-vectors.json`: the fee-key derivation from the wallet master (H20/W4
   vectors), checked against RFC 8554 Test Case 2 in Python and through `tools/lms_tool`.
 - `suite_scenarios.py`, `suite-scenarios.tsv`, `suite-expected.tsv`, `suite-parity.cpp`,
-  `tosctl/src/vm/examples/suite-parity.rs`, `suite_parity_mutations.py`: C++/Rust parity.
+  `tosctl/src/vm/examples/suite-parity.rs`, `suite_parity_mutations.py`: C++/Rust parity,
+  including the `p-*` programs for the per-execution SLH-DSA attempt limit across child VMs.
   A scenario may carry a whole program as a code BOC in an optional tenth column, and may
   expect `R<n>` (normal exit with `n` alone on the stack). Each mutation names the rows that
   must change, and may name Rust unit tests (by exact path) that must fail for what no row can

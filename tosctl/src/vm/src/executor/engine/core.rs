@@ -94,6 +94,11 @@ pub struct Engine {
     pub(in crate::executor) libraries: Vec<HashmapE>, // 256 bit dictionaries
     pub(in crate::executor) modifiers: BehaviorModifiers,
     pub(in crate::executor) checked_signatures_count: usize,
+    // SLH-DSA verification attempts of this top-level execution. Unlike
+    // checked_signatures_count it is inherited by every child VM, isolated or not,
+    // and written back before the parent resumes. Any new path that builds an
+    // Engine inside an execution must carry it the same way.
+    pub(in crate::executor) slh_counter: u32,
     // get_extra_balance_counter: usize, // TODO: what is it?
     // SliceData::load_cell() is faster than trying to cache SliceData for each
     // visited cell with HashMap<UInt256, SliceData>
@@ -216,6 +221,7 @@ impl Engine {
             libraries: Vec::new(),
             modifiers: BehaviorModifiers::default(),
             checked_signatures_count: 0,
+            slh_counter: 0,
             visited_cells: HashSet::new(),
             cstate: None,
             time: 0,
@@ -1120,6 +1126,8 @@ impl Engine {
             libraries: self.libraries.clone(),
             modifiers: self.modifiers.clone(),
             checked_signatures_count,
+            // Not reset by isolate_gas.
+            slh_counter: self.slh_counter,
             visited_cells,
             cstate: None,
             time: self.time,
@@ -1152,6 +1160,8 @@ impl Engine {
             Ok(result) => result,
             Err(err) => child.child_exit_after_error(&err),
         };
+        // Before anything below can fail (the child gas charge may run out of gas).
+        self.slh_counter = child.slh_counter;
         // let mut result = child.execute().unwrap_or_else(|err| tvm_exception_or_custom_code(&err));
         log::debug!(
             target: "tvm",
@@ -1889,5 +1899,24 @@ mod nesting_depth_tests {
                 "nesting far beyond the former cap must not be refused for depth"
             );
         }
+    }
+
+    // The SLH-DSA attempt count belongs to the whole execution: an empty child, isolated or
+    // not, must hand the parent's count back unchanged. Resetting it on child entry or for
+    // isolate_gas would let a parent verify again after running an empty isolated child.
+    #[test]
+    fn empty_child_vm_keeps_the_slh_attempt_count() -> Status {
+        for isolate_gas in [false, true] {
+            let mut engine = engine_at_depth(0);
+            engine.slh_counter = 1;
+            engine.run_child_vm(RunChildVm {
+                data: StackItem::cell(Cell::default()),
+                c7: StackItem::tuple(vec![]),
+                isolate_gas,
+                ..minimal_child_params()
+            })?;
+            assert_eq!(engine.slh_counter, 1, "isolate_gas = {isolate_gas}");
+        }
+        Ok(())
     }
 }

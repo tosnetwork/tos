@@ -107,6 +107,10 @@ class VmState final : public VmStateInterface {
   td::uint16 max_data_depth = 512;  // Default value
   int global_version{0};
   size_t chksgn_counter = 0;
+  // SLH-DSA verification attempts of this top-level execution. Unlike chksgn_counter it is
+  // inherited by every child VM, isolated or not, and written back before the parent resumes.
+  // Any new mechanism that creates a VmState inside an execution must carry it the same way.
+  unsigned slh_counter = 0;
   size_t get_extra_balance_counter = 0;
   long long free_gas_consumed = 0;
   std::unique_ptr<ParentVmState> parent = nullptr;
@@ -444,6 +448,15 @@ class VmState final : public VmStateInterface {
         consume_free_gas(chksgn_gas_price);
       }
     }
+  }
+  // Consumes one SLH-DSA attempt before any of its gas is charged, so a later failure (out of
+  // gas, malformed input) does not return it; past the limit the instruction fails with
+  // range_chk without loading operands.
+  void register_slh_attempt(unsigned limit) {
+    if (slh_counter >= limit) {
+      throw VmError{Excno::range_chk, "SLH-DSA verification limit of this execution reached"};
+    }
+    ++slh_counter;
   }
   bool register_get_extra_balance_call() {
     ++get_extra_balance_counter;

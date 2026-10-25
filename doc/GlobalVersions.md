@@ -481,13 +481,36 @@ PATH7 adds no separate transaction-engine change.
   dispatches suite 1 ML-DSA-44, suite 2 Falcon-512 padded, suite 3
   SLH-DSA-SHA2-128s and suite 4 the one-level HSS/LMS fee verifier. Suite 2 shares
   `F93101`'s version gate.
+- Suite 3 charges a flat 4,500 gas after the stack and type checks and before
+  reading any operand cell, then ordinary cell
+  loads; there is no per-byte charge. Valid, invalid and malformed signatures
+  cost the same up to the point of failure. One complete check with operands
+  pushed on the stack costs 11,039 gas
+  (`test/rescue-fee-gate/suite-expected.tsv`, row `s3-valid`).
+- One top-level execution, together with all of its child VMs (`RUNVM`, isolated
+  or not), may make at most one suite 3 attempt. The attempt is taken after the
+  suite is dispatched and before the base charge, and it is not given back when
+  the check returns false, its operands are malformed, or it runs out of gas. A
+  second attempt fails with a range check (exit 5) before its base charge and
+  before any operand is loaded. The count (`slh_counter`) is passed to every
+  child VM, including isolated ones, and copied back to the parent whenever the
+  parent resumes after the child, before the parent is charged for the child's
+  gas.
+  Any future mechanism that creates a VM state inside an execution must carry
+  `slh_counter` the same way.
+- The suite 3 tariff assumes validators verify with SHA-NI, which is a hardware
+  requirement ([Validator.md](Validator.md#cpu-instruction-set)). It covers about
+  409 µs of verification at 37 ns per gas. If the adversarial worst case measured
+  on release hardware exceeds that, the base charge must be raised, up to 7,145,
+  which keeps the minimal rescue wallet under a credit of 18,000 gas.
 - `LMSCHECKFEEHASH` (`F93103`, `hash leaf signature public_key - valid`) is the
   fixed H20/W4 fee-admission profile. See [tvm-lms-fee-hash.md](tvm-lms-fee-hash.md).
 
-All three are rejected as invalid (exit 6) at versions 0-15. The Falcon,
-SLH-DSA and LMS tariffs are prototype values pending reference-hardware
-calibration and protocol approval; profile acceptance bytes cannot later be
-reinterpreted as formal FN-DSA.
+All three are rejected as invalid (exit 6) at versions 0-15. The Falcon and
+LMS tariffs are prototype values pending reference-hardware calibration and
+protocol approval. The SLH-DSA tariff is calibrated on a SHA-NI host, but it
+still has to be confirmed on release hardware, as described above. Profile
+acceptance bytes cannot later be reinterpreted as formal FN-DSA.
 
 ### c7 tuple
 

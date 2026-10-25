@@ -42,6 +42,11 @@ CHILD_GAS = {
     "nested-restore": 301,
 }
 C2_SWITCH_LIMIT = 1_060  # exception price paid; its 47-value stack is not
+# Gas limits of a child running one SLH-DSA check (C++ VM, measured on feat/slh-reprice-4500):
+# the child reaches the base charge after 234 gas, so 235-4,733 runs out at the base charge and
+# 4,734-11,238 while loading operands; 11,239 completes.
+CHILD_GAS_AT_BASE = 3_000
+CHILD_GAS_AT_LOAD = 9_000
 
 
 def chain(data):
@@ -224,7 +229,12 @@ def main(out):
     add("s3-no-context", "I", "int:3", msg, b"", ssig, spk)
     add("s3-long-signature", "E9", "int:3", msg, CTX_AUTH, ssig + b"\0", spk)
     add("s3-short-signature", "E9", "int:3", msg, CTX_AUTH, ssig[:-1], spk)
-    add("s3-out-of-gas-base", "E-14", "int:3", msg, CTX_AUTH, ssig, spk, budget=749_000)
+    # The dispatch costs 34 gas, then the flat 4,500: 34-4,533 runs out at the base charge
+    # (consumed 4,534 either way); 4,534 passes it and runs out at the first operand cell load.
+    add("s3-out-of-gas-dispatch", "E-14", "int:3", msg, CTX_AUTH, ssig, spk, budget=33)
+    add("s3-out-of-gas-base", "E-14", "int:3", msg, CTX_AUTH, ssig, spk, budget=4_000)
+    add("s3-out-of-gas-base-last", "E-14", "int:3", msg, CTX_AUTH, ssig, spk, budget=4_533)
+    add("s3-out-of-gas-first-load", "E-14", "int:3", msg, CTX_AUTH, ssig, spk, budget=4_534)
 
     # Suite 4: the fee profile H20/W4, from a key derived like a wallet's.
     seed, ident = fee_key.derive_fee_seed(bytes(32), bytes(32), 42, 0, 0, bytes(32))
@@ -283,6 +293,89 @@ def main(out):
             (tmp / "m4.sig").read_bytes(),
             (tmp / f"{name}.pub").read_bytes(),
         )
+
+    # Programs: one SLH-DSA attempt per top-level execution, shared by every child VM. A second
+    # attempt fails with a range check before its base charge or any operand load. Each E5 row
+    # has a control beside it that differs only in the second check (ML-DSA instead of SLH-DSA),
+    # so the program reaches the second check and the failure is the limit, not the setup.
+    S = (msg, CTX_AUTH, ssig, spk)
+    L = (msg, CTX_AUTH, ssig + b"\0", spk)  # fails while loading, after its base charge
+    M = (msg, CTX_ML, msig, mpk)
+    slh, ml = call(S, 3), call(M, 1)
+    child = prog(slh)
+    empty = prog()
+    for second, suffix, exit5 in ((slh, "", "E5"), (ml, "-control", "V")):
+        add_program(f"p-two-calls{suffix}", exit5, prog(slh, DROP, second))
+        add_program(
+            f"p-try-malformed-then-retry{suffix}",
+            exit5,
+            prog(op([0x8A], prog(call(L, 3))), op([0x8A], prog(blkdrop(2), second)), TRY),
+        )
+        for flags, kind in ((0, ""), (128, "-isolated")):
+            add_program(
+                f"p-child{kind}-then-parent{suffix}",
+                exit5,
+                prog(runvm(child, flags), blkdrop(2), second),
+            )
+            add_program(
+                f"p-parent-empty-child{kind}-then-parent{suffix}",
+                exit5,
+                prog(slh, DROP, runvm(empty, flags), DROP, second),
+            )
+            add_program(
+                f"p-grandchild{kind}-then-parent{suffix}",
+                exit5,
+                prog(runvm(prog(runvm(child, flags), blkdrop(2)), 0), DROP, second),
+            )
+    add_program("p-ml-slh-ml", "V", prog(ml, slh, AND, ml, AND))
+    add_program("p-child-valid", "V", prog(runvm(child, 0), DROP))
+    add_program("p-child-isolated-valid", "V", prog(runvm(child, 128), DROP))
+    # The child's own exit code is left on the stack: 5 is the limit inside the child.
+    for flags, kind in ((0, ""), (128, "-isolated")):
+        add_program(
+            f"p-parent-then-child{kind}", "R5", prog(slh, DROP, runvm(child, flags), ONLYTOP)
+        )
+        add_program(
+            f"p-sibling-then-child{kind}",
+            "R5",
+            prog(runvm(child, 128 - flags), blkdrop(2), runvm(child, flags), ONLYTOP),
+        )
+        add_program(
+            f"p-grandchild{kind}-then-child",
+            "R5",
+            prog(runvm(prog(runvm(child, flags), blkdrop(2), slh), 0), ONLYTOP),
+        )
+    # A child that runs out of gas still used its attempt: at the base charge (the attempt is
+    # taken before it), and while loading operands. RUNVM then returns the gas the child consumed,
+    # exit code -14 and, for +8, that gas again; each is observed, and the parent drops exactly
+    # those three values before its own next check. The exit and value rows keep only the value
+    # they observe, so a child that does not run out of gas still gives a comparable row; the
+    # depth rows check the shape.
+    oog_exit = (DROP, ONLYTOP)  # DROP the gas: the exit code is left on top
+    oog_value = (op([0x5B]), ONLYTOP)  # 2DROP: the value the child returned is left on top
+    oog_depth = (op([0x68]), ONLYTOP)
+    # The gas returned is what the child consumed, which passes its limit by the whole charge
+    # that failed: 234 + 4,500 at the base charge; the cell load in progress at 9,000.
+    oog_cases = [
+        (f"p-child-oog-{where}", runvm(child, 8, gas), consumed)
+        for gas, where, consumed in (
+            (CHILD_GAS_AT_BASE, "base", 4_734),
+            (CHILD_GAS_AT_LOAD, "load", 9_034),
+        )
+    ]
+    # The child runs out of gas while being charged for its grandchild's gas, after the
+    # grandchild used the attempt: the count must already be back in the child by then. The
+    # grandchild runs out loading operands; the child pays its gas capped at the grandchild's
+    # limit plus one, which takes the child one past its own limit.
+    restore = runvm(prog(runvm(child, 0), blkdrop(2)), 8, CHILD_GAS_AT_LOAD)
+    oog_cases.append(("p-restore-oog", restore, CHILD_GAS_AT_LOAD + 1))
+    for name, oog, consumed in oog_cases:
+        add_program(f"{name}-exit", "R-14", prog(oog, oog_exit))
+        add_program(f"{name}-value", f"R{consumed}", prog(oog, oog_value))
+        add_program(f"{name}-gas", f"R{consumed}", prog(oog, ONLYTOP))
+        add_program(f"{name}-depth", "R3", prog(oog, oog_depth))
+        add_program(f"{name}-then-parent", "E5", prog(oog, blkdrop(3), slh))
+        add_program(f"{name}-then-parent-control", "V", prog(oog, blkdrop(3), ml))
 
     # Dispatcher.
     add("unknown-suite-0", "E5", "int:0", msg, CTX_ML, msig, mpk)
