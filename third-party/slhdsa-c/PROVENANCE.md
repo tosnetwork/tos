@@ -11,8 +11,9 @@ SHAKE parameter sets, SHA-3, prehash (HashSLH-DSA) and the upstream test tree ar
 The node compiles these files into a verify-only target. With `TOS_SLHDSA_SHA_NI` on (the
 default for Linux x86-64), `crypto/pq/slhdsa-sha256.c` is compiled in place of `sha2_256.c`:
 it builds this `sha2_256.c` under private names for its portable fallback, copies its buffering
-and padding code unchanged, and adds an SHA-NI compression path chosen at run time. The imported
-files themselves stay byte-for-byte; `test-pq-slhdsa-sha256-backend` compares the two. The TOS adapter
+and padding code unchanged, and adds an SHA-NI compression path chosen at run time, which is the
+unmodified transform vendored in `third-party/bitcoin-sha256`. The imported files themselves stay
+byte-for-byte; `test-pq-slhdsa-sha256-backend` compares the two. The TOS adapter
 (`crypto/pq/slhdsa128s.cpp`) exposes exactly one profile: Pure SLH-DSA-SHA2-128s
 verification with an explicit context. It does not expose signing, key generation, RNG or any
 other parameter set. The other SHA2 parameter tables are still compiled, because they sit in

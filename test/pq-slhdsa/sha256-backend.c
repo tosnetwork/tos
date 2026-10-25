@@ -1,7 +1,8 @@
 /* Copyright 2026 TOS Blockchain Teams. SPDX-License-Identifier: LGPL-2.0-or-later */
 /* crypto/pq/slhdsa-sha256.c against the unmodified imported sha2_256.c, on the CPU-selected path
  * and again with the portable path forced. Covers every entry point the SLH code uses, including
- * final_pad followed by a direct compression of the padded state (the WOTS chain loop).
+ * final_pad followed by a direct compression of the padded state (the WOTS chain loop), and the
+ * CPU probe's decision for each missing required extension.
  * Checks stay on under NDEBUG. TOS_REQUIRE_SHA_NI=1 fails the run unless the SHA-NI path is
  * the one selected on this CPU. */
 #include <stdio.h>
@@ -170,8 +171,25 @@ static void against_reference(void)
   }
 }
 
+/* The probe accepts SHA-NI only with every extension the vendored transform is compiled for:
+ * SSSE3, SSE4.1, SSE4.2 (CPUID leaf 1 ECX bits 9, 19, 20) and SHA (leaf 7 EBX bit 29). */
+static void cpu_probe(void)
+{
+  const unsigned ssse3 = 1u << 9, sse41 = 1u << 19, sse42 = 1u << 20, sha = 1u << 29;
+  const unsigned all1 = ssse3 | sse41 | sse42;
+  CHECK(tos_slhdsa_sha256_accepts_cpu(all1, sha) == 1);
+  CHECK(tos_slhdsa_sha256_accepts_cpu(0xFFFFFFFFu, 0xFFFFFFFFu) == 1);
+  CHECK(tos_slhdsa_sha256_accepts_cpu(all1 & ~ssse3, sha) == 0);
+  CHECK(tos_slhdsa_sha256_accepts_cpu(all1 & ~sse41, sha) == 0);
+  CHECK(tos_slhdsa_sha256_accepts_cpu(all1 & ~sse42, sha) == 0);
+  CHECK(tos_slhdsa_sha256_accepts_cpu(all1, 0) == 0);
+  CHECK(tos_slhdsa_sha256_accepts_cpu(0xFFFFFFFFu & ~sse42, 0xFFFFFFFFu) == 0);
+  CHECK(tos_slhdsa_sha256_accepts_cpu(0xFFFFFFFFu, 0xFFFFFFFFu & ~sha) == 0);
+}
+
 int main(void)
 {
+  cpu_probe();
   const char *selected = tos_slhdsa_sha256_backend();
   printf("CPU-selected backend: %s\n", selected);
   const char *require = getenv("TOS_REQUIRE_SHA_NI");

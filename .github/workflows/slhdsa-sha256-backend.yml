@@ -5,6 +5,7 @@ on:
       - 'crypto/pq/slhdsa*'
       - 'crypto/pq/CMakeLists.txt'
       - 'third-party/slhdsa-c/**'
+      - 'third-party/bitcoin-sha256/**'
       - 'test/pq-slhdsa/**'
       - 'tosctl/src/common/build/slhdsa_sha256.rs'
       - 'tosctl/src/vm/build.rs'

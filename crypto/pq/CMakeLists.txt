@@ -379,17 +379,28 @@ else()
 endif()
 option(TOS_SLHDSA_SHA_NI "SLH-DSA verifier uses the SHA-NI SHA-256 backend" ${TOS_SLHDSA_SHA_NI_DEFAULT})
 if(TOS_SLHDSA_SHA_NI)
-  if(NOT CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64)$" OR NOT CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang)$")
+  if(NOT CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64)$" OR NOT CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang)$"
+     OR NOT CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang)$")
     message(FATAL_ERROR "TOS_SLHDSA_SHA_NI needs an x86-64 target and GCC or Clang")
   endif()
-  set(TOS_SLHDSA_SHA256_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/slhdsa-sha256.c")
+  # The SHA-NI transform is vendored unchanged (third-party/bitcoin-sha256/PROVENANCE.md) and
+  # built as its upstream builds it; only that file gets the instruction-set flags.
+  set(TOS_SHA256_SHANI_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../third-party/bitcoin-sha256")
+  set(TOS_SHA256_SHANI_SOURCE "${TOS_SHA256_SHANI_DIR}/sha256_x86_shani.cpp")
+  set_source_files_properties("${TOS_SHA256_SHANI_SOURCE}" PROPERTIES
+    COMPILE_DEFINITIONS "ENABLE_SSE41;ENABLE_X86_SHANI"
+    COMPILE_OPTIONS "-msse4.1;-msse4;-msha"
+    INCLUDE_DIRECTORIES "${TOS_SHA256_SHANI_DIR}")
+  set(TOS_SLHDSA_SHA256_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/slhdsa-sha256.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/slhdsa-sha256-shani.cpp" "${TOS_SHA256_SHANI_SOURCE}")
 else()
-  set(TOS_SLHDSA_SHA256_SOURCE "${TOS_SLHDSA_SOURCE_DIR}/sha2_256.c")
+  set(TOS_SLHDSA_SHA256_SOURCES "${TOS_SLHDSA_SOURCE_DIR}/sha2_256.c")
 endif()
 message(STATUS "SLH-DSA SHA-256 backend: TOS_SLHDSA_SHA_NI=${TOS_SLHDSA_SHA_NI}")
 add_library(tos_slhdsa_native STATIC "${TOS_SLHDSA_SOURCE_DIR}/slh_dsa.c" "${TOS_SLHDSA_SOURCE_DIR}/slh_sha2.c"
-  "${TOS_SLHDSA_SHA256_SOURCE}" "${TOS_SLHDSA_SOURCE_DIR}/sha2_512.c")
-set_target_properties(tos_slhdsa_native PROPERTIES C_STANDARD 99 POSITION_INDEPENDENT_CODE ON)
+  ${TOS_SLHDSA_SHA256_SOURCES} "${TOS_SLHDSA_SOURCE_DIR}/sha2_512.c")
+set_target_properties(tos_slhdsa_native PROPERTIES C_STANDARD 99 CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON
+  POSITION_INDEPENDENT_CODE ON)
 # Preserve the byte-for-byte imported backend. Its byte packing uses intentional
 # narrowing conversions; keep those diagnostics visible without promoting them
 # to errors. This exception is private to the upstream C target, not our adapter.
@@ -412,8 +423,9 @@ if(TOS_SLHDSA_SHA_NI)
   # Links its own testing build of the backend (with the forcing hook) and the imported file
   # under ref_ names; the production archive is not involved.
   add_executable(test-pq-slhdsa-sha256-backend "${TOS_SLHDSA_TEST_DIR}/sha256-backend.c"
-    "${TOS_SLHDSA_TEST_DIR}/sha256-reference.c" "${CMAKE_CURRENT_SOURCE_DIR}/slhdsa-sha256.c")
-  set_target_properties(test-pq-slhdsa-sha256-backend PROPERTIES C_STANDARD 99)
+    "${TOS_SLHDSA_TEST_DIR}/sha256-reference.c" ${TOS_SLHDSA_SHA256_SOURCES})
+  set_target_properties(test-pq-slhdsa-sha256-backend PROPERTIES C_STANDARD 99 CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON)
   target_include_directories(test-pq-slhdsa-sha256-backend PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}"
     "${TOS_SLHDSA_SOURCE_DIR}" "${TOS_SLHDSA_TEST_DIR}")
   target_compile_definitions(test-pq-slhdsa-sha256-backend PRIVATE TOS_SLHDSA_SHA256_TESTING)
@@ -433,6 +445,9 @@ if(TARGET tos_crypto)
   target_link_libraries(test-fee-native-cost PRIVATE tos_crypto)
 endif()
 install(FILES "${TOS_FALCON_SOURCE_DIR}/LICENSE" DESTINATION share/tos/licenses/falcon-reference)
+if(TOS_SLHDSA_SHA_NI)
+  install(FILES "${TOS_SHA256_SHANI_DIR}/COPYING" DESTINATION share/tos/licenses/bitcoin-sha256)
+endif()
 
 if(NOT CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   # Static SDK consumers need the transitive verifier libraries in the export.

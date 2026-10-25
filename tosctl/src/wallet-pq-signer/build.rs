@@ -83,4 +83,5 @@ fn main() {
         .std("c99")
         .warnings(false)
         .compile("tos_wallet_slh");
+    sha256.compile_sha_ni("tos_wallet_slh");
 }

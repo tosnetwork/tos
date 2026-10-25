@@ -3,17 +3,18 @@
  *
  * Built in place of third-party/slhdsa-c/sha2_256.c when TOS_SLHDSA_SHA_NI is on; that file
  * is not modified. Its portable compression function is compiled here under a private name
- * and stays the fallback. The buffering and padding routines below are copied from it
- * unchanged (hence its license on this file): the SLH code reaches the compression function
- * through them as well as directly, so replacing only the compression symbol would leave most
- * hashing on the portable path. State layout is the imported one: s[0..7] hold the chaining
- * value as big-endian words, s[8..23] the 64-byte block. */
+ * and stays the fallback. The SHA-NI compression is the vendored, unmodified transform in
+ * third-party/bitcoin-sha256, reached through slhdsa-sha256-shani.cpp. The buffering and
+ * padding routines below are copied from the imported file unchanged (hence its license on
+ * this file): the SLH code reaches the compression function through them as well as directly,
+ * so replacing only the compression symbol would leave most hashing on the portable path.
+ * State layout is the imported one: s[0..7] hold the chaining value as big-endian words,
+ * s[8..23] the 64-byte block. */
 #if !defined(__x86_64__) || !(defined(__GNUC__) || defined(__clang__))
 #error "the SHA-NI SHA-256 backend needs x86-64 and GCC or Clang"
 #endif
 
 #include <cpuid.h>
-#include <immintrin.h>
 #include <string.h>
 #include "slhdsa-sha256.h"
 #include "sha2_api.h"
@@ -57,18 +58,23 @@ void tos_slhdsa_portable_sha2_224(uint8_t *h, const void *m, size_t m_sz);
 enum { backend_unknown = 0, backend_portable = 1, backend_sha_ni = 2 };
 static int backend_state = backend_unknown;
 
+/* The vendored transform is compiled with -msse4.1 -msse4 -msha, so every one of those
+ * extensions must be present, not only SHA. */
+static int accepts_cpu(unsigned leaf1_ecx, unsigned leaf7_ebx)
+{
+  const unsigned leaf1_needed = bit_SSSE3 | bit_SSE4_1 | bit_SSE4_2;
+  return (leaf1_ecx & leaf1_needed) == leaf1_needed && (leaf7_ebx & bit_SHA) != 0;
+}
+
 static int cpu_has_sha_ni(void)
 {
-  unsigned a, b, c, d;
-  if (!__get_cpuid(1, &a, &b, &c, &d) || !(c & bit_SSSE3) || !(c & bit_SSE4_1))
+  unsigned a, b1, c1, d;
+  unsigned b7, c7;
+  if (!__get_cpuid(1, &a, &b1, &c1, &d) || !__get_cpuid_count(7, 0, &a, &b7, &c7, &d))
   {
     return 0;
   }
-  if (!__get_cpuid_count(7, 0, &a, &b, &c, &d))
-  {
-    return 0;
-  }
-  return (b & bit_SHA) != 0;
+  return accepts_cpu(c1, b7);
 }
 
 static int backend(void)
@@ -92,80 +98,21 @@ void tos_slhdsa_sha256_force_portable(int on)
 {
   __atomic_store_n(&backend_state, on ? backend_portable : backend_unknown, __ATOMIC_RELAXED);
 }
+
+int tos_slhdsa_sha256_accepts_cpu(unsigned leaf1_ecx, unsigned leaf7_ebx)
+{
+  return accepts_cpu(leaf1_ecx, leaf7_ebx);
+}
 #endif
 
-/* === SHA-NI compression (FIPS 180-4 round function in hardware).
- *
- * The instruction sequence is the one Intel published for its SHA extensions: the same ABEF/CDGH
- * state shuffle, two sha256rnds2 per four rounds, and sha256msg1/sha256msg2 for the schedule.
- * Only the surroundings differ: the imported state layout keeps the chaining value as big-endian
- * bytes, so it is byte-swapped on load and store, and the 64 rounds are a loop the compiler
- * unrolls. The backend test checks it against the imported portable function. */
-
-static const uint32_t sha_ni_k[64] = {
-    0x428A2F98, 0x71374491, 0xB5C0FBCF, 0xE9B5DBA5, 0x3956C25B, 0x59F111F1,
-    0x923F82A4, 0xAB1C5ED5, 0xD807AA98, 0x12835B01, 0x243185BE, 0x550C7DC3,
-    0x72BE5D74, 0x80DEB1FE, 0x9BDC06A7, 0xC19BF174, 0xE49B69C1, 0xEFBE4786,
-    0x0FC19DC6, 0x240CA1CC, 0x2DE92C6F, 0x4A7484AA, 0x5CB0A9DC, 0x76F988DA,
-    0x983E5152, 0xA831C66D, 0xB00327C8, 0xBF597FC7, 0xC6E00BF3, 0xD5A79147,
-    0x06CA6351, 0x14292967, 0x27B70A85, 0x2E1B2138, 0x4D2C6DFC, 0x53380D13,
-    0x650A7354, 0x766A0ABB, 0x81C2C92E, 0x92722C85, 0xA2BFE8A1, 0xA81A664B,
-    0xC24B8B70, 0xC76C51A3, 0xD192E819, 0xD6990624, 0xF40E3585, 0x106AA070,
-    0x19A4C116, 0x1E376C08, 0x2748774C, 0x34B0BCB5, 0x391C0CB3, 0x4ED8AA4A,
-    0x5B9CCA4F, 0x682E6FF3, 0x748F82EE, 0x78A5636F, 0x84C87814, 0x8CC70208,
-    0x90BEFFFA, 0xA4506CEB, 0xBEF9A3F7, 0xC67178F2};
-
-__attribute__((target("sha,sse4.1,ssse3"))) static void sha_ni_compress(uint32_t *sp)
-{
-  /* Byte-swaps each 32-bit lane: big-endian words in memory to host order and back. */
-  const __m128i bswap = _mm_set_epi64x(0x0c0d0e0f08090a0bULL, 0x0405060700010203ULL);
-  const uint8_t *block = (const uint8_t *)(sp + 8);
-
-  __m128i abcd = _mm_shuffle_epi8(_mm_loadu_si128((const __m128i *)&sp[0]), bswap);
-  __m128i efgh = _mm_shuffle_epi8(_mm_loadu_si128((const __m128i *)&sp[4]), bswap);
-  /* The instructions take the state as ABEF and CDGH. */
-  __m128i tmp = _mm_shuffle_epi32(abcd, 0xB1);
-  __m128i st1 = _mm_shuffle_epi32(efgh, 0x1B);
-  __m128i st0 = _mm_alignr_epi8(tmp, st1, 8);
-  st1 = _mm_blend_epi16(st1, tmp, 0xF0);
-  const __m128i abef = st0;
-  const __m128i cdgh = st1;
-
-  __m128i w[4];
-  for (int i = 0; i < 4; i++)
-  {
-    w[i] = _mm_shuffle_epi8(_mm_loadu_si128((const __m128i *)(block + 16 * i)), bswap);
-  }
-  for (int i = 0; i < 16; i++)
-  {
-    __m128i msg = _mm_add_epi32(w[i & 3], _mm_loadu_si128((const __m128i *)&sha_ni_k[4 * i]));
-    st1 = _mm_sha256rnds2_epu32(st1, st0, msg);
-    msg = _mm_shuffle_epi32(msg, 0x0E);
-    st0 = _mm_sha256rnds2_epu32(st0, st1, msg);
-    if (i < 12)
-    {
-      /* Schedule words 4i+16..4i+19 from words 4i..4i+15. */
-      __m128i t = _mm_sha256msg1_epu32(w[i & 3], w[(i + 1) & 3]);
-      t = _mm_add_epi32(t, _mm_alignr_epi8(w[(i + 3) & 3], w[(i + 2) & 3], 4));
-      w[i & 3] = _mm_sha256msg2_epu32(t, w[(i + 3) & 3]);
-    }
-  }
-  st0 = _mm_add_epi32(st0, abef);
-  st1 = _mm_add_epi32(st1, cdgh);
-
-  tmp = _mm_shuffle_epi32(st0, 0x1B);
-  st1 = _mm_shuffle_epi32(st1, 0xB1);
-  abcd = _mm_blend_epi16(tmp, st1, 0xF0);
-  efgh = _mm_alignr_epi8(st1, tmp, 8);
-  _mm_storeu_si128((__m128i *)&sp[0], _mm_shuffle_epi8(abcd, bswap));
-  _mm_storeu_si128((__m128i *)&sp[4], _mm_shuffle_epi8(efgh, bswap));
-}
+/* === Compression: the vendored SHA-NI transform when the probe accepts the CPU, otherwise the
+ * imported portable function. */
 
 void sha2_256_compress(void *v)
 {
   if (backend() == backend_sha_ni)
   {
-    sha_ni_compress((uint32_t *)v);
+    tos_slhdsa_sha_ni_compress((uint32_t *)v);
     return;
   }
   tos_slhdsa_portable_sha2_256_compress(v);

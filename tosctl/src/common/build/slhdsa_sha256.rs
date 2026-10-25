@@ -10,6 +10,40 @@
 pub struct SlhdsaSha256 {
     pub source: std::path::PathBuf,
     pub sha_ni: bool,
+    root: std::path::PathBuf,
+}
+
+impl SlhdsaSha256 {
+    /// With SHA-NI, compiles the C++ adapter and the vendored transform it calls into two
+    /// archives named after `prefix`. Call it after compiling the archive that holds `source`,
+    /// so the archives are linked in dependency order. The vendored file alone gets the upstream
+    /// definitions and instruction-set flags; neither file uses the C++ runtime library.
+    pub fn compile_sha_ni(&self, prefix: &str) {
+        if !self.sha_ni {
+            return;
+        }
+        let shani = self.root.join("third-party/bitcoin-sha256");
+        cc::Build::new()
+            .cpp(true)
+            .std("c++17")
+            .cpp_link_stdlib(None)
+            .include(self.root.join("crypto/pq"))
+            .file(self.root.join("crypto/pq/slhdsa-sha256-shani.cpp"))
+            .compile(&format!("{prefix}_sha_ni_adapter"));
+        cc::Build::new()
+            .cpp(true)
+            .std("c++17")
+            .cpp_link_stdlib(None)
+            .include(&shani)
+            .define("ENABLE_SSE41", None)
+            .define("ENABLE_X86_SHANI", None)
+            .flag("-msse4.1")
+            .flag("-msse4")
+            .flag("-msha")
+            .warnings(false)
+            .file(shani.join("sha256_x86_shani.cpp"))
+            .compile(&format!("{prefix}_sha_ni_transform"));
+    }
 }
 
 /// `root` is the repository root. Emits the rerun lines for everything the choice depends on.
@@ -18,6 +52,8 @@ pub fn slhdsa_sha256(root: &std::path::Path) -> SlhdsaSha256 {
     println!("cargo:rerun-if-env-changed=TOS_SLHDSA_SHA_NI");
     println!("cargo:rerun-if-changed={}", replacement.display());
     println!("cargo:rerun-if-changed={}", root.join("crypto/pq/slhdsa-sha256.h").display());
+    println!("cargo:rerun-if-changed={}", root.join("crypto/pq/slhdsa-sha256-shani.cpp").display());
+    println!("cargo:rerun-if-changed={}", root.join("third-party/bitcoin-sha256").display());
     println!("cargo:rerun-if-changed={}", root.join("third-party/slhdsa-c/sha2_api.h").display());
     let os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     let arch = std::env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
@@ -39,5 +75,5 @@ pub fn slhdsa_sha256(root: &std::path::Path) -> SlhdsaSha256 {
         println!("cargo:warning=SLH-DSA SHA-256 backend: TOS_SLHDSA_SHA_NI={}", u8::from(sha_ni));
     }
     let source = if sha_ni { replacement } else { root.join("third-party/slhdsa-c/sha2_256.c") };
-    SlhdsaSha256 { source, sha_ni }
+    SlhdsaSha256 { source, sha_ni, root: root.to_path_buf() }
 }

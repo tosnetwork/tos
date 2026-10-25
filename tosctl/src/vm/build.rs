@@ -66,4 +66,5 @@ fn main() {
         .std("c99")
         .warnings(false)
         .compile("tos_rust_slhdsa128s");
+    sha256.compile_sha_ni("tos_rust_slhdsa128s");
 }
