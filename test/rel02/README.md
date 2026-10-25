@@ -1,8 +1,8 @@
 # Cross-architecture epoch replay (REL-02)
 
-This offline corpus contains 340 original public epoch-5 blocks (global id 2;
-183 masterchain, 157 basechain) and the original cells needed to execute their
-475 transactions. The manifest and all BOCs total about 4.51 MB, below the 20 MB
+This offline corpus contains 351 original public epoch-5 blocks (global id 2;
+187 masterchain, 164 basechain) and the original cells needed to execute their
+494 transactions. The manifest and all BOCs total about 4.70 MB, below the 20 MB
 budget. No network, validator database, private key, or node service is needed to
 run it. The corpus contains no generated positive chain fixtures.
 
@@ -16,30 +16,23 @@ native emulator.
 | Cases | Blocks | Transactions | Coverage |
 | --- | ---: | ---: | --- |
 | `tok01`: consecutive masterchain 117753–117895 | 143 | 294 | Every masterchain block of the Token/NFT run: ticks/tocks, configuration and elector traffic |
-| `tok01`: basechain 118260–118404 registered by those blocks | 140 | 42 | Collection deploy, mint 1000 and 100, transfer to an existing and to an undeployed wallet, transfer with payload notification, insufficient balance (exit 706, aborted, bounced), burn, admin change, NFT mint, NFT transfer, NFT transfer by a non-owner (exit 401, aborted, bounced); 128 empty blocks between them |
+| `tok01`: basechain 118260–118404 registered by those blocks | 145 | 44 | Token master deploy, collection deploy, mint 1000 and 100, transfer to an existing and to an undeployed wallet, transfer with payload notification, insufficient balance (exit 706, aborted, bounced), burn, admin change, NFT mint, NFT transfer, NFT transfer by a non-owner (exit 401, aborted, bounced); 132 empty blocks between them |
 | `cp15`: masterchain 151331, 151410, 151706, 151780, 151828, 151876 | 6 | 28 | ConfigParam 15 critical proposal registration through the Config contract, a proposer-wallet transaction with no outgoing message, round-1 votes |
-| `cp15`: masterchain 161046, 161094 | 2 | 10 | Round-2 votes |
+| `cp15`: masterchain 160950, 160997, 161046, 161094 | 4 | 20 | Round-2 votes |
 | `cp15`: masterchain 194882–194884 | 3 | 6 | Validator rotation key block 194883 (ConfigParam 32/34) before round 3 |
 | `cp15`: masterchain 195411, 195426, 195440, 195453–195455 | 6 | 24 | Round-3 votes and the adoption key block 195454 that installs the new ConfigParam 15 |
-| `shard-exits`: basechain 152032, 152121, 152207, 152292, 152470, 152559 | 6 | 23 | Basechain service traffic during round 1 with contract-defined compute exits 1800, 1803 and 1808 (aborted) |
-| `rotation`: masterchain 230373–230384 and basechain 231429–231440 | 23 | 25 | The first two-hour validator rotation: key block 230378 (ConfigParam 32/34) and the blocks around it |
-| `context`: masterchain 117750, 117752, 151333, 151421, 151510, 151596, 151772, 151861, 230370–230372 | 11 | 23 | Exact masterchain contexts referenced by the selected basechain blocks |
+| `shard-exits`: basechain 152032, 152121, 152207, 152292, 152381, 152470, 152559 | 7 | 26 | Basechain service traffic during round 1 with contract-defined compute exits 1800, 1803 and 1808 (aborted) |
+| `rotation`: masterchain 230373–230384 and basechain 231429–231440 | 24 | 25 | The first two-hour validator rotation: key block 230378 (ConfigParam 32/34) and the blocks around it |
+| `context`: masterchain 117750–117752, 151333, 151421, 151510, 151596, 151685, 151772, 151861, 230370–230372 | 13 | 27 | Exact masterchain contexts referenced by the selected basechain blocks |
 
 Three selected blocks are key blocks (194883, 195454, 230378). Split/merge
 blocks are not covered; the harness refuses them rather than guessing a
 predecessor state.
 
-Excluded, because no two-validator full id exists for them in the id captures:
-
-- Basechain 118263, the token master deploy. A `shards` reply names only the
-  newest basechain block a masterchain block registers, and masterchain 117756
-  registers 118265; 118263 is reachable from it only through the hash links of
-  118264 and 118265. Its contract code is used as an original cell source (bound
-  by hash), not replayed.
-- Empty basechain 118261, 118264, 118286, 118313 and 231435, and basechain
-  152381 (service traffic), for the same reason.
-- Masterchain 160950 and 160997, the first two round-2 votes: outside the
-  captured range 161000–161250.
+No planned block is excluded. Basechain blocks that are not the newest one a
+masterchain block registers (among them the token master deploy 118263), and
+masterchain 160950 and 160997 outside the captured ranges, carry ids from
+separate node-1/node-3 `lookupBlock` captures.
 
 ## What is checked
 
@@ -78,25 +71,26 @@ prefix matches. The final workflow job also requires both matrix jobs to succeed
 ## Provenance and files
 
 Every replayed block's root and file hash equals the full block ids returned by
-validators node-1 and node-3. [Capture commands and receipts](CAPTURE.md) describe
+validators node-1 and node-3, from `lookupBlock` or from a masterchain block's
+`shards` reply. [Capture commands and receipts](CAPTURE.md) describe
 the local, read-only capture from the archive packages of a full node synced
 from genesis; no host was contacted and no live database was opened.
 `files` records each block's source ID and SHA-256. One native multi-root BOC,
-`state-parts.boc`, packs the original supplemental cells, so the corpus has 341
+`state-parts.boc`, packs the original supplemental cells, so the corpus has 352
 inputs. Its file entry records SHA-256 and source block IDs; `supplement_roots`
-records each of its 758 original roots with hashes and provenance:
+records each of its 795 original roots with hashes and provenance:
 
-- 756 `original_state_update` roots: the whole state-update cell of an archived
-  block (751 masterchain blocks 3–230369 and basechain 105530, 118263, 150944,
-  151779 and 152381). The configuration,
+- 793 `original_state_update` roots: the whole state-update cell of an archived
+  block (789 masterchain blocks 3–230369 and basechain 105524, 105530, 150944
+  and 151779). The configuration,
   previous-block VM context and account cells the replay reads but that a
   selected block's own Merkle update prunes come from these.
 - One `original_block_extra` root: key block 154916's extra, whose configuration
   holds cells the elector and Config contract read.
-- One `zero_state` root: the genesis zero state, for cells unchanged since
-  genesis. Its hashes equal the initial block id node-1 and node-3 return.
+- One `zero_state` root: the published genesis zero state, for cells unchanged
+  since genesis, bound by the initial block id node-1 and node-3 return.
 
-292 roots come from blocks with node-1/node-3 ids (`verified_rpc_nodes`); the
+301 roots come from blocks with node-1/node-3 ids (`verified_rpc_nodes`); the
 others are bound by hash only, which is sufficient for their use: a cell is
 accepted only where a verified block's state holds a pruned branch of the same
 level-zero hash. Re-encoding the BOC container creates no new state values.

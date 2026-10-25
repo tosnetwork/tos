@@ -10,11 +10,14 @@ were:
   before use.
 - `$IDS_DIR`: full block ids from validators node-1 and node-3, captured with
   `lookupBlock` and `shards` per masterchain sequence number (TOK-01 117,700–117,950;
-  ConfigParam 15 rounds 151,200–152,000, 161,000–161,250 and 194,800–195,800).
+  ConfigParam 15 rounds 151,200–152,000, 161,000–161,250 and 194,800–195,800), and
+  `named-supplement.json`, with node-1/node-3 `lookupBlock` replies for nine named
+  blocks no `shards` reply covers. `$IDS_DIR/SHA256SUMS` lists every id file.
 - `$CON01_RAW`: the rotation capture with node-1/node-3 `lookupBlock`, `shards` and
   `getMasterchainInfo` replies for masterchain 230,278–230,477.
-- `$GENESIS_ZEROSTATE`: the published genesis zero state. Its root and file hashes
-  equal the initial block id that node-1 and node-3 return in `getMasterchainInfo`.
+- `$GENESIS_ZEROSTATE`: the published genesis zero state, bound by the initial
+  block id: its root and file hashes equal the `init` id that node-1 and node-3
+  return in the rotation capture's `getMasterchainInfo` replies.
 
 `capture-index.json` is the durable source index. For every selected block and
 every source of original cells it records the full block id, the package, entry
@@ -29,10 +32,11 @@ hashes of their inputs and outputs.
 A block is a replay case only when node-1 and node-3 each returned exactly one
 full id for it and both equal the root hash and file hash of the archive bytes.
 Masterchain ids come from `lookupBlock`; basechain ids come from the `shards`
-reply of a masterchain block, so only the newest basechain block each
-masterchain block registers can qualify. A basechain block also needs its exact
-masterchain context in the corpus. Every other block of the planned cases is
-excluded and listed in the README.
+reply of a masterchain block, which names only the newest basechain block it
+registers, or from a named `lookupBlock` capture for the other basechain blocks.
+A basechain block also needs its exact masterchain context in the corpus. A
+planned block without such an id would be excluded and listed in the README;
+none is.
 
 ## Original cells
 
@@ -97,7 +101,8 @@ replies = {}
 for path in sorted(Path(os.environ['IDS_DIR']).glob('*.json')):
     for node, per in json.loads(path.read_text()).items():
         for seq, rec in per.items():
-            for r in [rec['lookup']['result']] + rec['shards']['result']['shards']:
+            shards = rec['shards']['result']['shards'] if 'shards' in rec else []
+            for r in [rec['lookup']['result']] + shards:
                 replies.setdefault((r['workchain'], int(r['seqno'])), {}).setdefault(node, r)
 con = json.loads(Path(os.environ['CON01_RAW']).read_text())
 for node in ('node-1', 'node-3'):
