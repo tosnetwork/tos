@@ -13,6 +13,7 @@
 #include "td/actor/actor.h"
 #include "td/db/RocksDb.h"
 #include "td/utils/Time.h"
+#include "td/utils/filesystem.h"
 #include "td/utils/port/path.h"
 #include "validator/block-handle.hpp"
 #include "validator/db/archive-manager.hpp"
@@ -26,6 +27,32 @@ namespace tos::validator {
 // Access is serialized on each production actor; no alternate manager/slice
 // implementation, skipped alarm or process-exit shortcut is used.
 struct ArchivePruneTestAccess {
+  static void create_package(td::actor::ActorId<ArchiveManager> manager, PackageId id,
+                             td::Promise<td::actor::ActorId<ArchiveSlice>> promise) {
+    td::actor::send_lambda(manager, [manager, id, promise = std::move(promise)]() mutable {
+      auto &self = manager.get_actor_unsafe();
+      auto desc = self.get_file_desc(ShardIdFull{masterchainId}, id, id.id + 1, id.id + 1, id.id + 1, true);
+      promise.set_value(desc.move_as_ok()->file_actor_id());
+    });
+  }
+
+  static void prune_package(td::actor::ActorId<ArchiveManager> manager, PackageId id, bool retain_source_files,
+                            td::Promise<td::Unit> promise) {
+    td::actor::send_lambda(manager, [manager, id, retain_source_files, promise = std::move(promise)]() mutable {
+      auto &self = manager.get_actor_unsafe();
+      if (retain_source_files) {
+        // Negative control: publish the real deletion metadata but keep the
+        // source package on disk. A secondary must stop, never destroy it.
+        auto it = self.get_file_map(id).find(id);
+        CHECK(it != self.get_file_map(id).end());
+        it->second.deleted = true;
+        self.deleted_package(id, std::move(promise));
+      } else {
+        self.delete_package(id, std::move(promise));
+      }
+    });
+  }
+
   static void get_slice(td::actor::ActorId<ArchiveManager> manager, PackageId id,
                         td::Promise<td::actor::ActorId<ArchiveSlice>> promise) {
     td::actor::send_lambda(manager, [manager, id, promise = std::move(promise)]() mutable {
@@ -321,12 +348,93 @@ void manager_held_reader(const std::string &root, bool shutdown_while_held) {
   std::cout << "PASS: actual slice retained-reader control; shutdown_while_held=" << shutdown_while_held << std::endl;
 }
 
+void secondary_prune_lifetime(const std::string &root, bool retain_source_files) {
+  auto opts = ValidatorManagerOptions::create(block_id(0), block_id(0));
+  opts.write().set_disable_rocksdb_stats(true);
+  opts.write().set_max_open_archive_files(128);
+  td::actor::Scheduler scheduler({2});
+  td::actor::ActorOwn<ArchiveManager> primary, secondary;
+  scheduler.run_in_context([&] {
+    primary = td::actor::create_actor<ArchiveManager>("primary-lifetime", td::actor::ActorId<RootDb>{}, root, opts);
+  });
+  std::vector<td::actor::ActorId<ArchiveSlice>> retired;
+  for (unsigned round = 1; round <= 12; ++round) {
+    // Exercise all three package maps without waiting for real-hour rotation.
+    PackageId id{round * 20000, round % 3 == 1, round % 3 == 2};
+    auto source = request<td::actor::ActorId<ArchiveSlice>>(scheduler, [&](auto promise) {
+                    ArchivePruneTestAccess::create_package(primary.get(), id, std::move(promise));
+                  }).move_as_ok();
+    {
+      auto snapshot = request<std::unique_ptr<td::KeyValueReader>>(scheduler, [&](auto promise) {
+                        ArchivePruneTestAccess::snapshot(source, std::move(promise));
+                      }).move_as_ok();
+      std::string value;
+      check(snapshot->get("status", value).move_as_ok() == td::KeyValue::GetStatus::Ok, "source index opened");
+    }
+    if (secondary.empty()) {
+      scheduler.run_in_context([&] {
+        secondary = td::actor::create_actor<ArchiveManager>("secondary-lifetime", td::actor::ActorId<RootDb>{}, root,
+                                                            opts, td::DbOpenMode::db_secondary);
+      });
+    }
+    auto catch_up = [&] {
+      request<td::Unit>(scheduler, [&](auto promise) {
+        td::actor::send_closure(secondary, &ArchiveManager::try_catch_up_with_primary, CatchUpMode::Force,
+                                std::move(promise));
+      }).ensure();
+    };
+    catch_up();
+    auto reader = request<td::actor::ActorId<ArchiveSlice>>(scheduler, [&](auto promise) {
+                    ArchivePruneTestAccess::get_slice(secondary.get(), id, std::move(promise));
+                  }).move_as_ok();
+    {
+      auto snapshot = request<std::unique_ptr<td::KeyValueReader>>(scheduler, [&](auto promise) {
+                        ArchivePruneTestAccess::snapshot(reader, std::move(promise));
+                      }).move_as_ok();
+      std::string value;
+      check(snapshot->get("status", value).move_as_ok() == td::KeyValue::GetStatus::Ok, "secondary index opened");
+    }
+    check(reader.is_alive(), "secondary actor must be alive before deletion");
+    const auto prefix = root + id.path() + id.name();
+    auto package_before = td::read_file(prefix + ".pack").move_as_ok();
+    request<td::Unit>(scheduler, [&](auto promise) {
+      ArchivePruneTestAccess::prune_package(primary.get(), id, retain_source_files, std::move(promise));
+    }).ensure();
+    catch_up();
+    retired.push_back(reader);
+    pump_until(scheduler, [&] { return !reader.is_alive(); }, "deleted secondary archive actor must terminate");
+    for (const auto &old : retired)
+      check(!old.is_alive(), "no retired archive actors may accumulate across catch-up rounds");
+    if (retain_source_files) {
+      check(std::filesystem::exists(prefix + ".index"), "secondary teardown must not destroy source index");
+      check(td::read_file(prefix + ".pack").move_as_ok().as_slice() == package_before.as_slice(),
+            "secondary teardown must preserve source package bytes");
+    } else {
+      check(!std::filesystem::exists(prefix + ".pack"), "primary deletion must remove the package");
+      check(!std::filesystem::exists(prefix + ".index"), "primary deletion must remove the index");
+    }
+    catch_up();  // Repeated tombstones must be harmless.
+  }
+  scheduler.run_in_context([&] {
+    secondary.reset();
+    primary.reset();
+  });
+  std::cout << "PASS: 12 secondary deletion/catch-up rounds; retired actors=0; retain_source_files="
+            << retain_source_files << std::endl;
+}
+
 }  // namespace
 
 int main(int argc, char **argv) {
   auto root = td::mkdtemp("", "archive-prune-").move_as_ok();
   if (argc == 2 && std::string(argv[1]) == "--held-reader-shutdown") {
     manager_held_reader(root + "/held-shutdown", true);
+    td::rmrf(root).ensure();
+    return 0;
+  }
+  if (argc == 2 && std::string(argv[1]) == "--secondary-lifetime") {
+    secondary_prune_lifetime(root + "/secondary-delete", false);
+    secondary_prune_lifetime(root + "/secondary-preserve", true);
     td::rmrf(root).ensure();
     return 0;
   }
@@ -340,6 +448,8 @@ int main(int argc, char **argv) {
   manager_prune(root + "/manager-sync", false);
   manager_prune(root + "/manager-async", true);
   manager_held_reader(root + "/held-release", false);
+  secondary_prune_lifetime(root + "/secondary-delete", false);
+  secondary_prune_lifetime(root + "/secondary-preserve", true);
   td::rmrf(root).ensure();
   std::cout << "PASS: archive prune baseline" << std::endl;
 }

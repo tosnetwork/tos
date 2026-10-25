@@ -1272,7 +1272,7 @@ td::Status ArchiveManager::catch_up_package(const PackageId &id) {
     FileDescription desc{id, x->deleted_};
     desc.first_blocks = std::move(first_blocks);
     if (x->deleted_) {
-      it->second.file.release();
+      it->second.file.reset();
     } else {
       desc.file = std::move(it->second.file);
     }
