@@ -458,7 +458,7 @@ impl Engine {
                 log::info!(target: "tvm", "stack: [ {} ]\n", self.get_stack_result_fift());
             }
             if self.trace_bit(Engine::TRACE_CODE) {
-                log::info!(target: "tvm", "code cell hash: {:X} offset: {}\n", info.cmd_code.cell().unwrap().repr_hash(), info.cmd_code.pos());
+                log::info!(target: "tvm", "code cell hash: {} offset: {}\n", code_cell_hash(&info.cmd_code), info.cmd_code.pos());
                 let cmd_str = match info.cmd_str.as_str() {
                     "POP s0" => "POP",
                     "POP s1" => "NIP",
@@ -481,8 +481,8 @@ impl Engine {
     pub fn emulator_trace_callback(&self, info: &EngineTraceInfo) {
         if info.has_cmd() {
             if self.trace_bit(Engine::TRACE_CODE) {
-                log::info!(target: "executor", "code cell hash: {:X} offset: {}\n",
-                    info.cmd_code.cell().unwrap().repr_hash(), info.cmd_code.pos());
+                log::info!(target: "executor", "code cell hash: {} offset: {}\n",
+                    code_cell_hash(&info.cmd_code), info.cmd_code.pos());
                 log::info!(target: "executor", "{}\n", info.cmd_str);
             }
             if self.trace_bit(Engine::TRACE_STACK) {
@@ -502,7 +502,8 @@ impl Engine {
     #[allow(dead_code)]
     fn dump_stack_result(stack: &Stack) -> String {
         static PREV_STACK: LazyLock<Mutex<Stack>> = LazyLock::new(|| Mutex::new(Stack::new()));
-        let mut prev_stack = PREV_STACK.lock().unwrap();
+        // The previous stack only shortens the next dump, so a poisoned lock is still usable.
+        let mut prev_stack = PREV_STACK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut result = String::new();
         let mut iter = prev_stack.iter();
         let mut same = false;
@@ -1790,6 +1791,14 @@ impl Engine {
     }
 }
 
+// The hash of the code cell a trace line points into, or why it is unavailable.
+fn code_cell_hash(code: &SliceData) -> String {
+    match code.cell() {
+        Ok(cell) => format!("{:X}", cell.repr_hash()),
+        Err(err) => format!("unavailable ({err})"),
+    }
+}
+
 #[cfg(test)]
 mod nesting_depth_tests {
     use super::*;
@@ -1853,6 +1862,14 @@ mod nesting_depth_tests {
         assert_eq!(child.cc.stack.depth(), 1);
         assert_eq!(child.cc.stack.get(0)?.as_integer_value(0..=i64::MAX)?, 108);
         assert_eq!(child.gas_used(), 108);
+        Ok(())
+    }
+
+    #[test]
+    fn trace_names_the_code_cell_by_its_hash() -> Status {
+        let cell = BuilderData::with_raw(vec![0x77], 8)?.into_cell()?;
+        let code = SliceData::load_cell(cell.clone())?;
+        assert_eq!(code_cell_hash(&code), format!("{:X}", cell.repr_hash()));
         Ok(())
     }
 
