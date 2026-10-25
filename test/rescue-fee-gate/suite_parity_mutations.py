@@ -26,7 +26,6 @@ CARGO = ROOT / "tosctl/src"
 PQ = CARGO / "vm/src/executor/pq.rs"
 LMS = CARGO / "vm/src/executor/lms_fee.rs"
 CORE = CARGO / "vm/src/executor/engine/core.rs"
-CONTINUATION = CARGO / "vm/src/executor/continuation.rs"
 ERROR = CARGO / "vm/src/error.rs"
 HANDLERS = CARGO / "vm/src/executor/engine/handlers.rs"
 GAS = CARGO / "vm/src/executor/gas/mod.rs"
@@ -150,8 +149,8 @@ MUTATIONS = {
         CORE,
         [
             (
-                "            self.step += 1;\n            let execution_result = match HANDLERS_CP0.get_handler(self) {\n",
-                "            let execution_result = match HANDLERS_CP0.get_handler(self) {\n",
+                "            self.step += 1;\n            let execution_result = match self.check_prefix() {\n",
+                "            let execution_result = match self.check_prefix() {\n",
             )
         ],
         ("s1-valid", "steps-unassigned-opcode", "steps-truncated-prefix-ff"),
@@ -453,15 +452,98 @@ MUTATIONS = {
         (),
         ("try-body-defines-c0",),
     ),
-    "RUNVM before version 4": Mutation(
-        CONTINUATION,
-        [("    if engine.block_version() < 4 {\n", "    if engine.block_version() < 3 {\n")],
+    "prefix check skips the version gate": Mutation(
+        CORE,
+        [("if width == 0 || self.block_version < u32::from(version) {", "if width == 0 {")],
         ("runvm-version-3", "runvmx-version-3"),
+        (),
+        ("version-f83400-24-at-3", "version-cf5000-16-at-11"),
     ),
-    "RUNVM only from version 5": Mutation(
-        CONTINUATION,
-        [("    if engine.block_version() < 4 {\n", "    if engine.block_version() < 5 {\n")],
-        ("runvm-version-4",),
+    "unassigned opcodes pass the prefix check": Mutation(
+        CORE,
+        [
+            (
+                "if width == 0 || self.block_version < u32::from(version) {",
+                "if self.block_version < u32::from(version) {",
+            )
+        ],
+        (),
+        (),
+        ("unassigned-b7a910-24", "ext-pushint-1f-complete-ones"),
+    ),
+    "prefix check skips the width check": Mutation(
+        CORE,
+        [("        if bits < usize::from(width) {\n", "        if false {\n")],
+        (),
+        (),
+        ("truncated-100000-8-of-16", "truncated-400000-12-of-16"),
+    ),
+    "short instruction data charged as a full byte": Mutation(
+        CORE,
+        [
+            (
+                "Err(err) => match self.try_use_gas(Gas::basic_gas_price(width, 0)) {",
+                "Err(err) => match self.basic_use_gas(8) {",
+            )
+        ],
+        (),
+        (),
+        ("ext-stsliceconst-0-short-bit",),
+    ),
+    "constant slice decoded before its gas is checked": Mutation(
+        CORE,
+        [
+            (
+                "                self.try_use_gas(Gas::basic_gas_price(offset + r + x, 0))?;\n                let mut slice",
+                "                self.use_gas(Gas::basic_gas_price(offset + r + x, 0));\n                let mut slice",
+            )
+        ],
+        (),
+        (),
+        ("ext-stsliceconst-0-budget-23", "ext-sdbegins-0-budget-30"),
+    ),
+    "constant bytes decoded before their gas is checked": Mutation(
+        CORE,
+        [
+            (
+                "                self.try_use_gas(Gas::basic_gas_price(offset + r + x, 0))?;\n                let slice =",
+                "                self.use_gas(Gas::basic_gas_price(offset + r + x, 0));\n                let slice =",
+            )
+        ],
+        (),
+        (),
+        ("ext-pushcont-5-short-bit-budget-25", "ext-pushcont-short-1-short-bit-budget-17"),
+    ),
+    "constant dictionary decoded before its gas is checked": Mutation(
+        CORE,
+        [
+            (
+                "self.try_use_gas(Gas::basic_gas_price(offset + 1 + bits, 0))?;",
+                "self.use_gas(Gas::basic_gas_price(offset + 1 + bits, 0));",
+            )
+        ],
+        (),
+        (),
+        ("ext-pfxdictswitch-0-budget-33",),
+    ),
+    "data without a completion tag kept": Mutation(
+        CORE,
+        [
+            (
+                "                if bits > 0 && slice.remaining_bits() == bits {\n                    slice.shrink_data(..0);\n                }\n",
+                "",
+            )
+        ],
+        (),
+        (),
+        ("ext-pushslice-0-complete-zeros", "ext-sdbegins-0-setup-complete-zeros"),
+    ),
+    "debug opcodes without a meaning are invalid": Mutation(
+        HANDLERS,
+        [("                .set_range(0x16..0x1E, execute_debug_nop)\n", "")],
+        (),
+        (),
+        ("ext-debug-16-complete-ones", "ext-debug-1d-complete-ones"),
     ),
 }
 

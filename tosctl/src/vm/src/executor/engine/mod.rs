@@ -10,6 +10,7 @@
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
 mod core;
+mod cp0_prefixes;
 pub(in crate::executor) mod data;
 mod handlers;
 #[macro_use]

@@ -65,6 +65,11 @@ fn continuation(cont: &ContinuationData) -> anyhow::Result<String> {
         ContinuationType::UntilLoopCondition(_) => "vmc_until".to_string(),
         ContinuationType::WhileLoopCondition(..) => "vmc_while_cond".to_string(),
     };
+    // The C++ VM's quit continuations carry no data of their own.
+    let plain = cont.nargs == -1 && cont.savelist.is_empty() && cont.stack.depth() == 0;
+    if plain && matches!(cont.type_of, ContinuationType::Quit(_) | ContinuationType::ExcQuit) {
+        return Ok(format!("cont:{name}"));
+    }
     Ok(format!(
         "cont:{name}:nargs={}:save={}:stack=[{}]",
         cont.nargs,
@@ -134,9 +139,15 @@ fn main() -> anyhow::Result<()> {
         }
         push(&mut stack, f[4])?;
         let code = read_single_root_boc(hex::decode(f[9])?)?;
+        // The C++ VM starts with an empty tuple in c7 unless given one, and c3 quitting with 11
+        // unless told to start with c3 set to the code.
+        let mut ctrls = SaveList::new();
+        ctrls.put(7, StackItem::tuple(vec![]))?;
+        let quit = ContinuationData::with_type(ContinuationType::Quit(11));
+        ctrls.put(3, StackItem::continuation(quit))?;
         let mut engine = Engine::with_capabilities(0).setup_checked(
             code,
-            SaveList::new(),
+            ctrls,
             stack,
             Gas::test_with_limit(budget),
             vec![],

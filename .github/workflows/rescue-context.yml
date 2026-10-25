@@ -110,7 +110,7 @@ jobs:
       - name: Build native Release tools and both Rust drivers
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-          cmake --build build --target func fift tlbc create-state emulator test-fee-native-cost test-pq-suite-parity test-vm-endstate test-pq-falcon512-parity test-wallet-pq-signer-fixture -j"$(nproc)"
+          cmake --build build --target func fift tlbc create-state emulator test-fee-native-cost test-pq-suite-parity test-vm-endstate test-vm-opcode-table test-pq-falcon512-parity test-wallet-pq-signer-fixture -j"$(nproc)"
           sh test/rescue-fee-gate/tools/build.sh build-signers
           cargo build --manifest-path tosctl/src/Cargo.toml --locked -p tos_vm -p tos_executor \
             --example fee-native-cost --example suite-parity --example vm-endstate --example falcon-parity \
@@ -614,16 +614,28 @@ jobs:
             artifacts/context/endstate-rust.tsv --expected test/rescue-fee-gate/vm-endstate-expected.tsv \
             --known "$(python test/rescue-fee-gate/vm_endstate_scenarios.py --known)" \
             --known-stack "$(python test/rescue-fee-gate/vm_endstate_scenarios.py --known-stack)"
+          build/crypto/pq/test-vm-opcode-table > artifacts/context/cp0.tsv
+          python test/rescue-fee-gate/vm_opcode_table.py artifacts/context/cp0.tsv --check
+          python test/rescue-fee-gate/vm_prefix_scenarios.py artifacts/context/cp0.tsv artifacts/context/prefix.tsv
+          build/crypto/pq/test-vm-endstate artifacts/context/prefix.tsv > artifacts/context/prefix-cpp.tsv
+          "$CARGO_TARGET_DIR/debug/examples/vm-endstate" artifacts/context/prefix.tsv > artifacts/context/prefix-rust.tsv
+          python test/rescue-fee-gate/vm_endstate_compare.py artifacts/context/prefix-cpp.tsv \
+            artifacts/context/prefix-rust.tsv --known "$(python test/rescue-fee-gate/vm_prefix_scenarios.py --known)"
           cargo test --manifest-path tosctl/src/Cargo.toml --locked -p tos_vm --lib incoming_storage_context_is_versioned_and_optional
           cargo test --manifest-path tosctl/src/Cargo.toml --locked -p tos_assembler --lib lms_fee_hash_mnemonic_round_trip
+          cargo test --manifest-path tosctl/src/Cargo.toml --locked -p tos_assembler --lib computed_cell_code_runs_at_the_newest_version
           cargo test --manifest-path tosctl/src/Cargo.toml --locked -p tos_executor --lib
       - name: Require meaningful mutation failures and restore binaries
         if: contains(fromJSON('["mutations"]'), matrix.suite) && matrix.runner == 'ubuntu-24.04'
         run: |
           python test/rescue-fee-gate/context_mutations.py --artifacts artifacts/context --target "$CARGO_TARGET_DIR"
+          python test/rescue-fee-gate/vm_prefix_scenarios.py artifacts/context/cp0.tsv \
+            artifacts/context/prefix-equal.tsv --without-known
+          cat artifacts/context/endstate.tsv artifacts/context/prefix-equal.tsv > artifacts/context/endstate-all.tsv
+          build/crypto/pq/test-vm-endstate artifacts/context/endstate-all.tsv > artifacts/context/endstate-all-cpp.tsv
           python test/rescue-fee-gate/suite_parity_mutations.py test/rescue-fee-gate/suite-scenarios.tsv \
             artifacts/context/legacy-cpp.tsv "$CARGO_TARGET_DIR" \
-            artifacts/context/endstate.tsv artifacts/context/endstate-cpp.tsv
+            artifacts/context/endstate-all.tsv artifacts/context/endstate-all-cpp.tsv
           python test/rescue-fee-gate/context_transactions.py --output artifacts/context \
             --rust "$CARGO_TARGET_DIR/debug/examples/pq-tx-parity"
           git diff --exit-code

@@ -16,7 +16,7 @@ use crate::{
     },
     stack::StackItem,
 };
-use chain_block::{fail, ExceptionCode, Mask, Status};
+use chain_block::{Mask, Status};
 use std::{cmp, str, sync::Arc};
 
 const STR: u8 = 0x01;
@@ -219,6 +219,11 @@ pub(crate) fn execute_debug_off(engine: &mut Engine) -> Status {
     engine.switch_debug(true);
     Ok(())
 }
+/// DEBUG xx: every other debug opcode below FEF0 does nothing, as on a node, which runs with
+/// debug opcodes disabled
+pub(crate) fn execute_debug_nop(engine: &mut Engine) -> Status {
+    engine.load_instruction(Instruction::new("DEBUG"))
+}
 /// dumps s(n)
 pub(crate) fn execute_dump_var(engine: &mut Engine) -> Status {
     internal_dump(engine, "DUMP", FLUSH | INDEX, |engine| {
@@ -242,45 +247,26 @@ pub(crate) fn execute_print_var(engine: &mut Engine) -> Status {
     })
 }
 
-fn internal_dump_string<F>(engine: &mut Engine, name: &'static str, how: u8, op: F) -> Status
-where
-    F: FnOnce(&mut Engine, &str) -> Status,
-{
+/// DEBUGSTR: FEFn followed by n + 1 bytes. A node runs with debug opcodes disabled and skips
+/// the bytes whatever they hold; with debug output on, the first byte selects the output (0 log,
+/// 1 print and flush, 0 alone flush) and the rest is printed as text where it is UTF-8.
+pub(crate) fn execute_dump_string(engine: &mut Engine) -> Status {
     engine.load_instruction(
-        Instruction::new(name).set_opts(InstructionOptions::Bytestring(12, 0, 4, 1)),
+        Instruction::new("DEBUGSTR").set_opts(InstructionOptions::Bytestring(12, 0, 4, 1)),
     )?;
-    match str::from_utf8(&engine.cmd.slice().get_bytestring(8)) {
-        Ok(string) => {
-            if engine.debug() {
-                op(engine, string)?
-            }
+    let data = engine.cmd.slice().get_bytestring(0);
+    let Some((&mode, text)) = data.split_first() else {
+        return Ok(());
+    };
+    if engine.debug() {
+        if let Ok(text) = str::from_utf8(text) {
+            engine.dump(text);
         }
-        Err(err) => fail!(ExceptionCode::InvalidOpcode, "convert from utf-8 error {}", err),
     }
-    if how.bit(FLUSH) {
+    if mode == 1 || (mode == 0 && text.is_empty()) {
         engine.flush();
     }
     Ok(())
-}
-
-pub(crate) fn execute_dump_string(engine: &mut Engine) -> Status {
-    let length = 1 + (0x0F & engine.last_cmd() as usize);
-    match engine.next_cmd()? {
-        0 if length == 1 => internal_dump_string(engine, "LOGFLUSH", FLUSH, |_, _| Ok(())),
-        0 => internal_dump_string(engine, "LOGSTR", 0, |engine, string| {
-            engine.dump(string);
-            Ok(())
-        }),
-        1 => internal_dump_string(engine, "PRINTSTR", FLUSH, |engine, string| {
-            engine.dump(string);
-            Ok(())
-        }),
-        // TODO: dump s0 as TL-B supported type
-        _ => internal_dump_string(engine, "DUMPTOSFMT", 0, |engine, string| {
-            engine.dump(string);
-            Ok(())
-        }),
-    }
 }
 
 #[cfg(test)]

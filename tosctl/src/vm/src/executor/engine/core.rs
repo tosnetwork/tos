@@ -16,7 +16,7 @@ use crate::{
     },
     executor::{
         continuation::{switch, switch_to_c0},
-        engine::handlers::Handlers,
+        engine::{cp0_prefixes::CP0_PREFIXES, handlers::Handlers},
         gas::gas_state::Gas,
         math::DivMode,
         microcode::{CTRL, VAR},
@@ -638,31 +638,36 @@ impl Engine {
             // instruction that fails before it is decoded (an unassigned opcode, a
             // version gate, a truncated prefix).
             self.step += 1;
-            let execution_result = match HANDLERS_CP0.get_handler(self) {
-                Err(err) => match self.basic_use_gas(8) {
-                    Err(err) => Some(err),
-                    Ok(_) => Some(err),
-                },
-                Ok(Some(handler)) => {
-                    match handler(self) {
-                        Err(e) => {
-                            // Some(update_error_description(e, |e|
-                            //     format!("CMD: {}{} err: {}", self.cmd.proto.name_prefix.unwrap_or_default(), self.cmd.proto.name, e)
-                            // ))
-                            Some(e)
+            let execution_result = match self.check_prefix() {
+                Err(err) => Some(err),
+                Ok(width) => match HANDLERS_CP0.get_handler(self) {
+                    // The prefix is complete, so the code ends inside the instruction's data:
+                    // the C++ VM charges the prefix and the instruction finds its data short.
+                    Err(err) => match self.try_use_gas(Gas::basic_gas_price(width, 0)) {
+                        Err(err) => Some(err),
+                        Ok(_) => Some(err),
+                    },
+                    Ok(Some(handler)) => {
+                        match handler(self) {
+                            Err(e) => {
+                                // Some(update_error_description(e, |e|
+                                //     format!("CMD: {}{} err: {}", self.cmd.proto.name_prefix.unwrap_or_default(), self.cmd.proto.name, e)
+                                // ))
+                                Some(e)
+                            }
+                            Ok(_) => self.gas.check_gas_remaining().err(),
                         }
-                        Ok(_) => self.gas.check_gas_remaining().err(),
                     }
-                }
-                Ok(None) => {
-                    let code = self.last_cmd();
-                    log::trace!(target: "tvm", "Invalid code: {} ({:#X})\n", code, code);
-                    if let Err(err) = self.try_use_gas(Gas::basic_gas_price(0, 0)) {
-                        Some(err)
-                    } else {
-                        Some(error!(ExceptionCode::InvalidOpcode))
+                    Ok(None) => {
+                        let code = self.last_cmd();
+                        log::trace!(target: "tvm", "Invalid code: {} ({:#X})\n", code, code);
+                        if let Err(err) = self.try_use_gas(Gas::basic_gas_price(0, 0)) {
+                            Some(err)
+                        } else {
+                            Some(error!(ExceptionCode::InvalidOpcode))
+                        }
                     }
-                }
+                },
             };
             self.cmd.clear();
             if let Some(err) = execution_result {
@@ -684,6 +689,32 @@ impl Engine {
             fail!(ExceptionCode::CellOverflow, "automatic commit failed: {}", err)
         }
         Ok(result)
+    }
+
+    // Before running an instruction the C++ VM looks up at most 24 bits of code, padded with
+    // zeros, in codepage 0 (cp0_prefixes.rs is generated from that table). An unassigned opcode,
+    // or one the global version does not enable, costs 10 gas and is invalid. Otherwise the
+    // prefix width is the base gas, and fewer bits than that left in the code is invalid too.
+    // Only a failing check charges gas here: an instruction that runs charges its own base gas.
+    // Returns the prefix width.
+    fn check_prefix(&mut self) -> Result<usize> {
+        let code = self.cc.code();
+        let bits = code.remaining_bits().min(24);
+        let opcode = u32::try_from(code.get_int(bits)?)? << (24 - bits);
+        let index = CP0_PREFIXES.partition_point(|&(first, _, _)| first <= opcode);
+        let Some(&(_, width, version)) = index.checked_sub(1).and_then(|i| CP0_PREFIXES.get(i))
+        else {
+            fail!(ExceptionCode::FatalError, "opcode {:06x} is not in codepage 0", opcode)
+        };
+        if width == 0 || self.block_version < u32::from(version) {
+            self.try_use_gas(Gas::basic_gas_price(0, 0))?;
+            fail!(ExceptionCode::InvalidOpcode, "invalid opcode {:06x}", opcode)
+        }
+        if bits < usize::from(width) {
+            self.try_use_gas(Gas::basic_gas_price(usize::from(width), 0))?;
+            fail!(ExceptionCode::InvalidOpcode, "too short opcode {:06x}", opcode)
+        }
+        Ok(usize::from(width))
     }
 
     fn step_next_ref(&mut self, reference: Cell) -> Result<Option<i32>> {
@@ -1603,7 +1634,7 @@ impl Engine {
                 }))
             }
             Some(InstructionOptions::Dictionary(offset, bits)) => {
-                self.use_gas(Gas::basic_gas_price(offset + 1 + bits, 0));
+                self.try_use_gas(Gas::basic_gas_price(offset + 1 + bits, 0))?;
                 let mut code = self.cmd_code(offset)?;
                 let cell = code
                     .get_next_dictionary()
@@ -1615,7 +1646,7 @@ impl Engine {
                 self.cmd.params.push(InstructionParameter::Length(length))
             }
             Some(InstructionOptions::Bytestring(offset, r, x, bytes)) => {
-                self.use_gas(Gas::basic_gas_price(offset + r + x, 0));
+                self.try_use_gas(Gas::basic_gas_price(offset + r + x, 0))?;
                 let slice = self.extract_slice(offset, r, x, 0, bytes)?;
                 if slice.remaining_bits() % 8 != 0 {
                     fail!(ExceptionCode::InvalidOpcode)
@@ -1623,9 +1654,15 @@ impl Engine {
                 self.cmd.params.push(InstructionParameter::Slice(slice))
             }
             Some(InstructionOptions::Bitstring(offset, r, x, refs)) => {
-                self.use_gas(Gas::basic_gas_price(offset + r + x, 0));
+                self.try_use_gas(Gas::basic_gas_price(offset + r + x, 0))?;
                 let mut slice = self.extract_slice(offset, r, x, refs, 0)?;
+                // The completion tag is the last 1 bit; data without one is empty, as in the
+                // C++ VM.
+                let bits = slice.remaining_bits();
                 slice.trim_right();
+                if bits > 0 && slice.remaining_bits() == bits {
+                    slice.shrink_data(..0);
+                }
                 self.cmd.params.push(InstructionParameter::Slice(slice));
             }
             None => {
