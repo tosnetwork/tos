@@ -372,6 +372,37 @@ def main(out):
     add_program("child-exits-null-via-c2-exit", "R7", prog(runvm(exits_null, 8, 1_000), exit_code))
     add_program("child-exits-null-via-c2-value", "R5", prog(runvm(exits_null, 8, 1_000), value))
     add_program("exits-13-via-c2", "E13", prog(pushint(7), pushint(13), c2_jump))
+    # The same exit through EXECUTE, in an isolated child, and with nothing else on the stack.
+    executes_13 = prog(pushint(5), pushint(7), pushint(13), op([0xED, 0x42]), op([0xD8]))
+    add_program(
+        "child-executes-13-via-c2-exit", "R13", prog(runvm(executes_13, 8, 1_000), exit_code)
+    )
+    add_program(
+        "child-exits-13-via-c2-exit-isolated", "R13", prog(runvm(exits_13, 136, 1_000), exit_code)
+    )
+    alone_13 = prog(pushint(13), c2_jump)
+    add_program(
+        "child-exits-13-alone-via-c2-depth", "R1", prog(runvm(alone_13, 0), op([0x68]), ONLYTOP)
+    )
+    # A custom handler that forwards THROW 13 to the saved original c2: SETCONTARGS 1 captures
+    # the original in the handler, which rotates it above (value, code) and jumps to it.
+    forwards = prog(
+        pushint(7),
+        op([0xED, 0x42]),  # PUSH c2: the original handler
+        op([0x92, 0x58, 0xD9]),  # PUSHCONT { ROT JMPX }
+        op([0xEC, 0x1F]),  # SETCONTARGS 1
+        op([0xED, 0x52]),  # POP c2
+        op([0xF2, 0x0D]),  # THROW 13
+    )
+    for flags, suffix in ((8, ""), (136, "-isolated")):
+        add_program(
+            f"child-forwards-throw-13-to-saved-c2-exit{suffix}",
+            "R13",
+            prog(runvm(forwards, flags, 1_000), exit_code),
+        )
+    add_program(
+        "child-forwards-throw-13-to-saved-c2-depth", "R3", prog(runvm(forwards, 8, 1_000), depth)
+    )
     add_program("throw-13", "E13", prog(pushint(7), op([0xF2, 0x0D])))
 
     # Data and actions (+4, +32) of a child: what it last committed, or from version 11 null if

@@ -187,7 +187,11 @@ MUTATIONS = {
                 "        };\n",
             )
         ],
-        ("child-exits-13-via-c2-exit", "exits-13-via-c2"),
+        (
+            "child-exits-13-via-c2-exit",
+            "child-forwards-throw-13-to-saved-c2-exit",
+            "exits-13-via-c2",
+        ),
     ),
     "default exception handler leaves its exit code on the returned stack": Mutation(
         CORE,

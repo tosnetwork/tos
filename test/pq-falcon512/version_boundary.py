@@ -62,7 +62,7 @@ def main():
                 raise RuntimeError(f"{entry}/{vm}: driver failed: {result.returncode}")
             rows = [line.split("\t") for line in result.stdout.splitlines()]
             if len(rows) != len(expected) or any(
-                len(row) != (7 if entry == "dedicated" else 4) for row in rows
+                len(row) != (7 if entry == "dedicated" else 5) for row in rows
             ):
                 raise RuntimeError(f"{entry}/{vm}: incomplete execution evidence")
             for row, want in zip(rows, expected):
@@ -71,6 +71,9 @@ def main():
                     failures.append(dict(entry=entry, vm=vm, expected=want, actual=actual))
                 if int(row[2]) <= 0:
                     raise RuntimeError("missing gas charge")
+                # The generic driver's fifth field is the VM step count.
+                if entry == "generic" and int(row[4]) <= 0:
+                    raise RuntimeError("missing step count")
                 if entry == "dedicated" and int(row[4]) != (1 if want[1] == 0 else 0):
                     failures.append(dict(entry=entry, vm=vm, case=row[0], error="commit mismatch"))
             outputs.append(["\t".join(row).lower() for row in rows])
