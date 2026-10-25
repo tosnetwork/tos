@@ -28,6 +28,12 @@ BOOLEVAL = op([0xED, 0xF9])
 SETCPX = op([0xFF, 0xF0])
 INC = op([0xA4])
 DEC = op([0xA5])
+NEGATE = op([0xA3])
+SETGASLIMIT = op([0xF8, 0x01])
+
+
+def pushpow2(n):
+    return op([0x83, n - 1])
 AGAIN_FOREVER = (op([0x90]), op([0xEA]))  # PUSHCONT {} AGAIN
 
 
@@ -95,6 +101,19 @@ def scenarios():
     add("setcpx-nan", prog(pushint(7), PUSHNAN, SETCPX))
     add("setcpx-null", prog(pushint(7), PUSHNULL, SETCPX))
     add("setcpx-empty", prog(SETCPX))
+    # SETGASLIMIT: at most 0 means 0, 2^63 and more mean unlimited (capped by the maximum), NaN is
+    # an integer overflow. A limit below the gas already used is out of gas.
+    add("setgaslimit-5000", prog(pushint(5000), SETGASLIMIT, pushint(7)))
+    add("setgaslimit-2-pow-62", prog(pushpow2(62), SETGASLIMIT, pushint(7)))
+    add("setgaslimit-2-pow-63-minus-1", prog(pushpow2(63), DEC, SETGASLIMIT, pushint(7)))
+    add("setgaslimit-2-pow-63", prog(pushpow2(63), SETGASLIMIT, pushint(7)))
+    add("setgaslimit-2-pow-200", prog(pushpow2(200), SETGASLIMIT, pushint(7)))
+    add("setgaslimit-0", prog(pushint(7), pushint(0), SETGASLIMIT))
+    add("setgaslimit-minus-1", prog(pushint(7), pushint(-1), SETGASLIMIT))
+    add("setgaslimit-minus-2-pow-200", prog(pushint(7), pushpow2(200), NEGATE, SETGASLIMIT))
+    add("setgaslimit-nan", prog(pushint(7), PUSHNAN, SETGASLIMIT))
+    add("setgaslimit-null", prog(pushint(7), PUSHNULL, SETGASLIMIT))
+    add("setgaslimit-empty", prog(SETGASLIMIT))
 
 
 # Rows that differ only in the termination contract: the Rust VM leaves the exit code on the
@@ -122,6 +141,12 @@ KNOWN_STACK = [
     "setcpx-nan",
     "setcpx-null",
     "setcpx-empty",
+    "setgaslimit-0",
+    "setgaslimit-minus-1",
+    "setgaslimit-minus-2-pow-200",
+    "setgaslimit-nan",
+    "setgaslimit-null",
+    "setgaslimit-empty",
 ]
 
 # Rows that differ in more than that.

@@ -20,6 +20,7 @@ use crate::{
     },
 };
 use chain_block::{fail, ExceptionCode, Result, Status};
+use num::bigint::Sign;
 
 pub mod gas_state;
 
@@ -49,7 +50,13 @@ pub fn execute_accept(engine: &mut Engine) -> Status {
 pub fn execute_setgaslimit(engine: &mut Engine) -> Status {
     engine.load_instruction(Instruction::new("SETGASLIMIT"))?;
     fetch_stack(engine, 1)?;
-    let gas_limit = engine.cmd.var(0).as_integer()?.take_value_of(|x| i64::from_int(x).ok())?;
+    // At most 0 means 0; from 2^63 the limit is unlimited, as ACCEPT sets it. NaN is an overflow.
+    let gas_limit = engine.cmd.var(0).as_integer()?.take_value_of(|x| {
+        Some(match x.sign() {
+            Sign::Plus => i64::from_int(x).unwrap_or(i64::MAX),
+            Sign::Minus | Sign::NoSign => 0,
+        })
+    })?;
     setgaslimit(engine, gas_limit)
 }
 // Application-specific primitives - A.11; Gas-related primitives - A.11.2
