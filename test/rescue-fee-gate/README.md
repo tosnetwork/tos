@@ -53,6 +53,12 @@ What it adds:
   `child-*` rows run a child VM with RUNVM inside a parent that ends normally, so each observes
   what the child returned; their gas values were measured with the C++ VM. Regenerating draws fresh keys for the five `s4-*-random-key` rows; the other
   rows are deterministic, so keep the committed random-key rows unless they are what changes.
+- `vm_endstate_scenarios.py`, `vm-endstate.cpp`, `tosctl/src/vm/examples/vm-endstate.rs`,
+  `vm_endstate_compare.py`, `vm-endstate-expected.tsv`: how each VM ends a program. Beyond exit
+  code, gas and steps, both drivers print the committed state and the whole final stack, and the
+  Rust driver also prints the argument its error carries, which must equal the C++ stack top
+  (transactions report it as exit_arg). `KNOWN` in the generator lists rows that still differ;
+  each must keep differing, so a fix removes its rows. The C++ output is frozen.
 - Test signers in `tools/`: `build.sh <dir>` builds `slh_tool`, `mldsa_tool` and `lms_tool`
   (RFC 8554 Appendix A key generation from SEED and I, parallel).
 
@@ -77,6 +83,12 @@ cargo run -p tos_vm --example suite-parity -- ../../test/rescue-fee-gate/suite-s
                                                      # equal suite-expected.tsv
 python3 test/rescue-fee-gate/compare.py test/rescue-fee-gate/suite-scenarios.tsv \
   /path/to/cpp.tsv /path/to/rust.tsv test/rescue-fee-gate/suite-expected.tsv
+python3 test/rescue-fee-gate/vm_endstate_scenarios.py /tmp/endstate.tsv
+build/crypto/pq/test-vm-endstate /tmp/endstate.tsv > /tmp/endstate-cpp.tsv
+cargo run -p tos_vm --example vm-endstate -- /tmp/endstate.tsv > /tmp/endstate-rust.tsv   # (from tosctl/src)
+python3 test/rescue-fee-gate/vm_endstate_compare.py /tmp/endstate-cpp.tsv /tmp/endstate-rust.tsv \
+  --expected test/rescue-fee-gate/vm-endstate-expected.tsv \
+  --known "$(python3 test/rescue-fee-gate/vm_endstate_scenarios.py --known)"
 python3 test/rescue-fee-gate/version_scenarios.py /path/to/version-scenarios.tsv
 # Run both drivers on version-scenarios.tsv, then compare.py without a frozen-expected argument.
 # All four suites must reject versions 0-15 and accept valid inputs at versions 16-19.
