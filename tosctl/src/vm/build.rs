@@ -5,6 +5,7 @@ mod metadata {
         main();
     }
 }
+include!("../common/build/slhdsa_sha256.rs");
 fn main() {
     metadata::emit();
     let root = std::path::PathBuf::from(
@@ -49,13 +50,19 @@ fn main() {
     let slh = root.join("../../../third-party/slhdsa-c");
     println!("cargo:rerun-if-changed={}", slh.display());
     println!("cargo:rerun-if-changed=slh-shim.c");
+    let sha256 = slhdsa_sha256(&root.join("../../.."));
     let mut build = cc::Build::new();
-    for source in ["slh_dsa.c", "slh_sha2.c", "sha2_256.c", "sha2_512.c"] {
+    for source in ["slh_dsa.c", "slh_sha2.c", "sha2_512.c"] {
         build.file(slh.join(source));
     }
+    if sha256.sha_ni {
+        build.define("TOS_SLHDSA_SHA_NI", None);
+    }
     build
+        .file(&sha256.source)
         .file(root.join("slh-shim.c"))
         .include(&slh)
+        .include(&adapter)
         .std("c99")
         .warnings(false)
         .compile("tos_rust_slhdsa128s");

@@ -1,0 +1,127 @@
+name: SLH-DSA SHA-256 backends
+on:
+  pull_request:
+    paths:
+      - 'crypto/pq/slhdsa*'
+      - 'crypto/pq/CMakeLists.txt'
+      - 'third-party/slhdsa-c/**'
+      - 'test/pq-slhdsa/**'
+      - 'tosctl/src/common/build/slhdsa_sha256.rs'
+      - 'tosctl/src/vm/build.rs'
+      - 'tosctl/src/vm/slh-shim.c'
+      - 'tosctl/src/vm/src/executor/pq.rs'
+      - 'tosctl/src/vm/src/tests/test_slhdsa_vectors.rs'
+      - 'tosctl/src/wallet-pq-signer/build.rs'
+      - '.github/workflows/slhdsa-sha256-backend.yml'
+defaults:
+  run:
+    shell: bash
+permissions:
+  contents: read
+concurrency:
+  group: slhdsa-sha256-backend-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  # Every configuration runs the same signature vectors. "sha-ni" must actually execute the SHA-NI
+  # path (TOS_REQUIRE_SHA_NI=1 fails the job otherwise); "portable" builds the imported file.
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64-default
+            runner: ubuntu-24.04
+            switch: ''
+            expect: 'ON'
+            require: '1'
+            backend: sha-ni
+          - name: linux-x86_64-off
+            runner: ubuntu-24.04
+            switch: '0'
+            expect: 'OFF'
+            require: '0'
+            backend: portable
+          - name: linux-arm64-default
+            runner: ubuntu-24.04-arm
+            switch: ''
+            expect: 'OFF'
+            require: '0'
+            backend: portable
+          - name: macos-default
+            runner: macos-15
+            switch: ''
+            expect: 'OFF'
+            require: '0'
+            backend: portable
+    name: native (${{ matrix.name }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Configure the PQ library alone
+        run: |
+          if [ -n '${{ matrix.switch }}' ]; then export TOS_SLHDSA_SHA_NI='${{ matrix.switch }}'; fi
+          cmake -S crypto/pq -B build-pq -DCMAKE_BUILD_TYPE=Release | tee configure.txt
+          grep -Fx -- '-- SLH-DSA SHA-256 backend: TOS_SLHDSA_SHA_NI=${{ matrix.expect }}' configure.txt
+      - name: Signature vectors through the node adapter
+        env:
+          TOS_REQUIRE_SHA_NI: ${{ matrix.require }}
+        run: |
+          cmake --build build-pq --target test-pq-slhdsa-vectors -j4
+          build-pq/test-pq-slhdsa-vectors test/pq-slhdsa/slh-verify-vectors.txt | tee vectors.txt
+          grep -Fx 'SLH-DSA SHA-256 backend: ${{ matrix.backend }}' vectors.txt
+      - name: SHA-NI backend against the imported implementation
+        if: matrix.expect == 'ON'
+        env:
+          TOS_REQUIRE_SHA_NI: ${{ matrix.require }}
+        run: |
+          grep -m1 -o -w sha_ni /proc/cpuinfo
+          cmake --build build-pq --target test-pq-slhdsa-sha256-backend -j4
+          build-pq/test-pq-slhdsa-sha256-backend
+  rust:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64-default
+            runner: ubuntu-24.04
+            switch: ''
+            require: '1'
+            backend: sha-ni
+          - name: linux-x86_64-off
+            runner: ubuntu-24.04
+            switch: '0'
+            require: '0'
+            backend: portable
+          - name: linux-arm64-default
+            runner: ubuntu-24.04-arm
+            switch: ''
+            require: '0'
+            backend: portable
+    name: rust (${{ matrix.name }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Install the pinned Rust toolchain
+        run: scripts/install-rust-toolchain.sh
+      - name: Restore Rust dependency cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        continue-on-error: true
+        with:
+          prefix-key: tos-rust-ci-v1
+          key: slhdsa-sha256-${{ matrix.name }}
+          cache-bin: false
+          workspaces: tosctl/src -> target
+      - name: VM suite-3 backend and the wallet signer
+        env:
+          TOS_REQUIRE_SHA_NI: ${{ matrix.require }}
+        run: |
+          if [ -n '${{ matrix.switch }}' ]; then export TOS_SLHDSA_SHA_NI='${{ matrix.switch }}'; fi
+          cargo test --locked --manifest-path tosctl/src/vm/Cargo.toml --lib slhdsa_vector_tests -- --nocapture | tee vm.txt
+          grep -Fx 'SLH-DSA SHA-256 backend: ${{ matrix.backend }}' vm.txt
+          cargo test --locked --manifest-path tosctl/src/wallet-pq-signer/Cargo.toml

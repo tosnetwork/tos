@@ -365,8 +365,30 @@ target_include_directories(tos_lms_fee PUBLIC "$<BUILD_INTERFACE:${CMAKE_CURRENT
 target_link_libraries(tos_lms_fee PRIVATE OpenSSL::Crypto)
 # PROTOTYPE rescue root: Pure SLH-DSA-SHA2-128s verification only. See the import's PROVENANCE.md.
 set(TOS_SLHDSA_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../third-party/slhdsa-c")
+# SHA-256 backend of the SLH-DSA verifier. ON builds crypto/pq/slhdsa-sha256.c (SHA-NI with a
+# portable fallback chosen at run time) in place of the imported sha2_256.c; the hashes are the
+# same either way. Default: on for Linux x86-64 with GCC or Clang, off elsewhere. The environment
+# variable of the same name sets the default, so the CMake and Cargo builds follow one switch.
+if(DEFINED ENV{TOS_SLHDSA_SHA_NI})
+  set(TOS_SLHDSA_SHA_NI_DEFAULT "$ENV{TOS_SLHDSA_SHA_NI}")
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64)$"
+       AND CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang)$")
+  set(TOS_SLHDSA_SHA_NI_DEFAULT ON)
+else()
+  set(TOS_SLHDSA_SHA_NI_DEFAULT OFF)
+endif()
+option(TOS_SLHDSA_SHA_NI "SLH-DSA verifier uses the SHA-NI SHA-256 backend" ${TOS_SLHDSA_SHA_NI_DEFAULT})
+if(TOS_SLHDSA_SHA_NI)
+  if(NOT CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64)$" OR NOT CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang)$")
+    message(FATAL_ERROR "TOS_SLHDSA_SHA_NI needs an x86-64 target and GCC or Clang")
+  endif()
+  set(TOS_SLHDSA_SHA256_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/slhdsa-sha256.c")
+else()
+  set(TOS_SLHDSA_SHA256_SOURCE "${TOS_SLHDSA_SOURCE_DIR}/sha2_256.c")
+endif()
+message(STATUS "SLH-DSA SHA-256 backend: TOS_SLHDSA_SHA_NI=${TOS_SLHDSA_SHA_NI}")
 add_library(tos_slhdsa_native STATIC "${TOS_SLHDSA_SOURCE_DIR}/slh_dsa.c" "${TOS_SLHDSA_SOURCE_DIR}/slh_sha2.c"
-  "${TOS_SLHDSA_SOURCE_DIR}/sha2_256.c" "${TOS_SLHDSA_SOURCE_DIR}/sha2_512.c")
+  "${TOS_SLHDSA_SHA256_SOURCE}" "${TOS_SLHDSA_SOURCE_DIR}/sha2_512.c")
 set_target_properties(tos_slhdsa_native PROPERTIES C_STANDARD 99 POSITION_INDEPENDENT_CODE ON)
 # Preserve the byte-for-byte imported backend. Its byte packing uses intentional
 # narrowing conversions; keep those diagnostics visible without promoting them
@@ -379,6 +401,26 @@ target_compile_features(tos_slhdsa128s PUBLIC cxx_std_17)
 set_target_properties(tos_slhdsa128s PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(tos_slhdsa128s PUBLIC "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>")
 target_link_libraries(tos_slhdsa128s PRIVATE tos_slhdsa_native)
+if(TOS_SLHDSA_SHA_NI)
+  target_compile_definitions(tos_slhdsa128s PRIVATE TOS_SLHDSA_SHA_NI)
+endif()
+set(TOS_SLHDSA_TEST_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../test/pq-slhdsa")
+add_executable(test-pq-slhdsa-vectors "${TOS_SLHDSA_TEST_DIR}/slh-verify-vectors.cpp")
+target_link_libraries(test-pq-slhdsa-vectors PRIVATE tos_slhdsa128s)
+add_test(NAME pq-slhdsa-vectors COMMAND test-pq-slhdsa-vectors "${TOS_SLHDSA_TEST_DIR}/slh-verify-vectors.txt")
+if(TOS_SLHDSA_SHA_NI)
+  # Links its own testing build of the backend (with the forcing hook) and the imported file
+  # under ref_ names; the production archive is not involved.
+  add_executable(test-pq-slhdsa-sha256-backend "${TOS_SLHDSA_TEST_DIR}/sha256-backend.c"
+    "${TOS_SLHDSA_TEST_DIR}/sha256-reference.c" "${CMAKE_CURRENT_SOURCE_DIR}/slhdsa-sha256.c")
+  set_target_properties(test-pq-slhdsa-sha256-backend PROPERTIES C_STANDARD 99)
+  target_include_directories(test-pq-slhdsa-sha256-backend PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}"
+    "${TOS_SLHDSA_SOURCE_DIR}" "${TOS_SLHDSA_TEST_DIR}")
+  target_compile_definitions(test-pq-slhdsa-sha256-backend PRIVATE TOS_SLHDSA_SHA256_TESTING)
+  target_compile_options(test-pq-slhdsa-sha256-backend PRIVATE
+    "$<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-Wno-error=conversion>")
+  add_test(NAME pq-slhdsa-sha256-backend COMMAND test-pq-slhdsa-sha256-backend)
+endif()
 if(TARGET tos_crypto)
   target_link_libraries(tos_crypto PRIVATE tos_slhdsa128s)
   target_link_libraries(tos_crypto PRIVATE tos_lms_fee)

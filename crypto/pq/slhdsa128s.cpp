@@ -1,8 +1,19 @@
 /* Copyright 2026 TOS Blockchain Teams. SPDX-License-Identifier: LGPL-2.0-or-later */
 #include "slh_dsa.h"
 #include "slhdsa128s.h"
+#ifdef TOS_SLHDSA_SHA_NI
+#include "slhdsa-sha256.h"
+#endif
 
 namespace tos::pq {
+const char* slhdsa128s_sha256_backend() noexcept {
+#ifdef TOS_SLHDSA_SHA_NI
+  return tos_slhdsa_sha256_backend();
+#else
+  return "portable";
+#endif
+}
+
 VerifyResult verify_slhdsa128s(std::string_view message, std::string_view context, std::string_view signature,
                                std::string_view public_key) noexcept {
   if (public_key.size() != slhdsa128s_public_key_bytes || signature.size() != slhdsa128s_signature_bytes ||
