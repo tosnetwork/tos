@@ -348,28 +348,35 @@ fn result_failures_are_terminal_and_envelope_failures_are_retried() {
     assert!(matches!(result, Attempt::Retry("too_deep")), "{result:?}");
 }
 
-/// Exit 13 sends a list read to stored state only from the checkpoint; from
-/// another block it is retried, and a single-proposal read refuses it.
+/// Running out of gas (exit -14) sends a list read to stored state only from the
+/// checkpoint; from another block it is retried, and a single-proposal read refuses
+/// it. A getter that throws 13 has not run out of gas and is refused.
 #[test]
-fn only_exit_13_of_a_list_read_at_the_checkpoint_falls_back() {
+fn only_out_of_gas_of_a_list_read_at_the_checkpoint_falls_back() {
     let checkpoint = checkpoint_of(TWO_LIVE);
-    let exit13 = TWO_LIVE.replacen(r#""exit_code":0"#, r#""exit_code":13"#, 1);
+    let out_of_gas = TWO_LIVE.replacen(r#""exit_code":0"#, r#""exit_code":-14"#, 1);
     assert!(matches!(
-        decode_getter_response(&response(&exit13), ProposalRead::List, &checkpoint),
-        Attempt::Exit13
+        decode_getter_response(&response(&out_of_gas), ProposalRead::List, &checkpoint),
+        Attempt::OutOfGas
     ));
     let other = MasterchainCheckpoint { seqno: checkpoint.seqno + 1, ..checkpoint.clone() };
     assert!(matches!(
-        decode_getter_response(&response(&exit13), ProposalRead::List, &other),
+        decode_getter_response(&response(&out_of_gas), ProposalRead::List, &other),
         Attempt::Retry("wrong_block")
     ));
     for read in [ProposalRead::One([1; 32]), ProposalRead::Expiry([1; 32])] {
-        let result = decode_getter_response(&response(&exit13), read, &checkpoint);
+        let result = decode_getter_response(&response(&out_of_gas), read, &checkpoint);
         assert!(
-            matches!(&result, Attempt::Refused(e) if e.contains("exited with code 13")),
+            matches!(&result, Attempt::Refused(e) if e.contains("exited with code -14")),
             "{result:?}"
         );
     }
+    let exit13 = TWO_LIVE.replacen(r#""exit_code":0"#, r#""exit_code":13"#, 1);
+    let result = decode_getter_response(&response(&exit13), ProposalRead::List, &checkpoint);
+    assert!(
+        matches!(&result, Attempt::Refused(e) if e.contains("exited with code 13")),
+        "{result:?}"
+    );
 }
 
 // ─── Destruction ──────────────────────────────────────────────────────────────

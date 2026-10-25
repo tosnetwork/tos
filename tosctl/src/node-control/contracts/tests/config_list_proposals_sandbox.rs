@@ -560,7 +560,7 @@ fn many(count: u32) -> Vec<Stored> {
 /// The node's get-method gas limit (`liteServer`'s `client_method_gas_limit`).
 const NODE_GET_METHOD_GAS: i64 = 300_000;
 
-/// The production path when the getter exceeds its gas: the node serves exit 13
+/// The production path when the getter exceeds its gas: the node serves exit -14
 /// with an answer far below the byte limit, and the list is read from the stored
 /// account at the same block. It matches the getter run with ample gas, entry for
 /// entry.
@@ -572,8 +572,8 @@ fn a_getter_out_of_gas_is_read_whole_from_the_stored_state() {
         .blockchain
         .run_get_method_with_gas(&chain.config, "list_proposals", vec![], NODE_GET_METHOD_GAS)
         .expect("runs");
-    assert_eq!(starved.exit_code, 13, "200 proposals fit the node's gas limit");
-    let served = served::run_result_with_exit(&starved.stack, 13, served::block_json(SEQNO));
+    assert_eq!(starved.exit_code, -14, "200 proposals fit the node's gas limit");
+    let served = served::run_result_with_exit(&starved.stack, -14, served::block_json(SEQNO));
     let oracle = chain
         .blockchain
         .run_get_method_with_gas(&chain.config, "list_proposals", vec![], 100_000_000)
@@ -604,9 +604,10 @@ fn a_getter_out_of_gas_is_read_whole_from_the_stored_state() {
 }
 
 /// Exit 13 sends only a list read to stored state, and only at the checkpoint:
-/// `get_proposal` exit 13, other exits, and exit 13 from another block are errors.
+/// `get_proposal` out of gas, other exits (13 thrown by a program among them), and
+/// out of gas from another block are errors.
 #[test]
-fn exit_13_falls_back_for_the_list_only() {
+fn out_of_gas_falls_back_for_the_list_only() {
     let mut chain = launch();
     register(&mut chain, &[Stored::unvoted([0x47; 32], 1000)]);
     let exit = |code: i32, seqno: u32| {
@@ -615,7 +616,8 @@ fn exit_13_falls_back_for_the_list_only() {
     for (case, list) in [
         ("exit 11", exit(11, SEQNO)),
         ("exit 1", exit(1, SEQNO)),
-        ("exit 13 from another block", exit(13, SEQNO - 1)),
+        ("exit 13", exit(13, SEQNO)),
+        ("out of gas from another block", exit(-14, SEQNO - 1)),
     ] {
         let answers = Answers { list, ..Answers::of(&chain, &[]) };
         let (calls, result) = runtime().block_on(async {
@@ -627,13 +629,13 @@ fn exit_13_falls_back_for_the_list_only() {
         assert!(!calls.contains(&"getAddressInformation".to_string()), "{case} fell back");
     }
     let mut answers = Answers::of(&chain, &[]);
-    answers.get.insert(hex::encode([0x47; 32]), exit(13, SEQNO));
+    answers.get.insert(hex::encode([0x47; 32]), exit(-14, SEQNO));
     let (calls, result) = runtime().block_on(async {
         let (node, wrapper) = serve(answers).await;
         let result = wrapper.get_proposal([0x47; 32]).await;
         (node.calls(), result.map(|proposal| proposal.is_some()))
     });
-    assert!(result.is_err_and(|e| format!("{e:#}").contains("exited with code 13")));
+    assert!(result.is_err_and(|e| format!("{e:#}").contains("exited with code -14")));
     assert!(!calls.contains(&"getAddressInformation".to_string()));
 }
 
@@ -654,7 +656,7 @@ fn the_getter_runs_out_of_gas_long_before_the_byte_limit() {
     let (fits, gas) = run(100);
     assert_eq!(fits, 0, "100 proposals: {gas} gas");
     let (out_of_gas, _) = run(150);
-    assert_eq!(out_of_gas, 13, "150 proposals ran within the node's gas limit");
+    assert_eq!(out_of_gas, -14, "150 proposals ran within the node's gas limit");
 }
 
 /// Only an oversized getter answer falls back. A malformed or refused answer, an
@@ -734,8 +736,9 @@ fn the_fallback_refuses_another_block_and_unsupported_code() {
             "unsupported code",
         ),
     ] {
-        let exit13 = Reply::ok(served::run_result_with_exit(&[], 13, served::block_json(SEQNO)));
-        for (trigger, list) in [("too large", too_large()), ("exit 13", exit13)] {
+        let out_of_gas =
+            Reply::ok(served::run_result_with_exit(&[], -14, served::block_json(SEQNO)));
+        for (trigger, list) in [("too large", too_large()), ("out of gas", out_of_gas)] {
             let answers = Answers { list, account: account.clone(), get: Default::default() };
             let result = runtime().block_on(async {
                 let (_node, wrapper) = serve(answers).await;

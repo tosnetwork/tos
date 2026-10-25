@@ -622,7 +622,8 @@ jobs:
         run: |
           python test/rescue-fee-gate/context_mutations.py --artifacts artifacts/context --target "$CARGO_TARGET_DIR"
           python test/rescue-fee-gate/suite_parity_mutations.py test/rescue-fee-gate/suite-scenarios.tsv \
-            artifacts/context/legacy-cpp.tsv "$CARGO_TARGET_DIR"
+            artifacts/context/legacy-cpp.tsv "$CARGO_TARGET_DIR" \
+            artifacts/context/endstate.tsv artifacts/context/endstate-cpp.tsv
           python test/rescue-fee-gate/context_transactions.py --output artifacts/context \
             --rust "$CARGO_TARGET_DIR/debug/examples/pq-tx-parity"
           git diff --exit-code

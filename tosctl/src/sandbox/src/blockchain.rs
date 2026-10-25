@@ -554,14 +554,14 @@ impl Blockchain {
         vm.set_block_version(block_version);
 
         let result = vm.execute();
-        let mut result_stack = mem::take(&mut vm.withdraw_stack().storage);
+        // The VM leaves its final stack as the C++ VM does; nothing is dropped from it.
+        let result_stack = mem::take(&mut vm.withdraw_stack().storage);
 
         let exit_code = match result {
             Ok(code) => code,
             Err(err) => {
-                result_stack.pop();
                 log::debug!(target: "sandbox", "get-method VM exception: {}", err);
-                tos_vm::error::tvm_exception_or_custom_code(&err)
+                tos_vm::error::tvm_exit_code(&err)
             }
         };
 

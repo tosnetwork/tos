@@ -55,7 +55,7 @@ network.
 | 38 | 53,594 | 38,211 | 125 | ok |
 | 39 | 54,926 | 39,199 | 128 | **fails** (client) |
 | 100 | — | — | — | **node refuses** (serialization) |
-| 214 | > 300,000 | — | — | **node refuses** (exit 13) |
+| 214 | > 300,000 | — | — | **node refuses** (out of gas, exit -14) |
 | 256 | 368,795 | 254,122 | 779 | — |
 
 Gas grows by about 1.33k and depth by exactly 3 per participant.

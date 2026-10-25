@@ -10,7 +10,10 @@
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
 use crate::{
-    error::{tvm_exception_code, tvm_exception_full, tvm_exception_or_custom_code, TvmError},
+    error::{
+        tvm_exception_code, tvm_exception_full, tvm_exception_or_custom_code, tvm_exit_code,
+        TvmError,
+    },
     executor::{
         continuation::{switch, switch_to_c0},
         engine::handlers::Handlers,
@@ -597,7 +600,34 @@ impl Engine {
         }
     }
 
+    /// Runs the code and ends the VM as the C++ VM does: out of gas leaves only the gas
+    /// consumed on the stack, and an error carries the final top of the stack as its argument
+    /// (null when the stack is empty), which is what transactions report as exit_arg.
     pub fn execute(&mut self) -> Result<i32> {
+        let result = self.run_to_end();
+        self.finish(result)
+    }
+
+    fn finish(&mut self, result: Result<i32>) -> Result<i32> {
+        let err = match result {
+            Ok(exit_code) => return Ok(exit_code),
+            Err(err) => err,
+        };
+        if tvm_exception_code(&err) == Some(ExceptionCode::OutOfGas) {
+            let gas_used = self.gas_used();
+            self.cc.stack = Stack::new();
+            self.cc.stack.push_int(gas_used);
+            fail!(TvmError::exception(ExceptionCode::OutOfGas, err, gas_used, file!(), line!()))
+        }
+        let exception = match tvm_exception_full(err) {
+            Ok((exception, _)) => exception,
+            Err(err) => return Err(err),
+        };
+        let top = self.cc.stack.get(0).cloned().unwrap_or_default();
+        fail!(TvmError::new(exception, top))
+    }
+
+    fn run_to_end(&mut self) -> Result<i32> {
         self.trace_info(EngineTraceInfoType::Start, 0, None);
         let result = loop {
             if let Some(result) = self.seek_next_cmd()? {
@@ -755,7 +785,7 @@ impl Engine {
     // The default exception handler, entered by a jump: the exit code is popped from the stack,
     // or is the error popping it raised, and everything below it stays, as in the C++ VM. The
     // exit code is chosen by the program, so it is reported as a custom code: 13 is not out of
-    // gas. It is pushed back for whoever ends the VM, as a raised exception leaves its code.
+    // gas. The argument of the error is set from the final stack when the VM ends.
     fn make_external_error(&mut self) -> Result<Option<i32>> {
         let number = match self.cc.stack.drop(0) {
             Ok(item) => item.as_integer_value(0..=0xffffi32),
@@ -767,13 +797,7 @@ impl Engine {
         {
             return Ok(Some(number));
         }
-        let value = match self.cc.stack.get(0) {
-            Ok(item) => item.as_integer().cloned().unwrap_or_default(),
-            Err(_) => IntegerData::zero(),
-        };
-        self.cc.stack.push_int(number);
-        let exception = Exception::from_number(number, String::new(), file!(), line!());
-        fail!(TvmError::new(exception, StackItem::int(value)))
+        fail!(Exception::from_number(number, String::new(), file!(), line!()))
     }
 
     // return Ok(Some(exit_code)) - if you want to stop execution
@@ -1157,7 +1181,8 @@ impl Engine {
         const STACK_GROW: usize = 2 * 1024 * 1024;
         let mut result = match stacker::maybe_grow(RED_ZONE, STACK_GROW, || child.execute()) {
             Ok(result) => result,
-            Err(err) => child.child_exit_after_error(&err),
+            // execute() has left on the child's stack what the parent receives.
+            Err(err) => tvm_exit_code(&err),
         };
         // Before anything below can fail (the child gas charge may run out of gas).
         self.slh_counter = child.slh_counter;
@@ -1232,30 +1257,6 @@ impl Engine {
             self.cc.stack.push_int(child_gas_used);
         }
         Ok(())
-    }
-
-    /// The exit code of a child VM that stopped with `err`, leaving on its stack what the
-    /// parent receives. A child out of gas keeps only the gas it consumed and exits with the
-    /// complemented out-of-gas code, whatever its stack held. Any other error left its code
-    /// on top of the stack, which is dropped.
-    fn child_exit_after_error(&mut self, err: &Error) -> i32 {
-        if tvm_exception_code(err) == Some(ExceptionCode::OutOfGas) {
-            self.cc.stack = Stack::new();
-            self.cc.stack.push_int(self.gas_used());
-            return !(ExceptionCode::OutOfGas as i32);
-        }
-        match self.cc.stack.pop().and_then(|x| x.as_integer_value(0..=0xFFF)) {
-            Ok(code) => {
-                debug_assert_eq!(code, tvm_exception_or_custom_code(err));
-            }
-            Err(err) => {
-                log::error!(
-                    target: "tvm",
-                    "Failed to pop error code from stack {err:?}",
-                );
-            }
-        }
-        tvm_exception_or_custom_code(err)
     }
 
     // Internal API ***********************************************************
@@ -1639,6 +1640,15 @@ impl Engine {
     // raises the exception and tries to dispatch it via c(2).
     // If c(2) is not set, returns that exception, otherwise, returns None
     fn raise_exception(&mut self, err: Error) -> Result<Option<i32>> {
+        // An explicit THROW raises a custom code. As in the C++ VM, where THROW enters the
+        // handler from inside the instruction, failing to enter it raises one more exception,
+        // which is dispatched once; failing to enter the handler for an exception the VM raised
+        // ends the VM.
+        let explicit = tvm_exception_code(&err).is_none();
+        self.dispatch_exception(err, explicit)
+    }
+
+    fn dispatch_exception(&mut self, err: Error, retry: bool) -> Result<Option<i32>> {
         if let Some(code) = tvm_exception_code(&err) {
             self.step += 1;
             if code == ExceptionCode::OutOfGas {
@@ -1672,19 +1682,34 @@ impl Engine {
                     self.switch_counting_out_of_gas(n)?;
                     return Ok(None);
                 } else {
+                    // The default handler consumes the exit code and leaves the argument.
                     self.cc.stack = Stack::new();
                     self.cc.stack.push(value);
-                    self.cc.stack.push(int!(exception.exception_or_custom_code()));
                     fail!(exception)
                 }
             }
         }
-        self.cmd.push_var(c2);
+        // The handler receives the argument and the exit code and checks them against its own
+        // number of arguments.
+        self.cc.stack = Stack::new();
         self.cc.stack.push(value);
         self.cc.stack.push(int!(exception.exception_or_custom_code()));
-        self.cmd.vars[n].as_continuation_mut()?.nargs = 2;
-        self.switch_counting_out_of_gas(n)?;
-        Ok(None)
+        self.cmd.push_var(c2.clone());
+        match self.switch_counting_out_of_gas(n) {
+            Ok(()) => Ok(None),
+            Err(err) if tvm_exception_code(&err) == Some(ExceptionCode::OutOfGas) => Err(err),
+            Err(err) => {
+                // The handler was not entered and the control registers are as they were; the
+                // stack keeps the argument and the exit code.
+                self.cmd.vars.truncate(n);
+                self.ctrls.put(2, c2)?;
+                if retry {
+                    self.dispatch_exception(err, false)
+                } else {
+                    Err(err)
+                }
+            }
+        }
     }
 
     // Switches to the exception handler. Running out of gas there ends the VM with one more
@@ -1860,23 +1885,27 @@ mod nesting_depth_tests {
     }
 
     // A parent sees only the top of an erroring child's stack, so it cannot tell a stack of
-    // just the consumed gas from one where the gas sits on the child's own values. This checks
-    // the child's whole stack.
+    // just the consumed gas from one where the gas sits on the child's own values. This runs a
+    // VM, as a child is run, out of gas and checks its whole stack and the error's argument.
     #[test]
     fn child_out_of_gas_leaves_only_the_gas_consumed() -> Status {
-        let mut child = Engine::with_capabilities(0);
-        child.set_gas(Gas::test_with_limit(100));
-        for sentinel in [7, 5000, 7] {
-            child.cc.stack.push_int(sentinel);
-        }
-        let err = child
-            .try_use_gas(108)
-            .err()
-            .ok_or_else(|| error!("108 gas must not fit a limit of 100"))?;
-        assert_eq!(child.child_exit_after_error(&err), !(ExceptionCode::OutOfGas as i32));
+        // PUSHINT 7, PUSHINT 5000, PUSHINT 7, PUSHCONT {}, AGAIN
+        let code = BuilderData::with_raw(vec![0x77, 0x81, 0x13, 0x88, 0x77, 0x90, 0xEA], 56)?;
+        let mut child = Engine::with_capabilities(0).setup_checked(
+            code.into_cell()?,
+            SaveList::new(),
+            Stack::new(),
+            Gas::test_with_limit(300),
+            vec![],
+        )?;
+        let err = child.execute().err().ok_or_else(|| error!("the loop must run out of gas"))?;
+        let gas_used = child.gas_used();
+        assert!(gas_used > 300, "{gas_used}");
+        assert_eq!(tvm_exit_code(&err), !(ExceptionCode::OutOfGas as i32));
         assert_eq!(child.cc.stack.depth(), 1);
-        assert_eq!(child.cc.stack.get(0)?.as_integer_value(0..=i64::MAX)?, 108);
-        assert_eq!(child.gas_used(), 108);
+        assert_eq!(child.cc.stack.get(0)?.as_integer_value(0..=i64::MAX)?, gas_used);
+        let (_, value) = tvm_exception_full(err)?;
+        assert_eq!(value.as_integer_value(0..=i64::MAX)?, gas_used);
         Ok(())
     }
 

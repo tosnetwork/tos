@@ -34,6 +34,8 @@ SETGASLIMIT = op([0xF8, 0x01])
 
 def pushpow2(n):
     return op([0x83, n - 1])
+
+
 AGAIN_FOREVER = (op([0x90]), op([0xEA]))  # PUSHCONT {} AGAIN
 
 
@@ -83,6 +85,9 @@ def scenarios():
         "handler-nargs-3-vm-error", prog(*handler_with_nargs(3, pushint(9)), pushint(7), UNASSIGNED)
     )
     add("handler-nargs-3-throw-6", prog(*handler_with_nargs(3, pushint(9)), pushint(7), throw(6)))
+    # Running out of gas while entering the default handler (THROW 6 costs 94 gas in all).
+    for budget in (60, 93, 94):
+        add(f"throw-out-of-gas-in-dispatch-{budget}", prog(pushint(7), throw(6)), budget=budget)
     # BOOLEVAL returns through implicit PUSHINT continuations, which are not counted as steps.
     add("booleval-true", prog(op([0x91, 0x77]), BOOLEVAL))
     add("booleval-false", prog(op([0x92, 0xDB, 0x31]), BOOLEVAL))
@@ -116,45 +121,12 @@ def scenarios():
     add("setgaslimit-empty", prog(SETGASLIMIT))
 
 
-# Rows that differ only in the termination contract: the Rust VM leaves the exit code on the
-# stack and its error carries no argument. Exit code, gas, steps and committed state must be equal.
-KNOWN_STACK = [
-    "end-throw-6",
-    "end-throwarg-5-42",
-    "end-unassigned-opcode",
-    "end-out-of-gas",
-    "excquit-13-keeps-below",
-    "excquit-13-alone",
-    "excquit-empty-stack",
-    "excquit-after-drop",
-    "excquit-not-an-integer",
-    "excquit-out-of-range",
-    "excquit-nan",
-    "setcp-1",
-    "setcp-minus-1",
-    "setcpx-1",
-    "setcpx-16384",
-    "setcpx-32767",
-    "setcpx-32768",
-    "setcpx-minus-32768",
-    "setcpx-minus-32769",
-    "setcpx-nan",
-    "setcpx-null",
-    "setcpx-empty",
-    "setgaslimit-0",
-    "setgaslimit-minus-1",
-    "setgaslimit-minus-2-pow-200",
-    "setgaslimit-nan",
-    "setgaslimit-null",
-    "setgaslimit-empty",
-]
+# Rows that may differ only in the final stack and the error argument; exit code, gas, steps
+# and committed state must be equal.
+KNOWN_STACK = []
 
 # Rows that differ in more than that.
-KNOWN = [
-    # The Rust VM removes c2 and runs the handler with two arguments despite its nargs.
-    "handler-nargs-3-vm-error",
-    "handler-nargs-3-throw-6",
-]
+KNOWN = []
 
 
 def main(args):

@@ -10,6 +10,7 @@
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
 use crate::{
+    error::TvmError,
     executor::{
         engine::{storage::fetch_stack, Engine},
         types::Instruction,
@@ -31,8 +32,15 @@ fn tomitogas(engine: &Engine, nanocoins: &IntegerData) -> Result<i64> {
     Ok(ret)
 }
 fn setgaslimit(engine: &mut Engine, gas_limit: i64) -> Status {
-    if gas_limit < engine.gas_used() {
-        fail!(ExceptionCode::OutOfGas);
+    let gas_used = engine.gas_used();
+    if gas_limit < gas_used {
+        fail!(TvmError::exception(
+            ExceptionCode::OutOfGas,
+            "gas limit below the gas used",
+            gas_used,
+            file!(),
+            line!()
+        ));
     }
     engine.new_gas_limit(gas_limit);
     Ok(())

@@ -98,8 +98,9 @@ fn stack_items(stack: &Stack) -> anyhow::Result<String> {
     Ok(stack.iter().map(entry).collect::<anyhow::Result<Vec<_>>>()?.join(" "))
 }
 
-// What execute() returned, and the argument of its error.
-fn raw_result(result: &Result<i32, Error>) -> anyhow::Result<(String, String)> {
+// What execute() returned, and the argument of its error. With an empty final stack the
+// argument is null, printed as missing, as the C++ stack top is.
+fn raw_result(result: &Result<i32, Error>, stack: &Stack) -> anyhow::Result<(String, String)> {
     let err = match result {
         Ok(_) => return Ok(("ok".to_string(), "-".to_string())),
         Err(err) => err,
@@ -109,6 +110,9 @@ fn raw_result(result: &Result<i32, Error>) -> anyhow::Result<(String, String)> {
         None => format!("custom:{}", tvm_exception_or_custom_code(err)),
     };
     let arg = match err.downcast_ref::<TvmError>() {
+        Some(TvmError { value: StackItem::None, .. }) if stack.depth() == 0 => {
+            "missing".to_string()
+        }
         Some(error) => entry(&error.value)?,
         None => "missing".to_string(),
     };
@@ -148,7 +152,7 @@ fn main() -> anyhow::Result<()> {
                 _ => tvm_exception_or_custom_code(e),
             },
         };
-        let (kind, arg) = raw_result(&result)?;
+        let (kind, arg) = raw_result(&result, engine.stack())?;
         let stack = stack_items(engine.stack())?;
         let (gas, steps) = (engine.gas_used(), engine.steps());
         let (committed, c4, c5) = match engine.get_committed_state() {
