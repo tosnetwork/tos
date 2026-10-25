@@ -212,6 +212,10 @@ struct ValidatorManagerOptions : public td::CntObject {
   // shown to reconcile that mid-flight state.
   virtual bool get_test_crash_cleanup_before_erase() const = 0;
   virtual bool nonfinal_ls_queries_enabled() const = 0;
+  virtual double get_secondary_catch_up_interval() const = 0;
+  virtual void set_secondary_catch_up_interval(double value) = 0;
+  virtual td::optional<std::string> get_secondary_working_dir() const = 0;
+  virtual void set_secondary_working_dir(td::optional<std::string> value) = 0;
   virtual td::optional<td::uint64> get_celldb_cache_size() const = 0;
   virtual bool get_celldb_direct_io() const = 0;
   virtual bool get_celldb_preload_all() const = 0;

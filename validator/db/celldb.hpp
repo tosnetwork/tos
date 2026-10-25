@@ -430,10 +430,11 @@ class CellDbIn : public CellDbBase {
                                                            td::uint64 rollback_cells,
                                                            td::uint64 rollback_bytes);
 
+  void try_catch_up_with_primary(td::Promise<td::Unit> promise);
   void flush_db_stats();
 
   CellDbIn(td::actor::ActorId<RootDb> root_db, td::actor::ActorId<CellDb> parent, std::string path,
-           td::Ref<ValidatorManagerOptions> opts);
+           td::Ref<ValidatorManagerOptions> opts, td::DbOpenMode mode = td::DbOpenMode::db_primary);
   ~CellDbIn() override;
 
   void validate_meta();
@@ -518,6 +519,8 @@ class CellDbIn : public CellDbBase {
   td::Timestamp migrate_after_ = td::Timestamp::never();
   bool migration_active_ = false;
   std::optional<double> in_memory_load_time_;
+
+  td::DbOpenMode mode_;
 
   struct MigrationStats {
     td::Timer start_;
@@ -637,10 +640,12 @@ class CellDb : public CellDbBase {
   void import_persistent_state_streaming(PersistentStateImportRequest request,
                                          td::Promise<PersistentStateImportResult> promise);
 
+  void try_catch_up_with_primary(td::Promise<td::Unit> promise);
   void flush_db_stats(std::string stats);
 
-  CellDb(td::actor::ActorId<RootDb> root_db, std::string path, td::Ref<ValidatorManagerOptions> opts)
-      : root_db_(root_db), path_(path), opts_(opts) {
+  CellDb(td::actor::ActorId<RootDb> root_db, std::string path, td::Ref<ValidatorManagerOptions> opts,
+         td::DbOpenMode mode = td::DbOpenMode::db_primary)
+      : root_db_(root_db), path_(path), opts_(opts), mode_(mode) {
   }
 
   void start_up() override;
@@ -656,6 +661,8 @@ class CellDb : public CellDbBase {
   std::shared_ptr<const vm::DynamicBagOfCellsDb> thread_safe_boc_;
   bool started_ = false;
   std::vector<std::pair<std::string, std::string>> prepared_stats_{{"started", "false"}};
+
+  td::DbOpenMode mode_;
 
   std::function<void(const vm::CellLoader::LoadResult&)> on_load_callback_;
 
