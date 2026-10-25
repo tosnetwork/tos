@@ -1,0 +1,64 @@
+#include "../../../smartcont/stdlib.fc";
+#include "../../../smartcont/wallet-v5-action-list.fc";
+
+;; Same vectors as tol-tester/tests/slice3-wallet-stdlib-positive.tol method 106: identical
+;; inputs, expected exit codes and failure codes.
+
+cell action(int mode, cell msg, cell next) {
+  return begin_cell().store_uint(0x0ec3c86d, 32).store_uint(mode, 8).store_ref(next).store_ref(msg).end_cell();
+}
+
+cell internal_message() {
+  return begin_cell()
+      .store_uint(0x10, 6)
+      .store_uint(4, 3).store_int(0, 8).store_uint(0x6666666666666666666666666666666666666666666666666666666666666666, 256)
+      .store_coins(0)
+      .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+      .end_cell();
+}
+
+;; ext_out_msg_info$11 from and to addr_none, no StateInit, empty inline body
+cell ext_out_message() {
+  return begin_cell().store_uint(3, 2).store_uint(0, 4).store_uint(0, 64 + 32).store_uint(0, 2).end_cell();
+}
+
+int verify_exit_code(cell c5, int is_external) {
+  try {
+    ;; verify_c5_actions is not impure: FunC drops a call whose result is unused, so use it.
+    throw_if(1, cell_null?(verify_c5_actions(c5, is_external)));
+  } catch (_, code) {
+    return code;
+  }
+  return 0;
+}
+
+int test_external_c5_ext_out_mode() method_id(106) {
+  cell empty = begin_cell().end_cell();
+  ;; modes the executor refuses for ext_out without honouring +2
+  throw_unless(141, verify_exit_code(action(66, ext_out_message(), empty), true) == 147);
+  throw_unless(142, verify_exit_code(action(130, ext_out_message(), empty), true) == 147);
+  throw_unless(143, verify_exit_code(action(18, ext_out_message(), empty), true) == 147);
+  throw_unless(144, verify_exit_code(action(19, ext_out_message(), empty), true) == 147);
+  throw_unless(145, verify_exit_code(action(34, ext_out_message(), empty), true) == 147);
+  ;; the refusal holds anywhere in the list
+  cell second = action(66, ext_out_message(), action(3, internal_message(), empty));
+  throw_unless(146, verify_exit_code(second, true) == 147);
+  ;; modes it accepts
+  throw_unless(147, verify_exit_code(action(2, ext_out_message(), empty), true) == 0);
+  throw_unless(148, verify_exit_code(action(3, ext_out_message(), empty), true) == 0);
+  ;; internal messages keep every mode the +2 rule allows
+  throw_unless(149, verify_exit_code(action(66, internal_message(), empty), true) == 0);
+  ;; cells too short to carry a constructor are left to the executor
+  throw_unless(150, verify_exit_code(action(66, empty, empty), true) == 0);
+  throw_unless(151, verify_exit_code(action(66, begin_cell().store_uint(1, 1).end_cell(), empty), true) == 0);
+  ;; requests that are not external are unchanged
+  throw_unless(152, verify_exit_code(action(66, ext_out_message(), empty), false) == 0);
+  return 6;
+}
+
+() main() {
+}
+
+{-
+TESTCASE | 106 | | 6
+-}

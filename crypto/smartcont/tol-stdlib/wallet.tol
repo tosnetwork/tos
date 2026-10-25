@@ -86,6 +86,19 @@ fun slice.walletV5EnforceAndRemoveActionSendMsgPrefix(mutate self): self
 fun slice.walletV5CountTrailingZeroes(self): int
     asm "SDCNTTRAIL0";
 
+/// The reference at index 1: an action's out_msg.
+@pure
+fun slice.walletV5PreloadSecondRef(self): cell
+    asm "1 PLDREFIDX";
+
+/// True for an ext_out_msg_info$11 message. A cell too short to carry a
+/// constructor is not one: the executor skips such a send under +2, and
+/// refusing it here would discard the valid sends of the same request.
+fun walletV5IsExtOutMessage(msg: cell): bool {
+    val (m, _) = msg.beginParseSpecial();
+    return m.remainingBitsCount() >= 2 && m.preloadUint(2) == 3;
+}
+
 fun walletPatternManifestHeader(): Slice3PatternManifestHeader {
     return Slice3PatternManifestHeader {
         manifestVersion: SLICE3_PATTERN_MANIFEST_VERSION,
@@ -240,8 +253,18 @@ fun walletV5VerifyC5Actions(c5: cell, isExternal: bool): cell {
         if (cs.remainingRefsCount() != 2) {
             throw WALLET_V5_FUNC_THROW_INVALID_C5;
         }
-        if (isExternal && cs.preloadBits(7).walletV5CountTrailingZeroes() > 0) {
-            throw WALLET_V5_FUNC_THROW_EXTERNAL_SEND_MODE;
+        if (isExternal) {
+            if (cs.preloadBits(7).walletV5CountTrailingZeroes() > 0) {
+                throw WALLET_V5_FUNC_THROW_EXTERNAL_SEND_MODE;
+            }
+            // The executor refuses an ext_out send whose mode has any bit
+            // besides +1 and +2, and +2 does not skip that refusal: the whole
+            // action phase fails and the seqno committed for this request is
+            // not persisted, so the request could be charged again on every
+            // delivery. Refuse it here, after the commit, instead.
+            if ((cs.preloadUint(8) & ~3) != 0 && walletV5IsExtOutMessage(cs.walletV5PreloadSecondRef())) {
+                throw WALLET_V5_FUNC_THROW_INVALID_C5;
+            }
         }
         val (next, _) = cs.preloadRef().beginParseSpecial();
         cs = next;

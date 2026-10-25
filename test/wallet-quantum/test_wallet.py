@@ -15,11 +15,20 @@ from cells import Cell, from_boc, make_dict, read_dict  # noqa: E402
 from test_auth_policy import policy as global_policy  # noqa: E402
 from test_fee_identity import vault_data  # noqa: E402
 from test_identity import module_data  # noqa: E402
-from test_receiver_auth import ACCOUNT, TARGET, cosign, payload, relay, request  # noqa: E402
+from test_receiver_auth import ACCOUNT, TAGS, TARGET, cosign, payload, relay, request  # noqa: E402
 from test_state import fee, state  # noqa: E402
 
 
-def run(code, data, module, req, expected=0, signature=None, shard=None, sender=None):
+def ext_out_payload(send_mode):
+    """One send of an ext_out message from and to addr_none."""
+    out = Cell().uint(3, 2).uint(0, 2).uint(0, 2).uint(0, 64).uint(0, 32).uint(0, 1).uint(0, 1)
+    actions = Cell().uint(0x0EC3C86D, 32).uint(send_mode, 8).ref(Cell()).ref(out)
+    return Cell().uint(TAGS.get(0, 0), 32).ref(actions)
+
+
+def run(
+    code, data, module, req, expected=0, signature=None, shard=None, sender=None, external_out=False
+):
     entries = read_dict(native.config(16), 32)
     entries[48] = Cell().ref(global_policy())
     with patch.object(native, "config", return_value=make_dict(entries, 32)):
@@ -46,6 +55,9 @@ def run(code, data, module, req, expected=0, signature=None, shard=None, sender=
         messages = native.outgoing(from_boc(result["transaction"]))
         for m in messages:
             s = m.slice()
+            if external_out and not expected:
+                assert s.uint(2) == 3, "accepted ext_out send emitted another message"
+                continue
             flags = s.uint(4)
             s.addr()
             dest = s.addr()
@@ -191,6 +203,14 @@ def main():
             if count <= 255:
                 assert sent == count
             cases += 1
+        # The shared action engine refuses an ext_out send with a mode the executor
+        # would refuse without honouring +2; ext_out with +2 alone still goes out.
+        run(code, base, module, request(root=root, body=ext_out_payload(66)), 147)
+        _, _, sent = run(
+            code, base, module, request(root=root, body=ext_out_payload(2)), external_out=True
+        )
+        assert sent == 1
+        cases += 2
         src = work / "wallet-quantum-code.fc"
         original = src.read_text()
         mutations = {}

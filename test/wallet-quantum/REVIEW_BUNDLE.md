@@ -1,6 +1,6 @@
 # Reproducible Quantum review candidate
 
-The [compact manifest](review-candidate-manifest.json) freezes 74 file identities
+The [compact manifest](review-candidate-manifest.json) freezes 75 file identities
 for an **unapproved review candidate**. It covers the ordinary wallet, module
 and fee-vault code; actual ConfigParams; contract/compiler-adapter sources;
 TL-B, opcode/error definitions; SDK codecs; and the public crypto/KDF/wire
@@ -9,8 +9,8 @@ or an approved production release.
 
 The frozen configuration uses the public test namespace `0x42` repeated 32
 times, global ID 1, version 16, basechain credit 20,000 and masterchain credit
-10,000. Its ConfigParams SHA-256 is
-`b1b8ef24ab92f60bd0a812465b2c330e6f3633d017f36c30d885c148d4b2f157`.
+10,000. Its ConfigParams SHA-256 (of `config.boc`) is
+`59880ee43f99c6e103bb60a99af4696bbadaff0dc7c064c04b438cc0a904d800`.
 The wallet code embeds this namespace; a deployment under another namespace
 needs its own reviewed code/configuration identities.
 
@@ -18,7 +18,7 @@ needs its own reviewed code/configuration identities.
 | --- | --- | --- |
 | Fee vault | 690 | `9fa07637d49c4176766847251cfd820d5a11ade70fe92a45e11e419dba0452a0` |
 | Module | 3,055 | `f818dd311152d6ea13ef7f38002eb6f7390fac06bbe5df71bb8a2dd0c09c5b6d` |
-| Wallet | 3,410 | `06203e98d4d8bf97b0cab37523ec435f5ab0e1d6d2c5253926eebf20ef1712f5` |
+| Wallet | 3,446 | `18252490f90f12149832b6067ca60f3f0216f23a97d71e7afcd8017eeb75e61f` |
 
 These match the code exercised by the selected generated-config fee and PRIMARY
 transaction corpora. The decoder rejects exotic/library cells at every depth;

@@ -17,6 +17,21 @@ slice enforce_and_remove_action_send_msg_prefix(slice body) impure asm "x{0ec3c8
 ;;; transforms an ordinary or exotic cell into a Slice, as if it were an ordinary cell.
 (slice, int) begin_parse_raw(cell c) asm "XCTOS";
 
+;;; the reference at index 1 of slice s: an action's out_msg.
+cell preload_second_ref(slice s) asm "1 PLDREFIDX";
+
+;; True for an ext_out_msg_info$11 message. A cell too short to carry a constructor is
+;; not one: the executor skips such a send under +2, and refusing it here would discard
+;; the valid sends of the same request.
+int is_ext_out_message?(cell msg) inline {
+  (slice m, _) = msg.begin_parse_raw();
+  ;; `&` evaluates both operands, so the length check must guard the read on its own.
+  if (m.slice_bits() < 2) {
+    return false;
+  }
+  return m.preload_uint(2) == 3;
+}
+
 cell verify_c5_actions(cell c5, int is_external) inline {
   (slice cs, _) = c5.begin_parse_raw();
   int count = 0;
@@ -24,7 +39,16 @@ cell verify_c5_actions(cell c5, int is_external) inline {
     cs = cs.enforce_and_remove_action_send_msg_prefix();
     throw_unless(v5_action::invalid_c5, cs.slice_bits() == 8);
     throw_unless(v5_action::invalid_c5, cs.slice_refs() == 2);
-    throw_if(v5_action::external_requires_ignore_errors, is_external & (count_trailing_zeroes(cs.preload_bits(7)) > 0));
+    if (is_external) {
+      throw_if(v5_action::external_requires_ignore_errors, count_trailing_zeroes(cs.preload_bits(7)) > 0);
+      ;; The executor refuses an ext_out send whose mode has any bit besides +1 and +2,
+      ;; and +2 does not skip that refusal: the whole action phase fails and the seqno
+      ;; committed for this request is not persisted, so the request could be charged
+      ;; again on every delivery. Refuse it here, after the commit, instead.
+      if (cs.preload_uint(8) & (~ 3)) {
+        throw_if(v5_action::invalid_c5, is_ext_out_message?(cs.preload_second_ref()));
+      }
+    }
     (cs, _) = cs.preload_ref().begin_parse_raw();
     count += 1;
   }
