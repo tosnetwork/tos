@@ -37,7 +37,13 @@ def actions(account, count=1, mode=3):
     return result
 
 
-def execute(code, make_actions, expected):
+def ext_out_actions(mode):
+    """One send of an ext_out message from and to addr_none."""
+    out = Cell().uint(3, 2).uint(0, 2).uint(0, 2).uint(0, 64).uint(0, 32).uint(0, 1).uint(0, 1)
+    return lambda account: Cell().uint(0x0EC3C86D, 32).uint(mode, 8).ref(Cell()).ref(out)
+
+
+def execute(code, make_actions, expected, external_out=False):
     CODES["wallet-func"] = code
     a = Account("wallet-func", mode=2)
     a.shard = active_account(a.address, code, a.data, balance=1_000_000_000_000_000)
@@ -61,6 +67,9 @@ def execute(code, make_actions, expected):
         # Rejections can bounce the funded input. They must never emit a target payment.
         for message in messages:
             header = message.slice()
+            if external_out and not expected:
+                assert header.uint(2) == 3, "accepted ext_out send emitted another message"
+                continue
             flags = header.uint(4)
             header.addr()
             destination = header.addr()
@@ -88,6 +97,21 @@ def main():
             allowed.append(mode)
             assert result["messages"] == 1, (mode, result)
     assert allowed == [2, 3, 18, 19, 66, 67, 82, 83, 130, 131, 146, 147]
+    # An ext_out send keeps only the modes the executor accepts for it (+1, +2): any
+    # other bit fails the action phase in a way +2 does not skip. The shared engine
+    # refuses it (147) before the AUTH-only mode policy (1811) is consulted.
+    allowed_ext_out = []
+    for mode in range(256):
+        if not mode & 2:
+            expected = 137
+        else:
+            expected = 0 if mode & ~3 == 0 else 147
+        result = execute(code, ext_out_actions(mode), expected, external_out=True)
+        results[f"ext_out_mode_{mode}"] = result
+        if expected == 0:
+            allowed_ext_out.append(mode)
+            assert result["messages"] == 1, (mode, result)
+    assert allowed_ext_out == [2, 3]
     for count in [0, 1, 254, 255, 256]:
         expected = 147 if count > 255 else 0
         result = execute(code, lambda a, n=count: actions(a, count=n), expected)
@@ -108,9 +132,15 @@ def main():
     mutations = [
         (
             "ignore_errors",
-            "    throw_if(v5_action::external_requires_ignore_errors, is_external & (count_trailing_zeroes(cs.preload_bits(7)) > 0));",
+            "      throw_if(v5_action::external_requires_ignore_errors, count_trailing_zeroes(cs.preload_bits(7)) > 0);",
             lambda a: actions(a, mode=0),
             137,
+        ),
+        (
+            "ext_out_mode",
+            "        throw_if(v5_action::invalid_c5, is_ext_out_message?(cs.preload_second_ref()));",
+            ext_out_actions(66),
+            147,
         ),
         (
             "action_cap",
@@ -151,6 +181,7 @@ def main():
         "code_hash": code.hash.hex(),
         "sdk_code_unchanged": True,
         "allowed_strict_send_modes": allowed,
+        "allowed_ext_out_send_modes": allowed_ext_out,
         "cases": len(results),
         "results": results,
         "mutations": killed,

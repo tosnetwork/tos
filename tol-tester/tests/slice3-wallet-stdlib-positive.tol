@@ -111,10 +111,51 @@ fun test_error_mapping(): int {
     return 5;
 }
 
+fun extOutMsgCell(): cell {
+    // ext_out_msg_info$11 from and to addr_none, no StateInit, empty inline body
+    return beginCell().storeUint(3, 2).storeUint(0, 4).storeUint(0, 64 + 32).storeUint(0, 2).endCell();
+}
+
+fun verifyExitCode(c5: cell, isExternal: bool): int {
+    try {
+        walletV5VerifyC5Actions(c5, isExternal);
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+// Same vectors as crypto/func/auto-tests/tests/lib-wallet-v5-action-list.fc.
+@method_id(106)
+fun test_external_c5_ext_out_mode(): int {
+    val empty = createEmptyCell();
+    // modes the executor refuses for ext_out without honouring +2
+    assert(verifyExitCode(walletV5BuildActionSendMsg(66, extOutMsgCell(), empty), true) == 147) throw 141;
+    assert(verifyExitCode(walletV5BuildActionSendMsg(130, extOutMsgCell(), empty), true) == 147) throw 142;
+    assert(verifyExitCode(walletV5BuildActionSendMsg(18, extOutMsgCell(), empty), true) == 147) throw 143;
+    assert(verifyExitCode(walletV5BuildActionSendMsg(19, extOutMsgCell(), empty), true) == 147) throw 144;
+    assert(verifyExitCode(walletV5BuildActionSendMsg(34, extOutMsgCell(), empty), true) == 147) throw 145;
+    // the refusal holds anywhere in the list
+    val second = walletV5BuildActionSendMsg(66, extOutMsgCell(), walletV5BuildActionSendMsg(3, outMsgCell(), empty));
+    assert(verifyExitCode(second, true) == 147) throw 146;
+    // modes it accepts
+    assert(verifyExitCode(walletV5BuildActionSendMsg(2, extOutMsgCell(), empty), true) == 0) throw 147;
+    assert(verifyExitCode(walletV5BuildActionSendMsg(3, extOutMsgCell(), empty), true) == 0) throw 148;
+    // internal messages keep every mode the +2 rule allows
+    assert(verifyExitCode(walletV5BuildActionSendMsg(66, outMsgCell(), empty), true) == 0) throw 149;
+    // cells too short to carry a constructor are left to the executor
+    assert(verifyExitCode(walletV5BuildActionSendMsg(66, empty, empty), true) == 0) throw 150;
+    assert(verifyExitCode(walletV5BuildActionSendMsg(66, beginCell().storeUint(1, 1).endCell(), empty), true) == 0) throw 151;
+    // requests that are not external are unchanged
+    assert(verifyExitCode(walletV5BuildActionSendMsg(66, extOutMsgCell(), empty), false) == 0) throw 152;
+    return 6;
+}
+
 /**
 @testcase | 101 | | 1
 @testcase | 102 | | 2
 @testcase | 103 | | 3
 @testcase | 104 | | 137
 @testcase | 105 | | 5
+@testcase | 106 | | 6
  */

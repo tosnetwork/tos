@@ -50,6 +50,15 @@ def auth_cell(mode, epoch=1, nonce=0, module=MODULE):
     return Cell().uint(mode, 2).uint(epoch, 64).uint(nonce, 64).uint(module[1], 256)
 
 
+def send_action(mode, message, previous=None):
+    return Cell().uint(0x0EC3C86D, 32).uint(mode, 8).ref(previous or Cell()).ref(message)
+
+
+def ext_out():
+    """ext_out_msg_info$11 from and to addr_none, no StateInit, empty inline body."""
+    return Cell().uint(3, 2).uint(0, 2).uint(0, 2).uint(0, 64).uint(0, 32).uint(0, 1).uint(0, 1)
+
+
 class Account:
     def __init__(
         self,
@@ -279,6 +288,67 @@ class AuthenticationTests(unittest.TestCase):
                 else bad.bits[:-1] + ("1" if bad.bits[-1] == "0" else "0")
             )
             a.send(bad, ext=True, expected=1704 if a.agent else 135)
+
+    def test_ext_out_send_with_a_mode_the_executor_refuses_is_consumed(self):
+        # The executor accepts an ext_out send only with mode bits +1 and +2, and +2
+        # does not skip that refusal, so such a send used to fail the whole action
+        # phase and leave the committed seqno unpersisted: the same signed request was
+        # charged again on every delivery. Both builds now refuse it after the commit.
+        # 18 and 19 are refused too, even where the executor would strip +16.
+        for mode in [66, 130, 18, 19, 34]:
+            for a in self.accounts():
+                if a.agent:
+                    continue
+                with self.subTest(impl=a.impl, mode=mode):
+                    body = a.legacy_body(Cell().maybe(send_action(mode, ext_out())).uint(0, 1))
+                    before = account_data(a.shard)[1]
+                    result = a.send(body, ext=True, expected=147, commits=True)
+                    self.assertEqual(len(outgoing(from_boc(result["transaction"]))), 0)
+                    charged = account_data(a.shard)[1]
+                    self.assertLess(charged, before)
+                    self.assertEqual(a.counters()[1], 1)
+                    a.send(body, ext=True, expected=133)
+                    self.assertEqual(account_data(a.shard)[1], charged)
+        for mode in [2, 3]:
+            for a in self.accounts():
+                if a.agent:
+                    continue
+                with self.subTest(impl=a.impl, mode=mode):
+                    body = a.legacy_body(Cell().maybe(send_action(mode, ext_out())).uint(0, 1))
+                    result = a.send(body, ext=True)
+                    self.assertEqual(len(outgoing(from_boc(result["transaction"]))), 1)
+                    self.assertEqual(a.counters()[1], 1)
+
+    def test_malformed_message_beside_a_valid_send_is_still_skipped(self):
+        # A message cell too short to carry a constructor is not an ext_out message:
+        # the executor skips it under +2 and runs the rest of the list. The new check
+        # reads the constructor only when the cell has one.
+        for malformed in [Cell(), Cell("1")]:
+            for a in self.accounts():
+                if a.agent:
+                    continue
+                with self.subTest(impl=a.impl, bits=len(malformed.bits)):
+                    transfer = internal(a.address, TARGET, Cell(), 1_000_000_000)
+                    actions = (
+                        Cell()
+                        .uint(0x0EC3C86D, 32)
+                        .uint(3, 8)
+                        .ref(send_action(66, malformed))
+                        .ref(transfer)
+                    )
+                    result = a.send(a.legacy_body(Cell().maybe(actions).uint(0, 1)), ext=True)
+                    self.assertEqual(len(outgoing(from_boc(result["transaction"]))), 1)
+                    self.assertEqual(a.counters()[1], 1)
+
+    def test_module_request_cannot_carry_an_ext_out_send_the_executor_refuses(self):
+        for a in self.accounts(mode=2):
+            if a.agent:
+                continue
+            with self.subTest(impl=a.impl):
+                a.send(a.envelope(a.request(payload=send_action(66, ext_out()))), expected=147)
+                self.assertEqual(a.counters()[1], 0)
+                result = a.send(a.envelope(a.request(payload=send_action(2, ext_out()))))
+                self.assertEqual(len(outgoing(from_boc(result["transaction"]))), 1)
 
     def test_request_refused_by_action_checks_consumes_its_seqno(self):
         # External sends without the ignore-errors bit are refused after the
