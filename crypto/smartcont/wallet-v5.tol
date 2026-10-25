@@ -64,6 +64,7 @@ import "@stdlib/common"
 import "@stdlib/tvm-dicts"
 import "@stdlib/gas-payments"
 import "@stdlib/exotic-cells"
+import "@stdlib/strong-ed25519-key"
 import "@stdlib/wallet"
 import "auth-extension"
 
@@ -511,6 +512,9 @@ fun processSignedRequest(inMsgBody: slice, isExternal: bool): void {
     val publicKey = dataSlice.loadUint(SIZE_PUBLIC_KEY);
     val isExtensionsNotEmpty = dataSlice.preloadInt(1);
 
+    if (ed25519IsWeakKey(publicKey)) {
+        throw ERROR_INVALID_SIGNATURE;
+    }
     val isSignatureValid = isSignatureValid(signedSlice.hash(), signature, publicKey);
     if (!isSignatureValid) {
         if (isExternal) {
@@ -536,8 +540,6 @@ fun processSignedRequest(inMsgBody: slice, isExternal: bool): void {
         acceptExternalMessage();
     }
 
-    validateActions(cs, isExternal, false);
-
     storedSeqno += 1;
     contract.setData(
         beginCell()
@@ -547,11 +549,16 @@ fun processSignedRequest(inMsgBody: slice, isExternal: bool): void {
             .endCell()
     );
 
-    // Commit only after the action chain has been validated without state
-    // mutation. The following processActions pass should not compute-throw; the
-    // commit then closes the replay window before action-phase execution.
-    commitContractDataAndActions();
+    // Same order as wallet-v5-code.fc: once an external request has been
+    // accepted its seqno is committed before any action is checked, so a
+    // request that validateActions or processActions rejects is consumed
+    // instead of being paid for again on every delivery. An internal request
+    // is paid for by its sender, and a failure reverts it whole.
+    if (isExternal) {
+        commitContractDataAndActions();
+    }
 
+    validateActions(cs, isExternal, false);
     processActions(cs, isExternal, false);
 }
 
