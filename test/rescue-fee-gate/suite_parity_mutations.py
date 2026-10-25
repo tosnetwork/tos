@@ -152,6 +152,26 @@ MUTATIONS = {
         ],
         ("child-oog-c2-switch-exit", "child-oog-c2-switch-value"),
     ),
+    "uncommitted child returns empty cells, not null": Mutation(
+        CORE,
+        [
+            (
+                "            None if self.block_version >= 11 => {\n",
+                "            None if false => {\n",
+            )
+        ],
+        ("child-oog-uncommitted-data", "child-error-uncommitted-actions"),
+    ),
+    "child out of gas commits its live data": Mutation(
+        CORE,
+        [
+            (
+                "OutOfGas) {\n            self.cc.stack = Stack::new();\n",
+                "OutOfGas) {\n            self.try_commit().ok();\n            self.cc.stack = Stack::new();\n",
+            )
+        ],
+        ("child-oog-committed-data", "child-oog-uncommitted-actions"),
+    ),
 }
 
 

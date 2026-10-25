@@ -1191,12 +1191,26 @@ impl Engine {
         self.checked_signatures_count = child.checked_signatures_count;
         self.free_gas_consumed = child.free_gas_consumed;
         debug_assert!(self.block_version >= 11 || (!params.return_data && !params.return_actions));
-        let (data, actions) = child.cstate.unwrap_or_default();
-        if params.return_data {
-            self.cc.stack.push_cell(data);
-        }
-        if params.return_actions {
-            self.cc.stack.push_cell(actions);
+        // From version 11 a child that never committed returns null for its data and actions,
+        // not empty cells.
+        match child.cstate {
+            None if self.block_version >= 11 => {
+                if params.return_data {
+                    self.cc.stack.push_null();
+                }
+                if params.return_actions {
+                    self.cc.stack.push_null();
+                }
+            }
+            cstate => {
+                let (data, actions) = cstate.unwrap_or_default();
+                if params.return_data {
+                    self.cc.stack.push_cell(data);
+                }
+                if params.return_actions {
+                    self.cc.stack.push_cell(actions);
+                }
+            }
         }
         if params.return_gas {
             self.cc.stack.push_int(child_gas_used);

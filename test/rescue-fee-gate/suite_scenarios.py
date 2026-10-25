@@ -118,10 +118,13 @@ def call(operands, suite):
 
 
 def runvm(child, flags, gas_limit=None, ret_vals=None):
-    """RUNVM with no arguments for the child: n=0, code, [ret_vals for +256], [gas limit for +8]."""
+    """RUNVM with no arguments for the child: n=0, code, [ret_vals for +256], [an empty data cell
+    for +4], [gas limit for +8]."""
     ops = [pushint(0), op([0x89], child)]
     if flags & 256:
         ops.append(pushint(ret_vals))
+    if flags & 4:
+        ops.append(op([0x88], Cell()))
     if flags & 8:
         ops.append(pushint(gas_limit))
     return ops + [op([0xDB, 0x40 | flags >> 8, flags & 0xFF])]
@@ -357,6 +360,30 @@ def main(out):
     error = children["exception-price"][0]
     add_program("child-error-exit", "R2", prog(runvm(error, 8, 1_000), exit_code))
     add_program("child-too-few-values-exit", "R-3", prog(runvm(prog(), 264, 1_000, 3), exit_code))
+
+    # Data and actions (+4, +32) of a child: what it last committed, or from version 11 null if
+    # it never committed. Each child stores a byte in a cell for c4 or c5; a cell costs 500 gas.
+    def store(byte, ctr):
+        return (pushint(byte), op([0xC8]), op([0xCB, 0x07]), op([0xC9]), op([0xED, 0x50 | ctr]))
+
+    commit = op([0xF8, 0x0F])
+    committed = prog(store(42, 4), store(43, 5), commit, store(99, 4), store(98, 5), *loop)
+    byte = (DROP, op([0xD0]), op([0xD7, 0x0B, 0x07]), ONLYTOP)  # the cell's first byte
+    is_null = (DROP, op([0x6E]), ONLYTOP)
+    for flag, name, want in ((4, "data", 42), (32, "actions", 43)):
+        add_program(
+            f"child-oog-committed-{name}", f"R{want}", prog(runvm(committed, 8 | flag, 5_000), byte)
+        )
+        add_program(
+            f"child-oog-uncommitted-{name}", "R-1", prog(runvm(prog(*loop), 8 | flag, 100), is_null)
+        )
+        add_program(
+            f"child-error-uncommitted-{name}", "R-1", prog(runvm(error, 8 | flag, 1_000), is_null)
+        )
+        # A child that ends normally commits automatically.
+        add_program(
+            f"child-ends-normally-{name}", "R0", prog(runvm(prog(), 8 | flag, 1_000), is_null)
+        )
 
     Path(out).write_text("\n".join("\t".join(r) for r in rows) + "\n")
     print(f"{len(rows)} scenarios")
