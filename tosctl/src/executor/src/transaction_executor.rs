@@ -111,6 +111,10 @@ mod tests_message_size_limits;
 #[path = "tests/test_precompiled_external.rs"]
 mod tests_precompiled_external;
 
+#[cfg(test)]
+#[path = "tests/test_compute_exit_arg.rs"]
+mod tests_compute_exit_arg;
+
 #[derive(Clone, Default)]
 pub struct ExecuteParams {
     pub state_libs: HashmapE,
@@ -477,6 +481,11 @@ pub trait TransactionExecutor {
             }
         };
         vm_phase.success = vm.is_committed_state();
+        // As in the native engine, a compute phase that committed reports no exit argument,
+        // however the VM ended.
+        if vm_phase.success {
+            vm_phase.exit_arg = None;
+        }
         log::debug!(target: "executor", "VM terminated with exit code {}", vm_phase.exit_code);
 
         // calc gas fees
