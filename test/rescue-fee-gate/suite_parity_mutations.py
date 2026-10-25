@@ -1,56 +1,71 @@
 """EXPERIMENT: the C++/Rust PQCHECKSIG_SUITE parity check must be able to fail.
 
-For each mutation of the Rust VM: apply it, rebuild the Rust driver, run the scenarios, and
-require a difference from the C++ output. The source is always restored.
+For each mutation of the Rust VM: apply its edits, rebuild the Rust driver, run the scenarios,
+and require every row the mutation names to differ from the C++ output; a difference somewhere
+else does not show that the named boundary is tested. The source is always restored.
 
-Usage: suite_parity_mutations.py <scenarios.tsv> <cpp-output> <cargo-target-dir>
+Usage: suite_parity_mutations.py <scenarios.tsv> <cpp-output> <cargo-target-dir> [--list]
+--list prints the rows each mutation changes instead of checking them.
 """
 
 import os
 import subprocess
 import sys
 from pathlib import Path
+from typing import NamedTuple
 
 ROOT = Path(__file__).resolve().parents[2]
 CARGO = ROOT / "tosctl/src"
 PQ = CARGO / "vm/src/executor/pq.rs"
 LMS = CARGO / "vm/src/executor/lms_fee.rs"
 
+
+class Mutation(NamedTuple):
+    path: Path
+    edits: list  # (old, new) pairs, each old text present exactly once
+    rows: tuple  # scenario ids that must differ
+
+
 MUTATIONS = {
-    "LMS tariff 3 -> 4 gas per compression": (
+    "LMS tariff 3 -> 4 gas per compression": Mutation(
         PQ,
-        "const LMS_GAS_PER_COMPRESSION: i64 = 3;",
-        "const LMS_GAS_PER_COMPRESSION: i64 = 4;",
+        [("const LMS_GAS_PER_COMPRESSION: i64 = 3;", "const LMS_GAS_PER_COMPRESSION: i64 = 4;")],
+        ("s4-h20w4-valid", "s4-out-of-gas-before-signature"),
     ),
-    "LMS path: sibling order swapped": (
+    "LMS path: sibling order swapped": Mutation(
         LMS,
-        "        tmp = if node & 1 == 1 {",
-        "        tmp = if node & 1 == 0 {",
+        [("        tmp = if node & 1 == 1 {", "        tmp = if node & 1 == 0 {")],
+        ("s4-h20w4-valid", "s4-h20w4-random-key"),
     ),
-    "Falcon suite accepts a non-empty context": (
+    "Falcon suite accepts a non-empty context": Mutation(
         PQ,
-        "            read_bytes_priced(engine, context, 0, FALCON512_BYTE_GAS)?;",
-        "            read_bytes_priced(engine, context, 1, FALCON512_BYTE_GAS)?;",
+        [
+            (
+                "            read_bytes_priced(engine, context, 0, FALCON512_BYTE_GAS)?;",
+                "            read_bytes_priced(engine, context, 1, FALCON512_BYTE_GAS)?;",
+            )
+        ],
+        ("s2-nonempty-context",),
     ),
-    "suite enabled before version 16": (
+    "suite enabled before version 16": Mutation(
         PQ,
-        "const SUITE_MIN_VERSION: u32 = 16;",
-        "const SUITE_MIN_VERSION: u32 = 15;",
+        [("const SUITE_MIN_VERSION: u32 = 16;", "const SUITE_MIN_VERSION: u32 = 15;")],
+        ("s2-refused-before-genesis", "version-15"),
     ),
-    "suite enabled only from version 17": (
+    "suite enabled only from version 17": Mutation(
         PQ,
-        "const SUITE_MIN_VERSION: u32 = 16;",
-        "const SUITE_MIN_VERSION: u32 = 17;",
+        [("const SUITE_MIN_VERSION: u32 = 16;", "const SUITE_MIN_VERSION: u32 = 17;")],
+        ("s1-valid", "s2-valid", "s3-valid", "s4-h20w4-valid"),
     ),
-    "Falcon generic gate differs from the dedicated gate": (
+    "Falcon generic gate differs from the dedicated gate": Mutation(
         PQ,
-        "const FALCON512_MIN_VERSION: u32 = 16;",
-        "const FALCON512_MIN_VERSION: u32 = 17;",
+        [("const FALCON512_MIN_VERSION: u32 = 16;", "const FALCON512_MIN_VERSION: u32 = 17;")],
+        ("s2-valid",),
     ),
-    "SLH base gas 750,000 -> 749,999": (
+    "SLH base gas 750,000 -> 749,999": Mutation(
         PQ,
-        "const SLH_BASE_GAS: i64 = 750_000;",
-        "const SLH_BASE_GAS: i64 = 749_999;",
+        [("const SLH_BASE_GAS: i64 = 750_000;", "const SLH_BASE_GAS: i64 = 749_999;")],
+        ("s3-valid", "s3-out-of-gas-base"),
     ),
 }
 
@@ -72,26 +87,40 @@ def rust_output(scenarios, target):
     ).stdout
 
 
-def main(scenarios, cpp_output, target):
+def main(scenarios, cpp_output, target, *flags):
+    listing = flags == ("--list",)
     cpp = Path(cpp_output).read_text()
     if rust_output(scenarios, target) != cpp:
         sys.exit("baseline differs: fix parity before measuring sensitivity")
     print("baseline: identical")
+    ids = [line.split("\t")[0] for line in cpp.splitlines()]
     failed = False
-    for name, (path, old, new) in MUTATIONS.items():
-        text = path.read_text()
-        if text.count(old) != 1:
-            sys.exit(f"{name}: anchor not found exactly once")
-        path.write_text(text.replace(old, new))
+    for name, m in MUTATIONS.items():
+        missing = [r for r in m.rows if r not in ids]
+        if missing and not listing:
+            sys.exit(f"{name}: named rows not in the scenarios: {missing}")
+        text = mutated = m.path.read_text()
+        for old, new in m.edits:
+            if mutated.count(old) != 1:
+                sys.exit(f"{name}: anchor not found exactly once")
+            mutated = mutated.replace(old, new)
+        m.path.write_text(mutated)
         try:
             out = rust_output(scenarios, target)
         finally:
-            path.write_text(text)
+            m.path.write_text(text)
         if len(out.splitlines()) != len(cpp.splitlines()):
             sys.exit(f"{name}: incomplete output is not mutation evidence")
-        differ = sum(a != b for a, b in zip(out.splitlines(), cpp.splitlines()))
-        print(f"{name}: {'caught' if differ else 'ESCAPED'} ({differ} rows differ)")
-        failed |= not differ
+        differ = {i for i, a, b in zip(ids, out.splitlines(), cpp.splitlines()) if a != b}
+        if listing:
+            print(f"{name}: {sorted(differ)}")
+            continue
+        escaped = [r for r in m.rows if r not in differ]
+        ok = bool(m.rows) and not escaped
+        print(f"{name}: {'caught' if ok else 'ESCAPED'} ({len(differ)} rows differ)")
+        if escaped:
+            print(f"  named rows unchanged: {escaped}")
+        failed |= not ok
     if rust_output(scenarios, target) != cpp:
         sys.exit("restored baseline differs")
     print("restored baseline: identical")
@@ -99,4 +128,4 @@ def main(scenarios, cpp_output, target):
 
 
 if __name__ == "__main__":
-    main(*sys.argv[1:4])
+    main(*sys.argv[1:])

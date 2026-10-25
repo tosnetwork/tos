@@ -28,7 +28,7 @@ fn main() -> anyhow::Result<()> {
     let mut count = 0;
     for line in data.lines() {
         let f: Vec<_> = line.split('\t').collect();
-        anyhow::ensure!(f.len() == 9, "invalid scenario");
+        anyhow::ensure!(f.len() == 9 || f.len() == 10, "invalid scenario");
         let version = f[1].parse::<u32>()?;
         let budget = f[2].parse::<i64>()?;
         let mut stack = Stack::new();
@@ -36,10 +36,16 @@ fn main() -> anyhow::Result<()> {
             push(&mut stack, field)?;
         }
         push(&mut stack, f[4])?;
-        let mut code = BuilderData::new();
-        code.append_raw(&[0xf9, 0x31, 0x02], 24)?;
+        let code = match f.get(9) {
+            Some(boc) => read_single_root_boc(hex::decode(boc)?)?,
+            None => {
+                let mut code = BuilderData::new();
+                code.append_raw(&[0xf9, 0x31, 0x02], 24)?;
+                code.into_cell()?
+            }
+        };
         let mut engine = Engine::with_capabilities(0).setup_checked(
-            code.into_cell()?,
+            code,
             SaveList::new(),
             stack,
             Gas::test_with_limit(budget),
@@ -56,7 +62,7 @@ fn main() -> anyhow::Result<()> {
         };
         let value = if exit == 0 {
             anyhow::ensure!(engine.stack().depth() == 1, "unexpected stack");
-            engine.stack().get(0)?.as_integer_value(-1i64..=0i64)?
+            engine.stack().get(0)?.as_integer_value(i64::MIN..=i64::MAX)?
         } else {
             99
         };

@@ -1,10 +1,11 @@
 """EXPERIMENT: PQCHECKSIG_SUITE cross-VM scenarios (C++ VM against the Rust VM).
 
 Writes one tab-separated scenario per line:
-    id  version  budget  expect  suite  message  context  signature  public_key
+    id  version  budget  expect  suite  message  context  signature  public_key  [code]
 where each operand is a BOC in hex, "int:N" for an integer, or "skip" (not pushed). The stack is
-pushed bottom to top in that order (message first, suite last); the program is F93102.
-`expect` is V (valid), I (invalid), or E<code> (exception), checked against the C++ result.
+pushed bottom to top in that order (message first, suite last); the program is F93102, or the
+code cell given as a BOC in the optional tenth column. `expect` is V (valid), I (invalid),
+E<code> (exception), or R<n> (normal exit with n alone on the stack), checked against both VMs.
 
 All inputs are PUBLIC TEST DATA. Needs SLH_TOOL, MLDSA_TOOL, LMS_TOOL and HASH_SIGS_DEMO.
 Usage: suite_scenarios.py <out.tsv>
@@ -50,10 +51,97 @@ def run(*args):
     return subprocess.run([str(a) for a in args], check=True, capture_output=True, text=True).stdout
 
 
+# A minimal assembler for the program scenarios. Every instruction used is byte aligned; an
+# instruction is (bytes, refs). A program longer than one cell continues in its last reference,
+# which the VM enters by an implicit jump once the cell's bits are used up.
+def op(data, *refs):
+    return (bytes(data), list(refs))
+
+
+def program(*ops):
+    chunks, cur, bits, refs = [], [], 0, 0
+    for data, rs in ops:
+        if bits + 8 * len(data) > 1023 or refs + len(rs) > 3:
+            chunks.append(cur)
+            cur, bits, refs = [], 0, 0
+        cur.append((data, rs))
+        bits += 8 * len(data)
+        refs += len(rs)
+    chunks.append(cur)
+    tail = None
+    for chunk in reversed(chunks):
+        node = Cell()
+        for data, rs in chunk:
+            node.raw(data)
+            for r in rs:
+                node.ref(r)
+        if tail is not None:
+            node.ref(tail)
+        tail = node
+    return tail
+
+
+def pushint(n):
+    if -5 <= n <= 10:
+        return op([0x70 | (n & 0xF)])
+    if -128 <= n <= 127:
+        return op([0x80, n & 0xFF])
+    assert -32768 <= n <= 32767
+    return op([0x81, *(n & 0xFFFF).to_bytes(2, "big")])
+
+
+DROP = op([0x30])
+AND = op([0xB0])
+TRY = op([0xF2, 0xFF])
+ONLYTOP = (pushint(1), op([0x6A]))  # 1 ONLYTOPX: leave only the top of the stack
+
+
+def blkdrop(n):
+    return op([0x5F, n])
+
+
+def call(operands, suite):
+    """Pushes message, context, signature and key from references, then runs F93102."""
+    return [op([0x88], chain(x)) for x in operands] + [pushint(suite), op([0xF9, 0x31, 0x02])]
+
+
+def runvm(child, flags, gas_limit=None):
+    """RUNVM with no arguments for the child: n=0, code, [gas limit when flags has +8]."""
+    ops = [pushint(0), op([0x89], child)]
+    if flags & 8:
+        ops.append(pushint(gas_limit))
+    return ops + [op([0xDB, 0x40 | flags >> 8, flags & 0xFF])]
+
+
+def flat(*parts):
+    out = []
+    for p in parts:
+        if isinstance(p, tuple) and p and isinstance(p[0], bytes):
+            out.append(p)
+        else:
+            out.extend(flat(*p))
+    return out
+
+
+def prog(*parts):
+    return program(*flat(*parts))
+
+
 def main(out):
     rows = []
 
-    def add(name, expect, suite, message, context, signature, key, budget=BUDGET, version=VERSION):
+    def add(
+        name,
+        expect,
+        suite,
+        message,
+        context,
+        signature,
+        key,
+        budget=BUDGET,
+        version=VERSION,
+        code=None,
+    ):
         def field(v):
             if v is None:
                 return "skip"
@@ -73,7 +161,11 @@ def main(out):
                 field(signature),
                 field(key),
             ]
+            + ([] if code is None else [code.boc().hex()])
         )
+
+    def add_program(name, expect, code, budget=BUDGET):
+        add(name, expect, "skip", None, None, None, None, budget=budget, code=code)
 
     tmp = Path(tempfile.mkdtemp())
     msg = bytes(range(32))

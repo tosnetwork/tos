@@ -613,6 +613,8 @@ jobs:
         if: contains(fromJSON('["mutations"]'), matrix.suite) && matrix.runner == 'ubuntu-24.04'
         run: |
           python test/rescue-fee-gate/context_mutations.py --artifacts artifacts/context --target "$CARGO_TARGET_DIR"
+          python test/rescue-fee-gate/suite_parity_mutations.py test/rescue-fee-gate/suite-scenarios.tsv \
+            artifacts/context/legacy-cpp.tsv "$CARGO_TARGET_DIR"
           python test/rescue-fee-gate/context_transactions.py --output artifacts/context \
             --rust "$CARGO_TARGET_DIR/debug/examples/pq-tx-parity"
           git diff --exit-code

@@ -7,15 +7,26 @@ import sys
 from pathlib import Path
 
 
-def read(path, fields):
+def read(path, *fields):
     rows = [line.split("\t") for line in Path(path).read_text().splitlines()]
-    assert rows and all(len(row) == fields for row in rows), f"invalid rows: {path}"
+    assert rows and all(len(row) in fields for row in rows), f"invalid rows: {path}"
     assert len({row[0] for row in rows}) == len(rows), f"duplicate ids: {path}"
     return rows
 
 
+def intended(outcome):
+    if outcome == "V":
+        return (0, -1)
+    if outcome == "I":
+        return (0, 0)
+    if outcome[0] == "R":
+        return (0, int(outcome[1:]))
+    assert outcome[0] == "E", f"unknown outcome {outcome}"
+    return (int(outcome[1:]), 99)
+
+
 def main(scenarios, cpp, rust, expected=None):
-    inputs = read(scenarios, 9)
+    inputs = read(scenarios, 9, 10)
     outputs = [read(cpp, 4), read(rust, 4)]
     ids = [row[0] for row in inputs]
     for path, rows in zip((cpp, rust), outputs):
@@ -23,10 +34,7 @@ def main(scenarios, cpp, rust, expected=None):
         for scenario, row in zip(inputs, rows):
             name, exit_code, gas, result = row
             actual = (int(exit_code), int(result))
-            outcome = scenario[3]
-            want = (
-                (0, -1) if outcome == "V" else (0, 0) if outcome == "I" else (int(outcome[1:]), 99)
-            )
+            want = intended(scenario[3])
             assert actual == want, f"{path}: {name}: expected {want}, got {actual}"
             assert int(gas) > 0, f"{path}: {name}: missing gas charge"
     assert outputs[0] == outputs[1], "C++/Rust exit, gas or result mismatch"
