@@ -30,6 +30,18 @@ CTX_AUTH = b"TOS-AUTH-SLH-DSA-SHA2-128S-v1"
 CTX_ML = b"TOS-AUTH-V2-ML-DSA-44-v1"
 VERSION = 16  # unified development genesis
 BUDGET = 1_000_000
+# Gas each child out of gas consumed, measured with the C++ VM.
+CHILD_GAS = {
+    "instruction": 108,
+    "out-of-range-top": 102,
+    "implicit-ret": 104,
+    "implicit-jmpref": 128,
+    "exception-price": 86,
+    "c2-switch": 1072,
+    "setgaslimit": 106,
+    "nested-restore": 301,
+}
+C2_SWITCH_LIMIT = 1_060  # exception price paid; its 47-value stack is not
 
 
 def chain(data):
@@ -105,9 +117,11 @@ def call(operands, suite):
     return [op([0x88], chain(x)) for x in operands] + [pushint(suite), op([0xF9, 0x31, 0x02])]
 
 
-def runvm(child, flags, gas_limit=None):
-    """RUNVM with no arguments for the child: n=0, code, [gas limit when flags has +8]."""
+def runvm(child, flags, gas_limit=None, ret_vals=None):
+    """RUNVM with no arguments for the child: n=0, code, [ret_vals for +256], [gas limit for +8]."""
     ops = [pushint(0), op([0x89], child)]
+    if flags & 256:
+        ops.append(pushint(ret_vals))
     if flags & 8:
         ops.append(pushint(gas_limit))
     return ops + [op([0xDB, 0x40 | flags >> 8, flags & 0xFF])]
@@ -283,6 +297,66 @@ def main(out):
     add_program("steps-unassigned-opcode", "E6", prog(pushint(7), op([0xF4, 0xFF])))
     add_program("steps-truncated-prefix-ff", "E6", prog(pushint(7), op([0xFF])))
     add_program("steps-truncated-prefix-f9", "E6", prog(pushint(7), op([0xF9])))
+
+    # A child VM that runs out of gas: the parent ends normally, so every row observes what the
+    # child returned, not the parent running out itself. A child out of gas returns exactly one
+    # value, the gas it consumed, with exit code -14; +8 also returns that gas.
+    exit_code = (DROP, op([0x31]))  # DROP the gas, NIP the value: the exit code is left
+    value = (op([0x5B]),)  # 2DROP: the value the child returned is left
+    depth = (op([0x68]), ONLYTOP)
+    sevens = prog(*[pushint(7)] * 30)
+    loop = (op([0x90]), op([0xEA]))  # PUSHCONT {} AGAIN: implicit returns until out of gas
+    c2_switch = prog(
+        *[pushint(7)] * 45,
+        op([0x90]),
+        *[op([0xEC, 0xFF])] * 3,  # SETCONTARGS 15: 45 values move into the continuation
+        op([0xED, 0x52]),  # POP c2: switching to it pays for its 47-value stack
+        pushint(1),
+        pushint(0),
+        op([0xA9, 0x04]),  # DIV by zero
+    )
+    children = {
+        # In-range integers on the child's stack: the Rust VM used to take the top one for an
+        # exit code.
+        "instruction": (sevens, 100),
+        "out-of-range-top": (prog(*[pushint(5000)] * 10), 100),
+        "implicit-ret": (prog(pushint(7), *loop), 100),
+        "implicit-jmpref": (Cell().raw(b"\x77").ref(Cell().raw(b"\x77")), 50),
+        "exception-price": (prog(pushint(7), op([0x5B])), 40),
+        "c2-switch": (c2_switch, C2_SWITCH_LIMIT),
+        "setgaslimit": (prog(*[pushint(7)] * 3, pushint(20), op([0xF8, 0x01])), 1_000),
+        "nested-restore": (prog(pushint(7), runvm(prog(*loop), 0)), 300),
+    }
+    for path, (child, limit) in children.items():
+        add_program(f"child-oog-{path}-exit", "R-14", prog(runvm(child, 8, limit), exit_code))
+        add_program(
+            f"child-oog-{path}-value",
+            f"R{CHILD_GAS[path]}",
+            prog(runvm(child, 8, limit), value),
+        )
+    child, limit = children["instruction"]
+    gas = CHILD_GAS["instruction"]
+    for flags, suffix in ((8, ""), (136, "-isolated")):
+        add_program(f"child-oog-gas{suffix}", f"R{gas}", prog(runvm(child, flags, limit), ONLYTOP))
+        add_program(f"child-oog-depth{suffix}", "R3", prog(runvm(child, flags, limit), depth))
+    add_program("child-oog-exit-isolated", "R-14", prog(runvm(child, 136, limit), exit_code))
+    add_program("child-oog-value-isolated", f"R{gas}", prog(runvm(child, 136, limit), value))
+    child, limit = children["implicit-ret"]
+    for n in (0, 3):
+        add_program(f"child-oog-ret-vals-{n}-depth", "R3", prog(runvm(child, 264, limit, n), depth))
+    add_program(
+        "child-oog-setgaslimit-gas",
+        f"R{CHILD_GAS['setgaslimit']}",
+        prog(runvm(children["setgaslimit"][0], 8, 1_000), ONLYTOP),
+    )
+    # Controls: the same child with enough gas; THROW 13, which is not out of gas; an ordinary
+    # unhandled error; and too few return values.
+    add_program("child-enough-gas-exit", "R0", prog(runvm(sevens, 8, 10_000), DROP, ONLYTOP))
+    throw13 = prog(pushint(7), op([0xF2, 0x0D]))
+    add_program("child-throw-13-exit", "R13", prog(runvm(throw13, 8, 1_000), exit_code))
+    error = children["exception-price"][0]
+    add_program("child-error-exit", "R2", prog(runvm(error, 8, 1_000), exit_code))
+    add_program("child-too-few-values-exit", "R-3", prog(runvm(prog(), 264, 1_000, 3), exit_code))
 
     Path(out).write_text("\n".join("\t".join(r) for r in rows) + "\n")
     print(f"{len(rows)} scenarios")

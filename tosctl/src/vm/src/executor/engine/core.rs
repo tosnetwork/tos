@@ -1143,21 +1143,7 @@ impl Engine {
         const STACK_GROW: usize = 2 * 1024 * 1024;
         let mut result = match stacker::maybe_grow(RED_ZONE, STACK_GROW, || child.execute()) {
             Ok(result) => result,
-            Err(err) => {
-                // in case of error we have copy of code on stack
-                match child.cc.stack.pop().and_then(|x| x.as_integer_value(0..=0xFFF)) {
-                    Ok(code) => {
-                        debug_assert_eq!(code, tvm_exception_or_custom_code(&err));
-                    }
-                    Err(err) => {
-                        log::error!(
-                            target: "tvm",
-                            "Failed to pop error code from stack {err:?}",
-                        );
-                    }
-                }
-                tvm_exception_or_custom_code(&err)
-            }
+            Err(err) => child.child_exit_after_error(&err),
         };
         // let mut result = child.execute().unwrap_or_else(|err| tvm_exception_or_custom_code(&err));
         log::debug!(
@@ -1167,7 +1153,8 @@ impl Engine {
         );
 
         self.step += child.step;
-        self.use_gas(child.gas_used().min(child.gas.get_gas_limit() + 1)); // +1?
+        let child_gas_used = child.gas_used();
+        self.use_gas(child_gas_used.min(child.gas.get_gas_limit() + 1)); // +1?
         let ret_vals = if result == 0 || result == 1 {
             if params.ret_vals >= 0 {
                 if params.ret_vals as usize <= child.cc.stack.depth() {
@@ -1212,9 +1199,33 @@ impl Engine {
             self.cc.stack.push_cell(actions);
         }
         if params.return_gas {
-            self.cc.stack.push_int(child.gas.get_gas_used());
+            self.cc.stack.push_int(child_gas_used);
         }
         Ok(())
+    }
+
+    /// The exit code of a child VM that stopped with `err`, leaving on its stack what the
+    /// parent receives. A child out of gas keeps only the gas it consumed and exits with the
+    /// complemented out-of-gas code, whatever its stack held. Any other error left its code
+    /// on top of the stack, which is dropped.
+    fn child_exit_after_error(&mut self, err: &Error) -> i32 {
+        if tvm_exception_code(err) == Some(ExceptionCode::OutOfGas) {
+            self.cc.stack = Stack::new();
+            self.cc.stack.push_int(self.gas_used());
+            return !(ExceptionCode::OutOfGas as i32);
+        }
+        match self.cc.stack.pop().and_then(|x| x.as_integer_value(0..=0xFFF)) {
+            Ok(code) => {
+                debug_assert_eq!(code, tvm_exception_or_custom_code(err));
+            }
+            Err(err) => {
+                log::error!(
+                    target: "tvm",
+                    "Failed to pop error code from stack {err:?}",
+                );
+            }
+        }
+        tvm_exception_or_custom_code(err)
     }
 
     // Internal API ***********************************************************
@@ -1628,7 +1639,7 @@ impl Engine {
                     self.cmd.push_var(StackItem::Continuation(Arc::new(cont)));
                     self.cc.stack.push(value);
                     self.cmd.vars[n].as_continuation_mut()?.nargs = 1;
-                    switch(self, var!(n))?;
+                    self.switch_counting_out_of_gas(n)?;
                     return Ok(None);
                 } else {
                     self.cc.stack = Stack::new();
@@ -1642,8 +1653,20 @@ impl Engine {
         self.cc.stack.push(value);
         self.cc.stack.push(int!(exception.exception_or_custom_code()));
         self.cmd.vars[n].as_continuation_mut()?.nargs = 2;
-        switch(self, var!(n))?;
+        self.switch_counting_out_of_gas(n)?;
         Ok(None)
+    }
+
+    // Switches to the exception handler. Running out of gas there ends the VM with one more
+    // step than the exception itself, as running out of gas anywhere else does.
+    fn switch_counting_out_of_gas(&mut self, n: usize) -> Status {
+        let result = switch(self, var!(n));
+        if let Err(err) = &result {
+            if tvm_exception_code(err) == Some(ExceptionCode::OutOfGas) {
+                self.step += 1;
+            }
+        }
+        result
     }
 
     pub(in crate::executor) fn last_cmd(&self) -> u8 {
@@ -1796,6 +1819,27 @@ mod nesting_depth_tests {
                 "nesting at the former cap must not be refused for depth"
             );
         }
+    }
+
+    // A parent sees only the top of an erroring child's stack, so it cannot tell a stack of
+    // just the consumed gas from one where the gas sits on the child's own values. This checks
+    // the child's whole stack.
+    #[test]
+    fn child_out_of_gas_leaves_only_the_gas_consumed() -> Status {
+        let mut child = Engine::with_capabilities(0);
+        child.set_gas(Gas::test_with_limit(100));
+        for sentinel in [7, 5000, 7] {
+            child.cc.stack.push_int(sentinel);
+        }
+        let err = child
+            .try_use_gas(108)
+            .err()
+            .ok_or_else(|| error!("108 gas must not fit a limit of 100"))?;
+        assert_eq!(child.child_exit_after_error(&err), !(ExceptionCode::OutOfGas as i32));
+        assert_eq!(child.cc.stack.depth(), 1);
+        assert_eq!(child.cc.stack.get(0)?.as_integer_value(0..=i64::MAX)?, 108);
+        assert_eq!(child.gas_used(), 108);
+        Ok(())
     }
 
     #[test]
