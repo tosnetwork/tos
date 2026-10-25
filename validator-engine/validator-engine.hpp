@@ -219,7 +219,6 @@ class ValidatorEngine : public td::actor::Actor {
   td::optional<td::IPAddress> json_rpc_addr_;
   // A validator serves JSON-RPC to its own operator tool without the wallet index:
   // the index belongs to RPC nodes, and tosctl calls none of its methods.
-  bool json_rpc_wallet_index_ = true;
   tos::JsonRpcServer::Options json_rpc_opts_;
   std::string local_config_ = "";
   std::string global_config_ = "tos-global.config";
@@ -588,7 +587,6 @@ class ValidatorEngine : public td::actor::Actor {
   void started_validator();
   // Lets the wallet-index worker run once its block fetcher is installed;
   // it first re-indexes the blocks earlier runs left unfinished.
-  void recover_wc0_index();
 
   void start_full_node();
   void started_full_node();
@@ -619,7 +617,6 @@ class ValidatorEngine : public td::actor::Actor {
   void set_health_diagnostic(std::string path, int peer_pid, std::uint32_t sampling);
   void serve_json_rpc(td::IPAddress address);
   void set_json_rpc_readonly(bool readonly);
-  void set_json_rpc_wallet_index(bool enabled);
   void set_json_rpc_expose_consensus_status(bool expose);
   void set_json_rpc_cors_origin(std::string origin);
   void set_json_rpc_readyz_threshold(td::int32 threshold);

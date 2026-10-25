@@ -1091,6 +1091,30 @@ void JsonRpcServer::dispatch_method_impl(const std::string &method, td::JsonObje
     promise.set_value(make_json_rpc_error(-32601, PSTRING() << "Method not found: " << method, req_id));
     return;
   }
+  if (opts_.index_query_sender && (method == "getAccountTokens" || method == "getAccountNfts" ||
+                                   method == "getAccountEvents" || method == "getAccountEvent")) {
+    td::JsonBuilder builder;
+    {
+      auto object = builder.enter_object();
+      object("jsonrpc", "2.0");
+      object("method", method);
+      object("id", td::JsonRaw(req_id.empty() ? "null" : req_id));
+      object("params", td::JsonValue::make_object(std::move(params)));
+    }
+    auto body = builder.string_builder().as_cslice().str();
+    opts_.index_query_sender(std::move(body), [promise = std::move(promise), req_id,
+                                               cors = opts_.cors_origin](td::Result<std::string> r) mutable {
+      if (r.is_error()) {
+        promise.set_value(
+            r.error().code() == 429
+                ? make_json_rpc_error(json_rpc::kRateLimited, "Wallet index service rate limit exceeded", req_id, cors)
+                : make_json_rpc_error(-32603, "Wallet index service unavailable", req_id, cors));
+      } else {
+        promise.set_value(make_raw_json_response(r.move_as_ok(), cors));
+      }
+    });
+    return;
+  }
   entry->invoke(*this, params, std::move(req_id), source_ip, std::move(promise));
 }
 
@@ -1315,6 +1339,11 @@ const JsonRpcServer::MethodEntry *JsonRpcServer::find_method(td::Slice name) {
 }
 
 bool JsonRpcServer::serves(const MethodEntry &entry) const {
+  if (opts_.index_only) {
+    td::Slice name(entry.name);
+    return name == "getAccountTokens" || name == "getAccountNfts" || name == "getAccountEvents" ||
+           name == "getAccountEvent";
+  }
   return (entry.flags & kMethodAdmin) == 0 || opts_.expose_consensus_status;
 }
 
@@ -1400,6 +1429,10 @@ void JsonRpcServer::send_attributed_liteserver_query(td::BufferSlice query, adnl
         [guard_id](td::Result<td::BufferSlice> result) mutable {
           td::actor::send_closure(guard_id, &QueryTimeoutGuard::deliver, std::move(result));
         });
+  }
+  if (opts_.lite_query_sender) {
+    opts_.lite_query_sender(std::move(query), std::move(promise));
+    return;
   }
   td::actor::send_closure(validator_manager_,
                           &validator::ValidatorManagerInterface::run_ext_query,

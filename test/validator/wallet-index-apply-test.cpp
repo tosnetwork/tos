@@ -1,14 +1,6 @@
 /* Copyright 2026 TOS Blockchain Teams. SPDX-License-Identifier: LGPL-2.0-or-later */
-// Block application with the wallet index enabled must never wait for the
-// index: not for a read of block data the index needs, not for the index's
-// WAL sync, and not for room in its queue.
-//
-// The real ApplyBlock actor runs against a stand-in manager that answers what
-// ApplyBlock asks at once, except a block-data read, which it never answers:
-// an apply that read anything back for the index would hang there. The hook
-// is the real one, queueing into a real wallet index database with its real
-// worker; each test blocks one part of the index and requires every apply to
-// complete while that part is still blocked.
+// Block application cannot reach the retired wallet-index embedding seam.
+// The source manager deliberately never answers block-data readbacks.
 #include <atomic>
 #include <chrono>
 #include <map>
@@ -22,8 +14,6 @@
 #include "td/utils/logging.h"
 #include "td/utils/port/path.h"
 #include "td/utils/tests.h"
-#include "validator-engine/wallet-index-writer.h"
-#include "validator-engine/wallet-index.h"
 #include "validator/block-handle.hpp"
 #include "validator/db/archive-gc-floor.h"
 #include "validator/fabric.h"
@@ -130,52 +120,9 @@ BlockHandle stored_block(tos::BlockSeqno seqno, const tos::BlockIdExt &prev) {
   return handle;
 }
 
-// A fetcher for the worker whose reads stay unanswered until released.
-struct BlockedFetcher {
-  std::mutex mutex;
-  std::vector<std::function<void(td::Result<tos_wallet_index::Wc0FetchedBlock>)>> pending;
-  std::atomic<int> calls{0};
-
-  void install() {
-    tos_wallet_index::set_wc0_index_block_fetcher(
-        [this](const tos::BlockIdExt &, bool, std::function<void(td::Result<tos_wallet_index::Wc0FetchedBlock>)> done) {
-          std::lock_guard<std::mutex> guard(mutex);
-          pending.push_back(std::move(done));
-          calls++;
-        });
-  }
-  void release() {
-    decltype(pending) taken;
-    {
-      std::lock_guard<std::mutex> guard(mutex);
-      taken.swap(pending);
-    }
-    for (auto &done : taken) {
-      done(td::Status::Error("read released by the test"));
-    }
-  }
-};
-
-template <class F>
-bool eventually(F &&condition, std::chrono::milliseconds limit = std::chrono::milliseconds(10000)) {
-  auto deadline = std::chrono::steady_clock::now() + limit;
-  while (!condition()) {
-    if (std::chrono::steady_clock::now() > deadline) {
-      return false;
-    }
-    std::this_thread::sleep_for(std::chrono::milliseconds(2));
-  }
-  return true;
-}
-
-// The real ApplyBlock actor, the real hook and worker, a real index.
 class ApplyHarness {
  public:
-  explicit ApplyHarness(std::string name) : path_("test-wallet-index-apply-" + std::move(name)) {
-    td::rmrf(path_).ignore();
-    auto db = tos_wallet_index::WalletIndexDb::open(path_);
-    db.ensure();
-    tos_wallet_index::set_wallet_index_db(db.move_as_ok());
+  ApplyHarness() {
     g_apply_reads = 0;
     scheduler_.run_in_context([&] {
       manager_ = td::actor::create_actor<StandInManager>("stand-in-manager");
@@ -186,28 +133,14 @@ class ApplyHarness {
       td::actor::send_closure(manager_, &StandInManager::add_handle, first);
     });
   }
-
   ~ApplyHarness() {
     tos::validator::g_wc0_block_index_hook = nullptr;
-    tos_wallet_index::set_wc0_index_marking_stall_for_testing(false);
-    tos_wallet_index::stop_wc0_index_worker();
-    tos_wallet_index::set_wc0_index_block_fetcher(nullptr);
     scheduler_.run_in_context([&] {
       manager_.reset();
       td::actor::SchedulerContext::get().stop();
     });
     while (scheduler_.run(1)) {
     }
-    tos_wallet_index::set_wallet_index_db(nullptr);
-    td::rmrf(path_).ignore();
-  }
-
-  bool start_index() {
-    if (!tos_wallet_index::start_wc0_index_worker(false)) {
-      return false;
-    }
-    tos::validator::g_wc0_block_index_hook = &tos_wallet_index::enqueue_wc0_index_block;
-    return true;
   }
 
   // Applies the next block, with no block data in hand. True when the apply
@@ -254,16 +187,11 @@ class ApplyHarness {
     return done.load() && ok;
   }
 
-  tos_wallet_index::WalletIndexDb &db() {
-    return *tos_wallet_index::wallet_index_db();
-  }
-
   tos::BlockSeqno last_seqno() const {
     return next_seqno_ - 1;
   }
 
  private:
-  std::string path_;
   td::actor::Scheduler scheduler_{{1}};
   td::actor::ActorOwn<StandInManager> manager_;
   tos::BlockSeqno next_seqno_ = 2;
@@ -271,97 +199,26 @@ class ApplyHarness {
 
 }  // namespace
 
-// The worker's read of the block data is stuck; applies still complete, and
-// ApplyBlock itself reads nothing for the index.
-TEST(WalletIndexApply, ApplyCompletesWhileTheWorkersReadIsBlocked) {
-  BlockedFetcher reads;
-  reads.install();
-  ApplyHarness harness("blocked-read");
-  ASSERT_TRUE(harness.start_index());
-  for (int i = 0; i < 3; i++) {
-    ASSERT_TRUE(harness.apply_next());
-  }
-  // The worker is waiting on its read of the first block, still unanswered.
-  ASSERT_TRUE(eventually([&] { return reads.calls.load() == 1; }));
-  ASSERT_TRUE(harness.apply_next());
-  ASSERT_EQ(reads.calls.load(), 1);
-  ASSERT_EQ(g_apply_reads.load(), 0);
-  // Every applied block is marked for recovery while its indexing waits.
-  ASSERT_TRUE(
-      eventually([&] { return harness.db().has_incomplete_block(basechain_id(harness.last_seqno())).move_as_ok(); }));
-  reads.release();
-}
-
-// The recorder's WAL sync hangs; applies still complete.
-TEST(WalletIndexApply, ApplyCompletesWhileTheWalIsBlocked) {
-  BlockedFetcher reads;
-  reads.install();
-  ApplyHarness harness("blocked-wal");
-  ASSERT_TRUE(harness.start_index());
-  tos_wallet_index::set_wc0_index_marking_stall_for_testing(true);
-  for (int i = 0; i < 3; i++) {
-    ASSERT_TRUE(harness.apply_next());
-  }
-  // Nothing was marked yet: the recorder is still stuck in its write.
-  ASSERT_TRUE(!harness.db().has_incomplete_block(basechain_id(2)).move_as_ok());
-  ASSERT_EQ(g_apply_reads.load(), 0);
-  tos_wallet_index::set_wc0_index_marking_stall_for_testing(false);
-  ASSERT_TRUE(
-      eventually([&] { return harness.db().has_incomplete_block(basechain_id(harness.last_seqno())).move_as_ok(); }));
-  reads.release();
-}
-
-// The worker is stuck and its queue is full; applies still complete, and a
-// block that found no room is marked for recovery instead.
-TEST(WalletIndexApply, ApplyCompletesWithAFullQueue) {
-  BlockedFetcher reads;
-  reads.install();
-  ApplyHarness harness("full-queue");
-  ASSERT_TRUE(harness.start_index());
-  ASSERT_TRUE(harness.apply_next());
-  ASSERT_TRUE(eventually([&] { return reads.calls.load() == 1; }));
-  for (size_t i = 0; i < tos_wallet_index::kWc0IndexQueueCapacity + 4; i++) {
-    ASSERT_TRUE(harness.apply_next());
-  }
-  ASSERT_EQ(reads.calls.load(), 1);
-  ASSERT_EQ(g_apply_reads.load(), 0);
-  ASSERT_TRUE(
-      eventually([&] { return harness.db().has_incomplete_block(basechain_id(harness.last_seqno())).move_as_ok(); }));
-  reads.release();
-}
-
-namespace {
-
-bool no_leases() {
-  std::lock_guard<std::mutex> guard(tos::validator::g_archive_retention.mutex);
-  return tos::validator::g_archive_retention.leases.empty();
-}
-
-}  // namespace
-
-// While a basechain block is being applied, before it is filed, archive
-// pruning cannot admit deleting the package it will be filed in: ApplyBlock
-// holds a lease on its masterchain reference until the index has taken over.
-TEST(WalletIndexApply, ApplyLeasesTheBlocksPackageUntilTheIndexTakesOver) {
+TEST(WalletIndexApply, ApplicationDoesNotCallTheRetiredIndexHookOrLeaseForIt) {
   tos::validator::reset_archive_retention_for_testing();
-  BlockedFetcher reads;
-  reads.install();
-  ApplyHarness harness("lease");
-  ASSERT_TRUE(harness.start_index());
+  ApplyHarness harness;
+  std::atomic<int> calls{0};
+  tos::validator::g_wc0_block_index_hook = [&](auto, auto, auto, auto) { ++calls; };
   harness.hold_new_blocks(true);
   std::atomic<bool> done{false};
   harness.start_next(77, done);
-  harness.run_for(0.2);
+  harness.run_for(0.1);
   ASSERT_TRUE(!done.load());
-  // The package holding references 70..77 may not go; one ending at 77 may.
-  ASSERT_TRUE(!tos::validator::archive_admit_deletion(78, tos::validator::kNoArchiveGcFloor));
-  ASSERT_TRUE(!no_leases());
+  {
+    std::lock_guard<std::mutex> guard(tos::validator::g_archive_retention.mutex);
+    ASSERT_TRUE(tos::validator::g_archive_retention.leases.empty());
+  }
   harness.hold_new_blocks(false);
-  harness.run_for(0.2);
+  harness.run_for(0.1);
   ASSERT_TRUE(done.load());
-  // The index holds it now, and the apply's lease is gone.
-  ASSERT_TRUE(no_leases());
-  ASSERT_TRUE(!tos::validator::archive_admit_deletion(78, tos::validator::kNoArchiveGcFloor));
-  reads.release();
+  for (int i = 0; i < 64; ++i)
+    ASSERT_TRUE(harness.apply_next());
+  ASSERT_EQ(calls.load(), 0);
+  ASSERT_EQ(g_apply_reads.load(), 0);
   tos::validator::reset_archive_retention_for_testing();
 }

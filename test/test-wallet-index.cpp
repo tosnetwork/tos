@@ -4000,3 +4000,76 @@ TEST(WalletIndexWorker, HandOversBeyondTheRecorderStayBoundedAndAreReported) {
   reset_index_singletons();
   td::rmrf(path).ignore();
 }
+
+TEST(WalletIndex, ReplayCheckpointAndReceiptsSurviveRestartAtomically) {
+  const std::string path = "test-wallet-index-replay";
+  auto db = open_fresh_db(path);
+  auto anchor = make_test_block_id(-1, tos::shardIdAll, 1, 1, 2);
+  auto shard = make_test_block_id(0, tos::shardIdAll, 1, 3, 4);
+  db->initialize_replay(anchor).ensure();
+  auto checkpoint = db->replay_checkpoint().move_as_ok().value();
+  ASSERT_EQ(checkpoint.committed.seqno(), 0u);
+  // An interrupted write must not leave a receipt claiming its block exists.
+  db->begin_batch().ensure();
+  db->record_replay_block(shard).ensure();
+  db->abort_batch();
+  ASSERT_TRUE(!db->replay_block_committed(shard).move_as_ok());
+  db->begin_batch().ensure();
+  db->record_replay_block(shard).ensure();
+  db->commit_batch().ensure();
+  db.reset();
+  db = tos_wallet_index::WalletIndexDb::open(path).move_as_ok();
+  ASSERT_TRUE(db->replay_block_committed(shard).move_as_ok());
+  ASSERT_EQ(db->replay_checkpoint().move_as_ok().value().committed.seqno(), 0u);
+  checkpoint.committed = anchor;
+  db->commit_replay_checkpoint(checkpoint).ensure();
+  db.reset();
+  db = tos_wallet_index::WalletIndexDb::open(path).move_as_ok();
+  ASSERT_TRUE(!db->replay_block_committed(shard).move_as_ok());
+  ASSERT_TRUE(db->replay_checkpoint().move_as_ok().value().committed == anchor);
+  auto foreign = anchor;
+  foreign.root_hash.as_slice()[0] ^= 1;
+  ASSERT_TRUE(db->initialize_replay(foreign).is_error());
+  db.reset();
+  td::rmrf(path).ensure();
+}
+
+TEST(WalletIndex, ReplayRejectsEmbeddedDatabaseWithoutCursor) {
+  const std::string path = "test-wallet-index-legacy-replay";
+  auto db = open_fresh_db(path);
+  auto shard = make_test_block_id(0, tos::shardIdAll, 1, 3, 4);
+  db->put_incomplete_block(shard).ensure();
+  auto anchor = make_test_block_id(-1, tos::shardIdAll, 1, 1, 2);
+  ASSERT_TRUE(db->initialize_replay(anchor).is_error());
+  ASSERT_TRUE(!db->replay_checkpoint().move_as_ok());
+  db.reset();
+  td::rmrf(path).ensure();
+}
+
+TEST(WalletIndex, ReplayReceiptCommitsWithBlockAndSkipsAnAlreadyCommittedBlock) {
+  reset_index_singletons();
+  const std::string path = "test-wallet-index-replay-block";
+  td::rmrf(path).ignore();
+  auto &db = install_db(path);
+  auto anchor = make_test_block_id(-1, tos::shardIdAll, 1, 1, 2);
+  db.initialize_replay(anchor).ensure();
+  auto id = worker_block_id(1);
+  auto root = wallet_index_fixture::block(1, 100, 1000, {});
+  tos_wallet_index::set_wc0_index_commit_faults_for_testing(1);
+  ASSERT_TRUE(tos_wallet_index::wc0_index_block(root, {}, id, true) == tos_wallet_index::Wc0IndexResult::NotDone);
+  ASSERT_TRUE(!db.replay_block_committed(id).move_as_ok());
+  ASSERT_TRUE(tos_wallet_index::wc0_index_block(root, {}, id, true) == tos_wallet_index::Wc0IndexResult::Done);
+  ASSERT_TRUE(db.replay_block_committed(id).move_as_ok());
+  tos_wallet_index::set_wallet_index_db(nullptr);
+  auto &reopened = install_db(path);
+  tos_wallet_index::set_wc0_index_commit_faults_for_testing(1);
+  ASSERT_TRUE(tos_wallet_index::wc0_index_block(root, {}, id, true) == tos_wallet_index::Wc0IndexResult::Done);
+  ASSERT_TRUE(reopened.replay_block_committed(id).move_as_ok());
+  // The fault remains armed: the receipt skipped the entire write, not merely
+  // its result. A different block still encounters the injected disk error.
+  auto next = wallet_index_fixture::block(2, 200, 1001, {});
+  ASSERT_TRUE(tos_wallet_index::wc0_index_block(next, {}, worker_block_id(2), true) ==
+              tos_wallet_index::Wc0IndexResult::NotDone);
+  reset_index_singletons();
+  td::rmrf(path).ensure();
+}

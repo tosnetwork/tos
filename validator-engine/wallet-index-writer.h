@@ -86,7 +86,13 @@ class WalletIndexVerificationBudget {
 // finishes some first and tries again; the block keeps its recovery mark
 // meanwhile.
 enum class Wc0IndexResult { Done, AtPendingCap, NotDone };
-Wc0IndexResult wc0_index_block(td::Ref<vm::Cell> block_root, td::Ref<vm::Cell> state_root, tos::BlockIdExt block_id);
+Wc0IndexResult wc0_index_block(td::Ref<vm::Cell> block_root, td::Ref<vm::Cell> state_root, tos::BlockIdExt block_id,
+                               bool replay = false);
+// One bounded background pass, for the standalone replay thread. Never call
+// concurrently with the legacy queue worker.
+bool drain_wc0_index();
+// Release cached lazy source cells before destroying the source scheduler.
+void release_wc0_index_state();
 
 // Blocks waiting to be indexed at most. Each holds its block and state cells.
 constexpr size_t kWc0IndexQueueCapacity = 256;

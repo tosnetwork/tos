@@ -1145,7 +1145,8 @@ bool retry_parked_locked(WalletIndexDb* db) {
 
 }  // namespace
 
-Wc0IndexResult wc0_index_block(td::Ref<vm::Cell> block_root, td::Ref<vm::Cell> state_root, tos::BlockIdExt block_id) {
+Wc0IndexResult wc0_index_block(td::Ref<vm::Cell> block_root, td::Ref<vm::Cell> state_root, tos::BlockIdExt block_id,
+                               bool replay) {
   auto* db = wallet_index_db();
   // A block whose data could not be obtained keeps the recovery mark the
   // queue gave it, so startup recovery retries it.
@@ -1161,6 +1162,13 @@ Wc0IndexResult wc0_index_block(td::Ref<vm::Cell> block_root, td::Ref<vm::Cell> s
   // the write batch below is a single unsynchronized object: serialize
   // whole-block passes.
   std::lock_guard<std::mutex> guard(db->write_mutex());
+  if (replay) {
+    auto recorded = db->replay_block_committed(block_id);
+    if (recorded.is_error())
+      return Wc0IndexResult::NotDone;
+    if (recorded.ok())
+      return Wc0IndexResult::Done;
+  }
   // A block indexed before whose remaining candidates are persisted with it:
   // nothing of the block itself is needed again. Its state, being at hand,
   // verifies them now.
@@ -1348,6 +1356,13 @@ Wc0IndexResult wc0_index_block(td::Ref<vm::Cell> block_root, td::Ref<vm::Cell> s
     LOG(WARNING) << "wc0-index: injected commit fault for block seqno=" << seqno;
     db->abort_batch();
     return Wc0IndexResult::NotDone;
+  }
+  if (replay) {
+    auto recorded = db->record_replay_block(block_id);
+    if (recorded.is_error()) {
+      db->abort_batch();
+      return Wc0IndexResult::NotDone;
+    }
   }
   auto s = db->commit_batch();
   if (s.is_error()) {
@@ -2011,6 +2026,14 @@ uint64_t take_wc0_index_drop_report(uint64_t dropped_total, uint64_t& reported,
 
 void set_wc0_index_marking_fault_for_testing(bool fail) {
   g_marking_fault.store(fail);
+}
+
+void release_wc0_index_state() {
+  forget_context();
+}
+
+bool drain_wc0_index() {
+  return index_idle_step();
 }
 
 }  // namespace tos_wallet_index

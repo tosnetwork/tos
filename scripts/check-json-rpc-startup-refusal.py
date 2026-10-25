@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Check that validator-engine refuses an unsafe JSON-RPC listener at startup.
 
-A write-enabled plaintext JSON-RPC listener may bind loopback only. The engine
+The validator operator JSON-RPC listener may bind loopback only. The engine
 must exit with status 2 before it starts any actor when asked to bind such a
 listener elsewhere, and must not refuse the safe configurations.
 
@@ -20,7 +20,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-REFUSAL = "refusing to bind write-enabled plaintext listener to non-loopback address"
+REFUSAL = "validator JSON-RPC is private: bind loopback"
 NEXT_CHECK = "--measurement-jsonl and --measurement-node-id must be supplied together"
 TIMEOUT_SECONDS = 60
 
@@ -30,13 +30,13 @@ UNSAFE = (
     ("ipv6-any-write", ["--json-rpc-address", "[::]:1"]),
     # The last --json-rpc-address is the one the engine serves.
     ("last-address-wins", ["--json-rpc-address", "127.0.0.1:1", "--json-rpc-address", "0.0.0.0:1"]),
+    ("ipv4-any-readonly", ["--json-rpc-address", "0.0.0.0:1", "--json-rpc-readonly"]),
+    ("readonly-before-address", ["--json-rpc-readonly", "--json-rpc-address", "0.0.0.0:1"]),
 )
 
 SAFE = (
     ("ipv4-loopback-write", ["--json-rpc-address", "127.0.0.1:1"]),
     ("ipv6-loopback-write", ["--json-rpc-address", "[::1]:1"]),
-    ("ipv4-any-readonly", ["--json-rpc-address", "0.0.0.0:1", "--json-rpc-readonly"]),
-    ("readonly-before-address", ["--json-rpc-readonly", "--json-rpc-address", "0.0.0.0:1"]),
 )
 
 
