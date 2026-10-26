@@ -160,6 +160,7 @@ def actions(address, count=1, mode=3, message=None):
 
 class Harness:
     def __init__(self, output, primary_seed="11", rescue_seed="22"):
+        output = output.resolve()
         self.output = output
         output.mkdir(parents=True, exist_ok=True)
         self.code = native.compile_contract("wallet-quantum-self-pay.fc", output / "wallet.boc")
