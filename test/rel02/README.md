@@ -105,11 +105,14 @@ The files have separate purposes:
   Python codec. It checks oracle regeneration; it is not used to compute native
   execution results or required at replay runtime.
 - `test_run.py` exercises failure reporting and refuses incomplete/malformed
-  comparison results. It adds no synthetic positive chain fixtures.
+  comparison results. It adds no synthetic positive chain fixtures. It also runs
+  the capture resolver against stub diagnostic children, which must be refused
+  when they fail, are killed, time out or replay only part of the selection.
 - `corpus/manifest.json` records the oracle and provenance; the BOCs are its inputs.
 - `CAPTURE.md`, `capture-index.json` and `capture-commands.json` retain the local
   capture programs, exact archive locations and the independent full-id replies.
   They remain auditable after the archive and the id captures are gone.
+  `capture/resolve.py` supersedes the recorded `resolve.py` for re-captures.
 - `VALIDATION.json` records source/data hashes and the execution-control
   sensitivity receipt; hosted runs repeat the controls on both architectures.
 - `.github/workflows/epoch-replay.yml` provides one bounded two-architecture
