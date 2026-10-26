@@ -606,6 +606,31 @@ def main():
     )
     assert unpack(native.account_data(from_boc(result["shard_account"]))[0])["retired"] == 2
 
+    # READY migration pays for a missing-policy refusal after acceptance;
+    # REQUIRED migration must remain available with no CP48 at all.
+    for next_policy, error in [(1, 1820), (2, 0)]:
+        successor = h.make_authority(policy_value=next_policy)
+        account = h.account_for(seqno=7)
+        result = h.send(
+            f"migrate-policy-{next_policy}-without-cp48",
+            h.message(role=2, kind=4, payload=Cell().uint(TAGS[4], 32).ref(successor)),
+            account=account,
+            configuration=config(policy_cell=None),
+            expected=error,
+        )
+        data, balance = native.account_data(from_boc(result["shard_account"]))
+        saved = unpack(data)
+        assert saved == dict(
+            seqno=7 if error else 0,
+            wallet_id=0,
+            retired=0,
+            epoch=1,
+            primary=0,
+            rescue=0,
+            authority=(h.authority if error else successor).hash.hex(),
+        ), saved
+        assert balance < native.account_data(account)[1]
+
     for label, account, cfg in [
         ("local-retired", h.account_for(retired=2), config()),
         ("global-retired", h.account, config(policy_cell=policy(network=NETWORK, retired=2))),
