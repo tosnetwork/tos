@@ -1,0 +1,36 @@
+{
+  "source_commit": "295d5029b2a465e9e17a332c34acb1eac475cca3",
+  "scope": "Public genesis test signer; frozen raw transactions, not mobile custody acceptance. Hash chain was checked against independently authenticated account head.",
+  "account": "a633225d28f686aa5656d836342dd603adce6d91576fc185550f73f8dc25a77c",
+  "proven_head": "bd3e43aa54aa705623975acf9938f47ffbb512e4068959bee694526865dddd72",
+  "transactions": [
+    {
+      "file": "transaction-0.boc",
+      "sha256": "abac92c243488fda46c71c021802688e26e1d8e7f3a56c8c11d10f97c5468286",
+      "hash": "bd3e43aa54aa705623975acf9938f47ffbb512e4068959bee694526865dddd72",
+      "lt": "13000001",
+      "outgoing_amounts": [],
+      "skipped_actions": 1
+    },
+    {
+      "file": "transaction-1.boc",
+      "sha256": "8277c01a7daecd3805a682debe3c61d7d5322df95a8c9189f7e654b0cb688307",
+      "hash": "769db2086dca1dfd718fe5de90232cd0bb677669ade6a0714ee478a50a5be4bb",
+      "lt": "10000001",
+      "outgoing_amounts": [
+        "10000000000"
+      ],
+      "skipped_actions": 0
+    },
+    {
+      "file": "transaction-2.boc",
+      "sha256": "0db6883d7bb37a290c0bea62bc93476c8b3d6c78949cd1c2b16ea2fbadfc5d51",
+      "hash": "8f947f21ae4ad0b677404ea71d319b084bfd5b16c3b3626b87de866cf9915157",
+      "lt": "8000001",
+      "outgoing_amounts": [
+        "10000000000"
+      ],
+      "skipped_actions": 0
+    }
+  ]
+}

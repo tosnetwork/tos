@@ -1,6 +1,7 @@
 # Shared proof verification core and its installed command-line front end.
 # The engine accepts borrowed in-memory material and has no transport/file API.
-add_library(proof-verify-engine STATIC proof-verify.cpp proof-verify.h embedded.cpp embedded.h)
+add_library(proof-verify-engine STATIC proof-verify.cpp proof-verify.h embedded.cpp embedded.h
+  wallet-transaction.cpp wallet-transaction.h)
 target_include_directories(proof-verify-engine PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
   $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}>)
 target_link_libraries(proof-verify-engine PUBLIC lite-client-proof-common tos_block smc-envelope tl_api tl_lite_api
@@ -40,6 +41,9 @@ add_test(NAME proof-verify-embedded COMMAND test-proof-verify-embedded
 
 if(NOT CMAKE_CROSSCOMPILING)
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
+  add_test(NAME wallet-transaction COMMAND ${Python3_EXECUTABLE}
+    ${PROJECT_SOURCE_DIR}/test/pq-native/wallet-transaction-test.py
+    $<TARGET_FILE:tos-proof-embedded> ${PROJECT_SOURCE_DIR}/test/pq-native/data/wallet-transactions)
   add_test(NAME proof-acquire-persisted COMMAND ${Python3_EXECUTABLE}
     ${PROJECT_SOURCE_DIR}/test/pq-native/proof-acquire-persisted-test.py
     $<TARGET_FILE:tos-proof-embedded> ${PROJECT_SOURCE_DIR}/test/pq-native/data/proof-verify-real)
