@@ -190,3 +190,24 @@ uploaded with each architecture's CI result. The negative operation shares the
 normal replay/emulation path and only replaces contract code before the emulator
 call. Removing that replacement must make `--controls` fail with
 `execution control did not change a consensus result`.
+
+
+## Account completeness supplement (2026-10-26)
+
+The retained node-a manifest was verified before copying the archive packages.
+A full-hash scan of masterchain block cells located the missing preimages in
+blocks 53209 and 212648. Their original bytes are committed unchanged as
+`corpus/account-preimages/-1-53209.boc` and `-1-212648.boc`. They are added to
+`supplements`, not `blocks`, so the replay cases and on-chain oracle stay fixed.
+The capture index records both source full IDs and exact package ranges;
+`rpc_verification: []` means hash-bound source provenance, not a new independent
+validator observation. The manifest's `complete_account_preimages` records
+the original reference paths and complete subtree hashes/counts.
+
+Reacquisition uses the same bounded package-entry read above, selecting the
+source by block ID (these entries have `case: null`). Require the recorded
+payload size/SHA-256 and decoded root hash before using a source. Retaining
+only the 53209 state update is not the chosen receipt: its target candidate
+still has a pruned child, while its block extra contains the full preimage.
+Existing native hydration may recover that child from other supplements, but
+the original full block makes the complete source directly auditable.
