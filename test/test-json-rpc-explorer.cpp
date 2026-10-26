@@ -54,6 +54,30 @@ td::Ref<vm::Cell> module_data() {
       .store_long(2, 8)
       .finalize();
 }
+td::Ref<vm::Cell> self_pay_authority(unsigned policy = 1, unsigned daily = 1, std::size_t key_size = 1312) {
+  return vm::CellBuilder()
+      .store_long(1, 8)
+      .store_long(-3, 32)
+      .store_zeroes(256)
+      .store_long(daily, 8)
+      .store_ref(key(key_size))
+      .store_zeroes(256)
+      .store_long(policy, 8)
+      .finalize();
+}
+td::Ref<vm::Cell> self_pay_data(unsigned retired = 2, unsigned version = 1, unsigned policy = 1, unsigned daily = 1,
+                                std::size_t key_size = 1312) {
+  return vm::CellBuilder()
+      .store_long(version, 8)
+      .store_long(0xffffffff, 32)
+      .store_long(7, 32)
+      .store_long(retired, 16)
+      .store_long(-1, 64)
+      .store_long(-1, 64)
+      .store_long(-1, 64)
+      .store_ref(self_pay_authority(policy, daily, key_size))
+      .finalize();
+}
 td::Ref<vm::Cell> fee_public_key() {
   return vm::CellBuilder().store_long(1, 32).store_long(8, 32).store_long(3, 32).store_zeroes(384).finalize();
 }
@@ -164,7 +188,7 @@ TEST(JsonRpcExplorer, selectors_are_strict_and_pin_all_hashes) {
   ASSERT_TRUE(parse_hash(std::string(42, 'A') + "B=").is_error());  // noncanonical pad bits
 }
 TEST(JsonRpcExplorer, exact_registry_precedes_public_state_decoding) {
-  ASSERT_EQ(registry().size(), 6u);
+  ASSERT_EQ(registry().size(), 7u);
   auto data = module_data();
   auto unknown_code = vm::CellBuilder().store_long(1, 1).finalize();
   auto unknown = decode_public_state(unknown_code, data);
@@ -208,6 +232,52 @@ TEST(JsonRpcExplorer, exact_registry_precedes_public_state_decoding) {
   auto trailing = vm::CellBuilder().append_cellslice(vm::load_cell_slice(ml)).store_long(0, 1).finalize();
   expect_state_invalid("mldsa44_auth_module_v1", trailing);
   expect_state_invalid("mldsa44_auth_module_v1", vm::CellBuilder().store_long(42, 32).store_ref(key(1311)).finalize());
+}
+TEST(JsonRpcExplorer, self_pay_state_has_no_fee_authority_and_preserves_unsigned_counters) {
+  ASSERT_EQ(td::hex_encode(code("quantum_self_pay_v1")->get_hash().as_slice()),
+            "4f4d4d55622992eeee9b4db05c2b447ca05d9c49e6ad5d027c7f9b16d759b93b");
+  ASSERT_TRUE(decode_public_state(code("quantum_self_pay_v1"), self_pay_data(0), -3).is_ok());
+  for (unsigned policy : {1u, 2u}) {
+    auto result = decode_public_state(code("quantum_self_pay_v1"), self_pay_data(2, 1, policy), -3);
+    ASSERT_TRUE(result.is_ok());
+    const auto& state = result.ok();
+    ASSERT_EQ(state.family, "quantum_self_pay_v1");
+    ASSERT_EQ(state.account_model, "advanced.wallet.quantum_self_pay");
+    ASSERT_EQ(state.authorization_version, "auth.quantum.self_pay.v1");
+    ASSERT_EQ(state.wallet_type, "quantum self-pay v1");
+    ASSERT_EQ(state.wallet_id.value(), 7u);
+    ASSERT_EQ(state.seqno.value(), 0xffffffffu);
+    auto encoded = state.json;
+    auto parsed = td::json_decode(td::MutableSlice(encoded));
+    ASSERT_TRUE(parsed.is_ok() && parsed.ok().type() == td::JsonValue::Type::Object);
+    auto& object = parsed.ok().get_object();
+    auto epoch = object.get_required_string_field("authority_epoch");
+    ASSERT_TRUE(epoch.is_ok());
+    ASSERT_EQ(epoch.ok(), "18446744073709551615");
+    ASSERT_TRUE(state.json.find("\"primary_nonce\":\"18446744073709551615\"") != std::string::npos);
+    ASSERT_TRUE(state.json.find("\"rescue_nonce\":\"18446744073709551615\"") != std::string::npos);
+    ASSERT_TRUE(state.json.find("\"global_id\":-3") != std::string::npos);
+    ASSERT_TRUE(state.json.find("\"fee_payment\":\"wallet_balance\"") != std::string::npos);
+    ASSERT_TRUE(state.json.find(policy == 1 ? "\"policy\":\"ready\"" : "\"policy\":\"required\"") != std::string::npos);
+    ASSERT_TRUE(!object.has_field("fee") && !object.has_field("module") &&
+                !object.has_field("legacy_signature_enabled"));
+  }
+}
+TEST(JsonRpcExplorer, self_pay_state_rejects_unsupported_layout_and_observed_network) {
+  for (unsigned retired : {1u, 3u, 4u, 0xffffu})
+    expect_state_invalid("quantum_self_pay_v1", self_pay_data(retired));
+  expect_state_invalid("quantum_self_pay_v1", self_pay_data(2, 2));
+  for (unsigned policy : {0u, 3u})
+    expect_state_invalid("quantum_self_pay_v1", self_pay_data(2, 1, policy));
+  expect_state_invalid("quantum_self_pay_v1", self_pay_data(2, 1, 1, 2));
+  expect_state_invalid("quantum_self_pay_v1", self_pay_data(2, 1, 1, 1, 1311));
+  auto wrong_network = decode_public_state(code("quantum_self_pay_v1"), self_pay_data(), 42);
+  ASSERT_TRUE(wrong_network.is_error());
+  ASSERT_EQ(wrong_network.error().code(), static_cast<int>(Failure::StateInvalid));
+  auto trailing = vm::CellBuilder().append_cellslice(vm::load_cell_slice(self_pay_data())).store_long(0, 1).finalize();
+  expect_state_invalid("quantum_self_pay_v1", trailing);
+  trailing = vm::CellBuilder().append_cellslice(vm::load_cell_slice(self_pay_data())).store_ref(key(1)).finalize();
+  expect_state_invalid("quantum_self_pay_v1", trailing);
 }
 TEST(JsonRpcExplorer, inspection_has_depth_and_exotic_limits) {
   auto data = vm::CellBuilder().finalize();

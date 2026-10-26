@@ -184,8 +184,18 @@ using exact compiled code identity and bounded canonical state decoding:
 | ML-DSA authorization module | Suite, global ID and canonical 1312-byte public key |
 | Falcon padded authorization module | Suite/profile version, global ID and canonical 897-byte public key; VM availability is reported separately |
 | Complete Quantum wallet | Wallet ID/seqno, AUTH schema/mode, retirement flags, authority epoch, primary/rescue nonces, module StateInit identity and public fee metadata |
+| Self-pay Quantum wallet (`quantum_self_pay_v1`) | Wallet ID/seqno, local retirement flags, exact authority epoch and role nonces, signed global ID, namespace, current authority hash, ML-DSA primary and SLH rescue keys/policy; `fee_payment=wallet_balance` |
 | Quantum module | Global ID, network namespace, daily ML-DSA key, SLH-DSA rescue key and rescue policy |
 | Quantum fee vault | HSS/LMS public profile, configuration commitment, bound module, epoch start and next consumed/available leaf counter |
+
+The self-pay layout is version 1, with only retirement bit 1 defined. The
+authority hash describes the current stored authority, not a new birth
+StateInit/address after rotation. This family has neither a module identity nor
+a fee signer. The stored namespace is public metadata; it is not constrained
+to the registry generator's legacy candidate namespace. The stored global ID
+must match the authenticated observation. Global CP48 eligibility, key
+possession and external-message admission require separate checks; public
+storage inspection grants no signing authority.
 
 Include the observed masterchain/shard IDs, code hash, decoding schema and
 recognition status. Pin account state to the requested masterchain observation.
@@ -197,7 +207,7 @@ Use the existing native codecs or a source-generated registry, rather than a
 second unchecked list of code hashes. Different compiler outputs/candidate bundles
 require explicit recognition; matching storage shape alone cannot identify code.
 
-The Quantum wallet's V5-shaped 256-bit field is required to be zero and inert. It
+The module/vault Quantum wallet's V5-shaped 256-bit field is required to be zero and inert. It
 must never be advertised as an Ed25519 signing authority. Daily, rescue and fee
 roles have distinct suites and lifecycle rules. The fee-tree ID is public metadata,
 not a secret or a public-key digest. A leaf counter does not prove that an offline

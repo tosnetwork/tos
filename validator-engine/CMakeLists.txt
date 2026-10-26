@@ -47,6 +47,7 @@ add_custom_command(OUTPUT ${EXPLORER_REGISTRY}
     ${CMAKE_BINARY_DIR}/generated/quantum_fee_vault_v3.boc
     ${CMAKE_BINARY_DIR}/generated/quantum_module_v1.boc
     ${CMAKE_BINARY_DIR}/generated/quantum_wallet_v4.boc
+    ${CMAKE_BINARY_DIR}/generated/quantum_self_pay_v1.boc
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/build-explorer-pq-registry.py
     --func $<TARGET_FILE:func> --fift $<TARGET_FILE:fift> --output ${EXPLORER_REGISTRY}
     --network-tag ${TOS_EXPLORER_QUANTUM_NETWORK_TAG}

@@ -40,6 +40,7 @@ def main():
         ("pq_highload_mldsa44_v1", "pq-highload-wallet-code.fc"),
         ("mldsa44_auth_module_v1", "mldsa44-auth-module.fc"),
         ("falcon512_padded_auth_module_v1", "falcon512-auth-module.fc"),
+        ("quantum_self_pay_v1", "wallet-quantum-self-pay.fc"),
         ("quantum_fee_vault_v3", "wallet-quantum-fee-vault.fc"),
     ):
         cell = compile_contract(source, out / (family + ".boc"))
@@ -73,7 +74,7 @@ def main():
     ).hexdigest()
     manifest = {
         "format": "tos-explorer-pq-registry/1",
-        "decoder_revision": 1,
+        "decoder_revision": 2,
         "release_status": "review_candidate",
         "quantum_wallet_network_tag": args.network_tag,
         "sources": sources,
@@ -92,7 +93,7 @@ def main():
     }
     revision = hashlib.sha256(
         json.dumps(
-            {"codes": manifest["codes"], "decoder_revision": 1, "network_tag": args.network_tag},
+            {"codes": manifest["codes"], "decoder_revision": 2, "network_tag": args.network_tag},
             sort_keys=True,
             separators=(",", ":"),
         ).encode()
