@@ -14,6 +14,7 @@
 #include "emulator/transaction-emulator.h"
 #include "td/utils/crypto.h"
 #include "td/utils/filesystem.h"
+#include "td/utils/misc.h"
 #include "vm/boc.h"
 #include "vm/cells/MerkleProof.h"
 #include "vm/cells/MerkleUpdate.h"
@@ -35,6 +36,35 @@ void check(bool value, const char* message) {
 std::string hash(Cell cell) {
   return cell->get_hash(0).to_hex();
 }
+// Proof-backed state is virtualized and cannot be serialized as it is; copy it
+// into ordinary cells, keeping pruned branches as pruned-branch cells.
+Cell materialize(Cell cell, std::map<std::string, Cell>& copies) {
+  auto key = cell->get_hash(0).to_hex();
+  auto known = copies.find(key);
+  if (known != copies.end())
+    return known->second;
+  auto data = require(cell->load_cell()).data_cell;
+  auto cs = vm::load_cell_slice_special(Cell(data));
+  vm::CellBuilder builder;
+  builder.store_bits(cs.fetch_bits(cs.size()));
+  for (unsigned i = 0; i < data->size_refs(); ++i)
+    builder.store_ref(materialize(data->get_ref(i), copies));
+  auto copy = builder.finalize(cs.is_special());
+  copies.emplace(key, copy);
+  return copy;
+}
+
+std::string boc_hex(Cell cell) {
+  if (cell.is_null())
+    return "-";
+  std::map<std::string, Cell> copies;
+  return td::hex_encode(require(vm::std_boc_serialize(materialize(std::move(cell), copies), 0)).as_slice());
+}
+
+// One line per executed transaction with every input the Rust executor needs,
+// written only when --dump names an output file.
+std::ofstream dump;
+
 Cell load(const std::string& path) {
   return require(vm::std_boc_deserialize(require(td::read_file(path)).as_slice()));
 }
@@ -276,6 +306,20 @@ void replay(Cell root, const Cells& cells, const MasterBlocks& masters, bool emp
       if (empty_code_control)
         account.code = vm::CellBuilder{}.finalize();
       account.now_ = original_record.now;
+      if (dump.is_open()) {
+        vm::CellBuilder shard_account;
+        check(shard_account.store_ref_bool(account.total_state) &&
+                  shard_account.store_bits_bool(account.last_trans_hash_) &&
+                  shard_account.store_long_bool(account.last_trans_lt_, 64),
+              "cannot build the input shard account");
+        vm::CellBuilder previous_cb;
+        check(vm::StackEntry(previous_blocks).serialize(previous_cb), "cannot serialize previous blocks");
+        auto in_msg = original_record.r1.in_msg->prefetch_ref();
+        dump << type << '\t' << original_record.now << '\t' << original_record.lt << '\t' << seed.to_hex() << '\t'
+             << boc_hex(shard_account.finalize()) << '\t' << boc_hex(in_msg) << '\t' << boc_hex(config->get_root_cell())
+             << '\t' << boc_hex(config->get_libraries_root()) << '\t' << boc_hex(previous_cb.finalize()) << '\t'
+             << hash(original) << '\t' << expected_account.new_hash.to_hex() << '\t' << boc_hex(original) << '\n';
+      }
       auto result = require(emulator.emulate_transaction(std::move(account), original_record.r1.in_msg->prefetch_ref(),
                                                          original_record.now, original_record.lt, type));
       auto* emulated = dynamic_cast<emulator::TransactionEmulator::EmulationSuccess*>(result.get());
@@ -333,7 +377,9 @@ void inspect(const std::string& path) {
 
 int main(int argc, char** argv) {
   try {
-    check(argc == 2 || argc == 4, "usage: test-epoch-replay block.boc OR --run blocks.list cells.list");
+    check(
+        argc == 2 || argc == 4 || (argc == 5 && std::string(argv[1]) == "--dump"),
+        "usage: test-epoch-replay block.boc OR --run blocks.list cells.list OR --dump blocks.list cells.list out.tsv");
     SET_VERBOSITY_LEVEL(0);
     auto initialized = vm::init_vm(false);
     check(initialized.is_ok(), "VM initialization failed");
@@ -341,7 +387,11 @@ int main(int argc, char** argv) {
       inspect(argv[1]);
     else {
       bool empty_code_control = std::string(argv[1]) == "--run-empty-code-control";
-      check(std::string(argv[1]) == "--run" || empty_code_control, "unknown operation");
+      if (std::string(argv[1]) == "--dump") {
+        dump.open(argv[4]);
+        check(dump.good(), "cannot write the dump file");
+      } else
+        check(std::string(argv[1]) == "--run" || empty_code_control, "unknown operation");
       auto blocks = paths(argv[2]);
       auto supplements = paths(argv[3]);
       check(!blocks.empty(), "empty corpus");
