@@ -21,7 +21,11 @@ parser.add_argument("--output", type=Path, required=True)
 args = parser.parse_args()
 
 # Opcode prices: ACCEPT26, PUSHREF18, SETCODE26+one new action cell500,
-# POP c4=26, implicit RET5 (vm op table and cell-create gas price).
+# POP c4=26, implicit RET5. Prices follow crypto/vm/opctable.h,
+# exec_set_code in crypto/vm/tosops.cpp, and cell_create_gas_price in vm.h;
+# cell creation is charged by crypto/vm/cells/CellBuilder.cpp.
+# Root115 = last_trans_lt64 + coin-length4 + coins40 + extra-presence1
+# + active StateInit6. A/B each40 bits and C8 yield203 then163 total bits.
 c = Cell().uint(0x42, 8)
 b = Cell().raw(bytes([0xF8, 0x00, 0x88, 0xED, 0x54])).ref(c)
 a = Cell().raw(bytes([0xF8, 0x00, 0x88, 0xFB, 0x04])).ref(b)

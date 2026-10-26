@@ -47,6 +47,45 @@ fn size_measurement_preserves_visible_storage_metadata() {
 }
 
 #[test]
+fn size_measurement_checks_actual_merkle_depth_with_low_advertised_counters() {
+    use chain_block::{MerkleProof, MAX_MERKLE_DEPTH};
+    let config = BlockchainConfig::with_config(
+        ConfigParams::construct_from_file(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/real_boc/default_config.boc"
+        ))
+        .unwrap(),
+    )
+    .unwrap();
+    let address = MsgAddressInt::with_standart(None, 0, [0x45; 32].into()).unwrap();
+    let mut account = Account::with_storage(
+        &address,
+        &StorageInfo::with_values(1_780_000_000, None),
+        &AccountStorage::active(
+            0,
+            CurrencyCollection::with_coins(100_000_000_000),
+            StateInit::default(),
+        ),
+    );
+    let original = account.storage_info().unwrap().serialize().unwrap().repr_hash();
+    let mut data = Cell::default();
+    for depth in 1..=MAX_MERKLE_DEPTH + 1 {
+        data = MerkleProof::create(&data, |_| true).unwrap().serialize().unwrap();
+        assert!(account.set_data(data.clone()));
+        assert_eq!(
+            check_account_size_limits(config.size_limits_config(), 16, &mut account).unwrap(),
+            depth <= MAX_MERKLE_DEPTH
+        );
+        assert_eq!(account.storage_stat().unwrap().max_merkle_depth().unwrap(), depth);
+        assert_eq!(account.storage_info().unwrap().serialize().unwrap().repr_hash(), original);
+    }
+    assert!(account.set_data(Cell::default()));
+    assert!(check_account_size_limits(config.size_limits_config(), 16, &mut account).unwrap());
+    assert_eq!(account.storage_stat().unwrap().max_merkle_depth().unwrap(), 0);
+    assert_eq!(account.storage_info().unwrap().serialize().unwrap().repr_hash(), original);
+}
+
+#[test]
 fn live_storage_cache_matches_native_after_duplicate_code_data_roots() {
     use chain_block::{read_single_root_boc, HashUpdate, ShardAccount};
     let fixture: serde_json::Value =

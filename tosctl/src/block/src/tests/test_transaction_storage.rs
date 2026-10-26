@@ -43,10 +43,84 @@ fn transaction_storage_applies_only_the_final_net_bit_delta() {
                 assert_eq!(account.storage_info().unwrap().used().cells(), 1);
             }
             None => {
-                assert!(result.unwrap_err().to_string().contains("transaction storage bit delta"))
+                assert!(result.unwrap_err().to_string().contains("transaction storage bit delta"));
+                assert_eq!(account.storage_info().unwrap().used().bits(), old_bits);
+                assert_eq!(account.storage_info().unwrap().used().cells(), 1);
+                // Failure leaves advertised metadata intact; the reconciled
+                // actual cache remains usable after selecting another state.
+                account.set_balance(CurrencyCollection::with_coins(before));
+                let retry = account.snapshot_transaction_storage(16).unwrap();
+                account.finalize_transaction_storage(retry, 16, 26).unwrap();
+                assert_eq!(account.storage_info().unwrap().used().bits(), old_bits);
             }
         }
     }
+}
+
+#[test]
+fn transaction_storage_excludes_extra_currencies_from_version_ten() {
+    for version in [9, 10, 11, 16] {
+        let mut account = account_with_counters(255, 25, 1000, false, None);
+        let snapshot = account.snapshot_transaction_storage(version).unwrap();
+        let mut balance = CurrencyCollection::with_coins(255);
+        balance.set_other(17, 1234567).unwrap();
+        account.set_balance(balance);
+        let measured = account.measure_storage_stat(version).unwrap();
+        // One ordinary dictionary leaf is added to root/code/empty-data.
+        assert_eq!(measured.cells(), if version < 10 { 4 } else { 3 });
+        assert_eq!(account.storage_info().unwrap().used().cells(), 25);
+        account.finalize_transaction_storage(snapshot, version, 3).unwrap();
+        assert_eq!(
+            account.storage_info().unwrap().used().cells(),
+            if version < 10 { 4 } else { 25 }
+        );
+        if version < 10 {
+            // Independent unique graph walk of serialized AccountStorage,
+            // including its currency dictionary. No production cache oracle.
+            let root = account.stuff().unwrap().storage.serialize().unwrap();
+            let mut pending = vec![root];
+            let mut unique = std::collections::BTreeMap::new();
+            while let Some(cell) = pending.pop() {
+                if unique.insert(cell.repr_hash(), cell.bit_length() as u64).is_none() {
+                    for index in 0..cell.references_count() {
+                        pending.push(cell.reference(index).unwrap());
+                    }
+                }
+            }
+            assert_eq!(account.storage_info().unwrap().used().bits(), unique.values().sum::<u64>());
+        } else {
+            assert_eq!(account.storage_info().unwrap().used().bits(), 1000);
+        }
+        assert!(account.dict_hash().is_none());
+    }
+}
+
+#[test]
+fn transaction_storage_distinguishes_creation_deletion_and_uninit() {
+    let mut absent = Account::default();
+    let snapshot = absent.snapshot_transaction_storage(16).unwrap();
+    absent.finalize_transaction_storage(snapshot, 16, 0).unwrap();
+    assert!(absent.is_none());
+
+    let snapshot = absent.snapshot_transaction_storage(16).unwrap();
+    let mut created = account_with_counters(255, 0, 0, false, None);
+    created.finalize_transaction_storage(snapshot, 16, 3).unwrap();
+    assert_eq!(created.storage_info().unwrap().used().cells(), 3);
+    assert!(created.dict_hash().is_some());
+
+    let snapshot = created.snapshot_transaction_storage(16).unwrap();
+    let mut deleted = Account::default();
+    deleted.finalize_transaction_storage(snapshot, 16, 0).unwrap();
+    assert!(deleted.is_none());
+
+    let snapshot = created.snapshot_transaction_storage(16).unwrap();
+    created.uninit_account();
+    created.finalize_transaction_storage(snapshot, 16, 1).unwrap();
+    assert!(created.is_uninit());
+    assert_eq!(created.storage_info().unwrap().used().cells(), 1);
+    assert_eq!(created.storage_stat().unwrap().total_cells(), 0);
+    // Empty native StorageStatDict hash is zero, not the hash of an empty cell.
+    assert_eq!(created.dict_hash(), Some(&UInt256::default()));
 }
 
 #[test]

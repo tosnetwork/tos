@@ -1,8 +1,8 @@
 """Native/Rust transaction error boundaries, bounded in separate processes.
 
-Uses public deterministic fixtures. Original inconsistent storage fixtures remain
-covered by precompiled_external; these root controls derive valid input storage
-statistics directly from the original AccountStorage graph.
+Uses public deterministic fixtures. Rejection controls derive graph statistics;
+storage-policy controls deliberately retain their original advertised counters.
+Every accepted Transaction, Account and ShardAccount root is compared.
 """
 
 import argparse
@@ -247,11 +247,14 @@ def send_tick(emulator, shard, is_tock):
 # Original canonical U1 inputs retain their advertised statistics. Do not
 # normalize these cases with consistent(): they expose native transaction policy.
 storage_expectations = {}
+storage_hash_expectations = {}
 
 
-def storage_input(address, contract, cells, bits, balance=100_000_000_000):
+def storage_input(
+    address, contract, cells, bits, balance=100_000_000_000, extra=None, dict_hash=None
+):
     init = native.state_init(contract, Cell())
-    storage = Cell().uint(0, 64).coins(balance).uint(0, 1).uint(1, 1)
+    storage = Cell().uint(0, 64).coins(balance).maybe(extra).uint(1, 1)
     storage.bits += init.bits
     storage.refs.extend(init.refs)
     if cells is None:
@@ -272,10 +275,11 @@ def storage_input(address, contract, cells, bits, balance=100_000_000_000):
         .addr(address)
         .varuint(cells, 7)
         .varuint(bits, 7)
-        .uint(0, 3)
-        .uint(native.NOW, 32)
-        .uint(0, 1)
+        .uint(int(dict_hash is not None), 3)
     )
+    if dict_hash is not None:
+        account.uint(dict_hash, 256)
+    account.uint(native.NOW, 32).uint(0, 1)
     account.bits += storage.bits
     account.refs = list(storage.refs)
     return Cell().uint(0, 320).ref(account)
@@ -319,6 +323,79 @@ for old_bits in (0, 1000, None):
             native.external(m.PROBE, Cell()),
         )
     )
+
+
+def with_storage_threshold(configuration, threshold):
+    # block.tlb size_limits_config_v2#02: the promotion predicate (oldcells>25)
+    # is distinct from this configurable threshold on freshly counted cells.
+    limits = (
+        Cell()
+        .uint(2, 8)
+        .uint(1 << 21, 32)
+        .uint(1 << 13, 32)
+        .uint(1000, 32)
+        .uint(512, 16)
+        .uint(65535, 32)
+        .uint(512, 16)
+        .uint(65536, 32)
+        .uint(65536, 32)
+        .uint(256, 32)
+        .uint(256, 32)
+        .uint(255, 32)
+        .uint(8, 8)
+        .uint(threshold, 32)
+    )
+    entries = read_dict(configuration, 32)
+    entries[43] = Cell().ref(limits)
+    return make_dict(entries, 32)
+
+
+# Native v16 excludes extra currencies from both the reference comparison and
+# actual graph count. A fake pre-existing dict hash is deliberately retained
+# without reconstructing it when refs do not change, regardless of threshold.
+old_hash = int.from_bytes(bytes([0x55]) * 32, "big")
+for wc in (0, -1):
+    for changed in (False, True):
+        contract = (
+            m.ACCEPT
+            if not changed
+            else Cell().raw(bytes([0xF8, 0x00, 0x88, 0xED, 0x54])).ref(Cell().uint(0x42, 8))
+        )
+        for threshold in (0, 3, 4):
+            for existing in (False, True):
+                for currencies in (False, True):
+                    label = (
+                        f"storage-hash-wc{wc}-refs{int(changed)}-threshold{threshold}"
+                        f"-old{int(existing)}-extra{int(currencies)}"
+                    )
+                    # No old hash + cells26 promotes even at threshold4;
+                    # an existing hash suppresses promotion when refs stay equal.
+                    recount = changed or (wc == 0 and not existing)
+                    storage_expectations[label] = (
+                        75 if changed else 31,
+                        3 if recount else 26,
+                        (163 if changed else 131) if recount else 1000,
+                    )
+                    storage_hash_expectations[label] = (
+                        wc == 0 and (existing if not recount else threshold <= 3),
+                        old_hash if wc == 0 and existing and not recount else None,
+                    )
+                    extra = make_dict({17: Cell().varuint(1234567, 32)}, 32) if currencies else None
+                    cases.append(
+                        (
+                            label,
+                            with_storage_threshold(base, threshold),
+                            storage_input(
+                                (wc, 0x4545),
+                                contract,
+                                26,
+                                1000,
+                                extra=extra,
+                                dict_hash=old_hash if existing else None,
+                            ),
+                            native.external((wc, 0x4545), Cell()),
+                        )
+                    )
 
 
 def outcome(r):
@@ -389,11 +466,13 @@ def run_worker(library):
                 account = from_boc(result["shard_account"]).refs[0].slice()
                 assert account.uint(1) == 1
                 account.addr()
-                assert (
-                    account.varuint(7) == cells
-                    and account.varuint(7) == bits
-                    and account.uint(3) == 0
-                ), label
+                assert account.varuint(7) == cells and account.varuint(7) == bits, label
+                has_hash, retained = storage_hash_expectations.get(label, (False, None))
+                assert account.uint(3) == int(has_hash), label
+                if has_hash:
+                    actual_hash = account.uint(256)
+                    if retained is not None:
+                        assert actual_hash == retained, label
                 report.append(dict(name=label, outcome=observed))
                 continue
             if label.startswith(("tick-", "tock-")):
@@ -484,12 +563,12 @@ else:
         supervised(library, out / backend)
     left = json.loads((out / "native/outcomes.json").read_text())
     right = json.loads((out / "rust/outcomes.json").read_text())
-    assert len(left) == len(right) == 55
+    assert len(cases) == len(left) == len(right) == 103
     assert left == right, "native/Rust transaction outcomes differ"
     # Every oracle uses exactly the same complete original inputs and config.
     for label, _, _, _ in cases:
         for kind in ["config", "shard", "message"]:
             name = label + "-" + kind + ".boc"
             assert (out / "native" / name).read_bytes() == (out / "rust" / name).read_bytes(), name
-    (out / "summary.json").write_text(json.dumps(dict(cases=55, matched=True), indent=2) + "\n")
-    print("PASS: 55 transaction outcomes; accepted transaction/Account/ShardAccount roots match")
+    (out / "summary.json").write_text(json.dumps(dict(cases=103, matched=True), indent=2) + "\n")
+    print("PASS: 103 transaction outcomes; accepted transaction/Account/ShardAccount roots match")

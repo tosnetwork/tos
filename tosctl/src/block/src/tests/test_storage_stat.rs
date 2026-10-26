@@ -70,7 +70,7 @@ fn measured_cache_tracks_duplicate_root_multiplicity() {
 
 #[test]
 fn cached_root_changes_match_fresh_multiset_and_unique_graph() {
-    use crate::{AccountStorageStat, BuilderData, Cell, IBitstring};
+    use crate::{AccountStorageStat, BuilderData, Cell};
     use std::collections::BTreeMap;
     let a = BuilderData::with_raw(vec![0x41], 8).unwrap().into_cell().unwrap();
     let b = BuilderData::with_raw(vec![0x42], 8).unwrap().into_cell().unwrap();
