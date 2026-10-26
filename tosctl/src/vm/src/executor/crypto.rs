@@ -106,7 +106,8 @@ pub(super) fn execute_sha256c(engine: &mut Engine) -> Status {
         if cells > 512 {
             fail!(ExceptionCode::CellUnderflow, "SHA256C snake exceeds depth limit")
         }
-        let slice = chain_block::SliceData::load_cell(cell)?;
+        // Charged like every other load, as the C++ VM's load_cell_slice does.
+        let slice = engine.load_cell(cell)?;
         if !slice.remaining_bits().is_multiple_of(8) || slice.remaining_references() > 1 {
             fail!(ExceptionCode::CellUnderflow, "SHA256C expects a byte-aligned canonical snake")
         }
