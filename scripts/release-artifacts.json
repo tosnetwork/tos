@@ -127,6 +127,16 @@
         },
         {
           "artifact": "tos-node-x86_64-linux",
+          "path": "tos-rpc",
+          "name": "tos-rpc-linux-x86_64"
+        },
+        {
+          "artifact": "tos-node-x86_64-linux",
+          "path": "tos-wallet-index",
+          "name": "tos-wallet-index-linux-x86_64"
+        },
+        {
+          "artifact": "tos-node-x86_64-linux",
           "path": "BUILD-INFO",
           "name": "node-build-info-linux-x86_64.txt"
         },
@@ -234,6 +244,16 @@
           "artifact": "tos-node-arm64-linux",
           "path": "dht-server",
           "name": "dht-server-linux-arm64"
+        },
+        {
+          "artifact": "tos-node-arm64-linux",
+          "path": "tos-rpc",
+          "name": "tos-rpc-linux-arm64"
+        },
+        {
+          "artifact": "tos-node-arm64-linux",
+          "path": "tos-wallet-index",
+          "name": "tos-wallet-index-linux-arm64"
         },
         {
           "artifact": "tos-node-arm64-linux",

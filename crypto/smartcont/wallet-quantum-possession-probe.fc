@@ -1,0 +1,55 @@
+;; Immutable, one-shot proof that both successor keys are usable. This contract
+;; has no wallet authority and never emits messages or accepts external funding.
+#include "wallet-quantum-self-pay-common.fc";
+cell my_code() asm "MYCODE";
+
+cell qsp_pop_primary_context() asm "<b x{544f532d5153502d504f502d4d4c44534134342d7631} s, b> PUSHREF";
+cell qsp_pop_rescue_context() asm "<b x{544f532d5153502d504f502d534c48313238532d7631} s, b> PUSHREF";
+
+() recv_external(slice body) impure { throw(auth::legacy_disabled); }
+
+() recv_internal(int value, cell message, slice body) impure {
+  slice header = message.begin_parse();
+  if (header~load_uint(4) & 1) { return (); }
+  slice state = auth_policy_ordinary(get_data());
+  throw_unless(auth::bad_mode, state~load_uint(8) == 1);
+  int verified = state~load_uint(1);
+  cell immutable = state~load_ref();
+  state.end_parse();
+  if (verified) { return (); }
+  if (body.slice_empty?()) { return (); }
+
+  slice identity = auth_policy_ordinary(immutable);
+  throw_unless(auth::bad_mode, identity~load_uint(32) == 0x51505031);
+  int global_id = identity~load_int(32);
+  int network = identity~load_uint(256);
+  quantum_basechain_hash(identity~load_msg_addr(), auth::wrong_account);
+  throw_unless(quantum::bad_payload, identity~load_uint(256) != 0);
+  int deadline = identity~load_uint(32);
+  cell authority = identity~load_ref();
+  identity.end_parse();
+  throw_unless(auth::wrong_network, global_id == auth_global_id());
+  throw_unless(auth::expired, (deadline > now()) & (deadline <= now() + 3600));
+  var (authority_global_id, authority_network, _, primary, rescue, _) = qsp_authority(authority);
+  throw_unless(auth::wrong_network, (authority_global_id == global_id) & (authority_network == network));
+  cell primary_signature = body~load_ref();
+  cell rescue_signature = body~load_ref();
+  body.end_parse();
+  ;; Code hash is part of the profile: a proof cannot be transplanted to a
+  ;; different probe program interpreting the same immutable cell differently.
+  cell digest = begin_cell().store_uint(cell_hash(begin_cell().store_uint(0x51505031, 32)
+    .store_uint(cell_hash(my_code()), 256).store_ref(immutable).end_cell()), 256).end_cell();
+  throw_unless(auth::bad_signature, pq_check_suite(digest, qsp_pop_primary_context(), primary_signature, primary, 1));
+  cell rescue_key = begin_cell().store_uint(rescue, 256).end_cell();
+  throw_unless(auth::bad_signature, pq_check_suite(digest, qsp_pop_rescue_context(), rescue_signature, rescue_key, 3));
+  set_data(begin_cell().store_uint(1, 8).store_uint(1, 1).store_ref(immutable).end_cell());
+}
+
+(int, cell) get_possession_receipt() method_id {
+  slice state = auth_policy_ordinary(get_data());
+  throw_unless(auth::bad_mode, state~load_uint(8) == 1);
+  int verified = state~load_uint(1);
+  cell immutable = state~load_ref();
+  state.end_parse();
+  return (verified, immutable);
+}

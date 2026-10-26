@@ -82,7 +82,9 @@ int quantum_payload_tag(int kind) impure inline {
   return (role, kind, payload);
 }
 
-;; Invoke only after payload/action/successor validation, before any state write.
+;; Read-only counter calculation, before any state write or external acceptance.
+;; A caller that validates payloads later must first commit a replay fallback
+;; retaining the installed authority; failed migration must retain its old seqno.
 ;; Control operations do NOT increment the rescue execute nonce first.
 (int, int, int, int) quantum_advance_counters(int role, int kind, int epoch, int primary_nonce,
     int rescue_nonce, int seqno) impure inline_ref {

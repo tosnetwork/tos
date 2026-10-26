@@ -1,0 +1,23 @@
+;; Self-pay Quantum v1 authority codec and signature domains.
+#include "wallet-quantum-auth.fc";
+#include "pq.fc";
+#include "pq-bytes.fc";
+
+const int qsp::request = 0x51535031;
+cell qsp_primary_context() asm "<b x{544f532d5153502d4d4c44534134342d7631} s, b> PUSHREF";
+cell qsp_rescue_context() asm "<b x{544f532d5153502d534c48313238532d7631} s, b> PUSHREF";
+
+(int, int, int, cell, int, int) qsp_authority(cell authority) impure inline {
+  slice s = auth_policy_ordinary(authority);
+  throw_unless(auth::bad_module, s~load_uint(8) == 1);
+  int global_id = s~load_int(32);
+  int network = s~load_uint(256);
+  int daily = s~load_uint(8);
+  cell primary = s~load_ref();
+  int rescue = s~load_uint(256);
+  int policy = s~load_uint(8);
+  s.end_parse();
+  throw_unless(auth::bad_mode, (daily == 1) & ((policy == 1) | (policy == 2)));
+  return (global_id, network, daily, primary, rescue, policy);
+}
+
