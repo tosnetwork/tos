@@ -223,6 +223,17 @@ def scenarios():
     add("xchg-long-2-2-invalid", prog(*three, op([0x10, 0x22])))
     add("xchg-long-2-1-invalid", prog(*three, op([0x10, 0x21])))
     add("xchg-long-1-5-underflow", prog(*three, op([0x10, 0x15])))
+    # HASHEXT: every id byte decodes; 255 takes the id from the stack, after a depth check. The
+    # count is popped before the id is checked, so an unknown id on an empty stack is an
+    # underflow, and on a valid count a range check. The appending forms need a builder below.
+    one_byte = (pushint(0x61), op([0xC8, 0xCB, 7, 0xC9, 0xD0]))  # 'a' as a slice
+    add("hashext-sha256-one-byte", prog(*one_byte, pushint(1), op([0xF9, 0x04, 0x00])))
+    add("hashext-sha512-one-byte", prog(*one_byte, pushint(1), op([0xF9, 0x04, 0x01])))
+    add("hashext-id-5-empty", prog(op([0xF9, 0x04, 0x05])))
+    add("hashext-id-5-count-0", prog(pushint(0), op([0xF9, 0x04, 0x05])))
+    add("hashext-id-255-sha512", prog(*one_byte, pushint(1), pushint(1), op([0xF9, 0x04, 0xFF])))
+    add("hashext-id-255-only", prog(pushint(0), op([0xF9, 0x04, 0xFF])))
+    add("hashexta-count-0-no-builder", prog(pushint(0), op([0xF9, 0x06, 0x00])))
 
 
 # Rows that may differ only in the final stack and the error argument; exit code, gas, steps

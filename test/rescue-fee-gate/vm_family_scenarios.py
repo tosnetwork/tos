@@ -96,7 +96,50 @@ HASHEXT_SETUPS = {
     "int-1": (I7, pushint(1)),
     "slices-2": (EMPTY_SLICE, EMPTY_SLICE, pushint(2)),
 }
-SEVEN_BITS = op([0xC8, 0x70, 0xCB, 0x06, 0xC9, 0xD0])  # NEWC 0 STU 7 ENDC CTOS: a 7-bit slice
+SWAP = op([0x01])
+ENDC_CTOS = op([0xC9, 0xD0])
+
+
+def stu(n):
+    """STU n: (x b - b')."""
+    return op([0xCB, n - 1])
+
+
+def bits_builder(value, n):
+    """A builder holding value as n bits."""
+    return (pushint(value), NEWC, stu(n))
+
+
+def bits_slice(value, n):
+    return (*bits_builder(value, n), ENDC_CTOS)
+
+
+def slice_with_ref(value, n):
+    """A slice of n data bits and one reference to an empty cell."""
+    return (*bits_builder(value, n), op([0xC8, 0xC9]), SWAP, op([0xCC]), ENDC_CTOS)
+
+
+def zero_builder(bits):
+    """A builder of bits zero bits, built 256 bits at a time."""
+    out = [NEWC]
+    while bits > 0:
+        step = min(bits, 256)
+        out += [pushint(0), SWAP, stu(step)]
+        bits -= step
+    return tuple(out)
+
+
+# Data with content, for results and gas: (name, items pushed before the count).
+HASHEXT_DATA = {
+    "one-byte": (bits_slice(0x61, 8),),
+    "seven-plus-one": (bits_slice(0x30, 7), bits_slice(1, 1)),
+    "seven": (bits_slice(0x30, 7),),
+    "unequal": (bits_slice(0x6162, 16), bits_builder(0x63, 8), bits_slice(0x6465, 15)),
+    "with-ref": (slice_with_ref(0x61, 8), bits_slice(0x62, 8)),
+    "many": (bits_slice(0x0102, 16),) * 5,
+}
+# Gas budgets that cut a two-element run at each of its charges (immediate SHA-256 forms).
+HASHEXT_BUDGETS = range(1420, 1475)  # the run uses 1471 in all
 
 
 def hashext():
@@ -104,13 +147,66 @@ def hashext():
         code = op(list(o.to_bytes(3, "big")))
         for name, setup in HASHEXT_SETUPS.items():
             add(f"hashext-{o:06x}-{name}", *setup, code)
-        if o & 0xFF in (0, 4, 5, 0xFF):
-            add(f"hashext-{o:06x}-seven-bits", NEWC, SEVEN_BITS, pushint(1), code)
-        if o & 0xFF == 0xFF:
-            for hid in (0, 4, 5, 254, 255, -1):
-                add(f"hashext-{o:06x}-slice-id-{hid}", EMPTY_SLICE, pushint(1), pushint(hid), code)
-                add(f"hashext-{o:06x}-builder-id-{hid}", NEWC, pushint(0), pushint(hid), code)
+        hid = o & 0xFF
+        append = (o >> 9) & 1
+        if hid not in (0, 1, 2, 3, 4, 5, 0xFF):
+            continue
+        # The id from the stack comes after the count.
+        id_push = (pushint(hid),) if hid != 0xFF else ()
+        for idv in (0, 1, 2, 3, 4) if hid == 0xFF else (None,):
+            suffix = f"-id-{idv}" if idv is not None else ""
+            id_part = (pushint(idv),) if idv is not None else ()
+            for name, data in HASHEXT_DATA.items():
+                head = (zero_builder(0),) if append else ()
+                add(
+                    f"hashext-{o:06x}-{name}{suffix}",
+                    *head,
+                    *data,
+                    pushint(len(data)),
+                    *id_part,
+                    code,
+                )
+            if append:
+                # A builder with exactly room for the digest, and one bit less.
+                size = 512 if (idv if idv is not None else hid) in (1, 2, 4) else 256
+                for spare, label in ((0, "full"), (1, "one-short")):
+                    add(
+                        f"hashext-{o:06x}-builder-{label}{suffix}",
+                        zero_builder(1023 - size + spare),
+                        *bits_slice(0x61, 8),
+                        pushint(1),
+                        *id_part,
+                        code,
+                    )
+        del id_push
+        if hid == 0xFF:
+            for hidv, label in ((5, "5"), (254, "254"), (255, "255"), (-1, "minus-1")):
+                add(
+                    f"hashext-{o:06x}-slice-id-{label}",
+                    EMPTY_SLICE,
+                    pushint(1),
+                    pushint(hidv),
+                    code,
+                )
+            add(f"hashext-{o:06x}-id-nan", EMPTY_SLICE, pushint(1), op([0x83, 0xFF]), code)
+            add(f"hashext-{o:06x}-id-null", EMPTY_SLICE, pushint(1), NULL, code)
             add(f"hashext-{o:06x}-id-only", pushint(0), code)
+            add(f"hashext-{o:06x}-count-negative", pushint(-1), pushint(0), code)
+            add(f"hashext-{o:06x}-count-too-big", EMPTY_SLICE, pushint(5), pushint(0), code)
+        else:
+            add(f"hashext-{o:06x}-count-negative", pushint(-1), code)
+            add(f"hashext-{o:06x}-count-nan", op([0x83, 0xFF]), code)
+            add(f"hashext-{o:06x}-count-too-big", EMPTY_SLICE, pushint(5), code)
+    for budget in HASHEXT_BUDGETS:
+        data = (bits_slice(0x61, 8), bits_slice(0x62, 8), pushint(2))
+        add(f"hashext-f90400-budget-{budget}", *data, op([0xF9, 0x04, 0x00]), budget=budget)
+        add(
+            f"hashext-f904ff-budget-{budget}",
+            *data,
+            pushint(0),
+            op([0xF9, 0x04, 0xFF]),
+            budget=budget,
+        )
 
 
 BLS_SETUPS = {
@@ -352,7 +448,7 @@ FAMILIES = {
     "loop": loop,
 }
 # The families vm_prefix_scenarios.py runs; the others still differ (continuation model).
-COMPARED = ("xchg",)
+COMPARED = ("xchg", "hashext")
 
 
 def scenarios(families=COMPARED):

@@ -593,6 +593,77 @@ MUTATIONS = {
         (),
         ("family-xchg-other-01-deep", "family-xchg-other-1100-deep", "family-xchg-other-0f-deep"),
     ),
+    # HASHEXT: the id is checked when the instruction runs, after the count.
+    "HASHEXT ids other than 0-4 and 255 are invalid opcodes": Mutation(
+        CRYPTO,
+        [
+            (
+                "    let mut id = engine.cmd.length();\n",
+                "    let mut id = engine.cmd.length();\n    if id > 4 && id != 255 {\n"
+                "        fail!(ExceptionCode::InvalidOpcode)\n    }\n",
+            )
+        ],
+        (),
+        (),
+        ("family-hashext-f90405-count-0", "family-hashext-f907fe-slice-1"),
+    ),
+    "HASHEXT checks the id before the count": Mutation(
+        CRYPTO,
+        [
+            (
+                "    fetch_stack(engine, 1)?;\n    // The entries below the count",
+                "    Hasher::from_id(id)?;\n    fetch_stack(engine, 1)?;\n    // The entries below the count",
+            )
+        ],
+        (),
+        (),
+        ("family-hashext-f90405-empty", "family-hashext-f90405-not-integer"),
+    ),
+    "HASHEXTA count bound saturates at zero": Mutation(
+        CRYPTO,
+        [("{ below - 1 } else { below };", "{ (below - 1).max(0) } else { below };")],
+        (),
+        (),
+        ("family-hashext-f90600-count-0", "family-hashext-f90704-count-0"),
+    ),
+    "HASHEXT 255 ignores the id on the stack": Mutation(
+        CRYPTO,
+        [
+            (
+                "        id = engine.cmd.var(0).as_integer_value(0..=254)?;",
+                "        id = engine.cmd.var(0).as_integer_value(0..=254).map(|_| 0)?;",
+            )
+        ],
+        (),
+        (),
+        ("family-hashext-f904ff-one-byte-id-1", "family-hashext-f906ff-builder-full-id-4"),
+    ),
+    "HASHEXTR hashes in the forward order": Mutation(
+        CRYPTO,
+        [("base + if rev { i } else { num - 1 - i };", "base + num - 1 - i + 0 * (rev as usize);")],
+        (),
+        (),
+        ("family-hashext-f90500-seven-plus-one", "family-hashext-f90700-with-ref"),
+    ),
+    "HASHEXTA appends one byte less": Mutation(
+        CRYPTO,
+        [
+            (
+                "result.append_raw(&hash, hash.len() * 8)?;",
+                "result.append_raw(&hash, hash.len() * 8 - 8)?;",
+            )
+        ],
+        (),
+        (),
+        ("family-hashext-f90600-one-byte", "family-hashext-f90601-builder-one-short"),
+    ),
+    "HASHEXT charges 2 gas per entry": Mutation(
+        CRYPTO,
+        [("let gas_total = i + 1 + total_bits", "let gas_total = 2 * i + 2 + total_bits")],
+        (),
+        (),
+        ("family-hashext-f90400-one-byte", "family-hashext-f90400-budget-1466"),
+    ),
 }
 
 
