@@ -20,7 +20,7 @@ on:
       - "test/tl-cli/**"
       - "crypto/smartcont/**"
       - "crypto/smc-envelope/**"
-      - "emulator/tvm-emulator.hpp"
+      - "emulator/**"
       - "CMakeLists.txt"
       - "tosctl/src/node-control/contracts/**"
       # Proven pool snapshots run the shared proof verifier on recorded material.
@@ -35,6 +35,11 @@ on:
       # The executor and block crates decide every sandbox transaction's
       # outcome, including the outbound message size limits.
       - "tosctl/src/executor/**"
+      - "tosctl/src/Cargo.toml"
+      - "tosctl/src/Cargo.lock"
+      - "tosctl/src/assembler/**"
+      - "tosctl/src/block-json/**"
+      - "tosctl/src/common/build/**"
       - "tosctl/src/block/**"
       # The token-bridge sandbox compiles these sources when it runs.
       - "crosschain/token-bridge/tvm/**"
@@ -82,7 +87,7 @@ on:
       - "test/tl-cli/**"
       - "crypto/smartcont/**"
       - "crypto/smc-envelope/**"
-      - "emulator/tvm-emulator.hpp"
+      - "emulator/**"
       - "CMakeLists.txt"
       - "tosctl/src/node-control/contracts/**"
       # Proven pool snapshots run the shared proof verifier on recorded material.
@@ -97,6 +102,11 @@ on:
       # The executor and block crates decide every sandbox transaction's
       # outcome, including the outbound message size limits.
       - "tosctl/src/executor/**"
+      - "tosctl/src/Cargo.toml"
+      - "tosctl/src/Cargo.lock"
+      - "tosctl/src/assembler/**"
+      - "tosctl/src/block-json/**"
+      - "tosctl/src/common/build/**"
       - "tosctl/src/block/**"
       # The token-bridge sandbox compiles these sources when it runs.
       - "crosschain/token-bridge/tvm/**"

@@ -16,11 +16,11 @@ import native
 from cells import Cell, from_boc, make_dict, read_dict
 
 
-def account(address, init, status):
+def account(address, init, status, balance=100_000_000_000):
     if status == "nonexist":
         acc = Cell().uint(0, 1)
     else:
-        storage = Cell().uint(0, 64).coins(100_000_000_000).uint(0, 1)
+        storage = Cell().uint(0, 64).coins(balance).uint(0, 1)
         if status == "active":
             storage.uint(1, 1)
             storage.bits += init.bits
@@ -85,6 +85,11 @@ scenarios = [
 scenarios.append(("nonexist", "prefix"))
 scenarios += [
     (status, mode)
+    for status in ["nonexist", "uninit", "frozen", "active"]
+    for mode in ["no-code", "no-gas"]
+]
+scenarios += [
+    (status, mode)
     for status in ["uninit", "active"]
     for mode in ["external", "external-precompiled"]
 ]
@@ -94,22 +99,24 @@ for status, mode in scenarios:
         ("throw", bytes.fromhex("f800f22a"), False, 42),
         ("commit-throw", bytes.fromhex("f800f80ff22a"), True, 42),
     ]
+    if mode in ("no-code", "no-gas"):
+        programs = [(mode, b"", False, -13)]
     if mode.startswith("external"):
         programs.append(("no-accept", b"", False, 0))
     for name, code, committed, exit_code in programs:
-        init = native.state_init(Cell().raw(code), Cell())
+        init = native.state_init(None if mode == "no-code" else Cell().raw(code), Cell())
         if mode == "prefix":
             init = Cell().uint(33, 6).uint(0, 1).maybe(Cell().raw(code)).maybe(Cell()).uint(0, 1)
         address = (0, 0x1234 if status == "frozen" else int.from_bytes(init.hash, "big"))
         if mode == "prefix":
             address = (0, address[1] ^ (1 << 255))
-        shard = account(address, init, status)
+        shard = account(address, init, status, 0 if mode == "no-gas" else 100_000_000_000)
         message = (
             Cell()
             .uint(4, 4)
             .addr((0, 0x9999))
             .addr(address)
-            .coins(1_000_000_000)
+            .coins(0 if mode == "no-gas" else 1_000_000_000)
             .uint(0, 1)
             .coins(0)
             .coins(0)
@@ -169,7 +176,7 @@ for status, mode in scenarios:
             continue
         assert result["success"], (status, name, result)
         tx = from_boc(result["transaction"])
-        if mode == "unaffordable":
+        if mode in ("unaffordable", "no-gas"):
             assert result["details"]["skipped"]
             assert result["details"]["reason"].startswith("10"), result["details"]
         else:
@@ -185,6 +192,8 @@ for status, mode in scenarios:
                 gas += 26
             if mode in ("precompiled", "external-precompiled"):
                 gas = 1000
+            elif mode == "no-code":
+                gas = 0
             assert result["details"]["gas"] == gas, result["details"]
             assert result["details"]["compute_success"] == committed
             assert result["details"]["aborted"] == (not committed)

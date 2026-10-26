@@ -1,10 +1,10 @@
 # Deployment state vectors
 
-`deploy-state.json` contains 55 global-version-16 cases: 51 full transaction and
+`deploy-state.json` contains 63 global-version-16 cases: 59 full transaction and
 account root comparisons and four explicitly rejected external messages. Inputs
 cover nonexistent, uninitialized, frozen and active accounts; successful compute,
 accepted failure, explicit commit followed by a throw, configured precompiled
-fallback, unaffordable precompiled execution, and fixed-prefix deployment.
+fallback, unaffordable precompiled execution, zero gas, absent code, and fixed-prefix deployment.
 
 The native reference was built at `f2ad5c344d23975407afe228e7959ff393ac7e97`.
 Its transaction semantics are those of base `bf31ded4b`; the intervening native

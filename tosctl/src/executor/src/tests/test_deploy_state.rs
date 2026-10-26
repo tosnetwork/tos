@@ -139,7 +139,7 @@ fn deploy_state_matches_frozen_native_roots() {
         serde_json::from_str(include_str!("../../tests/fixtures/deploy-state.json"))
             .expect("native fixtures");
     let rows = rows.as_array().expect("fixture array");
-    assert_eq!(rows.len(), 55);
+    assert_eq!(rows.len(), 63);
     for row in rows {
         let name = row["name"].as_str().expect("name");
         let cell = |key: &str| {
