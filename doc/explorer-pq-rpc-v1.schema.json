@@ -878,6 +878,9 @@
         },
         {
           "$ref": "#/$defs/QuantumVaultState"
+        },
+        {
+          "$ref": "#/$defs/QuantumSelfPayState"
         }
       ]
     },
@@ -941,7 +944,8 @@
                 "falcon512_padded_auth_module_v1",
                 "quantum_module_v1",
                 "quantum_wallet_v4",
-                "quantum_fee_vault_v3"
+                "quantum_fee_vault_v3",
+                "quantum_self_pay_v1"
               ]
             },
             {
@@ -1030,7 +1034,8 @@
                   "falcon512_padded_auth_module_v1",
                   "quantum_module_v1",
                   "quantum_wallet_v4",
-                  "quantum_fee_vault_v3"
+                  "quantum_fee_vault_v3",
+                  "quantum_self_pay_v1"
                 ]
               },
               "state_schema": {
@@ -1196,7 +1201,8 @@
                   "falcon512_padded_auth_module_v1",
                   "quantum_module_v1",
                   "quantum_wallet_v4",
-                  "quantum_fee_vault_v3"
+                  "quantum_fee_vault_v3",
+                  "quantum_self_pay_v1"
                 ]
               }
             }
@@ -1205,6 +1211,25 @@
             "properties": {
               "release_status": {
                 "const": "review_candidate"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code_family": {
+                "const": "quantum_self_pay_v1"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "state_schema": {
+                "const": "quantum_self_pay_v1"
+              },
+              "public_state": {
+                "$ref": "#/$defs/QuantumSelfPayState"
               }
             }
           }
@@ -2043,6 +2068,69 @@
           }
         }
       ]
+    },
+    "QuantumSelfPayState": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "quantum_self_pay_v1"
+        },
+        "seqno": {
+          "$ref": "#/$defs/U32"
+        },
+        "wallet_id": {
+          "$ref": "#/$defs/U32"
+        },
+        "retired_flags": {
+          "enum": [
+            0,
+            2
+          ]
+        },
+        "authority_epoch": {
+          "$ref": "#/$defs/U64"
+        },
+        "primary_nonce": {
+          "$ref": "#/$defs/U64"
+        },
+        "rescue_nonce": {
+          "$ref": "#/$defs/U64"
+        },
+        "global_id": {
+          "$ref": "#/$defs/I32"
+        },
+        "network_tag": {
+          "$ref": "#/$defs/Bits256"
+        },
+        "authority_hash": {
+          "$ref": "#/$defs/Bits256"
+        },
+        "primary": {
+          "$ref": "#/$defs/PrimaryKey"
+        },
+        "rescue": {
+          "$ref": "#/$defs/RescueKey"
+        },
+        "fee_payment": {
+          "const": "wallet_balance"
+        }
+      },
+      "required": [
+        "kind",
+        "seqno",
+        "wallet_id",
+        "retired_flags",
+        "authority_epoch",
+        "primary_nonce",
+        "rescue_nonce",
+        "global_id",
+        "network_tag",
+        "authority_hash",
+        "primary",
+        "rescue",
+        "fee_payment"
+      ],
+      "additionalProperties": false
     }
   }
 }

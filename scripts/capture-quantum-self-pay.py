@@ -17,6 +17,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+from bounded_process_group import stop_process_group
 from quantum_self_pay_fixture import (
     GLOBAL_ID,
     NAMESPACE,
@@ -26,33 +27,6 @@ from quantum_self_pay_fixture import (
     require,
     source_commit,
 )
-
-
-def stop_process_group(process, grace=5.0):
-    """Reclaim children even if their group leader has already crashed."""
-
-    def exists():
-        try:
-            os.killpg(process.pid, 0)
-            return True
-        except ProcessLookupError:
-            return False
-
-    for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGKILL):
-        if not exists():
-            break
-        try:
-            os.killpg(process.pid, sig)
-        except ProcessLookupError:
-            break
-        deadline = time.monotonic() + grace
-        while time.monotonic() < deadline:
-            process.poll()  # Reap the leader while waiting for the remaining children.
-            if not exists():
-                break
-            time.sleep(0.05)
-    process.wait(timeout=grace)
-    require(not exists(), "owned network process group did not exit")
 
 
 async def serve(build, workdir, basechain):
@@ -369,6 +343,9 @@ def capture(build, public_input, out):
                 "files": files,
                 "capture_source_commit": source_commit(),
                 "capture_script_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+                "process_group_helper_sha256": hashlib.sha256(
+                    Path(__file__).with_name("bounded_process_group.py").read_bytes()
+                ).hexdigest(),
                 "binaries": {
                     name: hashlib.sha256((build / name).read_bytes()).hexdigest()
                     for name in (

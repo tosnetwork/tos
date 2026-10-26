@@ -6,6 +6,7 @@ The generated accounts contain synthetic public key bytes and receive test funds
 """
 
 import argparse
+import asyncio
 import base64
 import hashlib
 import json
@@ -19,6 +20,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
+
+from bounded_process_group import stop_process_group
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "test/auth-extensions"))
@@ -113,6 +116,15 @@ def fixtures(build, out):
         .ref(Cell().uint(1312, 32).ref(chain(public_key)))
     )
     states = {
+        "quantum_self_pay_v1": Cell()
+        .uint(1, 8)
+        .uint(2**32 - 1, 32)
+        .uint(7, 32)
+        .uint(2, 16)
+        .uint(2**64 - 1, 64)
+        .uint(42, 64)
+        .uint(43, 64)
+        .ref(module),
         "quantum_module_v1": module,
         "quantum_wallet_v4": wallet,
         "quantum_fee_vault_v3": vault,
@@ -170,12 +182,41 @@ def fixtures(build, out):
     return addresses
 
 
+async def serve(build, workdir, rpc_port, base_port, ordinary):
+    """Start only the read-only nodes needed for public RPC observations."""
+    from tostester.install import Install
+    from tostester.network import Network, StartOptions
+    from tostester.pq_initial_validator import make_deterministic_pq_initial_validator
+
+    workdir.mkdir(parents=True)
+    async with Network(Install(build, ROOT), workdir, base_port=base_port) as network:
+        network.config.global_id = 1
+        network.config.global_version = 16
+        network.config.auth_network_tag = bytes.fromhex(("43" if ordinary else "42") * 32)
+        if not ordinary:
+            network.config.quantum_admission_candidate = True
+            network.config.deployment_fee_schedule = True
+            network.config.basechain_fixture = (workdir.parent / "basestate0.boc").read_bytes()
+        dht = network.create_dht_node()
+        nodes = [network.create_full_node() for _ in range(3)]
+        for index, node in enumerate(nodes):
+            make_deterministic_pq_initial_validator(node, index)
+            node.announce_to(dht)
+        (workdir / "lite-client.json").write_text(nodes[0].liteserver_config.to_json())
+        await dht.run()
+        await asyncio.gather(*(node.run(StartOptions(args=[
+            "--json-rpc-address", f"127.0.0.1:{rpc_port + index}"
+        ])) for index, node in enumerate(nodes)))
+        await asyncio.Event().wait()
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--build-dir", type=Path, default=ROOT / "build")
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--rpc-port", type=int, default=48545)
     parser.add_argument("--base-port", type=int, default=44000)
+    parser.add_argument("--serve", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument(
         "--ordinary-config",
         "--legacy-config",
@@ -185,6 +226,9 @@ def main():
     )
     args = parser.parse_args()
     build, out = args.build_dir.resolve(), args.out.resolve()
+    if args.serve:
+        asyncio.run(serve(build, out, args.rpc_port, args.base_port, args.legacy_config))
+        return
     out.mkdir(parents=True, exist_ok=True)
     attempts = out / ("attempt-" + str(time.time_ns()))
     attempts.mkdir()
@@ -251,26 +295,19 @@ def main():
     env.pop("TOS_AUTH_NETWORK_TAG", None)
     command = [
         sys.executable,
-        str(ROOT / "scripts/localnet-jsonrpc.py"),
-        "--validators",
-        "3",
-        "--workdir",
+        str(Path(__file__).resolve()),
+        "--serve",
+        "--build-dir",
+        str(build),
+        "--out",
         str(out / "network"),
-        "--rpc",
-        f"127.0.0.1:{args.rpc_port}",
-        "--control",
-        f"127.0.0.1:{args.rpc_port + 200}",
+        "--rpc-port",
+        str(args.rpc_port),
         "--base-port",
         str(args.base_port),
-        "--boot-timeout",
-        "180",
     ]
     if args.legacy_config:
-        command.extend(["--auth-network-tag", "43" * 32])
-    else:
-        command.extend(
-            ["--quantum-admission-candidate", "--basechain-fixture", str(out / "basestate0.boc")]
-        )
+        command.append("--ordinary-config")
     with (out / "network.log").open("w") as log:
         process = subprocess.Popen(
             command, cwd=ROOT, env=env, stdout=log, stderr=log, start_new_session=True
@@ -361,6 +398,14 @@ def main():
                 assert (pq["recognition"] == "unknown_code") == (name == "unknown_code")
                 if name != "unknown_code":
                     assert pq["code_family"] == name and pq["public_state"]["kind"] == name
+                if name == "quantum_self_pay_v1":
+                    state = pq["public_state"]
+                    assert first["account_model"] == "advanced.wallet.quantum_self_pay"
+                    assert state["fee_payment"] == "wallet_balance"
+                    assert state["authority_epoch"] == str(2**64 - 1)
+                    assert state["primary"]["algorithm_id"] == 1
+                    assert state["rescue"]["algorithm_id"] == 3
+                    assert "fee" not in state and "module" not in state
                 # Default classification still uses the original path.
                 legacy = request(
                     "getAccountCapability", {"address": address, "seqno": observation["seqno"]}
@@ -445,14 +490,11 @@ def main():
             assert first == second and base64.b64decode(first["reply"], validate=True)
 
         finally:
-            if process.poll() is None:
-                os.killpg(process.pid, signal.SIGINT)
-                try:
-                    process.wait(timeout=20)
-                except subprocess.TimeoutExpired:
-                    os.killpg(process.pid, signal.SIGKILL)
-                    process.wait(timeout=10)
-            (out / "rpc-evidence.json").write_text(json.dumps(records, indent=2) + "\n")
+            try:
+                stop_process_group(process)
+            finally:
+                (out / "rpc-evidence.json").write_text(json.dumps(records, indent=2) + "\n")
+                (out / "network-exit.json").write_text(json.dumps({"exit": process.returncode}) + "\n")
     print(
         json.dumps(
             {
@@ -465,4 +507,8 @@ def main():
 
 
 if __name__ == "__main__":
+    def interrupted(_signal, _frame):
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGTERM, interrupted)
     main()
