@@ -320,8 +320,8 @@
       "sha256": "a8aa654107f705f907981951f3f6db62e9fbf1fc1b5864264144a78cb0fb91cc"
     },
     "repository/tosctl/src/vm/src/executor/engine/handlers.rs": {
-      "bytes": 49886,
-      "sha256": "0c1b879a0f6504280eb06f730b41a14ff80ab4c02ab1498366fc1467f20bcc15"
+      "bytes": 48350,
+      "sha256": "e0b252bd86255b0bc7d1d6e02e6af1bf73620a9c8c6edd59a0e18ef7d1d779b3"
     },
     "repository/tosctl/src/vm/src/executor/lms_fee.rs": {
       "bytes": 5582,

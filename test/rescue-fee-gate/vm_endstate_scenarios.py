@@ -215,6 +215,37 @@ def scenarios():
     # TRYARGS 1,1 passes one value to the body and keeps one of its results or the handler's.
     add("tryargs-returns", prog(pushint(5), pushint(6), cont(INC), cont(pushint(9)), TRYARGS_1_1))
     add("tryargs-handler", prog(pushint(5), pushint(6), cont(throw(5)), cont(INC), TRYARGS_1_1))
+    # XCHG s(i),s(j) (10ij) is valid only for 1 <= i < j; anything else is an invalid opcode,
+    # whatever the stack holds.
+    three = (pushint(1), pushint(2), pushint(3))
+    add("xchg-long-1-2", prog(*three, op([0x10, 0x12])))
+    add("xchg-long-0-2-invalid", prog(*three, op([0x10, 0x02])))
+    add("xchg-long-2-2-invalid", prog(*three, op([0x10, 0x22])))
+    add("xchg-long-2-1-invalid", prog(*three, op([0x10, 0x21])))
+    add("xchg-long-1-5-underflow", prog(*three, op([0x10, 0x15])))
+    # HASHEXT: every id byte decodes; 255 takes the id from the stack, after a depth check. The
+    # count is popped before the id is checked, so an unknown id on an empty stack is an
+    # underflow, and on a valid count a range check. The appending forms need a builder below.
+    one_byte = (pushint(0x61), op([0xC8, 0xCB, 7, 0xC9, 0xD0]))  # 'a' as a slice
+    add("hashext-sha256-one-byte", prog(*one_byte, pushint(1), op([0xF9, 0x04, 0x00])))
+    add("hashext-sha512-one-byte", prog(*one_byte, pushint(1), op([0xF9, 0x04, 0x01])))
+    add("hashext-id-5-empty", prog(op([0xF9, 0x04, 0x05])))
+    add("hashext-id-5-count-0", prog(pushint(0), op([0xF9, 0x04, 0x05])))
+    add("hashext-id-255-sha512", prog(*one_byte, pushint(1), pushint(1), op([0xF9, 0x04, 0xFF])))
+    add("hashext-id-255-only", prog(pushint(0), op([0xF9, 0x04, 0xFF])))
+    add("hashexta-count-0-no-builder", prog(pushint(0), op([0xF9, 0x06, 0x00])))
+    # BLS: the depth is checked before the operation is charged; a scalar must be finite before
+    # its point is decoded; the aggregate checks decode their message and signature last, also
+    # for a count of zero.
+    empty_slice = op([0xC8, 0xC9, 0xD0])
+    add("bls-g1-add-empty-stack", prog(op([0xF9, 0x30, 0x10])))
+    add("bls-g1-mul-nan-short-point", prog(empty_slice, PUSHNAN, op([0xF9, 0x30, 0x13])))
+    add("bls-g2-mul-nan-short-point", prog(empty_slice, PUSHNAN, op([0xF9, 0x30, 0x23])))
+    add(
+        "bls-fastaggregateverify-0-short",
+        prog(pushint(0), empty_slice, empty_slice, op([0xF9, 0x30, 0x02])),
+    )
+    add("bls-aggregateverify-0-short", prog(pushint(0), empty_slice, op([0xF9, 0x30, 0x03])))
 
 
 # Rows that may differ only in the final stack and the error argument; exit code, gas, steps

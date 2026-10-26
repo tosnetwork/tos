@@ -31,6 +31,9 @@ ERROR = CARGO / "vm/src/error.rs"
 HANDLERS = CARGO / "vm/src/executor/engine/handlers.rs"
 GAS = CARGO / "vm/src/executor/gas/mod.rs"
 EXCEPTIONS = CARGO / "vm/src/executor/exceptions.rs"
+STACK = CARGO / "vm/src/executor/stack.rs"
+CRYPTO = CARGO / "vm/src/executor/crypto.rs"
+BLS = CARGO / "vm/src/executor/bls.rs"
 CHILD_STACK_TEST = (
     "executor::engine::core::nesting_depth_tests::child_out_of_gas_leaves_only_the_gas_consumed"
 )
@@ -558,6 +561,166 @@ MUTATIONS = {
         (),
         (),
         ("ext-debug-16-complete-ones", "ext-debug-1d-complete-ones"),
+    ),
+    "XCHG s(i),s(j) runs with i = 0 or i >= j": Mutation(
+        STACK,
+        [
+            (
+                "    if ra == 0 || ra >= rb {\n        fail!(ExceptionCode::InvalidOpcode, ",
+                "    if false {\n        fail!(ExceptionCode::InvalidOpcode, ",
+            )
+        ],
+        (),
+        (),
+        (
+            "family-xchg-1000-empty",
+            "family-xchg-1001-deep",
+            "family-xchg-1011-deep",
+            "family-xchg-10ff-deep",
+        ),
+    ),
+    # The other exchange forms may name s0 or one register twice: a check in the shared helper
+    # refuses them.
+    "XCHG argument check in the shared helper": Mutation(
+        STACK,
+        [
+            (
+                "    let rb = engine.cmd.sregs().rb;\n    engine.cc.stack.swap(ra, rb)?;\n    Ok(())",
+                "    let rb = engine.cmd.sregs().rb;\n    if ra == 0 || ra >= rb {\n        fail!(ExceptionCode::InvalidOpcode)\n    }\n    engine.cc.stack.swap(ra, rb)?;\n    Ok(())",
+            )
+        ],
+        (),
+        (),
+        ("family-xchg-other-01-deep", "family-xchg-other-1100-deep", "family-xchg-other-0f-deep"),
+    ),
+    # HASHEXT: the id is checked when the instruction runs, after the count.
+    "HASHEXT ids other than 0-4 and 255 are invalid opcodes": Mutation(
+        CRYPTO,
+        [
+            (
+                "    let mut id = engine.cmd.length();\n",
+                "    let mut id = engine.cmd.length();\n    if id > 4 && id != 255 {\n"
+                "        fail!(ExceptionCode::InvalidOpcode)\n    }\n",
+            )
+        ],
+        (),
+        (),
+        ("family-hashext-f90405-count-0", "family-hashext-f907fe-slice-1"),
+    ),
+    "HASHEXT checks the id before the count": Mutation(
+        CRYPTO,
+        [
+            (
+                "    fetch_stack(engine, 1)?;\n    // The entries below the count",
+                "    Hasher::from_id(id)?;\n    fetch_stack(engine, 1)?;\n    // The entries below the count",
+            )
+        ],
+        (),
+        (),
+        ("family-hashext-f90405-empty", "family-hashext-f90405-not-integer"),
+    ),
+    "HASHEXTA count bound saturates at zero": Mutation(
+        CRYPTO,
+        [("{ below - 1 } else { below };", "{ (below - 1).max(0) } else { below };")],
+        (),
+        (),
+        ("family-hashext-f90600-count-0", "family-hashext-f90704-count-0"),
+    ),
+    "HASHEXT 255 ignores the id on the stack": Mutation(
+        CRYPTO,
+        [
+            (
+                "        id = engine.cmd.var(0).as_integer_value(0..=254)?;",
+                "        id = engine.cmd.var(0).as_integer_value(0..=254).map(|_| 0)?;",
+            )
+        ],
+        (),
+        (),
+        ("family-hashext-f904ff-one-byte-id-1", "family-hashext-f906ff-builder-full-id-4"),
+    ),
+    "HASHEXTR hashes in the forward order": Mutation(
+        CRYPTO,
+        [("base + if rev { i } else { num - 1 - i };", "base + num - 1 - i + 0 * (rev as usize);")],
+        (),
+        (),
+        ("family-hashext-f90500-seven-plus-one", "family-hashext-f90700-with-ref"),
+    ),
+    "HASHEXTA appends one byte less": Mutation(
+        CRYPTO,
+        [
+            (
+                "result.append_raw(&hash, hash.len() * 8)?;",
+                "result.append_raw(&hash, hash.len() * 8 - 8)?;",
+            )
+        ],
+        (),
+        (),
+        ("family-hashext-f90600-one-byte", "family-hashext-f90601-builder-one-short"),
+    ),
+    "HASHEXT charges 2 gas per entry": Mutation(
+        CRYPTO,
+        [("let gas_total = i + 1 + total_bits", "let gas_total = 2 * i + 2 + total_bits")],
+        (),
+        (),
+        ("family-hashext-f90400-one-byte", "family-hashext-f90400-budget-1466"),
+    ),
+    # BLS: the depth is checked before the charge, a scalar before its point, and the message and
+    # signature of the aggregate checks are decoded last, also for no keys.
+    "BLS ADD charges before the depth check": Mutation(
+        BLS,
+        [
+            (
+                "    fetch_stack(engine, 2)?;\n    engine.try_use_gas(gas)?;\n\n    let y =",
+                "    engine.try_use_gas(gas)?;\n    fetch_stack(engine, 2)?;\n\n    let y =",
+            )
+        ],
+        (),
+        (),
+        ("family-bls-f93010-empty-1000000", "family-bls-f93021-i-300", "version-f93010-24-at-4"),
+    ),
+    "BLS MUL decodes the point before the scalar": Mutation(
+        BLS,
+        [
+            (
+                "    let s = engine.cmd.var(0).as_integer()?;\n    if s.is_nan() {\n"
+                "        fail!(ExceptionCode::IntegerOverflow)\n    }\n"
+                "    let x = engine.cmd.var(1).as_slice()?.clone().get_next_bytes(L)?;\n",
+                "    let x = engine.cmd.var(1).as_slice()?.clone().get_next_bytes(L)?;\n"
+                "    let s = engine.cmd.var(0).as_integer()?;\n    if s.is_nan() {\n"
+                "        fail!(ExceptionCode::IntegerOverflow)\n    }\n",
+            )
+        ],
+        (),
+        (),
+        ("family-bls-f93013-s-nan-1000000", "family-bls-f93023-s-null-1000000"),
+    ),
+    "BLS FASTAGGREGATEVERIFY decodes the signature first": Mutation(
+        BLS,
+        [
+            (
+                "    fetch_stack(engine, 3)?;\n    engine.cmd.var(0).as_slice()?;\n",
+                "    fetch_stack(engine, 3)?;\n"
+                "    engine.cmd.var(0).as_slice()?.clone().get_next_bytes(BLS_SIG_LEN)?;\n",
+            )
+        ],
+        (),
+        (),
+        ("family-bls-f93002-g1-s-s-1000000", "family-bls-f93002-0-s-s-1000000"),
+    ),
+    "BLS AGGREGATEVERIFY skips decoding for no pairs": Mutation(
+        BLS,
+        [
+            (
+                "    let sgn = engine.cmd.var(0).as_slice()?.clone().get_next_bytes(BLS_SIG_LEN)?;\n"
+                "    let res = if n == 0 {\n        false\n    } else {\n        let msgs_refs",
+                "    let res = if n == 0 {\n        false\n    } else {\n"
+                "        let sgn = engine.cmd.var(0).as_slice()?.clone().get_next_bytes(BLS_SIG_LEN)?;\n"
+                "        let msgs_refs",
+            )
+        ],
+        (),
+        (),
+        ("family-bls-f93003-0-s-1000000",),
     ),
 }
 

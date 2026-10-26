@@ -5,7 +5,7 @@ For every assigned range and every length k shorter than its prefix, the program
 k-bit code in the range (the VM pads it with zeros to 24 bits, which must land in the same range).
 For a range enabled from version v > 0, its full prefix runs at v - 1 (invalid) and at v. Each
 unassigned range gets its first 8-bit code, if it has one, and its first 24-bit code. The rows of
-vm_ext_scenarios.py follow.
+vm_ext_scenarios.py and of the compared families of vm_family_scenarios.py follow.
 
 KNOWN lists the rows whose difference is still open; vm_endstate_compare.py requires each of them
 to differ, so a fix must remove its rows from the list.
@@ -20,11 +20,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from suite_scenarios import Cell  # noqa: E402
 from vm_ext_scenarios import scenarios as ext_scenarios  # noqa: E402
+from vm_family_scenarios import KNOWN as FAMILY_KNOWN  # noqa: E402
+from vm_family_scenarios import scenarios as family_scenarios  # noqa: E402
 from vm_opcode_table import TOP, read  # noqa: E402
 
-# BLS_G1_ADD and BLS_G2_ADD run on an empty stack: the Rust VM charges the operation before it
-# checks the stack depth, the C++ VM after. Open; the BLS instructions are fixed separately.
-KNOWN = ["version-f93010-24-at-4", "version-f93020-24-at-4"]
+KNOWN = [*FAMILY_KNOWN]
 
 VERSION = 16
 BUDGET = 1_000_000
@@ -71,7 +71,7 @@ def main(args):
         return
     if len(args) not in (2, 3) or args[2:] not in ([], ["--without-known"]):
         sys.exit(__doc__)
-    rows = scenarios(read(args[0])) + ext_scenarios()
+    rows = scenarios(read(args[0])) + ext_scenarios() + family_scenarios()
     if args[2:] == ["--without-known"]:
         rows = [r for r in rows if r[0] not in KNOWN]
     assert len({r[0] for r in rows}) == len(rows), "duplicate ids"

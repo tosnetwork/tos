@@ -948,42 +948,10 @@ impl Handlers {
                 .set(0x01, execute_hashsu)
                 .set(0x02, execute_sha256u)
                 .set(0x03, execute_sha256c)
-                .add_subset(
-                    0x04,
-                    Handlers::new()
-                        .set(0x00, execute_hashext_sha256)
-                        .set(0x01, execute_hashext_sha512)
-                        .set(0x02, execute_hashext_blake2b)
-                        .set(0x03, execute_hashext_keccak256)
-                        .set(0x04, execute_hashext_keccak512),
-                )
-                .add_subset(
-                    0x05,
-                    Handlers::new()
-                        .set(0x00, execute_hashext_sha256_rev)
-                        .set(0x01, execute_hashext_sha512_rev)
-                        .set(0x02, execute_hashext_blake2b_rev)
-                        .set(0x03, execute_hashext_keccak256_rev)
-                        .set(0x04, execute_hashext_keccak512_rev),
-                )
-                .add_subset(
-                    0x06,
-                    Handlers::new()
-                        .set(0x00, execute_hashext_sha256_add)
-                        .set(0x01, execute_hashext_sha512_add)
-                        .set(0x02, execute_hashext_blake2b_add)
-                        .set(0x03, execute_hashext_keccak256_add)
-                        .set(0x04, execute_hashext_keccak512_add),
-                )
-                .add_subset(
-                    0x07,
-                    Handlers::new()
-                        .set(0x00, execute_hashext_sha256_add_rev)
-                        .set(0x01, execute_hashext_sha512_add_rev)
-                        .set(0x02, execute_hashext_blake2b_add_rev)
-                        .set(0x03, execute_hashext_keccak256_add_rev)
-                        .set(0x04, execute_hashext_keccak512_add_rev),
-                )
+                .set(0x04, execute_hashext)
+                .set(0x05, execute_hashext_rev)
+                .set(0x06, execute_hashext_add)
+                .set(0x07, execute_hashext_add_rev)
                 .set(0x10, execute_chksignu)
                 .set(0x11, execute_chksigns)
                 .set(0x12, execute_ec_recover)
