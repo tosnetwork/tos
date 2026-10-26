@@ -1,8 +1,8 @@
 # Cross-architecture epoch replay (REL-02)
 
-This offline corpus contains 351 original public epoch-5 blocks (global id 2;
-187 masterchain, 164 basechain) and the original cells needed to execute their
-494 transactions. The manifest and all BOCs total about 4.70 MB, below the 20 MB
+This offline corpus contains 366 original public epoch-5 blocks (global id 2;
+202 masterchain, 164 basechain) and the original cells needed to execute their
+576 transactions. The manifest and all BOCs total about 7.59 MB, below the 20 MB
 budget. No network, validator database, private key, or node service is needed to
 run it. The corpus contains no generated positive chain fixtures.
 
@@ -24,6 +24,10 @@ native emulator.
 | `shard-exits`: basechain 152032, 152121, 152207, 152292, 152381, 152470, 152559 | 7 | 26 | Basechain service traffic during round 1 with contract-defined compute exits 1800, 1803 and 1808 (aborted) |
 | `rotation`: masterchain 230373–230384 and basechain 231429–231440 | 24 | 25 | The first two-hour validator rotation: key block 230378 (ConfigParam 32/34) and the blocks around it |
 | `context`: masterchain 117750–117752, 151333, 151421, 151510, 151596, 151685, 151772, 151861, 230370–230372 | 13 | 27 | Exact masterchain contexts referenced by the selected basechain blocks |
+| `staking`: masterchain 172824, 177967, 178028, 178083, 178145, 178206, 178267 | 7 | 36 | Elector stake refusals, each returned with op `0xee6f454c` and its reason: no election open (0, 172824); a bad signature, a wrong global id and a wrong `src_addr` (1, 177967, 178028, 178083); below `min_stake` (5, 178145); below 1/4096 of the total (2, 178206); a stake for another election (3, 178267). Each block holds the probe wallet's external message, its `new_stake`, the Elector's refusal and the wallet receiving the returned value |
+| `staking`: masterchain 191343, 259207 | 2 | 11 | `recover_stake` with no credit, answered `0xfffffffe` (191343); a pool's `recover_stake`, sent on a wallet's request and answered `0xf96f7324` with 10,369.84 TOS of credit after the 13:00 UTC term (259207) |
+| `staking`: masterchain 221616, 221669, 221688, 221689, 259307 | 5 | 30 | Accepted stakes: a wallet's stake request to its pool, the pool's `new_stake` to the Elector, the Elector's confirmation `0xf374484c` and the pool receiving it, for the four pools of the 12:00 UTC election and for the pool that recovered in 259207 staking again in the 16:15 UTC election |
+| `staking`: masterchain 213016 | 1 | 5 | A single-nominator pool owner's withdrawal (op `0x1000`) of the pool's liquid balance, paid back to the owner wallet |
 
 Three selected blocks are key blocks (194883, 195454, 230378). Split/merge
 blocks are not covered; the harness refuses them rather than guessing a
@@ -33,6 +37,29 @@ No planned block is excluded. Basechain blocks that are not the newest one a
 masterchain block registers (among them the token master deploy 118263), and
 masterchain 160950 and 160997 outside the captured ranges, carry ids from
 separate node-1/node-3 `lookupBlock` captures.
+
+### Staking coverage
+
+The third-party review of the first epoch-5 corpus asked for stake submission,
+stake recovery and failed-election cancellation/refund coverage. The `staking`
+rows cover them as follows:
+
+- **Stake submission: covered.** Five accepted stakes with the Elector's
+  confirmation, and refusals with reasons 0, 1, 2, 3 and 5, each with the
+  returned value arriving back at the sender.
+- **Stake recovery: covered.** A recovery that returns credit (259207) and one
+  with no credit (191343).
+- **Failed-election cancellation/refund: partly covered.** The refusals above are
+  the Elector's refund path. A failed election that is postponed is not covered:
+  the postponed election whose ids were captured for masterchain
+  248,148–248,690 is not in the archives. Node (a)'s archive ends at 242,333 and
+  node (b)'s starts at 248,301, so its recovery block (about 248,24x) is in
+  neither. In 248,301–248,690 node (b) holds only Elector ticks and empty-body
+  Elector messages from the zero address: no `new_stake`, no message to the
+  Config contract and no key block. No block from that capture is planned.
+
+No planned staking block is excluded. Masterchain 259207 and 259307 come from
+node (b)'s archive, the others from node (a)'s.
 
 ## What is checked
 
@@ -74,23 +101,25 @@ Every replayed block's root and file hash equals the full block ids returned by
 validators node-1 and node-3, from `lookupBlock` or from a masterchain block's
 `shards` reply. [Capture commands and receipts](CAPTURE.md) describe
 the local, read-only capture from the archive packages of a full node synced
-from genesis; no host was contacted and no live database was opened.
+from genesis, and of a second full node for masterchain 248,301–262,749; no
+host was contacted and no live database was opened.
 `files` records each block's source ID and SHA-256. One native multi-root BOC,
-`state-parts.boc`, packs the original supplemental cells, so the corpus has 352
+`state-parts.boc`, packs the original supplemental cells, so the corpus has 367
 inputs. Its file entry records SHA-256 and source block IDs; `supplement_roots`
-records each of its 795 original roots with hashes and provenance:
+records each of its 1525 original roots with hashes and provenance:
 
-- 793 `original_state_update` roots: the whole state-update cell of an archived
-  block (789 masterchain blocks 3–230369 and basechain 105524, 105530, 150944
+- 1522 `original_state_update` roots: the whole state-update cell of an archived
+  block (1518 masterchain blocks 3–259310 and basechain 105524, 105530, 150944
   and 151779). The configuration,
   previous-block VM context and account cells the replay reads but that a
   selected block's own Merkle update prunes come from these.
-- One `original_block_extra` root: key block 154916's extra, whose configuration
-  holds cells the elector and Config contract read.
+- Two `original_block_extra` roots: the extras of key blocks 154916 and 250344,
+  whose configurations hold cells the elector and Config contract read. 250344 is
+  in node (b)'s archive.
 - One `zero_state` root: the published genesis zero state, for cells unchanged
   since genesis, bound by the initial block id node-1 and node-3 return.
 
-301 roots come from blocks with node-1/node-3 ids (`verified_rpc_nodes`); the
+506 roots come from blocks with node-1/node-3 ids (`verified_rpc_nodes`); the
 others are bound by hash only, which is sufficient for their use: a cell is
 accepted only where a verified block's state holds a pruned branch of the same
 level-zero hash. Re-encoding the BOC container creates no new state values.
