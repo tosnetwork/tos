@@ -2,6 +2,7 @@
 
 import json
 import os
+import signal
 import subprocess
 import sys
 import tempfile
@@ -78,6 +79,70 @@ class BoundsAndProcesses(unittest.TestCase):
             time.sleep(0.05)
         else:
             self.fail("descendant remains live after timeout")
+
+    def test_cancellation_reaps_child_and_kills_descendants(self):
+        for cancellation in (signal.SIGTERM, signal.SIGINT):
+            with self.subTest(signal=cancellation):
+                directory = self.root / str(cancellation)
+                directory.mkdir()
+                program = (
+                    "import os,time\nchild=os.fork()\n"
+                    "if child: print(os.getpid(),child,flush=True)\n"
+                    "time.sleep(30)\n"
+                )
+                launcher = (
+                    "import sys\nfrom pathlib import Path\n"
+                    f"sys.path.insert(0,{str(Path(gate.__file__).parent)!r})\n"
+                    "import run_rust as gate\n"
+                    f"gate.execute([sys.executable,'-c',{program!r}],Path({str(directory)!r}),'cancel')\n"
+                )
+                runner = subprocess.Popen(
+                    [sys.executable, "-c", launcher],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                child_pid = descendant_pid = None
+                try:
+                    output = directory / "cancel.stdout"
+                    deadline = time.monotonic() + 5
+                    while time.monotonic() < deadline:
+                        if output.exists() and len(output.read_text().split()) == 2:
+                            child_pid, descendant_pid = map(int, output.read_text().split())
+                            break
+                        self.assertIsNone(runner.poll(), "runner exited before readiness")
+                        time.sleep(0.01)
+                    self.assertIsNotNone(child_pid, "child did not report readiness")
+                    runner.send_signal(cancellation)
+                    self.assertNotEqual(runner.wait(timeout=5), 0)
+                    self.assertFalse(
+                        Path(f"/proc/{child_pid}").exists(), "direct child was not reaped"
+                    )
+                    for _ in range(100):
+                        status = Path(f"/proc/{descendant_pid}/stat")
+                        if not status.exists() or status.read_text().split()[2] == "Z":
+                            break
+                        time.sleep(0.01)
+                    else:
+                        self.fail("descendant remains live after cancellation")
+                finally:
+                    if child_pid is not None:
+                        try:
+                            os.killpg(child_pid, signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
+                    if runner.poll() is None:
+                        runner.kill()
+                    runner.wait()
+
+    def test_signal_state_restored_after_spawn_failure(self):
+        signals = (signal.SIGTERM, signal.SIGINT)
+        handlers = {sig: signal.getsignal(sig) for sig in signals}
+        mask = signal.pthread_sigmask(signal.SIG_BLOCK, [])
+        with mock.patch.object(gate.subprocess, "Popen", side_effect=OSError("spawn failed")):
+            with self.assertRaisesRegex(OSError, "spawn failed"):
+                gate.execute(["unused"], self.root, "spawn-failed")
+        self.assertEqual({sig: signal.getsignal(sig) for sig in signals}, handlers)
+        self.assertEqual(signal.pthread_sigmask(signal.SIG_BLOCK, []), mask)
 
     def test_snapshot_rejects_budget_before_reading_payload(self):
         source = self.root / "manifest.json"

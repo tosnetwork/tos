@@ -86,21 +86,54 @@ def execute(command, directory, label):
     stdout = directory / f"{label}.stdout"
     stderr = directory / f"{label}.stderr"
     with stdout.open("wb") as out, stderr.open("wb") as err:
-        child = subprocess.Popen(
-            command, stdout=out, stderr=err, start_new_session=True, preexec_fn=child_limits
-        )
+        cancellation = (signal.SIGTERM, signal.SIGINT)
+        previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK, cancellation)
+        previous_handlers = {sig: signal.getsignal(sig) for sig in cancellation}
+        child = None
+
+        def cancelled(signum, _frame):
+            if signum == signal.SIGINT:
+                raise KeyboardInterrupt
+            raise SystemExit(128 + signum)
+
+        def prepare_child():
+            # The child must not inherit the parent's scoped cancellation setup.
+            for sig in cancellation:
+                signal.signal(sig, signal.SIG_DFL)
+            signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
+            child_limits()
+
         try:
-            code = child.wait(timeout=TIMEOUT)
-        except subprocess.TimeoutExpired:
-            os.killpg(child.pid, signal.SIGKILL)
-            child.wait()
-            raise ValueError(f"{label} timed out; process group killed") from None
-        finally:
-            # Reap descendants that outlived the parent on every exit path.
+            for sig in cancellation:
+                signal.signal(sig, cancelled)
+            # Defer cancellation until the parent owns a Popen handle. Otherwise
+            # a signal during Popen can leave a child whose pid we never receive.
+            child = subprocess.Popen(
+                command,
+                stdout=out,
+                stderr=err,
+                start_new_session=True,
+                preexec_fn=prepare_child,
+            )
+            signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
             try:
-                os.killpg(child.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
+                code = child.wait(timeout=TIMEOUT)
+            except subprocess.TimeoutExpired:
+                raise ValueError(f"{label} timed out; process group killed") from None
+        finally:
+            # A repeated SIGTERM/SIGINT must not interrupt group cleanup/reaping.
+            signal.pthread_sigmask(signal.SIG_BLOCK, cancellation)
+            try:
+                if child is not None:
+                    try:
+                        os.killpg(child.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    child.wait()
+            finally:
+                for sig, handler in previous_handlers.items():
+                    signal.signal(sig, handler)
+                signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
     output = bounded_read(stdout, MAX_DIAGNOSTICS)
     errors = bounded_read(stderr, MAX_DIAGNOSTICS)
     if code != 0:
