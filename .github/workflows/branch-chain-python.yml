@@ -419,6 +419,27 @@ jobs:
           uv run python scripts/test_quantum_candidate_network.py
           uv run python scripts/check-quantum-candidate-network.py --build-dir build --out build/quantum-candidate-ci --sdk-fixture test/wallet-quantum/fixtures/public-genesis-accounts.json
 
+      - name: Prove self-pay active, prefunded and absent accounts
+        timeout-minutes: 10
+        run: |
+          uv run python scripts/test_quantum_self_pay_fixture.py
+          uv run python scripts/capture-quantum-self-pay.py --build-dir build \
+            --input test/wallet-quantum/fixtures/public-self-pay-accounts.json \
+            --out build/quantum-self-pay-candidate-ci
+
+      - name: Retain public self-pay proofs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: quantum-self-pay-proofs-${{ github.sha }}
+          path: |
+            build/quantum-self-pay-candidate-ci/mobile-fixture/
+            build/quantum-self-pay-candidate-ci/*-result.json
+            build/quantum-self-pay-candidate-ci/*-verifier.log
+            build/quantum-self-pay-candidate-ci/proof-controls.json
+          if-no-files-found: warn
+          retention-days: 14
+
       - name: Broadcast disposable Quantum payment and verify execution linkage
         timeout-minutes: 15
         env:
