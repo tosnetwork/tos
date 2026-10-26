@@ -100,6 +100,7 @@ option(TOS_USE_ASAN "Use \"ON\" to enable AddressSanitizer." OFF)
 option(TOS_USE_TSAN "Use \"ON\" to enable ThreadSanitizer." OFF)
 option(TOS_USE_UBSAN "Use \"ON\" to enable UndefinedBehaviorSanitizer." OFF)
 option(TOS_USE_COVERAGE "Use \"ON\" to enable code coverage with gcov." OFF)
+option(TOS_VM_STEP_TRACE "Test builds only: compile the per-step VM trace hook used by conformance tests." OFF)
 set(TOS_ARCH "native" CACHE STRING "Architecture, will be passed to -march=")
 
 option(TOS_PRINT_BACKTRACE_ON_CRASH "Attempt to print a backtrace when a fatal signal is caught" ON)
@@ -493,6 +494,11 @@ if (GCC OR CLANG)
     # set to RelWithDebInfo.
     add_compile_options(-O3)
   endif()
+endif()
+
+if (TOS_VM_STEP_TRACE)
+  message(WARNING "TOS_VM_STEP_TRACE is ON: this build carries the VM step trace hook and is for tests only")
+  add_compile_definitions(TOS_VM_STEP_TRACE)
 endif()
 
 if (TOS_USE_COVERAGE)

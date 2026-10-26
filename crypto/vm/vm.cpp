@@ -458,6 +458,11 @@ int VmState::step() {
     stack->dump(std::cerr, 3);
   }
   ++steps;
+#ifdef TOS_VM_STEP_TRACE
+  if (auto* sink = step_trace_sink()) {
+    sink->on_step(*this);
+  }
+#endif
   if (code->size()) {
     VM_LOG_MASK(this, vm::VmLog::ExecLocation)
         << "code cell hash: " << code->get_base_cell()->get_hash().to_hex() << " offset: " << code->cur_pos();
@@ -680,7 +685,19 @@ bool VmState::register_library_collection(Ref<Cell> lib) {
 void VmState::register_cell_load(const CellHash& cell_hash) {
   auto new_cell = loaded_cells.insert(cell_hash).second;  // check whether this is the first time this cell is loaded
   consume_gas(new_cell ? cell_load_gas_price : cell_reload_gas_price);
+#ifdef TOS_VM_STEP_TRACE
+  if (auto* sink = step_trace_sink()) {
+    sink->on_cell_load(*this, cell_hash, new_cell);
+  }
+#endif
 }
+
+#ifdef TOS_VM_STEP_TRACE
+StepTraceSink*& step_trace_sink() {
+  thread_local StepTraceSink* sink = nullptr;
+  return sink;
+}
+#endif
 
 bool VmState::register_cell_load_free(const CellHash& cell_hash) {
   return loaded_cells.insert(cell_hash).second;

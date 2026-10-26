@@ -1,5 +1,6 @@
 // Copyright 2026 TOS Blockchain Teams. SPDX-License-Identifier: LGPL-2.0-or-later
 // Offline replay uses the production codec, authenticated state update and transaction emulator.
+#include <cstdlib>
 #include <fstream>
 #include <iostream>
 #include <map>
@@ -60,6 +61,37 @@ std::string boc_hex(Cell cell) {
   std::map<std::string, Cell> copies;
   return td::hex_encode(require(vm::std_boc_serialize(materialize(std::move(cell), copies), 0)).as_slice());
 }
+
+#ifdef TOS_VM_STEP_TRACE
+// Writes the steps and cell loads of one transaction, named by its logical time
+// in TOS_TRACE_LT, to the file named by TOS_TRACE_FILE.
+class FileTrace final : public vm::StepTraceSink {
+  std::ofstream out_;
+
+ public:
+  explicit FileTrace(const char* path) : out_(path) {
+    check(out_.good(), "cannot write the trace file");
+  }
+  void on_step(const vm::VmState& vm) override {
+    auto code = vm.get_code();
+    out_ << "S\t" << vm.get_steps_count() << '\t' << vm.get_gas_limits().gas_remaining << '\t' << vm.trace_stack_depth()
+         << '\t' << vm.trace_is_child() << '\t'
+         << (code.is_null() ? std::string("-") : code->get_base_cell()->get_hash().to_hex()) << '\t'
+         << (code.is_null() ? 0 : code->cur_pos()) << '\n';
+  }
+  void on_cell_load(const vm::VmState& vm, const vm::CellHash& hash, bool first) override {
+    out_ << "L\t" << vm.get_steps_count() << '\t' << hash.to_hex() << '\t' << first << '\n';
+  }
+};
+
+std::unique_ptr<FileTrace> trace_for(tos::LogicalTime lt) {
+  auto wanted = std::getenv("TOS_TRACE_LT");
+  auto path = std::getenv("TOS_TRACE_FILE");
+  if (wanted == nullptr || path == nullptr || std::to_string(lt) != wanted)
+    return nullptr;
+  return std::make_unique<FileTrace>(path);
+}
+#endif
 
 // One line per executed transaction with every input the Rust executor needs,
 // written only when --dump names an output file.
@@ -320,8 +352,15 @@ void replay(Cell root, const Cells& cells, const MasterBlocks& masters, bool emp
              << '\t' << boc_hex(config->get_libraries_root()) << '\t' << boc_hex(previous_cb.finalize()) << '\t'
              << hash(original) << '\t' << expected_account.new_hash.to_hex() << '\t' << boc_hex(original) << '\n';
       }
+#ifdef TOS_VM_STEP_TRACE
+      auto trace = trace_for(original_record.lt);
+      vm::step_trace_sink() = trace.get();
+#endif
       auto result = require(emulator.emulate_transaction(std::move(account), original_record.r1.in_msg->prefetch_ref(),
                                                          original_record.now, original_record.lt, type));
+#ifdef TOS_VM_STEP_TRACE
+      vm::step_trace_sink() = nullptr;
+#endif
       auto* emulated = dynamic_cast<emulator::TransactionEmulator::EmulationSuccess*>(result.get());
       check(emulated != nullptr, "an on-chain transaction was not accepted by the emulator");
       execution(emulated->transaction, emulated->account.total_state);
