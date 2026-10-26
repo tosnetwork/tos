@@ -72,7 +72,8 @@ The diagnostic build is used for this search only. Every result in
 Use a Python 3.14 environment with the codec dependencies of `test/tostester`
 (`bitarray`, `pynacl`, `pycryptodome`). The programs are stored in
 `capture-commands.json`; write every `scripts` entry, under its name, into one new
-directory and run `capture.py` there with these variables set:
+directory, replace `resolve.py` there with `test/rel02/capture/resolve.py`, and run
+`capture.py` there with these variables set:
 
 ```sh
 export REPO_DIR="$PWD" ARCHIVE_DIR=... ARCHIVE_SHA256SUMS=... IDS_DIR=... \
@@ -82,6 +83,19 @@ python3 capture.py
 
 `REPLAY_DIAG` is the command that runs the diagnostic build (built from this tree
 with `diagnostic.patch` applied, in the `Dockerfile.builder` environment).
+`REPLAY_DIAG_TIMEOUT` optionally bounds each diagnostic run, in seconds (default 600).
+
+`capture-commands.json` records what ran for the committed corpus, and its
+`resolve.py` (SHA-256 `876718d71ff9e4d70d3083fdeeadde537d3921a7bdfcc939db5f61bea271f785`) is kept
+as it ran. That program did not check the diagnostic child: a child that exited
+non-zero, or exited 0 without replaying anything, read as "no failing blocks". For
+any re-capture it is superseded by `test/rel02/capture/resolve.py` (SHA-256
+`7ba1b888d30d866fbbcdbbf65827dc8595252da6be08b35a9c823039eac51ee8`), which refuses a diagnostic
+run that exits non-zero, is killed or times out, and one that does not announce
+every selected block in order or leaves a block with neither a block record nor a
+reported failure. `test_run.py` exercises those refusals with stub children. The
+committed corpus does not rest on the old program's result: `check_oracle.py` and
+the unmodified replay check it independently.
 `capture.py` writes `capture-log.json` in `$WORK_DIR`; its entries are the
 `steps` of `capture-commands.json`.
 
