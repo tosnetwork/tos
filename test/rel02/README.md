@@ -240,16 +240,23 @@ No mismatch resets state to the native input or permits a skipped transaction.
 The nine-field Rust output contains index, type, LT, comparison labels,
 diagnostic, actual transaction root, actual Account root and actual
 ShardAccount root. `rust.roots.tsv` preserves these actual outputs and the
-schema-2 receipt binds their digest. The comparator requires complete x86_64
+schema-3 receipt binds their digest. The comparator requires complete x86_64
 and aarch64 artifacts and compares both to the oracle and each other. Receipt
-counts without actual roots are insufficient. CI retains source/compiler/build
+counts without actual roots are insufficient. The #rel02-v2 native export has
+18 fields; its final field is post-Account depth, emitted only after native
+transaction and Account roots agree with the chain. The receipt also binds
+`rust.native-depths.json`, ordered by index and original transaction hash.
+Both Rust and Python independently derive each expected ShardAccount root from
+that depth and the original transaction hash/start LT and output Account hash.
+This checks every terminal segment too; equal errors on both architectures
+cannot replace the per-row oracle. CI retains source/compiler/build
 provenance and requires both matrix jobs to succeed.
 
 The bounded offline processes use a 4 GiB address-space cap, 600-second CPU/wall
 limits, 64 MiB per output file and 8 MiB parent diagnostic reads. Dump parsing
 allows 64 MiB total, 1 MiB per row, at most 10,000 rows, and account traversal
 at most 2,000,000 visits/depth 1,024. Refusal is an error, not a semantic mismatch
-or a successful partial replay. Tests exercise process/output limits, timeout
+or a successful partial replay. Tests exercise process/output limits, timeout/cancellation
 cleanup, invalid schema/identity and mutations of actual output artifacts.
 
 The native `--check-dump-representations` control uses original block 53209's

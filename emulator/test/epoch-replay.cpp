@@ -80,7 +80,7 @@ std::string boc_hex(Cell cell) {
 }
 
 void dump_row(const std::vector<std::string>& fields) {
-  check(fields.size() == 17 && dump_rows < max_dump_rows, "dump row count/shape limit exceeded");
+  check(fields.size() == 18 && dump_rows < max_dump_rows, "dump row count/shape limit exceeded");
   std::string row;
   for (const auto& field : fields) {
     check(field.size() < max_dump_row_bytes && row.size() < max_dump_row_bytes - field.size(),
@@ -336,6 +336,7 @@ void replay(Cell root, const Cells& cells, const MasterBlocks& masters, bool emp
       if (empty_code_control)
         account.code = vm::CellBuilder{}.finalize();
       account.now_ = original_record.now;
+      std::vector<std::string> dump_fields;
       if (dump.is_open()) {
         vm::CellBuilder shard_account;
         check(shard_account.store_ref_bool(account.total_state) &&
@@ -345,11 +346,23 @@ void replay(Cell root, const Cells& cells, const MasterBlocks& masters, bool emp
         vm::CellBuilder previous_cb;
         check(vm::StackEntry(previous_blocks).serialize(previous_cb), "cannot serialize previous blocks");
         auto in_msg = original_record.r1.in_msg->prefetch_ref();
-        dump_row({std::to_string(type), std::to_string(original_record.now), std::to_string(original_record.lt),
-                  seed.to_hex(), boc_hex(shard_account.finalize()), boc_hex(in_msg), boc_hex(config->get_root_cell()),
-                  boc_hex(config->get_libraries_root()), boc_hex(previous_cb.finalize()), hash(original),
-                  expected_account.new_hash.to_hex(), boc_hex(original), std::to_string(shard.workchain),
-                  std::to_string(shard.shard), std::to_string(info.seq_no), hash(root), source_file_hash});
+        dump_fields = {std::to_string(type),
+                       std::to_string(original_record.now),
+                       std::to_string(original_record.lt),
+                       seed.to_hex(),
+                       boc_hex(shard_account.finalize()),
+                       boc_hex(in_msg),
+                       boc_hex(config->get_root_cell()),
+                       boc_hex(config->get_libraries_root()),
+                       boc_hex(previous_cb.finalize()),
+                       hash(original),
+                       expected_account.new_hash.to_hex(),
+                       boc_hex(original),
+                       std::to_string(shard.workchain),
+                       std::to_string(shard.shard),
+                       std::to_string(info.seq_no),
+                       hash(root),
+                       source_file_hash};
       }
       auto result = require(emulator.emulate_transaction(std::move(account), original_record.r1.in_msg->prefetch_ref(),
                                                          original_record.now, original_record.lt, type));
@@ -360,6 +373,11 @@ void replay(Cell root, const Cells& cells, const MasterBlocks& masters, bool emp
       // the first changed consensus field even when replay stops here.
       check(hash(emulated->transaction) == hash(original), "transaction hash mismatch");
       check(expected_account.new_hash == emulated->account.total_state->get_hash().bits(), "account hash mismatch");
+      if (dump.is_open()) {
+        // Only publish post-state metadata after both on-chain roots agree.
+        dump_fields.push_back(std::to_string(emulated->account.total_state->get_depth(0)));
+        dump_row(dump_fields);
+      }
       account = std::move(emulated->account);
       return true;
     }),
@@ -451,7 +469,7 @@ int main(int argc, char** argv) {
       if (std::string(argv[1]) == "--dump") {
         dump.open(argv[4], std::ios::binary | std::ios::trunc);
         check(dump.good(), "cannot open dump output");
-        const std::string header = "#rel02-v1\n";
+        const std::string header = "#rel02-v2\n";
         dump << header;
         check(dump.good(), "cannot write dump header");
         dump_bytes = header.size();

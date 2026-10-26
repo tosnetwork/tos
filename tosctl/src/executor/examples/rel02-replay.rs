@@ -106,12 +106,15 @@ struct Row {
     source_seqno: u32,
     source_root: String,
     source_file: String,
+    post_account_depth: u16,
 }
 
 fn parse(line: &str) -> anyhow::Result<Row> {
     anyhow::ensure!(line.len() < MAX_ROW_BYTES, "row byte limit exceeded");
     let f: Vec<_> = line.split('\t').collect();
-    anyhow::ensure!(f.len() == 17, "a v1 dump row has 17 fields, found {}", f.len());
+    anyhow::ensure!(f.len() == 18, "a v2 dump row has 18 fields, found {}", f.len());
+    let post_account_depth: u16 = f[17].parse()?;
+    anyhow::ensure!(post_account_depth <= 1024, "invalid native Account depth");
     // Inspect the unvirtualized graph: virtualization must not hide a hole.
     let raw_account = read_single_root_boc(hex::decode(f[4])?)?;
     complete_account(&raw_account)?;
@@ -134,6 +137,7 @@ fn parse(line: &str) -> anyhow::Result<Row> {
         source_seqno: f[14].parse()?,
         source_root: hash_text(f[15])?,
         source_file: hash_text(f[16])?,
+        post_account_depth,
     })
 }
 
@@ -280,7 +284,7 @@ fn main() -> anyhow::Result<()> {
         "dump digest differs from verified native export"
     );
     let mut lines = data.lines();
-    anyhow::ensure!(lines.next() == Some("#rel02-v1"), "unsupported dump schema");
+    anyhow::ensure!(lines.next() == Some("#rel02-v2"), "unsupported dump schema");
     anyhow::ensure!(data.ends_with('\n'), "truncated dump");
     let mut rows = Vec::new();
     for line in lines {
@@ -474,6 +478,25 @@ fn main() -> anyhow::Result<()> {
             Some(shard) => hex::encode(shard.serialize()?.repr_hash().as_slice()),
             None => String::from("-"),
         };
+        let actual_depth = outcome
+            .account
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("no resulting Account"))?
+            .serialize()?
+            .depth(0);
+        anyhow::ensure!(
+            actual_depth == row.post_account_depth,
+            "row {index}: Account depth mismatch"
+        );
+        // ShardAccount is 320 ordinary bits and one Account reference. Use the
+        // original transaction's start LT, never the Account's ending LT.
+        let mut expected_shard = vec![1u8, 80u8];
+        expected_shard.extend(hex::decode(&row.transaction_hash)?);
+        expected_shard.extend(row.lt.to_be_bytes());
+        expected_shard.extend(row.post_account_depth.to_be_bytes());
+        expected_shard.extend(hex::decode(&row.account_hash)?);
+        let expected_shard = hex::encode(UInt256::calc_file_hash(&expected_shard).as_slice());
+        anyhow::ensure!(shard_hash == expected_shard, "row {index}: ShardAccount oracle mismatch");
         println!(
             "{index}\t{}\t{}\t{}\t{}\t{detail}\t{tx_hash}\t{}\t{shard_hash}",
             row.kind,

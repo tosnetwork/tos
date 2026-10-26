@@ -151,9 +151,38 @@ def binary_hash(path):
     return result.hexdigest()
 
 
-def check_rust_roots(actual, expected):
-    rows = [line.split("\t") for line in actual.decode().splitlines()]
+def expected_shard_root(original, depth):
+    if type(depth) is not int or not 0 <= depth <= 1024:
+        raise ValueError("invalid native Account depth")
+    # Ordinary cell: one reference, 320 bits; referenced depth precedes hash.
+    data = (
+        bytes([1, 80])
+        + bytes.fromhex(original["result_hash"])
+        + int(original["lt"]).to_bytes(8, "big")
+        + depth.to_bytes(2, "big")
+        + bytes.fromhex(original["account_hash"])
+    )
+    return digest(data)
+
+
+def check_native_depths(depths, expected):
     transactions = [r for r in expected if r["kind"] == "transaction"]
+    if len(depths) != len(transactions):
+        raise ValueError("missing/extra native depth records")
+    for index, (depth, original) in enumerate(zip(depths, transactions)):
+        if depth != {
+            "index": index,
+            "transaction_hash": original["result_hash"].lower(),
+            "account_depth": depth.get("account_depth"),
+        }:
+            raise ValueError("native depth identity mismatch")
+        expected_shard_root(original, depth["account_depth"])
+    return transactions
+
+
+def check_rust_roots(actual, expected, depths):
+    rows = [line.split("\t") for line in actual.decode().splitlines()]
+    transactions = check_native_depths(depths, expected)
     if len(rows) != len(transactions):
         raise ValueError("missing/extra Rust output rows")
     for index, (row, original) in enumerate(zip(rows, transactions)):
@@ -170,8 +199,8 @@ def check_rust_roots(actual, expected):
         ]
         if len(row) != 9 or row[:8] != wanted:
             raise ValueError(f"Rust output row {index} differs from complete parity result")
-        if len(row[8]) != 64 or any(c not in "0123456789abcdef" for c in row[8]):
-            raise ValueError(f"Rust output row {index} has invalid ShardAccount root")
+        if row[8] != expected_shard_root(original, depths[index]["account_depth"]):
+            raise ValueError(f"Rust output row {index} differs from ShardAccount oracle")
     return rows
 
 
@@ -188,7 +217,8 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     roots_path = args.output.with_suffix(".roots.tsv")
-    if args.output.exists() or roots_path.exists():
+    depths_path = args.output.with_suffix(".native-depths.json")
+    if args.output.exists() or roots_path.exists() or depths_path.exists():
         raise ValueError("output receipt already exists; use a fresh path")
     if platform.system() != "Linux":
         raise ValueError("replay resource isolation currently requires Linux")
@@ -229,6 +259,23 @@ def main():
         native.check_records(manifest["expected"], records, "native authenticated export")
         dump_bytes = bounded_read(dump, MAX_OUTPUT)
         dump_hash = digest(dump_bytes)
+        export_lines = dump_bytes.decode().splitlines()
+        if not export_lines or export_lines[0] != "#rel02-v2":
+            raise ValueError("unsupported native export schema")
+        depths = []
+        for index, line in enumerate(export_lines[1:]):
+            fields = line.split("\t")
+            if len(fields) != 18:
+                raise ValueError("invalid native export field count")
+            depths.append(
+                {
+                    "index": index,
+                    "transaction_hash": fields[9].lower(),
+                    "account_depth": int(fields[17]),
+                }
+            )
+        check_native_depths(depths, manifest["expected"])
+        depth_bytes = (json.dumps(depths, separators=(",", ":")) + "\n").encode()
         # Invoke Rust only after successful native execution and complete
         # original on-chain oracle comparison. Digest pins this exact export.
         actual, _ = execute(
@@ -236,11 +283,11 @@ def main():
             work,
             "rust",
         )
-        rows = check_rust_roots(actual, manifest["expected"])
+        rows = check_rust_roots(actual, manifest["expected"], depths)
         if len(rows) != topology["rows"]:
             raise ValueError("Rust output count differs from topology")
         receipt = {
-            "schema": 2,
+            "schema": 3,
             "architecture": platform.machine(),
             "transactions": len(rows),
             "carried_edges": topology["carried_edges"],
@@ -248,6 +295,7 @@ def main():
             "manifest_sha256": manifest_hash,
             "topology_sha256": digest(topology_bytes),
             "dump_sha256": dump_hash,
+            "native_depths_sha256": digest(depth_bytes),
             "native_output_sha256": digest(output),
             "rust_output_sha256": digest(actual),
             "native_binary_sha256": binary_hash(native_binary),
@@ -261,6 +309,8 @@ def main():
         args.output.parent.mkdir(parents=True, exist_ok=True)
         # Roots are actual Rust output, not reconstructed from expected hashes.
         # A partial write cannot acquire a success receipt.
+        with depths_path.open("xb") as depths_file:
+            depths_file.write(depth_bytes)
         with roots_path.open("xb") as roots_file:
             roots_file.write(actual)
         # No acceptance receipt is created before every check succeeds.

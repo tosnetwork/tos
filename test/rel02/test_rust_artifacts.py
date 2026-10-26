@@ -28,12 +28,14 @@ def main():
     receipt_path = args.receipt
     receipt = json.loads(receipt_path.read_bytes())
     actual = receipt_path.with_suffix(".roots.tsv").read_bytes()
+    native_depths = receipt_path.with_suffix(".native-depths.json").read_bytes()
     validation = (manifest, hashlib.sha256(manifest_bytes).hexdigest(), receipt["topology_sha256"])
     compare.check_artifact(receipt_path, architecture, *validation)
     results = [dict(control="actual-artifact", result="accepted")]
     with tempfile.TemporaryDirectory() as temp:
         path = Path(temp) / "receipt.json"
         roots_path = path.with_suffix(".roots.tsv")
+        path.with_suffix(".native-depths.json").write_bytes(native_depths)
 
         def reject(name, metadata, data, architecture, reason):
             path.write_text(json.dumps(metadata))
@@ -80,34 +82,27 @@ def main():
             architecture,
             "missing/extra Rust output rows",
         )
-        # The chain pins Account and transaction roots. A same-width changed
-        # ShardAccount root must additionally fail the cross-output comparison.
+        # Both architecture artifacts must reject the same wrong terminal root,
+        # even after their Rust output digests are recomputed consistently.
         shard_lines = actual.decode().splitlines()
-        shard_row = shard_lines[0].split("\t")
+        shard_row = shard_lines[-1].split("\t")
         shard_row[8] = "0" * 64
-        shard_lines[0] = "\t".join(shard_row)
+        shard_lines[-1] = "\t".join(shard_row)
         changed_shard = ("\n".join(shard_lines) + "\n").encode()
         changed_receipt = dict(
             receipt, rust_output_sha256=hashlib.sha256(changed_shard).hexdigest()
         )
-        path.write_text(json.dumps(changed_receipt))
-        roots_path.write_bytes(changed_shard)
-        modified = compare.check_artifact(path, architecture, *validation)
-        original = compare.check_artifact(receipt_path, architecture, *validation)
-        try:
-            compare.compare_results(original, modified)
-        except ValueError as error:
-            assert "cross-architecture rust_output_sha256 differs" in str(error)
-            results.append(
-                dict(
-                    control="changed-ShardAccount-comparison", result="rejected", reason=str(error)
-                )
+        for arch in (architecture, other_architecture):
+            reject(
+                f"same-wrong-terminal-ShardAccount-{arch}",
+                dict(changed_receipt, architecture=arch),
+                changed_shard,
+                arch,
+                "ShardAccount oracle",
             )
-        else:
-            raise AssertionError("changed ShardAccount accepted by comparison")
     with args.output.open("x") as output:
         output.write(json.dumps(results, indent=2) + "\n")
-    print(f"PASS: real {architecture} roots accepted; seven artifact mutations rejected")
+    print(f"PASS: real {architecture} roots accepted; eight artifact mutations rejected")
 
 
 if __name__ == "__main__":

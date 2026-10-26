@@ -1,5 +1,6 @@
 """Failure controls for the authenticated-export orchestrator; no fake passing replay."""
 
+import importlib.util
 import json
 import os
 import signal
@@ -225,31 +226,63 @@ class RootArtifacts(unittest.TestCase):
                 "account_hash": "b" * 64,
             }
         ]
-        self.row = ["0", "1", "42", "EQUAL", "account=", "-", "a" * 64, "b" * 64, "c" * 64]
+        self.depths = [{"index": 0, "transaction_hash": "a" * 64, "account_depth": 2}]
+        self.row = [
+            "0",
+            "1",
+            "42",
+            "EQUAL",
+            "account=",
+            "-",
+            "a" * 64,
+            "b" * 64,
+            gate.expected_shard_root(self.expected[0], 2),
+        ]
 
     def encoded(self, rows):
         return ("\n".join("\t".join(row) for row in rows) + "\n").encode()
 
     def test_actual_roots_are_required_even_with_equal_labels(self):
-        gate.check_rust_roots(self.encoded([self.row]), self.expected)
+        gate.check_rust_roots(self.encoded([self.row]), self.expected, self.depths)
         for index in (6, 7):
             changed = self.row.copy()
             changed[index] = "d" * 64
             with self.assertRaisesRegex(ValueError, "differs from complete parity"):
-                gate.check_rust_roots(self.encoded([changed]), self.expected)
+                gate.check_rust_roots(self.encoded([changed]), self.expected, self.depths)
 
     def test_old_output_and_invalid_shard_root_are_rejected(self):
         with self.assertRaisesRegex(ValueError, "differs from complete parity"):
-            gate.check_rust_roots(self.encoded([self.row[:6]]), self.expected)
+            gate.check_rust_roots(self.encoded([self.row[:6]]), self.expected, self.depths)
         changed = self.row.copy()
         changed[8] = "-"
-        with self.assertRaisesRegex(ValueError, "invalid ShardAccount root"):
-            gate.check_rust_roots(self.encoded([changed]), self.expected)
+        with self.assertRaisesRegex(ValueError, "ShardAccount oracle"):
+            gate.check_rust_roots(self.encoded([changed]), self.expected, self.depths)
+
+    def test_absent_account_depth_zero_matches_independent_cell_encoder(self):
+        spec = importlib.util.spec_from_file_location(
+            "rel02_control_cells", Path(__file__).parents[1] / "auth-extensions/cells.py"
+        )
+        cells = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cells)
+        account = cells.Cell().uint(0, 1)
+        shard = cells.Cell().uint(int("a" * 64, 16), 256).uint(42, 64).ref(account)
+        original = dict(self.expected[0], account_hash=account.hash.hex())
+        self.assertEqual(account.depth, 0)
+        self.assertEqual(gate.expected_shard_root(original, 0), shard.hash.hex())
+        self.assertNotEqual(gate.expected_shard_root(original, 1), shard.hash.hex())
+
+    def test_native_depth_identity_and_bounds_are_checked(self):
+        for bad in (-1, 1025, True):
+            depths = [dict(self.depths[0], account_depth=bad)]
+            with self.assertRaisesRegex(ValueError, "invalid native Account depth"):
+                gate.check_native_depths(depths, self.expected)
+        with self.assertRaisesRegex(ValueError, "native depth identity mismatch"):
+            gate.check_native_depths([dict(self.depths[0], index=1)], self.expected)
 
     def test_missing_and_duplicate_output_are_rejected(self):
         for data in (b"", self.encoded([self.row, self.row])):
             with self.assertRaisesRegex(ValueError, "missing/extra"):
-                gate.check_rust_roots(data, self.expected)
+                gate.check_rust_roots(data, self.expected, self.depths)
 
 
 if __name__ == "__main__":

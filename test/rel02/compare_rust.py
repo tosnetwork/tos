@@ -11,7 +11,7 @@ import run_rust as gate
 def check_artifact(path, architecture, manifest, manifest_hash, topology_hash):
     receipt = json.loads(gate.bounded_read(path, gate.MAX_METADATA))
     required = {
-        "schema": 2,
+        "schema": 3,
         "architecture": architecture,
         "transactions": 576,
         "carried_edges": 474,
@@ -28,6 +28,7 @@ def check_artifact(path, architecture, manifest, manifest_hash, topology_hash):
         if receipt.get(field) != expected:
             raise ValueError(f"{architecture}: receipt {field} differs")
     for field in (
+        "native_depths_sha256",
         "dump_sha256",
         "native_output_sha256",
         "rust_output_sha256",
@@ -41,16 +42,25 @@ def check_artifact(path, architecture, manifest, manifest_hash, topology_hash):
             or any(c not in "0123456789abcdef" for c in value)
         ):
             raise ValueError(f"{architecture}: invalid {field}")
+    depth_bytes = gate.bounded_read(path.with_suffix(".native-depths.json"), gate.MAX_METADATA)
+    if gate.digest(depth_bytes) != receipt["native_depths_sha256"]:
+        raise ValueError(f"{architecture}: native depth digest differs")
+    depths = json.loads(depth_bytes)
     roots = gate.bounded_read(path.with_suffix(".roots.tsv"), gate.MAX_DIAGNOSTICS)
     if gate.digest(roots) != receipt["rust_output_sha256"]:
         raise ValueError(f"{architecture}: Rust output digest differs")
-    if len(gate.check_rust_roots(roots, manifest["expected"])) != 576:
+    if len(gate.check_rust_roots(roots, manifest["expected"], depths)) != 576:
         raise ValueError(f"{architecture}: incomplete Rust roots")
     return receipt, roots
 
 
 def compare_results(left, right):
-    for field in ("dump_sha256", "native_output_sha256", "rust_output_sha256"):
+    for field in (
+        "dump_sha256",
+        "native_output_sha256",
+        "native_depths_sha256",
+        "rust_output_sha256",
+    ):
         if left[0][field] != right[0][field]:
             raise ValueError(f"cross-architecture {field} differs")
     if left[1] != right[1]:
