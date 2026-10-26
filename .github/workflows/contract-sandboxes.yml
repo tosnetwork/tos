@@ -40,6 +40,8 @@ on:
       - "crosschain/token-bridge/tvm/**"
       - "scripts/replay-token-bridge-trace.py"
       - "test/auth-extensions/cells.py"
+      - "test/auth-extensions/native.py"
+      - "test/executor-parity/deploy_state.py"
       - "scripts/test_replay_token_bridge_trace.py"
       - "crosschain/token-bridge/tests/**"
       - "scripts/token-bridge-mutations.py"
@@ -100,6 +102,8 @@ on:
       - "crosschain/token-bridge/tvm/**"
       - "scripts/replay-token-bridge-trace.py"
       - "test/auth-extensions/cells.py"
+      - "test/auth-extensions/native.py"
+      - "test/executor-parity/deploy_state.py"
       - "scripts/test_replay_token_bridge_trace.py"
       - "crosschain/token-bridge/tests/**"
       - "scripts/token-bridge-mutations.py"
@@ -516,6 +520,14 @@ jobs:
           cargo build --manifest-path tosctl/src/Cargo.toml --locked -p tos_executor --example pq-tx-parity
           python3 test/executor-parity/precompiled_external.py \
             --driver tosctl/src/target/debug/examples/pq-tx-parity --output "$RUNNER_TEMP/precompiled-external"
+
+      - name: Deployment states agree with frozen native roots
+        env:
+          EMULATOR_PATH: ${{ github.workspace }}/build/emulator/libemulator.so
+        run: |
+          python3 test/executor-parity/deploy_state.py --output "$RUNNER_TEMP/deploy-state.json"
+          cmp "$RUNNER_TEMP/deploy-state.json" tosctl/src/executor/tests/fixtures/deploy-state.json
+          cargo test --manifest-path tosctl/src/Cargo.toml --locked -p tos_executor --lib tests_deploy_state
 
       # Each guard of the settlement protocol is removed in a copy of the
       # sources and the test that names it must fail for its stated reason.
