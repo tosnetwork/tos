@@ -190,6 +190,11 @@ class TreeTest(unittest.TestCase):
                 "workflow_dispatch": None,
                 "workflow_call": None,
             },
+            "build-tos-linux-node-binaries.yml": {
+                "push": {"tags": ["v*"]},
+                "workflow_dispatch": None,
+                "workflow_call": None,
+            },
             "build-tos-linux-x86-64-werror.yml": {
                 "push": {"branches": ["main"]},
                 "pull_request": {

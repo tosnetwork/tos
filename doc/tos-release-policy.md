@@ -348,8 +348,11 @@ built from, and only by one workflow per tag namespace:
 Each publisher refuses a tag outside its namespace. Releases published before
 these namespaces were introduced keep their names.
 
-Both release sets ship Linux binaries only, for x86-64 (`tos-x86_64-linux`)
-and arm64 (`tos-arm64-linux`), built by the two AppImage workflows. There are
+Both release sets ship Linux binaries only, for x86-64 and arm64. The tools
+come from the two AppImage workflows (artifacts `tos-x86_64-linux` and
+`tos-arm64-linux`); the `full` set adds the node binaries, built separately
+with the node recipe (artifacts `tos-node-x86_64-linux` and
+`tos-node-arm64-linux`, see [Node binaries](#node-binaries)). There are
 no macOS, Windows, Android or WebAssembly release artifacts.
 The binaries are built on Ubuntu 24.04 and need glibc 2.39 or newer. The
 node container image is published for the same two architectures, from a
@@ -365,6 +368,82 @@ enforces this: `RELEASE_WRITER_NOT_DESIGNATED` fails any other workflow that
 runs `gh release create`, `upload`, `edit`, `delete` or `delete-asset`, uses a
 release-writing action, or sends a write request to a releases API path, and
 `RELEASE_CLOBBER` fails `--clobber` anywhere.
+
+### Node binaries
+
+Validators, full nodes and DHT servers are installed from these assets of a
+`v<version>` release, one per architecture (`<arch>` is `x86_64` or `arm64`):
+
+| Asset | Binary |
+|---|---|
+| `validator-engine-linux-<arch>` | `validator-engine` |
+| `validator-engine-console-linux-<arch>` | `validator-engine-console` |
+| `lite-client-linux-<arch>` | `lite-client` |
+| `generate-random-id-linux-<arch>` | `generate-random-id` |
+| `tos-pq-consensus-key-linux-<arch>` | `tos-pq-consensus-key` |
+| `dht-server-linux-<arch>` | `dht-server` |
+| `node-build-info-linux-<arch>.txt` | the build record described below |
+| `tos-node-linux-<arch>.zip` | the workflow artifact `tos-node-<arch>-linux` itself |
+
+These names, `SHA256SUMS` and `release-provenance.json` are what operator
+tooling downloads; a change to any of them is a breaking change to the
+release surface.
+
+`tos-node-linux-<arch>.zip` is the anchor that binds the binaries to their
+build run. It is the artifact zip byte for byte, so its SHA-256 equals the
+`artifact_digest` that `release-provenance.json` records for the entry whose
+`artifact_name` is `tos-node-<arch>-linux` (with its `workflow`, `run_id`,
+`run_attempt` and `head_sha`). Every standalone node asset above, and the
+build record, is a byte copy of the zip's top-level member of the same plain
+name (`validator-engine`, ..., `dht-server`, `BUILD-INFO`). An installer
+checks the zip against that digest and each binary against its member, or
+against `SHA256SUMS`, which the same publisher job writes.
+`release-provenance.json` records digests per artifact zip only; it has no
+per-asset digest.
+
+The node binaries are plain ELF executables, not AppImages, built by
+`.github/workflows/build-tos-linux-node-binaries.yml` with
+`assembly/native/build-node-binaries.sh`. That script is the production node
+recipe, the same one the testnet hosts use when they build on themselves:
+
+- `CMAKE_BUILD_TYPE=Release`, clang-21 (`scripts/install-llvm-toolchain.sh 21`);
+- `TOS_USE_JEMALLOC=ON`: a validator's memory behaviour depends on jemalloc,
+  so a node binary built without it is not the tested product;
+- `TOS_ARCH` and RocksDB's `PORTABLE` both set to `x86-64-v2` on x86-64 and
+  `armv8-a` on arm64, never `-march=native`, so a binary does not stop with
+  `SIGILL` on an older CPU;
+- `SOURCE_DATE_EPOCH` set to the commit time of the tagged commit, so build
+  timestamps in third-party code do not vary between builds;
+- no compiler cache: every release build compiles from source.
+
+The script refuses to finish unless the recipe took effect: it reads the
+values back from `CMakeCache.txt`, requires `validator-engine` and
+`dht-server` to list `libjemalloc.so` as a dependency, runs
+`validator-engine -V` under `MALLOC_CONF=stats_print:true` and requires
+jemalloc's exit statistics (so jemalloc is the allocator the process
+actually ran with), and requires every binary with `-V` to report the tagged
+commit. `node-build-info-linux-<arch>.txt` records the commit,
+`SOURCE_DATE_EPOCH`, the compiler, the flags, the jemalloc library and
+package, the build OS, each binary's dynamic dependencies and SHA-256.
+`scripts/test_release_artifacts.py` fails if an asset above comes from any
+other build, or if the script loses a recipe flag or a check.
+
+The binaries link the C and C++ runtimes dynamically, and `validator-engine`
+and `dht-server` also link `libjemalloc.so.2`. Like
+the other release binaries they are built on Ubuntu 24.04 and need glibc
+2.39 or newer, plus `libjemalloc2` (and the other libraries listed as
+`needed` in the build record) installed on the host.
+
+The AppImages and `tos-linux-<arch>.zip` are unchanged: they remain the
+desktop and tool builds (`PORTABLE=1`, without jemalloc) and are not the
+supported way to install a node. Before this split, `lite-client-linux-<arch>`
+and `tos-pq-consensus-key-linux-<arch>` were AppImages; they are now the
+plain node-recipe binaries, and the AppImage versions remain inside the zip.
+
+Byte-identical output across hosts has been observed for this recipe on the
+testnet hosts. It has not been verified across GitHub-hosted runners, so the
+release makes no reproducibility claim; compare a host build's SHA-256 with
+the release's `SHA256SUMS` before relying on it.
 
 ### Cutting a release
 
