@@ -996,8 +996,8 @@ fn an_endpoint_specific_answer_failure_fails_over() {
         ("another block", Reply::raw(200, at_block(&valid, SEQNO - 1))),
         ("no block", Reply::raw(200, valid.replacen("\"block_id\":", "\"block\":", 1))),
         (
-            "exit 13 from another block",
-            Reply::raw(200, with_exit(&at_block(&valid, SEQNO + 1), 13)),
+            "out of gas from another block",
+            Reply::raw(200, with_exit(&at_block(&valid, SEQNO + 1), -14)),
         ),
     ] {
         runtime.block_on(async {
@@ -1015,8 +1015,8 @@ fn an_endpoint_specific_answer_failure_fails_over() {
 }
 
 /// A valid envelope at the checkpoint settles the read: a non-zero exit or a result
-/// the strict decoder refuses ends it without asking the next endpoint, and exit
-/// 13 of the list goes to stored state.
+/// the strict decoder refuses ends it without asking the next endpoint, and a list
+/// getter that ran out of gas (exit -14) goes to stored state.
 #[test]
 fn a_valid_envelope_at_the_checkpoint_settles_the_read() {
     let valid = list_answer(2, 0);
@@ -1050,9 +1050,9 @@ fn a_valid_envelope_at_the_checkpoint_settles_the_read() {
         });
     }
     runtime.block_on(async {
-        let exit13 = endpoint(Reply::raw(200, with_exit(&valid, 13))).await;
+        let out_of_gas = endpoint(Reply::raw(200, with_exit(&valid, -14))).await;
         let other = endpoint(Reply::raw(200, valid.clone())).await;
-        let nodes = [&exit13, &other];
+        let nodes = [&out_of_gas, &other];
         let list = listed(read_over(&nodes).await.expect("read from stored state"));
         assert_eq!(list.len(), 1);
         assert_eq!(other.requests_for("runGetMethodStd").len(), 0, "the getter was asked again");

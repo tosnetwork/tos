@@ -49,10 +49,31 @@ What it adds:
   A scenario may carry a whole program as a code BOC in an optional tenth column, and may
   expect `R<n>` (normal exit with `n` alone on the stack). Each mutation names the rows that
   must change, and may name Rust unit tests (by exact path) that must fail for what no row can
-  observe; those tests must pass before the first mutation and after restoring. The
+  observe; those tests must pass before the first mutation and after restoring. A mutation may
+  also name end-state rows (below), which must then differ from the C++ end state. The
   `child-*` rows run a child VM with RUNVM inside a parent that ends normally, so each observes
   what the child returned; their gas values were measured with the C++ VM. Regenerating draws fresh keys for the five `s4-*-random-key` rows; the other
   rows are deterministic, so keep the committed random-key rows unless they are what changes.
+- `vm_endstate_scenarios.py`, `vm-endstate.cpp`, `tosctl/src/vm/examples/vm-endstate.rs`,
+  `vm_endstate_compare.py`, `vm-endstate-expected.tsv`: how each VM ends a program. Beyond exit
+  code, gas and steps, both drivers print the committed state and the whole final stack, and the
+  Rust driver also prints the argument its error carries, which must equal the C++ stack top
+  (transactions report it as exit_arg). `KNOWN` and `KNOWN_STACK` in the generator list rows
+  that still differ (`KNOWN_STACK` rows only in stack and error argument); each must keep
+  differing, so a fix removes its rows. The C++ output is frozen.
+- `vm-opcode-table.cpp`, `vm_opcode_table.py`, `vm_prefix_scenarios.py`, `vm_ext_scenarios.py`,
+  `vm-ext-rules.md`: which opcodes may run. `test-vm-opcode-table` prints the C++ VM's finalized
+  codepage 0 (first opcode, assigned, prefix bits, version of each range);
+  `vm_opcode_table.py` generates the Rust table `engine/cp0_prefixes.rs` from it, and `--check`
+  fails unless the committed table matches. `vm_prefix_scenarios.py` writes end-state rows for
+  every range: truncated code, unassigned opcodes, opcodes above the global version, and the
+  variable-length families of `vm_ext_scenarios.py`, whose rules `vm-ext-rules.md` lists. Rows in
+  its `KNOWN` list still differ and must keep differing. These rows are not frozen: the C++ table
+  is the reference, so both drivers run them and must agree.
+- `vm_family_scenarios.py`: whole instruction families (every XCHG s(i),s(j), HASHEXT and BLS
+  opcode on stack set-ups that reach each of its checks, with gas budgets around them).
+  `vm_prefix_scenarios.py` appends the families listed in `COMPARED`; the others are written
+  with `vm_family_scenarios.py <out.tsv> <family> ...` and still differ.
 - Test signers in `tools/`: `build.sh <dir>` builds `slh_tool`, `mldsa_tool` and `lms_tool`
   (RFC 8554 Appendix A key generation from SEED and I, parallel).
 
@@ -77,6 +98,20 @@ cargo run -p tos_vm --example suite-parity -- ../../test/rescue-fee-gate/suite-s
                                                      # equal suite-expected.tsv
 python3 test/rescue-fee-gate/compare.py test/rescue-fee-gate/suite-scenarios.tsv \
   /path/to/cpp.tsv /path/to/rust.tsv test/rescue-fee-gate/suite-expected.tsv
+python3 test/rescue-fee-gate/vm_endstate_scenarios.py /tmp/endstate.tsv
+build/crypto/pq/test-vm-endstate /tmp/endstate.tsv > /tmp/endstate-cpp.tsv
+cargo run -p tos_vm --example vm-endstate -- /tmp/endstate.tsv > /tmp/endstate-rust.tsv   # (from tosctl/src)
+python3 test/rescue-fee-gate/vm_endstate_compare.py /tmp/endstate-cpp.tsv /tmp/endstate-rust.tsv \
+  --expected test/rescue-fee-gate/vm-endstate-expected.tsv \
+  --known "$(python3 test/rescue-fee-gate/vm_endstate_scenarios.py --known)" \
+  --known-stack "$(python3 test/rescue-fee-gate/vm_endstate_scenarios.py --known-stack)"
+build/crypto/pq/test-vm-opcode-table > /tmp/cp0.tsv
+python3 test/rescue-fee-gate/vm_opcode_table.py /tmp/cp0.tsv --check
+python3 test/rescue-fee-gate/vm_prefix_scenarios.py /tmp/cp0.tsv /tmp/prefix.tsv
+build/crypto/pq/test-vm-endstate /tmp/prefix.tsv > /tmp/prefix-cpp.tsv
+cargo run -p tos_vm --example vm-endstate -- /tmp/prefix.tsv > /tmp/prefix-rust.tsv   # (from tosctl/src)
+python3 test/rescue-fee-gate/vm_endstate_compare.py /tmp/prefix-cpp.tsv /tmp/prefix-rust.tsv \
+  --known "$(python3 test/rescue-fee-gate/vm_prefix_scenarios.py --known)"
 python3 test/rescue-fee-gate/version_scenarios.py /path/to/version-scenarios.tsv
 # Run both drivers on version-scenarios.tsv, then compare.py without a frozen-expected argument.
 # All four suites must reject versions 0-15 and accept valid inputs at versions 16-19.

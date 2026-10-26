@@ -549,19 +549,19 @@ impl Blockchain {
             .setup_checked(code, ctrls, stack, gas, libraries)
             .map_err(|e| SandboxError::ExecutionFailed(e.into()))?;
 
-        let block_version =
-            smc_info.config_params.get_global_version().map(|gv| gv.version).unwrap_or(0);
-        vm.set_block_version(block_version);
+        // The same version as this sandbox's transactions: the default configuration has no
+        // ConfigParam 8, and version 0 would refuse every instruction added since.
+        vm.set_block_version(self.config.block_version());
 
         let result = vm.execute();
-        let mut result_stack = mem::take(&mut vm.withdraw_stack().storage);
+        // The VM leaves its final stack as the C++ VM does; nothing is dropped from it.
+        let result_stack = mem::take(&mut vm.withdraw_stack().storage);
 
         let exit_code = match result {
             Ok(code) => code,
             Err(err) => {
-                result_stack.pop();
                 log::debug!(target: "sandbox", "get-method VM exception: {}", err);
-                tos_vm::error::tvm_exception_or_custom_code(&err)
+                tos_vm::error::tvm_exit_code(&err)
             }
         };
 

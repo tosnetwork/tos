@@ -243,7 +243,7 @@ fn the_tree_behaves_like_a_tree_before_any_count_is_believed() {
 fn a_dictionary_costs_exactly_two_cells_per_entry_minus_one() {
     let p = Probe::deploy();
     println!("\n n      cells   expected(2n-1)   bits");
-    // 256 exhausts the get-method gas allowance (exit 13); the formula is what is
+    // 256 exhausts the get-method gas allowance (exit -14); the formula is what is
     // under test, not how many entries one get-method can build.
     for n in [1i64, 2, 4, 8, 16, 32, 64, 128] {
         let (v, _) = p.call("dict_size", vec![n]);

@@ -16,7 +16,6 @@ use std::{fmt, mem};
 #[derive(Clone, Debug, Eq, PartialEq, Default)]
 pub enum ContinuationType {
     AgainLoopBody(SliceData),
-    TryCatch,
     #[default]
     Ordinary,
     PushInt(i32),
@@ -170,7 +169,6 @@ impl fmt::Display for ContinuationType {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let name = match self {
             ContinuationType::AgainLoopBody(_) => "again",
-            ContinuationType::TryCatch => "try-catch",
             ContinuationType::Ordinary => "ordinary",
             ContinuationType::PushInt(_) => "pushint",
             ContinuationType::Quit(_) => "quit",

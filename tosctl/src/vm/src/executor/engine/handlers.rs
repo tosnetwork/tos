@@ -37,7 +37,7 @@ use crate::{
     },
     stack::integer::behavior::{Quiet, Signaling},
 };
-use chain_block::{Result, Status};
+use chain_block::{fail, ExceptionCode, Result, Status};
 use std::{fmt, ops::Range};
 
 // ( - )
@@ -50,14 +50,21 @@ fn execute_setcp(engine: &mut Engine) -> Status {
         Instruction::new("SETCP").set_opts(InstructionOptions::Integer(-15..240)),
     )?;
     let code_page = engine.cmd.integer();
-    *engine.code_page_mut() = code_page;
-    Ok(())
+    set_code_page(engine, code_page)
 }
 
 fn execute_setcpx(engine: &mut Engine) -> Status {
     engine.load_instruction(Instruction::new("SETCPX"))?;
     fetch_stack(engine, 1)?;
-    let code_page = engine.cmd.var(0).as_integer_value(-1 << 15..=1 << (15 - 1))?;
+    let code_page = engine.cmd.var(0).as_integer_value(i16::MIN as isize..=i16::MAX as isize)?;
+    set_code_page(engine, code_page)
+}
+
+// Codepage 0 is the only one; selecting any other is an invalid opcode.
+fn set_code_page(engine: &mut Engine, code_page: isize) -> Status {
+    if code_page != 0 {
+        fail!(ExceptionCode::InvalidOpcode, "unsupported codepage {}", code_page);
+    }
     *engine.code_page_mut() = code_page;
     Ok(())
 }
@@ -880,9 +887,6 @@ impl Handlers {
             Handlers::new()
                 .set(0x00, execute_accept)
                 .set(0x01, execute_setgaslimit)
-                .set(0x02, execute_buygas)
-                .set(0x04, execute_tomitogas)
-                .set(0x05, execute_gastotomi)
                 .set(0x07, execute_gasconsumed)
                 .set(0x0F, execute_commit)
                 .set(0x10, execute_randu256)
@@ -944,42 +948,10 @@ impl Handlers {
                 .set(0x01, execute_hashsu)
                 .set(0x02, execute_sha256u)
                 .set(0x03, execute_sha256c)
-                .add_subset(
-                    0x04,
-                    Handlers::new()
-                        .set(0x00, execute_hashext_sha256)
-                        .set(0x01, execute_hashext_sha512)
-                        .set(0x02, execute_hashext_blake2b)
-                        .set(0x03, execute_hashext_keccak256)
-                        .set(0x04, execute_hashext_keccak512),
-                )
-                .add_subset(
-                    0x05,
-                    Handlers::new()
-                        .set(0x00, execute_hashext_sha256_rev)
-                        .set(0x01, execute_hashext_sha512_rev)
-                        .set(0x02, execute_hashext_blake2b_rev)
-                        .set(0x03, execute_hashext_keccak256_rev)
-                        .set(0x04, execute_hashext_keccak512_rev),
-                )
-                .add_subset(
-                    0x06,
-                    Handlers::new()
-                        .set(0x00, execute_hashext_sha256_add)
-                        .set(0x01, execute_hashext_sha512_add)
-                        .set(0x02, execute_hashext_blake2b_add)
-                        .set(0x03, execute_hashext_keccak256_add)
-                        .set(0x04, execute_hashext_keccak512_add),
-                )
-                .add_subset(
-                    0x07,
-                    Handlers::new()
-                        .set(0x00, execute_hashext_sha256_add_rev)
-                        .set(0x01, execute_hashext_sha512_add_rev)
-                        .set(0x02, execute_hashext_blake2b_add_rev)
-                        .set(0x03, execute_hashext_keccak256_add_rev)
-                        .set(0x04, execute_hashext_keccak512_add_rev),
-                )
+                .set(0x04, execute_hashext)
+                .set(0x05, execute_hashext_rev)
+                .set(0x06, execute_hashext_add)
+                .set(0x07, execute_hashext_add_rev)
                 .set(0x10, execute_chksignu)
                 .set(0x11, execute_chksigns)
                 .set(0x12, execute_ec_recover)
@@ -1050,16 +1022,20 @@ impl Handlers {
             Handlers::new()
                 .set(0x00, execute_dump_stack)
                 .set_range(0x01..0x0F, execute_dump_stack_top)
+                .set(0x0F, execute_debug_nop)
                 .set(0x10, execute_dump_hex)
                 .set(0x11, execute_print_hex)
                 .set(0x12, execute_dump_bin)
                 .set(0x13, execute_print_bin)
                 .set(0x14, execute_dump_str)
                 .set(0x15, execute_print_str)
+                .set_range(0x16..0x1E, execute_debug_nop)
                 .set(0x1E, execute_debug_off)
                 .set(0x1F, execute_debug_on)
                 .set_range(0x20..0x2F, execute_dump_var)
+                .set(0x2F, execute_debug_nop)
                 .set_range(0x30..0x3F, execute_print_var)
+                .set_range(0x3F..0xF0, execute_debug_nop)
                 .set_range(0xF0..0xFF, execute_dump_string)
                 .set(0xFF, execute_dump_string),
         )

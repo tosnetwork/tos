@@ -2,7 +2,7 @@
   "baseline_commit": "8bf39647d6cde0b00fc8c49e8ecb354be85d4897",
   "baseline_workflow_sha256": "2d92152340753190d08df50d0230037edb7dd7adbff879a1448fdecb90724ad2",
   "steps": [
-    {"name": "Build native Release tools and both Rust drivers","run_sha256": "1cbc2caeb5df5cf23fd9ad7c089be2079ee57444ab578f5627b69f3529a9de63","suites": ["signer-fee","signer-mnemonic","signer-vault","fee-promotion","fee-lifecycle","fee-successor","signer-custody","vm-ingress","release-wallet","mutations"],"x86_only": false,"requires": []},
+    {"name": "Build native Release tools and both Rust drivers","run_sha256": "4ce2091fdd89d0fb8862c7a997bee53e350a390d88229f09795c9067ac6436a4","suites": ["signer-fee","signer-mnemonic","signer-vault","fee-promotion","fee-lifecycle","fee-successor","signer-custody","vm-ingress","release-wallet","mutations"],"x86_only": false,"requires": []},
     {"name": "Generated admission configuration loading","run_sha256": "40d096fdbb3e1a9afc1c6ebc8136e0f15bdfe374eb84d0bea87b5cf7665c84dc","suites": ["signer-fee","signer-mnemonic","signer-vault","fee-promotion","fee-lifecycle","fee-successor","signer-custody","vm-ingress","release-wallet","mutations"],"x86_only": false,"requires": []},
     {"name": "Whole transactions using the generated admission configuration","run_sha256": "7e98685865a92d914de85457b4d5601764face1e12cf79da1aaced3fa0939bbc","suites": ["release-wallet"],"x86_only": false,"requires": ["Generated admission configuration loading"]},
     {"name": "Reproducible code and interface review bundle","run_sha256": "0291d24e2ed8ceded864943c2600ffe5104de4caeee58022244858d97bb4c6b0","suites": ["release-wallet"],"x86_only": false,"requires": ["Generated admission configuration loading"]},
@@ -52,7 +52,7 @@
     {"name": "Full fee verification deletion control","run_sha256": "6c2969a90433164fd8c774f3942f73377311f1b53fa8204d3eea3475463c3607","suites": ["mutations"],"x86_only": true,"requires": ["Full R2 fee transaction parity at diagnostic credit"]},
     {"name": "Falcon version-16 boundary in both VMs","run_sha256": "ec68a83bcdc8a6d904816f7f6ae5cbf8586314a5f9ab6882cb05ee2869302027","suites": ["vm-ingress","mutations"],"x86_only": false,"requires": []},
     {"name": "Reject early and late Falcon activation mutations","run_sha256": "690fbb2626fd2fb435e64a545449d92d9d7d8305c2890c2c92fa8b583b6127db","suites": ["mutations"],"x86_only": true,"requires": ["Falcon version-16 boundary in both VMs"]},
-    {"name": "Verify context, opcode, complete transactions and legacy pricing","run_sha256": "72f6cf08759691661be45bb63f31a17d4342a9b075175001788229f07fc727e2","suites": ["vm-ingress","mutations"],"x86_only": false,"requires": []},
-    {"name": "Require meaningful mutation failures and restore binaries","run_sha256": "2d181778fa2a9cc78dd8e2d16b201cae396768fc46948b3bae49e5e209f2df06","suites": ["mutations"],"x86_only": true,"requires": ["Verify context, opcode, complete transactions and legacy pricing"]}
+    {"name": "Verify context, opcode, complete transactions and legacy pricing","run_sha256": "b03f6cbeb9b4e0a01d55f1a5aab2075c1c8324b38517cd94e4cb5ab89b1fef80","suites": ["vm-ingress","mutations"],"x86_only": false,"requires": []},
+    {"name": "Require meaningful mutation failures and restore binaries","run_sha256": "800594e7aa77c3098e5884dc5ca20bffed5d691058ef453fe2e09b46f56cd5e0","suites": ["mutations"],"x86_only": true,"requires": ["Verify context, opcode, complete transactions and legacy pricing"]}
   ]
 }

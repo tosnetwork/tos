@@ -588,3 +588,16 @@ mod lms_fee_hash_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod inline_computed_cell_tests {
+    // The cell is computed by a VM run at the newest version, so code may use any instruction
+    // the network enables (GASCONSUMED needs version 4).
+    #[test]
+    fn computed_cell_code_runs_at_the_newest_version() {
+        let source =
+            ".FRAGMENT cell, {\nGASCONSUMED\nDROP\nNEWC\nENDC\n}\n.INLINE-COMPUTED-CELL cell, 0\n";
+        let code = crate::compile_code(source).expect("computes the cell");
+        assert_eq!(code.remaining_bits(), 0);
+    }
+}

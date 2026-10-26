@@ -18,31 +18,32 @@ def main():
     p.add_argument("--out", type=Path, required=True)
     a = p.parse_args()
     source = ROOT / "tosctl/src/vm/src/executor/pq.rs"
-    original = source.read_text()
-    # Both suites activate at v16. Anchor mutations to the ML-DSA guard's
-    # metering comment so the shared floor cannot mutate the Falcon guard too.
-    mldsa_guard = (
-        "    // older versions charge the exception too before detecting exhaustion.\n"
-        "    if engine.block_version() < 16 {"
-    )
+    # The version gate is the opcodes' codepage 0 entry, and an invalid opcode is charged by
+    # the engine as the C++ VM's consume_gas does: checked at once only from version 4.
+    table = ROOT / "tosctl/src/vm/src/executor/engine/cp0_prefixes.rs"
+    core = ROOT / "tosctl/src/vm/src/executor/engine/core.rs"
+    consume_gas = "        if self.block_version >= 4 {\n            self.try_use_gas(gas)"
     mutants = [
         (
             "verification",
+            source,
             "status == invalid_signature {\n        false",
             "status == invalid_signature {\n        true",
         ),
-        ("version", mldsa_guard, mldsa_guard.replace("engine.block_version() < 16", "false")),
+        ("version", table, "    (0xf93100, 24, 16),", "    (0xf93100, 24, 0),"),
         (
             "signature-charge",
+            source,
             "MAX_MESSAGE_BYTES)?;\n    engine.register_chksgn_call()?;\n    if key.len()",
             "MAX_MESSAGE_BYTES)?;\n    if key.len()",
         ),
-        ("byte-gas", "const BYTE_GAS: i64 = 0;", "const BYTE_GAS: i64 = 1;"),
-        ("canonical-chunk", "(refs != 0 && size != CHUNK_BYTES)", "(false)"),
+        ("byte-gas", source, "const BYTE_GAS: i64 = 0;", "const BYTE_GAS: i64 = 1;"),
+        ("canonical-chunk", source, "(refs != 0 && size != CHUNK_BYTES)", "(false)"),
         (
             "preactivation-gas",
-            mldsa_guard + "\n        if engine.block_version() >= 4 {",
-            mldsa_guard + "\n        if false {",
+            core,
+            consume_gas,
+            consume_gas.replace("self.block_version >= 4", "false"),
         ),
     ]
     build = [
@@ -68,11 +69,12 @@ def main():
 
     execute()
     check(a.scenarios, a.cpp, transcript)
-    for name, before, after in mutants:
+    for name, path, before, after in mutants:
+        original = path.read_text()
         if original.count(before) != 1:
             raise ValueError("guard must occur once: " + name)
         try:
-            source.write_text(original.replace(before, after))
+            path.write_text(original.replace(before, after))
             execute()  # Must compile and finish; a crash/error is not a kill.
             try:
                 check(a.scenarios, a.cpp, transcript)
@@ -81,7 +83,7 @@ def main():
             else:
                 raise RuntimeError("surviving mutation: " + name)
         finally:
-            source.write_text(original)
+            path.write_text(original)
         execute()
         check(a.scenarios, a.cpp, transcript)
     a.out.write_text(json.dumps(reports, indent=2, sort_keys=True) + "\n")

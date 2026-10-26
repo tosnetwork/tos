@@ -34,7 +34,7 @@ use std::{
     sync::{Arc, LazyLock},
 };
 use tos_vm::{
-    error::tvm_exception_full,
+    error::{tvm_exception_full, tvm_exit_code},
     executor::{gas::gas_state::Gas, BehaviorModifiers, Engine},
     smart_contract_info::{PrevBlocksInfo, SmartContractInfo},
     stack::{savelist::SaveList, Stack, StackItem},
@@ -463,28 +463,23 @@ pub trait TransactionExecutor {
             Ok(exit_code) => vm_phase.exit_code = exit_code,
             Err(err) => {
                 log::debug!(target: "executor", "VM terminated with exception: {}", err);
-                let (exception, value) = tvm_exception_full(err)?;
-                vm_phase.exit_code = if let Some(code) = exception.custom_code() {
-                    code
-                } else {
-                    match exception.exception_code() {
-                        Some(ExceptionCode::OutOfGas) => !(ExceptionCode::OutOfGas as i32), // correct error code according cpp code
-                        Some(error_code) => error_code as i32,
-                        None => ExceptionCode::UnknownError as i32,
-                    }
-                };
-                vm_phase.exit_arg = match value.as_integer_value(i32::MIN..=i32::MAX) {
-                    Err(_) | Ok(0) => None,
-                    Ok(exit_arg) => Some(exit_arg),
-                };
+                vm_phase.exit_code = tvm_exit_code(&err);
+                // The argument of the error is the final top of the stack.
+                let (_, value) = tvm_exception_full(err)?;
                 raw_exit_arg = Some(value);
             }
         };
         vm_phase.success = vm.is_committed_state();
-        // As in the native engine, a compute phase that committed reports no exit argument,
-        // however the VM ended.
-        if vm_phase.success {
-            vm_phase.exit_arg = None;
+        // As in the native engine, a compute phase that did not commit reports the final top of
+        // the stack when it is a nonzero 32-bit integer, however the VM ended.
+        vm_phase.exit_arg = None;
+        if !vm_phase.success {
+            if let Ok(top) = vm.stack().get(0) {
+                vm_phase.exit_arg = match top.as_integer_value(i32::MIN..=i32::MAX) {
+                    Err(_) | Ok(0) => None,
+                    Ok(exit_arg) => Some(exit_arg),
+                };
+            }
         }
         log::debug!(target: "executor", "VM terminated with exit code {}", vm_phase.exit_code);
 

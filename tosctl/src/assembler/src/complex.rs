@@ -998,10 +998,11 @@ fn compile_inline_computed_cell(
         par[1].parse::<u64>().map_err(|_| ParameterError::NotSupported.parameter("capabilities"))?
     };
 
-    // initialize and run vm
+    // initialize and run vm at the newest version, as Fift's runvm does
     let mut vm = tos_vm::executor::Engine::with_capabilities(capabilities)
         .setup(code, None, None, None, vec![])
         .expect("Failed to load cell data");
+    vm.set_block_version(chain_block::SUPPORTED_VERSION);
     match vm.execute() {
         Err(_e) => return Err(OperationError::CellComputeError),
         Ok(code) => {

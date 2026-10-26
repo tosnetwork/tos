@@ -101,6 +101,18 @@ bool OpcodeTable::insert_bool(const OpcodeInstr* instr) {
   return true;
 }
 
+std::vector<std::pair<unsigned, OpcodePrefix>> OpcodeTable::prefixes() const {
+  std::vector<std::pair<unsigned, OpcodePrefix>> res;
+  if (!final) {
+    return res;
+  }
+  res.reserve(instruction_list.size());
+  for (const auto& x : instruction_list) {
+    res.emplace_back(x.first, x.second->prefix());
+  }
+  return res;
+}
+
 const OpcodeInstr* OpcodeTable::lookup_instr(unsigned opcode, unsigned bits) const {
   std::size_t i = 0, j = instruction_list.size();
   assert(j);

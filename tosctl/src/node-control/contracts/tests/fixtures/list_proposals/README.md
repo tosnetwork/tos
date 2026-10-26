@@ -51,7 +51,7 @@ preflight, and only flat results leave it
 | JSON depth | 19,724 levels | 3 levels per 160-byte voter cons cell, the cheapest nesting a decodable answer can buy, plus 64 |
 | Workers | 2, 30 s admission | taken before any response of the read is buffered (the checkpoint included), released when the worker ends |
 | Worker stack | 128 MiB release, 256 MiB debug | measured need of the whole pipeline: 5.9 MiB release, 34.6 MiB debug |
-| Getter gas | 300,000 on the node | `list_proposals` returns exit 13 at about 130 proposals |
+| Getter gas | 300,000 on the node | `list_proposals` runs out of gas (exit -14) at about 130 proposals |
 
 Stack needs come from `measure_worker_stack` and timings from
 `measure_refusal_times` in `tests/proposal_read_workers.rs` (run with
@@ -74,7 +74,7 @@ linear scan of previous keys it took 5.3 s (6.1 s).
 These are recorded, not gated: the tests assert each refusal's reason and run
 under a 300 s watchdog for hangs.
 
-Capacity: the getter serves at most about 130 small proposals before exit 13;
+Capacity: the getter serves at most about 130 small proposals before it runs out of gas;
 the stored account is far more compact (a minimal proposal adds about 110 bytes
 to it). No state bound exists in the contract, so a dictionary too large for
 both representations is an explicit error. Paginated or incremental state reads

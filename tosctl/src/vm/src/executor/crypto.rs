@@ -13,7 +13,7 @@ use crate::{
     executor::{
         engine::{storage::fetch_stack, Engine},
         gas::gas_state::Gas,
-        types::Instruction,
+        types::{Instruction, InstructionOptions},
     },
     stack::{
         integer::{
@@ -26,7 +26,7 @@ use crate::{
 };
 use chain_block::{
     blake2b_digest, fail, keccak256_digest, keccak512_digest, sha256_digest, sha512_digest,
-    Bitstring, Ed25519PublicKey, ExceptionCode, GasConsumer, Status, UInt256,
+    Bitstring, Ed25519PublicKey, ExceptionCode, GasConsumer, Result, Status, UInt256,
     ED25519_PUBLIC_KEY_LENGTH, ED25519_SIGNATURE_LENGTH, P256_PUBLIC_KEY_LENGTH,
     P256_SIGNATURE_LENGTH,
 };
@@ -504,6 +504,17 @@ enum Hasher {
 }
 
 impl Hasher {
+    fn from_id(id: usize) -> Result<Self> {
+        match id {
+            0 => Ok(Self::Sha256),
+            1 => Ok(Self::Sha512),
+            2 => Ok(Self::Blake2b),
+            3 => Ok(Self::Keccak256),
+            4 => Ok(Self::Keccak512),
+            _ => fail!(ExceptionCode::RangeCheckError, "invalid hash id {}", id),
+        }
+    }
+
     fn hash(&self, data: &[u8]) -> Vec<u8> {
         match self {
             Self::Blake2b => blake2b_digest(data).to_vec(),
@@ -525,26 +536,34 @@ impl Hasher {
     }
 }
 
-fn calc_hash_ext(
-    engine: &mut Engine,
-    hasher: Hasher,
-    name: &'static str,
-    add: bool,
-    rev: bool,
-) -> Status {
-    engine.load_instruction(Instruction::new(name))?;
-    fetch_stack(engine, 1)?;
-    let mut max = engine.stack().depth();
-    if add {
-        max = max.saturating_sub(1);
+// HASHEXT{A}{R} id: the id is the instruction's last byte, or for 255 an integer popped first.
+// As in the C++ VM the count is popped next, and only then is the id checked, so an unknown id is
+// a range check error of the running instruction, not an invalid opcode.
+fn calc_hash_ext(engine: &mut Engine, name: &'static str, add: bool, rev: bool) -> Status {
+    engine.load_instruction(Instruction::new(name).set_opts(InstructionOptions::Length(0..256)))?;
+    let mut id = engine.cmd.length();
+    let mut base = 1;
+    if id == 255 {
+        if engine.block_version() >= 9 && engine.stack().depth() < 2 {
+            fail!(ExceptionCode::StackUnderflow)
+        }
+        fetch_stack(engine, 1)?;
+        id = engine.cmd.var(0).as_integer_value(0..=254)?;
+        base = 2;
     }
-    let num = engine.cmd.var(0).as_integer_value(0..=max)?;
+    fetch_stack(engine, 1)?;
+    // The entries below the count, less the builder an appending form needs; a negative bound is
+    // a range check error, not a smaller stack.
+    let below = engine.stack().depth() as isize;
+    let max = if add && engine.block_version() >= 9 { below - 1 } else { below };
+    let num = engine.cmd.var(base - 1).as_integer_value(0..=max)? as usize;
+    let hasher = Hasher::from_id(id)?;
     fetch_stack(engine, num)?;
     let mut total_bits = 0;
     let mut gas_consumed = 0;
     let mut buffer = Bitstring::default();
     for i in 0..num {
-        let index = if rev { i + 1 } else { num - i };
+        let index = base + if rev { i } else { num - 1 - i };
         if let Ok(slice) = engine.cmd.var(index).as_slice() {
             total_bits += slice.remaining_bits();
             buffer.append_raw(&slice.get_bytestring(0), slice.remaining_bits())?;
@@ -581,82 +600,18 @@ fn calc_hash_ext(
     Ok(())
 }
 
-pub(super) fn execute_hashext_sha256(engine: &mut Engine) -> Status {
-    calc_hash_ext(engine, Hasher::Sha256, "HASHEXT_SHA256", false, false)
+pub(super) fn execute_hashext(engine: &mut Engine) -> Status {
+    calc_hash_ext(engine, "HASHEXT", false, false)
 }
 
-pub(super) fn execute_hashext_sha512(engine: &mut Engine) -> Status {
-    calc_hash_ext(engine, Hasher::Sha512, "HASHEXT_SHA512", false, false)
+pub(super) fn execute_hashext_rev(engine: &mut Engine) -> Status {
+    calc_hash_ext(engine, "HASHEXTR", false, true)
 }
 
-pub(super) fn execute_hashext_blake2b(engine: &mut Engine) -> Status {
-    calc_hash_ext(engine, Hasher::Blake2b, "HASHEXT_BLAKE2B", false, false)
+pub(super) fn execute_hashext_add(engine: &mut Engine) -> Status {
+    calc_hash_ext(engine, "HASHEXTA", true, false)
 }
 
-pub(super) fn execute_hashext_keccak256(engine: &mut Engine) -> Status {
-    calc_hash_ext(engine, Hasher::Keccak256, "HASHEXT_KECCAK256", false, false)
-}
-
-pub(super) fn execute_hashext_keccak512(engine: &mut Engine) -> Status {
-    calc_hash_ext(engine, Hasher::Keccak512, "HASHEXT_KECCAK512", false, false)
-}
-
-pub(super) fn execute_hashext_sha256_add(engine: &mut Engine) -> Status {
-    calc_hash_ext(engine, Hasher::Sha256, "HASHEXTA_SHA256", true, false)
-}
-
-pub(super) fn execute_hashext_sha512_add(engine: &mut Engine) -> Status {
-    calc_hash_ext(engine, Hasher::Sha512, "HASHEXTA_SHA512", true, false)
-}
-
-pub(super) fn execute_hashext_blake2b_add(engine: &mut Engine) -> Status {
-    calc_hash_ext(engine, Hasher::Blake2b, "HASHEXTA_BLAKE2B", true, false)
-}
-
-pub(super) fn execute_hashext_keccak256_add(engine: &mut Engine) -> Status {
-    calc_hash_ext(engine, Hasher::Keccak256, "HASHEXTA_KECCAK256", true, false)
-}
-
-pub(super) fn execute_hashext_keccak512_add(engine: &mut Engine) -> Status {
-    calc_hash_ext(engine, Hasher::Keccak512, "HASHEXTA_KECCAK512", true, false)
-}
-
-pub(super) fn execute_hashext_sha256_rev(engine: &mut Engine) -> Status {
-    calc_hash_ext(engine, Hasher::Sha256, "HASHEXTR_SHA256", false, true)
-}
-
-pub(super) fn execute_hashext_sha512_rev(engine: &mut Engine) -> Status {
-    calc_hash_ext(engine, Hasher::Sha512, "HASHEXTR_SHA512", false, true)
-}
-
-pub(super) fn execute_hashext_blake2b_rev(engine: &mut Engine) -> Status {
-    calc_hash_ext(engine, Hasher::Blake2b, "HASHEXTR_BLAKE2B", false, true)
-}
-
-pub(super) fn execute_hashext_keccak256_rev(engine: &mut Engine) -> Status {
-    calc_hash_ext(engine, Hasher::Keccak256, "HASHEXTR_KECCAK256", false, true)
-}
-
-pub(super) fn execute_hashext_keccak512_rev(engine: &mut Engine) -> Status {
-    calc_hash_ext(engine, Hasher::Keccak512, "HASHEXTR_KECCAK512", false, true)
-}
-
-pub(super) fn execute_hashext_sha256_add_rev(engine: &mut Engine) -> Status {
-    calc_hash_ext(engine, Hasher::Sha256, "HASHEXTAR_SHA256", true, true)
-}
-
-pub(super) fn execute_hashext_sha512_add_rev(engine: &mut Engine) -> Status {
-    calc_hash_ext(engine, Hasher::Sha512, "HASHEXTAR_SHA512", true, true)
-}
-
-pub(super) fn execute_hashext_blake2b_add_rev(engine: &mut Engine) -> Status {
-    calc_hash_ext(engine, Hasher::Blake2b, "HASHEXTAR_BLAKE2B", true, true)
-}
-
-pub(super) fn execute_hashext_keccak256_add_rev(engine: &mut Engine) -> Status {
-    calc_hash_ext(engine, Hasher::Keccak256, "HASHEXTAR_KECCAK256", true, true)
-}
-
-pub(super) fn execute_hashext_keccak512_add_rev(engine: &mut Engine) -> Status {
-    calc_hash_ext(engine, Hasher::Keccak512, "HASHEXTAR_KECCAK512", true, true)
+pub(super) fn execute_hashext_add_rev(engine: &mut Engine) -> Status {
+    calc_hash_ext(engine, "HASHEXTAR", true, true)
 }

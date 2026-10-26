@@ -414,6 +414,11 @@ jobs:
       - name: Sandbox source-root discovery
         run: cargo test --manifest-path tosctl/src/Cargo.toml --locked -p tos_sandbox --lib paths::tests
 
+      # The exit code and final stack a sandbox get-method reports when the VM ends with an
+      # error, as the C++ VM leaves them.
+      - name: Sandbox get-method endings
+        run: cargo test --manifest-path tosctl/src/Cargo.toml --locked -p tos_sandbox --lib tests::tests::test_get_method_reports_how_the_vm_ended -- --exact
+
       - name: Service Actor E2E evidence controls
         run: python3 -m unittest discover -s test/pq-native -p 'test_e13_service*py'
 

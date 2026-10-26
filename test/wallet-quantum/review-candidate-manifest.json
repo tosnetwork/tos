@@ -320,16 +320,16 @@
       "sha256": "a8aa654107f705f907981951f3f6db62e9fbf1fc1b5864264144a78cb0fb91cc"
     },
     "repository/tosctl/src/vm/src/executor/engine/handlers.rs": {
-      "bytes": 49500,
-      "sha256": "d1c230a43c7043d6e688dbe505d0d9d259f2fbd43d651537451060e8381b253e"
+      "bytes": 48350,
+      "sha256": "e0b252bd86255b0bc7d1d6e02e6af1bf73620a9c8c6edd59a0e18ef7d1d779b3"
     },
     "repository/tosctl/src/vm/src/executor/lms_fee.rs": {
       "bytes": 5582,
       "sha256": "ff6ae2ffc152a193695c7f152be4a1063f958bc5e16a6f43be0262694f609f66"
     },
     "repository/tosctl/src/vm/src/executor/pq.rs": {
-      "bytes": 17854,
-      "sha256": "c0b5ce2e466f1ec03c0c3dabe39b8ee5f8d9e367b14ad4c61d92798301041078"
+      "bytes": 16471,
+      "sha256": "c1a6a2ba318fc9ed106f0c0f208ce1c64b8eb02c060a8a2f25e17a47982bf6ab"
     },
     "repository/tosctl/src/wallet-pq-signer/src/kdf.rs": {
       "bytes": 9772,
