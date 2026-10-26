@@ -5,25 +5,64 @@ Set FUNC_PATH, FIFT_PATH, EMULATOR_PATH, MLDSA_TOOL and SLH_TOOL. Test keys are
 public deterministic fixtures. Raw traces and signer output stay in --output.
 """
 import argparse
+from functools import partial
 import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT / "test/auth-extensions"), str(ROOT / "test/mldsa-auth")]
 import native  # noqa: E402
-from cells import Cell, from_boc, make_dict, read_dict  # noqa: E402
+from cells import Cell, LibraryReference, from_boc, make_dict, read_dict  # noqa: E402
 from protocol import chain  # noqa: E402
 from test_auth_policy import policy  # noqa: E402
-from fee_tx_parity import transcript  # noqa: E402
+import fee_tx_parity  # noqa: E402
+
+# The generic adapter refuses exotic fixtures by default. Explicitly admit
+# level-zero library references only for these malformed-input controls.
+from_boc = partial(from_boc, allow_library=True)
 
 NETWORK = int.from_bytes(hashlib.sha256(b"PUBLIC TEST QSP NETWORK").digest(), "big")
 TAGS = {0: 0x45584543, 1: 0x434F4E46, 3: 0x4C4F434B, 4: 0x4D494752}
 MAX64 = (1 << 64) - 1
 MAX32 = (1 << 32) - 1
+
+
+def provenance(rust_driver=None):
+    """Bind the complete FunC include closure, harness and used executables."""
+    sources = {}
+
+    def visit(path):
+        path = path.resolve()
+        name = str(path.relative_to(ROOT))
+        if name in sources:
+            return
+        data = path.read_bytes()
+        sources[name] = hashlib.sha256(data).hexdigest()
+        if path.suffix == ".fc":
+            for include in re.findall(r'#include\s+"([^"]+)"', data.decode()):
+                visit(path.parent / include)
+
+    for name in ("crypto/smartcont/stdlib.fc", "crypto/smartcont/wallet-quantum-self-pay.fc",
+                 "crypto/smartcont/wallet-quantum-possession-probe.fc",
+                 "test/wallet-quantum/test_self_pay.py", "test/wallet-quantum/test_self_pay_recovery.py",
+                 "test/wallet-quantum/test_auth_policy.py", "test/wallet-quantum/fee_tx_parity.py",
+                 "test/auth-extensions/native.py", "test/auth-extensions/cells.py",
+                 "test/mldsa-auth/protocol.py", "tosctl/src/executor/real_boc/default_config.boc"):
+        visit(ROOT / name)
+    executables = {name: Path(os.environ[name]).resolve() for name in
+                   ("FUNC_PATH", "FIFT_PATH", "EMULATOR_PATH", "MLDSA_TOOL", "SLH_TOOL")}
+    if rust_driver:
+        executables["rust_driver"] = rust_driver.resolve()
+    return dict(source_commit=run("git", "-C", ROOT, "rev-parse", "HEAD").strip(),
+                source_status=run("git", "-C", ROOT, "status", "--porcelain").strip(),
+                sources=sources, executables={name: dict(path=str(path), sha256=hashlib.sha256(path.read_bytes()).hexdigest())
+                                             for name, path in executables.items()})
 
 
 def run(*args):
@@ -139,7 +178,8 @@ class Harness:
         account = self.account if account is None else account
         emu = native.Emulator.from_config(configuration, vm_log_verbosity=3 if trace else 0)
         try:
-            result = emu.send(account, message)
+            with patch.object(native, "from_boc", from_boc):
+                result = emu.send(account, message)
             lt = emu.lt
         finally:
             emu.close()
@@ -147,7 +187,8 @@ class Harness:
             (self.output / (name + ".json")).write_text(json.dumps(result, indent=2) + "\n")
             if configuration.hash == config().hash and (result["success"] or result.get("external_not_accepted")):
                 self.scenarios.append("\t".join([name, str(native.NOW), str(lt), account.refs[0].boc().hex(), message.boc().hex(), "-"]))
-                self.transcripts.append(transcript(name, result))
+                with patch.object(fee_tx_parity, "from_boc", from_boc):
+                    self.transcripts.append(fee_tx_parity.transcript(name, result))
         return result
 
     def send(self, name, message, account=None, expected=0, accepted=True, configuration=None, trace=False):
@@ -168,13 +209,14 @@ class Harness:
             print(json.dumps(row), flush=True)
         return result
 
-    def boundary(self, label, message):
+    def boundary(self, label, message, account=None):
+        account = self.account if account is None else account
         low, high = 1, 20000
         while low < high:
             mid = (low + high) // 2
             e = native.Emulator.from_config(config(mid), vm_log_verbosity=0)
             try:
-                result = e.send(self.account, message)
+                result = e.send(account, message)
             finally:
                 e.close()
             if result["success"]:
@@ -183,8 +225,8 @@ class Harness:
             else:
                 assert result["vm_exit_code"] == -14, result
                 low = mid + 1
-        self.send(label + "-below", message, configuration=config(low - 1), expected=-14, accepted=False)
-        result = self.send(label + "-exact", message, configuration=config(low), trace=True)
+        self.send(label + "-below", message, account=account, configuration=config(low - 1), expected=-14, accepted=False)
+        result = self.send(label + "-exact", message, account=account, configuration=config(low), trace=True)
         return dict(minimum_credit=low, total_gas=result["details"]["gas"])
 
 
@@ -227,8 +269,49 @@ def main():
         ("expired", {"deadline": native.NOW}, 1805),
         ("too-far", {"deadline": native.NOW + 3601}, 1805),
         ("primary-lock", {"kind": 3}, 1812),
+        ("unknown-role", {"role": 3}, 1812),
+        ("unknown-kind", {"role": 2, "kind": 2, "payload": Cell()}, 1812),
     ]:
         h.send(name, h.message(**kwargs), expected=error, accepted=False)
+
+    envelope = h.message().refs[0]
+    request, signature = envelope.refs
+    for label, body, error in [
+        ("trailing-envelope-bit", Cell("1", envelope.refs), 9),
+        ("trailing-envelope-ref", Cell("", [*envelope.refs, Cell()]), 9),
+        ("trailing-request-bit", Cell().ref(Cell(request.bits + "1", request.refs)).ref(signature), 9),
+        ("trailing-request-ref", Cell().ref(Cell(request.bits, [*request.refs, Cell()])).ref(signature), 9),
+        ("exotic-request", Cell().ref(LibraryReference(1)).ref(signature), 1820),
+        ("exotic-signature", Cell().ref(request).ref(LibraryReference(1)), 9),
+    ]:
+        h.send(label, native.external(h.address, body), expected=error, accepted=False)
+    for role in (1, 2):
+        envelope = h.message(role=role).refs[0]
+        sig, raw = envelope.refs[1], b""
+        while True:
+            raw += int(sig.bits, 2).to_bytes(len(sig.bits) // 8, "big")
+            if not sig.refs:
+                break
+            sig = sig.refs[0]
+        for delta in (-1, 1):
+            changed = raw[:-1] if delta == -1 else raw + b"\x00"
+            msg = native.external(h.address, Cell().ref(envelope.refs[0]).ref(chain(changed)))
+            h.send(f"signature-length-{role}-{delta}", msg, expected=9, accepted=False)
+    for label, authority, error in [
+        ("exotic-installed-authority", LibraryReference(1), 1820),
+        ("trailing-installed-authority", Cell(h.authority.bits + "1", h.authority.refs), 9),
+    ]:
+        h.send(label, h.message(), account=native.active_account(h.address, h.code, state(authority)),
+               expected=error, accepted=False)
+    for label, payload, error in [
+        ("exotic-payload", LibraryReference(1), 1820),
+        ("trailing-payload", Cell().uint(TAGS[0], 32).uint(1, 1).ref(Cell()), 9),
+    ]:
+        msg = h.message(payload=payload)
+        result = h.send(label, msg, expected=error)
+        after = from_boc(result["shard_account"])
+        assert unpack(native.account_data(after)[0])["primary"] == 1
+        h.send(label + "-replay", msg, account=after, expected=1804, accepted=False)
 
     for label, policy_cell, error in [
         ("missing-policy", None, 1820),
@@ -319,6 +402,20 @@ def main():
     for kind in (1, 3, 4):
         payload = None if kind != 4 else Cell().uint(TAGS[4], 32).ref(successor)
         boundaries[f"control-{kind}"] = h.boundary(f"control-{kind}", h.message(role=2, kind=kind, payload=payload))
+    for role in (1, 2):
+        account = h.account_for(seqno=MAX32 - 1, epoch=MAX64, primary=MAX64 - 1, rescue=MAX64 - 1)
+        msg = h.message(role=role, epoch=MAX64, nonce=MAX64 - 1,
+                        payload=Cell().uint(TAGS[0], 32).ref(actions(h.address, count=255)))
+        boundaries[f"maximum-state-actions-{role}"] = h.boundary(f"maximum-state-actions-{role}", msg, account)
+    for label, successor, error in [
+        ("short-key", h.make_authority(primary=chain(h.pkfile.read_bytes()[:-1])), 63),
+        ("long-key", h.make_authority(primary=chain(h.pkfile.read_bytes() + b"\x00")), 63),
+        ("exotic-successor", LibraryReference(1), 1820),
+        ("trailing-successor", Cell(h.authority.bits + "1", h.authority.refs), 9),
+    ]:
+        result = h.send(label, h.message(role=2, kind=4, payload=Cell().uint(TAGS[4], 32).ref(successor)), expected=error)
+        saved = unpack(native.account_data(from_boc(result["shard_account"]))[0])
+        assert saved["authority"] == h.authority.hash.hex() and saved["epoch"] == 1
     result = h.send("lock-without-policy", h.message(role=2, kind=3), configuration=config(policy_cell=None))
     assert unpack(native.account_data(from_boc(result["shard_account"]))[0])["retired"] == 2
 
@@ -401,6 +498,7 @@ def main():
                   code_hash=h.code.hash.hex(), boundaries=boundaries, cases=h.rows,
                   balance_sweep=balance_rows, mutations=mutations, parity_cases=len(h.scenarios),
                   rust_parity="passed" if args.rust_driver else "not run",
+                  provenance=provenance(args.rust_driver),
                   scope="Local transaction fixtures; no mobile or live-chain acceptance")
     (args.output / "report.json").write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps(dict(cases=len(h.rows), boundaries=boundaries)))

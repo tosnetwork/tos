@@ -11,7 +11,7 @@ import os
 from pathlib import Path
 import subprocess
 
-from test_self_pay import Harness, Cell, ROOT, NETWORK, TAGS, chain, config, from_boc, native, run, unpack, uninitialized
+from test_self_pay import Harness, Cell, ROOT, NETWORK, TAGS, chain, config, from_boc, native, provenance, run, unpack, uninitialized
 from fee_tx_parity import transcript
 
 
@@ -97,6 +97,8 @@ def main():
         ("different-wallet", identity(target=(0, 99)), 1808),
         ("different-challenge", identity(random=challenge ^ 1), 1808),
         ("expired-proof", identity(expires=native.NOW), 1805),
+        ("excessive-deadline", identity(expires=native.NOW + 3601), 1805),
+        ("zero-challenge", identity(random=0), 1814),
         ("different-authority", identity(authority=new.make_authority(policy_value=1)), 1808),
     ]:
         changed_data = Cell().uint(1, 8).uint(0, 1).ref(changed)
@@ -104,6 +106,21 @@ def main():
         result = send(label, account, native.internal(old.address, address, body), expected=error)
         assert native.account_data(from_boc(result["shard_account"]))[0].hash == changed_data.hash
         assert not native.outgoing(from_boc(result["transaction"]))
+    for label, changed in [("trailing-body-bit", Cell("1", body.refs)),
+                           ("trailing-body-ref", Cell("", [*body.refs, Cell()]))]:
+        result = send(label, native.active_account(address, probe, data),
+                      native.internal(old.address, address, changed), expected=9)
+        assert native.account_data(from_boc(result["shard_account"]))[0].hash == data.hash
+    source = (ROOT / "crypto/smartcont/wallet-quantum-possession-probe.fc").read_text()
+    source = source.replace('"wallet-quantum-self-pay-common.fc"',
+                            '"' + os.path.relpath(ROOT / "crypto/smartcont/wallet-quantum-self-pay-common.fc", out) + '"')
+    changed_path = out / "other-profile.fc"
+    changed_path.write_text(source + "\nint other_profile() method_id { return 1; }\n")
+    changed_code = native.compile_contract(str(changed_path), out / "other-profile.boc")
+    assert changed_code.hash != probe.hash
+    result = send("different-code-profile", native.active_account(address, changed_code, data),
+                  native.internal(old.address, address, body), expected=1808)
+    assert native.account_data(from_boc(result["shard_account"]))[0].hash == data.hash
     for role, signature in [(1, primary_sig.read_bytes()), (2, rescue_sig.read_bytes())]:
         bad = bytes([signature[0] ^ 1]) + signature[1:]
         forged = (Cell().ref(chain(bad if role == 1 else primary_sig.read_bytes()))
@@ -147,6 +164,7 @@ def main():
         (out / "rust.log").write_text(r.stderr)
         assert r.stdout.splitlines() == expected_rows, "native/Rust recovery mismatch"
     report = dict(cases=rows, wallet_code_hash=old.code.hash.hex(), probe_code_hash=probe.hash.hex(),
+                  provenance=provenance(args.rust_driver),
                   rust_parity="passed" if args.rust_driver else "not run",
                   scope="Contract recovery; no mobile cold-backup, UI or live-chain acceptance")
     (out / "report.json").write_text(json.dumps(report, indent=2) + "\n")
