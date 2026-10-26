@@ -428,11 +428,16 @@ package, the build OS, each binary's dynamic dependencies and SHA-256.
 `scripts/test_release_artifacts.py` fails if an asset above comes from any
 other build, or if the script loses a recipe flag or a check.
 
-The binaries link the C and C++ runtimes dynamically, and `validator-engine`
-and `dht-server` also link `libjemalloc.so.2`. Like
-the other release binaries they are built on Ubuntu 24.04 and need glibc
-2.39 or newer, plus `libjemalloc2` (and the other libraries listed as
-`needed` in the build record) installed on the host.
+The binaries are dynamically linked. Like the other release binaries they
+are built on Ubuntu 24.04 and need glibc 2.39 or newer. Beyond the C and C++
+runtimes, the build links what the build host has installed, so the
+`needed` lines of the build record are the authority. A build with the
+workflow's package set links `libjemalloc.so.2` into `validator-engine` and
+`dht-server`, `libgsl.so.27` and `libblas.so.3` into `validator-engine`,
+`libreadline.so.8` into `validator-engine-console` and `lite-client`, and on
+arm64 `libatomic.so.1` as well. On Ubuntu 24.04 the host therefore needs
+`libjemalloc2`, `libgsl27`, `libblas3`, `libreadline8t64` and, on arm64,
+`libatomic1`.
 
 The AppImages and `tos-linux-<arch>.zip` are unchanged: they remain the
 desktop and tool builds (`PORTABLE=1`, without jemalloc) and are not the
