@@ -129,9 +129,10 @@ the local, read-only capture from the archive packages of a full node synced
 from genesis, and of a second full node for masterchain 248,301–262,749; no
 host was contacted and no live database was opened.
 `files` records each block's source ID and SHA-256. One native multi-root BOC,
-`state-parts.boc`, packs the original supplemental cells, so the corpus has 367
-inputs. Its file entry records SHA-256 and source block IDs; `supplement_roots`
-records each of its 1525 original roots with hashes and provenance:
+`state-parts.boc`, packs the original supplemental cells. Together with the
+366 replay blocks and two complete-account source blocks, the corpus has 369
+input files. The `state-parts.boc` entry records SHA-256 and source block IDs;
+`supplement_roots` records each of its 1525 original roots with hashes and provenance:
 
 - 1522 `original_state_update` roots: the whole state-update cell of an archived
   block (1518 masterchain blocks 3–259310 and basechain 105524, 105530, 150944
