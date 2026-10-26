@@ -274,3 +274,30 @@ for name, slot, replacement in [('malformed-state-update', 1, Cell()),
     encoded, digest, _, _ = serialize(malformed)
     assert call(first, data=encoded, digest=digest, lt=int(manifest['transactions'][-1]['lt']))[0] != 0, name
     print('WALLET_TRANSACTION_CASE', name, 'PASS')
+
+# Opaque means an exotic leaf is not loaded as executable code or an ordinary
+# cell, even when it is the directly referenced message body.
+from cells import LibraryReference  # noqa: E402
+encoded, digest, _, _ = serialize(with_body(LibraryReference(123)))
+assert call(first, data=encoded, digest=digest, lt=int(manifest['transactions'][-1]['lt']))[0] == 0, 'direct-opaque-body'
+print('WALLET_TRANSACTION_CASE direct-opaque-body PASS')
+
+# Referenced typed fields must be structurally validated while Any contents
+# remain opaque. These all have the correct independently computed root hash.
+refs = list(ordinary.refs)
+refs.insert(1, Cell())
+bad_currency = Cell(ordinary.bits[:-1] + '1', refs)
+leaf = ordinary.refs[0].refs[1]
+bad_leaf = Cell(leaf.bits + '1', leaf.refs)
+bad_messages = Cell(ordinary.refs[0].bits, [ordinary.refs[0].refs[0], bad_leaf])
+bad_dictionary = Cell(ordinary.bits, [bad_messages] + ordinary.refs[1:])
+incoming = ordinary.refs[0].refs[0]
+bad_init = Cell(incoming.bits[:-2] + '111', [Cell()] + incoming.refs)
+bad_init_messages = Cell(ordinary.refs[0].bits, [bad_init] + ordinary.refs[0].refs[1:])
+bad_init_transaction = Cell(ordinary.bits, [bad_init_messages] + ordinary.refs[1:])
+for name, malformed in [('malformed-extra-currency', bad_currency),
+                        ('trailing-dictionary-leaf', bad_dictionary),
+                        ('malformed-referenced-state-init', bad_init_transaction)]:
+    encoded, digest, _, _ = serialize(malformed)
+    assert call(first, data=encoded, digest=digest, lt=int(manifest['transactions'][-1]['lt']))[0] != 0, name
+    print('WALLET_TRANSACTION_CASE', name, 'PASS')

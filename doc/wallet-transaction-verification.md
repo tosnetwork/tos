@@ -53,7 +53,8 @@ timers, descriptors, threads, files or retained input/output buffers.
 | Borrowed BOC | 1 MiB, checked before native allocation; empty/oversized inputs refused |
 | Preflight links | 16,384 entries, each four reference indices and one count; header checked before allocation |
 | Preflight depths | 16,384 integers; acyclic forward references and depth <= 1,023 checked before deserialization |
-| Native cells/index | At most 16,384 cells from at most 1 MiB of serialized bytes; native fixed cell/ref/hash metadata bounds apply in addition |
+| Native cells/index | At most 16,384 cells from at most 1 MiB of serialized bytes; each DataCell storage <= sizeof(DataCell) + 4*sizeof(LevelInfo) + 128 bytes; native BOC index arrays are proportional to the same bounded cell count |
+| Typed layout traversal | At most 65,536 referenced-schema visits, including shared subgraphs; exhausted budget refuses the layout |
 | Output dictionary traversal | At most 256 messages; count checked before traversal, traversal stops if actual count exceeds the declaration; every consecutive index must exist |
 | Rendered JSON | Fixed fields, at most 256 fixed-shape message summaries; addresses <= 76 characters, hashes 64, currency strings <= 37, logical times <= 20; bodies never rendered. Result additionally capped at 1 MiB |
 | Borrowed output clearing | At most 1 MiB, checked before clearing |
@@ -61,6 +62,8 @@ timers, descriptors, threads, files or retained input/output buffers.
 The API does not control how many threads a caller creates. Mobile integrations
 must retain their bounded proof/history admission permits. The bounds above
 apply independently to each admitted synchronous call, without global storage.
+Object/allocator overhead is additional; these allocation bounds are not an
+exact process RSS claim.
 This change makes no performance claim for validator production hardware.
 
 ## Reproduction and scope
@@ -77,7 +80,9 @@ The control runner requires a clean tracked build source, verifies the baseline,
 removes one guard at a time, requires a failure at its named runtime assertion,
 and restores/rebuilds the original bytes in `finally`. Run it in an isolated
 checkout without concurrent builds or processes using its shared library.
-It covers hash/account/time binding and the byte/cell/depth/message ceilings.
+It covers hash/account/time binding and the byte/cell/depth/message ceilings, plus full typed-layout validation.
+The handwritten transaction schema validates typed StateInit, state updates,
+descriptions and dictionary leaves while keeping code/data/Any bodies opaque.
 The chain workflow builds this ABI and runs both the regression and controls.
 
 The three small frozen transactions in `test/pq-native/data/wallet-transactions`
@@ -92,4 +97,5 @@ protected-custody signing or end-to-end mobile payment acceptance.
 Synthetic cases cover exact 1 MiB bytes, 16,384 cells, 1,023 depth, 256 messages
 and one beyond each, unsigned-64 logical time, full 120-bit fees/message values,
 matching-hash malformed layouts, dictionary holes/count mismatch, failure
-clearing, and concurrent independent calls.
+clearing, direct opaque body references, malformed referenced typed fields,
+and concurrent independent calls.

@@ -26,6 +26,8 @@ patterns = [('wallet-transaction-hash', engine,
              ' || tx.lt != logical_time', '', 'wrong-lt'),
             ('wallet-transaction-cells', engine,
              ' || header.cell_count > kMaxWalletTransactionCells', '', 'cell-count-16385'),
+            ('wallet-transaction-layout', engine,
+             '!block::tlb::t_Transaction.validate_ref(65536, root)', 'false', 'malformed-state-update'),
             ('wallet-transaction-messages', engine,
              'tx.outmsg_cnt > kMaxWalletTransactionMessages', 'false', 'message-count-257')]
 

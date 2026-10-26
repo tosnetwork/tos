@@ -247,7 +247,9 @@ td::Result<std::string> verify_wallet_transaction(td::Slice account_hash, td::ui
   // first, including state updates, nonordinary descriptions and dictionary
   // leaves. Any message body remains opaque. The independent operation budget
   // also bounds repeated visits through shared subgraphs.
-  if (!block::gen::t_Transaction.validate_ref(65536, root)) {
+  // The handwritten schema uses RefAnything for a message body: structural
+  // fields are validated, while an exotic body is retained without loading it.
+  if (!block::tlb::t_Transaction.validate_ref(65536, root)) {
     return td::Status::Error("wallet transaction layout");
   }
   block::gen::Transaction::Record tx;
