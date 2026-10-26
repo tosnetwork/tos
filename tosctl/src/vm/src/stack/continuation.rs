@@ -55,6 +55,20 @@ impl ContEdge {
 
 static EMPTY_ORDINARY: ContinuationData = ContinuationData::new_empty();
 
+/// A stack item in a continuation's Debug output: a continuation is named by its kind only, so
+/// formatting a deep chain through saved registers or captured stacks does not recurse.
+struct Shallow<'a>(&'a StackItem);
+
+impl fmt::Debug for Shallow<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self.0 {
+            StackItem::Continuation(cont) => write!(f, "Continuation(<{}>)", cont.type_of),
+            StackItem::Tuple(items) => write!(f, "Tuple(len {})", items.len()),
+            item => write!(f, "{:?}", item),
+        }
+    }
+}
+
 impl fmt::Debug for ContEdge {
     // Shallow: names the kind only, so formatting a long chain does not recurse through it.
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -118,7 +132,7 @@ impl ContinuationType {
     }
 
     /// The same kind and scalar fields; the edges are compared separately.
-    fn same_shape(&self, other: &Self) -> bool {
+    pub(crate) fn same_shape(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::Ordinary, Self::Ordinary)
             | (Self::Envelope(_), Self::Envelope(_))
@@ -134,7 +148,7 @@ impl ContinuationType {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct ContinuationData {
     code: SliceData,
     pub nargs: isize,
@@ -144,27 +158,28 @@ pub struct ContinuationData {
 }
 
 impl PartialEq for ContinuationData {
-    // Structural, with an explicit work list over the continuation edges, so comparing two long
-    // chains does not recurse through them.
+    // Structural, with an explicit work list over saved registers, captured stacks and the
+    // continuations of the kind (stack/mod.rs), so comparing long chains does not recurse.
     fn eq(&self, other: &Self) -> bool {
-        let mut work = vec![(self, other)];
-        while let Some((x, y)) = work.pop() {
-            if std::ptr::eq(x, y) {
-                continue;
-            }
-            if x.code != y.code
-                || x.nargs != y.nargs
-                || x.savelist != y.savelist
-                || x.stack != y.stack
-                || !x.type_of.same_shape(&y.type_of)
-            {
-                return false;
-            }
-            for (a, b) in x.type_of.edges().into_iter().zip(y.type_of.edges()) {
-                work.push((a.get(), b.get()));
-            }
-        }
-        true
+        crate::stack::continuations_equal(self, other)
+    }
+}
+
+impl fmt::Debug for ContinuationData {
+    // Shallow: nested continuations are named by their kind only.
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let saved: Vec<(usize, Shallow)> = SaveList::REGS
+            .iter()
+            .filter_map(|&i| self.savelist.get(i).map(|item| (i, Shallow(item))))
+            .collect();
+        let stack: Vec<Shallow> = self.stack.storage.iter().map(Shallow).collect();
+        f.debug_struct("ContinuationData")
+            .field("code", &self.code)
+            .field("nargs", &self.nargs)
+            .field("savelist", &saved)
+            .field("stack", &stack)
+            .field("type_of", &self.type_of)
+            .finish()
     }
 }
 
@@ -187,6 +202,18 @@ impl ContinuationData {
             stack: Stack::new(),
             type_of: self.type_of.clone(),
         }
+    }
+
+    /// The fields compared without following any nested item: code, nargs, kind, savelist
+    /// slots in use, stack depth.
+    pub(crate) fn shallow_eq(&self, other: &Self) -> bool {
+        self.code == other.code
+            && self.nargs == other.nargs
+            && self.stack.depth() == other.stack.depth()
+            && self.type_of.same_shape(&other.type_of)
+            && SaveList::REGS
+                .iter()
+                .all(|&i| self.savelist.get(i).is_some() == other.savelist.get(i).is_some())
     }
 
     pub fn code(&self) -> &SliceData {

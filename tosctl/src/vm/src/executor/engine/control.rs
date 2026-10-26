@@ -819,4 +819,56 @@ mod tests {
     fn engine_with_little_gas() -> Engine {
         engine(1_000)
     }
+
+    // Each continuation saves the previous one as c0, as nested SETCONTCTR c0 builds it.
+    fn saved_c0_chain(depth: usize, end: i32) -> ContinuationData {
+        let mut cont = quit(end);
+        for _ in 0..depth {
+            let mut next = ContinuationData::new_empty();
+            next.savelist.put_opt(0, StackItem::continuation(cont));
+            cont = next;
+        }
+        cont
+    }
+
+    // Each continuation captures the previous one on its stack, as nested SETCONTARGS builds it.
+    fn captured_chain(depth: usize, end: i32) -> ContinuationData {
+        let mut cont = quit(end);
+        for _ in 0..depth {
+            let mut next = ContinuationData::new_empty();
+            next.stack.push(StackItem::continuation(cont));
+            next.nargs = 0;
+            cont = next;
+        }
+        cont
+    }
+
+    fn nested_tuples(depth: usize, end: i32) -> StackItem {
+        let mut item = StackItem::int(end);
+        for _ in 0..depth {
+            item = StackItem::tuple(vec![item]);
+        }
+        item
+    }
+
+    // Chains through saved registers and captured stacks, and nested tuples, are compared,
+    // formatted and released without recursion.
+    #[test]
+    fn deep_saved_and_captured_chains_compare_and_format_without_recursion() {
+        for build in [saved_c0_chain, captured_chain] {
+            let a = StackItem::continuation(build(DEPTH, 0));
+            let b = StackItem::continuation(build(DEPTH, 0));
+            let c = StackItem::continuation(build(DEPTH, 1));
+            assert!(a == b);
+            assert!(a != c);
+            assert!(Stack::eq_item(&a, &b));
+            assert!(format!("{:?}", a).len() < 1_000);
+            assert!(format!("{}", a).len() < 1_000);
+            drop((a, b, c));
+        }
+        let a = nested_tuples(DEPTH, 0);
+        assert!(a == nested_tuples(DEPTH, 0));
+        assert!(a != nested_tuples(DEPTH, 1));
+        drop(a);
+    }
 }
