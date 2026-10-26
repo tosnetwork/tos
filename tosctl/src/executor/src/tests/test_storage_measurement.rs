@@ -116,10 +116,22 @@ fn deep_merkle_proofs_cannot_wrap_past_the_size_guard() {
 
 #[test]
 fn live_storage_cache_matches_native_after_duplicate_code_data_roots() {
-    use chain_block::{read_single_root_boc, HashUpdate, ShardAccount};
-    let fixture: serde_json::Value =
+    let fixture =
         serde_json::from_str(include_str!("../../tests/fixtures/storage-cache-carry.json"))
             .unwrap();
+    assert_live_storage_cache(fixture);
+}
+
+#[test]
+fn live_storage_cache_matches_native_after_oversize_rollback_and_successors() {
+    let fixture =
+        serde_json::from_str(include_str!("../../tests/fixtures/storage-rollback-carry.json"))
+            .unwrap();
+    assert_live_storage_cache(fixture);
+}
+
+fn assert_live_storage_cache(fixture: serde_json::Value) {
+    use chain_block::{read_single_root_boc, HashUpdate, ShardAccount};
     fn cell(value: &serde_json::Value) -> Cell {
         read_single_root_boc(hex::decode(value.as_str().unwrap()).unwrap()).unwrap()
     }
@@ -156,6 +168,10 @@ fn live_storage_cache_matches_native_after_duplicate_code_data_roots() {
                     assert_eq!(vm.gas_used.as_u64(), row["gas"].as_u64().unwrap())
                 }
                 _ => panic!("the authored contract must execute"),
+            }
+            if let Some(code) = row["action_code"].as_i64() {
+                let description = transaction.read_description().unwrap();
+                assert_eq!(description.action_phase_ref().unwrap().result_code, code as i32);
             }
             transaction.set_prev_trans_lt(shard.last_trans_lt());
             transaction.set_prev_trans_hash(shard.last_trans_hash().clone());

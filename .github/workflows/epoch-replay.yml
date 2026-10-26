@@ -99,6 +99,8 @@ jobs:
           cargo test --manifest-path tosctl/src/Cargo.toml --locked --release -p chain_block --lib transaction_storage
           python3 test/executor-parity/storage_cache_carry.py --output result/storage-cache-carry.json
           cmp result/storage-cache-carry.json tosctl/src/executor/tests/fixtures/storage-cache-carry.json
+          python3 test/executor-parity/storage_rollback_carry.py --output result/storage-rollback-carry.json
+          cmp result/storage-rollback-carry.json tosctl/src/executor/tests/fixtures/storage-rollback-carry.json
           cargo test --manifest-path tosctl/src/Cargo.toml --locked --release -p tos_executor --lib tests_storage_measurement
       - name: Export authenticated contexts and carry Rust account state
         run: |
