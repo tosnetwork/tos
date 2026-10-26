@@ -190,6 +190,23 @@ class TreeTest(unittest.TestCase):
                 "workflow_dispatch": None,
                 "workflow_call": None,
             },
+            "build-tos-linux-node-binaries.yml": {
+                "push": {"tags": ["v*"]},
+                "pull_request": {
+                    "branches": ["main"],
+                    "types": ["opened", "reopened", "synchronize", "ready_for_review"],
+                    "paths": [
+                        ".github/workflows/build-tos-linux-node-binaries.yml",
+                        "assembly/native/build-node-binaries.sh",
+                        "scripts/release-artifacts.json",
+                        "scripts/install-llvm-toolchain.sh",
+                        "scripts/keys/apt-llvm-org.asc",
+                        "CMake/Findjemalloc.cmake",
+                    ],
+                },
+                "workflow_dispatch": None,
+                "workflow_call": None,
+            },
             "build-tos-linux-x86-64-werror.yml": {
                 "push": {"branches": ["main"]},
                 "pull_request": {

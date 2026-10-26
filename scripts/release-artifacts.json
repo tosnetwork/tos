@@ -5,6 +5,14 @@
       "workflow": "build-tos-linux-arm64-appimage.yml"
     },
     {
+      "artifact": "tos-node-arm64-linux",
+      "workflow": "build-tos-linux-node-binaries.yml"
+    },
+    {
+      "artifact": "tos-node-x86_64-linux",
+      "workflow": "build-tos-linux-node-binaries.yml"
+    },
+    {
       "artifact": "tos-x86_64-linux",
       "workflow": "build-tos-linux-x86-64-appimage.yml"
     }
@@ -31,11 +39,6 @@
           "artifact": "tos-x86_64-linux",
           "path": "tol",
           "name": "tol-linux-x86_64"
-        },
-        {
-          "artifact": "tos-x86_64-linux",
-          "path": "lite-client",
-          "name": "lite-client-linux-x86_64"
         },
         {
           "artifact": "tos-x86_64-linux",
@@ -79,11 +82,6 @@
         },
         {
           "artifact": "tos-x86_64-linux",
-          "path": "tos-pq-consensus-key",
-          "name": "tos-pq-consensus-key-linux-x86_64"
-        },
-        {
-          "artifact": "tos-x86_64-linux",
           "path": "tos-pq-key",
           "name": "tos-pq-key-linux-x86_64"
         },
@@ -91,6 +89,46 @@
           "artifact": "tos-x86_64-linux",
           "path": "tos-pq-vote",
           "name": "tos-pq-vote-linux-x86_64"
+        },
+        {
+          "artifact": "tos-node-x86_64-linux",
+          "zip": true,
+          "name": "tos-node-linux-x86_64.zip"
+        },
+        {
+          "artifact": "tos-node-x86_64-linux",
+          "path": "validator-engine",
+          "name": "validator-engine-linux-x86_64"
+        },
+        {
+          "artifact": "tos-node-x86_64-linux",
+          "path": "validator-engine-console",
+          "name": "validator-engine-console-linux-x86_64"
+        },
+        {
+          "artifact": "tos-node-x86_64-linux",
+          "path": "lite-client",
+          "name": "lite-client-linux-x86_64"
+        },
+        {
+          "artifact": "tos-node-x86_64-linux",
+          "path": "generate-random-id",
+          "name": "generate-random-id-linux-x86_64"
+        },
+        {
+          "artifact": "tos-node-x86_64-linux",
+          "path": "tos-pq-consensus-key",
+          "name": "tos-pq-consensus-key-linux-x86_64"
+        },
+        {
+          "artifact": "tos-node-x86_64-linux",
+          "path": "dht-server",
+          "name": "dht-server-linux-x86_64"
+        },
+        {
+          "artifact": "tos-node-x86_64-linux",
+          "path": "BUILD-INFO",
+          "name": "node-build-info-linux-x86_64.txt"
         },
         {
           "artifact": "tos-arm64-linux",
@@ -111,11 +149,6 @@
           "artifact": "tos-arm64-linux",
           "path": "tol",
           "name": "tol-linux-arm64"
-        },
-        {
-          "artifact": "tos-arm64-linux",
-          "path": "lite-client",
-          "name": "lite-client-linux-arm64"
         },
         {
           "artifact": "tos-arm64-linux",
@@ -159,11 +192,6 @@
         },
         {
           "artifact": "tos-arm64-linux",
-          "path": "tos-pq-consensus-key",
-          "name": "tos-pq-consensus-key-linux-arm64"
-        },
-        {
-          "artifact": "tos-arm64-linux",
           "path": "tos-pq-key",
           "name": "tos-pq-key-linux-arm64"
         },
@@ -171,6 +199,46 @@
           "artifact": "tos-arm64-linux",
           "path": "tos-pq-vote",
           "name": "tos-pq-vote-linux-arm64"
+        },
+        {
+          "artifact": "tos-node-arm64-linux",
+          "zip": true,
+          "name": "tos-node-linux-arm64.zip"
+        },
+        {
+          "artifact": "tos-node-arm64-linux",
+          "path": "validator-engine",
+          "name": "validator-engine-linux-arm64"
+        },
+        {
+          "artifact": "tos-node-arm64-linux",
+          "path": "validator-engine-console",
+          "name": "validator-engine-console-linux-arm64"
+        },
+        {
+          "artifact": "tos-node-arm64-linux",
+          "path": "lite-client",
+          "name": "lite-client-linux-arm64"
+        },
+        {
+          "artifact": "tos-node-arm64-linux",
+          "path": "generate-random-id",
+          "name": "generate-random-id-linux-arm64"
+        },
+        {
+          "artifact": "tos-node-arm64-linux",
+          "path": "tos-pq-consensus-key",
+          "name": "tos-pq-consensus-key-linux-arm64"
+        },
+        {
+          "artifact": "tos-node-arm64-linux",
+          "path": "dht-server",
+          "name": "dht-server-linux-arm64"
+        },
+        {
+          "artifact": "tos-node-arm64-linux",
+          "path": "BUILD-INFO",
+          "name": "node-build-info-linux-arm64.txt"
         }
       ],
       "bundles": [

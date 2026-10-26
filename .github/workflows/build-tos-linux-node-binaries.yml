@@ -1,0 +1,77 @@
+name: Ubuntu TOS build (node binaries)
+
+# The node binaries a release publishes, built with the production node recipe
+# (assembly/native/build-node-binaries.sh): Release, clang-21, jemalloc, a fixed
+# CPU level and SOURCE_DATE_EPOCH set to the commit time. The AppImage workflows
+# keep building the desktop tools; operators install validators from these.
+on:
+  # Release packaging: a version tag builds the binaries the release workflow
+  # collects (scripts/release-artifacts.json); dispatch builds them on demand.
+  push:
+    tags: ['v*']
+  # A change to the recipe or to what the release takes from this build runs
+  # both legs before it merges. A pull-request run only uploads workflow
+  # artifacts with a read-only token; the release collects push and dispatch
+  # runs of the tag commit only (scripts/release-artifacts.py).
+  pull_request:
+    branches: [main]
+    types: [opened, reopened, synchronize, ready_for_review]
+    paths:
+      - '.github/workflows/build-tos-linux-node-binaries.yml'
+      - 'assembly/native/build-node-binaries.sh'
+      - 'scripts/release-artifacts.json'
+      - 'scripts/install-llvm-toolchain.sh'
+      - 'scripts/keys/apt-llvm-org.asc'
+      - 'CMake/Findjemalloc.cmake'
+  workflow_dispatch:
+  workflow_call:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Node binaries (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+            artifact: tos-node-x86_64-linux
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            artifact: tos-node-arm64-linux
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 240
+
+    steps:
+    - name: Check out repository
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      with:
+        persist-credentials: false
+
+    - name: Install system libraries
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential git cmake ninja-build autoconf automake libtool \
+          texinfo pkg-config python3 libgflags-dev libreadline-dev libgsl-dev libblas-dev \
+          libgslcblas0 libjemalloc-dev libgmp-dev gperf
+
+    - name: Install clang-21
+      run: sudo scripts/install-llvm-toolchain.sh 21
+
+    - name: Build the node binaries with the node recipe
+      run: assembly/native/build-node-binaries.sh node-binaries
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      with:
+        name: ${{ matrix.artifact }}
+        path: node-binaries
+        if-no-files-found: error
+        retention-days: 14
