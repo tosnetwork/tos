@@ -220,13 +220,12 @@ td::Result<PublicState> decode_public_state(td::Ref<vm::Cell> code, td::Ref<vm::
       auto authority = module_state(authority_cell);
       require(!observation_global_id || authority.global == *observation_global_id);
       out << "{\"kind\":\"" << result.family << "\",\"seqno\":" << seqno << ",\"wallet_id\":" << wallet_id
-          << ",\"retired_flags\":" << retired << ",\"authority_epoch\":\"" << epoch
-          << "\",\"primary_nonce\":\"" << primary_nonce << "\",\"rescue_nonce\":\"" << rescue_nonce
-          << "\",\"global_id\":" << authority.global << ",\"network_tag\":\"" << hash_b64(authority.network)
-          << "\",\"authority_hash\":\"" << b64(authority_cell->get_hash().as_slice())
-          << "\",\"primary\":{\"algorithm_id\":1,\"public_key\":\"" << b64(authority.primary)
-          << "\"},\"rescue\":{\"algorithm_id\":3,\"public_key\":\"" << hash_b64(authority.rescue)
-          << "\",\"policy\":\"" << (authority.policy == 1 ? "ready" : "required")
+          << ",\"retired_flags\":" << retired << ",\"authority_epoch\":\"" << epoch << "\",\"primary_nonce\":\""
+          << primary_nonce << "\",\"rescue_nonce\":\"" << rescue_nonce << "\",\"global_id\":" << authority.global
+          << ",\"network_tag\":\"" << hash_b64(authority.network) << "\",\"authority_hash\":\""
+          << b64(authority_cell->get_hash().as_slice()) << "\",\"primary\":{\"algorithm_id\":1,\"public_key\":\""
+          << b64(authority.primary) << "\"},\"rescue\":{\"algorithm_id\":3,\"public_key\":\""
+          << hash_b64(authority.rescue) << "\",\"policy\":\"" << (authority.policy == 1 ? "ready" : "required")
           << "\"},\"fee_payment\":\"wallet_balance\"}";
       result.wallet_id = static_cast<td::uint32>(wallet_id);
       result.seqno = static_cast<td::uint32>(seqno);

@@ -65,8 +65,8 @@ td::Ref<vm::Cell> self_pay_authority(unsigned policy = 1, unsigned daily = 1, st
       .store_long(policy, 8)
       .finalize();
 }
-td::Ref<vm::Cell> self_pay_data(unsigned retired = 2, unsigned version = 1, unsigned policy = 1,
-                               unsigned daily = 1, std::size_t key_size = 1312) {
+td::Ref<vm::Cell> self_pay_data(unsigned retired = 2, unsigned version = 1, unsigned policy = 1, unsigned daily = 1,
+                                std::size_t key_size = 1312) {
   return vm::CellBuilder()
       .store_long(version, 8)
       .store_long(0xffffffff, 32)
@@ -259,7 +259,8 @@ TEST(JsonRpcExplorer, self_pay_state_has_no_fee_authority_and_preserves_unsigned
     ASSERT_TRUE(state.json.find("\"global_id\":-3") != std::string::npos);
     ASSERT_TRUE(state.json.find("\"fee_payment\":\"wallet_balance\"") != std::string::npos);
     ASSERT_TRUE(state.json.find(policy == 1 ? "\"policy\":\"ready\"" : "\"policy\":\"required\"") != std::string::npos);
-    ASSERT_TRUE(!object.has_field("fee") && !object.has_field("module") && !object.has_field("legacy_signature_enabled"));
+    ASSERT_TRUE(!object.has_field("fee") && !object.has_field("module") &&
+                !object.has_field("legacy_signature_enabled"));
   }
 }
 TEST(JsonRpcExplorer, self_pay_state_rejects_unsupported_layout_and_observed_network) {
