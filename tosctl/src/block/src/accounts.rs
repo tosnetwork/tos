@@ -1045,7 +1045,9 @@ impl Account {
         let (used, preserved_hash) = if recount {
             (actual, None)
         } else {
-            let original = snapshot.original.unwrap();
+            let original = snapshot
+                .original
+                .ok_or_else(|| crate::error!("missing original transaction storage snapshot"))?;
             let bits = if root_bits >= original.root_bits {
                 original.used.bits().checked_add((root_bits - original.root_bits) as u64)
             } else {
