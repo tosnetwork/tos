@@ -613,6 +613,8 @@ jobs:
             artifacts/context/legacy-cpp.tsv artifacts/context/legacy-rust.tsv test/rescue-fee-gate/suite-expected.tsv
           python test/rescue-fee-gate/vm_endstate_scenarios.py artifacts/context/endstate.tsv
           build/crypto/pq/test-vm-endstate artifacts/context/endstate.tsv > artifacts/context/endstate-cpp.tsv
+          python test/rescue-fee-gate/vm_sha256c_scenarios.py artifacts/context/endstate-cpp.tsv
+          cargo test --manifest-path tosctl/src/Cargo.toml --locked -p tos_vm --test test_sha256c
           "$CARGO_TARGET_DIR/debug/examples/vm-endstate" artifacts/context/endstate.tsv > artifacts/context/endstate-rust.tsv
           python test/rescue-fee-gate/vm_endstate_compare.py artifacts/context/endstate-cpp.tsv \
             artifacts/context/endstate-rust.tsv --expected test/rescue-fee-gate/vm-endstate-expected.tsv \
