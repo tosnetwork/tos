@@ -52,7 +52,7 @@
     {"name": "Full fee verification deletion control","run_sha256": "6c2969a90433164fd8c774f3942f73377311f1b53fa8204d3eea3475463c3607","suites": ["mutations"],"x86_only": true,"requires": ["Full R2 fee transaction parity at diagnostic credit"]},
     {"name": "Falcon version-16 boundary in both VMs","run_sha256": "ec68a83bcdc8a6d904816f7f6ae5cbf8586314a5f9ab6882cb05ee2869302027","suites": ["vm-ingress","mutations"],"x86_only": false,"requires": []},
     {"name": "Reject early and late Falcon activation mutations","run_sha256": "690fbb2626fd2fb435e64a545449d92d9d7d8305c2890c2c92fa8b583b6127db","suites": ["mutations"],"x86_only": true,"requires": ["Falcon version-16 boundary in both VMs"]},
-    {"name": "Verify context, opcode, complete transactions and legacy pricing","run_sha256": "b03f6cbeb9b4e0a01d55f1a5aab2075c1c8324b38517cd94e4cb5ab89b1fef80","suites": ["vm-ingress","mutations"],"x86_only": false,"requires": []},
+    {"name": "Verify context, opcode, complete transactions and legacy pricing","run_sha256": "62cdbb51320ebc02b4720a7ea63f9a0fdc4aa2dfa3a8485b15b7c0d355e1f5fd","suites": ["vm-ingress","mutations"],"x86_only": false,"requires": []},
     {"name": "Require meaningful mutation failures and restore binaries","run_sha256": "800594e7aa77c3098e5884dc5ca20bffed5d691058ef453fe2e09b46f56cd5e0","suites": ["mutations"],"x86_only": true,"requires": ["Verify context, opcode, complete transactions and legacy pricing"]}
   ]
 }
