@@ -9,6 +9,20 @@ on:
   # collects (scripts/release-artifacts.json); dispatch builds them on demand.
   push:
     tags: ['v*']
+  # A change to the recipe or to what the release takes from this build runs
+  # both legs before it merges. A pull-request run only uploads workflow
+  # artifacts with a read-only token; the release collects push and dispatch
+  # runs of the tag commit only (scripts/release-artifacts.py).
+  pull_request:
+    branches: [main]
+    types: [opened, reopened, synchronize, ready_for_review]
+    paths:
+      - '.github/workflows/build-tos-linux-node-binaries.yml'
+      - 'assembly/native/build-node-binaries.sh'
+      - 'scripts/release-artifacts.json'
+      - 'scripts/install-llvm-toolchain.sh'
+      - 'scripts/keys/apt-llvm-org.asc'
+      - 'CMake/Findjemalloc.cmake'
   workflow_dispatch:
   workflow_call:
 

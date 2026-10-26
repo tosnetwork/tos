@@ -1104,6 +1104,62 @@ class PqToolPackagingTest(unittest.TestCase):
             self.assertIn(f"COPY --from=builder {source} /usr/local/bin/\n", dockerfile)
 
 
+def node_workflow_legs(workflow: str) -> list[dict[str, str]] | None:
+    """The matrix `include:` entries of the node workflow, or None if the
+    matrix is not exactly one `include:` list of flat `key: value` entries."""
+    lines = workflow.splitlines()
+    try:
+        start = lines.index("      matrix:")
+    except ValueError:
+        return None
+    if start + 1 >= len(lines) or lines[start + 1] != "        include:":
+        return None
+    legs: list[dict[str, str]] = []
+    for line in lines[start + 2 :]:
+        if not line.startswith("          "):
+            break
+        entry = re.fullmatch(r" {10}- ([a-z_-]+): (\S+)", line)
+        field = re.fullmatch(r" {12}([a-z_-]+): (\S+)", line)
+        if entry:
+            legs.append({entry.group(1): entry.group(2)})
+        elif field and legs and field.group(1) not in legs[-1]:
+            legs[-1][field.group(1)] = field.group(2)
+        else:
+            return None
+    return legs
+
+
+def node_workflow_leg_problems(workflow: str) -> list[str]:
+    """Each architecture is one unconditional leg on its runner, uploading its artifact."""
+    workflow_name = NodeBinaryReleaseTest.WORKFLOW
+    expected = [
+        {"arch": arch, "runner": runner, "artifact": artifact}
+        for arch, (artifact, runner, _cpu) in NodeBinaryReleaseTest.ARCHES.items()
+    ]
+    problems: list[str] = []
+    legs = node_workflow_legs(workflow)
+    if legs is None:
+        problems.append(f"{workflow_name} has no plain matrix include list")
+    elif sorted(legs, key=str) != sorted(expected, key=str):
+        problems.append(f"{workflow_name} legs are {legs}, expected {expected}")
+    jobs = workflow.split("\njobs:\n", 1)[-1]
+    if re.findall(r"(?m)^  [A-Za-z0-9_-]+:$", jobs) != ["  build:"]:
+        problems.append(f"{workflow_name} must have exactly the one build job")
+    # A condition, an exclusion or a tolerated failure would let a leg be
+    # skipped, or fail, while the run still succeeds.
+    for pattern, why in (
+        (r"(?m)^\s*(?:- )?if:", "a condition"),
+        (r"(?m)^\s*exclude:", "a matrix exclusion"),
+        (r"(?m)^\s*continue-on-error:", "a tolerated failure"),
+    ):
+        if re.search(pattern, jobs):
+            problems.append(f"{workflow_name} has {why}; both legs must always run")
+    for line in ("    runs-on: ${{ matrix.runner }}\n", "        name: ${{ matrix.artifact }}\n"):
+        if line not in jobs:
+            problems.append(f"{workflow_name} lost {line.strip()!r}")
+    return problems
+
+
 def node_release_problems(config: dict[str, Any], workflow: str, script: str) -> list[str]:
     """Why the published node binaries would not be the node-recipe build.
 
@@ -1130,8 +1186,6 @@ def node_release_problems(config: dict[str, Any], workflow: str, script: str) ->
             problems.append(
                 f"the full set does not publish {artifact} as tos-node-linux-{arch}.zip"
             )
-        if f"artifact: {artifact}\n" not in workflow or f"runner: {runner}\n" not in workflow:
-            problems.append(f"{workflow_name} has no {arch} leg on {runner}")
         for binary in [*binaries, "BUILD-INFO"]:
             name = (
                 f"node-build-info-linux-{arch}.txt"
@@ -1148,6 +1202,7 @@ def node_release_problems(config: dict[str, Any], workflow: str, script: str) ->
             continue
         if asset.get("path") in binaries:
             problems.append(f"{asset['name']} publishes {asset['path']} from {asset['artifact']}")
+    problems += node_workflow_leg_problems(workflow)
     if "run: assembly/native/build-node-binaries.sh node-binaries\n" not in workflow:
         problems.append(f"{workflow_name} does not run the node build script")
     if "path: node-binaries\n" not in workflow:
@@ -1162,7 +1217,26 @@ def node_release_problems(config: dict[str, Any], workflow: str, script: str) ->
         "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct HEAD)\nexport SOURCE_DATE_EPOCH\n",
         "export CCACHE_DISABLE=1\n",
         '[ "$(cached TOS_USE_JEMALLOC)" = ON ]',
-        "grep -q 'jemalloc statistics'",
+        # jemalloc is a dependency of the binaries that link it ...
+        "\nJEMALLOC_TARGETS=(validator-engine dht-server)\n",
+        '\nfor t in "${JEMALLOC_TARGETS[@]}"; do\n'
+        '  bin="$BUILD/${PATHS[$t]}"\n'
+        "  readelf -d \"$bin\" | grep -q 'NEEDED.*\\[libjemalloc\\.so' "
+        '|| die "$t does not link jemalloc"\n'
+        "done\n",
+        # ... and the allocator validator-engine actually runs with ...
+        '\nMALLOC_CONF=stats_print:true "$BUILD/${PATHS[validator-engine]}" -V '
+        '>"$BUILD/jemalloc-stats.txt" 2>&1 \\\n'
+        '  || die "validator-engine -V failed"\n'
+        "grep -q 'jemalloc statistics' \"$BUILD/jemalloc-stats.txt\" \\\n"
+        '  || die "validator-engine does not allocate through jemalloc"\n',
+        # ... and every binary with -V reports the commit it was built from.
+        "\nVERSIONED_TARGETS=(validator-engine validator-engine-console lite-client "
+        "generate-random-id dht-server)\n",
+        '\nfor t in "${VERSIONED_TARGETS[@]}"; do\n'
+        '  "$BUILD/${PATHS[$t]}" -V | grep -q "Commit: $REV" '
+        '|| die "$t -V does not report commit $REV"\n'
+        "done\n",
     ]
     for line in recipe:
         if line not in script:
@@ -1218,6 +1292,74 @@ class NodeBinaryReleaseTest(unittest.TestCase):
             node_release_problems(config, workflow, script),
             ["the full set does not publish dht-server-linux-arm64"],
         )
+
+    def test_swapped_leg_artifacts_are_refused(self) -> None:
+        # Each binary would then be published under the other architecture.
+        config, workflow, script = self.inputs()
+        swapped = (
+            workflow.replace("artifact: tos-node-x86_64-linux\n", "artifact: SWAP\n")
+            .replace("artifact: tos-node-arm64-linux\n", "artifact: tos-node-x86_64-linux\n")
+            .replace("artifact: SWAP\n", "artifact: tos-node-arm64-linux\n")
+        )
+        self.assertNotEqual(swapped, workflow)
+        found = node_release_problems(config, swapped, script)
+        self.assertEqual(len(found), 1, found)
+        self.assertIn("legs are", found[0])
+
+    def test_a_skipped_leg_is_refused(self) -> None:
+        config, workflow, script = self.inputs()
+        anchor = "    runs-on: ${{ matrix.runner }}\n"
+        for condition in (
+            "    if: matrix.arch != 'arm64'\n",
+            "    continue-on-error: ${{ matrix.arch == 'arm64' }}\n",
+        ):
+            with self.subTest(condition=condition):
+                mutant = workflow.replace(anchor, anchor + condition, 1)
+                self.assertNotEqual(mutant, workflow)
+                self.assertNotEqual(node_release_problems(config, mutant, script), [])
+        step = "    - name: Upload artifacts\n"
+        mutant = workflow.replace(step, step + "      if: matrix.arch == 'x86_64'\n", 1)
+        self.assertNotEqual(node_release_problems(config, mutant, script), [])
+        exclusion = workflow.replace(
+            "        include:\n", "        exclude:\n          - arch: arm64\n        include:\n", 1
+        )
+        self.assertNotEqual(node_release_problems(config, exclusion, script), [])
+        dropped = workflow.replace(
+            "          - arch: arm64\n"
+            "            runner: ubuntu-24.04-arm\n"
+            "            artifact: tos-node-arm64-linux\n",
+            "",
+        )
+        self.assertNotEqual(dropped, workflow)
+        self.assertNotEqual(node_release_problems(config, dropped, script), [])
+
+    def test_a_dropped_jemalloc_check_is_refused(self) -> None:
+        config, workflow, script = self.inputs()
+        needed = (
+            "  readelf -d \"$bin\" | grep -q 'NEEDED.*\\[libjemalloc\\.so' "
+            '|| die "$t does not link jemalloc"\n'
+        )
+        stats = (
+            "grep -q 'jemalloc statistics' \"$BUILD/jemalloc-stats.txt\" \\\n"
+            '  || die "validator-engine does not allocate through jemalloc"\n'
+        )
+        mutants = {
+            "NEEDED check deleted": script.replace(needed, ""),
+            "NEEDED check tolerated": script.replace(
+                '|| die "$t does not link jemalloc"', '|| echo "$t does not link jemalloc"'
+            ),
+            "NEEDED check on no target": script.replace(
+                "JEMALLOC_TARGETS=(validator-engine dht-server)", "JEMALLOC_TARGETS=()"
+            ),
+            "stats check deleted": script.replace(stats, ""),
+            "commit check deleted": script.replace(
+                '  "$BUILD/${PATHS[$t]}" -V | grep -q "Commit: $REV" ', "  true "
+            ),
+        }
+        for label, mutant in mutants.items():
+            with self.subTest(mutant=label):
+                self.assertNotEqual(mutant, script)
+                self.assertNotEqual(node_release_problems(config, workflow, mutant), [])
 
     def test_a_missing_artifact_zip_is_refused(self) -> None:
         config, workflow, script = self.inputs()
