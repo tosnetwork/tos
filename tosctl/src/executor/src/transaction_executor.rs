@@ -417,7 +417,12 @@ pub trait TransactionExecutor {
 
         let code_hash = code.repr_hash();
         let precompiled = self.config().raw_config().precompiled_contracts_list()?;
-        let precompiled = if let Some(list) = precompiled { list.get(&code_hash)? } else { None };
+        // Native applies ConfigParam45 only to ordinary transactions. Tick/tock
+        // must retain normal gas limits, charging and failure outcomes.
+        let precompiled = match (precompiled, self.ordinary_transaction()) {
+            (Some(list), true) => list.get(&code_hash)?,
+            _ => None,
+        };
         if let Some(precompiled) = precompiled.as_ref() {
             // An external message has no gas limit until the contract accepts
             // it; what it can pay for is gas_max.

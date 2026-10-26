@@ -6,6 +6,7 @@ statistics directly from the original AccountStorage graph.
 """
 
 import argparse
+import ctypes
 import importlib.util
 import json
 import os
@@ -18,7 +19,7 @@ from pathlib import Path
 root = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(root / "test/auth-extensions"))
 import native  # noqa: E402
-from cells import Cell, from_boc  # noqa: E402
+from cells import Cell, from_boc, make_dict, read_dict  # noqa: E402
 
 spec = importlib.util.spec_from_file_location(
     "precompiled", root / "test/executor-parity/precompiled_external.py"
@@ -156,6 +157,92 @@ cases.append(
     )
 )
 
+# Native's ConfigParam45 optimization applies only to ordinary transactions.
+# These are real masterchain fundamental tick/tock accounts (CP31), with a
+# small special gas limit so genuine OOG is deterministic and bounded.
+tentries = read_dict(native.config(16), 32)
+tentries.pop(45, None)
+prices = tentries[20].refs[0]
+offset = 136 if int(prices.bits[:8], 2) == 0xD1 else 0
+assert int(prices.bits[offset : offset + 8], 2) == 0xDE
+offset += 8 + 2 * 64
+tentries[20] = Cell().ref(
+    Cell(
+        bits=prices.bits[:offset] + format(2000, "064b") + prices.bits[offset + 64 :],
+        refs=prices.refs,
+    )
+)
+tentries[31] = Cell().ref(Cell().maybe(make_dict({0x4545: Cell()}, 256)))
+tick_config = make_dict(tentries, 32)
+for is_tock in (False, True):
+    for burns in (False, True):
+        contract = m.burn_then_accept(12) if burns else m.ACCEPT
+        init = Cell().uint(0, 1).uint(1, 1).uint(3, 2).maybe(contract).maybe(Cell()).uint(0, 1)
+        storage = Cell().uint(0, 64).coins(100_000_000_000).uint(0, 1).uint(1, 1)
+        storage.bits += init.bits
+        storage.refs.extend(init.refs)
+        account = (
+            Cell()
+            .uint(1, 1)
+            .addr((-1, 0x4545))
+            .varuint(0, 7)
+            .varuint(0, 7)
+            .uint(0, 3)
+            .uint(native.NOW, 32)
+            .uint(0, 1)
+        )
+        account.bits += storage.bits
+        account.refs = list(storage.refs)
+        shard = consistent(Cell().uint(0, 320).ref(account))
+        for usage in (None, 0, (1 << 64) - 1):
+            configuration = (
+                tick_config if usage is None else m.with_precompiled(tick_config, contract, usage)
+            )
+            label = f"{'tock' if is_tock else 'tick'}-{'oog' if burns else 'accept'}-{usage}"
+            # No inbound message is supplied to this C API; the empty cell is
+            # only a retained fixture marker for the common artifact layout.
+            cases.append((label, configuration, shard, Cell()))
+
+
+def tick_details(transaction, is_tock):
+    c = transaction.refs[2].slice()
+    assert c.uint(3) == 1 and bool(c.uint(1)) == is_tock
+    c.coins()
+    if c.uint(1):
+        c.coins()
+    if c.uint(1):
+        c.uint(1)
+    assert c.uint(1) == 1, "tick/tock must execute a VM compute phase"
+    success = bool(c.uint(1))
+    c.uint(2)
+    c.coins()
+    vm = c.ref().slice()
+    gas = vm.varuint(7)
+    limit = vm.varuint(7)
+    if vm.uint(1):
+        vm.varuint(3)
+    vm.sint(8)
+    exit_code = vm.sint(32)
+    c.maybe()
+    aborted = bool(c.uint(1))
+    return dict(exit=exit_code, gas=gas, gas_limit=limit, compute_success=success, aborted=aborted)
+
+
+def send_tick(emulator, shard, is_tock):
+    fn = emulator.lib.transaction_emulator_emulate_tick_tock_transaction
+    fn.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_bool]
+    fn.restype = ctypes.c_void_p
+    emulator.lib.transaction_emulator_set_lt(emulator.ptr, 2_000_000)
+    raw = fn(emulator.ptr, shard.b64(), is_tock)
+    assert raw
+    try:
+        result = json.loads(ctypes.string_at(raw))
+    finally:
+        emulator.lib.string_destroy(raw)
+    if result["success"]:
+        result["details"] = tick_details(from_boc(result["transaction"]), is_tock)
+    return result
+
 
 def outcome(r):
     if r["success"]:
@@ -184,7 +271,11 @@ def run_worker(library):
             (out / (label + "-" + kind + ".boc")).write_bytes(value.boc())
         em = native.Emulator.from_config(cfg)
         try:
-            result = em.send(shard, message)
+            result = (
+                send_tick(em, shard, label.startswith("tock-"))
+                if label.startswith(("tick-", "tock-"))
+                else em.send(shard, message)
+            )
         finally:
             em.close()
         (out / (label + ".json")).write_text(json.dumps(result, indent=2) + "\n")
@@ -206,6 +297,14 @@ def run_worker(library):
         assert observed[: len(expected)] == expected, (label, observed, expected)
         if result["success"]:
             details = result["details"]
+            if label.startswith(("tick-", "tock-")):
+                burns = "-oog-" in label
+                assert details["exit"] == (-14 if burns else 0), (label, details)
+                assert details["gas"] == (2000 if burns else 31), (label, details)
+                assert details["compute_success"] == (not burns), (label, details)
+                assert details["aborted"] == burns, (label, details)
+                report.append(dict(name=label, outcome=observed))
+                continue
             expected_exit = (
                 13
                 if label.endswith("throw13")
@@ -217,6 +316,11 @@ def run_worker(library):
             if label.startswith("precompiled-"):
                 assert details["gas"] == 0, (label, details)
         report.append(dict(name=label, outcome=observed))
+    for transaction_kind in ("tick", "tock"):
+        for execution in ("accept", "oog"):
+            prefix = f"{transaction_kind}-{execution}-"
+            outcomes = [row["outcome"] for row in report if row["name"].startswith(prefix)]
+            assert len(outcomes) == 3 and all(value == outcomes[0] for value in outcomes), prefix
     (out / "outcomes.json").write_text(json.dumps(report, indent=2) + "\n")
 
 
@@ -281,12 +385,12 @@ else:
         supervised(library, out / backend)
     left = json.loads((out / "native/outcomes.json").read_text())
     right = json.loads((out / "rust/outcomes.json").read_text())
-    assert len(left) == len(right) == 24
+    assert len(left) == len(right) == 36
     assert left == right, "native/Rust transaction outcomes differ"
     # Every oracle uses exactly the same complete original inputs and config.
     for label, _, _, _ in cases:
         for kind in ["config", "shard", "message"]:
             name = label + "-" + kind + ".boc"
             assert (out / "native" / name).read_bytes() == (out / "rust" / name).read_bytes(), name
-    (out / "summary.json").write_text(json.dumps(dict(cases=24, matched=True), indent=2) + "\n")
-    print("PASS: 24 transaction outcomes; accepted transaction/Account/ShardAccount roots match")
+    (out / "summary.json").write_text(json.dumps(dict(cases=36, matched=True), indent=2) + "\n")
+    print("PASS: 36 transaction outcomes; accepted transaction/Account/ShardAccount roots match")
