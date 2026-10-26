@@ -2,6 +2,8 @@
 #include <cstring>
 #include <optional>
 
+#include "vm/excno.hpp"
+
 #include "embedded.h"
 #include "proof-verify.h"
 #include "wallet-transaction.h"
@@ -109,6 +111,10 @@ extern "C" int tos_proof_verify_wallet_transaction(int32_t workchain, const uint
     std::memcpy(result, rendered.data(), rendered.size());
     *result_size = rendered.size();
     return 0;
+  } catch (const vm::VmError &) {
+    return -2;
+  } catch (const vm::VmVirtError &) {
+    return -2;
   } catch (...) {
     return -4;
   }
