@@ -91,6 +91,15 @@ jobs:
             --native build/emulator/libemulator.so \
             --rust tosctl/src/target/release/libtos_emulator.so \
             --output result/transaction-rejections
+      - name: Preserve native transaction storage accounting and live caches
+        env:
+          EMULATOR_PATH: ${{ github.workspace }}/build/emulator/libemulator.so
+        run: |
+          cargo test --manifest-path tosctl/src/Cargo.toml --locked --release -p chain_block --lib storage_stat
+          cargo test --manifest-path tosctl/src/Cargo.toml --locked --release -p chain_block --lib transaction_storage
+          python3 test/executor-parity/storage_cache_carry.py --output result/storage-cache-carry.json
+          cmp result/storage-cache-carry.json tosctl/src/executor/tests/fixtures/storage-cache-carry.json
+          cargo test --manifest-path tosctl/src/Cargo.toml --locked --release -p tos_executor --lib tests_storage_measurement
       - name: Export authenticated contexts and carry Rust account state
         run: |
           python3 test/rel02/run_rust.py --native build/emulator/test-epoch-replay \

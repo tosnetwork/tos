@@ -127,17 +127,37 @@ impl AccountStorageStat {
     }
 
     pub fn update(&mut self, storage: &AccountStorage) -> Result<StorageUsed> {
+        self.update_for_transaction(storage, true)
+    }
+
+    /// Reconcile the actual graph cache without deciding advertised metadata.
+    /// Native v10+ excludes extra currencies from storage accounting.
+    pub(crate) fn update_for_transaction(
+        &mut self,
+        storage: &AccountStorage,
+        exclude_extra_currencies: bool,
+    ) -> Result<StorageUsed> {
         #[cfg(not(target_family = "wasm"))]
         let now = std::time::Instant::now();
-        self.replace_roots(Self::get_roots(storage.state_init()))?;
+        let roots = if exclude_extra_currencies {
+            Self::get_roots(storage.state_init())
+        } else {
+            let cell = storage.serialize()?;
+            (0..cell.references_count())
+                .map(|index| cell.reference(index))
+                .collect::<Result<_>>()?
+        };
+        self.replace_roots(roots)?;
         #[cfg(not(target_family = "wasm"))]
         log::debug!("TIME Storage stat replace roots {:?}", now.elapsed());
-
         let cell = storage.serialize()?;
-        StorageUsed::with_values_checked(
-            self.total_cells + 1,
-            self.total_bits + cell.bit_length() as u64,
-        )
+        let cells =
+            self.total_cells.checked_add(1).ok_or_else(|| error!("storage cell count overflow"))?;
+        let bits = self
+            .total_bits
+            .checked_add(cell.bit_length() as u64)
+            .ok_or_else(|| error!("storage bit count overflow"))?;
+        StorageUsed::with_values_checked(cells, bits)
     }
 
     pub fn get_roots(storage: Option<&StateInit>) -> Vec<Cell> {
@@ -160,21 +180,55 @@ impl AccountStorageStat {
         }
     }
 
-    fn replace_roots(&mut self, roots: Vec<Cell>) -> Result<()> {
-        if roots == self.roots {
+    fn replace_roots(&mut self, mut roots: Vec<Cell>) -> Result<()> {
+        // Match native: roots are a multiset. contains() loses changes in
+        // multiplicity when code/data/library share the same root.
+        if roots.is_empty() {
+            *self = Self::new();
             return Ok(());
         }
-
-        self.dict_updated = false;
-        for root in &roots {
-            if !self.roots.contains(root) {
-                self.add_cell(root)?;
+        roots.sort_by_key(Cell::repr_hash);
+        self.roots.sort_by_key(Cell::repr_hash);
+        let mut added = Vec::new();
+        let mut removed = Vec::new();
+        let (mut new_index, mut old_index) = (0, 0);
+        while new_index < roots.len() || old_index < self.roots.len() {
+            match (roots.get(new_index), self.roots.get(old_index)) {
+                (Some(new), Some(old)) => match new.repr_hash().cmp(&old.repr_hash()) {
+                    std::cmp::Ordering::Equal => {
+                        new_index += 1;
+                        old_index += 1;
+                    }
+                    std::cmp::Ordering::Less => {
+                        added.push(new.clone());
+                        new_index += 1;
+                    }
+                    std::cmp::Ordering::Greater => {
+                        removed.push(old.clone());
+                        old_index += 1;
+                    }
+                },
+                (Some(new), None) => {
+                    added.push(new.clone());
+                    new_index += 1;
+                }
+                (None, Some(old)) => {
+                    removed.push(old.clone());
+                    old_index += 1;
+                }
+                (None, None) => break,
             }
         }
-        for root in &std::mem::take(&mut self.roots) {
-            if !roots.contains(root) {
-                self.remove_cell(root)?;
-            }
+        if added.is_empty() && removed.is_empty() {
+            return Ok(());
+        }
+        self.dict_updated = false;
+        // Add first so shared subgraphs remain live while old roots disappear.
+        for root in added {
+            self.add_cell(&root)?;
+        }
+        for root in removed {
+            self.remove_cell(&root)?;
         }
         self.roots = roots;
         Ok(())

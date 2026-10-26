@@ -453,7 +453,6 @@ impl Emulator {
         let config = BlockchainConfig::with_config(self.config_params.clone())
             .inspect_err(|err| log::error!("Failed to create BlockchainConfig: {err}"))?;
 
-        let dict_hash_min_cells = config.size_limits_config().acc_state_cells_for_storage_dict;
         let executor: Box<dyn TransactionExecutor> = if in_msg_cell.is_some() {
             Box::new(OrdinaryTransactionExecutor::new(config))
         } else {
@@ -481,7 +480,6 @@ impl Emulator {
         let elapsed_time = now.elapsed().as_micros() as i64;
         let result = match result {
             Ok(mut transaction) => {
-                account.update_storage_stat(dict_hash_min_cells).unwrap();
                 transaction.set_prev_trans_lt(shard_acc.last_trans_lt());
                 transaction.set_prev_trans_hash(shard_acc.last_trans_hash().clone());
                 let old_hash = shard_acc.account_hash();

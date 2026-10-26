@@ -244,6 +244,83 @@ def send_tick(emulator, shard, is_tock):
     return result
 
 
+# Original canonical U1 inputs retain their advertised statistics. Do not
+# normalize these cases with consistent(): they expose native transaction policy.
+storage_expectations = {}
+
+
+def storage_input(address, contract, cells, bits, balance=100_000_000_000):
+    init = native.state_init(contract, Cell())
+    storage = Cell().uint(0, 64).coins(balance).uint(0, 1).uint(1, 1)
+    storage.bits += init.bits
+    storage.refs.extend(init.refs)
+    if cells is None:
+        seen = {}
+
+        def visit(cell):
+            if cell.hash in seen:
+                return
+            seen[cell.hash] = len(cell.bits)
+            for ref in cell.refs:
+                visit(ref)
+
+        visit(storage)
+        cells, bits = len(seen), sum(seen.values())
+    account = (
+        Cell()
+        .uint(1, 1)
+        .addr(address)
+        .varuint(cells, 7)
+        .varuint(bits, 7)
+        .uint(0, 3)
+        .uint(native.NOW, 32)
+        .uint(0, 1)
+    )
+    account.bits += storage.bits
+    account.refs = list(storage.refs)
+    return Cell().uint(0, 320).ref(account)
+
+
+for wc in (0, -1):
+    for changed in (False, True):
+        contract = (
+            m.ACCEPT
+            if not changed
+            else Cell().raw(bytes([0xF8, 0x00, 0x88, 0xED, 0x54])).ref(Cell().uint(0x42, 8))
+        )
+        for old_cells in (0, 1, 25, 26):
+            old_bits = 0 if old_cells == 0 else 1000
+            label = f"storage-wc{wc}-refs{int(changed)}-cells{old_cells}"
+            recount = changed or (wc == 0 and old_cells > 25)
+            expected_cells = 3 if recount else old_cells
+            expected_bits = (163 if changed else 131) if recount else old_bits
+            storage_expectations[label] = (75 if changed else 31, expected_cells, expected_bits)
+            cases.append(
+                (
+                    label,
+                    base,
+                    storage_input((wc, 0x4545), contract, old_cells, old_bits),
+                    native.external((wc, 0x4545), Cell()),
+                )
+            )
+for old_bits in (0, 1000, None):
+    label = f"storage-width-bits{old_bits}"
+    if old_bits != 0:
+        storage_expectations[label] = (
+            31,
+            3 if old_bits is None else 0,
+            115 if old_bits is None else 992,
+        )
+    cases.append(
+        (
+            label,
+            base,
+            storage_input(m.PROBE, m.ACCEPT, None if old_bits is None else 0, old_bits, 1 << 24),
+            native.external(m.PROBE, Cell()),
+        )
+    )
+
+
 def outcome(r):
     if r["success"]:
         tx = from_boc(r["transaction"])
@@ -255,6 +332,8 @@ def outcome(r):
         return ["unaccepted", r["vm_exit_code"]]
     assert "vm_exit_code" not in r
     error = r.get("error", "")
+    if "cannot serialize new transaction" in error or "transaction storage bit delta" in error:
+        return ["storage-finalization-failed"]
     if (
         "cannot create compute phase of a new transaction" in error
         or error == "Precompiled fallback exhausted gas during compute phase"
@@ -282,7 +361,9 @@ def run_worker(library):
         observed = outcome(result)
         # Independent classifications ensure two identically wrong adapters cannot
         # pass by collapsing every failure or accepting every input.
-        if label.endswith("nogas") or label in ("external-no-state", "external-bad-state"):
+        if label == "storage-width-bits0":
+            expected = ["storage-finalization-failed"]
+        elif label.endswith("nogas") or label in ("external-no-state", "external-bad-state"):
             expected = ["unaccepted", 0]
         elif label.startswith("precompiled-") and "burn" in label:
             expected = ["precompiled-compute-failed"]
@@ -297,6 +378,24 @@ def run_worker(library):
         assert observed[: len(expected)] == expected, (label, observed, expected)
         if result["success"]:
             details = result["details"]
+            if label in storage_expectations:
+                gas, cells, bits = storage_expectations[label]
+                assert (
+                    details["exit"] == 0
+                    and details["gas"] == gas
+                    and details["compute_success"]
+                    and not details["aborted"]
+                ), (label, details)
+                account = from_boc(result["shard_account"]).refs[0].slice()
+                assert account.uint(1) == 1
+                account.addr()
+                assert (
+                    account.varuint(7) == cells
+                    and account.varuint(7) == bits
+                    and account.uint(3) == 0
+                ), label
+                report.append(dict(name=label, outcome=observed))
+                continue
             if label.startswith(("tick-", "tock-")):
                 burns = "-oog-" in label
                 assert details["exit"] == (-14 if burns else 0), (label, details)
@@ -385,12 +484,12 @@ else:
         supervised(library, out / backend)
     left = json.loads((out / "native/outcomes.json").read_text())
     right = json.loads((out / "rust/outcomes.json").read_text())
-    assert len(left) == len(right) == 36
+    assert len(left) == len(right) == 55
     assert left == right, "native/Rust transaction outcomes differ"
     # Every oracle uses exactly the same complete original inputs and config.
     for label, _, _, _ in cases:
         for kind in ["config", "shard", "message"]:
             name = label + "-" + kind + ".boc"
             assert (out / "native" / name).read_bytes() == (out / "rust" / name).read_bytes(), name
-    (out / "summary.json").write_text(json.dumps(dict(cases=36, matched=True), indent=2) + "\n")
-    print("PASS: 36 transaction outcomes; accepted transaction/Account/ShardAccount roots match")
+    (out / "summary.json").write_text(json.dumps(dict(cases=55, matched=True), indent=2) + "\n")
+    print("PASS: 55 transaction outcomes; accepted transaction/Account/ShardAccount roots match")

@@ -108,6 +108,10 @@ mod tests_with_real_data;
 mod tests_message_size_limits;
 
 #[cfg(test)]
+#[path = "tests/test_storage_measurement.rs"]
+mod tests_storage_measurement;
+
+#[cfg(test)]
 #[path = "tests/test_precompiled_external.rs"]
 mod tests_precompiled_external;
 
@@ -2008,7 +2012,7 @@ pub(super) fn check_account_size_limits(
     global_version: u32,
     acc: &mut Account,
 ) -> Result<bool> {
-    acc.update_storage_stat(cfg.acc_state_cells_for_storage_dict)?;
+    acc.measure_storage_stat(global_version)?;
     let Some(stat) = acc.storage_stat() else {
         return Ok(true);
     };
