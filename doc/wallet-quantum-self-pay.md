@@ -1,0 +1,153 @@
+# Quantum self-pay v1 candidate
+
+This is a separate contract and ABI from the module/fee-vault Quantum wallet.
+It is not yet the approved mobile default. Mobile integration, authenticated
+backup restoration, live-network fixtures and release review remain required.
+
+## Identity and wire format
+
+All integers use big-endian bit encoding. Every listed cell is ordinary and
+level zero. Parsing consumes the complete cell. Addresses are standard,
+non-anycast basechain addresses. The descriptor's signed global ID must match
+the VM global ID; the 256-bit namespace must be explicitly selected for the
+actual network. Public test namespaces are not production defaults.
+
+| Cell | Fields in order |
+| --- | --- |
+| State | version:uint8=1, seqno:uint32, wallet_id:uint32, retired:uint16, epoch:uint64, primary_nonce:uint64, rescue_nonce:uint64, authority:^Cell |
+| Authority | version:uint8=1, global_id:int32, namespace:bits256, daily:uint8=1, primary:^Cell, rescue:bits256, policy:uint8 |
+| Request | magic:uint32=0x51535031, global_id:int32, namespace:bits256, wallet:MsgAddressInt, authority_hash:bits256, role:uint8, epoch:uint64, nonce:uint64, deadline:uint32, kind:uint8, payload:^Cell |
+| External body | request:^Cell, signature:^Cell |
+
+The ML-DSA-44 public key is a canonical 1,312-byte chain with 127-byte
+non-final chunks. Signature chains use the VM verifier's canonical byte-chain
+rules. The rescue key is a 32-byte SLH-DSA-SHA2-128s public key. Policy 1 is
+READY, policy 2 REQUIRED; only retired bit 1 is defined. No classical signer,
+arbitrary algorithm, extension dictionary or fee signer can authorize this
+contract. The request hash is signed directly as 32 bytes, using context
+`TOS-QSP-MLDSA44-v1` for role 1 and `TOS-QSP-SLH128S-v1` for role 2.
+
+PRIMARY may only execute in READY, with neither local nor CP48 retirement
+effective. Missing/malformed CP48 rejects PRIMARY. RESCUE does not require
+CP48 and can execute, configure, lock or migrate. Deadlines must be strictly
+after chain time and at most 3,600 seconds ahead.
+
+| Kind | Payload | Successful effect |
+| --- | --- | --- |
+| 0 execute | tag:uint32=0x45584543, actions:^Cell | V5 AUTH action list; role nonce and seqno increment |
+| 1 configure | tag:uint32=0x434f4e46, mode:uint2=2 | REQUIRED; seqno and epoch increment, role nonces reset |
+| 3 lock | tag:uint32=0x4c4f434b, suite:uint8=1 | Permanently retire suite 1; epoch increments, role nonces reset, seqno retained |
+| 4 migrate | tag:uint32=0x4d494752, successor:^Authority | Install successor at the same address; epoch increments, seqno and role nonces reset |
+
+Migration preserves all retirement bits. The successor must use the same
+network and supported suite. A READY successor requires both current local
+and global permission. REQUIRED successors remain installable without CP48.
+Neither migration nor an internal message can replace wallet code.
+
+## Acceptance and failed operations
+
+The contract checks request identity, permission, nonce, deadline and counter
+bounds, then verifies the signature. It constructs a fallback with the next
+counters and the existing authority/retirement, sets c4, COMMITs and finally
+ACCEPTs. An unaccepted transaction cannot persist the fallback. This order
+removes the accepted-but-uncommitted gas-exhaustion window.
+
+Payload and action validation use the wallet's paid gas after acceptance.
+An authenticated invalid operation can therefore be charged once. Its
+fallback persists and exact replay is refused. Failed configure consumes its
+seqno increment. Failed lock leaves seqno and retirement unchanged. Failed
+migration retains the pre-migration seqno and authority; it consumes epoch
+but does not install the successor. Successful migration alone resets seqno.
+Lock/migrate remain available at saturated execute nonce or seqno. An
+exhausted epoch rejects controls before acceptance; no counter wraps.
+
+**Committed compute success is not operation success.** Clients must inspect
+the exit result and authenticated final state before displaying a successful
+lock or migration. Epoch advancement alone is insufficient.
+
+The reused V5 action engine allows at most 255 sends, requires mode +2,
+rejects SETCODE and destruction, and limits ext_out modes to +1/+2. Internal
+messages (including bounces, old AUTH and self-messages) only deposit funds.
+
+## Deployment, possession and recovery
+
+Generate and back up the original StateInit/address before receiving funds.
+Pre-fund that address, then submit a signed external message with StateInit;
+the account pays its deployment and execution fees. No fee vault is involved.
+
+The separate immutable possession probe demonstrates that both successor
+keys work. Its state is `version:uint8=1, verified:bit, immutable:^Cell`.
+The immutable cell contains `magic:uint32=0x51505031, global_id:int32,
+namespace:bits256, target_wallet:MsgAddressInt, challenge:bits256,
+deadline:uint32, authority:^Cell`. The challenge must be nonzero and newly
+generated by the client. Derive the probe address with `verified=0`.
+
+An internal body carries PRIMARY and RESCUE signature references. Each signs
+the hash of `magic:uint32=0x51505031, probe_code_hash:bits256,
+immutable:^Cell`, using `TOS-QSP-POP-MLDSA44-v1` or
+`TOS-QSP-POP-SLH128S-v1`. One transaction verifies both, within the one-SLH
+attempt limit, and permanently sets verified. It never emits messages or
+authorizes the wallet. Duplicate delivery is idempotent; external entry is
+rejected. Funds sent to this probe pay verification; any remainder stays at
+the probe, so clients must quote/fund its bounded cost rather than transfer
+the wallet balance.
+
+Clients must authenticate the probe's account at the address derived from
+the original unverified StateInit, pin the code hash and entire immutable
+identity, and require verified. A getter or an arbitrary verified account is
+not sufficient evidence. A user controlling RESCUE can intentionally install
+unusable keys; possession proof is a client readiness requirement, not an
+additional wallet authority.
+
+After same-address rotation, backup must retain the **original** StateInit,
+address and network alongside current recovery keys/authority. New keys
+alone derive a different address. Restoration must authenticate the current
+installed authority and refuse stale recovery material.
+
+The public mobile identity envelope is `magic:uint32=0x51534931,
+address_hash:bits256, birth_state_init:^Cell`; the workchain is always zero.
+It contains no private keys. Decoders pin the wallet code, require the exact
+five-bit StateInit flags `00110`, two references, and canonical version-one
+wallet data with zero seqno, epoch, nonces and retirement. They reconstruct
+the wallet from its birth authority and wallet ID, and compare the entire
+StateInit hash with the recorded address. Bound serialized input to 16 KiB.
+An identity envelope does not prove ownership or current authority: restore
+still checks the expected network, independently known address and current
+authenticated chain state before accepting recovery keys.
+
+## Reproduction and current evidence
+
+Build native `func`, `fift`, `emulator`, the public test signers in
+`test/rescue-fee-gate/tools/build.sh`, and the Rust `tos_executor` example
+`pq-tx-parity`. Set `FUNC_PATH`, `FIFT_PATH`, `EMULATOR_PATH`, `MLDSA_TOOL`
+and `SLH_TOOL`; then run:
+
+```sh
+python3 test/wallet-quantum/test_self_pay.py --output /tmp/qsp \
+  --rust-driver /path/to/pq-tx-parity
+python3 test/wallet-quantum/test_self_pay_recovery.py --output /tmp/qsp-recovery \
+  --rust-driver /path/to/pq-tx-parity
+python3 test/wallet-quantum/export_self_pay_vectors.py --output /tmp/qsp-mobile/vectors.json
+```
+
+The runners compile current source, use real signatures, assert exact errors
+and state, measure adjacent CP21 admission-credit boundaries, run signature
+and COMMIT deletion controls, and compare complete native/Rust transaction
+transcripts. The recovery runner feeds the wallet's actual outgoing message
+into probe deployment and proves new-root payment at the original address.
+The release-wallet CI suite runs both on x86-64 and ARM64.
+
+The mobile exporter executes all five operation vectors and asserts their
+compute/action results and exact final state before writing public keys,
+signatures, code, request/identity hashes and the source/tool digest manifest.
+Both mobile implementations consume the same JSON fixture. Native signing
+tests also collapse the two new signing domains in an isolated build, showing
+that the wrong-domain rejection check detects the defect.
+
+The initial local candidate on base `99d907411` measured PRIMARY 13,269 gas,
+RESCUE execute 19,546, configure 19,868, lock 19,816 and migrate 19,798
+through acceptance at CP21 credit 20,000. These are candidate measurements,
+not protocol constants: rerun after compiler/source changes. Full migration
+costs more than admission credit because successor validation is paid after
+acceptance. The remaining admission margin is small and must remain a release
+gate. Fixture configuration is v16; live-genesis acceptance is still pending.

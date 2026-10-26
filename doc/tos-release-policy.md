@@ -371,7 +371,9 @@ release-writing action, or sends a write request to a releases API path, and
 
 ### Node binaries
 
-Validators, full nodes and DHT servers are installed from these assets of a
+Validators, full nodes, DHT servers and the standalone wallet services
+([standalone-wallet-services.md](standalone-wallet-services.md)) are
+installed from these assets of a
 `v<version>` release, one per architecture (`<arch>` is `x86_64` or `arm64`):
 
 | Asset | Binary |
@@ -382,6 +384,8 @@ Validators, full nodes and DHT servers are installed from these assets of a
 | `generate-random-id-linux-<arch>` | `generate-random-id` |
 | `tos-pq-consensus-key-linux-<arch>` | `tos-pq-consensus-key` |
 | `dht-server-linux-<arch>` | `dht-server` |
+| `tos-rpc-linux-<arch>` | `tos-rpc` |
+| `tos-wallet-index-linux-<arch>` | `tos-wallet-index` |
 | `node-build-info-linux-<arch>.txt` | the build record described below |
 | `tos-node-linux-<arch>.zip` | the workflow artifact `tos-node-<arch>-linux` itself |
 
@@ -395,7 +399,8 @@ build run. It is the artifact zip byte for byte, so its SHA-256 equals the
 `artifact_name` is `tos-node-<arch>-linux` (with its `workflow`, `run_id`,
 `run_attempt` and `head_sha`). Every standalone node asset above, and the
 build record, is a byte copy of the zip's top-level member of the same plain
-name (`validator-engine`, ..., `dht-server`, `BUILD-INFO`). An installer
+name (`validator-engine`, ..., `dht-server`, `tos-rpc`, `tos-wallet-index`,
+`BUILD-INFO`). An installer
 checks the zip against that digest and each binary against its member, or
 against `SHA256SUMS`, which the same publisher job writes.
 `release-provenance.json` records digests per artifact zip only; it has no
@@ -417,12 +422,15 @@ recipe, the same one the testnet hosts use when they build on themselves:
 - no compiler cache: every release build compiles from source.
 
 The script refuses to finish unless the recipe took effect: it reads the
-values back from `CMakeCache.txt`, requires `validator-engine` and
-`dht-server` to list `libjemalloc.so` as a dependency, runs
+values back from `CMakeCache.txt`, requires `validator-engine`,
+`dht-server`, `tos-rpc` and `tos-wallet-index` (the binaries whose link line
+carries jemalloc; the two services get it through `tos_db`) to list
+`libjemalloc.so` as a dependency, runs
 `validator-engine -V` under `MALLOC_CONF=stats_print:true` and requires
 jemalloc's exit statistics (so jemalloc is the allocator the process
 actually ran with), and requires every binary with `-V` to report the tagged
-commit. `node-build-info-linux-<arch>.txt` records the commit,
+commit. `tos-pq-consensus-key`, `tos-rpc` and `tos-wallet-index` have no `-V`;
+the build record's digests bind them to the build. `node-build-info-linux-<arch>.txt` records the commit,
 `SOURCE_DATE_EPOCH`, the compiler, the flags, the jemalloc library and
 package, the build OS, each binary's dynamic dependencies and SHA-256.
 `scripts/test_release_artifacts.py` fails if an asset above comes from any
@@ -432,12 +440,14 @@ The binaries are dynamically linked. Like the other release binaries they
 are built on Ubuntu 24.04 and need glibc 2.39 or newer. Beyond the C and C++
 runtimes, the build links what the build host has installed, so the
 `needed` lines of the build record are the authority. A build with the
-workflow's package set links `libjemalloc.so.2` into `validator-engine` and
-`dht-server`, `libgsl.so.27` and `libblas.so.3` into `validator-engine`,
+workflow's package set links `libjemalloc.so.2` into `validator-engine`,
+`dht-server`, `tos-rpc` and `tos-wallet-index`, `libgsl.so.27` and
+`libblas.so.3` into `validator-engine`, `tos-rpc` and `tos-wallet-index`,
 `libreadline.so.8` into `validator-engine-console` and `lite-client`, and on
 arm64 `libatomic.so.1` as well. On Ubuntu 24.04 the host therefore needs
 `libjemalloc2`, `libgsl27`, `libblas3`, `libreadline8t64` and, on arm64,
-`libatomic1`.
+`libatomic1`; a host that runs only the wallet services needs the same
+packages except `libreadline8t64`.
 
 The AppImages and `tos-linux-<arch>.zip` are unchanged: they remain the
 desktop and tool builds (`PORTABLE=1`, without jemalloc) and are not the

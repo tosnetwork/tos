@@ -1218,7 +1218,6 @@ def node_release_problems(config: dict[str, Any], workflow: str, script: str) ->
         "export CCACHE_DISABLE=1\n",
         '[ "$(cached TOS_USE_JEMALLOC)" = ON ]',
         # jemalloc is a dependency of the binaries that link it ...
-        "\nJEMALLOC_TARGETS=(validator-engine dht-server)\n",
         '\nfor t in "${JEMALLOC_TARGETS[@]}"; do\n'
         '  bin="$BUILD/${PATHS[$t]}"\n'
         "  readelf -d \"$bin\" | grep -q 'NEEDED.*\\[libjemalloc\\.so' "
@@ -1231,19 +1230,39 @@ def node_release_problems(config: dict[str, Any], workflow: str, script: str) ->
         "grep -q 'jemalloc statistics' \"$BUILD/jemalloc-stats.txt\" \\\n"
         '  || die "validator-engine does not allocate through jemalloc"\n',
         # ... and every binary with -V reports the commit it was built from.
-        "\nVERSIONED_TARGETS=(validator-engine validator-engine-console lite-client "
-        "generate-random-id dht-server)\n",
         '\nfor t in "${VERSIONED_TARGETS[@]}"; do\n'
         '  "$BUILD/${PATHS[$t]}" -V | grep -q "Commit: $REV" '
         '|| die "$t -V does not report commit $REV"\n'
         "done\n",
+        # Every target goes into the artifact zip, with its dynamic
+        # dependencies and digest in the build record.
+        '\nfor t in "${TARGETS[@]}"; do\n  install -m 0755 "$BUILD/${PATHS[$t]}" "$OUT/$t"\ndone\n',
+        '\n  for t in "${TARGETS[@]}"; do\n    echo "needed $t $(readelf -d "$OUT/$t" | ',
+        '\n  (cd "$OUT" && sha256sum "${TARGETS[@]}") | sed \'s/^/sha256 /\'\n',
     ]
     for line in recipe:
         if line not in script:
             problems.append(f"the node build script lost {line.strip()!r}")
-    targets = re.search(r"\nTARGETS=\(([^)]*)\)", script)
-    if targets is None or targets.group(1).split() != list(binaries):
-        problems.append("the node build script does not build exactly the node binaries")
+    for name, expected, what in (
+        ("TARGETS", binaries, "build exactly the node binaries"),
+        (
+            "JEMALLOC_TARGETS",
+            NodeBinaryReleaseTest.JEMALLOC_BINARIES,
+            "check jemalloc in exactly the binaries that link it",
+        ),
+        (
+            "VERSIONED_TARGETS",
+            NodeBinaryReleaseTest.VERSIONED_BINARIES,
+            "check the commit of exactly the binaries with -V",
+        ),
+    ):
+        found = re.search(rf"\n{name}=\(([^)]*)\)\n", script)
+        if found is None or found.group(1).split() != list(expected):
+            problems.append(f"the node build script does not {what}")
+    paths = re.search(r"\ndeclare -A PATHS=\(\n((?:  \[[a-z-]+\]=\S+\n)*)\)\n", script)
+    found_paths = dict(re.findall(r"  \[([a-z-]+)\]=(\S+)\n", paths.group(1))) if paths else None
+    if found_paths != NodeBinaryReleaseTest.PATHS:
+        problems.append("the node build script does not take each binary from its build path")
     return problems
 
 
@@ -1262,6 +1281,30 @@ class NodeBinaryReleaseTest(unittest.TestCase):
         "lite-client",
         "generate-random-id",
         "tos-pq-consensus-key",
+        "dht-server",
+        "tos-rpc",
+        "tos-wallet-index",
+    )
+    # binary -> its path in the build directory
+    PATHS = {
+        "validator-engine": "validator-engine/validator-engine",
+        "validator-engine-console": "validator-engine-console/validator-engine-console",
+        "lite-client": "lite-client/lite-client",
+        "generate-random-id": "utils/generate-random-id",
+        "tos-pq-consensus-key": "crypto/pq/tos-pq-consensus-key",
+        "dht-server": "dht-server/dht-server",
+        "tos-rpc": "services/tos-rpc",
+        "tos-wallet-index": "services/tos-wallet-index",
+    }
+    # The binaries whose link line carries jemalloc: validator-engine and
+    # dht-server list it, tos-rpc and tos-wallet-index get it through tos_db.
+    JEMALLOC_BINARIES = ("validator-engine", "dht-server", "tos-rpc", "tos-wallet-index")
+    # The binaries with a -V option that prints the commit; the others have none.
+    VERSIONED_BINARIES = (
+        "validator-engine",
+        "validator-engine-console",
+        "lite-client",
+        "generate-random-id",
         "dht-server",
     )
 
@@ -1349,7 +1392,8 @@ class NodeBinaryReleaseTest(unittest.TestCase):
                 '|| die "$t does not link jemalloc"', '|| echo "$t does not link jemalloc"'
             ),
             "NEEDED check on no target": script.replace(
-                "JEMALLOC_TARGETS=(validator-engine dht-server)", "JEMALLOC_TARGETS=()"
+                "JEMALLOC_TARGETS=(validator-engine dht-server tos-rpc tos-wallet-index)",
+                "JEMALLOC_TARGETS=()",
             ),
             "stats check deleted": script.replace(stats, ""),
             "commit check deleted": script.replace(
@@ -1360,6 +1404,65 @@ class NodeBinaryReleaseTest(unittest.TestCase):
             with self.subTest(mutant=label):
                 self.assertNotEqual(mutant, script)
                 self.assertNotEqual(node_release_problems(config, workflow, mutant), [])
+
+    def test_the_wallet_services_are_built_published_and_checked(self) -> None:
+        # tos-rpc and tos-wallet-index are node binaries like the others:
+        # dropping either from the build targets, its build path, the zip,
+        # the build record, the jemalloc check or the asset list is refused.
+        config, workflow, script = self.inputs()
+        self.assertEqual(node_release_problems(config, workflow, script), [])
+        targets = (
+            "TARGETS=(validator-engine validator-engine-console lite-client generate-random-id\n"
+            "         tos-pq-consensus-key dht-server tos-rpc tos-wallet-index)"
+        )
+        jemalloc = "JEMALLOC_TARGETS=(validator-engine dht-server tos-rpc tos-wallet-index)"
+        install = 'for t in "${TARGETS[@]}"; do\n  install -m 0755'
+        needed = 'for t in "${TARGETS[@]}"; do\n    echo "needed $t'
+        digests = '(cd "$OUT" && sha256sum "${TARGETS[@]}")'
+        for binary, path in (
+            ("tos-rpc", "services/tos-rpc"),
+            ("tos-wallet-index", "services/tos-wallet-index"),
+        ):
+            other = "tos-wallet-index" if binary == "tos-rpc" else "tos-rpc"
+            dropped = f" {binary}"
+            script_mutants = {
+                "build target dropped": script.replace(targets, targets.replace(dropped, "", 1)),
+                "build path dropped": script.replace(f"  [{binary}]={path}\n", ""),
+                "build path moved": script.replace(
+                    f"  [{binary}]={path}\n", f"  [{binary}]=services/{other}\n"
+                ),
+                "jemalloc check dropped": script.replace(
+                    jemalloc, jemalloc.replace(dropped, "", 1)
+                ),
+                "not copied into the zip": script.replace(
+                    install,
+                    f'for t in "${{TARGETS[@]}}"; do\n  [ "$t" = {binary} ] && continue\n'
+                    "  install -m 0755",
+                ),
+                "no needed line": script.replace(
+                    needed,
+                    f'for t in "${{TARGETS[@]}}"; do\n    [ "$t" = {binary} ] && continue\n'
+                    '    echo "needed $t',
+                ),
+                "no digest": script.replace(
+                    digests, f'(cd "$OUT" && sha256sum "${{TARGETS[@]/{binary}}}")'
+                ),
+            }
+            for label, mutant in script_mutants.items():
+                with self.subTest(binary=binary, mutant=label):
+                    self.assertNotEqual(mutant, script)
+                    self.assertNotEqual(node_release_problems(config, workflow, mutant), [])
+            for arch in self.ARCHES:
+                with self.subTest(binary=binary, arch=arch, mutant="asset dropped"):
+                    mutant = json.loads(json.dumps(config))
+                    assets = mutant["release_sets"]["full"]["assets"]
+                    before = len(assets)
+                    assets[:] = [a for a in assets if a["name"] != f"{binary}-linux-{arch}"]
+                    self.assertEqual(len(assets), before - 1)
+                    self.assertEqual(
+                        node_release_problems(mutant, workflow, script),
+                        [f"the full set does not publish {binary}-linux-{arch}"],
+                    )
 
     def test_a_missing_artifact_zip_is_refused(self) -> None:
         config, workflow, script = self.inputs()
@@ -1379,7 +1482,7 @@ class NodeBinaryReleaseTest(unittest.TestCase):
             "-DCMAKE_BUILD_TYPE=Release": "-DCMAKE_BUILD_TYPE=RelWithDebInfo",
             "export SOURCE_DATE_EPOCH": "",
             "clang++-21 \\": "g++ \\",
-            "tos-pq-consensus-key dht-server)": "tos-pq-consensus-key)",
+            "tos-pq-consensus-key dht-server tos-rpc tos-wallet-index)": "tos-pq-consensus-key)",
             "grep -q 'jemalloc statistics'": "true",
         }
         for old, new in mutants.items():
