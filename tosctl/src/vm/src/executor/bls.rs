@@ -124,22 +124,27 @@ pub(super) fn execute_bls_aggregate(engine: &mut Engine) -> Status {
 pub(super) fn execute_bls_fast_aggregate_verify(engine: &mut Engine) -> Status {
     engine.load_instruction(Instruction::new("BLS_FASTAGGREGATEVERIFY"))?;
 
+    // As in the C++ VM: the signature and message are only typed as slices here; the count is
+    // checked and charged, the keys are decoded, and the message and signature are decoded last,
+    // also when there are no keys.
     fetch_stack(engine, 3)?;
-    let sgn = engine.cmd.var(0).as_slice()?.clone().get_next_bytes(BLS_SIG_LEN)?;
-    let msg = slice_to_msg(engine.cmd.var(1).as_slice()?)?;
+    engine.cmd.var(0).as_slice()?;
+    engine.cmd.var(1).as_slice()?;
     let n = engine.cmd.var(2).as_stack_index()?;
     if n > engine.stack().depth() {
         fail!(ExceptionCode::RangeCheckError);
     }
     engine.try_use_gas(Gas::bls_fastaggregateverify_gas_price(n as i64))?;
+    fetch_stack(engine, n)?;
+    let mut pks = Vec::with_capacity(n);
+    for i in 3..n + 3 {
+        pks.push(engine.cmd.var(i).as_slice()?.clone().get_next_bytes(BLS_PUBLIC_KEY_LEN)?)
+    }
+    let msg = slice_to_msg(engine.cmd.var(1).as_slice()?)?;
+    let sgn = engine.cmd.var(0).as_slice()?.clone().get_next_bytes(BLS_SIG_LEN)?;
     let res = if n == 0 {
         false
     } else {
-        fetch_stack(engine, n)?;
-        let mut pks = Vec::with_capacity(n);
-        for i in 3..n + 3 {
-            pks.push(engine.cmd.var(i).as_slice()?.clone().get_next_bytes(BLS_PUBLIC_KEY_LEN)?)
-        }
         let mut pks_refs = Vec::<&[u8; BLS_PUBLIC_KEY_LEN]>::with_capacity(n);
         for pk in &pks {
             pks_refs.push(pk.as_slice().try_into()?);
@@ -159,25 +164,27 @@ pub(super) fn execute_bls_fast_aggregate_verify(engine: &mut Engine) -> Status {
 pub(super) fn execute_bls_aggregate_verify(engine: &mut Engine) -> Status {
     engine.load_instruction(Instruction::new("BLS_AGGREGATEVERIFY"))?;
 
+    // As in the C++ VM: the signature is only typed as a slice here; the count is checked and
+    // charged, each message and key is decoded, and the signature is decoded last, also when
+    // there are no pairs.
     fetch_stack(engine, 2)?;
-    let sgn = engine.cmd.var(0).as_slice()?.clone().get_next_bytes(BLS_SIG_LEN)?;
+    engine.cmd.var(0).as_slice()?;
     let n = engine.cmd.var(1).as_stack_index()?;
     if n * 2 > engine.stack().depth() {
         fail!(ExceptionCode::RangeCheckError);
     }
     engine.try_use_gas(Gas::bls_aggregateverify_gas_price(n as i64))?;
+    fetch_stack(engine, n * 2)?;
+    let mut pks = Vec::with_capacity(n);
+    let mut msgs = Vec::with_capacity(n);
+    for i in 0..n {
+        msgs.push(slice_to_msg(engine.cmd.var(2 + i * 2).as_slice()?)?);
+        pks.push(engine.cmd.var(3 + i * 2).as_slice()?.clone().get_next_bytes(BLS_PUBLIC_KEY_LEN)?);
+    }
+    let sgn = engine.cmd.var(0).as_slice()?.clone().get_next_bytes(BLS_SIG_LEN)?;
     let res = if n == 0 {
         false
     } else {
-        fetch_stack(engine, n * 2)?;
-        let mut pks = Vec::with_capacity(n);
-        let mut msgs = Vec::with_capacity(n);
-        for i in 0..n {
-            msgs.push(slice_to_msg(engine.cmd.var(2 + i * 2).as_slice()?)?);
-            pks.push(
-                engine.cmd.var(3 + i * 2).as_slice()?.clone().get_next_bytes(BLS_PUBLIC_KEY_LEN)?,
-            );
-        }
         let msgs_refs: Vec<&[u8]> = msgs.iter().map(|sig| &sig[..]).collect();
         let mut pks_refs = Vec::<&[u8; BLS_PUBLIC_KEY_LEN]>::with_capacity(n);
         for pk in &pks {
@@ -207,9 +214,10 @@ where
     P: FnOnce(&[u8; L], &[u8; L]) -> Result<[u8; L]>,
 {
     engine.load_instruction(Instruction::new(instruction))?;
+    // The stack depth is checked before the operation is charged, as in the C++ VM.
+    fetch_stack(engine, 2)?;
     engine.try_use_gas(gas)?;
 
-    fetch_stack(engine, 2)?;
     let y = engine.cmd.var(0).as_slice()?.clone().get_next_bytes(L)?;
     let x = engine.cmd.var(1).as_slice()?.clone().get_next_bytes(L)?;
 
@@ -231,10 +239,14 @@ where
     P: FnOnce(&[u8; L], &[u8; BLS_SCALAR_LEN]) -> Result<[u8; L]>,
 {
     engine.load_instruction(Instruction::new(instruction))?;
+    // Depth, then the charge, then a finite scalar, and only then the point, as in the C++ VM.
+    fetch_stack(engine, 2)?;
     engine.try_use_gas(gas)?;
 
-    fetch_stack(engine, 2)?;
     let s = engine.cmd.var(0).as_integer()?;
+    if s.is_nan() {
+        fail!(ExceptionCode::IntegerOverflow)
+    }
     let x = engine.cmd.var(1).as_slice()?.clone().get_next_bytes(L)?;
 
     // Using FloorToNegativeInfinity we got positive remainder anyway,

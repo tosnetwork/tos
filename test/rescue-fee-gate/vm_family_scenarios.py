@@ -255,6 +255,26 @@ BLS_SETUPS = {
     "s-s-2": (EMPTY_SLICE, EMPTY_SLICE, pushint(2)),
     "g1-nan-1": (G1Z, op([0x83, 0xFF]), pushint(1)),
     "g1-nan": (G1Z, op([0x83, 0xFF])),
+    "g2-nan": (G2Z, op([0x83, 0xFF])),
+    # A scalar that is not finite or not an integer, below or above a malformed point.
+    "s-nan": (EMPTY_SLICE, op([0x83, 0xFF])),
+    "s-null": (EMPTY_SLICE, NULL),
+    "nan-s": (op([0x83, 0xFF]), EMPTY_SLICE),
+    "g1-big": (G1Z, op([0x83, 200])),
+    "g2-minus-1": (G2Z, pushint(-1)),
+    # Counts of zero with a malformed or valid message and signature, and type errors in front.
+    "0-s-s": (pushint(0), EMPTY_SLICE, EMPTY_SLICE),
+    "0-s-g2": (pushint(0), EMPTY_SLICE, G2Z),
+    "0-s": (pushint(0), EMPTY_SLICE),
+    "0-g2": (pushint(0), G2Z),
+    "0-null-s": (pushint(0), NULL, EMPTY_SLICE),
+    "0-s-null": (pushint(0), EMPTY_SLICE, NULL),
+    "null-s": (NULL, EMPTY_SLICE),
+    "g1-1-s-null": (G1Z, pushint(1), EMPTY_SLICE, NULL),
+    "s-1-s-g2": (EMPTY_SLICE, pushint(1), EMPTY_SLICE, G2Z),
+    "g1-s-1-g2": (G1Z, EMPTY_SLICE, pushint(1), G2Z),
+    "s-s-1-g2": (EMPTY_SLICE, EMPTY_SLICE, pushint(1), G2Z),
+    "g1-s-s-1-s": (G1Z, EMPTY_SLICE, pushint(1), EMPTY_SLICE),
 }
 BLS_OPS = [0x00, 0x01, 0x02, 0x03, *range(0x10, 0x19), *range(0x20, 0x29), 0x30, 0x31]
 
@@ -448,7 +468,7 @@ FAMILIES = {
     "loop": loop,
 }
 # The families vm_prefix_scenarios.py runs; the others still differ (continuation model).
-COMPARED = ("xchg", "hashext")
+COMPARED = ("xchg", "hashext", "bls")
 
 
 def scenarios(families=COMPARED):

@@ -234,6 +234,18 @@ def scenarios():
     add("hashext-id-255-sha512", prog(*one_byte, pushint(1), pushint(1), op([0xF9, 0x04, 0xFF])))
     add("hashext-id-255-only", prog(pushint(0), op([0xF9, 0x04, 0xFF])))
     add("hashexta-count-0-no-builder", prog(pushint(0), op([0xF9, 0x06, 0x00])))
+    # BLS: the depth is checked before the operation is charged; a scalar must be finite before
+    # its point is decoded; the aggregate checks decode their message and signature last, also
+    # for a count of zero.
+    empty_slice = op([0xC8, 0xC9, 0xD0])
+    add("bls-g1-add-empty-stack", prog(op([0xF9, 0x30, 0x10])))
+    add("bls-g1-mul-nan-short-point", prog(empty_slice, PUSHNAN, op([0xF9, 0x30, 0x13])))
+    add("bls-g2-mul-nan-short-point", prog(empty_slice, PUSHNAN, op([0xF9, 0x30, 0x23])))
+    add(
+        "bls-fastaggregateverify-0-short",
+        prog(pushint(0), empty_slice, empty_slice, op([0xF9, 0x30, 0x02])),
+    )
+    add("bls-aggregateverify-0-short", prog(pushint(0), empty_slice, op([0xF9, 0x30, 0x03])))
 
 
 # Rows that may differ only in the final stack and the error argument; exit code, gas, steps

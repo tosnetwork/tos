@@ -24,9 +24,7 @@ from vm_family_scenarios import KNOWN as FAMILY_KNOWN  # noqa: E402
 from vm_family_scenarios import scenarios as family_scenarios  # noqa: E402
 from vm_opcode_table import TOP, read  # noqa: E402
 
-# BLS_G1_ADD and BLS_G2_ADD run on an empty stack: the Rust VM charges the operation before it
-# checks the stack depth, the C++ VM after. Open; the BLS instructions are fixed separately.
-KNOWN = ["version-f93010-24-at-4", "version-f93020-24-at-4", *FAMILY_KNOWN]
+KNOWN = [*FAMILY_KNOWN]
 
 VERSION = 16
 BUDGET = 1_000_000

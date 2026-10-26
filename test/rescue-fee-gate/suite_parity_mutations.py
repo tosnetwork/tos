@@ -664,6 +664,64 @@ MUTATIONS = {
         (),
         ("family-hashext-f90400-one-byte", "family-hashext-f90400-budget-1466"),
     ),
+    # BLS: the depth is checked before the charge, a scalar before its point, and the message and
+    # signature of the aggregate checks are decoded last, also for no keys.
+    "BLS ADD charges before the depth check": Mutation(
+        BLS,
+        [
+            (
+                "    fetch_stack(engine, 2)?;\n    engine.try_use_gas(gas)?;\n\n    let y =",
+                "    engine.try_use_gas(gas)?;\n    fetch_stack(engine, 2)?;\n\n    let y =",
+            )
+        ],
+        (),
+        (),
+        ("family-bls-f93010-empty-1000000", "family-bls-f93021-i-300", "version-f93010-24-at-4"),
+    ),
+    "BLS MUL decodes the point before the scalar": Mutation(
+        BLS,
+        [
+            (
+                "    let s = engine.cmd.var(0).as_integer()?;\n    if s.is_nan() {\n"
+                "        fail!(ExceptionCode::IntegerOverflow)\n    }\n"
+                "    let x = engine.cmd.var(1).as_slice()?.clone().get_next_bytes(L)?;\n",
+                "    let x = engine.cmd.var(1).as_slice()?.clone().get_next_bytes(L)?;\n"
+                "    let s = engine.cmd.var(0).as_integer()?;\n    if s.is_nan() {\n"
+                "        fail!(ExceptionCode::IntegerOverflow)\n    }\n",
+            )
+        ],
+        (),
+        (),
+        ("family-bls-f93013-s-nan-1000000", "family-bls-f93023-s-null-1000000"),
+    ),
+    "BLS FASTAGGREGATEVERIFY decodes the signature first": Mutation(
+        BLS,
+        [
+            (
+                "    fetch_stack(engine, 3)?;\n    engine.cmd.var(0).as_slice()?;\n",
+                "    fetch_stack(engine, 3)?;\n"
+                "    engine.cmd.var(0).as_slice()?.clone().get_next_bytes(BLS_SIG_LEN)?;\n",
+            )
+        ],
+        (),
+        (),
+        ("family-bls-f93002-g1-s-s-1000000", "family-bls-f93002-0-s-s-1000000"),
+    ),
+    "BLS AGGREGATEVERIFY skips decoding for no pairs": Mutation(
+        BLS,
+        [
+            (
+                "    let sgn = engine.cmd.var(0).as_slice()?.clone().get_next_bytes(BLS_SIG_LEN)?;\n"
+                "    let res = if n == 0 {\n        false\n    } else {\n        let msgs_refs",
+                "    let res = if n == 0 {\n        false\n    } else {\n"
+                "        let sgn = engine.cmd.var(0).as_slice()?.clone().get_next_bytes(BLS_SIG_LEN)?;\n"
+                "        let msgs_refs",
+            )
+        ],
+        (),
+        (),
+        ("family-bls-f93003-0-s-1000000",),
+    ),
 }
 
 
