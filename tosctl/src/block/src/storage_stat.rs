@@ -267,8 +267,11 @@ impl AccountStorageStat {
                 max_merkle_depth = max_merkle_depth.max(child_depth);
             }
             if cell.is_merkle() {
-                max_merkle_depth += 1;
+                max_merkle_depth = max_merkle_depth.saturating_add(1);
             }
+            // Three is the two-bit rejection sentinel above the allowed depth
+            // two. Keep deep graphs from wrapping back into the accepted range.
+            max_merkle_depth = max_merkle_depth.min(3);
             self.total_cells += 1;
             self.total_bits += cell.bit_length() as u64;
             let data = StorageStatCellInfo { ref_count: 1, max_merkle_depth, ref_count_diff: 1 };
