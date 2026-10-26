@@ -2,8 +2,10 @@
 
 import base64
 import importlib.util
+import signal
 import unittest
 from pathlib import Path
+from unittest.mock import Mock, patch
 
 from pytosiq_core import Builder
 from quantum_self_pay_fixture import GLOBAL_ID, NAMESPACE, accounts, byte_chain, one_cell
@@ -112,6 +114,63 @@ class FixtureTests(unittest.TestCase):
             value["account"][field] = bad
             with self.subTest(field=field), self.assertRaises(ValueError):
                 self.capture.validate_account(value, record, self.code.hash.hex())
+
+    def test_cleanup_signals_surviving_group_after_leader_exit(self):
+        process = Mock(pid=12345)
+        process.poll.return_value = 7
+        alive = True
+        signals = []
+
+        def killpg(pid, sig):
+            nonlocal alive
+            self.assertEqual(pid, process.pid)
+            if not alive:
+                raise ProcessLookupError
+            if sig:
+                signals.append(sig)
+                alive = False
+
+        with patch.object(self.capture.os, "killpg", side_effect=killpg):
+            self.capture.stop_process_group(process, grace=0.01)
+        self.assertEqual(signals, [signal.SIGINT])
+        process.wait.assert_called_once_with(timeout=0.01)
+
+    def test_readiness_requires_nonzero_basechain_shards(self):
+        def response(*shards):
+            return {"result": {"shards": list(shards)}}
+
+        ready = {"workchain": 0, "seqno": 1}
+        self.assertTrue(self.capture.basechain_ready(response(ready)))
+        for value in (
+            {},
+            {"error": {"code": -32603}},
+            response(),
+            response({"workchain": -1, "seqno": 1}),
+            response({"workchain": 0, "seqno": 0}),
+            response(ready, {"workchain": 0, "seqno": 0}),
+        ):
+            with self.subTest(value=value):
+                self.assertFalse(self.capture.basechain_ready(value))
+
+    def test_cleanup_escalates_until_the_whole_group_exits(self):
+        process = Mock(pid=12345)
+        process.poll.return_value = 0  # Leader already exited; children ignore INT and TERM.
+        alive = True
+        signals = []
+
+        def killpg(pid, sig):
+            nonlocal alive
+            self.assertEqual(pid, process.pid)
+            if not alive:
+                raise ProcessLookupError
+            if sig:
+                signals.append(sig)
+                if sig == signal.SIGKILL:
+                    alive = False
+
+        with patch.object(self.capture.os, "killpg", side_effect=killpg):
+            self.capture.stop_process_group(process, grace=0.01)
+        self.assertEqual(signals, [signal.SIGINT, signal.SIGTERM, signal.SIGKILL])
 
 
 if __name__ == "__main__":

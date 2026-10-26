@@ -437,6 +437,8 @@ jobs:
             build/quantum-self-pay-candidate-ci/*-result.json
             build/quantum-self-pay-candidate-ci/*-verifier.log
             build/quantum-self-pay-candidate-ci/proof-controls.json
+            build/quantum-self-pay-candidate-ci/readiness.json
+            build/quantum-self-pay-candidate-ci/network-exit.json
           if-no-files-found: warn
           retention-days: 14
 

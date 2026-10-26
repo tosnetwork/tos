@@ -42,9 +42,15 @@ uv run python scripts/capture-quantum-self-pay.py --build-dir build \
 ```
 
 The output directory must be new. The runner owns and stops its disposable
-node process group. It verifies configuration and all three accounts at one
+node process group, including surviving children after a leader crash. It
+starts no wallet client and waits until the masterchain references nonzero
+basechain blocks before requesting account proofs. The JSON-RPC readiness
+check is only a startup hint; it does not authenticate any state. The native
+verifier verifies configuration and all three accounts at one
 authenticated masterchain checkpoint, then replays the genuine account proof
-and requires a wrong anchor and missing account material to be refused.
+and requires a wrong anchor and missing account material to be refused for
+their specific reasons. `readiness.json` and `network-exit.json` retain the
+startup observation and the reaped leader's exit status.
 `mobile-fixture/` contains only public JSON and raw TL proof material for
 mobile re-verification at its recorded controlled time. `network/` contains
 private node runtime data and must not be copied into fixtures or artifacts.

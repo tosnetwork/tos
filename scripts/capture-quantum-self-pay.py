@@ -2,6 +2,7 @@
 """Capture native-verified self-pay account proofs on a fresh disposable chain."""
 
 import argparse
+import asyncio
 import base64
 import hashlib
 import json
@@ -16,7 +17,72 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from quantum_self_pay_fixture import ROOT, build_fixture, one_cell, require
+from quantum_self_pay_fixture import GLOBAL_ID, NAMESPACE, ROOT, build_fixture, one_cell, require
+
+
+def stop_process_group(process, grace=5.0):
+    """Reclaim children even if their group leader has already crashed."""
+
+    def exists():
+        try:
+            os.killpg(process.pid, 0)
+            return True
+        except ProcessLookupError:
+            return False
+
+    for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGKILL):
+        if not exists():
+            break
+        try:
+            os.killpg(process.pid, sig)
+        except ProcessLookupError:
+            break
+        deadline = time.monotonic() + grace
+        while time.monotonic() < deadline:
+            process.poll()  # Reap the leader while waiting for the remaining children.
+            if not exists():
+                break
+            time.sleep(0.05)
+    process.wait(timeout=grace)
+    require(not exists(), "owned network process group did not exit")
+
+
+async def serve(build, workdir, basechain):
+    """Read-only chain: no faucet or native wallet-client connection is needed."""
+    from tostester.install import Install
+    from tostester.network import Network, StartOptions
+    from tostester.pq_initial_validator import make_deterministic_pq_initial_validator
+    from tostester.zerostate import basechain_fixture_balance
+
+    require(not workdir.exists(), "fresh network directory required")
+    workdir.mkdir(parents=True)
+    encoded = basechain.read_bytes()
+    basechain_fixture_balance(encoded, GLOBAL_ID)
+    async with Network(Install(build, ROOT), workdir, base_port=39000) as network:
+        network.config.global_version = 16
+        network.config.global_id = GLOBAL_ID
+        network.config.auth_network_tag = NAMESPACE
+        network.config.deployment_fee_schedule = True
+        network.config.quantum_admission_candidate = True
+        network.config.basechain_fixture = encoded
+        dht = network.create_dht_node()
+        node = network.create_full_node()
+        make_deterministic_pq_initial_validator(node, 0)
+        node.announce_to(dht)
+        (workdir / "lite-client.json").write_text(node.liteserver_config.to_json())
+        await dht.run()
+        await node.run(StartOptions(args=["--json-rpc-address", "127.0.0.1:38545"]))
+        await asyncio.Event().wait()
+
+
+def basechain_ready(response):
+    """Readiness only: every basechain shard must have a non-zerostate block."""
+    shards = [
+        shard
+        for shard in response.get("result", {}).get("shards", [])
+        if shard.get("workchain") == 0
+    ]
+    return bool(shards) and all(shard.get("seqno", 0) > 0 for shard in shards)
 
 
 def validate_account(value, record, code_hash):
@@ -77,11 +143,17 @@ def proof_controls(verifier, public, out):
     shutil.copytree(material, missing)
     (missing / "account.tl").unlink()
     rows = {}
-    for name, selected_anchor, selected_material, accepted in [
-        ("genuine", anchor, material, True),
-        ("wrong-anchor", wrong_anchor, material, False),
-        ("missing-account", anchor, missing, False),
+    for name, selected_anchor, selected_material, expected_reason in [
+        ("genuine", anchor, material, None),
+        (
+            "wrong-anchor",
+            wrong_anchor,
+            material,
+            "proof chain does not start at the authenticated block",
+        ),
+        ("missing-account", anchor, missing, "account proof is missing"),
     ]:
+        accepted = expected_reason is None
         result = subprocess.run(
             [
                 str(verifier),
@@ -103,7 +175,8 @@ def proof_controls(verifier, public, out):
         value = json.loads(result.stdout)
         require(
             result.returncode == (0 if accepted else 1)
-            and value["status"] == ("verified" if accepted else "refused"),
+            and value["status"] == ("verified" if accepted else "refused")
+            and value.get("reason") == expected_reason,
             f"native proof control failed: {name}",
         )
         rows[name] = {
@@ -130,20 +203,14 @@ def capture(build, public_input, out):
     env.pop("TOS_AUTH_NETWORK_TAG", None)
     command = [
         sys.executable,
-        str(ROOT / "scripts/localnet-jsonrpc.py"),
-        "--quantum-admission-candidate",
-        "--basechain-fixture",
+        str(Path(__file__).resolve()),
+        "--serve",
+        "--build-dir",
+        str(build),
+        "--input",
         str(out / "genesis/basestate0.boc"),
-        "--workdir",
+        "--out",
         str(network),
-        "--rpc",
-        "127.0.0.1:38545",
-        "--control",
-        "127.0.0.1:38745",
-        "--base-port",
-        "39000",
-        "--boot-timeout",
-        "180",
     ]
     verifier = build / "lite-client/proof-verify/tos-proof-verify"
     public = out / "mobile-fixture"
@@ -158,12 +225,26 @@ def capture(build, public_input, out):
         try:
             deadline = time.monotonic() + 200
             while True:
-                require(process.poll() is None, "node exited before readiness")
+                require(
+                    process.poll() is None, f"node exited before readiness: {process.returncode}"
+                )
                 try:
-                    with urllib.request.urlopen(
-                        "http://127.0.0.1:38745/readyz", timeout=1
-                    ) as response:
-                        if json.load(response).get("ok") is True:
+                    request = urllib.request.Request(
+                        "http://127.0.0.1:38545/jsonRPC",
+                        data=json.dumps(
+                            {
+                                "jsonrpc": "2.0",
+                                "id": 1,
+                                "method": "getShards",
+                                "params": {},
+                            }
+                        ).encode(),
+                        headers={"Content-Type": "application/json"},
+                    )
+                    with urllib.request.urlopen(request, timeout=1) as response:
+                        result = json.load(response)
+                        if basechain_ready(result):
+                            (out / "readiness.json").write_text(json.dumps(result) + "\n")
                             break
                 except (OSError, ValueError):
                     pass
@@ -294,21 +375,25 @@ def capture(build, public_input, out):
             (public / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
             print("Self-pay active, prefunded and absent native proofs captured", flush=True)
         finally:
-            if process.poll() is None:
-                os.killpg(process.pid, signal.SIGINT)
-                try:
-                    process.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    os.killpg(process.pid, signal.SIGTERM)
-                    process.wait(timeout=10)
+            stop_process_group(process)
+            (out / "network-exit.json").write_text(json.dumps({"exit": process.returncode}) + "\n")
 
 
 if __name__ == "__main__":
+
+    def interrupted(_signal, _frame):
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGTERM, interrupted)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--build-dir", required=True, type=Path)
     parser.add_argument(
         "--input", required=True, type=Path, help="Public vectors or frozen genesis fixture"
     )
     parser.add_argument("--out", required=True, type=Path)
+    parser.add_argument("--serve", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
-    capture(args.build_dir.resolve(), args.input.resolve(), args.out.resolve())
+    if args.serve:
+        asyncio.run(serve(args.build_dir.resolve(), args.out.resolve(), args.input.resolve()))
+    else:
+        capture(args.build_dir.resolve(), args.input.resolve(), args.out.resolve())
