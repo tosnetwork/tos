@@ -144,6 +144,18 @@ bad_message = (
 )
 cases.append(("external-bad-state", base, Cell().uint(0, 320).ref(uninit), bad_message))
 
+# A program cannot spoof real OOG by THROWANY(-14): native range-checks
+# the exception number and reports integer-out-of-range (5).
+negative_throw = Cell().raw(bytes([0x80, 0xF2, 0xF2, 0xF0]))
+cases.append(
+    (
+        "precompiled-external-negative-throwany",
+        m.with_precompiled(base, negative_throw, 0),
+        consistent(native.active_account(m.PROBE, negative_throw, Cell())),
+        native.external(m.PROBE, Cell()),
+    )
+)
+
 
 def outcome(r):
     if r["success"]:
@@ -183,6 +195,8 @@ def run_worker(library):
             expected = ["unaccepted", 0]
         elif label.startswith("precompiled-") and "burn" in label:
             expected = ["precompiled-compute-failed"]
+        elif label.endswith("negative-throwany"):
+            expected = ["unaccepted", 5]
         elif "-external-throw13" in label:
             expected = ["unaccepted", 13]
         elif label == "ordinary-external-burn-before-accept":
@@ -267,12 +281,12 @@ else:
         supervised(library, out / backend)
     left = json.loads((out / "native/outcomes.json").read_text())
     right = json.loads((out / "rust/outcomes.json").read_text())
-    assert len(left) == len(right) == 23
+    assert len(left) == len(right) == 24
     assert left == right, "native/Rust transaction outcomes differ"
     # Every oracle uses exactly the same complete original inputs and config.
     for label, _, _, _ in cases:
         for kind in ["config", "shard", "message"]:
             name = label + "-" + kind + ".boc"
             assert (out / "native" / name).read_bytes() == (out / "rust" / name).read_bytes(), name
-    (out / "summary.json").write_text(json.dumps(dict(cases=23, matched=True), indent=2) + "\n")
-    print("PASS: 23 transaction outcomes; accepted transaction/Account/ShardAccount roots match")
+    (out / "summary.json").write_text(json.dumps(dict(cases=24, matched=True), indent=2) + "\n")
+    print("PASS: 24 transaction outcomes; accepted transaction/Account/ShardAccount roots match")

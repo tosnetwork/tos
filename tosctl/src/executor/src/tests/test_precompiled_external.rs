@@ -272,6 +272,11 @@ fn real_oog_is_distinct_from_user_throw_and_ordinary_oog() {
         run(code(&[0xf2, 0x0d]), Some(0), external(), BALANCE),
         Outcome::NotAccepted(13)
     ));
+    // PUSHINT -14; THROWANY is range-checked, not a real OOG exception.
+    assert!(matches!(
+        run(code(&[0x80, 0xf2, 0xf2, 0xf0]), Some(0), external(), BALANCE),
+        Outcome::NotAccepted(5)
+    ));
     for message in [external(), internal()] {
         assert!(matches!(
             run(code(&[0xf8, 0x00, 0xf2, 0x0d]), Some(0), message, BALANCE),
