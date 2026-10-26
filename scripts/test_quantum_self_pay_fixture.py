@@ -2,16 +2,70 @@
 
 import base64
 import importlib.util
+import os
 import signal
+import subprocess
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
 from pytosiq_core import Builder
-from quantum_self_pay_fixture import GLOBAL_ID, NAMESPACE, accounts, byte_chain, one_cell
+from quantum_self_pay_fixture import (
+    GLOBAL_ID,
+    NAMESPACE,
+    ROOT,
+    accounts,
+    byte_chain,
+    one_cell,
+    source_commit,
+)
 
 
 class FixtureTests(unittest.TestCase):
+    def test_provenance_reads_only_the_explicitly_trusted_checkout(self):
+        with patch.dict(
+            os.environ,
+            {
+                "GIT_TEST_ASSUME_DIFFERENT_OWNER": "1",
+                "GIT_CONFIG_GLOBAL": os.devnull,
+                "GIT_CONFIG_NOSYSTEM": "1",
+            },
+        ):
+            refused = subprocess.run(
+                ["git", "-c", "safe.directory=", "rev-parse", "HEAD"],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            self.assertNotEqual(refused.returncode, 0)
+            self.assertIn("dubious ownership", refused.stderr)
+            expected = subprocess.check_output(
+                [
+                    "git",
+                    "-c",
+                    f"safe.directory={ROOT}",
+                    "show",
+                    "--no-patch",
+                    "--format=%H",
+                    "HEAD",
+                ],
+                cwd=ROOT,
+                text=True,
+                timeout=10,
+            ).strip()
+            self.assertEqual(source_commit(), expected)
+            # The helper must not leave a global trust exception behind.
+            refused_again = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            self.assertNotEqual(refused_again.returncode, 0)
+            self.assertIn("dubious ownership", refused_again.stderr)
+
     def setUp(self):
         self.code = Builder().store_uint(17, 8).end_cell()
         self.primary = bytes(index % 256 for index in range(1312))

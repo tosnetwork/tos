@@ -15,6 +15,17 @@ NAMESPACE = bytes.fromhex("42" * 32)
 GLOBAL_ID = 1
 
 
+def source_commit():
+    # Container checkout ownership can differ from the executing user. Trust
+    # only the checkout whose harness is already executing, for this read alone.
+    return subprocess.check_output(
+        ["git", "-c", f"safe.directory={ROOT}", "rev-parse", "HEAD"],
+        cwd=ROOT,
+        text=True,
+        timeout=10,
+    ).strip()
+
+
 def require(value, message):
     if not value:
         raise ValueError(message)
@@ -208,9 +219,7 @@ def build_fixture(public_input, build, out):
         "rescue_key": rescue.hex(),
         "accounts": records,
         "provenance": {
-            "source_commit": subprocess.check_output(
-                ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
-            ).strip(),
+            "source_commit": source_commit(),
             "public_input_sha256": hashlib.sha256(vector_bytes).hexdigest(),
             "public_input_schema": vector["schema"],
             "generator_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),

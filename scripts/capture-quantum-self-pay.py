@@ -17,7 +17,15 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from quantum_self_pay_fixture import GLOBAL_ID, NAMESPACE, ROOT, build_fixture, one_cell, require
+from quantum_self_pay_fixture import (
+    GLOBAL_ID,
+    NAMESPACE,
+    ROOT,
+    build_fixture,
+    one_cell,
+    require,
+    source_commit,
+)
 
 
 def stop_process_group(process, grace=5.0):
@@ -359,9 +367,7 @@ def capture(build, public_input, out):
                 "target": target,
                 "proof_controls": controls,
                 "files": files,
-                "capture_source_commit": subprocess.check_output(
-                    ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
-                ).strip(),
+                "capture_source_commit": source_commit(),
                 "capture_script_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
                 "binaries": {
                     name: hashlib.sha256((build / name).read_bytes()).hexdigest()
