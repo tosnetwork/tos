@@ -213,9 +213,12 @@ async def serve(build, workdir, rpc_port, base_port, ordinary):
             node.announce_to(dht)
         (workdir / "lite-client.json").write_text(nodes[0].liteserver_config.to_json())
         await dht.run()
-        await asyncio.gather(*(node.run(StartOptions(args=[
-            "--json-rpc-address", f"127.0.0.1:{rpc_port + index}"
-        ])) for index, node in enumerate(nodes)))
+        await asyncio.gather(
+            *(
+                node.run(StartOptions(args=["--json-rpc-address", f"127.0.0.1:{rpc_port + index}"]))
+                for index, node in enumerate(nodes)
+            )
+        )
         await asyncio.Event().wait()
 
 
@@ -413,7 +416,9 @@ def main():
                     assert state["fee_payment"] == "wallet_balance"
                     assert state["authority_epoch"] == str(2**64 - 1)
                     assert second["seqno"] == 2**32 - 1 and second["wallet_id"] == 7
-                    assert state["network_tag"] == base64.b64encode(bytes.fromhex("43" * 32)).decode()
+                    assert (
+                        state["network_tag"] == base64.b64encode(bytes.fromhex("43" * 32)).decode()
+                    )
                     assert state["rescue"]["policy"] == "ready"
                     assert state["primary"]["algorithm_id"] == 1
                     assert state["rescue"]["algorithm_id"] == 3
@@ -506,7 +511,9 @@ def main():
                 stop_process_group(process)
             finally:
                 (out / "rpc-evidence.json").write_text(json.dumps(records, indent=2) + "\n")
-                (out / "network-exit.json").write_text(json.dumps({"exit": process.returncode}) + "\n")
+                (out / "network-exit.json").write_text(
+                    json.dumps({"exit": process.returncode}) + "\n"
+                )
     print(
         json.dumps(
             {
@@ -519,6 +526,7 @@ def main():
 
 
 if __name__ == "__main__":
+
     def interrupted(_signal, _frame):
         raise KeyboardInterrupt
 

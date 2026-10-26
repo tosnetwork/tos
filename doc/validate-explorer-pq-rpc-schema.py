@@ -369,14 +369,29 @@ def main(schema=SCHEMA):
             auth_mode=2,
         ),
     ]
-    self_pay = dict(kind="quantum_self_pay_v1", seqno=4294967295, wallet_id=7,
-                    retired_flags=2, authority_epoch="18446744073709551615",
-                    primary_nonce="18446744073709551615", rescue_nonce="18446744073709551615",
-                    global_id=-3, network_tag=encoded(32), authority_hash=encoded(32),
-                    primary=primary, rescue=rescue, fee_payment="wallet_balance")
+    self_pay = dict(
+        kind="quantum_self_pay_v1",
+        seqno=4294967295,
+        wallet_id=7,
+        retired_flags=2,
+        authority_epoch="18446744073709551615",
+        primary_nonce="18446744073709551615",
+        rescue_nonce="18446744073709551615",
+        global_id=-3,
+        network_tag=encoded(32),
+        authority_hash=encoded(32),
+        primary=primary,
+        rescue=rescue,
+        fee_payment="wallet_balance",
+    )
     states.append(self_pay)
-    for field, value in [("retired_flags", 1), ("retired_flags", 4),
-                         ("fee_payment", "fee_vault"), ("primary_nonce", 1), ("fee", fee)]:
+    for field, value in [
+        ("retired_flags", 1),
+        ("retired_flags", 4),
+        ("fee_payment", "fee_vault"),
+        ("primary_nonce", 1),
+        ("fee", fee),
+    ]:
         cases.append(("QuantumSelfPayState", {**self_pay, field: value}, False))
     for state in states:
         view = {
