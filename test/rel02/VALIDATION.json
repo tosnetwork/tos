@@ -4,23 +4,24 @@
     "emulator/test/epoch-replay.cpp": "4a52fc93c335f3b709d13c7c68b795868daa3192dbea3b4db2a4e56d0746b5b0",
     "test/rel02/run.py": "2c6a66529def92bbdacbfcc455bba7ac3451f1e4fcde1e333c8906055e7383c5",
     "test/rel02/check_oracle.py": "a896cb4b3814c8f4f14a43fc6e622077be77ee0df9e166dad887e84994685190",
-    "test/rel02/corpus/manifest.json": "ec34f70f645a46d04511f9c2a965d4ec6f1d448ca190b072804cfe5ade4a6f80",
-    "test/rel02/corpus/state-parts.boc": "a8516a455b90344b11612b007bd7e12861ddd389ca78cb62765c8dc3c8f07f4c",
-    "test/rel02/capture-index.json": "9a67e463874b822d89b34ddc8d8c6d085b2c7fce6a3fab7df6d2ec158d56fba1",
-    "test/rel02/capture-commands.json": "e09837d9deff252c42b189e8bf0aa82d8f37ab5ccb31e1888a2cce83e736b52a"
+    "test/rel02/corpus/manifest.json": "e5492b86a3347c53e6819d8ca5e51a0a52b67dd2d4e86d1d727d25bc95f10e36",
+    "test/rel02/corpus/state-parts.boc": "1f5f56a2841a873dff13c993e0cb5ce9139214330c7283ef89bc8511af44e174",
+    "test/rel02/capture-index.json": "2985c69041ca3c968377787d48c1dcbce1b63a0778b0594c94b0da187d4e2449",
+    "test/rel02/capture-commands.json": "12b0311038a50714081a568d127b9b5ed5c2acebd4caebbb81a68c68bdcc215b",
+    "test/rel02/capture/resolve.py": "7ba1b888d30d866fbbcdbbf65827dc8595252da6be08b35a9c823039eac51ee8"
   },
-  "base": "f58402109",
+  "base": "5b4f87873",
   "environment": "Dockerfile.builder (builder-24), LLVM 21.1.8, x86_64; Release, jemalloc, x86-64-v2",
   "command": "cmake --build build --target test-epoch-replay --parallel 16 && python3 test/rel02/test_run.py && python3 test/rel02/run.py --executable build/emulator/test-epoch-replay --output result/outputs.jsonl --metrics result/metrics.json --controls && python3 test/rel02/check_oracle.py",
-  "binary_sha256": "77edac846a07a1cece80c49855159e1dae7977170b86efbaa4689ab3004bbe61",
+  "binary_sha256": "9d23ef57b3b28fb2492f07375e392b8aa7f3d3a5340ee20abc837aa72767b57f",
   "positive_exit": 0,
   "outputs": {
-    "blocks": 351,
-    "records": 845,
-    "sha256": "ed331f01844cc4fc07511f2a6e3b6eeca692670d89f193b5bc02322e533d4a13"
+    "blocks": 366,
+    "records": 942,
+    "sha256": "03f2ded400ff0bbab6ce6c9c74fdc2fa4e60a8ab5132c16e45a15bf6b60d1b62"
   },
-  "check_oracle": "PASS: 351 blocks, 845 original records",
-  "test_run": "8 tests OK",
+  "check_oracle": "PASS: 366 blocks, 942 original records",
+  "test_run": "17 tests OK",
   "lite_proof_content": "test-lite-proof-content test/rel02/corpus/blocks: exit 0",
   "controls": [
     {
@@ -59,7 +60,8 @@
     "restored_exit": 0,
     "assertion": "execution control did not change a consensus result",
     "source_restored_sha256": "4a52fc93c335f3b709d13c7c68b795868daa3192dbea3b4db2a4e56d0746b5b0",
-    "restored_outputs_sha256": "ed331f01844cc4fc07511f2a6e3b6eeca692670d89f193b5bc02322e533d4a13"
+    "restored_outputs_sha256": "03f2ded400ff0bbab6ce6c9c74fdc2fa4e60a8ab5132c16e45a15bf6b60d1b62",
+    "red_binary_sha256": "e338efb8b1ee4618a48a14e78e3b19503b1e2fcb20c13910e172c879563f2d89"
   },
   "sensitivity_reproduction": [
     "In a disposable checkout, replace the if (empty_code_control) / account.code = vm::CellBuilder{}.finalize(); block with (void)empty_code_control;",
@@ -68,5 +70,11 @@
   ],
   "hosted_workflow": ".github/workflows/epoch-replay.yml",
   "hosted_artifacts": "epoch-replay-x86-64 and epoch-replay-arm64, retained 30 days; contain outputs.jsonl, metrics.json and outputs.controls.json",
-  "scope": "State-update application and transaction execution, not full block validation. Epoch-5 public testnet (global id 2). No split/merge case is claimed."
+  "scope": "State-update application and transaction execution, not full block validation. Epoch-5 public testnet (global id 2). No split/merge case is claimed.",
+  "outputs_without_staking": {
+    "records": 845,
+    "sha256": "ed331f01844cc4fc07511f2a6e3b6eeca692670d89f193b5bc02322e533d4a13",
+    "note": "The records of the non-staking blocks, in order, are byte-identical to the previous corpus outputs."
+  },
+  "full_id_check": "CAPTURE.md full-id check over the committed blocks and IDS_DIR: every block equals the node-1 and node-3 full ids"
 }

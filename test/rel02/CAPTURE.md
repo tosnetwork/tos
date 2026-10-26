@@ -99,6 +99,49 @@ the unmodified replay check it independently.
 `capture.py` writes `capture-log.json` in `$WORK_DIR`; its entries are the
 `steps` of `capture-commands.json`.
 
+## Staking capture
+
+The `staking` case was added by a second capture of the whole selection, with the
+same method and the same read-only inputs plus:
+
+- node (b)'s archive packages: a second full node's packages for masterchain
+  248,301–262,749 (basechain 249,421–263,978), checked against their own SHA-256
+  list (`$ARCHIVE_B_SHA256SUMS`). `$ARCHIVE_DIR` is a read-only view of both
+  archives, node (a)'s packages at their own paths and node (b)'s under `node-b/`,
+  so the earlier archive locations keep their names. Neither archive covers
+  masterchain 242,334–248,300.
+- node-1/node-3 `lookupBlock` and `shards` captures for masterchain 172,796–172,908,
+  177,942–178,387, 191,315–191,426, 212,786–213,221, 221,505–222,989,
+  248,148–248,690 and 259,146–260,176, listed in the same `$IDS_DIR/SHA256SUMS`.
+
+`plan.py` adds the 15 staking blocks named in the README (all masterchain, so
+they need no masterchain context). `capture.py` adds the node (b) checksum step and
+extends the cell index over both archives. All 15 have two-validator full ids
+equal to their archive bytes, so none is excluded. The ids for 248,148–248,690
+are verified but no block from them is planned: 248,148–248,300, which holds that
+election's recovery, is in neither archive, and 248,301–248,690 holds no staking
+transaction.
+
+This was the first run of `test/rel02/capture/resolve.py` on real data. An
+attempt in a separate work directory, whose diagnostic wrapper was not
+executable, was refused (`diagnostic replay could not start: [Errno 13]
+Permission denied`, exit 1, no `resolve.json`); the earlier program would have
+read that as no failing blocks. The recorded run then accepted 124 diagnostic
+runs over the 366 selected blocks: every child exited 0, announced every block
+in order and left none without a block record or a reported failure. It ended
+with no failing block, 1523 sources and 942 records. The resolver drew 119
+masterchain sources and the extra of key block 250,344 from node (b)'s archive.
+
+`capture-commands.json` keeps the first capture as it ran. Its `staking_capture`
+entry holds the new `capture.py` and `plan.py`, `resolve.py` as committed in
+`test/rel02/capture/`, the SHA-256 of each unchanged program, the diagnostic
+build and the resolver receipt; the steps whose ids start with `staking-` were
+appended to `steps`. To reproduce it, write the `scripts` entries into one new
+directory, overwrite them with the `staking_capture` scripts, and run
+`capture.py` with `ARCHIVE_B_SHA256SUMS` also set. Re-running the whole selection
+rewrote `capture-index.json`, the manifest and `state-parts.boc`; the earlier
+cases' block files and their 845 replay output records are unchanged.
+
 ## Check the full ids and the committed bytes
 
 With only the committed files and the id captures:
