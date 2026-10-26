@@ -134,9 +134,10 @@ fn transaction_storage_excludes_extra_currencies_from_version_ten() {
         let mut balance = CurrencyCollection::with_coins(255);
         balance.set_other(17, 1234567).unwrap();
         account.set_balance(balance);
-        let measured = account.measure_storage_stat(version).unwrap();
-        // One ordinary dictionary leaf is added to root/code/empty-data.
-        assert_eq!(measured.cells(), if version < 10 { 4 } else { 3 });
+        let measured = account.measure_storage_stat().unwrap();
+        // Size validation excludes currency roots at every version. Legacy
+        // fee finalization below still accounts for the additional leaf.
+        assert_eq!(measured.cells(), 3);
         assert_eq!(account.storage_info().unwrap().used().cells(), 25);
         account.finalize_transaction_storage(snapshot, version, 3).unwrap();
         assert_eq!(

@@ -2012,7 +2012,7 @@ pub(super) fn check_account_size_limits(
     global_version: u32,
     acc: &mut Account,
 ) -> Result<bool> {
-    acc.measure_storage_stat(global_version)?;
+    acc.measure_storage_stat()?;
     let Some(stat) = acc.storage_stat() else {
         return Ok(true);
     };

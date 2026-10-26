@@ -8,7 +8,7 @@ from pathlib import Path
 root = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(root / "test/auth-extensions"))
 import native  # noqa: E402
-from cells import Cell, from_boc  # noqa: E402
+from cells import Cell, from_boc, make_dict, read_dict  # noqa: E402
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--output", type=Path, required=True)
@@ -269,7 +269,92 @@ cases.append(
         ],
     )
 )
-assert len(cases) == 33 and sum(len(case["rows"]) for case in cases) == 49
+# A real successor must reselect code/data roots after legacy fee accounting
+# temporarily included the currency dictionary in this same Account cache.
+for version in (9, 10, 16):
+    selected = Cell().uint(0x42, 8)
+    contract = Cell().raw(bytes.fromhex("f80088ed54")).ref(selected)
+    init = native.state_init(contract, Cell())
+    extra = make_dict({value: Cell().varuint(value + 1, 32) for value in range(8)}, 32)
+    storage = Cell().uint(0, 64).coins(100_000_000_000).maybe(extra).uint(1, 1)
+    storage.bits += init.bits
+    storage.refs = list(storage.refs) + init.refs
+    account = (
+        Cell()
+        .uint(1, 1)
+        .addr((0, 0x4545))
+        .varuint(0, 7)
+        .varuint(1000, 7)
+        .uint(0, 3)
+        .uint(native.NOW, 32)
+        .uint(0, 1)
+    )
+    account.bits += storage.bits
+    account.refs = list(storage.refs)
+    shard = Cell().uint(0, 320).ref(account)
+    limits = (
+        Cell()
+        .uint(2, 8)
+        .uint(1 << 21, 32)
+        .uint(1 << 13, 32)
+        .uint(1000, 32)
+        .uint(512, 16)
+        .uint(65535, 32)
+        .uint(512, 16)
+        .uint(3, 32)
+        .uint(3, 32)
+        .uint(256, 32)
+        .uint(256, 32)
+        .uint(255, 32)
+        .uint(8, 8)
+        .uint(26, 32)
+    )
+    entries = read_dict(native.config(version), 32)
+    entries[43] = Cell().ref(limits)
+    configuration = make_dict(entries, 32)
+    config = Cell(bits=wrapped.bits, refs=[configuration])
+    message = native.external((0, 0x4545), Cell())
+    em = native.Emulator.from_config(configuration)
+    rows = []
+    try:
+        for _ in range(2):
+            before = shard
+            result = em.send(shard, message)
+            assert result["success"], result
+            details = result["details"]
+            assert details["gas"] == 75 and details["exit"] == 0
+            assert details["compute_success"] and not details["aborted"]
+            assert details["action"] == dict(success=True, code=0)
+            shard = from_boc(result["shard_account"])
+            usage = shard.refs[0].slice()
+            assert usage.uint(1) == 1
+            usage.addr()
+            cells, bits = usage.varuint(7), usage.varuint(7)
+            assert cells == (18 if version < 10 else 3), (version, cells, bits)
+            transaction = from_boc(result["transaction"])
+            rows.append(
+                dict(
+                    now=native.NOW,
+                    lt=em.lt,
+                    input_shard=before.boc().hex(),
+                    message=message.boc().hex(),
+                    status="active",
+                    end_status="active",
+                    gas=75,
+                    exit_code=0,
+                    aborted=False,
+                    action_code=0,
+                    transaction_hash=transaction.hash.hex(),
+                    account_hash=shard.refs[0].hash.hex(),
+                    shard_hash=shard.hash.hex(),
+                )
+            )
+    finally:
+        em.close()
+    cases.append(
+        dict(name=f"currency-size-successor-v{version}", config_boc=config.boc().hex(), rows=rows)
+    )
+assert len(cases) == 36 and sum(len(case["rows"]) for case in cases) == 55
 args.output.parent.mkdir(parents=True, exist_ok=True)
 args.output.write_text(json.dumps(dict(cases=cases), indent=2) + "\n")
-print(f"PASS: 33 native option/freeze chains, 49 transactions: {args.output}")
+print(f"PASS: 36 native option/freeze/currency chains, 55 transactions: {args.output}")

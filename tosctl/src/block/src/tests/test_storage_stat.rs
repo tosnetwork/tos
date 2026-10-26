@@ -55,15 +55,15 @@ fn measured_cache_tracks_duplicate_root_multiplicity() {
         &StorageInfo::with_values(1_780_000_000, None),
         &AccountStorage::active(0, CurrencyCollection::with_coins(100_000_000_000), init),
     );
-    account.measure_storage_stat(16).unwrap();
+    account.measure_storage_stat().unwrap();
     assert_eq!(account.storage_stat().unwrap().total_cells(), 1);
     let data = BuilderData::with_raw(vec![0x43], 8).unwrap().into_cell().unwrap();
     assert!(account.set_data(data));
-    account.measure_storage_stat(16).unwrap();
+    account.measure_storage_stat().unwrap();
     assert_eq!(account.storage_stat().unwrap().total_cells(), 2);
     let code = BuilderData::with_raw(vec![0x44], 8).unwrap().into_cell().unwrap();
     assert!(account.set_code(code));
-    account.measure_storage_stat(16).unwrap();
+    account.measure_storage_stat().unwrap();
     // The original shared root has no remaining edge. Exactly two cells exist.
     assert_eq!(account.storage_stat().unwrap().total_cells(), 2);
 }

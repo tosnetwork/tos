@@ -325,7 +325,7 @@ for old_bits in (0, 1000, None):
     )
 
 
-def with_storage_threshold(configuration, threshold):
+def with_storage_threshold(configuration, threshold, max_state_cells=65536):
     # block.tlb size_limits_config_v2#02: the promotion predicate (oldcells>25)
     # is distinct from this configurable threshold on freshly counted cells.
     limits = (
@@ -337,8 +337,8 @@ def with_storage_threshold(configuration, threshold):
         .uint(512, 16)
         .uint(65535, 32)
         .uint(512, 16)
-        .uint(65536, 32)
-        .uint(65536, 32)
+        .uint(max_state_cells, 32)
+        .uint(max_state_cells, 32)
         .uint(256, 32)
         .uint(256, 32)
         .uint(255, 32)
@@ -398,6 +398,34 @@ for wc in (0, -1):
                     )
 
 
+# Validation always measures code/data/library; legacy fee accounting below10
+# still includes currencies. Force a changed-data action to exercise validation.
+storage_size_expectations = {}
+for version in (9, 10, 16):
+    for currencies in (False, True):
+        for oversize in (False, True):
+            selected = Cell().uint(0x42, 8)
+            if oversize:
+                for value in range(5):
+                    selected = Cell().uint(value, 8).ref(selected)
+            contract = Cell().raw(bytes.fromhex("f80088ed54")).ref(selected)
+            extra = (
+                make_dict({value: Cell().varuint(value + 1, 32) for value in range(8)}, 32)
+                if currencies
+                else None
+            )
+            label = f"storage-size-v{version}-extra{int(currencies)}-oversize{int(oversize)}"
+            storage_size_expectations[label] = oversize
+            cases.append(
+                (
+                    label,
+                    with_storage_threshold(native.config(version), 26, max_state_cells=3),
+                    storage_input((0, 0x4545), contract, 0, 1000, extra=extra),
+                    native.external((0, 0x4545), Cell()),
+                )
+            )
+
+
 def outcome(r):
     if r["success"]:
         tx = from_boc(r["transaction"])
@@ -455,6 +483,21 @@ def run_worker(library):
         assert observed[: len(expected)] == expected, (label, observed, expected)
         if result["success"]:
             details = result["details"]
+            if label in storage_size_expectations:
+                oversize = storage_size_expectations[label]
+                assert details["exit"] == 0 and details["gas"] == 75, (label, details)
+                assert details["compute_success"] and details["aborted"] == oversize, (
+                    label,
+                    details,
+                )
+                assert details["action"] == dict(
+                    success=not oversize, code=50 if oversize else 0
+                ), (
+                    label,
+                    details,
+                )
+                report.append(dict(name=label, outcome=observed))
+                continue
             if label in storage_expectations:
                 gas, cells, bits = storage_expectations[label]
                 assert (
@@ -563,12 +606,12 @@ else:
         supervised(library, out / backend)
     left = json.loads((out / "native/outcomes.json").read_text())
     right = json.loads((out / "rust/outcomes.json").read_text())
-    assert len(cases) == len(left) == len(right) == 103
+    assert len(cases) == len(left) == len(right) == 115
     assert left == right, "native/Rust transaction outcomes differ"
     # Every oracle uses exactly the same complete original inputs and config.
     for label, _, _, _ in cases:
         for kind in ["config", "shard", "message"]:
             name = label + "-" + kind + ".boc"
             assert (out / "native" / name).read_bytes() == (out / "rust" / name).read_bytes(), name
-    (out / "summary.json").write_text(json.dumps(dict(cases=103, matched=True), indent=2) + "\n")
-    print("PASS: 103 transaction outcomes; accepted transaction/Account/ShardAccount roots match")
+    (out / "summary.json").write_text(json.dumps(dict(cases=115, matched=True), indent=2) + "\n")
+    print("PASS: 115 transaction outcomes; accepted transaction/Account/ShardAccount roots match")

@@ -5,6 +5,76 @@ use crate::OrdinaryTransactionExecutor;
 use chain_block::{AccountStorage, BuilderData, ConfigParams, StateInit, StorageInfo};
 
 #[test]
+fn size_checks_exclude_currencies_while_legacy_fee_accounting_includes_them() {
+    let config = BlockchainConfig::with_config(
+        ConfigParams::construct_from_file(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/real_boc/default_config.boc"
+        ))
+        .unwrap(),
+    )
+    .unwrap();
+    let mut limits = config.size_limits_config().clone();
+    limits.max_acc_state_cells = 2;
+    for version in [9, 10, 16] {
+        for prewarm in [false, true] {
+            let mut balance = CurrencyCollection::with_coins(100_000_000_000);
+            for currency in 0..8 {
+                balance.set_other(currency, u128::from(currency) + 1).unwrap();
+            }
+            let mut init = StateInit::default();
+            init.set_code(
+                BuilderData::with_raw(vec![0xf8, 0x00], 16).unwrap().into_cell().unwrap(),
+            );
+            init.set_data(Cell::default());
+            let mut account = Account::with_storage(
+                &MsgAddressInt::with_standart(None, 0, [0x45; 32].into()).unwrap(),
+                &StorageInfo::with_values(1_780_000_000, None),
+                &AccountStorage::active(0, balance, init),
+            );
+            if prewarm {
+                account.update_storage_stat(26).unwrap();
+            }
+            let original = account.storage_info().unwrap().serialize().unwrap().repr_hash();
+            let snapshot = account.snapshot_transaction_storage(version).unwrap();
+            let selected = BuilderData::with_raw(vec![0x42], 8).unwrap().into_cell().unwrap();
+            assert!(account.set_data(selected.clone()));
+            assert!(
+                check_account_size_limits(&limits, version, &mut account).unwrap(),
+                "currency roots must not affect size validation at version {version}"
+            );
+            assert_eq!(account.storage_stat().unwrap().total_cells(), 2);
+            assert_eq!(account.storage_info().unwrap().serialize().unwrap().repr_hash(), original);
+            account.finalize_transaction_storage(snapshot, version, 26).unwrap();
+            let used = account.storage_info().unwrap().used().cells();
+            if version < 10 {
+                assert!(used > 3, "legacy fee accounting must still include currencies");
+            } else {
+                assert_eq!(used, 3);
+            }
+            // Fee finalization may have selected additional legacy roots. The
+            // next validation on that same cache must select only state roots.
+            let next_snapshot = account.snapshot_transaction_storage(version).unwrap();
+            assert!(check_account_size_limits(&limits, version, &mut account).unwrap());
+            assert_eq!(account.storage_stat().unwrap().total_cells(), 2);
+            account.finalize_transaction_storage(next_snapshot, version, 26).unwrap();
+            assert_eq!(account.storage_info().unwrap().used().cells(), used);
+            assert_eq!(account.storage_stat().unwrap().total_cells() + 1, used);
+            let mut large = selected.clone();
+            for value in 0..4 {
+                let mut builder = BuilderData::with_raw(vec![value], 8).unwrap();
+                builder.checked_append_reference(large).unwrap();
+                large = builder.into_cell().unwrap();
+            }
+            assert!(account.set_data(large));
+            assert!(!check_account_size_limits(&limits, version, &mut account).unwrap());
+            assert!(account.set_data(selected));
+            assert!(check_account_size_limits(&limits, version, &mut account).unwrap());
+        }
+    }
+}
+
+#[test]
 fn size_measurement_preserves_visible_storage_metadata() {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/real_boc/default_config.boc");
     let config =
@@ -143,8 +213,8 @@ fn live_storage_options_match_native_across_freeze_and_successors() {
         serde_json::from_str(include_str!("../../tests/fixtures/storage-option-carry.json"))
             .unwrap();
     let cases = fixture["cases"].as_array().unwrap();
-    assert_eq!(cases.len(), 33);
-    assert_eq!(cases.iter().map(|case| case["rows"].as_array().unwrap().len()).sum::<usize>(), 49);
+    assert_eq!(cases.len(), 36);
+    assert_eq!(cases.iter().map(|case| case["rows"].as_array().unwrap().len()).sum::<usize>(), 55);
     for case in cases {
         assert_live_storage_cache(case.clone());
     }
@@ -204,14 +274,13 @@ fn assert_live_storage_cache(fixture: serde_json::Value) {
         ConfigParams::construct_from_cell(cell(&fixture["config_boc"])).unwrap(),
     )
     .unwrap();
-    let version = config.global_version();
     let executor = OrdinaryTransactionExecutor::new(config.clone());
     let rows = fixture["rows"].as_array().unwrap();
     for prewarm in [false, true] {
         let mut shard = ShardAccount::construct_from_cell(cell(&rows[0]["input_shard"])).unwrap();
         let mut account = shard.read_account().unwrap();
         if prewarm {
-            account.measure_storage_stat(version).unwrap();
+            account.measure_storage_stat().unwrap();
         }
         for row in rows {
             assert_eq!(

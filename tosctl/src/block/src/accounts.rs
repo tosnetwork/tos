@@ -984,14 +984,13 @@ impl Account {
         }
     }
 
-    /// Measure the selected graph for size/depth checks. This updates the real
-    /// cache only: advertised usage and dictionary hash remain unchanged until
+    /// Measure code/data/library for size/depth checks at every version.
+    /// Currency roots belong only to legacy fee accounting. This updates the
+    /// real cache only: advertised usage and dictionary hash remain unchanged until
     /// the transaction-specific finalizer publishes its chosen metadata.
-    pub fn measure_storage_stat(&mut self, global_version: u32) -> Result<StorageUsed> {
+    pub fn measure_storage_stat(&mut self) -> Result<StorageUsed> {
         match self.stuff_mut() {
-            Some(stuff) => {
-                stuff.storage_stat.update_for_transaction(&stuff.storage, global_version >= 10)
-            }
+            Some(stuff) => stuff.storage_stat.update_for_transaction(&stuff.storage, true),
             None => Ok(StorageUsed::new()),
         }
     }
