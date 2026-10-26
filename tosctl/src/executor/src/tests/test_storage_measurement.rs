@@ -130,8 +130,16 @@ fn live_storage_cache_matches_native_after_oversize_rollback_and_successors() {
     assert_live_storage_cache(fixture);
 }
 
+#[test]
+fn live_storage_cache_matches_native_across_tick_oog_tock_and_tick() {
+    let fixture =
+        serde_json::from_str(include_str!("../../tests/fixtures/storage-tick-carry.json")).unwrap();
+    assert_live_storage_cache(fixture);
+}
+
 fn assert_live_storage_cache(fixture: serde_json::Value) {
-    use chain_block::{read_single_root_boc, HashUpdate, ShardAccount};
+    use crate::TickTockTransactionExecutor;
+    use chain_block::{read_single_root_boc, HashUpdate, ShardAccount, TransactionTickTock};
     fn cell(value: &serde_json::Value) -> Cell {
         read_single_root_boc(hex::decode(value.as_str().unwrap()).unwrap()).unwrap()
     }
@@ -139,7 +147,7 @@ fn assert_live_storage_cache(fixture: serde_json::Value) {
         ConfigParams::construct_from_cell(cell(&fixture["config_boc"])).unwrap(),
     )
     .unwrap();
-    let executor = OrdinaryTransactionExecutor::new(config);
+    let executor = OrdinaryTransactionExecutor::new(config.clone());
     let rows = fixture["rows"].as_array().unwrap();
     for prewarm in [false, true] {
         let mut shard = ShardAccount::construct_from_cell(cell(&rows[0]["input_shard"])).unwrap();
@@ -160,17 +168,27 @@ fn assert_live_storage_cache(fixture: serde_json::Value) {
                 last_tr_lt: lt,
                 ..ExecuteParams::default()
             };
-            let mut transaction = executor
-                .execute_with_params(Some(cell(&row["message"])), &mut account, params)
-                .unwrap();
-            match transaction.read_description().unwrap().compute_phase_ref() {
+            let mut transaction = if let Some(is_tock) = row["is_tock"].as_bool() {
+                TickTockTransactionExecutor::new(config.clone(), TransactionTickTock::new(is_tock))
+                    .execute_with_params(None, &mut account, params)
+            } else {
+                executor.execute_with_params(Some(cell(&row["message"])), &mut account, params)
+            }
+            .unwrap();
+            let description = transaction.read_description().unwrap();
+            if let Some(aborted) = row["aborted"].as_bool() {
+                assert_eq!(description.is_aborted(), aborted);
+            }
+            match description.compute_phase_ref() {
                 Some(TrComputePhase::Vm(vm)) => {
-                    assert_eq!(vm.gas_used.as_u64(), row["gas"].as_u64().unwrap())
+                    assert_eq!(vm.gas_used.as_u64(), row["gas"].as_u64().unwrap());
+                    if let Some(code) = row["exit_code"].as_i64() {
+                        assert_eq!(vm.exit_code, code as i32);
+                    }
                 }
                 _ => panic!("the authored contract must execute"),
             }
             if let Some(code) = row["action_code"].as_i64() {
-                let description = transaction.read_description().unwrap();
                 assert_eq!(description.action_phase_ref().unwrap().result_code, code as i32);
             }
             transaction.set_prev_trans_lt(shard.last_trans_lt());
