@@ -2,9 +2,34 @@
 
 This offline corpus contains 366 original public epoch-5 blocks (global id 2;
 202 masterchain, 164 basechain) and the original cells needed to execute their
-576 transactions. The manifest and all BOCs total about 7.59 MB, below the 20 MB
+576 transactions. The manifest and all BOCs total about 7.61 MB, below the 20 MB
 budget. No network, validator database, private key, or node service is needed to
 run it. The corpus contains no generated positive chain fixtures.
+
+## Complete account preimages
+
+Two additional original archive blocks are retained under
+`corpus/account-preimages/`: masterchain 53209 and 212648, totaling 19,476
+bytes. They are supplemental cell sources, not additional replay cases.
+Their complete ordinary subtrees replace the two distinct pruned hashes
+that appeared in 147 input ShardAccounts. The manifest records full block
+identities and reference paths in `complete_account_preimages`.
+
+The source from 53209 must include its block extra: the same logical hash
+also has a partial representation in its state update. The complete subtree
+has 57 nodes; the second source's subtree has seven. The existing native
+proof combiner handles matching representations without changing level-zero
+hashes. All original 366 cases and 942 expected output records are unchanged.
+
+Source bytes came from checksum-verified retained archive packages. The new
+sources have no independent RPC ID capture; they are bound by their file/root
+hashes and the matching preimages under existing authenticated account roots.
+`capture-index.json` records package entries, byte ranges and this distinction.
+The input-completeness probe checked all 576 accounts for pruned descendants,
+compared every input logical root with the previous dump, and obtained zero
+incomplete accounts. Removing these supplements restores 147 incomplete
+accounts. This does not claim general instruction coverage or add a Rust
+replay gate; that integration is separate work.
 
 ## Coverage
 
@@ -104,9 +129,10 @@ the local, read-only capture from the archive packages of a full node synced
 from genesis, and of a second full node for masterchain 248,301–262,749; no
 host was contacted and no live database was opened.
 `files` records each block's source ID and SHA-256. One native multi-root BOC,
-`state-parts.boc`, packs the original supplemental cells, so the corpus has 367
-inputs. Its file entry records SHA-256 and source block IDs; `supplement_roots`
-records each of its 1525 original roots with hashes and provenance:
+`state-parts.boc`, packs the original supplemental cells. Together with the
+366 replay blocks and two complete-account source blocks, the corpus has 369
+input files. The `state-parts.boc` entry records SHA-256 and source block IDs;
+`supplement_roots` records each of its 1525 original roots with hashes and provenance:
 
 - 1522 `original_state_update` roots: the whole state-update cell of an archived
   block (1518 masterchain blocks 3–259310 and basechain 105524, 105530, 150944
