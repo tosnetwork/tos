@@ -57,7 +57,7 @@ macro_rules! boolean {
     };
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default)]
 pub enum StackItem {
     #[default]
     None,
@@ -67,6 +67,76 @@ pub enum StackItem {
     Integer(Arc<IntegerData>),
     Slice(SliceData),
     Tuple(Arc<Vec<StackItem>>),
+}
+
+impl PartialEq for StackItem {
+    fn eq(&self, other: &Self) -> bool {
+        items_equal(self, other)
+    }
+}
+
+enum EqPair<'a> {
+    Item(&'a StackItem, &'a StackItem),
+    Cont(&'a ContinuationData, &'a ContinuationData),
+}
+
+fn equal_from(start: EqPair) -> bool {
+    let mut work = vec![start];
+    while let Some(pair) = work.pop() {
+        match pair {
+            EqPair::Item(a, b) => match (a, b) {
+                (StackItem::None, StackItem::None) => {}
+                (StackItem::Builder(a), StackItem::Builder(b)) if a == b => {}
+                (StackItem::Cell(a), StackItem::Cell(b)) if a == b => {}
+                (StackItem::Integer(a), StackItem::Integer(b)) if a == b => {}
+                (StackItem::Slice(a), StackItem::Slice(b)) if a == b => {}
+                (StackItem::Tuple(a), StackItem::Tuple(b)) => {
+                    if Arc::ptr_eq(a, b) {
+                        continue;
+                    }
+                    if a.len() != b.len() {
+                        return false;
+                    }
+                    work.extend(a.iter().zip(b.iter()).map(|(p, q)| EqPair::Item(p, q)));
+                }
+                (StackItem::Continuation(a), StackItem::Continuation(b)) => {
+                    if !Arc::ptr_eq(a, b) {
+                        work.push(EqPair::Cont(a, b));
+                    }
+                }
+                _ => return false,
+            },
+            EqPair::Cont(a, b) => {
+                if !a.shallow_eq(b) {
+                    return false;
+                }
+                for index in savelist::SaveList::REGS {
+                    match (a.savelist.get(index), b.savelist.get(index)) {
+                        (Some(p), Some(q)) => work.push(EqPair::Item(p, q)),
+                        (None, None) => {}
+                        _ => return false,
+                    }
+                }
+                let (sa, sb) = (&a.stack.storage, &b.stack.storage);
+                work.extend(sa.iter().zip(sb.iter()).map(|(p, q)| EqPair::Item(p, q)));
+                let edges = a.type_of.edges().into_iter().zip(b.type_of.edges());
+                work.extend(edges.map(|(p, q)| EqPair::Cont(p.get(), q.get())));
+            }
+        }
+    }
+    true
+}
+
+/// Structural equality of stack items with an explicit work list: nested tuples and
+/// continuations (their saved registers, captured stacks and the continuations they refer to)
+/// are compared without recursion.
+pub fn items_equal(x: &StackItem, y: &StackItem) -> bool {
+    equal_from(EqPair::Item(x, y))
+}
+
+/// Structural equality of two continuations, as `items_equal`.
+pub fn continuations_equal(x: &ContinuationData, y: &ContinuationData) -> bool {
+    equal_from(EqPair::Cont(x, y))
 }
 
 impl Drop for StackItem {
@@ -100,6 +170,9 @@ fn collect_items(stack: &mut Vec<StackItem>, item: &mut StackItem) {
                 }
                 for item in &mut cont.stack.storage {
                     stack.push(std::mem::take(item))
+                }
+                for edge in cont.type_of.edges_mut() {
+                    stack.push(edge.take_item())
                 }
             }
             Err(data) => drop(data),
@@ -690,69 +763,8 @@ impl Stack {
         }
     }
 
-    fn eq_builder(x: &BuilderData, y: &StackItem) -> bool {
-        match y {
-            StackItem::Builder(y) => x.eq(y),
-            _ => false,
-        }
-    }
-
-    fn eq_cell(x: &Cell, y: &StackItem) -> bool {
-        match y {
-            StackItem::Cell(y) => x.eq(y),
-            _ => false,
-        }
-    }
-
-    fn eq_continuation(x: &ContinuationData, y: &StackItem) -> bool {
-        match y {
-            StackItem::Continuation(y) => x.eq(y),
-            _ => false,
-        }
-    }
-
-    fn eq_integer(x: &IntegerData, y: &StackItem) -> bool {
-        match y {
-            StackItem::Integer(y) => x.eq(y),
-            _ => false,
-        }
-    }
-
-    fn eq_slice(x: &SliceData, y: &StackItem) -> bool {
-        match y {
-            StackItem::Slice(y) => x.eq(y),
-            _ => false,
-        }
-    }
-
-    fn eq_tuple(x: &[StackItem], y: &StackItem) -> bool {
-        match y {
-            StackItem::Tuple(y) => {
-                let len = x.len();
-                if len != y.len() {
-                    return false;
-                }
-                for i in 0..len {
-                    if !Stack::eq_item(&x[i], &y[i]) {
-                        return false;
-                    }
-                }
-                true
-            }
-            _ => false,
-        }
-    }
-
     pub fn eq_item(x: &StackItem, y: &StackItem) -> bool {
-        match x {
-            StackItem::Builder(x) => Stack::eq_builder(x, y),
-            StackItem::Cell(x) => Stack::eq_cell(x, y),
-            StackItem::Continuation(x) => Stack::eq_continuation(x, y),
-            StackItem::Integer(x) => Stack::eq_integer(x, y),
-            StackItem::Slice(x) => Stack::eq_slice(x, y),
-            StackItem::Tuple(x) => Stack::eq_tuple(x, y),
-            StackItem::None => y == &StackItem::None,
-        }
+        items_equal(x, y)
     }
 
     pub fn iter(&self) -> Iter<'_, StackItem> {

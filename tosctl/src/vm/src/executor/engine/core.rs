@@ -10,16 +10,15 @@
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
 use crate::{
-    error::{
-        tvm_exception_code, tvm_exception_full, tvm_exception_or_custom_code, tvm_exit_code,
-        TvmError,
-    },
+    error::{tvm_exception_code, tvm_exception_full, tvm_exit_code, TvmError},
     executor::{
-        continuation::{switch, switch_to_c0},
-        engine::{cp0_prefixes::CP0_PREFIXES, handlers::Handlers},
+        engine::{
+            control::{cont_of, Terminal},
+            cp0_prefixes::CP0_PREFIXES,
+            handlers::Handlers,
+        },
         gas::gas_state::Gas,
         math::DivMode,
-        microcode::{CTRL, VAR},
         storage::fetch_stack,
         types::{
             Instruction, InstructionExt, InstructionOptions, InstructionParameter, LengthAndIndex,
@@ -112,7 +111,7 @@ pub struct Engine {
     free_gas_consumed: i64, // gas consumed by free operations
     code_page: isize,
     debug_on: isize, // status of debug can be recursively incremented
-    step: u32,       // number of executable command
+    pub(in crate::executor) step: u32, // number of executable command
     debug_buffer: String,
     cmd_code: SliceProto, // start of current cmd
     last_cmd: u8,
@@ -127,6 +126,8 @@ pub struct Engine {
     vm_nesting_depth: u16,
     capabilities: u64,
     block_version: u32,
+    // How the VM ends, once a dispatch reached a quit continuation.
+    pub(in crate::executor) terminal: Option<Terminal>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -243,6 +244,7 @@ impl Engine {
             vm_nesting_depth: 0,
             capabilities,
             block_version: 0,
+            terminal: None,
         }
     }
 
@@ -743,100 +745,20 @@ impl Engine {
         self.step += 1;
         self.log_string = Some("implicit RET");
         self.try_use_gas(Gas::implicit_ret_price())?;
-        if self.ctrls.get(0).is_none() {
-            return Ok(Some(0));
-        }
-        switch_to_c0(self)?;
-        Ok(None)
-    }
-    fn step_pushint(&mut self, code: i32) -> Result<Option<i32>> {
-        self.log_string = Some("implicit PUSHINT");
-        self.cc.stack.push_int(code);
-        switch(self, ctrl!(0))?;
-        Ok(None)
-    }
-    fn step_while_loop(&mut self, body: SliceData, cond: SliceData) -> Result<Option<i32>> {
-        match self.check_while_loop_condition() {
-            Ok(true) => {
-                self.log_string = Some("NEXT WHILE ITERATION");
-                self.discharge_nargs();
-                let mut cond = ContinuationData::with_code(cond);
-                let mut while_ = ContinuationData::move_without_stack(&mut self.cc, body);
-                while_.savelist.put_opt(0, self.ctrl_mut(0)?.withdraw());
-                cond.savelist.put_opt(0, StackItem::continuation(while_));
-                self.ctrls.put_opt(0, StackItem::continuation(cond));
-            }
-            Ok(false) => {
-                self.log_string = Some("RET FROM WHILE");
-                switch(self, ctrl!(0))?;
-            }
-            Err(err) => {
-                let quit = ContinuationType::Quit(ExceptionCode::NormalTermination as i32);
-                self.ctrls.put(0, StackItem::continuation(ContinuationData::with_type(quit)))?;
-                return Err(err);
-            }
-        }
-        Ok(None)
-    }
-    fn step_repeat_loop(&mut self, body: SliceData) -> Result<Option<i32>> {
-        if let ContinuationType::RepeatLoopBody(_, ref mut counter) = self.cc.type_of {
-            if *counter > 1 {
-                *counter -= 1;
-                self.log_string = Some("NEXT REPEAT ITERATION");
-                self.discharge_nargs();
-                let mut repeat = ContinuationData::move_without_stack(&mut self.cc, body);
-                repeat.savelist.put_opt(0, self.ctrl_mut(0)?.withdraw());
-                self.ctrls.put_opt(0, StackItem::continuation(repeat));
-            } else {
-                self.log_string = Some("RET FROM REPEAT");
-                switch(self, ctrl!(0))?;
-            }
-        }
-        Ok(None)
-    }
-    fn step_until_loop(&mut self, body: SliceData) -> Result<Option<i32>> {
-        match self.check_until_loop_condition() {
-            Ok(true) => {
-                self.log_string = Some("NEXT UNTIL ITERATION");
-                self.discharge_nargs();
-                let mut until = ContinuationData::move_without_stack(&mut self.cc, body);
-                until.savelist.put_opt(0, self.ctrl_mut(0)?.withdraw());
-                self.ctrls.put_opt(0, StackItem::continuation(until));
-            }
-            Ok(false) => {
-                self.log_string = Some("RET FROM UNTIL");
-                switch(self, ctrl!(0))?;
-            }
-            Err(err) => return Err(err),
-        }
-        Ok(None)
-    }
-    fn step_again_loop(&mut self, body: SliceData) -> Result<Option<i32>> {
-        self.log_string = Some("NEXT AGAIN ITERATION");
-        self.discharge_nargs();
-        let again = ContinuationData::move_without_stack(&mut self.cc, body);
-        self.ctrls.put_opt(0, StackItem::continuation(again));
+        self.ret()?;
         Ok(None)
     }
 
-    fn discharge_nargs(&mut self) {
-        if self.cc.nargs != -1 {
-            let depth = self.cc.stack.depth();
-            let _ = self.cc.stack.drop_range_straight((depth - self.cc.nargs as usize)..depth);
-            self.cc.nargs = -1;
-        }
-    }
-
-    // The default exception handler, entered by a jump: the exit code is popped from the stack,
-    // or is the error popping it raised, and everything below it stays, as in the C++ VM. The
-    // exit code is chosen by the program, so it is reported as a custom code: 13 is not out of
-    // gas. The argument of the error is set from the final stack when the VM ends.
-    fn make_external_error(&mut self) -> Result<Option<i32>> {
-        let number = match self.cc.stack.drop(0) {
-            Ok(item) => item.as_integer_value(0..=0xffffi32),
-            Err(err) => Err(err),
-        }
-        .unwrap_or_else(|err| tvm_exception_or_custom_code(&err));
+    // How the VM ends once a dispatch reached a quit continuation. The default exception handler
+    // (ExcQuit) popped its exit code during the dispatch, as in the C++ VM; that code is chosen by
+    // the program, so it is reported as a custom code: 13 is not out of gas. The argument of the
+    // error is set from the final stack when the VM ends.
+    fn finish_terminal(&mut self, terminal: Terminal) -> Result<Option<i32>> {
+        let number = match terminal {
+            Terminal::Quit(exit_code) => return Ok(Some(exit_code)),
+            Terminal::ExcQuit(number) => number,
+            Terminal::Raised(exception) => fail!(exception),
+        };
         if number == ExceptionCode::NormalTermination as i32
             || number == ExceptionCode::AlternativeTermination as i32
         {
@@ -847,24 +769,19 @@ impl Engine {
 
     // return Ok(Some(exit_code)) - if you want to stop execution
     pub(in crate::executor) fn seek_next_cmd(&mut self) -> Result<Option<i32>> {
-        while self.cc.code().remaining_bits() == 0 {
+        loop {
+            if let Some(terminal) = self.terminal.take() {
+                return self.finish_terminal(terminal);
+            }
+            if self.cc.code().remaining_bits() != 0 {
+                return Ok(None);
+            }
             let gas = self.gas_used();
             self.log_string = None;
             let result = if let Some(reference) = self.cc.code().reference_opt(0) {
                 self.step_next_ref(reference)
             } else {
-                match self.cc.type_of.clone() {
-                    ContinuationType::Ordinary => self.step_ordinary(),
-                    ContinuationType::PushInt(code) => self.step_pushint(code),
-                    ContinuationType::Quit(exit_code) => Ok(Some(exit_code)),
-                    ContinuationType::WhileLoopCondition(body, cond) => {
-                        self.step_while_loop(body, cond)
-                    }
-                    ContinuationType::RepeatLoopBody(code, _counter) => self.step_repeat_loop(code),
-                    ContinuationType::UntilLoopCondition(body) => self.step_until_loop(body),
-                    ContinuationType::AgainLoopBody(slice) => self.step_again_loop(slice),
-                    ContinuationType::ExcQuit => Ok(self.make_external_error()?),
-                }
+                self.step_ordinary()
             };
             if self.is_trace_enabled() {
                 if let Some(log_string) = self.log_string {
@@ -885,7 +802,6 @@ impl Engine {
                 },
             }
         }
-        Ok(None)
     }
 
     fn resolve_init_code_cell(&self, code: Cell) -> Result<SliceData> {
@@ -1213,6 +1129,7 @@ impl Engine {
             vm_nesting_depth: self.vm_nesting_depth + 1,
             capabilities: self.capabilities,
             block_version: self.block_version,
+            terminal: None,
         };
         // A child VM executes on the host call stack (execute -> ... ->
         // run_child_vm -> child.execute), so deep RUNVM nesting would otherwise
@@ -1356,16 +1273,6 @@ impl Engine {
     ///Interface to gas state set_gas_limit method
     pub fn new_gas_limit(&mut self, gas: i64) {
         self.gas.new_gas_limit(gas)
-    }
-
-    fn check_while_loop_condition(&mut self) -> Result<bool> {
-        let x = self.cc.stack.drop(0)?;
-        let y = x.as_integer()?;
-        Ok(!y.is_zero())
-    }
-
-    fn check_until_loop_condition(&mut self) -> Result<bool> {
-        Ok(!self.check_while_loop_condition()?)
     }
 
     fn extract_slice(
@@ -1724,36 +1631,27 @@ impl Engine {
         let (exception, value) = tvm_exception_full(err).inspect_err(
             |err| log::trace!(target: "tvm", "BAD CODE: {}: {}\n", self.cmd_code_string(), err),
         )?;
-        if let Ok(c2) = c2.as_continuation() {
-            if c2.type_of == ContinuationType::ExcQuit {
-                if let Some(exit_code) = exception.is_normal_termination() {
-                    let cont = ContinuationData::with_type(ContinuationType::Quit(exit_code));
-                    self.cmd.push_var(StackItem::Continuation(Arc::new(cont)));
-                    self.cc.stack.push(value);
-                    self.cmd.vars[n].as_continuation_mut()?.nargs = 1;
-                    self.switch_counting_out_of_gas(n)?;
-                    return Ok(None);
-                } else {
-                    // The default handler consumes the exit code and leaves the argument.
-                    self.cc.stack = Stack::new();
-                    self.cc.stack.push(value);
-                    fail!(exception)
-                }
-            }
-        }
         // The handler receives the argument and the exit code and checks them against its own
-        // number of arguments.
+        // number of arguments; the default handler (ExcQuit) pops the exit code.
         self.cc.stack = Stack::new();
         self.cc.stack.push(value);
         self.cc.stack.push(int!(exception.exception_or_custom_code()));
-        self.cmd.push_var(c2.clone());
-        match self.switch_counting_out_of_gas(n) {
-            Ok(()) => Ok(None),
+        self.cmd.vars.truncate(n);
+        let c2 = cont_of(&c2)?;
+        let code = exception.exception_or_custom_code();
+        match self.jump_counting_out_of_gas(c2) {
+            Ok(()) => {
+                if matches!(self.terminal, Some(Terminal::ExcQuit(number)) if number == code)
+                    && exception.is_normal_termination().is_none()
+                {
+                    self.terminal = Some(Terminal::Raised(exception));
+                }
+                Ok(None)
+            }
             Err(err) if tvm_exception_code(&err) == Some(ExceptionCode::OutOfGas) => Err(err),
             Err(err) => {
-                // The handler was not entered and the control registers are as they were; the
-                // stack keeps the argument and the exit code.
-                self.cmd.vars.truncate(n);
+                // The handler could not take its arguments: the stack keeps the argument and
+                // the exit code.
                 if retry {
                     self.dispatch_exception(err, false)
                 } else {
@@ -1763,10 +1661,10 @@ impl Engine {
         }
     }
 
-    // Switches to the exception handler. Running out of gas there ends the VM with one more
-    // step than the exception itself, as running out of gas anywhere else does.
-    fn switch_counting_out_of_gas(&mut self, n: usize) -> Status {
-        let result = switch(self, var!(n));
+    // Jumps to the exception handler. Running out of gas there ends the VM with one more step
+    // than the exception itself, as running out of gas anywhere else does.
+    fn jump_counting_out_of_gas(&mut self, c2: Arc<ContinuationData>) -> Status {
+        let result = self.jump(c2);
         if let Err(err) = &result {
             if tvm_exception_code(err) == Some(ExceptionCode::OutOfGas) {
                 self.step += 1;

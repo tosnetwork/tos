@@ -34,6 +34,9 @@ EXCEPTIONS = CARGO / "vm/src/executor/exceptions.rs"
 STACK = CARGO / "vm/src/executor/stack.rs"
 CRYPTO = CARGO / "vm/src/executor/crypto.rs"
 BLS = CARGO / "vm/src/executor/bls.rs"
+CONTROL = CARGO / "vm/src/executor/engine/control.rs"
+CONT = CARGO / "vm/src/executor/continuation.rs"
+DICT = CARGO / "vm/src/executor/dictionary.rs"
 CHILD_STACK_TEST = (
     "executor::engine::core::nesting_depth_tests::child_out_of_gas_leaves_only_the_gas_consumed"
 )
@@ -288,10 +291,8 @@ MUTATIONS = {
         CORE,
         [
             (
-                "                    self.cc.stack.push(value);\n                    fail!(exception)\n",
-                "                    self.cc.stack.push(value);\n"
-                "                    self.cc.stack.push(int!(exception.exception_or_custom_code()));\n"
-                "                    fail!(exception)\n",
+                "                    self.terminal = Some(Terminal::Raised(exception));\n",
+                "                    self.cc.stack.push(int!(code));\n                    self.terminal = Some(Terminal::Raised(exception));\n",
             )
         ],
         (),
@@ -314,9 +315,8 @@ MUTATIONS = {
         CORE,
         [
             (
-                "        self.cmd.push_var(c2.clone());\n",
-                "        self.cmd.push_var(c2.clone());\n"
-                "        self.cmd.vars[n].as_continuation_mut()?.nargs = 2;\n",
+                "        let c2 = cont_of(&c2)?;\n",
+                "        let mut c2 = cont_of(&c2)?;\n        if c2.has_control_data() {\n            Arc::make_mut(&mut c2).nargs = 2;\n        }\n",
             )
         ],
         (),
@@ -331,12 +331,11 @@ MUTATIONS = {
         ("handler-nargs-3-throw-6",),
     ),
     "implicit PUSHINT counted as a step": Mutation(
-        CORE,
+        CONTROL,
         [
             (
-                "    fn step_pushint(&mut self, code: i32) -> Result<Option<i32>> {\n",
-                "    fn step_pushint(&mut self, code: i32) -> Result<Option<i32>> {\n"
-                "        self.step += 1;\n",
+                "                self.cc.stack.push_int(*value);\n",
+                "                self.cc.stack.push_int(*value);\n                self.step += 1;\n",
             )
         ],
         (),
@@ -432,11 +431,11 @@ MUTATIONS = {
         ("handler-rethrows-until-out-of-gas", "handler-rethrows-once"),
     ),
     "TRY body keeps the outer c1": Mutation(
-        EXCEPTIONS,
+        CONTROL,
         [
             (
-                "        engine.ctrls.put(1, StackItem::continuation(ContinuationData::with_type(quit1)))?\n",
-                "        engine.ctrls.get(1).cloned()\n",
+                "            let c1 = self.ctrls.put_opt(1, quit1()).unwrap_or_default();\n",
+                "            let c1 = self.ctrls.get(1).cloned().unwrap_or_default();\n",
             )
         ],
         (),
@@ -445,14 +444,14 @@ MUTATIONS = {
     ),
     "TRY overwrites the handler's c2": Mutation(
         EXCEPTIONS,
-        [("        if handler.savelist.get(2).is_none() {\n", "        {\n")],
+        [("    define_c(save, 2, old_c2);\n", "    save.put_opt(2, old_c2);\n")],
         (),
         (),
         ("try-handler-defines-c2",),
     ),
     "TRY overwrites the handler's c0": Mutation(
         EXCEPTIONS,
-        [("    if handler_cont.savelist.get(0).is_none() {\n", "    {\n")],
+        [("    define_c(save, 0, cc.clone());\n", "    save.put_opt(0, cc.clone());\n")],
         (),
         (),
         ("try-handler-defines-c0",),
@@ -461,8 +460,8 @@ MUTATIONS = {
         EXCEPTIONS,
         [
             (
-                "    if let Some(c0) = body_c0 {\n        engine.ctrls.put(0, c0)?;\n    }\n",
-                "    drop(body_c0);\n",
+                "    let cont = pop_cont(engine)?;\n",
+                "    let mut cont = pop_cont(engine)?;\n    if cont.has_control_data() {\n        std::sync::Arc::make_mut(&mut cont).savelist.remove(0);\n    }\n",
             )
         ],
         (),
@@ -721,6 +720,375 @@ MUTATIONS = {
         (),
         (),
         ("family-bls-f93003-0-s-1000000",),
+    ),
+    # The continuation model (control.rs and the instructions on it).
+    "a jump leaves out the saved c0 and c1": Mutation(
+        CONTROL,
+        [
+            (
+                "            ContinuationType::Ordinary => {\n                let data = Arc::make_mut(&mut cont);\n                let mut save = std::mem::take(&mut data.savelist);\n",
+                "            ContinuationType::Ordinary => {\n                let data = Arc::make_mut(&mut cont);\n                let mut save = std::mem::take(&mut data.savelist);\n                save.remove(0);\n                save.remove(1);\n",
+            )
+        ],
+        (),
+        (),
+        ("jump-applies-saved-c0", "family-jump-c0-jmpx", "family-jump-c1-ifjmp"),
+    ),
+    "the savelist is applied before the arguments are checked": Mutation(
+        CONTROL,
+        [
+            (
+                '        let depth = self.cc.stack.depth() as isize;\n        if cont.has_control_data() {\n            if pass_args > depth || cont.nargs > depth {\n                fail!(\n                    ExceptionCode::StackUnderflow,\n                    "stack underflow while jumping',
+                '        let depth = self.cc.stack.depth() as isize;\n        if cont.has_control_data() {\n            let mut early = cont.savelist.clone();\n            self.adjust_cr(&mut early);\n            if pass_args > depth || cont.nargs > depth {\n                fail!(\n                    ExceptionCode::StackUnderflow,\n                    "stack underflow while jumping',
+            )
+        ],
+        (),
+        (),
+        ("family-ctrmany2-jump-depth-error-keeps-c0",),
+    ),
+    "a call to a continuation that defines c0 sets that c0's arguments": Mutation(
+        CONTROL,
+        [
+            (
+                "            if cont.savelist.get(0).is_some() {\n                return self.jump_args(cont, pass_args);\n            }\n",
+                "            if cont.savelist.get(0).is_some() {\n                self.jump_args(cont, pass_args)?;\n                let mut c0 = self.get_cont(0)?;\n                Arc::make_mut(&mut c0).nargs = ret_args;\n                self.ctrls.put_opt(0, StackItem::Continuation(c0));\n                return Ok(());\n            }\n",
+            )
+        ],
+        (),
+        (),
+        ("callxargs-to-saved-c0-is-a-jump", "family-jump-c0-callxargs-1-0"),
+    ),
+    # Above the free stack depth the jump and the general call differ in stack gas.
+    "a call to a continuation that defines c0 is no jump": Mutation(
+        CONTROL,
+        [
+            (
+                "            if cont.savelist.get(0).is_some() {\n                return self.jump_args(cont, pass_args);\n            }\n",
+                "",
+            )
+        ],
+        (),
+        (),
+        (
+            "family-stackgas-tail-call-whole-stack-1095",
+            "family-stackgas-tail-call-whole-stack-1000000",
+        ),
+    ),
+    "the capture does not take c0": Mutation(
+        CONTROL,
+        [("        if save_cr & 1 != 0 {\n", "        if save_cr & 1 != 0 && false {\n")],
+        (),
+        (),
+        ("callcc-captures-c0-c1", "family-compose2-booleval-false"),
+    ),
+    "the capture does not take c2": Mutation(
+        CONTROL,
+        [("        if save_cr & 4 != 0 {\n", "        if save_cr & 4 != 0 && false {\n")],
+        (),
+        (),
+        ("throw-after-try-returns", "throw-after-try-returns-to-own-handler"),
+    ),
+    "the captured part of the stack is the top": Mutation(
+        CONTROL,
+        [
+            (
+                "        let rest = std::mem::replace(&mut self.cc.stack, new_stack);\n        let code = std::mem::take(self.cc.code_mut());\n",
+                "        let rest = std::mem::replace(&mut self.cc.stack, new_stack);\n        let rest = std::mem::replace(&mut self.cc.stack, rest);\n        let code = std::mem::take(self.cc.code_mut());\n",
+            )
+        ],
+        (),
+        (),
+        ("family-capture-callccargs-1--1", "family-capture-callccargs-2-1"),
+    ),
+    "CALLCC checks the target's arguments before it pushes the capture": Mutation(
+        CONT,
+        [
+            (
+                "    let cont = pop_cont(engine)?;\n    let cc = engine.extract_cc(3, -1, -1)?;\n    engine.cc.stack.push(StackItem::continuation(cc));\n",
+                "    let cont = pop_cont(engine)?;\n    if cont.nargs > engine.cc.stack.depth() as isize {\n        fail!(ExceptionCode::StackUnderflow)\n    }\n    let cc = engine.extract_cc(3, -1, -1)?;\n    engine.cc.stack.push(StackItem::continuation(cc));\n",
+            )
+        ],
+        (),
+        (),
+        ("callcc-generated-argument", "family-capture-callcc-generated-arg"),
+    ),
+    "a loop runs its body's code only": Mutation(
+        CONTROL,
+        [
+            (
+                "                    count: count - 1,\n                };\n                self.ctrls.put_opt(0, StackItem::continuation(ContinuationData::with_type(again)));\n                Ok(Some(body_cont))",
+                "                    count: count - 1,\n                };\n                self.ctrls.put_opt(0, StackItem::continuation(ContinuationData::with_type(again)));\n                Ok(Some(Arc::new(ContinuationData::with_code(body_cont.code().clone()))))",
+            )
+        ],
+        (),
+        (),
+        ("family-loop2-repeat-closure-nargs", "family-jump-c1-repeat-2"),
+    ),
+    "dispatches past the eighth are free": Mutation(
+        CONTROL,
+        [
+            (
+                "            if count > FREE_NESTED_CONT_JUMP && self.block_version() >= 9 {\n",
+                "            if count > FREE_NESTED_CONT_JUMP && self.block_version() >= 99 {\n",
+            )
+        ],
+        (),
+        (),
+        ("dispatch-chain-of-nine", "family-chain-9-quit-v16-331", "family-chain-10-quit-v9-368"),
+    ),
+    "the dispatch that ends the chain is not counted": Mutation(
+        CONTROL,
+        [("            count += 1;\n", "            count += u32::from(next.is_some());\n")],
+        (),
+        (),
+        ("dispatch-chain-of-nine", "family-chain-8-quit-v16-294"),
+    ),
+    "an envelope is no dispatch of its own": Mutation(
+        CONTROL,
+        [
+            (
+                "                let mut save = std::mem::take(&mut data.savelist);\n                self.adjust_cr(&mut save);\n                Ok(Some(next))\n",
+                "                let mut save = std::mem::take(&mut data.savelist);\n                self.adjust_cr(&mut save);\n                self.dispatch(next)\n",
+            )
+        ],
+        (),
+        (),
+        ("family-chain-7-envelope-v16-872", "family-chain-8-envelope-v9-909"),
+    ),
+    "the default handler raises an error popping its exit code": Mutation(
+        CONTROL,
+        [
+            (
+                "                .unwrap_or_else(|err| tvm_exception_or_custom_code(&err));\n                self.terminal = Some(Terminal::ExcQuit(number));\n",
+                "                ?;\n                self.terminal = Some(Terminal::ExcQuit(number));\n",
+            )
+        ],
+        (),
+        (),
+        ("family-terminal-excquit-null", "family-terminal-excquit-minus-1"),
+    ),
+    "the exits of a BRK loop do not save c0 and c1": Mutation(
+        CONTROL,
+        [
+            (
+                "        if save {\n            let c1 = self.ctrls.get(1).cloned().unwrap_or_default();\n",
+                "        if save && false {\n            let c1 = self.ctrls.get(1).cloned().unwrap_or_default();\n",
+            )
+        ],
+        (),
+        (),
+        ("family-loop2-repeatbrk-restores-c1",),
+    ),
+    "a definition overwrites a taken slot": Mutation(
+        CONTROL,
+        [
+            (
+                "    if save.get(index).is_some() {\n        return index == 7 || silent_if_set;\n    }\n",
+                "",
+            )
+        ],
+        (),
+        (),
+        ("setcontctr-keeps-taken-slot", "family-ctrmany-01-preset-c0"),
+    ),
+    "a taken slot is checked before the value's type": Mutation(
+        CONTROL,
+        [
+            (
+                "    if !suits {\n        return false;\n    }\n    if save.get(index).is_some() {\n        return index == 7 || silent_if_set;\n    }\n",
+                "    if save.get(index).is_some() {\n        return index == 7 || silent_if_set;\n    }\n    if !suits {\n        return false;\n    }\n",
+            )
+        ],
+        (),
+        (),
+        ("family-ctrmany2-setcontctr-taken-wrong-type",),
+    ),
+    "a composition overwrites a taken slot": Mutation(
+        CONTROL,
+        [
+            (
+                "    if !value.is_null() && save.get(index).is_none() {\n",
+                "    if !value.is_null() {\n",
+            )
+        ],
+        (),
+        (),
+        ("family-compose-booland-preset0-callx", "family-compose2-booland-both-preset"),
+    ),
+    "a second stack copy is charged": Mutation(
+        CONTROL,
+        [
+            (
+                "                self.cc.stack = new_stack;\n                self.consume_stack_gas(new_depth)?;\n",
+                "                self.cc.stack = new_stack;\n                self.consume_stack_gas(new_depth)?;\n                self.consume_stack_gas(new_depth)?;\n",
+            )
+        ],
+        (),
+        (),
+        ("family-stackgas-closure-call-depth-33", "family-capture-callccargs-1-depth-33"),
+    ),
+    "versions before 14 keep a taken slot silently": Mutation(
+        CONT,
+        [("    engine.block_version() >= 14\n", "    engine.block_version() >= 4\n")],
+        (),
+        (),
+        ("family-ctrmany2-setcontctr-conflict-v13", "family-ctrmany2-setretctr-conflict-v13"),
+    ),
+    "SAVEBOTHCTR refuses again": Mutation(
+        CONT,
+        [
+            (
+                "    let index = engine.cmd.creg();\n    let mut c0 = engine.get_cont(0)?;\n    let mut c1 = engine.get_cont(1)?;\n",
+                "    let index = engine.cmd.creg();\n    fail!(ExceptionCode::TypeCheckError);\n    #[allow(unreachable_code)]\n    let mut c0 = engine.get_cont(0)?;\n    let mut c1 = engine.get_cont(1)?;\n",
+            )
+        ],
+        (),
+        (),
+        ("saveboth-c0", "family-save-saveboth-c1-plain"),
+    ),
+    "SAVEBOTHCTR c0 gives c1 the changed c0": Mutation(
+        CONT,
+        [
+            (
+                "    define(&mut force_cdata(&mut c1).savelist, index, value, false);\n",
+                "    let value = if index == 0 { cont_item(c0.clone()) } else { value };\n    define(&mut force_cdata(&mut c1).savelist, index, value, false);\n",
+            )
+        ],
+        (),
+        (),
+        ("family-save2-saveboth-c0-retalt",),
+    ),
+    "SETCONTCTRMANY refuses c6 after the pop": Mutation(
+        CONT,
+        [
+            (
+                '    let mask = engine.cmd.length() as i64;\n    if mask & (1 << 6) != 0 {\n        fail!(ExceptionCode::RangeCheckError, "no control register c6")\n    }\n    let cont = pop_cont(engine)?;\n',
+                '    let mask = engine.cmd.length() as i64;\n    let cont = pop_cont(engine)?;\n    if mask & (1 << 6) != 0 {\n        fail!(ExceptionCode::RangeCheckError, "no control register c6")\n    }\n',
+            )
+        ],
+        (),
+        (),
+        ("family-ctrmany-40-empty", "family-ctrmany-ff-empty"),
+    ),
+    "SETEXITALT does not define c1": Mutation(
+        CONT,
+        [
+            (
+                "    define_c(save, 0, c0);\n    define_c(save, 1, c1);\n    engine.ctrls.put_opt(1, cont_item(cont));\n",
+                "    define_c(save, 0, c0);\n    drop(c1);\n    engine.ctrls.put_opt(1, cont_item(cont));\n",
+            )
+        ],
+        (),
+        (),
+        ("family-compose2-setexitalt-c1",),
+    ),
+    "INVERT keeps a set c0": Mutation(
+        CONT,
+        [
+            (
+                "    for (index, value) in [(0, c1), (1, c0)] {\n",
+                "    for (index, value) in [(1, c0)] {\n",
+            )
+        ],
+        (),
+        (),
+        ("family-compose2-invert-twice", "family-compose-invert-preset1"),
+    ),
+    "the call forms accept a count of 255": Mutation(
+        CONT,
+        [
+            (
+                "    let retvals = pop_smallint_range(engine, 254, -1)? as isize;\n    let params = pop_smallint_range(engine, 254, -1)? as isize;\n    let cont = pop_cont(engine)?;\n    engine.call_args(cont, params, retvals)",
+                "    let retvals = pop_smallint_range(engine, 255, -1)? as isize;\n    let params = pop_smallint_range(engine, 254, -1)? as isize;\n    let cont = pop_cont(engine)?;\n    engine.call_args(cont, params, retvals)",
+            )
+        ],
+        (),
+        (),
+        ("family-varargs-callx-ret-255",),
+    ),
+    "RETURNARGS keeps the bottom entries": Mutation(
+        CONT,
+        [
+            (
+                "    let moved: Vec<StackItem> = engine.cc.stack.storage.drain(..copy).collect();\n",
+                "    let moved: Vec<StackItem> = engine.cc.stack.storage.drain(count..).collect();\n",
+            )
+        ],
+        (),
+        (),
+        ("family-closure-returnargs-1", "family-closure-returnargs-2-ret"),
+    ),
+    "POPSAVE c0 ends with the old c0": Mutation(
+        STACK,
+        [
+            (
+                "        engine.ctrls.put_opt(0, StackItem::Continuation(c0));\n        engine.set_c(0, value)\n",
+                "        engine.set_c(0, value)?;\n        engine.ctrls.put_opt(0, StackItem::Continuation(c0));\n        Ok(())\n",
+            )
+        ],
+        (),
+        (),
+        ("family-popsave-c0-cont",),
+    ),
+    "POPSAVE c0 checks the new value last": Mutation(
+        STACK,
+        [
+            (
+                "    if creg == 0 && value.as_continuation().is_err() {\n",
+                "    if creg == 0 && value.as_continuation().is_err() && false {\n",
+            )
+        ],
+        (),
+        (),
+        ("family-popsave-c0-int",),
+    ),
+    "POP c2 takes null": Mutation(
+        CONTROL,
+        [
+            (
+                "pub(in crate::executor) fn can_set(index: usize, value: &StackItem) -> bool {\n    match index {\n",
+                "pub(in crate::executor) fn can_set(index: usize, value: &StackItem) -> bool {\n    if index == 2 && value.is_null() {\n        return true;\n    }\n    match index {\n",
+            )
+        ],
+        (),
+        (),
+        ("family-ctrmany2-popctr-c2-null",),
+    ),
+    "a dictionary key out of range is an error": Mutation(
+        DICT,
+        [
+            (
+                "        Err(_) => None,\n    };\n    if let Some(data) = found {\n",
+                "        Err(err) => return Err(err),\n    };\n    if let Some(data) = found {\n",
+            )
+        ],
+        (),
+        (),
+        ("dict-key-out-of-range-is-a-miss", "family-dict-ugetjmpz-key-minus-1"),
+    ),
+    "PFXDICTSWITCH calls what it finds": Mutation(
+        DICT,
+        [
+            (
+                '    pfxdictget(engine, "PFXDICTSWITCH", CMD | SWITCH)',
+                '    pfxdictget(engine, "PFXDICTSWITCH", CMD | CALLX)',
+            )
+        ],
+        (),
+        (),
+        ("family-dict-pfxdictswitch-const-hit",),
+    ),
+    "PFXDICTGETEXEC not found gives the slice back": Mutation(
+        DICT,
+        [
+            (
+                "    } else if how.bit(RET) || how.bit(SWITCH) {\n",
+                "    } else if how.bit(RET) || how.bit(SWITCH) || how.bit(CALLX) {\n",
+            )
+        ],
+        (),
+        (),
+        ("family-dict-pfxgetexec-miss",),
     ),
 }
 

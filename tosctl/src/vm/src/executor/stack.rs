@@ -12,17 +12,17 @@
 use crate::{
     executor::{
         engine::{
+            control::{define, force_cdata},
             data::convert,
-            storage::{copy_to_var, fetch_reference, fetch_stack, swap},
+            storage::{fetch_reference, fetch_stack},
             Engine,
         },
-        microcode::{CC, CELL, CONTINUATION, CTRL, SAVELIST, SLICE, VAR},
+        microcode::{CC, CELL, CONTINUATION, SLICE, VAR},
         types::{Instruction, InstructionOptions, WhereToGetParams},
     },
     stack::{
         continuation::ContinuationData,
         integer::{behavior::Signaling, IntegerData},
-        savelist::SaveList,
         StackItem,
     },
 };
@@ -216,43 +216,55 @@ pub(super) fn execute_pop(engine: &mut Engine) -> Status {
     Ok(())
 }
 
-// (x - ), c[i] = x
+// POP c(i): exec_pop_ctr
 pub(super) fn execute_popctr(engine: &mut Engine) -> Status {
     engine.load_instruction(
         Instruction::new("POPCTR").set_opts(InstructionOptions::ControlRegister),
     )?;
-    fetch_stack(engine, 1)?;
     let creg = engine.cmd.creg();
-    swap(engine, var!(0), ctrl!(creg))
+    let value = engine.cc.stack.drop(0)?;
+    engine.set_c(creg, value)
 }
 
-// (x i - ), c[i] = x
+// POPCTRX: exec_pop_ctr_var
 pub(super) fn execute_popctrx(engine: &mut Engine) -> Status {
     engine.load_instruction(Instruction::new("POPCTRX"))?;
-    fetch_stack(engine, 2)?;
-    let creg = engine.cmd.var(0).as_stack_index()?;
-    if !SaveList::REGS.contains(&creg) {
-        fail!(ExceptionCode::RangeCheckError)
+    if engine.cc.stack.depth() < 2 {
+        fail!(ExceptionCode::StackUnderflow)
     }
-    swap(engine, var!(0), ctrl!(creg))
+    let creg = engine.cc.stack.drop(0)?.as_integer_value(0..=16usize)?;
+    if !matches!(creg, 0..=5 | 7) {
+        fail!(ExceptionCode::RangeCheckError, "control register index out of range")
+    }
+    let value = engine.cc.stack.drop(0)?;
+    engine.set_c(creg, value)
 }
 
-// (x - ), c[0].savelist[i] = c[i], c[i] = x,
+// POPSAVE c(i): exec_popsave_ctr. The new value is popped and c0 read; for c0 the new value
+// must be a continuation before anything changes; the old c(i) is defined into c0's savelist
+// (the result ignored); for c0 the modified c0 is installed and then replaced by the new value,
+// for any other register the new value is installed (type-checked) first and the modified c0
+// only after that.
 pub(super) fn execute_popsave(engine: &mut Engine) -> Status {
     engine.load_instruction(
         Instruction::new("POPSAVE").set_opts(InstructionOptions::ControlRegister),
     )?;
-    fetch_stack(engine, 1)?;
     let creg = engine.cmd.creg();
-    swap(engine, var!(0), ctrl!(creg))?;
-    if let Ok(c0) = engine.ctrl(0) {
-        if let Ok(c0) = c0.as_continuation() {
-            if c0.savelist.get(creg).is_some() {
-                return Ok(());
-            }
-        }
+    let value = engine.cc.stack.drop(0)?;
+    let mut c0 = engine.get_cont(0)?;
+    if creg == 0 && value.as_continuation().is_err() {
+        fail!(ExceptionCode::TypeCheckError, "invalid value type for control register")
     }
-    swap(engine, var!(0), savelist!(ctrl!(0), creg))
+    let old = engine.get_c(creg);
+    define(&mut force_cdata(&mut c0).savelist, creg, old, false);
+    if creg == 0 {
+        engine.ctrls.put_opt(0, StackItem::Continuation(c0));
+        engine.set_c(0, value)
+    } else {
+        engine.set_c(creg, value)?;
+        engine.ctrls.put_opt(0, StackItem::Continuation(c0));
+        Ok(())
+    }
 }
 
 // (x ... y ... z ... a - a... y ... z ... z y x)
@@ -349,27 +361,26 @@ pub(super) fn execute_pushcont_long(engine: &mut Engine) -> Status {
     execute_pushcont(engine, InstructionOptions::Bytestring(4, 0, 4, 0))
 }
 
-// ( - c[i])
+// PUSH c(i): exec_push_ctr
 pub(super) fn execute_pushctr(engine: &mut Engine) -> Status {
     engine.load_instruction(
         Instruction::new("PUSHCTR").set_opts(InstructionOptions::ControlRegister),
     )?;
     let creg = engine.cmd.creg();
-    copy_to_var(engine, ctrl!(creg))?;
-    engine.cc.stack.push(engine.cmd.pop_var()?);
+    let value = engine.get_c(creg);
+    engine.cc.stack.push(value);
     Ok(())
 }
 
-// (i - c[i])
+// PUSHCTRX: exec_push_ctr_var; a register that does not exist or holds nothing is a range check
 pub(super) fn execute_pushctrx(engine: &mut Engine) -> Status {
     engine.load_instruction(Instruction::new("PUSHCTRX"))?;
-    fetch_stack(engine, 1)?;
-    let creg = engine.cmd.var(0).as_stack_index()?;
-    if !SaveList::REGS.contains(&creg) {
-        fail!(ExceptionCode::RangeCheckError)
+    let creg = engine.cc.stack.drop(0)?.as_integer_value(0..=16usize)?;
+    let value = if matches!(creg, 0..=5 | 7) { engine.get_c(creg) } else { StackItem::None };
+    if value.is_null() {
+        fail!(ExceptionCode::RangeCheckError, "control register index out of range")
     }
-    copy_to_var(engine, ctrl!(creg))?;
-    engine.cc.stack.push(engine.cmd.pop_var()?);
+    engine.cc.stack.push(value);
     Ok(())
 }
 

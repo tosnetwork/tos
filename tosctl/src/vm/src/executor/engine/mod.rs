@@ -9,6 +9,7 @@
  * This file has been modified from its original version.
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
+pub(in crate::executor) mod control;
 mod core;
 mod cp0_prefixes;
 pub(in crate::executor) mod data;
@@ -17,7 +18,3 @@ mod handlers;
 pub(in crate::executor) mod storage;
 
 pub use self::core::*;
-
-#[cfg(test)]
-#[path = "../../tests/test_microfunctions.rs"]
-mod tests;
