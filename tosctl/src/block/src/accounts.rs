@@ -596,6 +596,15 @@ fn transaction_storage_shape(
     Ok((cell.bit_length(), references.into_iter().map(|cell| cell.repr_hash()).collect()))
 }
 
+fn normalize_transaction_state_init(state: &mut StateInit) {
+    if state.fixed_prefix_length.is_some_and(|length| length.as_u32() == 0) {
+        state.fixed_prefix_length = None;
+    }
+    if state.special.as_ref().is_some_and(|flags| !flags.tick && !flags.tock) {
+        state.special = None;
+    }
+}
+
 #[derive(Clone, Default)]
 struct AccountStuff {
     addr: MsgAddressInt,
@@ -814,6 +823,20 @@ impl Account {
         Ok(())
     }
 
+    /// Transaction output hashes omit redundant zero-valued StateInit options.
+    /// Keep explicit construction/freezing and original input serialization separate.
+    pub fn try_freeze_for_transaction(&mut self) -> Result<()> {
+        if let Some(stuff) = self.stuff_mut() {
+            if let AccountState::AccountActive { state_init } = &stuff.storage.state {
+                let mut selected = state_init.clone();
+                normalize_transaction_state_init(&mut selected);
+                let state_init_hash = selected.hash()?;
+                stuff.storage.state = AccountState::AccountFrozen { state_init_hash };
+            }
+        }
+        Ok(())
+    }
+
     // make account uninitialized
     pub fn uninit_account(&mut self) {
         if let Some(stuff) = self.stuff_mut() {
@@ -1008,6 +1031,9 @@ impl Account {
         let Some(stuff) = self.stuff_mut() else {
             return Ok(());
         };
+        if let AccountState::AccountActive { state_init } = &mut stuff.storage.state {
+            normalize_transaction_state_init(state_init);
+        }
         let (root_bits, references) = transaction_storage_shape(&stuff.storage, global_version)?;
         let actual =
             stuff.storage_stat.update_for_transaction(&stuff.storage, global_version >= 10)?;

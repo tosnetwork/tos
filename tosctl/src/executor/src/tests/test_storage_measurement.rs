@@ -137,9 +137,66 @@ fn live_storage_cache_matches_native_across_tick_oog_tock_and_tick() {
     assert_live_storage_cache(fixture);
 }
 
+#[test]
+fn live_storage_options_match_native_across_freeze_and_successors() {
+    let fixture: serde_json::Value =
+        serde_json::from_str(include_str!("../../tests/fixtures/storage-option-carry.json"))
+            .unwrap();
+    let cases = fixture["cases"].as_array().unwrap();
+    assert_eq!(cases.len(), 33);
+    assert_eq!(cases.iter().map(|case| case["rows"].as_array().unwrap().len()).sum::<usize>(), 49);
+    for case in cases {
+        assert_live_storage_cache(case.clone());
+    }
+}
+
+#[test]
+fn external_rejection_preserves_original_zero_option_presence() {
+    use chain_block::{read_single_root_boc, ShardAccount};
+    let fixture: serde_json::Value =
+        serde_json::from_str(include_str!("../../tests/fixtures/storage-option-carry.json"))
+            .unwrap();
+    let case = fixture["cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|case| case["name"] == "active-prefix1-special1")
+        .unwrap();
+    let row = &case["rows"][0];
+    let decode = |value: &serde_json::Value| {
+        read_single_root_boc(hex::decode(value.as_str().unwrap()).unwrap()).unwrap()
+    };
+    let config = BlockchainConfig::with_config(
+        ConfigParams::construct_from_cell(decode(&case["config_boc"])).unwrap(),
+    )
+    .unwrap();
+    let shard = ShardAccount::construct_from_cell(decode(&row["input_shard"])).unwrap();
+    let mut account = shard.read_account().unwrap();
+    assert!(
+        account.set_code(BuilderData::with_raw(vec![0xf2, 0x0d], 16).unwrap().into_cell().unwrap())
+    );
+    let original = account.state_init().unwrap().serialize().unwrap().repr_hash();
+    let params = ExecuteParams {
+        block_unixtime: row["now"].as_u64().unwrap() as u32,
+        block_lt: 2_000_000,
+        last_tr_lt: 2_000_000,
+        ..ExecuteParams::default()
+    };
+    let error = OrdinaryTransactionExecutor::new(config)
+        .execute_with_params(Some(decode(&row["message"])), &mut account, params)
+        .unwrap_err();
+    assert!(matches!(
+        error.downcast_ref::<crate::ExecutorError>(),
+        Some(crate::ExecutorError::NoAcceptError(13, _))
+    ));
+    assert_eq!(account.state_init().unwrap().serialize().unwrap().repr_hash(), original);
+}
+
 fn assert_live_storage_cache(fixture: serde_json::Value) {
     use crate::TickTockTransactionExecutor;
-    use chain_block::{read_single_root_boc, HashUpdate, ShardAccount, TransactionTickTock};
+    use chain_block::{
+        read_single_root_boc, AccountStatus, HashUpdate, ShardAccount, TransactionTickTock,
+    };
     fn cell(value: &serde_json::Value) -> Cell {
         read_single_root_boc(hex::decode(value.as_str().unwrap()).unwrap()).unwrap()
     }
@@ -147,13 +204,14 @@ fn assert_live_storage_cache(fixture: serde_json::Value) {
         ConfigParams::construct_from_cell(cell(&fixture["config_boc"])).unwrap(),
     )
     .unwrap();
+    let version = config.global_version();
     let executor = OrdinaryTransactionExecutor::new(config.clone());
     let rows = fixture["rows"].as_array().unwrap();
     for prewarm in [false, true] {
         let mut shard = ShardAccount::construct_from_cell(cell(&rows[0]["input_shard"])).unwrap();
         let mut account = shard.read_account().unwrap();
         if prewarm {
-            account.measure_storage_stat(16).unwrap();
+            account.measure_storage_stat(version).unwrap();
         }
         for row in rows {
             assert_eq!(
@@ -186,7 +244,27 @@ fn assert_live_storage_cache(fixture: serde_json::Value) {
                         assert_eq!(vm.exit_code, code as i32);
                     }
                 }
+                Some(TrComputePhase::Skipped(skipped)) => {
+                    assert_eq!(
+                        format!("{:?}", skipped.reason),
+                        row["skipped_reason"].as_str().unwrap()
+                    );
+                }
                 _ => panic!("the authored contract must execute"),
+            }
+            if let Some(status) = row["status"].as_str() {
+                assert_eq!(account.is_active(), status == "active");
+                assert_eq!(account.is_frozen(), status == "frozen");
+                assert_eq!(account.is_uninit(), status == "uninit");
+            }
+            if let Some(status) = row["end_status"].as_str() {
+                let expected = match status {
+                    "active" => AccountStatus::AccStateActive,
+                    "frozen" => AccountStatus::AccStateFrozen,
+                    "uninit" => AccountStatus::AccStateUninit,
+                    _ => panic!("unknown expected transaction end status"),
+                };
+                assert_eq!(transaction.end_status, expected);
             }
             if let Some(code) = row["action_code"].as_i64() {
                 assert_eq!(description.action_phase_ref().unwrap().result_code, code as i32);

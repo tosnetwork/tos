@@ -97,12 +97,17 @@ jobs:
         run: |
           cargo test --manifest-path tosctl/src/Cargo.toml --locked --release -p chain_block --lib storage_stat
           cargo test --manifest-path tosctl/src/Cargo.toml --locked --release -p chain_block --lib transaction_storage
+          cmake --build build --target test-storage-encoding --parallel "$(nproc)"
+          python3 test/executor-parity/storage_encoding.py --native build/emulator/test-storage-encoding --output result/storage-encoding.json
+          cmp result/storage-encoding.fixture.tsv tosctl/src/block/src/tests/data/storage_stat/storage-encoding.tsv
           python3 test/executor-parity/storage_cache_carry.py --output result/storage-cache-carry.json
           cmp result/storage-cache-carry.json tosctl/src/executor/tests/fixtures/storage-cache-carry.json
           python3 test/executor-parity/storage_rollback_carry.py --output result/storage-rollback-carry.json
           cmp result/storage-rollback-carry.json tosctl/src/executor/tests/fixtures/storage-rollback-carry.json
           python3 test/executor-parity/storage_tick_carry.py --output result/storage-tick-carry.json
           cmp result/storage-tick-carry.json tosctl/src/executor/tests/fixtures/storage-tick-carry.json
+          python3 test/executor-parity/storage_option_carry.py --output result/storage-option-carry.json
+          cmp result/storage-option-carry.json tosctl/src/executor/tests/fixtures/storage-option-carry.json
           cargo test --manifest-path tosctl/src/Cargo.toml --locked --release -p tos_executor --lib tests_storage_measurement
       - name: Export authenticated contexts and carry Rust account state
         run: |

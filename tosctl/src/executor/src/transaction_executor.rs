@@ -232,7 +232,7 @@ pub trait TransactionExecutor {
                 log::debug!(target: "executor", "due payment {} have to freeze", fee);
                 acc.set_due_payment(Some(fee));
                 if acc.status() == AccountStatus::AccStateActive {
-                    acc.try_freeze()?;
+                    acc.try_freeze_for_transaction()?;
                     Ok(TrStoragePhase::with_params(
                         storage_fees_collected,
                         Some(fee),

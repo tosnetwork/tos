@@ -474,12 +474,19 @@ impl TransactionExecutor for OrdinaryTransactionExecutor {
             *account = Account::uninit(account_address, acc_balance.clone(), 0, last_paid);
             // }
         }
-        tr.set_end_status(account.status());
+        let status_before_uninit_conversion = account.status();
         if let Some(hash) = account.frozen_hash() {
             if account_id.contains_bytes(hash.as_slice()) {
                 account.uninit_account();
             }
         }
+        // Omit a frozen hash equal to the address; from version13 the
+        // transaction end status must also reflect the uninitialized state.
+        tr.set_end_status(if self.config.global_version() >= 13 {
+            account.status()
+        } else {
+            status_before_uninit_conversion
+        });
         log::debug!(target: "executor", "set balance {}", acc_balance.coins);
         account.set_balance(acc_balance);
         log::debug!(target: "executor", "add messages {}, start_lt {}", out_msgs.len(), lt);
