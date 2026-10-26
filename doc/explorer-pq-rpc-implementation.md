@@ -11,7 +11,7 @@ not implied by local results.
 | Boundary | Implemented behavior | Regression evidence |
 | --- | --- | --- |
 | R1 `getMasterchainBlockSignatures` | Full-ID or height selection, native anchored PQ finality verification, exact native signing payload and signer IDs, optional raw proof | Native forward-proof suite; frozen ordinary-predecessor proof; three-node response agreement |
-| R2 `getAccountCapability`, `getWalletInformation` | `include_pq: true` adds authenticated public authorization metadata for six exact compiled code identities | All six public genesis fixtures; malformed recognized code; unknown code; inactive account; unsigned 64-bit extrema |
+| R2 `getAccountCapability`, `getWalletInformation` | `include_pq: true` adds authenticated public authorization metadata for seven exact compiled code identities | All seven public genesis fixtures; malformed recognized code; unknown code; inactive account; unsigned 64-bit extrema |
 | R3 `getProofQuery` | Named REST and JSON-RPC share the existing read-only TL allowlist, authentication and budgets | Exact pinned Config8 reply parity; forbidden send/nested queries fail before backend access |
 | R4 `getConfigParam` | `include_decoded: true` adds native Config8/43/47/48 projection and explicit authenticated absence | Native wire-version/default/retirement tests; VM18 and VM16 networks |
 
@@ -29,9 +29,11 @@ reported rather than replaced with current state.
 
 R2 checks exact compiled code hashes before decoding storage. The build registry
 is generated from native contract sources and records compiler/source hashes;
-there is no runtime plugin or arbitrary-file ABI lookup. The default Quantum
-wallet registry is the public candidate network tag `42` repeated 32 times.
-Operators targeting another compiled wallet namespace must set
+there is no runtime plugin or arbitrary-file ABI lookup. The module/vault Quantum
+wallet registry uses the public candidate network tag `42` repeated 32 times.
+Self-pay wallets expose their stored namespace without pinning it to that registry
+tag; their global ID must match the authenticated observation. Operators targeting
+another module/vault wallet namespace must set
 `TOS_EXPLORER_QUANTUM_NETWORK_TAG` at CMake configuration time and distribute that
 build's registry manifest. Public state is observational: it does not attest
 private-key possession, successful signing, admission or release readiness.

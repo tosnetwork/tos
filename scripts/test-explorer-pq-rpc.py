@@ -124,7 +124,16 @@ def fixtures(build, out):
         .uint(2**64 - 1, 64)
         .uint(42, 64)
         .uint(43, 64)
-        .ref(module),
+        .ref(
+            Cell()
+            .uint(1, 8)
+            .sint(1, 32)
+            .uint(int("43" * 32, 16), 256)
+            .uint(1, 8)
+            .uint(456, 256)
+            .uint(1, 8)
+            .ref(chain(public_key))
+        ),
         "quantum_module_v1": module,
         "quantum_wallet_v4": wallet,
         "quantum_fee_vault_v3": vault,
@@ -403,6 +412,9 @@ def main():
                     assert first["account_model"] == "advanced.wallet.quantum_self_pay"
                     assert state["fee_payment"] == "wallet_balance"
                     assert state["authority_epoch"] == str(2**64 - 1)
+                    assert second["seqno"] == 2**32 - 1 and second["wallet_id"] == 7
+                    assert state["network_tag"] == base64.b64encode(bytes.fromhex("43" * 32)).decode()
+                    assert state["rescue"]["policy"] == "ready"
                     assert state["primary"]["algorithm_id"] == 1
                     assert state["rescue"]["algorithm_id"] == 3
                     assert "fee" not in state and "module" not in state
