@@ -47,6 +47,7 @@ class BranchConditionTests(unittest.TestCase):
         for name in (
             "Retain Quantum candidate configuration and boot evidence",
             "Retain public explorer RPC response receipts",
+            "Retain public self-pay proofs",
         ):
             archive = re.search(
                 rf"(?ms)^      - name: {re.escape(name)}\n.*?(?=^      - |\Z)",

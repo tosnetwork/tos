@@ -293,6 +293,10 @@ jobs:
           python test/wallet-quantum/test_pop.py --output artifacts/context/quantum-pop
           python test/wallet-quantum/test_preparation.py --output artifacts/context/quantum-preparation \
             --rust-driver "$CARGO_TARGET_DIR/debug/examples/pq-tx-parity"
+          python test/wallet-quantum/test_self_pay.py --output artifacts/context/quantum-self-pay \
+            --rust-driver "$CARGO_TARGET_DIR/debug/examples/pq-tx-parity"
+          python test/wallet-quantum/test_self_pay_recovery.py --output artifacts/context/quantum-self-pay-recovery \
+            --rust-driver "$CARGO_TARGET_DIR/debug/examples/pq-tx-parity"
       - name: Full R2 fee transaction parity at diagnostic credit
         if: contains(fromJSON('["fee-lifecycle","fee-successor","fee-promotion","vm-ingress","mutations"]'), matrix.suite)
         run: |
