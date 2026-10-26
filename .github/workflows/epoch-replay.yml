@@ -61,6 +61,17 @@ jobs:
           mkdir -p result
           python3 test/rel02/run.py --executable build/emulator/test-epoch-replay \
             --output result/outputs.jsonl --metrics result/metrics.json --controls
+      - name: Compare transaction error classes and complete accepted roots
+        run: |
+          scripts/install-rust-toolchain.sh
+          cmake --build build --target emulator --parallel "$(nproc)"
+          cargo test --manifest-path tosctl/src/Cargo.toml --locked --release -p tos_executor --lib tests_precompiled_external
+          cargo test --manifest-path tosctl/src/Cargo.toml --locked --release -p tos_emulator --lib external_compute_skips_are_unaccepted_without_outputs
+          cargo build --manifest-path tosctl/src/Cargo.toml --locked --release -p tos_emulator --lib
+          python3 test/executor-parity/transaction_rejections.py \
+            --native build/emulator/libemulator.so \
+            --rust tosctl/src/target/release/libtos_emulator.so \
+            --output result/transaction-rejections
       - name: Publish canonical outputs
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -87,4 +98,6 @@ jobs:
             artifacts/epoch-replay-arm64/outputs.jsonl
           cat artifacts/epoch-replay-x86-64/metrics.json
           cat artifacts/epoch-replay-arm64/metrics.json
+          cmp artifacts/epoch-replay-x86-64/transaction-rejections/native/outcomes.json artifacts/epoch-replay-arm64/transaction-rejections/native/outcomes.json
+          cmp artifacts/epoch-replay-x86-64/transaction-rejections/rust/outcomes.json artifacts/epoch-replay-arm64/transaction-rejections/rust/outcomes.json
           test "${{ needs.replay.result }}" = success

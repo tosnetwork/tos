@@ -503,7 +503,15 @@ impl Emulator {
                 })
             }
             Err(err) => {
-                if let Some(ExecutorError::NoAcceptError(vm_exit_code, _)) = err.downcast_ref() {
+                let unaccepted_exit = match err.downcast_ref::<ExecutorError>() {
+                    Some(ExecutorError::NoAcceptError(code, _)) => Some(*code),
+                    // Native exposes an external skipped phase as an unaccepted
+                    // message with default exit code 0. Keep the typed reason
+                    // inside the executor for its other callers.
+                    Some(ExecutorError::ExtMsgComputeSkipped(_)) => Some(0),
+                    _ => None,
+                };
+                if let Some(vm_exit_code) = unaccepted_exit {
                     json!({
                         "success": false,
                         "error": "External message not accepted by smart contract",

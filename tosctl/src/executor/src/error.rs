@@ -20,6 +20,8 @@ pub enum ExecutorError {
     TrExecutorError(String),
     #[error("Contract did not accept message, exit code: {0}")]
     NoAcceptError(i32, Option<StackItem>),
+    #[error("Precompiled fallback exhausted gas during compute phase")]
+    PrecompiledComputeOutOfGas,
     #[error("Cannot pay for importing this external message")]
     NoFundsToImportMsg,
     #[error("Compute phase skipped while processing external inbound message with reason {:?}", .0)]

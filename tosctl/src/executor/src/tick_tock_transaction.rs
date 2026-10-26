@@ -135,7 +135,10 @@ impl TransactionExecutor for TickTockTransactionExecutor {
             Err(e) => {
                 log::debug!(target: "executor", "compute_phase error: {}", e);
                 match e.downcast_ref::<ExecutorError>() {
-                    Some(ExecutorError::NoAcceptError(_, _)) => return Err(e),
+                    Some(
+                        ExecutorError::NoAcceptError(_, _)
+                        | ExecutorError::PrecompiledComputeOutOfGas,
+                    ) => return Err(e),
                     _ => fail!(ExecutorError::TrExecutorError(e.to_string())),
                 }
             }
