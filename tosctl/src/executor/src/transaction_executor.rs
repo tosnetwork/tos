@@ -115,6 +115,10 @@ mod tests_precompiled_external;
 #[path = "tests/test_compute_exit_arg.rs"]
 mod tests_compute_exit_arg;
 
+#[cfg(test)]
+#[path = "tests/test_deploy_state.rs"]
+mod tests_deploy_state;
+
 #[derive(Clone, Default)]
 pub struct ExecuteParams {
     pub state_libs: HashmapE,
@@ -281,6 +285,7 @@ pub trait TransactionExecutor {
         is_masterchain: bool,
         is_special: bool,
         was_deleted_or_frozen: bool,
+        prepared_account: Option<Account>,
         params: &ExecuteParams,
     ) -> Result<(TrComputePhase, Option<Cell>, Option<Cell>)> {
         log::debug!(target: "executor", "acc balance: {}", acc_balance.coins);
@@ -345,22 +350,35 @@ pub trait TransactionExecutor {
         }
 
         let mut libraries = vec![];
-        let mut result_acc = acc.clone();
+        let prepared = prepared_account.is_some();
+        let mut result_acc = prepared_account.unwrap_or_else(|| acc.clone());
         if let Some(msg) = msg {
             if let Some(state_init) = msg.state_init() {
                 libraries.push(state_init.libraries().clone().inner());
             }
-            if let Some(reason) = compute_new_state(
-                &mut result_acc,
-                msg,
-                self.config(),
-                params.block_unixtime,
-                was_deleted_or_frozen,
-            )? {
+            let skip_reason = if prepared {
+                None
+            } else {
+                compute_new_state(
+                    &mut result_acc,
+                    msg,
+                    self.config(),
+                    params.block_unixtime,
+                    was_deleted_or_frozen,
+                )?
+            };
+            if let Some(reason) = skip_reason {
                 *acc = result_acc;
                 return Ok((TrComputePhase::skipped(reason), None, None));
             }
         };
+
+        let use_msg_state = acc.status() != AccountStatus::AccStateActive
+            && result_acc.status() == AccountStatus::AccStateActive;
+        let deferred_activation = self.config().global_version() >= 16 && use_msg_state;
+        if self.config().global_version() >= 16 {
+            vm_phase.msg_state_used = use_msg_state;
+        }
 
         vm_phase.gas_credit = match gas.get_gas_credit() as u32 {
             0 => None,
@@ -387,7 +405,9 @@ pub trait TransactionExecutor {
                     );
                     fail!("can't sub funds: from acc_balance")
                 }
-                *acc = result_acc;
+                if !deferred_activation {
+                    *acc = result_acc;
+                }
                 return Ok((TrComputePhase::Vm(vm_phase), None, None));
             }
         };
@@ -530,7 +550,10 @@ pub trait TransactionExecutor {
         }
 
         let (new_data, out_actions) = vm.get_committed_state().unzip();
-        *acc = result_acc;
+        if !deferred_activation || (credit == 0 && vm_phase.success) {
+            *acc = result_acc;
+            vm_phase.account_activated = deferred_activation;
+        }
         Ok((TrComputePhase::Vm(vm_phase), out_actions, new_data))
     }
 

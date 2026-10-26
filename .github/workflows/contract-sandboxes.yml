@@ -20,7 +20,7 @@ on:
       - "test/tl-cli/**"
       - "crypto/smartcont/**"
       - "crypto/smc-envelope/**"
-      - "emulator/tvm-emulator.hpp"
+      - "emulator/**"
       - "CMakeLists.txt"
       - "tosctl/src/node-control/contracts/**"
       # Proven pool snapshots run the shared proof verifier on recorded material.
@@ -35,11 +35,18 @@ on:
       # The executor and block crates decide every sandbox transaction's
       # outcome, including the outbound message size limits.
       - "tosctl/src/executor/**"
+      - "tosctl/src/Cargo.toml"
+      - "tosctl/src/Cargo.lock"
+      - "tosctl/src/assembler/**"
+      - "tosctl/src/block-json/**"
+      - "tosctl/src/common/build/**"
       - "tosctl/src/block/**"
       # The token-bridge sandbox compiles these sources when it runs.
       - "crosschain/token-bridge/tvm/**"
       - "scripts/replay-token-bridge-trace.py"
       - "test/auth-extensions/cells.py"
+      - "test/auth-extensions/native.py"
+      - "test/executor-parity/deploy_state.py"
       - "scripts/test_replay_token_bridge_trace.py"
       - "crosschain/token-bridge/tests/**"
       - "scripts/token-bridge-mutations.py"
@@ -80,7 +87,7 @@ on:
       - "test/tl-cli/**"
       - "crypto/smartcont/**"
       - "crypto/smc-envelope/**"
-      - "emulator/tvm-emulator.hpp"
+      - "emulator/**"
       - "CMakeLists.txt"
       - "tosctl/src/node-control/contracts/**"
       # Proven pool snapshots run the shared proof verifier on recorded material.
@@ -95,11 +102,18 @@ on:
       # The executor and block crates decide every sandbox transaction's
       # outcome, including the outbound message size limits.
       - "tosctl/src/executor/**"
+      - "tosctl/src/Cargo.toml"
+      - "tosctl/src/Cargo.lock"
+      - "tosctl/src/assembler/**"
+      - "tosctl/src/block-json/**"
+      - "tosctl/src/common/build/**"
       - "tosctl/src/block/**"
       # The token-bridge sandbox compiles these sources when it runs.
       - "crosschain/token-bridge/tvm/**"
       - "scripts/replay-token-bridge-trace.py"
       - "test/auth-extensions/cells.py"
+      - "test/auth-extensions/native.py"
+      - "test/executor-parity/deploy_state.py"
       - "scripts/test_replay_token_bridge_trace.py"
       - "crosschain/token-bridge/tests/**"
       - "scripts/token-bridge-mutations.py"
@@ -516,6 +530,14 @@ jobs:
           cargo build --manifest-path tosctl/src/Cargo.toml --locked -p tos_executor --example pq-tx-parity
           python3 test/executor-parity/precompiled_external.py \
             --driver tosctl/src/target/debug/examples/pq-tx-parity --output "$RUNNER_TEMP/precompiled-external"
+
+      - name: Deployment states agree with frozen native roots
+        env:
+          EMULATOR_PATH: ${{ github.workspace }}/build/emulator/libemulator.so
+        run: |
+          python3 test/executor-parity/deploy_state.py --output "$RUNNER_TEMP/deploy-state.json"
+          cmp "$RUNNER_TEMP/deploy-state.json" tosctl/src/executor/tests/fixtures/deploy-state.json
+          cargo test --manifest-path tosctl/src/Cargo.toml --locked -p tos_executor --lib tests_deploy_state
 
       # Each guard of the settlement protocol is removed in a copy of the
       # sources and the test that names it must fail for its stated reason.

@@ -9,8 +9,8 @@
 mod current_network;
 
 use chain_block::{
-    BuilderData, Cell, Coins, IBitstring, MsgAddressInt, Serializable, SliceData, StateInit,
-    TrComputePhase,
+    AccountStatus, BuilderData, Cell, Coins, IBitstring, MsgAddressInt, Serializable, SliceData,
+    StateInit, TrComputePhase,
 };
 use contracts::{
     PredictionLiquidityRoleV1, PredictionMarketContractV1, PredictionMarketInitV1,
@@ -31,6 +31,35 @@ fn assert_success(label: &str, result: &SendResult) {
     }
 }
 
+fn assert_failed_deployment(
+    label: &str,
+    bc: &Blockchain,
+    market: &MsgAddressInt,
+    result: &SendResult,
+    exit_code: i32,
+) {
+    assert_eq!(&result.transactions.first().expect("deployment transaction").0, market);
+    let description = result.read_primary_description();
+    assert!(description.aborted, "{label}");
+    assert!(description.action.is_none(), "{label}: failed compute must not run actions");
+    match description.compute_ph {
+        TrComputePhase::Vm(vm) => {
+            assert_eq!(vm.exit_code, exit_code, "{label}");
+            assert!(!vm.success, "{label}");
+            assert!(vm.msg_state_used, "{label}: must execute the supplied StateInit");
+            assert!(!vm.account_activated, "{label}: failed compute must not activate");
+        }
+        other => panic!("{label}: expected contract execution, got {other:?}"),
+    }
+    let account = bc.get_account(market).expect("post-deployment account");
+    assert!(
+        matches!(account.status(), AccountStatus::AccStateUninit | AccountStatus::AccStateNonexist),
+        "{label}: failed deployment must leave an uninitialized or absent account"
+    );
+    assert!(account.get_code().is_none(), "{label}: failed deployment must not install code");
+    assert!(account.get_data().is_none(), "{label}: failed deployment must not install data");
+}
+
 fn assert_state_init_activation_aborts(label: &str, data: Cell) {
     let mut bc = Blockchain::with_global_version(current_network::global_version()).unwrap();
     bc.set_workchain(-1);
@@ -48,10 +77,8 @@ fn assert_state_init_activation_aborts(label: &str, data: Cell) {
                 .build(),
         )
         .unwrap();
-    result.expect_aborted();
-    let state = bc.run_get_method(&market, "get_prediction_state", vec![]).unwrap();
-    state.expect_success();
-    assert_eq!(state.int_at(0), 0, "{label} must not activate the market");
+    // The contract's config and initial-runtime guards throw err::bad_config (2403).
+    assert_failed_deployment(label, &bc, &market, &result, 2403);
 }
 
 fn initial_state_with_rebound_config(
@@ -704,12 +731,10 @@ fn malformed_state_init_data_cannot_activate_the_production_contract() {
             .body(PredictionMarketContractV1::activate(1).unwrap())
             .build();
         let result = bc.send_message(deploy).unwrap();
-        result.expect_aborted();
-        let state = bc.run_get_method(&market, "get_prediction_state", vec![]).unwrap();
-        assert_ne!(
-            state.exit_code, 0,
-            "{label} StateInit must not become a parseable active market state"
-        );
+        // load_state reads uint32 first: short input underflows; wrong magic
+        // reaches the contract's err::bad_config guard.
+        let exit_code = if label == "bad magic" { 2403 } else { 9 };
+        assert_failed_deployment(label, &bc, &market, &result, exit_code);
     }
 }
 
@@ -749,11 +774,7 @@ fn prepopulated_state_init_runtime_cannot_activate_the_production_contract() {
                 .build(),
         )
         .unwrap();
-    result.expect_aborted();
-    let state = bc.run_get_method(&market, "get_prediction_state", vec![]).unwrap();
-    state.expect_success();
-    assert_eq!(state.int_at(0), 0, "pre-populated runtime must not activate the market");
-    assert_eq!(state.int_at(1), 1, "failed activation must not rewrite the supplied runtime");
+    assert_failed_deployment("pre-populated runtime", &bc, &market, &result, 2403);
 }
 
 #[test]
@@ -782,6 +803,9 @@ fn prepopulated_state_init_liability_cannot_activate_the_production_contract() {
     let mut root = BuilderData::from_cell(&valid_data).unwrap();
     root.replace_reference_cell(1, accounting.into_cell().unwrap());
     let prepopulated_data = root.into_cell().unwrap();
+    let mut decoded = SliceData::load_cell(prepopulated_data.reference(1).unwrap()).unwrap();
+    assert_eq!(decoded.get_next_u32().unwrap(), 0x504d_4131);
+    assert_eq!(decoded.get_next_u32().unwrap(), 1, "test mutation must seed participant_count");
 
     let mut bc = Blockchain::with_global_version(current_network::global_version()).unwrap();
     bc.set_workchain(-1);
@@ -801,13 +825,7 @@ fn prepopulated_state_init_liability_cannot_activate_the_production_contract() {
                 .build(),
         )
         .unwrap();
-    result.expect_aborted();
-    let accounting = bc.run_get_method(&market, "get_prediction_accounting", vec![]).unwrap();
-    accounting.expect_success();
-    assert_eq!(accounting.int_at(0), 1, "failed activation must not normalize seeded liabilities");
-    let state = bc.run_get_method(&market, "get_prediction_state", vec![]).unwrap();
-    state.expect_success();
-    assert_eq!(state.int_at(0), 0, "seeded liability must not activate the market");
+    assert_failed_deployment("seeded liability", &bc, &market, &result, 2403);
 }
 
 #[test]

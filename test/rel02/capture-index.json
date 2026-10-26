@@ -76671,6 +76671,50 @@
      "size": 17816
     }
    ]
+  },
+  {
+   "block": {
+    "file_hash": "1B5167291137979EFDB7FD6B18FC297186485BF8A6FF0FD87E76CE68C3DD49E2",
+    "root_hash": "2C3589C6710597F7CCAC5AF367C6A3BA7D8147C0F6FFFB4E4CD4DF0FEC9D3EE0",
+    "seqno": 53209,
+    "shard": -9223372036854775808,
+    "workchain": -1
+   },
+   "case": null,
+   "rpc_verification": [],
+   "sha256": "1b5167291137979efdb7fd6b18fc297186485bf8a6ff0fd87e76ce68c3dd49e2",
+   "size": 13916,
+   "sources": [
+    {
+     "archive_file": "$ARCHIVE_DIR/arch0000/archive.53209.pack",
+     "entry": "block_(-1,8000000000000000,53209):2C3589C6710597F7CCAC5AF367C6A3BA7D8147C0F6FFFB4E4CD4DF0FEC9D3EE0:1B5167291137979EFDB7FD6B18FC297186485BF8A6FF0FD87E76CE68C3DD49E2",
+     "offset": 175,
+     "sha256": "1b5167291137979efdb7fd6b18fc297186485bf8a6ff0fd87e76ce68c3dd49e2",
+     "size": 13916
+    }
+   ]
+  },
+  {
+   "block": {
+    "file_hash": "ECBADA1A82DDD28F72C9799FFB00474419ABAA7CB219A9BF7DB861453DA7F237",
+    "root_hash": "3A2CE88478232AD874C321631079F474C49614DE1F4708135175587BB239BF6D",
+    "seqno": 212648,
+    "shard": -9223372036854775808,
+    "workchain": -1
+   },
+   "case": null,
+   "rpc_verification": [],
+   "sha256": "ecbada1a82ddd28f72c9799ffb00474419abaa7cb219a9bf7db861453da7f237",
+   "size": 5560,
+   "sources": [
+    {
+     "archive_file": "$ARCHIVE_DIR/arch0002/archive.212600.pack",
+     "entry": "block_(-1,8000000000000000,212648):3A2CE88478232AD874C321631079F474C49614DE1F4708135175587BB239BF6D:ECBADA1A82DDD28F72C9799FFB00474419ABAA7CB219A9BF7DB861453DA7F237",
+     "offset": 661481,
+     "sha256": "ecbada1a82ddd28f72c9799ffb00474419abaa7cb219a9bf7db861453da7f237",
+     "size": 5560
+    }
+   ]
   }
  ],
  "description": "Archive locations of every selected block and every original-cell source, with the node-1 and node-3 full-id replies. A null case denotes a cell source, not a replay case. A source without replies is bound by hash only: its cells replace pruned cells of the same hash. response_sha256 is the SHA-256 of the reply's canonical JSON.",

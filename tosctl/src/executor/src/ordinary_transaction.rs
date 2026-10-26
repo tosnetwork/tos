@@ -14,10 +14,10 @@ use crate::{
     error::ExecutorError, ActionPhaseResult, ExecuteParams, TransactionExecutor,
 };
 use chain_block::{
-    error, fail, AccStatusChange, Account, AddSub, Cell, Coins, CommonMsgInfo, ComputeSkipReason,
-    Deserializable, Message, MsgAddressInt, Result, Serializable, StorageUsageCalc, TrBouncePhase,
-    TrComputePhase, Transaction, TransactionDescr, TransactionDescrOrdinary, MASTERCHAIN_ID,
-    MAX_MSG_MERKLE_DEPTH,
+    error, fail, AccStatusChange, Account, AccountStatus, AddSub, Cell, Coins, CommonMsgInfo,
+    ComputeSkipReason, Deserializable, Message, MsgAddressInt, Result, Serializable,
+    StorageUsageCalc, TrBouncePhase, TrComputePhase, Transaction, TransactionDescr,
+    TransactionDescrOrdinary, MASTERCHAIN_ID, MAX_MSG_MERKLE_DEPTH,
 };
 #[cfg(feature = "timings")]
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -293,6 +293,7 @@ impl TransactionExecutor for OrdinaryTransactionExecutor {
             .push(boolean!(is_ext_msg));
         log::debug!(target: "executor", "compute_phase");
         let mut bad_state = false;
+        let mut prepared_account = None;
         if account.is_none() && !is_ext_msg && !was_deleted_or_frozen {
             if let Some(mut new_acc) = account_from_message(
                 self.config(),
@@ -307,7 +308,21 @@ impl TransactionExecutor for OrdinaryTransactionExecutor {
                     self.config().global_version(),
                     &mut new_acc,
                 )? {
-                    *account = new_acc;
+                    if self.config().global_version() >= 16
+                        && new_acc.status() == AccountStatus::AccStateActive
+                    {
+                        // Keep the validated StateInit candidate separate until compute commits.
+                        // Reusing it preserves the address-prefix validation performed above.
+                        *account = Account::uninit(
+                            account_address.clone(),
+                            msg_balance.clone(),
+                            0,
+                            last_paid,
+                        );
+                        prepared_account = Some(new_acc);
+                    } else {
+                        *account = new_acc;
+                    }
                 } else {
                     bad_state = true;
                 }
@@ -327,6 +342,7 @@ impl TransactionExecutor for OrdinaryTransactionExecutor {
                 is_masterchain,
                 is_special,
                 was_deleted_or_frozen,
+                prepared_account,
                 &params,
             ) {
                 Ok((compute_ph, actions, new_data)) => (compute_ph, actions, new_data),
