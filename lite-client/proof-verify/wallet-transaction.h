@@ -17,6 +17,6 @@ constexpr std::size_t kMaxWalletTransactionResultBytes = 1u << 20;
 // Pure bounded codec/hash verification. The caller obtains the account/hash/lt
 // from a separately authenticated ShardAccount, not from transaction RPC JSON.
 td::Result<std::string> verify_wallet_transaction(td::Slice account_hash, td::uint64 logical_time,
-                                                td::Slice transaction_hash, td::Slice boc);
+                                                  td::Slice transaction_hash, td::Slice boc);
 
 }  // namespace tos::proofverify

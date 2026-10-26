@@ -5,7 +5,6 @@ import argparse
 import json
 import pathlib
 import subprocess
-import sys
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--build-dir', required=True, type=pathlib.Path)
@@ -65,7 +64,7 @@ try:
             replace(engine, 'depths[links[i].refs[j]] >= kMaxWalletTransactionDepth', 'false')
             replace(engine, 'root->get_depth() > kMaxWalletTransactionDepth', 'false')
         elif name == 'wallet-transaction-bytes':
-            replace(abi, ' || boc_size > pv::kMaxWalletTransactionBytes', '')
+            replace(abi, 'boc_size > pv::kMaxWalletTransactionBytes', 'false')
             replace(engine, ' || bytes.size() > kMaxWalletTransactionBytes', '')
         else:
             replace(path, before, after)

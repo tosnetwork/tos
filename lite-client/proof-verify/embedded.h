@@ -40,8 +40,8 @@ int tos_proof_verify_embedded(const char *anchor, size_t anchor_size, const char
  * Return codes and output clearing follow tos_proof_verify_embedded above.
  */
 int tos_proof_verify_wallet_transaction(int32_t workchain, const uint8_t *account_hash, uint64_t logical_time,
-                                      const uint8_t *transaction_hash, const uint8_t *boc, size_t boc_size,
-                                      char *result, size_t result_capacity, size_t *result_size);
+                                        const uint8_t *transaction_hash, const uint8_t *boc, size_t boc_size,
+                                        char *result, size_t result_capacity, size_t *result_size);
 #ifdef __cplusplus
 }
 #endif

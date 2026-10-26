@@ -237,3 +237,29 @@ assert used.value == 0
 # Invalid oversized capacities are rejected before touching that pointer range.
 assert output.raw == b'\0' * 32
 print('WALLET_TRANSACTION_CASE null-input-and-invalid-capacity PASS')
+
+# Matching hashes on malformed cells reach the TLB decoder, rather than being
+# rejected by the outer hash guard first. Exercise both truncation and reference
+# failures without accepting an abort/panic as successful rejection.
+for cut in range(0, len(ordinary.bits), 17):
+    malformed = Cell(ordinary.bits[:cut], ordinary.refs)
+    encoded, digest, _, _ = serialize(malformed)
+    assert call(first, data=encoded, digest=digest, lt=int(manifest['transactions'][-1]['lt']))[0] != 0
+for refs in ([], ordinary.refs[:1], ordinary.refs[:2], ordinary.refs + [Cell()]):
+    malformed = Cell(ordinary.bits, refs)
+    encoded, digest, _, _ = serialize(malformed)
+    assert call(first, data=encoded, digest=digest, lt=int(manifest['transactions'][-1]['lt']))[0] != 0
+print('WALLET_TRANSACTION_CASE matching-hash-malformed-tlb PASS')
+
+from concurrent.futures import ThreadPoolExecutor  # noqa: E402
+
+
+def repeated(index):
+    tx = manifest['transactions'][index % len(manifest['transactions'])]
+    code, decoded = call(tx)
+    assert code == 0 and decoded['hash'] == tx['hash']
+
+
+with ThreadPoolExecutor(max_workers=4) as workers:
+    list(workers.map(repeated, range(256)))
+print('WALLET_TRANSACTION_CASE concurrent-independent-calls PASS')

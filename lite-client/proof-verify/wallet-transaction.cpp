@@ -1,6 +1,4 @@
 /* Copyright 2026 TOS Blockchain Teams. SPDX-License-Identifier: LGPL-2.0-or-later */
-#include "wallet-transaction.h"
-
 #include <algorithm>
 #include <array>
 #include <vector>
@@ -12,6 +10,8 @@
 #include "td/utils/format.h"
 #include "vm/boc.h"
 #include "vm/dict.h"
+
+#include "wallet-transaction.h"
 
 namespace tos::proofverify {
 namespace {
@@ -148,10 +148,15 @@ td::Result<std::string> message_json(td::Ref<vm::Cell> cell) {
       if (!tlb::csr_unpack(std::move(info), value) || !currency.unpack(value.value)) {
         return td::Status::Error("wallet internal message");
       }
-      result.str("kind", "internal").raw("source", address_json(value.src)).raw("destination", address_json(value.dest))
-          .str("value", currency.tomis->to_dec_string()).boolean("other_currencies", currency.extra.not_null())
-          .boolean("bounced", value.bounced).boolean("bounce", value.bounce)
-          .str("created_lt", std::to_string(value.created_lt)).num("created_at", value.created_at);
+      result.str("kind", "internal")
+          .raw("source", address_json(value.src))
+          .raw("destination", address_json(value.dest))
+          .str("value", currency.tomis->to_dec_string())
+          .boolean("other_currencies", currency.extra.not_null())
+          .boolean("bounced", value.bounced)
+          .boolean("bounce", value.bounce)
+          .str("created_lt", std::to_string(value.created_lt))
+          .num("created_at", value.created_at);
       break;
     }
     case block::gen::CommonMsgInfo::ext_in_msg_info: {
@@ -170,7 +175,8 @@ td::Result<std::string> message_json(td::Ref<vm::Cell> cell) {
       result.str("kind", "external_out").raw("source", address_json(value.src));
       break;
     }
-    default: return td::Status::Error("wallet message type");
+    default:
+      return td::Status::Error("wallet message type");
   }
   return result.finish();
 }
@@ -185,7 +191,11 @@ td::Result<std::string> compute_json(td::Ref<vm::CellSlice> phase) {
     if (!block::gen::t_TrComputePhase.unpack(slice, value)) {
       return td::Status::Error("wallet VM compute phase");
     }
-    return Object{}.boolean("skipped", false).boolean("success", value.success).num("exit_code", value.r1.exit_code).finish();
+    return Object{}
+        .boolean("skipped", false)
+        .boolean("success", value.success)
+        .num("exit_code", value.r1.exit_code)
+        .finish();
   }
   block::gen::TrComputePhase::Record_tr_phase_compute_skipped value;
   if (!block::gen::t_TrComputePhase.unpack(slice, value)) {
@@ -208,15 +218,20 @@ td::Result<std::string> action_json(td::Ref<vm::CellSlice> field) {
   if (field->size_refs() != 1 || !block::gen::t_TrActionPhase.cell_unpack(field->prefetch_ref(), value)) {
     return td::Status::Error("wallet transaction action phase");
   }
-  return Object{}.boolean("success", value.success).boolean("valid", value.valid).boolean("no_funds", value.no_funds)
-      .num("result_code", value.result_code).num("skipped_actions", value.skipped_actions)
-      .num("messages_created", value.msgs_created).finish();
+  return Object{}
+      .boolean("success", value.success)
+      .boolean("valid", value.valid)
+      .boolean("no_funds", value.no_funds)
+      .num("result_code", value.result_code)
+      .num("skipped_actions", value.skipped_actions)
+      .num("messages_created", value.msgs_created)
+      .finish();
 }
 
 }  // namespace
 
 td::Result<std::string> verify_wallet_transaction(td::Slice account_hash, td::uint64 logical_time,
-                                                td::Slice transaction_hash, td::Slice bytes) {
+                                                  td::Slice transaction_hash, td::Slice bytes) {
   if (account_hash.size() != 32 || transaction_hash.size() != 32 || logical_time == 0) {
     return td::Status::Error("wallet transaction binding");
   }
@@ -239,10 +254,14 @@ td::Result<std::string> verify_wallet_transaction(td::Slice account_hash, td::ui
     return td::Status::Error("wallet transaction fees");
   }
   Object result;
-  result.str("interface", "tos-wallet-transaction/1").str("account", "0:" + hex(account_hash))
-      .str("hash", hex(transaction_hash)).str("lt", std::to_string(tx.lt))
-      .str("previous_hash", hex(tx.prev_trans_hash.as_slice())).str("previous_lt", std::to_string(tx.prev_trans_lt))
-      .num("timestamp", tx.now).str("fees", fees.tomis->to_dec_string())
+  result.str("interface", "tos-wallet-transaction/1")
+      .str("account", "0:" + hex(account_hash))
+      .str("hash", hex(transaction_hash))
+      .str("lt", std::to_string(tx.lt))
+      .str("previous_hash", hex(tx.prev_trans_hash.as_slice()))
+      .str("previous_lt", std::to_string(tx.prev_trans_lt))
+      .num("timestamp", tx.now)
+      .str("fees", fees.tomis->to_dec_string())
       .boolean("other_fee_currencies", fees.extra.not_null());
   if (tx.r1.in_msg->prefetch_ulong(1)) {
     TRY_RESULT(input, message_json(tx.r1.in_msg->prefetch_ref()));
@@ -266,15 +285,19 @@ td::Result<std::string> verify_wallet_transaction(td::Slice account_hash, td::ui
     outputs += output;
   }
   result.raw("out_msgs", outputs + "]");
-  if (block::gen::t_TransactionDescr.get_tag(vm::load_cell_slice(tx.description)) == block::gen::TransactionDescr::trans_ord) {
+  if (block::gen::t_TransactionDescr.get_tag(vm::load_cell_slice(tx.description)) ==
+      block::gen::TransactionDescr::trans_ord) {
     block::gen::TransactionDescr::Record_trans_ord description;
     if (!tlb::unpack_cell(tx.description, description)) {
       return td::Status::Error("wallet ordinary transaction description");
     }
     TRY_RESULT(compute, compute_json(description.compute_ph));
     TRY_RESULT(action, action_json(description.action));
-    result.str("type", "ordinary").boolean("aborted", description.aborted).boolean("destroyed", description.destroyed)
-        .raw("compute", compute).raw("action", action);
+    result.str("type", "ordinary")
+        .boolean("aborted", description.aborted)
+        .boolean("destroyed", description.destroyed)
+        .raw("compute", compute)
+        .raw("action", action);
   } else {
     result.str("type", "other");
   }
