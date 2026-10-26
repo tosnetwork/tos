@@ -77,6 +77,7 @@ td::Bits256 address_hash(Reader& reader) {
 struct Module {
   td::int32 global;
   td::Bits256 network, rescue;
+  td::uint8 policy;
   std::string primary, json;
 };
 Module module_state(td::Ref<vm::Cell> data) {
@@ -91,6 +92,7 @@ Module module_state(td::Ref<vm::Cell> data) {
   auto policy = r.u(8);
   r.end();
   require(policy == 1 || policy == 2);
+  result.policy = static_cast<td::uint8>(policy);
   td::StringBuilder out;
   out << "{\"kind\":\"quantum_module_v1\",\"global_id\":" << result.global << ",\"network_tag\":\""
       << hash_b64(result.network) << "\",\"primary\":{\"algorithm_id\":1,\"public_key\":\"" << b64(result.primary)
@@ -204,6 +206,32 @@ td::Result<PublicState> decode_public_state(td::Ref<vm::Cell> code, td::Ref<vm::
       out << "}";
       result.account_model = falcon ? "advanced.auth_module.falcon512_padded" : "advanced.auth_module.mldsa44";
       result.authorization_version = falcon ? "auth.module.falcon512-padded.v1" : "auth.module.mldsa44.v1";
+    } else if (result.family == "quantum_self_pay_v1") {
+      require(r.u(8) == 1);
+      auto seqno = r.u(32);
+      auto wallet_id = r.u(32);
+      auto retired = r.u(16);
+      require((retired & ~td::uint64{2}) == 0);
+      auto epoch = r.u(64);
+      auto primary_nonce = r.u(64);
+      auto rescue_nonce = r.u(64);
+      auto authority_cell = r.ref();
+      r.end();
+      auto authority = module_state(authority_cell);
+      require(!observation_global_id || authority.global == *observation_global_id);
+      out << "{\"kind\":\"" << result.family << "\",\"seqno\":" << seqno << ",\"wallet_id\":" << wallet_id
+          << ",\"retired_flags\":" << retired << ",\"authority_epoch\":\"" << epoch << "\",\"primary_nonce\":\""
+          << primary_nonce << "\",\"rescue_nonce\":\"" << rescue_nonce << "\",\"global_id\":" << authority.global
+          << ",\"network_tag\":\"" << hash_b64(authority.network) << "\",\"authority_hash\":\""
+          << b64(authority_cell->get_hash().as_slice()) << "\",\"primary\":{\"algorithm_id\":1,\"public_key\":\""
+          << b64(authority.primary) << "\"},\"rescue\":{\"algorithm_id\":3,\"public_key\":\""
+          << hash_b64(authority.rescue) << "\",\"policy\":\"" << (authority.policy == 1 ? "ready" : "required")
+          << "\"},\"fee_payment\":\"wallet_balance\"}";
+      result.wallet_id = static_cast<td::uint32>(wallet_id);
+      result.seqno = static_cast<td::uint32>(seqno);
+      result.account_model = "advanced.wallet.quantum_self_pay";
+      result.authorization_version = "auth.quantum.self_pay.v1";
+      result.wallet_type = "quantum self-pay v1";
     } else if (result.family == "quantum_module_v1") {
       out << module_state(data).json;
       result.account_model = "advanced.auth_module.quantum";
