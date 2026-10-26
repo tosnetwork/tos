@@ -243,6 +243,13 @@ td::Result<std::string> verify_wallet_transaction(td::Slice account_hash, td::ui
       root->get_depth() > kMaxWalletTransactionDepth || root->get_hash(0).as_slice() != transaction_hash) {
     return td::Status::Error("wallet transaction hash");
   }
+  // Unpacking is lazy across references. Validate the full transaction schema
+  // first, including state updates, nonordinary descriptions and dictionary
+  // leaves. Any message body remains opaque. The independent operation budget
+  // also bounds repeated visits through shared subgraphs.
+  if (!block::gen::t_Transaction.validate_ref(65536, root)) {
+    return td::Status::Error("wallet transaction layout");
+  }
   block::gen::Transaction::Record tx;
   if (!tlb::unpack_cell(root, tx) || tx.account_addr.as_slice() != account_hash || tx.lt != logical_time ||
       tx.prev_trans_lt >= tx.lt || (tx.prev_trans_lt == 0) != tx.prev_trans_hash.is_zero() ||

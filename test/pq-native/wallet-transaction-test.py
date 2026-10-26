@@ -263,3 +263,14 @@ def repeated(index):
 with ThreadPoolExecutor(max_workers=4) as workers:
     list(workers.map(repeated, range(256)))
 print('WALLET_TRANSACTION_CASE concurrent-independent-calls PASS')
+
+for name, slot, replacement in [('malformed-state-update', 1, Cell()),
+                                 ('trailing-state-update', 1, Cell(ordinary.refs[1].bits + '1')),
+                                 ('malformed-other-description', 2, Cell('1')),
+                                 ('empty-description', 2, Cell())]:
+    refs = list(ordinary.refs)
+    refs[slot] = replacement
+    malformed = Cell(ordinary.bits, refs)
+    encoded, digest, _, _ = serialize(malformed)
+    assert call(first, data=encoded, digest=digest, lt=int(manifest['transactions'][-1]['lt']))[0] != 0, name
+    print('WALLET_TRANSACTION_CASE', name, 'PASS')
