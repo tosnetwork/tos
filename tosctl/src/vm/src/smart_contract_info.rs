@@ -552,13 +552,13 @@ pub fn run_smc_method(
     vm.set_block_version(block_version);
 
     let result = vm.execute();
-    let mut stack = mem::take(&mut vm.withdraw_stack().storage);
+    // The VM leaves its final stack as the C++ VM does; nothing is dropped from it.
+    let stack = mem::take(&mut vm.withdraw_stack().storage);
     let exit_code = match result {
         Ok(exit_code) => exit_code,
         Err(err) => {
-            stack.pop();
             log::debug!(target: "executor", "VM terminated with full exception: {}", err);
-            crate::error::tvm_exception_or_custom_code(&err)
+            crate::error::tvm_exit_code(&err)
         }
     };
     log::debug!("run_smc_method: exit_code={}\n", exit_code);

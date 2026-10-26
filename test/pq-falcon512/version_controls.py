@@ -45,11 +45,14 @@ def main():
     if check("baseline"):
         raise RuntimeError("baseline must pass before mutating")
     controls = []
+    # Each VM's Falcon gate: in C++ one constant gates the dedicated opcode (its codepage 0
+    # entry) and the generic one; in Rust the dedicated opcode's version is its entry in the
+    # table generated from codepage 0 (shared with the other F931 opcodes), and the generic
+    # opcode has the constant.
     cases = [
         (
             "cpp",
-            "crypto/vm/pqops.h",
-            "pq_falcon512_min_version = 16",
+            [("crypto/vm/pqops.h", "pq_falcon512_min_version = 16")],
             [
                 "cmake",
                 "--build",
@@ -61,8 +64,10 @@ def main():
         ),
         (
             "rust",
-            "tosctl/src/vm/src/executor/pq.rs",
-            "FALCON512_MIN_VERSION: u32 = 16",
+            [
+                ("tosctl/src/vm/src/executor/pq.rs", "FALCON512_MIN_VERSION: u32 = 16"),
+                ("tosctl/src/vm/src/executor/engine/cp0_prefixes.rs", "(0xf93100, 24, 16)"),
+            ],
             [
                 "cargo",
                 "build",
@@ -78,15 +83,19 @@ def main():
             ],
         ),
     ]
-    for vm, name, anchor, build in cases:
-        path = ROOT / name
-        original = path.read_text()
-        if original.count(anchor) != 1:
-            raise RuntimeError("mutation anchor must occur exactly once")
+    for vm, anchors, build in cases:
+        originals = {}
+        for name, anchor in anchors:
+            originals[name] = (ROOT / name).read_text()
+            if originals[name].count(anchor) != 1:
+                raise RuntimeError("mutation anchor must occur exactly once")
         for gate in (15, 17):
             label = f"{vm}-gate-{gate}"
             try:
-                path.write_text(original.replace(anchor, anchor.replace("16", str(gate))))
+                for name, anchor in anchors:
+                    (ROOT / name).write_text(
+                        originals[name].replace(anchor, anchor.replace("16", str(gate)))
+                    )
                 if run(build, label + "-build"):
                     raise RuntimeError("mutation did not compile")
                 code = check(label)
@@ -107,7 +116,8 @@ def main():
                     raise RuntimeError("mutation must produce a semantic test failure")
                 controls.append(dict(vm=vm, gate=gate, exit=code, entries_detected=list(entries)))
             finally:
-                path.write_text(original)
+                for name, original in originals.items():
+                    (ROOT / name).write_text(original)
                 if run(build, label + "-restored-build"):
                     raise RuntimeError("restored build failed")
             if check(label + "-restored"):

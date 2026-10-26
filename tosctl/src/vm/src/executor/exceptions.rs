@@ -13,47 +13,58 @@ use crate::{
     error::TvmError,
     executor::{
         continuation::callx,
-        engine::{
-            storage::{copy_to_var, fetch_stack, swap},
-            Engine,
-        },
-        microcode::{CC, CTRL, SAVELIST, VAR},
+        engine::{storage::fetch_stack, Engine},
         types::{Instruction, InstructionOptions},
     },
-    stack::{continuation::ContinuationType, StackItem},
+    stack::{
+        continuation::{ContinuationData, ContinuationType},
+        StackItem,
+    },
 };
 use chain_block::{fail, Exception, ExceptionCode, Status};
 use std::ops::Range;
 
 //Utilities **********************************************************************************
-//(c c' -)
-//c'.nargs = c'.stack.depth + 2
-//c'.savelist[2] = c2, cc.savelist[2] = c2
-//c'.savelist[0] = cc, c.savelist[0] = cc
-//callx c
+// (c c' -): runs c with c' as c2.
+// The return continuation saves c0, c1 and c2; c runs with c1 = quit1, c0 = the return
+// continuation and c2 = c', each replaced by c's own saved register where it has one. c' gets
+// the return continuation as c0 and the previous c2 as c2 only where it has none of its own.
 fn init_try_catch(engine: &mut Engine) -> Status {
     fetch_stack(engine, 2)?;
     if engine.cc.stack.depth() < engine.cmd.pargs() {
         fail!(ExceptionCode::StackUnderflow)
     }
     engine.cmd.var(1).as_continuation()?;
-    engine.cmd.var_mut(0).as_continuation_mut().map(|catch_cont| {
-        catch_cont.type_of = ContinuationType::TryCatch;
-    })?;
-    engine.cmd.var_mut(1).as_continuation_mut().map(|try_cont| try_cont.remove_from_savelist(0))?;
-    if engine.ctrl(2).is_ok() {
-        copy_to_var(engine, ctrl!(2))?;
-        swap(engine, savelist!(var!(0), 2), var!(2))?;
-        copy_to_var(engine, ctrl!(2))?;
-        swap(engine, savelist!(CC, 2), var!(3))?;
+    engine.cmd.var(0).as_continuation()?;
+    let body_c0 = engine.cmd.var_mut(1).as_continuation_mut()?.remove_from_savelist(0);
+    let quit1 = ContinuationType::Quit(ExceptionCode::AlternativeTermination as i32);
+    if let Some(c1) =
+        engine.ctrls.put(1, StackItem::continuation(ContinuationData::with_type(quit1)))?
+    {
+        engine.cc.savelist.put_opt(1, c1);
     }
-    // special swapping for callx: it calls a cont from var0, but at this point var0 holds catch cont
-    swap(engine, var!(0), var!(1))?;
-    swap(engine, ctrl!(2), var!(1))?;
-    callx(engine, 0, false)?;
-    copy_to_var(engine, ctrl!(0))?;
-    let length = engine.cmd.var_count();
-    swap(engine, savelist!(ctrl!(2), 0), var!(length - 1))?;
+    let old_c2 = engine.ctrls.remove(2);
+    let mut handler = engine.cmd.var(0).clone();
+    if let Some(c2) = old_c2 {
+        engine.cc.savelist.put_opt(2, c2.clone());
+        let handler = handler.as_continuation_mut()?;
+        if handler.savelist.get(2).is_none() {
+            handler.savelist.put_opt(2, c2);
+        }
+    }
+    // c has no c0 now, so callx leaves the return continuation in c0 and applies c's c1 and c2.
+    callx(engine, 1, false)?;
+    let ret = engine.ctrl(0)?.clone();
+    let handler_cont = handler.as_continuation_mut()?;
+    if handler_cont.savelist.get(0).is_none() {
+        handler_cont.savelist.put_opt(0, ret);
+    }
+    if engine.ctrls.get(2).is_none() {
+        engine.ctrls.put(2, handler)?;
+    }
+    if let Some(c0) = body_c0 {
+        engine.ctrls.put(0, c0)?;
+    }
     Ok(())
 }
 

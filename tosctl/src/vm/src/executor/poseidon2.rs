@@ -1,18 +1,16 @@
 // Copyright 2026 TOS Blockchain Teams. SPDX-License-Identifier: GPL-3.0-only
 //! The Poseidon2 t=8 instruction pair, mirroring `crypto/vm/poseidon2ops.cpp`.
 //! The permutation itself lives in `chain_block::poseidon2`, beside the frozen
-//! parameters it reads; what is here is the stack contract, the version gate,
-//! the tariff, and the refusal of anything that is not already a field element.
+//! parameters it reads; what is here is the stack contract, the tariff, and the
+//! refusal of anything that is not already a field element.
 
 use super::{
     engine::{storage::fetch_stack, Engine},
-    gas::gas_state::Gas,
     types::Instruction,
 };
 use crate::stack::{integer::IntegerData, StackItem};
 use chain_block::{fail, poseidon2, Cell, ExceptionCode, Result, Status};
 
-pub(super) const MIN_VERSION: u32 = 16;
 /// Measured against instructions whose price is already fixed, and matching
 /// `poseidon2_perm8_gas_price` in the C++ VM. See the note there; the two are
 /// changed at once.
@@ -47,17 +45,7 @@ fn permute_stack_state(
     engine: &mut Engine,
     name: &'static str,
 ) -> Result<[poseidon2::FieldBytes; STATE_WIDTH]> {
-    // Before activation the opcode does not exist. The metering matches the
-    // older instruction's: from v4 the invalid-instruction charge can exhaust
-    // gas before exception dispatch, earlier versions charge it regardless.
-    if engine.block_version() < MIN_VERSION {
-        if engine.block_version() >= 4 {
-            engine.try_use_gas(Gas::basic_gas_price(0, 0))?;
-        } else {
-            engine.use_gas(Gas::basic_gas_price(0, 0));
-        }
-        fail!(ExceptionCode::InvalidOpcode);
-    }
+    // The opcodes exist from version 16; the engine's codepage 0 check refuses them before.
     engine.load_instruction(Instruction::new(name))?;
     if engine.cc.stack.depth() < STATE_WIDTH {
         fail!(ExceptionCode::StackUnderflow);
@@ -92,9 +80,6 @@ pub(super) fn execute_poseidon2_hash7(engine: &mut Engine) -> Status {
 
 // --- POSEIDON2_PATH7 --------------------------------------------------------
 
-/// PATH7 is newer than the two above; a node built for 17 implements them and
-/// not it.
-pub(super) const PATH7_MIN_VERSION: u32 = 16;
 /// Matching `poseidon2_path7_*_gas_price` in the C++ VM, and changed with it.
 /// One HASH7 a level plus the two cells the level's siblings live in, so
 /// moving the loop into the VM buys nothing cheaply. Neither figure is
@@ -189,14 +174,6 @@ fn read_triple(
 }
 
 pub(super) fn execute_poseidon2_path7(engine: &mut Engine) -> Status {
-    if engine.block_version() < PATH7_MIN_VERSION {
-        if engine.block_version() >= 4 {
-            engine.try_use_gas(Gas::basic_gas_price(0, 0))?;
-        } else {
-            engine.use_gas(Gas::basic_gas_price(0, 0));
-        }
-        fail!(ExceptionCode::InvalidOpcode);
-    }
     engine.load_instruction(Instruction::new("POSEIDON2_PATH7"))?;
     if engine.cc.stack.depth() < 5 {
         fail!(ExceptionCode::StackUnderflow);

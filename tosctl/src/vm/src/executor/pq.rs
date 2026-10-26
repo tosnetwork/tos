@@ -2,7 +2,6 @@
 use super::lms_fee;
 use super::{
     engine::{storage::fetch_stack, Engine},
-    gas::gas_state::Gas,
     types::Instruction,
 };
 use crate::stack::StackItem;
@@ -75,18 +74,8 @@ fn read_bytes_priced(
     }
 }
 
+// The PQ instructions exist from version 16; the engine's codepage 0 check refuses them before.
 pub(super) fn execute_pq_mldsa44(engine: &mut Engine) -> Status {
-    // Preserve historical exception metering before activation. From v4 the
-    // invalid-instruction charge can exhaust gas before exception dispatch;
-    // older versions charge the exception too before detecting exhaustion.
-    if engine.block_version() < 16 {
-        if engine.block_version() >= 4 {
-            engine.try_use_gas(Gas::basic_gas_price(0, 0))?;
-        } else {
-            engine.use_gas(Gas::basic_gas_price(0, 0));
-        }
-        fail!(ExceptionCode::InvalidOpcode);
-    }
     engine.load_instruction(Instruction::new("PQCHECKSIG_MLDSA44"))?;
     if engine.cc.stack.depth() < 4 {
         fail!(ExceptionCode::StackUnderflow);
@@ -148,14 +137,6 @@ extern "C" {
 }
 
 pub(super) fn execute_pq_falcon512(engine: &mut Engine) -> Status {
-    if engine.block_version() < FALCON512_MIN_VERSION {
-        if engine.block_version() >= 4 {
-            engine.try_use_gas(Gas::basic_gas_price(0, 0))?;
-        } else {
-            engine.use_gas(Gas::basic_gas_price(0, 0));
-        }
-        fail!(ExceptionCode::InvalidOpcode);
-    }
     engine.load_instruction(Instruction::new("PQCHECKSIG_FALCON512_PADDED"))?;
     if engine.cc.stack.depth() < 3 {
         fail!(ExceptionCode::StackUnderflow);
@@ -236,20 +217,10 @@ fn push_outcome(engine: &mut Engine, valid: Option<bool>, name: &str) -> Status 
     }
 }
 
-const SUITE_MIN_VERSION: u32 = 16;
 const FALCON512_MIN_VERSION: u32 = 16;
 const FALCON512_BYTE_GAS: i64 = 1;
-const LMS_FEE_HASH_MIN_VERSION: u32 = 16;
 
 pub(super) fn execute_pq_suite(engine: &mut Engine) -> Status {
-    if engine.block_version() < SUITE_MIN_VERSION {
-        if engine.block_version() >= 4 {
-            engine.try_use_gas(Gas::basic_gas_price(0, 0))?;
-        } else {
-            engine.use_gas(Gas::basic_gas_price(0, 0));
-        }
-        fail!(ExceptionCode::InvalidOpcode);
-    }
     engine.load_instruction(Instruction::new("PQCHECKSIG_SUITE"))?;
     if engine.cc.stack.depth() < 5 {
         fail!(ExceptionCode::StackUnderflow);
@@ -385,14 +356,6 @@ pub(super) fn execute_pq_suite(engine: &mut Engine) -> Status {
 /// Fixed-profile fee verifier: hash, leaf, signature, key -> bool.
 /// Eliminates caller-created digest/context cells, not verification work or tariff.
 pub(super) fn execute_lms_fee_hash(engine: &mut Engine) -> Status {
-    if engine.block_version() < LMS_FEE_HASH_MIN_VERSION {
-        if engine.block_version() >= 4 {
-            engine.try_use_gas(Gas::basic_gas_price(0, 0))?;
-        } else {
-            engine.use_gas(Gas::basic_gas_price(0, 0));
-        }
-        fail!(ExceptionCode::InvalidOpcode);
-    }
     engine.load_instruction(Instruction::new("LMSCHECKFEEHASH"))?;
     if engine.cc.stack.depth() < 4 {
         fail!(ExceptionCode::StackUnderflow);

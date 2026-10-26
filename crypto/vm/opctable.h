@@ -38,6 +38,15 @@ typedef std::function<int(VmState* st)> exec_simple_instr_func_t;
 enum { max_opcode_bits = 24 };
 const unsigned top_opcode = (1U << max_opcode_bits);
 
+// What an instruction requires before it runs: an unassigned opcode is invalid; otherwise the
+// global version must be at least `version`, and `bits` bits are charged as the base gas and
+// must be present.
+struct OpcodePrefix {
+  bool assigned;
+  unsigned bits;
+  int version;
+};
+
 class OpcodeInstr {
   unsigned min_opcode, max_opcode;
 
@@ -47,6 +56,9 @@ class OpcodeInstr {
   virtual int dispatch(VmState* st, CellSlice& cs, unsigned opcode, unsigned bits) const = 0;
   virtual std::string dump(CellSlice& cs, unsigned opcode, unsigned bits) const;
   virtual int instr_len(const CellSlice& cs, unsigned opcode, unsigned bits) const;
+  virtual OpcodePrefix prefix() const {
+    return {false, 0, 0};
+  }
   OpcodeInstr(unsigned _min, unsigned _max) : min_opcode(_min), max_opcode(_max) {
   }
   OpcodeInstr(unsigned _opcode, unsigned _bits, bool);
@@ -112,6 +124,9 @@ class OpcodeTable : public DispatchTable {
   int dispatch(VmState* st, CellSlice& cs) const override;
   std::string dump_instr(CellSlice& cs) const override;
   int instr_len(const CellSlice& cs) const override;
+  // The finalized table as consecutive ranges covering every 24-bit opcode, unassigned gaps
+  // included: (first opcode, prefix).
+  std::vector<std::pair<unsigned, OpcodePrefix>> prefixes() const;
   bool insert_bool(const OpcodeInstr*);
   OpcodeTable& insert(const OpcodeInstr*);
 
@@ -138,6 +153,9 @@ class OpcodeInstrSimple : public OpcodeInstr {
   OpcodeInstrSimple() = delete;
   OpcodeInstrSimple(unsigned opcode, unsigned _opc_bits, std::string _name, exec_instr_func_t exec);
   ~OpcodeInstrSimple() override = default;
+  OpcodePrefix prefix() const override {
+    return {true, opc_bits, 0};
+  }
   int dispatch(VmState* st, CellSlice& cs, unsigned opcode, unsigned bits) const override;
   std::string dump(CellSlice& cs, unsigned opcode, unsigned bits) const override;
   int instr_len(const CellSlice& cs, unsigned opcode, unsigned bits) const override;
@@ -152,6 +170,9 @@ class OpcodeInstrSimplest : public OpcodeInstr {
   OpcodeInstrSimplest() = delete;
   OpcodeInstrSimplest(unsigned opcode, unsigned _opc_bits, std::string _name, exec_simple_instr_func_t exec);
   ~OpcodeInstrSimplest() override = default;
+  OpcodePrefix prefix() const override {
+    return {true, opc_bits, 0};
+  }
   int dispatch(VmState* st, CellSlice& cs, unsigned opcode, unsigned bits) const override;
   std::string dump(CellSlice& cs, unsigned opcode, unsigned bits) const override;
   int instr_len(const CellSlice& cs, unsigned opcode, unsigned bits) const override;
@@ -170,6 +191,9 @@ class OpcodeInstrFixed : public OpcodeInstr {
   OpcodeInstrFixed(unsigned opcode_min, unsigned opcode_max, unsigned _tot_bits, unsigned _arg_bits,
                    dump_arg_instr_func_t dump, exec_arg_instr_func_t exec);
   ~OpcodeInstrFixed() override = default;
+  OpcodePrefix prefix() const override {
+    return {true, tot_bits, 0};
+  }
   int dispatch(VmState* st, CellSlice& cs, unsigned opcode, unsigned bits) const override;
   std::string dump(CellSlice& cs, unsigned opcode, unsigned bits) const override;
   int instr_len(const CellSlice& cs, unsigned opcode, unsigned bits) const override;
@@ -188,6 +212,9 @@ class OpcodeInstrExt : public OpcodeInstr {
   OpcodeInstrExt(unsigned opcode_min, unsigned opcode_max, unsigned _tot_bits, unsigned _arg_bits,
                  dump_instr_func_t dump, exec_instr_func_t exec, compute_instr_len_func_t comp_len);
   ~OpcodeInstrExt() override = default;
+  OpcodePrefix prefix() const override {
+    return {true, tot_bits, 0};
+  }
   int dispatch(VmState* st, CellSlice& cs, unsigned opcode, unsigned bits) const override;
   std::string dump(CellSlice& cs, unsigned opcode, unsigned bits) const override;
   int instr_len(const CellSlice& cs, unsigned opcode, unsigned bits) const override;
@@ -202,6 +229,10 @@ class OpcodeInstrWithVersion : public OpcodeInstr {
       , required_version(required_version) {
   }
   ~OpcodeInstrWithVersion() override = default;
+  OpcodePrefix prefix() const override {
+    auto inner = instr->prefix();
+    return {inner.assigned, inner.bits, required_version};
+  }
   int dispatch(VmState* st, CellSlice& cs, unsigned opcode, unsigned bits) const override;
   std::string dump(CellSlice& cs, unsigned opcode, unsigned bits) const override;
   int instr_len(const CellSlice& cs, unsigned opcode, unsigned bits) const override;

@@ -87,8 +87,15 @@ fn test_division_primitives_execution() {
             continue;
         }
         test_div_primitive_execution::<Signaling>(&mode);
-        test_div_primitive_execution::<Quiet>(&mode);
-        if !mode.shift_parameter() {
+        if mode.shift_parameter() {
+            // The C++ VM has no quiet division with a constant shift: it is an invalid opcode.
+            let code = div_generate_bytecode::<Quiet>(&mode, 3, 1);
+            let mut engine =
+                Engine::with_capabilities(0).setup(code, None, None, None, vec![]).unwrap();
+            let err = engine.execute().expect_err("a quiet division with a constant shift runs");
+            assert_eq!(tvm_exception_code(&err), Some(ExceptionCode::InvalidOpcode), "{}", err);
+        } else {
+            test_div_primitive_execution::<Quiet>(&mode);
             count += 1;
         }
     }

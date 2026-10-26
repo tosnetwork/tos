@@ -138,4 +138,54 @@ mod tests {
         // Message should be constructable
         assert!(!msg.is_internal(), "Should not be an internal message");
     }
+
+    // ─── Test 6: How a get-method ends ─────────────────────────────────
+
+    // For code that ignores the method id: the expected exit code and final stack, bottom to
+    // top (`None` stands for the gas consumed), as the C++ VM leaves them. Out of gas keeps only
+    // the gas consumed, an exception keeps its argument, and a program that jumps into the
+    // default exception handler keeps everything below the exit code it chose; 13 chosen by a
+    // program is not out of gas.
+    #[test]
+    fn test_get_method_reports_how_the_vm_ended() {
+        use chain_block::{tos_method_id, Account, BuilderData, Cell, MsgAddressInt, StateInit};
+        let method_id = i64::from(tos_method_id("ending"));
+        let cases: [(&str, &[u8], i32, Vec<Option<i64>>); 5] = [
+            // PUSHINT 7, PUSHCONT {}, AGAIN
+            ("out of gas", &[0x77, 0x90, 0xEA], -14, vec![None]),
+            // PUSHINT 7, THROW 6
+            ("throw", &[0x77, 0xF2, 0x06], 6, vec![Some(0)]),
+            // PUSHINT 42, THROWARG 9
+            ("throwarg", &[0x80, 42, 0xF2, 0xC8, 0x09], 9, vec![Some(42)]),
+            // PUSHINT 5, PUSHINT 7, PUSHINT 13, PUSH c2, JMPX
+            (
+                "jump into the default handler",
+                &[0x75, 0x77, 0x80, 0x0D, 0xED, 0x42, 0xD9],
+                13,
+                vec![Some(method_id), Some(5), Some(7)],
+            ),
+            // THROW 13
+            ("throw 13", &[0xF2, 0x0D], 13, vec![Some(0)]),
+        ];
+        let mut bc = Blockchain::new().expect("blockchain");
+        let address = MsgAddressInt::standard(0, [0x11; 32]);
+        for (name, code, exit_code, stack) in cases {
+            let mut state_init = StateInit::default();
+            let code = BuilderData::with_raw(code.to_vec(), code.len() * 8).expect("code");
+            state_init.set_code(code.into_cell().expect("code cell"));
+            state_init.set_data(Cell::default());
+            let account = Account::active_standard([0x11; 32], 1_000_000_000, 0, 0, state_init);
+            bc.set_account(address.clone(), account);
+            let result =
+                bc.run_get_method_with_gas(&address, "ending", vec![], 10_000).expect(name);
+            assert_eq!(result.exit_code, exit_code, "{name}");
+            let actual: Vec<i64> = result
+                .stack
+                .iter()
+                .map(|x| x.as_integer_value(i64::MIN..=i64::MAX).expect(name))
+                .collect();
+            let expected: Vec<i64> = stack.iter().map(|x| x.unwrap_or(result.gas_used)).collect();
+            assert_eq!(actual, expected, "{name}");
+        }
+    }
 }

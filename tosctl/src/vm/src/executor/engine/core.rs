@@ -10,10 +10,13 @@
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
 use crate::{
-    error::{tvm_exception_code, tvm_exception_full, tvm_exception_or_custom_code, TvmError},
+    error::{
+        tvm_exception_code, tvm_exception_full, tvm_exception_or_custom_code, tvm_exit_code,
+        TvmError,
+    },
     executor::{
         continuation::{switch, switch_to_c0},
-        engine::handlers::Handlers,
+        engine::{cp0_prefixes::CP0_PREFIXES, handlers::Handlers},
         gas::gas_state::Gas,
         math::DivMode,
         microcode::{CTRL, VAR},
@@ -295,6 +298,17 @@ impl Engine {
 
     pub fn use_gas(&mut self, gas: i64) -> i64 {
         self.gas.use_gas(gas)
+    }
+
+    /// Charges gas as the C++ VM's consume_gas does: from version 4 running out stops at once,
+    /// before that it is only noticed later.
+    pub(in crate::executor) fn consume_gas(&mut self, gas: i64) -> Result<()> {
+        if self.block_version >= 4 {
+            self.try_use_gas(gas)
+        } else {
+            self.use_gas(gas);
+            Ok(())
+        }
     }
 
     /// Counts one signature check and charges it: the first checks of a transaction are
@@ -597,7 +611,34 @@ impl Engine {
         }
     }
 
+    /// Runs the code and ends the VM as the C++ VM does: out of gas leaves only the gas
+    /// consumed on the stack, and an error carries the final top of the stack as its argument
+    /// (null when the stack is empty), which is what transactions report as exit_arg.
     pub fn execute(&mut self) -> Result<i32> {
+        let result = self.run_to_end();
+        self.finish(result)
+    }
+
+    fn finish(&mut self, result: Result<i32>) -> Result<i32> {
+        let err = match result {
+            Ok(exit_code) => return Ok(exit_code),
+            Err(err) => err,
+        };
+        if tvm_exception_code(&err) == Some(ExceptionCode::OutOfGas) {
+            let gas_used = self.gas_used();
+            self.cc.stack = Stack::new();
+            self.cc.stack.push_int(gas_used);
+            fail!(TvmError::exception(ExceptionCode::OutOfGas, err, gas_used, file!(), line!()))
+        }
+        let exception = match tvm_exception_full(err) {
+            Ok((exception, _)) => exception,
+            Err(err) => return Err(err),
+        };
+        let top = self.cc.stack.get(0).cloned().unwrap_or_default();
+        fail!(TvmError::new(exception, top))
+    }
+
+    fn run_to_end(&mut self) -> Result<i32> {
         self.trace_info(EngineTraceInfoType::Start, 0, None);
         let result = loop {
             if let Some(result) = self.seek_next_cmd()? {
@@ -608,31 +649,36 @@ impl Engine {
             // instruction that fails before it is decoded (an unassigned opcode, a
             // version gate, a truncated prefix).
             self.step += 1;
-            let execution_result = match HANDLERS_CP0.get_handler(self) {
-                Err(err) => match self.basic_use_gas(8) {
-                    Err(err) => Some(err),
-                    Ok(_) => Some(err),
-                },
-                Ok(Some(handler)) => {
-                    match handler(self) {
-                        Err(e) => {
-                            // Some(update_error_description(e, |e|
-                            //     format!("CMD: {}{} err: {}", self.cmd.proto.name_prefix.unwrap_or_default(), self.cmd.proto.name, e)
-                            // ))
-                            Some(e)
+            let execution_result = match self.check_prefix() {
+                Err(err) => Some(err),
+                Ok(width) => match HANDLERS_CP0.get_handler(self) {
+                    // The prefix is complete, so the code ends inside the instruction's data:
+                    // the C++ VM charges the prefix and the instruction finds its data short.
+                    Err(err) => match self.consume_gas(Gas::basic_gas_price(width, 0)) {
+                        Err(err) => Some(err),
+                        Ok(_) => Some(err),
+                    },
+                    Ok(Some(handler)) => {
+                        match handler(self) {
+                            Err(e) => {
+                                // Some(update_error_description(e, |e|
+                                //     format!("CMD: {}{} err: {}", self.cmd.proto.name_prefix.unwrap_or_default(), self.cmd.proto.name, e)
+                                // ))
+                                Some(e)
+                            }
+                            Ok(_) => self.gas.check_gas_remaining().err(),
                         }
-                        Ok(_) => self.gas.check_gas_remaining().err(),
                     }
-                }
-                Ok(None) => {
-                    let code = self.last_cmd();
-                    log::trace!(target: "tvm", "Invalid code: {} ({:#X})\n", code, code);
-                    if let Err(err) = self.try_use_gas(Gas::basic_gas_price(0, 0)) {
-                        Some(err)
-                    } else {
-                        Some(error!(ExceptionCode::InvalidOpcode))
+                    Ok(None) => {
+                        let code = self.last_cmd();
+                        log::trace!(target: "tvm", "Invalid code: {} ({:#X})\n", code, code);
+                        if let Err(err) = self.consume_gas(Gas::basic_gas_price(0, 0)) {
+                            Some(err)
+                        } else {
+                            Some(error!(ExceptionCode::InvalidOpcode))
+                        }
                     }
-                }
+                },
             };
             self.cmd.clear();
             if let Some(err) = execution_result {
@@ -644,8 +690,45 @@ impl Engine {
             self.gas_used(),
             Some("NORMAL TERMINATION".to_string()),
         );
-        self.try_commit()?;
+        // Only an exit with 0 or 1 commits the data and actions; any other exit code (such as
+        // the 11 of the default c3) leaves them uncommitted. When they cannot be committed the
+        // VM ends with cell overflow and 0 alone on the stack, without the exception handler,
+        // keeping any state committed before. c4 and c5 always hold cells (writing them is
+        // type-checked), so the only failure is a cell too deep or of a nonzero level.
+        let commits = result == ExceptionCode::NormalTermination as i32
+            || result == ExceptionCode::AlternativeTermination as i32;
+        if let Err(err) = if commits { self.try_commit() } else { Ok(()) } {
+            self.cc.stack = Stack::new();
+            self.cc.stack.push_int(0);
+            fail!(ExceptionCode::CellOverflow, "automatic commit failed: {}", err)
+        }
         Ok(result)
+    }
+
+    // Before running an instruction the C++ VM looks up at most 24 bits of code, padded with
+    // zeros, in codepage 0 (cp0_prefixes.rs is generated from that table). An unassigned opcode,
+    // or one the global version does not enable, costs 10 gas and is invalid. Otherwise the
+    // prefix width is the base gas, and fewer bits than that left in the code is invalid too.
+    // Only a failing check charges gas here: an instruction that runs charges its own base gas.
+    // Returns the prefix width.
+    fn check_prefix(&mut self) -> Result<usize> {
+        let code = self.cc.code();
+        let bits = code.remaining_bits().min(24);
+        let opcode = u32::try_from(code.get_int(bits)?)? << (24 - bits);
+        let index = CP0_PREFIXES.partition_point(|&(first, _, _)| first <= opcode);
+        let Some(&(_, width, version)) = index.checked_sub(1).and_then(|i| CP0_PREFIXES.get(i))
+        else {
+            fail!(ExceptionCode::FatalError, "opcode {:06x} is not in codepage 0", opcode)
+        };
+        if width == 0 || self.block_version < u32::from(version) {
+            self.consume_gas(Gas::basic_gas_price(0, 0))?;
+            fail!(ExceptionCode::InvalidOpcode, "invalid opcode {:06x}", opcode)
+        }
+        if bits < usize::from(width) {
+            self.consume_gas(Gas::basic_gas_price(usize::from(width), 0))?;
+            fail!(ExceptionCode::InvalidOpcode, "too short opcode {:06x}", opcode)
+        }
+        Ok(usize::from(width))
     }
 
     fn step_next_ref(&mut self, reference: Cell) -> Result<Option<i32>> {
@@ -667,17 +750,8 @@ impl Engine {
         Ok(None)
     }
     fn step_pushint(&mut self, code: i32) -> Result<Option<i32>> {
-        self.step += 1;
         self.log_string = Some("implicit PUSHINT");
         self.cc.stack.push_int(code);
-        switch(self, ctrl!(0))?;
-        Ok(None)
-    }
-    fn step_try_catch(&mut self) -> Result<Option<i32>> {
-        self.step += 1;
-        self.log_string = Some("IMPLICIT RET FROM TRY-CATCH");
-        self.try_use_gas(Gas::implicit_ret_price())?;
-        self.ctrls.remove(2);
         switch(self, ctrl!(0))?;
         Ok(None)
     }
@@ -756,7 +830,7 @@ impl Engine {
     // The default exception handler, entered by a jump: the exit code is popped from the stack,
     // or is the error popping it raised, and everything below it stays, as in the C++ VM. The
     // exit code is chosen by the program, so it is reported as a custom code: 13 is not out of
-    // gas. It is pushed back for whoever ends the VM, as a raised exception leaves its code.
+    // gas. The argument of the error is set from the final stack when the VM ends.
     fn make_external_error(&mut self) -> Result<Option<i32>> {
         let number = match self.cc.stack.drop(0) {
             Ok(item) => item.as_integer_value(0..=0xffffi32),
@@ -768,13 +842,7 @@ impl Engine {
         {
             return Ok(Some(number));
         }
-        let value = match self.cc.stack.get(0) {
-            Ok(item) => item.as_integer().cloned().unwrap_or_default(),
-            Err(_) => IntegerData::zero(),
-        };
-        self.cc.stack.push_int(number);
-        let exception = Exception::from_number(number, String::new(), file!(), line!());
-        fail!(TvmError::new(exception, StackItem::int(value)))
+        fail!(Exception::from_number(number, String::new(), file!(), line!()))
     }
 
     // return Ok(Some(exit_code)) - if you want to stop execution
@@ -789,7 +857,6 @@ impl Engine {
                     ContinuationType::Ordinary => self.step_ordinary(),
                     ContinuationType::PushInt(code) => self.step_pushint(code),
                     ContinuationType::Quit(exit_code) => Ok(Some(exit_code)),
-                    ContinuationType::TryCatch => self.step_try_catch(),
                     ContinuationType::WhileLoopCondition(body, cond) => {
                         self.step_while_loop(body, cond)
                     }
@@ -1158,7 +1225,8 @@ impl Engine {
         const STACK_GROW: usize = 2 * 1024 * 1024;
         let mut result = match stacker::maybe_grow(RED_ZONE, STACK_GROW, || child.execute()) {
             Ok(result) => result,
-            Err(err) => child.child_exit_after_error(&err),
+            // execute() has left on the child's stack what the parent receives.
+            Err(err) => tvm_exit_code(&err),
         };
         // Before anything below can fail (the child gas charge may run out of gas).
         self.slh_counter = child.slh_counter;
@@ -1233,30 +1301,6 @@ impl Engine {
             self.cc.stack.push_int(child_gas_used);
         }
         Ok(())
-    }
-
-    /// The exit code of a child VM that stopped with `err`, leaving on its stack what the
-    /// parent receives. A child out of gas keeps only the gas it consumed and exits with the
-    /// complemented out-of-gas code, whatever its stack held. Any other error left its code
-    /// on top of the stack, which is dropped.
-    fn child_exit_after_error(&mut self, err: &Error) -> i32 {
-        if tvm_exception_code(err) == Some(ExceptionCode::OutOfGas) {
-            self.cc.stack = Stack::new();
-            self.cc.stack.push_int(self.gas_used());
-            return !(ExceptionCode::OutOfGas as i32);
-        }
-        match self.cc.stack.pop().and_then(|x| x.as_integer_value(0..=0xFFF)) {
-            Ok(code) => {
-                debug_assert_eq!(code, tvm_exception_or_custom_code(err));
-            }
-            Err(err) => {
-                log::error!(
-                    target: "tvm",
-                    "Failed to pop error code from stack {err:?}",
-                );
-            }
-        }
-        tvm_exception_or_custom_code(err)
     }
 
     // Internal API ***********************************************************
@@ -1604,7 +1648,7 @@ impl Engine {
                 }))
             }
             Some(InstructionOptions::Dictionary(offset, bits)) => {
-                self.use_gas(Gas::basic_gas_price(offset + 1 + bits, 0));
+                self.try_use_gas(Gas::basic_gas_price(offset + 1 + bits, 0))?;
                 let mut code = self.cmd_code(offset)?;
                 let cell = code
                     .get_next_dictionary()
@@ -1616,7 +1660,7 @@ impl Engine {
                 self.cmd.params.push(InstructionParameter::Length(length))
             }
             Some(InstructionOptions::Bytestring(offset, r, x, bytes)) => {
-                self.use_gas(Gas::basic_gas_price(offset + r + x, 0));
+                self.try_use_gas(Gas::basic_gas_price(offset + r + x, 0))?;
                 let slice = self.extract_slice(offset, r, x, 0, bytes)?;
                 if slice.remaining_bits() % 8 != 0 {
                     fail!(ExceptionCode::InvalidOpcode)
@@ -1624,9 +1668,15 @@ impl Engine {
                 self.cmd.params.push(InstructionParameter::Slice(slice))
             }
             Some(InstructionOptions::Bitstring(offset, r, x, refs)) => {
-                self.use_gas(Gas::basic_gas_price(offset + r + x, 0));
+                self.try_use_gas(Gas::basic_gas_price(offset + r + x, 0))?;
                 let mut slice = self.extract_slice(offset, r, x, refs, 0)?;
+                // The completion tag is the last 1 bit; data without one is empty, as in the
+                // C++ VM.
+                let bits = slice.remaining_bits();
                 slice.trim_right();
+                if bits > 0 && slice.remaining_bits() == bits {
+                    slice.shrink_data(..0);
+                }
                 self.cmd.params.push(InstructionParameter::Slice(slice));
             }
             None => {
@@ -1640,6 +1690,15 @@ impl Engine {
     // raises the exception and tries to dispatch it via c(2).
     // If c(2) is not set, returns that exception, otherwise, returns None
     fn raise_exception(&mut self, err: Error) -> Result<Option<i32>> {
+        // An explicit THROW raises a custom code. As in the C++ VM, where THROW enters the
+        // handler from inside the instruction, failing to enter it raises one more exception,
+        // which is dispatched once; failing to enter the handler for an exception the VM raised
+        // ends the VM.
+        let explicit = tvm_exception_code(&err).is_none();
+        self.dispatch_exception(err, explicit)
+    }
+
+    fn dispatch_exception(&mut self, err: Error, retry: bool) -> Result<Option<i32>> {
         if let Some(code) = tvm_exception_code(&err) {
             self.step += 1;
             if code == ExceptionCode::OutOfGas {
@@ -1657,7 +1716,9 @@ impl Engine {
             self.gas_used(),
             Some(format!("EXCEPTION: {:?}", err)),
         );
-        let Some(c2) = self.ctrls.remove(2) else {
+        // c2 stays where it is: a handler that throws enters itself again unless entering it
+        // restored another c2.
+        let Some(c2) = self.ctrls.get(2).cloned() else {
             return Err(err);
         };
         let (exception, value) = tvm_exception_full(err).inspect_err(
@@ -1673,19 +1734,33 @@ impl Engine {
                     self.switch_counting_out_of_gas(n)?;
                     return Ok(None);
                 } else {
+                    // The default handler consumes the exit code and leaves the argument.
                     self.cc.stack = Stack::new();
                     self.cc.stack.push(value);
-                    self.cc.stack.push(int!(exception.exception_or_custom_code()));
                     fail!(exception)
                 }
             }
         }
-        self.cmd.push_var(c2);
+        // The handler receives the argument and the exit code and checks them against its own
+        // number of arguments.
+        self.cc.stack = Stack::new();
         self.cc.stack.push(value);
         self.cc.stack.push(int!(exception.exception_or_custom_code()));
-        self.cmd.vars[n].as_continuation_mut()?.nargs = 2;
-        self.switch_counting_out_of_gas(n)?;
-        Ok(None)
+        self.cmd.push_var(c2.clone());
+        match self.switch_counting_out_of_gas(n) {
+            Ok(()) => Ok(None),
+            Err(err) if tvm_exception_code(&err) == Some(ExceptionCode::OutOfGas) => Err(err),
+            Err(err) => {
+                // The handler was not entered and the control registers are as they were; the
+                // stack keeps the argument and the exit code.
+                self.cmd.vars.truncate(n);
+                if retry {
+                    self.dispatch_exception(err, false)
+                } else {
+                    Err(err)
+                }
+            }
+        }
     }
 
     // Switches to the exception handler. Running out of gas there ends the VM with one more
@@ -1861,23 +1936,27 @@ mod nesting_depth_tests {
     }
 
     // A parent sees only the top of an erroring child's stack, so it cannot tell a stack of
-    // just the consumed gas from one where the gas sits on the child's own values. This checks
-    // the child's whole stack.
+    // just the consumed gas from one where the gas sits on the child's own values. This runs a
+    // VM, as a child is run, out of gas and checks its whole stack and the error's argument.
     #[test]
     fn child_out_of_gas_leaves_only_the_gas_consumed() -> Status {
-        let mut child = Engine::with_capabilities(0);
-        child.set_gas(Gas::test_with_limit(100));
-        for sentinel in [7, 5000, 7] {
-            child.cc.stack.push_int(sentinel);
-        }
-        let err = child
-            .try_use_gas(108)
-            .err()
-            .ok_or_else(|| error!("108 gas must not fit a limit of 100"))?;
-        assert_eq!(child.child_exit_after_error(&err), !(ExceptionCode::OutOfGas as i32));
+        // PUSHINT 7, PUSHINT 5000, PUSHINT 7, PUSHCONT {}, AGAIN
+        let code = BuilderData::with_raw(vec![0x77, 0x81, 0x13, 0x88, 0x77, 0x90, 0xEA], 56)?;
+        let mut child = Engine::with_capabilities(0).setup_checked(
+            code.into_cell()?,
+            SaveList::new(),
+            Stack::new(),
+            Gas::test_with_limit(300),
+            vec![],
+        )?;
+        let err = child.execute().err().ok_or_else(|| error!("the loop must run out of gas"))?;
+        let gas_used = child.gas_used();
+        assert!(gas_used > 300, "{gas_used}");
+        assert_eq!(tvm_exit_code(&err), !(ExceptionCode::OutOfGas as i32));
         assert_eq!(child.cc.stack.depth(), 1);
-        assert_eq!(child.cc.stack.get(0)?.as_integer_value(0..=i64::MAX)?, 108);
-        assert_eq!(child.gas_used(), 108);
+        assert_eq!(child.cc.stack.get(0)?.as_integer_value(0..=i64::MAX)?, gas_used);
+        let (_, value) = tvm_exception_full(err)?;
+        assert_eq!(value.as_integer_value(0..=i64::MAX)?, gas_used);
         Ok(())
     }
 

@@ -11,8 +11,8 @@
  */
 use super::*;
 use chain_block::{
-    tos_method_id, Coins, CurrencyCollection, InternalMessageHeader, Message, MsgAddressInt,
-    ShardAccount,
+    tos_method_id, Account, BuilderData, Coins, CurrencyCollection, InternalMessageHeader, Message,
+    MsgAddressInt, ShardAccount, StateInit,
 };
 
 #[test]
@@ -407,4 +407,60 @@ fn getter_context_shape_matches_the_cpp_getter_paths() {
         rows += 1;
     }
     assert!(rows >= 3, "the shape record must cover versions 15, 16 and 17");
+}
+
+/// How a get-method ends, for code that ignores the method id. Each case gives the code, the
+/// expected exit code and the expected final stack, bottom to top (`None` stands for the gas
+/// consumed). The stacks are what the C++ VM leaves: out of gas keeps only the gas consumed, an
+/// exception keeps its argument, and a program that jumps into the default exception handler
+/// keeps everything below the exit code it chose. 13 chosen by a program is not out of gas.
+const GET_METHOD_ENDINGS: &[(&str, &[u8], i32, &[Option<i64>])] = &[
+    // PUSHINT 7, PUSHCONT {}, AGAIN
+    ("out of gas", &[0x77, 0x90, 0xEA], -14, &[None]),
+    // PUSHINT 7, THROW 6
+    ("throw", &[0x77, 0xF2, 0x06], 6, &[Some(0)]),
+    // PUSHINT 42, THROWARG 9
+    ("throwarg", &[0x80, 42, 0xF2, 0xC8, 0x09], 9, &[Some(42)]),
+    // PUSHINT 5, PUSHINT 7, PUSHINT 13, PUSH c2, JMPX
+    (
+        "jump into the default handler",
+        &[0x75, 0x77, 0x80, 0x0D, 0xED, 0x42, 0xD9],
+        13,
+        &[Some(METHOD_ID), Some(5), Some(7)],
+    ),
+    // THROW 13
+    ("throw 13", &[0xF2, 0x0D], 13, &[Some(0)]),
+];
+
+const METHOD_ID: i64 = 0x1_2345;
+
+fn account_with_code(code: &[u8]) -> Account {
+    let mut state_init = StateInit::default();
+    state_init.set_code(
+        BuilderData::with_raw(code.to_vec(), code.len() * 8).unwrap().into_cell().unwrap(),
+    );
+    state_init.set_data(Cell::default());
+    Account::active_standard([0x11; 32], 1_000_000_000, 0, 0, state_init)
+}
+
+#[test]
+fn get_method_reports_how_the_vm_ended() {
+    let mc_state_cell = load_mc_state_cell();
+    let mc_state = ShardStateUnsplit::construct_from_cell(mc_state_cell.clone()).unwrap();
+    for (name, code, exit_code, stack) in GET_METHOD_ENDINGS {
+        let result = run_smc_method(
+            &account_with_code(code),
+            mc_state_cell.clone(),
+            METHOD_ID as u32,
+            Vec::new(),
+            mc_state.gen_time(),
+            mc_state.gen_lt(),
+        )
+        .unwrap();
+        assert_eq!(result.exit_code, *exit_code, "{name}");
+        let actual: Vec<i64> =
+            result.stack.iter().map(|x| x.as_integer_value(i64::MIN..=i64::MAX).unwrap()).collect();
+        let expected: Vec<i64> = stack.iter().map(|x| x.unwrap_or(result.gas_used)).collect();
+        assert_eq!(actual, expected, "{name}");
+    }
 }

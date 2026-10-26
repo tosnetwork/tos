@@ -17,7 +17,8 @@
 //!
 //! The answer is read at one masterchain checkpoint taken before the getter runs.
 //! When the `list_proposals` answer exceeds the transport limit, or the getter
-//! returns exit 13 at that checkpoint, the list is read instead from the contract's
+//! runs out of gas at that checkpoint (exit -14, as the node reports it; a getter that
+//! throws 13 is refused like any other exit), the list is read instead from the contract's
 //! stored vote dictionary at the same checkpoint and address, after its code is
 //! checked to be the one whose layout this crate decodes. No other failure falls
 //! back, and `get_proposal` never does. Neither representation is unbounded: a
@@ -609,9 +610,10 @@ fn convert_open(open: &mut Vec<OpenEntry>) -> Result<Vec<StackEntry>, String> {
 enum Attempt<T> {
     /// A valid envelope at the checkpoint, decoded.
     Answer(T),
-    /// A valid envelope at the checkpoint whose `list_proposals` exited with 13,
-    /// which it does when its dictionary walk outgrows the node's get-method gas.
-    Exit13,
+    /// A valid envelope at the checkpoint whose `list_proposals` ran out of gas
+    /// (exit -14), which it does when its dictionary walk outgrows the node's
+    /// get-method gas.
+    OutOfGas,
     /// A valid envelope at the checkpoint that is refused: any other non-zero exit,
     /// a result or stack the strict decoder refuses, or unsupported code. Terminal:
     /// another endpoint is not asked.
@@ -627,7 +629,7 @@ impl<T> std::fmt::Debug for Attempt<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Attempt::Answer(_) => f.write_str("Answer"),
-            Attempt::Exit13 => f.write_str("Exit13"),
+            Attempt::OutOfGas => f.write_str("OutOfGas"),
             Attempt::Refused(reason) => write!(f, "Refused({reason:?})"),
             Attempt::Retry(category) => write!(f, "Retry({category})"),
         }
@@ -652,6 +654,10 @@ fn checked_result(
     Ok(result)
 }
 
+/// The exit code a node reports for a get-method that ran out of gas: the complement of
+/// the out-of-gas code 13 (liteServer's `~vm.run()`), unlike a program's own `THROW 13`.
+const OUT_OF_GAS_EXIT: i64 = -14;
+
 /// Classifies one getter answer. Runs on a worker.
 fn decode_getter_response(
     response: &RawRpcResponse,
@@ -664,8 +670,10 @@ fn decode_getter_response(
     };
     match result.get("exit_code") {
         Some(Json::Number(code)) if code.as_i64() == Some(0) => {}
-        Some(Json::Number(code)) if code.as_i64() == Some(13) && read == ProposalRead::List => {
-            return Attempt::Exit13;
+        Some(Json::Number(code))
+            if code.as_i64() == Some(OUT_OF_GAS_EXIT) && read == ProposalRead::List =>
+        {
+            return Attempt::OutOfGas;
         }
         Some(Json::Number(code)) => {
             return Attempt::Refused(format!("the getter exited with code {code}"));
@@ -974,9 +982,9 @@ pub async fn read_proposals_with(
         over_endpoints(client, admission, permit, "runGetMethodStd", params, classify).await?;
     let why = match outcome {
         Outcome::Settled(Attempt::Answer(answer)) => return Ok(answer),
-        Outcome::Settled(Attempt::Exit13) => {
-            tracing::info!(target: "proposals", "getter returned exit 13; read from stored state");
-            "the list_proposals getter returned exit 13".to_string()
+        Outcome::Settled(Attempt::OutOfGas) => {
+            tracing::info!(target: "proposals", "getter ran out of gas; read from stored state");
+            "the list_proposals getter ran out of gas".to_string()
         }
         Outcome::Settled(Attempt::Refused(error)) => {
             anyhow::bail!("{label} answer refused: {error}")
@@ -998,7 +1006,7 @@ pub async fn read_proposals_with(
 /// The large-state path: the contract's stored vote dictionary at the same
 /// checkpoint and address, under the read's own permit. Reached only when the list
 /// getter's answer exceeded the transport limit on every endpoint that answered
-/// successfully, or the getter returned exit 13 at the checkpoint.
+/// successfully, or the getter ran out of gas at the checkpoint.
 async fn read_from_state(
     client: &ClientJsonRpc,
     address: &MsgAddressInt,
@@ -1024,7 +1032,7 @@ async fn read_from_state(
         Outcome::Settled(Attempt::Retry(category)) => {
             anyhow::bail!("{why}; configuration account read failed: {category}")
         }
-        Outcome::Settled(Attempt::Exit13) => {
+        Outcome::Settled(Attempt::OutOfGas) => {
             anyhow::bail!("{why}; configuration account read answered an exit code")
         }
         Outcome::TooLarge { limit } => anyhow::bail!(

@@ -103,6 +103,16 @@ pub fn tvm_exception_code(err: &Error) -> Option<ExceptionCode> {
     }
 }
 
+/// The exit code reported for a VM that stopped with `err`, as transactions and get-methods
+/// report it: out of gas as the complemented out-of-gas code (-14), any other exception or custom
+/// code as is (a program that throws 13 reports 13).
+pub fn tvm_exit_code(err: &Error) -> i32 {
+    match tvm_exception_code(err) {
+        Some(ExceptionCode::OutOfGas) => !(ExceptionCode::OutOfGas as i32),
+        _ => tvm_exception_or_custom_code(err),
+    }
+}
+
 pub fn tvm_exception_or_custom_code(err: &Error) -> i32 {
     if let Some(err) = err.downcast_ref::<TvmError>() {
         err.exception.exception_or_custom_code()
