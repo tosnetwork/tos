@@ -33,7 +33,19 @@ jobs:
         with:
           fetch-depth: 0
       - name: Check the comparison failure controls
-        run: python3 test/rel02/test_run.py
+        run: |
+          python3 test/rel02/test_run.py
+          python3 test/rel02/test_rust_replay.py
+      - name: Install repository-pinned Rust toolchain
+        run: scripts/install-rust-toolchain.sh
+      - name: Restore Rust dependency cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        continue-on-error: true
+        with:
+          prefix-key: tos-rust-ci-v1
+          key: epoch-replay-${{ matrix.arch }}
+          cache-bin: false
+          workspaces: tosctl/src -> target
       - name: Install the release toolchain
         run: |
           sudo apt-get update
@@ -56,11 +68,34 @@ jobs:
             -DTOS_ARCH="$CPU" -DPORTABLE="$CPU" -DTOS_USE_JEMALLOC=ON
       - name: Build the existing execution libraries and replay entry point
         run: cmake --build build --target test-epoch-replay --parallel "$(nproc)"
+      - name: Preserve distinct witnesses of the same logical cell
+        run: |
+          mkdir -p result
+          build/emulator/test-epoch-replay --check-dump-representations \
+            test/rel02/corpus/account-preimages/-1-53209.boc result/witness-copy.boc
+      - name: Build continuous Rust replay
+        run: cargo build --manifest-path tosctl/src/Cargo.toml --locked --release -p tos_executor --example rel02-replay
       - name: Replay and check the on-chain oracle
         run: |
           mkdir -p result
           python3 test/rel02/run.py --executable build/emulator/test-epoch-replay \
             --output result/outputs.jsonl --metrics result/metrics.json --controls
+      - name: Export authenticated contexts and carry Rust account state
+        run: |
+          python3 test/rel02/run_rust.py --native build/emulator/test-epoch-replay \
+            --rust tosctl/src/target/release/examples/rel02-replay --output result/rust.json
+      - name: Reject mutated replay artifacts
+        run: python3 test/rel02/test_rust_artifacts.py --receipt result/rust.json --output result/artifact-controls.json
+      - name: Record source and compiler provenance
+        if: always()
+        run: |
+          mkdir -p result
+          git rev-parse HEAD > result/source-commit.txt
+          git status --porcelain --untracked-files=no > result/source-status.txt
+          clang-21 --version > result/clang-version.txt
+          rustc -Vv > result/rust-version.txt
+          cp build/CMakeCache.txt result/CMakeCache.txt
+          sha256sum tosctl/src/Cargo.lock rust-toolchain.toml > result/build-inputs.sha256
       - name: Publish canonical outputs
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -85,6 +120,14 @@ jobs:
           python3 test/rel02/run.py --compare \
             artifacts/epoch-replay-x86-64/outputs.jsonl \
             artifacts/epoch-replay-arm64/outputs.jsonl
+          python3 test/rel02/compare_rust.py \
+            artifacts/epoch-replay-x86-64/rust.json \
+            artifacts/epoch-replay-arm64/rust.json
+          cmp artifacts/epoch-replay-x86-64/source-commit.txt artifacts/epoch-replay-arm64/source-commit.txt
+          test "$(cat artifacts/epoch-replay-x86-64/source-commit.txt)" = "$(git rev-parse HEAD)"
+          cmp artifacts/epoch-replay-x86-64/build-inputs.sha256 artifacts/epoch-replay-arm64/build-inputs.sha256
+          test ! -s artifacts/epoch-replay-x86-64/source-status.txt
+          test ! -s artifacts/epoch-replay-arm64/source-status.txt
           cat artifacts/epoch-replay-x86-64/metrics.json
           cat artifacts/epoch-replay-arm64/metrics.json
           test "${{ needs.replay.result }}" = success

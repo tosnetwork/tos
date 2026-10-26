@@ -35,8 +35,67 @@ void check(bool value, const char* message) {
 std::string hash(Cell cell) {
   return cell->get_hash(0).to_hex();
 }
-Cell load(const std::string& path) {
-  return require(vm::std_boc_deserialize(require(td::read_file(path)).as_slice()));
+constexpr std::size_t max_dump_bytes = 64 * 1024 * 1024;
+constexpr std::size_t max_dump_row_bytes = 1024 * 1024;
+constexpr std::size_t max_dump_rows = 10000;
+constexpr std::size_t max_copy_cells = 2000000;
+constexpr unsigned max_copy_depth = 1024;
+std::ofstream dump;
+std::size_t dump_bytes = 0;
+std::size_t dump_rows = 0;
+
+// Different partial witnesses can have the same logical hash. Preserve their
+// representation identity while copying virtual cells into serializable cells.
+Cell materialize(Cell cell, std::map<std::pair<std::string, unsigned>, Cell>& copies, unsigned depth) {
+  check(depth <= max_copy_depth, "dump cell depth limit exceeded");
+  auto loaded = require(cell->load_cell());
+  auto data = loaded.data_cell;
+  auto key = std::make_pair(data->get_hash().to_hex(), loaded.effective_level);
+  auto known = copies.find(key);
+  if (known != copies.end())
+    return known->second;
+  check(copies.size() < max_copy_cells, "dump cell count limit exceeded");
+  // Reserve the key before visiting children, bounding live traversal work.
+  copies.emplace(key, Cell{});
+  auto cs = vm::load_cell_slice_special(Cell(data));
+  vm::CellBuilder builder;
+  check(builder.store_bits_bool(cs.fetch_bits(cs.size())), "cannot copy dump cell bits");
+  for (unsigned i = 0; i < data->size_refs(); ++i) {
+    auto child = materialize(data->get_ref(i), copies, depth + 1);
+    check(child.not_null() && builder.store_ref_bool(std::move(child)), "cannot copy dump cell reference");
+  }
+  auto result = builder.finalize(cs.is_special());
+  check(hash(result) == hash(cell), "dump serialization changed a logical cell hash");
+  copies.at(key) = result;
+  return result;
+}
+
+std::string boc_hex(Cell cell) {
+  if (cell.is_null())
+    return "-";
+  std::map<std::pair<std::string, unsigned>, Cell> copies;
+  auto bytes = require(vm::std_boc_serialize(materialize(std::move(cell), copies, 0), 0));
+  check(bytes.size() <= max_dump_row_bytes / 2, "dump cell bytes limit exceeded");
+  return td::hex_encode(bytes.as_slice());
+}
+
+void dump_row(const std::vector<std::string>& fields) {
+  check(fields.size() == 17 && dump_rows < max_dump_rows, "dump row count/shape limit exceeded");
+  std::string row;
+  for (const auto& field : fields) {
+    check(field.size() < max_dump_row_bytes && row.size() < max_dump_row_bytes - field.size(),
+          "dump row bytes limit exceeded");
+    if (!row.empty())
+      row += '\t';
+    row += field;
+  }
+  row += '\n';
+  check(row.size() <= max_dump_row_bytes && dump_bytes <= max_dump_bytes - row.size(),
+        "dump total bytes limit exceeded");
+  dump.write(row.data(), row.size());
+  check(dump.good(), "cannot write dump row");
+  dump_bytes += row.size();
+  ++dump_rows;
 }
 
 // Supplemental cells are original RPC proof/account bytes. A replacement is
@@ -194,7 +253,8 @@ std::shared_ptr<block::ConfigInfo> context(const block::gen::BlockInfo::Record& 
   return std::shared_ptr<block::ConfigInfo>(std::move(config));
 }
 
-void replay(Cell root, const Cells& cells, const MasterBlocks& masters, bool empty_code_control) {
+void replay(Cell root, const Cells& cells, const MasterBlocks& masters, bool empty_code_control,
+            const std::string& source_file_hash) {
   block::gen::Block::Record block;
   block::gen::BlockInfo::Record info;
   block::gen::BlockExtra::Record extra;
@@ -276,6 +336,21 @@ void replay(Cell root, const Cells& cells, const MasterBlocks& masters, bool emp
       if (empty_code_control)
         account.code = vm::CellBuilder{}.finalize();
       account.now_ = original_record.now;
+      if (dump.is_open()) {
+        vm::CellBuilder shard_account;
+        check(shard_account.store_ref_bool(account.total_state) &&
+                  shard_account.store_bits_bool(account.last_trans_hash_) &&
+                  shard_account.store_long_bool(account.last_trans_lt_, 64),
+              "cannot build the input shard account");
+        vm::CellBuilder previous_cb;
+        check(vm::StackEntry(previous_blocks).serialize(previous_cb), "cannot serialize previous blocks");
+        auto in_msg = original_record.r1.in_msg->prefetch_ref();
+        dump_row({std::to_string(type), std::to_string(original_record.now), std::to_string(original_record.lt),
+                  seed.to_hex(), boc_hex(shard_account.finalize()), boc_hex(in_msg), boc_hex(config->get_root_cell()),
+                  boc_hex(config->get_libraries_root()), boc_hex(previous_cb.finalize()), hash(original),
+                  expected_account.new_hash.to_hex(), boc_hex(original), std::to_string(shard.workchain),
+                  std::to_string(shard.shard), std::to_string(info.seq_no), hash(root), source_file_hash});
+      }
       auto result = require(emulator.emulate_transaction(std::move(account), original_record.r1.in_msg->prefetch_ref(),
                                                          original_record.now, original_record.lt, type));
       auto* emulated = dynamic_cast<emulator::TransactionEmulator::EmulationSuccess*>(result.get());
@@ -333,15 +408,56 @@ void inspect(const std::string& path) {
 
 int main(int argc, char** argv) {
   try {
-    check(argc == 2 || argc == 4, "usage: test-epoch-replay block.boc OR --run blocks.list cells.list");
+    check(
+        argc == 2 || argc == 4 || (argc == 5 && std::string(argv[1]) == "--dump"),
+        "usage: test-epoch-replay block.boc OR --run blocks.list cells.list OR --dump blocks.list cells.list out.tsv");
     SET_VERBOSITY_LEVEL(0);
     auto initialized = vm::init_vm(false);
     check(initialized.is_ok(), "VM initialization failed");
-    if (argc == 2)
+    if (argc == 4 &&
+        (std::string(argv[1]) == "--check-dump-copy" || std::string(argv[1]) == "--check-dump-representations")) {
+      auto bytes = require(td::read_file(td::CSlice(argv[2]), max_dump_row_bytes / 2 + 1));
+      check(bytes.size() <= max_dump_row_bytes / 2, "copy control input bytes limit exceeded");
+      auto original = require(vm::std_boc_deserialize(bytes.as_slice(), false, true));
+      if (std::string(argv[1]) == "--check-dump-representations") {
+        // The original masterchain block 53209 contains both witnesses of
+        // one logical subtree. Exercise their coexistence in one copy map.
+        auto follow = [&](const std::vector<unsigned>& path) {
+          Cell current = original;
+          for (auto index : path) {
+            auto loaded = require(current->load_cell());
+            check(index < loaded.data_cell->size_refs(), "missing witness fixture path");
+            current = loaded.data_cell->get_ref(index);
+          }
+          return current;
+        };
+        auto partial = follow({2, 1, 1, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0, 1});
+        auto complete = follow({3, 3, 3, 1, 0, 0, 1});
+        check(hash(partial) == hash(complete) && partial->get_hash() != complete->get_hash(),
+              "fixture must have distinct witnesses of the same logical cell");
+        vm::CellBuilder wrapper;
+        check(wrapper.store_ref_bool(partial) && wrapper.store_ref_bool(complete), "cannot wrap witness pair");
+        original = wrapper.finalize();
+      }
+      auto encoded = require(td::hex_decode(boc_hex(original)));
+      auto copied = require(vm::std_boc_deserialize(encoded, false, true));
+      check(copied->get_hash() == original->get_hash(), "copy changed a witness representation");
+      auto written = td::write_file(td::CSlice(argv[3]), encoded);
+      check(written.is_ok(), "cannot write copy control output");
+    } else if (argc == 2)
       inspect(argv[1]);
     else {
       bool empty_code_control = std::string(argv[1]) == "--run-empty-code-control";
-      check(std::string(argv[1]) == "--run" || empty_code_control, "unknown operation");
+      if (std::string(argv[1]) == "--dump") {
+        dump.open(argv[4], std::ios::binary | std::ios::trunc);
+        check(dump.good(), "cannot open dump output");
+        const std::string header = "#rel02-v1\n";
+        dump << header;
+        check(dump.good(), "cannot write dump header");
+        dump_bytes = header.size();
+      } else {
+        check(std::string(argv[1]) == "--run" || empty_code_control, "unknown operation");
+      }
       auto blocks = paths(argv[2]);
       auto supplements = paths(argv[3]);
       check(!blocks.empty(), "empty corpus");
@@ -377,8 +493,18 @@ int main(int argc, char** argv) {
       for (const auto& path : blocks) {
         std::cerr << "replay " << path << std::endl;
         inspect(path);
-        replay(load(path), cells, masters, empty_code_control);
+        auto bytes = require(td::read_file(path));
+        td::Bits256 file_hash;
+        td::sha256(bytes.as_slice(), file_hash.as_slice());
+        replay(require(vm::std_boc_deserialize(bytes.as_slice())), cells, masters, empty_code_control,
+               file_hash.to_hex());
       }
+    }
+    if (dump.is_open()) {
+      dump.flush();
+      check(dump.good(), "cannot flush dump output");
+      dump.close();
+      check(!dump.fail(), "cannot close dump output");
     }
     return 0;
   } catch (const vm::VmVirtError& error) {
