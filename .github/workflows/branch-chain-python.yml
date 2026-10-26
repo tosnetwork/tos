@@ -235,7 +235,9 @@ jobs:
         run: ctest --test-dir build --output-on-failure --no-tests=error -R '^(wallet-transaction|proof-verify-embedded|proof-readonly-query|test-json-rpc-transport|test-json-rpc-explorer)$'
 
       - name: Remove and restore wallet transaction guards
-        run: python3 scripts/test-wallet-transaction-controls.py --build-dir build
+        run: |
+          python3 scripts/test_wallet_transaction_control_source.py
+          python3 scripts/test-wallet-transaction-controls.py --build-dir build
 
       - name: Remove and restore proof relay route control
         run: python3 scripts/test-proof-query-rpc-controls.py --build-dir build

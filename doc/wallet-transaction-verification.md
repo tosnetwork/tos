@@ -76,9 +76,12 @@ ctest --test-dir build --output-on-failure --no-tests=error \
 python3 scripts/test-wallet-transaction-controls.py --build-dir build
 ```
 
-The control runner requires a clean tracked build source, verifies the baseline,
+The control runner checks the invoked Git checkout and byte-matches its codec,
+ABI, tests and fixtures against the configured CMake source before any write.
+The configured compile source may be a matching copy without Git metadata.
+It verifies the baseline,
 removes one guard at a time, requires a failure at its named runtime assertion,
-and restores/rebuilds the original bytes in `finally`. Run it in an isolated
+and restores/rebuilds the original bytes in `finally`, checking exact restoration. Run it in an isolated
 checkout without concurrent builds or processes using its shared library.
 It covers hash/account/time binding and the byte/cell/depth/message ceilings, plus full typed-layout validation.
 The handwritten transaction schema validates typed StateInit, state updates,
