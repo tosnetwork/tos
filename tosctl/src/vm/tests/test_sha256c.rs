@@ -44,14 +44,16 @@ fn sha256c_is_chunk_independent_at_version_14() {
 fn sha256c_matches_cpp_consensus_differential_vector() {
     // Keep this vector identical to crypto/test/vm.cpp's
     // VM.sha256_canonical_snake case. Both VMs must hash the same two-cell
-    // canonical snake to standard SHA-256 before version 14 is activated.
+    // canonical snake to standard SHA-256. At v16 the gas includes both loads:
+    // PUSHREF 18 + SHA256C 26 + 2*(load 100 + entry 1 + floor(120/33)) + RET 5.
     let first = vec![b'a'; 120];
     let second = vec![b'b'; 120];
     let mut bytes = first.clone();
     bytes.extend_from_slice(&second);
     test_case_with_refs("PUSHREF SHA256C", vec![snake(&[&first, &second])])
-        .with_block_version(14)
-        .expect_stack(&expected_hash(&bytes));
+        .with_block_version(16)
+        .expect_stack(&expected_hash(&bytes))
+        .expect_gas_used(257);
 }
 
 #[test]

@@ -61,6 +61,12 @@ What it adds:
   (transactions report it as exit_arg). `KNOWN` and `KNOWN_STACK` in the generator list rows
   that still differ (`KNOWN_STACK` rows only in stack and error argument); each must keep
   differing, so a fix removes its rows. The C++ output is frozen.
+- `vm_sha256c_scenarios.py` adds 16 v16 SHA256C rows to that suite: cold and warm
+  snake loads, per-cell byte-tariff boundaries, load/reload exhaustion, malformed
+  cells and unresolved library references. Before freezing, its native-output
+  checker asserts all eight endstate columns using opcode/gas constants and a
+  separately computed SHA-256 digest. Successful library resolution is not
+  covered because the endstate driver does not accept a library dictionary.
 - `vm-opcode-table.cpp`, `vm_opcode_table.py`, `vm_prefix_scenarios.py`, `vm_ext_scenarios.py`,
   `vm-ext-rules.md`: which opcodes may run. `test-vm-opcode-table` prints the C++ VM's finalized
   codepage 0 (first opcode, assigned, prefix bits, version of each range);
@@ -106,6 +112,7 @@ python3 test/rescue-fee-gate/compare.py test/rescue-fee-gate/suite-scenarios.tsv
   /path/to/cpp.tsv /path/to/rust.tsv test/rescue-fee-gate/suite-expected.tsv
 python3 test/rescue-fee-gate/vm_endstate_scenarios.py /tmp/endstate.tsv
 build/crypto/pq/test-vm-endstate /tmp/endstate.tsv > /tmp/endstate-cpp.tsv
+python test/rescue-fee-gate/vm_sha256c_scenarios.py /tmp/endstate-cpp.tsv
 cargo run -p tos_vm --example vm-endstate -- /tmp/endstate.tsv > /tmp/endstate-rust.tsv   # (from tosctl/src)
 python3 test/rescue-fee-gate/vm_endstate_compare.py /tmp/endstate-cpp.tsv /tmp/endstate-rust.tsv \
   --expected test/rescue-fee-gate/vm-endstate-expected.tsv \
