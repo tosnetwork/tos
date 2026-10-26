@@ -104,6 +104,17 @@ address and network alongside current recovery keys/authority. New keys
 alone derive a different address. Restoration must authenticate the current
 installed authority and refuse stale recovery material.
 
+The public mobile identity envelope is `magic:uint32=0x51534931,
+address_hash:bits256, birth_state_init:^Cell`; the workchain is always zero.
+It contains no private keys. Decoders pin the wallet code, require the exact
+five-bit StateInit flags `00110`, two references, and canonical version-one
+wallet data with zero seqno, epoch, nonces and retirement. They reconstruct
+the wallet from its birth authority and wallet ID, and compare the entire
+StateInit hash with the recorded address. Bound serialized input to 16 KiB.
+An identity envelope does not prove ownership or current authority: restore
+still checks the expected network, independently known address and current
+authenticated chain state before accepting recovery keys.
+
 ## Reproduction and current evidence
 
 Build native `func`, `fift`, `emulator`, the public test signers in
@@ -116,6 +127,7 @@ python3 test/wallet-quantum/test_self_pay.py --output /tmp/qsp \
   --rust-driver /path/to/pq-tx-parity
 python3 test/wallet-quantum/test_self_pay_recovery.py --output /tmp/qsp-recovery \
   --rust-driver /path/to/pq-tx-parity
+python3 test/wallet-quantum/export_self_pay_vectors.py --output /tmp/qsp-mobile/vectors.json
 ```
 
 The runners compile current source, use real signatures, assert exact errors
@@ -124,6 +136,13 @@ and COMMIT deletion controls, and compare complete native/Rust transaction
 transcripts. The recovery runner feeds the wallet's actual outgoing message
 into probe deployment and proves new-root payment at the original address.
 The release-wallet CI suite runs both on x86-64 and ARM64.
+
+The mobile exporter executes all five operation vectors and asserts their
+compute/action results and exact final state before writing public keys,
+signatures, code, request/identity hashes and the source/tool digest manifest.
+Both mobile implementations consume the same JSON fixture. Native signing
+tests also collapse the two new signing domains in an isolated build, showing
+that the wrong-domain rejection check detects the defect.
 
 The initial local candidate on base `99d907411` measured PRIMARY 13,269 gas,
 RESCUE execute 19,546, configure 19,868, lock 19,816 and migrate 19,798
