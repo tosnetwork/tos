@@ -215,6 +215,14 @@ def scenarios():
     # TRYARGS 1,1 passes one value to the body and keeps one of its results or the handler's.
     add("tryargs-returns", prog(pushint(5), pushint(6), cont(INC), cont(pushint(9)), TRYARGS_1_1))
     add("tryargs-handler", prog(pushint(5), pushint(6), cont(throw(5)), cont(INC), TRYARGS_1_1))
+    # XCHG s(i),s(j) (10ij) is valid only for 1 <= i < j; anything else is an invalid opcode,
+    # whatever the stack holds.
+    three = (pushint(1), pushint(2), pushint(3))
+    add("xchg-long-1-2", prog(*three, op([0x10, 0x12])))
+    add("xchg-long-0-2-invalid", prog(*three, op([0x10, 0x02])))
+    add("xchg-long-2-2-invalid", prog(*three, op([0x10, 0x22])))
+    add("xchg-long-2-1-invalid", prog(*three, op([0x10, 0x21])))
+    add("xchg-long-1-5-underflow", prog(*three, op([0x10, 0x15])))
 
 
 # Rows that may differ only in the final stack and the error argument; exit code, gas, steps

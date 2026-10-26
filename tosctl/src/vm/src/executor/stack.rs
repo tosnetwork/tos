@@ -686,13 +686,20 @@ pub(super) fn execute_xchg_simple(engine: &mut Engine) -> Status {
     )
 }
 
-// XCHG addressing via the next instruction byte
+// XCHG s(i),s(j) addressing via the next instruction byte: only 1 <= i < j is valid, checked
+// before the stack depth
 pub(super) fn execute_xchg_std(engine: &mut Engine) -> Status {
-    execute_xchg(
-        engine,
-        "XCHG",
-        InstructionOptions::StackRegisterPair(WhereToGetParams::GetFromNextByte),
-    )
+    engine.load_instruction(
+        Instruction::new("XCHG")
+            .set_opts(InstructionOptions::StackRegisterPair(WhereToGetParams::GetFromNextByte)),
+    )?;
+    let ra = engine.cmd.sregs().ra;
+    let rb = engine.cmd.sregs().rb;
+    if ra == 0 || ra >= rb {
+        fail!(ExceptionCode::InvalidOpcode, "invalid XCHG arguments")
+    }
+    engine.cc.stack.swap(ra, rb)?;
+    Ok(())
 }
 
 // XCHG addressing via the next instruction byte, long index

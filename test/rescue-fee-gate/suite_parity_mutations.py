@@ -31,6 +31,9 @@ ERROR = CARGO / "vm/src/error.rs"
 HANDLERS = CARGO / "vm/src/executor/engine/handlers.rs"
 GAS = CARGO / "vm/src/executor/gas/mod.rs"
 EXCEPTIONS = CARGO / "vm/src/executor/exceptions.rs"
+STACK = CARGO / "vm/src/executor/stack.rs"
+CRYPTO = CARGO / "vm/src/executor/crypto.rs"
+BLS = CARGO / "vm/src/executor/bls.rs"
 CHILD_STACK_TEST = (
     "executor::engine::core::nesting_depth_tests::child_out_of_gas_leaves_only_the_gas_consumed"
 )
@@ -558,6 +561,37 @@ MUTATIONS = {
         (),
         (),
         ("ext-debug-16-complete-ones", "ext-debug-1d-complete-ones"),
+    ),
+    "XCHG s(i),s(j) runs with i = 0 or i >= j": Mutation(
+        STACK,
+        [
+            (
+                "    if ra == 0 || ra >= rb {\n        fail!(ExceptionCode::InvalidOpcode, ",
+                "    if false {\n        fail!(ExceptionCode::InvalidOpcode, ",
+            )
+        ],
+        (),
+        (),
+        (
+            "family-xchg-1000-empty",
+            "family-xchg-1001-deep",
+            "family-xchg-1011-deep",
+            "family-xchg-10ff-deep",
+        ),
+    ),
+    # The other exchange forms may name s0 or one register twice: a check in the shared helper
+    # refuses them.
+    "XCHG argument check in the shared helper": Mutation(
+        STACK,
+        [
+            (
+                "    let rb = engine.cmd.sregs().rb;\n    engine.cc.stack.swap(ra, rb)?;\n    Ok(())",
+                "    let rb = engine.cmd.sregs().rb;\n    if ra == 0 || ra >= rb {\n        fail!(ExceptionCode::InvalidOpcode)\n    }\n    engine.cc.stack.swap(ra, rb)?;\n    Ok(())",
+            )
+        ],
+        (),
+        (),
+        ("family-xchg-other-01-deep", "family-xchg-other-1100-deep", "family-xchg-other-0f-deep"),
     ),
 }
 

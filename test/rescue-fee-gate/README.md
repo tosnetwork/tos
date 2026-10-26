@@ -70,6 +70,10 @@ What it adds:
   variable-length families of `vm_ext_scenarios.py`, whose rules `vm-ext-rules.md` lists. Rows in
   its `KNOWN` list still differ and must keep differing. These rows are not frozen: the C++ table
   is the reference, so both drivers run them and must agree.
+- `vm_family_scenarios.py`: whole instruction families (every XCHG s(i),s(j), HASHEXT and BLS
+  opcode on stack set-ups that reach each of its checks, with gas budgets around them).
+  `vm_prefix_scenarios.py` appends the families listed in `COMPARED`; the others are written
+  with `vm_family_scenarios.py <out.tsv> <family> ...` and still differ.
 - Test signers in `tools/`: `build.sh <dir>` builds `slh_tool`, `mldsa_tool` and `lms_tool`
   (RFC 8554 Appendix A key generation from SEED and I, parallel).
 
