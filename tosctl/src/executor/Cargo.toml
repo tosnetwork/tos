@@ -29,6 +29,7 @@ tos_assembler = { path = '../assembler' }
 ci_run = [  ]
 cross_check = [ 'tos_vm/fift_check' ]
 timings = [  ]
+step_trace = [ 'tos_vm/step_trace' ]
 
 [[bench]]
 harness = false

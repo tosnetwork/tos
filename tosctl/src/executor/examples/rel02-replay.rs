@@ -82,7 +82,70 @@ struct Outcome {
     error: String,
 }
 
+/// Writes the steps and cell loads of the transaction whose logical time is in
+/// TOS_TRACE_LT to TOS_TRACE_FILE, in the C++ test-epoch-replay trace format.
+#[cfg(feature = "step_trace")]
+mod trace {
+    use std::io::Write;
+    use tos_vm::executor::step_trace::{set_step_trace_sink, StepEvent, StepTraceSink};
+
+    struct FileTrace(std::io::BufWriter<std::fs::File>);
+
+    impl StepTraceSink for FileTrace {
+        fn on_step(&mut self, e: &StepEvent) {
+            let code = e.code_hash.as_ref().map(|h| h.to_hex_string().to_uppercase());
+            let _ = writeln!(
+                self.0,
+                "S\t{}\t{}\t{}\t{}\t{}\t{}",
+                e.steps,
+                e.gas_remaining,
+                e.stack_depth,
+                u8::from(e.child),
+                code.unwrap_or_else(|| String::from("-")),
+                e.offset
+            );
+        }
+        fn on_cell_load(&mut self, steps: u32, hash: &chain_block::UInt256, first: bool) {
+            let _ = writeln!(
+                self.0,
+                "L\t{steps}\t{}\t{}",
+                hash.to_hex_string().to_uppercase(),
+                u8::from(first)
+            );
+        }
+    }
+
+    pub fn start(lt: u64) -> anyhow::Result<bool> {
+        let (Ok(wanted), Ok(path)) =
+            (std::env::var("TOS_TRACE_LT"), std::env::var("TOS_TRACE_FILE"))
+        else {
+            return Ok(false);
+        };
+        if wanted != lt.to_string() {
+            return Ok(false);
+        }
+        let file = std::io::BufWriter::new(std::fs::File::create(path)?);
+        set_step_trace_sink(Some(Box::new(FileTrace(file))));
+        Ok(true)
+    }
+
+    pub fn stop() {
+        set_step_trace_sink(None);
+    }
+}
+
 fn execute(row: &Row) -> anyhow::Result<Outcome> {
+    #[cfg(feature = "step_trace")]
+    let traced = trace::start(row.lt)?;
+    let outcome = execute_untraced(row);
+    #[cfg(feature = "step_trace")]
+    if traced {
+        trace::stop();
+    }
+    outcome
+}
+
+fn execute_untraced(row: &Row) -> anyhow::Result<Outcome> {
     let config = BlockchainConfig::with_config(ConfigParams::with_root(row.config.clone())?)?;
     let dict_hash_min_cells = config.size_limits_config().acc_state_cells_for_storage_dict;
     let executor: Box<dyn TransactionExecutor> = match row.kind {

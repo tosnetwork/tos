@@ -651,6 +651,8 @@ impl Engine {
             // instruction that fails before it is decoded (an unassigned opcode, a
             // version gate, a truncated prefix).
             self.step += 1;
+            #[cfg(feature = "step_trace")]
+            self.trace_step();
             let execution_result = match self.check_prefix() {
                 Err(err) => Some(err),
                 Ok(width) => match HANDLERS_CP0.get_handler(self) {
@@ -733,8 +735,22 @@ impl Engine {
         Ok(usize::from(width))
     }
 
+    #[cfg(feature = "step_trace")]
+    fn trace_step(&self) {
+        super::step_trace::step(|| super::step_trace::StepEvent {
+            steps: self.step,
+            gas_remaining: self.gas.get_gas_remaining(),
+            stack_depth: self.stack().depth(),
+            child: self.vm_nesting_depth > 0,
+            code_hash: self.cc.code().cell_opt().map(|cell| cell.repr_hash()),
+            offset: self.cc.code().pos(),
+        });
+    }
+
     fn step_next_ref(&mut self, reference: Cell) -> Result<Option<i32>> {
         self.step += 1;
+        #[cfg(feature = "step_trace")]
+        self.trace_step();
         self.log_string = Some("implicit JMPREF");
         self.try_use_gas(Gas::implicit_jmp_price())?;
         let code = self.load_hashed_cell(reference, true)?;
@@ -743,6 +759,8 @@ impl Engine {
     }
     fn step_ordinary(&mut self) -> Result<Option<i32>> {
         self.step += 1;
+        #[cfg(feature = "step_trace")]
+        self.trace_step();
         self.log_string = Some("implicit RET");
         self.try_use_gas(Gas::implicit_ret_price())?;
         self.ret()?;
@@ -856,8 +874,10 @@ impl Engine {
         loop {
             if !library_loaded {
                 let hash = cell.repr_hash();
-                let first = self.visited_cells.insert(hash);
+                let first = self.visited_cells.insert(hash.clone());
                 self.try_use_gas(Gas::load_cell_price(first))?;
+                #[cfg(feature = "step_trace")]
+                super::step_trace::cell_load(self.step, &hash, first);
             }
             let mut slice = SliceData::load_cell(cell)?;
             if !resolve_special || slice.cell_type() == CellType::Ordinary {

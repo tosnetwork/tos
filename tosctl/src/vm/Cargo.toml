@@ -36,6 +36,8 @@ pprof = { features = [ 'criterion', 'flamegraph' ], version = '0.14' }
 ci_run = [  ]
 fift_check = [  ]
 log_file = [  ]
+# Test builds only: the per-step trace compared with the C++ VM's.
+step_trace = [  ]
 verbose = [  ]
 
 [[bench]]
