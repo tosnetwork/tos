@@ -76,9 +76,10 @@ ctest --test-dir build --output-on-failure --no-tests=error \
 python3 scripts/test-wallet-transaction-controls.py --build-dir build
 ```
 
-The control runner checks the invoked Git checkout and byte-matches its codec,
-ABI, tests and fixtures against the configured CMake source before any write.
-The configured compile source may be a matching copy without Git metadata.
+The control runner requires the configured CMake source to be the invoked Git
+checkout and refuses both unstaged and staged tracked changes before any write.
+Its Git reads use a command-scoped safe.directory for that exact checkout to
+support container ownership differences, without changing global configuration.
 It verifies the baseline,
 removes one guard at a time, requires a failure at its named runtime assertion,
 and restores/rebuilds the original bytes in `finally`, checking exact restoration. Run it in an isolated

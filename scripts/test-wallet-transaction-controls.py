@@ -7,23 +7,20 @@ import json
 import pathlib
 import subprocess
 
-CONTROL_FILES = (
-    "lite-client/proof-verify/wallet-transaction.cpp",
-    "lite-client/proof-verify/wallet-transaction.h",
-    "lite-client/proof-verify/embedded.cpp",
-    "lite-client/proof-verify/embedded.h",
-    "lite-client/proof-verify/CMakeLists.txt",
-    "test/pq-native/wallet-transaction-test.py",
-    "test/pq-native/data/wallet-transactions/manifest.json",
-    "test/pq-native/data/wallet-transactions/transaction-0.boc",
-    "test/pq-native/data/wallet-transactions/transaction-1.boc",
-    "test/pq-native/data/wallet-transactions/transaction-2.boc",
-    "test/auth-extensions/cells.py",
-)
+
+def require_clean_checkout(checkout):
+    # Trust only the checkout whose code is already executing, for this command.
+    # Container ownership may otherwise make diff report exit129 as non-repo.
+    command = ["git", "-c", f"safe.directory={checkout}", "-C", str(checkout)]
+    for options in (
+        ("diff", "--quiet", "--exit-code"),
+        ("diff", "--cached", "--quiet", "--exit-code"),
+    ):
+        subprocess.run(command + list(options), check=True, timeout=10)
 
 
 def checked_source(build, checkout):
-    """Check configured compile inputs without requiring Git in a source mirror."""
+    """Refuse an unrelated build source and dirty tracked inputs before writes."""
     cache = (build / "CMakeCache.txt").read_text()
     homes = [
         line.split("=", 1)[1]
@@ -33,14 +30,9 @@ def checked_source(build, checkout):
     if len(homes) != 1:
         raise RuntimeError("expected one configured CMake source")
     source = pathlib.Path(homes[0]).resolve()
-    print(json.dumps({"checkout": str(checkout), "configured_source": str(source)}), flush=True)
-    # The invoked, reviewed checkout owns Git metadata. A configured source copy
-    # may not; check its actual inputs before any write instead of assuming it is
-    # another Git worktree. A different/missing input refuses the control run.
-    subprocess.run(["git", "diff", "--exit-code"], cwd=checkout, check=True)
-    for relative in CONTROL_FILES:
-        if (source / relative).read_bytes() != (checkout / relative).read_bytes():
-            raise RuntimeError(f"configured source differs from checkout: {relative}")
+    if source != checkout:
+        raise RuntimeError("configured source must be the invoked checkout")
+    require_clean_checkout(checkout)
     return source
 
 
@@ -160,7 +152,7 @@ def main():
     print(restored.stdout, flush=True)
     if restored.returncode:
         raise RuntimeError("restored regression failed")
-    subprocess.run(["git", "diff", "--exit-code"], cwd=checkout, check=True)
+    require_clean_checkout(checkout)
     print(json.dumps({"controls": receipts, "restored_exit": restored.returncode}, indent=2))
 
 
