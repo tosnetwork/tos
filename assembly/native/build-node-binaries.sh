@@ -16,9 +16,10 @@
 # fixed SOURCE_DATE_EPOCH keeps third-party build timestamps from varying.
 #
 # The script refuses to finish unless the recipe is in effect: the configured
-# cache holds these values, validator-engine and dht-server load jemalloc and
-# allocate through it, and every binary reports the commit it was built from.
-# The output directory receives the six binaries and BUILD-INFO.
+# cache holds these values, the binaries that link jemalloc load it,
+# validator-engine allocates through it, and every binary with -V reports the
+# commit it was built from. The output directory receives the eight binaries
+# and BUILD-INFO.
 set -euo pipefail
 
 die() { echo "build-node-binaries: $*" >&2; exit 1; }
@@ -45,7 +46,7 @@ export SOURCE_DATE_EPOCH
 export CCACHE_DISABLE=1
 
 TARGETS=(validator-engine validator-engine-console lite-client generate-random-id
-         tos-pq-consensus-key dht-server)
+         tos-pq-consensus-key dht-server tos-rpc tos-wallet-index)
 declare -A PATHS=(
   [validator-engine]=validator-engine/validator-engine
   [validator-engine-console]=validator-engine-console/validator-engine-console
@@ -53,10 +54,15 @@ declare -A PATHS=(
   [generate-random-id]=utils/generate-random-id
   [tos-pq-consensus-key]=crypto/pq/tos-pq-consensus-key
   [dht-server]=dht-server/dht-server
+  [tos-rpc]=services/tos-rpc
+  [tos-wallet-index]=services/tos-wallet-index
 )
-# The targets that link jemalloc (their CMake targets list JEMALLOC_LIBRARIES).
-JEMALLOC_TARGETS=(validator-engine dht-server)
-# The targets with a -V option that prints the commit.
+# The targets that link jemalloc: validator-engine and dht-server list
+# JEMALLOC_LIBRARIES themselves; tos-rpc and tos-wallet-index get it through
+# tos_db, which links it PUBLIC.
+JEMALLOC_TARGETS=(validator-engine dht-server tos-rpc tos-wallet-index)
+# The targets with a -V option that prints the commit. tos-pq-consensus-key,
+# tos-rpc and tos-wallet-index have no -V; BUILD-INFO records their digests.
 VERSIONED_TARGETS=(validator-engine validator-engine-console lite-client generate-random-id dht-server)
 
 BUILD=build-node
