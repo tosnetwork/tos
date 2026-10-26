@@ -758,6 +758,22 @@ MUTATIONS = {
         (),
         ("callxargs-to-saved-c0-is-a-jump", "family-jump-c0-callxargs-1-0"),
     ),
+    # Above the free stack depth the jump and the general call differ in stack gas.
+    "a call to a continuation that defines c0 is no jump": Mutation(
+        CONTROL,
+        [
+            (
+                "            if cont.savelist.get(0).is_some() {\n                return self.jump_args(cont, pass_args);\n            }\n",
+                "",
+            )
+        ],
+        (),
+        (),
+        (
+            "family-stackgas-tail-call-whole-stack-1095",
+            "family-stackgas-tail-call-whole-stack-1000000",
+        ),
+    ),
     "the capture does not take c0": Mutation(
         CONTROL,
         [("        if save_cr & 1 != 0 {\n", "        if save_cr & 1 != 0 && false {\n")],
@@ -1049,6 +1065,18 @@ MUTATIONS = {
         (),
         (),
         ("dict-key-out-of-range-is-a-miss", "family-dict-ugetjmpz-key-minus-1"),
+    ),
+    "PFXDICTSWITCH calls what it finds": Mutation(
+        DICT,
+        [
+            (
+                '    pfxdictget(engine, "PFXDICTSWITCH", CMD | SWITCH)',
+                '    pfxdictget(engine, "PFXDICTSWITCH", CMD | CALLX)',
+            )
+        ],
+        (),
+        (),
+        ("family-dict-pfxdictswitch-const-hit",),
     ),
     "PFXDICTGETEXEC not found gives the slice back": Mutation(
         DICT,

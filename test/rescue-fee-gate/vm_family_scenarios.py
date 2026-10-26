@@ -78,6 +78,14 @@ def add(name, *parts, budget=BUDGET, version=VERSION):
     )
 
 
+def add_boc(name, boc_hex, budget=BUDGET, version=VERSION):
+    """A row whose program is given as a code BOC (for cells the builder does not make)."""
+    ROWS.append(
+        [f"family-{name}", str(version), str(budget), "V", "skip", "skip", "skip", "skip", "skip"]
+        + [boc_hex]
+    )
+
+
 def xchg():
     deep = [pushint(i) for i in range(17)]
     for args in range(256):
@@ -513,7 +521,7 @@ def terminal():
         "65536": (pushint(256), pushint(256), op([0xA8])),  # 256 * 256
         "nan": (PUSHNAN,),
         "null": (NULL,),
-        "empty": (),
+        "sentinel-only": (),  # nothing above the sentinel: the sentinel is the exit code
     }
     for name, push in codes.items():
         add(f"terminal-excquit-{name}", pushint(99), *push, PUSHC2, JMPX)
@@ -527,6 +535,9 @@ def terminal():
             setc(4),
             JMPX,
         )
+    # A really empty stack: popping the exit code fails, and that error is the exit code.
+    add("terminal-excquit-empty-stack", PUSHC2, JMPX)
+    add("terminal-envelope-excquit-empty-stack", EMPTY_CELL, PUSHC2, setc(4), JMPX)
     # Entered by the exception dispatch.
     add("terminal-throw-13", pushint(99), throw(13))
     add("terminal-throw-0", pushint(99), throw(0))
@@ -864,6 +875,18 @@ def dict_jumps():
         )
 
 
+# PFXDICTSWITCH 8 with its prefix dictionary in the code: the root cell is a short label 1 and a
+# leaf holding the code 77 (PUSHINT 7). The program pushes 1, the key slice (C0 is found under
+# the prefix 1, 40 is not), PFXDICTSWITCH, then PUSHINT 9, which only runs when not found.
+PFXDICTSWITCH_HIT = "b5ee9c7201010301001200020e7188d0f4ac08790201000353bc0002c0"
+PFXDICTSWITCH_MISS = "b5ee9c7201010301001200020e7188d0f4ac08790201000353bc000240"
+
+
+def dict_switch():
+    add_boc("dict-pfxdictswitch-const-hit", PFXDICTSWITCH_HIT)
+    add_boc("dict-pfxdictswitch-const-miss", PFXDICTSWITCH_MISS)
+
+
 def chain():
     # One jump that dispatches k + 1 continuations: REPEATEND 1 k times makes c0 a chain of k
     # finished repeat loops, each continuing with the one before; the implicit RET at the end
@@ -891,6 +914,23 @@ def chain():
 
 
 def stackgas():
+    # A call to a continuation that defines c0 is a jump: with nargs equal to the whole stack of
+    # 33 entries nothing is copied and nothing charged; a call would split the stack and pay
+    # for it (the run takes 1095 gas, measured with the C++ VM).
+    tail = (
+        *deep(33),
+        cont(pushint(5)),
+        pushint(33),
+        op([0xED, 0x12]),  # SETNUMVARARGS
+        PUSHC0,
+        SWAP,
+        setc(0),
+        pushint(-1),
+        pushint(-1),
+        CALLXVARARGS,
+    )
+    for budget in (1094, 1095, BUDGET):
+        add(f"stackgas-tail-call-whole-stack-{budget}", *tail, budget=budget)
     # Jumps and calls that copy stacks at the free depth (32) and around it.
     body = cont(pushint(5))
     for depth in (31, 32, 33, 40):
@@ -1263,6 +1303,7 @@ FAMILIES = {
     "closure": closure,
     "popsave": popsave,
     "dict": dict_jumps,
+    "dict-switch": dict_switch,
     "chain": chain,
     "stackgas": stackgas,
     "loop2": loop_more,
