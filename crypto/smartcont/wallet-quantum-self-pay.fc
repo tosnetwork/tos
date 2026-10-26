@@ -1,0 +1,127 @@
+;; Quantum self-pay v1. All authority comes from an external PQ signature.
+;; Internal messages may fund the account but can never install actions or keys.
+#include "wallet-quantum-self-pay-common.fc";
+#include "wallet-v5-action-list.fc";
+
+(int, int, int, int, int, int, cell) qsp_state() impure inline {
+  slice s = auth_policy_ordinary(get_data());
+  throw_unless(auth::bad_mode, s~load_uint(8) == 1);
+  int seqno = s~load_uint(32);
+  int wallet_id = s~load_uint(32);
+  int retired = s~load_uint(16);
+  throw_unless(auth::bad_mode, (retired & ~ 2) == 0);
+  int epoch = s~load_uint(64);
+  int primary_nonce = s~load_uint(64);
+  int rescue_nonce = s~load_uint(64);
+  cell authority = s~load_ref();
+  s.end_parse();
+  return (seqno, wallet_id, retired, epoch, primary_nonce, rescue_nonce, authority);
+}
+
+cell qsp_store(int seqno, int wallet_id, int retired, int epoch,
+    int primary_nonce, int rescue_nonce, cell authority) inline {
+  return begin_cell().store_uint(1, 8).store_uint(seqno, 32).store_uint(wallet_id, 32)
+    .store_uint(retired, 16).store_uint(epoch, 64).store_uint(primary_nonce, 64)
+    .store_uint(rescue_nonce, 64).store_ref(authority).end_cell();
+}
+
+() recv_internal(slice body) impure {
+  ;; Deposits, bounces and legacy AUTH bodies confer no authorization.
+}
+
+() recv_external(slice body) impure {
+  quantum_basechain_hash(my_address(), auth::wrong_account);
+  cell request = body~load_ref();
+  cell signature = body~load_ref();
+  body.end_parse();
+  var (seqno, wallet_id, retired, epoch, primary_nonce, rescue_nonce, authority) = qsp_state();
+  var (global_id, network, daily, primary, rescue, policy) = qsp_authority(authority);
+  throw_unless(auth::wrong_network, global_id == auth_global_id());
+
+  slice rs = auth_policy_ordinary(request);
+  throw_unless(quantum::bad_payload, rs~load_uint(32) == qsp::request);
+  throw_unless(auth::wrong_network, rs~load_int(32) == global_id);
+  throw_unless(auth::wrong_network, rs~load_uint(256) == network);
+  throw_unless(auth::wrong_account, equal_slice_bits(rs~load_msg_addr(), my_address()));
+  throw_unless(auth::bad_module, rs~load_uint(256) == cell_hash(authority));
+  int role = rs~load_uint(8);
+  throw_unless(auth::stale_epoch, rs~load_uint(64) == epoch);
+  int nonce = rs~load_uint(64);
+  int deadline = rs~load_uint(32);
+  throw_unless(auth::expired, (deadline > now()) & (deadline <= now() + 3600));
+  int kind = rs~load_uint(8);
+  cell payload = rs~load_ref();
+  rs.end_parse();
+
+  if (role == quantum::primary) {
+    throw_unless(quantum::bad_kind, kind == quantum::execute);
+    throw_unless(quantum::requires_rescue, policy == 1);
+    throw_if(auth_policy::retired, retired & 2);
+    auth_policy_require_primary(network, daily);
+    throw_unless(auth::bad_nonce, nonce == primary_nonce);
+  } else {
+    throw_unless(quantum::bad_kind, role == quantum::rescue);
+    throw_unless(auth::bad_nonce, nonce == rescue_nonce);
+  }
+  ;; Refuse exhaustion before ACCEPT: an uncommitted signed request must not
+  ;; remain replayable after charging the account. Controls bypass execute nonce
+  ;; saturation but cannot wrap epoch.
+  int previous_seqno = seqno;
+  (epoch, primary_nonce, rescue_nonce, seqno) = quantum_advance_counters(
+    role, kind, epoch, primary_nonce, rescue_nonce, seqno);
+
+  cell digest = begin_cell().store_uint(cell_hash(request), 256).end_cell();
+  cell context = qsp_primary_context();
+  int suite = 1;
+  cell public_key = primary;
+  if (role == quantum::rescue) {
+    suite = 3;
+    context = qsp_rescue_context();
+    public_key = begin_cell().store_uint(rescue, 256).end_cell();
+  }
+  throw_unless(auth::bad_signature, pq_check_suite(digest, context, signature, public_key, suite));
+  int fallback_seqno = kind == quantum::migrate ? previous_seqno : seqno;
+  cell next_state = qsp_store(fallback_seqno, wallet_id, retired, epoch, primary_nonce, rescue_nonce, authority);
+  ;; Commit the replay guard before accepting. An unaccepted transaction cannot
+  ;; persist it; after acceptance, even immediate out-of-gas retains it.
+  set_data(next_state);
+  commit();
+  accept_message();
+  ;; The authenticated request is now consumed, even if its operation is invalid.
+  slice ps = auth_policy_ordinary(payload);
+  throw_unless(quantum::bad_payload, ps~load_uint(32) == quantum_payload_tag(kind));
+  cell actions = null();
+  if (kind == quantum::execute) {
+    actions = ps~load_ref();
+  } elseif (kind == quantum::configure) {
+    throw_unless(auth::bad_mode, ps~load_uint(2) == 2);
+    authority = begin_cell().store_uint(1, 8).store_int(global_id, 32).store_uint(network, 256)
+      .store_uint(daily, 8).store_ref(primary).store_uint(rescue, 256).store_uint(2, 8).end_cell();
+  } elseif (kind == quantum::lock) {
+    throw_unless(auth::bad_operation, ps~load_uint(8) == 1);
+    retired |= 2;
+  } else {
+    cell successor = ps~load_ref();
+    var (next_global_id, next_network, next_daily, next_primary, _, next_policy) = qsp_authority(successor);
+    throw_unless(auth::wrong_network, (next_global_id == global_id) & (next_network == network));
+    pq::check_chain_bytes(next_primary, pq::mldsa44_public_key_bytes);
+    if (next_policy == 1) {
+      throw_if(auth_policy::retired, retired & 2);
+      auth_policy_require_primary(network, next_daily);
+    }
+    authority = successor;
+  }
+  ps.end_parse();
+
+  if (kind == quantum::execute) {
+    set_c5_actions(verify_auth_actions(actions));
+  } else {
+    set_data(qsp_store(seqno, wallet_id, retired, epoch, primary_nonce, rescue_nonce, authority));
+  }
+}
+
+int seqno() method_id { var (seqno, _, _, _, _, _, _) = qsp_state(); return seqno; }
+int get_wallet_id() method_id { var (_, id, _, _, _, _, _) = qsp_state(); return id; }
+(int, int, int, int, int, int, cell) get_quantum_self_pay_state() method_id {
+  return qsp_state();
+}
