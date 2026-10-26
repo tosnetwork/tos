@@ -98,3 +98,57 @@ fn test_transaction() {
 
     transaction_emulator_destroy(p);
 }
+
+#[test]
+fn external_compute_skips_are_unaccepted_without_outputs() {
+    use chain_block::{
+        Account, BuilderData, ConfigParamEnum, CurrencyCollection, ExternalInboundMessageHeader,
+        Message, MsgAddressExt, MsgAddressInt, PrecompiledContractsList, StateInit,
+    };
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../executor/real_boc/default_config.boc");
+    let address = MsgAddressInt::with_standart(None, 0, [0x45; 32].into()).unwrap();
+    let message = Message::with_ext_in_header(ExternalInboundMessageHeader::new(
+        MsgAddressExt::AddrNone,
+        address.clone(),
+    ))
+    .serialize()
+    .unwrap();
+    for missing_state in [false, true] {
+        let mut config = ConfigParams::construct_from_file(path).unwrap();
+        let account = if missing_state {
+            Account::uninit(
+                address.clone(),
+                CurrencyCollection::with_coins(100_000_000_000),
+                0,
+                1_750_000_000,
+            )
+        } else {
+            let code = BuilderData::with_raw(vec![0xf8, 0x00], 16).unwrap().into_cell().unwrap();
+            let mut list = PrecompiledContractsList::default();
+            list.add(&code.repr_hash(), u64::MAX).unwrap();
+            config.set_config(ConfigParamEnum::ConfigParam45(list)).unwrap();
+            let mut init = StateInit::default();
+            init.set_code(code);
+            init.set_data(Cell::default());
+            Account::active(
+                address.clone(),
+                CurrencyCollection::with_coins(100_000_000_000),
+                0,
+                1_750_000_000,
+                init,
+                0,
+            )
+            .unwrap()
+        };
+        let shard = ShardAccount::with_params(&account, Default::default(), 0).unwrap();
+        let emulator = Emulator { unixtime: 1_750_000_000, lt: 2_000_000, ..Emulator::new(config) };
+        let text = emulator.emulate_transaction(shard, Some(message.clone()), false).unwrap();
+        let result: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(result["success"], false);
+        assert_eq!(result["external_not_accepted"], true, "{result}");
+        assert_eq!(result["vm_exit_code"], 0);
+        for field in ["transaction", "shard_account"] {
+            assert!(result.get(field).is_none(), "{result}");
+        }
+    }
+}

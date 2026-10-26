@@ -34,7 +34,7 @@ use std::{
     sync::{Arc, LazyLock},
 };
 use tos_vm::{
-    error::{tvm_exception_full, tvm_exit_code},
+    error::{tvm_exception_code, tvm_exception_full, tvm_exit_code},
     executor::{gas::gas_state::Gas, BehaviorModifiers, Engine},
     smart_contract_info::{PrevBlocksInfo, SmartContractInfo},
     stack::{savelist::SaveList, Stack, StackItem},
@@ -417,7 +417,12 @@ pub trait TransactionExecutor {
 
         let code_hash = code.repr_hash();
         let precompiled = self.config().raw_config().precompiled_contracts_list()?;
-        let precompiled = if let Some(list) = precompiled { list.get(&code_hash)? } else { None };
+        // Native applies ConfigParam45 only to ordinary transactions. Tick/tock
+        // must retain normal gas limits, charging and failure outcomes.
+        let precompiled = match (precompiled, self.ordinary_transaction()) {
+            (Some(list), true) => list.get(&code_hash)?,
+            _ => None,
+        };
         if let Some(precompiled) = precompiled.as_ref() {
             // An external message has no gas limit until the contract accepts
             // it; what it can pay for is gas_max.
@@ -483,6 +488,13 @@ pub trait TransactionExecutor {
             Ok(exit_code) => vm_phase.exit_code = exit_code,
             Err(err) => {
                 log::debug!(target: "executor", "VM terminated with exception: {}", err);
+                // Native refuses the entire compute phase when a configured
+                // precompiled fallback actually exhausts gas, even after COMMIT.
+                if precompiled.is_some()
+                    && tvm_exception_code(&err) == Some(ExceptionCode::OutOfGas)
+                {
+                    fail!(ExecutorError::PrecompiledComputeOutOfGas)
+                }
                 vm_phase.exit_code = tvm_exit_code(&err);
                 // The argument of the error is the final top of the stack.
                 let (_, value) = tvm_exception_full(err)?;

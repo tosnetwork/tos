@@ -110,6 +110,7 @@ enum Outcome {
         success: bool,
     },
     Skipped,
+    ComputeFailed,
     /// exit code of a compute phase that did not accept the message
     NotAccepted(i32),
 }
@@ -138,6 +139,7 @@ fn run_with_config(code: Cell, message: Cell, balance: u64, cfg: BlockchainConfi
         },
         Err(err) => match err.downcast_ref::<ExecutorError>() {
             Some(ExecutorError::ExtMsgComputeSkipped(_)) => Outcome::Skipped,
+            Some(ExecutorError::PrecompiledComputeOutOfGas) => Outcome::ComputeFailed,
             Some(ExecutorError::NoAcceptError(code, _)) => Outcome::NotAccepted(*code),
             _ => panic!("unexpected executor error: {err}"),
         },
@@ -151,6 +153,7 @@ fn an_external_within_gas_max_is_accepted_and_charged_the_precompiled_gas() {
             assert_eq!(gas_used, 5000);
             assert!(success);
         }
+        Outcome::ComputeFailed => panic!("unexpected compute phase failure"),
         Outcome::Skipped => {
             panic!("skipped: the precompiled usage was compared with the zero limit")
         }
@@ -210,13 +213,10 @@ fn an_unaccepted_external_runs_on_the_credit_alone() {
     // Granting the gas limit on top of the credit would let it reach ACCEPT.
     assert!(matches!(
         run(burn_then_accept_code(over), Some(0), external(), BALANCE),
-        Outcome::NotAccepted(OUT_OF_GAS)
+        Outcome::ComputeFailed
     ));
     // Without ACCEPT it is cut off at the credit instead of finishing on twice the limit.
-    assert!(matches!(
-        run(burn_code(over), Some(0), external(), BALANCE),
-        Outcome::NotAccepted(OUT_OF_GAS)
-    ));
+    assert!(matches!(run(burn_code(over), Some(0), external(), BALANCE), Outcome::ComputeFailed));
 }
 
 #[test]
@@ -227,5 +227,60 @@ fn internal_messages_are_unchanged() {
             assert!(success);
         }
         _ => panic!("an internal message within the limit runs"),
+    }
+}
+
+#[test]
+fn precompiled_real_oog_refuses_the_compute_phase() {
+    let over = 64 - (gas_limit() - 1).leading_zeros() as u8;
+    for prefix in [&[][..], &[0xf8, 0x00][..], &[0xf8, 0x00, 0xf8, 0x0f][..]] {
+        for message in [external(), internal()] {
+            let mut bytes = prefix.to_vec();
+            bytes.extend([0x95, 0xf8, 0x07, 0x83, over - 1, 0xbc, 0xe6]);
+            let contract = code(&bytes);
+            let cfg = config(&contract, Some(0));
+            let mut acc = account(contract, BALANCE);
+            let params = ExecuteParams {
+                block_unixtime: 1_750_000_000,
+                block_lt: 2_000_000,
+                last_tr_lt: 2_000_000,
+                ..ExecuteParams::default()
+            };
+            let error = OrdinaryTransactionExecutor::new(cfg)
+                .execute_with_params(Some(message), &mut acc, params)
+                .expect_err("native refuses a precompiled fallback that exhausts gas");
+            assert_eq!(
+                error.downcast_ref::<ExecutorError>(),
+                Some(&ExecutorError::PrecompiledComputeOutOfGas)
+            );
+            assert_eq!(
+                error.to_string(),
+                "Precompiled fallback exhausted gas during compute phase"
+            );
+        }
+    }
+}
+
+#[test]
+fn real_oog_is_distinct_from_user_throw_and_ordinary_oog() {
+    let over = 64 - (gas_limit() - 1).leading_zeros() as u8;
+    assert!(matches!(
+        run(burn_code(over), None, external(), BALANCE),
+        Outcome::NotAccepted(OUT_OF_GAS)
+    ));
+    assert!(matches!(
+        run(code(&[0xf2, 0x0d]), Some(0), external(), BALANCE),
+        Outcome::NotAccepted(13)
+    ));
+    // PUSHINT -14; THROWANY is range-checked, not a real OOG exception.
+    assert!(matches!(
+        run(code(&[0x80, 0xf2, 0xf2, 0xf0]), Some(0), external(), BALANCE),
+        Outcome::NotAccepted(5)
+    ));
+    for message in [external(), internal()] {
+        assert!(matches!(
+            run(code(&[0xf8, 0x00, 0xf2, 0x0d]), Some(0), message, BALANCE),
+            Outcome::Ran { success: false, gas_used: 0 }
+        ));
     }
 }
