@@ -12,9 +12,7 @@
 use crate::{
     error::tvm_exception_code,
     executor::{
-        continuation::{callx, switch},
         engine::{storage::fetch_stack, Engine},
-        microcode::VAR,
         types::{Instruction, InstructionOptions},
     },
     stack::{continuation::ContinuationData, integer::IntegerData, StackItem},
@@ -23,6 +21,7 @@ use chain_block::{
     fail, BuilderData, ExceptionCode, GasConsumer, HashmapE, HashmapSubtree, HashmapType, Mask,
     PfxHashmapE, Result, SliceData, Status,
 };
+use std::sync::Arc;
 
 fn try_unref_leaf(slice: SliceData) -> Result<StackItem> {
     match slice.remaining_bits() == 0 && slice.remaining_references() != 0 {
@@ -109,20 +108,27 @@ fn dict(
     Ok(())
 }
 
-// (key slice nbits - )
-fn dictcont(engine: &mut Engine, name: &'static str, keyreader: KeyReader, how: u8) -> Status {
+// (key slice nbits - ): exec_dict_get_exec. The key is a finite integer; one that does not fit
+// the key width (or, unsigned, is negative) is not found rather than an error.
+fn dictcont(engine: &mut Engine, name: &'static str, signed: bool, how: u8) -> Status {
     engine.load_instruction(Instruction::new(name))?;
     fetch_stack(engine, 3)?;
     let nbits = engine.cmd.var(0).as_integer_value(0..=1023)?;
     let dict = HashmapE::with_hashmap(nbits, engine.cmd.var(1).as_dict()?.cloned());
-    let key = keyreader(engine.cmd.var(2), nbits)?;
-    if let Some(data) = convert_dict_error(dict.get_with_gas(key, engine))? {
-        engine.cmd.vars.push(StackItem::continuation(ContinuationData::with_code(data)));
-        let n = engine.cmd.var_count() - 1;
+    let key = engine.cmd.var(2).as_integer()?;
+    if key.is_nan() {
+        fail!(ExceptionCode::IntegerOverflow);
+    }
+    let found = match key.as_slice(nbits, signed, true) {
+        Ok(key) => convert_dict_error(dict.get_with_gas(key, engine))?,
+        Err(_) => None,
+    };
+    if let Some(data) = found {
+        let cont = Arc::new(ContinuationData::with_code(data));
         if how.bit(SWITCH) {
-            switch(engine, var!(n))?;
+            engine.jump(cont)?;
         } else if how.bit(CALLX) {
-            callx(engine, n, false)?;
+            engine.call(cont)?;
         } else {
             fail!("dictcont: {:X}", how)
         }
@@ -246,28 +252,25 @@ fn pfxdictget(engine: &mut Engine, name: &'static str, how: u8) -> Status {
         convert_dict_error(dict.get_prefix_leaf_with_gas(key.clone(), engine))?
     {
         engine.cc.stack.push(StackItem::Slice(key.shrink_data(prefix.remaining_bits()..)));
-        if get_cont {
-            engine.cmd.vars.push(StackItem::continuation(ContinuationData::with_code(value)));
+        let cont = if get_cont {
+            Some(Arc::new(ContinuationData::with_code(value)))
         } else {
             engine.cc.stack.push(StackItem::Slice(value));
-        }
+            None
+        };
         engine.cc.stack.push(StackItem::Slice(suffix));
         if how.bit(RET) {
             engine.cc.stack.push(boolean!(true));
         }
-        if get_cont {
-            let n = engine.cmd.var_count();
-            if how.bit(SWITCH) {
-                switch(engine, var!(n - 1))
-            } else if how.bit(CALLX) {
-                callx(engine, n - 1, false)
-            } else {
-                fail!("pfxdictget: {:X}", how)
-            }
-        } else {
-            Ok(())
+        match cont {
+            Some(cont) if how.bit(SWITCH) => engine.jump(cont),
+            Some(cont) if how.bit(CALLX) => engine.call(cont),
+            Some(_) => fail!("pfxdictget: {:X}", how),
+            None => Ok(()),
         }
-    } else if how.bit(RET) || get_cont {
+    } else if how.bit(RET) || how.bit(SWITCH) {
+        // Not found: the quiet form and the jumps give the slice back; PFXDICTGET and
+        // PFXDICTGETEXEC raise a cell underflow (exec_pfx_dict_get).
         engine.cc.stack.push(engine.cmd.pop_var()?);
         if how.bit(RET) {
             engine.cc.stack.push(boolean!(false));
@@ -1117,42 +1120,42 @@ pub(super) fn execute_dictpushconst(engine: &mut Engine) -> Status {
 
 // (int slice nbits - )
 pub(super) fn execute_dictigetjmp(engine: &mut Engine) -> Status {
-    dictcont(engine, "DICTIGETJMP", keyreader_from_int, SWITCH)
+    dictcont(engine, "DICTIGETJMP", true, SWITCH)
 }
 
 // (int slice nbits - int or nothing)
 pub(super) fn execute_dictigetjmpz(engine: &mut Engine) -> Status {
-    dictcont(engine, "DICTIGETJMPZ", keyreader_from_int, SWITCH | STAY)
+    dictcont(engine, "DICTIGETJMPZ", true, SWITCH | STAY)
 }
 
 // (uint slice nbits - )
 pub(super) fn execute_dictugetjmp(engine: &mut Engine) -> Status {
-    dictcont(engine, "DICTUGETJMP", keyreader_from_uint, SWITCH)
+    dictcont(engine, "DICTUGETJMP", false, SWITCH)
 }
 
 // (uint slice nbits - int or nothing)
 pub(super) fn execute_dictugetjmpz(engine: &mut Engine) -> Status {
-    dictcont(engine, "DICTUGETJMPZ", keyreader_from_uint, SWITCH | STAY)
+    dictcont(engine, "DICTUGETJMPZ", false, SWITCH | STAY)
 }
 
 // (int slice nbits - )
 pub(super) fn execute_dictigetexec(engine: &mut Engine) -> Status {
-    dictcont(engine, "DICTIGETEXEC", keyreader_from_int, CALLX)
+    dictcont(engine, "DICTIGETEXEC", true, CALLX)
 }
 
 // (int slice nbits - int or nothing)
 pub(super) fn execute_dictigetexecz(engine: &mut Engine) -> Status {
-    dictcont(engine, "DICTIGETEXECZ", keyreader_from_int, CALLX | STAY)
+    dictcont(engine, "DICTIGETEXECZ", true, CALLX | STAY)
 }
 
 // (uint slice nbits - )
 pub(super) fn execute_dictugetexec(engine: &mut Engine) -> Status {
-    dictcont(engine, "DICTUGETEXEC", keyreader_from_uint, CALLX)
+    dictcont(engine, "DICTUGETEXEC", false, CALLX)
 }
 
 // (uint slice nbits - int or nothing)
 pub(super) fn execute_dictugetexecz(engine: &mut Engine) -> Status {
-    dictcont(engine, "DICTUGETEXECZ", keyreader_from_uint, CALLX | STAY)
+    dictcont(engine, "DICTUGETEXECZ", false, CALLX | STAY)
 }
 
 // (value key slice nbits - slice -1|0)

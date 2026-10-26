@@ -71,9 +71,15 @@ What it adds:
   its `KNOWN` list still differ and must keep differing. These rows are not frozen: the C++ table
   is the reference, so both drivers run them and must agree.
 - `vm_family_scenarios.py`: whole instruction families (every XCHG s(i),s(j), HASHEXT and BLS
-  opcode on stack set-ups that reach each of its checks, with gas budgets around them).
-  `vm_prefix_scenarios.py` appends the families listed in `COMPARED`; the others are written
-  with `vm_family_scenarios.py <out.tsv> <family> ...` and still differ.
+  opcode on stack set-ups that reach each of its checks, with gas budgets around them), and the
+  continuation instructions: jumps, calls, returns, captures, loops and their exits, savelist
+  definitions, closures, the default exception handler, dictionary jumps, and chains of
+  continuations dispatched by one jump around the gas for dispatches past the eighth.
+  `vm_prefix_scenarios.py` appends the families listed in `COMPARED` (all of them); one family
+  is written with `vm_family_scenarios.py <out.tsv> <family> ...`.
+- `vm_closure_fuzz.py`: seeded programs over continuations (closures, loops, saved exits,
+  captures, TRY, small budgets, a few versions) from a fixed grammar; its default seeds are the
+  `fuzz` family. More seeds: `vm_closure_fuzz.py <out.tsv> --seeds 101,102 --count 5000`.
 - Test signers in `tools/`: `build.sh <dir>` builds `slh_tool`, `mldsa_tool` and `lms_tool`
   (RFC 8554 Appendix A key generation from SEED and I, parallel).
 

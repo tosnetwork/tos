@@ -722,8 +722,11 @@ fn setaltctr() {
 
 #[test]
 fn setcontargs() {
+    // Copying 2 entries into a closure of 2 arguments leaves it 0 to take; the requested 2 more
+    // only applies to a continuation with no fixed count (end-state row
+    // setcontargs-copies-into-closure).
     let mut cont = ContinuationData::with_code(compile_code("PUSH s0").unwrap());
-    cont.nargs = 2;
+    cont.nargs = 0;
     cont.stack.push(int!(1));
     cont.stack.push(int!(2));
     cont.stack.push(int!(2));

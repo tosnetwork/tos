@@ -11,28 +11,161 @@
  */
 use crate::stack::{savelist::SaveList, SliceData, Stack, StackItem};
 use chain_block::{error, Cell, ExceptionCode, Result};
-use std::{fmt, mem};
+use std::{fmt, mem, sync::Arc};
 
-#[derive(Clone, Debug, Eq, PartialEq, Default)]
-pub enum ContinuationType {
-    AgainLoopBody(SliceData),
-    #[default]
-    Ordinary,
-    PushInt(i32),
-    Quit(i32),
-    RepeatLoopBody(SliceData, isize),
-    UntilLoopCondition(SliceData),
-    WhileLoopCondition(SliceData, SliceData),
-    ExcQuit,
+/// A reference from one continuation to another (a loop's body, an envelope's continuation, a
+/// PushInt continuation's next one). It holds a stack item that is always a continuation, so
+/// that releasing a long chain goes through the iterative release of stack items.
+#[derive(Clone)]
+pub struct ContEdge(StackItem);
+
+impl ContEdge {
+    pub fn new(cont: ContinuationData) -> Self {
+        Self(StackItem::Continuation(Arc::new(cont)))
+    }
+
+    pub fn from_arc(cont: Arc<ContinuationData>) -> Self {
+        Self(StackItem::Continuation(cont))
+    }
+
+    pub fn get(&self) -> &ContinuationData {
+        match &self.0 {
+            StackItem::Continuation(cont) => cont,
+            _ => &EMPTY_ORDINARY,
+        }
+    }
+
+    pub fn arc(&self) -> Arc<ContinuationData> {
+        match &self.0 {
+            StackItem::Continuation(cont) => cont.clone(),
+            _ => Arc::new(ContinuationData::new_empty()),
+        }
+    }
+
+    /// The continuation as a stack item (shares the continuation).
+    pub fn to_item(&self) -> StackItem {
+        self.0.clone()
+    }
+
+    /// Moves the edge out for releasing; the continuation that held it is being destroyed.
+    pub(crate) fn take_item(&mut self) -> StackItem {
+        mem::take(&mut self.0)
+    }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+static EMPTY_ORDINARY: ContinuationData = ContinuationData::new_empty();
+
+impl fmt::Debug for ContEdge {
+    // Shallow: names the kind only, so formatting a long chain does not recurse through it.
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "<{}>", self.get().type_of)
+    }
+}
+
+/// The kinds of continuation of the C++ VM. Only `Ordinary` and `Envelope` carry control data
+/// (nargs, a captured stack, a savelist): any other kind has `nargs = -1`, an empty stack and an
+/// empty savelist, and gets control data by being wrapped in an `Envelope` (`force_cdata`).
+#[derive(Clone, Debug, Default)]
+pub enum ContinuationType {
+    #[default]
+    Ordinary,
+    /// ArgContExt: its own control data, applied before the wrapped continuation runs.
+    Envelope(ContEdge),
+    Quit(i32),
+    ExcQuit,
+    /// Pushes the integer and continues with the next continuation.
+    PushInt(i32, ContEdge),
+    Repeat {
+        body: ContEdge,
+        after: ContEdge,
+        count: i64,
+    },
+    Again {
+        body: ContEdge,
+    },
+    Until {
+        body: ContEdge,
+        after: ContEdge,
+    },
+    While {
+        cond: ContEdge,
+        body: ContEdge,
+        after: ContEdge,
+        check_cond: bool,
+    },
+}
+
+impl ContinuationType {
+    /// The continuations this one refers to.
+    pub fn edges(&self) -> Vec<&ContEdge> {
+        match self {
+            Self::Ordinary | Self::Quit(_) | Self::ExcQuit => vec![],
+            Self::Envelope(next) | Self::PushInt(_, next) => vec![next],
+            Self::Repeat { body, after, .. } | Self::Until { body, after } => vec![body, after],
+            Self::Again { body } => vec![body],
+            Self::While { cond, body, after, .. } => vec![cond, body, after],
+        }
+    }
+
+    pub(crate) fn edges_mut(&mut self) -> Vec<&mut ContEdge> {
+        match self {
+            Self::Ordinary | Self::Quit(_) | Self::ExcQuit => vec![],
+            Self::Envelope(next) | Self::PushInt(_, next) => vec![next],
+            Self::Repeat { body, after, .. } | Self::Until { body, after } => vec![body, after],
+            Self::Again { body } => vec![body],
+            Self::While { cond, body, after, .. } => vec![cond, body, after],
+        }
+    }
+
+    /// The same kind and scalar fields; the edges are compared separately.
+    fn same_shape(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Ordinary, Self::Ordinary)
+            | (Self::Envelope(_), Self::Envelope(_))
+            | (Self::ExcQuit, Self::ExcQuit)
+            | (Self::Again { .. }, Self::Again { .. })
+            | (Self::Until { .. }, Self::Until { .. }) => true,
+            (Self::Quit(x), Self::Quit(y)) => x == y,
+            (Self::PushInt(x, _), Self::PushInt(y, _)) => x == y,
+            (Self::Repeat { count: x, .. }, Self::Repeat { count: y, .. }) => x == y,
+            (Self::While { check_cond: x, .. }, Self::While { check_cond: y, .. }) => x == y,
+            _ => false,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct ContinuationData {
     code: SliceData,
     pub nargs: isize,
     pub savelist: SaveList,
     pub stack: Stack,
     pub type_of: ContinuationType,
+}
+
+impl PartialEq for ContinuationData {
+    // Structural, with an explicit work list over the continuation edges, so comparing two long
+    // chains does not recurse through them.
+    fn eq(&self, other: &Self) -> bool {
+        let mut work = vec![(self, other)];
+        while let Some((x, y)) = work.pop() {
+            if std::ptr::eq(x, y) {
+                continue;
+            }
+            if x.code != y.code
+                || x.nargs != y.nargs
+                || x.savelist != y.savelist
+                || x.stack != y.stack
+                || !x.type_of.same_shape(&y.type_of)
+            {
+                return false;
+            }
+            for (a, b) in x.type_of.edges().into_iter().zip(y.type_of.edges()) {
+                work.push((a.get(), b.get()));
+            }
+        }
+        true
+    }
 }
 
 impl ContinuationData {
@@ -43,19 +176,6 @@ impl ContinuationData {
             savelist: SaveList::new(),
             stack: Stack::new(),
             type_of: ContinuationType::Ordinary,
-        }
-    }
-
-    pub fn move_without_stack(cont: &mut ContinuationData, body: SliceData) -> Self {
-        debug_assert!(cont.code.is_empty_bitstring());
-        debug_assert!(cont.nargs < 0);
-        debug_assert!(cont.savelist.is_empty());
-        Self {
-            code: mem::replace(&mut cont.code, body),
-            nargs: -1,
-            savelist: Default::default(),
-            stack: Stack::new(),
-            type_of: mem::take(&mut cont.type_of),
         }
     }
 
@@ -75,6 +195,22 @@ impl ContinuationData {
 
     pub fn code_mut(&mut self) -> &mut SliceData {
         &mut self.code
+    }
+
+    /// Whether this continuation carries control data of its own: the C++ OrdCont and ArgContExt.
+    pub fn has_control_data(&self) -> bool {
+        matches!(self.type_of, ContinuationType::Ordinary | ContinuationType::Envelope(_))
+    }
+
+    /// C++ `has_c0`: control data whose savelist defines c0.
+    pub fn has_c0(&self) -> bool {
+        self.has_control_data() && self.savelist.get(0).is_some()
+    }
+
+    /// Invariant of the kinds: only Ordinary and Envelope carry control data.
+    pub fn invariant_holds(&self) -> bool {
+        self.has_control_data()
+            || (self.nargs == -1 && self.stack.depth() == 0 && self.savelist.is_empty())
     }
 
     pub fn can_put_to_savelist_once(&self, i: usize) -> bool {
@@ -107,6 +243,7 @@ impl ContinuationData {
         Self::with_code_and_stack(code, Stack::new())
     }
 
+    /// A continuation of the given kind without control data.
     pub fn with_type(type_of: ContinuationType) -> Self {
         ContinuationData {
             code: SliceData::default(),
@@ -168,14 +305,15 @@ impl fmt::Display for ContinuationData {
 impl fmt::Display for ContinuationType {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let name = match self {
-            ContinuationType::AgainLoopBody(_) => "again",
             ContinuationType::Ordinary => "ordinary",
-            ContinuationType::PushInt(_) => "pushint",
+            ContinuationType::Envelope(_) => "envelope",
             ContinuationType::Quit(_) => "quit",
-            ContinuationType::RepeatLoopBody(_, _) => "repeat",
-            ContinuationType::UntilLoopCondition(_) => "until",
-            ContinuationType::WhileLoopCondition(_, _) => "while",
             ContinuationType::ExcQuit => "exception-quit",
+            ContinuationType::PushInt(..) => "pushint",
+            ContinuationType::Repeat { .. } => "repeat",
+            ContinuationType::Again { .. } => "again",
+            ContinuationType::Until { .. } => "until",
+            ContinuationType::While { .. } => "while",
         };
         write!(f, "{}", name)
     }

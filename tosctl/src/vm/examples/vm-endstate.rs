@@ -56,18 +56,19 @@ fn savelist(save: &SaveList) -> String {
 // Named as the C++ VM names its continuation classes.
 fn continuation(cont: &ContinuationData) -> anyhow::Result<String> {
     let name = match &cont.type_of {
-        ContinuationType::Ordinary => "vmc_std".to_string(),
-        ContinuationType::Quit(_) => "vmc_quit".to_string(),
-        ContinuationType::ExcQuit => "vmc_quit_exc".to_string(),
-        ContinuationType::PushInt(_) => "vmc_pushint".to_string(),
-        ContinuationType::RepeatLoopBody(..) => "vmc_repeat".to_string(),
-        ContinuationType::AgainLoopBody(_) => "vmc_again".to_string(),
-        ContinuationType::UntilLoopCondition(_) => "vmc_until".to_string(),
-        ContinuationType::WhileLoopCondition(..) => "vmc_while_cond".to_string(),
+        ContinuationType::Ordinary => "vmc_std",
+        ContinuationType::Envelope(_) => "vmc_envelope",
+        ContinuationType::Quit(_) => "vmc_quit",
+        ContinuationType::ExcQuit => "vmc_quit_exc",
+        ContinuationType::PushInt(..) => "vmc_pushint",
+        ContinuationType::Repeat { .. } => "vmc_repeat",
+        ContinuationType::Again { .. } => "vmc_again",
+        ContinuationType::Until { .. } => "vmc_until",
+        ContinuationType::While { check_cond: true, .. } => "vmc_while_cond",
+        ContinuationType::While { check_cond: false, .. } => "vmc_while_body",
     };
-    // The C++ VM's quit continuations carry no data of their own.
-    let plain = cont.nargs == -1 && cont.savelist.is_empty() && cont.stack.depth() == 0;
-    if plain && matches!(cont.type_of, ContinuationType::Quit(_) | ContinuationType::ExcQuit) {
+    // As in the C++ VM, only ordinary continuations and envelopes carry control data.
+    if !cont.has_control_data() {
         return Ok(format!("cont:{name}"));
     }
     Ok(format!(

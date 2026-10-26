@@ -101,6 +101,9 @@ fn collect_items(stack: &mut Vec<StackItem>, item: &mut StackItem) {
                 for item in &mut cont.stack.storage {
                     stack.push(std::mem::take(item))
                 }
+                for edge in cont.type_of.edges_mut() {
+                    stack.push(edge.take_item())
+                }
             }
             Err(data) => drop(data),
         },

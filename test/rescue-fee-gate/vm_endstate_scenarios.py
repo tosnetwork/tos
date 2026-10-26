@@ -246,6 +246,65 @@ def scenarios():
         prog(pushint(0), empty_slice, empty_slice, op([0xF9, 0x30, 0x02])),
     )
     add("bls-aggregateverify-0-short", prog(pushint(0), empty_slice, op([0xF9, 0x30, 0x03])))
+    # Continuations. A jump applies the target's whole savelist, c0 and c1 included; a call to
+    # a continuation that defines c0 is a jump; CALLCC captures c0 and c1; a loop keeps its
+    # whole body; savelist definitions keep a slot that is taken.
+    k0 = (cont(pushint(9)), cont(pushint(5)), SETCONTCTR_C0)  # { 5 } returning to { 9 }
+    add("jump-applies-saved-c0", prog(*k0, JMPX))
+    add("ifjmp-applies-saved-c0", prog(pushint(-1), *k0, IFJMP))
+    add("callxargs-to-saved-c0-is-a-jump", prog(pushint(4), pushint(6), *k0, op([0xDA, 0x10])))
+    add("callcc-captures-c0-c1", prog(cont(), op([0xDB, 0x34])))
+    add(
+        "callcc-generated-argument",
+        prog(cont(DROP, pushint(5)), op([0xEC, 0x01]), op([0xDB, 0x34])),
+    )
+    add("repeat-body-defines-c0", prog(pushint(2), *k0, op([0xE4]), pushint(3)))
+    add(
+        "setcontctr-keeps-taken-slot",
+        prog(
+            cont(pushint(9)),
+            cont(pushint(7)),
+            cont(pushint(5)),
+            SETCONTCTR_C0,
+            SETCONTCTR_C0,
+            op([0xD8]),
+        ),
+    )
+    add(
+        "saveboth-c0",
+        prog(cont(pushint(5)), POP_C0, cont(pushint(6)), POP_C1, op([0xED, 0xC0]), RETALT),
+    )
+    add(
+        "setcontargs-copies-into-closure",
+        prog(
+            pushint(1),
+            pushint(2),
+            op([0xC8, 0xC9, 0xD0]),
+            op([0xEE, 0x22]),
+            pushint(1),
+            op([0x01]),
+            pushint(2),
+            op([0x01]),
+            pushint(3),
+            op([0x01]),
+            op([0xEC, 0x22]),
+        ),
+    )
+    # The default handler pops its exit code when it is entered; an exception that reaches it
+    # ends the VM with that exception.
+    add("excquit-custom-13", prog(pushint(99), pushint(13), PUSH_C2, JMPX))
+    add(
+        "excquit-in-envelope",
+        prog(pushint(99), pushint(13), op([0xC8, 0xC9]), PUSH_C2, op([0xED, 0x64]), JMPX),
+    )
+    # One jump through nine continuations pays one gas for the ninth dispatch (version 9 on).
+    nine = [p for _ in range(8) for p in (pushint(1), op([0xE5]))]
+    add("dispatch-chain-of-nine", prog(*nine))
+    add("dispatch-chain-of-nine-v8", prog(*nine), version=8)
+    add(
+        "dict-key-out-of-range-is-a-miss",
+        prog(pushint(300), PUSHNULL, pushint(8), op([0xF4, 0xBC]), pushint(9)),
+    )
 
 
 # Rows that may differ only in the final stack and the error argument; exit code, gas, steps
