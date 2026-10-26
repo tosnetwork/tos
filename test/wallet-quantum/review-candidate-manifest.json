@@ -27,12 +27,12 @@
   },
   "compiler_binaries": {
     "FIFT_PATH": {
-      "bytes": 10985728,
-      "sha256": "00a35d05c3595d97782145ad92a3a13489af6e3301c2ffee53fb2f426a4afb80"
+      "bytes": 10189680,
+      "sha256": "2ed6f29a3a0dfb962050d3fa8f61ff76ec1299f31db9615f9ddcd31325092fbe"
     },
     "FUNC_PATH": {
-      "bytes": 1094416,
-      "sha256": "1ba8e7f24fb7000f0908bd0bf11bf647e4251df119fc4011ace72308e849e8f1"
+      "bytes": 1076616,
+      "sha256": "0ac8fa4a11c39ce92f95cdb73feb391559d32a4148e863c4b8545675c07a5eb8"
     }
   },
   "config": {
@@ -124,8 +124,8 @@
       "sha256": "77d121550d99c533cffe10d5f479c04777e6e7c34b712421473cfe6a24615717"
     },
     "repository/crypto/smartcont/wallet-quantum-auth.fc": {
-      "bytes": 5109,
-      "sha256": "2f08b2d44505b6dae340aadef3e21aa38c4c8c094c7e94768388c6867b66d0dd"
+      "bytes": 5268,
+      "sha256": "1bac82c410681286ed1da875d1e4596fb2e3c28326954eab1c95c7b42e7caa6b"
     },
     "repository/crypto/smartcont/wallet-quantum-code.fc": {
       "bytes": 4730,
@@ -365,7 +365,7 @@
     "final-head CI and activation approval"
   ],
   "scope": "Build or reproduce a reviewable Quantum candidate from an explicit chain config.\n\nThe bundle contains ordinary, self-contained code, its exact source and public\nwire/crypto/KDF vectors. It is not a reviewed release, a wallet enrollment, a\ncustody backup, or authorization to activate the candidate configuration.\n",
-  "source_revision": "6ad4680b644d6afb96074df2cf8db334640f7de6",
+  "source_revision": "67997843c01116f3f8f7dd407c5143938faec7b4",
   "status": "unapproved-review-candidate",
   "tracked_working_tree_changes": false
 }
