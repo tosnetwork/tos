@@ -7,10 +7,40 @@
 // nothing to do with the case under test, so it is armed differently: with
 // TOS_TEST_FAIL_DIR_FSYNC_WHEN naming a file, directory fsync fails only while that file
 // exists, and the test creates it just before the operation it means to fail.
+//
+// While TOS_TEST_FAIL_READDIR is set, reading a directory fails with EIO instead of
+// returning an entry, as a failing disk does, so a test can check that a reader tells a
+// failed read from the end of the directory.
 #include <cerrno>
 #include <cstdlib>
+#include <dirent.h>
 #include <dlfcn.h>
 #include <sys/stat.h>
+
+namespace {
+
+template <typename Entry>
+Entry* read_entry(DIR* dir, const char* name) {
+  using real_t = Entry* (*)(DIR*);
+  if (std::getenv("TOS_TEST_FAIL_READDIR") != nullptr) {
+    errno = EIO;
+    return nullptr;
+  }
+  static real_t real = reinterpret_cast<real_t>(dlsym(RTLD_NEXT, name));
+  if (real == nullptr) {
+    errno = ENOSYS;
+    return nullptr;
+  }
+  return real(dir);
+}
+
+}  // namespace
+
+// With 64-bit file offsets the header maps readdir to readdir64, and this definition
+// takes that symbol; on the supported 64-bit platforms the two are the same function.
+extern "C" struct dirent* readdir(DIR* dir) {
+  return read_entry<struct dirent>(dir, "readdir");
+}
 
 extern "C" int fsync(int fd) {
   using real_fsync_t = int (*)(int);

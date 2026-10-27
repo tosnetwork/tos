@@ -85,7 +85,8 @@ if(TARGET tl_api)
   target_link_libraries(tos-pq-consensus-key PRIVATE tos_pq_consensus_signer tos_pq_consensus tl_api tdutils
                         tos_signing_ledger OpenSSL::Crypto)
   # A directory flush that fails after the rename is reached through this shim, which
-  # makes fsync on a directory fail while the test asks it to. LD_PRELOAD is a Linux
+  # makes fsync on a directory fail while the test asks it to; the same shim makes a
+  # directory read fail, for the genesis ceremony's session check. LD_PRELOAD is a Linux
   # mechanism here; elsewhere the test runs without that one case. The shim is test-only:
   # it is outside the default build and is built through all-tests (or by name), never
   # as part of the tool.

@@ -472,6 +472,40 @@ bool parse_hash(std::string_view text, td::Bits256& out) {
   return true;
 }
 
+// Empty when `consensus` provably holds no consensus session directory: it does not exist,
+// or every entry of it was read and none is a session. Otherwise the reason to refuse. A
+// directory that cannot be opened or read to its end is not proof of anything.
+std::string refuse_unless_no_sessions(const std::string& consensus) {
+  DIR* dir = ::opendir(consensus.c_str());
+  if (dir == nullptr) {
+    if (errno == ENOENT) {
+      return {};
+    }
+    return consensus + ": cannot be inspected for consensus session directories (" + std::strerror(errno) +
+           "); refusing, since this node may have run validator groups";
+  }
+  std::string refused;
+  while (true) {
+    errno = 0;
+    const auto* entry = ::readdir(dir);
+    if (entry == nullptr) {
+      if (errno != 0) {
+        refused = consensus + ": cannot be read to its end (" + std::strerror(errno) +
+                  "); refusing, since this node may have run validator groups";
+      }
+      break;
+    }
+    if (std::strncmp(entry->d_name, "consensus.", 10) == 0) {
+      refused = consensus +
+                " holds consensus session directories: this node has run validator groups, so it is not a fresh "
+                "identity at genesis";
+      break;
+    }
+  }
+  ::closedir(dir);
+  return refused;
+}
+
 // The genesis ceremony: a complete signing ledger, asserting that this node has never
 // signed, whose history starts at the zerostate. Safe only for a fresh identity created for
 // this zerostate; see the genesis runbook. It refuses wherever the node may have signed:
@@ -499,23 +533,10 @@ int init_signing_ledger(int argc, char** argv) {
     return 1;
   }
   const std::string consensus = db_root + "/consensus";
-  if (DIR* dir = ::opendir(consensus.c_str())) {
-    bool has_sessions = false;
-    while (auto* entry = ::readdir(dir)) {
-      if (std::strncmp(entry->d_name, "consensus.", 10) == 0) {
-        has_sessions = true;
-        break;
-      }
-    }
-    ::closedir(dir);
-    if (has_sessions) {
-      ::close(lock);
-      std::fprintf(stderr,
-                   "%s holds consensus session directories: this node has run validator groups, so it "
-                   "is not a fresh identity at genesis\n",
-                   consensus.c_str());
-      return 1;
-    }
+  if (auto refused = refuse_unless_no_sessions(consensus); !refused.empty()) {
+    ::close(lock);
+    std::fprintf(stderr, "%s\n", refused.c_str());
+    return 1;
   }
   td::Bits256 validator;
   std::memcpy(validator.data(), validator_id.data(), 32);
