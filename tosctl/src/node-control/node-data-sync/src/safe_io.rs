@@ -2,14 +2,109 @@ use anyhow::{Context, Result, ensure};
 use sha2::{Digest, Sha256};
 use std::{
     ffi::CString,
-    fs::{File, OpenOptions},
+    fs::File,
     io::{Read, Write},
     os::{
         fd::{AsRawFd, FromRawFd, OwnedFd},
-        unix::fs::{MetadataExt, OpenOptionsExt},
+        unix::fs::MetadataExt,
     },
     path::{Path, PathBuf},
 };
+
+const RESOLVE_NO_XDEV: u64 = 0x01;
+const RESOLVE_NO_MAGICLINKS: u64 = 0x02;
+const RESOLVE_NO_SYMLINKS: u64 = 0x04;
+const RESOLVE_BENEATH: u64 = 0x08;
+/// Every lookup below a held directory: no symlink, no `..` escape, no other mount.
+const BENEATH: u64 =
+    RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS | RESOLVE_NO_XDEV | RESOLVE_NO_MAGICLINKS;
+
+/// `openat2(2)` with explicit resolution rules. There is no fallback: a kernel without it
+/// refuses, rather than resolving a name that another account may have replaced.
+fn openat2(dir: i32, name: &std::ffi::CStr, flags: i32, mode: u64, resolve: u64) -> Result<File> {
+    #[repr(C)]
+    struct OpenHow {
+        flags: u64,
+        mode: u64,
+        resolve: u64,
+    }
+    let how = OpenHow { flags: u64::try_from(flags | libc::O_CLOEXEC)?, mode, resolve };
+    // SAFETY: descriptor, terminated name and open_how stay valid for the call.
+    let raw = unsafe {
+        libc::syscall(libc::SYS_openat2, dir, name.as_ptr(), &how, std::mem::size_of::<OpenHow>())
+    };
+    if raw < 0 {
+        let error = std::io::Error::last_os_error();
+        ensure!(
+            error.raw_os_error() != Some(libc::ENOSYS),
+            "this kernel lacks openat2, which safe traversal requires"
+        );
+        return Err(error.into());
+    }
+    // SAFETY: openat2 returned a new descriptor owned here.
+    Ok(unsafe { File::from_raw_fd(i32::try_from(raw)?) })
+}
+/// Open `name` below the held directory `dir` without following any link or crossing a mount.
+fn open_beneath(dir: i32, name: &str, flags: i32, mode: u64) -> Result<File> {
+    let name = CString::new(name)?;
+    openat2(dir, &name, flags | libc::O_NOFOLLOW, mode, BENEATH)
+}
+/// The kind of one directory entry, read without following it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Kind {
+    Directory,
+    File,
+    Link,
+    Other,
+}
+/// Entry names of a held directory, listed through that descriptor, never by path.
+fn names(directory: &File) -> Result<Vec<String>> {
+    use std::os::unix::ffi::OsStrExt;
+    let mut names = Vec::new();
+    for entry in std::fs::read_dir(format!("/proc/self/fd/{}", directory.as_raw_fd()))? {
+        ensure!(names.len() < crate::budget::MAX_ALLOCATION_ENTRIES, "directory entry limit");
+        let name = entry?.file_name();
+        names.push(
+            std::str::from_utf8(name.as_bytes()).context("non-text directory entry")?.to_owned(),
+        );
+    }
+    names.sort();
+    Ok(names)
+}
+/// Stat one entry of a held directory without following it.
+fn stat_beneath(directory: &File, name: &str) -> Result<Option<libc::stat>> {
+    let name = CString::new(name)?;
+    let mut stat: libc::stat = unsafe { std::mem::zeroed() };
+    // SAFETY: held descriptor, terminated name and output buffer stay valid for the call.
+    if unsafe {
+        libc::fstatat(directory.as_raw_fd(), name.as_ptr(), &mut stat, libc::AT_SYMLINK_NOFOLLOW)
+    } == 0
+    {
+        return Ok(Some(stat));
+    }
+    let error = std::io::Error::last_os_error();
+    if error.kind() == std::io::ErrorKind::NotFound {
+        return Ok(None);
+    }
+    Err(error.into())
+}
+/// Metadata of one entry, as `fstatat` reported it below a held directory.
+#[derive(Clone, Copy, Debug)]
+pub struct Entry {
+    pub kind: Kind,
+    pub size: u64,
+    pub allocated: u64,
+    pub links: u64,
+    pub identity: (u64, u64),
+}
+fn kind(stat: &libc::stat) -> Kind {
+    match stat.st_mode & libc::S_IFMT {
+        libc::S_IFDIR => Kind::Directory,
+        libc::S_IFREG => Kind::File,
+        libc::S_IFLNK => Kind::Link,
+        _ => Kind::Other,
+    }
+}
 
 /// Descriptor-relative traversal refuses symlinks at every component.
 pub struct Root {
@@ -17,17 +112,98 @@ pub struct Root {
     pub path: PathBuf,
 }
 impl Root {
+    /// A canonical absolute root, resolved in one call that refuses a symlink in any component.
+    /// Descendants of a tree another account controls are opened with `open_child`, below
+    /// the descriptor already held, never by name from here.
     pub fn open(path: &Path) -> Result<Self> {
         ensure!(
             path.is_absolute() && std::fs::canonicalize(path)? == path,
             "root must be canonical and link-free"
         );
-        let directory = OpenOptions::new()
-            .read(true)
-            .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
-            .open(path)?;
+        let name = CString::new(path.as_os_str().as_encoded_bytes())?;
+        let directory = openat2(
+            libc::AT_FDCWD,
+            &name,
+            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW,
+            0,
+            RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS,
+        )
+        .with_context(|| format!("cannot open root {}", path.display()))?;
         ensure!(directory.metadata()?.is_dir(), "root is not a directory");
         Ok(Self { directory, path: path.to_owned() })
+    }
+    /// A descendant directory, opened below this held descriptor: no link, no `..`, no mount.
+    pub fn open_child(&self, relative: &str) -> Result<Self> {
+        self.open_child_optional(relative)?
+            .with_context(|| format!("missing directory {relative} in {}", self.path.display()))
+    }
+    /// As `open_child`, with absence reported as `None` and every other refusal as an error.
+    pub fn open_child_optional(&self, relative: &str) -> Result<Option<Self>> {
+        super::paths::relative(relative)?;
+        self.attached()?;
+        match open_beneath(
+            self.directory.as_raw_fd(),
+            relative,
+            libc::O_RDONLY | libc::O_DIRECTORY,
+            0,
+        ) {
+            Ok(directory) => Ok(Some(Self { directory, path: self.path.join(relative) })),
+            Err(error)
+                if error
+                    .downcast_ref::<std::io::Error>()
+                    .is_some_and(|e| e.kind() == std::io::ErrorKind::NotFound) =>
+            {
+                Ok(None)
+            }
+            Err(error) => Err(error.context(format!(
+                "refusing unsafe directory {relative} in {}",
+                self.path.display()
+            ))),
+        }
+    }
+    /// Entry names of this directory, listed through the held descriptor.
+    pub fn names(&self) -> Result<Vec<String>> {
+        names(&self.directory)
+    }
+    /// Kind of one direct entry, read through the held descriptor without following it.
+    pub fn kind(&self, name: &str) -> Result<Option<Kind>> {
+        Ok(self.entry(name)?.map(|entry| entry.kind))
+    }
+    /// One direct entry, read through the held descriptor without following it.
+    pub fn entry(&self, name: &str) -> Result<Option<Entry>> {
+        ensure!(super::paths::relative(name)?.len() == 1, "entry must be a direct child");
+        let Some(stat) = stat_beneath(&self.directory, name)? else {
+            return Ok(None);
+        };
+        Ok(Some(Entry {
+            kind: kind(&stat),
+            size: u64::try_from(stat.st_size)?,
+            allocated: u64::try_from(stat.st_blocks)?
+                .checked_mul(512)
+                .context("allocated size overflow")?,
+            links: stat.st_nlink,
+            identity: (stat.st_dev, stat.st_ino),
+        }))
+    }
+    /// A second handle on the same held directory.
+    pub fn duplicate(&self) -> Result<Self> {
+        Ok(Self { directory: self.directory.try_clone()?, path: self.path.clone() })
+    }
+    /// A directory inside this tree is opened below the held descriptor; a directory
+    /// elsewhere by its canonical path. A tree another account controls is never re-resolved.
+    pub fn open_anchored(&self, directory: &Path) -> Result<Self> {
+        if directory == self.path {
+            return self.duplicate();
+        }
+        match directory.strip_prefix(&self.path) {
+            Ok(relative) => self.open_child(relative.to_str().context("non-text path")?),
+            Err(_) => Self::open(directory),
+        }
+    }
+    /// Device and inode of the held descriptor.
+    pub fn identity(&self) -> Result<(u64, u64)> {
+        let metadata = self.directory.metadata()?;
+        Ok((metadata.dev(), metadata.ino()))
     }
     pub fn create(path: &Path) -> Result<Self> {
         use std::os::unix::fs::DirBuilderExt;
@@ -78,15 +254,9 @@ impl Root {
                     );
                 }
             }
-            let raw = unsafe {
-                libc::openat(
-                    dir.as_raw_fd(),
-                    name.as_ptr(),
-                    libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
-                )
-            };
-            ensure!(raw >= 0, "refusing unsafe directory: {}", std::io::Error::last_os_error());
-            dir = unsafe { OwnedFd::from_raw_fd(raw) };
+            dir = open_beneath(dir.as_raw_fd(), part, libc::O_RDONLY | libc::O_DIRECTORY, 0)
+                .context("refusing unsafe directory")?
+                .into();
         }
         Ok((dir, CString::new(*last)?))
     }
@@ -98,15 +268,14 @@ impl Root {
     }
     pub fn read(&self, path: &str, max: u64) -> Result<File> {
         let (dir, name) = self.parent(path, false)?;
-        let raw = unsafe {
-            libc::openat(
-                dir.as_raw_fd(),
-                name.as_ptr(),
-                libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC,
-            )
-        };
-        ensure!(raw >= 0, "cannot safely read {path}: {}", std::io::Error::last_os_error());
-        let file = unsafe { File::from_raw_fd(raw) };
+        let file = openat2(
+            dir.as_raw_fd(),
+            &name,
+            libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_NONBLOCK,
+            0,
+            BENEATH,
+        )
+        .with_context(|| format!("cannot safely read {path}"))?;
         let metadata = file.metadata()?;
         ensure!(
             metadata.is_file() && metadata.nlink() == 1 && metadata.len() <= max,
@@ -282,8 +451,11 @@ impl Root {
                 error.kind() == std::io::ErrorKind::AlreadyExists,
                 "cannot create lock: {error}"
             );
-            // SAFETY: as above; an existing entry is opened without creation.
-            let raw = unsafe { libc::openat(self.directory.as_raw_fd(), name.as_ptr(), flags) };
+            // SAFETY: as above; an existing entry is opened without creation, and a planted
+            // FIFO cannot block the open.
+            let raw = unsafe {
+                libc::openat(self.directory.as_raw_fd(), name.as_ptr(), flags | libc::O_NONBLOCK)
+            };
             ensure!(raw >= 0, "cannot open lock: {}", std::io::Error::last_os_error());
             (raw, false)
         };
@@ -356,37 +528,19 @@ fn hand_over_entry(
     if !metadata.is_dir() {
         return Ok(());
     }
-    for entry in std::fs::read_dir(format!("/proc/self/fd/{}", file.as_raw_fd()))? {
-        use std::os::unix::ffi::OsStrExt;
-        let name = CString::new(entry?.file_name().as_bytes())?;
-        #[repr(C)]
-        struct OpenHow {
-            flags: u64,
-            mode: u64,
-            resolve: u64,
-        }
-        let how = OpenHow {
-            flags: (libc::O_RDONLY | libc::O_NONBLOCK | libc::O_NOFOLLOW | libc::O_CLOEXEC) as u64,
-            mode: 0,
-            resolve: 1 | 4 | 8, // NO_XDEV, NO_SYMLINKS, BENEATH
-        };
-        // SAFETY: parent descriptor, terminated name and open_how stay valid for the call.
-        let raw = unsafe {
-            libc::syscall(
-                libc::SYS_openat2,
-                file.as_raw_fd(),
-                name.as_ptr(),
-                &how,
-                std::mem::size_of::<OpenHow>(),
-            )
-        };
+    for name in names(file)? {
+        let stat = stat_beneath(file, &name)?.context("hand-over entry vanished")?;
         ensure!(
-            raw >= 0,
-            "ownership hand-over refuses an unsafe entry: {}",
-            std::io::Error::last_os_error()
+            matches!(kind(&stat), Kind::Directory | Kind::File),
+            "ownership hand-over refuses a link or special file"
         );
-        // SAFETY: openat2 returned a new descriptor owned here.
-        let child = unsafe { File::from_raw_fd(i32::try_from(raw)?) };
+        let child = open_beneath(file.as_raw_fd(), &name, libc::O_RDONLY | libc::O_NONBLOCK, 0)
+            .context("ownership hand-over refuses an unsafe entry")?;
+        let opened = child.metadata()?;
+        ensure!(
+            (opened.dev(), opened.ino()) == (stat.st_dev, stat.st_ino),
+            "ownership hand-over entry was replaced"
+        );
         hand_over_entry(&child, owner, invoker, remaining)?;
     }
     Ok(())
@@ -505,6 +659,37 @@ pub(crate) mod ownership_tests {
     fn owner_of(path: &Path) -> Result<(u32, u32)> {
         let metadata = std::fs::symlink_metadata(path)?;
         Ok((metadata.uid(), metadata.gid()))
+    }
+
+    #[test]
+    fn descendants_never_resolve_through_a_swapped_intermediate_directory() -> Result<()> {
+        let temporary = tempfile::tempdir()?;
+        let base = temporary.path().canonicalize()?;
+        let root = Root::create(&base.join("root"))?;
+        root.write_new("a/b/file", b"own")?;
+        let decoy = base.join("decoy");
+        std::fs::create_dir_all(decoy.join("b"))?;
+        std::fs::write(decoy.join("b/file"), b"decoy")?;
+        std::fs::rename(root.path.join("a"), root.path.join("a.real"))?;
+        std::os::unix::fs::symlink(&decoy, root.path.join("a"))?;
+        for (label, result) in [
+            ("open", root.open_child("a/b").map(|_| ())),
+            ("read", root.read("a/b/file", 16).map(|_| ())),
+            ("create", root.create_file("a/b/new").map(|_| ())),
+        ] {
+            let text = format!("{:#}", result.err().context(label)?);
+            // A link as a path component is ELOOP; as the component opened with O_NOFOLLOW
+            // and O_DIRECTORY it is ENOTDIR. Both are the link refusal, never a lookup.
+            assert!(
+                text.contains("refusing unsafe directory")
+                    && (text.contains("Too many levels of symbolic links")
+                        || text.contains("Not a directory")),
+                "{label}: wrong refusal: {text}"
+            );
+        }
+        assert_eq!(std::fs::read(decoy.join("b/file"))?, b"decoy");
+        assert!(absent(&decoy.join("b/new"))?, "a file was created through the swapped link");
+        Ok(())
     }
 
     #[test]

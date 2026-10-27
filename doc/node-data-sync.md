@@ -151,11 +151,13 @@ start. It accepts three shapes and refuses everything else before the node is st
 | system unit, `User=` a fixed non-root account (for example `tos`) | root | that account |
 
 The third shape is the operator bundle's full node: `User=tos`, `Group=tos`, data
-in `/var/lib/tos/fullnode`. Stop and start then go through the system manager. It
-is refused when `User=` is missing, is `root` or resolves to uid 0, names a
-`DynamicUser=` account, has a `Group=` other than the account's primary group, or
-when the invoker is neither that account nor root. A user-manager unit that names
-a `User=` is refused, so root cannot address another account through its own manager.
+in `/var/lib/tos/fullnode`. Stop and start then go through the system manager. A
+system unit is refused when `User=` is missing, is `root` or resolves to uid 0,
+uses `DynamicUser=`, or has a `Group=` other than the account's primary group;
+these checks apply to the second shape too, not only to a service account. It is
+also refused when the invoker is neither that account nor root. A user-manager
+unit that names a `User=` is refused, so root cannot address another account
+through its own manager.
 
 Ownership is checked against the right account at each boundary:
 
@@ -172,14 +174,37 @@ Ownership is checked against the right account at each boundary:
   account therefore cannot re-point a path root resolves.
 - With a service account, each budget root must belong to root or to the service account.
 
+The service account can rename and replace anything inside the database tree, so
+the invoker never resolves a name there. The database root is opened once, and
+every directory and file below it is opened relative to that held descriptor with
+`openat2(RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS | RESOLVE_NO_XDEV)`. Listings are
+read through the same descriptor that the children are then opened from. A
+symlink, a replaced directory, another mount or a hard-linked file refuses. A
+kernel without `openat2` refuses; there is no fallback.
+
+The native database library opens paths itself and writes while it opens, so it
+never sees the installed tree. To read the installed StateDb's local records,
+restore and recovery copy `state/` through descriptors into a private
+`state-capture` directory of the operation, open only that copy, and remove it on
+success and on failure. Space for the copy, a table flushed from its write-ahead
+logs and 64 MiB of native metadata is admitted before copying. A capture left by an
+interrupted run is removed before the next one and is never read, so an operation
+holds at most one and it never becomes authoritative.
+
+Consistency of that copy rests on the cooperative-node model: the service is
+stopped, its native writer has shut down, and no process holds a writable
+descriptor on the tree. The copy includes the write-ahead logs and every other
+database file. Per-file size and change stamps refuse a change they can detect.
+They do not make the copy transactionally consistent against a concurrent writer,
+and they do not exclude a deliberate writer running as the service account.
+
 Root never leaves a file the node cannot open. A configuration lock created while
 the node is stopped takes the database directory's owner and group. Restore builds
 the replacement privately as root, then gives every entry it created to the
-installed root's owner before the forward-only boundary; opening the installed
-StateDb to read local records hands back any file the native library wrote. The
-hand-over walks descriptors only, never crosses a link or a mount, and refuses
-hard links, special files and entries of a third account. Files of the operation,
-catalog and cache stay the invoker's.
+installed root's owner before the forward-only boundary. The hand-over walks
+descriptors only, never crosses a link or a mount, and refuses hard links,
+special files and entries of a third account. Files of the operation, catalog and
+cache stay the invoker's.
 
 Restore uses the same service description, so the third shape is also a
 supported restore target. The operator bundle's full-node unit serves JSON-RPC

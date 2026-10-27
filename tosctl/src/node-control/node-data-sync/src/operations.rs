@@ -377,16 +377,82 @@ pub fn restore(request: &RestoreRequest, operation_path: &Path) -> Result<Journa
     start_installed(&request.context, &operation, &mut journal)?;
     Ok(journal)
 }
-/// Opening a native database writes into it. Files written by a privileged invoker go back
-/// to the installed tree's owner even when the export fails, so the node can still open it.
-fn export_installed(installed: &Root) -> Result<(ChainRecords, records::LocalRecords)> {
-    let state = installed.path.join("state");
-    let exported =
-        node_store::OfflineStore::open_existing(&state).and_then(|store| records::export(&store));
-    let returned = Root::open(&state).and_then(|root| root.hand_over(installed.owner()?));
-    let exported = exported?;
-    returned?;
-    Ok(exported)
+/// Fixed name of the private StateDb capture inside an operation directory. There is at
+/// most one: a leftover from an interrupted run is removed before the next capture, and
+/// a capture is never resumed or read again, so it never becomes authoritative.
+const STATE_CAPTURE: &str = "state-capture";
+/// Files the native library writes when it opens and recovers the capture: a new
+/// manifest and options file and its info log.
+const STATE_CAPTURE_METADATA: u64 = 64 << 20;
+/// Space for one capture of `state`: the copy, a table flushed from its write-ahead logs
+/// while the copy recovers, and native metadata. Checked arithmetic throughout.
+fn state_capture_reservation(state: &Root) -> Result<u64> {
+    let (mut copy, mut logs) = (0_u64, 0_u64);
+    for file in trees::inventory(state)? {
+        copy = copy.checked_add(file.size).context("StateDb capture size overflow")?;
+        if file.path.ends_with(".log") {
+            logs = logs.checked_add(file.size).context("StateDb log size overflow")?;
+        }
+    }
+    copy.checked_add(logs)
+        .and_then(|n| n.checked_add(STATE_CAPTURE_METADATA))
+        .context("StateDb capture reservation overflow")
+}
+fn discard_state_capture(operation: &Root) -> Result<()> {
+    if operation.kind(STATE_CAPTURE)?.is_some() {
+        operation.remove_tree(STATE_CAPTURE).context("remove leftover StateDb capture")?;
+    }
+    Ok(())
+}
+/// Read the installed tree's local records without ever opening it by name as the invoker.
+///
+/// The native library resolves paths itself and writes while it opens a database, so it
+/// never sees the installed tree, whose entries the service account can replace. `state`
+/// is opened below the held installed-root descriptor and copied, file by file through
+/// descriptors, into a private directory of the invoker's operation; only that copy is
+/// opened. A link, a replaced directory, another mount or a hard link refuses.
+///
+/// Consistency: the service is stopped, its native writer has shut down and no process
+/// holds a writable descriptor on the tree (checked when it was frozen). Under that
+/// cooperative-node model the copy, which includes the write-ahead logs and every other
+/// database file, is the database as the node left it. Per-file size and change stamps
+/// refuse a change they can detect; they do not make the copy transactionally consistent
+/// against a concurrent writer, and they do not exclude a deliberate same-account writer.
+fn export_installed(
+    installed: &Root,
+    operation: &Root,
+    policy: &crate::budget::DiskPolicy,
+    budget_roots: &[PathBuf],
+) -> Result<(ChainRecords, records::LocalRecords)> {
+    discard_state_capture(operation)?;
+    let state =
+        trees::optional_directory(installed, "state")?.context("StateDb directory is missing")?;
+    let reserve = state_capture_reservation(&state)?;
+    crate::budget::admit(
+        policy,
+        &[crate::budget::allocated(budget_roots)?],
+        reserve,
+        operation.space()?,
+    )
+    .context("disk refusal before the private StateDb capture")?;
+    let capture = Root::create(&operation.path.join(STATE_CAPTURE))?;
+    let exported = (|| {
+        trees::copy_tree(&state, &capture, "")?;
+        capture.sync()?;
+        let store = node_store::OfflineStore::open_existing(&capture.path)?;
+        records::export(&store)
+    })();
+    // Removed on success and on failure; a crash leaves it for the next discard.
+    let removed = operation.remove_tree(STATE_CAPTURE);
+    match (exported, removed) {
+        (Ok(exported), Ok(())) => Ok(exported),
+        (Ok(_), Err(error)) => Err(error.context("remove private StateDb capture")),
+        (Err(error), Ok(())) => Err(error.context("private StateDb capture")),
+        (Err(error), Err(cleanup)) => {
+            Err(error
+                .context(format!("private StateDb capture; its removal also failed: {cleanup:#}")))
+        }
+    }
 }
 struct StoppedTarget<'a> {
     operation_id: &'a str,
@@ -424,21 +490,15 @@ fn stage_with_space(
         "overlays".to_owned(),
         "error".to_owned(),
     ];
-    for entry in fs::read_dir(&own.path)? {
-        let entry = entry?;
-        if entry.file_name().to_str().is_some_and(|name| name.starts_with("dht-")) {
-            private_names.push(
-                entry
-                    .file_name()
-                    .into_string()
-                    .map_err(|_| anyhow::anyhow!("transport path is not text"))?,
-            );
+    for name in own.names()? {
+        if name.starts_with("dht-") {
+            private_names.push(name);
         }
     }
     let mut private_bytes = 0_u64;
     for name in &private_names {
-        if !crate::safe_io::absent(&own.path.join(name))? {
-            for file in trees::inventory(&Root::open(&own.path.join(name))?)? {
+        if let Some(tree) = trees::optional_directory(&own, name)? {
+            for file in trees::inventory(&tree)? {
                 private_bytes = private_bytes
                     .checked_add(file.size)
                     .context("private preservation size overflow")?;
@@ -452,14 +512,24 @@ fn stage_with_space(
     let raw = signed.manifest.files.iter().try_fold(0_u64, |sum, file| {
         sum.checked_add(file.size).context("manifest raw size overflow")
     })?;
-    let reserve = crate::budget::reservation(raw, 0, private_bytes)?;
+    let state =
+        trees::optional_directory(&own, "state")?.context("StateDb directory is missing")?;
+    let reserve = crate::budget::reservation(raw, 0, private_bytes)?
+        .checked_add(state_capture_reservation(&state)?)
+        .context("task reservation overflow")?;
+    drop(state);
     crate::budget::admit(
         &request.context.disk_policy,
         &[crate::budget::allocated(&request.context.budget_roots)?],
         reserve,
         space,
     )?;
-    let (old, local) = export_installed(&own)?;
+    let (old, local) = export_installed(
+        &own,
+        operation,
+        &request.context.disk_policy,
+        &request.context.budget_roots,
+    )?;
     let anchors = required(&old, &local)?;
     let donor = chain(signed, objects)?;
     ensure!(
@@ -520,7 +590,7 @@ fn stage_with_space(
         || signing.pointer("/extraconfig/pq_consensus").is_some_and(|v| !v.is_null())
     {
         ensure!(
-            own.path.join("consensus").symlink_metadata()?.file_type().is_dir(),
+            own.kind("consensus")? == Some(crate::safe_io::Kind::Directory),
             "existing validator signing history is missing"
         );
     }
@@ -539,7 +609,7 @@ fn stage_with_space(
     // The replacement becomes the installed tree: it takes the installed root's owner,
     // which the service description checked is the service account.
     replacement.hand_over(own.owner()?)?;
-    identity.verify_sources()?;
+    identity.verify_sources(&own)?;
     replacement.sync()?;
     let preservation = serde_json::to_vec(
         &serde_json::json!({"identity":identity,"local_records":local,"anchors":anchors,"local_trees":local_trees}),
@@ -771,6 +841,7 @@ pub fn recover(operation_path: &Path) -> Result<RecoveryOutcome> {
             let catalog = Catalog::open(&request.cache, key)?;
             let stop = classify_preparation(&request, &signed, &operation)?;
             catalog.abort_download(&signed, &objects, &id, &operation)?;
+            discard_state_capture(&operation)?;
             // Normal reachability pruning retains every other lease and published generation.
             let removed_stage = if let Some(stop) = stop {
                 cleanup_stage(&request, &operation, &stop)?;
@@ -859,7 +930,12 @@ pub fn recover(operation_path: &Path) -> Result<RecoveryOutcome> {
         Recovery::NewContinueOnly => {
             // A boot may have advanced this tree. Corroborate its current coherent frontier;
             // never replace it with the original snapshot or overlay old signing records.
-            let (current, _) = export_installed(&Root::open(&request.context.database)?)?;
+            let (current, _) = export_installed(
+                &Root::open(&request.context.database)?,
+                &operation,
+                &request.context.disk_policy,
+                &request.context.budget_roots,
+            )?;
             authorize_references(&request, &operation, &mut journal, &current.frontier()?)?;
         }
     }
@@ -938,37 +1014,216 @@ mod tests {
             source_url: None,
         })
     }
-    #[test]
-    fn opening_the_installed_state_hands_written_files_back_even_on_failure() -> Result<()> {
-        use std::os::unix::fs::MetadataExt;
-        let Some(owner) = crate::safe_io::ownership_tests::other_owner() else {
-            eprintln!("SKIP: no second owner is available to this test process");
-            return Ok(());
-        };
-        let tmp = tempfile::tempdir()?;
-        let installed = Root::create(&tmp.path().canonicalize()?.join("installed"))?;
-        // A database without the native version record: opening it writes files, then refuses.
+    /// A tree of one installed database with a native (versionless) StateDb, an unrelated
+    /// populated native database as the decoy, and a private operation directory.
+    struct CaptureFixture {
+        _temporary: tempfile::TempDir,
+        base: PathBuf,
+        installed: Root,
+        operation: Root,
+        decoy: PathBuf,
+        policy: crate::budget::DiskPolicy,
+    }
+    fn capture_fixture() -> Result<CaptureFixture> {
+        use std::os::unix::fs::PermissionsExt;
+        let temporary = tempfile::tempdir()?;
+        let base = temporary.path().canonicalize()?;
+        fs::set_permissions(&base, fs::Permissions::from_mode(0o755))?;
+        let installed = Root::create(&base.join("installed"))?;
         drop(node_store::OfflineStore::create_staging(&installed.path.join("state"))?);
-        let directory = std::ffi::CString::new(installed.path.as_os_str().as_encoded_bytes())?;
-        // SAFETY: a NUL-free path of a directory this test owns.
-        ensure!(unsafe { libc::chown(directory.as_ptr(), owner.0, owner.1) } == 0);
-        let error = export_installed(&installed).err().context("versionless StateDb accepted")?;
+        let decoy = base.join("decoy");
+        drop(node_store::OfflineStore::create_staging(&decoy)?);
+        fs::write(decoy.join("marker"), b"unrelated database")?;
+        let operation = Root::create(&base.join("operation"))?;
+        let policy =
+            crate::budget::DiskPolicy { max_owned_bytes: 1 << 30, shutdown_free_bytes: Some(1) };
+        Ok(CaptureFixture { _temporary: temporary, base, installed, operation, decoy, policy })
+    }
+    /// Names, sizes, inodes, owners and modification times of every entry of a directory.
+    fn listing(path: &Path) -> Result<Vec<(String, u64, u64, u32, i64, i64)>> {
+        use std::os::unix::fs::MetadataExt;
+        let mut entries = Vec::new();
+        for entry in fs::read_dir(path)? {
+            let entry = entry?;
+            let metadata = entry.metadata()?;
+            entries.push((
+                entry.file_name().to_string_lossy().into_owned(),
+                metadata.len(),
+                metadata.ino(),
+                metadata.uid(),
+                metadata.mtime(),
+                metadata.mtime_nsec(),
+            ));
+        }
+        entries.sort();
+        Ok(entries)
+    }
+    fn export(fixture: &CaptureFixture, installed: &Root) -> Result<()> {
+        export_installed(installed, &fixture.operation, &fixture.policy, &[fixture.base.clone()])
+            .map(|_| ())
+    }
+    fn refused(fixture: &CaptureFixture, installed: &Root, reason: &str) -> Result<()> {
+        refused_beside(fixture, installed, reason, &fixture.decoy)
+    }
+    fn refused_beside(
+        fixture: &CaptureFixture,
+        installed: &Root,
+        reason: &str,
+        decoy: &Path,
+    ) -> Result<()> {
+        let before = listing(decoy)?;
+        let error = export(fixture, installed).err().context("swapped StateDb was read")?;
+        let text = format!("{error:#}");
+        assert!(text.contains(reason), "wrong refusal, expected {reason:?}: {text}");
+        assert_eq!(listing(decoy)?, before, "a write landed in the decoy database");
+        assert!(
+            fixture.operation.kind(STATE_CAPTURE)?.is_none(),
+            "a refused capture was left behind"
+        );
+        Ok(())
+    }
+    #[test]
+    fn private_state_capture_never_writes_the_installed_tree() -> Result<()> {
+        let fixture = capture_fixture()?;
+        let state = fixture.installed.path.join("state");
+        let before = listing(&state)?;
+        // A leftover capture from an interrupted run is discarded, never read.
+        fixture.operation.write_new(&format!("{STATE_CAPTURE}/CURRENT"), b"stale")?;
+        let error = export(&fixture, &fixture.installed).err().context("versionless accepted")?;
+        // The native library opened and refused the private copy, not the installed tree.
         assert!(format!("{error:#}").contains("StateDb version"), "wrong refusal: {error:#}");
-        let state = installed.path.join("state");
-        let mut entries = vec![state.clone()];
-        for entry in fs::read_dir(&state)? {
-            entries.push(entry?.path());
-        }
-        assert!(entries.len() > 2, "native open wrote no files to check");
-        for path in entries {
-            let metadata = fs::symlink_metadata(&path)?;
-            assert_eq!(
-                (metadata.uid(), metadata.gid()),
-                owner,
-                "{} was left with the invoker",
-                path.display()
+        assert_eq!(listing(&state)?, before, "the invoker wrote into the installed StateDb");
+        assert!(fixture.operation.kind(STATE_CAPTURE)?.is_none(), "capture left behind");
+        Ok(())
+    }
+    #[test]
+    fn swapped_state_symlink_refuses_and_leaves_the_decoy() -> Result<()> {
+        let fixture = capture_fixture()?;
+        let state = fixture.installed.path.join("state");
+        fs::rename(&state, fixture.base.join("state.real"))?;
+        std::os::unix::fs::symlink(&fixture.decoy, &state)?;
+        refused(&fixture, &fixture.installed, "local tree is a symlink or special file: state")
+    }
+    #[test]
+    fn swapped_intermediate_directory_refuses_and_leaves_the_decoy() -> Result<()> {
+        let fixture = capture_fixture()?;
+        // The installed root is held; then its own path is replaced by a symlink to another
+        // tree whose real `state` directory is an unrelated database. A lookup by name
+        // would resolve through the replaced component into that database.
+        let held = fixture.installed.duplicate()?;
+        let elsewhere = fixture.base.join("elsewhere");
+        fs::create_dir(&elsewhere)?;
+        drop(node_store::OfflineStore::create_staging(&elsewhere.join("state"))?);
+        fs::rename(&fixture.installed.path, fixture.base.join("installed.real"))?;
+        std::os::unix::fs::symlink(&elsewhere, &fixture.installed.path)?;
+        refused_beside(
+            &fixture,
+            &held,
+            "root path was exchanged or replaced",
+            &elsewhere.join("state"),
+        )
+    }
+    #[test]
+    fn hard_linked_state_file_refuses_and_leaves_the_decoy() -> Result<()> {
+        let fixture = capture_fixture()?;
+        fs::hard_link(fixture.decoy.join("marker"), fixture.installed.path.join("state/marker"))?;
+        refused(
+            &fixture,
+            &fixture.installed,
+            "tree contains a link or special file: marker (links=2)",
+        )
+    }
+    /// Re-executes itself in a private user and mount namespace, where it may mount.
+    #[test]
+    #[ignore = "mounts in a private namespace; run by the native CI step"]
+    fn foreign_mount_on_state_refuses_and_leaves_the_mounted_tree() -> Result<()> {
+        const INNER: &str = "NODE_SYNC_MOUNT_CONTROL_INNER";
+        if std::env::var_os(INNER).is_none() {
+            let output = std::process::Command::new("unshare")
+                .args(["--user", "--map-root-user", "--mount", "--"])
+                .arg(std::env::current_exe()?)
+                .args([
+                    "--exact",
+                    "operations::tests::foreign_mount_on_state_refuses_and_leaves_the_mounted_tree",
+                    "--ignored",
+                    "--nocapture",
+                ])
+                .env(INNER, "1")
+                .output()?;
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(
+                output.status.success() && stdout.contains("FOREIGN_MOUNT_REFUSAL_INNER_OK"),
+                "mount control failed: {stdout}{}",
+                String::from_utf8_lossy(&output.stderr)
             );
+            println!("\nFOREIGN_MOUNT_REFUSAL_OK");
+            return Ok(());
         }
+        let fixture = capture_fixture()?;
+        let state = fixture.installed.path.join("state");
+        let target = std::ffi::CString::new(state.as_os_str().as_encoded_bytes())?;
+        // SAFETY: terminated constant strings and path; a private namespace's mount table.
+        let mounted = unsafe {
+            libc::mount(c"tmpfs".as_ptr(), target.as_ptr(), c"tmpfs".as_ptr(), 0, std::ptr::null())
+        };
+        ensure!(mounted == 0, "tmpfs mount: {}", std::io::Error::last_os_error());
+        fs::write(state.join("CURRENT"), b"MANIFEST-000001\n")?;
+        let mounted_before = listing(&state)?;
+        let decoy_before = listing(&fixture.decoy)?;
+        let error = export(&fixture, &fixture.installed).err().context("mount accepted")?;
+        let text = format!("{error:#}");
+        assert!(
+            text.contains("refusing unsafe directory state") && text.contains("cross-device"),
+            "wrong refusal: {text}"
+        );
+        assert_eq!(listing(&state)?, mounted_before, "a write landed in the mounted tree");
+        assert_eq!(listing(&fixture.decoy)?, decoy_before);
+        println!("\nFOREIGN_MOUNT_REFUSAL_INNER_OK");
+        Ok(())
+    }
+    /// The production shape: root reads a tree owned by uid 65534, and a process running as
+    /// that account replaces `state` by a symlink to a root-owned database, before the
+    /// lookup and after the directory is held.
+    #[test]
+    #[ignore = "requires real root; run by the native CI step"]
+    fn root_capture_resists_a_service_account_swap() -> Result<()> {
+        use std::os::unix::{fs::MetadataExt, process::CommandExt};
+        // SAFETY: geteuid has no preconditions.
+        ensure!(unsafe { libc::geteuid() } == 0, "this control must run as real root");
+        let fixture = capture_fixture()?;
+        fixture.installed.hand_over_from((65534, 65534), 0)?;
+        let state = fixture.installed.path.join("state");
+        let decoy = fixture.decoy.display().to_string();
+        let swap = |script: &str| -> Result<()> {
+            let status = std::process::Command::new("/bin/sh")
+                .args(["-c", script, "swap", &decoy])
+                .current_dir(&fixture.installed.path)
+                // Dropping from root also clears supplementary groups before exec.
+                .uid(65534)
+                .gid(65534)
+                .status()?;
+            ensure!(status.success(), "unprivileged swap failed");
+            Ok(())
+        };
+        let before = listing(&state)?;
+        let error = export(&fixture, &fixture.installed).err().context("versionless accepted")?;
+        assert!(format!("{error:#}").contains("StateDb version"), "wrong refusal: {error:#}");
+        assert_eq!(listing(&state)?, before, "root wrote into the service account's StateDb");
+        assert!(listing(&state)?.iter().all(|entry| entry.3 == 65534));
+        // Before the lookup.
+        swap("mv state state.real && ln -s \"$1\" state")?;
+        refused(&fixture, &fixture.installed, "local tree is a symlink or special file: state")?;
+        swap("rm state && mv state.real state")?;
+        // After `state` is held, between the lookup and the copy.
+        let held = trees::optional_directory(&fixture.installed, "state")?.context("state")?;
+        swap("mv state state.real && ln -s \"$1\" state")?;
+        let decoy_before = listing(&fixture.decoy)?;
+        let target = Root::create(&fixture.operation.path.join("held-copy"))?;
+        let error = trees::copy_tree(&held, &target, "").err().context("swap after hold read")?;
+        assert!(format!("{error:#}").contains("root path was exchanged or replaced"));
+        assert_eq!(listing(&fixture.decoy)?, decoy_before);
+        assert!(fs::symlink_metadata(&fixture.decoy)?.uid() == 0);
+        println!("\nROOT_SERVICE_ACCOUNT_SWAP_OK");
         Ok(())
     }
     #[test]

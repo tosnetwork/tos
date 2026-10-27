@@ -1,4 +1,4 @@
-use anyhow::{Result, ensure};
+use anyhow::{Context, Result, ensure};
 
 pub const CHAIN_ROOTS: [&str; 4] = ["celldb", "files", "archive", "static"];
 
@@ -147,45 +147,44 @@ pub fn immutable_sst(path: &str) -> bool {
 
 /// A replacement must account for every database-root directory, never silently discard one.
 pub fn restore_root(root: &std::path::Path) -> Result<()> {
-    let index = root.join("wc0-index");
-    match std::fs::symlink_metadata(&index) {
-        Ok(_) => anyhow::bail!(
+    use crate::safe_io::Kind;
+    // Listed and inspected through the held root descriptor; nothing is followed by name.
+    let root = crate::safe_io::Root::open(root)?;
+    let index = root.path.join("wc0-index");
+    if root.kind("wc0-index")?.is_some() {
+        anyhow::bail!(
             "wallet-indexed nodes (existing {}) are not supported by restore in this version; a retired index must be removed by the operator before restore; the tool never deletes it; the standard validator configuration does not run the index; see doc/node-data-sync.md#supported-targets",
             index.display()
-        ),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => return Err(error.into()),
-    }
-    for entry in std::fs::read_dir(root)? {
-        let entry = entry?;
-        let metadata = std::fs::symlink_metadata(entry.path())?;
-        ensure!(
-            !metadata.file_type().is_symlink(),
-            "database-root symlink is unsupported: {}",
-            entry.path().display()
         );
-        if !metadata.is_dir() {
+    }
+    for name in root.names()? {
+        let path = root.path.join(&name);
+        let Some(kind) = root.kind(&name)? else {
+            continue;
+        };
+        ensure!(kind != Kind::Link, "database-root symlink is unsupported: {}", path.display());
+        if kind != Kind::Directory {
             continue;
         }
-        let name = entry.file_name();
-        let name =
-            name.to_str().ok_or_else(|| anyhow::anyhow!("database-root name is not text"))?;
-        match name {
+        match name.as_str() {
             "celldb" | "files" | "archive" | "static" | "state" | "keyring" | "consensus"
             | "catchains" | "adnl" | "overlays" | "error" | "tmp" => {}
             "import" => ensure!(
-                std::fs::read_dir(entry.path())?.next().transpose()?.is_none(),
+                crate::trees::optional_directory(&root, "import")?
+                    .context("pending import directory vanished")?
+                    .names()?
+                    .is_empty(),
                 "pending import directory is not supported by restore: {}",
-                entry.path().display()
+                path.display()
             ),
             "packed" => anyhow::bail!(
                 "legacy packed archive directory is not supported by restore: {}",
-                entry.path().display()
+                path.display()
             ),
             value if value.starts_with("dht-") => {}
             _ => anyhow::bail!(
                 "unknown database-root directory is not supported by restore: {}",
-                entry.path().display()
+                path.display()
             ),
         }
     }

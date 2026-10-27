@@ -75,13 +75,7 @@ pub(crate) fn select_account(
     ensure!(account_name(user), "unsupported service User= value");
     let resolved = resolve(user)?;
     ensure!(resolved.uid != 0, "a system unit running as root is not supported");
-    if user == invoker.name.trim() && resolved.uid == invoker.uid {
-        return Ok(Account { uid: invoker.uid, gid: invoker.gid, invoker: invoker.uid });
-    }
-    ensure!(
-        invoker.uid == 0,
-        "service must run as the invoking user, or as a dedicated service account when invoked as root"
-    );
+    // Every system unit, whether it runs as the invoker or as a service account.
     ensure!(
         unit.dynamic.trim() == "no",
         "a dynamically allocated service user is not supported; use a fixed service account"
@@ -90,6 +84,13 @@ pub(crate) fn select_account(
     ensure!(
         group.is_empty() || group == resolved.group,
         "service Group= must be the service account's primary group"
+    );
+    if user == invoker.name.trim() && resolved.uid == invoker.uid {
+        return Ok(Account { uid: invoker.uid, gid: invoker.gid, invoker: invoker.uid });
+    }
+    ensure!(
+        invoker.uid == 0,
+        "service must run as the invoking user, or as a dedicated service account when invoked as root"
     );
     Ok(Account { uid: resolved.uid, gid: resolved.gid, invoker: 0 })
 }
@@ -967,7 +968,21 @@ mod account_tests {
         let user = UnitAccount { user_manager: true, user: "", group: "", dynamic: "" };
         assert_eq!(select_account(&user, &alice, tos)?, own);
         assert!(!own.delegated());
+        assert_eq!(select_account(&system("alice", "alice", "no"), &alice, resolve)?, own);
         Ok(())
+    }
+
+    #[test]
+    fn invoking_user_system_unit_keeps_group_and_dynamic_user_checks() {
+        let alice = Invoker { uid: 1000, gid: 1000, name: "alice" };
+        let resolve = |_: &str| Ok(Resolved { uid: 1000, gid: 1000, group: "alice".to_owned() });
+        for (label, unit, expected) in [
+            ("foreign group", system("alice", "adm", "no"), "primary group"),
+            ("dynamic user", system("alice", "", "yes"), "dynamically allocated"),
+        ] {
+            let error = select_account(&unit, &alice, resolve).expect_err(label).to_string();
+            assert!(error.contains(expected), "{label}: wrong refusal: {error}");
+        }
     }
 
     #[test]
