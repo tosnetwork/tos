@@ -80,3 +80,9 @@ native predecessor and per-send time/configuration context; see
 [their capture contract](../falcon-auth/LINKED-ROOTS.md). Their1076/164-row
 population and wallet-falcon final validator are separate from this workflow's
 52-row fixture contract. Other consumers and full VM coverage remain open.
+
+The four-case ML-DSA and Falcon module consumers also use the shared capture
+helper, with explicit profile/code identity and their original adaptive probes
+and outcome-diversity checks. Their family-specific architecture validators
+run in the original readiness/Falcon workflows; they do not change this
+workflow's fixed52-row contract.

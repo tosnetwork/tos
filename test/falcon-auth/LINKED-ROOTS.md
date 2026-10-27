@@ -56,6 +56,34 @@ native output. Reads are capped at64MiB, native send attempts at20000, and Rust
 execution reuses the root driver's row/graph limits and bounded process
 supervisor. No native production state or algorithm changes.
 
+The same capture/validator also covers the existing ML-DSA and Falcon module
+transaction producers, with four final cases each. Adaptive gas-sizing probes
+remain on their original plain native emulator and outside these exported
+four-case populations. Legacy names/exports and the authored outcome-diversity
+report remain unchanged; root names add capture ordinals. Both populations
+require authentic fresh zero-predecessor wrappers and their original module
+code, so another valid contract cannot silently substitute for the profile:
+
+| Family | Module code root |
+|---|---|
+| module-pq | `570a064f8cd152c32f2c8a5694e1807c39cfb54efabb7e1147552a3c907cc239` |
+| module-falcon | `6eddb777521f31be62601bf978d73e68c5048e3ba76d535c59390b6976bcd918` |
+
+These roots bind the repeatable pre-migration compilation/population, not VM
+effects. Intentional module changes need a reviewed baseline refresh. Full
+module comparison uses `linked_roots.py --module-family FAMILY --compare A B`,
+binding parent `commit.txt`, producer report and capture source to the expected
+checkout. Readiness and wallet-falcon retain their original architecture/job
+requirements. The shared helper is imported without shadowing either profile's
+different `protocol` or `build_contracts` module.
+
+`test/executor-parity/test_module_roots.py` runs twelve damaged-artifact
+controls per profile. Wrong code and nonzero-predecessor controls are actual
+successful native executions with coherent input/output/hash updates; native
+Account storage end LT must exceed the previous transaction start LT. Both
+sides reporting these equally wrong populations still fail the scope checks.
+These controls preserve all original positive assertions and bounded execution.
+
 `test_linked_roots.py --artifacts artifacts` damages actual outputs, including
 identical bad roots on both local sides, and requires specific rejections.
 Self-comparing restored local artifacts is a checker test, not architecture

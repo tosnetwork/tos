@@ -21,6 +21,8 @@ from transaction_roots import MAX_INPUT_BYTES, compare, expected_row
 POPULATIONS = {
     "two-hop": (1076, "6cb517095431c1a4a429434772847c2e222e71c56a95430f1f1eafad23cb9864", 688),
     "receipt": (164, "341f5d4e83f43ef63d5246c4fd2791ca5b7c1b312fb2872832c48efa2a457d0e", 8),
+    "module-pq": (4, "7508efb2f7689913ba0e7afd5fa15f363e5e1daebb518aee514dd38a48f339c9", 0),
+    "module-falcon": (4, "7508efb2f7689913ba0e7afd5fa15f363e5e1daebb518aee514dd38a48f339c9", 0),
 }
 EXCLUSIONS = {
     "two-hop": {
@@ -32,6 +34,12 @@ EXCLUSIONS = {
         "bounce-return assertion only": 12,
     },
     "receipt": {},
+    "module-pq": {},
+    "module-falcon": {},
+}
+MODULE_CODES = {
+    "module-pq": "570a064f8cd152c32f2c8a5694e1807c39cfb54efabb7e1147552a3c907cc239",
+    "module-falcon": "6eddb777521f31be62601bf978d73e68c5048e3ba76d535c59390b6976bcd918",
 }
 ATTEMPTS = []
 
@@ -134,7 +142,11 @@ class Capture:
 
 
 def export(records, driver, cfg, output, family, full):
-    assert cfg.read_bytes() == configuration().boc(), "unexpected root configuration"
+    value = read(cfg)
+    assert value == configuration().boc(), "unexpected root configuration"
+    target = output / f"{family}-config.boc"
+    if cfg.resolve() != target.resolve():
+        target.write_bytes(value)
     count = compare(
         driver, cfg, [(row.root_input(), row.native) for row in records], output, family
     )
@@ -197,6 +209,11 @@ def validate(directory, family, *, full=True):
         predecessor, predecessor_lt = s.uint(256), s.uint(64)
         account = s.ref()
         s.end()
+        if family in MODULE_CODES:
+            assert predecessor == predecessor_lt == 0, "unexpected module predecessor"
+            assert account.refs and account.refs[0].hash.hex() == MODULE_CODES[family], (
+                "module profile code mismatch"
+            )
         assert result.get("success") is True, "invalid linked native outcome"
         tx, after = from_boc(result["transaction"]), from_boc(result["shard_account"])
         t = tx.slice()
@@ -263,11 +280,32 @@ def compare_architectures(left, right, source):
     )
 
 
+def compare_module_architectures(left, right, family, source):
+    assert family in MODULE_CODES, "unknown module family"
+    signatures = []
+    for directory in (left, right):
+        assert read(directory.parent / "commit.txt").decode().strip() == source, (
+            "stale module source"
+        )
+        receipt = json.loads(read(directory / f"{family}-root-receipt.json"))
+        assert receipt["source_commit"] == source, "stale module receipt"
+        report = json.loads(read(directory / "tx-parity.json"))
+        assert report["success"] is True and report["transactions"] == 4, "module producer failed"
+        assert report["source_commit"] == source, "stale module report"
+        signatures.append(validate(directory, family))
+    assert signatures[0] == signatures[1], "module architecture mismatch"
+    print(f"PASS: {family} four complete roots on both architectures")
+
+
 if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--compare", nargs=2, type=Path, required=True)
+    parser.add_argument("--module-family", choices=tuple(MODULE_CODES))
     args = parser.parse_args()
     source = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
-    compare_architectures(*args.compare, source)
+    if args.module_family:
+        compare_module_architectures(*args.compare, args.module_family, source)
+    else:
+        compare_architectures(*args.compare, source)
