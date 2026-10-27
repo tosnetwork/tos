@@ -61,6 +61,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--driver", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--v16-only", action="store_true", help="Run only the v16 root lane")
     args = parser.parse_args()
     out = args.output.resolve()
     out.mkdir(parents=True, exist_ok=True)
@@ -74,7 +75,7 @@ def main():
     message = native.internal(PAYEE, PROBE, Cell().uint(1, 32))
     fixture = from_boc((ROOT / "tosctl/src/executor/real_boc/default_config.boc").read_bytes())
     report, balances, failures = {}, {}, []
-    for version in VERSIONS:
+    for version in (16,) if args.v16_only else VERSIONS:
         native_rows, scenarios, roots = [], [], []
         emulator = native.Emulator(version)
         try:
@@ -148,6 +149,8 @@ def main():
                 args.driver, config, roots, out, f"v{version}"
             )
     for name, by_version in balances.items():
+        if args.v16_only:
+            continue
         if not by_version[15] < by_version[14]:
             failures.append(f"{name}: no fine for the sent message at 15: {by_version}")
         if by_version[15] != by_version[16]:
@@ -155,7 +158,9 @@ def main():
     summary = {
         "passed": not failures,
         "balances": balances,
-        "fine_from_15": {name: v[14] - v[15] for name, v in balances.items()},
+        "fine_from_15": (
+            {} if args.v16_only else {name: v[14] - v[15] for name, v in balances.items()}
+        ),
         "rows": report,
         "failures": failures,
     }

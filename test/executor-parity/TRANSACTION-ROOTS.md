@@ -60,3 +60,12 @@ each) and the version-16 rows of `fail_action_fine.py` (four rows). Their existi
 gas, balance, refusal and fee assertions remain. Version-14/15 fine checks are
 preserved. Other registered transaction consumers still require migration;
 these two families do not establish whole-VM parity or a complete caller count.
+
+The epoch workflow runs both root families on x86-64 and arm64, using
+`fail_action_fine.py --v16-only` for its version-16 lane. The existing sandbox
+workflow retains the default version-14/15/16 fine assertions. Python-only edits
+also trigger that original registration. The epoch final job independently
+recomputes all 52 expected records from the retained native BOCs/refusal fields,
+requires exact scenario/row counts and version-16 configurations, and compares
+the complete original inputs/configurations and output records across runners.
+Optimized Python is rejected because these checks require enabled assertions.
