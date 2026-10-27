@@ -44,6 +44,7 @@
 #include "validator/manager.hpp"
 #include "validator/validator-options.hpp"
 #include "vm/cells.h"
+#include "vm/dict.h"
 
 namespace tos::validator {
 namespace {
@@ -148,69 +149,105 @@ class StateConfig : public ConfigHolder {
   Snapshot snapshot_;
 };
 
+// The masterchain state's configuration as the chain stores it: a ShardStateUnsplit
+// whose McStateExtra holds the masterchain catchain counter and the workchain shard
+// hashes, each shard a ShardDescr packed by McShardHash in a BinTree. Unpacked with the
+// production ConfigInfo, so counters, inheritance, a merged parent's counter and the
+// next set's counter come from the production derivation, not from this test.
+td::Ref<vm::Cell> shard_tree(WorkchainId workchain, ShardId prefix,
+                             const std::vector<td::Ref<block::McShardHash>>& shards, int depth = 0) {
+  CHECK(depth <= 8);
+  vm::CellBuilder cb;
+  for (const auto& descr : shards) {
+    if (descr->shard() == ShardIdFull{workchain, prefix}) {
+      CHECK(cb.store_long_bool(0, 1) && descr->pack(cb));  // bt_leaf$0
+      return cb.finalize();
+    }
+  }
+  CHECK(cb.store_long_bool(1, 1)  // bt_fork$1
+        && cb.store_ref_bool(shard_tree(workchain, shard_child(prefix, true), shards, depth + 1)) &&
+        cb.store_ref_bool(shard_tree(workchain, shard_child(prefix, false), shards, depth + 1)));
+  return cb.finalize();
+}
+
+std::unique_ptr<block::ConfigInfo> chain_config(td::int32 global_id, CatchainSeqno mc_cc,
+                                                const std::vector<td::Ref<block::McShardHash>>& shards) {
+  vm::Dictionary shard_hashes{32};
+  std::set<WorkchainId> workchains;
+  for (const auto& descr : shards) {
+    workchains.insert(descr->workchain());
+  }
+  for (auto workchain : workchains) {
+    CHECK(shard_hashes.set_ref(td::BitArray<32>{workchain}, shard_tree(workchain, shardIdAll, shards)));
+  }
+  vm::Dictionary params{32};
+  CHECK(params.set_ref(td::BitArray<32>::zero(), vm::CellBuilder{}.store_zeroes(256).finalize()));
+  vm::CellBuilder r1;
+  CHECK(r1.store_long_bool(0, 16)                                                            // flags
+        && r1.store_long_bool(0, 32) && r1.store_long_bool(mc_cc, 32)                        // validator_info
+        && r1.store_long_bool(0, 1)                                                          //   nx_cc_updated
+        && r1.store_long_bool(0, 1) && r1.store_long_bool(0, 1) && r1.store_zeroes_bool(64)  // prev_blocks: empty
+        && r1.store_long_bool(0, 1)                                                          // after_key_block
+        && r1.store_long_bool(0, 1));                                                        // last_key_block: nothing
+  vm::CellBuilder extra;
+  CHECK(extra.store_long_bool(0xcc26, 16) && shard_hashes.append_dict_to_bool(extra) && extra.store_zeroes_bool(256) &&
+        extra.store_ref_bool(params.get_root_cell()) && extra.store_ref_bool(r1.finalize()) &&
+        extra.store_zeroes_bool(4 + 1));  // global_balance
+  vm::CellBuilder rest;
+  CHECK(rest.store_zeroes_bool(64 + 64) && rest.store_zeroes_bool(5) && rest.store_zeroes_bool(5) &&
+        rest.store_zeroes_bool(1) && rest.store_zeroes_bool(1));
+  vm::CellBuilder root;
+  CHECK(root.store_long_bool(0x9023afe2, 32) && root.store_long_bool(global_id, 32)  // shard_state#9023afe2
+        && root.store_long_bool(0, 2) && root.store_long_bool(0, 6) && root.store_long_bool(masterchainId, 32) &&
+        root.store_long_bool(0, 64)                        // shard_id
+        && root.store_zeroes_bool(32 + 32 + 32 + 64 + 32)  // seq_no ... min_ref_mc_seqno
+        && root.store_ref_bool(vm::CellBuilder{}.finalize()) && root.store_long_bool(0, 1) &&
+        root.store_ref_bool(vm::CellBuilder{}.finalize()) && root.store_ref_bool(rest.finalize()) &&
+        root.store_long_bool(1, 1) && root.store_ref_bool(extra.finalize()));
+  auto config = block::ConfigInfo::extract_config(root.finalize(), BlockIdExt{masterchainId, shardIdAll, 0, {}, {}},
+                                                  block::ConfigInfo::needShardHashes);
+  LOG_CHECK(config.is_ok()) << config.error();
+  return config.move_as_ok();
+}
+
 class State : public MasterchainStateQ {
  public:
   State(BlockIdExt id, Snapshot snapshot)
       : MasterchainStateQ(id, vm::CellBuilder{}.finalize_novm()), snapshot_(std::move(snapshot)) {
     const double now = td::Clocks::system();
+    std::vector<td::Ref<block::McShardHash>> shards;
     for (const auto& spec : snapshot_.shards) {
       auto descr = td::make_ref<block::McShardHash>(
           BlockId{spec.shard.workchain, spec.shard.shard, 1}, 0, 0, 0,
           hash(PSTRING() << "shard-root-" << spec.shard.shard), hash(PSTRING() << "shard-file-" << spec.shard.shard),
-          block::CurrencyCollection{}, block::CurrencyCollection{}, std::numeric_limits<BlockSeqno>::max(),
-          std::numeric_limits<BlockSeqno>::max(), spec.cc);
+          block::CurrencyCollection{td::zero_refint()}, block::CurrencyCollection{td::zero_refint()}, 0, 0, spec.cc);
       if (spec.fsm != block::McShardHashI::FsmState::fsm_none) {
         descr.write().set_fsm(spec.fsm, static_cast<UnixTime>(now + spec.fsm_in), 100);
       }
-      shards_.push_back(descr);
+      shards.push_back(descr);
     }
+    config_ = chain_config(snapshot_.global_id, snapshot_.cc, shards);
   }
   td::Ref<block::ValidatorSet> get_total_validator_set(int offset) const override {
     return offset < 0 ? snapshot_.previous : offset > 0 ? snapshot_.next : snapshot_.current;
   }
+  // The members are this test's; the counter is the configuration's, as the production
+  // state derives it: delta 0 for the current set, delta 1 for the next.
   td::Ref<block::ValidatorSet> get_validator_set(ShardIdFull shard) const override {
     if (shard.is_masterchain()) {
       return snapshot_.current;
     }
     return shard_set(shard, 0);
   }
-  // A shard's next set is its counter + 1, as the configuration derives it with delta 1;
-  // the masterchain has none here.
+  // The masterchain has no next set here.
   td::Ref<block::ValidatorSet> get_next_validator_set(ShardIdFull shard) const override {
     if (shard.is_masterchain()) {
       return {};
     }
     return shard_set(shard, 1);
   }
-  // The configuration's rule: a shard inside a configured shard (equal, or a split child)
-  // takes its counter; a parent of two configured shards takes max + 1; anything else has
-  // no counter.
   CatchainSeqno get_shard_cc_seqno(ShardIdFull shard) const override {
-    if (shard.is_masterchain()) {
-      return snapshot_.cc;
-    }
-    const auto none = std::numeric_limits<CatchainSeqno>::max();
-    for (const auto& spec : snapshot_.shards) {
-      if (spec.shard.workchain == shard.workchain &&
-          (spec.shard.shard == shard.shard || shard_is_ancestor(spec.shard.shard, shard.shard))) {
-        return spec.cc;
-      }
-    }
-    std::optional<CatchainSeqno> left, right;
-    for (const auto& spec : snapshot_.shards) {
-      if (spec.shard.workchain != shard.workchain) {
-        continue;
-      }
-      if (spec.shard.shard == shard_child(shard.shard, true)) {
-        left = spec.cc;
-      } else if (spec.shard.shard == shard_child(shard.shard, false)) {
-        right = spec.cc;
-      }
-    }
-    if (!left || !right) {
-      return none;
-    }
-    return std::max(*left, *right) + 1;
+    return config_->get_shard_cc_seqno(shard);
   }
   td::int32 get_global_id() const override {
     return snapshot_.global_id;
@@ -218,10 +255,11 @@ class State : public MasterchainStateQ {
   bool rotated_all_shards() const override {
     return false;
   }
+  // As the production state lists them: from the shard hashes, unpacked.
   std::vector<td::Ref<McShardHash>> get_shards() const override {
     std::vector<td::Ref<McShardHash>> out;
-    for (const auto& descr : shards_) {
-      out.push_back(descr);
+    for (const auto& id : config_->get_shard_hash_ids(true)) {
+      out.push_back(config_->get_shard_hash(ShardIdFull{id}));
     }
     return out;
   }
@@ -249,15 +287,19 @@ class State : public MasterchainStateQ {
 
  private:
   td::Ref<block::ValidatorSet> shard_set(ShardIdFull shard, CatchainSeqno delta) const {
-    const auto cc = get_shard_cc_seqno(shard);
-    if (cc == std::numeric_limits<CatchainSeqno>::max()) {
+    // The production derivation of the counter: compute_validator_set_cc adds `delta` to
+    // the shard's counter, or leaves it when the shard has none. No validator list is
+    // given, so it computes no members; this test supplies its own.
+    if (config_->get_shard_cc_seqno(shard) == std::numeric_limits<CatchainSeqno>::max()) {
       return {};
     }
-    return td::make_ref<block::ValidatorSet>(cc + delta, shard, snapshot_.current->export_vector());
+    CatchainSeqno cc = delta;
+    config_->compute_validator_set_cc(shard, block::TotalValidatorSet{}, 0, &cc);
+    return td::make_ref<block::ValidatorSet>(cc, shard, snapshot_.current->export_vector());
   }
 
   Snapshot snapshot_;
-  std::vector<td::Ref<block::McShardHash>> shards_;
+  std::shared_ptr<block::ConfigInfo> config_;
 };
 
 // Everything the fakes saw, in order.
