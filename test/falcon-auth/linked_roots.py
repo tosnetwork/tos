@@ -12,14 +12,16 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT / "test/executor-parity"), str(ROOT / "test/auth-extensions")]
-from cells import Cell, from_boc
-from native import NOW, Emulator, config
+from cells import Cell, read_dict
+from native import NOW, Emulator, config, transaction_details
+from root_cells import from_boc
 from transaction_roots import MAX_INPUT_BYTES, compare, expected_row
 
 # Measured from the unchanged default producers before migration. Names include
 # capture ordinals, so dropping/reordering an identically labelled case fails.
 POPULATIONS = {
     "two-hop": (1076, "6cb517095431c1a4a429434772847c2e222e71c56a95430f1f1eafad23cb9864", 688),
+    "account-limit-v16": (4, "b84954b5da8fe953423b6e15972e4b19baaef867bc85a6bb0dd82929c9ee0481", 0),
     "receipt": (164, "341f5d4e83f43ef63d5246c4fd2791ca5b7c1b312fb2872832c48efa2a457d0e", 8),
     "module-pq": (4, "7508efb2f7689913ba0e7afd5fa15f363e5e1daebb518aee514dd38a48f339c9", 0),
     "module-falcon": (4, "7508efb2f7689913ba0e7afd5fa15f363e5e1daebb518aee514dd38a48f339c9", 0),
@@ -34,6 +36,7 @@ EXCLUSIONS = {
         "bounce-return assertion only": 12,
     },
     "receipt": {},
+    "account-limit-v16": {},
     "module-pq": {},
     "module-falcon": {},
 }
@@ -44,9 +47,16 @@ MODULE_CODES = {
 ATTEMPTS = []
 
 
-def configuration():
+def configuration(family=None):
     fixture = from_boc((ROOT / "tosctl/src/executor/real_boc/default_config.boc").read_bytes())
-    return Cell(bits=fixture.bits).ref(config(16))
+    if family == "account-limit-v16":
+        from account_limit_context import configuration as account_configuration
+
+        dictionary = account_configuration(16)
+    else:
+        assert family is None or family in POPULATIONS, "unknown capture family"
+        dictionary = config(16)
+    return Cell(bits=fixture.bits).ref(dictionary)
 
 
 def read(path):
@@ -60,9 +70,31 @@ class CaptureEmulator(Emulator):
     """Use the same native constructor while retaining its actual send context."""
 
     def __init__(self, global_version=16, max_msg_cells=None, vm_log_verbosity=1):
-        self.configuration = config(global_version, max_msg_cells)
-        self.version, self.now = global_version, NOW
-        self._initialize(self.configuration, vm_log_verbosity)
+        self._setup(
+            config(global_version, max_msg_cells), vm_log_verbosity, expected_version=global_version
+        )
+
+    @classmethod
+    def from_config(cls, configuration, vm_log_verbosity=1):
+        emulator = cls.__new__(cls)
+        emulator._setup(configuration, vm_log_verbosity)
+        return emulator
+
+    def _setup(self, configuration, vm_log_verbosity, expected_version=None):
+        # Snapshot the actual supplied wire configuration, not a mutable caller
+        # object or a later default selected during export.
+        snapshot = from_boc(configuration.boc())
+        version = read_dict(snapshot, 32)[8].refs[0].slice()
+        assert version.uint(8) == 0xC4, "invalid capture CP8"
+        self.version = version.uint(32)
+        version.uint(64)
+        version.end()
+        if expected_version is not None:
+            assert self.version == expected_version, "capture configuration version mismatch"
+        self.configuration = snapshot
+        self._configuration_hash = snapshot.hash.hex()
+        self.now = NOW
+        self._initialize(snapshot, vm_log_verbosity)
         self.lib.transaction_emulator_set_unixtime.restype = ctypes.c_bool
         self.last_capture = None
 
@@ -82,7 +114,7 @@ class CaptureEmulator(Emulator):
             inbound,
             self.lt,
             self.now,
-            self.configuration.hash.hex(),
+            self._configuration_hash,
             {
                 key: result[key]
                 for key in ("success", "transaction", "shard_account")
@@ -108,12 +140,12 @@ class Capture:
     legacy: str
 
     @classmethod
-    def from_send(cls, name, prior, message, emulator, result, legacy):
+    def from_send(cls, name, prior, message, emulator, result, legacy, *, family=None):
         assert isinstance(emulator, CaptureEmulator) and emulator.version == 16
         original, inbound, lt, now, cfg, native, event = emulator.last_capture
         assert not event["captured"] and result["success"] is True
         assert original == prior.boc().hex() and inbound == message.boc().hex()
-        assert cfg == configuration().refs[0].hash.hex(), "unexpected linked configuration"
+        assert cfg == configuration(family).refs[0].hash.hex(), "unexpected linked configuration"
         assert native["transaction"] == result["transaction"]
         assert native["shard_account"] == result["shard_account"]
         event.update(captured=True, reason="captured", name=name)
@@ -143,7 +175,7 @@ class Capture:
 
 def export(records, driver, cfg, output, family, full):
     value = read(cfg)
-    assert value == configuration().boc(), "unexpected root configuration"
+    assert value == configuration(family).boc(), "unexpected root configuration"
     target = output / f"{family}-config.boc"
     if cfg.resolve() != target.resolve():
         target.write_bytes(value)
@@ -172,7 +204,7 @@ def validate(directory, family, *, full=True):
     receipt = json.loads(read(directory / f"{family}-root-receipt.json"))
     assert receipt["family"] == family and receipt["full"] is full, "partial linked population"
     cfg = read(directory / f"{family}-config.boc")
-    assert cfg == configuration().boc(), "unexpected linked v16 config"
+    assert cfg == configuration(family).boc(), "unexpected linked v16 config"
     assert receipt["configuration_sha256"] == hashlib.sha256(cfg).hexdigest()
     inputs = read(directory / f"{family}-roots.tsv")
     lines = inputs.decode().splitlines()
@@ -226,8 +258,30 @@ def validate(directory, family, *, full=True):
         )
         assert t.uint(32) == int(now) and int(now) > 0, ("native time mismatch", ordinal)
         a = account.slice()
-        if a.uint(1):
-            assert a.addr()[1] == address, "original Account identity mismatch"
+        account_address = a.addr() if a.uint(1) else None
+        if account_address is not None:
+            assert account_address[1] == address, "original Account identity mismatch"
+        if family == "account-limit-v16":
+            assert predecessor == predecessor_lt == 0, "unexpected account-limit predecessor"
+            assert (
+                account.refs[0].hash.hex()
+                == "18953c4bead201f9625a2c4a06c657563d46e27c7fffaa438cf105143e182eb9"
+            ), "account-limit probe mismatch"
+            expected_wc = -1 if ordinal < 2 else 0
+            assert account_address == (expected_wc, int("22" * 32, 16)), (
+                "account-limit workchain mismatch"
+            )
+            message_cell = from_boc(bytes.fromhex(message))
+            envelope = message_cell.slice()
+            assert envelope.uint(1) == 0
+            envelope.uint(3)
+            assert envelope.addr()[0] == -1, "account-limit sender workchain mismatch"
+            assert envelope.addr() == account_address, "account-limit destination mismatch"
+            details = transaction_details(tx)
+            assert details["exit"] == 0 and details["action"] is not None
+            assert details["action"]["code"] == (50 if ordinal == 0 else 0), (
+                "account-limit action mismatch"
+            )
         assert tx.refs[0].slice().maybe().hash == from_boc(bytes.fromhex(message)).hash
         update = tx.refs[1].slice()
         assert update.uint(8) == 0x72
@@ -297,15 +351,39 @@ def compare_module_architectures(left, right, family, source):
     print(f"PASS: {family} four complete roots on both architectures")
 
 
+def compare_account_limit_architectures(left, right, source):
+    signatures = []
+    for directory in (left, right):
+        assert read(directory.parent / "commit.txt").decode().strip() == source, (
+            "stale account-limit source"
+        )
+        assert read(directory / "source-commit.txt").decode().strip() == source, (
+            "stale account-limit producer"
+        )
+        report = json.loads(read(directory / "account-limit-parity.json"))
+        assert report == {"cases": 12, "accepted": 10, "refused": 2}, (
+            "account-limit legacy report changed"
+        )
+        receipt = json.loads(read(directory / "account-limit-v16-root-receipt.json"))
+        assert receipt["source_commit"] == source
+        signatures.append(validate(directory, "account-limit-v16"))
+    assert signatures[0] == signatures[1], "account-limit architecture mismatch"
+    print("PASS: four account-limit v16 roots, workchains/actions and original12-row boundary")
+
+
 if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--compare", nargs=2, type=Path, required=True)
     parser.add_argument("--module-family", choices=tuple(MODULE_CODES))
+    parser.add_argument("--account-limit", action="store_true")
     args = parser.parse_args()
+    assert not (args.account_limit and args.module_family), "ambiguous capture family"
     source = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
-    if args.module_family:
+    if args.account_limit:
+        compare_account_limit_architectures(*args.compare, source)
+    elif args.module_family:
         compare_module_architectures(*args.compare, args.module_family, source)
     else:
         compare_architectures(*args.compare, source)

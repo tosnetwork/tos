@@ -36,6 +36,7 @@ jobs:
         run: |
           python3 test/rel02/test_run.py
           python3 test/rel02/test_rust_replay.py
+          python3 test/executor-parity/test_root_cells.py
       - name: Install repository-pinned Rust toolchain
         run: scripts/install-rust-toolchain.sh
       - name: Restore Rust dependency cache

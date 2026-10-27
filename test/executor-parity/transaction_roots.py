@@ -11,7 +11,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT / "test/rel02"), str(ROOT / "test/auth-extensions")]
 import run_rust  # noqa: E402
-from cells import from_boc, read_dict  # noqa: E402
+from cells import read_dict  # noqa: E402
+from root_cells import from_boc  # noqa: E402
 
 if not __debug__:
     raise RuntimeError("root comparison requires enabled Python assertions")

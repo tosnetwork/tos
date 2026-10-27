@@ -86,3 +86,30 @@ helper, with explicit profile/code identity and their original adaptive probes
 and outcome-diversity checks. Their family-specific architecture validators
 run in the original readiness/Falcon workflows; they do not change this
 workflow's fixed52-row contract.
+
+The account-limit consumer adds four version-16 root records to its original
+12-row version-11/12/16 report. It supplies its actual custom CP43 limits
+(masterchain 200 cells, ordinary 65536), preserving the 400-cell payload and
+four-cell positive control. Capture factories snapshot the supplied dictionary,
+derive the version from CP8 before native allocation, and bind the immutable
+configuration identity to each send. Existing families still require their
+original default configuration. The readiness final job checks both original
+Account and message workchains, fresh predecessor hash/LT, probe code identity,
+and native action results (50 for masterchain oversized, zero for the others).
+Twelve artifact controls include independently executed native alternatives
+with coherent roots for wrong configuration, code, workchain and action.
+
+`root_cells.py` bounds decoding before allocating the Cell graph: at most
+64 MiB of wire data and 2,000,000 declared cells, complete single-root BOCs,
+validated lengths/indices/forward references, and ordinary or explicitly allowed
+library cells. Stored hash/depth caches are recomputed. Iterative postorder
+hashing admits edge depth at most 1024 (leaf depth zero), detects cycles in
+caller-provided graphs, and bounds pending stack entries and pre-visits to
+2,000,000 each. Pre-visits include shared-edge cache hits; exact subtree heights
+also catch deeper paths to shared cells. This is a Python oracle work bound,
+not a claim that its counter has the same meaning as the Rust driver's visits.
+The unit tests exercise valid 400-edge inputs at Python's default recursion
+limit, exact depth/work boundaries, malformed/truncated BOCs, shared DAGs,
+cache poisoning, indexed BOCs and CRC32C. The legacy producer keeps its existing
+recursion setting for serialization. These per-input comparisons do not carry
+Rust Account/cache state between transactions.
