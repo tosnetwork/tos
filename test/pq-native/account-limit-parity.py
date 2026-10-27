@@ -28,9 +28,14 @@ sys.path[:0] = [str(ROOT / "test/auth-extensions")]
 # the configuration states a small masterchain ceiling and an ordinary one far above it.
 # The payload sits between them, where the two ceilings give opposite answers about the
 # same account.
-PAYLOAD_CELLS = 400
-MASTERCHAIN_CEILING = 200
-ORDINARY_CEILING = 65536
+sys.path.append(str(ROOT / "test/executor-parity"))
+from account_limit_context import (  # noqa: E402,F401 - preserve existing fixture API
+    MASTERCHAIN_CEILING,
+    ORDINARY_CEILING,
+    PAYLOAD_CELLS,
+    configuration,
+    size_limits_v2,
+)
 
 
 def compile_probe(build, out):
@@ -79,46 +84,6 @@ def chain(cells):
     return tail
 
 
-def size_limits_v2():
-    """ConfigParam 43 version 2, which is the first that carries both ceilings."""
-    from cells import Cell
-
-    return (
-        Cell()
-        .uint(0x02, 8)
-        .uint(1 << 21, 32)
-        .uint(1 << 13, 32)
-        .uint(1000, 32)
-        .uint(512, 16)
-        .uint(65535, 32)
-        .uint(512, 16)
-        .uint(ORDINARY_CEILING, 32)
-        .uint(MASTERCHAIN_CEILING, 32)
-        .uint(256, 32)
-        .uint(256, 32)
-        .uint(2, 32)
-        .uint(8, 8)
-        .uint(26, 32)
-    )
-
-
-def configuration(global_version):
-    import native
-    from cells import Cell, from_boc, make_dict, read_dict
-
-    fixture = from_boc((ROOT / "tosctl/src/executor/real_boc/default_config.boc").read_bytes())
-    entries = read_dict(fixture.refs[0], 32)
-    entries[0] = Cell().ref(Cell().uint(int(fixture.bits, 2), 256))
-    old = entries[8].refs[0].slice()
-    assert old.uint(8) == 0xC4
-    old.uint(32)
-    caps = old.uint(64)
-    entries[8] = Cell().ref(Cell().uint(0xC4, 8).uint(global_version, 32).uint(caps, 64))
-    entries[19] = Cell().ref(Cell().sint(native.GLOBAL_ID, 32))
-    entries[43] = Cell().ref(size_limits_v2())
-    return make_dict(entries, 32)
-
-
 def report(left, right):
     """Agreement between two implementations that both refuse everything is not evidence,
     so the transcript has to contain an acceptance and a refusal before it counts."""
@@ -158,10 +123,13 @@ def main():
     from protocol import emulator_library
 
     os.environ["EMULATOR_PATH"] = str(emulator_library(build))
-    import native
     from cells import Cell, from_boc
     from native import NOW, Emulator, active_account, internal
     from tx_parity import account_state
+
+    sys.path.append(str(ROOT / "test/falcon-auth"))
+    from linked_roots import Capture, CaptureEmulator
+    from linked_roots import export as export_roots
 
     code = compile_probe(build, out)
     payload, small = chain(PAYLOAD_CELLS), chain(4)
@@ -181,13 +149,9 @@ def main():
     left, right = [], []
     for version in (11, 12, 16):
         config_dict = configuration(version)
-        native.config = (
-            lambda global_version=native.CURRENT_GLOBAL_VERSION, max_msg_cells=None, _dict=config_dict: (
-                _dict
-            )
-        )
         rows, scenarios = [], []
-        emulator = Emulator(version)
+        emulator = (CaptureEmulator if version == 16 else Emulator).from_config(config_dict)
+        root_records = []
         try:
             for shape, workchain, body_payload in shapes:
                 name = f"{shape}-v{version}"
@@ -225,6 +189,18 @@ def main():
                         ]
                     )
                 )
+                if version == 16:
+                    root_records.append(
+                        Capture.from_send(
+                            f"{len(root_records)}:{name}",
+                            shard,
+                            message,
+                            emulator,
+                            result,
+                            rows[-1],
+                            family="account-limit-v16",
+                        )
+                    )
         finally:
             emulator.close()
         left.extend(rows)
@@ -241,11 +217,16 @@ def main():
         if rust.returncode != 0:
             raise SystemExit(f"version {version}: rust driver failed: {rust.stderr.strip()[:400]}")
         right.extend(rust.stdout.strip().splitlines())
+        if version == 16:
+            export_roots(root_records, args.driver, config_path, out, "account-limit-v16", True)
 
     (out / "cpp.tsv").write_text("\n".join(left) + "\n")
     (out / "rust.tsv").write_text("\n".join(right) + "\n")
     summary = report(left, right)
     (out / "account-limit-parity.json").write_text(json.dumps(summary, indent=2) + "\n")
+    (out / "source-commit.txt").write_text(
+        subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True)
+    )
     print(json.dumps(summary))
 
 
