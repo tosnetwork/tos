@@ -935,8 +935,10 @@ std::shared_ptr<const Admission> SigningLedger::admit_now(const td::Bits256& val
   if (status_ != LedgerStatus::Trusted) {
     if (auto started = start_unknown_history(validator); started.is_error()) {
       LOG(ERROR) << "signing ledger: no pending ledger could be created: " << started << "; no session will sign";
-      untrusted_reason_ += PSTRING() << "; no pending ledger could be created: " << started.message();
-      return Admission::fence(session, untrusted_reason_);
+      // The original trust failure is kept as it is; each reply carries it with only this
+      // attempt's error, so nothing retained grows with the number of admissions.
+      return Admission::fence(
+          session, PSTRING() << untrusted_reason_ << "; no pending ledger could be created: " << started.message());
     }
   }
   if (header_.validator != validator) {
@@ -1104,6 +1106,10 @@ td::actor::Task<std::optional<BlockIdExt>> SigningLedger::floor() {
 
 td::actor::Task<LedgerStatus> SigningLedger::status() {
   co_return status_;
+}
+
+td::actor::Task<std::string> SigningLedger::untrusted_reason() {
+  co_return status_ == LedgerStatus::Trusted ? std::string() : untrusted_reason_;
 }
 
 td::actor::Task<History> SigningLedger::history() {

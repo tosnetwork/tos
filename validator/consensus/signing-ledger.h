@@ -349,6 +349,8 @@ class SigningLedger : public td::actor::Actor {
 
   td::actor::Task<std::optional<BlockIdExt>> floor();
   td::actor::Task<LedgerStatus> status();
+  // Why the ledger on disk is not trusted; empty when it is.
+  td::actor::Task<std::string> untrusted_reason();
 
  private:
   td::Status write_header();

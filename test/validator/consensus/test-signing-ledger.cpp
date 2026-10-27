@@ -383,6 +383,7 @@ class Driver : public td::actor::Actor {
     co_await test_unknown_history();
     co_await test_untrusted_becomes_pending();
     co_await test_genesis_ledger();
+    co_await test_persistent_creation_failure();
     co_return td::Unit{};
   }
 
@@ -476,6 +477,41 @@ class Driver : public td::actor::Actor {
               "the pending ledger is trusted after a restart");
     }
     std::printf("untrusted becomes pending: ok\n");
+    co_return td::Unit{};
+  }
+
+  // A ledger that stays untrusted because no pending ledger can be created (all set-aside
+  // slots taken) fences every session; what it keeps, and what each reply carries, does not
+  // grow with the number of admissions.
+  td::actor::Task<> test_persistent_creation_failure() {
+    const auto dir = scratch() + "/signing-ledger";
+    require(create_ledger(dir, validator_).is_ok(), "create a ledger");
+    const auto copy = scratch() + "/signing-ledger";
+    std::filesystem::copy(dir, copy, std::filesystem::copy_options::recursive);
+    for (int n = 0; n < 4; ++n) {
+      std::ofstream(copy + "/ledger.untrusted." + std::to_string(n)) << "set aside";
+    }
+    auto ledger = td::actor::create_actor<SigningLedger>("stuck", copy);
+    const auto initial = co_await td::actor::ask(ledger.get(), &SigningLedger::untrusted_reason);
+    require(!initial.empty(), "the copied ledger is untrusted");
+    std::size_t first_reply = 0;
+    for (unsigned i = 0; i < 10000; ++i) {
+      td::Bits256 session = td::Bits256::zero();
+      std::memcpy(session.data(), &i, sizeof(i));
+      session.data()[31] = 0xEE;
+      auto admission = co_await admit(ledger.get(), session);
+      require(admission->fenced, "nothing is admitted while no pending ledger can be created");
+      if (i == 0) {
+        first_reply = admission->reason.size();
+        require(admission->reason.find("set aside") != std::string::npos, "the reply says why");
+      }
+      require(admission->reason.size() == first_reply, "a reply does not grow with the admissions before it");
+    }
+    require(co_await td::actor::ask(ledger.get(), &SigningLedger::untrusted_reason) == initial,
+            "the retained reason does not grow with the admissions");
+    require(std::filesystem::exists(copy + "/ledger"), "the untrusted header stays where it is");
+    std::printf("persistent creation failure: ok (reply %zu bytes, retained %zu bytes, 10000 sessions)\n", first_reply,
+                initial.size());
     co_return td::Unit{};
   }
 
