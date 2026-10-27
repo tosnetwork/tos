@@ -97,7 +97,15 @@ pub struct Entry {
     pub links: u64,
     pub identity: (u64, u64),
 }
+/// Widen a C integer field to `u64`. The widths of `stat` and `statvfs` fields differ
+/// between Linux targets (`st_nlink` is `u64` on x86-64 and `u32` on arm64), so a
+/// field is never assumed to be `u64`. Only lossless `From` conversions compile: a
+/// target where a field were wider than 64 bits would fail to build, not truncate.
+fn wide(value: impl Into<u64>) -> u64 {
+    value.into()
+}
 fn kind(stat: &libc::stat) -> Kind {
+    // `st_mode` and `S_IFMT` are both `mode_t` on every target, so they mask directly.
     match stat.st_mode & libc::S_IFMT {
         libc::S_IFDIR => Kind::Directory,
         libc::S_IFREG => Kind::File,
@@ -177,12 +185,13 @@ impl Root {
         };
         Ok(Some(Entry {
             kind: kind(&stat),
+            // `off_t` and `blkcnt_t` are signed: a negative value refuses.
             size: u64::try_from(stat.st_size)?,
             allocated: u64::try_from(stat.st_blocks)?
                 .checked_mul(512)
                 .context("allocated size overflow")?,
-            links: stat.st_nlink,
-            identity: (stat.st_dev, stat.st_ino),
+            links: wide(stat.st_nlink),
+            identity: (wide(stat.st_dev), wide(stat.st_ino)),
         }))
     }
     /// A second handle on the same held directory.
@@ -416,8 +425,12 @@ impl Root {
         );
         let stat = unsafe { stat.assume_init() };
         Ok(crate::budget::Space {
-            capacity: stat.f_blocks.checked_mul(stat.f_frsize).context("disk capacity overflow")?,
-            free: stat.f_bavail.checked_mul(stat.f_frsize).context("disk byte count overflow")?,
+            capacity: wide(stat.f_blocks)
+                .checked_mul(wide(stat.f_frsize))
+                .context("disk capacity overflow")?,
+            free: wide(stat.f_bavail)
+                .checked_mul(wide(stat.f_frsize))
+                .context("disk byte count overflow")?,
         })
     }
     /// Owner and group of this still-attached directory descriptor.
@@ -538,7 +551,7 @@ fn hand_over_entry(
             .context("ownership hand-over refuses an unsafe entry")?;
         let opened = child.metadata()?;
         ensure!(
-            (opened.dev(), opened.ino()) == (stat.st_dev, stat.st_ino),
+            (opened.dev(), opened.ino()) == (wide(stat.st_dev), wide(stat.st_ino)),
             "ownership hand-over entry was replaced"
         );
         hand_over_entry(&child, owner, invoker, remaining)?;
@@ -624,8 +637,8 @@ fn remove_child(parent: i32, name: &std::ffi::CStr, remaining: &mut usize) -> Re
     ensure!(
         unsafe { libc::fstatat(parent, name.as_ptr(), &mut current, libc::AT_SYMLINK_NOFOLLOW) }
             == 0
-            && current.st_dev == meta.dev()
-            && current.st_ino == meta.ino(),
+            && wide(current.st_dev) == meta.dev()
+            && wide(current.st_ino) == meta.ino(),
         "cleanup child identity changed"
     );
     let flags = if meta.is_dir() { libc::AT_REMOVEDIR } else { 0 };
