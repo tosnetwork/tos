@@ -412,6 +412,11 @@ jobs:
           export NODE_SYNC_NATIVE_WORKER="$GITHUB_WORKSPACE/build/operator-rust-target/debug/node-data-sync-worker"
           cargo test --manifest-path tosctl/src/Cargo.toml --locked -p node-data-sync --features native --lib operations::tests::native_stage_preserves_own_context_and_never_overlays_recovery_material -- --ignored --exact --nocapture | tee build/node-sync-native-preservation.log
           grep -Fx 'NATIVE_STAGE_PRESERVATION_OK' build/node-sync-native-preservation.log
+          # The job runs as root: the private StateDb capture must resist a uid-65534 swap
+          # of the service tree and refuse a foreign mount. The tokens prove both ran.
+          cargo test --manifest-path tosctl/src/Cargo.toml --locked -p node-data-sync --features native --lib -- --ignored --exact --nocapture operations::tests::root_capture_resists_a_service_account_swap operations::tests::foreign_mount_on_state_refuses_and_leaves_the_mounted_tree | tee build/node-sync-capture-controls.log
+          grep -Fx 'ROOT_SERVICE_ACCOUNT_SWAP_OK' build/node-sync-capture-controls.log
+          grep -Fx 'FOREIGN_MOUNT_REFUSAL_OK' build/node-sync-capture-controls.log
           rustc --edition=2024 tosctl/src/node-control/node-data-sync/build.rs -o build/node-sync-profile-check
           if env CARGO_FEATURE_NATIVE_LIFECYCLE_TESTS=1 PROFILE=release build/node-sync-profile-check > build/node-sync-profile-refusal.log 2>&1; then
             echo 'Release profile accepted lifecycle test feature'

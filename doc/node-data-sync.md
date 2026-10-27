@@ -1,9 +1,9 @@
 # Trusted node-data recovery
 
 > The standalone-services release never creates an embedded index, even with
-> operator JSON-RPC enabled. The restore tooling below retains its conservative
-> compatibility checks for older node binaries; keep the accepted no-op
-> `--json-rpc-without-wallet-index` flag when using that tooling.
+> operator JSON-RPC enabled: wallet indexing is provided by `tos-wallet-index`, and
+> `--json-rpc-without-wallet-index` is an accepted no-op. Restore decides from the
+> target database, not from that flag.
 
 This is an administrative recovery lane for an **existing** node. It trusts an
 independently pinned publisher key and the publisher's chain database. Hashes,
@@ -17,16 +17,23 @@ the separate local qualification run. They have not been qualified by unit tests
 
 ## Supported targets
 
-Restore supports non-indexed nodes only. Wallet-indexed RPC nodes are a later
-milestone: `--json-rpc-address` enables the wallet index unless
-`--json-rpc-without-wallet-index` is also given. Restore is refused when the configured
-or running command enables the index, or when a `wc0-index` directory exists. The
-standard validator configuration does not run the index: it serves JSON-RPC with
-`--json-rpc-without-wallet-index`. Dropping the flag alone
-does not make an indexed target supported: a retired `wc0-index` must be removed
-by the operator before restore; the tool never deletes it. Do not temporarily
-disable indexing to bypass this restriction. Preserving an old index would leave
-the imported block gap missing, and an empty replacement would omit old history.
+Restore supports nodes without an in-process wallet index only. A current engine
+never opens one, whatever its JSON-RPC options; the command line therefore decides
+nothing, and `--json-rpc-address` with or without the no-op
+`--json-rpc-without-wallet-index` is a supported target. Restore is refused when
+the installed database has a `wc0-index` entry of any kind (directory, file or
+link). It is checked through the held database descriptor before preparation,
+after the transfer, after the stop and before start. Main registers no other
+index option; any option outside the reviewed subset is refused as unsupported.
+
+An engine that predates the standalone wallet index opens `<db>/wc0-index`
+whenever `--json-rpc-address` is given without `--json-rpc-without-wallet-index`.
+On an epoch that pins such an engine, disable that index on the target first: add
+`--json-rpc-without-wallet-index` to the unit (or remove `--json-rpc-address`),
+stop the node, and remove the retired `wc0-index`; the tool never deletes it.
+Restoring into a target whose old engine still runs the index would leave the
+imported block gap missing from an old index, or start an empty one that omits old
+history.
 
 Database-root directories have explicit dispositions:
 
@@ -119,8 +126,8 @@ operator tools and pin both executable digests in the private context. Install
 regular copies: build outputs may be hard-linked, and the verifier refuses linked
 executables. Create the installation directory using the local operator policy.
 
-The invoking user must own the selected service and database. `systemctl` must
-be able to stop/start that exact unit. Native validation requires `unshare` with
+`systemctl` must be able to stop/start the exact selected unit. The supported
+service shapes are listed in [Service accounts](#service-accounts). Native validation requires `unshare` with
 user and network namespaces; refusal to create one is fatal. The verifier uses
 fresh local credentials and isolated loopback, with no external network access.
 On an Ubuntu 24.04 operator host with the default
@@ -137,6 +144,86 @@ refuse before service stop. For example, use `-v 0`, not `-v0`. This restriction
 aligns with the native parser's supported arities without changing that parser
 (reference `857b8a57a178e6ae0fe7fa86e7d81c5233de8560`,
 `tdutils/td/utils/OptionParser.cpp:137–164`).
+
+`--json-rpc-address` and `--exporter-address` are accepted with a separate value.
+The tool checks only their arity, never their address: the allow-list governs how
+the command line is parsed and which paths the engine reads and writes, not network
+exposure. The engine itself confines plaintext JSON-RPC to loopback unless
+`--json-rpc-readonly` is given; where the metrics exporter listens is deployment
+policy, and the operator bundle binds it to `127.0.0.1`.
+
+### Service accounts
+
+The service description is checked before every stop, after stop and before every
+start. It accepts three shapes and refuses everything else before the node is stopped:
+
+| Unit | Invoked as | Service account |
+|---|---|---|
+| user-manager unit (`user_manager: true`), no `User=` | any user | the invoking user |
+| system unit, `User=` the invoking user (not root) | that user | the invoking user |
+| system unit, `User=` a fixed non-root account (for example `tos`) | root | that account |
+
+The third shape is the operator bundle's full node: `User=tos`, `Group=tos`, data
+in `/var/lib/tos/fullnode`. Stop and start then go through the system manager. A
+system unit is refused when `User=` is missing, is `root` or resolves to uid 0,
+uses `DynamicUser=`, or has a `Group=` other than the account's primary group;
+these checks apply to the second shape too, not only to a service account. It is
+also refused when the invoker is neither that account nor root. A user-manager
+unit that names a `User=` is refused, so root cannot address another account
+through its own manager.
+
+Ownership is checked against the right account at each boundary:
+
+- The database root must be owned by the service account. The consensus seed
+  check uses the same owner.
+- The catalog, the restore cache and the operation directory (and its parent) must
+  be owned by the invoking user. With a service account they hold what root
+  validates, signs and installs, so the service account must not be able to change
+  them; a root-owned `/var/lib/tos/node-sync` beside the database is the intended
+  layout.
+- With a service account, those roots and the database must not be group- or
+  other-writable, and every ancestor of each of them must be owned by root and
+  writable by no other account (sticky shared directories excepted). The service
+  account therefore cannot re-point a path root resolves.
+- With a service account, each budget root must belong to root or to the service account.
+
+The service account can rename and replace anything inside the database tree, so
+the invoker never resolves a name there. The database root is opened once, and
+every directory and file below it is opened relative to that held descriptor with
+`openat2(RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS | RESOLVE_NO_XDEV)`. Listings are
+read through the same descriptor that the children are then opened from. A
+symlink, a replaced directory, another mount or a hard-linked file refuses. A
+kernel without `openat2` refuses; there is no fallback.
+
+The native database library opens paths itself and writes while it opens, so it
+never sees the installed tree. To read the installed StateDb's local records,
+restore and recovery copy `state/` through descriptors into a private
+`state-capture` directory of the operation, open only that copy, and remove it on
+success and on failure. Space for the copy, a table flushed from its write-ahead
+logs and 64 MiB of native metadata is admitted before copying. A capture left by an
+interrupted run is removed before the next one and is never read, so an operation
+holds at most one and it never becomes authoritative.
+
+Consistency of that copy rests on the cooperative-node model: the service is
+stopped, its native writer has shut down, and no process holds a writable
+descriptor on the tree. The copy includes the write-ahead logs and every other
+database file. Per-file size and change stamps refuse a change they can detect.
+They do not make the copy transactionally consistent against a concurrent writer,
+and they do not exclude a deliberate writer running as the service account.
+
+Root never leaves a file the node cannot open. A configuration lock created while
+the node is stopped takes the database directory's owner and group. Restore builds
+the replacement privately as root, then gives every entry it created to the
+installed root's owner before the forward-only boundary. The hand-over walks
+descriptors only, never crosses a link or a mount, and refuses hard links,
+special files and entries of a third account. Files of the operation, catalog and
+cache stay the invoker's.
+
+Restore uses the same service description, so the third shape is also a
+supported restore target. The operator bundle's full-node unit is supported as it
+is on an engine with the standalone wallet index; on an epoch whose engine
+predates it, disable the in-process index on the target as described in
+[Supported targets](#supported-targets).
 
 ## Private context
 
@@ -257,6 +344,29 @@ mode 0600, exactly 32 bytes. It must not be a validator key. The tool does not
 create publisher secrets. Keep that file outside the entire source database, public catalog and every operation tree.
 The shared creation path checks its provenance before stopping and again before capture;
 symlinks, hard links, replacement and capture aliases refuse.
+
+### Publisher host prerequisites
+
+Check these before the first `create`; each one otherwise refuses at run time:
+
+- **Two references reachable from the publisher host.** `create` and `publish`
+  each query two named, distinct JSON-RPC endpoints (`references` in the context,
+  `--reference` on `publish`) from the host that runs them. The source node's own
+  loopback JSON-RPC is not an independent reference. Check that both answer from
+  that host, for example through the firewall, before stopping anything.
+- **An operator config for the source node.** `operator_config` is a tosctl
+  configuration that names `node_name` with the node's control `server_address`
+  and `server_key` (its public key). Its `client_key` must be a control client the
+  node's `config.json` lists under `control`; the tool refuses a client that
+  belongs to another node. Build it from the node's console keys without copying
+  them out: give the server key as a public key, and keep the client private key in
+  the operator vault (`VaultKey`) rather than inline in the file. Keep the file
+  private to the invoking user and outside the chain, signing and recovery
+  directories. It must not enable an election binding for the source or any alias.
+- **One filesystem.** The operation directory, the catalog and every budget root
+  must be on the database's filesystem; a root on another device refuses. On the operator bundle that means a root-owned directory such
+  as `/var/lib/tos/node-sync` (mode 0700), with `budget_roots` naming its parent
+  `/var/lib/tos`, not `/srv` or `/tmp`.
 
 ```sh
 install -d -m 700 /srv/node-sync/catalog

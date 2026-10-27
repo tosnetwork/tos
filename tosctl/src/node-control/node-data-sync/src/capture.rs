@@ -30,16 +30,14 @@ fn cold_image_impl(
     let mut total = 0_u64;
     let mut count = 0_usize;
     for name in crate::paths::CHAIN_ROOTS.into_iter().chain(["state", "tmp"]) {
-        let path = source.path.join(name);
-        match path.symlink_metadata() {
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound && name == "tmp" => continue,
-            Err(e) => return Err(e.into()),
-            Ok(metadata) => ensure!(
-                metadata.file_type().is_dir(),
-                "captured native root is a link or special file"
-            ),
-        }
-        let root = Root::open(&path)?;
+        // Opened below the held source descriptor: a replaced, linked or mounted root refuses.
+        let root = match trees::optional_directory(source, name)
+            .context("captured native root is a link or special file")?
+        {
+            Some(root) => root,
+            None if name == "tmp" => continue,
+            None => anyhow::bail!("captured native root is missing: {name}"),
+        };
         for file in trees::inventory(&root)? {
             count = count.checked_add(1).context("capture file count overflow")?;
             ensure!(count <= FILE_COUNT_LIMIT, "capture file count limit");
