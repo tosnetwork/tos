@@ -212,6 +212,25 @@ The production rehearsal must exercise the complete path, including failed
 submission recovery, configuration installation, stake recovery, and bonus
 recovery. Observing only ConfigParam 34 or `funds_created` is insufficient.
 
+## Signing ledger at genesis
+
+When the own-decision log is enabled, a validator without a signing ledger
+treats its signing history as unknown. It signs nothing until a fence block and
+three catchain rotations have passed. A genesis validator whose identity was
+created for this zerostate and has never signed can start with a complete
+ledger instead. Run the following on the stopped node, before its first start,
+with the zerostate root and file hashes from the global configuration:
+
+```bash
+build/crypto/pq/tos-pq-consensus-key init-signing-ledger --genesis-ceremony \
+  DB_ROOT VALIDATOR_ID ZEROSTATE_ROOT_HASH ZEROSTATE_FILE_HASH
+```
+
+The node checks the ledger's zerostate against its configured zerostate at
+start, and a mismatch admits nothing. Never run the ceremony for a key that has
+signed before. See [signing-decision-log](signing-decision-log.md); the log is
+off by default and not yet deployable.
+
 ## Related documents
 
 - [`tos-validator-only-token-economics.md`](https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-validator-only-token-economics.md)

@@ -42,6 +42,12 @@ Database-root directories have explicit dispositions:
 | `packed` | Refuse unsupported legacy archive layout. |
 | Other directories or root symlinks | Refuse and name the path. |
 
+Preserving `consensus` keeps the target's own-decision log
+(`consensus/signing-ledger/`) with its own history. Never take that directory
+from a donor or from a backup: a copied ledger is treated as unknown signing
+history, and the validator signs again only after the fence described in
+[signing-decision-log](signing-decision-log.md).
+
 The wallet index (`validator-engine/wallet-index.cpp`) and this restore path are
 absent from the native reference at `857b8a57a178e6ae0fe7fa86e7d81c5233de8560`.
 
