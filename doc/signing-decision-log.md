@@ -1,11 +1,14 @@
 # Own-decision log and unknown signing history
 
 Status: **experimental, off by default, not deployable yet.** The validator
-manager option `signing_decision_log_enabled` is false, and the validator
-engine has no flag that sets it. Do not enable the log on any network until
-the pre-merge evidence listed under [Deployment blockers](#deployment-blockers)
-exists. It must be enabled together with the unknown-history fence described
-here, never without it.
+engine flag `--signing-decision-log` turns it on **for local-chain drills
+only**. A node started with the flag refuses to start on any network whose
+global id is not 3 (local). Mainnet (1) and the public testnet (2) are
+refused with a message naming the flag. It also admits no session there if a
+later path reaches admission. Do not enable the log anywhere else until the
+evidence listed under [Deployment blockers](#deployment-blockers) exists and
+the local-only restriction is lifted in a reviewed change. It is enabled
+together with the unknown-history fence described here, never without it.
 
 ## What it protects against
 
@@ -78,7 +81,8 @@ cost, not a recovery-time guarantee.
   honest validator refuses blocks generated more than 30 s in its future.
 - **No second signer.** The previous process of the identity has stopped
   before this one starts. Two hosts running the same identity at the same time
-  are out of scope. The consensus key lock prevents that on one host only.
+  are out of scope. The consensus key lock prevents that only for processes
+  that open the same key file inode on one kernel.
 
 ## Genesis ceremony
 
@@ -117,15 +121,31 @@ the target's own `consensus/`, including its signing ledger, and never imports a
 donor's. A validator restored that way keeps its ledger in place and keeps its
 history.
 
-A restore any other way starts with unknown history once the log is enabled.
-This includes replacing the database directory with a snapshot, moving it to a
-new host, or a fresh install of an existing identity. Expect such a node to sign
-again only after its fence block and three catchain counters (see
-[What it costs](#what-it-costs)).
+The ledger detects a copy by the directory's and each log's inode number and
+birth time. Once the log is enabled, a node starts with unknown history in
+these cases:
+
+- the database directory is replaced with a snapshot made by copying files;
+- the database is moved to a new host;
+- an existing identity is installed fresh.
+
+Expect such a node to sign again only after its fence block and three catchain
+counters (see [What it costs](#what-it-costs)).
+
+**Excluded residual: a consistent rollback that keeps inodes.** An in-place
+rollback of the filesystem or of the whole virtual machine keeps inode numbers
+and birth times, for example a block-level, LVM, ZFS, btrfs or hypervisor
+snapshot restored onto the same device. It rolls the ledger and the journal
+back together. The rolled-back ledger is indistinguishable from the original,
+so the node is **not** fenced. It can sign again in a session where it signed
+after the snapshot was taken. The log does not protect against this. Never
+roll a running or recently running validator back in place. If it has been
+rolled back, delete `consensus/signing-ledger/` before starting it, so that it
+goes through the unknown-history fence.
 
 Do not copy `consensus/signing-ledger/` between hosts or back it up for restore.
-A copy is detected and treated as unknown history. An old copy that went
-undetected would let the node sign against stale records.
+A file copy is detected and treated as unknown history. A copy that keeps inode
+numbers and birth times, as above, is not detected.
 
 ## Rolling upgrade
 
@@ -149,13 +169,18 @@ Neither part is deployed before all of the following are recorded:
   - no own vote or candidate in a session at or below `cc(M) + 2` of its
     lineage;
   - signing resumes at `cc(M) + 3`.
-- a validator engine option that enables the log, reviewed with the above.
+- the local-only restriction of `--signing-decision-log` lifted in a change
+  reviewed with the above.
 
 ## Release note (for the release that enables the log)
 
 > Validators record each consensus decision in an own-decision log before they
 > sign it. This prevents a node from signing twice in a session after its
-> consensus journal is lost, restored or copied. A validator whose earlier
+> consensus journal is lost, or its database is restored from a file copy or
+> moved to another host. It does not protect against an in-place filesystem or
+> virtual machine snapshot rollback, which keeps inode numbers. Never roll a
+> validator back that way, or delete its signing ledger before starting it
+> again. A validator whose earlier
 > signing is unknown does not sign until three catchain rotations after its
 > first fence block. This includes a fresh install of an existing identity, a
 > restore, or a node upgrading to this release. New genesis validators can

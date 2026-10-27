@@ -290,6 +290,13 @@ struct FenceEntry {
 // rather than wrapping.
 bool fenced_by_history(const std::vector<FenceEntry>& fence, ShardIdFull shard, std::uint32_t cc);
 
+// The global id of a local network. The own-decision log is experimental and runs only
+// there until it is cleared for deployment.
+inline constexpr std::int32_t kLocalNetworkGlobalId = 3;
+
+// OK on a local network; otherwise the reason a node with the log enabled must not run.
+td::Status refuse_off_local_network(std::int32_t global_id);
+
 struct Header {
   td::Bits256 validator = td::Bits256::zero();
   Binding dir;

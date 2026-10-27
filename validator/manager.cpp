@@ -2794,6 +2794,9 @@ void ValidatorManagerImpl::init_last_masterchain_state(td::Ref<MasterchainState>
   if (auth_status.is_error()) {
     LOG(FATAL) << "refusing initial masterchain AUTH policy: " << auth_status;
   }
+  if (auto local_only = signing_decision_log_network_check(*state); local_only.is_error()) {
+    LOG(FATAL) << "refusing to start: " << local_only;
+  }
   last_masterchain_state_ = std::move(state);
   update_shard_overlays();
 }
@@ -2804,6 +2807,9 @@ void ValidatorManagerImpl::started(ValidatorManagerInitResult R) {
   auto auth_status = admit_auth_policy_state(*R.state, last_masterchain_state_);
   if (auth_status.is_error()) {
     LOG(FATAL) << "refusing restored masterchain AUTH policy: " << auth_status;
+  }
+  if (auto local_only = signing_decision_log_network_check(*R.state); local_only.is_error()) {
+    LOG(FATAL) << "refusing to start: " << local_only;
   }
   last_masterchain_block_handle_ = std::move(R.handle);
   last_masterchain_block_id_ = last_masterchain_block_handle_->id();
@@ -4265,6 +4271,14 @@ std::shared_ptr<const consensus::signing::Admission> ValidatorManagerImpl::signi
   if (auto it = signing_admissions_.find(session_id); it != signing_admissions_.end()) {
     return it->second;
   }
+  // The start refuses such a network; this keeps any later path from signing on one too.
+  if (last_masterchain_state_.not_null()) {
+    if (auto local_only = signing_decision_log_network_check(*last_masterchain_state_); local_only.is_error()) {
+      auto fenced = consensus::signing::Admission::fence(session_id, local_only.message().str());
+      signing_admissions_[session_id] = fenced;
+      return fenced;
+    }
+  }
   switch (signing_floor_state_) {
     case SigningFloorState::Unknown:
       signing_floor_state_ = SigningFloorState::Requested;
@@ -4315,6 +4329,13 @@ std::shared_ptr<const consensus::signing::Admission> ValidatorManagerImpl::signi
     fetch_signing_admission(session_id, validator, shard, cc).start().detach();
   }
   return nullptr;
+}
+
+td::Status ValidatorManagerImpl::signing_decision_log_network_check(const MasterchainState &state) const {
+  if (!opts_->get_signing_decision_log_enabled()) {
+    return td::Status::OK();
+  }
+  return consensus::signing::refuse_off_local_network(state.get_global_id());
 }
 
 void ValidatorManagerImpl::offer_signing_fence_block() {

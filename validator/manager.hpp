@@ -347,6 +347,8 @@ class ValidatorManagerImpl : public ValidatorManager {
   // While the ledger's history is unknown, every new masterchain block is offered as its
   // fence block, before any group of that block is admitted.
   bool signing_history_settled_ = false;
+  // With the own-decision log enabled, refuses a network other than a local one.
+  td::Status signing_decision_log_network_check(const MasterchainState &state) const;
   void offer_signing_fence_block();
   void checked_signing_floor(td::Result<ConstBlockHandle> handle);
   void rebuild_groups_after_signing_answer();

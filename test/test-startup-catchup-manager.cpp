@@ -101,6 +101,7 @@ struct Snapshot {
   td::Ref<block::ValidatorSet> previous, current, next;
   CatchainSeqno cc = 1;
   std::vector<ShardSpec> shards = {};
+  td::int32 global_id = 3;
 };
 
 class StateConfig : public ConfigHolder {
@@ -117,10 +118,10 @@ class StateConfig : public ConfigHolder {
     return {0, 0x7fffffff};
   }
   td::int32 get_global_id() const override {
-    return 3;
+    return snapshot_.global_id;
   }
   td::Result<td::int32> get_config_global_id() const override {
-    return 3;
+    return snapshot_.global_id;
   }
   ValidatorSessionConfig get_consensus_config() const override {
     ValidatorSessionConfig result;
@@ -212,7 +213,7 @@ class State : public MasterchainStateQ {
     return std::max(*left, *right) + 1;
   }
   td::int32 get_global_id() const override {
-    return 3;
+    return snapshot_.global_id;
   }
   bool rotated_all_shards() const override {
     return false;
@@ -512,6 +513,12 @@ class StartupCatchupManagerProbe : public ValidatorManagerImpl {
                           })
                           .session_id);
   }
+  // The start's network check for the own-decision log, on the current state: empty when
+  // the node may start, otherwise the refusal.
+  void network_check(td::Promise<std::string> promise) {
+    auto checked = signing_decision_log_network_check(*last_masterchain_state_);
+    promise.set_value(checked.is_ok() ? std::string() : checked.message().str());
+  }
   // A new last key block, as applying a key block records it.
   void key_block(BlockSeqno seqno, td::Promise<td::Unit> promise) {
     auto handle =
@@ -735,6 +742,11 @@ class Fixture {
     return ask<ValidatorSessionId>([&](td::Promise<ValidatorSessionId> p) {
       td::actor::send_closure(manager_, &StartupCatchupManagerProbe::session_for, std::move(s), shard, cc,
                               std::move(p));
+    });
+  }
+  std::string network_check() {
+    return ask<std::string>([&](td::Promise<std::string> p) {
+      td::actor::send_closure(manager_, &StartupCatchupManagerProbe::network_check, std::move(p));
     });
   }
   void key_block(BlockSeqno seqno) {
@@ -1335,4 +1347,58 @@ TEST(StartupCatchupManager, UnknownHistoryKeyBlockChangesTheId) {
   auto later = f.snapshot(f.current, 5);
   f.advance(later, 14, kAfterTheMarginOfStart);
   ASSERT_EQ(std::string("admitted"), admission_of(f, f.session_for(later, ShardIdFull{masterchainId, shardIdAll}, 5)));
+}
+
+// ===== The engine option is for local networks only =====
+
+namespace {
+
+// Starts a node at a state of `global_id`, with the own-decision log on or off and a
+// complete ledger, and returns the start's refusal ("" when it may start) and how the
+// first session was admitted.
+std::pair<std::string, std::string> start_on_network(bool decision_log, td::int32 global_id) {
+  Fixture f(decision_log, decision_log ? signing_node() : nullptr);
+  f.hold(f.current, 0);
+  auto state = f.snapshot(f.current, 1);
+  state.global_id = global_id;
+  f.set_tip(state, 10, kFresh);
+  auto refusal = f.network_check();
+  CHECK(!f.decide());
+  f.advance(state, 10, kFresh);
+  f.run_for(1.0);
+  std::string admission = f.journal->count("admission admitted ") > 0 ? "admitted"
+                          : f.journal->count("admission fenced ") > 0 ? "fenced"
+                          : f.journal->count("group ") > 0            ? "no log"
+                                                                      : "none";
+  return {refusal, admission};
+}
+
+}  // namespace
+
+TEST(StartupCatchupManager, DecisionLogRefusesTheTestnet) {
+  auto [refusal, admission] = start_on_network(true, 2);
+  ASSERT_TRUE(refusal.find("global id is 2") != std::string::npos);
+  ASSERT_TRUE(refusal.find("local network") != std::string::npos);
+  ASSERT_EQ(std::string("fenced"), admission);
+}
+
+TEST(StartupCatchupManager, DecisionLogRefusesMainnet) {
+  auto [refusal, admission] = start_on_network(true, 1);
+  ASSERT_TRUE(refusal.find("global id is 1") != std::string::npos);
+  ASSERT_EQ(std::string("fenced"), admission);
+}
+
+TEST(StartupCatchupManager, DecisionLogAcceptsALocalNetwork) {
+  auto [refusal, admission] = start_on_network(true, 3);
+  ASSERT_EQ(std::string(), refusal);
+  ASSERT_EQ(std::string("admitted"), admission);
+}
+
+// Without the option, no network is refused and groups are built without the log.
+TEST(StartupCatchupManager, WithoutTheDecisionLogNothingChanges) {
+  for (td::int32 global_id : {1, 2, 3}) {
+    auto [refusal, admission] = start_on_network(false, global_id);
+    ASSERT_EQ(std::string(), refusal);
+    ASSERT_EQ(std::string("no log"), admission);
+  }
 }

@@ -1715,6 +1715,11 @@ td::Status ValidatorEngine::load_global_config() {
   if (test_crash_cleanup_before_erase_) {
     validator_options_.write().set_test_crash_cleanup_before_erase(true);
   }
+  if (signing_decision_log_) {
+    validator_options_.write().set_signing_decision_log_enabled(true);
+    LOG(WARNING) << "signing decision log: enabled (experimental, local networks only; the node refuses to start "
+                    "on any other network)";
+  }
   if (ext_message_work_profile_) {
     TRY_STATUS(validator_options_.write().set_ext_message_work_profile(ext_message_work_profile_.value()));
   }
@@ -6766,6 +6771,14 @@ int main(int argc, char *argv[]) {
                  acts.push_back(
                      [&x]() { td::actor::send_closure(x, &ValidatorEngine::set_validator_consensus_cleanup, false); });
                });
+  p.add_option(
+      '\0', "signing-decision-log",
+      "EXPERIMENTAL, LOCAL NETWORKS ONLY: record each own consensus decision in a synced log before "
+      "signing it, and fence sessions whose earlier signing is unknown (doc/signing-decision-log.md). "
+      "Default off. The node refuses to start with it on any network whose global id is not 3",
+      [&]() {
+        acts.push_back([&x]() { td::actor::send_closure(x, &ValidatorEngine::set_signing_decision_log, true); });
+      });
   p.add_option('\0', "test-consensus-cleanup-crash-before-erase",
                "TEST-ONLY FAULT INJECTION: after a consensus directory is confirmed deleted but before its durable "
                "cleanup record is erased, exit abruptly to reproduce the mid-flight crash state. Default off; never "

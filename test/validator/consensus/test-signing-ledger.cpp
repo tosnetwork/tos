@@ -168,6 +168,11 @@ void test_fence_rule() {
     require(fenced_by_history(fence, ShardIdFull{7, shardIdAll}, 1000), "an absent workchain is fenced");
     require(fenced_by_history({}, all, 1000), "an empty fence fences everything");
   }
+  // The log runs on a local network only.
+  require(refuse_off_local_network(3).is_ok(), "a local network is accepted");
+  require(refuse_off_local_network(2).is_error(), "the public testnet is refused");
+  require(refuse_off_local_network(1).is_error(), "mainnet is refused");
+  require(refuse_off_local_network(0).is_error(), "any other network is refused");
   std::printf("fence rule: ok\n");
 }
 

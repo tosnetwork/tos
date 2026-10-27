@@ -755,6 +755,16 @@ td::Status create_ledger(const std::string& dir, const td::Bits256& validator, s
 
 // ===== The fence =====
 
+td::Status refuse_off_local_network(std::int32_t global_id) {
+  if (global_id == kLocalNetworkGlobalId) {
+    return td::Status::OK();
+  }
+  return td::Status::Error(PSTRING() << "--signing-decision-log is experimental and runs only on a local network "
+                                        "(global id "
+                                     << kLocalNetworkGlobalId << "); this network's global id is " << global_id
+                                     << " (1 is mainnet, 2 the public testnet). Remove the flag.");
+}
+
 bool fenced_by_history(const std::vector<FenceEntry>& fence, ShardIdFull shard, std::uint32_t cc) {
   if (cc == kCounterSentinel) {
     return true;
