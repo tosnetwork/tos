@@ -1,49 +1,58 @@
 /* Copyright 2026 TOS Blockchain Teams. SPDX-License-Identifier: GPL-3.0-or-later */
 #pragma once
 
-#include <algorithm>
+#include <cstddef>
 #include <cstdint>
 
 #include "td/utils/Status.h"
-#include "td/utils/logging.h"
+#include "validator/db/archive-lru-policy.h"
 
 namespace tos::services {
 
-// Descriptor admission for source reads. A source read can open one archive
-// slice, which then holds up to that slice's weight in descriptors until the
-// archive LRU closes it again; closing is asynchronous and waits for the
-// slice's active queries. Running out of descriptors inside the node database
-// layer aborts the process, so a read is admitted only while the descriptors
-// held, plus room for the largest slice seen, stay within the budget.
-struct SourceAdmission {
-  // Descriptors the process may hold (its soft RLIMIT_NOFILE less a margin
-  // for sockets and other files opened between checks).
-  std::uint64_t budget = 0;
-  // Room kept for one slice open before any slice has reported its weight.
-  std::uint64_t min_reserve = 512;
-};
+// Descriptors a source read may need besides the archive slices it opens:
+// table files the cell and state databases open on catch-up, block readers.
+// Archive slice opens admit their own demand, counted from the files they are
+// about to open (ArchiveSlice::before_query), so no estimate from slices seen
+// before is involved.
+constexpr std::size_t kSourceReadReserve = 128;
 
-// `open_fds` negative means the count is unavailable; the read is then
-// refused, since nothing else bounds it. Admission depends only on the
-// descriptors actually held: a refused read changes nothing, while slices the
-// LRU closed meanwhile release theirs, so a refusal clears by itself once the
-// count is back within the budget.
-inline td::Status admit_source_request(const SourceAdmission& admission, std::int64_t open_fds,
-                                       std::uint64_t largest_slice_files) {
-  if (admission.budget == 0) {
-    return td::Status::OK();
-  }
-  if (open_fds < 0) {
-    return td::Status::Error("source read refused: the process's open descriptors cannot be counted");
-  }
-  auto reserve = std::max(admission.min_reserve, largest_slice_files);
-  auto held = static_cast<std::uint64_t>(open_fds);
-  if (held > admission.budget || admission.budget - held < reserve) {
-    return td::Status::Error(PSTRING() << "source read refused: " << held << " descriptors held, " << reserve
-                                       << " reserved for an archive slice, budget " << admission.budget
-                                       << "; replay resumes when archive slices have closed");
-  }
-  return td::Status::OK();
+// Admit one source read against the process-wide descriptor budget. A refusal
+// is either a wait (closing archive slices would make room; the caller asks
+// the archive LRU to rebalance and retries) or a shortage (nothing the
+// process can close would make room; only a higher descriptor limit helps).
+inline td::Status admit_source_request() {
+  return validator::admit_archive_descriptors(kSourceReadReserve, "source read");
 }
+
+// Consecutive shortages, with no read admitted in between, after which replay
+// stops instead of retrying: the limit has to be raised by the operator.
+constexpr int kShortagesBeforeStop = 3;
+
+// Tracks whether replay is blocked by a descriptor shortage. `observe` is
+// called once per replay step with the process-wide refusal counts after the
+// step; it returns true once kShortagesBeforeStop consecutive steps each
+// recorded a new shortage and nothing else.
+class ShortageTracker {
+ public:
+  bool observe(const validator::DescriptorRefusals& refusals) {
+    bool new_shortage = refusals.shortages > shortages_ && refusals.last_was_shortage;
+    shortages_ = refusals.shortages;
+    consecutive_ = new_shortage ? consecutive_ + 1 : 0;
+    return consecutive_ >= kShortagesBeforeStop;
+  }
+  // A step that succeeded: replay is not blocked, whatever it was refused
+  // on the way.
+  void progressed(const validator::DescriptorRefusals& refusals) {
+    shortages_ = refusals.shortages;
+    consecutive_ = 0;
+  }
+  int consecutive() const {
+    return consecutive_;
+  }
+
+ private:
+  std::uint64_t shortages_ = 0;
+  int consecutive_ = 0;
+};
 
 }  // namespace tos::services

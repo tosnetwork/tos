@@ -89,7 +89,7 @@ class LegacyLru {
 };
 
 ArchiveLruPolicy reader(std::size_t max_total_files, std::size_t keep, std::size_t budget = 0,
-                        std::size_t reserve = 512) {
+                        std::size_t reserve = 128) {
   return ArchiveLruPolicy{ArchiveLruPolicy::Options{max_total_files, keep, budget, reserve}};
 }
 }  // namespace
@@ -196,13 +196,13 @@ TEST(ArchiveLru, ReaderHoldsAtMostTheTargetPlusItsRetainedSlices) {
   }
 }
 
-TEST(ArchiveLru, ABudgetWithdrawsRetentionAndKeepsRoomForOneSlice) {
+TEST(ArchiveLru, ABudgetWithdrawsRetentionAndKeepsItsReserveFree) {
   auto policy = reader(128, 2, 1000, 100);
   ASSERT_TRUE(policy.on_query(slice(200000), 405, 300).empty());
   ASSERT_TRUE(policy.on_query(slice(220000), 169, 480).empty());
-  // 600 held + room for the largest slice (405) exceeds 1000: the oldest
-  // retained slice is closed, which frees enough.
-  auto closed = policy.on_query(slice(220000), 169, 600);
+  // 950 held leaves less than the reserve (100): the oldest retained slice
+  // is closed, which frees enough.
+  auto closed = policy.on_query(slice(220000), 169, 950);
   ASSERT_EQ(closed.size(), 1u);
   ASSERT_TRUE(closed[0] == slice(200000));
   ASSERT_EQ(policy.retention_withdrawn(), 1u);
@@ -216,31 +216,113 @@ TEST(ArchiveLru, ABudgetWithdrawsRetentionAndKeepsRoomForOneSlice) {
   ASSERT_EQ(policy.retention_withdrawn(), 2u);
 }
 
+// The open about to happen can need more than any slice seen so far; it is
+// admitted on its own demand, and a refusal frees exactly what it needs.
+TEST(ArchiveLru, AnOpenLargerThanEverySliceSeenIsAdmittedOnItsOwnDemand) {
+  using tos::validator::decide_descriptors;
+  using tos::validator::DescriptorVerdict;
+  auto policy = reader(128, 2, 1152, 128);
+  ASSERT_TRUE(policy.on_query(slice(200000), 405, 500).empty());
+  ASSERT_EQ(policy.evictable_files(), 405u);
+  // The next slice's index and packages need 1000 descriptors; 500 are held.
+  // Room for the largest slice seen (405) would have admitted it.
+  ASSERT_TRUE(decide_descriptors(1152, 500, 405, 0) == DescriptorVerdict::Admit);
+  ASSERT_TRUE(decide_descriptors(1152, 500, 1000, policy.evictable_files()) == DescriptorVerdict::Wait);
+  // Rebalancing for that demand closes the retained slice ...
+  auto closed = policy.rebalance(500, 1000);
+  ASSERT_EQ(closed.size(), 1u);
+  ASSERT_TRUE(closed[0] == slice(200000));
+  // ... after which the open fits.
+  ASSERT_TRUE(decide_descriptors(1152, 95, 1000, policy.evictable_files()) == DescriptorVerdict::Admit);
+  // With nothing closable it never fits: a shortage, not a wait.
+  ASSERT_TRUE(decide_descriptors(1152, 500, 1000, 0) == DescriptorVerdict::Shortage);
+  ASSERT_TRUE(decide_descriptors(1152, 1300, 10, 0) == DescriptorVerdict::Shortage);
+}
+
+// A slice heavier than the budget was opened and closed again: nothing about
+// it is remembered, so smaller work goes on.
+TEST(ArchiveLru, AClosedHeavySliceLeavesNoReserveBehind) {
+  using tos::validator::decide_descriptors;
+  using tos::validator::DescriptorVerdict;
+  auto policy = reader(128, 2, 1152, 128);
+  auto closed = policy.on_query(slice(1), 1200, 1300);
+  ASSERT_EQ(closed.size(), 1u);
+  ASSERT_EQ(policy.evictable_count(), 0u);
+  for (int i = 0; i < 100; ++i) {
+    ASSERT_TRUE(policy.rebalance(100, 50).empty());
+    ASSERT_TRUE(!policy.over_budget());
+    ASSERT_TRUE(decide_descriptors(1152, 100, 50, policy.evictable_files()) == DescriptorVerdict::Admit);
+  }
+  ASSERT_TRUE(policy.on_query(slice(2), 51, 151).empty());
+}
+
 TEST(ArchiveLru, RebalanceClosesWhatAnOverstatedWeightLeftOpen) {
   auto policy = reader(128, 2, 1000, 100);
   policy.on_query(slice(1), 300, 200);
   policy.on_query(slice(2), 300, 400);
   // The estimate after closing slice 1 fits, but the slice held fewer
   // descriptors than its weight: the actual count stays high.
-  ASSERT_EQ(policy.on_query(slice(2), 300, 750).size(), 1u);
+  ASSERT_EQ(policy.on_query(slice(2), 300, 950).size(), 1u);
   ASSERT_TRUE(!policy.over_budget());
-  auto closed = policy.rebalance(720);
+  auto closed = policy.rebalance(950);
   ASSERT_EQ(closed.size(), 1u);
   ASSERT_TRUE(closed[0] == slice(2));
   // Within the budget again, rebalancing changes nothing.
   ASSERT_TRUE(policy.rebalance(100).empty());
 }
 
-TEST(ArchiveLru, SourceReadsAreAdmittedOnlyWithRoomForASlice) {
-  using tos::services::admit_source_request;
-  using tos::services::SourceAdmission;
-  ASSERT_TRUE(admit_source_request(SourceAdmission{0, 512}, -1, 0).is_ok());
-  SourceAdmission admission{4000, 512};
-  ASSERT_TRUE(admit_source_request(admission, -1, 0).is_error());
-  ASSERT_TRUE(admit_source_request(admission, 3488, 0).is_ok());
-  ASSERT_TRUE(admit_source_request(admission, 3489, 0).is_error());
-  // The largest slice seen raises the reserve.
-  ASSERT_TRUE(admit_source_request(admission, 3000, 1000).is_ok());
-  ASSERT_TRUE(admit_source_request(admission, 3001, 1000).is_error());
-  ASSERT_TRUE(admit_source_request(admission, 5000, 0).is_error());
+TEST(ArchiveLru, LiveAdmissionNamesAWaitAndAShortage) {
+  using tos::validator::admit_archive_descriptors;
+  using tos::validator::archive_descriptor_refusals;
+  using tos::validator::count_process_open_fds;
+  using tos::validator::publish_archive_releasable_descriptors;
+  using tos::validator::set_archive_descriptor_budget;
+  // Without a budget nothing is counted or refused.
+  set_archive_descriptor_budget(0);
+  ASSERT_TRUE(admit_archive_descriptors(1u << 30, "test").is_ok());
+  auto held = static_cast<std::size_t>(count_process_open_fds());
+  set_archive_descriptor_budget(held + 64);
+  publish_archive_releasable_descriptors(0);
+  auto before = archive_descriptor_refusals();
+  ASSERT_TRUE(admit_archive_descriptors(8, "small open").is_ok());
+  auto shortage = admit_archive_descriptors(1000, "large open");
+  ASSERT_TRUE(shortage.is_error());
+  ASSERT_TRUE(shortage.message().str().find("raise the descriptor limit") != std::string::npos);
+  auto after = archive_descriptor_refusals();
+  ASSERT_EQ(after.shortages, before.shortages + 1);
+  ASSERT_TRUE(after.last_was_shortage);
+  // Closable slices could make room: a wait. An open of exactly the budget
+  // does not fit beside what is held, but fits once everything is released.
+  publish_archive_releasable_descriptors(held + 1000);
+  auto wait = admit_archive_descriptors(held + 64, "large open");
+  ASSERT_TRUE(wait.is_error());
+  ASSERT_TRUE(wait.message().str().find("waiting for archive slices to close") != std::string::npos);
+  ASSERT_EQ(archive_descriptor_refusals().waits, after.waits + 1);
+  ASSERT_TRUE(!archive_descriptor_refusals().last_was_shortage);
+  publish_archive_releasable_descriptors(0);
+  set_archive_descriptor_budget(0);
+}
+
+TEST(ArchiveLru, ReplayStopsOnlyOnConsecutiveShortages) {
+  tos::services::ShortageTracker tracker;
+  tos::validator::DescriptorRefusals refusals;
+  auto shortage = [&] {
+    ++refusals.shortages;
+    refusals.last_was_shortage = true;
+    return tracker.observe(refusals);
+  };
+  ASSERT_TRUE(!shortage());
+  ASSERT_TRUE(!shortage());
+  // A step that went through resets the run.
+  tracker.progressed(refusals);
+  ASSERT_TRUE(!shortage());
+  ASSERT_TRUE(!shortage());
+  // A failed step with only a wait (no new shortage) resets it too.
+  ++refusals.waits;
+  refusals.last_was_shortage = false;
+  ASSERT_TRUE(!tracker.observe(refusals));
+  ASSERT_TRUE(!shortage());
+  ASSERT_TRUE(!shortage());
+  ASSERT_TRUE(shortage());
+  ASSERT_EQ(tracker.consecutive(), tos::services::kShortagesBeforeStop);
 }

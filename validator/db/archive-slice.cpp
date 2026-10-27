@@ -460,7 +460,9 @@ void ArchiveSlice::get_handle(BlockIdExt block_id, td::Promise<BlockHandle> prom
     promise.set_error(td::Status::Error(ErrorCode::notready, td::Slice(kPackageGarbageCollected)));
     return;
   }
-  before_query();
+  if (!open_for_query(promise)) {
+    return;
+  }
   CHECK(!key_blocks_only_);
   std::string value;
   auto R = kv_->get(get_db_key_block_info(block_id), value);
@@ -486,7 +488,9 @@ void ArchiveSlice::get_temp_handle(BlockIdExt block_id, td::Promise<ConstBlockHa
     promise.set_error(td::Status::Error(ErrorCode::notready, td::Slice(kPackageGarbageCollected)));
     return;
   }
-  before_query();
+  if (!open_for_query(promise)) {
+    return;
+  }
   CHECK(!key_blocks_only_);
   std::string value;
   auto R = kv_->get(get_db_key_block_info(block_id), value);
@@ -509,7 +513,9 @@ void ArchiveSlice::get_file(ConstBlockHandle handle, FileReference ref_id, td::P
     promise.set_error(td::Status::Error(ErrorCode::notready, td::Slice(kPackageGarbageCollected)));
     return;
   }
-  before_query();
+  if (!open_for_query(promise)) {
+    return;
+  }
   std::string value;
   auto R = kv_->get(ref_id.hash().to_hex(), value);
   R.ensure();
@@ -542,7 +548,9 @@ void ArchiveSlice::get_block_common(AccountIdPrefixFull account_id,
     promise.set_error(td::Status::Error(ErrorCode::notready, td::Slice(kPackageGarbageCollected)));
     return;
   }
-  before_query();
+  if (!open_for_query(promise)) {
+    return;
+  }
   bool f = false;
   BlockIdExt block_id;
   td::uint32 ls = 0;
@@ -679,7 +687,9 @@ void ArchiveSlice::get_slice(td::uint64 archive_id, td::uint64 offset, td::uint3
     promise.set_error(td::Status::Error(ErrorCode::error, "bad archive id"));
     return;
   }
-  before_query();
+  if (!open_for_query(promise)) {
+    return;
+  }
   auto value = static_cast<td::uint32>(archive_id >> 32);
   PackageInfo *p;
   if (shard_separated_) {
@@ -696,16 +706,24 @@ void ArchiveSlice::get_slice(td::uint64 archive_id, td::uint64 offset, td::uint3
 }
 
 void ArchiveSlice::get_max_masterchain_seqno(td::Promise<BlockSeqno> promise) {
+  if (!open_for_query(promise)) {
+    return;
+  }
   promise.set_result(max_masterchain_seqno());
 }
 
 void ArchiveSlice::get_min_masterchain_seqno(td::Promise<BlockSeqno> promise) {
+  if (!open_for_query(promise)) {
+    return;
+  }
   promise.set_result(min_masterchain_seqno());
 }
 
 void ArchiveSlice::get_archive_id(BlockSeqno masterchain_seqno, ShardIdFull shard_prefix,
                                   td::Promise<td::uint64> promise) {
-  before_query();
+  if (!open_for_query(promise)) {
+    return;
+  }
   if (!sliced_mode_) {
     promise.set_result(archive_id_);
   } else {
@@ -732,8 +750,27 @@ void ArchiveSlice::before_query() {
             td::RocksDbReadOnly::open(db_path_, std::move(db_options)).move_as_ok());
         break;
       case td::DbOpenMode::db_secondary: {
-        kv_ = std::make_unique<td::RocksDbSecondary>(
-            td::RocksDbSecondary::open(db_path_, std::move(db_options)).move_as_ok());
+        if (budgeted_reader()) {
+          // Every file of the index directory may be held open (a secondary
+          // keeps all table files open), so that is the demand admitted.
+          auto files = count_directory_files(db_path_);
+          auto admitted = admit_descriptors(files + ESTIMATED_DB_OPEN_FILES, "opening archive slice index");
+          if (admitted.is_error()) {
+            open_error_ = std::move(admitted);
+            return;
+          }
+          auto opened = td::RocksDbSecondary::open(db_path_, std::move(db_options));
+          if (opened.is_error()) {
+            open_error_ = td::Status::Error(ErrorCode::notready, PSLICE() << "cannot open archive slice index "
+                                                                          << db_path_ << ": " << opened.error());
+            return;
+          }
+          kv_ = std::make_unique<td::RocksDbSecondary>(opened.move_as_ok());
+          index_files_ = files;
+        } else {
+          kv_ = std::make_unique<td::RocksDbSecondary>(
+              td::RocksDbSecondary::open(db_path_, std::move(db_options)).move_as_ok());
+        }
         last_catch_up_ = td::Timestamp::now();
         break;
       }
@@ -752,6 +789,15 @@ void ArchiveSlice::before_query() {
         R2 = kv_->get("slices", value);
         R2.ensure();
         auto tot = td::to_integer<td::uint32>(value);
+        if (budgeted_reader()) {
+          // Each package holds a descriptor while the slice is open.
+          auto admitted = admit_descriptors(tot, "opening archive slice packages");
+          if (admitted.is_error()) {
+            kv_ = {};
+            open_error_ = std::move(admitted);
+            return;
+          }
+        }
         R2 = kv_->get("slice_size", value);
         R2.ensure();
         slice_size_ = td::to_integer<td::uint32>(value);
@@ -824,11 +870,32 @@ void ArchiveSlice::before_query() {
     }
   }
   status_ = st_open;
+  open_error_ = td::Status::OK();
   if (!archive_lru_.empty()) {
     td::actor::send_closure(archive_lru_, &ArchiveLru::on_query, actor_id(this), p_id_,
                             packages_.size() + ESTIMATED_DB_OPEN_FILES);
   }
+  if (budgeted_reader()) {
+    auto caught_up = try_catch_up_with_primary_impl(CatchUpMode::Throttled);
+    if (caught_up.is_error()) {
+      LOG(WARNING) << "archive slice " << db_path_ << " not caught up: " << caught_up;
+    }
+    return;
+  }
   try_catch_up_with_primary_impl(CatchUpMode::Throttled).ensure();
+}
+
+bool ArchiveSlice::budgeted_reader() const {
+  return mode_ == td::DbOpenMode::db_secondary && archive_descriptor_budget() > 0;
+}
+
+td::Status ArchiveSlice::admit_descriptors(size_t demand, td::Slice what) {
+  auto admitted = admit_archive_descriptors(demand, PSLICE() << what << " " << db_path_);
+  if (admitted.is_error() && !archive_lru_.empty()) {
+    // Close what can be closed so that this demand fits on the next try.
+    td::actor::send_closure(archive_lru_, &ArchiveLru::rebalance, demand);
+  }
+  return admitted;
 }
 
 void ArchiveSlice::open_files() {
@@ -847,6 +914,9 @@ void ArchiveSlice::close_files() {
 
 void ArchiveSlice::iterate_block_handles(std::function<void(const BlockHandleInterface &)> f) {
   before_query();
+  if (status_ == st_closed) {
+    return;
+  }
   td::uint32 range_start = tos_api::db_blockdb_key_value::ID;
   td::uint32 range_end = tos_api::db_blockdb_key_value::ID + 1;
   kv_->for_each_in_range(td::Slice{(char *)&range_start, 4}, td::Slice{(char *)&range_end, 4},
@@ -868,7 +938,9 @@ void ArchiveSlice::get_temp_max_seqnos(td::Promise<std::map<ShardIdFull, BlockSe
     promise.set_error(td::Status::Error("not a temporary package"));
     return;
   }
-  before_query();
+  if (!open_for_query(promise)) {
+    return;
+  }
   if (!temp_max_seqnos_ready_) {
     temp_max_seqnos_ready_ = true;
     td::uint32 range_start = tos_api::db_blockdb_key_value::ID;
@@ -959,7 +1031,9 @@ void ArchiveSlice::end_async_query() {
 void ArchiveSlice::try_catch_up_with_primary(CatchUpMode mode, td::Promise<td::Unit> promise) {
   td::Status status;
   if (status_ == st_closed) {
-    before_query();
+    if (!open_for_query(promise)) {
+      return;
+    }
     status = td::Status::OK();
   } else {
     status = try_catch_up_with_primary_impl(mode);
@@ -982,7 +1056,15 @@ td::Status ArchiveSlice::try_catch_up_with_primary_impl(CatchUpMode mode) {
 
   CHECK(mode_ == td::DbOpenMode::db_secondary);
 
-  TRY_STATUS(static_cast<td::RocksDbSecondary *>(kv_.get())->try_catch_up_with_primary());
+  if (budgeted_reader()) {
+    // New table files since the last open or catch-up may be opened.
+    auto files = count_directory_files(db_path_);
+    TRY_STATUS(admit_descriptors(files > index_files_ ? files - index_files_ : 0, "catching up archive slice index"));
+    TRY_STATUS(static_cast<td::RocksDbSecondary *>(kv_.get())->try_catch_up_with_primary());
+    index_files_ = std::max(index_files_, files);
+  } else {
+    TRY_STATUS(static_cast<td::RocksDbSecondary *>(kv_.get())->try_catch_up_with_primary());
+  }
 
   std::string value;
   auto R2 = kv_->get("status", value);
@@ -995,6 +1077,9 @@ td::Status ArchiveSlice::try_catch_up_with_primary_impl(CatchUpMode mode) {
       if (tot == packages_.size()) {
         last_catch_up_ = td::Timestamp::now();
         return td::Status::OK();
+      }
+      if (budgeted_reader() && tot > packages_.size()) {
+        TRY_STATUS(admit_descriptors(tot - packages_.size(), "adding archive slice packages"));
       }
       R2 = kv_->get("slice_size", value);
       R2.ensure();
@@ -1642,18 +1727,6 @@ static std::tuple<td::uint32, bool, bool> to_tuple(const PackageId &id) {
   return {id.id, id.temp, id.key};
 }
 
-namespace {
-std::atomic<td::uint64> g_reader_largest_slice_files{0};
-std::atomic<td::uint64> g_reader_retention_withdrawn{0};
-std::atomic<bool> g_reader_over_budget{false};
-}  // namespace
-
-ArchiveLruReaderState archive_lru_reader_state() {
-  return {g_reader_largest_slice_files.load(std::memory_order_relaxed),
-          g_reader_retention_withdrawn.load(std::memory_order_relaxed),
-          g_reader_over_budget.load(std::memory_order_relaxed)};
-}
-
 std::int64_t ArchiveLru::open_fds() const {
   // Only a budgeted reader pays for counting its descriptors.
   return policy_.options().descriptor_budget > 0 ? count_process_open_fds() : -1;
@@ -1667,9 +1740,7 @@ void ArchiveLru::close(const std::vector<ArchiveLruPolicy::Key> &keys) {
     }
   }
   if (policy_.options().descriptor_budget > 0) {
-    g_reader_largest_slice_files.store(policy_.largest_slice_files(), std::memory_order_relaxed);
-    g_reader_retention_withdrawn.store(policy_.retention_withdrawn(), std::memory_order_relaxed);
-    g_reader_over_budget.store(policy_.over_budget(), std::memory_order_relaxed);
+    publish_archive_releasable_descriptors(policy_.evictable_files());
   }
 }
 
@@ -1679,8 +1750,8 @@ void ArchiveLru::on_query(td::actor::ActorId<ArchiveSlice> slice, PackageId id, 
   close(policy_.on_query(key, files_count, open_fds()));
 }
 
-void ArchiveLru::rebalance() {
-  close(policy_.rebalance(open_fds()));
+void ArchiveLru::rebalance(size_t demand) {
+  close(policy_.rebalance(open_fds(), demand));
 }
 
 void ArchiveLru::set_permanent_slices(std::vector<PackageId> ids) {

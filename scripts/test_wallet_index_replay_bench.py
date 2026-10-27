@@ -6,6 +6,7 @@ from __future__ import annotations
 import fcntl
 import importlib.util
 import os
+import socket
 import subprocess
 import sys
 import tempfile
@@ -91,6 +92,93 @@ class SourceChecks(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             with self.assertRaises(SystemExit):
                 bench.check_source(Path(root), allow_writable=True)
+
+
+def free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.bind(("127.0.0.1", 0))
+        return probe.getsockname()[1]
+
+
+class PassThrough(unittest.TestCase):
+    def test_tuning_options_are_passed_through(self) -> None:
+        self.assertEqual(
+            bench.tuning_arguments(["--archive-keep-recent", "0", "--archive-open-files=1024"]),
+            ["--archive-keep-recent", "0", "--archive-open-files", "1024"],
+        )
+        self.assertEqual(bench.tuning_arguments([]), [])
+
+    def test_paths_listeners_and_unknown_options_are_refused(self) -> None:
+        for arguments in (
+            ["--source-db", "/live/db"],
+            ["--source-db=/live/db"],
+            ["--data-dir", "/elsewhere"],
+            ["--data-dir=/elsewhere"],
+            ["--listen", "0.0.0.0:80"],
+            ["--listen=0.0.0.0:80"],
+            ["--archive-keep-recent", "0", "--source-db", "/live/db"],
+            ["--unknown"],
+            ["--archive-keep-recent"],
+            ["--archive-keep-recent", "-1"],
+            ["--archive-open-files=lots"],
+        ):
+            with self.subTest(arguments=arguments), self.assertRaises(SystemExit):
+                bench.tuning_arguments(arguments)
+
+    def run_main(self, root: Path, passed: list[str]) -> Path:
+        """Run the benchmark with a stand-in index that records its launch."""
+        marker = root / "launched"
+        fake = root / "fake-index"
+        fake.write_text(f'#!/bin/sh\necho "$@" > {marker}\n')
+        fake.chmod(0o755)
+        source = make_source(root)
+        freeze(source)
+        bench.main(
+            [
+                "--binary",
+                str(fake),
+                "--source",
+                str(source),
+                "--work-dir",
+                str(root / "runs"),
+                "--label",
+                "t",
+                "--port",
+                str(free_port()),
+                "--duration",
+                "1",
+                "--interval",
+                "0.1",
+                "--warmup",
+                "0",
+                "--repeat",
+                "1",
+                "--",
+                *passed,
+            ]
+        )
+        return marker
+
+    def test_refusal_happens_before_the_index_is_launched(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with self.assertRaises(SystemExit) as refused:
+                self.run_main(root, ["--source-db=/live/db"])
+            self.assertIn("refusing index argument", str(refused.exception))
+            self.assertFalse((root / "launched").exists())
+            self.assertFalse((root / "runs").exists())
+
+    def test_accepted_run_launches_with_the_checked_paths_only(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            marker = self.run_main(root, ["--archive-keep-recent", "0"])
+            launched = marker.read_text().split()
+            self.assertEqual(launched.count("--source-db"), 1)
+            self.assertEqual(
+                launched[launched.index("--source-db") + 1], str((root / "db").resolve())
+            )
+            self.assertEqual(launched.count("--data-dir"), 1)
+            self.assertEqual(launched[-2:], ["--archive-keep-recent", "0"])
 
 
 if __name__ == "__main__":

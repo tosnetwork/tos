@@ -22,7 +22,9 @@ Example A/B (stock behaviour, a larger target without retention, retention):
   ... --label target-1024 -- --archive-keep-recent 0 --archive-open-files 1024
   ... --label keep-2
 
-Arguments after `--` are passed to the index unchanged.
+Arguments after `--` are passed to the index; only --archive-open-files and
+--archive-keep-recent are accepted there, so a run can never read another
+source, write another data directory or listen elsewhere than checked.
 """
 
 from __future__ import annotations
@@ -42,6 +44,37 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any
+
+# Index options a run may pass through, each taking one value. Everything else
+# is refused: the source, data directory and listener are the ones this script
+# checked and chose, and a repeated option would override them (the index
+# keeps the last value it is given).
+TUNING_OPTIONS = frozenset({"--archive-open-files", "--archive-keep-recent"})
+
+
+def tuning_arguments(arguments: list[str]) -> list[str]:
+    """The pass-through arguments, refused unless every one is a tuning option."""
+    checked: list[str] = []
+    index = 0
+    while index < len(arguments):
+        argument = arguments[index]
+        name, separator, value = argument.partition("=")
+        if name not in TUNING_OPTIONS:
+            raise SystemExit(
+                f"refusing index argument {argument!r}: only {', '.join(sorted(TUNING_OPTIONS))} "
+                "may be passed through; the source, data directory and listener are set by this script"
+            )
+        if not separator:
+            index += 1
+            if index >= len(arguments):
+                raise SystemExit(f"index argument {name} needs a value")
+            value = arguments[index]
+        if not value.isdigit():
+            raise SystemExit(f"index argument {name} needs a non-negative integer, not {value!r}")
+        checked += [name, value]
+        index += 1
+    return checked
+
 
 STAT_KEYS = (
     "mc_blocks",
@@ -235,7 +268,11 @@ def run_once(args: argparse.Namespace, index_args: list[str], run: int) -> dict[
     return result
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
+    argv = sys.argv[1:] if argv is None else argv
+    split = argv.index("--") if "--" in argv else len(argv)
+    own, passed = argv[:split], argv[split + 1 :]
+    index_args = tuning_arguments(passed)
     usage = __doc__ or ""
     parser = argparse.ArgumentParser(
         description=usage.split("\n\n")[0],
@@ -260,8 +297,7 @@ def main() -> None:
     parser.add_argument("--repeat", type=int, default=3)
     parser.add_argument("--output", type=Path, help="append one JSON line per run")
     parser.add_argument("--allow-writable-source", action="store_true")
-    args, rest = parser.parse_known_args()
-    index_args = rest[1:] if rest[:1] == ["--"] else rest
+    args = parser.parse_args(own)
     if not args.until_seqno and not args.duration:
         parser.error("give --until-seqno or --duration")
     args.binary = args.binary.resolve()

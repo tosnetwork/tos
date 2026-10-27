@@ -2439,6 +2439,7 @@ if (NOT TOS_ONLY_TOSLIB AND NOT USE_EMSCRIPTEN AND NOT EMSCRIPTEN)
   add_dependencies(all-tests test-archive-prune)
   add_test(NAME archive-prune COMMAND test-archive-prune)
   add_test(NAME archive-prune-held-reader-shutdown COMMAND test-archive-prune --held-reader-shutdown)
+  add_test(NAME archive-descriptor-gate COMMAND test-archive-prune --descriptor-gate)
   set_tests_properties(archive-prune archive-prune-held-reader-shutdown PROPERTIES TIMEOUT 90)
 endif()
 

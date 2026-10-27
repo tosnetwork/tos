@@ -9,6 +9,7 @@
 #include <iostream>
 #include <memory>
 #include <string>
+#include <sys/resource.h>
 
 #include "td/actor/actor.h"
 #include "td/db/RocksDb.h"
@@ -16,6 +17,7 @@
 #include "td/utils/filesystem.h"
 #include "td/utils/port/path.h"
 #include "validator/block-handle.hpp"
+#include "validator/db/archive-lru-policy.h"
 #include "validator/db/archive-manager.hpp"
 #include "validator/db/archive-slice.hpp"
 #include "validator/impl/shard.hpp"
@@ -425,10 +427,89 @@ void secondary_prune_lifetime(const std::string &root, bool retain_source_files)
 
 }  // namespace
 
+// A budgeted reader must refuse a slice open it has no descriptors for, and
+// fail the query instead of the process: here the descriptor limit leaves
+// room for two more files, fewer than any slice index needs. Without the
+// admission, the secondary's RocksDB open fails with "Too many open files"
+// and the archive aborts. Restoring the limit lets the same slice open.
+void descriptor_gate(const std::string &root) {
+  auto opts = ValidatorManagerOptions::create(block_id(0), block_id(0));
+  opts.write().set_disable_rocksdb_stats(true);
+  opts.write().set_max_open_archive_files(128);
+  const PackageId middle{20000, false, false};
+  {
+    td::actor::Scheduler scheduler({2});
+    td::actor::ActorOwn<ArchiveManager> primary;
+    scheduler.run_in_context([&] {
+      primary = td::actor::create_actor<ArchiveManager>("gate-primary", td::actor::ActorId<RootDb>{}, root, opts);
+    });
+    for (tos::BlockSeqno seqno : {1U, 20001U, 40001U}) {
+      auto handle = BlockHandleImpl::create_empty(block_id(seqno));
+      handle->set_logical_time(100000 + seqno);
+      handle->set_unix_time(100000 + seqno / 20000);
+      handle->set_is_key_block(false);
+      request<td::Unit>(scheduler, [&](td::Promise<td::Unit> promise) {
+        td::actor::send_closure(primary, &ArchiveManager::add_handle, handle, std::move(promise));
+      }).ensure();
+    }
+    scheduler.run_in_context([&] { primary.reset(); });
+  }
+  auto reader_opts = opts;
+  reader_opts.write().set_archive_lru_keep_most_recent(2);
+  reader_opts.write().set_archive_descriptor_budget(1u << 20);
+  td::actor::Scheduler scheduler({2});
+  td::actor::ActorOwn<ArchiveManager> secondary;
+  scheduler.run_in_context([&] {
+    secondary = td::actor::create_actor<ArchiveManager>("gate-secondary", td::actor::ActorId<RootDb>{}, root,
+                                                        reader_opts, td::DbOpenMode::db_secondary);
+  });
+  auto slice = request<td::actor::ActorId<ArchiveSlice>>(scheduler, [&](auto promise) {
+                 ArchivePruneTestAccess::get_slice(secondary.get(), middle, std::move(promise));
+               }).move_as_ok();
+  auto query = [&] {
+    return request<tos::BlockSeqno>(scheduler, [&](td::Promise<tos::BlockSeqno> promise) {
+      td::actor::send_closure(slice, &ArchiveSlice::get_max_masterchain_seqno, std::move(promise));
+    });
+  };
+  const auto index_files = count_directory_files(root + middle.path() + middle.name() + ".index");
+  check(index_files >= 3, "the slice index exists");
+  struct rlimit original{};
+  check(getrlimit(RLIMIT_NOFILE, &original) == 0, "read the descriptor limit");
+  auto refusals_before = archive_descriptor_refusals();
+  {
+    auto held = count_process_open_fds();
+    check(held > 0, "descriptors can be counted");
+    struct rlimit tight = original;
+    tight.rlim_cur = static_cast<rlim_t>(held) + 2;
+    check(setrlimit(RLIMIT_NOFILE, &tight) == 0, "lower the descriptor limit");
+    set_archive_descriptor_budget(static_cast<size_t>(tight.rlim_cur));
+    auto refused = query();
+    check(setrlimit(RLIMIT_NOFILE, &original) == 0, "restore the descriptor limit");
+    check(refused.is_error(), "an open the budget cannot hold must fail the query");
+    check(refused.error().message().str().find("descriptors") != std::string::npos,
+          "the refusal names the descriptor shortage");
+  }
+  auto refusals_after = archive_descriptor_refusals();
+  check(refusals_after.shortages == refusals_before.shortages + 1 && refusals_after.last_was_shortage,
+        "with nothing closable the refusal is a shortage");
+  set_archive_descriptor_budget(static_cast<size_t>(original.rlim_cur > (1u << 20) ? (1u << 20) : original.rlim_cur));
+  auto opened = query();
+  check(opened.is_ok(), "the same slice opens once descriptors are available");
+  scheduler.run_in_context([&] { secondary.reset(); });
+  set_archive_descriptor_budget(0);
+  std::cout << "PASS: descriptor gate refuses an open it cannot hold, then opens; index files=" << index_files
+            << std::endl;
+}
+
 int main(int argc, char **argv) {
   auto root = td::mkdtemp("", "archive-prune-").move_as_ok();
   if (argc == 2 && std::string(argv[1]) == "--held-reader-shutdown") {
     manager_held_reader(root + "/held-shutdown", true);
+    td::rmrf(root).ensure();
+    return 0;
+  }
+  if (argc == 2 && std::string(argv[1]) == "--descriptor-gate") {
+    descriptor_gate(root + "/descriptor-gate");
     td::rmrf(root).ensure();
     return 0;
   }

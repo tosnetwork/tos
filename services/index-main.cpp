@@ -236,7 +236,8 @@ int main(int argc, char** argv) {
     }
     limit.rlim_cur = static_cast<rlim_t>(1) << 20;
   }
-  SourceAdmission admission{static_cast<uint64_t>(limit.rlim_cur - kDescriptorMargin)};
+  auto descriptor_budget = static_cast<size_t>(limit.rlim_cur - kDescriptorMargin);
+  validator::set_archive_descriptor_budget(descriptor_budget);
   auto index = tos_wallet_index::WalletIndexDb::open((data_path / "index").string());
   if (index.is_error()) {
     LOG(ERROR) << index.error();
@@ -257,7 +258,7 @@ int main(int argc, char** argv) {
     options.write().set_celldb_cache_size(128u << 20);
     options.write().set_max_open_archive_files(archive_open_files);
     options.write().set_archive_lru_keep_most_recent(archive_keep_recent);
-    options.write().set_archive_descriptor_budget(static_cast<size_t>(admission.budget));
+    options.write().set_archive_descriptor_budget(descriptor_budget);
     db = td::actor::create_actor<validator::RootDb>("index-source", td::actor::ActorId<validator::ValidatorManager>{},
                                                     source_path.string(), options, td::DbOpenMode::db_secondary);
     JsonRpcServer::Options rpc;
@@ -270,19 +271,32 @@ int main(int argc, char** argv) {
     td::actor::send_closure(server, &JsonRpcServer::listen, listen);
   });
   IndexReader reader(db.get());
-  reader.set_admission([admission] {
-    auto lru = validator::archive_lru_reader_state();
-    return admit_source_request(admission, validator::count_process_open_fds(), lru.largest_slice_files);
-  });
+  reader.set_admission([] { return admit_source_request(); });
+  std::atomic<bool> descriptor_shortage{false};
   std::thread worker([&] {
     Replay replay(reader, progress);
     tos_wallet_index::set_wc0_index_state_fetcher(
         [&](const td::Bits256& address, auto done) { done(replay.newest(address)); });
+    ShortageTracker shortages;
     while (!stop_requested.load()) {
       auto status = replay.step();
       if (status.is_error()) {
         progress.ready = false;
         LOG(WARNING) << "replay paused: " << status;
+      }
+      // A refused source read or slice open does not always surface as its
+      // own error (the archive falls back to other packages first), so the
+      // process-wide refusal record decides whether replay is blocked.
+      auto refusals = validator::archive_descriptor_refusals();
+      if (status.is_error() && shortages.observe(refusals)) {
+        LOG(ERROR) << "replay stopped: too few file descriptors (" << refusals.last_message
+                   << "); the cursor is durable, restart after raising the limit";
+        descriptor_shortage = true;
+        stop_requested = true;
+        break;
+      }
+      if (status.is_ok()) {
+        shortages.progressed(refusals);
       }
       if (status.is_error() || replay.idle()) {
         for (int i = 0; i < (status.is_error() ? 50 : 10) && !stop_requested.load(); ++i)
@@ -300,5 +314,8 @@ int main(int argc, char** argv) {
   worker.join();
   tos_wallet_index::release_wc0_index_state();
   tos_wallet_index::set_wallet_index_db(nullptr);
+  if (descriptor_shortage.load()) {
+    return 3;
+  }
   return reader.timed_out() ? 1 : 0;
 }

@@ -156,15 +156,25 @@ a descriptor budget:
 
 1. At startup the soft `RLIMIT_NOFILE` is raised to the hard limit. The service
    exits with status 2 when the limit is below `--archive-open-files` + 1280.
-2. The budget is the limit less 256. While the descriptors the process holds,
-   plus room for its largest slice (at least 512), exceed the budget, retained
-   and other non-permanent slices are closed oldest first.
-3. A source read is refused when the same check fails on the actual descriptor
-   count. Each refusal also asks the LRU to decide again on a fresh count. Replay
-   then pauses at its durable cursor and retries after five seconds; it never
-   runs out of descriptors inside the database layer.
-4. If the permanent slices alone exceed the budget, replay stays paused and logs
-   `source read refused` until the limit is raised.
+2. The budget is the limit less 256. While the descriptors the process holds
+   plus 128 exceed the budget, retained and other non-permanent slices are
+   closed oldest first.
+3. Every archive slice open is admitted on its own demand before anything is
+   opened. The demand is every file in the slice's index directory, since a
+   secondary keeps all its table files open, plus one descriptor per package,
+   checked again before the packages are opened. Catching up an open slice is
+   admitted the same way, for its new files. Every source read is also admitted
+   for 128 descriptors beyond the slices it opens. No weight seen earlier is
+   assumed for the next open.
+4. When an open or a read does not fit, it is refused before anything is opened,
+   and the query fails instead of the process. If closing archive slices would
+   make room, the LRU is asked to close enough for that demand, and replay
+   pauses at its durable cursor and retries after five seconds.
+5. If nothing the process can close would make room (a shortage), the refusal
+   says by how much the descriptor limit must be raised. After three consecutive
+   replay steps that end in a shortage, replay stops: the service logs
+   `replay stopped: too few file descriptors (...)` and exits with status 3.
+   The cursor is durable; restart after raising `LimitNOFILE`.
 
 `--archive-keep-recent 0 --archive-open-files 1024` is the control setting for
 comparing against a larger target without retention. A source request that fails to finish within 30 seconds

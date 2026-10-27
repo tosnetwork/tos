@@ -193,6 +193,23 @@ class ArchiveSlice : public td::actor::Actor {
   td::uint32 shard_split_depth_ = 0;
 
   enum Status { st_closed, st_open, st_want_close } status_ = st_closed;
+  // A budgeted reader's open can be refused or fail (see
+  // admit_archive_descriptors); the query then fails, not the process.
+  td::Status open_error_;
+  // Files in the index directory when the index was last opened or caught up.
+  size_t index_files_ = 0;
+  bool budgeted_reader() const;
+  td::Status admit_descriptors(size_t demand, td::Slice what);
+  template <class T>
+  bool open_for_query(td::Promise<T> &promise) {
+    before_query();
+    if (status_ != st_closed) {
+      return true;
+    }
+    promise.set_error(open_error_.is_error() ? open_error_.clone()
+                                             : td::Status::Error(ErrorCode::notready, "archive slice is not open"));
+    return false;
+  }
   size_t active_queries_ = 0;
   std::vector<td::Promise<>> query_finish_waiters_;
 
@@ -255,16 +272,6 @@ class ArchiveSlice : public td::actor::Actor {
   static const size_t ESTIMATED_DB_OPEN_FILES = 5;
 };
 
-// Process-wide view of the archive LRU for a reader that admits its own reads
-// against a descriptor budget (see ArchiveLruPolicy). Zero until an LRU with a
-// descriptor budget has decided anything.
-struct ArchiveLruReaderState {
-  td::uint64 largest_slice_files = 0;
-  td::uint64 retention_withdrawn = 0;
-  bool over_budget = false;
-};
-ArchiveLruReaderState archive_lru_reader_state();
-
 class ArchiveLru : public td::actor::Actor {
  public:
   explicit ArchiveLru(size_t max_total_files) : ArchiveLru(ArchiveLruPolicy::Options{max_total_files, 0, 0}) {
@@ -274,7 +281,9 @@ class ArchiveLru : public td::actor::Actor {
   }
   void on_query(td::actor::ActorId<ArchiveSlice> slice, PackageId id, size_t files_count);
   void set_permanent_slices(std::vector<PackageId> ids);
-  void rebalance();
+  // Close slices so that `demand` more descriptors fit, if closing can make
+  // them fit (a budgeted reader whose open was refused asks for this).
+  void rebalance(size_t demand);
 
  private:
   ArchiveLruPolicy policy_;

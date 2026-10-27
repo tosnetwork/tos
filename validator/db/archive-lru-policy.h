@@ -4,8 +4,12 @@
 #include <cstddef>
 #include <cstdint>
 #include <map>
+#include <string>
 #include <tuple>
 #include <vector>
+
+#include "td/utils/Slice.h"
+#include "td/utils/Status.h"
 
 namespace tos::validator {
 
@@ -25,21 +29,14 @@ namespace tos::validator {
 // times in a row. When that slice alone outweighs the target, the default
 // closes it after every read, and every read reopens its database. Such a
 // reader sets keep_most_recent: the most recently used non-permanent slices,
-// up to that many, are not closed for exceeding the target. The weight held is
-// then at most
-//   permanent slices + keep_most_recent retained slices + max_total_files
-// plus whatever a slice being opened concurrently adds before it is reported.
-// That sum is not bounded by the target, so the reader also sets
-// descriptor_budget and reports the descriptors the process actually holds.
-// Room for one more slice to open is kept: the reserve is the larger of
-// descriptor_reserve and the largest slice weight seen. While the descriptors
-// held plus that reserve exceed the budget, retention is withdrawn: retained
-// slices, and any other non-permanent slices, are closed oldest first until
-// the estimate fits or only permanent slices are left. over_budget() is then
-// true. The reader refuses new reads against the same formula on its actual
-// descriptor count, and asks for rebalance() while it refuses, so a slice
-// whose weight overstated its descriptors cannot leave reads refused while
-// retained slices could still be closed.
+// up to that many, are not closed for exceeding the target. That is bounded
+// by descriptor_budget instead: while the descriptors the process holds plus
+// descriptor_reserve exceed the budget, retained and other non-permanent
+// slices are closed oldest first, until the estimate fits or only permanent
+// slices are left. A slice that is refused an open asks for rebalance() with
+// the descriptors its open needs, so exactly that much is freed if it can be.
+// Opens themselves are admitted by admit_archive_descriptors() below, against
+// the demand of the open about to happen, never against weights seen before.
 class ArchiveLruPolicy {
  public:
   // (archive id, temp, key)
@@ -49,7 +46,8 @@ class ArchiveLruPolicy {
     std::size_t keep_most_recent = 0;
     // 0: no budget (open descriptor counts are ignored).
     std::size_t descriptor_budget = 0;
-    std::size_t descriptor_reserve = 512;
+    // Descriptors kept free for files other than archive slices.
+    std::size_t descriptor_reserve = 128;
   };
 
   explicit ArchiveLruPolicy(Options options);
@@ -60,24 +58,17 @@ class ArchiveLruPolicy {
   std::vector<Key> on_query(Key key, std::size_t files_count, std::int64_t open_fds = -1);
   // The set of permanent slices changed. Returns the slices to close.
   std::vector<Key> set_permanent(const std::vector<Key>& keys, std::int64_t open_fds = -1);
-  // Decide again with a fresh descriptor count. Returns the slices to close.
-  std::vector<Key> rebalance(std::int64_t open_fds) {
-    return enforce(open_fds);
-  }
-  // Descriptors kept free for one more slice to open.
-  std::size_t reserve() const;
+  // Decide again with a fresh descriptor count, keeping `demand` descriptors
+  // free for an operation waiting to run. Returns the slices to close.
+  std::vector<Key> rebalance(std::int64_t open_fds, std::size_t demand = 0);
 
   std::size_t total_files() const {
     return total_files_;
   }
-  // Weight of the open non-permanent slices.
+  // Weight of the open non-permanent slices: what closing could release.
   std::size_t evictable_files() const;
   std::size_t evictable_count() const {
     return lru_.size();
-  }
-  // The largest weight any slice has reported (permanent ones included).
-  std::size_t largest_slice_files() const {
-    return largest_slice_files_;
   }
   // Retained slices closed because the descriptor budget was exceeded.
   std::uint64_t retention_withdrawn() const {
@@ -98,7 +89,7 @@ class ArchiveLruPolicy {
     bool is_permanent = false;
   };
 
-  std::vector<Key> enforce(std::int64_t open_fds);
+  std::vector<Key> enforce(std::int64_t open_fds, std::size_t demand);
 
   Options options_;
   std::size_t current_idx_ = 1;
@@ -106,12 +97,45 @@ class ArchiveLruPolicy {
   std::map<std::size_t, Key> lru_;
   std::vector<Key> permanent_;
   std::size_t total_files_ = 0;
-  std::size_t largest_slice_files_ = 0;
   std::uint64_t retention_withdrawn_ = 0;
   bool over_budget_ = false;
 };
 
 // Number of descriptors this process holds, or -1 when it cannot be counted.
 std::int64_t count_process_open_fds();
+
+// Whether an operation needing `demand` more descriptors may run now, with
+// `held` descriptors held, of which closing slices could release `releasable`.
+// Admit: it fits now. Wait: it would fit once closable slices have closed.
+// Shortage: it cannot fit even then; only a higher descriptor limit helps.
+enum class DescriptorVerdict { Admit, Wait, Shortage };
+DescriptorVerdict decide_descriptors(std::size_t budget, std::size_t held, std::size_t demand, std::size_t releasable);
+
+// Process-wide descriptor budget of a reader that opens archive slices;
+// 0 (the default, and what validators and full nodes keep) disables every
+// check below.
+void set_archive_descriptor_budget(std::size_t budget);
+std::size_t archive_descriptor_budget();
+// What the archive LRU could release by closing its non-permanent slices.
+void publish_archive_releasable_descriptors(std::size_t files);
+std::size_t archive_releasable_descriptors();
+
+// Admit an operation about to open `demand` descriptors (`what` names it for
+// the refusal). Counts the descriptors held now; OK without a budget. A
+// refusal is an error and is recorded; the caller must not open anything.
+td::Status admit_archive_descriptors(std::size_t demand, td::Slice what);
+
+struct DescriptorRefusals {
+  std::uint64_t waits = 0;
+  std::uint64_t shortages = 0;
+  // The most recent refusal.
+  bool last_was_shortage = false;
+  std::string last_message;
+};
+DescriptorRefusals archive_descriptor_refusals();
+
+// Files in `directory` (an upper bound on what opening a RocksDB instance
+// there can hold open), or 0 when it cannot be listed.
+std::size_t count_directory_files(const std::string& directory);
 
 }  // namespace tos::validator

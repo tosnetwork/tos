@@ -1012,6 +1012,10 @@ void ArchiveManager::start_up() {
   td::mkdir(db_root_ + "/archive/states/").ensure();
   td::mkdir(db_root_ + "/files/").ensure();
   td::mkdir(db_root_ + "/files/packages/").ensure();
+  if (opts_->get_archive_descriptor_budget() > 0) {
+    // A budgeted reader admits its own slice opens; see archive-lru-policy.h.
+    set_archive_descriptor_budget(opts_->get_archive_descriptor_budget());
+  }
   if (opts_->get_max_open_archive_files() > 0) {
     archive_lru_ = td::actor::create_actor<ArchiveLru>(
         "archive_lru",
@@ -1144,7 +1148,7 @@ void ArchiveManager::alarm() {
 
 void ArchiveManager::rebalance_archive_lru() {
   if (!archive_lru_.empty()) {
-    td::actor::send_closure(archive_lru_, &ArchiveLru::rebalance);
+    td::actor::send_closure(archive_lru_, &ArchiveLru::rebalance, 0);
   }
 }
 

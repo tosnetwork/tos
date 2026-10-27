@@ -1,6 +1,10 @@
 /* Copyright 2026 TOS Blockchain Teams. SPDX-License-Identifier: GPL-3.0-or-later */
 #include <algorithm>
+#include <atomic>
 #include <dirent.h>
+#include <mutex>
+
+#include "td/utils/logging.h"
 
 #include "archive-lru-policy.h"
 
@@ -21,11 +25,10 @@ std::vector<ArchiveLruPolicy::Key> ArchiveLruPolicy::on_query(Key key, std::size
   info.files_count = files_count;
   total_files_ += files_count;
   info.opened_idx = current_idx_++;
-  largest_slice_files_ = std::max(largest_slice_files_, files_count);
   if (!info.is_permanent) {
     lru_.emplace(info.opened_idx, key);
   }
-  return enforce(open_fds);
+  return enforce(open_fds, 0);
 }
 
 std::vector<ArchiveLruPolicy::Key> ArchiveLruPolicy::set_permanent(const std::vector<Key>& keys,
@@ -51,7 +54,11 @@ std::vector<ArchiveLruPolicy::Key> ArchiveLruPolicy::set_permanent(const std::ve
       lru_.erase(info.opened_idx);
     }
   }
-  return enforce(open_fds);
+  return enforce(open_fds, 0);
+}
+
+std::vector<ArchiveLruPolicy::Key> ArchiveLruPolicy::rebalance(std::int64_t open_fds, std::size_t demand) {
+  return enforce(open_fds, demand);
 }
 
 std::size_t ArchiveLruPolicy::evictable_files() const {
@@ -65,15 +72,11 @@ std::size_t ArchiveLruPolicy::evictable_files() const {
   return result;
 }
 
-std::size_t ArchiveLruPolicy::reserve() const {
-  return std::max(options_.descriptor_reserve, largest_slice_files_);
-}
-
-std::vector<ArchiveLruPolicy::Key> ArchiveLruPolicy::enforce(std::int64_t open_fds) {
+std::vector<ArchiveLruPolicy::Key> ArchiveLruPolicy::enforce(std::int64_t open_fds, std::size_t demand) {
   std::vector<Key> closed;
   const bool budgeted = options_.descriptor_budget > 0 && open_fds >= 0;
   auto estimate = budgeted ? static_cast<std::size_t>(open_fds) : 0;
-  const auto room = reserve();
+  const auto room = std::max(options_.descriptor_reserve, demand);
   auto over = [&] {
     return budgeted && (estimate > options_.descriptor_budget || options_.descriptor_budget - estimate < room);
   };
@@ -118,6 +121,99 @@ std::int64_t count_process_open_fds() {
   closedir(dir);
   // The directory stream itself holds one descriptor while it is counted.
   return count > 0 ? count - 1 : 0;
+}
+
+std::size_t count_directory_files(const std::string& directory) {
+  auto* dir = opendir(directory.c_str());
+  if (dir == nullptr) {
+    return 0;
+  }
+  std::size_t count = 0;
+  while (auto* entry = readdir(dir)) {
+    if (entry->d_name[0] != '.') {
+      ++count;
+    }
+  }
+  closedir(dir);
+  return count;
+}
+
+DescriptorVerdict decide_descriptors(std::size_t budget, std::size_t held, std::size_t demand, std::size_t releasable) {
+  if (held <= budget && demand <= budget - held) {
+    return DescriptorVerdict::Admit;
+  }
+  auto floor = held - std::min(held, releasable);
+  if (floor <= budget && demand <= budget - floor) {
+    return DescriptorVerdict::Wait;
+  }
+  return DescriptorVerdict::Shortage;
+}
+
+namespace {
+std::atomic<std::size_t> g_descriptor_budget{0};
+std::atomic<std::size_t> g_releasable_descriptors{0};
+std::mutex g_refusals_mutex;
+DescriptorRefusals g_refusals;  // guarded by g_refusals_mutex
+}  // namespace
+
+void set_archive_descriptor_budget(std::size_t budget) {
+  g_descriptor_budget.store(budget, std::memory_order_relaxed);
+}
+
+std::size_t archive_descriptor_budget() {
+  return g_descriptor_budget.load(std::memory_order_relaxed);
+}
+
+void publish_archive_releasable_descriptors(std::size_t files) {
+  g_releasable_descriptors.store(files, std::memory_order_relaxed);
+}
+
+std::size_t archive_releasable_descriptors() {
+  return g_releasable_descriptors.load(std::memory_order_relaxed);
+}
+
+td::Status admit_archive_descriptors(std::size_t demand, td::Slice what) {
+  auto budget = archive_descriptor_budget();
+  if (budget == 0) {
+    return td::Status::OK();
+  }
+  auto counted = count_process_open_fds();
+  if (counted < 0) {
+    return td::Status::Error(PSLICE() << what << " refused: the process's open descriptors cannot be counted");
+  }
+  auto held = static_cast<std::size_t>(counted);
+  auto releasable = archive_releasable_descriptors();
+  auto verdict = decide_descriptors(budget, held, demand, releasable);
+  if (verdict == DescriptorVerdict::Admit) {
+    return td::Status::OK();
+  }
+  bool shortage = verdict == DescriptorVerdict::Shortage;
+  std::string message;
+  if (shortage) {
+    message = PSTRING() << what << " needs " << demand << " descriptors; " << held << " are held, of which "
+                        << releasable << " could be released by closing archive slices, and the budget is " << budget
+                        << ": raise the descriptor limit (LimitNOFILE) by at least "
+                        << (held - std::min(held, releasable) + demand - budget);
+  } else {
+    message = PSTRING() << what << " needs " << demand << " descriptors; " << held << " are held and the budget is "
+                        << budget << ": waiting for archive slices to close";
+  }
+  {
+    std::lock_guard<std::mutex> guard(g_refusals_mutex);
+    if (shortage) {
+      ++g_refusals.shortages;
+    } else {
+      ++g_refusals.waits;
+    }
+    g_refusals.last_was_shortage = shortage;
+    g_refusals.last_message = message;
+  }
+  return td::Status::Error(message);
+}
+
+DescriptorRefusals archive_descriptor_refusals() {
+  std::lock_guard<std::mutex> guard(g_refusals_mutex);
+  return g_refusals;
 }
 
 }  // namespace tos::validator
