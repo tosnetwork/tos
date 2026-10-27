@@ -72,6 +72,27 @@ must review and update the epoch and rehearse the initial-set lifetime before
 freezing the final hashes. Editing these defaults does not update an existing
 chain's ConfigParam 15 or its validator set.
 
+### Schedule template contract
+
+The bootstrap schedule is carried by five named constants in
+`crypto/smartcont/gen-zerostate.fif`, each defined exactly once on its own line
+as `<seconds> constant <name>`:
+
+| Constant | Canonical value | Used for |
+| --- | --- | --- |
+| `orig_vset_valid_for` | 21600 | Lifetime of the ConfigParam 34 genesis set |
+| `validators_elected_for` | 65536 | ConfigParam 15 `validators_elected_for` |
+| `elections_start_before` | 16384 | ConfigParam 15 `elections_start_before` |
+| `elections_end_before` | 8192 | ConfigParam 15 `elections_end_before` |
+| `stakes_frozen_for` | 32768 | ConfigParam 15 `stakes_frozen_for` |
+
+They are defined before the first-election guards, and ConfigParam 15 and
+ConfigParam 34 read them only by name. A tool that derives a different network
+profile from this template (for example a testnet ceremony) must replace these
+constant lines, not the `config.election_params!` or `config.validators!`
+lines, so that the guards check the schedule the derived genesis actually
+writes. A profile that the guards refuse produces no zerostate.
+
 ## Public-key manifest and operator ceremony
 
 Each operator generates and retains its own consensus seed in a private
