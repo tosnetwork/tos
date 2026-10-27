@@ -97,3 +97,7 @@ add_executable(test-self-pay-simulation ../../test/pq-native/self-pay-simulation
 target_link_libraries(test-self-pay-simulation PRIVATE proof-verify-core)
 
 add_test(NAME self-pay-simulation COMMAND test-self-pay-simulation ${PROJECT_SOURCE_DIR}/test/pq-native/data/self-pay-simulation ${PROJECT_SOURCE_DIR}/test/pq-native/data/proof-verify-real)
+
+add_executable(test-self-pay-simulation-live ../../test/pq-native/self-pay-simulation-live-test.cpp)
+target_link_libraries(test-self-pay-simulation-live PRIVATE proof-verify-core)
+add_test(NAME self-pay-simulation-live COMMAND test-self-pay-simulation-live ${PROJECT_SOURCE_DIR}/test/pq-native/data/self-pay-simulation-live)

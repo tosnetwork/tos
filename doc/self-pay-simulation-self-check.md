@@ -89,7 +89,7 @@ interposed the variant. That all-green run is invalid sensitivity evidence.
 The corrected runner uses the retained static engine; the resulting executable's
 `otool -L` lists no proof dylib. Earlier receipts remain retained.
 
-The branch has NOT yet incorporated refreshed main
+At the initial reviewed head, the branch had NOT yet incorporated refreshed main
 `c1cb3b8d699daf037106fd5f000c53d79c40f295`; fixture provenance intentionally names
 the sources it actually used. Integrate main and regenerate affected fixtures
 before final acceptance. No full fresh CMake/native build, ASAN/UBSAN run, fresh
@@ -115,3 +115,52 @@ found in either current file. Inputs were actually regenerated, not relabeled.
 The six fixture tests and native 29-check suite pass on regenerated inputs.
 The original thirteen-control corpus is retained separately and identified in
 the memo index. The original review finding remains part of the record.
+
+## Main integration and authenticated basechain execution increment
+
+Main `c1cb3b8d699daf037106fd5f000c53d79c40f295` was merged as `23618cdee`.
+Actual regeneration first failed because the merged harness exposes
+`parity_groups`, not `scenarios`. `b00a55d61` deliberately selects exactly one
+default-configuration group and regenerates all thirteen inputs; the current
+checker and six fixture tests pass. This integration is outside the earlier
+4d08 scoped acceptance.
+
+A fresh isolated VM16 three-validator chain was captured with the retained
+source-bound f2d node tools. The new approximately32KiB public corpus records
+an anchor, target/account/config/chain material, exact public-fixture signature
+and local policy clock. The current one-shot adapter authenticates and executes
+it in one call. A getter was used only for acquisition; the final simulation
+request has no getter. No host-signed request was broadcast and no phone
+custody was exercised. The account has enough balance to create one10 TOS
+message. Projection checks bind its recipient, value, successful phases,
+transaction hash, fees and expected balance. A reserialized signature forgery
+must return1808 without a transaction; damaged account material refuses, and
+restoration produces the same state hash. Initial restoration testing used a
+shared BufferSlice clone and therefore corrupted the saved copy too; the test
+uses an explicit deep copy. This was test setup, not a simulation defect.
+
+A separate fresh native Release CMake build uses the mobile-oriented
+`TOS_ONLY_TOSLIB=ON`, `USE_QUIC=OFF` profile. It builds current proof engine,
+static emulator, crypto dependencies, embedded library and affected tests from
+source. This is not a full node/platform/sanitizer build. Initial configuration
+needed explicit paths to its freshly built OpenSSL; blst's shell compiler
+needed the local SDKROOT/CC/CXX environment. Those failures are retained.
+Fourteen relevant CTests pass, including the new five-check live corpus and
+existing transaction/proof/persistence/context/config/account tests. The final
+initializer-warning fix was rebuilt and its affected live CTest passes again.
+
+An initial target-resolution probe requested `proof-verify-fs-shim` under the
+mobile-only build profile and failed. Checking the root CMake file showed that
+the target exists in the desktop test configuration; it was not a CI typo.
+The mistaken workflow rename was reverted before committing. The mobile-profile
+persisted fault target is separately named `proof-persisted-fsync-shim`; it
+builds and its actual persisted sync-fault CTest passes. These are distinct
+checks, not interchangeable target names.
+
+The existing thirteen controls remain scoped to their exact original corpus.
+Additional actual-verifier and post-balance variants were executed against the
+new authenticated corpus: each reached its designated assertion failure, with
+the unmodified fresh-build live test passing all five checks. No independent increment review,
+hosted CI, C ABI, mobile resource/fee policy or complete mobile delivery result
+is implied by these local checks. Raw commands, failures, restoration and hashes
+are indexed in the memo.
