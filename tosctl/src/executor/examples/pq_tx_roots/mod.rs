@@ -3,9 +3,10 @@
 //! No expected output fields are inputs to this adapter.
 use std::{collections::HashMap, fs::File, io::Read};
 
+use anyhow::Context;
 use chain_block::{
-    read_single_root_boc, Cell, CellType, ConfigParams, Deserializable, HashUpdate, HashmapE,
-    Serializable, ShardAccount, SliceData, UInt256,
+    read_single_root_boc, Account, Cell, CellType, ConfigParams, Deserializable, HashUpdate,
+    HashmapE, Message, Serializable, ShardAccount, SliceData, UInt256,
 };
 use tos_executor::{
     BlockchainConfig, ExecuteParams, ExecutorError, OrdinaryTransactionExecutor,
@@ -62,6 +63,7 @@ fn cell(value: &str) -> anyhow::Result<Cell> {
 struct Row {
     name: String,
     shard: ShardAccount,
+    account: Account,
     message: Cell,
     params: ExecuteParams,
 }
@@ -80,7 +82,10 @@ fn parse(line: &str) -> anyhow::Result<Row> {
     // deterministic claim for those implicit modes.
     anyhow::ensure!(now > 0 && lt > 0, "root fixtures require explicit nonzero time and LT");
     let shard = ShardAccount::construct_from_cell(cell(f[3])?)?;
+    let account = shard.read_account().context("invalid original Account during root preflight")?;
     let message = cell(f[4])?;
+    Message::construct_from_cell(message.clone())
+        .context("invalid original Message during root preflight")?;
     anyhow::ensure!(
         f[5].len() == 64 && f[5].bytes().all(|b| b.is_ascii_hexdigit()),
         "invalid root seed"
@@ -98,6 +103,7 @@ fn parse(line: &str) -> anyhow::Result<Row> {
     Ok(Row {
         name: f[0].to_owned(),
         shard,
+        account,
         message,
         params: ExecuteParams {
             block_unixtime: now,
@@ -129,13 +135,15 @@ pub fn run(config_path: &str, scenarios: &str) -> anyhow::Result<()> {
     // remain separate ordered records (some fixtures intentionally repeat rows).
     for line in lines {
         anyhow::ensure!(rows.len() < MAX_ROWS, "root row count limit exceeded");
-        rows.push(parse(line)?);
+        let row =
+            parse(line).with_context(|| format!("invalid root input record {}", rows.len()))?;
+        rows.push(row);
     }
     anyhow::ensure!(!rows.is_empty(), "empty root fixture set");
     for row in rows {
         let mut shard = row.shard;
         let old_hash = shard.account_hash();
-        let mut account = shard.read_account()?;
+        let mut account = row.account;
         match executor.execute_with_params(Some(row.message), &mut account, row.params) {
             Ok(mut transaction) => {
                 transaction.set_prev_trans_lt(shard.last_trans_lt());

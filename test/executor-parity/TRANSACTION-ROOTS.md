@@ -30,6 +30,11 @@ wrapper before native execution, especially for linked successor transactions.
 Zero predecessor/seed/default-context assumptions are valid only where that
 native caller actually supplies them.
 
+Every input row's Account and Message wrappers are decoded during preflight,
+before any transaction executes. The original Account cell remains the source
+of its pre-state hash. Later malformed typed rows must produce no transaction
+output; this contract is exercised in both workflow registrations.
+
 Every output record has five fields:
 
 | Outcome | Columns after the name |

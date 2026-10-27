@@ -118,6 +118,7 @@ jobs:
           cmake --build build --target func fift --parallel "$(nproc)"
           cargo build --manifest-path tosctl/src/Cargo.toml --locked --release -p tos_executor --example pq-tx-parity
           python3 test/executor-parity/precompiled_external.py --driver tosctl/src/target/release/examples/pq-tx-parity --output result/fixture-roots/precompiled
+          python3 test/executor-parity/test_root_preflight.py --driver tosctl/src/target/release/examples/pq-tx-parity --fixtures result/fixture-roots/precompiled --output result/fixture-roots/preflight
           python3 test/executor-parity/fail_action_fine.py --v16-only --driver tosctl/src/target/release/examples/pq-tx-parity --output result/fixture-roots/fine
       - name: Export authenticated contexts and carry Rust account state
         run: |
