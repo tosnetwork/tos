@@ -11,6 +11,7 @@ test-tdactor
 test-inmemory-celldb-dec
 archive-prune
 archive-prune-held-reader-shutdown
+archive-reader-no-package-sync
 streaming-boc-cell-bounds
 streaming-boc-valid-ondisk
 state-spool-amplification

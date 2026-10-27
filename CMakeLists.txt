@@ -2430,6 +2430,18 @@ if (NOT TOS_ONLY_TOSLIB AND NOT USE_EMSCRIPTEN AND NOT EMSCRIPTEN)
   add_test(NAME archive-prune COMMAND test-archive-prune)
   add_test(NAME archive-prune-held-reader-shutdown COMMAND test-archive-prune --held-reader-shutdown)
   set_tests_properties(archive-prune archive-prune-held-reader-shutdown PROPERTIES TIMEOUT 90)
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    # Counts fsync calls under a path prefix (LD_PRELOAD); test-only, built
+    # through all-tests or by name.
+    add_library(test-fsync-count-shim SHARED EXCLUDE_FROM_ALL test/validator/fsync-count-shim.c)
+    target_link_libraries(test-fsync-count-shim PRIVATE ${CMAKE_DL_LIBS})
+    add_dependencies(all-tests test-fsync-count-shim)
+    add_dependencies(test-archive-prune test-fsync-count-shim)
+    target_link_libraries(test-archive-prune PRIVATE ${CMAKE_DL_LIBS})
+    add_test(NAME archive-reader-no-package-sync COMMAND test-archive-prune --reader-package-sync)
+    set_tests_properties(archive-reader-no-package-sync PROPERTIES TIMEOUT 90
+      ENVIRONMENT "LD_PRELOAD=$<TARGET_FILE:test-fsync-count-shim>")
+  endif()
 endif()
 
 # Rust and native generators consume the same authoritative schema set.

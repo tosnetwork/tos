@@ -362,6 +362,9 @@ td::actor::Task<> ArchiveSlice::add_block(BlockHandle handle,
   if (destroyed_) {
     co_return td::Status::Error(ErrorCode::notready, td::Slice(kPackageGarbageCollected));
   }
+  if (mode_ != td::DbOpenMode::db_primary) {
+    co_return td::Status::Error(ErrorCode::error, td::Slice(kArchiveSliceReadOnly));
+  }
   CHECK(!key_blocks_only_);
   CHECK(!temp_);
   before_query();
@@ -410,6 +413,10 @@ void ArchiveSlice::add_file(BlockHandle handle, FileReference ref_id, td::Buffer
                             td::Promise<td::Unit> promise) {
   if (destroyed_) {
     promise.set_error(td::Status::Error(ErrorCode::notready, td::Slice(kPackageGarbageCollected)));
+    return;
+  }
+  if (mode_ != td::DbOpenMode::db_primary) {
+    promise.set_error(td::Status::Error(ErrorCode::error, td::Slice(kArchiveSliceReadOnly)));
     return;
   }
   before_query();
@@ -1103,6 +1110,10 @@ void ArchiveSlice::set_async_mode(bool mode, td::Promise<td::Unit> promise) {
   ig.add_promise(std::move(promise));
 
   for (auto &p : packages_) {
+    // Finalized packages, and every package of a reader, have no writer.
+    if (p->writer.empty()) {
+      continue;
+    }
     td::actor::send_closure(p->writer, &PackageWriter::set_async_mode, mode, ig.get_promise());
   }
 }
@@ -1216,8 +1227,14 @@ bool ArchiveSlice::add_package(td::uint32 seqno, ShardIdFull shard_prefix, td::u
   if (version >= 1 && mode_ == td::DbOpenMode::db_primary) {
     pack->truncate(size).ensure();
   }
-  auto writer = td::actor::create_actor<PackageWriter>(PSTRING() << "writer." << td::PathView(path).file_name(), pack,
-                                                       async_mode_, statistics_.pack_statistics);
+  // Only the primary writes packages. A reader keeps the package open for
+  // reads but gets no writer: a writer syncs its package when it is torn
+  // down, and a reader must never sync the files of the node it reads.
+  td::actor::ActorOwn<PackageWriter> writer;
+  if (mode_ == td::DbOpenMode::db_primary) {
+    writer = td::actor::create_actor<PackageWriter>(PSTRING() << "writer." << td::PathView(path).file_name(), pack,
+                                                    async_mode_, statistics_.pack_statistics);
+  }
   packages_.push_back(
       std::make_unique<PackageInfo>(std::move(pack), std::move(writer), seqno, shard_prefix, path, idx, version));
   return true;
