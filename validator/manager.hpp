@@ -339,9 +339,17 @@ class ValidatorManagerImpl : public ValidatorManager {
   // The admission for `session_id`, or null when it is not decided yet; requesting it then
   // and rebuilding groups when it arrives.
   std::shared_ptr<const consensus::signing::Admission> signing_admission_for(ValidatorSessionId session_id,
-                                                                             tos::ValidatorId validator);
+                                                                             tos::ValidatorId validator,
+                                                                             ShardIdFull shard, CatchainSeqno cc);
   td::actor::Task<> fetch_signing_floor();
-  td::actor::Task<> fetch_signing_admission(ValidatorSessionId session_id, tos::ValidatorId validator);
+  td::actor::Task<> fetch_signing_admission(ValidatorSessionId session_id, tos::ValidatorId validator,
+                                            ShardIdFull shard, CatchainSeqno cc);
+  // While the ledger's history is unknown, every new masterchain block is offered as its
+  // fence block, before any group of that block is admitted.
+  bool signing_history_settled_ = false;
+  // With the own-decision log enabled, refuses a network other than a local one.
+  td::Status signing_decision_log_network_check(const MasterchainState &state) const;
+  void offer_signing_fence_block();
   void checked_signing_floor(td::Result<ConstBlockHandle> handle);
   void rebuild_groups_after_signing_answer();
 

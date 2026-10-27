@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: LGPL-2.0-or-later
  */
 #include <cerrno>
+#include <cmath>
 #include <cstring>
 #include <dirent.h>
 #include <fcntl.h>
@@ -13,6 +14,8 @@
 #include "td/utils/crypto.h"
 #include "td/utils/logging.h"
 #include "td/utils/misc.h"
+#include "td/utils/port/Clocks.h"
+#include "tos/tos-shard.h"
 
 #include "signing-ledger.h"
 
@@ -21,7 +24,7 @@ namespace tos::validator::consensus::signing {
 namespace {
 
 constexpr unsigned char kRecordTag = 0xD1;
-constexpr char kHeaderMagic[8] = {'T', 'O', 'S', 'S', 'L', 'G', '0', '1'};
+constexpr char kHeaderMagic[8] = {'T', 'O', 'S', 'S', 'L', 'G', '0', '2'};
 constexpr const char* kHeaderName = "ledger";
 constexpr const char* kLogPrefix = "log.";
 
@@ -625,6 +628,14 @@ std::string encode_header(const Header& header) {
     put_bits(out, floor.root_hash);
     put_bits(out, floor.file_hash);
   }
+  out.push_back(static_cast<char>(header.history));
+  put_u64(out, header.t0);
+  put_u32(out, static_cast<std::uint32_t>(header.fence.size()));
+  for (const auto& entry : header.fence) {
+    put_u32(out, static_cast<std::uint32_t>(entry.workchain));
+    put_u64(out, entry.shard);
+    put_u32(out, entry.cc);
+  }
   put_u32(out, static_cast<std::uint32_t>(header.entries.size()));
   for (const auto& entry : header.entries) {
     put_bits(out, entry.session);
@@ -666,6 +677,31 @@ td::Result<Header> decode_header(td::Slice bytes) {
     }
     header.floor = BlockIdExt{static_cast<WorkchainId>(workchain), shard, seqno, root, file};
   }
+  std::uint8_t history = 0;
+  std::uint32_t fence_count = 0;
+  if (!in.u8(history) || history > static_cast<std::uint8_t>(History::Established) || !in.u64(header.t0) ||
+      !in.u32(fence_count)) {
+    return td::Status::Error("the ledger header's history is truncated or unknown");
+  }
+  header.history = static_cast<History>(history);
+  // Checked before anything is allocated for the fence.
+  constexpr std::size_t kFenceEntryBytes = 4 + 8 + 4;
+  if (fence_count > kMaxFenceEntries || in.remaining() < static_cast<std::size_t>(fence_count) * kFenceEntryBytes) {
+    return td::Status::Error(PSTRING() << "the ledger header claims " << fence_count << " fence entries");
+  }
+  if ((header.history == History::Established) != (fence_count > 0)) {
+    return td::Status::Error("the ledger header's fence does not match its history");
+  }
+  header.fence.reserve(fence_count);
+  for (std::uint32_t i = 0; i < fence_count; ++i) {
+    std::uint32_t workchain = 0;
+    FenceEntry entry;
+    if (!in.u32(workchain) || !in.u64(entry.shard) || !in.u32(entry.cc) || entry.cc == kCounterSentinel) {
+      return td::Status::Error("the ledger header's fence is truncated or holds no counter");
+    }
+    entry.workchain = static_cast<std::int32_t>(workchain);
+    header.fence.push_back(entry);
+  }
   std::uint32_t count = 0;
   if (!in.u32(count)) {
     return td::Status::Error("the ledger header is truncated");
@@ -695,7 +731,8 @@ std::string ledger_dir(const std::string& db_root) {
   return db_root + "/consensus/signing-ledger";
 }
 
-td::Status create_ledger(const std::string& dir, const td::Bits256& validator, std::shared_ptr<FileOps> ops) {
+td::Status create_ledger(const std::string& dir, const td::Bits256& validator, std::shared_ptr<FileOps> ops,
+                         std::optional<BlockIdExt> floor) {
   const std::string parent = parent_of(dir);
   if (::mkdir(parent.c_str(), 0700) != 0 && errno != EEXIST) {
     return td::Status::Error(PSTRING() << "cannot create " << parent << ": " << errno_text());
@@ -710,17 +747,60 @@ td::Status create_ledger(const std::string& dir, const td::Bits256& validator, s
   Header header;
   header.validator = validator;
   header.dir = binding;
+  header.floor = floor;
+  header.history = History::Complete;
   TRY_STATUS(ops->replace_file(dir, kHeaderName, encode_header(header)));
   return fsync_directory(parent);
 }
 
+// ===== The fence =====
+
+td::Status refuse_off_local_network(std::int32_t global_id) {
+  if (global_id == kLocalNetworkGlobalId) {
+    return td::Status::OK();
+  }
+  return td::Status::Error(PSTRING() << "--signing-decision-log is experimental and runs only on a local network "
+                                        "(global id "
+                                     << kLocalNetworkGlobalId << "); this network's global id is " << global_id
+                                     << " (1 is mainnet, 2 the public testnet). Remove the flag.");
+}
+
+bool fenced_by_history(const std::vector<FenceEntry>& fence, ShardIdFull shard, std::uint32_t cc) {
+  if (cc == kCounterSentinel) {
+    return true;
+  }
+  bool related = false;
+  for (const auto& entry : fence) {
+    if (entry.workchain != shard.workchain) {
+      continue;
+    }
+    if (entry.shard != shard.shard && !shard_is_ancestor(entry.shard, shard.shard) &&
+        !shard_is_ancestor(shard.shard, entry.shard)) {
+      continue;
+    }
+    related = true;
+    // In 64 bits: an entry near the top of the range fences everything above it.
+    if (static_cast<std::uint64_t>(cc) <= static_cast<std::uint64_t>(entry.cc) + kFenceCounterMargin) {
+      return true;
+    }
+  }
+  // No entry relates to this lineage: what was signed in it before the fence is unknown.
+  return !related;
+}
+
 // ===== SigningLedger =====
 
-SigningLedger::SigningLedger(std::string dir, std::shared_ptr<FileOps> ops, SessionDecisionLog::WriteGate gate)
-    : dir_(std::move(dir)), ops_(std::move(ops)), gate_(std::move(gate)) {
+SigningLedger::SigningLedger(std::string dir, std::shared_ptr<FileOps> ops, SessionDecisionLog::WriteGate gate,
+                             std::function<double()> clock)
+    : dir_(std::move(dir)), ops_(std::move(ops)), gate_(std::move(gate)), clock_(std::move(clock)) {
 }
 
 void SigningLedger::start_up() {
+  {
+    const double now = clock_ ? clock_() : td::Clocks::system();
+    // Rounded up: a later start time only ever fences more.
+    started_at_ = static_cast<std::uint64_t>(std::ceil(now));
+  }
   const std::string path = dir_ + "/" + kHeaderName;
   const int fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
   if (fd < 0) {
@@ -736,7 +816,8 @@ void SigningLedger::start_up() {
       status_ = LedgerStatus::Untrusted;
       untrusted_reason_ = "the signing ledger cannot be opened: " + errno_text();
     }
-    LOG(WARNING) << "signing ledger " << dir_ << ": " << untrusted_reason_ << "; no session will sign";
+    LOG(WARNING) << "signing ledger " << dir_ << ": " << untrusted_reason_
+                 << "; a pending ledger for unknown history replaces it at the first admission";
     return;
   }
   struct stat st{};
@@ -759,14 +840,16 @@ void SigningLedger::start_up() {
   if (!readable) {
     status_ = LedgerStatus::Untrusted;
     untrusted_reason_ = "the signing ledger header cannot be read or is above its size limit";
-    LOG(ERROR) << "signing ledger " << dir_ << ": " << untrusted_reason_ << "; no session will sign";
+    LOG(ERROR) << "signing ledger " << dir_ << ": " << untrusted_reason_
+               << "; a pending ledger for unknown history replaces it at the first admission";
     return;
   }
   auto decoded = decode_header(bytes);
   if (decoded.is_error()) {
     status_ = LedgerStatus::Untrusted;
     untrusted_reason_ = decoded.error().message().str();
-    LOG(ERROR) << "signing ledger " << dir_ << ": " << untrusted_reason_ << "; no session will sign";
+    LOG(ERROR) << "signing ledger " << dir_ << ": " << untrusted_reason_
+               << "; a pending ledger for unknown history replaces it at the first admission";
     return;
   }
   auto binding = binding_of(dir_);
@@ -776,7 +859,8 @@ void SigningLedger::start_up() {
                                            : std::string(
                                                  "the signing ledger directory is not the one it was "
                                                  "created as: it was copied, restored or recreated");
-    LOG(ERROR) << "signing ledger " << dir_ << ": " << untrusted_reason_ << "; no session will sign";
+    LOG(ERROR) << "signing ledger " << dir_ << ": " << untrusted_reason_
+               << "; a pending ledger for unknown history replaces it at the first admission";
     return;
   }
   header_ = decoded.move_as_ok();
@@ -796,19 +880,78 @@ td::Status SigningLedger::write_header() {
   return ops_->replace_file(dir_, kHeaderName, bytes);
 }
 
-td::actor::Task<std::shared_ptr<const Admission>> SigningLedger::admit(td::Bits256 validator, td::Bits256 session) {
-  co_return admit_now(validator, session);
+td::actor::Task<std::shared_ptr<const Admission>> SigningLedger::admit(td::Bits256 validator, td::Bits256 session,
+                                                                       ShardIdFull shard, std::uint32_t cc) {
+  co_return admit_now(validator, session, shard, cc);
 }
 
-std::shared_ptr<const Admission> SigningLedger::admit_now(const td::Bits256& validator, const td::Bits256& session) {
+td::Status SigningLedger::start_unknown_history(const td::Bits256& validator) {
+  const std::string path = dir_ + "/" + kHeaderName;
+  if (file_exists(path)) {
+    // The untrusted header is kept beside the new one, never deleted; at most kMaxSetAside.
+    std::string aside;
+    for (std::size_t n = 0; n < kMaxSetAside && aside.empty(); ++n) {
+      auto candidate = PSTRING() << path << ".untrusted." << n;
+      if (!file_exists(candidate)) {
+        aside = candidate;
+      }
+    }
+    if (aside.empty()) {
+      return td::Status::Error(PSTRING() << kMaxSetAside << " untrusted ledger headers are already set aside");
+    }
+    if (::rename(path.c_str(), aside.c_str()) != 0) {
+      return td::Status::Error(PSTRING() << "cannot set the untrusted ledger header aside: " << errno_text());
+    }
+    LOG(WARNING) << "signing ledger: the untrusted header was set aside as " << aside;
+  }
+  const std::string parent = parent_of(dir_);
+  if (::mkdir(parent.c_str(), 0700) != 0 && errno != EEXIST) {
+    return td::Status::Error(PSTRING() << "cannot create " << parent << ": " << errno_text());
+  }
+  if (::mkdir(dir_.c_str(), 0700) != 0 && errno != EEXIST) {
+    return td::Status::Error(PSTRING() << "cannot create " << dir_ << ": " << errno_text());
+  }
+  TRY_RESULT(binding, binding_of(dir_));
+  Header header;
+  header.validator = validator;
+  header.dir = binding;
+  header.history = History::Pending;
+  header.t0 = started_at_;
+  TRY_STATUS(ops_->replace_file(dir_, kHeaderName, encode_header(header)));
+  TRY_STATUS(fsync_directory(parent));
+  header_ = std::move(header);
+  status_ = LedgerStatus::Trusted;
+  LOG(WARNING) << "signing ledger: this node's earlier signing is unknown; every session is fenced until a "
+                  "masterchain block generated at or after "
+               << started_at_ + kHistoryMarginSeconds;
+  return td::Status::OK();
+}
+
+std::shared_ptr<const Admission> SigningLedger::admit_now(const td::Bits256& validator, const td::Bits256& session,
+                                                          ShardIdFull shard, std::uint32_t cc) {
   if (auto it = admitted_.find(session); it != admitted_.end()) {
     return it->second;
   }
   if (status_ != LedgerStatus::Trusted) {
-    return Admission::fence(session, untrusted_reason_);
+    if (auto started = start_unknown_history(validator); started.is_error()) {
+      LOG(ERROR) << "signing ledger: no pending ledger could be created: " << started << "; no session will sign";
+      // The original trust failure is kept as it is; each reply carries it with only this
+      // attempt's error, so nothing retained grows with the number of admissions.
+      return Admission::fence(
+          session, PSTRING() << untrusted_reason_ << "; no pending ledger could be created: " << started.message());
+    }
   }
   if (header_.validator != validator) {
     return Admission::fence(session, "the signing ledger belongs to another validator");
+  }
+  if (header_.history == History::Pending) {
+    return Admission::fence(session, PSTRING() << "this node's earlier signing is unknown; waiting for a masterchain "
+                                                  "block generated at or after "
+                                               << header_.t0 + kHistoryMarginSeconds);
+  }
+  if (header_.history == History::Established && fenced_by_history(header_.fence, shard, cc)) {
+    return Admission::fence(session, PSTRING() << "the session of " << shard.to_str() << " with catchain counter " << cc
+                                               << " is at or below the unknown-history fence");
   }
   const std::string path = log_path(session);
   auto entry = std::find_if(header_.entries.begin(), header_.entries.end(),
@@ -963,6 +1106,60 @@ td::actor::Task<std::optional<BlockIdExt>> SigningLedger::floor() {
 
 td::actor::Task<LedgerStatus> SigningLedger::status() {
   co_return status_;
+}
+
+td::actor::Task<std::string> SigningLedger::untrusted_reason() {
+  co_return status_ == LedgerStatus::Trusted ? std::string() : untrusted_reason_;
+}
+
+td::actor::Task<History> SigningLedger::history() {
+  co_return header_.history;
+}
+
+td::actor::Task<bool> SigningLedger::offer_fence_block(BlockIdExt block, std::uint32_t gen_utime,
+                                                       std::vector<FenceEntry> lineages) {
+  if (status_ != LedgerStatus::Trusted) {
+    // No ledger yet: the first admission creates a pending one, and the next offer counts.
+    co_return false;
+  }
+  if (header_.history != History::Pending) {
+    co_return true;
+  }
+  // In 64 bits, as everything about the margin is.
+  if (static_cast<std::uint64_t>(gen_utime) < header_.t0 + kHistoryMarginSeconds) {
+    co_return false;
+  }
+  if (lineages.empty() || lineages.size() > kMaxFenceEntries) {
+    LOG(ERROR) << "signing ledger: a fence of " << lineages.size() << " lineages cannot be recorded (at most "
+               << kMaxFenceEntries << "); the history stays pending";
+    co_return false;
+  }
+  for (const auto& entry : lineages) {
+    if (entry.cc == kCounterSentinel) {
+      LOG(WARNING) << "signing ledger: block " << block.to_str() << " gives no catchain counter for shard "
+                   << entry.workchain << ":" << entry.shard << "; it cannot be the fence block";
+      co_return false;
+    }
+  }
+  auto previous = header_;
+  header_.history = History::Established;
+  header_.fence = std::move(lineages);
+  if (!header_.floor.has_value() || header_.floor->seqno() < block.seqno()) {
+    header_.floor = block;
+  }
+  if (auto written = write_header(); written.is_error()) {
+    header_ = std::move(previous);
+    LOG(ERROR) << "signing ledger: the fence block was not recorded: " << written;
+    co_return false;
+  }
+  std::string lineages_text;
+  for (const auto& entry : header_.fence) {
+    lineages_text += PSTRING() << " " << ShardIdFull{entry.workchain, entry.shard}.to_str() << "=" << entry.cc;
+  }
+  LOG(WARNING) << "signing ledger: unknown history fenced at " << block.to_str() << " over " << header_.fence.size()
+               << " lineages; sessions more than " << kFenceCounterMargin
+               << " catchain counters above them sign again; counters:" << lineages_text;
+  co_return true;
 }
 
 }  // namespace tos::validator::consensus::signing

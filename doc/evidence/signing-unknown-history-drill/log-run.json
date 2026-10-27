@@ -1,0 +1,1011 @@
+{
+  "ceremony": {
+    "err": "",
+    "out": "signing ledger /datax/drill-322/run11-log/node4/consensus/signing-ledger created complete at the zerostate (-1,8000000000000000,0):7EF35F2A4B8F458A84734D54CF87FAE39899196BFFF08FC7C8CD1FBF8C870A2F:7F9D75FF2138CCA30A7AE495A29CA8AFA68FD2950A5C35C5FB36434EA1CD33BD",
+    "rc": 0
+  },
+  "consensus_moved_to": "consensus.removed-1793107427",
+  "expectation": {
+    "exit_status": 0,
+    "expected": "the fence held and signing resumed at cc(M) + 3",
+    "met": true,
+    "mode": "log"
+  },
+  "fence": [
+    {
+      "at": 1793107534.8652058,
+      "block": "(-1,8000000000000000,17):A806E8FE789121C0F22FA6687B8F83B72A3CEDC2FBB6F39A676826D4657CF376:7B28D44F148FB57448F47D8BB17136A9C046F359A2F27BBFC0819EA177FBB377",
+      "counters": {
+        "(-1,8000000000000000)": 1,
+        "(0,4000000000000000)": 2,
+        "(0,c000000000000000)": 2
+      },
+      "lineages": 3
+    }
+  ],
+  "mc_cc_at_stop": 0,
+  "mc_cc_started_after_restart": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "mc_lifetime": 300,
+  "mode": "log",
+  "not_signing_lines_after_restart": 93,
+  "observe": 1320,
+  "pending_split": {
+    "cc": 1,
+    "shard": "(0,4000000000000000)"
+  },
+  "restarted_at": 1793107427.7530332,
+  "restarted_within_mc_session": true,
+  "sessions_after_restart": [
+    {
+      "admission": "fenced",
+      "cc": 0,
+      "counter_at_fence": 1,
+      "group_built_after_restart_at": 1793107431.0429826,
+      "local_index": 3,
+      "own_signatures_after_restart": [],
+      "reason": "this node's earlier signing is unknown; waiting for a masterchain block generated at or after 1793107520",
+      "shard": "(-1,8000000000000000)",
+      "target_signatures_after_restart": 0,
+      "target_signatures_before_stop": 50,
+      "within_fence": true
+    },
+    {
+      "admission": "fenced",
+      "cc": 1,
+      "counter_at_fence": 1,
+      "group_built_after_restart_at": 1793107431.0439355,
+      "local_index": 1,
+      "own_signatures_after_restart": [],
+      "reason": "this node's earlier signing is unknown; waiting for a masterchain block generated at or after 1793107520",
+      "shard": "(-1,8000000000000000)",
+      "target_signatures_after_restart": 0,
+      "target_signatures_before_stop": 0,
+      "within_fence": true
+    },
+    {
+      "admission": "fenced",
+      "cc": 2,
+      "counter_at_fence": 1,
+      "group_built_after_restart_at": 1793107504.7137752,
+      "local_index": 0,
+      "own_signatures_after_restart": [],
+      "reason": "this node's earlier signing is unknown; waiting for a masterchain block generated at or after 1793107520",
+      "shard": "(-1,8000000000000000)",
+      "target_signatures_after_restart": 0,
+      "target_signatures_before_stop": 0,
+      "within_fence": true
+    },
+    {
+      "admission": "fenced",
+      "cc": 3,
+      "counter_at_fence": 1,
+      "group_built_after_restart_at": 1793107811.1640239,
+      "local_index": 3,
+      "own_signatures_after_restart": [],
+      "reason": "the session of (-1,8000000000000000) with catchain counter 3 is at or below the unknown-history fence",
+      "shard": "(-1,8000000000000000)",
+      "target_signatures_after_restart": 0,
+      "target_signatures_before_stop": 0,
+      "within_fence": true
+    },
+    {
+      "admission": "admitted",
+      "cc": 4,
+      "counter_at_fence": 1,
+      "group_built_after_restart_at": 1793108114.910902,
+      "local_index": 3,
+      "own_signatures_after_restart": [
+        "candidate",
+        "finalize vote",
+        "notarize vote",
+        "skip vote"
+      ],
+      "reason": null,
+      "shard": "(-1,8000000000000000)",
+      "target_signatures_after_restart": 1157,
+      "target_signatures_before_stop": 0,
+      "within_fence": false
+    },
+    {
+      "admission": "admitted",
+      "cc": 5,
+      "counter_at_fence": 1,
+      "group_built_after_restart_at": 1793108411.1462538,
+      "local_index": 1,
+      "own_signatures_after_restart": [
+        "candidate",
+        "finalize vote",
+        "notarize vote",
+        "skip vote"
+      ],
+      "reason": null,
+      "shard": "(-1,8000000000000000)",
+      "target_signatures_after_restart": 191,
+      "target_signatures_before_stop": 0,
+      "within_fence": false
+    },
+    {
+      "admission": "admitted",
+      "cc": 6,
+      "counter_at_fence": 1,
+      "group_built_after_restart_at": 1793108709.1548612,
+      "local_index": 2,
+      "own_signatures_after_restart": [],
+      "reason": null,
+      "shard": "(-1,8000000000000000)",
+      "target_signatures_after_restart": 0,
+      "target_signatures_before_stop": 0,
+      "within_fence": false
+    },
+    {
+      "admission": "fenced",
+      "cc": 1,
+      "counter_at_fence": 2,
+      "group_built_after_restart_at": 1793107431.0447805,
+      "local_index": 2,
+      "own_signatures_after_restart": [],
+      "reason": "this node's earlier signing is unknown; waiting for a masterchain block generated at or after 1793107520",
+      "shard": "(0,4000000000000000)",
+      "target_signatures_after_restart": 0,
+      "target_signatures_before_stop": 0,
+      "within_fence": true
+    },
+    {
+      "admission": "fenced",
+      "cc": 2,
+      "counter_at_fence": 2,
+      "group_built_after_restart_at": 1793107448.7040818,
+      "local_index": 0,
+      "own_signatures_after_restart": [],
+      "reason": "this node's earlier signing is unknown; waiting for a masterchain block generated at or after 1793107520",
+      "shard": "(0,4000000000000000)",
+      "target_signatures_after_restart": 0,
+      "target_signatures_before_stop": 0,
+      "within_fence": true
+    },
+    {
+      "admission": "fenced",
+      "cc": 3,
+      "counter_at_fence": 2,
+      "group_built_after_restart_at": 1793107523.7948484,
+      "local_index": 0,
+      "own_signatures_after_restart": [],
+      "reason": "this node's earlier signing is unknown; waiting for a masterchain block generated at or after 1793107520",
+      "shard": "(0,4000000000000000)",
+      "target_signatures_after_restart": 0,
+      "target_signatures_before_stop": 0,
+      "within_fence": true
+    },
+    {
+      "admission": "fenced",
+      "cc": 4,
+      "counter_at_fence": 2,
+      "group_built_after_restart_at": 1793107573.4948158,
+      "local_index": 0,
+      "own_signatures_after_restart": [],
+      "reason": "the session of (0,4000000000000000) with catchain counter 4 is at or below the unknown-history fence",
+      "shard": "(0,4000000000000000)",
+      "target_signatures_after_restart": 0,
+      "target_signatures_before_stop": 0,
+      "within_fence": true
+    },
+    {
+      "admission": "admitted",
+      "cc": 5,
+      "counter_at_fence": 2,
+      "group_built_after_restart_at": 1793107631.3674598,
+      "local_index": 3,
+      "own_signatures_after_restart": [
+        "candidate",
+        "finalize vote",
+        "notarize vote",
+        "skip vote"
+      ],
+      "reason": null,
+      "shard": "(0,4000000000000000)",
+      "target_signatures_after_restart": 239,
+      "target_signatures_before_stop": 0,
+      "within_fence": false
+    },
+    {
+      "admission": "admitted",
+      "cc": 6,
+      "counter_at_fence": 2,
+      "group_built_after_restart_at": 1793107686.196716,
+      "local_index": 1,
+      "own_signatures_after_restart": [
+        "candidate",
+        "finalize vote",
+        "notarize vote",
+        "skip vote"
+      ],
+      "reason": null,
+      "shard": "(0,4000000000000000)",
+      "target_signatures_after_restart": 371,
+      "target_signatures_before_stop": 0,
+      "within_fence": false
+    },
+    {
+      "admission": "admitted",
+      "cc": 7,
+      "counter_at_fence": 2,
+      "group_built_after_restart_at": 1793107746.7085974,
+      "local_index": 2,
+      "own_signatures_after_restart": [
+        "candidate",
+        "finalize vote",
+        "notarize vote",
+        "skip vote"
+      ],
+      "reason": null,
+      "shard": "(0,4000000000000000)",
+      "target_signatures_after_restart": 328,
+      "target_signatures_before_stop": 0,
+      "within_fence": false
+    },
+    {
+      "admission": "admitted",
+      "cc": 8,
+      "counter_at_fence": 2,
+      "group_built_after_restart_at": 1793107812.3417182,
+      "local_index": 3,
+      "own_signatures_after_restart": [
+        "candidate",
+        "finalize vote",
+        "notarize vote",
+        "skip vote"
+      ],
+      "reason": null,
+      "shard": "(0,4000000000000000)",
+      "target_signatures_after_restart": 366,
+      "target_signatures_before_stop": 0,
+      "within_fence": false
+    },
+    {
+      "admission": "admitted",
+      "cc": 9,
+      "counter_at_fence": 2,
+      "group_built_after_restart_at": 1793107867.4692008,
+      "local_index": 0,
+      "own_signatures_after_restart": [
+        "candidate",
+        "finalize vote",
+        "notarize vote",
+        "skip vote"
+      ],
+      "reason": null,
+      "shard": "(0,4000000000000000)",
+      "target_signatures_after_restart": 277,
+      "target_signatures_before_stop": 0,
+      "within_fence": false
+    },
+    {
+      "admission": "admitted",
+      "cc": 10,
+      "counter_at_fence": 2,
+      "group_built_after_restart_at": 1793107929.2371135,
+      "local_index": 2,
+      "own_signatures_after_restart": [
+        "candidate",
+        "finalize vote",
+        "notarize vote",
+        "skip vote"
+      ],
+      "reason": null,
+      "shard": "(0,4000000000000000)",
+      "target_signatures_after_restart": 272,
+      "target_signatures_before_stop": 0,
+      "within_fence": false
+    },
+    {
+      "admission": "admitted",
+      "cc": 11,
+      "counter_at_fence": 2,
+      "group_built_after_restart_at": 1793107989.9176385,
+      "local_index": 2,
+      "own_signatures_after_restart": [
+        "candidate",
+        "finalize vote",
+        "notarize vote",
+        "skip vote"
+      ],
+      "reason": null,
+      "shard": "(0,4000000000000000)",
+      "target_signatures_after_restart": 399,
+      "target_signatures_before_stop": 0,
+      "within_fence": false
+    },
+    {
+      "admission": "admitted",
+      "cc": 12,
+      "counter_at_fence": 2,
+      "group_built_after_restart_at": 1793108051.8186789,
+      "local_index": 3,
+      "own_signatures_after_restart": [
+        "candidate",
+        "finalize vote",
+        "notarize vote",
+        "skip vote"
+      ],
+      "reason": null,
+      "shard": "(0,4000000000000000)",
+      "target_signatures_after_restart": 293,
+      "target_signatures_before_stop": 0,
+      "within_fence": false
+    },
+    {
+      "admission": "admitted",
+      "cc": 13,
+      "counter_at_fence": 2,
+      "group_built_after_restart_at": 1793108116.4072533,
+      "local_index": 1,
+      "own_signatures_after_restart": [
+        "candidate",
+        "finalize vote",
+        "notarize vote",
+        "skip vote"
+      ],
+      "reason": null,
+      "shard": "(0,4000000000000000)",
+      "target_signatures_after_restart": 310,
+      "target_signatures_before_stop": 0,
+      "within_fence": false
+    },
+    {
+      "admission": "admitted",
+      "cc": 14,
+      "counter_at_fence": 2,
+      "group_built_after_restart_at": 1793108171.5184963,
+      "local_index": 3,
+      "own_signatures_after_restart": [
+        "candidate",
+        "finalize vote",
+        "notarize vote",
+        "skip vote"
+      ],
+      "reason": null,
+      "shard": "(0,4000000000000000)",
+      "target_signatures_after_restart": 282,
+      "target_signatures_before_stop": 0,
+      "within_fence": false
+    },
+    {
+      "admission": "admitted",
+      "cc": 15,
+      "counter_at_fence": 2,
+      "group_built_after_restart_at": 1793108232.0215178,
+      "local_index": 0,
+      "own_signatures_after_restart": [
+        "candidate",
+        "finalize vote",
+        "notarize vote",
+        "skip vote"
+      ],
+      "reason": null,
+      "shard": "(0,4000000000000000)",
+      "target_signatures_after_restart": 349,
+      "target_signatures_before_stop": 0,
+      "within_fence": false
+    },
+    {
+      "admission": "admitted",
+      "cc": 16,
+      "counter_at_fence": 2,
+      "group_built_after_restart_at": 1793108292.033106,
+      "local_index": 1,
+      "own_signatures_after_restart": [
+        "candidate",
+        "finalize vote",
+        "notarize vote",
+        "skip vote"
+      ],
+      "reason": null,
+      "shard": "(0,4000000000000000)",
+      "target_signatures_after_restart": 297,
+      "target_signatures_before_stop": 0,
+      "within_fence": false
+    },
+    {
+      "admission": "admitted",
+      "cc": 17,
+      "counter_at_fence": 2,
+      "group_built_after_restart_at": 1793108350.4578643,
+      "local_index": 1,
+      "own_signatures_after_restart": [
+        "candidate",
+        "finalize vote",
+        "notarize vote",
+        "skip vote"
+      ],
+      "reason": null,
+      "shard": "(0,4000000000000000)",
+      "target_signatures_after_restart": 297,
+      "target_signatures_before_stop": 0,
+      "within_fence": false
+    },
+    {
+      "admission": "admitted",
+      "cc": 18,
+      "counter_at_fence": 2,
+      "group_built_after_restart_at": 1793108413.1015036,
+      "local_index": 0,
+      "own_signatures_after_restart": [
+        "candidate",
+        "finalize vote",
+        "notarize vote",
+        "skip vote"
+      ],
+      "reason": null,
+      "shard": "(0,4000000000000000)",
+      "target_signatures_after_restart": 290,
+      "target_signatures_before_stop": 0,
+      "within_fence": false
+    },
+    {
+      "admission": "admitted",
+      "cc": 19,
+      "counter_at_fence": 2,
+      "group_built_after_restart_at": 1793108473.2783837,
+      "local_index": 2,
+      "own_signatures_after_restart": [
+        "candidate",
+        "finalize vote",
+        "notarize vote",
+        "skip vote"
+      ],
+      "reason": null,
+      "shard": "(0,4000000000000000)",
+      "target_signatures_after_restart": 319,
+      "target_signatures_before_stop": 0,
+      "within_fence": false
+    },
+    {
+      "admission": "admitted",
+      "cc": 20,
+      "counter_at_fence": 2,
+      "group_built_after_restart_at": 1793108529.450022,
+      "local_index": 1,
+      "own_signatures_after_restart": [
+        "candidate",
+        "finalize vote",
+        "notarize vote",
+        "skip vote"
+      ],
+      "reason": null,
+      "shard": "(0,4000000000000000)",
+      "target_signatures_after_restart": 300,
+      "target_signatures_before_stop": 0,
+      "within_fence": false
+    },
+    {
+      "admission": "admitted",
+      "cc": 21,
+      "counter_at_fence": 2,
+      "group_built_after_restart_at": 1793108593.2885194,
+      "local_index": 2,
+      "own_signatures_after_restart": [
+        "candidate",
+        "finalize vote",
+        "notarize vote",
+        "skip vote"
+      ],
+      "reason": null,
+      "shard": "(0,4000000000000000)",
+      "target_signatures_after_restart": 273,
+      "target_signatures_before_stop": 0,
+      "within_fence": false
+    },
+    {
+      "admission": "admitted",
+      "cc": 22,
+      "counter_at_fence": 2,
+      "group_built_after_restart_at": 1793108653.8300252,
+      "local_index": 1,
+      "own_signatures_after_restart": [
+        "candidate",
+        "finalize vote",
+        "notarize vote",
+        "skip vote"
+      ],
+      "reason": null,
+      "shard": "(0,4000000000000000)",
+      "target_signatures_after_restart": 201,
+      "target_signatures_before_stop": 0,
+      "within_fence": false
+    },
+    {
+      "admission": "admitted",
+      "cc": 23,
+      "counter_at_fence": 2,
+      "group_built_after_restart_at": 1793108710.259676,
+      "local_index": 0,
+      "own_signatures_after_restart": [],
+      "reason": null,
+      "shard": "(0,4000000000000000)",
+      "target_signatures_after_restart": 0,
+      "target_signatures_before_stop": 0,
+      "within_fence": false
+    },
+    {
+      "admission": "fenced",
+      "cc": 0,
+      "counter_at_fence": 2,
+      "group_built_after_restart_at": 1793107431.0443156,
+      "local_index": 2,
+      "own_signatures_after_restart": [],
+      "reason": "this node's earlier signing is unknown; waiting for a masterchain block generated at or after 1793107520",
+      "shard": "(0,8000000000000000)",
+      "target_signatures_after_restart": 0,
+      "target_signatures_before_stop": 0,
+      "within_fence": true
+    },
+    {
+      "admission": "fenced",
+      "cc": 1,
+      "counter_at_fence": 2,
+      "group_built_after_restart_at": 1793107448.7031174,
+      "local_index": 0,
+      "own_signatures_after_restart": [],
+      "reason": "this node's earlier signing is unknown; waiting for a masterchain block generated at or after 1793107520",
+      "shard": "(0,8000000000000000)",
+      "target_signatures_after_restart": 0,
+      "target_signatures_before_stop": 0,
+      "within_fence": true
+    },
+    {
+      "admission": "fenced",
+      "cc": 2,
+      "counter_at_fence": 2,
+      "group_built_after_restart_at": 1793107498.1937108,
+      "local_index": 2,
+      "own_signatures_after_restart": [],
+      "reason": "this node's earlier signing is unknown; waiting for a masterchain block generated at or after 1793107520",
+      "shard": "(0,8000000000000000)",
+      "target_signatures_after_restart": 0,
+      "target_signatures_before_stop": 0,
+      "within_fence": true
+    },
+    {
+      "admission": "fenced",
+      "cc": 3,
+      "counter_at_fence": 2,
+      "group_built_after_restart_at": 1793107504.714848,
+      "local_index": 2,
+      "own_signatures_after_restart": [],
+      "reason": "this node's earlier signing is unknown; waiting for a masterchain block generated at or after 1793107520",
+      "shard": "(0,8000000000000000)",
+      "target_signatures_after_restart": 0,
+      "target_signatures_before_stop": 0,
+      "within_fence": true
+    },
+    {
+      "admission": "fenced",
+      "cc": 1,
+      "counter_at_fence": 2,
+      "group_built_after_restart_at": 1793107431.0451758,
+      "local_index": 3,
+      "own_signatures_after_restart": [],
+      "reason": "this node's earlier signing is unknown; waiting for a masterchain block generated at or after 1793107520",
+      "shard": "(0,c000000000000000)",
+      "target_signatures_after_restart": 0,
+      "target_signatures_before_stop": 0,
+      "within_fence": true
+    },
+    {
+      "admission": "fenced",
+      "cc": 2,
+      "counter_at_fence": 2,
+      "group_built_after_restart_at": 1793107448.704893,
+      "local_index": 3,
+      "own_signatures_after_restart": [],
+      "reason": "this node's earlier signing is unknown; waiting for a masterchain block generated at or after 1793107520",
+      "shard": "(0,c000000000000000)",
+      "target_signatures_after_restart": 0,
+      "target_signatures_before_stop": 0,
+      "within_fence": true
+    },
+    {
+      "admission": "fenced",
+      "cc": 3,
+      "counter_at_fence": 2,
+      "group_built_after_restart_at": 1793107523.795284,
+      "local_index": 2,
+      "own_signatures_after_restart": [],
+      "reason": "this node's earlier signing is unknown; waiting for a masterchain block generated at or after 1793107520",
+      "shard": "(0,c000000000000000)",
+      "target_signatures_after_restart": 0,
+      "target_signatures_before_stop": 0,
+      "within_fence": true
+    },
+    {
+      "admission": "fenced",
+      "cc": 4,
+      "counter_at_fence": 2,
+      "group_built_after_restart_at": 1793107573.4953349,
+      "local_index": 0,
+      "own_signatures_after_restart": [],
+      "reason": "the session of (0,c000000000000000) with catchain counter 4 is at or below the unknown-history fence",
+      "shard": "(0,c000000000000000)",
+      "target_signatures_after_restart": 0,
+      "target_signatures_before_stop": 0,
+      "within_fence": true
+    },
+    {
+      "admission": "admitted",
+      "cc": 5,
+      "counter_at_fence": 2,
+      "group_built_after_restart_at": 1793107632.6296873,
+      "local_index": 2,
+      "own_signatures_after_restart": [
+        "candidate",
+        "finalize vote",
+        "notarize vote",
+        "skip vote"
+      ],
+      "reason": null,
+      "shard": "(0,c000000000000000)",
+      "target_signatures_after_restart": 309,
+      "target_signatures_before_stop": 0,
+      "within_fence": false
+    },
+    {
+      "admission": "admitted",
+      "cc": 6,
+      "counter_at_fence": 2,
+      "group_built_after_restart_at": 1793107687.767743,
+      "local_index": 1,
+      "own_signatures_after_restart": [
+        "candidate",
+        "finalize vote",
+        "notarize vote",
+        "skip vote"
+      ],
+      "reason": null,
+      "shard": "(0,c000000000000000)",
+      "target_signatures_after_restart": 379,
+      "target_signatures_before_stop": 0,
+      "within_fence": false
+    },
+    {
+      "admission": "admitted",
+      "cc": 7,
+      "counter_at_fence": 2,
+      "group_built_after_restart_at": 1793107747.9941602,
+      "local_index": 3,
+      "own_signatures_after_restart": [
+        "candidate",
+        "finalize vote",
+        "notarize vote",
+        "skip vote"
+      ],
+      "reason": null,
+      "shard": "(0,c000000000000000)",
+      "target_signatures_after_restart": 286,
+      "target_signatures_before_stop": 0,
+      "within_fence": false
+    },
+    {
+      "admission": "admitted",
+      "cc": 8,
+      "counter_at_fence": 2,
+      "group_built_after_restart_at": 1793107813.4234457,
+      "local_index": 1,
+      "own_signatures_after_restart": [
+        "candidate",
+        "finalize vote",
+        "notarize vote",
+        "skip vote"
+      ],
+      "reason": null,
+      "shard": "(0,c000000000000000)",
+      "target_signatures_after_restart": 260,
+      "target_signatures_before_stop": 0,
+      "within_fence": false
+    },
+    {
+      "admission": "admitted",
+      "cc": 9,
+      "counter_at_fence": 2,
+      "group_built_after_restart_at": 1793107868.583643,
+      "local_index": 1,
+      "own_signatures_after_restart": [
+        "candidate",
+        "finalize vote",
+        "notarize vote",
+        "skip vote"
+      ],
+      "reason": null,
+      "shard": "(0,c000000000000000)",
+      "target_signatures_after_restart": 350,
+      "target_signatures_before_stop": 0,
+      "within_fence": false
+    },
+    {
+      "admission": "admitted",
+      "cc": 10,
+      "counter_at_fence": 2,
+      "group_built_after_restart_at": 1793107930.457415,
+      "local_index": 3,
+      "own_signatures_after_restart": [
+        "candidate",
+        "finalize vote",
+        "notarize vote",
+        "skip vote"
+      ],
+      "reason": null,
+      "shard": "(0,c000000000000000)",
+      "target_signatures_after_restart": 340,
+      "target_signatures_before_stop": 0,
+      "within_fence": false
+    },
+    {
+      "admission": "admitted",
+      "cc": 11,
+      "counter_at_fence": 2,
+      "group_built_after_restart_at": 1793107991.1906965,
+      "local_index": 1,
+      "own_signatures_after_restart": [
+        "candidate",
+        "finalize vote",
+        "notarize vote",
+        "skip vote"
+      ],
+      "reason": null,
+      "shard": "(0,c000000000000000)",
+      "target_signatures_after_restart": 303,
+      "target_signatures_before_stop": 0,
+      "within_fence": false
+    },
+    {
+      "admission": "admitted",
+      "cc": 12,
+      "counter_at_fence": 2,
+      "group_built_after_restart_at": 1793108052.999342,
+      "local_index": 1,
+      "own_signatures_after_restart": [
+        "candidate",
+        "finalize vote",
+        "notarize vote",
+        "skip vote"
+      ],
+      "reason": null,
+      "shard": "(0,c000000000000000)",
+      "target_signatures_after_restart": 234,
+      "target_signatures_before_stop": 0,
+      "within_fence": false
+    },
+    {
+      "admission": "admitted",
+      "cc": 13,
+      "counter_at_fence": 2,
+      "group_built_after_restart_at": 1793108117.2774677,
+      "local_index": 3,
+      "own_signatures_after_restart": [
+        "candidate",
+        "finalize vote",
+        "notarize vote",
+        "skip vote"
+      ],
+      "reason": null,
+      "shard": "(0,c000000000000000)",
+      "target_signatures_after_restart": 314,
+      "target_signatures_before_stop": 0,
+      "within_fence": false
+    },
+    {
+      "admission": "admitted",
+      "cc": 14,
+      "counter_at_fence": 2,
+      "group_built_after_restart_at": 1793108172.6935236,
+      "local_index": 3,
+      "own_signatures_after_restart": [
+        "candidate",
+        "finalize vote",
+        "notarize vote",
+        "skip vote"
+      ],
+      "reason": null,
+      "shard": "(0,c000000000000000)",
+      "target_signatures_after_restart": 304,
+      "target_signatures_before_stop": 0,
+      "within_fence": false
+    },
+    {
+      "admission": "admitted",
+      "cc": 15,
+      "counter_at_fence": 2,
+      "group_built_after_restart_at": 1793108233.2763314,
+      "local_index": 0,
+      "own_signatures_after_restart": [
+        "candidate",
+        "finalize vote",
+        "notarize vote",
+        "skip vote"
+      ],
+      "reason": null,
+      "shard": "(0,c000000000000000)",
+      "target_signatures_after_restart": 320,
+      "target_signatures_before_stop": 0,
+      "within_fence": false
+    },
+    {
+      "admission": "admitted",
+      "cc": 16,
+      "counter_at_fence": 2,
+      "group_built_after_restart_at": 1793108293.1784425,
+      "local_index": 0,
+      "own_signatures_after_restart": [
+        "candidate",
+        "finalize vote",
+        "notarize vote",
+        "skip vote"
+      ],
+      "reason": null,
+      "shard": "(0,c000000000000000)",
+      "target_signatures_after_restart": 301,
+      "target_signatures_before_stop": 0,
+      "within_fence": false
+    },
+    {
+      "admission": "admitted",
+      "cc": 17,
+      "counter_at_fence": 2,
+      "group_built_after_restart_at": 1793108351.7951744,
+      "local_index": 0,
+      "own_signatures_after_restart": [
+        "candidate",
+        "finalize vote",
+        "notarize vote",
+        "skip vote"
+      ],
+      "reason": null,
+      "shard": "(0,c000000000000000)",
+      "target_signatures_after_restart": 313,
+      "target_signatures_before_stop": 0,
+      "within_fence": false
+    },
+    {
+      "admission": "admitted",
+      "cc": 18,
+      "counter_at_fence": 2,
+      "group_built_after_restart_at": 1793108413.744077,
+      "local_index": 2,
+      "own_signatures_after_restart": [
+        "candidate",
+        "finalize vote",
+        "notarize vote",
+        "skip vote"
+      ],
+      "reason": null,
+      "shard": "(0,c000000000000000)",
+      "target_signatures_after_restart": 296,
+      "target_signatures_before_stop": 0,
+      "within_fence": false
+    },
+    {
+      "admission": "admitted",
+      "cc": 19,
+      "counter_at_fence": 2,
+      "group_built_after_restart_at": 1793108474.7849195,
+      "local_index": 1,
+      "own_signatures_after_restart": [
+        "candidate",
+        "finalize vote",
+        "notarize vote",
+        "skip vote"
+      ],
+      "reason": null,
+      "shard": "(0,c000000000000000)",
+      "target_signatures_after_restart": 200,
+      "target_signatures_before_stop": 0,
+      "within_fence": false
+    },
+    {
+      "admission": "admitted",
+      "cc": 20,
+      "counter_at_fence": 2,
+      "group_built_after_restart_at": 1793108530.567074,
+      "local_index": 3,
+      "own_signatures_after_restart": [
+        "candidate",
+        "finalize vote",
+        "notarize vote",
+        "skip vote"
+      ],
+      "reason": null,
+      "shard": "(0,c000000000000000)",
+      "target_signatures_after_restart": 255,
+      "target_signatures_before_stop": 0,
+      "within_fence": false
+    },
+    {
+      "admission": "admitted",
+      "cc": 21,
+      "counter_at_fence": 2,
+      "group_built_after_restart_at": 1793108594.9070451,
+      "local_index": 2,
+      "own_signatures_after_restart": [
+        "candidate",
+        "finalize vote",
+        "notarize vote",
+        "skip vote"
+      ],
+      "reason": null,
+      "shard": "(0,c000000000000000)",
+      "target_signatures_after_restart": 271,
+      "target_signatures_before_stop": 0,
+      "within_fence": false
+    },
+    {
+      "admission": "admitted",
+      "cc": 22,
+      "counter_at_fence": 2,
+      "group_built_after_restart_at": 1793108655.3049302,
+      "local_index": 2,
+      "own_signatures_after_restart": [
+        "candidate",
+        "finalize vote",
+        "notarize vote",
+        "skip vote"
+      ],
+      "reason": null,
+      "shard": "(0,c000000000000000)",
+      "target_signatures_after_restart": 198,
+      "target_signatures_before_stop": 0,
+      "within_fence": false
+    },
+    {
+      "admission": "admitted",
+      "cc": 23,
+      "counter_at_fence": 2,
+      "group_built_after_restart_at": 1793108711.9314222,
+      "local_index": 0,
+      "own_signatures_after_restart": [],
+      "reason": null,
+      "shard": "(0,c000000000000000)",
+      "target_signatures_after_restart": 0,
+      "target_signatures_before_stop": 0,
+      "within_fence": false
+    }
+  ],
+  "shard_lifetime": 60,
+  "started_before_stop": [
+    [
+      "(-1,8000000000000000)",
+      0
+    ],
+    [
+      "(0,8000000000000000)",
+      0
+    ]
+  ],
+  "stopped_at": 1793107427.6120145,
+  "verdict": {
+    "every_session_within_fence_fenced": true,
+    "fence_recorded": true,
+    "masterchain_expected_first_cc": 4,
+    "masterchain_first_own_signature_cc": 4,
+    "masterchain_first_signed_cc": 4,
+    "no_signature_within_fence": true,
+    "own_signature_kinds_above_fence": [
+      "candidate",
+      "finalize vote",
+      "notarize vote",
+      "skip vote"
+    ],
+    "passed": true,
+    "signatures_within_fence": [],
+    "signed_in_the_old_masterchain_session_before_stop": true
+  },
+  "zerostate": {
+    "file_hash": "7f9d75ff2138cca30a7ae495a29ca8afa68fd2950a5c35c5fb36434ea1cd33bd",
+    "root_hash": "7ef35f2a4b8f458a84734d54cf87fae39899196bfff08fc7c8cd1fbf8c870a2f"
+  }
+}

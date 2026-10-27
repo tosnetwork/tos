@@ -44,6 +44,7 @@
 #include "validator/manager.hpp"
 #include "validator/validator-options.hpp"
 #include "vm/cells.h"
+#include "vm/dict.h"
 
 namespace tos::validator {
 namespace {
@@ -85,11 +86,23 @@ struct Epoch {
   }
 };
 
+// A shard of the workchain configuration: its catchain counter and its split/merge state.
+// `fsm_in` places the state's fsm_utime relative to the real clock when the state is made,
+// since the group update compares fsm_utime with the real clock.
+struct ShardSpec {
+  ShardIdFull shard;
+  CatchainSeqno cc = 0;
+  block::McShardHashI::FsmState fsm = block::McShardHashI::FsmState::fsm_none;
+  double fsm_in = 0;
+};
+
 // One masterchain state: the validator sets, the catchain seqno of the masterchain
-// shard, and the consensus config. No shards besides the masterchain.
+// shard, the consensus config, and the workchain shards (none by default).
 struct Snapshot {
   td::Ref<block::ValidatorSet> previous, current, next;
   CatchainSeqno cc = 1;
+  std::vector<ShardSpec> shards = {};
+  td::int32 global_id = 3;
 };
 
 class StateConfig : public ConfigHolder {
@@ -106,10 +119,10 @@ class StateConfig : public ConfigHolder {
     return {0, 0x7fffffff};
   }
   td::int32 get_global_id() const override {
-    return 3;
+    return snapshot_.global_id;
   }
   td::Result<td::int32> get_config_global_id() const override {
-    return 3;
+    return snapshot_.global_id;
   }
   ValidatorSessionConfig get_consensus_config() const override {
     ValidatorSessionConfig result;
@@ -136,31 +149,119 @@ class StateConfig : public ConfigHolder {
   Snapshot snapshot_;
 };
 
+// The masterchain state's configuration as the chain stores it: a ShardStateUnsplit
+// whose McStateExtra holds the masterchain catchain counter and the workchain shard
+// hashes, each shard a ShardDescr packed by McShardHash in a BinTree. Unpacked with the
+// production ConfigInfo, so counters, inheritance, a merged parent's counter and the
+// next set's counter come from the production derivation, not from this test.
+td::Ref<vm::Cell> shard_tree(WorkchainId workchain, ShardId prefix,
+                             const std::vector<td::Ref<block::McShardHash>>& shards, int depth = 0) {
+  CHECK(depth <= 8);
+  vm::CellBuilder cb;
+  for (const auto& descr : shards) {
+    if (descr->shard() == ShardIdFull{workchain, prefix}) {
+      CHECK(cb.store_long_bool(0, 1) && descr->pack(cb));  // bt_leaf$0
+      return cb.finalize();
+    }
+  }
+  CHECK(cb.store_long_bool(1, 1)  // bt_fork$1
+        && cb.store_ref_bool(shard_tree(workchain, shard_child(prefix, true), shards, depth + 1)) &&
+        cb.store_ref_bool(shard_tree(workchain, shard_child(prefix, false), shards, depth + 1)));
+  return cb.finalize();
+}
+
+std::unique_ptr<block::ConfigInfo> chain_config(td::int32 global_id, CatchainSeqno mc_cc,
+                                                const std::vector<td::Ref<block::McShardHash>>& shards) {
+  vm::Dictionary shard_hashes{32};
+  std::set<WorkchainId> workchains;
+  for (const auto& descr : shards) {
+    workchains.insert(descr->workchain());
+  }
+  for (auto workchain : workchains) {
+    CHECK(shard_hashes.set_ref(td::BitArray<32>{workchain}, shard_tree(workchain, shardIdAll, shards)));
+  }
+  vm::Dictionary params{32};
+  CHECK(params.set_ref(td::BitArray<32>::zero(), vm::CellBuilder{}.store_zeroes(256).finalize()));
+  vm::CellBuilder r1;
+  CHECK(r1.store_long_bool(0, 16)                                                            // flags
+        && r1.store_long_bool(0, 32) && r1.store_long_bool(mc_cc, 32)                        // validator_info
+        && r1.store_long_bool(0, 1)                                                          //   nx_cc_updated
+        && r1.store_long_bool(0, 1) && r1.store_long_bool(0, 1) && r1.store_zeroes_bool(64)  // prev_blocks: empty
+        && r1.store_long_bool(0, 1)                                                          // after_key_block
+        && r1.store_long_bool(0, 1));                                                        // last_key_block: nothing
+  vm::CellBuilder extra;
+  CHECK(extra.store_long_bool(0xcc26, 16) && shard_hashes.append_dict_to_bool(extra) && extra.store_zeroes_bool(256) &&
+        extra.store_ref_bool(params.get_root_cell()) && extra.store_ref_bool(r1.finalize()) &&
+        extra.store_zeroes_bool(4 + 1));  // global_balance
+  vm::CellBuilder rest;
+  CHECK(rest.store_zeroes_bool(64 + 64) && rest.store_zeroes_bool(5) && rest.store_zeroes_bool(5) &&
+        rest.store_zeroes_bool(1) && rest.store_zeroes_bool(1));
+  vm::CellBuilder root;
+  CHECK(root.store_long_bool(0x9023afe2, 32) && root.store_long_bool(global_id, 32)  // shard_state#9023afe2
+        && root.store_long_bool(0, 2) && root.store_long_bool(0, 6) && root.store_long_bool(masterchainId, 32) &&
+        root.store_long_bool(0, 64)                        // shard_id
+        && root.store_zeroes_bool(32 + 32 + 32 + 64 + 32)  // seq_no ... min_ref_mc_seqno
+        && root.store_ref_bool(vm::CellBuilder{}.finalize()) && root.store_long_bool(0, 1) &&
+        root.store_ref_bool(vm::CellBuilder{}.finalize()) && root.store_ref_bool(rest.finalize()) &&
+        root.store_long_bool(1, 1) && root.store_ref_bool(extra.finalize()));
+  auto config = block::ConfigInfo::extract_config(root.finalize(), BlockIdExt{masterchainId, shardIdAll, 0, {}, {}},
+                                                  block::ConfigInfo::needShardHashes);
+  LOG_CHECK(config.is_ok()) << config.error();
+  return config.move_as_ok();
+}
+
 class State : public MasterchainStateQ {
  public:
   State(BlockIdExt id, Snapshot snapshot)
       : MasterchainStateQ(id, vm::CellBuilder{}.finalize_novm()), snapshot_(std::move(snapshot)) {
+    const double now = td::Clocks::system();
+    std::vector<td::Ref<block::McShardHash>> shards;
+    for (const auto& spec : snapshot_.shards) {
+      auto descr = td::make_ref<block::McShardHash>(
+          BlockId{spec.shard.workchain, spec.shard.shard, 1}, 0, 0, 0,
+          hash(PSTRING() << "shard-root-" << spec.shard.shard), hash(PSTRING() << "shard-file-" << spec.shard.shard),
+          block::CurrencyCollection{td::zero_refint()}, block::CurrencyCollection{td::zero_refint()}, 0, 0, spec.cc);
+      if (spec.fsm != block::McShardHashI::FsmState::fsm_none) {
+        descr.write().set_fsm(spec.fsm, static_cast<UnixTime>(now + spec.fsm_in), 100);
+      }
+      shards.push_back(descr);
+    }
+    config_ = chain_config(snapshot_.global_id, snapshot_.cc, shards);
   }
   td::Ref<block::ValidatorSet> get_total_validator_set(int offset) const override {
     return offset < 0 ? snapshot_.previous : offset > 0 ? snapshot_.next : snapshot_.current;
   }
-  td::Ref<block::ValidatorSet> get_validator_set(ShardIdFull) const override {
-    return snapshot_.current;
+  // The members are this test's; the counter is the configuration's, as the production
+  // state derives it: delta 0 for the current set, delta 1 for the next.
+  td::Ref<block::ValidatorSet> get_validator_set(ShardIdFull shard) const override {
+    if (shard.is_masterchain()) {
+      return snapshot_.current;
+    }
+    return shard_set(shard, 0);
   }
-  td::Ref<block::ValidatorSet> get_next_validator_set(ShardIdFull) const override {
-    return {};
+  // The masterchain has no next set here.
+  td::Ref<block::ValidatorSet> get_next_validator_set(ShardIdFull shard) const override {
+    if (shard.is_masterchain()) {
+      return {};
+    }
+    return shard_set(shard, 1);
   }
   CatchainSeqno get_shard_cc_seqno(ShardIdFull shard) const override {
-    return shard.is_masterchain() ? snapshot_.cc : std::numeric_limits<CatchainSeqno>::max();
+    return config_->get_shard_cc_seqno(shard);
   }
   td::int32 get_global_id() const override {
-    return 3;
+    return snapshot_.global_id;
   }
   bool rotated_all_shards() const override {
     return false;
   }
+  // As the production state lists them: from the shard hashes, unpacked.
   std::vector<td::Ref<McShardHash>> get_shards() const override {
-    return {};
+    std::vector<td::Ref<McShardHash>> out;
+    for (const auto& id : config_->get_shard_hash_ids(true)) {
+      out.push_back(config_->get_shard_hash(ShardIdFull{id}));
+    }
+    return out;
   }
   td::Ref<McShardHash> get_shard_from_config(ShardIdFull, bool) const override {
     return {};
@@ -185,7 +286,20 @@ class State : public MasterchainStateQ {
   }
 
  private:
+  td::Ref<block::ValidatorSet> shard_set(ShardIdFull shard, CatchainSeqno delta) const {
+    // The production derivation of the counter: compute_validator_set_cc adds `delta` to
+    // the shard's counter, or leaves it when the shard has none. No validator list is
+    // given, so it computes no members; this test supplies its own.
+    if (config_->get_shard_cc_seqno(shard) == std::numeric_limits<CatchainSeqno>::max()) {
+      return {};
+    }
+    CatchainSeqno cc = delta;
+    config_->compute_validator_set_cc(shard, block::TotalValidatorSet{}, 0, &cc);
+    return td::make_ref<block::ValidatorSet>(cc, shard, snapshot_.current->export_vector());
+  }
+
   Snapshot snapshot_;
+  std::shared_ptr<block::ConfigInfo> config_;
 };
 
 // Everything the fakes saw, in order.
@@ -277,12 +391,13 @@ class StartupCatchupManagerProbe : public ValidatorManagerImpl {
  public:
   StartupCatchupManagerProbe(std::string root, std::shared_ptr<Journal> journal,
                              td::actor::ActorId<keyring::Keyring> keys, td::actor::ActorId<adnl::Adnl> adnl,
-                             td::actor::ActorId<rldp2::Rldp> rldp, bool decision_log = false)
-      : ValidatorManagerImpl(options(decision_log), std::move(root), keys, adnl, rldp, {}, {})
+                             td::actor::ActorId<rldp2::Rldp> rldp, bool decision_log = false,
+                             BlockIdExt zero_state = BlockIdExt{})
+      : ValidatorManagerImpl(options(decision_log, zero_state), std::move(root), keys, adnl, rldp, {}, {})
       , journal_(std::move(journal)) {
   }
-  static td::Ref<ValidatorManagerOptions> options(bool decision_log) {
-    auto opts = ValidatorManagerOptions::create(BlockIdExt{}, BlockIdExt{});
+  static td::Ref<ValidatorManagerOptions> options(bool decision_log, BlockIdExt zero_state) {
+    auto opts = ValidatorManagerOptions::create(zero_state, zero_state);
     opts.write().set_signing_decision_log_enabled(decision_log);
     return opts;
   }
@@ -299,6 +414,31 @@ class StartupCatchupManagerProbe : public ValidatorManagerImpl {
     zero->flushed_upto(zero->version());
     last_key_block_handle_ = zero;
     last_known_key_block_handle_ = zero;
+  }
+
+  // Stores a masterchain block handle in the node's real database, as block application
+  // does: the handle, then its archive entry.
+  void archive_block(BlockIdExt id, UnixTime unix_time, LogicalTime lt, td::Promise<td::Unit> promise) {
+    auto handle = create_empty_block_handle(id);
+    handle->set_unix_time(unix_time);
+    handle->set_logical_time(lt);
+    handle->set_is_key_block(id.seqno() == 0);
+    td::actor::send_closure(
+        db_, &Db::store_block_handle, handle,
+        [db = db_.get(), handle, promise = std::move(promise)](td::Result<td::Unit> stored) mutable {
+          if (stored.is_error()) {
+            promise.set_error(stored.move_as_error());
+            return;
+          }
+          td::actor::send_closure(db, &Db::add_handle_to_archive, handle, std::move(promise));
+        });
+  }
+  // Whether the database's seqno index finds the masterchain block at `seqno`.
+  void find_by_seqno(BlockSeqno seqno, td::Promise<bool> promise) {
+    get_block_by_seqno_from_db(AccountIdPrefixFull{masterchainId, 0}, seqno,
+                               [promise = std::move(promise)](td::Result<ConstBlockHandle> found) mutable {
+                                 promise.set_value(found.is_ok());
+                               });
   }
 
   void hold(std::shared_ptr<const pq::ValidatorPQKeyStore> store, ValidatorId id, td::uint32 expire_at) {
@@ -394,6 +534,44 @@ class StartupCatchupManagerProbe : public ValidatorManagerImpl {
                           })
                           .session_id);
   }
+  // The canonical id the group update derives for `shard` at counter `cc`, with the
+  // validators of `snapshot` and this node's current last key block.
+  void session_for(Snapshot snapshot, ShardIdFull shard, CatchainSeqno cc, td::Promise<ValidatorSessionId> promise) {
+    auto state = td::make_ref<State>(last_masterchain_block_id_, snapshot);
+    auto selected = state->get_selected_new_consensus_config(shard.workchain);
+    auto config = state->get_consensus_config();
+    consensus::ValidatorSessionOptions opts{config};
+    promise.set_value(block::derive_validator_session_identity(
+                          block::ValidatorSessionIdentityInput{
+                              .global_id = 3,
+                              .validator_options_hash = block::validator_session_options_hash(config),
+                              .simplex_config_cell_hash = selected.value().cell_hash,
+                              .shard = shard,
+                              .catchain_seqno = cc,
+                              .validators = snapshot.current->export_vector(),
+                              .vertical_seqno = opts_->get_maximal_vertical_seqno(),
+                              .last_key_block_seqno = last_key_block_handle_->id().seqno(),
+                              .new_catchain_ids = opts.new_catchain_ids,
+                          })
+                          .session_id);
+  }
+  // The start's network check for the own-decision log, on the current state: empty when
+  // the node may start, otherwise the refusal.
+  void network_check(td::Promise<std::string> promise) {
+    auto checked = signing_decision_log_network_check(*last_masterchain_state_);
+    promise.set_value(checked.is_ok() ? std::string() : checked.message().str());
+  }
+  // A new last key block, as applying a key block records it.
+  void key_block(BlockSeqno seqno, td::Promise<td::Unit> promise) {
+    auto handle =
+        create_empty_block_handle(BlockIdExt{masterchainId, shardIdAll, seqno, hash(PSTRING() << "key-root-" << seqno),
+                                             hash(PSTRING() << "key-file-" << seqno)});
+    handle->set_is_key_block(true);
+    handle->flushed_upto(handle->version());
+    last_key_block_handle_ = handle;
+    last_known_key_block_handle_ = handle;
+    promise.set_value(td::Unit());
+  }
   void teardown(td::Promise<td::Unit> promise) {
     for (auto& [id, entry] : validator_groups_) {
       td::actor::send_closure(entry.actor, &IValidatorGroup::destroy);
@@ -450,7 +628,8 @@ class Fixture {
 
   // With `decision_log`, the manager keeps an own-decision log under its database root;
   // `before_start` runs on that root before the manager exists.
-  explicit Fixture(bool decision_log = false, const std::function<void(const std::string&)>& before_start = nullptr)
+  explicit Fixture(bool decision_log = false, const std::function<void(const std::string&)>& before_start = nullptr,
+                   BlockIdExt zero_state = BlockIdExt{})
       : root_(td::mkdtemp("/tmp", "startup-catchup-manager").move_as_ok()), scheduler_({1}) {
     if (before_start) {
       before_start(root_);
@@ -467,8 +646,8 @@ class Fixture {
                                   adnl::AdnlAddressList{}, static_cast<td::uint8>(0));
         }
       }
-      manager_ = td::actor::create_actor<StartupCatchupManagerProbe>("catchup manager", root_, journal, keys_.get(),
-                                                                     adnl_.get(), rldp_.get(), decision_log);
+      manager_ = td::actor::create_actor<StartupCatchupManagerProbe>(
+          "catchup manager", root_, journal, keys_.get(), adnl_.get(), rldp_.get(), decision_log, zero_state);
     });
   }
   ~Fixture() {
@@ -545,6 +724,16 @@ class Fixture {
       td::actor::send_closure(manager_, &StartupCatchupManagerProbe::advance, std::move(s), height, age, std::move(p));
     });
   }
+  void archive_block(BlockIdExt id, UnixTime unix_time, LogicalTime lt) {
+    ask<td::Unit>([&](td::Promise<td::Unit> p) {
+      td::actor::send_closure(manager_, &StartupCatchupManagerProbe::archive_block, id, unix_time, lt, std::move(p));
+    });
+  }
+  bool find_by_seqno(BlockSeqno seqno) {
+    return ask<bool>([&](td::Promise<bool> p) {
+      td::actor::send_closure(manager_, &StartupCatchupManagerProbe::find_by_seqno, seqno, std::move(p));
+    });
+  }
   bool decide() {
     return ask<bool>([&](td::Promise<bool> p) {
       td::actor::send_closure(manager_, &StartupCatchupManagerProbe::decide, std::move(p));
@@ -589,6 +778,22 @@ class Fixture {
   ValidatorSessionId session_of(Snapshot s) {
     return ask<ValidatorSessionId>([&](td::Promise<ValidatorSessionId> p) {
       td::actor::send_closure(manager_, &StartupCatchupManagerProbe::session_of, std::move(s), std::move(p));
+    });
+  }
+  ValidatorSessionId session_for(Snapshot s, ShardIdFull shard, CatchainSeqno cc) {
+    return ask<ValidatorSessionId>([&](td::Promise<ValidatorSessionId> p) {
+      td::actor::send_closure(manager_, &StartupCatchupManagerProbe::session_for, std::move(s), shard, cc,
+                              std::move(p));
+    });
+  }
+  std::string network_check() {
+    return ask<std::string>([&](td::Promise<std::string> p) {
+      td::actor::send_closure(manager_, &StartupCatchupManagerProbe::network_check, std::move(p));
+    });
+  }
+  void key_block(BlockSeqno seqno) {
+    ask<td::Unit>([&](td::Promise<td::Unit> p) {
+      td::actor::send_closure(manager_, &StartupCatchupManagerProbe::key_block, seqno, std::move(p));
     });
   }
   bool wait_event(const std::string& prefix, double timeout) {
@@ -923,4 +1128,319 @@ TEST(StartupCatchupManager, DecisionLogRefusesAChainWithoutTheFloor) {
   auto expected = f.session_of(f.snapshot(f.current, 1));
   ASSERT_TRUE(f.wait_event("group " + expected.to_hex(), 10.0));
   ASSERT_EQ(1u, f.journal->count("admission fenced " + expected.to_hex()));
+}
+
+// Unknown history on the masterchain. Without a ledger the node's earlier signing is
+// unknown: the first session is fenced and a pending ledger records when this process
+// started. A masterchain block generated at least the margin after that start is the
+// fence: sessions up to two catchain counters above it stay fenced, the next one signs.
+TEST(StartupCatchupManager, DecisionLogFencesUnknownHistory) {
+  // A block generated in the future of this process's start, by more than the margin.
+  constexpr double kAfterTheMargin = -(consensus::signing::kHistoryMarginSeconds + 5.0);
+  Fixture f(true);
+  f.hold(f.current, 0);
+  f.set_tip(f.snapshot(f.current, 1), 10, kFresh);
+  ASSERT_TRUE(!f.decide());
+  f.advance(f.snapshot(f.current, 1), 10, kFresh);
+  auto first = f.session_of(f.snapshot(f.current, 1));
+  ASSERT_TRUE(f.wait_event("group " + first.to_hex(), 10.0));
+  ASSERT_EQ(1u, f.journal->count("admission fenced " + first.to_hex()));
+
+  // A block generated before the margin has passed is not the fence.
+  f.advance(f.snapshot(f.current, 2), 11, kFresh);
+  auto early = f.session_of(f.snapshot(f.current, 2));
+  ASSERT_TRUE(f.wait_event("group " + early.to_hex(), 10.0));
+  ASSERT_EQ(1u, f.journal->count("admission fenced " + early.to_hex()));
+
+  // The fence block, at catchain counter 2.
+  f.advance(f.snapshot(f.current, 2), 12, kAfterTheMargin);
+  f.run_for(0.5);
+  // Counter 4 = 2 + 2 is fenced: a session the previous process could have reached.
+  f.advance(f.snapshot(f.current, 4), 13, kAfterTheMargin);
+  auto within = f.session_of(f.snapshot(f.current, 4));
+  ASSERT_TRUE(f.wait_event("group " + within.to_hex(), 10.0));
+  ASSERT_EQ(1u, f.journal->count("admission fenced " + within.to_hex()));
+  // Counter 5 signs.
+  f.advance(f.snapshot(f.current, 5), 14, kAfterTheMargin);
+  auto above = f.session_of(f.snapshot(f.current, 5));
+  ASSERT_TRUE(f.wait_event("group " + above.to_hex(), 10.0));
+  ASSERT_EQ(1u, f.journal->count("admission admitted " + above.to_hex()));
+}
+
+// ===== The genesis ceremony's ledger at a real database =====
+
+namespace {
+
+const BlockIdExt kZeroState{masterchainId, shardIdAll, 0, hash("zerostate-root"), hash("zerostate-file")};
+
+// Starts a node whose ledger the genesis ceremony made with `floor`, configured with the
+// zerostate kZeroState, and whose real database holds the zerostate and block 1 as block
+// application stores them. Returns how the first session was admitted.
+std::string genesis_start(const BlockIdExt& floor) {
+  Fixture f(
+      true,
+      [&](const std::string& root) {
+        CHECK(consensus::signing::create_ledger(ledger_of(root), member_id(2, 0).value,
+                                                consensus::signing::default_file_ops(), floor)
+                  .is_ok());
+      },
+      kZeroState);
+  f.archive_block(kZeroState, 1000, 0);
+  f.archive_block(BlockIdExt{masterchainId, shardIdAll, 1, hash("block-1-root"), hash("block-1-file")}, 1001, 1000000);
+  // The database an ordinary floor check reads: a zerostate is not in its seqno index.
+  CHECK(!f.find_by_seqno(0));
+  CHECK(f.find_by_seqno(1));
+  f.hold(f.current, 0);
+  f.set_tip(f.snapshot(f.current, 1), 10, kFresh);
+  CHECK(!f.decide());
+  f.advance(f.snapshot(f.current, 1), 10, kFresh);
+  auto session = f.session_of(f.snapshot(f.current, 1));
+  if (!f.wait_event("group " + session.to_hex(), 10.0)) {
+    return "no group";
+  }
+  if (f.journal->count("admission admitted " + session.to_hex()) == 1) {
+    return "admitted";
+  }
+  if (f.journal->count("admission fenced " + session.to_hex()) == 1) {
+    return "fenced";
+  }
+  return "unknown";
+}
+
+}  // namespace
+
+// A ledger the genesis ceremony made at this node's zerostate admits the first session.
+TEST(StartupCatchupManager, GenesisCeremonyLedgerAdmits) {
+  ASSERT_EQ(std::string("admitted"), genesis_start(kZeroState));
+}
+
+// A ceremony ledger made for another zerostate admits nothing: another root hash, or
+// another file hash.
+TEST(StartupCatchupManager, GenesisCeremonyLedgerForAnotherRootHashFences) {
+  BlockIdExt other = kZeroState;
+  other.root_hash = hash("another-zerostate-root");
+  ASSERT_EQ(std::string("fenced"), genesis_start(other));
+}
+
+TEST(StartupCatchupManager, GenesisCeremonyLedgerForAnotherFileHashFences) {
+  BlockIdExt other = kZeroState;
+  other.file_hash = hash("another-zerostate-file");
+  ASSERT_EQ(std::string("fenced"), genesis_start(other));
+}
+
+// ===== Unknown history: which sessions the fence covers, through the group update =====
+//
+// Each test has two halves. The first runs a node that may sign (a complete ledger) and
+// shows, through the production group update, a session such a node builds before an
+// unknown restart. The second runs a node whose earlier signing is unknown: the session
+// is not derived at its fence block M, comes back after M, and is fenced. The selection
+// compares the split/merge time with the real clock: a split or merge due within 60 s
+// derives the new lineage, so `kSoon` (30 s) derives it and `kLater` (600 s) does not.
+// The tests take seconds, and assume the clock does not step by 30 s meanwhile.
+
+namespace {
+
+using Fsm = block::McShardHashI::FsmState;
+constexpr double kSoon = 30.0;
+constexpr double kLater = 600.0;
+constexpr double kAfterTheMarginOfStart = -(consensus::signing::kHistoryMarginSeconds + 5.0);
+const ShardIdFull kBase{basechainId, shardIdAll};
+const ShardIdFull kLeft{basechainId, shard_child(shardIdAll, true)};
+const ShardIdFull kRight{basechainId, shard_child(shardIdAll, false)};
+
+Snapshot with_shards(Snapshot snapshot, std::vector<ShardSpec> shards) {
+  snapshot.shards = std::move(shards);
+  return snapshot;
+}
+
+// "admitted", "fenced", or "none" when no group was built for the session.
+std::string admission_of(Fixture& f, const ValidatorSessionId& session, double timeout = 10.0) {
+  if (!f.wait_event("group " + session.to_hex(), timeout)) {
+    return "none";
+  }
+  if (f.journal->count("admission admitted " + session.to_hex()) > 0) {
+    return "admitted";
+  }
+  if (f.journal->count("admission fenced " + session.to_hex()) > 0) {
+    return "fenced";
+  }
+  return "unknown";
+}
+
+// A node that may sign: a complete ledger for member 0 of `current`.
+std::function<void(const std::string&)> signing_node() {
+  return [](const std::string& root) { make_ledger(root, member_id(2, 0), std::nullopt); };
+}
+
+// Starts a node with unknown history at `before` (fresh) and settles its fence at `at_m`,
+// a block generated after the margin. Every group built before M is fenced.
+void settle_fence_at(Fixture& f, const Snapshot& before, const Snapshot& at_m) {
+  f.hold(f.current, 0);
+  f.set_tip(before, 10, kFresh);
+  CHECK(!f.decide());
+  f.advance(before, 10, kFresh);
+  CHECK(admission_of(f, f.session_of(before)) == "fenced");
+  f.advance(at_m, 11, kAfterTheMarginOfStart);
+  f.run_for(0.5);
+}
+
+}  // namespace
+
+// A split due soon derives tentative children; a node may sign in them. At M the split is
+// postponed, so the children are not derived; after M the split happens and a child's
+// session with that counter comes back. It is fenced, through the parent's entry.
+TEST(StartupCatchupManager, UnknownHistoryTentativeLineageDisappearsAndReturns) {
+  {
+    Fixture old(true, signing_node());
+    old.hold(old.current, 0);
+    auto soon = with_shards(old.snapshot(old.current, 1), {{kBase, 5, Fsm::fsm_split, kSoon}});
+    old.set_tip(soon, 10, kFresh);
+    ASSERT_TRUE(!old.decide());
+    old.advance(soon, 10, kFresh);
+    ASSERT_EQ(std::string("admitted"), admission_of(old, old.session_for(soon, kLeft, 6)));
+  }
+  Fixture f(true);
+  auto at_m = with_shards(f.snapshot(f.current, 1), {{kBase, 5, Fsm::fsm_split, kLater}});
+  settle_fence_at(f, f.snapshot(f.current, 1), at_m);
+  auto returning = f.session_for(at_m, kLeft, 6);
+  ASSERT_EQ(std::string("none"), admission_of(f, returning, 0.5));  // not derived at M
+  ASSERT_EQ(std::string("fenced"), admission_of(f, f.session_for(at_m, kBase, 6)));
+  auto split = with_shards(f.snapshot(f.current, 1), {{kLeft, 5}, {kRight, 5}});
+  f.advance(split, 12, kAfterTheMarginOfStart);
+  ASSERT_EQ(std::string("fenced"), admission_of(f, returning));
+  // Three counters above the fence the child signs again.
+  auto later = with_shards(f.snapshot(f.current, 1), {{kLeft, 8}, {kRight, 5}});
+  f.advance(later, 13, kAfterTheMarginOfStart);
+  ASSERT_EQ(std::string("admitted"), admission_of(f, f.session_for(later, kLeft, 8)));
+}
+
+// A merge due soon derives the prospective parent at max(children) + 1 and its tentative
+// session at max + 2. At M the merge is postponed; after M it happens, and the parent's
+// session at max + 2 is fenced. Max + 3 signs.
+TEST(StartupCatchupManager, UnknownHistoryMergedParentTentative) {
+  {
+    Fixture old(true, signing_node());
+    old.hold(old.current, 0);
+    auto soon = with_shards(old.snapshot(old.current, 1),
+                            {{kLeft, 5, Fsm::fsm_merge, kSoon}, {kRight, 7, Fsm::fsm_merge, kSoon}});
+    old.set_tip(soon, 10, kFresh);
+    ASSERT_TRUE(!old.decide());
+    old.advance(soon, 10, kFresh);
+    ASSERT_EQ(std::string("admitted"), admission_of(old, old.session_for(soon, kBase, 9)));
+  }
+  Fixture f(true);
+  auto at_m =
+      with_shards(f.snapshot(f.current, 1), {{kLeft, 5, Fsm::fsm_merge, kLater}, {kRight, 7, Fsm::fsm_merge, kLater}});
+  settle_fence_at(f, f.snapshot(f.current, 1), at_m);
+  auto parent_tentative = f.session_for(at_m, kBase, 9);
+  ASSERT_EQ(std::string("none"), admission_of(f, parent_tentative, 0.5));  // not derived at M
+  auto merged = with_shards(f.snapshot(f.current, 1), {{kBase, 8}});
+  f.advance(merged, 12, kAfterTheMarginOfStart);
+  ASSERT_EQ(std::string("fenced"), admission_of(f, f.session_for(merged, kBase, 8)));
+  ASSERT_EQ(std::string("fenced"), admission_of(f, parent_tentative));
+  auto later = with_shards(f.snapshot(f.current, 1), {{kBase, 10}});
+  f.advance(later, 13, kAfterTheMarginOfStart);
+  ASSERT_EQ(std::string("admitted"), admission_of(f, f.session_for(later, kBase, 10)));
+}
+
+// A tentative group, once built, is kept while no related active group passes its
+// counter, even when the latest state no longer derives it. Such a group of the previous
+// process is not derived at M; after M it becomes current and is fenced.
+TEST(StartupCatchupManager, UnknownHistoryRetainedTentativeGroup) {
+  {
+    Fixture old(true, signing_node());
+    old.hold(old.current, 0);
+    auto soon = with_shards(old.snapshot(old.current, 1), {{kBase, 5, Fsm::fsm_split, kSoon}});
+    old.set_tip(soon, 10, kFresh);
+    ASSERT_TRUE(!old.decide());
+    old.advance(soon, 10, kFresh);
+    auto tentative = old.session_for(soon, kLeft, 6);
+    ASSERT_EQ(std::string("admitted"), admission_of(old, tentative));
+    auto postponed = with_shards(old.snapshot(old.current, 1), {{kBase, 5, Fsm::fsm_split, kLater}});
+    old.advance(postponed, 11, kFresh);
+    old.run_for(0.5);
+    ASSERT_EQ(0u, old.journal->count("close " + tentative.to_hex()));  // kept, not derived
+  }
+  Fixture f(true);
+  auto at_m = with_shards(f.snapshot(f.current, 1), {{kBase, 5}});
+  settle_fence_at(f, f.snapshot(f.current, 1), at_m);
+  auto split = with_shards(f.snapshot(f.current, 1), {{kLeft, 6}, {kRight, 6}});
+  auto current = f.session_for(split, kLeft, 6);
+  ASSERT_EQ(std::string("none"), admission_of(f, current, 0.5));  // not derived at M
+  f.advance(split, 12, kAfterTheMarginOfStart);
+  ASSERT_EQ(std::string("fenced"), admission_of(f, current));
+  auto later = with_shards(f.snapshot(f.current, 1), {{kLeft, 8}, {kRight, 6}});
+  f.advance(later, 13, kAfterTheMarginOfStart);
+  ASSERT_EQ(std::string("admitted"), admission_of(f, f.session_for(later, kLeft, 8)));
+}
+
+// A key block after M changes every session id; the fence compares the lineage and the
+// counter, so a session at a fenced counter stays fenced under its new id.
+TEST(StartupCatchupManager, UnknownHistoryKeyBlockChangesTheId) {
+  Fixture f(true);
+  settle_fence_at(f, f.snapshot(f.current, 1), f.snapshot(f.current, 2));
+  auto next = f.snapshot(f.current, 3);
+  auto before_key_block = f.session_for(next, ShardIdFull{masterchainId, shardIdAll}, 3);
+  f.key_block(12);
+  auto after_key_block = f.session_for(next, ShardIdFull{masterchainId, shardIdAll}, 3);
+  ASSERT_TRUE(before_key_block != after_key_block);
+  f.advance(next, 13, kAfterTheMarginOfStart);
+  ASSERT_EQ(std::string("fenced"), admission_of(f, after_key_block));
+  auto later = f.snapshot(f.current, 5);
+  f.advance(later, 14, kAfterTheMarginOfStart);
+  ASSERT_EQ(std::string("admitted"), admission_of(f, f.session_for(later, ShardIdFull{masterchainId, shardIdAll}, 5)));
+}
+
+// ===== The engine option is for local networks only =====
+
+namespace {
+
+// Starts a node at a state of `global_id`, with the own-decision log on or off and a
+// complete ledger, and returns the start's refusal ("" when it may start) and how the
+// first session was admitted.
+std::pair<std::string, std::string> start_on_network(bool decision_log, td::int32 global_id) {
+  Fixture f(decision_log, decision_log ? signing_node() : nullptr);
+  f.hold(f.current, 0);
+  auto state = f.snapshot(f.current, 1);
+  state.global_id = global_id;
+  f.set_tip(state, 10, kFresh);
+  auto refusal = f.network_check();
+  CHECK(!f.decide());
+  f.advance(state, 10, kFresh);
+  f.run_for(1.0);
+  std::string admission = f.journal->count("admission admitted ") > 0 ? "admitted"
+                          : f.journal->count("admission fenced ") > 0 ? "fenced"
+                          : f.journal->count("group ") > 0            ? "no log"
+                                                                      : "none";
+  return {refusal, admission};
+}
+
+}  // namespace
+
+TEST(StartupCatchupManager, DecisionLogRefusesTheTestnet) {
+  auto [refusal, admission] = start_on_network(true, 2);
+  ASSERT_TRUE(refusal.find("global id is 2") != std::string::npos);
+  ASSERT_TRUE(refusal.find("local network") != std::string::npos);
+  ASSERT_EQ(std::string("fenced"), admission);
+}
+
+TEST(StartupCatchupManager, DecisionLogRefusesMainnet) {
+  auto [refusal, admission] = start_on_network(true, 1);
+  ASSERT_TRUE(refusal.find("global id is 1") != std::string::npos);
+  ASSERT_EQ(std::string("fenced"), admission);
+}
+
+TEST(StartupCatchupManager, DecisionLogAcceptsALocalNetwork) {
+  auto [refusal, admission] = start_on_network(true, 3);
+  ASSERT_EQ(std::string(), refusal);
+  ASSERT_EQ(std::string("admitted"), admission);
+}
+
+// Without the option, no network is refused and groups are built without the log.
+TEST(StartupCatchupManager, WithoutTheDecisionLogNothingChanges) {
+  for (td::int32 global_id : {1, 2, 3}) {
+    auto [refusal, admission] = start_on_network(false, global_id);
+    ASSERT_EQ(std::string(), refusal);
+    ASSERT_EQ(std::string("no log"), admission);
+  }
 }

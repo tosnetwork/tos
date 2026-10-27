@@ -570,6 +570,11 @@ class BridgeImpl final : public IValidatorGroup {
     bus->cc_seqno = params_.validator_set->get_catchain_seqno();
     bus->validator_set_hash = params_.validator_set->get_validator_set_hash();
     CHECK(!params_.local_id || found);
+    if (found) {
+      // Which signature in this session's certificates is this node's.
+      LOG(INFO) << "consensus: session " << params_.session_id.to_hex() << " of " << bus->shard.to_str() << " catchain "
+                << bus->cc_seqno << ": local validator index " << bus->local_id->idx.value();
+    }
     bus->local_adnl_id = params_.local_adnl_id;
 
     bus->config = params_.config;

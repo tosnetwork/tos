@@ -2794,6 +2794,9 @@ void ValidatorManagerImpl::init_last_masterchain_state(td::Ref<MasterchainState>
   if (auth_status.is_error()) {
     LOG(FATAL) << "refusing initial masterchain AUTH policy: " << auth_status;
   }
+  if (auto local_only = signing_decision_log_network_check(*state); local_only.is_error()) {
+    LOG(FATAL) << "refusing to start: " << local_only;
+  }
   last_masterchain_state_ = std::move(state);
   update_shard_overlays();
 }
@@ -2804,6 +2807,9 @@ void ValidatorManagerImpl::started(ValidatorManagerInitResult R) {
   auto auth_status = admit_auth_policy_state(*R.state, last_masterchain_state_);
   if (auth_status.is_error()) {
     LOG(FATAL) << "refusing restored masterchain AUTH policy: " << auth_status;
+  }
+  if (auto local_only = signing_decision_log_network_check(*R.state); local_only.is_error()) {
+    LOG(FATAL) << "refusing to start: " << local_only;
   }
   last_masterchain_block_handle_ = std::move(R.handle);
   last_masterchain_block_id_ = last_masterchain_block_handle_->id();
@@ -3595,6 +3601,9 @@ void ValidatorManagerImpl::update_shard_overlays() {
 }
 
 void ValidatorManagerImpl::update_shards() {
+  // An admission the ledger decides before this offer is a fence while its history is
+  // pending, never an admission, so the order of the two only ever errs towards fencing.
+  offer_signing_fence_block();
   if ((last_masterchain_state_->rotated_all_shards() || last_masterchain_seqno_ == 0) &&
       opts_->get_last_fork_masterchain_seqno() <= last_masterchain_seqno_) {
     allow_validate_ = true;
@@ -4240,7 +4249,7 @@ td::actor::ActorOwn<IValidatorGroup> ValidatorManagerImpl::create_validator_grou
   // again when the answer arrives.
   std::shared_ptr<const consensus::signing::Admission> signing_admission;
   if (opts_->get_signing_decision_log_enabled()) {
-    signing_admission = signing_admission_for(session_id, local_vid);
+    signing_admission = signing_admission_for(session_id, local_vid, shard, validator_set->get_catchain_seqno());
     if (signing_admission == nullptr) {
       return {};
     }
@@ -4258,9 +4267,17 @@ td::actor::ActorOwn<IValidatorGroup> ValidatorManagerImpl::create_validator_grou
 }
 
 std::shared_ptr<const consensus::signing::Admission> ValidatorManagerImpl::signing_admission_for(
-    ValidatorSessionId session_id, tos::ValidatorId validator) {
+    ValidatorSessionId session_id, tos::ValidatorId validator, ShardIdFull shard, CatchainSeqno cc) {
   if (auto it = signing_admissions_.find(session_id); it != signing_admissions_.end()) {
     return it->second;
+  }
+  // The start refuses such a network; this keeps any later path from signing on one too.
+  if (last_masterchain_state_.not_null()) {
+    if (auto local_only = signing_decision_log_network_check(*last_masterchain_state_); local_only.is_error()) {
+      auto fenced = consensus::signing::Admission::fence(session_id, local_only.message().str());
+      signing_admissions_[session_id] = fenced;
+      return fenced;
+    }
   }
   switch (signing_floor_state_) {
     case SigningFloorState::Unknown:
@@ -4274,6 +4291,20 @@ std::shared_ptr<const consensus::signing::Admission> ValidatorManagerImpl::signi
       // A group may be built only from a state at or after the floor, on a chain that
       // contains it: one built from an older state could be a session the floor retired.
       CHECK(signing_floor_.has_value());
+      if (signing_floor_->seqno() == 0) {
+        // A floor at the zerostate (the genesis ceremony's ledger). The archive keeps no
+        // seqno index entry for a zerostate, so it is checked against the zerostate this
+        // node was configured with, the global configuration's identity of its chain.
+        if (*signing_floor_ == opts_->zero_block_id()) {
+          signing_floor_state_ = SigningFloorState::Verified;
+        } else {
+          LOG(ERROR) << "signing ledger: its history starts at the zerostate " << signing_floor_->to_str()
+                     << ", not at this node's zerostate " << opts_->zero_block_id().to_str()
+                     << "; no session will sign";
+          signing_floor_state_ = SigningFloorState::Refused;
+        }
+        return signing_admission_for(session_id, validator, shard, cc);
+      }
       if (last_masterchain_seqno_ < signing_floor_->seqno()) {
         return nullptr;
       }
@@ -4295,9 +4326,46 @@ std::shared_ptr<const consensus::signing::Admission> ValidatorManagerImpl::signi
       break;
   }
   if (signing_admissions_pending_.insert(session_id).second) {
-    fetch_signing_admission(session_id, validator).start().detach();
+    fetch_signing_admission(session_id, validator, shard, cc).start().detach();
   }
   return nullptr;
+}
+
+td::Status ValidatorManagerImpl::signing_decision_log_network_check(const MasterchainState &state) const {
+  if (!opts_->get_signing_decision_log_enabled()) {
+    return td::Status::OK();
+  }
+  return consensus::signing::refuse_off_local_network(state.get_global_id());
+}
+
+void ValidatorManagerImpl::offer_signing_fence_block() {
+  if (signing_ledger_.empty() || signing_history_settled_ || last_masterchain_state_.is_null() ||
+      !last_masterchain_block_handle_) {
+    return;
+  }
+  // The catchain counter of every shard lineage at this block, as the session derivation
+  // reads it; a failure to derive one is passed on as the sentinel, which the ledger refuses.
+  std::vector<consensus::signing::FenceEntry> lineages;
+  const ShardIdFull masterchain{masterchainId, shardIdAll};
+  lineages.push_back(
+      {masterchain.workchain, masterchain.shard, last_masterchain_state_->get_shard_cc_seqno(masterchain)});
+  for (const auto &shard : last_masterchain_state_->get_shards()) {
+    const auto id = shard->shard();
+    lineages.push_back({id.workchain, id.shard, last_masterchain_state_->get_shard_cc_seqno(id)});
+  }
+  [](ValidatorManagerImpl *self, BlockIdExt block, td::uint32 gen_utime,
+     std::vector<consensus::signing::FenceEntry> lineages) -> td::actor::Task<> {
+    auto settled =
+        co_await td::actor::ask(self->signing_ledger_.get(), &consensus::signing::SigningLedger::offer_fence_block,
+                                block, gen_utime, std::move(lineages))
+            .wrap();
+    if (settled.is_ok() && settled.ok()) {
+      self->signing_history_settled_ = true;
+    }
+    co_return td::Unit{};
+  }(this, last_masterchain_block_id_, last_masterchain_block_handle_->unix_time(), std::move(lineages))
+                                                                  .start()
+                                                                  .detach();
 }
 
 td::actor::Task<> ValidatorManagerImpl::fetch_signing_floor() {
@@ -4332,9 +4400,10 @@ void ValidatorManagerImpl::checked_signing_floor(td::Result<ConstBlockHandle> ha
 }
 
 td::actor::Task<> ValidatorManagerImpl::fetch_signing_admission(ValidatorSessionId session_id,
-                                                                tos::ValidatorId validator) {
+                                                                tos::ValidatorId validator, ShardIdFull shard,
+                                                                CatchainSeqno cc) {
   auto admission = co_await td::actor::ask(signing_ledger_.get(), &consensus::signing::SigningLedger::admit,
-                                           validator.value, session_id)
+                                           validator.value, session_id, shard, static_cast<td::uint32>(cc))
                        .wrap();
   signing_admissions_pending_.erase(session_id);
   if (admission.is_error()) {
@@ -4344,6 +4413,10 @@ td::actor::Task<> ValidatorManagerImpl::fetch_signing_admission(ValidatorSession
   } else {
     signing_admissions_[session_id] = admission.move_as_ok();
   }
+  // Once per session: what this node may sign in it, and why.
+  const auto &decided = signing_admissions_[session_id];
+  LOG(WARNING) << "signing ledger: session " << session_id.to_hex() << " of " << shard.to_str() << " catchain " << cc
+               << ": " << (decided->fenced ? "fenced (" + decided->reason + ")" : std::string("admitted"));
   rebuild_groups_after_signing_answer();
   co_return td::Unit{};
 }

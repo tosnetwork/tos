@@ -1,0 +1,658 @@
+{
+  "ceremony": {
+    "err": "",
+    "out": "signing ledger /datax/drill-322/run12-producer-control/node4/consensus/signing-ledger created complete at the zerostate (-1,8000000000000000,0):147E3A6880880952E79E2A76733969CD9C1E22746800AF9ADB4A4292B8EC405C:42D7695050A57A5A35A6C0386400C14763E03A53C9DC787FFAC3465181F65D94",
+    "rc": 0
+  },
+  "consensus_moved_to": "consensus.removed-1793108776",
+  "expectation": {
+    "exit_status": 0,
+    "expected": "the target signed a candidate in a fenced session",
+    "met": true,
+    "mode": "producer-control"
+  },
+  "fence": [
+    {
+      "at": 1793108882.7832243,
+      "block": "(-1,8000000000000000,17):8F1E4302F363D3C39AAFC04AC6648ABF6AAF6ABCB711637B4B1F11D589E3939E:B147C26CDB1E81339C604DA273EE2C6765EACD7DE46F78CF15649A167CB14FA4",
+      "counters": {
+        "(-1,8000000000000000)": 0,
+        "(0,4000000000000000)": 1,
+        "(0,c000000000000000)": 1
+      },
+      "lineages": 3
+    }
+  ],
+  "mc_cc_at_stop": 0,
+  "mc_cc_started_after_restart": [
+    0,
+    1,
+    2
+  ],
+  "mc_lifetime": 300,
+  "mode": "log",
+  "not_signing_lines_after_restart": 0,
+  "observe": 600,
+  "pending_split": {
+    "cc": 1,
+    "shard": "(0,4000000000000000)"
+  },
+  "restarted_at": 1793108777.2163475,
+  "restarted_within_mc_session": true,
+  "sessions_after_restart": [
+    {
+      "admission": "fenced",
+      "cc": 0,
+      "counter_at_fence": 0,
+      "group_built_after_restart_at": 1793108779.9898257,
+      "local_index": 3,
+      "own_signatures_after_restart": [
+        "candidate"
+      ],
+      "reason": "this node's earlier signing is unknown; waiting for a masterchain block generated at or after 1793108869",
+      "shard": "(-1,8000000000000000)",
+      "target_signatures_after_restart": 0,
+      "target_signatures_before_stop": 31,
+      "within_fence": true
+    },
+    {
+      "admission": "fenced",
+      "cc": 1,
+      "counter_at_fence": 0,
+      "group_built_after_restart_at": 1793108779.990905,
+      "local_index": 1,
+      "own_signatures_after_restart": [
+        "candidate"
+      ],
+      "reason": "this node's earlier signing is unknown; waiting for a masterchain block generated at or after 1793108869",
+      "shard": "(-1,8000000000000000)",
+      "target_signatures_after_restart": 0,
+      "target_signatures_before_stop": 0,
+      "within_fence": true
+    },
+    {
+      "admission": "fenced",
+      "cc": 2,
+      "counter_at_fence": 0,
+      "group_built_after_restart_at": 1793109008.336485,
+      "local_index": 0,
+      "own_signatures_after_restart": [
+        "candidate"
+      ],
+      "reason": "the session of (-1,8000000000000000) with catchain counter 2 is at or below the unknown-history fence",
+      "shard": "(-1,8000000000000000)",
+      "target_signatures_after_restart": 0,
+      "target_signatures_before_stop": 0,
+      "within_fence": true
+    },
+    {
+      "admission": "admitted",
+      "cc": 3,
+      "counter_at_fence": 0,
+      "group_built_after_restart_at": 1793109307.983812,
+      "local_index": 3,
+      "own_signatures_after_restart": [],
+      "reason": null,
+      "shard": "(-1,8000000000000000)",
+      "target_signatures_after_restart": 0,
+      "target_signatures_before_stop": 0,
+      "within_fence": false
+    },
+    {
+      "admission": "fenced",
+      "cc": 0,
+      "counter_at_fence": 1,
+      "group_built_after_restart_at": 1793108809.0799284,
+      "local_index": 0,
+      "own_signatures_after_restart": [
+        "candidate"
+      ],
+      "reason": "this node's earlier signing is unknown; waiting for a masterchain block generated at or after 1793108869",
+      "shard": "(0,4000000000000000)",
+      "target_signatures_after_restart": 0,
+      "target_signatures_before_stop": 0,
+      "within_fence": true
+    },
+    {
+      "admission": "fenced",
+      "cc": 1,
+      "counter_at_fence": 1,
+      "group_built_after_restart_at": 1793108779.9917603,
+      "local_index": 2,
+      "own_signatures_after_restart": [
+        "candidate"
+      ],
+      "reason": "this node's earlier signing is unknown; waiting for a masterchain block generated at or after 1793108869",
+      "shard": "(0,4000000000000000)",
+      "target_signatures_after_restart": 0,
+      "target_signatures_before_stop": 0,
+      "within_fence": true
+    },
+    {
+      "admission": "fenced",
+      "cc": 2,
+      "counter_at_fence": 1,
+      "group_built_after_restart_at": 1793108829.1199906,
+      "local_index": 0,
+      "own_signatures_after_restart": [
+        "candidate"
+      ],
+      "reason": "this node's earlier signing is unknown; waiting for a masterchain block generated at or after 1793108869",
+      "shard": "(0,4000000000000000)",
+      "target_signatures_after_restart": 0,
+      "target_signatures_before_stop": 0,
+      "within_fence": true
+    },
+    {
+      "admission": "fenced",
+      "cc": 3,
+      "counter_at_fence": 1,
+      "group_built_after_restart_at": 1793108891.2696972,
+      "local_index": 0,
+      "own_signatures_after_restart": [
+        "candidate"
+      ],
+      "reason": "the session of (0,4000000000000000) with catchain counter 3 is at or below the unknown-history fence",
+      "shard": "(0,4000000000000000)",
+      "target_signatures_after_restart": 0,
+      "target_signatures_before_stop": 0,
+      "within_fence": true
+    },
+    {
+      "admission": "admitted",
+      "cc": 4,
+      "counter_at_fence": 1,
+      "group_built_after_restart_at": 1793108948.5975547,
+      "local_index": 0,
+      "own_signatures_after_restart": [
+        "candidate",
+        "finalize vote",
+        "notarize vote",
+        "skip vote"
+      ],
+      "reason": null,
+      "shard": "(0,4000000000000000)",
+      "target_signatures_after_restart": 317,
+      "target_signatures_before_stop": 0,
+      "within_fence": false
+    },
+    {
+      "admission": "admitted",
+      "cc": 5,
+      "counter_at_fence": 1,
+      "group_built_after_restart_at": 1793109009.6271617,
+      "local_index": 3,
+      "own_signatures_after_restart": [
+        "candidate",
+        "finalize vote",
+        "notarize vote",
+        "skip vote"
+      ],
+      "reason": null,
+      "shard": "(0,4000000000000000)",
+      "target_signatures_after_restart": 220,
+      "target_signatures_before_stop": 0,
+      "within_fence": false
+    },
+    {
+      "admission": "admitted",
+      "cc": 6,
+      "counter_at_fence": 1,
+      "group_built_after_restart_at": 1793109075.9805582,
+      "local_index": 1,
+      "own_signatures_after_restart": [
+        "candidate",
+        "finalize vote",
+        "notarize vote",
+        "skip vote"
+      ],
+      "reason": null,
+      "shard": "(0,4000000000000000)",
+      "target_signatures_after_restart": 322,
+      "target_signatures_before_stop": 0,
+      "within_fence": false
+    },
+    {
+      "admission": "admitted",
+      "cc": 7,
+      "counter_at_fence": 1,
+      "group_built_after_restart_at": 1793109137.8219981,
+      "local_index": 2,
+      "own_signatures_after_restart": [
+        "candidate",
+        "finalize vote",
+        "notarize vote",
+        "skip vote"
+      ],
+      "reason": null,
+      "shard": "(0,4000000000000000)",
+      "target_signatures_after_restart": 369,
+      "target_signatures_before_stop": 0,
+      "within_fence": false
+    },
+    {
+      "admission": "admitted",
+      "cc": 8,
+      "counter_at_fence": 1,
+      "group_built_after_restart_at": 1793109188.3538394,
+      "local_index": 3,
+      "own_signatures_after_restart": [
+        "candidate",
+        "finalize vote",
+        "notarize vote",
+        "skip vote"
+      ],
+      "reason": null,
+      "shard": "(0,4000000000000000)",
+      "target_signatures_after_restart": 376,
+      "target_signatures_before_stop": 0,
+      "within_fence": false
+    },
+    {
+      "admission": "admitted",
+      "cc": 9,
+      "counter_at_fence": 1,
+      "group_built_after_restart_at": 1793109247.8970377,
+      "local_index": 0,
+      "own_signatures_after_restart": [
+        "candidate",
+        "finalize vote",
+        "notarize vote",
+        "skip vote"
+      ],
+      "reason": null,
+      "shard": "(0,4000000000000000)",
+      "target_signatures_after_restart": 218,
+      "target_signatures_before_stop": 0,
+      "within_fence": false
+    },
+    {
+      "admission": "admitted",
+      "cc": 10,
+      "counter_at_fence": 1,
+      "group_built_after_restart_at": 1793109309.9541583,
+      "local_index": 2,
+      "own_signatures_after_restart": [
+        "candidate",
+        "finalize vote",
+        "notarize vote",
+        "skip vote"
+      ],
+      "reason": null,
+      "shard": "(0,4000000000000000)",
+      "target_signatures_after_restart": 53,
+      "target_signatures_before_stop": 0,
+      "within_fence": false
+    },
+    {
+      "admission": "admitted",
+      "cc": 11,
+      "counter_at_fence": 1,
+      "group_built_after_restart_at": 1793109367.1630793,
+      "local_index": 2,
+      "own_signatures_after_restart": [],
+      "reason": null,
+      "shard": "(0,4000000000000000)",
+      "target_signatures_after_restart": 0,
+      "target_signatures_before_stop": 0,
+      "within_fence": false
+    },
+    {
+      "admission": "fenced",
+      "cc": 0,
+      "counter_at_fence": 1,
+      "group_built_after_restart_at": 1793108779.991362,
+      "local_index": 2,
+      "own_signatures_after_restart": [
+        "candidate"
+      ],
+      "reason": "this node's earlier signing is unknown; waiting for a masterchain block generated at or after 1793108869",
+      "shard": "(0,8000000000000000)",
+      "target_signatures_after_restart": 0,
+      "target_signatures_before_stop": 0,
+      "within_fence": true
+    },
+    {
+      "admission": "fenced",
+      "cc": 1,
+      "counter_at_fence": 1,
+      "group_built_after_restart_at": 1793108809.0810158,
+      "local_index": 0,
+      "own_signatures_after_restart": [],
+      "reason": "this node's earlier signing is unknown; waiting for a masterchain block generated at or after 1793108869",
+      "shard": "(0,8000000000000000)",
+      "target_signatures_after_restart": 0,
+      "target_signatures_before_stop": 0,
+      "within_fence": true
+    },
+    {
+      "admission": "fenced",
+      "cc": 0,
+      "counter_at_fence": 1,
+      "group_built_after_restart_at": 1793108809.0805151,
+      "local_index": 2,
+      "own_signatures_after_restart": [
+        "candidate"
+      ],
+      "reason": "this node's earlier signing is unknown; waiting for a masterchain block generated at or after 1793108869",
+      "shard": "(0,c000000000000000)",
+      "target_signatures_after_restart": 0,
+      "target_signatures_before_stop": 0,
+      "within_fence": true
+    },
+    {
+      "admission": "fenced",
+      "cc": 1,
+      "counter_at_fence": 1,
+      "group_built_after_restart_at": 1793108779.9921145,
+      "local_index": 3,
+      "own_signatures_after_restart": [
+        "candidate"
+      ],
+      "reason": "this node's earlier signing is unknown; waiting for a masterchain block generated at or after 1793108869",
+      "shard": "(0,c000000000000000)",
+      "target_signatures_after_restart": 0,
+      "target_signatures_before_stop": 0,
+      "within_fence": true
+    },
+    {
+      "admission": "fenced",
+      "cc": 2,
+      "counter_at_fence": 1,
+      "group_built_after_restart_at": 1793108829.1205554,
+      "local_index": 3,
+      "own_signatures_after_restart": [
+        "candidate"
+      ],
+      "reason": "this node's earlier signing is unknown; waiting for a masterchain block generated at or after 1793108869",
+      "shard": "(0,c000000000000000)",
+      "target_signatures_after_restart": 0,
+      "target_signatures_before_stop": 0,
+      "within_fence": true
+    },
+    {
+      "admission": "fenced",
+      "cc": 3,
+      "counter_at_fence": 1,
+      "group_built_after_restart_at": 1793108891.2701633,
+      "local_index": 2,
+      "own_signatures_after_restart": [
+        "candidate"
+      ],
+      "reason": "the session of (0,c000000000000000) with catchain counter 3 is at or below the unknown-history fence",
+      "shard": "(0,c000000000000000)",
+      "target_signatures_after_restart": 0,
+      "target_signatures_before_stop": 0,
+      "within_fence": true
+    },
+    {
+      "admission": "admitted",
+      "cc": 4,
+      "counter_at_fence": 1,
+      "group_built_after_restart_at": 1793108950.2224917,
+      "local_index": 0,
+      "own_signatures_after_restart": [
+        "candidate",
+        "finalize vote",
+        "notarize vote",
+        "skip vote"
+      ],
+      "reason": null,
+      "shard": "(0,c000000000000000)",
+      "target_signatures_after_restart": 362,
+      "target_signatures_before_stop": 0,
+      "within_fence": false
+    },
+    {
+      "admission": "admitted",
+      "cc": 5,
+      "counter_at_fence": 1,
+      "group_built_after_restart_at": 1793109010.5002427,
+      "local_index": 2,
+      "own_signatures_after_restart": [
+        "candidate",
+        "finalize vote",
+        "notarize vote",
+        "skip vote"
+      ],
+      "reason": null,
+      "shard": "(0,c000000000000000)",
+      "target_signatures_after_restart": 408,
+      "target_signatures_before_stop": 0,
+      "within_fence": false
+    },
+    {
+      "admission": "admitted",
+      "cc": 6,
+      "counter_at_fence": 1,
+      "group_built_after_restart_at": 1793109077.2692354,
+      "local_index": 1,
+      "own_signatures_after_restart": [
+        "candidate",
+        "finalize vote",
+        "notarize vote",
+        "skip vote"
+      ],
+      "reason": null,
+      "shard": "(0,c000000000000000)",
+      "target_signatures_after_restart": 223,
+      "target_signatures_before_stop": 0,
+      "within_fence": false
+    },
+    {
+      "admission": "admitted",
+      "cc": 7,
+      "counter_at_fence": 1,
+      "group_built_after_restart_at": 1793109138.7696245,
+      "local_index": 3,
+      "own_signatures_after_restart": [
+        "candidate",
+        "finalize vote",
+        "notarize vote",
+        "skip vote"
+      ],
+      "reason": null,
+      "shard": "(0,c000000000000000)",
+      "target_signatures_after_restart": 329,
+      "target_signatures_before_stop": 0,
+      "within_fence": false
+    },
+    {
+      "admission": "admitted",
+      "cc": 8,
+      "counter_at_fence": 1,
+      "group_built_after_restart_at": 1793109189.619444,
+      "local_index": 1,
+      "own_signatures_after_restart": [
+        "candidate",
+        "finalize vote",
+        "notarize vote",
+        "skip vote"
+      ],
+      "reason": null,
+      "shard": "(0,c000000000000000)",
+      "target_signatures_after_restart": 282,
+      "target_signatures_before_stop": 0,
+      "within_fence": false
+    },
+    {
+      "admission": "admitted",
+      "cc": 9,
+      "counter_at_fence": 1,
+      "group_built_after_restart_at": 1793109249.288248,
+      "local_index": 1,
+      "own_signatures_after_restart": [
+        "candidate",
+        "finalize vote",
+        "notarize vote",
+        "skip vote"
+      ],
+      "reason": null,
+      "shard": "(0,c000000000000000)",
+      "target_signatures_after_restart": 318,
+      "target_signatures_before_stop": 0,
+      "within_fence": false
+    },
+    {
+      "admission": "admitted",
+      "cc": 10,
+      "counter_at_fence": 1,
+      "group_built_after_restart_at": 1793109311.072472,
+      "local_index": 3,
+      "own_signatures_after_restart": [
+        "candidate",
+        "finalize vote",
+        "notarize vote",
+        "skip vote"
+      ],
+      "reason": null,
+      "shard": "(0,c000000000000000)",
+      "target_signatures_after_restart": 53,
+      "target_signatures_before_stop": 0,
+      "within_fence": false
+    },
+    {
+      "admission": "admitted",
+      "cc": 11,
+      "counter_at_fence": 1,
+      "group_built_after_restart_at": 1793109368.3851616,
+      "local_index": 1,
+      "own_signatures_after_restart": [],
+      "reason": null,
+      "shard": "(0,c000000000000000)",
+      "target_signatures_after_restart": 0,
+      "target_signatures_before_stop": 0,
+      "within_fence": false
+    }
+  ],
+  "shard_lifetime": 60,
+  "started_before_stop": [
+    [
+      "(-1,8000000000000000)",
+      0
+    ],
+    [
+      "(0,8000000000000000)",
+      0
+    ]
+  ],
+  "stopped_at": 1793108776.9339187,
+  "verdict": {
+    "every_session_within_fence_fenced": true,
+    "fence_recorded": true,
+    "masterchain_expected_first_cc": 3,
+    "masterchain_first_own_signature_cc": 0,
+    "masterchain_first_signed_cc": null,
+    "no_signature_within_fence": false,
+    "own_signature_kinds_above_fence": [
+      "candidate",
+      "finalize vote",
+      "notarize vote",
+      "skip vote"
+    ],
+    "passed": false,
+    "signatures_within_fence": [
+      {
+        "cc": 0,
+        "certificates": 0,
+        "own": [
+          "candidate"
+        ],
+        "shard": "(-1,8000000000000000)"
+      },
+      {
+        "cc": 1,
+        "certificates": 0,
+        "own": [
+          "candidate"
+        ],
+        "shard": "(-1,8000000000000000)"
+      },
+      {
+        "cc": 2,
+        "certificates": 0,
+        "own": [
+          "candidate"
+        ],
+        "shard": "(-1,8000000000000000)"
+      },
+      {
+        "cc": 0,
+        "certificates": 0,
+        "own": [
+          "candidate"
+        ],
+        "shard": "(0,4000000000000000)"
+      },
+      {
+        "cc": 1,
+        "certificates": 0,
+        "own": [
+          "candidate"
+        ],
+        "shard": "(0,4000000000000000)"
+      },
+      {
+        "cc": 2,
+        "certificates": 0,
+        "own": [
+          "candidate"
+        ],
+        "shard": "(0,4000000000000000)"
+      },
+      {
+        "cc": 3,
+        "certificates": 0,
+        "own": [
+          "candidate"
+        ],
+        "shard": "(0,4000000000000000)"
+      },
+      {
+        "cc": 0,
+        "certificates": 0,
+        "own": [
+          "candidate"
+        ],
+        "shard": "(0,8000000000000000)"
+      },
+      {
+        "cc": 0,
+        "certificates": 0,
+        "own": [
+          "candidate"
+        ],
+        "shard": "(0,c000000000000000)"
+      },
+      {
+        "cc": 1,
+        "certificates": 0,
+        "own": [
+          "candidate"
+        ],
+        "shard": "(0,c000000000000000)"
+      },
+      {
+        "cc": 2,
+        "certificates": 0,
+        "own": [
+          "candidate"
+        ],
+        "shard": "(0,c000000000000000)"
+      },
+      {
+        "cc": 3,
+        "certificates": 0,
+        "own": [
+          "candidate"
+        ],
+        "shard": "(0,c000000000000000)"
+      }
+    ],
+    "signed_in_the_old_masterchain_session_before_stop": true
+  },
+  "zerostate": {
+    "file_hash": "42d7695050a57a5a35a6c0386400c14763e03a53c9dc787ffac3465181f65d94",
+    "root_hash": "147e3a6880880952e79e2a76733969cd9c1e22746800af9adb4a4292b8ec405c"
+  }
+}
