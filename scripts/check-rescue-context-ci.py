@@ -300,12 +300,91 @@ def validate(text, contract, source_guard):
                 name
                 in {
                     "Build the fee lifecycle CLI",
+                    "Verify generated transaction root controls and bundle",
+                    "Retain generated transaction roots",
                     "Compile cache statistics",
                     "Record exact source and public evidence hashes",
                 },
                 f"unexpected skip rule: {name}",
             )
+    validate_generated_roots(prefix, suites_text, parity, step_map)
     return {pair: [row["name"] for row in steps if selected(row, *pair)] for pair in pairs()}
+
+
+def validate_generated_roots(prefix, suites, parity, steps):
+    for path in ("test/executor-parity/**", "test/falcon-auth/linked_roots.py", "test/rel02/**"):
+        require(f"      - '{path}'\n" in prefix, f"missing generated root trigger {path}")
+    require("  actions: read\n" in prefix, "artifact metadata needs read-only actions permission")
+    name = "Verify generated transaction root controls and bundle"
+    require(name in steps, "missing generated root controls")
+    block = steps[name]
+    before, run = block.split("        run:", 1)
+    require(
+        before
+        == "      - name: "
+        + name
+        + "\n        if: contains(fromJSON('[\"release-wallet\"]'), matrix.suite)\n",
+        "generated controls need both release-wallet architectures",
+    )
+    require(
+        digest("        run:" + run.rstrip() + "\n")
+        == "63c3f704f496d10487a265e1bca24c4b8108bc5305f86d1c23b8471e3a4c32e3",
+        "generated producer/control/bundle commands changed",
+    )
+    order = list(steps)
+    require(
+        order.index("Require source restoration")
+        < order.index(name)
+        < order.index("Record successful suite"),
+        "generated controls must precede suite success",
+    )
+    upload = steps.get("Retain generated transaction roots", "")
+    require(
+        upload
+        == """      - name: Retain generated transaction roots
+        if: contains(fromJSON('["release-wallet"]'), matrix.suite)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: rescue-roots-${{ matrix.runner }}-attempt-${{ github.run_attempt }}
+          path: artifacts/generated-roots
+          if-no-files-found: error
+          retention-days: 14
+""",
+        "generated root upload identity/audience changed",
+    )
+    require(
+        order.index(name)
+        < order.index("Retain generated transaction roots")
+        < order.index("Record successful suite"),
+        "generated root upload must follow controls",
+    )
+    preflight = """      - name: Bound generated root artifact download
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python test/executor-parity/generated_bundle.py --check-download
+"""
+    download = """      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: rescue-roots-*
+          path: roots
+"""
+    compare = """      - name: Compare generated transaction roots from both architectures
+        env:
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: python test/executor-parity/generated_bundle.py --compare roots --receipts receipts
+"""
+    require(
+        parity.count(preflight) == parity.count(download) == parity.count(compare) == 1,
+        "generated final preflight/download/source comparison missing",
+    )
+    require(
+        parity.index(preflight) < parity.index(download) < parity.index(compare),
+        "generated download selection must be bounded first",
+    )
+    require(
+        "        ref: ${{ github.event.pull_request.head.sha || github.sha }}" in parity,
+        "generated final checkout must match expected source",
+    )
 
 
 def coverage_for_event(coverage, event):
@@ -367,6 +446,7 @@ def verify_receipts(directory, source, run_id, attempt, coverage, event):
     require(
         set(newest) == set(coverage), f"missing success receipts: {set(coverage) - set(newest)}"
     )
+    return newest
 
 
 def main():

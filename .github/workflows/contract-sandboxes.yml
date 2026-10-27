@@ -47,6 +47,10 @@ on:
       - "test/auth-extensions/cells.py"
       - "test/auth-extensions/native.py"
       - "test/executor-parity/deploy_state.py"
+      - "test/executor-parity/precompiled_external.py"
+      - "test/executor-parity/fail_action_fine.py"
+      - "test/executor-parity/transaction_roots.py"
+      - "test/executor-parity/test_root_preflight.py"
       - "scripts/test_replay_token_bridge_trace.py"
       - "crosschain/token-bridge/tests/**"
       - "scripts/token-bridge-mutations.py"
@@ -114,6 +118,10 @@ on:
       - "test/auth-extensions/cells.py"
       - "test/auth-extensions/native.py"
       - "test/executor-parity/deploy_state.py"
+      - "test/executor-parity/precompiled_external.py"
+      - "test/executor-parity/fail_action_fine.py"
+      - "test/executor-parity/transaction_roots.py"
+      - "test/executor-parity/test_root_preflight.py"
       - "scripts/test_replay_token_bridge_trace.py"
       - "crosschain/token-bridge/tests/**"
       - "scripts/token-bridge-mutations.py"
@@ -531,6 +539,8 @@ jobs:
           cargo build --manifest-path tosctl/src/Cargo.toml --locked -p tos_executor --example pq-tx-parity
           python3 test/executor-parity/precompiled_external.py \
             --driver tosctl/src/target/debug/examples/pq-tx-parity --output "$RUNNER_TEMP/precompiled-external"
+          python3 test/executor-parity/test_root_preflight.py \
+            --driver tosctl/src/target/debug/examples/pq-tx-parity --fixtures "$RUNNER_TEMP/precompiled-external" --output "$RUNNER_TEMP/root-preflight"
 
       - name: Deployment states agree with frozen native roots
         env:

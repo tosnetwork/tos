@@ -40,6 +40,9 @@ on:
       - 'third-party/lms-reference/**'
       - 'tosctl/src/**'
       - 'test/auth-extensions/**'
+      - 'test/executor-parity/**'
+      - 'test/falcon-auth/linked_roots.py'
+      - 'test/rel02/**'
       - 'test/rescue-fee-gate/**'
       - 'test/wallet-quantum/**'
       - 'test/test-ext-message-ingress.cpp'
@@ -52,6 +55,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: rescue-context-${{ github.event.pull_request.number || github.ref }}
@@ -647,6 +651,20 @@ jobs:
           git diff --exit-code
       - name: Require source restoration
         run: git diff --exit-code
+      - name: Verify generated transaction root controls and bundle
+        if: contains(fromJSON('["release-wallet"]'), matrix.suite)
+        run: |
+          python test/executor-parity/test_generated_roots.py --release artifacts/context/quantum-release-transactions --post artifacts/context/quantum-post-accept --emulator build/emulator/libemulator.so --output artifacts/generated-root-controls.json
+          python test/executor-parity/test_generated_bundle.py --release artifacts/context/quantum-release-transactions --post artifacts/context/quantum-post-accept --controls artifacts/generated-root-controls.json
+          python test/executor-parity/generated_bundle.py --bundle artifacts/generated-roots --release artifacts/context/quantum-release-transactions --post artifacts/context/quantum-post-accept --controls artifacts/generated-root-controls.json --runner '${{ matrix.runner }}'
+      - name: Retain generated transaction roots
+        if: contains(fromJSON('["release-wallet"]'), matrix.suite)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: rescue-roots-${{ matrix.runner }}-attempt-${{ github.run_attempt }}
+          path: artifacts/generated-roots
+          if-no-files-found: error
+          retention-days: 14
       - name: Record successful suite
         run: |
           python scripts/check-rescue-context-ci.py --write-receipt artifacts/context/suite-success.json \
@@ -712,3 +730,15 @@ jobs:
         env:
           SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: python scripts/check-rescue-context-ci.py --verify-receipts receipts
+      - name: Bound generated root artifact download
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python test/executor-parity/generated_bundle.py --check-download
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: rescue-roots-*
+          path: roots
+      - name: Compare generated transaction roots from both architectures
+        env:
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: python test/executor-parity/generated_bundle.py --compare roots --receipts receipts
