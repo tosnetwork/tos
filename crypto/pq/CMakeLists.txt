@@ -83,7 +83,7 @@ if(TARGET tl_api)
   # The tool includes OpenSSL headers itself; link the same OpenSSL::Crypto target so its
   # headers come from the library it links, not from whatever the system search path holds.
   target_link_libraries(tos-pq-consensus-key PRIVATE tos_pq_consensus_signer tos_pq_consensus tl_api tdutils
-                        OpenSSL::Crypto)
+                        tos_signing_ledger OpenSSL::Crypto)
   # A directory flush that fails after the rename is reached through this shim, which
   # makes fsync on a directory fail while the test asks it to. LD_PRELOAD is a Linux
   # mechanism here; elsewhere the test runs without that one case. The shim is test-only:

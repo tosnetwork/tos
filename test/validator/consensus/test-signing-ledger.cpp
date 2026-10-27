@@ -17,6 +17,8 @@
 #include <fcntl.h>
 #include <filesystem>
 #include <fstream>
+#include <functional>
+#include <limits>
 #include <memory>
 #include <string>
 #include <sys/stat.h>
@@ -26,6 +28,7 @@
 #include "td/actor/actor.h"
 #include "td/actor/coro_utils.h"
 #include "td/utils/logging.h"
+#include "tos/tos-shard.h"
 #include "validator/consensus/signing-ledger.h"
 
 using namespace tos;
@@ -107,6 +110,65 @@ void test_index() {
     require(index.check(c.next) == c.expected, c.what);
   }
   std::printf("index: %zu cases\n", cases.size());
+}
+
+// ===== The unknown-history fence, as a rule =====
+
+void test_fence_rule() {
+  const ShardIdFull all{basechainId, shardIdAll};
+  const ShardIdFull left{basechainId, shard_child(shardIdAll, true)};
+  const ShardIdFull right{basechainId, shard_child(shardIdAll, false)};
+  const ShardIdFull left_left{basechainId, shard_child(left.shard, true)};
+  const ShardIdFull left_right{basechainId, shard_child(left.shard, false)};
+  const ShardIdFull masterchain{masterchainId, shardIdAll};
+
+  // A merge of unequal children: the prospective parent's tentative counter is
+  // max(children) + 2, fenced through the larger child's entry.
+  {
+    const std::vector<FenceEntry> fence = {{basechainId, left.shard, 5}, {basechainId, right.shard, 7}};
+    require(fenced_by_history(fence, all, 9), "the merged parent's tentative counter max + 2 is fenced");
+    require(!fenced_by_history(fence, all, 10), "the merged parent above max + 2 is admitted");
+  }
+  // Descendants after further splits inherit the lineage.
+  {
+    const std::vector<FenceEntry> fence = {{basechainId, shardIdAll, 20}, {masterchainId, shardIdAll, 30}};
+    require(fenced_by_history(fence, left_left, 21), "a grandchild at +1 is fenced");
+    require(fenced_by_history(fence, left_right, 22), "a grandchild at +2 is fenced");
+    require(!fenced_by_history(fence, left_left, 23), "a grandchild at +3 is admitted");
+  }
+  // The first admitted counter of each lineage is +3.
+  {
+    const std::vector<FenceEntry> fence = {{masterchainId, shardIdAll, 100}, {basechainId, shardIdAll, 40}};
+    for (std::uint32_t d = 0; d <= 2; ++d) {
+      require(fenced_by_history(fence, masterchain, 100 + d), "the masterchain up to +2 is fenced");
+      require(fenced_by_history(fence, all, 40 + d), "the basechain up to +2 is fenced");
+    }
+    require(!fenced_by_history(fence, masterchain, 103), "the masterchain at +3 is admitted");
+    require(!fenced_by_history(fence, all, 43), "the basechain at +3 is admitted");
+    require(fenced_by_history(fence, masterchain, 5), "an old masterchain counter is fenced too");
+  }
+  // Near the top of the counter range: no wrap.
+  {
+    const std::uint32_t top = std::numeric_limits<std::uint32_t>::max();
+    const std::vector<FenceEntry> fence = {{masterchainId, shardIdAll, top - 2}};
+    require(fenced_by_history(fence, masterchain, top - 1), "a counter just below the top is fenced");
+    require(fenced_by_history(fence, masterchain, 0), "a small counter is fenced, not admitted by a wrap");
+    require(fenced_by_history(fence, masterchain, 1), "a small counter is fenced, not admitted by a wrap");
+    require(fenced_by_history(fence, masterchain, kCounterSentinel), "the sentinel is fenced");
+    // An entry whose counter + 2 passes the top of the 32-bit range.
+    const std::vector<FenceEntry> wrapping = {{masterchainId, shardIdAll, top - 1}};
+    require(fenced_by_history(wrapping, masterchain, top - 1), "counter + 2 past the top does not wrap");
+    require(fenced_by_history(wrapping, masterchain, 5), "a small counter under a wrapping entry is fenced");
+    const std::vector<FenceEntry> low = {{masterchainId, shardIdAll, 3}};
+    require(fenced_by_history(low, masterchain, kCounterSentinel), "the sentinel is fenced whatever the entry");
+  }
+  // A workchain absent at the fence block is fenced, whatever its configuration says.
+  {
+    const std::vector<FenceEntry> fence = {{masterchainId, shardIdAll, 10}, {basechainId, shardIdAll, 10}};
+    require(fenced_by_history(fence, ShardIdFull{7, shardIdAll}, 1000), "an absent workchain is fenced");
+    require(fenced_by_history({}, all, 1000), "an empty fence fences everything");
+  }
+  std::printf("fence rule: ok\n");
 }
 
 // ===== Records and logs =====
@@ -296,9 +358,10 @@ class Driver : public td::actor::Actor {
     co_return true;
   }
 
-  td::actor::Task<std::shared_ptr<const Admission>> admit(td::actor::ActorId<SigningLedger> ledger,
-                                                          td::Bits256 session) {
-    co_return co_await td::actor::ask(ledger, &SigningLedger::admit, validator_, session);
+  td::actor::Task<std::shared_ptr<const Admission>> admit(td::actor::ActorId<SigningLedger> ledger, td::Bits256 session,
+                                                          ShardIdFull shard = ShardIdFull{masterchainId, shardIdAll},
+                                                          std::uint32_t cc = 1) {
+    co_return co_await td::actor::ask(ledger, &SigningLedger::admit, validator_, session, shard, cc);
   }
 
   td::actor::Task<Reservation> reserve(const std::shared_ptr<const Admission>& admission, Decision d) {
@@ -312,20 +375,138 @@ class Driver : public td::actor::Actor {
     co_await test_serialized_reservations();
     co_await test_failed_appends();
     co_await test_prune_and_floor();
+    co_await test_unknown_history();
+    co_await test_untrusted_becomes_pending();
+    co_await test_genesis_ledger();
+    co_return td::Unit{};
+  }
+
+  static std::function<double()> clock_at(double t) {
+    return [t] { return t; };
+  }
+
+  td::actor::Task<bool> offer(td::actor::ActorId<SigningLedger> ledger, std::uint32_t seqno, std::uint32_t gen_utime,
+                              std::vector<FenceEntry> lineages) {
+    const BlockIdExt block{masterchainId, shardIdAll, seqno, fill(static_cast<unsigned char>(seqno)), fill(0x5f)};
+    co_return co_await td::actor::ask(ledger, &SigningLedger::offer_fence_block, block, gen_utime, std::move(lineages));
+  }
+
+  td::actor::Task<> test_unknown_history() {
+    const auto dir = scratch() + "/signing-ledger";
+    const ShardIdFull mc{masterchainId, shardIdAll};
+    const std::vector<FenceEntry> at_m = {{masterchainId, shardIdAll, 50}, {basechainId, shardIdAll, 70}};
+    {
+      // Started at t0 = 1000.4, rounded up to 1001.
+      auto ledger =
+          td::actor::create_actor<SigningLedger>("unknown", dir, default_file_ops(), nullptr, clock_at(1000.4));
+      require(co_await td::actor::ask(ledger.get(), &SigningLedger::history) == History::Complete,
+              "nothing on disk yet");
+      require((co_await admit(ledger.get(), fill(0x10), mc, 999))->fenced, "pending: fenced");
+      require(co_await td::actor::ask(ledger.get(), &SigningLedger::history) == History::Pending, "pending");
+      // The fence block must be generated at t0 + 91 or later. The times are written out, not
+      // derived from the constant, so a changed margin fails here.
+      require(!co_await offer(ledger.get(), 10, 1091, at_m), "t0 + 90 is too early");
+      // The fence refuses what it cannot record.
+      std::vector<FenceEntry> too_many;
+      for (std::size_t i = 0; i <= kMaxFenceEntries; ++i) {
+        too_many.push_back({basechainId, shardIdAll, static_cast<std::uint32_t>(i)});
+      }
+      require(!co_await offer(ledger.get(), 11, 2000, too_many), "257 lineages are not recorded");
+      require(!co_await offer(ledger.get(), 11, 2000, {{masterchainId, shardIdAll, kCounterSentinel}}),
+              "a lineage without a counter is not recorded");
+      require(!co_await offer(ledger.get(), 11, 2000, {}), "an empty fence is not recorded");
+      require((co_await admit(ledger.get(), fill(0x11), mc, 2000))->fenced, "still pending: fenced");
+    }
+    {
+      // A restart while pending keeps the stored t0, even though this process starts later.
+      auto ledger =
+          td::actor::create_actor<SigningLedger>("unknown-restart", dir, default_file_ops(), nullptr, clock_at(5000.0));
+      require(co_await td::actor::ask(ledger.get(), &SigningLedger::history) == History::Pending,
+              "still pending after a restart");
+      std::vector<FenceEntry> at_cap;
+      for (std::size_t i = 0; i + 1 < kMaxFenceEntries; ++i) {
+        at_cap.push_back({basechainId, static_cast<std::uint64_t>(i) * 2 + 1, 70});
+      }
+      at_cap.push_back(at_m.front());
+      require(at_cap.size() == kMaxFenceEntries, "a fence at the cap");
+      require(co_await offer(ledger.get(), 12, 1092, at_cap),
+              "t0 + 91, with the stored t0, establishes the fence; 256 lineages are recorded");
+      require(co_await td::actor::ask(ledger.get(), &SigningLedger::history) == History::Established, "established");
+      auto floor = co_await td::actor::ask(ledger.get(), &SigningLedger::floor);
+      require(floor.has_value() && floor->seqno() == 12, "the fence block is the floor");
+    }
+    {
+      auto ledger = td::actor::create_actor<SigningLedger>("established", dir);
+      require(co_await td::actor::ask(ledger.get(), &SigningLedger::history) == History::Established,
+              "the fence is durable");
+      require((co_await admit(ledger.get(), fill(0x12), mc, 52))->fenced, "the masterchain at +2 is fenced");
+      auto above = co_await admit(ledger.get(), fill(0x13), mc, 53);
+      require(!above->fenced, "the masterchain at +3 is admitted");
+      require((co_await reserve(above, skip(1))).result == ReserveResult::Reserved, "and records");
+      require((co_await admit(ledger.get(), fill(0x14), ShardIdFull{9, shardIdAll}, 1000))->fenced,
+              "a workchain absent at the fence block is fenced");
+      require(co_await offer(ledger.get(), 13, 9999, at_m), "a settled history stays settled");
+    }
+    std::printf("unknown history: ok\n");
+    co_return td::Unit{};
+  }
+
+  td::actor::Task<> test_untrusted_becomes_pending() {
+    const auto dir = scratch() + "/signing-ledger";
+    require(create_ledger(dir, validator_).is_ok(), "create a ledger");
+    const auto copy = scratch() + "/signing-ledger";
+    std::filesystem::copy(dir, copy, std::filesystem::copy_options::recursive);
+    {
+      auto ledger = td::actor::create_actor<SigningLedger>("copied", copy);
+      require(co_await td::actor::ask(ledger.get(), &SigningLedger::status) == LedgerStatus::Untrusted,
+              "a copied ledger is untrusted");
+      require((co_await admit(ledger.get(), fill(0x20)))->fenced, "and admits nothing");
+      require(co_await td::actor::ask(ledger.get(), &SigningLedger::history) == History::Pending,
+              "a pending ledger replaces it");
+      require(std::filesystem::exists(copy + "/ledger.untrusted.0"), "the untrusted header is kept beside it");
+    }
+    {
+      auto ledger = td::actor::create_actor<SigningLedger>("copied-restart", copy);
+      require(co_await td::actor::ask(ledger.get(), &SigningLedger::history) == History::Pending,
+              "the pending ledger is trusted after a restart");
+    }
+    std::printf("untrusted becomes pending: ok\n");
+    co_return td::Unit{};
+  }
+
+  td::actor::Task<> test_genesis_ledger() {
+    const auto dir = scratch() + "/signing-ledger";
+    const BlockIdExt zerostate{masterchainId, shardIdAll, 0, fill(0x31), fill(0x32)};
+    require(create_ledger(dir, validator_, default_file_ops(), zerostate).is_ok(), "the genesis ceremony's ledger");
+    require(create_ledger(dir, validator_, default_file_ops(), zerostate).is_error(), "only once");
+    auto ledger = td::actor::create_actor<SigningLedger>("genesis", dir);
+    require(co_await td::actor::ask(ledger.get(), &SigningLedger::history) == History::Complete, "complete");
+    auto floor = co_await td::actor::ask(ledger.get(), &SigningLedger::floor);
+    require(floor.has_value() && *floor == zerostate, "the history starts at the zerostate");
+    require(!(co_await admit(ledger.get(), fill(0x30), ShardIdFull{masterchainId, shardIdAll}, 1))->fenced,
+            "a complete ledger admits from the first session");
+    require(co_await offer(ledger.get(), 1, 10, {{masterchainId, shardIdAll, 1}}), "nothing to fence");
+    std::printf("genesis ledger: ok\n");
     co_return td::Unit{};
   }
 
   td::actor::Task<> test_absent_and_untrusted() {
-    const auto dir = scratch() + "/signing-ledger";
     {
-      auto ledger = td::actor::create_actor<SigningLedger>("absent", dir);
+      // No ledger: the node's earlier signing is unknown, so a pending one is created and
+      // nothing is admitted until its fence block.
+      const auto absent = scratch() + "/signing-ledger";
+      auto ledger = td::actor::create_actor<SigningLedger>("absent", absent);
       auto admission = co_await admit(ledger.get(), fill(0x01));
       require(admission->fenced, "no ledger: nothing is admitted");
+      require(co_await td::actor::ask(ledger.get(), &SigningLedger::history) == History::Pending,
+              "no ledger: a pending one replaces it");
     }
+    const auto dir = scratch() + "/signing-ledger";
     require(create_ledger(dir, validator_).is_ok(), "create a ledger");
     {
       auto ledger = td::actor::create_actor<SigningLedger>("trusted", dir);
-      auto other = co_await td::actor::ask(ledger.get(), &SigningLedger::admit, fill(0x99), fill(0x01));
+      auto other = co_await td::actor::ask(ledger.get(), &SigningLedger::admit, fill(0x99), fill(0x01),
+                                           ShardIdFull{masterchainId, shardIdAll}, std::uint32_t{1});
       require(other->fenced, "another validator's ledger admits nothing");
     }
     // The directory copied elsewhere (a restore, a migration) is not the one written.
@@ -527,6 +708,7 @@ class Driver : public td::actor::Actor {
 int main() {
   SET_VERBOSITY_LEVEL(verbosity_ERROR);
   test_index();
+  test_fence_rule();
   const auto dir = scratch();
   test_log_format(dir);
   test_header_format();

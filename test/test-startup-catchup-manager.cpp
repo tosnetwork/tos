@@ -924,3 +924,40 @@ TEST(StartupCatchupManager, DecisionLogRefusesAChainWithoutTheFloor) {
   ASSERT_TRUE(f.wait_event("group " + expected.to_hex(), 10.0));
   ASSERT_EQ(1u, f.journal->count("admission fenced " + expected.to_hex()));
 }
+
+// Unknown history on the masterchain. Without a ledger the node's earlier signing is
+// unknown: the first session is fenced and a pending ledger records when this process
+// started. A masterchain block generated at least the margin after that start is the
+// fence: sessions up to two catchain counters above it stay fenced, the next one signs.
+TEST(StartupCatchupManager, DecisionLogFencesUnknownHistory) {
+  // A block generated in the future of this process's start, by more than the margin.
+  constexpr double kAfterTheMargin = -(consensus::signing::kHistoryMarginSeconds + 5.0);
+  Fixture f(true);
+  f.hold(f.current, 0);
+  f.set_tip(f.snapshot(f.current, 1), 10, kFresh);
+  ASSERT_TRUE(!f.decide());
+  f.advance(f.snapshot(f.current, 1), 10, kFresh);
+  auto first = f.session_of(f.snapshot(f.current, 1));
+  ASSERT_TRUE(f.wait_event("group " + first.to_hex(), 10.0));
+  ASSERT_EQ(1u, f.journal->count("admission fenced " + first.to_hex()));
+
+  // A block generated before the margin has passed is not the fence.
+  f.advance(f.snapshot(f.current, 2), 11, kFresh);
+  auto early = f.session_of(f.snapshot(f.current, 2));
+  ASSERT_TRUE(f.wait_event("group " + early.to_hex(), 10.0));
+  ASSERT_EQ(1u, f.journal->count("admission fenced " + early.to_hex()));
+
+  // The fence block, at catchain counter 2.
+  f.advance(f.snapshot(f.current, 2), 12, kAfterTheMargin);
+  f.run_for(0.5);
+  // Counter 4 = 2 + 2 is fenced: a session the previous process could have reached.
+  f.advance(f.snapshot(f.current, 4), 13, kAfterTheMargin);
+  auto within = f.session_of(f.snapshot(f.current, 4));
+  ASSERT_TRUE(f.wait_event("group " + within.to_hex(), 10.0));
+  ASSERT_EQ(1u, f.journal->count("admission fenced " + within.to_hex()));
+  // Counter 5 signs.
+  f.advance(f.snapshot(f.current, 5), 14, kAfterTheMargin);
+  auto above = f.session_of(f.snapshot(f.current, 5));
+  ASSERT_TRUE(f.wait_event("group " + above.to_hex(), 10.0));
+  ASSERT_EQ(1u, f.journal->count("admission admitted " + above.to_hex()));
+}

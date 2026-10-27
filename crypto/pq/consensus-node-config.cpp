@@ -569,6 +569,10 @@ bool parse_key_id(std::string_view text, ConsensusKeyIdBytes& out) {
 
 }  // namespace
 
+int lock_stopped_node(const std::string& db_root, std::string& why) {
+  return take_config_lock(db_root, why);
+}
+
 bool parse_validator_id(std::string_view text, std::array<std::uint8_t, 32>& out, std::string& why) {
   if (text.size() == 67 && text.substr(0, 3) == "-1:") {
     text.remove_prefix(3);

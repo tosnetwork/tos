@@ -3595,6 +3595,9 @@ void ValidatorManagerImpl::update_shard_overlays() {
 }
 
 void ValidatorManagerImpl::update_shards() {
+  // An admission the ledger decides before this offer is a fence while its history is
+  // pending, never an admission, so the order of the two only ever errs towards fencing.
+  offer_signing_fence_block();
   if ((last_masterchain_state_->rotated_all_shards() || last_masterchain_seqno_ == 0) &&
       opts_->get_last_fork_masterchain_seqno() <= last_masterchain_seqno_) {
     allow_validate_ = true;
@@ -4240,7 +4243,7 @@ td::actor::ActorOwn<IValidatorGroup> ValidatorManagerImpl::create_validator_grou
   // again when the answer arrives.
   std::shared_ptr<const consensus::signing::Admission> signing_admission;
   if (opts_->get_signing_decision_log_enabled()) {
-    signing_admission = signing_admission_for(session_id, local_vid);
+    signing_admission = signing_admission_for(session_id, local_vid, shard, validator_set->get_catchain_seqno());
     if (signing_admission == nullptr) {
       return {};
     }
@@ -4258,7 +4261,7 @@ td::actor::ActorOwn<IValidatorGroup> ValidatorManagerImpl::create_validator_grou
 }
 
 std::shared_ptr<const consensus::signing::Admission> ValidatorManagerImpl::signing_admission_for(
-    ValidatorSessionId session_id, tos::ValidatorId validator) {
+    ValidatorSessionId session_id, tos::ValidatorId validator, ShardIdFull shard, CatchainSeqno cc) {
   if (auto it = signing_admissions_.find(session_id); it != signing_admissions_.end()) {
     return it->second;
   }
@@ -4295,9 +4298,39 @@ std::shared_ptr<const consensus::signing::Admission> ValidatorManagerImpl::signi
       break;
   }
   if (signing_admissions_pending_.insert(session_id).second) {
-    fetch_signing_admission(session_id, validator).start().detach();
+    fetch_signing_admission(session_id, validator, shard, cc).start().detach();
   }
   return nullptr;
+}
+
+void ValidatorManagerImpl::offer_signing_fence_block() {
+  if (signing_ledger_.empty() || signing_history_settled_ || last_masterchain_state_.is_null() ||
+      !last_masterchain_block_handle_) {
+    return;
+  }
+  // The catchain counter of every shard lineage at this block, as the session derivation
+  // reads it; a failure to derive one is passed on as the sentinel, which the ledger refuses.
+  std::vector<consensus::signing::FenceEntry> lineages;
+  const ShardIdFull masterchain{masterchainId, shardIdAll};
+  lineages.push_back(
+      {masterchain.workchain, masterchain.shard, last_masterchain_state_->get_shard_cc_seqno(masterchain)});
+  for (const auto &shard : last_masterchain_state_->get_shards()) {
+    const auto id = shard->shard();
+    lineages.push_back({id.workchain, id.shard, last_masterchain_state_->get_shard_cc_seqno(id)});
+  }
+  [](ValidatorManagerImpl *self, BlockIdExt block, td::uint32 gen_utime,
+     std::vector<consensus::signing::FenceEntry> lineages) -> td::actor::Task<> {
+    auto settled =
+        co_await td::actor::ask(self->signing_ledger_.get(), &consensus::signing::SigningLedger::offer_fence_block,
+                                block, gen_utime, std::move(lineages))
+            .wrap();
+    if (settled.is_ok() && settled.ok()) {
+      self->signing_history_settled_ = true;
+    }
+    co_return td::Unit{};
+  }(this, last_masterchain_block_id_, last_masterchain_block_handle_->unix_time(), std::move(lineages))
+                                                                  .start()
+                                                                  .detach();
 }
 
 td::actor::Task<> ValidatorManagerImpl::fetch_signing_floor() {
@@ -4332,9 +4365,10 @@ void ValidatorManagerImpl::checked_signing_floor(td::Result<ConstBlockHandle> ha
 }
 
 td::actor::Task<> ValidatorManagerImpl::fetch_signing_admission(ValidatorSessionId session_id,
-                                                                tos::ValidatorId validator) {
+                                                                tos::ValidatorId validator, ShardIdFull shard,
+                                                                CatchainSeqno cc) {
   auto admission = co_await td::actor::ask(signing_ledger_.get(), &consensus::signing::SigningLedger::admit,
-                                           validator.value, session_id)
+                                           validator.value, session_id, shard, static_cast<td::uint32>(cc))
                        .wrap();
   signing_admissions_pending_.erase(session_id);
   if (admission.is_error()) {

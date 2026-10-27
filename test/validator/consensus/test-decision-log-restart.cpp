@@ -613,8 +613,9 @@ class Driver : public td::actor::Actor {
       }
       ledger_ = td::actor::create_actor<signing::SigningLedger>(PSTRING() << "ledger" << current_life.load(),
                                                                 ledger_dir_, signing::default_file_ops(), gate);
-      admission = co_await td::actor::ask(ledger_.get(), &signing::SigningLedger::admit,
-                                          validators_.at(target_).validator_id.value, SESSION);
+      admission =
+          co_await td::actor::ask(ledger_.get(), &signing::SigningLedger::admit,
+                                  validators_.at(target_).validator_id.value, SESSION, SHARD, std::uint32_t{CC_SEQNO});
       admission_ = admission;
       emit(PSTRING() << "DLR_ADMISSION life=" << current_life.load() << " fenced=" << admission->fenced
                      << " decisions=" << admission->decisions.size()
