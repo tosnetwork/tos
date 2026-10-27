@@ -1,6 +1,7 @@
 """Original linked native contexts, independently replayed by the Rust executor."""
 
 # ruff: noqa: E402
+import ctypes
 import hashlib
 import json
 import subprocess
@@ -54,6 +55,7 @@ class CaptureEmulator(Emulator):
         self.configuration = config(global_version, max_msg_cells)
         self.version, self.now = global_version, NOW
         self._initialize(self.configuration, vm_log_verbosity)
+        self.lib.transaction_emulator_set_unixtime.restype = ctypes.c_bool
         self.last_capture = None
 
     def set_time(self, now):
