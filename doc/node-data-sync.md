@@ -1,9 +1,9 @@
 # Trusted node-data recovery
 
 > The standalone-services release never creates an embedded index, even with
-> operator JSON-RPC enabled. The restore tooling below retains its conservative
-> compatibility checks for older node binaries; keep the accepted no-op
-> `--json-rpc-without-wallet-index` flag when using that tooling.
+> operator JSON-RPC enabled: wallet indexing is provided by `tos-wallet-index`, and
+> `--json-rpc-without-wallet-index` is an accepted no-op. Restore decides from the
+> target database, not from that flag.
 
 This is an administrative recovery lane for an **existing** node. It trusts an
 independently pinned publisher key and the publisher's chain database. Hashes,
@@ -17,16 +17,23 @@ the separate local qualification run. They have not been qualified by unit tests
 
 ## Supported targets
 
-Restore supports non-indexed nodes only. Wallet-indexed RPC nodes are a later
-milestone: `--json-rpc-address` enables the wallet index unless
-`--json-rpc-without-wallet-index` is also given. Restore is refused when the configured
-or running command enables the index, or when a `wc0-index` directory exists. The
-standard validator configuration does not run the index: it serves JSON-RPC with
-`--json-rpc-without-wallet-index`. Dropping the flag alone
-does not make an indexed target supported: a retired `wc0-index` must be removed
-by the operator before restore; the tool never deletes it. Do not temporarily
-disable indexing to bypass this restriction. Preserving an old index would leave
-the imported block gap missing, and an empty replacement would omit old history.
+Restore supports nodes without an in-process wallet index only. A current engine
+never opens one, whatever its JSON-RPC options; the command line therefore decides
+nothing, and `--json-rpc-address` with or without the no-op
+`--json-rpc-without-wallet-index` is a supported target. Restore is refused when
+the installed database has a `wc0-index` entry of any kind (directory, file or
+link). It is checked through the held database descriptor before preparation,
+after the transfer, after the stop and before start. Main registers no other
+index option; any option outside the reviewed subset is refused as unsupported.
+
+An engine that predates the standalone wallet index opens `<db>/wc0-index`
+whenever `--json-rpc-address` is given without `--json-rpc-without-wallet-index`.
+On an epoch that pins such an engine, disable that index on the target first: add
+`--json-rpc-without-wallet-index` to the unit (or remove `--json-rpc-address`),
+stop the node, and remove the retired `wc0-index`; the tool never deletes it.
+Restoring into a target whose old engine still runs the index would leave the
+imported block gap missing from an old index, or start an empty one that omits old
+history.
 
 Database-root directories have explicit dispositions:
 
@@ -207,10 +214,10 @@ special files and entries of a third account. Files of the operation, catalog an
 cache stay the invoker's.
 
 Restore uses the same service description, so the third shape is also a
-supported restore target. The operator bundle's full-node unit serves JSON-RPC
-without `--json-rpc-without-wallet-index`, which restore treats as wallet-indexed
-(see [Supported targets](#supported-targets)); add that no-op flag to the unit
-before restoring into it. Creating a dump from that unit needs no change.
+supported restore target. The operator bundle's full-node unit is supported as it
+is on an engine with the standalone wallet index; on an epoch whose engine
+predates it, disable the in-process index on the target as described in
+[Supported targets](#supported-targets).
 
 ## Private context
 

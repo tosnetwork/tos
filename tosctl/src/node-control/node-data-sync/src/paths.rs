@@ -150,10 +150,13 @@ pub fn restore_root(root: &std::path::Path) -> Result<()> {
     use crate::safe_io::Kind;
     // Listed and inspected through the held root descriptor; nothing is followed by name.
     let root = crate::safe_io::Root::open(root)?;
+    // Any entry named wc0-index (directory, file or link) means an engine that runs the
+    // in-process wallet index has used, or may use, this database.
     let index = root.path.join("wc0-index");
     if root.kind("wc0-index")?.is_some() {
         anyhow::bail!(
-            "wallet-indexed nodes (existing {}) are not supported by restore in this version; a retired index must be removed by the operator before restore; the tool never deletes it; the standard validator configuration does not run the index; see doc/node-data-sync.md#supported-targets",
+            "wallet-indexed nodes are not supported by restore in this version: {} exists. An engine that predates the standalone wallet index opens it whenever JSON-RPC is enabled; disable that index on the target (add --json-rpc-without-wallet-index to the unit, or remove --json-rpc-address), stop the node, and the operator must remove {} before restore (a retired index must be removed; the tool never deletes it). See doc/node-data-sync.md#supported-targets",
+            index.display(),
             index.display()
         );
     }
@@ -212,6 +215,65 @@ mod restore_tests {
             assert!(error.contains(message), "wrong refusal: {error}");
             assert!(root.path().join(name).exists(), "refusal deleted operator data");
         }
+        Ok(())
+    }
+    /// Names, sizes and modification times of a directory and of one level below it.
+    fn listing(path: &std::path::Path) -> Result<Vec<(String, u64, i64, i64)>> {
+        use std::os::unix::fs::MetadataExt;
+        let mut entries = Vec::new();
+        for entry in std::fs::read_dir(path)? {
+            let entry = entry?;
+            let metadata = entry.path().symlink_metadata()?;
+            entries.push((
+                entry.file_name().to_string_lossy().into_owned(),
+                metadata.len(),
+                metadata.mtime(),
+                metadata.mtime_nsec(),
+            ));
+            if metadata.is_dir() {
+                for child in std::fs::read_dir(entry.path())? {
+                    let child = child?;
+                    let metadata = child.path().symlink_metadata()?;
+                    entries.push((
+                        child.path().to_string_lossy().into_owned(),
+                        metadata.len(),
+                        metadata.mtime(),
+                        metadata.mtime_nsec(),
+                    ));
+                }
+            }
+        }
+        entries.sort();
+        Ok(entries)
+    }
+    #[test]
+    fn any_wallet_index_entry_refuses_and_nothing_is_written() -> Result<()> {
+        for kind in ["directory", "file", "symlink"] {
+            let temporary = tempfile::tempdir()?;
+            let root = temporary.path().canonicalize()?;
+            std::fs::create_dir(root.join("celldb"))?;
+            std::fs::write(root.join("celldb/CURRENT"), b"MANIFEST-000001\n")?;
+            let index = root.join("wc0-index");
+            match kind {
+                "directory" => std::fs::create_dir(&index)?,
+                "file" => std::fs::write(&index, b"index")?,
+                _ => std::os::unix::fs::symlink(root.join("celldb"), &index)?,
+            }
+            let before = listing(&root)?;
+            let error = restore_root(&root).expect_err(kind).to_string();
+            assert!(
+                error.contains("wallet-indexed nodes")
+                    && error.contains(&index.display().to_string())
+                    && error.contains("--json-rpc-without-wallet-index"),
+                "{kind}: wrong refusal: {error}"
+            );
+            assert_eq!(listing(&root)?, before, "{kind}: the refusal wrote or removed something");
+        }
+        // Without an index entry the same database is a supported target.
+        let temporary = tempfile::tempdir()?;
+        let root = temporary.path().canonicalize()?;
+        std::fs::create_dir(root.join("celldb"))?;
+        restore_root(&root)?;
         Ok(())
     }
     #[test]

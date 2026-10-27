@@ -17,7 +17,6 @@ pub struct Service {
 }
 struct CheckedService {
     permanent_cells: bool,
-    indexed: bool,
     account: Account,
 }
 
@@ -254,13 +253,12 @@ impl Service {
     pub fn require_mode(&self, expected: bool) -> Result<()> {
         self.describe(Some(expected)).map(|_| ())
     }
-    /// Restore supports only non-indexed targets; capture may still use an indexed source.
+    /// Restore supports only targets without an in-process wallet index; capture may still
+    /// use an indexed source. The installed database decides, through its held descriptor:
+    /// a current engine never opens an index whatever its flags, and the only flag that
+    /// once disabled it is now a no-op, so the command line decides nothing here.
     pub fn require_restore_target(&self, expected: Option<bool>) -> Result<()> {
-        let checked = self.describe(expected)?;
-        ensure!(
-            !checked.indexed,
-            "wallet-indexed nodes (--json-rpc-address without --json-rpc-without-wallet-index) are not supported by restore in this version; the standard validator configuration does not run the index; see doc/node-data-sync.md#supported-targets"
-        );
+        self.describe(expected)?;
         crate::paths::restore_root(&self.database)
     }
     pub fn start_restore(&self, frozen: Frozen, expected: bool) -> Result<()> {
@@ -315,7 +313,6 @@ impl Service {
             &self.global_config,
             &self.working_directory,
         )?;
-        let mut indexed = indexed_exec(&exec)?;
         let pid = command(
             self.manager().args(["show", "--property=MainPID", "--value", "--", &self.unit]),
             Duration::from_secs(10),
@@ -349,11 +346,10 @@ impl Service {
                 &self.global_config,
                 &self.working_directory,
             )?;
-            indexed |= indexed_exec(&format!("{{ argv[]={} ; running }}", arguments.join(" ")))?;
             check_mode(configured, Some(running), expected)?;
         }
         check_mode(configured, None, expected)?;
-        Ok(CheckedService { permanent_cells: configured, indexed, account })
+        Ok(CheckedService { permanent_cells: configured, account })
     }
     /// The checked account of the selected service; the same decision `describe` enforces.
     pub fn account(&self) -> Result<Account> {
@@ -620,24 +616,6 @@ fn validate_exec(
     }
     Ok(permanent)
 }
-// Called only on commands accepted by validate_exec, using the same option arities.
-fn indexed_exec(value: &str) -> Result<bool> {
-    let (_, rest) = value.split_once("argv[]=").context("service command missing")?;
-    let (argv, _) = rest.split_once(" ; ").context("service command encoding")?;
-    let mut tokens = argv.split_whitespace().skip(1);
-    let (mut json_rpc, mut without_index) = (false, false);
-    while let Some(option) = tokens.next() {
-        let (name, takes_value) = canonical_option(option)?;
-        json_rpc |= name == "json-rpc-address";
-        without_index |= name == "json-rpc-without-wallet-index";
-        if takes_value {
-            tokens.next().context("service option requires value")?;
-        }
-    }
-    // JSON-RPC opens the wallet index unless the engine is told not to.
-    Ok(json_rpc && !without_index)
-}
-
 // A deliberately restricted spelling/arity subset of the native option table, not a
 // second permissive parser. Unsupported native forms must be canonicalized by the operator.
 const SAFE_OPTIONS: &[(&str, &str, bool)] = &[
@@ -662,6 +640,7 @@ const SAFE_OPTIONS: &[(&str, &str, bool)] = &[
     ("", "enable-validator-consensus-cleanup", false),
     ("", "disable-validator-consensus-cleanup", false),
     ("", "json-rpc-readonly", false),
+    // Accepted for older units; a no-op on current engines and never a restore decision.
     ("", "json-rpc-without-wallet-index", false),
 ];
 fn canonical_option(option: &str) -> Result<(&'static str, bool)> {
@@ -680,21 +659,6 @@ fn canonical_option(option: &str) -> Result<(&'static str, bool)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn indexing_detection_uses_option_arity_not_values() -> Result<()> {
-        assert!(indexed_exec(
-            "{ argv[]=/engine --db /db --json-rpc-address 127.0.0.1:8081 ; running }"
-        )?);
-        assert!(!indexed_exec("{ argv[]=/engine --logname --json-rpc-address ; running }")?);
-        assert!(!indexed_exec("{ argv[]=/engine --db /db ; running }")?);
-        assert!(!indexed_exec(
-            "{ argv[]=/engine --db /db --json-rpc-address 127.0.0.1:8081 --json-rpc-without-wallet-index ; running }"
-        )?);
-        assert!(indexed_exec(
-            "{ argv[]=/engine --db /db --logname --json-rpc-without-wallet-index --json-rpc-address 127.0.0.1:8081 ; running }"
-        )?);
-        Ok(())
-    }
     #[test]
     fn configured_running_and_expected_modes_are_one_invariant() {
         for configured in [false, true] {
@@ -908,7 +872,6 @@ mod account_tests {
     #[test]
     fn deployed_full_node_command_is_accepted() -> Result<()> {
         assert!(!deployed(DEPLOYED)?, "deployed unit selects split cell storage");
-        assert!(indexed_exec(DEPLOYED)?, "deployed JSON-RPC without the no-index flag");
         let missing = DEPLOYED.replace(" 127.0.0.1:9100 ;", " ;");
         let error = deployed(&missing).expect_err("exporter without a value").to_string();
         assert!(error.contains("requires a separate value"), "wrong refusal: {error}");
