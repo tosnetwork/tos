@@ -38,6 +38,9 @@ class RocksDbSecondary : public KeyValue {
   static Status destroy(Slice path);
   RocksDbSecondary clone() const;
   static Result<RocksDbSecondary> open(std::string path, RocksDbOptions options = {});
+  // Tests only: make the catch-up that ends the next `count` opens fail, after
+  // the instance itself has been opened.
+  static void fail_next_open_catch_ups_for_testing(int count);
 
   Status try_catch_up_with_primary();
 

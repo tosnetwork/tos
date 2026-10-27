@@ -13,6 +13,7 @@
 
 #include "td/actor/actor.h"
 #include "td/db/RocksDb.h"
+#include "td/db/RocksDbSecondary.h"
 #include "td/utils/Time.h"
 #include "td/utils/filesystem.h"
 #include "td/utils/port/path.h"
@@ -80,6 +81,24 @@ struct ArchivePruneTestAccess {
       auto &self = slice.get_actor_unsafe();
       promise.set_value(self.destroyed_ && self.kv_ == nullptr);
     });
+  }
+
+  // Completes once the manager's archive LRU has handled everything sent to
+  // it before.
+  static void lru_barrier(td::actor::ActorId<ArchiveManager> manager, td::Promise<td::Unit> promise) {
+    td::actor::send_lambda(manager, [manager, promise = std::move(promise)]() mutable {
+      auto lru = manager.get_actor_unsafe().archive_lru_.get();
+      if (lru.empty()) {
+        promise.set_value(td::Unit());
+        return;
+      }
+      td::actor::send_lambda(lru, [promise = std::move(promise)]() mutable { promise.set_value(td::Unit()); });
+    });
+  }
+
+  template <class ActorT>
+  static void actor_barrier(td::actor::ActorId<ActorT> actor, td::Promise<td::Unit> promise) {
+    td::actor::send_lambda(actor, [promise = std::move(promise)]() mutable { promise.set_value(td::Unit()); });
   }
 
   static void deletion_completed(td::actor::ActorId<ArchiveManager> manager, PackageId id, td::Promise<bool> promise) {
@@ -427,51 +446,98 @@ void secondary_prune_lifetime(const std::string &root, bool retain_source_files)
 
 }  // namespace
 
+// A secondary reader with a descriptor budget over three slices written by a
+// real primary (packages 0, 20000 and 40000; the last is the newest). Before a
+// test samples process-wide descriptor counts, every asynchronous step the
+// reader started is finished: the manager's start-up work, the newest slice's
+// preload and the LRU decisions it caused, and any close those requested.
+struct GateFixture {
+  const PackageId kMiddle{20000, false, false};
+  const PackageId kNewest{40000, false, false};
+
+  explicit GateFixture(const std::string &root) : root_(root) {
+    auto opts = ValidatorManagerOptions::create(block_id(0), block_id(0));
+    opts.write().set_disable_rocksdb_stats(true);
+    opts.write().set_max_open_archive_files(128);
+    {
+      td::actor::Scheduler primary_scheduler({2});
+      td::actor::ActorOwn<ArchiveManager> primary;
+      primary_scheduler.run_in_context([&] {
+        primary = td::actor::create_actor<ArchiveManager>("gate-primary", td::actor::ActorId<RootDb>{}, root, opts);
+      });
+      for (tos::BlockSeqno seqno : {1U, 20001U, 40001U}) {
+        auto handle = BlockHandleImpl::create_empty(block_id(seqno));
+        handle->set_logical_time(100000 + seqno);
+        handle->set_unix_time(100000 + seqno / 20000);
+        handle->set_is_key_block(false);
+        request<td::Unit>(primary_scheduler, [&](td::Promise<td::Unit> promise) {
+          td::actor::send_closure(primary, &ArchiveManager::add_handle, handle, std::move(promise));
+        }).ensure();
+      }
+      primary_scheduler.run_in_context([&] { primary.reset(); });
+    }
+    auto reader_opts = opts;
+    reader_opts.write().set_archive_lru_keep_most_recent(2);
+    reader_opts.write().set_archive_descriptor_budget(1u << 20);
+    scheduler.run_in_context([&] {
+      secondary = td::actor::create_actor<ArchiveManager>("gate-secondary", td::actor::ActorId<RootDb>{}, root,
+                                                          reader_opts, td::DbOpenMode::db_secondary);
+    });
+    middle = slice_of(kMiddle);
+    newest = slice_of(kNewest);
+    // The newest slice is opened by the manager's preload; open it here too,
+    // so that nothing about it is left pending.
+    check(query(newest).is_ok(), "the newest slice opens");
+    settle();
+  }
+  ~GateFixture() {
+    scheduler.run_in_context([&] { secondary.reset(); });
+  }
+
+  td::actor::ActorId<ArchiveSlice> slice_of(PackageId id) {
+    return request<td::actor::ActorId<ArchiveSlice>>(
+               scheduler,
+               [&](auto promise) { ArchivePruneTestAccess::get_slice(secondary.get(), id, std::move(promise)); })
+        .move_as_ok();
+  }
+  td::Result<tos::BlockSeqno> query(td::actor::ActorId<ArchiveSlice> slice) {
+    return request<tos::BlockSeqno>(scheduler, [&](td::Promise<tos::BlockSeqno> promise) {
+      td::actor::send_closure(slice, &ArchiveSlice::get_max_masterchain_seqno, std::move(promise));
+    });
+  }
+  // Each actor handles its mailbox in order, so a round trip through it
+  // finishes everything sent to it before. Two rounds cover slice -> LRU ->
+  // slice (an open reported to the LRU, and a close it requested).
+  void settle() {
+    for (int round = 0; round < 2; ++round) {
+      request<td::Unit>(scheduler, [&](auto promise) {
+        ArchivePruneTestAccess::lru_barrier(secondary.get(), std::move(promise));
+      }).ensure();
+      for (auto slice : {middle, newest}) {
+        request<td::Unit>(scheduler, [&](auto promise) {
+          ArchivePruneTestAccess::actor_barrier(slice, std::move(promise));
+        }).ensure();
+      }
+    }
+  }
+  size_t middle_index_files() const {
+    return count_directory_files(root_ + kMiddle.path() + kMiddle.name() + ".index");
+  }
+
+  std::string root_;
+  td::actor::Scheduler scheduler{{2}};
+  td::actor::ActorOwn<ArchiveManager> secondary;
+  td::actor::ActorId<ArchiveSlice> middle, newest;
+};
+
 // A budgeted reader must refuse a slice open it has no descriptors for, and
 // fail the query instead of the process: here the descriptor limit leaves
 // room for two more files, fewer than any slice index needs. Without the
 // admission, the secondary's RocksDB open fails with "Too many open files"
 // and the archive aborts. Restoring the limit lets the same slice open.
 void descriptor_gate(const std::string &root) {
-  auto opts = ValidatorManagerOptions::create(block_id(0), block_id(0));
-  opts.write().set_disable_rocksdb_stats(true);
-  opts.write().set_max_open_archive_files(128);
-  const PackageId middle{20000, false, false};
-  {
-    td::actor::Scheduler scheduler({2});
-    td::actor::ActorOwn<ArchiveManager> primary;
-    scheduler.run_in_context([&] {
-      primary = td::actor::create_actor<ArchiveManager>("gate-primary", td::actor::ActorId<RootDb>{}, root, opts);
-    });
-    for (tos::BlockSeqno seqno : {1U, 20001U, 40001U}) {
-      auto handle = BlockHandleImpl::create_empty(block_id(seqno));
-      handle->set_logical_time(100000 + seqno);
-      handle->set_unix_time(100000 + seqno / 20000);
-      handle->set_is_key_block(false);
-      request<td::Unit>(scheduler, [&](td::Promise<td::Unit> promise) {
-        td::actor::send_closure(primary, &ArchiveManager::add_handle, handle, std::move(promise));
-      }).ensure();
-    }
-    scheduler.run_in_context([&] { primary.reset(); });
-  }
-  auto reader_opts = opts;
-  reader_opts.write().set_archive_lru_keep_most_recent(2);
-  reader_opts.write().set_archive_descriptor_budget(1u << 20);
-  td::actor::Scheduler scheduler({2});
-  td::actor::ActorOwn<ArchiveManager> secondary;
-  scheduler.run_in_context([&] {
-    secondary = td::actor::create_actor<ArchiveManager>("gate-secondary", td::actor::ActorId<RootDb>{}, root,
-                                                        reader_opts, td::DbOpenMode::db_secondary);
-  });
-  auto slice = request<td::actor::ActorId<ArchiveSlice>>(scheduler, [&](auto promise) {
-                 ArchivePruneTestAccess::get_slice(secondary.get(), middle, std::move(promise));
-               }).move_as_ok();
-  auto query = [&] {
-    return request<tos::BlockSeqno>(scheduler, [&](td::Promise<tos::BlockSeqno> promise) {
-      td::actor::send_closure(slice, &ArchiveSlice::get_max_masterchain_seqno, std::move(promise));
-    });
-  };
-  const auto index_files = count_directory_files(root + middle.path() + middle.name() + ".index");
+  GateFixture fixture(root);
+  const auto index_files = fixture.middle_index_files();
   check(index_files >= 3, "the slice index exists");
   struct rlimit original{};
   check(getrlimit(RLIMIT_NOFILE, &original) == 0, "read the descriptor limit");
@@ -483,7 +549,7 @@ void descriptor_gate(const std::string &root) {
     tight.rlim_cur = static_cast<rlim_t>(held) + 2;
     check(setrlimit(RLIMIT_NOFILE, &tight) == 0, "lower the descriptor limit");
     set_archive_descriptor_budget(static_cast<size_t>(tight.rlim_cur));
-    auto refused = query();
+    auto refused = fixture.query(fixture.middle);
     check(setrlimit(RLIMIT_NOFILE, &original) == 0, "restore the descriptor limit");
     check(refused.is_error(), "an open the budget cannot hold must fail the query");
     check(refused.error().message().str().find("descriptors") != std::string::npos,
@@ -492,19 +558,42 @@ void descriptor_gate(const std::string &root) {
   auto refusals_after = archive_descriptor_refusals();
   check(refusals_after.shortages == refusals_before.shortages + 1 && refusals_after.last_was_shortage,
         "with nothing closable the refusal is a shortage");
-  set_archive_descriptor_budget(static_cast<size_t>(original.rlim_cur > (1u << 20) ? (1u << 20) : original.rlim_cur));
-  auto opened = query();
-  check(opened.is_ok(), "the same slice opens once descriptors are available");
-  scheduler.run_in_context([&] { secondary.reset(); });
+  set_archive_descriptor_budget(1u << 20);
+  check(fixture.query(fixture.middle).is_ok(), "the same slice opens once descriptors are available");
   set_archive_descriptor_budget(0);
   std::cout << "PASS: descriptor gate refuses an open it cannot hold, then opens; index files=" << index_files
             << std::endl;
+}
+
+// A secondary open that fails after the instance was opened must close it:
+// the reader retries, and every failed attempt would otherwise keep the
+// database and its files open.
+void secondary_open_retry(const std::string &root) {
+  GateFixture fixture(root);
+  const auto baseline = count_process_open_fds();
+  check(baseline > 0, "descriptors can be counted");
+  td::RocksDbSecondary::fail_next_open_catch_ups_for_testing(5);
+  for (int attempt = 0; attempt < 5; ++attempt) {
+    auto failed = fixture.query(fixture.middle);
+    check(failed.is_error(), "an open whose catch-up fails must fail the query");
+    fixture.settle();
+  }
+  const auto after_failures = count_process_open_fds();
+  std::cout << "descriptors before " << baseline << ", after five failed opens " << after_failures << std::endl;
+  check(after_failures == baseline, "failed opens must release every descriptor they took");
+  check(fixture.query(fixture.middle).is_ok(), "the retry after the failures opens the slice");
+  std::cout << "PASS: failed secondary opens release their descriptors, then the slice opens" << std::endl;
 }
 
 int main(int argc, char **argv) {
   auto root = td::mkdtemp("", "archive-prune-").move_as_ok();
   if (argc == 2 && std::string(argv[1]) == "--held-reader-shutdown") {
     manager_held_reader(root + "/held-shutdown", true);
+    td::rmrf(root).ensure();
+    return 0;
+  }
+  if (argc == 2 && std::string(argv[1]) == "--secondary-open-retry") {
+    secondary_open_retry(root + "/secondary-open-retry");
     td::rmrf(root).ensure();
     return 0;
   }

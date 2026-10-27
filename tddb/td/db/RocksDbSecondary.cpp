@@ -15,6 +15,8 @@
 // The bundled database header triggers this conversion warning.
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wimplicit-int-float-conversion"
+#include <atomic>
+
 #include "rocksdb/db.h"
 #pragma GCC diagnostic pop
 #include "rocksdb/env.h"
@@ -27,6 +29,8 @@
 
 namespace td {
 namespace {
+// Tests only: secondary opens whose catch-up fails after the open succeeded.
+std::atomic<int> open_catch_up_faults{0};
 class NullLogger final : public rocksdb::Logger {
  public:
   void Logv(const char *, va_list) override {
@@ -119,8 +123,19 @@ Result<RocksDbSecondary> RocksDbSecondary::open(std::string path, RocksDbOptions
     // default column family
     delete handles[0];
   }
-  TRY_STATUS(from_rocksdb(db->TryCatchUpWithPrimary()));
-  return RocksDbSecondary(std::shared_ptr<rocksdb::DB>(db), std::move(options));
+  // Owned before anything else can fail: a failed catch-up below must close
+  // the instance and its files, since a reader may retry the open.
+  std::shared_ptr<rocksdb::DB> owned(db);
+  if (open_catch_up_faults.load(std::memory_order_relaxed) > 0) {
+    open_catch_up_faults.fetch_sub(1, std::memory_order_relaxed);
+    return Status::Error("injected catch-up failure after a secondary open");
+  }
+  TRY_STATUS(from_rocksdb(owned->TryCatchUpWithPrimary()));
+  return RocksDbSecondary(std::move(owned), std::move(options));
+}
+
+void RocksDbSecondary::fail_next_open_catch_ups_for_testing(int count) {
+  open_catch_up_faults.store(count, std::memory_order_relaxed);
 }
 
 Status RocksDbSecondary::try_catch_up_with_primary() {
