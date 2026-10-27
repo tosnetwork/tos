@@ -17,3 +17,7 @@ This is the first component of the pending native simulation implementation. It 
 Raw commands, build/test logs, ten modified-source copies and binaries are retained under `${HOME}/validation/mobile-quantum-handoff`, prefix `r02-simulation-context-`; the memo index records sizes/hashes. Keep them through independent acceptance and complete wallet delivery. The shared generated headers/archive remain attributed to their original build.
 
 Next in this WIP branch: complete configuration graph/Account proof binding, explicit execution inputs, the exact signed-message adapter and its resource/result ownership limits, then source-built target/platform validation and the full transaction/negative-control matrix. Do not merge or describe this component as working fee estimation before those steps.
+
+## CI registration follow-up
+
+The existing `python-and-pq-chain` workflow now builds `test-self-pay-simulation-context` and selects its CTest name with `--no-tests=error`. The workflow runs on every PR without path filters. Local YAML parsing and command-selection inspection pass; hosted execution and a fresh full CMake build have not run for this WIP branch. This registration does not change the twenty-check/ten-mutation local evidence or the pending production integration.
