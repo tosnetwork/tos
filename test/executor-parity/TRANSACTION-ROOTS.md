@@ -1,0 +1,62 @@
+# Transaction fixture root comparisons
+
+`pq-tx-parity config.boc scenarios.tsv 16 --roots` compares actual version-16
+transaction output. The existing six-field input and default/`--details` output
+modes remain available and continue to run in migrated tests.
+
+The configuration file is the original `ConfigParams` BOC, including its address
+and dictionary. Root mode requires exactly global version 16. It rejects missing
+context and unexpected executor errors rather than fabricating an empty result.
+
+Root input starts with `#pq-tx-roots-v1` followed by LF-terminated, tab-separated
+records with nine fields:
+
+| Field | Value |
+|---|---|
+| Name | Nonempty scenario name; duplicate names are separate ordered records |
+| Time | Explicit nonzero Unix time |
+| LT | Explicit nonzero transaction execution LT |
+| Account | Hex BOC of the complete original **ShardAccount**, including predecessor hash/LT |
+| Message | Hex BOC of the original inbound message |
+| Seed | Exactly 64 hex digits |
+| Libraries | Hex global-library dictionary BOC, or `-` for absent |
+| Previous blocks | Hex serialized stack tuple BOC, or `-` for the emulator default |
+| Ignore signatures | `0`; signature verification is required |
+
+The adapter accepts complete ordinary/library cell graphs; unsupported exotic
+or incomplete input graphs fail explicitly. It does not reconstruct missing
+state or context from expected output. A caller must capture the full original
+wrapper before native execution, especially for linked successor transactions.
+Zero predecessor/seed/default-context assumptions are valid only where that
+native caller actually supplies them.
+
+Every output record has five fields:
+
+| Outcome | Columns after the name |
+|---|---|
+| Accepted transaction, including VM/action failure | `accepted`, Transaction hash, Account hash, ShardAccount hash |
+| External message not accepted | `rejected`, exact VM exit code, `-`, `-` |
+| Precompiled fallback compute failure | `refused`, `precompiled-compute-failed`, `-`, `-` |
+
+The adapter uses the transaction executor's final selected Account and metadata.
+It preserves the original input hash and predecessor, writes the actual state
+update, and uses the returned transaction's hash/start LT in ShardAccount. It
+does not recompute storage metadata after execution to obtain equality.
+
+`transaction_roots.py` receives original input rows and native responses
+separately. Expected hashes come from the original native transaction and
+ShardAccount BOCs. Rejections must contain neither output BOC; unsupported
+failures stop comparison. Every ordered row and field is compared, including
+repeated names. Inputs, minimal raw native responses, expected records and
+bounded worker output are retained beside the existing fixture reports.
+
+Driver inputs are limited to 64 MiB/10,000 records, with 1 MiB per record and
+8 MiB configurations. Cell traversal has explicit depth/work limits. Driver
+execution reuses the REL-02 supervisor's address-space, CPU, wall-time and file
+limits, output read cap and process-group cleanup on failure/cancellation.
+
+This slice adds roots to `precompiled_external.py` (all 12 cases, four rows
+each) and the version-16 rows of `fail_action_fine.py` (four rows). Their existing
+gas, balance, refusal and fee assertions remain. Version-14/15 fine checks are
+preserved. Other registered transaction consumers still require migration;
+these two families do not establish whole-VM parity or a complete caller count.

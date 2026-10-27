@@ -24,6 +24,7 @@ sys.path[:0] = [str(ROOT / "test/auth-extensions"), str(ROOT / "test/wallet-quan
 import native
 from cells import Cell, from_boc
 from fee_tx_parity import transcript
+from transaction_roots import compare as compare_roots
 
 VERSIONS = (14, 15, 16)
 PROBE = (0, 0x5151)
@@ -74,7 +75,7 @@ def main():
     fixture = from_boc((ROOT / "tosctl/src/executor/real_boc/default_config.boc").read_bytes())
     report, balances, failures = {}, {}, []
     for version in VERSIONS:
-        native_rows, scenarios = [], []
+        native_rows, scenarios, roots = [], [], []
         emulator = native.Emulator(version)
         try:
             for name, shard in cases:
@@ -99,6 +100,27 @@ def main():
                         ]
                     )
                 )
+                if version == 16:
+                    # Full original wrapper and the constructor's explicit
+                    # deterministic defaults, separate from the native oracle.
+                    roots.append(
+                        (
+                            "\t".join(
+                                [
+                                    name,
+                                    str(native.NOW),
+                                    str(emulator.lt),
+                                    shard.boc().hex(),
+                                    message.boc().hex(),
+                                    "0" * 64,
+                                    "-",
+                                    "-",
+                                    "0",
+                                ]
+                            ),
+                            result,
+                        )
+                    )
         finally:
             emulator.close()
         (out / f"v{version}.tsv").write_text("\n".join(scenarios) + "\n")
@@ -121,6 +143,10 @@ def main():
                     f"v{version}: executors differ\n  native {native_row}\n  rust   {rust_row}"
                 )
         report[version] = {"native": native_rows, "rust": rust_rows}
+        if version == 16:
+            report[version]["root_rows"] = compare_roots(
+                args.driver, config, roots, out, f"v{version}"
+            )
     for name, by_version in balances.items():
         if not by_version[15] < by_version[14]:
             failures.append(f"{name}: no fine for the sent message at 15: {by_version}")

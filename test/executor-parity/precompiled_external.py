@@ -23,6 +23,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT / "test/auth-extensions")]
 import native
 from cells import Cell, from_boc, make_dict, read_dict
+from transaction_roots import compare as compare_roots
 
 VERSION = native.CURRENT_GLOBAL_VERSION
 PROBE = (0, 0x4545)
@@ -152,7 +153,23 @@ def main():
         if rust.returncode != 0:
             raise SystemExit(f"{name}: rust driver failed: {rust.stderr.strip()[-400:]}")
         theirs = rust_row(rust.stdout.splitlines()[0])
-        report[name] = {"native": mine, "rust": theirs}
+        # This caller supplies the original full wrapper. Its fresh emulator
+        # keeps zero seed, no libraries/previous blocks, and signature checks.
+        root_input = "\t".join(
+            [
+                name,
+                str(native.NOW),
+                str(lt),
+                shard.boc().hex(),
+                message.boc().hex(),
+                "0" * 64,
+                "-",
+                "-",
+                "0",
+            ]
+        )
+        root_rows = compare_roots(args.driver, config_file, [(root_input, result)] * 4, out, name)
+        report[name] = {"native": mine, "rust": theirs, "root_rows": root_rows}
         if mine != theirs:
             failures.append(f"{name}: executors differ\n  native {mine}\n  rust   {theirs}")
         outcome = mine.split("\t", 1)[1]
