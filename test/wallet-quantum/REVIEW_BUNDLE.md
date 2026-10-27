@@ -10,7 +10,10 @@ or an approved production release.
 The frozen configuration uses the public test namespace `0x42` repeated 32
 times, global ID 1, version 16, basechain credit 20,000 and masterchain credit
 10,000. Its ConfigParams SHA-256 (of `config.boc`) is
-`59880ee43f99c6e103bb60a99af4696bbadaff0dc7c064c04b438cc0a904d800`.
+`90471221a3b1b9f7e06678797f5aed83f6eeb803db74c80646ff66e086d7d954`.
+It was last refreshed when the genesis template's ConfigParam 15 election lead
+moved from 32,768 to 16,384 seconds; that parameter is the only one that
+changed, and the code identities below did not change.
 The wallet code embeds this namespace; a deployment under another namespace
 needs its own reviewed code/configuration identities.
 

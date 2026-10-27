@@ -72,6 +72,9 @@ fi
 for last; do :; done
 if [ -n "${PLZIP_STUB_STATE:-}" ]; then
   if [ -e "$PLZIP_STUB_STATE" ]; then
+    if [ -n "${PLZIP_STUB_CONFIG:-}" ]; then
+      cp -- "$PLZIP_STUB_CONFIG" "$TOS_DB_DIR/config.json"
+    fi
     if [ -n "${PLZIP_STUB_TOUCH:-}" ]; then
       printf 'appeared during staging' >"$PLZIP_STUB_TOUCH"
     fi
@@ -357,6 +360,134 @@ class ImportSnapshotTest(unittest.TestCase):
         self.assert_refused(result, "is inside the database directory", before)
 
     # ---- content authentication and download
+
+    def test_validator_environment_is_refused_before_download(self) -> None:
+        url, digest = self.serve(tar_bytes(GOOD_MEMBERS))
+        for binding in (
+            {"VALIDATOR_ID": "11" * 32},
+            {"PQ_CONSENSUS_KEY_FILE": "/private/consensus.seed"},
+            {"VALIDATOR_ID": "11" * 32, "PQ_CONSENSUS_KEY_FILE": "/private/consensus.seed"},
+        ):
+            with self.subTest(binding=list(binding)):
+                before = tree(self.db)
+                result = self.run_import(**self.enabled(url, digest, **binding))
+                self.assert_refused(result, "validator snapshot import is forbidden", before)
+                self.assertNotIn("downloading", result.stdout)
+
+    def test_configured_validator_without_journal_is_refused(self) -> None:
+        # Both permanent and scheduled native signing custody count, including
+        # a retired key: local wall time cannot prove its old sessions are safe.
+        configurations = [
+            {"validators": [{"id": "11" * 32, "expire_at": 1}]},
+            {
+                "extraconfig": {
+                    "pq_consensus": {
+                        "validator_id": "11" * 32,
+                        "consensus_key_file": "/private/seed",
+                        "keys": [],
+                    }
+                }
+            },
+            {
+                "extraconfig": {
+                    "pq_consensus": {
+                        "validator_id": "11" * 32,
+                        "consensus_key_file": "",
+                        "keys": [
+                            {"consensus_key_file": "/private/seed", "valid_from": 1, "expire_at": 2}
+                        ],
+                    }
+                }
+            },
+            {"extraconfig": {"pq_consensus": {}}},
+        ]
+        url, digest = self.serve(tar_bytes(GOOD_MEMBERS))
+        for config in configurations:
+            with self.subTest(config=config):
+                (self.db / "config.json").write_text(json.dumps(config))
+                before = tree(self.db)
+                result = self.run_import(**self.enabled(url, digest))
+                self.assert_refused(result, "validator snapshot import is forbidden", before)
+                self.assertNotIn("downloading", result.stdout)
+
+    def test_duplicate_json_fields_cannot_hide_validator_bindings(self) -> None:
+        # The native parser uses the first field; jq's object parser uses the
+        # last. Inspect every occurrence, including escaped field names.
+        binding = json.dumps({"validator_id": "11" * 32, "consensus_key_file": "/seed"})
+        for config in (
+            '{"validators":[{"id":"key"}],"validators":[]}',
+            '{"extraconfig":{"pq_consensus":' + binding + '},"extraconfig":null}',
+            '{"extraconfig":{"pq_consensus":' + binding + ',"pq_consensus":null}}',
+            '{"extraconfig":{"pq_consensus":' + binding + '},"extra\\u0063onfig":{}}',
+        ):
+            with self.subTest(config=config):
+                (self.db / "config.json").write_text(config)
+                url, digest = self.serve(tar_bytes(GOOD_MEMBERS))
+                before = tree(self.db)
+                result = self.run_import(**self.enabled(url, digest))
+                self.assert_refused(result, "validator snapshot import is forbidden", before)
+                self.assertNotIn("downloading", result.stdout)
+
+    def test_unreadable_role_is_not_treated_as_a_full_node(self) -> None:
+        url, digest = self.serve(tar_bytes(GOOD_MEMBERS))
+        for config in (
+            "",
+            "{",
+            "[]",
+            "null",
+            "{} {}",
+            '{"validators":false}',
+            '{"validators":{}}',
+            '{"extraconfig":false}',
+        ):
+            with self.subTest(config=config):
+                (self.db / "config.json").write_text(config)
+                before = tree(self.db)
+                result = self.run_import(**self.enabled(url, digest))
+                self.assert_refused(
+                    result, "cannot establish a non-validator configuration", before
+                )
+
+    def test_unbound_full_node_import_still_succeeds(self) -> None:
+        (self.db / "config.json").write_text(
+            json.dumps({"validators": [], "extraconfig": {"pq_consensus": None}})
+        )
+        url, digest = self.serve(tar_bytes(GOOD_MEMBERS))
+        result = self.run_import(**self.enabled(url, digest))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.db / ".snapshot-imported").read_text(), digest)
+
+    def test_donor_signing_journals_are_refused(self) -> None:
+        for name in ("consensus", "catchains"):
+            with self.subTest(name=name):
+                self.assert_member_refused(
+                    [*GOOD_MEMBERS, (f"././{name}/session/log", "file", b"foreign vote")],
+                    f"archive member overwrites the node's own {name}",
+                )
+
+    def test_validator_binding_appearing_during_staging_is_refused(self) -> None:
+        config = json.dumps(
+            {
+                "extraconfig": {
+                    "pq_consensus": {
+                        "validator_id": "11" * 32,
+                        "consensus_key_file": "/private/seed",
+                        "keys": [],
+                    }
+                }
+            }
+        ).encode()
+        replacement = self.root / "validator.json"
+        replacement.write_bytes(config)
+        url, digest = self.serve(tar_bytes(GOOD_MEMBERS))
+        before = tree(self.db)
+        result = self.run_import(
+            **self.enabled(url, digest),
+            PLZIP_STUB_STATE=str(self.root / "plzip-called"),
+            PLZIP_STUB_CONFIG=str(replacement),
+        )
+        before["config.json"] = ("file", config)
+        self.assert_refused(result, "validator snapshot import is forbidden", before)
 
     def test_digest_mismatch_is_refused(self) -> None:
         url, _ = self.serve(tar_bytes(GOOD_MEMBERS))

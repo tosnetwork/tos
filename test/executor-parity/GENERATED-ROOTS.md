@@ -18,11 +18,14 @@ Account roots. Replay uses independently seeded inputs, not continuous Rust
 Account/cache carry.
 
 Canonical version-16 generated configuration has full ConfigParams root
-`f773f0a8978b637149d04f2e5626967fea009c6afc146b7742d136597f8ac5e4` and dictionary
-root `a1b33a6658266c78beed840a038179e9be23fd36c56027da86ed2d3b2ead38c9`. These
+`ac82cfd2432644f198d20a8fb8a696161aaa7b05aaa472b30429b342c6888f2b` and dictionary
+root `fe9f43e1c143d6fc632f3374d7580445d6c411b02e24717c84f91c2e12892304`. These
 identities were measured from the real source template/candidate wrapper and
 matched to actual generated masterchain state and both architecture CI exports.
-They supplement CP8/21/48 parsing. The full supplied raw file is preserved:
+The current identity refresh follows the source election-lead change in CP15;
+all31 parameter keys/cell hashes were compared independently and only CP15
+changes. The unchanged integrated generator baseline/fallback/restoration control
+and actual hosted export agree byte-for-byte. They supplement CP8/21/48 parsing. The full supplied raw file is preserved:
 Fift CRC and Rust file encodings can differ for the same semantic roots. An
 intentional generator change requires a reviewed identity refresh. Producer
 claims cannot supply arbitrary expected identities. Existing seven families'

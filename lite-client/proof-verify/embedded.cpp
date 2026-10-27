@@ -2,8 +2,11 @@
 #include <cstring>
 #include <optional>
 
+#include "vm/excno.hpp"
+
 #include "embedded.h"
 #include "proof-verify.h"
+#include "wallet-transaction.h"
 
 extern "C" int tos_proof_verify_embedded(const char *anchor, size_t anchor_size, const char *request,
                                          size_t request_size, const char *state, size_t state_size, int64_t local_now,
@@ -77,6 +80,41 @@ extern "C" int tos_proof_verify_embedded(const char *anchor, size_t anchor_size,
     *result_size = rendered.size();
     *next_state_size = rendered_state.size();
     return 0;
+  } catch (...) {
+    return -4;
+  }
+}
+
+extern "C" int tos_proof_verify_wallet_transaction(int32_t workchain, const uint8_t *account_hash,
+                                                   uint64_t logical_time, const uint8_t *transaction_hash,
+                                                   const uint8_t *boc, size_t boc_size, char *result, size_t capacity,
+                                                   size_t *result_size) {
+  namespace pv = tos::proofverify;
+  if (result_size)
+    *result_size = 0;
+  if (!result || capacity > pv::kMaxWalletTransactionResultBytes)
+    return -1;
+  std::memset(result, 0, capacity);
+  if (!result_size || workchain != 0 || !account_hash || !transaction_hash || !logical_time || !boc || !boc_size ||
+      boc_size > pv::kMaxWalletTransactionBytes)
+    return -1;
+  try {
+    auto verified =
+        pv::verify_wallet_transaction(td::Slice(reinterpret_cast<const char *>(account_hash), 32), logical_time,
+                                      td::Slice(reinterpret_cast<const char *>(transaction_hash), 32),
+                                      td::Slice(reinterpret_cast<const char *>(boc), boc_size));
+    if (verified.is_error())
+      return -2;
+    const auto &rendered = verified.ok();
+    if (rendered.size() > capacity)
+      return -3;
+    std::memcpy(result, rendered.data(), rendered.size());
+    *result_size = rendered.size();
+    return 0;
+  } catch (const vm::VmError &) {
+    return -2;
+  } catch (const vm::VmVirtError &) {
+    return -2;
   } catch (...) {
     return -4;
   }

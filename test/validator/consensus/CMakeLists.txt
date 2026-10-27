@@ -104,6 +104,41 @@ target_link_libraries(test-merkle-prospective-notar PRIVATE
     tdutils
 )
 
+# The red controls of that test: the same driver linked against a test-only mutant of the
+# state resolver, generated from the production source with hooks that let the driver pick
+# the wrong base. The production resolver is not changed; the mutant object takes the place
+# of the library's state-resolver object in this executable only.
+if(Python3_Interpreter_FOUND)
+    set(STATE_RESOLVER_SOURCE ${CMAKE_SOURCE_DIR}/validator/consensus/simplex/state-resolver.cpp)
+    set(STATE_RESOLVER_MUTANT ${CMAKE_CURRENT_BINARY_DIR}/state-resolver-mutant.cpp)
+    add_custom_command(
+        OUTPUT ${STATE_RESOLVER_MUTANT}
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/make-state-resolver-mutant.py
+                ${STATE_RESOLVER_SOURCE} ${STATE_RESOLVER_MUTANT}
+        DEPENDS ${STATE_RESOLVER_SOURCE} ${CMAKE_CURRENT_SOURCE_DIR}/make-state-resolver-mutant.py
+        COMMENT "Generating the test-only state-resolver mutant")
+    add_executable(test-merkle-prospective-notar-mutant test-merkle-prospective-notar.cpp ${STATE_RESOLVER_MUTANT})
+    target_compile_definitions(test-merkle-prospective-notar-mutant PRIVATE TOS_STATE_RESOLVER_MUTANT=1)
+    target_include_directories(test-merkle-prospective-notar-mutant PRIVATE
+        ${CMAKE_SOURCE_DIR}/validator/consensus/simplex)
+    target_link_libraries(test-merkle-prospective-notar-mutant PRIVATE
+        validator
+        tos_validator
+        tos_block
+        adnl
+        overlay
+        dht
+        tl_api
+        tl-utils
+        tos_crypto
+        tos_pq_consensus_signer
+        tos_pq_consensus
+        tos_mldsa44
+        tdactor
+        tdutils
+    )
+endif()
+
 # A controlled transient ResolveState failure inside the production Consensus actor.
 add_executable(test-notarize-after-transient-resolve test-notarize-after-transient-resolve.cpp)
 target_link_libraries(test-notarize-after-transient-resolve PRIVATE
@@ -590,6 +625,30 @@ if(Python3_Interpreter_FOUND)
     add_test(NAME test-consensus-simplex2-merkle-prospective-notar-gate-control
              COMMAND ${Python3_EXECUTABLE} ${MERKLE_PROSPECTIVE_NOTAR_CHECK}
                      $<TARGET_FILE:test-merkle-prospective-notar> gate --n 5)
+    # Two notarized siblings at one height; FinalizeCert(C) settles P's branch. Two observers
+    # with different certificate orders finalize P, never P', and resolve C to the same block
+    # and state, with P' resolved and cached first on one of them.
+    add_test(NAME test-consensus-simplex2-merkle-sibling-finalized-branch
+             COMMAND ${Python3_EXECUTABLE} ${MERKLE_PROSPECTIVE_NOTAR_CHECK}
+                     $<TARGET_FILE:test-merkle-prospective-notar> sibling --n 5 --n 23)
+    # P finalized while the manager withholds its state until its masterchain reference
+    # arrives: one observer reconstructs, one resolves from the anchor after release.
+    add_test(NAME test-consensus-simplex2-merkle-delayed-anchor
+             COMMAND ${Python3_EXECUTABLE} ${MERKLE_PROSPECTIVE_NOTAR_CHECK}
+                     $<TARGET_FILE:test-merkle-prospective-notar> anchor --n 5 --n 23)
+    # Red controls against the test-only mutant resolver: each must reproduce its exact abort.
+    add_test(NAME test-consensus-simplex2-merkle-prospective-notar-red
+             COMMAND ${Python3_EXECUTABLE} ${MERKLE_PROSPECTIVE_NOTAR_CHECK}
+                     $<TARGET_FILE:test-merkle-prospective-notar-mutant> red --n 5 --n 23)
+    add_test(NAME test-consensus-simplex2-merkle-peer-notar-leader-path-red
+             COMMAND ${Python3_EXECUTABLE} ${MERKLE_PROSPECTIVE_NOTAR_CHECK}
+                     $<TARGET_FILE:test-merkle-prospective-notar-mutant> peer-red --n 5 --n 23)
+    add_test(NAME test-consensus-simplex2-merkle-sibling-red
+             COMMAND ${Python3_EXECUTABLE} ${MERKLE_PROSPECTIVE_NOTAR_CHECK}
+                     $<TARGET_FILE:test-merkle-prospective-notar-mutant> sibling-red --n 5 --n 23)
+    add_test(NAME test-consensus-simplex2-merkle-delayed-anchor-red
+             COMMAND ${Python3_EXECUTABLE} ${MERKLE_PROSPECTIVE_NOTAR_CHECK}
+                     $<TARGET_FILE:test-merkle-prospective-notar-mutant> anchor-red --n 5 --n 23)
     add_test(NAME simplex-exact-ancestor-source-guard
              COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/check-simplex-exact-ancestor-resolution.py ${CMAKE_SOURCE_DIR})
     set_tests_properties(simplex-exact-ancestor-source-guard PROPERTIES LABELS "source-guard")
