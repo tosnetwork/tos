@@ -20,6 +20,9 @@ struct PreparedSimulationAccount {
   bool existed;
 };
 
+// Bound reply and Account/proof BOC allocation before the read verifier runs.
+td::Status preflight_simulation_account_reply(td::Slice raw_reply);
+
 // Restore only authenticated observations. This does not validate a proof or
 // authorize simulation/signing. A null true_root means proven dictionary absence.
 // Frozen/uninitialized states retain their exact native representation; the

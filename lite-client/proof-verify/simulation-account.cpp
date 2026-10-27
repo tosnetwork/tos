@@ -28,7 +28,38 @@ td::Result<std::size_t> preflight(td::Slice bytes, int roots, std::size_t cell_l
   }
   return static_cast<std::size_t>(header.cell_count);
 }
+
+td::Result<tos::tl_object_ptr<tos::lite_api::liteServer_accountState>> bounded_account_reply(td::Slice raw_reply) {
+  if (raw_reply.empty() || raw_reply.size() > kMaxSimulationConfigReplyBytes) {
+    return refuse(SimulationAccountError::Resource);
+  }
+  auto answer = tos::fetch_tl_object<tos::lite_api::liteServer_accountState>(td::BufferSlice(raw_reply), true);
+  if (answer.is_error()) {
+    return refuse(SimulationAccountError::Input);
+  }
+  auto& info = answer.ok();
+  if (info->state_.size() > kMaxSimulationAccountBytes) {
+    return refuse(SimulationAccountError::Resource);
+  }
+  std::size_t remaining = kMaxSimulationConfigProofCells;
+  if (!info->state_.empty()) {
+    TRY_RESULT(cells, preflight(info->state_.as_slice(), 1, kMaxSimulationAccountCells));
+    remaining -= cells;
+  }
+  TRY_RESULT(proof_cells, preflight(info->proof_.as_slice(), 2, remaining));
+  remaining -= proof_cells;
+  if (!info->shard_proof_.empty()) {
+    TRY_RESULT(shard_cells, preflight(info->shard_proof_.as_slice(), 2, remaining));
+    remaining -= shard_cells;
+  }
+  return answer.move_as_ok();
+}
 }  // namespace
+
+td::Status preflight_simulation_account_reply(td::Slice raw_reply) {
+  auto parsed = bounded_account_reply(raw_reply);
+  return parsed.is_error() ? parsed.move_as_error() : td::Status::OK();
+}
 
 td::Result<PreparedSimulationAccount> restore_simulation_account(const block::StdAddress& address,
                                                                  const block::AccountState::Info& proven,
@@ -115,12 +146,9 @@ td::Result<PreparedSimulationAccount> prepare_simulation_account(const tos::Bloc
     if (config.block_id != target) {
       return refuse(SimulationAccountError::Proof);
     }
-    if (raw_reply.empty() || raw_reply.size() > kMaxSimulationConfigReplyBytes) {
-      return refuse(SimulationAccountError::Resource);
-    }
-    auto answer = tos::fetch_tl_object<tos::lite_api::liteServer_accountState>(td::BufferSlice(raw_reply), true);
+    auto answer = bounded_account_reply(raw_reply);
     if (answer.is_error()) {
-      return refuse(SimulationAccountError::Input);
+      return answer.move_as_error();
     }
     auto& info = answer.ok();
     block::AccountState state;
@@ -128,20 +156,6 @@ td::Result<PreparedSimulationAccount> prepare_simulation_account(const tos::Bloc
     state.shard_blk = tos::create_block_id(info->shardblk_);
     if (state.blk != target) {
       return refuse(SimulationAccountError::Proof);
-    }
-    if (info->state_.size() > kMaxSimulationAccountBytes) {
-      return refuse(SimulationAccountError::Resource);
-    }
-    std::size_t remaining = kMaxSimulationConfigProofCells;
-    if (!info->state_.empty()) {
-      TRY_RESULT(cells, preflight(info->state_.as_slice(), 1, kMaxSimulationAccountCells));
-      remaining -= cells;
-    }
-    TRY_RESULT(proof_cells, preflight(info->proof_.as_slice(), 2, remaining));
-    remaining -= proof_cells;
-    if (!info->shard_proof_.empty()) {
-      TRY_RESULT(shard_cells, preflight(info->shard_proof_.as_slice(), 2, remaining));
-      remaining -= shard_cells;
     }
     state.shard_proof = std::move(info->shard_proof_);
     state.proof = std::move(info->proof_);

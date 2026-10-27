@@ -230,6 +230,10 @@ td::Result<std::string> action_json(td::Ref<vm::CellSlice> field) {
 
 }  // namespace
 
+td::Status preflight_wallet_boc(td::Slice bytes) {
+  return preflight(bytes);
+}
+
 td::Result<std::string> verify_wallet_transaction(td::Slice account_hash, td::uint64 logical_time,
                                                   td::Slice transaction_hash, td::Slice bytes) {
   if (account_hash.size() != 32 || transaction_hash.size() != 32 || logical_time == 0) {
