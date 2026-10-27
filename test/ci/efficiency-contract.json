@@ -178,9 +178,10 @@
       "job": "native",
       "name": "Build node and genesis configuration paths",
       "original_sha256": "6a9977f3a257c8d686aafbe9d03550862ffd92e00c7fb5e06eeabe508fc103bc",
-      "run_sha256": "905112b5745846b46a85f6f03ea0cdad03e06f49fd9422b51a16bd3800694301",
+      "run_sha256": "9afe8313905f1f708f8d9719bec7e1f00881e8ee42cbf6607dfc35bda88c02d3",
       "original_if": null,
-      "deduplicated": true
+      "deduplicated": true,
+      "change_reason": "Build the native emulator for canonical first-election tick regressions; retain every existing target."
     },
     {
       "workflow": "quantum-readiness.yml",
@@ -205,10 +206,10 @@
       "job": "native",
       "name": "Actual genesis construction and failure controls",
       "original_sha256": "a08fe16df4069c85423a3eab788da5e28226997d638e4ee4c861c26ba760e37c",
-      "run_sha256": "f65cf24022044b8abe2e161df1d7e9927d6049d84e18850de0a8989c2d7d9c1a",
+      "run_sha256": "d2266f754a951fa5a0591e8190250d74e9f7175a5313445cfa3a55b21882fc00",
       "original_if": null,
       "deduplicated": true,
-      "change_reason": "Version-16 AUTH baseline: retain legacy version-15 coverage and include ordinary Genesis namespace controls."
+      "change_reason": "Retain version-15 and version-16 AUTH/namespace coverage; add canonical first-election timing and unsafe-schedule regressions."
     },
     {
       "workflow": "build-tos-linux-x86-64-shared.yml",

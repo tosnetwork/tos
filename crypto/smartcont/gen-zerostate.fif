@@ -44,6 +44,26 @@ wc_master setworkchain
 1789434000 constant mainnet_genesis_utime
 now mainnet_genesis_utime = not abort"SOURCE_DATE_EPOCH must be 1789434000 for TOS mainnet genesis"
 
+// Keep the bootstrap term and ConfigParam 15 together. The first election
+// opens 5,216 s after genesis, closes at +13,408 s and elects the set due at
+// +21,600 s. Opening after genesis leaves time to bring the initial set up.
+21600 constant orig_vset_valid_for
+65536 constant validators_elected_for
+16384 constant elections_start_before
+8192 constant elections_end_before
+32768 constant stakes_frozen_for
+
+// The Elector anchors an election at its opening tick plus the lead time.
+// An opening before genesis would instead anchor it at genesis (or later).
+// Refuse that schedule before writing any state or generating wallet keys.
+now orig_vset_valid_for + constant bootstrap_until
+bootstrap_until elections_start_before - now max constant first_election_open
+first_election_open elections_start_before + constant first_election_at
+first_election_at elections_end_before - constant first_election_close
+first_election_at bootstrap_until > abort"first election would extend the bootstrap validator term"
+first_election_close first_election_open <= abort"first election must have a positive bidding window"
+first_election_close first_election_at >= abort"first election must close before validator rotation"
+
 // TIP-1 immutable .tos Root StateInit address. This must equal the reproducible
 // root_address in domains/packages/protocol/test/vectors.json. ConfigParam 4
 // stores only these 256 account-id bits; clients supply masterchain wc=-1.
@@ -167,7 +187,7 @@ Masterchain swap
 // min-stake max-stake min-total-stake max-factor
 TM$10000 TM$10000000 TM$40000 sg~1 config.validator_stake_limits!
 // elected-for elect-start-before elect-end-before stakes-frozen-for
-65536 32768 8192 32768 config.election_params!
+validators_elected_for elections_start_before elections_end_before stakes_frozen_for config.election_params!
 // misbehaviour punishment schedule (ConfigParam 40)
 //
 // The base pair is the mildest tier (ordinary severity, short interval); the
@@ -434,10 +454,9 @@ variable genesis-key-id
 
 "validator-pq" +suffix +".pub" load-pq-keys-from-file
 
-// Six hours: the first election opens at genesis and closes 8,192 s before this
+// Six hours: the first election opens at +5,216 s and closes 8,192 s before this
 // set expires. Retired consensus data is deleted only after a key block, so a
 // short first set bounds consensus/ growth under load before the first rotation.
-21600 =: orig_vset_valid_for
 now dup orig_vset_valid_for + 0 config.validators!
 
 /*

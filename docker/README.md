@@ -183,7 +183,7 @@ refused, as the node would refuse it. `STATE_TTL`, `ARCHIVE_TTL`, `THREADS`,
 Back the seed up offline and encrypted, never on the host.
 
 ### Database snapshots
-A new node can start from a database snapshot instead of synchronizing from
+A new non-validating full node can start from a database snapshot instead of synchronizing from
 scratch. The snapshot replaces chain state the node would otherwise check for
 itself, so the container imports one only when the operator asks for it and
 names its content:
@@ -195,6 +195,24 @@ names its content:
 -e "DUMP_ZEROSTATE_ROOT_HASH=<validator.zero_state.root_hash of the network>" \
 -v /data/snapshot-staging:/var/tos-work/snapshot-staging \
 ```
+
+**This importer is not a validator recovery path.** It refuses a requested
+validator role (`VALIDATOR_ID` or `PQ_CONSENSUS_KEY_FILE`), any existing
+`extraconfig.pq_consensus` binding (including scheduled keys), or nonempty
+`validators` registrations. Removing the binding and adding it back after
+import is not a safe workaround: the donor's chain state cannot recover the
+target's own votes or destroyed-session records. Refusal does not depend on
+key expiry or snapshot age. The startup catch-up threshold is not a signing
+safety fence.
+
+For an existing validator, use the [same-node restore procedure](../doc/node-data-sync.md)
+with its original, intact signing state. If that state is lost, keep the old
+signer stopped and retire its affected signing identity before provisioning a
+fresh one for a later validator set. Never restore an old vote-journal backup
+or copy a donor's `consensus/` or `catchains/` directory. There is no automatic
+cross-host exclusion: a key must have exactly one signing process, and an old
+host must be stopped and prevented from restarting before a replacement is
+enabled. A database lock only excludes another process using that database.
 
 `DUMP_SHA256` is the trust anchor. It authenticates the archive only if you
 obtained it independently of the snapshot download, for example from a
@@ -241,13 +259,16 @@ The import script (`docker/import-snapshot.sh`) then:
   Any other content, even with names the snapshot does not use, is refused.
   `init.sh` runs the import before `validator-engine` initializes the
   database, so on a first start the database holds only the global config;
+- checks that neither the environment nor the target configuration enables
+  signing, both before download and immediately before installation; malformed
+  configuration is refused, not treated as a full node;
 - downloads into `SNAPSHOT_STAGING_DIR`, which must be outside the database
   directory (mount it on the same filesystem as the database so the final step
   is a rename), and checks the SHA-256 before anything is unpacked;
 - accepts only regular files and directories with relative names, never `..`,
   and never a top-level name the database already reserves (`config.json`,
   `config.json.lock`, `keyring`, `tos-global.config`, `error`, `lost+found`,
-  `config.json.tmp`,
+  `config.json.tmp`, `consensus`, `catchains`,
   the import markers), however
   the name is spelled (`././keyring`, `.//keyring` and `keyring/` are all
   `keyring`);
@@ -262,7 +283,8 @@ during validation, which covers everything up to and including the final
 check of the database immediately before installation, leaves the database as
 it was. A failure during installation itself (moving the checked entries into
 place) can leave it partially installed and without the `.snapshot-imported`
-marker; the next start then refuses it as not new. Delete the database
+marker; the next start then refuses it as not new. For a non-validating full
+node only, delete the database
 directory's contents except `config.json`, `config.json.lock`, `keyring/` and
 `tos-global.config`,
 or start from a new database, before trying again. A database imported by an
