@@ -59,13 +59,10 @@ std::string errno_text(int error) {
   return std::string(std::strerror(error));
 }
 
-std::variant<std::shared_ptr<KeyFileLock>, std::string> acquire(const std::string& path) {
-  // Not following a symlink, as the key file rules do not; the file locked is the file
-  // configured.
-  const int fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
-  if (fd < 0) {
-    return "cannot open the consensus key file to lock it: " + errno_text(errno);
-  }
+// Locks the file open at `fd`, which this function takes over: it ends up owned by the new
+// lock, or closed when the file's lock is already held in this process. The caller must
+// not use `fd` afterwards except through what is returned.
+std::variant<std::shared_ptr<KeyFileLock>, std::string> acquire(int fd) {
   struct stat st{};
   if (::fstat(fd, &st) != 0) {
     const int error = errno;
@@ -144,24 +141,37 @@ bool consensus_key_lock_supported_filesystem(std::uint64_t f_type) noexcept {
 
 std::variant<std::shared_ptr<const ValidatorPQKeyStore>, std::string> load_locked_consensus_key(
     std::string_view path, std::uint32_t expire_at) {
-  const std::string name(path);
+  // Opened once, as the key file rules open it: no symlink followed, and without blocking,
+  // so a FIFO is refused instead of waited on. Everything after this happens through this
+  // one descriptor: the file locked is the file judged and read, whatever the path names
+  // meanwhile. Reopening the path would let a file swapped in between be read while the
+  // locked one is not.
+  const int opened = detail::open_seed_file(path);
+  if (opened < 0) {
+    return "cannot open the consensus key file to lock it: " + errno_text(errno);
+  }
+  // A second descriptor of the same open file description, kept for reading: the first
+  // is given to the lock, which may close it when this process already holds the file.
+  // dup() shares the description, so it refers to the inode just opened.
+  detail::Descriptor reader(::fcntl(opened, F_DUPFD_CLOEXEC, 0));
+  if (!reader.valid()) {
+    const int error = errno;
+    ::close(opened);
+    return "cannot open the consensus key file to lock it: " + errno_text(error);
+  }
   // Locked before it is read, so the key this process signs with is never one another
   // engine is signing with at the same moment.
-  auto acquired = acquire(name);
+  auto acquired = acquire(opened);
   if (std::holds_alternative<std::string>(acquired)) {
     return std::get<std::string>(std::move(acquired));
   }
   auto lock = std::get<std::shared_ptr<KeyFileLock>>(std::move(acquired));
-
-  auto loaded = load_consensus_key(name);
+  // When the lock was already held here, it was taken on another descriptor; it covers
+  // this file only if this descriptor refers to the same inode, which the registry lookup
+  // established by fstat of this very description.
+  auto loaded = load_consensus_key_from(reader.get(), path);
   if (std::holds_alternative<ConsensusKeyFileError>(loaded)) {
     return std::string(describe(std::get<ConsensusKeyFileError>(loaded)));
-  }
-  // The file read must be the file locked: one replaced in between would leave this
-  // process signing with a key whose file nothing holds.
-  struct stat st{};
-  if (::lstat(name.c_str(), &st) != 0 || st.st_dev != lock->dev() || st.st_ino != lock->ino()) {
-    return std::string("the consensus key file was replaced while it was being loaded");
   }
 
   auto holder =
