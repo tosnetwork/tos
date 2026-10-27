@@ -22,6 +22,9 @@
 # initializes a database
 # (error/ holding an empty files/ directory and an empty log.txt), and an empty
 # lost+found. A snapshot is never merged into existing chain data.
+# Only a non-validating node may import: a donor snapshot cannot restore the
+# target's own voting journal or prove that an existing signing identity has
+# never voted. Validator recovery must preserve its original signing state.
 #
 # Prerequisite: this script must be the database's only writer for the whole
 # import. Stop the validator and any other importer, and let no other
@@ -69,7 +72,7 @@ NEW_DB_ENTRIES=(config.json config.json.lock keyring tos-global.config error los
 # when config.json is missing (init.sh runs the import before validator-engine
 # initializes the database, so an archive-supplied one would become the
 # node's configuration), and this script's bookkeeping.
-RESERVED_TOP_LEVEL=("${NEW_DB_ENTRIES[@]}" config.json.tmp .snapshot-imported .snapshot-imported.tmp dump_downloaded)
+RESERVED_TOP_LEVEL=("${NEW_DB_ENTRIES[@]}" config.json.tmp consensus catchains .snapshot-imported .snapshot-imported.tmp dump_downloaded)
 
 fail() {
   echo "[snapshot] refused: $*" >&2
@@ -139,6 +142,27 @@ require_new_database() {
         ;;
     esac
   done < <(find "$DB_DIR" -mindepth 1 -maxdepth 1 -print0)
+}
+
+# Both init.sh's later binding and an already configured identity can enable
+# signing after the import. Do not use expiry or snapshot age as a substitute
+# for the target's durable own-vote history. Check under the configuration lock
+# before downloading and again before installing; no override is provided.
+require_nonvalidator_target() {
+  local reason="validator snapshot import is forbidden; preserve the target's own consensus journal and session records with tosctl node sync restore; never reuse a signing identity after losing its voting history"
+  [ -z "${VALIDATOR_ID:-}" ] && [ -z "${PQ_CONSENSUS_KEY_FILE:-}" ] || fail "$reason"
+  local config="$DB_DIR/config.json" role
+  [ -e "$config" ] || return 0
+  role="$(jq -ers '
+    if length != 1 or (.[0] | type) != "object" then error("expected one config object")
+    else .[0] end |
+    if (.validators != null and (.validators | type) != "array") or
+       (.extraconfig != null and (.extraconfig | type) != "object")
+    then error("invalid validator configuration") else . end |
+    if ((.validators // []) | length) > 0 or .extraconfig.pq_consensus != null
+    then "validator" else "fullnode" end
+  ' "$config")" || fail "cannot establish a non-validator configuration in $config"
+  [ "$role" = fullnode ] || fail "$reason"
 }
 
 # Refuse if any RocksDB LOCK file under the database is held. RocksDB takes
@@ -303,6 +327,7 @@ if [ -e "$LEGACY_MARKER" ]; then
 fi
 refuse_held_rocksdb_locks
 require_new_database
+require_nonvalidator_target
 
 # ---- Staging: download, verify, list, unpack. The database is not touched.
 
@@ -387,6 +412,7 @@ linked="$(find "$extract" -type f -links +1 -print -quit)"
 
 refuse_held_rocksdb_locks
 require_new_database "; it appeared while the snapshot was staged, so something else is writing this database. The import requires exclusive write access to the database: stop the validator and any other importer, and let no other container write it until the import ends"
+require_nonvalidator_target
 for entry in "${entries[@]}"; do
   mv -T -- "$entry" "$DB_DIR/${entry##*/}" || fail "cannot move ${entry##*/} into the database"
 done
