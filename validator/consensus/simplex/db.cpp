@@ -164,6 +164,12 @@ class DbImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo<B
     co_return result;
   }
 
+  // This write is what keeps a restarted leader from announcing a window it already led and
+  // signing a second, different candidate for one of its slots. The ordering that protects it
+  // lives in the bus: listeners of a request, Consensus among them, see LeaderWindowObserved
+  // only after this processor succeeded, so candidate generation starts after the write is
+  // durable. Keep LeaderWindowObserved a request processed here; see
+  // test/validator/consensus/test-candidate-window-durability.cpp.
   template <>
   td::actor::Task<> process(BusHandle, std::shared_ptr<LeaderWindowObserved> event) {
     auto window = event->start_slot / owning_bus()->config.slots_per_leader_window;

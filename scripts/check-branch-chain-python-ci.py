@@ -32,6 +32,7 @@ REQUIRED_NATIVE_TARGETS = {
     "test-consensus",
     "test-notarize-after-transient-resolve",
     "test-skip-after-finality-backlog",
+    "test-candidate-window-durability",
     "test-counted-finalizations",
     "test-unfinalized-count-resolver",
     "test-state-resolver-teardown",
