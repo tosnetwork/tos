@@ -19,10 +19,14 @@ within the same masterchain session.
   --mode control  a build without the log (main): the red control. Expected: the target
                   signs again at once, in the masterchain session it signed in before.
 
-Signing is observed on every node. A certificate lists the indices of the validators
-whose signatures it carries ("Obtained certificate ...: V.VV", logged by the actor
-valgroup<shard>.<cc>), and the target logs its own index in each session. A certificate
-carrying the target's index, obtained after the restart, proves the target signed then.
+Signing is observed two ways.
+- At the signing boundary: the target logs, once per session, the first candidate and
+  the first vote of each kind (notarize, finalize, skip) it signs ("own signature: first
+  ..."). This sees a signature whether or not it is ever published or certified.
+- On every node: a certificate lists the indices of the validators whose signatures it
+  carries ("Obtained certificate ...: V.VV", logged by the actor valgroup<shard>.<cc>),
+  and the target logs its own index in each session. A certificate carrying the target's
+  index, obtained after the restart, proves the target signed then.
 
 Usage:
   uv run python test/integration/signing_unknown_history_drill.py --mode log \\
@@ -69,6 +73,10 @@ CREATED = re.compile(r"Created validator group (?P<shard>\(\S+\))\.(?P<cc>\d+):"
 STARTED = re.compile(r"Started validator group (?P<shard>\(\S+\))\.(?P<cc>\d+):")
 CERT = re.compile(
     r"\[!valgroup(?P<shard>\(\S+\))\.(?P<cc>\d+)\.SimplexPool\]\s*Obtained certificate for (?P<vote>.*?): (?P<votes>[.V]+)"
+)
+OWN = re.compile(
+    r"consensus: own signature: first (?P<kind>candidate|notarize vote|finalize vote|skip vote) "
+    r"signed in session [0-9A-Fa-f]{64} of (?P<shard>\(\S+\)) catchain (?P<cc>\d+)"
 )
 NOT_SIGNING = re.compile(
     r"the decision log admits no signing in this session|decision log stopped before"
@@ -184,6 +192,10 @@ def analyze(working_dir: Path, summary: dict[str, Any]) -> None:
                 }
             )
     certs = certificates(node_dirs)
+    own: dict[tuple[str, int], list[str]] = {}
+    for line in after:
+        if m := OWN.search(line):
+            own.setdefault((m["shard"], int(m["cc"])), []).append(m["kind"])
     mc_after = sorted(cc for shard, cc in keys(STARTED, after) if shard == MC)
 
     def target_signatures(shard: str, cc: int, since: float | None, until: float | None) -> int:
@@ -227,6 +239,7 @@ def analyze(working_dir: Path, summary: dict[str, Any]) -> None:
                 "group_built_after_restart_at": built,
                 "target_signatures_after_restart": target_signatures(shard, cc, built, None),
                 "target_signatures_before_stop": target_signatures(shard, cc, 0, stopped_at),
+                "own_signatures_after_restart": sorted(own.get((shard, cc), [])),
             }
         )
     summary["fence"] = fences
@@ -239,8 +252,17 @@ def analyze(working_dir: Path, summary: dict[str, Any]) -> None:
     old = next((s for s in sessions if s["shard"] == MC and s["cc"] == mc_cc), None)
     if mode == "log":
         violations = [
-            s for s in sessions if s["within_fence"] and s["target_signatures_after_restart"] > 0
+            s
+            for s in sessions
+            if s["within_fence"]
+            and (s["target_signatures_after_restart"] > 0 or s["own_signatures_after_restart"])
         ]
+        above = [s for s in sessions if s["counter_at_fence"] is not None and not s["within_fence"]]
+        boundary_kinds_above = sorted({k for s in above for k in s["own_signatures_after_restart"]})
+        own_first_mc = min(
+            (s["cc"] for s in sessions if s["shard"] == MC and s["own_signatures_after_restart"]),
+            default=None,
+        )
         fenced_ok = all(s["admission"] == "fenced" for s in sessions if s["within_fence"])
         resumed = [
             s for s in sessions if s["shard"] == MC and s["target_signatures_after_restart"] > 0
@@ -252,6 +274,17 @@ def analyze(working_dir: Path, summary: dict[str, Any]) -> None:
             "signed_in_the_old_masterchain_session_before_stop": bool(old)
             and old["target_signatures_before_stop"] > 0,
             "no_signature_within_fence": not violations,
+            "signatures_within_fence": [
+                {
+                    "shard": s["shard"],
+                    "cc": s["cc"],
+                    "certificates": s["target_signatures_after_restart"],
+                    "own": s["own_signatures_after_restart"],
+                }
+                for s in violations
+            ],
+            "own_signature_kinds_above_fence": boundary_kinds_above,
+            "masterchain_first_own_signature_cc": own_first_mc,
             "every_session_within_fence_fenced": fenced_ok,
             "masterchain_first_signed_cc": first_resumed,
             "masterchain_expected_first_cc": None if at_m is None else at_m + 3,
@@ -262,7 +295,10 @@ def analyze(working_dir: Path, summary: dict[str, Any]) -> None:
             and fenced_ok
             and first_resumed is not None
             and at_m is not None
-            and first_resumed == at_m + 3,
+            and first_resumed == at_m + 3
+            and own_first_mc == at_m + 3
+            and "candidate" in boundary_kinds_above
+            and any(k.endswith("vote") for k in boundary_kinds_above),
         }
     else:
         summary["verdict"] = {

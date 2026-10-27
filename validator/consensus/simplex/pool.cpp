@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: LGPL-2.0-or-later
  */
 
+#include <array>
 #include <cstring>
 
 #include "td/actor/coro_utils.h"
@@ -870,6 +871,14 @@ class PoolImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo
                  << (bus.pq_signer->expired_now() ? " (the consensus key has expired)" : "");
       return std::nullopt;
     }
+    // Once per vote kind and session: that this node has signed one, so whether a session
+    // was signed in is observable at the signing boundary, not only through certificates.
+    if (const auto kind = vote.vote.index(); !own_vote_kind_signed_[kind]) {
+      own_vote_kind_signed_[kind] = true;
+      static constexpr const char *kKinds[] = {"notarize", "finalize", "skip"};
+      LOG(INFO) << "consensus: own signature: first " << kKinds[kind] << " vote signed in session "
+                << bus.session_id.to_hex() << " of " << bus.shard.to_str() << " catchain " << bus.cc_seqno;
+    }
     return td::BufferSlice(pq_signature->signature);
   }
 
@@ -1288,6 +1297,8 @@ class PoolImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo
 
   bool suppress_certificate_broadcast_ = true;
   bool is_started_ = false;
+  // Which vote kinds (notarize, finalize, skip) this node has signed in this session.
+  std::array<bool, 3> own_vote_kind_signed_{};
   // Non-empty when the journal held a signed vote this node cannot verify as its own. It
   // is a terminal condition for the group: casting a fresh vote would create a second
   // signature for a vote that may already be in a peer's certificate.
