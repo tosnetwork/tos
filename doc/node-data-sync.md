@@ -400,11 +400,16 @@ a binding to bypass that refusal or restore an older consensus journal. If the
 history is lost, keep the old signer stopped and retire the affected signing
 identity before provisioning a new one for a later validator set.
 
-The node's database lock is local to that database. Two hosts or databases
-holding the same key have no shared exclusion. Prevent the old signing process
-from restarting before enabling its replacement; neither a recent snapshot nor
-the startup catch-up age threshold establishes exclusive signing or complete
-vote history. Cross-host leases or signer-side durable counters are not provided.
+The node's database lock is local to that database. An engine also holds an
+exclusive lock on every consensus key file it signs with. A second engine on the
+same kernel that opens the same file, by any path, bind mount or hard link, refuses
+to load the key. Engines also refuse to load a key file that is on a network,
+cluster or FUSE filesystem, where the lock would not exclude anything. That is the
+only exclusion: a copy of the seed is another file, and two hosts holding the same
+key have no shared exclusion. Prevent the old signing process from restarting
+before enabling its replacement; neither a recent snapshot nor the startup catch-up
+age threshold establishes exclusive signing or complete vote history. Cross-host
+leases or signer-side durable counters are not provided.
 
 After startup the command watches the shared status collector. Completion releases
 the receiver lease, but retains the old tree and its matched recovery evidence.
