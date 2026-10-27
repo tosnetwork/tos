@@ -113,3 +113,9 @@ limit, exact depth/work boundaries, malformed/truncated BOCs, shared DAGs,
 cache poisoning, indexed BOCs and CRC32C. The legacy producer keeps its existing
 recursion setting for serialization. These per-input comparisons do not carry
 Rust Account/cache state between transactions.
+
+Two generated-config consumers additionally retain all ten PQ availability and
+five post-ACCEPT outcomes, including two exact external rejections. Their
+canonical semantic configuration, original context, native behavior and
+source/run/attempt-bound architecture bundles are described in
+[GENERATED-ROOTS.md](GENERATED-ROOTS.md). Existing family admission is unchanged.

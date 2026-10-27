@@ -117,7 +117,14 @@ class CaptureEmulator(Emulator):
             self._configuration_hash,
             {
                 key: result[key]
-                for key in ("success", "transaction", "shard_account")
+                for key in (
+                    "success",
+                    "transaction",
+                    "shard_account",
+                    "external_not_accepted",
+                    "vm_exit_code",
+                    "error",
+                )
                 if key in result
             },
             event,
