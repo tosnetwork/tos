@@ -163,6 +163,18 @@ require_nonvalidator_target() {
     then "validator" else "fullnode" end
   ' "$config")" || fail "cannot establish a non-validator configuration in $config"
   [ "$role" = fullnode ] || fail "$reason"
+  # Native JSON decoding keeps the first duplicate field, while jq objects
+  # keep the last. The stream retains every occurrence, so a later empty
+  # field cannot hide signing custody that the engine would load.
+  role="$(jq --stream -nr '
+    if any(inputs; length == 2 and (
+      (.[0][0] == "validators" and
+       ((.[0] | length) > 1 or (.[1] != null and .[1] != []))) or
+      (.[0][0:2] == ["extraconfig", "pq_consensus"] and
+       ((.[0] | length) > 2 or .[1] != null))
+    )) then "validator" else "fullnode" end
+  ' "$config")" || fail "cannot establish a non-validator configuration in $config"
+  [ "$role" = fullnode ] || fail "$reason"
 }
 
 # Refuse if any RocksDB LOCK file under the database is held. RocksDB takes

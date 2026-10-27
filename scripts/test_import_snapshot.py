@@ -410,6 +410,24 @@ class ImportSnapshotTest(unittest.TestCase):
                 self.assert_refused(result, "validator snapshot import is forbidden", before)
                 self.assertNotIn("downloading", result.stdout)
 
+    def test_duplicate_json_fields_cannot_hide_validator_bindings(self) -> None:
+        # The native parser uses the first field; jq's object parser uses the
+        # last. Inspect every occurrence, including escaped field names.
+        binding = json.dumps({"validator_id": "11" * 32, "consensus_key_file": "/seed"})
+        for config in (
+            '{"validators":[{"id":"key"}],"validators":[]}',
+            '{"extraconfig":{"pq_consensus":' + binding + '},"extraconfig":null}',
+            '{"extraconfig":{"pq_consensus":' + binding + ',"pq_consensus":null}}',
+            '{"extraconfig":{"pq_consensus":' + binding + '},"extra\\u0063onfig":{}}',
+        ):
+            with self.subTest(config=config):
+                (self.db / "config.json").write_text(config)
+                url, digest = self.serve(tar_bytes(GOOD_MEMBERS))
+                before = tree(self.db)
+                result = self.run_import(**self.enabled(url, digest))
+                self.assert_refused(result, "validator snapshot import is forbidden", before)
+                self.assertNotIn("downloading", result.stdout)
+
     def test_unreadable_role_is_not_treated_as_a_full_node(self) -> None:
         url, digest = self.serve(tar_bytes(GOOD_MEMBERS))
         for config in (
