@@ -93,8 +93,8 @@ td::Status load_checkpoint_progress(tos_wallet_index::WalletIndexDb& db, Progres
   return td::Status::OK();
 }
 
-int64_t count_open_fds() {
-  auto* dir = opendir("/proc/self/fd");
+int64_t count_open_fds(const char* fd_directory) {
+  auto* dir = opendir(fd_directory);
   if (dir == nullptr) {
     return -1;
   }

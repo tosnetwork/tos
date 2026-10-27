@@ -37,6 +37,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstring>
+#include <filesystem>
 #include <mutex>
 #include <optional>
 #include <set>
@@ -4111,7 +4112,22 @@ TEST(WalletIndex, ReplayStatsReportEveryStageAndIntervalDeltas) {
   auto readyz = progress.readyz_json(0, after);
   ASSERT_TRUE(contains(readyz, "\"initialized\":false,\"replay_stats\":{"));
   ASSERT_TRUE(readyz.back() == '}');
-  ASSERT_TRUE(tos::services::count_open_fds() > 0);
+}
+
+// Descriptors are counted from procfs where it exists; elsewhere the count is
+// unknown and reported as null, never as a number.
+TEST(WalletIndex, ReplayStatsReportAnUncountableDescriptorTotalAsNull) {
+  auto missing = tos::services::count_open_fds("/nonexistent-procfs/self/fd");
+  ASSERT_EQ(missing, -1);
+  tos::services::ReplayStats stats;
+  stats.open_fds = missing;
+  auto json = tos::services::replay_stats_json(stats.snapshot(1, 0, 0));
+  ASSERT_TRUE(contains(json, "\"open_fds\":null}"));
+  if (std::filesystem::is_directory(tos::services::kProcessFdDirectory)) {
+    ASSERT_TRUE(tos::services::count_open_fds() > 0);
+  } else {
+    ASSERT_EQ(tos::services::count_open_fds(), -1);
+  }
 }
 
 TEST(WalletIndex, ReplayRejectsEmbeddedDatabaseWithoutCursor) {

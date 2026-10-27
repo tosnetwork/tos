@@ -96,7 +96,11 @@ struct Progress {
 // without a checkpoint (a fresh directory) leaves the cursor unknown.
 td::Status load_checkpoint_progress(tos_wallet_index::WalletIndexDb& db, Progress& progress);
 
-// Number of descriptors this process holds, or -1 when it cannot be counted.
-int64_t count_open_fds();
+// Where the process's descriptors are listed (Linux procfs).
+inline constexpr const char* kProcessFdDirectory = "/proc/self/fd";
+
+// Number of descriptors this process holds, or -1 when they cannot be
+// counted (no such directory, as on hosts without procfs). Reported as null.
+int64_t count_open_fds(const char* fd_directory = kProcessFdDirectory);
 
 }  // namespace tos::services
