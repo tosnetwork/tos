@@ -69,6 +69,7 @@ REQUIRED_SOURCE_GUARDS = frozenset(
         "tosctl-pq-stake-builder-source",
         "validator-id-key-hash-source",
         "validator-session-assembly-source",
+        "wallet-index-replay-bench-source",
         "workflow-supply-chain-self-test",
         "workflow-supply-chain-source",
     }

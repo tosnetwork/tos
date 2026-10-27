@@ -669,6 +669,11 @@ add_executable(test-wallet-index test/test-td-main.cpp test/test-wallet-index.cp
   validator-engine/wallet-index-writer.cpp validator/wc0-block-hook.cpp)
 target_link_libraries(test-wallet-index PRIVATE smc-envelope tos_crypto tddb memprof tdutils)
 
+# Archive LRU decisions, and source-read admission for the standalone index.
+add_executable(test-archive-lru test/test-td-main.cpp test/test-archive-lru.cpp validator/db/archive-lru-policy.cpp)
+target_include_directories(test-archive-lru PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(test-archive-lru PRIVATE tdutils)
+
 add_executable(test-tddb test/test-td-main.cpp ${TDDB_TEST_SOURCE})
 target_link_libraries(test-tddb PRIVATE tdutils tddb ${CMAKE_THREAD_LIBS_INIT} memprof)
 
@@ -2232,6 +2237,7 @@ tos_test(test-consensus-config-admission)
 tos_test(test-weak-ptr-registry)
 tos_test(test-wallet-index)
 tos_test(test-wallet-index-apply)
+tos_test(test-archive-lru)
 # Keep the security fixes exercised before merge, not only by main's full
 # CTest pass. The branch workflow also verifies this inventory is complete.
 set_tests_properties(
@@ -2275,6 +2281,10 @@ set_property(TEST boc-compression APPEND PROPERTY LABELS queue-codec)
 add_test(NAME benchmark-exclusion-source
   COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-benchmark-exclusion.sh ${CMAKE_CURRENT_SOURCE_DIR})
 set_tests_properties(benchmark-exclusion-source PROPERTIES LABELS "source-guard")
+# The replay benchmark must refuse a live or writable source database.
+add_test(NAME wallet-index-replay-bench-source
+  COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_wallet_index_replay_bench.py)
+set_tests_properties(wallet-index-replay-bench-source PROPERTIES LABELS "source-guard")
 add_test(NAME frozen-boc-toolchain-resolution
   COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-frozen-boc-toolchain.sh ${CMAKE_CURRENT_SOURCE_DIR})
 set_tests_properties(frozen-boc-toolchain-resolution PROPERTIES LABELS "source-guard")

@@ -1,6 +1,7 @@
 /* Copyright 2026 TOS Blockchain Teams. SPDX-License-Identifier: GPL-3.0-or-later */
 #include <filesystem>
 #include <iostream>
+#include <sys/resource.h>
 #include <thread>
 
 #include "block/block-auto.h"
@@ -8,10 +9,12 @@
 #include "td/utils/port/signals.h"
 #include "validator-engine/wallet-index-writer.h"
 #include "validator-engine/wallet-index.h"
+#include "validator/db/archive-slice.hpp"
 #include "validator/validator-options.hpp"
 
 #include "index-reader.h"
 #include "index-replay.h"
+#include "source-admission.h"
 
 namespace tos::services {
 namespace {
@@ -146,10 +149,35 @@ int main(int argc, char** argv) {
   });
   parser.add_option('\0', "source-db", "read-only node database root", [&](td::Slice v) { source = v.str(); });
   parser.add_option('\0', "data-dir", "separate writable service directory", [&](td::Slice v) { data = v.str(); });
+  size_t archive_open_files = 128;
+  size_t archive_keep_recent = 2;
+  parser.add_checked_option('\0', "archive-open-files",
+                            "target for descriptors held by older source archive slices (default 128)",
+                            [&](td::Slice v) -> td::Status {
+                              TRY_RESULT(value, td::to_integer_safe<size_t>(v));
+                              if (value == 0 || value > 1000000)
+                                return td::Status::Error("archive-open-files must be between 1 and 1000000");
+                              archive_open_files = value;
+                              return td::Status::OK();
+                            });
+  parser.add_checked_option('\0', "archive-keep-recent",
+                            "most recently read source archive slices kept open past that target (default 2; 0 "
+                            "closes a slice that exceeds the target after every read)",
+                            [&](td::Slice v) -> td::Status {
+                              TRY_RESULT(value, td::to_integer_safe<size_t>(v));
+                              if (value > 16)
+                                return td::Status::Error("archive-keep-recent must be between 0 and 16");
+                              archive_keep_recent = value;
+                              return td::Status::OK();
+                            });
   parser.add_checked_option('\0', "listen", "internal HTTP address (loopback only)",
                             [&](td::Slice v) { return listen.init_host_port(v.str()); });
   auto parsed = parser.run(argc, argv);
-  if (parsed.is_error() || source.empty() || data.empty() || !json_rpc::is_loopback_bind_address(listen)) {
+  if (parsed.is_error()) {
+    LOG(ERROR) << parsed.error();
+    return 2;
+  }
+  if (source.empty() || data.empty() || !json_rpc::is_loopback_bind_address(listen)) {
     LOG(ERROR) << "specify --source-db and --data-dir and a loopback --listen";
     return 2;
   }
@@ -180,6 +208,35 @@ int main(int argc, char** argv) {
       return 2;
     }
   }
+  // Descriptors: slices kept open past the target are bounded by a budget
+  // derived from the descriptor limit, which is raised to its hard maximum.
+  // The budget leaves a margin for sockets and other files opened between
+  // checks; a limit too low for the target plus that headroom is refused here,
+  // and every source read is admitted against the budget at run time.
+  constexpr rlim_t kDescriptorMargin = 256;
+  constexpr rlim_t kMinimumHeadroom = 1024;
+  struct rlimit limit{};
+  if (getrlimit(RLIMIT_NOFILE, &limit) != 0) {
+    LOG(ERROR) << "cannot read the descriptor limit";
+    return 2;
+  }
+  if (limit.rlim_cur < limit.rlim_max) {
+    auto raised = limit;
+    raised.rlim_cur = limit.rlim_max;
+    if (setrlimit(RLIMIT_NOFILE, &raised) == 0) {
+      limit = raised;
+    }
+  }
+  auto required = static_cast<rlim_t>(archive_open_files) + kDescriptorMargin + kMinimumHeadroom;
+  if (limit.rlim_cur == RLIM_INFINITY || limit.rlim_cur < required) {
+    if (limit.rlim_cur != RLIM_INFINITY) {
+      LOG(ERROR) << "the descriptor limit " << limit.rlim_cur << " is below " << required << " (--archive-open-files "
+                 << archive_open_files << " plus headroom); raise LimitNOFILE";
+      return 2;
+    }
+    limit.rlim_cur = static_cast<rlim_t>(1) << 20;
+  }
+  SourceAdmission admission{static_cast<uint64_t>(limit.rlim_cur - kDescriptorMargin)};
   auto index = tos_wallet_index::WalletIndexDb::open((data_path / "index").string());
   if (index.is_error()) {
     LOG(ERROR) << index.error();
@@ -198,7 +255,9 @@ int main(int argc, char** argv) {
     options.write().set_secondary_working_dir((data_path / "secondary").string());
     options.write().set_disable_rocksdb_stats(true);
     options.write().set_celldb_cache_size(128u << 20);
-    options.write().set_max_open_archive_files(128);
+    options.write().set_max_open_archive_files(archive_open_files);
+    options.write().set_archive_lru_keep_most_recent(archive_keep_recent);
+    options.write().set_archive_descriptor_budget(static_cast<size_t>(admission.budget));
     db = td::actor::create_actor<validator::RootDb>("index-source", td::actor::ActorId<validator::ValidatorManager>{},
                                                     source_path.string(), options, td::DbOpenMode::db_secondary);
     JsonRpcServer::Options rpc;
@@ -211,6 +270,10 @@ int main(int argc, char** argv) {
     td::actor::send_closure(server, &JsonRpcServer::listen, listen);
   });
   IndexReader reader(db.get());
+  reader.set_admission([admission] {
+    auto lru = validator::archive_lru_reader_state();
+    return admit_source_request(admission, validator::count_process_open_fds(), lru.largest_slice_files);
+  });
   std::thread worker([&] {
     Replay replay(reader, progress);
     tos_wallet_index::set_wc0_index_state_fetcher(

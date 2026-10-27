@@ -17,6 +17,7 @@
     Copyright 2019-2020 Telegram Systems LLP
     Copyright 2025-2026 TOS Blockchain Teams
 */
+#include <atomic>
 #include <csignal>
 
 #include "common/delay.h"
@@ -1641,59 +1642,54 @@ static std::tuple<td::uint32, bool, bool> to_tuple(const PackageId &id) {
   return {id.id, id.temp, id.key};
 }
 
+namespace {
+std::atomic<td::uint64> g_reader_largest_slice_files{0};
+std::atomic<td::uint64> g_reader_retention_withdrawn{0};
+std::atomic<bool> g_reader_over_budget{false};
+}  // namespace
+
+ArchiveLruReaderState archive_lru_reader_state() {
+  return {g_reader_largest_slice_files.load(std::memory_order_relaxed),
+          g_reader_retention_withdrawn.load(std::memory_order_relaxed),
+          g_reader_over_budget.load(std::memory_order_relaxed)};
+}
+
+std::int64_t ArchiveLru::open_fds() const {
+  // Only a budgeted reader pays for counting its descriptors.
+  return policy_.options().descriptor_budget > 0 ? count_process_open_fds() : -1;
+}
+
+void ArchiveLru::close(const std::vector<ArchiveLruPolicy::Key> &keys) {
+  for (const auto &key : keys) {
+    auto it = actors_.find(key);
+    if (it != actors_.end()) {
+      td::actor::send_closure(it->second, &ArchiveSlice::close_files);
+    }
+  }
+  if (policy_.options().descriptor_budget > 0) {
+    g_reader_largest_slice_files.store(policy_.largest_slice_files(), std::memory_order_relaxed);
+    g_reader_retention_withdrawn.store(policy_.retention_withdrawn(), std::memory_order_relaxed);
+    g_reader_over_budget.store(policy_.over_budget(), std::memory_order_relaxed);
+  }
+}
+
 void ArchiveLru::on_query(td::actor::ActorId<ArchiveSlice> slice, PackageId id, size_t files_count) {
-  SliceInfo &info = slices_[to_tuple(id)];
-  if (info.opened_idx != 0) {
-    total_files_ -= info.files_count;
-    lru_.erase(info.opened_idx);
-  }
-  info.actor = std::move(slice);
-  total_files_ += (info.files_count = files_count);
-  info.opened_idx = current_idx_++;
-  if (!info.is_permanent) {
-    lru_.emplace(info.opened_idx, id);
-  }
-  enforce_limit();
+  auto key = to_tuple(id);
+  actors_[key] = std::move(slice);
+  close(policy_.on_query(key, files_count, open_fds()));
+}
+
+void ArchiveLru::rebalance() {
+  close(policy_.rebalance(open_fds()));
 }
 
 void ArchiveLru::set_permanent_slices(std::vector<PackageId> ids) {
-  for (auto id : permanent_slices_) {
-    SliceInfo &info = slices_[to_tuple(id)];
-    if (!info.is_permanent) {
-      continue;
-    }
-    info.is_permanent = false;
-    if (info.opened_idx) {
-      lru_.emplace(info.opened_idx, id);
-    }
+  std::vector<ArchiveLruPolicy::Key> keys;
+  keys.reserve(ids.size());
+  for (const auto &id : ids) {
+    keys.push_back(to_tuple(id));
   }
-  permanent_slices_ = std::move(ids);
-  for (auto id : permanent_slices_) {
-    SliceInfo &info = slices_[to_tuple(id)];
-    if (info.is_permanent) {
-      continue;
-    }
-    info.is_permanent = true;
-    if (info.opened_idx) {
-      lru_.erase(info.opened_idx);
-    }
-  }
-  enforce_limit();
-}
-
-void ArchiveLru::enforce_limit() {
-  // Keeping one evictable slice open defeats the configured limit when a
-  // slice contains hundreds of per-shard package files. The currently written
-  // normal/key/temp slices are tracked as permanent and are never present in
-  // lru_, so it is safe to close the last non-permanent slice as well.
-  while (total_files_ > max_total_files_ && !lru_.empty()) {
-    auto it = lru_.begin();
-    auto it2 = slices_.find(to_tuple(it->second));
-    lru_.erase(it);
-    total_files_ -= it2->second.files_count;
-    td::actor::send_closure(it2->second.actor, &ArchiveSlice::close_files);
-    it2->second.opened_idx = 0;
-  }
+  close(policy_.set_permanent(keys, open_fds()));
 }
 
 }  // namespace validator

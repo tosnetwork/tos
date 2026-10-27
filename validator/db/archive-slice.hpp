@@ -24,6 +24,7 @@
 #include "td/db/RocksDb.h"
 #include "validator/interfaces/db.h"
 
+#include "archive-lru-policy.h"
 #include "catch-up.hpp"
 #include "fileref.hpp"
 #include "package.hpp"
@@ -254,29 +255,33 @@ class ArchiveSlice : public td::actor::Actor {
   static const size_t ESTIMATED_DB_OPEN_FILES = 5;
 };
 
+// Process-wide view of the archive LRU for a reader that admits its own reads
+// against a descriptor budget (see ArchiveLruPolicy). Zero until an LRU with a
+// descriptor budget has decided anything.
+struct ArchiveLruReaderState {
+  td::uint64 largest_slice_files = 0;
+  td::uint64 retention_withdrawn = 0;
+  bool over_budget = false;
+};
+ArchiveLruReaderState archive_lru_reader_state();
+
 class ArchiveLru : public td::actor::Actor {
  public:
-  explicit ArchiveLru(size_t max_total_files) : max_total_files_(max_total_files) {
-    CHECK(max_total_files_ > 0);
+  explicit ArchiveLru(size_t max_total_files) : ArchiveLru(ArchiveLruPolicy::Options{max_total_files, 0, 0}) {
+  }
+  explicit ArchiveLru(ArchiveLruPolicy::Options options) : policy_(options) {
+    CHECK(options.max_total_files > 0);
   }
   void on_query(td::actor::ActorId<ArchiveSlice> slice, PackageId id, size_t files_count);
   void set_permanent_slices(std::vector<PackageId> ids);
+  void rebalance();
 
  private:
-  size_t current_idx_ = 1;
-  struct SliceInfo {
-    td::actor::ActorId<ArchiveSlice> actor;
-    size_t files_count = 0;
-    size_t opened_idx = 0;  // 0 - not opened
-    bool is_permanent = false;
-  };
-  std::map<std::tuple<td::uint32, bool, bool>, SliceInfo> slices_;
-  std::map<size_t, PackageId> lru_;
-  size_t total_files_ = 0;
-  size_t max_total_files_ = 0;
-  std::vector<PackageId> permanent_slices_;
+  ArchiveLruPolicy policy_;
+  std::map<ArchiveLruPolicy::Key, td::actor::ActorId<ArchiveSlice>> actors_;
 
-  void enforce_limit();
+  std::int64_t open_fds() const;
+  void close(const std::vector<ArchiveLruPolicy::Key> &keys);
 };
 
 }  // namespace validator

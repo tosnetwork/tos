@@ -172,6 +172,9 @@ class RootDb : public Db {
   void run_gc(Ref<MasterchainState> shard_client_state, UnixTime gc_ts, double archive_ttl) override;
 
   void try_catch_up_with_primary(CatchUpMode mode, td::Promise<td::Unit> promise);
+  // A reader refusing reads for lack of descriptors asks the archive LRU to
+  // decide again with a fresh count (see ArchiveLruPolicy).
+  void rebalance_archive_lru();
 
   void get_max_masterchain_seqno(bool force_catch_up, td::Promise<BlockSeqno> promise);
   void get_min_masterchain_seqno(td::Promise<BlockSeqno> promise);

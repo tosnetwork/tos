@@ -6,6 +6,8 @@ set(VALIDATOR_DB_SOURCE
   db/archiver.hpp
   db/archive-manager.cpp
   db/archive-manager.hpp
+  db/archive-lru-policy.cpp
+  db/archive-lru-policy.h
   db/archive-slice.cpp
   db/archive-slice.hpp
   db/celldb.cpp

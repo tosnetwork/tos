@@ -193,6 +193,12 @@ struct ValidatorManagerOptions : public td::CntObject {
   virtual bool get_celldb_in_memory() const = 0;
   virtual bool get_celldb_v2() const = 0;
   virtual size_t get_max_open_archive_files() const = 0;
+  // A sequential archive reader keeps this many most recently used slices open
+  // past the open-files target; 0 (the default) never does.
+  virtual size_t get_archive_lru_keep_most_recent() const = 0;
+  // Descriptors the process may hold before the archive LRU withdraws that
+  // retention; 0 (the default) means no budget.
+  virtual size_t get_archive_descriptor_budget() const = 0;
   virtual double get_archive_preload_period() const = 0;
   virtual bool get_disable_rocksdb_stats() const = 0;
   // Deletion of retired validator consensus-DB directories. Default TRUE: every
@@ -255,6 +261,8 @@ struct ValidatorManagerOptions : public td::CntObject {
   virtual void set_session_logs_file(std::string f) = 0;
   virtual void set_celldb_compress_depth(td::uint32 value) = 0;
   virtual void set_max_open_archive_files(size_t value) = 0;
+  virtual void set_archive_lru_keep_most_recent(size_t value) = 0;
+  virtual void set_archive_descriptor_budget(size_t value) = 0;
   virtual void set_archive_preload_period(double value) = 0;
   virtual void set_disable_rocksdb_stats(bool value) = 0;
   virtual void set_validator_consensus_cleanup_enabled(bool value) = 0;

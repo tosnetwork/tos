@@ -505,6 +505,10 @@ void RootDb::get_min_masterchain_seqno(td::Promise<BlockSeqno> promise) {
   td::actor::send_closure(archive_db_, &ArchiveManager::get_min_masterchain_seqno, std::move(promise));
 }
 
+void RootDb::rebalance_archive_lru() {
+  td::actor::send_closure(archive_db_, &ArchiveManager::rebalance_archive_lru);
+}
+
 void RootDb::try_catch_up_with_primary(CatchUpMode mode, td::Promise<td::Unit> promise) {
   if (mode_ != td::DbOpenMode::db_secondary || mode == CatchUpMode::None) {
     promise.set_value(td::Unit());

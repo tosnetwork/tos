@@ -131,11 +131,43 @@ releases the request actor and its connection. Writes are not retried by the RPC
 adapter. Saturation/backend failure returns an RPC error; it does not fall back
 to an embedded validator index.
 
-Replay holds one source request at a time, at most 4096 shard identities per
-masterchain interval, and configures an archive LRU eviction target of 128 files. This is not a hard
-ceiling: the newest normal/key/temp slices are permanent, and package files open
-before eviction. File descriptors and transient usage can exceed this target. Its cell block cache
-is configured to 128 MiB. A source request that fails to finish within 30 seconds
+Replay holds one source request at a time and at most 4096 shard identities per
+masterchain interval. Its cell block cache is configured to 128 MiB.
+
+Source archive slices are opened on demand and closed by an LRU. A slice weighs
+its package files plus five for its index database. Older slices of a long chain
+often weigh several hundred. A validator closes the least recently used slices,
+including the one just read, whenever the total exceeds its target. A reader
+that reads one old slice many times in a row would then reopen that slice's
+database for every read. The index therefore:
+
+- keeps the `--archive-keep-recent` (default 2, at most 16) most recently read
+  slices open past the target. Two cover a replay that crosses a slice boundary
+  and alternates between the two slices; 0 restores the validator behaviour.
+- closes other non-permanent slices above `--archive-open-files` (default 128,
+  the target).
+- never closes the newest normal, key and temp slices: they are written by the
+  node and are permanent.
+
+The descriptors held are therefore the permanent slices, plus up to
+`--archive-keep-recent` retained slices, plus the target, plus the index's own
+databases and sockets. Because that sum depends on slice sizes, it is bounded by
+a descriptor budget:
+
+1. At startup the soft `RLIMIT_NOFILE` is raised to the hard limit. The service
+   exits with status 2 when the limit is below `--archive-open-files` + 1280.
+2. The budget is the limit less 256. While the descriptors the process holds,
+   plus room for its largest slice (at least 512), exceed the budget, retained
+   and other non-permanent slices are closed oldest first.
+3. A source read is refused when the same check fails on the actual descriptor
+   count. Each refusal also asks the LRU to decide again on a fresh count. Replay
+   then pauses at its durable cursor and retries after five seconds; it never
+   runs out of descriptors inside the database layer.
+4. If the permanent slices alone exceed the budget, replay stays paused and logs
+   `source read refused` until the limit is raised.
+
+`--archive-keep-recent 0 --archive-open-files 1024` is the control setting for
+comparing against a larger target without retention. A source request that fails to finish within 30 seconds
 stops the service with exit status 1; restart resumes its durable cursor.
 Cancellation refuses new source requests, clears undispatched mailbox entries and
 stops the current bounded candidate drain without losing its persisted work. The existing bounded token

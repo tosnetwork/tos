@@ -20,3 +20,4 @@ json-rpc-import-fee
 test-out-msg-queue-limits
 test-validate-query-rules
 boc-compression
+test-archive-lru

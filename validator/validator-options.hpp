@@ -125,6 +125,12 @@ struct ValidatorManagerOptionsImpl : public ValidatorManagerOptions {
   size_t get_max_open_archive_files() const override {
     return max_open_archive_files_;
   }
+  size_t get_archive_lru_keep_most_recent() const override {
+    return archive_lru_keep_most_recent_;
+  }
+  size_t get_archive_descriptor_budget() const override {
+    return archive_descriptor_budget_;
+  }
   double get_archive_preload_period() const override {
     return archive_preload_period_;
   }
@@ -272,6 +278,12 @@ struct ValidatorManagerOptionsImpl : public ValidatorManagerOptions {
   void set_max_open_archive_files(size_t value) override {
     max_open_archive_files_ = value;
   }
+  void set_archive_lru_keep_most_recent(size_t value) override {
+    archive_lru_keep_most_recent_ = value;
+  }
+  void set_archive_descriptor_budget(size_t value) override {
+    archive_descriptor_budget_ = value;
+  }
   void set_archive_preload_period(double value) override {
     archive_preload_period_ = value;
   }
@@ -409,6 +421,8 @@ struct ValidatorManagerOptionsImpl : public ValidatorManagerOptions {
   std::string session_logs_file_;
   td::uint32 celldb_compress_depth_{0};
   size_t max_open_archive_files_ = ValidatorManagerOptions::default_max_open_archive_files();
+  size_t archive_lru_keep_most_recent_ = 0;
+  size_t archive_descriptor_budget_ = 0;
   double archive_preload_period_ = 0.0;
   bool disable_rocksdb_stats_;
   // On by default; see ValidatorManagerOptions::get_validator_consensus_cleanup_enabled.

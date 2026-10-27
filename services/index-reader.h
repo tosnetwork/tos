@@ -22,6 +22,19 @@ class IndexReader {
   }
   template <class T, class F>
   td::Result<T> query(F call) {
+    if (admission_) {
+      auto admitted = admission_();
+      if (admitted.is_error()) {
+        refused_.fetch_add(1, std::memory_order_relaxed);
+        std::lock_guard<std::mutex> lock(mutex_);
+        // Fire and forget: the archive LRU decides again on a fresh count,
+        // so the refusal clears once slices it can close have closed.
+        if (!pending_ && !stop_requested.load()) {
+          pending_ = [db = db_] { td::actor::send_closure(db, &validator::RootDb::rebalance_archive_lru); };
+        }
+        return admitted;
+      }
+    }
     struct Reply {
       std::mutex mutex;
       std::condition_variable cv;
@@ -85,6 +98,13 @@ class IndexReader {
   bool timed_out() const {
     return timed_out_.load();
   }
+  // Checked before every source request; an error refuses the request.
+  void set_admission(std::function<td::Status()> admission) {
+    admission_ = std::move(admission);
+  }
+  uint64_t refused() const {
+    return refused_.load(std::memory_order_relaxed);
+  }
 
  private:
   td::actor::ActorId<validator::RootDb> db_;
@@ -92,6 +112,8 @@ class IndexReader {
   std::mutex mutex_;
   std::atomic<bool> timed_out_{false};
   std::function<void()> pending_;
+  std::function<td::Status()> admission_;
+  std::atomic<uint64_t> refused_{0};
 };
 
 // Extract only wc=0 heads from a committed masterchain block; the head ids
