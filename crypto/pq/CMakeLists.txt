@@ -57,6 +57,14 @@ target_include_directories(tos_pq_consensus_signer PUBLIC "${CMAKE_CURRENT_SOURC
 target_compile_definitions(tos_pq_consensus_signer PRIVATE MLD_CONFIG_FILE="consensus-signer-config.h")
 target_link_libraries(tos_pq_consensus_signer PUBLIC tos_pq_consensus PRIVATE tos_pq_consensus_signer_backend OpenSSL::Crypto)
 
+# The engine's exclusive hold on the consensus key files it signs with. Only the engine
+# links it; the operator tools that read a seed offline do not take the lock.
+add_library(tos_pq_consensus_key_lock STATIC consensus-key-lock.cpp)
+set_target_properties(tos_pq_consensus_key_lock PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_compile_features(tos_pq_consensus_key_lock PUBLIC cxx_std_20)
+target_include_directories(tos_pq_consensus_key_lock PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
+target_link_libraries(tos_pq_consensus_key_lock PUBLIC tos_pq_consensus_signer)
+
 # The same signer for tests that need to move the key deadline's wall clock. Only this
 # library is compiled with TOS_PQ_SIGNER_TEST_CLOCK; the production library above has no
 # clock seam, which the pq-signer-no-test-clock test (root CMakeLists.txt) checks.
@@ -83,9 +91,10 @@ if(TARGET tl_api)
   # The tool includes OpenSSL headers itself; link the same OpenSSL::Crypto target so its
   # headers come from the library it links, not from whatever the system search path holds.
   target_link_libraries(tos-pq-consensus-key PRIVATE tos_pq_consensus_signer tos_pq_consensus tl_api tdutils
-                        OpenSSL::Crypto)
+                        tos_signing_ledger OpenSSL::Crypto)
   # A directory flush that fails after the rename is reached through this shim, which
-  # makes fsync on a directory fail while the test asks it to. LD_PRELOAD is a Linux
+  # makes fsync on a directory fail while the test asks it to; the same shim makes a
+  # directory read fail, for the genesis ceremony's session check. LD_PRELOAD is a Linux
   # mechanism here; elsewhere the test runs without that one case. The shim is test-only:
   # it is outside the default build and is built through all-tests (or by name), never
   # as part of the tool.
@@ -119,6 +128,12 @@ add_executable(test-consensus-key-file "${PQ_TEST_DIR}/consensus-key-file-test.c
 set_target_properties(test-consensus-key-file PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 target_link_libraries(test-consensus-key-file PRIVATE tos_pq_consensus_signer tos_pq_consensus)
 add_test(NAME consensus-key-file COMMAND test-consensus-key-file)
+
+# Two processes cannot both hold one consensus key file; one process shares its own lock.
+add_executable(test-consensus-key-lock "${PQ_TEST_DIR}/consensus-key-lock-test.cpp")
+set_target_properties(test-consensus-key-lock PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+target_link_libraries(test-consensus-key-lock PRIVATE tos_pq_consensus_key_lock tos_pq_consensus_signer tos_pq_consensus)
+add_test(NAME consensus-key-lock COMMAND test-consensus-key-lock)
 
 add_executable(test-pq-signer "${PQ_TEST_DIR}/pq-signer-test.cpp")
 set_target_properties(test-pq-signer PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)

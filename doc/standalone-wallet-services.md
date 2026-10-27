@@ -90,6 +90,36 @@ Missing or pruned blocks pause replay at its durable cursor; they never cause a
 skip. Restore the archive before restarting replay. Historical shard *states*
 are not required: pending token candidates use current shard states.
 
+### Preparing the source node
+
+A node that joins the network the default way starts at the newest persistent
+state, so its database never contains masterchain block 1, and validators no
+longer serve the oldest archive packages to a node that asks for them. Such a
+node can serve liteserver reads but cannot be the source of a fresh index. The
+index then logs `source has no masterchain block 1` every few seconds and reports
+`"initialized": false` in `/readyz`; nothing is indexed and nothing is lost.
+
+To prepare a source for a full replay:
+
+1. Obtain archive packages from masterchain block 0 up to some later block: a
+   copy of another node's `<db>/archive/packages/` tree (`arch*/archive.*.pack`
+   and `key*/`), with a SHA-256 manifest from its operator. Verify every file
+   against the manifest, for example `sha256sum -c packages.SHA256SUMS`.
+2. Create a **fresh** node database and place the packages under `<db>/import/`,
+   keeping their directory layout. The node imports every `archive.*.pack` it
+   finds there at startup. Packages are checked block by block from the zero
+   state as they are applied, so a damaged or foreign package stops the import
+   and is not accepted.
+3. Start the node with `--skip-key-sync`, so it starts from the zero state in
+   the global configuration instead of the newest persistent state. Set
+   `--archive-ttl` to cover the chain's age and the planned rebuild time. The
+   network supplies the blocks after the last imported package.
+4. Start the index against this database. It records its first checkpoint once
+   block 1 has been applied. Check progress with `GET /readyz` (below).
+
+An existing node that joined at a persistent state cannot be converted in place:
+its database starts after block 1. Prepare a second node as above.
+
 Index entries and a per-block replay receipt commit in one WAL-synced batch.
 After all blocks in an interval are committed, another atomic batch advances the
 masterchain cursor and removes that interval's receipts. SIGKILL between these
@@ -99,7 +129,28 @@ Neither shutdown method permanently marks the new index as needing a rebuild.
 
 `GET /readyz` on the index service reports its replay cursor, observed source tip
 and whether block replay has caught up (HTTP 200/503). Readiness expires if the
-source has not been checked successfully for five seconds. Token and NFT responses
+source has not been checked successfully for five seconds. The fields are:
+
+- `masterchain_seqno`: the durable replay cursor. It is read from the index
+  before the service listens, so the first answer after a restart already shows
+  the cursor replay resumes from. It is `null` only for an index that has never
+  recorded a checkpoint (a fresh directory), and `initialized` is then `false`.
+- `source_seqno`: the source tip, `null` until the source has been read once.
+- `caught_up`: whether replay has reached the observed tip.
+- `replay_stats` (readiness only): cumulative counters since the process
+  started: `mc_blocks`, `shard_blocks`, `source_requests` and `source_wait_ms`
+  (every source read, including dispatch), `catch_ups` and `catch_up_ms`
+  (observing the source tip), `walk_ms` (indexing shard blocks, including their
+  write batches), `commits` and `commit_ms` (checkpoint advances), `drains` and
+  `drain_ms` (token-candidate passes), `archive_slice_opens` and
+  `archive_slice_closes` (source archive slice databases opened and closed), and
+  `open_fds` (descriptors held, sampled once a second). The service also logs
+  the change of these counters every 60 seconds (`replay stats over 60s: ...`).
+  A count of slice opens close to the count of source requests means the source
+  archive slices are being reopened for each read.
+
+`index_state.replay` in token and NFT responses carries the same fields except
+`replay_stats`. Token and NFT responses
 retain `index_state` and add `index_state.replay`. Pending, parked, lost or
 unfinished candidates still make `index_state.complete` false independently of
 block catch-up. Ownership discovery covers accounts nominated by transactions;

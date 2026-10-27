@@ -16,6 +16,10 @@ on:
       - 'tosctl/**'
       - 'test/pq-falcon512/**'
       - 'test/falcon-auth/**'
+      - 'test/executor-parity/**'
+      - 'test/rel02/run_rust.py'
+      - 'test/auth-extensions/native.py'
+      - 'test/auth-extensions/cells.py'
       - 'test/tostester/**'
       - 'tools/falcon/**'
       - 'scripts/localnet-jsonrpc.py'
@@ -108,11 +112,14 @@ jobs:
           python test/falcon-auth/test_wallet.py --library build-falcon/libtos_falcon_offline.so --artifacts artifacts
           python test/falcon-auth/receipt_e2e.py --build build --library build-falcon/libtos_falcon_offline.so \
             --driver tosctl/src/target/release/examples/pq-tx-parity --out artifacts/receipts
+          python test/falcon-auth/test_linked_roots.py --artifacts artifacts
           python test/falcon-auth/receipt_mutations.py --build build --library build-falcon/libtos_falcon_offline.so \
             --artifacts artifacts --out artifacts/receipts/controls
           python test/falcon-auth/provider_mutations.py --library build-falcon/libtos_falcon_offline.so --artifacts artifacts
           python test/falcon-auth/tx_parity.py --build build --signer build-falcon/libtos_falcon_offline.so \
             --driver tosctl/src/target/release/examples/pq-tx-parity --out artifacts/transactions
+          python test/executor-parity/test_module_roots.py --family module-falcon \
+            --artifacts artifacts/transactions --emulator build/emulator/libemulator.so
       - name: Sensitive compiled mutations and unchanged ML-DSA authorization
         run: |
           python test/pq-falcon512/mutations.py --build build --artifacts artifacts \
@@ -165,12 +172,18 @@ jobs:
     needs: conformance
     runs-on: ubuntu-24.04
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           pattern: falcon-*
           path: results
       - name: Require architecture-independent execution and module identities
         run: |
+          python3 test/falcon-auth/linked_roots.py --compare results/falcon-x86_64 results/falcon-aarch64
+          python3 test/falcon-auth/linked_roots.py --module-family module-falcon --compare results/falcon-x86_64/transactions results/falcon-aarch64/transactions
           for name in commit.txt official/official-kat.json vectors.json cpp.tsv rust.tsv scenarios.tsv module-func.boc module-tol.boc wallet-func.boc wallet-tol.boc agent.boc transactions/emulator.tsv transactions/rust.tsv two-hop-cpp.tsv two-hop-rust.tsv receipts/receipt-e2e.json receipts/receipt-cpp.tsv receipts/receipt-rust.tsv; do
             cmp "results/falcon-x86_64/$name" "results/falcon-aarch64/$name"
           done

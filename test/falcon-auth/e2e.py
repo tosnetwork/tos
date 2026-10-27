@@ -23,10 +23,12 @@ sys.path.insert(0, str(ROOT / "test/auth-extensions"))
 
 import test_auth as framework
 from build_contracts import build_contracts
+from linked_roots import Capture
+from linked_roots import CaptureEmulator as Emulator
+from linked_roots import export as export_roots
 from native import (
     GLOBAL_ID,
     NOW,
-    Emulator,
     account_data,
     active_account,
     external,
@@ -85,7 +87,7 @@ def require_result(result, expected, before, shard, label, commits=False):
     return details
 
 
-def capture_transaction(name, prior, message, lt, result, now=NOW):
+def capture_transaction(name, prior, message, emulator, result):
     import tx_parity
 
     name = str(len(TRANSACTIONS)) + ":" + name
@@ -94,7 +96,7 @@ def capture_transaction(name, prior, message, lt, result, now=NOW):
     row = tx_parity.transcript(
         name, result["details"], from_boc(result["transaction"]), after.refs[0]
     )
-    TRANSACTIONS.append((name, prior.refs[0], message, lt, now, row))
+    TRANSACTIONS.append(Capture.from_send(name, prior, message, emulator, result, row))
 
 
 def record(label, phase, result, shard):
@@ -154,7 +156,15 @@ class Module:
         prior = self.shard
         result = self.e.send(self.shard, msg)
         if result["success"] and not ext and self.version >= 16:
-            capture_transaction(label + "/module", prior, msg, self.e.lt, result)
+            capture_transaction(label + "/module", prior, msg, self.e, result)
+        else:
+            self.e.exclude(
+                "external call"
+                if ext
+                else "non-v16 call"
+                if self.version != 16
+                else "unaccepted call"
+            )
         if result["success"]:
             self.shard = from_boc(result["shard_account"])
         require_result(result, expected, before, self.shard, label)
@@ -178,7 +188,6 @@ class Pair:
         a.shard = active_account(a.address, CODES[impl], data, BALANCE)
         self.label = f"{language}/{impl}/wc{workchain}"
         self.limit_injection = False
-        self.now = NOW
 
     def close(self):
         self.module.close()
@@ -200,7 +209,11 @@ class Pair:
         prior = a.shard
         result = a.e.send(a.shard, message)
         if result["success"] and not self.limit_injection:
-            capture_transaction(label + "/account", prior, message, a.e.lt, result, self.now)
+            capture_transaction(label + "/account", prior, message, a.e, result)
+        else:
+            a.e.exclude(
+                "destination-limit injection" if self.limit_injection else "unaccepted call"
+            )
         if result["success"]:
             a.shard = from_boc(result["shard_account"])
         details = require_result(result, expected, before, a.shard, label, commits=commits)
@@ -290,6 +303,7 @@ class FalconAuthTests(unittest.TestCase):
                 self.addCleanup(legacy.close)
                 wrong = deployment(a.address, CODES[a.impl], legacy.data)
                 rejected = a.e.send(empty, wrong)
+                a.e.exclude("wrong-StateInit assertion only")
                 self.assertTrue(rejected["success"])
                 self.assertTrue(rejected["details"]["skipped"])
                 self.assertNotIn("gas", rejected["details"])
@@ -304,7 +318,7 @@ class FalconAuthTests(unittest.TestCase):
                     owner.shard = from_boc(result["shard_account"])
                     self.assertEqual(account_data(owner.shard)[0].hash, data.hash)
                     capture_transaction(
-                        self.label(p, f"genesis-{mode}-{label}"), empty, message, owner.e.lt, result
+                        self.label(p, f"genesis-{mode}-{label}"), empty, message, owner.e, result
                     )
                 self.assertEqual(a.auth(), (mode, 1, 0, m.address[1]))
                 req = a.request()
@@ -414,8 +428,7 @@ class FalconAuthTests(unittest.TestCase):
             body = m.signed(a)
             _, messages = m.call(body, label=self.label(p, "before-expiry"))
             self.assertEqual(len(messages), 1)
-            a.e.lib.transaction_emulator_set_unixtime(a.e.ptr, NOW + 601)
-            p.now = NOW + 601
+            a.e.set_time(NOW + 601)
             p.deliver(messages[0], 1805, self.label(p, "expired-in-transit"))
             self.assertEqual(a.auth()[2], 0)
 
@@ -637,6 +650,7 @@ class FalconAuthTests(unittest.TestCase):
             # CRITICAL: the message the account actually produced, not a rebuilt one.
             m.e.lt = max(m.e.lt, wire["created_lt"])
             returned = m.e.send(m.shard, bounces[0])
+            m.e.exclude("bounce-return assertion only")
             self.assertTrue(returned["success"], "the module must accept its own bounce")
             m.shard = from_boc(returned["shard_account"])
             details = returned.get("details", returned)
@@ -718,14 +732,8 @@ def main():
         from native import config
 
         cases = out / "two-hop-scenarios.tsv"
-        cases.write_text(
-            "\n".join(
-                "\t".join([name, str(now), str(lt), prior.boc().hex(), message.boc().hex(), "-"])
-                for name, prior, message, lt, now, row in TRANSACTIONS
-            )
-            + "\n"
-        )
-        left = [row for name, prior, message, lt, now, row in TRANSACTIONS]
+        cases.write_text("\n".join(row.old_input() for row in TRANSACTIONS) + "\n")
+        left = [row.legacy for row in TRANSACTIONS]
         (out / "two-hop-cpp.tsv").write_text("\n".join(left) + "\n")
         fixture = from_boc((ROOT / "tosctl/src/executor/real_boc/default_config.boc").read_bytes())
         cfg = out / "two-hop-config.boc"
@@ -741,6 +749,7 @@ def main():
         if len(left) < 100 or left != right:
             different = [(x, y) for x, y in zip(left, right) if x != y]
             raise AssertionError("two-hop executor divergence: " + repr(different[:3]))
+        export_roots(TRANSACTIONS, args.driver, cfg, out, "two-hop", not (args.case or args.module))
         (out / "two-hop-parity.json").write_text(
             json.dumps(
                 dict(

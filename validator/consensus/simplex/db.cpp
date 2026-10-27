@@ -44,6 +44,34 @@ using db_candidateResolver_notarCertRef = tl_object_ptr<db_candidateResolver_not
 
 namespace {
 
+// A vote as the decision the own-decision log records, and back.
+signing::Decision decision_of(const Vote& vote) {
+  return std::visit(
+      td::overloaded(
+          [](const NotarizeVote& v) {
+            return signing::Decision{signing::DecisionKind::Notarize, v.id.slot, v.id.hash};
+          },
+          [](const FinalizeVote& v) {
+            return signing::Decision{signing::DecisionKind::Finalize, v.id.slot, v.id.hash};
+          },
+          [](const SkipVote& v) { return signing::Decision{signing::DecisionKind::Skip, v.slot, Bits256::zero()}; }),
+      vote.vote);
+}
+
+std::optional<Vote> vote_of(const signing::Decision& decision) {
+  switch (decision.kind) {
+    case signing::DecisionKind::Notarize:
+      return Vote{NotarizeVote{CandidateId{decision.slot, decision.candidate}}};
+    case signing::DecisionKind::Finalize:
+      return Vote{FinalizeVote{CandidateId{decision.slot, decision.candidate}}};
+    case signing::DecisionKind::Skip:
+      return Vote{SkipVote{decision.slot}};
+    case signing::DecisionKind::LeaderWindow:
+      return std::nullopt;
+  }
+  return std::nullopt;
+}
+
 // What a stored record claims to be, readable even when the rest of it -- or the key it is
 // filed under -- cannot be parsed, as long as the record is still enumerated at all. The
 // leading constructor tag is the last thing to go, and it is enough to tell a record of
@@ -109,6 +137,39 @@ class DbImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo<B
       co_return td::Status::Error(cancelled, "Vote was already casted");
     }
 
+    // With an own-decision log the decision is recorded there, not in the journal: the log
+    // is the authority on what this node decided, and refuses a decision that conflicts
+    // with one it already holds. The journal keeps only the signed bytes.
+    if (const auto& admission = owning_bus()->signing_admission) {
+      tos::health::WorkObservation storage(tos::health::Work::IntentStorage);
+      if (admission->signing_stopped()) {
+        storage.finish(tos::health::WorkResult::Failure);
+        co_return td::Status::Error(PSTRING() << "the decision log admits no signing in this session: "
+                                              << (admission->fenced ? admission->reason : "it stopped recording"));
+      }
+      auto reserved =
+          co_await td::actor::ask(admission->log, &signing::SessionDecisionLog::reserve, decision_of(event->vote))
+              .wrap();
+      if (reserved.is_error()) {
+        storage.finish(tos::health::WorkResult::Failure);
+        co_return reserved.move_as_error_prefix("the decision log did not answer: ");
+      }
+      switch (reserved.ok().result) {
+        case signing::ReserveResult::Reserved:
+        case signing::ReserveResult::AlreadyDecided:
+          storage.finish(tos::health::WorkResult::Success);
+          co_return reserved.ok().seq;
+        case signing::ReserveResult::Conflict:
+          storage.finish(tos::health::WorkResult::Failure);
+          co_return td::Status::Error(PSTRING() << "the decision log refused " << event->vote
+                                                << ": it conflicts with a decision already recorded");
+        case signing::ReserveResult::Failed:
+          storage.finish(tos::health::WorkResult::Failure);
+          co_return td::Status::Error(PSTRING() << "the decision log did not record " << event->vote);
+      }
+      co_return td::Status::Error("unreachable");
+    }
+
     const auto seqno = next_seqno_++;
     auto key = create_serialize_tl_object<tl::db_key_vote>(hash);
     auto value = create_serialize_tl_object<tl::db_ourVoteIntent>(std::move(vote), seqno);
@@ -164,6 +225,12 @@ class DbImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo<B
     co_return result;
   }
 
+  // This write is what keeps a restarted leader from announcing a window it already led and
+  // signing a second, different candidate for one of its slots. The ordering that protects it
+  // lives in the bus: listeners of a request, Consensus among them, see LeaderWindowObserved
+  // only after this processor succeeded, so candidate generation starts after the write is
+  // durable. Keep LeaderWindowObserved a request processed here; see
+  // test/validator/consensus/test-candidate-window-durability.cpp.
   template <>
   td::actor::Task<> process(BusHandle, std::shared_ptr<LeaderWindowObserved> event) {
     auto window = event->start_slot / owning_bus()->config.slots_per_leader_window;
@@ -374,6 +441,62 @@ class DbImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo<B
     std::sort(our_votes.begin(), our_votes.end());
     if (!our_votes.empty()) {
       next_seqno_ = our_votes.back().seqno + 1;
+    }
+
+    // With an own-decision log, the log is the authority on what this node decided and the
+    // journal only keeps the bytes of what it signed. The two check each other here, before
+    // any actor that signs starts.
+    if (const auto& admission = bus.signing_admission) {
+      bus.bootstrap_certificates = std::move(certs);
+      if (admission->fenced) {
+        bus.vote_journal_failure = "the decision log does not admit this session: " + admission->reason;
+        LOG(ERROR) << "Simplex db: " << bus.vote_journal_failure;
+        return;
+      }
+      if (!bus.vote_journal_failure.empty()) {
+        admission->stopped->store(true, std::memory_order_release);
+        return;
+      }
+      // Every vote the journal holds must be a decision the log holds. One the log lacks
+      // means the log lost it (an older or replaced log beside a surviving journal) or the
+      // journal is not this log's: the session is fenced, never repaired by dropping either.
+      for (const auto& v : our_votes) {
+        const auto decision = decision_of(v.vote);
+        const bool recorded = std::any_of(admission->decisions.begin(), admission->decisions.end(),
+                                          [&](const auto& entry) { return entry.second == decision; });
+        if (!recorded) {
+          bus.vote_journal_failure = PSTRING() << "the journal holds " << v.vote
+                                               << ", which the decision log does not; the log lost it or the "
+                                                  "journal is not its own";
+          LOG(ERROR) << "Simplex db: " << bus.vote_journal_failure;
+          // Nothing in this session may sign: no vote, and no candidate either.
+          admission->stopped->store(true, std::memory_order_release);
+          return;
+        }
+      }
+      // What to restore: every vote decision in the log, with the bytes the journal kept for
+      // it, or none. A decision whose bytes are gone is signed again: the same decision,
+      // which peers treat as the same vote.
+      for (const auto& [seq, decision] : admission->decisions) {
+        auto vote = vote_of(decision);
+        if (!vote.has_value()) {
+          continue;
+        }
+        td::BufferSlice signature;
+        for (auto& v : our_votes) {
+          if (!v.signature.empty() && decision_of(v.vote) == decision) {
+            signature = std::move(v.signature);
+            break;
+          }
+        }
+        // Known as cast, so the same vote is not requested afresh; a vote the journal also
+        // held is already in the set, which is what a false answer means here.
+        auto hash = sha256_bits256(serialize_tl_object(vote->to_tl(), true));
+        const bool newly_known = saved_vote_hashes_.insert(vote->referenced_slot(), hash);
+        static_cast<void>(newly_known);
+        bus.bootstrap_votes.push_back(BootstrapVote{std::move(*vote), seq, std::move(signature)});
+      }
+      return;
     }
 
     bus.bootstrap_certificates = std::move(certs);

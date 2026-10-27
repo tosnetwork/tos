@@ -94,26 +94,31 @@ enum class SeedFileRefusal {
   read_failed,
 };
 
-// Read the seed at `path`, or say which protection refused it. A symlink is refused
-// rather than followed: the path an operator configured is the file that is read.
-inline std::optional<SeedFileRefusal> read_protected_seed(std::string_view path, SeedBuffer& seed) noexcept {
+// Opens `path` the way a seed is read: read-only, close-on-exec, not following a symlink,
+// and without blocking, so a FIFO at the path is refused by the checks below rather than
+// waited on until something writes to it. Returns -1 when it cannot be opened.
+inline int open_seed_file(std::string_view path) noexcept {
   const std::string name(path);
-  // Opened without blocking, so a FIFO at the path is refused below rather than waited on
-  // until something writes to it. Blocking is restored once the file is known to be
-  // regular, where it makes no difference anyway.
-  Descriptor fd(::open(name.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK));
-  if (!fd.valid()) {
-    return SeedFileRefusal::cannot_open;
-  }
+  return ::open(name.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
+}
+
+// Check the file open at `fd` (from open_seed_file) against every protection and read its
+// seed through that same descriptor, or say which protection refused it. `path` is only
+// where the file was opened from, for the directory check; the file judged and read is the
+// one the descriptor refers to, whatever the path names by now.
+inline std::optional<SeedFileRefusal> read_protected_seed_from(int fd, std::string_view path,
+                                                               SeedBuffer& seed) noexcept {
   struct stat st{};
-  if (::fstat(fd.get(), &st) != 0) {
+  if (::fstat(fd, &st) != 0) {
     return SeedFileRefusal::cannot_open;
   }
   if (!S_ISREG(st.st_mode)) {
     return SeedFileRefusal::not_a_regular_file;
   }
-  const int flags = ::fcntl(fd.get(), F_GETFL);
-  if (flags < 0 || ::fcntl(fd.get(), F_SETFL, flags & ~O_NONBLOCK) != 0) {
+  // Blocking is restored once the file is known to be regular, where it makes no
+  // difference anyway.
+  const int flags = ::fcntl(fd, F_GETFL);
+  if (flags < 0 || ::fcntl(fd, F_SETFL, flags & ~O_NONBLOCK) != 0) {
     return SeedFileRefusal::cannot_open;
   }
   if (st.st_uid != ::geteuid()) {
@@ -129,9 +134,12 @@ inline std::optional<SeedFileRefusal> read_protected_seed(std::string_view path,
     return SeedFileRefusal::wrong_size;
   }
 
+  // Positioned reads from the start, so the result does not depend on where the
+  // descriptor's offset happens to be.
   std::size_t read_so_far = 0;
   while (read_so_far < seed.bytes.size()) {
-    const auto n = ::read(fd.get(), seed.bytes.data() + read_so_far, seed.bytes.size() - read_so_far);
+    const auto n =
+        ::pread(fd, seed.bytes.data() + read_so_far, seed.bytes.size() - read_so_far, static_cast<off_t>(read_so_far));
     if (n < 0 && errno == EINTR) {
       continue;
     }
@@ -141,6 +149,16 @@ inline std::optional<SeedFileRefusal> read_protected_seed(std::string_view path,
     read_so_far += static_cast<std::size_t>(n);
   }
   return std::nullopt;
+}
+
+// Read the seed at `path`, or say which protection refused it. A symlink is refused
+// rather than followed: the path an operator configured is the file that is read.
+inline std::optional<SeedFileRefusal> read_protected_seed(std::string_view path, SeedBuffer& seed) noexcept {
+  Descriptor fd(open_seed_file(path));
+  if (!fd.valid()) {
+    return SeedFileRefusal::cannot_open;
+  }
+  return read_protected_seed_from(fd.get(), path, seed);
 }
 
 }  // namespace tos::pq::detail

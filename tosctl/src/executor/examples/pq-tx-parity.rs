@@ -5,6 +5,8 @@
 //! were only ever compared as an action-list hash. This runs the same account
 //! and the same inbound message through the Rust executor and prints what the
 //! transaction did, for the emulator's transcript to be compared against.
+mod pq_tx_roots;
+
 use std::{env, fs};
 
 use chain_block::{
@@ -22,8 +24,12 @@ fn main() -> anyhow::Result<()> {
     let args: Vec<_> = env::args().collect();
     anyhow::ensure!(
         (3..=5).contains(&args.len()),
-        "usage: pq-tx-parity config.boc scenarios.tsv [min-global-version] [--details]"
+        "usage: pq-tx-parity config.boc scenarios.tsv [min-global-version] [--details|--roots]"
     );
+    if args.len() == 5 && args[4] == "--roots" {
+        anyhow::ensure!(args[3] == "16", "root mode requires version argument 16");
+        return pq_tx_roots::run(&args[1], &args[2]);
+    }
     let detailed = args.len() == 5;
     anyhow::ensure!(!detailed || args[4] == "--details", "unknown output option");
     // The scenarios decide which version they need. The post-quantum ones need the

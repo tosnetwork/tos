@@ -13,6 +13,7 @@ archive-prune
 archive-prune-held-reader-shutdown
 archive-descriptor-gate
 archive-secondary-open-retry
+archive-reader-no-package-sync
 streaming-boc-cell-bounds
 streaming-boc-valid-ondisk
 state-spool-amplification

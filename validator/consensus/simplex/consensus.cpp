@@ -220,6 +220,21 @@ class ConsensusImpl : public td::actor::SpawnsWith<Bus>, public td::actor::Conne
   template <>
   void handle(BusHandle, std::shared_ptr<const CandidateReceived> event) {
     td::uint32 slot_idx = event->candidate->id.slot;
+    // The slot is already finalized, so there is nothing to vote on. The candidate may still
+    // be the one the finalized chain needs and that the state resolver is trying to fetch, so
+    // while the candidate resolver retains the slot it is stored there and nothing else is
+    // done with it. This is decided before the too-new check: a finalized slot is never too
+    // new, while the leader window can lag the finalized frontier, before Start (the window
+    // is announced only then) and after a frontier jump until LeaderWindowObserved follows.
+    const td::uint32 first_nonfinalized_slot = state_->tracked_slots_interval().begin;
+    if (slot_idx < first_nonfinalized_slot) {
+      if (slot_idx >= late_window_begin(first_nonfinalized_slot, retained_slots_)) {
+        store_late_candidate(event->candidate).start().detach();
+      } else {
+        LOG(DEBUG) << "Dropping a candidate for slot " << slot_idx << ", finalized and outside the retained window";
+      }
+      return;
+    }
     td::uint32 first_too_new_slot = (current_window_ + params_.max_leader_window_desync + 1) * slots_per_leader_window_;
     if (slot_idx >= first_too_new_slot) {
       LOG(WARNING) << "Dropping too new candidate from " << event->candidate->leader << " : slot=" << slot_idx
@@ -228,15 +243,7 @@ class ConsensusImpl : public td::actor::SpawnsWith<Bus>, public td::actor::Conne
     }
     auto slot = state_->slot_at(slot_idx);
     if (!slot.has_value()) {
-      // The slot is already finalized, so there is nothing to vote on. The candidate may
-      // still be the one the finalized chain needs and that the state resolver is trying
-      // to fetch, so while the candidate resolver retains the slot it is stored there and
-      // nothing else is done with it.
-      if (slot_idx >= late_window_begin(state_->tracked_slots_interval().begin, retained_slots_)) {
-        store_late_candidate(event->candidate).start().detach();
-      } else {
-        LOG(DEBUG) << "Dropping a candidate for slot " << slot_idx << ", finalized and outside the retained window";
-      }
+      // slot_at() is empty only for a finalized slot, handled above on this same actor.
       return;
     }
     if (slot->state->voted_notar) {

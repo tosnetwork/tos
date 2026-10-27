@@ -278,6 +278,13 @@ target_link_libraries(validator PRIVATE validator-common validator-db tos_valida
 target_link_libraries(validator PUBLIC tos_pq_consensus_signer tos_pq_consensus tos_mldsa44)
 target_link_libraries(validator PUBLIC validator-measurement)
 
+# The own-decision log, a library of its own so that the operator key tool can write the
+# genesis ceremony's ledger with the same code the node reads it with.
+add_library(tos_signing_ledger STATIC consensus/signing-ledger.cpp consensus/signing-ledger.h)
+target_include_directories(tos_signing_ledger PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/consensus)
+target_link_libraries(tos_signing_ledger PUBLIC tdactor tdutils tos_crypto_core)
+target_link_libraries(validator PUBLIC tos_signing_ledger)
+
 target_link_libraries(validator-disk PRIVATE validator-common validator-db)
 # Its manager holds post-quantum consensus custody, which consults the signer's registry of
 # retired keys; consumers inherit the dependency from here.

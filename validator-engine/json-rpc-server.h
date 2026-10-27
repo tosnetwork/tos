@@ -195,6 +195,8 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
     bool index_only = false;
     std::function<bool()> index_ready;
     std::function<std::string()> index_progress;
+    // The /readyz body of an index-only server; index_progress when unset.
+    std::function<std::string()> index_readyz_body;
     bool readonly = false;           // disable sendBoc/sendBocReturnHash/sendQuery/submitSignedTransaction
     // Access-Control-Allow-Origin value; empty emits no header at all,
     // which is the default. A wildcard lets any page the operator visits

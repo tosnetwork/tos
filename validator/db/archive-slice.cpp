@@ -362,6 +362,9 @@ td::actor::Task<> ArchiveSlice::add_block(BlockHandle handle,
   if (destroyed_) {
     co_return td::Status::Error(ErrorCode::notready, td::Slice(kPackageGarbageCollected));
   }
+  if (mode_ != td::DbOpenMode::db_primary) {
+    co_return td::Status::Error(ErrorCode::error, td::Slice(kArchiveSliceReadOnly));
+  }
   CHECK(!key_blocks_only_);
   CHECK(!temp_);
   before_query();
@@ -410,6 +413,10 @@ void ArchiveSlice::add_file(BlockHandle handle, FileReference ref_id, td::Buffer
                             td::Promise<td::Unit> promise) {
   if (destroyed_) {
     promise.set_error(td::Status::Error(ErrorCode::notready, td::Slice(kPackageGarbageCollected)));
+    return;
+  }
+  if (mode_ != td::DbOpenMode::db_primary) {
+    promise.set_error(td::Status::Error(ErrorCode::error, td::Slice(kArchiveSliceReadOnly)));
     return;
   }
   before_query();
@@ -736,9 +743,23 @@ void ArchiveSlice::get_archive_id(BlockSeqno masterchain_seqno, ShardIdFull shar
   }
 }
 
+namespace {
+std::atomic<td::uint64> g_archive_slice_opens{0};
+std::atomic<td::uint64> g_archive_slice_closes{0};
+}  // namespace
+
+td::uint64 archive_slice_opens() {
+  return g_archive_slice_opens.load(std::memory_order_relaxed);
+}
+
+td::uint64 archive_slice_closes() {
+  return g_archive_slice_closes.load(std::memory_order_relaxed);
+}
+
 void ArchiveSlice::before_query() {
   if (status_ == st_closed) {
     LOG(DEBUG) << "Opening archive slice " << db_path_;
+    g_archive_slice_opens.fetch_add(1, std::memory_order_relaxed);
     td::RocksDbOptions db_options;
     db_options.statistics = statistics_.rocksdb_statistics;
     switch (mode_) {
@@ -991,6 +1012,7 @@ void ArchiveSlice::do_close() {
   commit_transaction_now();
   CHECK(status_ != st_closed && active_queries_ == 0);
   LOG(DEBUG) << "Closing archive slice " << db_path_;
+  g_archive_slice_closes.fetch_add(1, std::memory_order_relaxed);
   status_ = st_closed;
   kv_ = {};
   if (statistics_.pack_statistics) {
@@ -1173,6 +1195,10 @@ void ArchiveSlice::set_async_mode(bool mode, td::Promise<td::Unit> promise) {
   ig.add_promise(std::move(promise));
 
   for (auto &p : packages_) {
+    // Finalized packages, and every package of a reader, have no writer.
+    if (p->writer.empty()) {
+      continue;
+    }
     td::actor::send_closure(p->writer, &PackageWriter::set_async_mode, mode, ig.get_promise());
   }
 }
@@ -1286,8 +1312,14 @@ bool ArchiveSlice::add_package(td::uint32 seqno, ShardIdFull shard_prefix, td::u
   if (version >= 1 && mode_ == td::DbOpenMode::db_primary) {
     pack->truncate(size).ensure();
   }
-  auto writer = td::actor::create_actor<PackageWriter>(PSTRING() << "writer." << td::PathView(path).file_name(), pack,
-                                                       async_mode_, statistics_.pack_statistics);
+  // Only the primary writes packages. A reader keeps the package open for
+  // reads but gets no writer: a writer syncs its package when it is torn
+  // down, and a reader must never sync the files of the node it reads.
+  td::actor::ActorOwn<PackageWriter> writer;
+  if (mode_ == td::DbOpenMode::db_primary) {
+    writer = td::actor::create_actor<PackageWriter>(PSTRING() << "writer." << td::PathView(path).file_name(), pack,
+                                                    async_mode_, statistics_.pack_statistics);
+  }
   packages_.push_back(
       std::make_unique<PackageInfo>(std::move(pack), std::move(writer), seqno, shard_prefix, path, idx, version));
   return true;

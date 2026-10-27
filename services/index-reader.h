@@ -3,9 +3,11 @@
 
 #include <condition_variable>
 #include <mutex>
+#include <optional>
 
 #include "validator/db/rootdb.hpp"
 
+#include "index-progress.h"
 #include "service-common.h"
 
 namespace tos::services {
@@ -17,8 +19,8 @@ namespace tos::services {
 class IndexReader {
  public:
   explicit IndexReader(td::actor::ActorId<validator::RootDb> db,
-                       std::chrono::milliseconds timeout = std::chrono::seconds(30))
-      : db_(db), timeout_(timeout) {
+                       std::chrono::milliseconds timeout = std::chrono::seconds(30), ReplayStats* stats = nullptr)
+      : db_(db), timeout_(timeout), stats_(stats) {
   }
   template <class T, class F>
   td::Result<T> query(F call) {
@@ -59,6 +61,11 @@ class IndexReader {
                reply->cv.notify_one();
              }));
       };
+    }
+    std::optional<StageTimer> waited;
+    if (stats_ != nullptr) {
+      stats_->source_requests.fetch_add(1, std::memory_order_relaxed);
+      waited.emplace(stats_->source_wait_us);
     }
     std::unique_lock<std::mutex> lock(reply->mutex);
     auto deadline = std::chrono::steady_clock::now() + timeout_;
@@ -109,6 +116,7 @@ class IndexReader {
  private:
   td::actor::ActorId<validator::RootDb> db_;
   std::chrono::milliseconds timeout_;
+  ReplayStats* stats_;
   std::mutex mutex_;
   std::atomic<bool> timed_out_{false};
   std::function<void()> pending_;

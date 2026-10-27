@@ -97,6 +97,7 @@
 #include "interfaces/validator-manager.h"
 #include "pq/consensus-config-json.h"
 #include "pq/consensus-key-file.h"
+#include "pq/consensus-key-lock.h"
 #include "pq/consensus-key-schedule.h"
 #include "pq/consensus-node-config.h"
 #include "pq/pq-elector.h"
@@ -1715,6 +1716,11 @@ td::Status ValidatorEngine::load_global_config() {
   if (test_crash_cleanup_before_erase_) {
     validator_options_.write().set_test_crash_cleanup_before_erase(true);
   }
+  if (signing_decision_log_) {
+    validator_options_.write().set_signing_decision_log_enabled(true);
+    LOG(WARNING) << "signing decision log: enabled (experimental, local networks only; the node refuses to start "
+                    "on any other network)";
+  }
   if (ext_message_work_profile_) {
     TRY_STATUS(validator_options_.write().set_ext_message_work_profile(ext_message_work_profile_.value()));
   }
@@ -2576,16 +2582,15 @@ void ValidatorEngine::start_validator() {
     std::vector<tos::pq::ConsensusKeyWindow> schedule;
     for (const auto index : load) {
       const auto &key = configured[index];
-      auto loaded = tos::pq::load_consensus_key(key.key_file);
-      if (std::holds_alternative<tos::pq::ConsensusKeyFileError>(loaded)) {
-        LOG(FATAL) << "post-quantum consensus key " << key.key_file << ": "
-                   << tos::pq::describe(std::get<tos::pq::ConsensusKeyFileError>(loaded));
-      }
-      // The window's end is the store's own signing deadline: from then on it signs
+      // Held under the key file's exclusive lock for as long as any signer built from it
+      // exists, so a second engine on another database root cannot sign with the same
+      // file. The window's end is the store's own signing deadline: from then on it signs
       // nothing, wherever it is held.
-      std::get<tos::pq::ValidatorPQKeyStore>(loaded).set_expire_at(key.expire_at);
-      auto store = std::make_shared<const tos::pq::ValidatorPQKeyStore>(
-          std::move(std::get<tos::pq::ValidatorPQKeyStore>(loaded)));
+      auto loaded = tos::pq::load_locked_consensus_key(key.key_file, key.expire_at);
+      if (std::holds_alternative<std::string>(loaded)) {
+        LOG(FATAL) << "post-quantum consensus key " << key.key_file << ": " << std::get<std::string>(loaded);
+      }
+      auto store = std::get<std::shared_ptr<const tos::pq::ValidatorPQKeyStore>>(std::move(loaded));
       schedule.push_back(tos::pq::ConsensusKeyWindow{store->consensus_key().key_id, key.valid_from, key.expire_at});
       // The identity of the key is what the key derives, never what the configuration
       // says: a node cannot claim to hold a key it does not. Logged in the form
@@ -4946,15 +4951,14 @@ void ValidatorEngine::run_control_query(tos::tos_api::engine_validator_addPqCons
     refuse(std::get<std::string>(plan));
     return;
   }
-  // Under the same rules as at startup, as the user the node runs as.
-  auto loaded = tos::pq::load_consensus_key(file);
-  if (std::holds_alternative<tos::pq::ConsensusKeyFileError>(loaded)) {
-    refuse(file + ": " + tos::pq::describe(std::get<tos::pq::ConsensusKeyFileError>(loaded)));
+  // Under the same rules as at startup, as the user the node runs as, and under the key
+  // file's exclusive lock. A refusal below drops the store, and with it the lock.
+  auto loaded = tos::pq::load_locked_consensus_key(file, key.expire_at);
+  if (std::holds_alternative<std::string>(loaded)) {
+    refuse(file + ": " + std::get<std::string>(loaded));
     return;
   }
-  std::get<tos::pq::ValidatorPQKeyStore>(loaded).set_expire_at(key.expire_at);
-  auto store =
-      std::make_shared<const tos::pq::ValidatorPQKeyStore>(std::move(std::get<tos::pq::ValidatorPQKeyStore>(loaded)));
+  auto store = std::get<std::shared_ptr<const tos::pq::ValidatorPQKeyStore>>(std::move(loaded));
   const auto key_id = tos::validator::PqConsensusCustody::key_id_of(*store);
   const auto validator_id = config_.pq_consensus->validator_id;
   if (pq_custody_.held_keys(validator_id).count(key_id) != 0) {
@@ -6766,6 +6770,14 @@ int main(int argc, char *argv[]) {
                  acts.push_back(
                      [&x]() { td::actor::send_closure(x, &ValidatorEngine::set_validator_consensus_cleanup, false); });
                });
+  p.add_option(
+      '\0', "signing-decision-log",
+      "EXPERIMENTAL, LOCAL NETWORKS ONLY: record each own consensus decision in a synced log before "
+      "signing it, and fence sessions whose earlier signing is unknown (doc/signing-decision-log.md). "
+      "Default off. The node refuses to start with it on any network whose global id is not 3",
+      [&]() {
+        acts.push_back([&x]() { td::actor::send_closure(x, &ValidatorEngine::set_signing_decision_log, true); });
+      });
   p.add_option('\0', "test-consensus-cleanup-crash-before-erase",
                "TEST-ONLY FAULT INJECTION: after a consensus directory is confirmed deleted but before its durable "
                "cleanup record is erased, exit abruptly to reproduce the mid-flight crash state. Default off; never "

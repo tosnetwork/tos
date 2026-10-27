@@ -24,6 +24,7 @@
 #include <cstdio>
 #include <cstring>
 #include <ctime>
+#include <dirent.h>
 #include <openssl/crypto.h>
 #include <string>
 #include <string_view>
@@ -34,6 +35,7 @@
 #include "consensus-key-file.h"
 #include "consensus-node-config.h"
 #include "seed-file.h"
+#include "signing-ledger.h"
 
 namespace {
 
@@ -126,6 +128,8 @@ int usage() {
       "       tos-pq-consensus-key add-node-key DB_ROOT KEYFILE VALID_FROM [EXPIRE_AT]\n"
       "       tos-pq-consensus-key remove-node-key DB_ROOT KEYFILE|KEY_ID\n"
       "       tos-pq-consensus-key list-node-keys DB_ROOT\n"
+      "       tos-pq-consensus-key init-signing-ledger --genesis-ceremony DB_ROOT VALIDATOR_ID\n"
+      "                                            ZEROSTATE_ROOT_HASH ZEROSTATE_FILE_HASH\n"
       "\n"
       "generate, import and show print the identity the validator set records for the\n"
       "key. Only export prints the key itself.\n"
@@ -156,6 +160,13 @@ int usage() {
       "validator set lists it. remove-node-key cannot see validator sets: it refuses only\n"
       "the last key and a removal that would leave only expired keys.\n"
       "list-node-keys reads without the lock and works beside a running node.\n"
+      "\n"
+      "init-signing-ledger --genesis-ceremony creates the node's signing ledger as one\n"
+      "that asserts the identity has never signed, starting at the zerostate whose root\n"
+      "and file hashes are given (the global config's validator.zero_state). It is safe\n"
+      "only for a fresh identity created for this zerostate: never run it for a key that\n"
+      "has signed anything. It takes the configuration lock of a stopped node, and\n"
+      "refuses when a signing ledger or any consensus session directory is already there.\n"
       "\n"
       "Rotating the consensus key from A to B without downtime. The node\n"
       "holds A and B together: A keeps signing for every validator set that lists A,\n"
@@ -433,7 +444,122 @@ int list_node_keys(int argc, char** argv) {
 
 }  // namespace
 
+namespace {
+
+bool parse_hash(std::string_view text, td::Bits256& out) {
+  if (text.size() != 64) {
+    return false;
+  }
+  for (std::size_t i = 0; i < 32; ++i) {
+    int value = 0;
+    for (std::size_t j = 0; j < 2; ++j) {
+      const char c = text[2 * i + j];
+      int digit = -1;
+      if (c >= '0' && c <= '9') {
+        digit = c - '0';
+      } else if (c >= 'a' && c <= 'f') {
+        digit = c - 'a' + 10;
+      } else if (c >= 'A' && c <= 'F') {
+        digit = c - 'A' + 10;
+      }
+      if (digit < 0) {
+        return false;
+      }
+      value = value * 16 + digit;
+    }
+    out.data()[i] = static_cast<unsigned char>(value);
+  }
+  return true;
+}
+
+// Empty when `consensus` provably holds no consensus session directory: it does not exist,
+// or every entry of it was read and none is a session. Otherwise the reason to refuse. A
+// directory that cannot be opened or read to its end is not proof of anything.
+std::string refuse_unless_no_sessions(const std::string& consensus) {
+  DIR* dir = ::opendir(consensus.c_str());
+  if (dir == nullptr) {
+    if (errno == ENOENT) {
+      return {};
+    }
+    return consensus + ": cannot be inspected for consensus session directories (" + std::strerror(errno) +
+           "); refusing, since this node may have run validator groups";
+  }
+  std::string refused;
+  while (true) {
+    errno = 0;
+    const auto* entry = ::readdir(dir);
+    if (entry == nullptr) {
+      if (errno != 0) {
+        refused = consensus + ": cannot be read to its end (" + std::strerror(errno) +
+                  "); refusing, since this node may have run validator groups";
+      }
+      break;
+    }
+    if (std::strncmp(entry->d_name, "consensus.", 10) == 0) {
+      refused = consensus +
+                " holds consensus session directories: this node has run validator groups, so it is not a fresh "
+                "identity at genesis";
+      break;
+    }
+  }
+  ::closedir(dir);
+  return refused;
+}
+
+// The genesis ceremony: a complete signing ledger, asserting that this node has never
+// signed, whose history starts at the zerostate. Safe only for a fresh identity created for
+// this zerostate; see the genesis runbook. It refuses wherever the node may have signed:
+// with a ledger already there, or any consensus session directory.
+int init_signing_ledger(int argc, char** argv) {
+  if (argc != 7 || std::string_view(argv[2]) != "--genesis-ceremony") {
+    return usage();
+  }
+  const std::string db_root = argv[3];
+  std::array<std::uint8_t, 32> validator_id{};
+  std::string why;
+  if (!tos::pq::parse_validator_id(argv[4], validator_id, why)) {
+    std::fprintf(stderr, "%s\n", why.c_str());
+    return 1;
+  }
+  td::Bits256 root_hash;
+  td::Bits256 file_hash;
+  if (!parse_hash(argv[5], root_hash) || !parse_hash(argv[6], file_hash)) {
+    std::fprintf(stderr, "the zerostate root and file hashes are 64 hexadecimal digits each\n");
+    return 1;
+  }
+  const int lock = tos::pq::lock_stopped_node(db_root, why);
+  if (lock < 0) {
+    std::fprintf(stderr, "%s\n", why.c_str());
+    return 1;
+  }
+  const std::string consensus = db_root + "/consensus";
+  if (auto refused = refuse_unless_no_sessions(consensus); !refused.empty()) {
+    ::close(lock);
+    std::fprintf(stderr, "%s\n", refused.c_str());
+    return 1;
+  }
+  td::Bits256 validator;
+  std::memcpy(validator.data(), validator_id.data(), 32);
+  const tos::BlockIdExt zerostate{tos::masterchainId, tos::shardIdAll, 0, root_hash, file_hash};
+  auto created = tos::validator::consensus::signing::create_ledger(
+      tos::validator::consensus::signing::ledger_dir(db_root), validator,
+      tos::validator::consensus::signing::default_file_ops(), zerostate);
+  ::close(lock);
+  if (created.is_error()) {
+    std::fprintf(stderr, "%s\n", created.message().c_str());
+    return 1;
+  }
+  std::fprintf(stdout, "signing ledger %s created complete at the zerostate %s\n",
+               tos::validator::consensus::signing::ledger_dir(db_root).c_str(), zerostate.to_str().c_str());
+  return 0;
+}
+
+}  // namespace
+
 int main(int argc, char** argv) {
+  if (argc >= 2 && std::string_view(argv[1]) == "init-signing-ledger") {
+    return init_signing_ledger(argc, argv);
+  }
   if (argc >= 2 && std::string_view(argv[1]) == "bind-node") {
     return bind_node(argc, argv);
   }
