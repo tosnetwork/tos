@@ -17,9 +17,10 @@ inline constexpr unsigned kMaxSimulationConfigDepth = 1023;
 
 enum class SimulationConfigError { Input = 1, Proof = 2, Incomplete = 3, Resource = 4, Unsupported = 5 };
 
-// Inspect every reachable representation before deduplication, so a pruned
-// representation cannot hide behind an already visited hash. Only the config
-// subtree is checked: unrelated masterchain state may remain pruned.
+// Inspect every distinct loaded DataCell representation, retaining its identity
+// until the scan ends. Equal commitments do not imply equal representations.
+// The cell budget counts these identities, including separately allocated equal
+// values. Only the config subtree is checked: unrelated state may remain pruned.
 td::Result<std::size_t> check_complete_simulation_config(const td::Ref<vm::Cell>& root);
 
 // The caller must first authenticate target from its anchor/live proof chain.

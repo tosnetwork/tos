@@ -166,6 +166,23 @@ int main(int argc, char** argv) {
         partial_dict.ok()->get_hash(0) == dict.get_root_cell()->get_hash(0) &&
             refused(detail::check_complete_simulation_config(partial_dict.ok()),
                     detail::SimulationConfigError::Incomplete));
+  auto hidden_virtual = partial_dict.ok()->virtualize(0);
+  auto representations = vm::CellBuilder().store_ref(hidden_virtual).store_ref(dict.get_root_cell()).finalize();
+  check("duplicate-ordinary-partial-representation",
+        refused(detail::check_complete_simulation_config(representations), detail::SimulationConfigError::Incomplete));
+  auto wrapped_full = vm::CellBuilder().store_ref(dict.get_root_cell()).finalize();
+  auto wrapped_partial = vm::CellBuilder().store_ref(hidden_virtual).finalize();
+  auto wrapped_representations = vm::CellBuilder().store_ref(wrapped_partial).store_ref(wrapped_full).finalize();
+  check("nested-ordinary-partial-representation",
+        wrapped_partial->get_hash() == wrapped_full->get_hash() &&
+            refused(detail::check_complete_simulation_config(wrapped_representations),
+                    detail::SimulationConfigError::Incomplete));
+  auto duplicate_leaf = vm::CellBuilder().store_long(1, 32).finalize();
+  auto distinct = vm::CellBuilder().store_ref(leaf).store_ref(duplicate_leaf).finalize();
+  auto distinct_count = detail::check_complete_simulation_config(distinct);
+  check("distinct-loaded-representations-charged", duplicate_leaf.get() != leaf.get() &&
+                                                       duplicate_leaf->get_hash() == leaf->get_hash() &&
+                                                       distinct_count.is_ok() && distinct_count.ok() == 3);
   auto deep = leaf;
   for (unsigned i = 0; i < detail::kMaxSimulationConfigDepth; ++i) {
     deep = vm::CellBuilder().store_ref(deep).finalize();

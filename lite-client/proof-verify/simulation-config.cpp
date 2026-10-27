@@ -1,5 +1,5 @@
 /* Copyright 2026 TOS Blockchain Teams. SPDX-License-Identifier: LGPL-2.0-or-later */
-#include <unordered_set>
+#include <unordered_map>
 #include <vector>
 
 #include "block/check-proof.h"
@@ -38,7 +38,10 @@ td::Result<std::size_t> check_complete_simulation_config(const td::Ref<vm::Cell>
     if (root->get_depth() > kMaxSimulationConfigDepth) {
       return refuse(SimulationConfigError::Resource);
     }
-    std::unordered_set<vm::CellHash> visited;
+    // Commitments can coincide for complete and virtualized partial graphs,
+    // including ordinary parents with different underlying representations.
+    // Retain each loaded representation so its identity cannot be reused.
+    std::unordered_map<const vm::DataCell*, td::Ref<vm::DataCell>> visited;
     std::vector<td::Ref<vm::Cell>> pending{root};
     while (!pending.empty()) {
       auto cell = std::move(pending.back());
@@ -55,13 +58,13 @@ td::Result<std::size_t> check_complete_simulation_config(const td::Ref<vm::Cell>
       if (type != vm::Cell::SpecialType::Ordinary && type != vm::Cell::SpecialType::Library) {
         return refuse(SimulationConfigError::Unsupported);
       }
-      if (visited.count(cell->get_hash())) {
+      if (visited.count(data.get())) {
         continue;
       }
       if (visited.size() == kMaxSimulationConfigCells) {
         return refuse(SimulationConfigError::Resource);
       }
-      visited.insert(cell->get_hash());
+      visited.emplace(data.get(), data);
       for (unsigned i = 0; i < data->size_refs(); ++i) {
         pending.push_back(data->get_ref(i));
       }
