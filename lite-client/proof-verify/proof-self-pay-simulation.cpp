@@ -2,6 +2,7 @@
 #include <exception>
 #include <limits>
 
+#include "common/global-version.h"
 #include "vm/cells/CellSlice.h"
 
 #include "self-pay-simulation.h"
@@ -10,8 +11,14 @@
 
 namespace tos::proofverify {
 namespace {
-td::Status refuse() {
-  return td::Status::Error("self-pay simulation proof or input refused");
+td::Status refuse(SelfPaySimulationError error = SelfPaySimulationError::Proof) {
+  return self_pay_simulation_error(error);
+}
+td::Status account_error(const td::Status& error) {
+  using E = detail::SimulationAccountError;
+  return refuse(error.code() == static_cast<int>(E::Resource)  ? SelfPaySimulationError::Resource
+                : error.code() == static_cast<int>(E::Context) ? SelfPaySimulationError::Context
+                                                               : SelfPaySimulationError::Proof);
 }
 }  // namespace
 
@@ -21,15 +28,19 @@ td::Result<ProofBoundSelfPaySimulation> simulate_self_pay(const Anchor& anchor, 
                                                           td::Slice message_boc) {
   try {
     if (request.mode != Mode::Live || !request.account || !request.get_methods.empty() ||
-        !request.config_params.empty() || material.config || !material.exec_config || !material.account ||
-        policy.now <= 0 || policy.now > std::numeric_limits<td::uint32>::max() || material.libraries ||
-        request_bytes.empty() || request_bytes.size() > (1u << 20) || preflight_wallet_boc(message_boc).is_error() ||
-        material.chain.size() > kMaxChainResponses || material.descent.size() > kMaxDescentLinks) {
-      return refuse();
+        !request.config_params.empty() || material.config || material.libraries || !state ||
+        state->anchor.id != anchor.id || state->anchor.kind != anchor.kind || policy.now <= 0 ||
+        policy.now > std::numeric_limits<td::uint32>::max() || request_bytes.empty()) {
+      return refuse(SelfPaySimulationError::Input);
     }
-    if (detail::preflight_simulation_account_reply(material.account->as_slice()).is_error()) {
+    if (request_bytes.size() > (1u << 20) || material.chain.size() > kMaxChainResponses ||
+        material.descent.size() > kMaxDescentLinks)
+      return refuse(SelfPaySimulationError::Resource);
+    if (!material.exec_config || !material.account)
       return refuse();
-    }
+    auto account_preflight = detail::preflight_simulation_account_reply(material.account->as_slice());
+    if (account_preflight.is_error())
+      return account_error(account_preflight);
     // Bound the borrowed input aggregate before making any read-path copies.
     std::size_t remaining = kMaxFileBytes;
     auto charge = [&](const td::BufferSlice& bytes) {
@@ -41,17 +52,17 @@ td::Result<ProofBoundSelfPaySimulation> simulate_self_pay(const Anchor& anchor, 
     };
     for (const auto* bytes : {&material.masterchain_info, &material.config, &material.account, &material.exec_config}) {
       if (*bytes && !charge(**bytes)) {
-        return refuse();
+        return refuse(SelfPaySimulationError::Resource);
       }
     }
     for (const auto& bytes : material.chain) {
       if (!charge(bytes)) {
-        return refuse();
+        return refuse(SelfPaySimulationError::Resource);
       }
     }
     for (const auto& bytes : material.descent) {
       if (!charge(bytes)) {
-        return refuse();
+        return refuse(SelfPaySimulationError::Resource);
       }
     }
     Material read_material;
@@ -79,7 +90,9 @@ td::Result<ProofBoundSelfPaySimulation> simulate_self_pay(const Anchor& anchor, 
     }
     auto extracted = detail::extract_simulation_config(authenticated.ok().target, material.exec_config->as_slice());
     if (extracted.is_error()) {
-      return refuse();
+      return refuse(extracted.error().code() == static_cast<int>(detail::SimulationConfigError::Resource)
+                        ? SelfPaySimulationError::Resource
+                        : SelfPaySimulationError::Proof);
     }
     std::shared_ptr<block::ConfigInfo> config{extracted.move_as_ok()};
     auto global_id = config->get_config_param(19);
@@ -94,20 +107,34 @@ td::Result<ProofBoundSelfPaySimulation> simulate_self_pay(const Anchor& anchor, 
     if (!material.account || !authenticated.ok().account) {
       return refuse();
     }
+    // Bind a structurally valid exact message before classifying unsupported
+    // versions. No execution context is invented for those versions.
+    TRY_RESULT(message, detail::bind_simulation_message(*request.account, message_boc));
+    if (config->get_global_version() < 16 || config->get_global_version() > tos::SUPPORTED_VERSION ||
+        request.account->workchain != 0) {
+      SelfPaySimulation estimate;
+      estimate.authenticated_balance = authenticated.ok().account->exists ? authenticated.ok().account->balance : "0";
+      estimate.message_bytes_hash = message.bytes_hash;
+      estimate.message_root_hash = message.root_hash;
+      estimate.config_root_hash = td::Bits256{config->get_root_cell()->get_hash().bits()};
+      return ProofBoundSelfPaySimulation{authenticated.move_as_ok(), std::move(estimate)};
+    }
     auto prepared = detail::prepare_simulation_account(authenticated.ok().target, *request.account,
                                                        material.account->as_slice(), *config, policy.now);
-    if (prepared.is_error() || prepared.ok().existed != authenticated.ok().account->exists ||
+    if (prepared.is_error())
+      return account_error(prepared.error());
+    if (prepared.ok().existed != authenticated.ok().account->exists ||
         (prepared.ok().existed && prepared.ok().authenticated_state_hash != authenticated.ok().account->state_hash)) {
       return refuse();
     }
     auto previous_blocks = config->get_prev_blocks_info();
     if (previous_blocks.is_error()) {
-      return refuse();
+      return refuse(SelfPaySimulationError::Context);
     }
     auto execution = detail::execute_prepared_self_pay(authenticated.ok().target, config, previous_blocks.move_as_ok(),
                                                        prepared.move_as_ok(), message_boc);
     if (execution.is_error()) {
-      return refuse();
+      return execution.move_as_error();
     }
     return ProofBoundSelfPaySimulation{authenticated.move_as_ok(), execution.move_as_ok()};
   } catch (vm::VmError&) {
@@ -115,7 +142,7 @@ td::Result<ProofBoundSelfPaySimulation> simulate_self_pay(const Anchor& anchor, 
   } catch (vm::VmVirtError&) {
     return refuse();
   } catch (const std::exception&) {
-    return refuse();
+    return refuse(SelfPaySimulationError::Internal);
   }
 }
 

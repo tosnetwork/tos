@@ -16,7 +16,7 @@
 namespace tos::proofverify::detail {
 namespace {
 td::Status invalid() {
-  return td::Status::Error("self-pay simulation input refused");
+  return self_pay_simulation_error(SelfPaySimulationError::Input);
 }
 
 bool supported_code(const td::Ref<vm::Cell>& code) {
@@ -42,6 +42,42 @@ td::Result<td::Ref<vm::Cell>> message_init(td::Ref<vm::CellSlice> field) {
 }
 }  // namespace
 
+td::Result<BoundSimulationMessage> bind_simulation_message(const block::StdAddress& expected, td::Slice bytes) {
+  try {
+    auto preflight = preflight_wallet_boc(bytes);
+    if (preflight.is_error()) {
+      return self_pay_simulation_error(preflight.code() == static_cast<int>(WalletBocError::Resource)
+                                           ? SelfPaySimulationError::Resource
+                                           : SelfPaySimulationError::Input);
+    }
+    auto parsed = vm::std_boc_deserialize(bytes);
+    if (parsed.is_error())
+      return invalid();
+    auto message = parsed.move_as_ok();
+    auto complete = check_complete_simulation_config(message);
+    if (complete.is_error()) {
+      return self_pay_simulation_error(complete.error().code() == static_cast<int>(SimulationConfigError::Resource)
+                                           ? SelfPaySimulationError::Resource
+                                           : SelfPaySimulationError::Input);
+    }
+    block::gen::Message::Record record;
+    block::gen::CommonMsgInfo::Record_ext_in_msg_info external;
+    block::StdAddress destination;
+    if (!block::gen::t_Message_Any.validate_ref(65536, message) ||
+        !block::gen::t_Message_Any.cell_unpack(message, record) || !tlb::csr_unpack(record.info, external) ||
+        !block::tlb::t_MsgAddressInt.extract_std_address(external.dest, destination) ||
+        destination.workchain != expected.workchain || destination.addr != expected.addr)
+      return invalid();
+    td::Bits256 bytes_hash;
+    td::sha256(bytes, bytes_hash.as_slice());
+    return BoundSimulationMessage{message, bytes_hash, td::Bits256{message->get_hash().bits()}};
+  } catch (vm::VmError&) {
+    return invalid();
+  } catch (vm::VmVirtError&) {
+    return invalid();
+  }
+}
+
 td::Result<SelfPaySimulation> execute_prepared_self_pay(const tos::BlockIdExt& target,
                                                         std::shared_ptr<block::Config> config,
                                                         td::Ref<vm::Tuple> previous_blocks,
@@ -53,36 +89,26 @@ td::Result<SelfPaySimulation> execute_prepared_self_pay(const tos::BlockIdExt& t
       return invalid();
     }
     result.authenticated_balance = prepared.account.balance.tomis->to_dec_string();
-    if (preflight_wallet_boc(message_boc).is_error()) {
-      return invalid();
-    }
-    auto parsed_message = vm::std_boc_deserialize(message_boc);
-    if (parsed_message.is_error()) {
-      return invalid();
-    }
-    auto message = parsed_message.move_as_ok();
-    if (check_complete_simulation_config(message).is_error() ||
-        !block::gen::t_Message_Any.validate_ref(65536, message)) {
-      return invalid();
-    }
+    TRY_RESULT(bound, bind_simulation_message(block::StdAddress{prepared.account.workchain, prepared.account.addr},
+                                              message_boc));
+    auto message = std::move(bound.root);
     block::gen::Message::Record record;
-    block::gen::CommonMsgInfo::Record_ext_in_msg_info external;
-    block::StdAddress destination;
-    if (!block::gen::t_Message_Any.cell_unpack(message, record) || !tlb::csr_unpack(record.info, external) ||
-        !block::tlb::t_MsgAddressInt.extract_std_address(external.dest, destination) ||
-        destination.workchain != prepared.account.workchain || destination.addr != prepared.account.addr) {
-      return invalid();
+    if (!block::gen::t_Message_Any.cell_unpack(message, record)) {
+      return self_pay_simulation_error(SelfPaySimulationError::Internal);
     }
-    td::sha256(message_boc, result.message_bytes_hash.as_slice());
-    result.message_root_hash = td::Bits256{message->get_hash().bits()};
+    result.message_bytes_hash = bound.bytes_hash;
+    result.message_root_hash = bound.root_hash;
     result.config_root_hash = td::Bits256{config->get_root_cell()->get_hash().bits()};
     if (config->get_global_version() < 16 || config->get_global_version() > tos::SUPPORTED_VERSION ||
-        prepared.account.workchain != 0 || previous_blocks.is_null() || prepared.account.library.not_null() ||
-        prepared.context.estimated_time == 0 || prepared.context.estimated_transaction_lt == 0 ||
-        prepared.context.estimated_block_start_lt == 0 ||
+        prepared.account.workchain != 0 || prepared.account.library.not_null()) {
+      result.context.reset();
+      return result;
+    }
+    if (previous_blocks.is_null() || prepared.context.estimated_time == 0 ||
+        prepared.context.estimated_transaction_lt == 0 || prepared.context.estimated_block_start_lt == 0 ||
         prepared.context.estimated_transaction_lt - 1 != prepared.context.estimated_block_start_lt ||
         prepared.context.estimated_block_start_lt % block::Config::get_lt_align() != 0) {
-      return result;
+      return self_pay_simulation_error(SelfPaySimulationError::Context);
     }
     TRY_RESULT(init, message_init(record.init));
     if (init.not_null()) {
@@ -117,7 +143,7 @@ td::Result<SelfPaySimulation> execute_prepared_self_pay(const tos::BlockIdExt& t
     td::Bits256 seed;
     td::sha256(seed_input, seed.as_slice());
     if (seed.is_zero()) {
-      return result;
+      return self_pay_simulation_error(SelfPaySimulationError::Context);
     }
     result.simulation_seed = seed;
     emulator::TransactionEmulator emulator{std::move(config), 0};
@@ -135,8 +161,9 @@ td::Result<SelfPaySimulation> execute_prepared_self_pay(const tos::BlockIdExt& t
     if (executed.is_error()) {
       if (executed.error().code() == -701) {
         result.outcome = SimulationOutcome::ImportRejected;
+        return result;
       }
-      return result;
+      return self_pay_simulation_error(SelfPaySimulationError::Internal);
     }
     auto execution = executed.move_as_ok();
     if (auto* rejected = dynamic_cast<emulator::TransactionEmulator::EmulationExternalNotAccepted*>(execution.get())) {
@@ -147,30 +174,32 @@ td::Result<SelfPaySimulation> execute_prepared_self_pay(const tos::BlockIdExt& t
     }
     auto* success = dynamic_cast<emulator::TransactionEmulator::EmulationSuccess*>(execution.get());
     if (success == nullptr) {
-      return result;
+      return self_pay_simulation_error(SelfPaySimulationError::Internal);
     }
     auto serialized = vm::std_boc_serialize(success->transaction, 2);
     if (serialized.is_error()) {
-      return result;
+      return self_pay_simulation_error(SelfPaySimulationError::Internal);
     }
     auto decoded =
         verify_wallet_transaction(success->account.addr.as_slice(), prepared.context.estimated_transaction_lt,
                                   success->transaction->get_hash().as_slice(), serialized.ok().as_slice());
     if (decoded.is_error()) {
-      return result;
+      return self_pay_simulation_error(decoded.error().code() == static_cast<int>(WalletBocError::Resource)
+                                           ? SelfPaySimulationError::Resource
+                                           : SelfPaySimulationError::Internal);
     }
     result.transaction = SimulatedTransaction{decoded.move_as_ok(), success->account.balance.tomis->to_dec_string(),
                                               td::Bits256{success->account.total_state->get_hash().bits()}};
     result.outcome = SimulationOutcome::Executed;
     return result;
   } catch (vm::VmError&) {
-    return invalid();
+    return self_pay_simulation_error(SelfPaySimulationError::Internal);
   } catch (vm::VmVirtError&) {
-    return invalid();
+    return self_pay_simulation_error(SelfPaySimulationError::Internal);
   } catch (vm::CellBuilder::CellWriteError&) {
-    return invalid();
+    return self_pay_simulation_error(SelfPaySimulationError::Internal);
   } catch (vm::CellBuilder::CellCreateError&) {
-    return invalid();
+    return self_pay_simulation_error(SelfPaySimulationError::Internal);
   }
 }
 

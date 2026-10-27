@@ -94,15 +94,17 @@ int main(int argc, char** argv) {
                                     columns[0] == "pre-funded-deployment-2" || columns[0] == "primary" ||
                                     columns[0] == "rescue" || columns[5] != "-";
     const bool ok =
-        result.is_ok() &&
-        (expect_zero_seed_refusal
-             ? result.ok().outcome == pv::SimulationOutcome::Unsupported && !result.ok().transaction
-         : expected_execution
-             ? result.ok().outcome == pv::SimulationOutcome::Executed && result.ok().transaction.has_value() &&
-                   !result.ok().message_bytes_hash.is_zero() && !result.ok().simulation_seed.is_zero()
-             : result.ok().outcome == pv::SimulationOutcome::NotAccepted && !result.ok().transaction.has_value() &&
-                   result.ok().vm_exit_code.has_value() &&
-                   result.ok().vm_exit_code.value() == (columns[0].find("replay") != std::string::npos ? 1804 : 1808));
+        expect_zero_seed_refusal
+            ? result.is_error() && result.error().code() == static_cast<int>(pv::SelfPaySimulationError::Context)
+            : result.is_ok() &&
+                  (expected_execution
+                       ? result.ok().outcome == pv::SimulationOutcome::Executed &&
+                             result.ok().transaction.has_value() && !result.ok().message_bytes_hash.is_zero() &&
+                             !result.ok().simulation_seed.is_zero()
+                       : result.ok().outcome == pv::SimulationOutcome::NotAccepted &&
+                             !result.ok().transaction.has_value() && result.ok().vm_exit_code.has_value() &&
+                             result.ok().vm_exit_code.value() ==
+                                 (columns[0].find("replay") != std::string::npos ? 1804 : 1808));
     std::printf("SELF_PAY_SIMULATION_CASE %s %s outcome=%d\n", columns[0].c_str(), ok ? "PASS" : "FAIL",
                 result.is_ok() ? static_cast<int>(result.ok().outcome) : -1);
     failures += !ok;
@@ -234,10 +236,11 @@ int main(int argc, char** argv) {
       auto thaw = detail::execute_prepared_self_pay(tos::BlockIdExt{}, config, vm::make_tuple_ref(),
                                                     std::move(frozen_input), must(vm::std_boc_serialize(thaw_root, 2)));
       const bool thawed =
-          td::Bits256{current_init->get_hash().bits()} != address.addr && thaw.is_ok() &&
+          td::Bits256{current_init->get_hash().bits()} != address.addr &&
           (expect_zero_seed_refusal
-               ? thaw.ok().outcome == pv::SimulationOutcome::Unsupported && !thaw.ok().transaction
-               : thaw.ok().outcome == pv::SimulationOutcome::Executed && thaw.ok().transaction.has_value());
+               ? thaw.is_error() && thaw.error().code() == static_cast<int>(pv::SelfPaySimulationError::Context)
+               : thaw.is_ok() && thaw.ok().outcome == pv::SimulationOutcome::Executed &&
+                     thaw.ok().transaction.has_value());
       std::printf("SELF_PAY_SIMULATION_CASE frozen-current-state-init-not-birth %s\n", thawed ? "PASS" : "FAIL");
       failures += !thawed;
       block::gen::Account::Record_account empty_record;
@@ -265,10 +268,11 @@ int main(int argc, char** argv) {
       auto imported = detail::execute_prepared_self_pay(tos::BlockIdExt{}, config, vm::make_tuple_ref(),
                                                         std::move(empty_input), message);
       const bool import_refused =
-          imported.is_ok() && !imported.ok().transaction && !imported.ok().vm_exit_code &&
-          imported.ok().authenticated_balance == "0" &&
-          imported.ok().outcome ==
-              (expect_zero_seed_refusal ? pv::SimulationOutcome::Unsupported : pv::SimulationOutcome::ImportRejected);
+          expect_zero_seed_refusal
+              ? imported.is_error() && imported.error().code() == static_cast<int>(pv::SelfPaySimulationError::Context)
+              : imported.is_ok() && !imported.ok().transaction && !imported.ok().vm_exit_code &&
+                    imported.ok().authenticated_balance == "0" &&
+                    imported.ok().outcome == pv::SimulationOutcome::ImportRejected;
       std::printf("SELF_PAY_SIMULATION_CASE import-rejected-with-no-fabricated-fees %s\n",
                   import_refused ? "PASS" : "FAIL");
       failures += !import_refused;

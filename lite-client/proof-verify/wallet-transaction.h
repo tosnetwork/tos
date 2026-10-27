@@ -14,6 +14,8 @@ constexpr int kMaxWalletTransactionDepth = 1023;
 constexpr int kMaxWalletTransactionMessages = 256;
 constexpr std::size_t kMaxWalletTransactionResultBytes = 1u << 20;
 
+enum class WalletBocError { Resource = 8101 };
+
 // Shared single-root BOC byte/cell/depth preflight, before allocating cells.
 // This checks the container graph, not a transaction or message schema.
 td::Status preflight_wallet_boc(td::Slice bytes);

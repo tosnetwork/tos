@@ -57,14 +57,18 @@ std::string hex(td::Slice bytes) {
 // cells and their virtual depths/hashes. Opaque message bodies stay opaque.
 td::Status preflight(td::Slice bytes) {
   if (bytes.empty() || bytes.size() > kMaxWalletTransactionBytes) {
-    return td::Status::Error("wallet transaction byte limit");
+    return td::Status::Error(bytes.empty() ? -1 : static_cast<int>(WalletBocError::Resource),
+                             "wallet transaction byte limit");
   }
   vm::BagOfCells::Info header;
   if (header.parse_serialized_header(bytes) <= 0 || !header.valid || header.root_count != 1 ||
-      header.absent_count != 0 || header.cell_count < 1 || header.cell_count > kMaxWalletTransactionCells ||
-      header.total_size != bytes.size() || header.data_offset > bytes.size() ||
-      header.data_size > bytes.size() - header.data_offset || header.ref_byte_size < 1 || header.ref_byte_size > 4) {
+      header.absent_count != 0 || header.cell_count < 1 || header.total_size != bytes.size() ||
+      header.data_offset > bytes.size() || header.data_size > bytes.size() - header.data_offset ||
+      header.ref_byte_size < 1 || header.ref_byte_size > 4) {
     return td::Status::Error("wallet transaction BOC header");
+  }
+  if (header.cell_count > kMaxWalletTransactionCells) {
+    return td::Status::Error(static_cast<int>(WalletBocError::Resource), "wallet transaction cell limit");
   }
   auto data = bytes.substr(static_cast<std::size_t>(header.data_offset), static_cast<std::size_t>(header.data_size));
   struct Links {
@@ -97,7 +101,7 @@ td::Status preflight(td::Slice bytes) {
     int depth = 0;
     for (int j = 0; j < links[i].count; ++j) {
       if (depths[links[i].refs[j]] >= kMaxWalletTransactionDepth) {
-        return td::Status::Error("wallet transaction graph depth");
+        return td::Status::Error(static_cast<int>(WalletBocError::Resource), "wallet transaction graph depth");
       }
       depth = std::max(depth, depths[links[i].refs[j]] + 1);
     }
@@ -316,7 +320,7 @@ td::Result<std::string> verify_wallet_transaction(td::Slice account_hash, td::ui
   }
   auto rendered = result.finish();
   if (rendered.size() > kMaxWalletTransactionResultBytes) {
-    return td::Status::Error("wallet transaction result limit");
+    return td::Status::Error(static_cast<int>(WalletBocError::Resource), "wallet transaction result limit");
   }
   return rendered;
 }
