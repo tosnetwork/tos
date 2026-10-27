@@ -175,6 +175,22 @@ class GeneratedBundleTests(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, "generated bundle file size limit"):
             self.verify()
 
+    def test_oversize_source_refused_before_output_creation(self):
+        post = self.bundle() / "post"
+        path = post / "generated-post-accept-root-native.json"
+        values = json.loads(path.read_text())
+        values[0]["error"] = "x" * gate.MAX_FILE
+        path.write_text(json.dumps(values))
+        output = self.root / "not-created"
+        with (
+            patch.dict(os.environ, self.environment),
+            self.assertRaisesRegex(AssertionError, "generated bundle file size limit"),
+        ):
+            gate.bundle(
+                output, OPTIONS.release, post, OPTIONS.controls, self.source, gate.RUNNERS[0]
+            )
+        self.assertFalse(output.exists(), "oversize source was copied before admission")
+
     def test_exact_total_byte_budget(self):
         size = sum(
             (self.bundle() / name).stat().st_size for name in gate.filenames() | {"bundle.json"}

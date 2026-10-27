@@ -33,6 +33,8 @@ architecture gate names. New controls execute only in the two release-wallet
 workers. A small explicit bundle contains 22 files: ten allowlisted files per
 family, controls and metadata. Limits are 2 MiB per file and 16 MiB total;
 symlinks, unexpected paths/counts, missing files and digest changes fail. A
+producer admits every input file and the complete metadata-inclusive size
+before creating output paths or copying bytes. A
 read-only GitHub metadata preflight bounds selection to 32 roots bundles, each
 at most 16 MiB compressed, within 2048 run artifacts. It precedes the existing
 official artifact downloader; reviewed producers bound their uncompressed files.

@@ -7,7 +7,6 @@ import importlib.util
 import json
 import os
 import re
-import shutil
 import subprocess
 import urllib.request
 from pathlib import Path
@@ -97,26 +96,36 @@ def metadata(source, runner):
 
 def bundle(output, release, post, controls, source, runner):
     assert not output.exists(), "generated bundle destination exists"
-    output.mkdir(parents=True)
-    control_result(json.loads(bounded(controls)), source)
+    sources = {"controls.json": controls}
     for family, original in [(RELEASE, release), (POST, post)]:
-        validate(original, family, source)
-        target = output / FOLDERS[family]
-        target.mkdir()
         for name in filenames():
             folder, _, filename = name.partition("/")
             if folder == FOLDERS[family]:
-                shutil.copyfile(original / filename, target / filename)
-    shutil.copyfile(controls, output / "controls.json")
+                sources[name] = original / filename
     manifest = metadata(source, runner)
     manifest["files"] = {}
-    total = 0
-    for name in sorted(filenames()):
-        value = bounded(output / name)
+    payloads, total = {}, 0
+    # Admit every source before creating output paths or copying any bytes.
+    for name in sorted(sources):
+        assert total + sources[name].stat().st_size <= MAX_TOTAL, (
+            "generated bundle total size limit"
+        )
+        value = bounded(sources[name])
         total += len(value)
         assert total <= MAX_TOTAL, "generated bundle total size limit"
+        payloads[name] = value
         manifest["files"][name] = dict(bytes=len(value), sha256=hashlib.sha256(value).hexdigest())
-    (output / "bundle.json").write_text(json.dumps(manifest, indent=2) + "\n")
+    control_result(json.loads(payloads["controls.json"]), source)
+    encoded = (json.dumps(manifest, indent=2) + "\n").encode()
+    assert len(encoded) <= MAX_FILE and total + len(encoded) <= MAX_TOTAL, (
+        "generated bundle total size limit"
+    )
+    output.mkdir(parents=True)
+    for name, value in payloads.items():
+        path = output / name
+        path.parent.mkdir(exist_ok=True)
+        path.write_bytes(value)
+    (output / "bundle.json").write_bytes(encoded)
     validate_bundle(output, source, manifest["event"], manifest["run_id"], manifest["run_attempt"])
 
 
