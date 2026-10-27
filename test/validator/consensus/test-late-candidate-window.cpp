@@ -33,10 +33,16 @@
 //                         passes its slot; the entry is evicted when the task ends.
 //   resolver-pin-error    a resolve task that fails releases its pin too.
 //   window-helper         late_window_begin() agrees with CandidateRetentionPolicy.
+//   restart-before-start  a node restarts with FinalCerts beyond the too-new gate in its
+//                         database and has no Start yet, so its leader window is not
+//                         announced: the candidates of the finalized slots are stored, the
+//                         one for the slot after them is not, and nothing is voted; after
+//                         Start the finalized blocks are applied.
 //
 // Without an argument every mode runs in its own child process.
 
 #include <algorithm>
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -130,6 +136,7 @@ enum class Mode {
   ResolverPin,
   ResolverPinError,
   FrontierSkew,
+  RestartBeforeStart,
 };
 
 struct Observations {
@@ -244,24 +251,38 @@ class OverlayStub : public td::actor::SpawnsWith<simplex::Bus>, public td::actor
   }
 };
 
-class MemoryDb : public consensus::Db {
- public:
-  std::optional<td::BufferSlice> get(td::Slice key) const override {
-    std::scoped_lock lock(mutex_);
-    auto it = map_.find(td::BufferSlice{key});
-    if (it == map_.end()) {
+// The records of a database backend. A restarted node opens the same storage again, as a
+// validator reopens its consensus database after a restart.
+struct MemoryStorage {
+  std::mutex mutex;
+  std::map<td::BufferSlice, td::BufferSlice> map;
+
+  std::optional<td::BufferSlice> get(td::Slice key) {
+    std::scoped_lock lock(mutex);
+    auto it = map.find(td::BufferSlice{key});
+    if (it == map.end()) {
       return std::nullopt;
     }
     return it->second.clone();
   }
+};
+
+class MemoryDb : public consensus::Db {
+ public:
+  explicit MemoryDb(std::shared_ptr<MemoryStorage> storage) : storage_(std::move(storage)) {
+  }
+
+  std::optional<td::BufferSlice> get(td::Slice key) const override {
+    return storage_->get(key);
+  }
 
   std::vector<std::pair<td::BufferSlice, td::BufferSlice>> get_by_prefix(td::uint32 prefix) const override {
-    std::scoped_lock lock(mutex_);
+    std::scoped_lock lock(storage_->mutex);
     std::vector<std::pair<td::BufferSlice, td::BufferSlice>> result;
     td::BufferSlice begin{(const char*)&prefix, 4};
     td::uint32 next_prefix = prefix + 1;
     td::BufferSlice end{(const char*)&next_prefix, 4};
-    for (auto it = map_.lower_bound(begin); it != map_.end() && it->first < end; ++it) {
+    for (auto it = storage_->map.lower_bound(begin); it != storage_->map.end() && it->first < end; ++it) {
       result.emplace_back(it->first.clone(), it->second.clone());
     }
     return result;
@@ -272,8 +293,8 @@ class MemoryDb : public consensus::Db {
   }
 
   td::actor::Task<> set(td::BufferSlice key, td::BufferSlice value) override {
-    std::scoped_lock lock(mutex_);
-    map_[std::move(key)] = std::move(value);
+    std::scoped_lock lock(storage_->mutex);
+    storage_->map[std::move(key)] = std::move(value);
     co_return td::Unit{};
   }
 
@@ -282,8 +303,7 @@ class MemoryDb : public consensus::Db {
   }
 
  private:
-  mutable std::mutex mutex_;
-  std::map<td::BufferSlice, td::BufferSlice> map_;
+  std::shared_ptr<MemoryStorage> storage_;
 };
 
 // The validator manager: holds the zerostate, validates and accepts every block, and records
@@ -391,12 +411,16 @@ class Driver : public td::actor::Actor {
  private:
   Mode mode_;
   std::vector<std::shared_ptr<const tos::pq::ValidatorPQKeyStore>> signers_;
-  td::actor::Runtime runtime_;
+  std::vector<PeerValidator> validators_;
+  // A runtime starts one bus, so a restarted node gets a fresh runtime and fresh actors.
+  std::shared_ptr<td::actor::Runtime> runtime_;
   td::actor::ActorOwn<RecordingManager> manager_;
   simplex::BusHandle bus_;
   std::shared_ptr<simplex::Bus> bus_ptr_;
-  // Owned by the bus; kept to read what the actors persisted.
-  const MemoryDb* db_ = nullptr;
+  // Set when the bus is destroyed, which happens only after every actor on it has stopped.
+  std::shared_ptr<std::atomic<bool>> bus_destroyed_;
+  // The database records; they outlive the bus, so a restarted node reopens them.
+  std::shared_ptr<MemoryStorage> storage_ = std::make_shared<MemoryStorage>();
   size_t target_ = 1;
 
   td::BufferSlice sign(size_t signer, td::Slice inner) const {
@@ -433,7 +457,7 @@ class Driver : public td::actor::Actor {
   }
 
   bool db_has(td::BufferSlice key) const {
-    return db_->get(key.as_slice()).has_value();
+    return storage_->get(key.as_slice()).has_value();
   }
 
   bool candidate_persisted(const CandidateId& id) const {
@@ -523,47 +547,56 @@ class Driver : public td::actor::Actor {
     co_return td::Unit{};
   }
 
-  void start_node() {
-    std::vector<PeerValidator> validators;
-    ValidatorWeight total_weight = 0;
+  void make_validators() {
     for (size_t i = 0; i < VALIDATORS; ++i) {
       // Deliberately public fixture seeds, never operational key material.
       auto store = tos::pq::ValidatorPQKeyStore::from_seed(std::string(32, static_cast<char>(0x60 + i)));
       CHECK(store.has_value());
       signers_.push_back(std::make_shared<const tos::pq::ValidatorPQKeyStore>(std::move(*store)));
       auto adnl = adnl::AdnlNodeIdShort{fill(static_cast<unsigned char>(0x90 + i))};
-      validators.push_back(PeerValidator{.validator_id = ValidatorId{fill(static_cast<unsigned char>(0x70 + i))},
-                                         .idx = PeerValidatorId{i},
-                                         .consensus_key = signers_.back()->consensus_key(),
-                                         .transport_key_id = adnl.pubkey_hash(),
-                                         .adnl_id = adnl,
-                                         .weight = 1});
-      total_weight += 1;
+      validators_.push_back(PeerValidator{.validator_id = ValidatorId{fill(static_cast<unsigned char>(0x70 + i))},
+                                          .idx = PeerValidatorId{i},
+                                          .consensus_key = signers_.back()->consensus_key(),
+                                          .transport_key_id = adnl.pubkey_hash(),
+                                          .adnl_id = adnl,
+                                          .weight = 1});
+    }
+  }
+
+  // Starts the node's bus on a fresh runtime over the shared database records. Without
+  // `publish_start` the group stays where a validator is while it syncs: its actors and
+  // overlay run, and Start has not arrived.
+  void start_node(bool publish_start = true) {
+    if (validators_.empty()) {
+      make_validators();
+    }
+    if (manager_.empty()) {
+      manager_ = td::actor::create_actor<RecordingManager>("RecordingManager");
     }
 
-    runtime_.register_actor<OverlayStub>("PrivateOverlay");
-    runtime_.register_actor<ObserverActor>("LateObserver");
-    BlockValidator::register_in(runtime_);
-    BlockAccepter::register_in(runtime_);
-    simplex::CandidateResolver::register_in(runtime_);
-    simplex::Consensus::register_in(runtime_);
-    simplex::Pool::register_in(runtime_);
-    simplex::StateResolver::register_in(runtime_);
-    simplex::Db::register_in(runtime_);
-    simplex::DefaultCollatorSchedule::provide_for(runtime_);
+    runtime_ = std::make_shared<td::actor::Runtime>();
+    runtime_->register_actor<OverlayStub>("PrivateOverlay");
+    runtime_->register_actor<ObserverActor>("LateObserver");
+    BlockValidator::register_in(*runtime_);
+    BlockAccepter::register_in(*runtime_);
+    simplex::CandidateResolver::register_in(*runtime_);
+    simplex::Consensus::register_in(*runtime_);
+    simplex::Pool::register_in(*runtime_);
+    simplex::StateResolver::register_in(*runtime_);
+    simplex::Db::register_in(*runtime_);
+    simplex::DefaultCollatorSchedule::provide_for(*runtime_);
 
-    manager_ = td::actor::create_actor<RecordingManager>("RecordingManager");
     auto bus = std::make_shared<simplex::Bus>();
     bus->shard = SHARD;
     bus->manager = manager_.get();
-    bus->validator_set = validators;
+    bus->validator_set = validators_;
     std::set<adnl::AdnlNodeIdShort> current_relays;
-    for (const auto& validator : validators) {
+    for (const auto& validator : validators_) {
       bus->all_validators.push_back(validator.adnl_id);
       current_relays.insert(validator.adnl_id);
     }
     bus->all_current_validators = std::move(current_relays);
-    bus->total_weight = total_weight;
+    bus->total_weight = static_cast<ValidatorWeight>(validators_.size());
     bus->config = NewConsensusConfig{
         .max_block_size = 1 << 20,
         .max_collated_data_size = 1 << 20,
@@ -580,21 +613,52 @@ class Driver : public td::actor::Actor {
     bus->session_id = fill(0x42);
     bus->cc_seqno = CC_SEQNO;
     bus->validator_set_hash = 0;
-    auto db = std::make_unique<MemoryDb>();
-    db_ = db.get();
-    bus->db = std::move(db);
+    bus->db = std::make_unique<MemoryDb>(storage_);
+    auto destroyed = std::make_shared<std::atomic<bool>>(false);
+    bus->stop_promise = td::PromiseCreator::lambda([destroyed](td::Result<td::Unit>) { destroyed->store(true); });
+    bus_destroyed_ = destroyed;
     bus_ptr_ = bus;
 
     bus->pq_signer = signers_.at(target_);
-    bus->local_id = validators.at(target_);
-    bus->local_adnl_id = validators.at(target_).adnl_id;
+    bus->local_id = validators_.at(target_);
+    bus->local_adnl_id = validators_.at(target_).adnl_id;
 
-    bus_ = runtime_.start(std::static_pointer_cast<simplex::Bus>(bus), "late-target");
+    bus_ = runtime_->start(std::static_pointer_cast<simplex::Bus>(bus), "late-target");
+    if (publish_start) {
+      publish_start_event();
+    }
+  }
+
+  void publish_start_event() {
     bus_.publish<Start>(
         td::make_ref<ChainState>(ChainState::ZerostateTip{FIRST_PARENT, gen_shard_state(0)}, MIN_MC_BLOCK_ID));
   }
 
+  // Stops the node and waits until its bus, and with it every actor, is gone. Only then are
+  // the observations cleared, so nothing the old actors report reaches the next run.
+  td::actor::Task<> stop_node() {
+    auto destroyed = bus_destroyed_;
+    bus_.publish<StopRequested>();
+    bus_ = {};
+    bus_ptr_.reset();
+    if (!co_await wait_until([&] { return destroyed->load(); })) {
+      finish(1, "LATE_PRECONDITION_FAILED: the stopped node's bus was never released");
+    }
+    runtime_.reset();
+    std::scoped_lock lock(observations.mutex);
+    observations.notarize_votes.clear();
+    observations.notarized.clear();
+    observations.finalized_slots.clear();
+    observations.overlay_requests.clear();
+    observations.accepted.clear();
+    observations.misbehavior_reports = 0;
+    co_return td::Unit{};
+  }
+
   td::actor::Task<> run_inner() {
+    if (mode_ == Mode::RestartBeforeStart) {
+      co_return co_await run_restart_before_start();
+    }
     start_node();
     auto leader0 = bus_ptr_->collator_schedule->expected_collator_for(0);
     if (leader0.value() == target_) {
@@ -624,8 +688,108 @@ class Driver : public td::actor::Actor {
         co_return co_await run_resolver_pin_error(X_alt, Y);
       case Mode::FrontierSkew:
         co_return co_await run_frontier_skew(X_alt, Y, Y_alt, Z);
+      case Mode::RestartBeforeStart:
+        // Starts and restarts its own node; it is dispatched before this one is started.
+        finish(1, "LATE_HARNESS_FAILED: restart-before-start reached the single-start path");
     }
     co_return td::Unit{};
+  }
+
+  // A validator restarts while its consensus database holds FinalCerts beyond the leader-window
+  // gate. Until Start its leader window is not announced, yet Pool replays the FinalCerts and
+  // admits broadcasts for the finalized slots; their candidates must reach the candidate
+  // resolver. The chain is W <- X, both finalized, and Fut extends X in the next slot.
+  td::actor::Task<> run_restart_before_start() {
+    // The production parameters, as the node under test runs with them.
+    const NewConsensusConfig::NoncriticalParams params{};
+    // The first slot the consensus actor calls too new while its window is still 0.
+    const td::uint32 gate = (params.max_leader_window_desync + 1) * SLOTS_PER_LEADER_WINDOW;
+    const td::uint32 w_slot = gate / 2;
+    const td::uint32 x_slot = gate + 1;
+    const td::uint32 fut_slot = x_slot + 1;
+    // Pool takes a certificate only below its own gate, which W's finalization moves.
+    const td::uint32 pool_gate_after_w =
+        (w_slot / SLOTS_PER_LEADER_WINDOW + 1 + params.max_leader_window_desync + 1) * SLOTS_PER_LEADER_WINDOW;
+    if (!(w_slot < gate && x_slot >= gate && x_slot < pool_gate_after_w)) {
+      finish(1, "LATE_PRECONDITION_FAILED: the slots do not straddle the too-new gate");
+    }
+
+    // First run: the certificates reach the database, and the candidates never arrive.
+    start_node(/*publish_start=*/false);
+    auto W = make_candidate(1, FIRST_PARENT, std::nullopt, w_slot);
+    auto X = make_candidate(2, W->block_id(), W->id, x_slot);
+    auto Fut = make_candidate(3, X->block_id(), X->id, fut_slot);
+    co_await notarize_and_finalize(W->id);
+    co_await notarize_and_finalize(X->id);
+    // Pool publishes FinalizationObserved only after SaveCertificate returned.
+    co_await stop_node();
+    if (candidate_persisted(W->id) || candidate_persisted(X->id)) {
+      finish(1, "LATE_PRECONDITION_FAILED: a candidate was persisted before it was delivered");
+    }
+
+    // The restart: the same database, a fresh runtime, and no Start.
+    start_node(/*publish_start=*/false);
+    if (!co_await wait_until([&] { return is_finalized(x_slot); })) {
+      finish(1, "LATE_PRECONDITION_FAILED: the stored FinalCert was not replayed at startup");
+    }
+    if (!co_await wait_until([&] { return overlay_requests_for(X->id) >= 1; })) {
+      finish(1, "LATE_PRECONDITION_FAILED: the finalized candidate was never requested from peers");
+    }
+    auto recovery = co_await bus_.publish<simplex::QueryConsensusRecoveryState>();
+    if (recovery.current_window != 0) {
+      finish(1, PSTRING() << "LATE_PRECONDITION_FAILED: the leader window is already " << recovery.current_window);
+    }
+    struct Broadcast {
+      const char* label;
+      td::uint32 slot;
+      unsigned char id_byte;
+    };
+    const Broadcast broadcasts[] = {{"W", w_slot, 0xf1}, {"X", x_slot, 0xf2}, {"Fut", fut_slot, 0xf3}};
+    for (const auto& broadcast : broadcasts) {
+      auto status = co_await precheck(broadcast.slot, fill(broadcast.id_byte));
+      if (status.is_error()) {
+        finish(1, PSTRING() << "LATE_PRECONDITION_FAILED: Pool refused the broadcast for " << broadcast.label << ": "
+                            << status.to_string());
+      }
+    }
+    if (accepted_count(W) != 0 || accepted_count(X) != 0) {
+      finish(1, "LATE_PRECONDITION_FAILED: a block was applied before its candidate arrived");
+    }
+
+    deliver_candidate(Fut, "not-finalized");
+    deliver_candidate(W, "finalized-below-gate");
+    deliver_candidate(X, "finalized-beyond-gate");
+    // W lies below the gate, so even without the fix it is stored: the late path runs here.
+    if (!co_await wait_until([&] { return candidate_persisted(W->id); })) {
+      finish(1, "LATE_PRECONDITION_FAILED: the candidate below the gate was not stored before Start");
+    }
+    bool stored = co_await wait_until([&] { return candidate_persisted(X->id); });
+    emit(PSTRING() << "LATE_RESULT before_start stored W=" << candidate_persisted(W->id) << " X=" << stored);
+    if (!stored) {
+      finish(3, "LATE_RESTART_DROPPED: a finalized candidate was dropped before Start");
+    }
+    co_await settle(0.5);
+    auto votes = [&] { return notarize_votes_for(W->id) + notarize_votes_for(X->id) + notarize_votes_for(Fut->id); };
+    emit(PSTRING() << "LATE_RESULT before_start Fut_persisted=" << candidate_persisted(Fut->id)
+                   << " notarize_votes=" << votes() << " misbehavior_reports=" << misbehavior_reports());
+    if (candidate_persisted(Fut->id)) {
+      finish(4, "LATE_SCOPE_FAILED: a candidate for a slot that is not finalized passed the gate before Start");
+    }
+    if (votes() != 0 || misbehavior_reports() != 0) {
+      finish(4, "LATE_VOTED: a finalized candidate must only be stored");
+    }
+
+    publish_start_event();
+    bool applied = co_await wait_until([&] { return accepted_count(W) >= 1 && accepted_count(X) >= 1; });
+    emit(PSTRING() << "LATE_RESULT applied W=" << accepted_count(W) << " X=" << accepted_count(X));
+    if (!applied) {
+      finish(3, "LATE_NOT_APPLIED: the finalized blocks were not applied from the stored candidates");
+    }
+    co_await settle(0.5);
+    if (candidate_persisted(Fut->id) || votes() != 0 || misbehavior_reports() != 0) {
+      finish(4, "LATE_VOTED: the run voted or reported after Start");
+    }
+    finish(0, "LATE_RESTART_OK");
   }
 
   td::actor::Task<> run_late_apply(CandidateRef X) {
@@ -923,6 +1087,7 @@ const ModeSpec MODES[] = {
     {"resolver-pin", Mode::ResolverPin, "1", nullptr},
     {"resolver-pin-error", Mode::ResolverPinError, "1", "1"},
     {"frontier-skew", Mode::FrontierSkew, "1", nullptr},
+    {"restart-before-start", Mode::RestartBeforeStart, nullptr, nullptr},
     {"window-helper", std::nullopt, nullptr, nullptr},
 };
 
