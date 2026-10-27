@@ -251,6 +251,145 @@ impl Root {
             free: stat.f_bavail.checked_mul(stat.f_frsize).context("disk byte count overflow")?,
         })
     }
+    /// Owner and group of this still-attached directory descriptor.
+    pub fn owner(&self) -> Result<(u32, u32)> {
+        self.attached()?;
+        let metadata = self.directory.metadata()?;
+        Ok((metadata.uid(), metadata.gid()))
+    }
+    /// Open, or create, a file the directory owner's service must also be able to open.
+    /// A file this call creates is given the directory's owner and group, through its
+    /// descriptor, so a privileged invoker never leaves an unreadable file in a service tree.
+    pub fn open_shared_lock(&self, name: &str) -> Result<File> {
+        ensure!(super::paths::relative(name)?.len() == 1, "lock must be a direct child");
+        self.attached()?;
+        let name = CString::new(name)?;
+        let flags = libc::O_RDWR | libc::O_NOFOLLOW | libc::O_CLOEXEC;
+        // SAFETY: held directory descriptor and terminated name remain valid for the call.
+        let raw = unsafe {
+            libc::openat(
+                self.directory.as_raw_fd(),
+                name.as_ptr(),
+                flags | libc::O_CREAT | libc::O_EXCL,
+                0o600,
+            )
+        };
+        let (raw, created) = if raw >= 0 {
+            (raw, true)
+        } else {
+            let error = std::io::Error::last_os_error();
+            ensure!(
+                error.kind() == std::io::ErrorKind::AlreadyExists,
+                "cannot create lock: {error}"
+            );
+            // SAFETY: as above; an existing entry is opened without creation.
+            let raw = unsafe { libc::openat(self.directory.as_raw_fd(), name.as_ptr(), flags) };
+            ensure!(raw >= 0, "cannot open lock: {}", std::io::Error::last_os_error());
+            (raw, false)
+        };
+        // SAFETY: the descriptor was just returned by openat and is owned here.
+        let file = unsafe { File::from_raw_fd(raw) };
+        ensure!(file.metadata()?.is_file(), "lock is not a regular file");
+        if created {
+            give(&file, self.owner()?)?;
+            self.sync()?;
+        }
+        self.attached()?;
+        Ok(file)
+    }
+    /// Give every entry this invocation created beneath this directory to `owner`.
+    pub fn hand_over(&self, owner: (u32, u32)) -> Result<()> {
+        // SAFETY: geteuid has no preconditions.
+        self.hand_over_from(owner, unsafe { libc::geteuid() })
+    }
+    /// Entries owned by `invoker` move to `owner`; entries `owner` already holds stay as
+    /// they are; any other owner, a link or a special file refuses. Traversal is through
+    /// descriptors only, never across a link or a mount.
+    pub(crate) fn hand_over_from(&self, owner: (u32, u32), invoker: u32) -> Result<()> {
+        self.attached()?;
+        let directory = self.directory.try_clone()?;
+        let mut remaining = crate::budget::MAX_ALLOCATION_ENTRIES;
+        hand_over_entry(&directory, owner, invoker, &mut remaining)?;
+        // One filesystem flush makes every ownership change durable before exposure.
+        // SAFETY: held directory descriptor remains valid for the call.
+        ensure!(
+            unsafe { libc::syncfs(directory.as_raw_fd()) } == 0,
+            "cannot flush ownership changes: {}",
+            std::io::Error::last_os_error()
+        );
+        self.attached()
+    }
+}
+fn give(file: &File, (uid, gid): (u32, u32)) -> Result<()> {
+    let metadata = file.metadata()?;
+    if (metadata.uid(), metadata.gid()) != (uid, gid) {
+        // SAFETY: the descriptor is held open by `file` for the call.
+        ensure!(
+            unsafe { libc::fchown(file.as_raw_fd(), uid, gid) } == 0,
+            "cannot give {uid}:{gid} ownership: {}",
+            std::io::Error::last_os_error()
+        );
+    }
+    Ok(())
+}
+fn hand_over_entry(
+    file: &File,
+    owner: (u32, u32),
+    invoker: u32,
+    remaining: &mut usize,
+) -> Result<()> {
+    *remaining = remaining.checked_sub(1).context("ownership hand-over entry limit")?;
+    let metadata = file.metadata()?;
+    ensure!(
+        metadata.is_dir() || (metadata.is_file() && metadata.nlink() == 1),
+        "ownership hand-over refuses a link or special file"
+    );
+    if metadata.uid() == invoker {
+        give(file, owner)?;
+    } else {
+        ensure!(
+            metadata.uid() == owner.0,
+            "ownership hand-over found an entry of another account (uid {})",
+            metadata.uid()
+        );
+    }
+    if !metadata.is_dir() {
+        return Ok(());
+    }
+    for entry in std::fs::read_dir(format!("/proc/self/fd/{}", file.as_raw_fd()))? {
+        use std::os::unix::ffi::OsStrExt;
+        let name = CString::new(entry?.file_name().as_bytes())?;
+        #[repr(C)]
+        struct OpenHow {
+            flags: u64,
+            mode: u64,
+            resolve: u64,
+        }
+        let how = OpenHow {
+            flags: (libc::O_RDONLY | libc::O_NONBLOCK | libc::O_NOFOLLOW | libc::O_CLOEXEC) as u64,
+            mode: 0,
+            resolve: 1 | 4 | 8, // NO_XDEV, NO_SYMLINKS, BENEATH
+        };
+        // SAFETY: parent descriptor, terminated name and open_how stay valid for the call.
+        let raw = unsafe {
+            libc::syscall(
+                libc::SYS_openat2,
+                file.as_raw_fd(),
+                name.as_ptr(),
+                &how,
+                std::mem::size_of::<OpenHow>(),
+            )
+        };
+        ensure!(
+            raw >= 0,
+            "ownership hand-over refuses an unsafe entry: {}",
+            std::io::Error::last_os_error()
+        );
+        // SAFETY: openat2 returned a new descriptor owned here.
+        let child = unsafe { File::from_raw_fd(i32::try_from(raw)?) };
+        hand_over_entry(&child, owner, invoker, remaining)?;
+    }
+    Ok(())
 }
 pub fn copy_hash(
     mut input: impl Read,
@@ -342,4 +481,87 @@ fn remove_child(parent: i32, name: &std::ffi::CStr, remaining: &mut usize) -> Re
         std::io::Error::last_os_error()
     );
     Ok(())
+}
+
+#[cfg(test)]
+pub(crate) mod ownership_tests {
+    use super::*;
+
+    /// An owner this process may give files to that differs from what it creates them with:
+    /// another account when running as root, otherwise one of its supplementary groups.
+    pub(crate) fn other_owner() -> Option<(u32, u32)> {
+        // SAFETY: geteuid and getegid have no preconditions.
+        let (uid, gid) = unsafe { (libc::geteuid(), libc::getegid()) };
+        if uid == 0 {
+            return Some((65534, 65534));
+        }
+        let mut groups = vec![0 as libc::gid_t; 256];
+        // SAFETY: the buffer holds the advertised number of entries.
+        let count = unsafe { libc::getgroups(256, groups.as_mut_ptr()) };
+        let count = usize::try_from(count).ok()?;
+        groups.truncate(count);
+        groups.into_iter().find(|group| *group != gid).map(|group| (uid, group))
+    }
+    fn owner_of(path: &Path) -> Result<(u32, u32)> {
+        let metadata = std::fs::symlink_metadata(path)?;
+        Ok((metadata.uid(), metadata.gid()))
+    }
+
+    #[test]
+    fn created_lock_takes_the_directory_owner() -> Result<()> {
+        let Some(owner) = other_owner() else {
+            eprintln!("SKIP: no second owner is available to this test process");
+            return Ok(());
+        };
+        let temporary = tempfile::tempdir()?;
+        let path = temporary.path().canonicalize()?;
+        let database = Root::open(&path)?;
+        // SAFETY: path is a NUL-free temporary directory path.
+        let directory = CString::new(path.as_os_str().as_encoded_bytes())?;
+        ensure!(unsafe { libc::chown(directory.as_ptr(), owner.0, owner.1) } == 0);
+        drop(database.open_shared_lock("config.json.lock")?);
+        assert_eq!(owner_of(&path.join("config.json.lock"))?, owner, "lock kept the invoker");
+        // An existing lock is opened as it is; the production lock path uses the same call.
+        drop(crate::service::Frozen::acquire(&path)?);
+        assert_eq!(owner_of(&path.join("config.json.lock"))?, owner);
+        assert!(database.open_shared_lock("../escape").is_err(), "lock left its directory");
+        Ok(())
+    }
+
+    #[test]
+    fn hand_over_gives_every_created_entry_and_refuses_links() -> Result<()> {
+        let Some(owner) = other_owner() else {
+            eprintln!("SKIP: no second owner is available to this test process");
+            return Ok(());
+        };
+        // SAFETY: geteuid has no preconditions.
+        let invoker = unsafe { libc::geteuid() };
+        let temporary = tempfile::tempdir()?;
+        let replacement = Root::create(&temporary.path().canonicalize()?.join("replacement"))?;
+        replacement.write_new("state/CURRENT", b"MANIFEST-000001\n")?;
+        replacement.write_new("keyring/KEY", b"private")?;
+        replacement.ensure_directory("tmp")?;
+        replacement.hand_over_from(owner, invoker)?;
+        for path in ["", "state", "state/CURRENT", "keyring", "keyring/KEY", "tmp"] {
+            assert_eq!(
+                owner_of(&replacement.path.join(path))?,
+                owner,
+                "{path} was not handed over"
+            );
+        }
+        // Entries of a third account are never taken over.
+        assert!(
+            replacement
+                .hand_over_from((owner.0.wrapping_add(2), owner.1), owner.0.wrapping_add(1))
+                .is_err(),
+            "foreign entry handed over"
+        );
+        std::fs::hard_link(replacement.path.join("keyring/KEY"), temporary.path().join("alias"))?;
+        let error = replacement.hand_over_from(owner, invoker).expect_err("hard link").to_string();
+        assert!(error.contains("link or special file"), "wrong refusal: {error}");
+        std::fs::remove_file(temporary.path().join("alias"))?;
+        std::os::unix::fs::symlink("/etc", replacement.path.join("tmp/trap"))?;
+        assert!(replacement.hand_over_from(owner, invoker).is_err(), "followed a symlink");
+        Ok(())
+    }
 }

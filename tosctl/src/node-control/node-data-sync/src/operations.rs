@@ -66,9 +66,22 @@ fn restore_storage(request: &RestoreRequest, operation: Option<&Path>) -> Result
         &paths,
     )
 }
+/// Ownership of the cache, operation and budget roots, against the described service account.
+/// Preparation abort does not use it: that path never describes the service before it has
+/// authenticated the operation, and it only removes the bound stage through descriptors.
+fn restore_owners(request: &RestoreRequest, operation: Option<&Path>) -> Result<()> {
+    let account = request.context.service().account()?;
+    account.require_private(&request.cache)?;
+    account.require_budget(&request.context.budget_roots)?;
+    if let Some(operation) = operation {
+        require_operation_owner(&account, operation)?;
+    }
+    Ok(())
+}
 fn selected(request: &RestoreRequest) -> Result<(SignedManifest, [u8; 32])> {
     restore_storage(request, None)?;
     request.context.service().require_restore_target(None)?;
+    restore_owners(request, None)?;
     let key = trusted(&request.publisher_key)?;
     let signed = SignedManifest::parse(&read_bytes(&request.manifest, MANIFEST_LIMIT)?, &key)?;
     let (network, policy) = request.context.policy()?;
@@ -138,12 +151,23 @@ fn separate(a: &Path, b: &Path) -> Result<()> {
     );
     Ok(())
 }
+/// A new operation is created by the invoker inside a directory only the invoker controls;
+/// an existing one must still be the invoker's.
+fn require_operation_owner(account: &crate::service::Account, path: &Path) -> Result<()> {
+    let absolute = std::path::absolute(path)?;
+    account.require_private(absolute.parent().context("operation parent")?)?;
+    if !crate::safe_io::absent(&absolute)? {
+        account.require_private(&absolute)?;
+    }
+    Ok(())
+}
 fn operation_directory(context: &NodeContext, path: &Path) -> Result<Root> {
     let absolute = std::path::absolute(path)?;
     ensure!(
         !absolute.starts_with(&context.database) && !context.database.starts_with(&absolute),
         "operation must be outside installed tree"
     );
+    require_operation_owner(&context.service().account()?, &absolute)?;
     crate::budget::require_paths(
         &context.budget_roots,
         &Root::open(&context.database)?,
@@ -207,6 +231,9 @@ pub fn create(
     let _lock = operation_lock(&context.database)?;
     let service = context.service();
     let permanent = service.permanent_cells()?;
+    let account = service.account()?;
+    account.require_private(store)?;
+    account.require_budget(&context.budget_roots)?;
     let public = Root::open(store)?;
     separate(&public.path, &context.database)?;
     separate(&public.path, &std::path::absolute(operation_path)?)?;
@@ -276,6 +303,7 @@ pub fn restore(request: &RestoreRequest, operation_path: &Path) -> Result<Journa
         "selected generation changed during preflight"
     );
     restore_storage(request, Some(operation_path))?;
+    restore_owners(request, Some(operation_path))?;
     let objects = Objects::open(&request.cache)?;
     let catalog = Catalog::open(&request.cache, key)?;
     separate(objects.root_path(), &request.context.database)?;
@@ -349,6 +377,17 @@ pub fn restore(request: &RestoreRequest, operation_path: &Path) -> Result<Journa
     start_installed(&request.context, &operation, &mut journal)?;
     Ok(journal)
 }
+/// Opening a native database writes into it. Files written by a privileged invoker go back
+/// to the installed tree's owner even when the export fails, so the node can still open it.
+fn export_installed(installed: &Root) -> Result<(ChainRecords, records::LocalRecords)> {
+    let state = installed.path.join("state");
+    let exported =
+        node_store::OfflineStore::open_existing(&state).and_then(|store| records::export(&store));
+    let returned = Root::open(&state).and_then(|root| root.hand_over(installed.owner()?));
+    let exported = exported?;
+    returned?;
+    Ok(exported)
+}
 struct StoppedTarget<'a> {
     operation_id: &'a str,
     frozen: &'a Frozen,
@@ -420,9 +459,7 @@ fn stage_with_space(
         reserve,
         space,
     )?;
-    let store = node_store::OfflineStore::open_existing(&own.path.join("state"))?;
-    let (old, local) = records::export(&store)?;
-    drop(store);
+    let (old, local) = export_installed(&own)?;
     let anchors = required(&old, &local)?;
     let donor = chain(signed, objects)?;
     ensure!(
@@ -499,6 +536,9 @@ fn stage_with_space(
     let (_, actual) = records::export(&store)?;
     ensure!(actual == local, "local StateDb preservation mismatch");
     drop(store);
+    // The replacement becomes the installed tree: it takes the installed root's owner,
+    // which the service description checked is the service account.
+    replacement.hand_over(own.owner()?)?;
     identity.verify_sources()?;
     replacement.sync()?;
     let preservation = serde_json::to_vec(
@@ -749,6 +789,7 @@ pub fn recover(operation_path: &Path) -> Result<RecoveryOutcome> {
         return result.context(guidance);
     }
     let mut journal = Journal::read(&operation)?;
+    restore_owners(&request, Some(&operation.path))?;
     let signed_probe = SignedManifest::parse(
         &operation.bytes("generation.json", MANIFEST_LIMIT)?,
         &trusted(&request.publisher_key)?,
@@ -818,10 +859,7 @@ pub fn recover(operation_path: &Path) -> Result<RecoveryOutcome> {
         Recovery::NewContinueOnly => {
             // A boot may have advanced this tree. Corroborate its current coherent frontier;
             // never replace it with the original snapshot or overlay old signing records.
-            let store =
-                node_store::OfflineStore::open_existing(&request.context.database.join("state"))?;
-            let (current, _) = records::export(&store)?;
-            drop(store);
+            let (current, _) = export_installed(&Root::open(&request.context.database)?)?;
             authorize_references(&request, &operation, &mut journal, &current.frontier()?)?;
         }
     }
@@ -899,6 +937,39 @@ mod tests {
             publisher_key: "00".repeat(32),
             source_url: None,
         })
+    }
+    #[test]
+    fn opening_the_installed_state_hands_written_files_back_even_on_failure() -> Result<()> {
+        use std::os::unix::fs::MetadataExt;
+        let Some(owner) = crate::safe_io::ownership_tests::other_owner() else {
+            eprintln!("SKIP: no second owner is available to this test process");
+            return Ok(());
+        };
+        let tmp = tempfile::tempdir()?;
+        let installed = Root::create(&tmp.path().canonicalize()?.join("installed"))?;
+        // A database without the native version record: opening it writes files, then refuses.
+        drop(node_store::OfflineStore::create_staging(&installed.path.join("state"))?);
+        let directory = std::ffi::CString::new(installed.path.as_os_str().as_encoded_bytes())?;
+        // SAFETY: a NUL-free path of a directory this test owns.
+        ensure!(unsafe { libc::chown(directory.as_ptr(), owner.0, owner.1) } == 0);
+        let error = export_installed(&installed).err().context("versionless StateDb accepted")?;
+        assert!(format!("{error:#}").contains("StateDb version"), "wrong refusal: {error:#}");
+        let state = installed.path.join("state");
+        let mut entries = vec![state.clone()];
+        for entry in fs::read_dir(&state)? {
+            entries.push(entry?.path());
+        }
+        assert!(entries.len() > 2, "native open wrote no files to check");
+        for path in entries {
+            let metadata = fs::symlink_metadata(&path)?;
+            assert_eq!(
+                (metadata.uid(), metadata.gid()),
+                owner,
+                "{} was left with the invoker",
+                path.display()
+            );
+        }
+        Ok(())
     }
     #[test]
     fn cleanup_rechecks_installed_identity_and_never_follows_links() -> Result<()> {

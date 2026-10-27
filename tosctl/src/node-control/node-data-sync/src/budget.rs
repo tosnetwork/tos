@@ -239,7 +239,7 @@ impl Drop for Monitor {
 pub fn allocated(roots: &[PathBuf]) -> Result<u64> {
     AllocationWalk::default().sample(roots)
 }
-const MAX_ALLOCATION_ENTRIES: usize = 2_000_000;
+pub(crate) const MAX_ALLOCATION_ENTRIES: usize = 2_000_000;
 
 #[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq)]

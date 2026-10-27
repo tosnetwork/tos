@@ -85,7 +85,10 @@ impl Identity {
                 }
             }
         }
-        let config = Root::open(&db)?.bytes("config.json", IDENTITY_FILE_LIMIT)?;
+        let database = Root::open(&db)?;
+        // A seed belongs to the account that runs the node, which owns the database root.
+        let (seed_owner, _) = database.owner()?;
+        let config = database.bytes("config.json", IDENTITY_FILE_LIMIT)?;
         let config: serde_json::Value = serde_json::from_slice(&config)?;
         for id in registered_keys(&config)? {
             let path = format!("keyring/{}", id.to_ascii_uppercase());
@@ -109,7 +112,7 @@ impl Identity {
             ensure!(
                 metadata.file_type().is_file()
                     && metadata.nlink() == 1
-                    && metadata.uid() == unsafe { libc::geteuid() }
+                    && metadata.uid() == seed_owner
                     && metadata.permissions().mode() & 0o077 == 0,
                 "configured consensus seed is not an owned private regular file"
             );
