@@ -35,14 +35,14 @@
     "crypto/smartcont/wallet-quantum-self-pay.fc": "b403a75f11af0d905732bc672c635f0738ec84d5873d7705e3f49f18793b821a",
     "crypto/smartcont/wallet-v5-action-list.fc": "8f8a60733c2233cad1b3e3c2364f652aaabc99debb02c1ef40a612618e92ddba",
     "crypto/smc-envelope/QuantumSelfPayCode.h": "908198c64cfb5499ece6ebc778623e002b374c985b833347116d249d90d4d270",
-    "scripts/update-self-pay-simulation-fixtures.py": "fc603ba420feeb3f4f320505d87682023a0a2bedee2a65b5c1a82271fb5d5f4e",
+    "scripts/update-self-pay-simulation-fixtures.py": "dc142ede16a664f9a7bb730f7874c5fa0c2e4940391da5db35a82755e35be274",
     "test/auth-extensions/cells.py": "81b937c31175302516a2624dcfd53e43525431e208a541970f2bc045482dc281",
     "test/auth-extensions/native.py": "b32dfb791ec13030bee78cb6ab89a8ff795ce38a6b7d5c9cdba90e5401dc0a82",
     "test/mldsa-auth/protocol.py": "9d6a3d900d0eb86731a0df1f73e82a86a6931e9b20ab89042ac9f6c95aecb5aa",
     "test/wallet-quantum/fee_tx_parity.py": "37b2ed54faa7813f73fa1e9d9fdb3b1f6a4a6ceb65fee020b74e38f7ee85ee09",
     "test/wallet-quantum/test_auth_policy.py": "390ebacc6d3880ab41b3eb5eabeb8614a2efa6be00d9ec3476edc13964948dd5",
-    "test/wallet-quantum/test_self_pay.py": "dcfc8d4ff8f80da319b6a9716e2ac530e9573b3176d945e5f95d3b3ab7cbf39c",
-    "test/wallet-quantum/test_self_pay_recovery.py": "cc8c7766282033ebb9c3577f033abcb7c66f28d235e4411ae768c1c515f71bcc",
+    "test/wallet-quantum/test_self_pay.py": "e1dcb4e865321c64fa574d27522a6ef0edca7726ba27f596db0cf6c52dd62043",
+    "test/wallet-quantum/test_self_pay_recovery.py": "94d200b914bba18325f03bcec68e3f46b39b66cd4a056a4c94e98c17b665053f",
     "tosctl/src/executor/real_boc/default_config.boc": "e7f513e2177473b0a84aecad9266d4d7f7518029d07544f213b28b0fd0cbb3d0"
   },
   "tools": {

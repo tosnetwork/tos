@@ -104,16 +104,20 @@ def main():
                 aborted=result["details"]["aborted"],
                 exit_code=expected_exit,
             )
-        if len(harness.scenarios) != 13:
+        default_hash = wallet.config().hash.hex()
+        if set(harness.parity_groups) != {default_hash}:
+            raise RuntimeError("public inputs require exactly the default configuration")
+        scenarios = harness.parity_groups[default_hash]["scenarios"]
+        if len(scenarios) != 13:
             raise RuntimeError("incomplete public fixture matrix")
-        for index, row in enumerate(harness.scenarios):
+        for index, row in enumerate(scenarios):
             columns = row.split("\t")
             if columns[0] in expectations:
                 columns[5] = json.dumps(
                     expectations[columns[0]], separators=(",", ":"), sort_keys=True
                 )
-                harness.scenarios[index] = "\t".join(columns)
-        rows = "\n".join(harness.scenarios) + "\n"
+                scenarios[index] = "\t".join(columns)
+        rows = "\n".join(scenarios) + "\n"
         base = from_boc((ROOT / "tosctl/src/executor/real_boc/default_config.boc").read_bytes())
         configuration = Cell(base.bits, [wallet.config()]).boc()
         (output / "scenarios.tsv").write_text(rows)
@@ -139,7 +143,7 @@ def main():
                 "scenarios.tsv": hashlib.sha256(rows.encode()).hexdigest(),
                 "config.boc": hashlib.sha256(configuration).hexdigest(),
             },
-            cases=[row.split("\t", 1)[0] for row in harness.scenarios],
+            cases=[row.split("\t", 1)[0] for row in scenarios],
         )
         (output / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
         print("Generated13 bounded public signing input fixtures; exact code profile matched")
