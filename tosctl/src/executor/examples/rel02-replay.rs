@@ -152,7 +152,6 @@ struct Outcome {
 fn execute(row: &Row, carried: Option<(ShardAccount, Account)>) -> anyhow::Result<Outcome> {
     let config = BlockchainConfig::with_config(ConfigParams::with_root(row.config.clone())?)?;
     anyhow::ensure!(config.global_version() == 16, "replay requires global version 16");
-    let dict_hash_min_cells = config.size_limits_config().acc_state_cells_for_storage_dict;
     let executor: Box<dyn TransactionExecutor> = match row.kind {
         ORDINARY => Box::new(OrdinaryTransactionExecutor::new(config)),
         TICK | TOCK => Box::new(TickTockTransactionExecutor::new(
@@ -204,7 +203,6 @@ fn execute(row: &Row, carried: Option<(ShardAccount, Account)>) -> anyhow::Resul
                 })
             }
         };
-    account.update_storage_stat(dict_hash_min_cells)?;
     transaction.set_prev_trans_lt(shard_account.last_trans_lt());
     transaction.set_prev_trans_hash(shard_account.last_trans_hash().clone());
     shard_account.write_account(&account)?;
@@ -481,7 +479,9 @@ fn main() -> anyhow::Result<()> {
         let actual_depth = outcome
             .account
             .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("no resulting Account"))?
+            .ok_or_else(|| {
+                anyhow::anyhow!("row {index} LT {}: executor refused: {}", row.lt, outcome.error)
+            })?
             .serialize()?
             .depth(0);
         anyhow::ensure!(
