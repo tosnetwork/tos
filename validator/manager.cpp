@@ -4413,6 +4413,10 @@ td::actor::Task<> ValidatorManagerImpl::fetch_signing_admission(ValidatorSession
   } else {
     signing_admissions_[session_id] = admission.move_as_ok();
   }
+  // Once per session: what this node may sign in it, and why.
+  const auto &decided = signing_admissions_[session_id];
+  LOG(WARNING) << "signing ledger: session " << session_id.to_hex() << " of " << shard.to_str() << " catchain " << cc
+               << ": " << (decided->fenced ? "fenced (" + decided->reason + ")" : std::string("admitted"));
   rebuild_groups_after_signing_answer();
   co_return td::Unit{};
 }

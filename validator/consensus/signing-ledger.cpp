@@ -1146,8 +1146,13 @@ td::actor::Task<bool> SigningLedger::offer_fence_block(BlockIdExt block, std::ui
     LOG(ERROR) << "signing ledger: the fence block was not recorded: " << written;
     co_return false;
   }
+  std::string lineages_text;
+  for (const auto& entry : header_.fence) {
+    lineages_text += PSTRING() << " " << ShardIdFull{entry.workchain, entry.shard}.to_str() << "=" << entry.cc;
+  }
   LOG(WARNING) << "signing ledger: unknown history fenced at " << block.to_str() << " over " << header_.fence.size()
-               << " lineages; sessions above it sign again";
+               << " lineages; sessions more than " << kFenceCounterMargin
+               << " catchain counters above them sign again; counters:" << lineages_text;
   co_return true;
 }
 
