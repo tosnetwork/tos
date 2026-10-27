@@ -44,7 +44,7 @@ The shared code hash is also checked by the existing source-generated Explorer
 registry test. The mobile engine does not link the server registry. Frozen
 fixture generation recompiles the contract and checks public diagnostic inputs
 against the signature-verifying reference emulator. The checker requires all
-20 generating sources, both input files, 13 named rows and the shared profile.
+22 generating sources, both input files, 13 named rows and the shared profile.
 
 Upstream comparison: local `ton-c` at
 `857b8a57a178e6ae0fe7fa86e7d81c5233de8560` has the ordinary transaction emulator
@@ -80,8 +80,8 @@ and binary hashes, original failures and raw retained artifacts. Required checks
   current state, import classification/no fabricated transaction, post-balance,
   historical refusal, actual ML-DSA/SLH verifier removal, forced-zero seed refusal
   and guard removal. The test source is never modified to make a product fault pass.
-- Fixture gate: five tests, with source-closure removal causing the designated
-  missing-source test to fail and restoration passing all five.
+- Fixture gate: six tests, with source-closure removal causing the designated
+  missing-source test to fail and restoration passing all six.
 - Python lint/format, C++ formatting, YAML parse and CTest/build-call mapping.
 
 The first PQ control linked the old shared proof library, whose VM symbols
@@ -102,3 +102,16 @@ code review is still required; design review does not substitute for it.
 This self-check records limitations instead of granting readiness. Do not merge
 unused helpers or advertise estimates until the entire execution, public API,
 platform, resource and fee-policy gates are met.
+
+## Independent review correction
+
+Review of `256bc1ad0` found that the fixture manifest omitted the interpreted
+`crypto/fift/lib/Asm.fif` and default-preloaded `crypto/fift/lib/Fift.fif`.
+The compiler executable hash does not cover those source files. A temporary
+source-root counterexample accepted all twenty listed sources without either
+Fift input. Checklist TE/provenance: the completeness assertion was too weak.
+Both inputs are now required by generator and checker; no recursive include was
+found in either current file. Inputs were actually regenerated, not relabeled.
+The six fixture tests and native 29-check suite pass on regenerated inputs.
+The original thirteen-control corpus is retained separately and identified in
+the memo index. The original review finding remains part of the record.

@@ -22,6 +22,8 @@
   "format": "tos-self-pay-simulation-inputs/1",
   "scope": "Diagnostic VM16 input fixtures; public seeds11/22, synthetic header/target/prev-blocks in native test. No proofs, phone custody or payment acceptance.",
   "sources": {
+    "crypto/fift/lib/Asm.fif": "a1df048428646f7f5ea2addc206a0cb2089982d967d589d5408aba90d2fedc4e",
+    "crypto/fift/lib/Fift.fif": "bad419afb217f533cfba08eaec1ba33dbbd8b061bf5299447ea672e2561ed7a4",
     "crypto/smartcont/auth-policy.fc": "8cbe92ade5089e39785292cdc7643246c6e17a4001773366e7d5c3f260769e10",
     "crypto/smartcont/pq-bytes.fc": "4ba7d80363b073325406dea3f64a5b0626a4f58b9af99508551131777f10ecef",
     "crypto/smartcont/pq.fc": "a0c96e263fcebd66f68bdd71a6cd5266678b588d2b851568729464980640f12d",
@@ -33,7 +35,7 @@
     "crypto/smartcont/wallet-quantum-self-pay.fc": "b403a75f11af0d905732bc672c635f0738ec84d5873d7705e3f49f18793b821a",
     "crypto/smartcont/wallet-v5-action-list.fc": "8f8a60733c2233cad1b3e3c2364f652aaabc99debb02c1ef40a612618e92ddba",
     "crypto/smc-envelope/QuantumSelfPayCode.h": "908198c64cfb5499ece6ebc778623e002b374c985b833347116d249d90d4d270",
-    "scripts/update-self-pay-simulation-fixtures.py": "3f2938fa8e67739eb32becb0de6495e54152932ac43b6ffe610e41a017a56292",
+    "scripts/update-self-pay-simulation-fixtures.py": "fc603ba420feeb3f4f320505d87682023a0a2bedee2a65b5c1a82271fb5d5f4e",
     "test/auth-extensions/cells.py": "81b937c31175302516a2624dcfd53e43525431e208a541970f2bc045482dc281",
     "test/auth-extensions/native.py": "b32dfb791ec13030bee78cb6ab89a8ff795ce38a6b7d5c9cdba90e5401dc0a82",
     "test/mldsa-auth/protocol.py": "9d6a3d900d0eb86731a0df1f73e82a86a6931e9b20ab89042ac9f6c95aecb5aa",

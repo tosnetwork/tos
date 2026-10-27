@@ -27,6 +27,8 @@ NAMES = [
 
 # Require the complete generating source closure; a shortened manifest must fail.
 SOURCES = [
+    "crypto/fift/lib/Asm.fif",
+    "crypto/fift/lib/Fift.fif",
     "crypto/smartcont/auth-policy.fc",
     "crypto/smartcont/pq-bytes.fc",
     "crypto/smartcont/pq.fc",

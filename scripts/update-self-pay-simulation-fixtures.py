@@ -121,6 +121,8 @@ def main():
         provenance = wallet.provenance()
         sources = provenance["sources"]
         for relative in (
+            "crypto/fift/lib/Asm.fif",
+            "crypto/fift/lib/Fift.fif",
             "crypto/smc-envelope/QuantumSelfPayCode.h",
             "scripts/update-self-pay-simulation-fixtures.py",
         ):

@@ -37,6 +37,10 @@ class SimulationInputGate(unittest.TestCase):
         self.manifest["sources"].pop("crypto/smartcont/wallet-quantum-self-pay.fc")
         self.reject("source closure differs")
 
+    def test_missing_assembler_source(self):
+        self.manifest["sources"].pop("crypto/fift/lib/Asm.fif")
+        self.reject("source closure differs")
+
     def test_changed_content(self):
         (self.directory / "config.boc").write_bytes(b"damaged")
         self.reject("content differs")
