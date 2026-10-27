@@ -4277,6 +4277,20 @@ std::shared_ptr<const consensus::signing::Admission> ValidatorManagerImpl::signi
       // A group may be built only from a state at or after the floor, on a chain that
       // contains it: one built from an older state could be a session the floor retired.
       CHECK(signing_floor_.has_value());
+      if (signing_floor_->seqno() == 0) {
+        // A floor at the zerostate (the genesis ceremony's ledger). The archive keeps no
+        // seqno index entry for a zerostate, so it is checked against the zerostate this
+        // node was configured with, the global configuration's identity of its chain.
+        if (*signing_floor_ == opts_->zero_block_id()) {
+          signing_floor_state_ = SigningFloorState::Verified;
+        } else {
+          LOG(ERROR) << "signing ledger: its history starts at the zerostate " << signing_floor_->to_str()
+                     << ", not at this node's zerostate " << opts_->zero_block_id().to_str()
+                     << "; no session will sign";
+          signing_floor_state_ = SigningFloorState::Refused;
+        }
+        return signing_admission_for(session_id, validator, shard, cc);
+      }
       if (last_masterchain_seqno_ < signing_floor_->seqno()) {
         return nullptr;
       }

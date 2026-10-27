@@ -277,12 +277,13 @@ class StartupCatchupManagerProbe : public ValidatorManagerImpl {
  public:
   StartupCatchupManagerProbe(std::string root, std::shared_ptr<Journal> journal,
                              td::actor::ActorId<keyring::Keyring> keys, td::actor::ActorId<adnl::Adnl> adnl,
-                             td::actor::ActorId<rldp2::Rldp> rldp, bool decision_log = false)
-      : ValidatorManagerImpl(options(decision_log), std::move(root), keys, adnl, rldp, {}, {})
+                             td::actor::ActorId<rldp2::Rldp> rldp, bool decision_log = false,
+                             BlockIdExt zero_state = BlockIdExt{})
+      : ValidatorManagerImpl(options(decision_log, zero_state), std::move(root), keys, adnl, rldp, {}, {})
       , journal_(std::move(journal)) {
   }
-  static td::Ref<ValidatorManagerOptions> options(bool decision_log) {
-    auto opts = ValidatorManagerOptions::create(BlockIdExt{}, BlockIdExt{});
+  static td::Ref<ValidatorManagerOptions> options(bool decision_log, BlockIdExt zero_state) {
+    auto opts = ValidatorManagerOptions::create(zero_state, zero_state);
     opts.write().set_signing_decision_log_enabled(decision_log);
     return opts;
   }
@@ -299,6 +300,31 @@ class StartupCatchupManagerProbe : public ValidatorManagerImpl {
     zero->flushed_upto(zero->version());
     last_key_block_handle_ = zero;
     last_known_key_block_handle_ = zero;
+  }
+
+  // Stores a masterchain block handle in the node's real database, as block application
+  // does: the handle, then its archive entry.
+  void archive_block(BlockIdExt id, UnixTime unix_time, LogicalTime lt, td::Promise<td::Unit> promise) {
+    auto handle = create_empty_block_handle(id);
+    handle->set_unix_time(unix_time);
+    handle->set_logical_time(lt);
+    handle->set_is_key_block(id.seqno() == 0);
+    td::actor::send_closure(
+        db_, &Db::store_block_handle, handle,
+        [db = db_.get(), handle, promise = std::move(promise)](td::Result<td::Unit> stored) mutable {
+          if (stored.is_error()) {
+            promise.set_error(stored.move_as_error());
+            return;
+          }
+          td::actor::send_closure(db, &Db::add_handle_to_archive, handle, std::move(promise));
+        });
+  }
+  // Whether the database's seqno index finds the masterchain block at `seqno`.
+  void find_by_seqno(BlockSeqno seqno, td::Promise<bool> promise) {
+    get_block_by_seqno_from_db(AccountIdPrefixFull{masterchainId, 0}, seqno,
+                               [promise = std::move(promise)](td::Result<ConstBlockHandle> found) mutable {
+                                 promise.set_value(found.is_ok());
+                               });
   }
 
   void hold(std::shared_ptr<const pq::ValidatorPQKeyStore> store, ValidatorId id, td::uint32 expire_at) {
@@ -450,7 +476,8 @@ class Fixture {
 
   // With `decision_log`, the manager keeps an own-decision log under its database root;
   // `before_start` runs on that root before the manager exists.
-  explicit Fixture(bool decision_log = false, const std::function<void(const std::string&)>& before_start = nullptr)
+  explicit Fixture(bool decision_log = false, const std::function<void(const std::string&)>& before_start = nullptr,
+                   BlockIdExt zero_state = BlockIdExt{})
       : root_(td::mkdtemp("/tmp", "startup-catchup-manager").move_as_ok()), scheduler_({1}) {
     if (before_start) {
       before_start(root_);
@@ -467,8 +494,8 @@ class Fixture {
                                   adnl::AdnlAddressList{}, static_cast<td::uint8>(0));
         }
       }
-      manager_ = td::actor::create_actor<StartupCatchupManagerProbe>("catchup manager", root_, journal, keys_.get(),
-                                                                     adnl_.get(), rldp_.get(), decision_log);
+      manager_ = td::actor::create_actor<StartupCatchupManagerProbe>(
+          "catchup manager", root_, journal, keys_.get(), adnl_.get(), rldp_.get(), decision_log, zero_state);
     });
   }
   ~Fixture() {
@@ -543,6 +570,16 @@ class Fixture {
   void advance(Snapshot s, BlockSeqno height, double age) {
     ask<td::Unit>([&](td::Promise<td::Unit> p) {
       td::actor::send_closure(manager_, &StartupCatchupManagerProbe::advance, std::move(s), height, age, std::move(p));
+    });
+  }
+  void archive_block(BlockIdExt id, UnixTime unix_time, LogicalTime lt) {
+    ask<td::Unit>([&](td::Promise<td::Unit> p) {
+      td::actor::send_closure(manager_, &StartupCatchupManagerProbe::archive_block, id, unix_time, lt, std::move(p));
+    });
+  }
+  bool find_by_seqno(BlockSeqno seqno) {
+    return ask<bool>([&](td::Promise<bool> p) {
+      td::actor::send_closure(manager_, &StartupCatchupManagerProbe::find_by_seqno, seqno, std::move(p));
     });
   }
   bool decide() {
@@ -960,4 +997,65 @@ TEST(StartupCatchupManager, DecisionLogFencesUnknownHistory) {
   auto above = f.session_of(f.snapshot(f.current, 5));
   ASSERT_TRUE(f.wait_event("group " + above.to_hex(), 10.0));
   ASSERT_EQ(1u, f.journal->count("admission admitted " + above.to_hex()));
+}
+
+// ===== The genesis ceremony's ledger at a real database =====
+
+namespace {
+
+const BlockIdExt kZeroState{masterchainId, shardIdAll, 0, hash("zerostate-root"), hash("zerostate-file")};
+
+// Starts a node whose ledger the genesis ceremony made with `floor`, configured with the
+// zerostate kZeroState, and whose real database holds the zerostate and block 1 as block
+// application stores them. Returns how the first session was admitted.
+std::string genesis_start(const BlockIdExt& floor) {
+  Fixture f(
+      true,
+      [&](const std::string& root) {
+        CHECK(consensus::signing::create_ledger(ledger_of(root), member_id(2, 0).value,
+                                                consensus::signing::default_file_ops(), floor)
+                  .is_ok());
+      },
+      kZeroState);
+  f.archive_block(kZeroState, 1000, 0);
+  f.archive_block(BlockIdExt{masterchainId, shardIdAll, 1, hash("block-1-root"), hash("block-1-file")}, 1001, 1000000);
+  // The database an ordinary floor check reads: a zerostate is not in its seqno index.
+  CHECK(!f.find_by_seqno(0));
+  CHECK(f.find_by_seqno(1));
+  f.hold(f.current, 0);
+  f.set_tip(f.snapshot(f.current, 1), 10, kFresh);
+  CHECK(!f.decide());
+  f.advance(f.snapshot(f.current, 1), 10, kFresh);
+  auto session = f.session_of(f.snapshot(f.current, 1));
+  if (!f.wait_event("group " + session.to_hex(), 10.0)) {
+    return "no group";
+  }
+  if (f.journal->count("admission admitted " + session.to_hex()) == 1) {
+    return "admitted";
+  }
+  if (f.journal->count("admission fenced " + session.to_hex()) == 1) {
+    return "fenced";
+  }
+  return "unknown";
+}
+
+}  // namespace
+
+// A ledger the genesis ceremony made at this node's zerostate admits the first session.
+TEST(StartupCatchupManager, GenesisCeremonyLedgerAdmits) {
+  ASSERT_EQ(std::string("admitted"), genesis_start(kZeroState));
+}
+
+// A ceremony ledger made for another zerostate admits nothing: another root hash, or
+// another file hash.
+TEST(StartupCatchupManager, GenesisCeremonyLedgerForAnotherRootHashFences) {
+  BlockIdExt other = kZeroState;
+  other.root_hash = hash("another-zerostate-root");
+  ASSERT_EQ(std::string("fenced"), genesis_start(other));
+}
+
+TEST(StartupCatchupManager, GenesisCeremonyLedgerForAnotherFileHashFences) {
+  BlockIdExt other = kZeroState;
+  other.file_hash = hash("another-zerostate-file");
+  ASSERT_EQ(std::string("fenced"), genesis_start(other));
 }
