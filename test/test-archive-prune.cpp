@@ -5,8 +5,10 @@
 */
 #include <atomic>
 #include <cstdlib>
+#include <dlfcn.h>
 #include <filesystem>
 #include <iostream>
+#include <map>
 #include <memory>
 #include <string>
 
@@ -77,6 +79,20 @@ struct ArchivePruneTestAccess {
     td::actor::send_lambda(slice, [slice, promise = std::move(promise)]() mutable {
       auto &self = slice.get_actor_unsafe();
       promise.set_value(self.destroyed_ && self.kv_ == nullptr);
+    });
+  }
+
+  // (packages open, packages with a writer)
+  static void package_writers(td::actor::ActorId<ArchiveSlice> slice, td::Promise<std::pair<size_t, size_t>> promise) {
+    td::actor::send_lambda(slice, [slice, promise = std::move(promise)]() mutable {
+      auto &self = slice.get_actor_unsafe();
+      size_t with_writer = 0;
+      for (const auto &package : self.packages_) {
+        if (!package->writer.empty()) {
+          ++with_writer;
+        }
+      }
+      promise.set_value(std::make_pair(self.packages_.size(), with_writer));
     });
   }
 
@@ -425,6 +441,204 @@ void secondary_prune_lifetime(const std::string &root, bool retain_source_files)
 
 }  // namespace
 
+// A reader (secondary or read-only) must never sync, or write to, the package
+// files of the node it reads; the primary keeps syncing what it appends. The
+// fsync counts come from test/validator/fsync-count-shim.c (LD_PRELOAD), scoped
+// to the slice's package directory and reset per phase. Each phase runs on its
+// own scheduler, which is destroyed, with every actor torn down, before the
+// count is read.
+namespace reader_sync {
+
+using CountFn = long (*)();
+using ResetFn = void (*)();
+
+struct Shim {
+  CountFn count = nullptr;
+  ResetFn reset = nullptr;
+};
+
+Shim load_shim() {
+  Shim shim;
+  shim.count = reinterpret_cast<CountFn>(dlsym(RTLD_DEFAULT, "tos_fsync_count_for_testing"));
+  shim.reset = reinterpret_cast<ResetFn>(dlsym(RTLD_DEFAULT, "tos_fsync_reset_for_testing"));
+  check(shim.count != nullptr && shim.reset != nullptr, "the fsync counting shim must be preloaded");
+  return shim;
+}
+
+// Handles the slices were given. A handle may not be destroyed with changes
+// it was never told are stored; the slice stores them in its own index, so
+// they are marked stored once the scheduler that used them is gone.
+std::vector<BlockHandle> &handles() {
+  static std::vector<BlockHandle> kept;
+  return kept;
+}
+
+void release_handles() {
+  for (auto &kept : handles()) {
+    kept->flushed_upto(kept->version());
+  }
+  handles().clear();
+}
+
+BlockHandle handle(tos::BlockSeqno seqno) {
+  auto result = BlockHandleImpl::create_empty(block_id(seqno));
+  result->set_logical_time(100000 + seqno);
+  result->set_unix_time(100000 + seqno);
+  result->set_is_key_block(false);
+  handles().push_back(result);
+  return result;
+}
+
+FileReference ref(tos::BlockSeqno seqno) {
+  return FileReference(fileref::Block{block_id(seqno)});
+}
+
+std::string payload(tos::BlockSeqno seqno) {
+  return PSTRING() << "block-" << seqno << "-" << std::string(512, static_cast<char>('a' + seqno % 26));
+}
+
+td::actor::ActorOwn<ArchiveSlice> open_slice(td::actor::Scheduler &scheduler, const std::string &root, PackageId id,
+                                             td::DbOpenMode mode) {
+  td::actor::ActorOwn<ArchiveSlice> slice;
+  scheduler.run_in_context([&] {
+    slice = td::actor::create_actor<ArchiveSlice>("reader-sync", id.id, id.key, id.temp, false, 0, root,
+                                                  td::actor::ActorId<ArchiveLru>{}, DbStatistics{}, mode);
+  });
+  return slice;
+}
+
+td::Status add_file(td::actor::Scheduler &scheduler, td::actor::ActorId<ArchiveSlice> slice, tos::BlockSeqno seqno) {
+  return request<td::Unit>(scheduler,
+                           [&](td::Promise<td::Unit> promise) {
+                             td::actor::send_closure(slice, &ArchiveSlice::add_file, handle(seqno), ref(seqno),
+                                                     td::BufferSlice(payload(seqno)), std::move(promise));
+                           })
+      .move_as_status();
+}
+
+td::Status add_block(td::actor::Scheduler &scheduler, td::actor::ActorId<ArchiveSlice> slice, tos::BlockSeqno seqno) {
+  return request<td::Unit>(scheduler,
+                           [&](td::Promise<td::Unit> promise) {
+                             std::vector<std::pair<FileReference, td::BufferSlice>> files;
+                             files.emplace_back(ref(seqno), td::BufferSlice(payload(seqno)));
+                             files.emplace_back(ref(seqno + 1), td::BufferSlice(payload(seqno + 1)));
+                             td::connect(std::move(promise), td::actor::ask(slice, &ArchiveSlice::add_block,
+                                                                            handle(seqno), std::move(files)));
+                           })
+      .move_as_status();
+}
+
+td::Status set_async(td::actor::Scheduler &scheduler, td::actor::ActorId<ArchiveSlice> slice, bool mode) {
+  return request<td::Unit>(scheduler,
+                           [&](td::Promise<td::Unit> promise) {
+                             td::actor::send_closure(slice, &ArchiveSlice::set_async_mode, mode, std::move(promise));
+                           })
+      .move_as_status();
+}
+
+td::Result<std::string> get_file(td::actor::Scheduler &scheduler, td::actor::ActorId<ArchiveSlice> slice,
+                                 tos::BlockSeqno seqno) {
+  auto result = request<td::BufferSlice>(scheduler, [&](td::Promise<td::BufferSlice> promise) {
+    td::actor::send_closure(slice, &ArchiveSlice::get_file, handle(seqno), ref(seqno), std::move(promise));
+  });
+  if (result.is_error()) {
+    return result.move_as_error();
+  }
+  return result.ok().as_slice().str();
+}
+
+void close_slice(td::actor::Scheduler &scheduler, td::actor::ActorOwn<ArchiveSlice> &slice) {
+  scheduler.run_in_context([&] { slice.reset(); });
+}
+
+// Every file under the slice's directory, with its bytes.
+std::map<std::string, std::string> snapshot(const std::string &directory) {
+  std::map<std::string, std::string> files;
+  for (const auto &entry : std::filesystem::recursive_directory_iterator(directory)) {
+    if (entry.is_regular_file()) {
+      files[entry.path().string()] = td::read_file_str(entry.path().string()).move_as_ok();
+    }
+  }
+  return files;
+}
+
+const char *mode_name(td::DbOpenMode mode) {
+  return mode == td::DbOpenMode::db_secondary ? "secondary" : "read-only";
+}
+
+}  // namespace reader_sync
+
+void reader_package_sync(const std::string &root) {
+  using namespace reader_sync;
+  auto shim = load_shim();
+  const PackageId id{100, false, false};
+  const auto directory = root + id.path();
+  std::filesystem::create_directories(directory);
+  check(setenv("TOS_FSYNC_COUNT_PREFIX", directory.c_str(), 1) == 0, "scope the fsync count");
+  const tos::BlockSeqno written[] = {101, 102, 103, 105};
+
+  // Primary: append, multi-append and an async-mode append, each synced.
+  shim.reset();
+  {
+    td::actor::Scheduler scheduler({2});
+    auto slice = open_slice(scheduler, root, id, td::DbOpenMode::db_primary);
+    check(add_file(scheduler, slice.get(), 101).is_ok(), "primary append");
+    check(add_block(scheduler, slice.get(), 102).is_ok(), "primary multi-append");
+    check(set_async(scheduler, slice.get(), true).is_ok(), "primary enters async mode");
+    check(add_file(scheduler, slice.get(), 105).is_ok(), "primary async append");
+    check(set_async(scheduler, slice.get(), false).is_ok(), "primary leaves async mode and flushes");
+    close_slice(scheduler, slice);
+  }
+  release_handles();
+  const auto primary_syncs = shim.count();
+  std::cout << "primary package syncs: " << primary_syncs << std::endl;
+  check(primary_syncs > 0, "the primary syncs the packages it appends to");
+
+  // Primary reopen: everything written survives.
+  {
+    td::actor::Scheduler scheduler({2});
+    auto slice = open_slice(scheduler, root, id, td::DbOpenMode::db_primary);
+    for (auto seqno : written) {
+      auto read = get_file(scheduler, slice.get(), seqno);
+      check(read.is_ok() && read.ok() == payload(seqno), "written data survives a primary reopen");
+    }
+    close_slice(scheduler, slice);
+  }
+  release_handles();
+  const auto before = snapshot(directory);
+
+  for (auto mode : {td::DbOpenMode::db_secondary, td::DbOpenMode::db_readonly}) {
+    shim.reset();
+    {
+      td::actor::Scheduler scheduler({2});
+      auto slice = open_slice(scheduler, root, id, mode);
+      auto read = get_file(scheduler, slice.get(), 101);
+      check(read.is_ok() && read.ok() == payload(101), "a reader reads the packages");
+      auto writers = request<std::pair<size_t, size_t>>(scheduler, [&](auto promise) {
+                       ArchivePruneTestAccess::package_writers(slice.get(), std::move(promise));
+                     }).move_as_ok();
+      check(writers.first > 0 && writers.second == 0, "a reader keeps its packages open without writers");
+      check(set_async(scheduler, slice.get(), true).is_ok(), "a reader accepts async mode");
+      check(set_async(scheduler, slice.get(), false).is_ok(), "a reader leaves async mode");
+      auto file = add_file(scheduler, slice.get(), 110);
+      check(file.is_error() && file.message() == td::Slice(kArchiveSliceReadOnly),
+            "a reader refuses add_file as read-only");
+      auto block = add_block(scheduler, slice.get(), 111);
+      check(block.is_error() && block.message() == td::Slice(kArchiveSliceReadOnly),
+            "a reader refuses add_block as read-only");
+      close_slice(scheduler, slice);
+    }
+    release_handles();
+    const auto reader_syncs = shim.count();
+    std::cout << mode_name(mode) << " reader package syncs: " << reader_syncs << std::endl;
+    check(reader_syncs == 0, "a reader never syncs the packages it reads");
+    check(snapshot(directory) == before, "a reader leaves the package bytes and index unchanged");
+  }
+  check(unsetenv("TOS_FSYNC_COUNT_PREFIX") == 0, "unscope the fsync count");
+  std::cout << "PASS: readers never sync or write packages; the primary still syncs and its data survives a reopen"
+            << std::endl;
+}
+
 int main(int argc, char **argv) {
   auto root = td::mkdtemp("", "archive-prune-").move_as_ok();
   if (argc == 2 && std::string(argv[1]) == "--held-reader-shutdown") {
@@ -435,6 +649,11 @@ int main(int argc, char **argv) {
   if (argc == 2 && std::string(argv[1]) == "--secondary-lifetime") {
     secondary_prune_lifetime(root + "/secondary-delete", false);
     secondary_prune_lifetime(root + "/secondary-preserve", true);
+    td::rmrf(root).ensure();
+    return 0;
+  }
+  if (argc == 2 && std::string(argv[1]) == "--reader-package-sync") {
+    reader_package_sync(root + "/reader-package-sync");
     td::rmrf(root).ensure();
     return 0;
   }

@@ -104,6 +104,11 @@ class PackageWriter : public td::actor::Actor {
 
 class ArchiveLru;
 
+// The refusal a slice gives to a write when its database was opened as a
+// reader (secondary or read-only): a reader never appends to, or syncs, the
+// packages of the node it reads.
+inline constexpr const char *kArchiveSliceReadOnly = "archive slice is read-only: its database was opened as a reader";
+
 // Process-wide counts of archive slice database opens and closes. A reader
 // whose access pattern makes a slice close and reopen shows up here.
 td::uint64 archive_slice_opens();
