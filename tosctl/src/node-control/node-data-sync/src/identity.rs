@@ -41,6 +41,8 @@ impl Identity {
         backup: &Root,
     ) -> Result<Self> {
         let db = fs::canonicalize(db)?;
+        // Every file below the node's tree is reached through this held descriptor.
+        let database = Root::open(&db)?;
         let work = fs::canonicalize(work)?;
         let working_directory = fs::canonicalize(working_directory)?;
         let mut sources =
@@ -76,23 +78,29 @@ impl Identity {
         for name in ["keyring", "keys"] {
             let base = if name == "keyring" { &db } else { &work };
             let path = base.join(name);
-            match path.symlink_metadata() {
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound && name == "keys" => {}
-                Err(error) => return Err(error.into()),
-                Ok(_) => {
-                    inventory_tree(&path, &mut sources)?;
+            let parent = database.open_anchored(base)?;
+            match crate::trees::optional_directory(&parent, name)
+                .context("required identity directory is missing or unsafe")?
+            {
+                None if name == "keys" => {}
+                None => anyhow::bail!("required identity directory is missing: {}", path.display()),
+                Some(tree) => {
+                    inventory_tree(&tree, &mut sources)?;
                     directories.push(path);
                 }
             }
         }
-        let config = Root::open(&db)?.bytes("config.json", IDENTITY_FILE_LIMIT)?;
+        // A seed belongs to the account that runs the node, which owns the database root.
+        let (seed_owner, _) = database.owner()?;
+        let config = database.bytes("config.json", IDENTITY_FILE_LIMIT)?;
         let config: serde_json::Value = serde_json::from_slice(&config)?;
         for id in registered_keys(&config)? {
             let path = format!("keyring/{}", id.to_ascii_uppercase());
-            Root::open(&db)?
+            database
                 .read(&path, IDENTITY_FILE_LIMIT)
                 .context("required registered key is missing")?;
         }
+        let mut seeds = std::collections::BTreeMap::new();
         for reference in seed_references(&config)? {
             let source =
                 if reference.is_absolute() { reference } else { working_directory.join(reference) };
@@ -104,22 +112,19 @@ impl Identity {
                     .any(|p| resolved.starts_with(db.join(p))),
                 "signing seed overlaps chain or recovery data"
             );
-            use std::os::unix::fs::{MetadataExt, PermissionsExt};
-            let metadata = source.symlink_metadata()?;
-            ensure!(
-                metadata.file_type().is_file()
-                    && metadata.nlink() == 1
-                    && metadata.uid() == unsafe { libc::geteuid() }
-                    && metadata.permissions().mode() & 0o077 == 0,
-                "configured consensus seed is not an owned private regular file"
-            );
-            ensure!(
-                metadata.len() == 32,
-                "configured consensus seed is not a protected 32-byte file"
-            );
+            // Opened once, below the held tree. The checks run on this descriptor and the
+            // backup is copied from it, so a seed replaced by name afterwards is never read.
+            let (parent, name) = anchored_file(&database, &source)?;
+            let seed = parent
+                .read(name, 32)
+                .context("configured consensus seed is not an owned private regular file")?;
+            check_seed(&seed, seed_owner)?;
             protected_files.push(source.clone());
+            seeds.insert(source.clone(), seed);
             sources.push(source);
         }
+        #[cfg(test)]
+        before_identity_copy();
         let mut unique = BTreeSet::new();
         let mut files = Vec::new();
         let mut total = 0_u64;
@@ -134,21 +139,31 @@ impl Identity {
                 continue;
             }
             let stored = format!("files/{:06}", files.len());
+            if let Some(seed) = seeds.remove(&source) {
+                // Rechecked on the same descriptor just before its bytes are copied.
+                check_seed(&seed, seed_owner)?;
+                let mut output = backup.create_file(&stored)?;
+                let (size, digest) = copy_hash(seed, &mut output, 32)?;
+                ensure!(size == 32, "configured consensus seed changed length while held");
+                total = total.checked_add(size).context("identity size overflow")?;
+                output.sync_all()?;
+                backup.sync_parent(&stored)?;
+                files.push(PrivateFile { source, stored, size: Some(size), sha256: Some(digest) });
+                continue;
+            }
             let optional = LOCAL_CONFIGS.iter().any(|name| source == db.join(name));
-            match fs::symlink_metadata(&source) {
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound && optional => {
+            let (parent, name) = anchored_file(&database, &source)?;
+            match parent.kind(name)? {
+                None if optional => {
                     files.push(PrivateFile { source, stored, size: None, sha256: None })
                 }
-                Err(e) => return Err(e.into()),
-                Ok(metadata) => {
+                None => anyhow::bail!("identity file is missing: {}", source.display()),
+                Some(kind) => {
                     ensure!(
-                        metadata.file_type().is_file(),
+                        kind == crate::safe_io::Kind::File,
                         "non-regular identity file: {}",
                         source.display()
                     );
-                    let parent = Root::open(source.parent().context("identity source parent")?)?;
-                    let name =
-                        source.file_name().and_then(|s| s.to_str()).context("identity filename")?;
                     let input = parent.read(name, IDENTITY_FILE_LIMIT)?;
                     let mut output = backup.create_file(&stored)?;
                     let (size, digest) = copy_hash(input, &mut output, IDENTITY_FILE_LIMIT)?;
@@ -165,6 +180,7 @@ impl Identity {
                 }
             }
         }
+        ensure!(seeds.is_empty(), "a checked consensus seed was not backed up");
         let identity = Self { format: 1, files, protected_files, directories };
         backup.write_new("identity.json", &serde_json::to_vec(&identity)?)?;
         identity.verify(backup)?;
@@ -210,17 +226,12 @@ impl Identity {
         ensure!(total <= IDENTITY_TOTAL_LIMIT, "identity total limit");
         Ok(())
     }
-    pub fn verify_sources(&self) -> Result<()> {
+    /// Recheck every source below the held database descriptor `database`.
+    pub fn verify_sources(&self, database: &Root) -> Result<()> {
         for file in &self.files {
+            let (parent, name) = anchored_file(database, &file.source)?;
             match file.size {
                 Some(size) => {
-                    let parent =
-                        Root::open(file.source.parent().context("identity source parent")?)?;
-                    let name = file
-                        .source
-                        .file_name()
-                        .and_then(|s| s.to_str())
-                        .context("identity name")?;
                     ensure!(
                         crate::safe_io::file_hash(parent.read(name, size)?, size)?
                             == (size, file.sha256.clone().context("identity digest")?),
@@ -228,7 +239,7 @@ impl Identity {
                     );
                 }
                 None => ensure!(
-                    crate::safe_io::absent(&file.source)?,
+                    parent.kind(name)?.is_none(),
                     "absent local config appeared during preparation"
                 ),
             }
@@ -289,13 +300,46 @@ impl Identity {
         Ok(())
     }
 }
-fn inventory_tree(path: &Path, sources: &mut Vec<PathBuf>) -> Result<()> {
-    let root = Root::open(path).context("required identity directory is missing or unsafe")?;
-    for file in crate::trees::inventory(&root)? {
+/// Owner, mode, link count and length of a consensus seed, read from its open descriptor.
+fn check_seed(seed: &fs::File, owner: u32) -> Result<()> {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    let metadata = seed.metadata()?;
+    ensure!(
+        metadata.file_type().is_file()
+            && metadata.nlink() == 1
+            && metadata.uid() == owner
+            && metadata.permissions().mode() & 0o077 == 0,
+        "configured consensus seed is not an owned private regular file"
+    );
+    ensure!(metadata.len() == 32, "configured consensus seed is not a protected 32-byte file");
+    Ok(())
+}
+#[cfg(test)]
+thread_local! {
+    static BEFORE_IDENTITY_COPY: std::cell::RefCell<Option<Box<dyn FnMut()>>> =
+        const { std::cell::RefCell::new(None) };
+}
+/// Test-only step between the seed checks and the backup copy.
+#[cfg(test)]
+fn before_identity_copy() {
+    BEFORE_IDENTITY_COPY.with(|hook| {
+        if let Some(hook) = hook.borrow_mut().as_mut() {
+            hook();
+        }
+    });
+}
+fn inventory_tree(tree: &Root, sources: &mut Vec<PathBuf>) -> Result<()> {
+    for file in crate::trees::inventory(tree)? {
         ensure!(sources.len() < 100_000, "identity inventory count limit");
-        sources.push(path.join(file.path));
+        sources.push(tree.path.join(file.path));
     }
     Ok(())
+}
+/// The parent of `source`, opened below the held database when it lies inside it.
+fn anchored_file<'a>(database: &Root, source: &'a Path) -> Result<(Root, &'a str)> {
+    let parent = database.open_anchored(source.parent().context("identity source parent")?)?;
+    let name = source.file_name().and_then(|s| s.to_str()).context("identity filename")?;
+    Ok((parent, name))
 }
 pub fn seed_references(config: &serde_json::Value) -> Result<Vec<PathBuf>> {
     let Some(pq) = config.pointer("/extraconfig/pq_consensus") else {
@@ -371,4 +415,69 @@ pub fn registered_keys(config: &serde_json::Value) -> Result<BTreeSet<String>> {
         }
     }
     Ok(keys)
+}
+
+#[cfg(test)]
+mod seed_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn seed_replaced_after_its_checks_is_never_copied() -> Result<()> {
+        let temporary = tempfile::tempdir()?;
+        let base = temporary.path().canonicalize()?;
+        let db = Root::create(&base.join("db"))?;
+        db.write_new(
+            "config.json",
+            br#"{"extraconfig":{"pq_consensus":{"consensus_key_file":"seed"}}}"#,
+        )?;
+        db.ensure_directory("keyring")?;
+        let seed = db.path.join("seed");
+        fs::write(&seed, [7_u8; 32])?;
+        fs::set_permissions(&seed, fs::Permissions::from_mode(0o600))?;
+        for name in ["operator.json", "global.json", "unit.service"] {
+            fs::write(base.join(name), b"{}")?;
+        }
+        let backup = Root::create(&base.join("backup"))?;
+        // Between the seed checks and the copy, the seed is replaced by name with a
+        // world-readable file of another length and other bytes.
+        let replaced = seed.clone();
+        BEFORE_IDENTITY_COPY.with(|hook| {
+            *hook.borrow_mut() = Some(Box::new(move || {
+                let staged = replaced.with_extension("staged");
+                fs::write(&staged, [9_u8; 64]).expect("stage replacement");
+                fs::set_permissions(&staged, fs::Permissions::from_mode(0o644))
+                    .expect("replacement mode");
+                fs::rename(&staged, &replaced).expect("replace seed");
+            }));
+        });
+        let captured = Identity::capture(
+            &db.path,
+            &base,
+            &db.path,
+            &base.join("operator.json"),
+            &base.join("global.json"),
+            &[base.join("unit.service")],
+            &backup,
+        );
+        BEFORE_IDENTITY_COPY.with(|hook| *hook.borrow_mut() = None);
+        // The held descriptor now names an unlinked inode: its recheck refuses before any
+        // byte is copied, and the replacement is never opened.
+        let error = captured.err().context("a seed replaced after its checks was backed up")?;
+        let text = format!("{error:#}");
+        assert!(
+            text.contains("configured consensus seed is not an owned private regular file"),
+            "wrong refusal: {text}"
+        );
+        if let Some(files) = crate::trees::optional_directory(&backup, "files")? {
+            for file in crate::trees::inventory(&files)? {
+                assert_ne!(
+                    files.bytes(&file.path, 64)?,
+                    [9_u8; 64],
+                    "the replacement was copied into the backup"
+                );
+            }
+        }
+        Ok(())
+    }
 }

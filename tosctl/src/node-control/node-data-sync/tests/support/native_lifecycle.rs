@@ -31,7 +31,8 @@ use std::{
 struct Manager {
     context: NodeContext,
     configured: bool,
-    indexed: bool,
+    json_rpc: bool,
+    no_index_flag: bool,
     flip_on_stop: bool,
     trip_on_describe: bool,
     child: Option<Child>,
@@ -103,12 +104,17 @@ impl Manager {
                 for property in properties.split(',') {
                     let value = match property {
                         "ExecStart" => format!(
-                            "{{ argv[]={} --db {} --global-config {}{}{} ; running }}",
+                            "{{ argv[]={} --db {} --global-config {}{}{}{} ; running }}",
                             self.context.engine.display(),
                             self.context.database.display(),
                             self.context.global_config.display(),
                             if self.configured { " --permanent-celldb" } else { "" },
-                            if self.indexed { " --json-rpc-address 127.0.0.1:8081" } else { "" }
+                            if self.json_rpc { " --json-rpc-address 127.0.0.1:8081" } else { "" },
+                            if self.no_index_flag {
+                                " --json-rpc-without-wallet-index"
+                            } else {
+                                ""
+                            }
                         ),
                         "User" => String::new(),
                         "WorkingDirectory" => self.context.working_directory.display().to_string(),
@@ -284,7 +290,8 @@ impl Fixture {
         let manager = Rc::new(RefCell::new(Manager {
             context,
             configured: false,
-            indexed: false,
+            json_rpc: false,
+            no_index_flag: false,
             flip_on_stop: false,
             trip_on_describe: false,
             child: None,
@@ -550,7 +557,8 @@ fn production_restore_process_exit_recovers() -> Result<()> {
         let manager = Rc::new(RefCell::new(Manager {
             context: request.context.clone(),
             configured: false,
-            indexed: false,
+            json_rpc: false,
+            no_index_flag: false,
             flip_on_stop: false,
             trip_on_describe: false,
             child: None,
@@ -695,6 +703,8 @@ fn production_complete_retries_after_release_cut() -> Result<()> {
     Ok(())
 }
 
+/// The installed database decides whether a target runs an in-process wallet index, at
+/// every boundary; the deprecated no-op flag and JSON-RPC on the command line decide nothing.
 #[test]
 fn production_restore_refuses_indexed_targets_at_lifecycle_boundaries() -> Result<()> {
     let _serial =
@@ -702,27 +712,41 @@ fn production_restore_refuses_indexed_targets_at_lifecycle_boundaries() -> Resul
     if !fixture_environment_available() {
         return Ok(());
     }
-    for case in ["configured", "disk-only", "download", "stop"] {
+    for case in [
+        "disk-directory",
+        "disk-symlink",
+        "download",
+        "stop",
+        "json-rpc-without-flag",
+        "json-rpc-with-flag",
+    ] {
+        let accepted = case.starts_with("json-rpc");
         let mut fixture = Fixture::new()?;
         fixture.manager.borrow_mut().start()?;
-        let state = Rc::clone(&fixture.manager);
+        let index = fixture.request.context.database.join("wc0-index");
+        let appear = index.clone();
         let mode = case.to_owned();
         let _scope = fixture.scope(move |point| {
             if (mode == "download" && point == "during-download")
                 || (mode == "stop" && point == "after-stop-before-stage")
             {
-                state.borrow_mut().indexed = true;
+                fs::create_dir(&appear)?;
             }
             if point == "before-stage" {
                 anyhow::bail!("prohibited staging reached");
             }
             Ok(())
         });
-        if case == "configured" {
-            fixture.manager.borrow_mut().indexed = true;
+        if accepted {
+            let mut manager = fixture.manager.borrow_mut();
+            manager.json_rpc = true;
+            manager.no_index_flag = case == "json-rpc-with-flag";
         }
-        if case == "disk-only" {
-            fs::create_dir(fixture.request.context.database.join("wc0-index"))?;
+        if case == "disk-directory" {
+            fs::create_dir(&index)?;
+        }
+        if case == "disk-symlink" {
+            std::os::unix::fs::symlink("absent", &index)?;
         }
         let _server;
         if case == "download" {
@@ -733,10 +757,21 @@ fn production_restore_refuses_indexed_targets_at_lifecycle_boundaries() -> Resul
             fixture.request.source_url = Some(_server.url.clone());
         }
         let error = operations::restore(&fixture.request, &fixture.operation)
-            .expect_err("indexed restore accepted");
+            .expect_err("restore ran past its staging boundary");
         let message = format!("{error:#}");
+        if accepted {
+            // Every service check before staging passed: JSON-RPC, with or without the
+            // no-op flag, is not a wallet index.
+            assert!(
+                message.contains("prohibited staging reached")
+                    && !message.contains("wallet-indexed"),
+                "{case}: target refused: {message}"
+            );
+            assert!(crate::safe_io::absent(&index)?, "{case}: an index entry was created");
+            continue;
+        }
         assert!(message.contains("wallet-indexed nodes"), "{case}: wrong refusal: {message}");
-        if case == "configured" || case == "disk-only" {
+        if case.starts_with("disk-") {
             assert!(
                 !fixture.operation.exists(),
                 "{case}: preparation began before unsupported target refusal"
@@ -754,9 +789,8 @@ fn production_restore_refuses_indexed_targets_at_lifecycle_boundaries() -> Resul
                 "{case}: stopped unsupported target"
             );
         }
-        if case == "disk-only" {
-            assert!(fixture.request.context.database.join("wc0-index").is_dir());
-        }
+        // The refusal never removes or replaces the operator's index entry.
+        assert!(index.symlink_metadata().is_ok(), "{case}: index entry was removed");
     }
     println!("\nPRODUCTION_RESTORE_INDEX_BOUNDARIES_OK");
     Ok(())

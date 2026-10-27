@@ -1,10 +1,7 @@
 use anyhow::{Context, Result, ensure};
 use std::{
-    fs::{self, File, OpenOptions},
-    os::{
-        fd::AsRawFd,
-        unix::fs::{MetadataExt, OpenOptionsExt},
-    },
+    fs::{self, File},
+    os::{fd::AsRawFd, unix::fs::MetadataExt},
     path::{Path, PathBuf},
     process::{Command, Stdio},
     time::{Duration, Instant},
@@ -20,7 +17,153 @@ pub struct Service {
 }
 struct CheckedService {
     permanent_cells: bool,
-    indexed: bool,
+    account: Account,
+}
+
+/// The account the selected service runs as, and the account invoking this tool.
+/// They differ only for a system unit with a dedicated service account, invoked as root.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Account {
+    pub uid: u32,
+    pub gid: u32,
+    pub invoker: u32,
+}
+/// `User=`, `Group=` and `DynamicUser=` of the selected unit, as the manager reports them.
+pub(crate) struct UnitAccount<'a> {
+    pub user_manager: bool,
+    pub user: &'a str,
+    pub group: &'a str,
+    pub dynamic: &'a str,
+}
+pub(crate) struct Invoker<'a> {
+    pub uid: u32,
+    pub gid: u32,
+    pub name: &'a str,
+}
+/// A resolved local account: numeric uid, primary gid and primary group name.
+pub(crate) struct Resolved {
+    pub uid: u32,
+    pub gid: u32,
+    pub group: String,
+}
+fn account_name(name: &str) -> bool {
+    (1..=32).contains(&name.len())
+        && !name.starts_with('-')
+        && name.bytes().all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
+}
+/// One decision for every supported service shape; anything else refuses before a stop.
+pub(crate) fn select_account(
+    unit: &UnitAccount<'_>,
+    invoker: &Invoker<'_>,
+    resolve: impl FnOnce(&str) -> Result<Resolved>,
+) -> Result<Account> {
+    let user = unit.user.trim();
+    if unit.user_manager {
+        // A user manager runs its units as the manager's own account: the invoker.
+        ensure!(
+            user.is_empty(),
+            "a user-manager unit cannot name a service account; select the system manager"
+        );
+        return Ok(Account { uid: invoker.uid, gid: invoker.gid, invoker: invoker.uid });
+    }
+    ensure!(
+        !user.is_empty(),
+        "a system unit without User= runs as root; set a dedicated service account"
+    );
+    ensure!(user != "root", "a system unit running as root is not supported");
+    ensure!(account_name(user), "unsupported service User= value");
+    let resolved = resolve(user)?;
+    ensure!(resolved.uid != 0, "a system unit running as root is not supported");
+    // Every system unit, whether it runs as the invoker or as a service account.
+    ensure!(
+        unit.dynamic.trim() == "no",
+        "a dynamically allocated service user is not supported; use a fixed service account"
+    );
+    let group = unit.group.trim();
+    ensure!(
+        group.is_empty() || group == resolved.group,
+        "service Group= must be the service account's primary group"
+    );
+    if user == invoker.name.trim() && resolved.uid == invoker.uid {
+        return Ok(Account { uid: invoker.uid, gid: invoker.gid, invoker: invoker.uid });
+    }
+    ensure!(
+        invoker.uid == 0,
+        "service must run as the invoking user, or as a dedicated service account when invoked as root"
+    );
+    Ok(Account { uid: resolved.uid, gid: resolved.gid, invoker: 0 })
+}
+impl Account {
+    pub fn delegated(&self) -> bool {
+        self.uid != self.invoker
+    }
+    /// With a service account, a group or other write bit would let a third account change
+    /// a tree the privileged invoker acts on. Without one, the invoker's layout is unchanged.
+    fn exclusive(&self, metadata: &fs::Metadata) -> bool {
+        !self.delegated() || metadata.mode() & 0o022 == 0
+    }
+    /// The installed database belongs to the service account.
+    pub fn require_database(&self, database: &Path) -> Result<()> {
+        let metadata = fs::symlink_metadata(database)?;
+        ensure!(
+            metadata.is_dir() && metadata.uid() == self.uid && self.exclusive(&metadata),
+            "database root must be owned by the service account (uid {}) and writable by no other account",
+            self.uid
+        );
+        if self.delegated() {
+            self.require_protected_ancestors(database)?;
+        }
+        Ok(())
+    }
+    /// Operation, catalog and cache trees belong to the invoker: the service account must
+    /// not be able to change what the invoker validates, signs or installs.
+    pub fn require_private(&self, path: &Path) -> Result<()> {
+        ensure!(
+            path.is_absolute() && fs::canonicalize(path)? == path,
+            "private operation root must be canonical and link-free"
+        );
+        let metadata = fs::symlink_metadata(path)?;
+        ensure!(
+            metadata.is_dir() && metadata.uid() == self.invoker && self.exclusive(&metadata),
+            "{} must be a directory owned by the invoking user (uid {}) and writable by no other account",
+            path.display(),
+            self.invoker
+        );
+        if self.delegated() {
+            self.require_protected_ancestors(path)?;
+        }
+        Ok(())
+    }
+    /// Allocation roots are only measured; with a service account they may belong to either side.
+    pub fn require_budget(&self, roots: &[PathBuf]) -> Result<()> {
+        if !self.delegated() {
+            return Ok(());
+        }
+        for root in roots {
+            let metadata = fs::symlink_metadata(root)?;
+            ensure!(
+                metadata.is_dir() && (metadata.uid() == self.invoker || metadata.uid() == self.uid),
+                "budget root {} belongs to another account",
+                root.display()
+            );
+        }
+        Ok(())
+    }
+    /// Paths the invoker resolves must not be re-pointable by the service account: every
+    /// ancestor is the invoker's or root's and writable by no other account, except sticky ones.
+    fn require_protected_ancestors(&self, path: &Path) -> Result<()> {
+        for ancestor in path.ancestors().skip(1) {
+            let metadata = fs::symlink_metadata(ancestor)?;
+            ensure!(
+                metadata.is_dir()
+                    && (metadata.uid() == 0 || metadata.uid() == self.invoker)
+                    && (metadata.mode() & 0o022 == 0 || metadata.mode() & 0o1000 != 0),
+                "{} must be owned by root and writable by no other account",
+                ancestor.display()
+            );
+        }
+        Ok(())
+    }
 }
 
 pub struct Frozen {
@@ -34,14 +177,9 @@ impl Frozen {
             root.is_absolute() && fs::canonicalize(root)? == root,
             "stopped root must be canonical"
         );
-        let lock = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .mode(0o600)
-            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
-            .open(root.join("config.json.lock"))?;
+        // The engine opens this lock read-write at start: a lock created here must belong
+        // to the database owner, not to a privileged invoker.
+        let lock = crate::safe_io::Root::open(root)?.open_shared_lock("config.json.lock")?;
         ensure!(lock.metadata()?.is_file(), "invalid native configuration lock");
         let mut record: libc::flock = unsafe { std::mem::zeroed() };
         record.l_type = libc::F_WRLCK as _;
@@ -115,13 +253,12 @@ impl Service {
     pub fn require_mode(&self, expected: bool) -> Result<()> {
         self.describe(Some(expected)).map(|_| ())
     }
-    /// Restore supports only non-indexed targets; capture may still use an indexed source.
+    /// Restore supports only targets without an in-process wallet index; capture may still
+    /// use an indexed source. The installed database decides, through its held descriptor:
+    /// a current engine never opens an index whatever its flags, and the only flag that
+    /// once disabled it is now a no-op, so the command line decides nothing here.
     pub fn require_restore_target(&self, expected: Option<bool>) -> Result<()> {
-        let checked = self.describe(expected)?;
-        ensure!(
-            !checked.indexed,
-            "wallet-indexed nodes (--json-rpc-address without --json-rpc-without-wallet-index) are not supported by restore in this version; the standard validator configuration does not run the index; see doc/node-data-sync.md#supported-targets"
-        );
+        self.describe(expected)?;
         crate::paths::restore_root(&self.database)
     }
     pub fn start_restore(&self, frozen: Frozen, expected: bool) -> Result<()> {
@@ -149,16 +286,8 @@ impl Service {
                 && fs::canonicalize(&self.working_directory)? == self.working_directory,
             "service paths must be canonical"
         );
-        let user = command(
-            self.manager().args(["show", "--property=User", "--value", "--", &self.unit]),
-            Duration::from_secs(10),
-        )?;
-        let own_user = command(Command::new("id").arg("-un"), Duration::from_secs(10))?;
-        ensure!(
-            (self.user_manager && user.trim().is_empty())
-                || (user.trim() == own_user.trim() && !user.trim().is_empty()),
-            "service must run as the invoking user"
-        );
+        let account = self.account_checked()?;
+        account.require_database(&self.database)?;
         let work = command(
             self.manager().args([
                 "show",
@@ -184,7 +313,6 @@ impl Service {
             &self.global_config,
             &self.working_directory,
         )?;
-        let mut indexed = indexed_exec(&exec)?;
         let pid = command(
             self.manager().args(["show", "--property=MainPID", "--value", "--", &self.unit]),
             Duration::from_secs(10),
@@ -218,11 +346,65 @@ impl Service {
                 &self.global_config,
                 &self.working_directory,
             )?;
-            indexed |= indexed_exec(&format!("{{ argv[]={} ; running }}", arguments.join(" ")))?;
             check_mode(configured, Some(running), expected)?;
         }
         check_mode(configured, None, expected)?;
-        Ok(CheckedService { permanent_cells: configured, indexed })
+        Ok(CheckedService { permanent_cells: configured, account })
+    }
+    /// The checked account of the selected service; the same decision `describe` enforces.
+    pub fn account(&self) -> Result<Account> {
+        Ok(self.describe(None)?.account)
+    }
+    fn property(&self, name: &str) -> Result<String> {
+        command(
+            self.manager().args([
+                "show",
+                &format!("--property={name}"),
+                "--value",
+                "--",
+                &self.unit,
+            ]),
+            Duration::from_secs(10),
+        )
+    }
+    fn account_checked(&self) -> Result<Account> {
+        let user = self.property("User")?;
+        let (group, dynamic) = if self.user_manager {
+            (String::new(), String::new())
+        } else {
+            (self.property("Group")?, self.property("DynamicUser")?)
+        };
+        let name = command(Command::new("id").arg("-un"), Duration::from_secs(10))?;
+        // SAFETY: geteuid and getegid have no preconditions.
+        let invoker = Invoker {
+            uid: unsafe { libc::geteuid() },
+            gid: unsafe { libc::getegid() },
+            name: &name,
+        };
+        let unit = UnitAccount {
+            user_manager: self.user_manager,
+            user: &user,
+            group: &group,
+            dynamic: &dynamic,
+        };
+        select_account(&unit, &invoker, |user| {
+            let number = |flag: &str| -> Result<u32> {
+                command(Command::new("id").args([flag, "--", user]), Duration::from_secs(10))?
+                    .trim()
+                    .parse()
+                    .context("service account id is not numeric")
+            };
+            Ok(Resolved {
+                uid: number("-u")?,
+                gid: number("-g")?,
+                group: command(
+                    Command::new("id").args(["-gn", "--", user]),
+                    Duration::from_secs(10),
+                )?
+                .trim()
+                .to_owned(),
+            })
+        })
     }
     pub fn stop(&self) -> Result<Frozen> {
         self.validate()?;
@@ -434,24 +616,6 @@ fn validate_exec(
     }
     Ok(permanent)
 }
-// Called only on commands accepted by validate_exec, using the same option arities.
-fn indexed_exec(value: &str) -> Result<bool> {
-    let (_, rest) = value.split_once("argv[]=").context("service command missing")?;
-    let (argv, _) = rest.split_once(" ; ").context("service command encoding")?;
-    let mut tokens = argv.split_whitespace().skip(1);
-    let (mut json_rpc, mut without_index) = (false, false);
-    while let Some(option) = tokens.next() {
-        let (name, takes_value) = canonical_option(option)?;
-        json_rpc |= name == "json-rpc-address";
-        without_index |= name == "json-rpc-without-wallet-index";
-        if takes_value {
-            tokens.next().context("service option requires value")?;
-        }
-    }
-    // JSON-RPC opens the wallet index unless the engine is told not to.
-    Ok(json_rpc && !without_index)
-}
-
 // A deliberately restricted spelling/arity subset of the native option table, not a
 // second permissive parser. Unsupported native forms must be canonicalized by the operator.
 const SAFE_OPTIONS: &[(&str, &str, bool)] = &[
@@ -465,6 +629,7 @@ const SAFE_OPTIONS: &[(&str, &str, bool)] = &[
     ("", "celldb-cache-size", true),
     ("", "celldb-cache-min-size", true),
     ("", "json-rpc-address", true),
+    ("", "exporter-address", true),
     ("", "session-logs", true),
     ("s", "state-ttl", true),
     ("b", "block-ttl", true),
@@ -475,6 +640,7 @@ const SAFE_OPTIONS: &[(&str, &str, bool)] = &[
     ("", "enable-validator-consensus-cleanup", false),
     ("", "disable-validator-consensus-cleanup", false),
     ("", "json-rpc-readonly", false),
+    // Accepted for older units; a no-op on current engines and never a restore decision.
     ("", "json-rpc-without-wallet-index", false),
 ];
 fn canonical_option(option: &str) -> Result<(&'static str, bool)> {
@@ -493,21 +659,6 @@ fn canonical_option(option: &str) -> Result<(&'static str, bool)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn indexing_detection_uses_option_arity_not_values() -> Result<()> {
-        assert!(indexed_exec(
-            "{ argv[]=/engine --db /db --json-rpc-address 127.0.0.1:8081 ; running }"
-        )?);
-        assert!(!indexed_exec("{ argv[]=/engine --logname --json-rpc-address ; running }")?);
-        assert!(!indexed_exec("{ argv[]=/engine --db /db ; running }")?);
-        assert!(!indexed_exec(
-            "{ argv[]=/engine --db /db --json-rpc-address 127.0.0.1:8081 --json-rpc-without-wallet-index ; running }"
-        )?);
-        assert!(indexed_exec(
-            "{ argv[]=/engine --db /db --logname --json-rpc-without-wallet-index --json-rpc-address 127.0.0.1:8081 ; running }"
-        )?);
-        Ok(())
-    }
     #[test]
     fn configured_running_and_expected_modes_are_one_invariant() {
         for configured in [false, true] {
@@ -686,5 +837,198 @@ mod reported_state_tests {
         assert_eq!(super::reported_state("ActiveState=inactive\nLoadState=not-found\n"), "unknown");
         assert_eq!(super::reported_state("ActiveState=inactive\nLoadState=loaded\n"), "inactive");
         assert_eq!(super::reported_state("ActiveState=inactive\n"), "unknown");
+    }
+}
+#[cfg(test)]
+mod account_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    const ROOT: Invoker<'static> = Invoker { uid: 0, gid: 0, name: "root\n" };
+    fn system<'a>(user: &'a str, group: &'a str, dynamic: &'a str) -> UnitAccount<'a> {
+        UnitAccount { user_manager: false, user, group, dynamic }
+    }
+    fn tos(name: &str) -> Result<Resolved> {
+        ensure!(name == "tos", "unexpected account lookup {name}");
+        Ok(Resolved { uid: 998, gid: 997, group: "tos".to_owned() })
+    }
+    fn me() -> (u32, u32) {
+        // SAFETY: geteuid and getegid have no preconditions.
+        unsafe { (libc::geteuid(), libc::getegid()) }
+    }
+
+    /// The operator bundle's full-node unit, as `systemctl show` reports its command.
+    const DEPLOYED: &str = "{ path=/usr/local/bin/validator-engine ; argv[]=/usr/local/bin/validator-engine -C /etc/tos/global-config.json -D /var/lib/tos/fullnode -l /var/log/tos/fullnode/node.log -t 16 --state-ttl 86400 --archive-ttl 604800 --celldb-cache-size 1073741824 --celldb-cache-min-size 1073741824 --json-rpc-address 127.0.0.1:8081 --exporter-address 127.0.0.1:9100 ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }";
+    fn deployed(command: &str) -> Result<bool> {
+        validate_exec(
+            command,
+            Path::new("/usr/local/bin/validator-engine"),
+            Path::new("/var/lib/tos/fullnode"),
+            Path::new("/etc/tos/global-config.json"),
+            Path::new("/var/lib/tos/fullnode"),
+        )
+    }
+
+    #[test]
+    fn deployed_full_node_command_is_accepted() -> Result<()> {
+        assert!(!deployed(DEPLOYED)?, "deployed unit selects split cell storage");
+        let missing = DEPLOYED.replace(" 127.0.0.1:9100 ;", " ;");
+        let error = deployed(&missing).expect_err("exporter without a value").to_string();
+        assert!(error.contains("requires a separate value"), "wrong refusal: {error}");
+        let attached = DEPLOYED
+            .replace("--exporter-address 127.0.0.1:9100", "--exporter-address=127.0.0.1:9100");
+        let error = deployed(&attached).expect_err("attached exporter value").to_string();
+        assert!(error.contains("unsupported service option"), "wrong refusal: {error}");
+        // The option's value is never read as an option or a path selector.
+        let flag_shaped = DEPLOYED.replace("127.0.0.1:9100", "--permanent-celldb");
+        assert!(!deployed(&flag_shaped)?, "an exporter value switched the storage mode");
+        Ok(())
+    }
+
+    #[test]
+    fn deployed_service_account_is_selected_when_invoked_as_root() -> Result<()> {
+        let account = select_account(&system("tos\n", "tos\n", "no\n"), &ROOT, tos)?;
+        assert_eq!(account, Account { uid: 998, gid: 997, invoker: 0 });
+        assert!(account.delegated());
+        // Group= may be left to the account's primary group.
+        assert_eq!(select_account(&system("tos", "", "no"), &ROOT, tos)?, account);
+        Ok(())
+    }
+
+    #[test]
+    fn unsafe_service_accounts_refuse() {
+        let alice = Invoker { uid: 1000, gid: 1000, name: "alice" };
+        for (label, unit, invoker, expected) in [
+            ("User=root", system("root", "", "no"), &ROOT, "running as root"),
+            ("system unit without User=", system("", "", "no"), &ROOT, "without User="),
+            ("dynamic user", system("tos", "tos", "yes"), &ROOT, "dynamically allocated"),
+            ("foreign group", system("tos", "adm", "no"), &ROOT, "primary group"),
+            ("option-shaped name", system("-tos", "", "no"), &ROOT, "unsupported service User="),
+            ("another user, not root", system("tos", "tos", "no"), &alice, "invoking user"),
+            (
+                "user manager naming a service account as root",
+                UnitAccount { user_manager: true, user: "tos", group: "", dynamic: "" },
+                &ROOT,
+                "user-manager unit",
+            ),
+        ] {
+            let error = select_account(&unit, invoker, tos).expect_err(label).to_string();
+            assert!(error.contains(expected), "{label}: wrong refusal: {error}");
+        }
+        let resolves_to_root = |_: &str| Ok(Resolved { uid: 0, gid: 0, group: "root".to_owned() });
+        let error = select_account(&system("toor", "", "no"), &ROOT, resolves_to_root)
+            .expect_err("uid 0 alias")
+            .to_string();
+        assert!(error.contains("running as root"), "wrong refusal: {error}");
+    }
+
+    #[test]
+    fn invoking_user_shapes_are_unchanged() -> Result<()> {
+        let alice = Invoker { uid: 1000, gid: 1000, name: "alice\n" };
+        let resolve = |_: &str| Ok(Resolved { uid: 1000, gid: 1000, group: "alice".to_owned() });
+        let own = Account { uid: 1000, gid: 1000, invoker: 1000 };
+        assert_eq!(select_account(&system("alice", "", "no"), &alice, resolve)?, own);
+        let user = UnitAccount { user_manager: true, user: "", group: "", dynamic: "" };
+        assert_eq!(select_account(&user, &alice, tos)?, own);
+        assert!(!own.delegated());
+        assert_eq!(select_account(&system("alice", "alice", "no"), &alice, resolve)?, own);
+        Ok(())
+    }
+
+    #[test]
+    fn invoking_user_system_unit_keeps_group_and_dynamic_user_checks() {
+        let alice = Invoker { uid: 1000, gid: 1000, name: "alice" };
+        let resolve = |_: &str| Ok(Resolved { uid: 1000, gid: 1000, group: "alice".to_owned() });
+        for (label, unit, expected) in [
+            ("foreign group", system("alice", "adm", "no"), "primary group"),
+            ("dynamic user", system("alice", "", "yes"), "dynamically allocated"),
+        ] {
+            let error = select_account(&unit, &alice, resolve).expect_err(label).to_string();
+            assert!(error.contains(expected), "{label}: wrong refusal: {error}");
+        }
+    }
+
+    #[test]
+    fn database_must_belong_to_the_service_account() -> Result<()> {
+        let (uid, gid) = me();
+        // Directly beneath the shared temporary directory, whose ancestors are root's.
+        let temporary = tempfile::tempdir()?;
+        let database = temporary.path().canonicalize()?;
+        fs::set_permissions(&database, fs::Permissions::from_mode(0o700))?;
+        // The database owner is the service account and the invoker is someone else.
+        let service = Account { uid, gid, invoker: uid.wrapping_add(1) };
+        service.require_database(&database)?;
+        Account { uid, gid, invoker: uid }.require_database(&database)?;
+        let stranger = Account { uid: uid.wrapping_add(1), gid, invoker: 0 };
+        let error = stranger.require_database(&database).expect_err("foreign database").to_string();
+        assert!(error.contains("owned by the service account"), "wrong refusal: {error}");
+        fs::set_permissions(&database, fs::Permissions::from_mode(0o770))?;
+        assert!(service.require_database(&database).is_err(), "group-writable database accepted");
+        Ok(())
+    }
+
+    #[test]
+    fn operation_catalog_and_cache_roots_must_belong_to_the_invoker() -> Result<()> {
+        let (uid, gid) = me();
+        let temporary = tempfile::tempdir()?;
+        fs::set_permissions(temporary.path(), fs::Permissions::from_mode(0o700))?;
+        let catalog = temporary.path().canonicalize()?.join("catalog");
+        fs::create_dir(&catalog)?;
+        fs::set_permissions(&catalog, fs::Permissions::from_mode(0o700))?;
+        // Invoked as this uid on behalf of another service account: accepted.
+        let invoked_here = Account { uid: uid.wrapping_add(1), gid, invoker: uid };
+        invoked_here.require_private(&catalog)?;
+        Account { uid, gid, invoker: uid }.require_private(&catalog)?;
+        // Invoked by another account for the service account that owns the catalog: refused.
+        let owned_by_service = Account { uid, gid, invoker: uid.wrapping_add(1) };
+        let error =
+            owned_by_service.require_private(&catalog).expect_err("service catalog").to_string();
+        assert!(error.contains("owned by the invoking user"), "wrong refusal: {error}");
+        fs::set_permissions(&catalog, fs::Permissions::from_mode(0o750))?;
+        invoked_here.require_private(&catalog)?;
+        fs::set_permissions(&catalog, fs::Permissions::from_mode(0o770))?;
+        assert!(invoked_here.require_private(&catalog).is_err(), "group-writable catalog accepted");
+        // Without a service account, the invoker's own group layout is not constrained.
+        Account { uid, gid, invoker: uid }.require_private(&catalog)?;
+        Ok(())
+    }
+
+    #[test]
+    fn delegated_paths_refuse_ancestors_another_account_can_rename() -> Result<()> {
+        let (uid, gid) = me();
+        let temporary = tempfile::tempdir()?;
+        let open = temporary.path().canonicalize()?.join("open");
+        let catalog = open.join("catalog");
+        fs::create_dir_all(&catalog)?;
+        for path in [temporary.path(), &open, &catalog] {
+            fs::set_permissions(path, fs::Permissions::from_mode(0o700))?;
+        }
+        let delegated = Account { uid: uid.wrapping_add(1), gid, invoker: uid };
+        delegated.require_private(&catalog)?;
+        fs::set_permissions(&open, fs::Permissions::from_mode(0o777))?;
+        let error = delegated.require_private(&catalog).expect_err("open ancestor").to_string();
+        assert!(error.contains("writable by no other account"), "wrong refusal: {error}");
+        // A sticky shared directory cannot be used to rename another account's entry.
+        fs::set_permissions(&open, fs::Permissions::from_mode(0o1777))?;
+        delegated.require_private(&catalog)?;
+        // Without a service account the invoker's own layout is not constrained further.
+        fs::set_permissions(&open, fs::Permissions::from_mode(0o777))?;
+        Account { uid, gid, invoker: uid }.require_private(&catalog)?;
+        Ok(())
+    }
+
+    #[test]
+    fn budget_roots_belong_to_the_invoker_or_the_service_account() -> Result<()> {
+        let (uid, gid) = me();
+        let temporary = tempfile::tempdir()?;
+        let roots = vec![temporary.path().canonicalize()?];
+        Account { uid: uid.wrapping_add(1), gid, invoker: uid }.require_budget(&roots)?;
+        Account { uid, gid, invoker: uid.wrapping_add(1) }.require_budget(&roots)?;
+        let error = Account { uid: uid.wrapping_add(1), gid, invoker: uid.wrapping_add(2) }
+            .require_budget(&roots)
+            .expect_err("foreign budget root")
+            .to_string();
+        assert!(error.contains("belongs to another account"), "wrong refusal: {error}");
+        Ok(())
     }
 }
