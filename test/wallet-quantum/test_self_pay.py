@@ -301,6 +301,7 @@ class Harness:
         return result
 
     def export_parity(self, rust_driver):
+        assert self.parity_names, "empty parity transaction set"
         fixture = from_boc((ROOT / "tosctl/src/executor/real_boc/default_config.boc").read_bytes())
         default_hash = config().hash.hex()
         exported_names = set()
@@ -351,6 +352,11 @@ class Harness:
         assert exported_names == self.parity_names, (
             "named transactions omitted from parity export",
             sorted(self.parity_names - exported_names),
+        )
+        required_names = {row["name"] for row in self.rows}
+        assert required_names <= exported_names, (
+            "wallet cases omitted from parity export",
+            sorted(required_names - exported_names),
         )
         return groups
 
