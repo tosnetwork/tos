@@ -8,41 +8,37 @@
 #include "td/utils/port/signals.h"
 #include "validator-engine/wallet-index-writer.h"
 #include "validator-engine/wallet-index.h"
+#include "validator/db/archive-slice.hpp"
 #include "validator/validator-options.hpp"
 
+#include "index-progress.h"
 #include "index-reader.h"
 #include "index-replay.h"
 
 namespace tos::services {
 namespace {
 using namespace tos_wallet_index;
-struct Progress {
-  std::atomic<uint32_t> cursor{0}, tip{0};
-  std::atomic<bool> ready{false};
-  std::atomic<double> checked_at{0};
-  bool is_ready() const {
-    return ready.load() && td::Time::now() - checked_at.load() <= 5.0;
-  }
-  std::string json() const {
-    return "{\"masterchain_seqno\":" + std::to_string(cursor.load()) +
-           ",\"source_seqno\":" + std::to_string(tip.load()) + ",\"caught_up\":" + (is_ready() ? "true" : "false") +
-           "}";
-  }
-};
-
 class Replay {
  public:
-  Replay(IndexReader& reader, Progress& progress) : reader_(reader), progress_(progress) {
+  Replay(IndexReader& reader, Progress& progress, ReplayStats& stats)
+      : reader_(reader), progress_(progress), stats_(stats) {
   }
   bool idle() const {
     return progress_.ready.load() && !background_progress_;
   }
   td::Status step() {
     background_progress_ = false;
-    TRY_RESULT(tip, reader_.tip());
+    td::Result<BlockIdExt> observed;
+    {
+      StageTimer timer(stats_.catch_up_us);
+      stats_.catch_ups.fetch_add(1, std::memory_order_relaxed);
+      observed = reader_.tip();
+    }
+    TRY_RESULT(tip, std::move(observed));
     if (!tip.is_masterchain() || !tip.seqno())
       return td::Status::Error("source has no applied masterchain block");
     progress_.tip = tip.seqno();
+    progress_.tip_known = true;
     if (checkpoint_.committed != tip)
       progress_.ready = false;
     TRY_RESULT(top, reader_.handle(tip));
@@ -51,7 +47,14 @@ class Replay {
     heads_ = std::move(heads);
     auto db = wallet_index_db();
     if (!initialized_) {
-      TRY_RESULT(anchor, reader_.masterchain(1));
+      auto first = reader_.masterchain(1);
+      if (first.is_error()) {
+        return td::Status::Error(PSTRING() << "source has no masterchain block 1 (" << first.error().message()
+                                           << "); a node that joined at a persistent state cannot serve a full "
+                                              "replay: prepare the source as described in "
+                                              "doc/standalone-wallet-services.md, \"Preparing the source node\"");
+      }
+      auto anchor = first.move_as_ok();
       TRY_STATUS(db->initialize_replay(anchor->id()));
       TRY_RESULT(stored, db->replay_checkpoint());
       CHECK(stored);
@@ -63,6 +66,7 @@ class Replay {
       }
       initialized_ = true;
       progress_.cursor = checkpoint_.committed.seqno();
+      progress_.cursor_known = true;
     }
     if (checkpoint_.committed.seqno() > tip.seqno())
       return td::Status::Error("source is behind durable index progress");
@@ -81,25 +85,33 @@ class Replay {
         if (stop_requested.load())
           return td::Status::Error("replay interrupted");
         TRY_RESULT(block, reader_.block(handle));
-        auto result = wc0_index_block(std::move(block), {}, handle->id(), true);
+        Wc0IndexResult result;
+        {
+          StageTimer timer(stats_.walk_us);
+          result = wc0_index_block(std::move(block), {}, handle->id(), true);
+        }
         if (result != Wc0IndexResult::Done) {
-          if (drain_wc0_index(&stop_requested) && result == Wc0IndexResult::AtPendingCap)
+          if (drain() && result == Wc0IndexResult::AtPendingCap)
             return td::Status::OK();
           return td::Status::Error("index block not committed; retrying from checkpoint");
         }
+        stats_.shard_blocks.fetch_add(1, std::memory_order_relaxed);
       }
       auto committed = checkpoint_;
       committed.committed = master->id();
       {
+        StageTimer timer(stats_.commit_us);
+        stats_.commits.fetch_add(1, std::memory_order_relaxed);
         std::lock_guard<std::mutex> guard(db->write_mutex());
         TRY_STATUS(db->commit_replay_checkpoint(committed));
       }
       checkpoint_ = committed;
       progress_.cursor = committed.committed.seqno();
+      stats_.mc_blocks.fetch_add(1, std::memory_order_relaxed);
     }
     if (stop_requested.load())
       return td::Status::Error("replay interrupted");
-    background_progress_ = drain_wc0_index(&stop_requested);
+    background_progress_ = drain();
     // HTTP handlers independently report the persisted token backlog. This
     // flag only says the block replay has reached the observed source tip.
     progress_.checked_at = td::Time::now();
@@ -121,8 +133,15 @@ class Replay {
   }
 
  private:
+  bool drain() {
+    StageTimer timer(stats_.drain_us);
+    stats_.drains.fetch_add(1, std::memory_order_relaxed);
+    return drain_wc0_index(&stop_requested);
+  }
+
   IndexReader& reader_;
   Progress& progress_;
+  ReplayStats& stats_;
   bool initialized_ = false;
   bool background_progress_ = false;
   WalletIndexDb::ReplayCheckpoint checkpoint_;
@@ -185,13 +204,25 @@ int main(int argc, char** argv) {
     LOG(ERROR) << index.error();
     return 2;
   }
+  Progress progress;
+  ReplayStats stats;
+  // Before anything listens: the first /readyz after a restart reports the
+  // durable cursor, not 0.
+  auto loaded = load_checkpoint_progress(*index.ok(), progress);
+  if (loaded.is_error()) {
+    LOG(WARNING) << "cannot read the replay checkpoint before serving: " << loaded;
+  }
   tos_wallet_index::set_wallet_index_db(index.move_as_ok());
   td::set_default_failure_signal_handler().ensure();
   td::set_signal_handler(td::SignalType::Quit, request_stop).ensure();
   td::actor::Scheduler scheduler({4});
   td::actor::ActorOwn<validator::RootDb> db;
   td::actor::ActorOwn<JsonRpcServer> server;
-  Progress progress;
+  auto started = td::Time::now();
+  auto stats_snapshot = [&] {
+    return stats.snapshot(td::Time::now() - started, validator::archive_slice_opens(),
+                          validator::archive_slice_closes());
+  };
   scheduler.run_in_context([&] {
     vm::init_vm().ensure();
     auto options = validator::ValidatorManagerOptions::create(BlockIdExt{}, BlockIdExt{});
@@ -205,17 +236,32 @@ int main(int argc, char** argv) {
     rpc.index_only = true;
     rpc.trust_proxy_headers = true;
     rpc.readonly = true;
-    rpc.index_ready = [&] { return progress.is_ready(); };
-    rpc.index_progress = [&] { return progress.json(); };
+    rpc.index_ready = [&] { return progress.is_ready(td::Time::now()); };
+    rpc.index_progress = [&] { return progress.json(td::Time::now()); };
+    rpc.index_readyz_body = [&] { return progress.readyz_json(td::Time::now(), stats_snapshot()); };
     server = JsonRpcServer::create({}, std::move(rpc));
     td::actor::send_closure(server, &JsonRpcServer::listen, listen);
   });
-  IndexReader reader(db.get());
+  IndexReader reader(db.get(), std::chrono::seconds(30), &stats);
   std::thread worker([&] {
-    Replay replay(reader, progress);
+    Replay replay(reader, progress, stats);
+    // Periodic operator line: where replay time went in the last interval.
+    constexpr double kStatsLogInterval = 60.0;
+    auto logged = stats_snapshot();
+    double fds_sampled_at = 0;
     tos_wallet_index::set_wc0_index_state_fetcher(
         [&](const td::Bits256& address, auto done) { done(replay.newest(address)); });
     while (!stop_requested.load()) {
+      auto now = td::Time::now();
+      if (now - fds_sampled_at >= 1.0) {
+        stats.open_fds = count_open_fds();
+        fds_sampled_at = now;
+      }
+      if (now - started - logged.uptime_s >= kStatsLogInterval) {
+        auto current = stats_snapshot();
+        LOG(WARNING) << replay_stats_log_line(current, logged);
+        logged = current;
+      }
       auto status = replay.step();
       if (status.is_error()) {
         progress.ready = false;
