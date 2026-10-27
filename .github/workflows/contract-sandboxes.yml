@@ -47,6 +47,10 @@ on:
       - "test/auth-extensions/cells.py"
       - "test/auth-extensions/native.py"
       - "test/executor-parity/deploy_state.py"
+      - "test/executor-parity/precompiled_external.py"
+      - "test/executor-parity/fail_action_fine.py"
+      - "test/executor-parity/transaction_roots.py"
+      - "test/executor-parity/test_root_preflight.py"
       - "scripts/test_replay_token_bridge_trace.py"
       - "crosschain/token-bridge/tests/**"
       - "scripts/token-bridge-mutations.py"
@@ -114,6 +118,10 @@ on:
       - "test/auth-extensions/cells.py"
       - "test/auth-extensions/native.py"
       - "test/executor-parity/deploy_state.py"
+      - "test/executor-parity/precompiled_external.py"
+      - "test/executor-parity/fail_action_fine.py"
+      - "test/executor-parity/transaction_roots.py"
+      - "test/executor-parity/test_root_preflight.py"
       - "scripts/test_replay_token_bridge_trace.py"
       - "crosschain/token-bridge/tests/**"
       - "scripts/token-bridge-mutations.py"
@@ -228,9 +236,10 @@ jobs:
       # a provisioning run reported as written becomes one the node refuses at startup.
       - name: Consensus key file
         run: |
-          cmake --build build --target test-consensus-key-file tos-pq-consensus-key \
+          cmake --build build --target test-consensus-key-file test-consensus-key-lock tos-pq-consensus-key \
             test-fsync-dir-failure-shim -j"$(nproc)"
           ./build/crypto/pq/test-consensus-key-file
+          ./build/crypto/pq/test-consensus-key-lock
           python3 test/pq-mldsa44/consensus_key_tool_test.py \
             --tool build/crypto/pq/tos-pq-consensus-key \
             --fsync-shim build/crypto/pq/libtest-fsync-dir-failure-shim.so
@@ -530,6 +539,8 @@ jobs:
           cargo build --manifest-path tosctl/src/Cargo.toml --locked -p tos_executor --example pq-tx-parity
           python3 test/executor-parity/precompiled_external.py \
             --driver tosctl/src/target/debug/examples/pq-tx-parity --output "$RUNNER_TEMP/precompiled-external"
+          python3 test/executor-parity/test_root_preflight.py \
+            --driver tosctl/src/target/debug/examples/pq-tx-parity --fixtures "$RUNNER_TEMP/precompiled-external" --output "$RUNNER_TEMP/root-preflight"
 
       - name: Deployment states agree with frozen native roots
         env:

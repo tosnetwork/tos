@@ -293,6 +293,61 @@ class RescueCiTests(unittest.TestCase):
             with self.subTest(name=name), self.assertRaises(ValueError):
                 verify(rows)
 
+    def test_generated_root_obligations_cannot_be_removed_or_narrowed(self):
+        mutations = [
+            ("test/executor-parity/**", "test/unrelated/**"),
+            ("test/falcon-auth/linked_roots.py", "test/unrelated/helper.py"),
+            ("test/rel02/**", "test/unrelated/replay/**"),
+            ("  actions: read\n", ""),
+            (
+                "--release artifacts/context/quantum-release-transactions --post artifacts/context/quantum-post-accept --emulator",
+                "--release wrong --post artifacts/context/quantum-post-accept --emulator",
+            ),
+            (
+                "          python test/executor-parity/test_generated_bundle.py",
+                "          python test/executor-parity/removed_bundle.py",
+            ),
+            (
+                "          python test/executor-parity/generated_bundle.py --bundle",
+                "          python test/executor-parity/removed_bundle.py --bundle",
+            ),
+            (
+                "          name: rescue-roots-${{ matrix.runner }}-attempt-${{ github.run_attempt }}",
+                "          name: rescue-roots-fixed",
+            ),
+            ("          path: artifacts/generated-roots", "          path: artifacts/context"),
+            ("run: python test/executor-parity/generated_bundle.py --check-download", "run: true"),
+            ("          pattern: rescue-roots-*", "          pattern: other-roots-*"),
+            (
+                "run: python test/executor-parity/generated_bundle.py --compare roots --receipts receipts",
+                "run: true",
+            ),
+        ]
+        for old, new in mutations:
+            with self.subTest(old=old):
+                self.assertIn(old, self.workflow)
+                with self.assertRaises(ValueError):
+                    self.check(self.workflow.replace(old, new))
+        for name in (
+            "Verify generated transaction root controls and bundle",
+            "Retain generated transaction roots",
+        ):
+            old = (
+                "      - name: "
+                + name
+                + "\n        if: contains(fromJSON('[\"release-wallet\"]'), matrix.suite)\n"
+            )
+            new = old.rstrip() + " && matrix.runner == 'ubuntu-24.04'\n"
+            with self.subTest(step=name), self.assertRaises(ValueError):
+                self.assertIn(old, self.workflow)
+                self.check(self.workflow.replace(old, new))
+        before, parity = self.workflow.split("\n  parity:\n", 1)
+        parity = parity.replace(
+            "ref: ${{ github.event.pull_request.head.sha || github.sha }}", "ref: main"
+        )
+        with self.assertRaises(ValueError):
+            self.check(before + "\n  parity:\n" + parity)
+
 
 if __name__ == "__main__":
     unittest.main()

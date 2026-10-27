@@ -463,8 +463,6 @@ pub fn execute_with_params(
     } else {
         mc_state_proof
     };
-    let block_version = config.global_version();
-    let dict_hash_min_cells = config.size_limits_config().acc_state_cells_for_storage_dict;
     let executor: Box<dyn TransactionExecutor> = if in_msg_cell.is_none() {
         let tt = acc.get_tick_tock().unwrap();
         let tt = match (tt.tick, tt.tock) {
@@ -479,13 +477,6 @@ pub fn execute_with_params(
     #[cfg(feature = "cross_check")]
     let acc_before = acc.clone();
     let trans = executor.execute_with_params(in_msg_cell.clone(), acc, params.clone());
-    if trans.is_ok() {
-        if block_version < 11 {
-            acc.del_storage_stat();
-        } else {
-            acc.update_storage_stat(dict_hash_min_cells).unwrap();
-        }
-    }
     #[cfg(feature = "cross_check")]
     cross_check::cross_check(
         mc_state_proof,

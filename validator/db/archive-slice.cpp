@@ -17,6 +17,7 @@
     Copyright 2019-2020 Telegram Systems LLP
     Copyright 2025-2026 TOS Blockchain Teams
 */
+#include <atomic>
 #include <csignal>
 
 #include "common/delay.h"
@@ -717,9 +718,23 @@ void ArchiveSlice::get_archive_id(BlockSeqno masterchain_seqno, ShardIdFull shar
   }
 }
 
+namespace {
+std::atomic<td::uint64> g_archive_slice_opens{0};
+std::atomic<td::uint64> g_archive_slice_closes{0};
+}  // namespace
+
+td::uint64 archive_slice_opens() {
+  return g_archive_slice_opens.load(std::memory_order_relaxed);
+}
+
+td::uint64 archive_slice_closes() {
+  return g_archive_slice_closes.load(std::memory_order_relaxed);
+}
+
 void ArchiveSlice::before_query() {
   if (status_ == st_closed) {
     LOG(DEBUG) << "Opening archive slice " << db_path_;
+    g_archive_slice_opens.fetch_add(1, std::memory_order_relaxed);
     td::RocksDbOptions db_options;
     db_options.statistics = statistics_.rocksdb_statistics;
     switch (mode_) {
@@ -918,6 +933,7 @@ void ArchiveSlice::do_close() {
   commit_transaction_now();
   CHECK(status_ != st_closed && active_queries_ == 0);
   LOG(DEBUG) << "Closing archive slice " << db_path_;
+  g_archive_slice_closes.fetch_add(1, std::memory_order_relaxed);
   status_ = st_closed;
   kv_ = {};
   if (statistics_.pack_statistics) {

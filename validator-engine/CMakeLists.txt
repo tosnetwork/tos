@@ -113,7 +113,7 @@ target_compile_options(validator-engine PRIVATE
 )
 target_link_libraries(validator-engine validator-engine-json-rpc metrics overlay tdutils tdactor adnl tl_api dht
   rldp2 quic full-node validator tos_validator validator
-  fift-lib memprof git tos_pq_consensus_signer ${JEMALLOC_LIBRARIES})
+  fift-lib memprof git tos_pq_consensus_signer tos_pq_consensus_key_lock ${JEMALLOC_LIBRARIES})
 
 target_link_libraries(validator-engine smc-envelope json-rpc-parse json-rpc-account-model control-getter)
 if (JEMALLOC_FOUND)

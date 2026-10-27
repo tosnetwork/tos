@@ -9,6 +9,9 @@ on:
       - '.github/workflows/pq-v16-readiness.yml'
       - '.github/actions/native-cache/**'
       - 'test/pq-readiness/**'
+      - 'test/falcon-auth/linked_roots.py'
+      - 'test/executor-parity/**'
+      - 'test/rel02/run_rust.py'
       - 'crypto/pq/**'
       - 'crypto/vm/pqops*'
       - 'tosctl/**'
@@ -112,6 +115,8 @@ jobs:
           python test/pq-readiness/tx_parity.py --build build \
             --signer build-auth-signer/test-mldsa44-sign --out artifacts/tx-parity \
             --driver tosctl/src/target/release/examples/pq-tx-parity
+          python test/executor-parity/test_module_roots.py --family module-pq \
+            --artifacts artifacts/tx-parity --emulator build/emulator/libemulator.so
       - name: Compare the account-state ceiling across the version that introduces it
         # Which ceiling applies is decided inside the action phase, so it is compared
         # the same way: the same account and message through both executors.
@@ -119,6 +124,9 @@ jobs:
           python test/pq-native/account-limit-parity.py --build build \
             --out artifacts/account-limit \
             --driver tosctl/src/target/release/examples/pq-tx-parity
+          python test/executor-parity/test_root_cells.py
+          python test/executor-parity/test_capture_config.py --artifacts artifacts/account-limit --emulator build/emulator/libemulator.so
+          python test/executor-parity/test_account_limit_roots.py --artifacts artifacts/account-limit --emulator build/emulator/libemulator.so
       - name: Execute newly deployed SDK accounts and signing paths
         run: |
           python test/pq-readiness/test_sdk.py --build build --key-tool build-pq-key/tos-pq-key --out artifacts/sdk
@@ -154,6 +162,10 @@ jobs:
         env:
           RESULT: ${{ needs.native.result }}
         run: test "$RESULT" = success
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           pattern: pq-readiness-*
@@ -162,6 +174,8 @@ jobs:
         run: |
           X=results/pq-readiness-x86_64
           A=results/pq-readiness-aarch64
+          python3 test/falcon-auth/linked_roots.py --module-family module-pq --compare "$X/tx-parity" "$A/tx-parity"
+          python3 test/falcon-auth/linked_roots.py --account-limit --compare "$X/account-limit" "$A/account-limit"
           for name in commit.txt scenarios.tsv cpp.tsv rust.tsv parity.json tx-parity/emulator.tsv tx-parity/rust.tsv sdk/sdk.json sdk/contracts.json sdk/module-func.boc sdk/module-tol.boc sdk/wallet-func.boc sdk/wallet-tol.boc sdk/agent.boc; do
             cmp "$X/$name" "$A/$name"
           done

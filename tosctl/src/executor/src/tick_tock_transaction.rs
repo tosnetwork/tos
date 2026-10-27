@@ -44,6 +44,8 @@ impl TransactionExecutor for TickTockTransactionExecutor {
         account: &mut Account,
         params: ExecuteParams,
     ) -> Result<Transaction> {
+        let storage_snapshot =
+            account.snapshot_transaction_storage(self.config.global_version())?;
         if in_msg_cell.is_some() {
             fail!("Tick Tock transaction must not have input message")
         }
@@ -202,6 +204,11 @@ impl TransactionExecutor for TickTockTransactionExecutor {
         let lt = self.add_messages(&mut tr, out_msgs, params.last_tr_lt)?;
         account.set_last_tr_time(lt);
         tr.write_description(&TransactionDescr::TickTock(description))?;
+        account.finalize_transaction_storage(
+            storage_snapshot,
+            self.config.global_version(),
+            self.config.size_limits_config().acc_state_cells_for_storage_dict,
+        )?;
         Ok(tr)
     }
     fn ordinary_transaction(&self) -> bool {

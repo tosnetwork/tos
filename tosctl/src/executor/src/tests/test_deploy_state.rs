@@ -152,7 +152,6 @@ fn deploy_state_matches_frozen_native_roots() {
             ConfigParams::with_root(cell("config")).expect("raw config"),
         )
         .expect("config");
-        let storage_threshold = config.size_limits_config().acc_state_cells_for_storage_dict;
         let initial = cell("account");
         let mut account = Account::construct_from_cell(initial.clone()).expect("account");
         let lt = row["lt"].as_u64().expect("lt");
@@ -177,7 +176,6 @@ fn deploy_state_matches_frozen_native_roots() {
             continue;
         }
         let mut transaction = outcome.expect(name);
-        account.update_storage_stat(storage_threshold).expect("storage statistics");
         let account_hash = account.serialize().expect("account cell").repr_hash();
         transaction
             .write_state_update(&chain_block::HashUpdate::with_hashes(

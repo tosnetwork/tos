@@ -25,6 +25,10 @@ use crate::{
 use std::{collections::HashSet, fmt};
 
 #[cfg(test)]
+#[path = "tests/test_transaction_storage.rs"]
+mod transaction_storage_tests;
+
+#[cfg(test)]
 #[path = "tests/test_accounts.rs"]
 mod tests;
 
@@ -561,6 +565,46 @@ impl fmt::Display for AccountState {
     }
 }
 
+/// Original transaction input metadata and bounded ordered storage references.
+/// Owned by one execution; consuming it prevents accidental repeated deltas.
+#[derive(Debug)]
+pub struct TransactionStorageSnapshot {
+    global_version: u32,
+    original: Option<OriginalTransactionStorage>,
+}
+
+#[derive(Debug)]
+struct OriginalTransactionStorage {
+    used: StorageUsed,
+    dict_hash: Option<UInt256>,
+    root_bits: usize,
+    references: Vec<UInt256>,
+}
+
+fn transaction_storage_shape(
+    storage: &AccountStorage,
+    global_version: u32,
+) -> Result<(usize, Vec<UInt256>)> {
+    let cell = storage.serialize()?;
+    let references = if global_version >= 10 {
+        AccountStorageStat::get_roots(storage.state_init())
+    } else {
+        (0..cell.references_count())
+            .map(|index| cell.reference(index))
+            .collect::<Result<Vec<_>>>()?
+    };
+    Ok((cell.bit_length(), references.into_iter().map(|cell| cell.repr_hash()).collect()))
+}
+
+fn normalize_transaction_state_init(state: &mut StateInit) {
+    if state.fixed_prefix_length.is_some_and(|length| length.as_u32() == 0) {
+        state.fixed_prefix_length = None;
+    }
+    if state.special.as_ref().is_some_and(|flags| !flags.tick && !flags.tock) {
+        state.special = None;
+    }
+}
+
 #[derive(Clone, Default)]
 struct AccountStuff {
     addr: MsgAddressInt,
@@ -779,6 +823,20 @@ impl Account {
         Ok(())
     }
 
+    /// Transaction output hashes omit redundant zero-valued StateInit options.
+    /// Keep explicit construction/freezing and original input serialization separate.
+    pub fn try_freeze_for_transaction(&mut self) -> Result<()> {
+        if let Some(stuff) = self.stuff_mut() {
+            if let AccountState::AccountActive { state_init } = &stuff.storage.state {
+                let mut selected = state_init.clone();
+                normalize_transaction_state_init(&mut selected);
+                let state_init_hash = selected.hash()?;
+                stuff.storage.state = AccountState::AccountFrozen { state_init_hash };
+            }
+        }
+        Ok(())
+    }
+
     // make account uninitialized
     pub fn uninit_account(&mut self) {
         if let Some(stuff) = self.stuff_mut() {
@@ -924,6 +982,97 @@ impl Account {
             Some(stuff) => stuff.update_storage_stat(dict_hash_min_cells),
             None => Ok(None),
         }
+    }
+
+    /// Measure code/data/library for size/depth checks at every version.
+    /// Currency roots belong only to legacy fee accounting. This updates the
+    /// real cache only: advertised usage and dictionary hash remain unchanged until
+    /// the transaction-specific finalizer publishes its chosen metadata.
+    pub fn measure_storage_stat(&mut self) -> Result<StorageUsed> {
+        match self.stuff_mut() {
+            Some(stuff) => stuff.storage_stat.update_for_transaction(&stuff.storage, true),
+            None => Ok(StorageUsed::new()),
+        }
+    }
+
+    /// Capture the original selected input before any transaction phase mutates it.
+    pub fn snapshot_transaction_storage(
+        &self,
+        global_version: u32,
+    ) -> Result<TransactionStorageSnapshot> {
+        let original = self
+            .stuff()
+            .map(|stuff| -> Result<OriginalTransactionStorage> {
+                let (root_bits, references) =
+                    transaction_storage_shape(&stuff.storage, global_version)?;
+                Ok(OriginalTransactionStorage {
+                    used: stuff.storage_info.used.clone(),
+                    dict_hash: stuff.storage_info.dict_hash().cloned(),
+                    root_bits,
+                    references,
+                })
+            })
+            .transpose()?;
+        Ok(TransactionStorageSnapshot { global_version, original })
+    }
+
+    /// Reconcile the actual cache, then publish native transaction accounting.
+    /// Generic explicit recomputation remains a separate construction/validation API.
+    pub fn finalize_transaction_storage(
+        &mut self,
+        snapshot: TransactionStorageSnapshot,
+        global_version: u32,
+        dict_hash_min_cells: u32,
+    ) -> Result<()> {
+        if snapshot.global_version != global_version {
+            fail!("transaction storage snapshot version mismatch");
+        }
+        let Some(stuff) = self.stuff_mut() else {
+            return Ok(());
+        };
+        if let AccountState::AccountActive { state_init } = &mut stuff.storage.state {
+            normalize_transaction_state_init(state_init);
+        }
+        let (root_bits, references) = transaction_storage_shape(&stuff.storage, global_version)?;
+        let actual =
+            stuff.storage_stat.update_for_transaction(&stuff.storage, global_version >= 10)?;
+        let store_dict = global_version >= 11 && !stuff.addr.is_masterchain();
+        let recount = snapshot.original.as_ref().is_none_or(|original| {
+            original.references != references
+                || (store_dict && original.dict_hash.is_none() && original.used.cells() > 25)
+        });
+        let (used, preserved_hash) = if recount {
+            (actual, None)
+        } else {
+            let original = snapshot
+                .original
+                .ok_or_else(|| crate::error!("missing original transaction storage snapshot"))?;
+            let bits = if root_bits >= original.root_bits {
+                original.used.bits().checked_add((root_bits - original.root_bits) as u64)
+            } else {
+                original.used.bits().checked_sub((original.root_bits - root_bits) as u64)
+            }
+            .ok_or_else(|| {
+                crate::error!("transaction storage bit delta is negative or overflowed")
+            })?;
+            (StorageUsed::with_values_checked(original.used.cells(), bits)?, original.dict_hash)
+        };
+        // Native VarUInteger7 encodes a length <7, hence at most six bytes.
+        if used.cells() > 0xffff_ffff_ffff || used.bits() > 0xffff_ffff_ffff {
+            fail!("transaction storage counters exceed native VarUInteger7 range");
+        }
+        let dict_hash = if !store_dict {
+            None
+        } else if !recount {
+            preserved_hash
+        } else if used.cells() >= u64::from(dict_hash_min_cells) {
+            Some(stuff.storage_stat.dict_root()?.map_or_else(Default::default, Cell::repr_hash))
+        } else {
+            None
+        };
+        stuff.storage_info.used = used;
+        stuff.storage_info.storage_extra.dict_hash = dict_hash;
+        Ok(())
     }
 
     pub fn init_storage_stat(&mut self, dict_hash_min_cells: u32) -> Result<Option<Cell>> {

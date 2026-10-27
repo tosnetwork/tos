@@ -37,6 +37,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstring>
+#include <filesystem>
 #include <mutex>
 #include <optional>
 #include <set>
@@ -45,6 +46,7 @@
 #include <thread>
 #include <vector>
 
+#include "../services/index-progress.h"
 #include "../validator-engine/wallet-index-queue.h"
 #include "../validator-engine/wallet-index-writer.h"
 #include "../validator-engine/wallet-index.h"
@@ -4033,6 +4035,99 @@ TEST(WalletIndex, ReplayCheckpointAndReceiptsSurviveRestartAtomically) {
   ASSERT_TRUE(db->initialize_replay(foreign).is_error());
   db.reset();
   td::rmrf(path).ensure();
+}
+
+namespace {
+bool contains(const std::string &haystack, const std::string &needle) {
+  return haystack.find(needle) != std::string::npos;
+}
+}  // namespace
+
+// A restarted index reports the cursor it resumes from before it reads the
+// source; an unknown value is null, never 0, so a restart cannot look like a
+// reset.
+TEST(WalletIndex, ReplayProgressReportsDurableCursorBeforeSourceIsRead) {
+  const std::string path = "test-wallet-index-progress";
+  auto db = open_fresh_db(path);
+  {
+    tos::services::Progress fresh;
+    tos::services::load_checkpoint_progress(*db, fresh).ensure();
+    auto body = fresh.json(0);
+    ASSERT_TRUE(contains(body, "\"masterchain_seqno\":null"));
+    ASSERT_TRUE(contains(body, "\"source_seqno\":null"));
+    ASSERT_TRUE(contains(body, "\"initialized\":false"));
+    ASSERT_TRUE(contains(body, "\"caught_up\":false"));
+  }
+  auto anchor = make_test_block_id(-1, tos::shardIdAll, 1, 1, 2);
+  db->initialize_replay(anchor).ensure();
+  auto checkpoint = db->replay_checkpoint().move_as_ok().value();
+  checkpoint.committed = make_test_block_id(-1, tos::shardIdAll, 4242, 5, 6);
+  db->commit_replay_checkpoint(checkpoint).ensure();
+  db.reset();
+  db = tos_wallet_index::WalletIndexDb::open(path).move_as_ok();
+  tos::services::Progress restarted;
+  tos::services::load_checkpoint_progress(*db, restarted).ensure();
+  auto body = restarted.json(0);
+  ASSERT_TRUE(contains(body, "\"masterchain_seqno\":4242"));
+  ASSERT_TRUE(contains(body, "\"initialized\":true"));
+  // The source tip is still unknown, and readiness needs a fresh source check.
+  ASSERT_TRUE(contains(body, "\"source_seqno\":null"));
+  ASSERT_TRUE(contains(body, "\"caught_up\":false"));
+  restarted.tip = 4300;
+  restarted.tip_known = true;
+  ASSERT_TRUE(contains(restarted.json(0), "\"source_seqno\":4300"));
+  db.reset();
+  td::rmrf(path).ensure();
+}
+
+TEST(WalletIndex, ReplayStatsReportEveryStageAndIntervalDeltas) {
+  tos::services::ReplayStats stats;
+  auto before = stats.snapshot(10, 3, 2);
+  stats.mc_blocks = 120;
+  stats.shard_blocks = 130;
+  stats.source_requests = 1200;
+  stats.source_wait_us = 45'000'000;
+  stats.catch_ups = 120;
+  stats.catch_up_us = 6'000'000;
+  stats.walk_us = 7'000'000;
+  stats.commits = 120;
+  stats.commit_us = 150'000;
+  stats.drains = 120;
+  stats.drain_us = 2'000'000;
+  stats.open_fds = 210;
+  auto after = stats.snapshot(70, 603, 602);
+  auto json = tos::services::replay_stats_json(after);
+  for (auto key : {"\"uptime_s\":70", "\"mc_blocks\":120", "\"shard_blocks\":130", "\"source_requests\":1200",
+                   "\"source_wait_ms\":45000", "\"catch_ups\":120", "\"catch_up_ms\":6000", "\"walk_ms\":7000",
+                   "\"commits\":120", "\"commit_ms\":150", "\"drains\":120", "\"drain_ms\":2000",
+                   "\"archive_slice_opens\":603", "\"archive_slice_closes\":602", "\"open_fds\":210"}) {
+    ASSERT_TRUE(contains(json, key));
+  }
+  auto line = tos::services::replay_stats_log_line(after, before);
+  ASSERT_TRUE(contains(line, "over 60s"));
+  ASSERT_TRUE(contains(line, "mc_blocks=120 (2.00/s)"));
+  ASSERT_TRUE(contains(line, "archive_slice_opens=600"));
+  ASSERT_TRUE(contains(line, "archive_slice_closes=600"));
+  tos::services::Progress progress;
+  auto readyz = progress.readyz_json(0, after);
+  ASSERT_TRUE(contains(readyz, "\"initialized\":false,\"replay_stats\":{"));
+  ASSERT_TRUE(readyz.back() == '}');
+}
+
+// Descriptors are counted from procfs where it exists; elsewhere the count is
+// unknown and reported as null, never as a number.
+TEST(WalletIndex, ReplayStatsReportAnUncountableDescriptorTotalAsNull) {
+  auto missing = tos::services::count_open_fds("/nonexistent-procfs/self/fd");
+  ASSERT_EQ(missing, -1);
+  tos::services::ReplayStats stats;
+  stats.open_fds = missing;
+  auto json = tos::services::replay_stats_json(stats.snapshot(1, 0, 0));
+  ASSERT_TRUE(contains(json, "\"open_fds\":null}"));
+  if (std::filesystem::is_directory(tos::services::kProcessFdDirectory)) {
+    ASSERT_TRUE(tos::services::count_open_fds() > 0);
+  } else {
+    ASSERT_EQ(tos::services::count_open_fds(), -1);
+  }
 }
 
 TEST(WalletIndex, ReplayRejectsEmbeddedDatabaseWithoutCursor) {

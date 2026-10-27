@@ -124,6 +124,12 @@ def main():
     )
     from protocol import AUTH, CONTEXT, Signer, commitment, module_data, submission
 
+    # Append after the profile's protocol imports, preserving ML-DSA/Falcon
+    # module resolution while sharing original-context root validation.
+    sys.path.append(str(ROOT / "test/falcon-auth"))
+    from linked_roots import Capture, CaptureEmulator
+    from linked_roots import export as export_roots
+
     build_contracts(build, out)
     signer = Signer(args.signer)
     key = signer.public_key(0)
@@ -195,8 +201,9 @@ def main():
     # fails, and only a whole-transaction comparison can see the difference.
     submit("module-verifies-but-cannot-forward", good, value=verify_only_value())
 
-    emulator = Emulator(16)
+    emulator = CaptureEmulator(16)
     logical_times = []
+    root_records = []
     try:
         for name, shard, message in scenarios:
             result = emulator.send(shard, message)
@@ -212,6 +219,11 @@ def main():
                     details,
                     from_boc(result["transaction"]),
                     after.refs[0] if after.refs else None,
+                )
+            )
+            root_records.append(
+                Capture.from_send(
+                    f"{len(root_records)}:{name}", shard, message, emulator, result, rows[-1]
                 )
             )
     finally:
@@ -248,6 +260,7 @@ def main():
     (out / "tx-parity.json").write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
     if not result["success"]:
         raise SystemExit("transaction divergence: " + repr(result["differences"]))
+    export_roots(root_records, args.driver, out / "config.boc", out, "module-pq", True)
     print(json.dumps(result))
 
 

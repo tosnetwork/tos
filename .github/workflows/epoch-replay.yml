@@ -36,6 +36,7 @@ jobs:
         run: |
           python3 test/rel02/test_run.py
           python3 test/rel02/test_rust_replay.py
+          python3 test/executor-parity/test_root_cells.py
       - name: Install repository-pinned Rust toolchain
         run: scripts/install-rust-toolchain.sh
       - name: Restore Rust dependency cache
@@ -91,6 +92,35 @@ jobs:
             --native build/emulator/libemulator.so \
             --rust tosctl/src/target/release/libtos_emulator.so \
             --output result/transaction-rejections
+      - name: Preserve native transaction storage accounting and live caches
+        env:
+          EMULATOR_PATH: ${{ github.workspace }}/build/emulator/libemulator.so
+        run: |
+          cargo test --manifest-path tosctl/src/Cargo.toml --locked --release -p chain_block --lib storage_stat
+          cargo test --manifest-path tosctl/src/Cargo.toml --locked --release -p chain_block --lib transaction_storage
+          cmake --build build --target test-storage-encoding --parallel "$(nproc)"
+          python3 test/executor-parity/storage_encoding.py --native build/emulator/test-storage-encoding --output result/storage-encoding.json
+          cmp result/storage-encoding.fixture.tsv tosctl/src/block/src/tests/data/storage_stat/storage-encoding.tsv
+          python3 test/executor-parity/storage_cache_carry.py --output result/storage-cache-carry.json
+          cmp result/storage-cache-carry.json tosctl/src/executor/tests/fixtures/storage-cache-carry.json
+          python3 test/executor-parity/storage_rollback_carry.py --output result/storage-rollback-carry.json
+          cmp result/storage-rollback-carry.json tosctl/src/executor/tests/fixtures/storage-rollback-carry.json
+          python3 test/executor-parity/storage_tick_carry.py --output result/storage-tick-carry.json
+          cmp result/storage-tick-carry.json tosctl/src/executor/tests/fixtures/storage-tick-carry.json
+          python3 test/executor-parity/storage_option_carry.py --output result/storage-option-carry.json
+          cmp result/storage-option-carry.json tosctl/src/executor/tests/fixtures/storage-option-carry.json
+          cargo test --manifest-path tosctl/src/Cargo.toml --locked --release -p tos_executor --lib tests_storage_measurement
+      - name: Compare complete roots in registered transaction fixtures
+        env:
+          EMULATOR_PATH: ${{ github.workspace }}/build/emulator/libemulator.so
+          FUNC_PATH: ${{ github.workspace }}/build/crypto/func
+          FIFT_PATH: ${{ github.workspace }}/build/crypto/fift
+        run: |
+          cmake --build build --target func fift --parallel "$(nproc)"
+          cargo build --manifest-path tosctl/src/Cargo.toml --locked --release -p tos_executor --example pq-tx-parity
+          python3 test/executor-parity/precompiled_external.py --driver tosctl/src/target/release/examples/pq-tx-parity --output result/fixture-roots/precompiled
+          python3 test/executor-parity/test_root_preflight.py --driver tosctl/src/target/release/examples/pq-tx-parity --fixtures result/fixture-roots/precompiled --output result/fixture-roots/preflight
+          python3 test/executor-parity/fail_action_fine.py --v16-only --driver tosctl/src/target/release/examples/pq-tx-parity --output result/fixture-roots/fine
       - name: Export authenticated contexts and carry Rust account state
         run: |
           python3 test/rel02/run_rust.py --native build/emulator/test-epoch-replay \
@@ -143,4 +173,5 @@ jobs:
           cat artifacts/epoch-replay-arm64/metrics.json
           cmp artifacts/epoch-replay-x86-64/transaction-rejections/native/outcomes.json artifacts/epoch-replay-arm64/transaction-rejections/native/outcomes.json
           cmp artifacts/epoch-replay-x86-64/transaction-rejections/rust/outcomes.json artifacts/epoch-replay-arm64/transaction-rejections/rust/outcomes.json
+          python3 test/executor-parity/transaction_roots.py --compare artifacts/epoch-replay-x86-64/fixture-roots artifacts/epoch-replay-arm64/fixture-roots
           test "${{ needs.replay.result }}" = success

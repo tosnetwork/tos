@@ -1307,6 +1307,132 @@ class RealEngineTest(unittest.TestCase):
             self.assertRegex(key_id_hex, r"^[0-9a-f]{64}$")
             self.assertRegex(line, rf"\bkey_id {key_id_hex}(?![0-9a-f])")
 
+    @requires_bind_node
+    def test_second_engine_on_the_same_key_file_refuses(self) -> None:
+        # Two databases bound to one consensus key file: the configuration lock is per
+        # database, so only the key file's own lock keeps the second engine from signing.
+        engine = find_built("validator-engine/validator-engine", "TOS_VALIDATOR_ENGINE")
+        key_tool = find_built("crypto/pq/tos-pq-consensus-key", "TOS_PQ_CONSENSUS_KEY")
+        if engine is None or key_tool is None:
+            self.skipTest(
+                "no built validator-engine and tos-pq-consensus-key; set TOS_VALIDATOR_ENGINE "
+                "and TOS_PQ_CONSENSUS_KEY to run this test"
+            )
+        custody = "post-quantum consensus custody: validator"
+        held = "another process holds this consensus key file"
+        with tempfile.TemporaryDirectory(prefix="validator-engine-lock-") as scratch:
+            root = Path(scratch)
+            root.chmod(0o700)
+            keys = root / "keys"
+            keys.mkdir(mode=0o700)
+            global_config = json.loads(ENGINE_GLOBAL_CONFIG.read_text())
+            global_config["dht"]["static_nodes"]["nodes"] = []
+            global_config.pop("liteservers", None)
+            global_path = root / "global.json"
+            global_path.write_text(json.dumps(global_config))
+            seed = keys / "pq-consensus.seed"
+            generated = subprocess.run(
+                [str(key_tool), "generate", str(seed)],
+                capture_output=True,
+                text=True,
+                timeout=60,
+                check=False,
+            )
+            self.assertEqual(generated.returncode, 0, generated.stderr)
+            env = {
+                "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+                **TOOL_ENV,
+                "VALIDATOR_ID": VALIDATOR_ID,
+                "PQ_CONSENSUS_KEY_FILE": str(seed),
+            }
+
+            def bound_database(name: str, address: str) -> Path:
+                db = root / name
+                init = subprocess.run(
+                    [str(engine), "-C", str(global_path), "--db", str(db), "--ip", address],
+                    capture_output=True,
+                    text=True,
+                    timeout=120,
+                    check=False,
+                )
+                self.assertEqual(init.returncode, 0, init.stderr[-2000:])
+                applied = subprocess.run(
+                    ["bash", str(ROLE), "apply", str(db / "config.json")],
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                    check=False,
+                )
+                self.assertEqual(applied.returncode, 0, applied.stderr)
+                return db
+
+            def start(db: Path, address: str, log: Path) -> subprocess.Popen[bytes]:
+                with log.open("wb") as sink:
+                    return subprocess.Popen(
+                        [str(engine), "-C", str(global_path), "--db", str(db), "--ip", address],
+                        stdout=sink,
+                        stderr=subprocess.STDOUT,
+                    )
+
+            def wait_for(
+                process: subprocess.Popen[bytes], log: Path, needles: tuple[str, ...]
+            ) -> str:
+                deadline = time.monotonic() + 60
+                while time.monotonic() < deadline:
+                    text = log.read_bytes().decode(errors="replace")
+                    for needle in needles:
+                        if needle in text:
+                            return needle
+                    if process.poll() is not None:
+                        text = log.read_bytes().decode(errors="replace")
+                        return next((needle for needle in needles if needle in text), "exited")
+                    time.sleep(0.2)
+                return "timeout"
+
+            def stop(process: subprocess.Popen[bytes]) -> None:
+                if process.poll() is None:
+                    process.kill()
+                process.wait(timeout=30)
+
+            first_address = f"127.0.0.1:{free_local_port()}"
+            first_db = bound_database("db-first", first_address)
+            first_log = root / "first.log"
+            first = start(first_db, first_address, first_log)
+            try:
+                self.assertEqual(
+                    wait_for(first, first_log, (custody,)),
+                    custody,
+                    first_log.read_bytes().decode(errors="replace")[-3000:],
+                )
+                second_address = f"127.0.0.1:{free_local_port()}"
+                second_db = bound_database("db-second", second_address)
+                second_log = root / "second.log"
+                second = start(second_db, second_address, second_log)
+                try:
+                    verdict = wait_for(second, second_log, (held, custody))
+                    second_text = second_log.read_bytes().decode(errors="replace")
+                    self.assertEqual(verdict, held, second_text[-3000:])
+                    second.wait(timeout=30)
+                    self.assertNotEqual(second.returncode, 0)
+                    self.assertNotIn(custody, second_text)
+                finally:
+                    stop(second)
+            finally:
+                stop(first)
+
+            # The first engine is gone, and its lock with it: the second database now starts.
+            retry_log = root / "second-retry.log"
+            retry = start(second_db, second_address, retry_log)
+            try:
+                self.assertEqual(
+                    wait_for(retry, retry_log, (custody, held)),
+                    custody,
+                    retry_log.read_bytes().decode(errors="replace")[-3000:],
+                )
+            finally:
+                stop(retry)
+
 
 if __name__ == "__main__":
     unittest.main()
