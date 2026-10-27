@@ -1,0 +1,65 @@
+{
+  "source_base": "7c9b2629cf0017bc519ce2904f0107ba8fbc1fc8",
+  "fix": "test-json-rpc-transport directly links validator-common OBJECT library",
+  "baseline_provider_objects_present": false,
+  "fixed_provider_objects_present": true,
+  "scope": "macOS Debug ASAN CMake generation and link-command dependency placement only. No local Linux ASAN runtime claim.",
+  "original_failure": "Linux Clang21/GNU ld: missing BlockHandleImpl constructor and ApplyBlock vtable",
+  "files": [
+    {
+      "name": "original-linux-asan-link-failure.log",
+      "bytes": 1653396,
+      "sha256": "0d4a069853c734ef078b52896e646de652626bc3d06809482145edc42a0f33bd"
+    },
+    {
+      "name": "baseline-configure.log",
+      "bytes": 1131818,
+      "sha256": "64d7994d254c273eec9e392d464f73fd07ed2145d11bbf54cbf77c3b1e16b4fb"
+    },
+    {
+      "name": "fixed-configure.log",
+      "bytes": 5439,
+      "sha256": "d97fad2bbe6a1d58c6f472b093e87c31456785a382eda40c03297476df1194d8"
+    },
+    {
+      "name": "baseline-link-command.txt",
+      "bytes": 5229,
+      "sha256": "1ea709ec8201ddb7633312a95140cffa940eb591125423efd0f7f7b2288e8ca4"
+    },
+    {
+      "name": "fixed-link-command.txt",
+      "bytes": 5941,
+      "sha256": "31110bd4a73ec9f3697f5bd5b1418e90946a579eb74236ced2f76fcc514787fa"
+    }
+  ],
+  "implementation_commit": "671610082a652ec24ad1a8faadc1f4d5e3fafc04",
+  "cmake_blob": "0e750c3ad6178b337174d30fbeb9231dba831b76",
+  "cmake_sha256": "932bbd7406b7b0962b953ceb027f341048c925e62d9191f6be76cab3771f8da5",
+  "source_status_before_configuration": "7c9b2629 base plus the exact CMake change committed as implementation_commit; no production source changes",
+  "reproduction": {
+    "working_directory": "clean checkout of implementation_commit",
+    "evidence_directory": "${HOME}/validation/pr328-ci-link-20261027",
+    "configure": [
+      "cmake",
+      "-S",
+      ".",
+      "-B",
+      "${TASK_LINK_BUILD}",
+      "-G",
+      "Ninja",
+      "-DCMAKE_C_COMPILER=/usr/bin/clang",
+      "-DCMAKE_CXX_COMPILER=/usr/bin/clang++",
+      "-DCMAKE_BUILD_TYPE=Debug",
+      "-DTOS_USE_ASAN=ON"
+    ],
+    "link_command_generation": [
+      "ninja",
+      "-C",
+      "${TASK_LINK_BUILD}",
+      "-t",
+      "commands",
+      "test-json-rpc-transport"
+    ],
+    "baseline": "Repeat configure/generation from source_base in a separate clean checkout/build directory; check that both validator-common provider objects are absent."
+  }
+}
