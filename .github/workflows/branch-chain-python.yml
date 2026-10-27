@@ -102,7 +102,7 @@ jobs:
             dht-server validator-engine-console validator-engine tos-rpc tos-wallet-index test-node-store-fixture \
             create-hardfork test-tos-collator test-apply-block-readback-latency \
             test-pq-lite-forward-proof test-pending-finality-cache test-c04-real-state-proof \
-            tos-proof-verify test-proof-verify proof-verify-fs-shim tos-proof-embedded test-proof-verify-embedded test-proof-readonly-query test-self-pay-simulation-context test-simulation-config test-simulation-account test-json-rpc-transport test-json-rpc-explorer \
+            tos-proof-verify test-proof-verify proof-verify-fs-shim tos-proof-embedded test-proof-verify-embedded test-proof-readonly-query test-self-pay-simulation-context test-simulation-config test-simulation-account test-self-pay-simulation test-json-rpc-transport test-json-rpc-explorer \
             test-n5-manager-db-fixture test-consensus test-get-method-context test-control-getter test-control-getter-budget test-control-getter-query test-control-getter-transport \
             test-notarize-after-transient-resolve test-state-resolver-teardown test-late-candidate-window \
             test-candidate-window-durability \
@@ -233,7 +233,7 @@ jobs:
           ctest --test-dir build -L security-findings --no-tests=error --output-on-failure
 
       - name: Check read-only proof relay and real HTTP ingress
-        run: ctest --test-dir build --output-on-failure --no-tests=error -R '^(wallet-transaction|proof-verify-embedded|proof-readonly-query|self-pay-simulation-context|simulation-config|simulation-account|test-json-rpc-transport|test-json-rpc-explorer)$'
+        run: ctest --test-dir build --output-on-failure --no-tests=error -R '^(wallet-transaction|proof-verify-embedded|proof-readonly-query|self-pay-simulation-context|simulation-config|simulation-account|self-pay-simulation|self-pay-simulation-inputs|self-pay-simulation-input-controls|test-json-rpc-transport|test-json-rpc-explorer)$'
 
       - name: Remove and restore wallet transaction guards
         run: |
