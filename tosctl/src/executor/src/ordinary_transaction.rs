@@ -90,6 +90,8 @@ impl TransactionExecutor for OrdinaryTransactionExecutor {
         account: &mut Account,
         params: ExecuteParams,
     ) -> Result<Transaction> {
+        let storage_snapshot =
+            account.snapshot_transaction_storage(self.config.global_version())?;
         #[cfg(feature = "timings")]
         let mut now = Instant::now();
 
@@ -472,12 +474,19 @@ impl TransactionExecutor for OrdinaryTransactionExecutor {
             *account = Account::uninit(account_address, acc_balance.clone(), 0, last_paid);
             // }
         }
-        tr.set_end_status(account.status());
+        let status_before_uninit_conversion = account.status();
         if let Some(hash) = account.frozen_hash() {
             if account_id.contains_bytes(hash.as_slice()) {
                 account.uninit_account();
             }
         }
+        // Omit a frozen hash equal to the address; from version13 the
+        // transaction end status must also reflect the uninitialized state.
+        tr.set_end_status(if self.config.global_version() >= 13 {
+            account.status()
+        } else {
+            status_before_uninit_conversion
+        });
         log::debug!(target: "executor", "set balance {}", acc_balance.coins);
         account.set_balance(acc_balance);
         log::debug!(target: "executor", "add messages {}, start_lt {}", out_msgs.len(), lt);
@@ -487,6 +496,11 @@ impl TransactionExecutor for OrdinaryTransactionExecutor {
         tr.write_description(&TransactionDescr::Ordinary(description))?;
         #[cfg(feature = "timings")]
         self.timings[2].fetch_add(now.elapsed().as_micros() as u64, Ordering::SeqCst);
+        account.finalize_transaction_storage(
+            storage_snapshot,
+            self.config.global_version(),
+            self.config.size_limits_config().acc_state_cells_for_storage_dict,
+        )?;
         Ok(tr)
     }
     fn ordinary_transaction(&self) -> bool {

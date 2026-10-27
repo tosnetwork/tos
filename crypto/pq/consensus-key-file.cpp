@@ -84,6 +84,29 @@ const char* describe(ConsensusKeyFileError error) noexcept {
   return "the consensus key file was refused";
 }
 
+namespace {
+
+std::variant<ValidatorPQKeyStore, ConsensusKeyFileError> derive_consensus_key(SeedBuffer& seed) noexcept {
+  auto store = ValidatorPQKeyStore::from_seed(
+      std::string_view(reinterpret_cast<const char*>(seed.bytes.data()), seed.bytes.size()));
+  if (!store.has_value()) {
+    return ConsensusKeyFileError::derivation_failed;
+  }
+  return std::move(*store);
+}
+
+}  // namespace
+
+std::variant<ValidatorPQKeyStore, ConsensusKeyFileError> load_consensus_key_from(int fd,
+                                                                                 std::string_view path) noexcept {
+  SeedBuffer seed;
+  if (auto refused = detail::read_protected_seed_from(fd, path, seed)) {
+    return consensus_key_refusal(*refused);
+  }
+  // The seed buffer is wiped by its destructor; what survives is the signer.
+  return derive_consensus_key(seed);
+}
+
 std::variant<ValidatorPQKeyStore, ConsensusKeyFileError> load_consensus_key(std::string_view path) noexcept {
   SeedBuffer seed;
   if (auto refused = detail::read_protected_seed(path, seed)) {

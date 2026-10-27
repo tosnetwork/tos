@@ -212,7 +212,9 @@ void JsonRpcServer::cache_readyz_answer(int status_code, std::string status_text
 void JsonRpcServer::handle_readyz(td::Promise<HttpReturn> promise) {
   if (opts_.index_only) {
     bool ready = opts_.index_ready && opts_.index_ready();
-    auto body = opts_.index_progress ? opts_.index_progress() : "{}";
+    auto body = opts_.index_readyz_body ? opts_.index_readyz_body()
+                : opts_.index_progress  ? opts_.index_progress()
+                                        : "{}";
     promise.set_value(build_readyz_response(ready ? 200 : 503, ready ? "OK" : "Service Unavailable", std::move(body),
                                             opts_.cors_origin));
     return;

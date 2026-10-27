@@ -12,8 +12,12 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT / "test/auth-extensions"), str(ROOT / "test/wallet-quantum")]
 import native
-from cells import Cell, from_boc, read_dict
+from cells import Cell, read_dict
 from fee_tx_parity import credit, transcript
+
+sys.path.append(str(ROOT / "test/executor-parity"))
+from generated_roots import POST, CaptureEmulator, capture, configuration, export, read
+from root_cells import from_boc
 
 
 def main():
@@ -25,7 +29,7 @@ def main():
     args = parser.parse_args()
     out = args.output.resolve()
     out.mkdir(parents=True, exist_ok=True)
-    raw = args.config.read_bytes()
+    raw = read(args.config)
     config = from_boc(raw).refs[0]
     assert credit(config) == 20000
     version = read_dict(config, 32)[8].refs[0].slice()
@@ -40,6 +44,7 @@ def main():
     assert tag in (0xDD, 0xDE), "invalid gas-price constructor"
     prices.uint(64)
     basechain_gas_limit = prices.uint(64)
+    configuration(raw)
     source = Path(__file__).with_name("post-accept-probe.fc")
     if args.delete_accept:
         original = source.read_text()
@@ -51,9 +56,10 @@ def main():
     data = Cell().uint(0, 32)
     with patch.object(native, "NOW", now):
         initial = native.active_account((0, 7000), code, data, 10**15)
-    emulator = native.Emulator.from_config(config, vm_log_verbosity=0)
-    emulator.lib.transaction_emulator_set_unixtime(emulator.ptr, now)
+    emulator = CaptureEmulator.from_config(config, vm_log_verbosity=0)
+    emulator.set_time(now)
     scenarios, receipts, measurements = [], [], []
+    root_records = []
     try:
         for name, accepted, count in [
             ("unaccepted-small", 0, 1),
@@ -83,6 +89,9 @@ def main():
                 measurements.append(
                     dict(name=name, transaction_accepted=False, exit=result["vm_exit_code"])
                 )
+                root_records.append(
+                    capture(f"{len(root_records)}:{name}", initial, message, emulator, result)
+                )
                 continue
             assert result["success"], (name, "expected acceptance", result)
             details = result["details"]
@@ -98,6 +107,9 @@ def main():
                     assert details["gas"] > 20000
             measurements.append(
                 dict(name=name, transaction_accepted=True, exit=details["exit"], gas=details["gas"])
+            )
+            root_records.append(
+                capture(f"{len(root_records)}:{name}", initial, message, emulator, result)
             )
     finally:
         emulator.close()
@@ -126,6 +138,7 @@ def main():
         scope="Ordinary funded owner-controlled account; whole transactions, not actual node dispatch or CPU calibration",
     )
     (out / "result.json").write_text(json.dumps(report, indent=2) + "\n")
+    export(root_records, args.driver.resolve(), out / "config.boc", out, POST)
     print(json.dumps(report))
 
 

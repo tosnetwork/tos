@@ -234,6 +234,31 @@ foreach(mode stall-recovers short-hold final-redrive superseded-deferral notar-r
                          ENVIRONMENT "TOS_SIMPLEX_TEST_CROSSCHECK_UNFINALIZED=1")
 endforeach()
 
+# A leader signs a candidate only once its leader window is durably recorded: the production
+# Consensus, Pool, BlockProducer and Db actors over a backend that holds or loses the poolState
+# write, across a crash and restart.
+add_executable(test-candidate-window-durability test-candidate-window-durability.cpp)
+target_link_libraries(test-candidate-window-durability PRIVATE
+    validator
+    tos_validator
+    tos_block
+    adnl
+    overlay
+    dht
+    tl_api
+    tl-utils
+    tos_crypto
+    tos_pq_consensus_signer
+    tos_pq_consensus
+    tos_mldsa44
+    tdactor
+    tdutils
+)
+foreach(mode crash-restart release shutdown-waiting shutdown-waiting-control)
+    add_test(NAME candidate-window-durability-${mode} COMMAND test-candidate-window-durability ${mode})
+    set_tests_properties(candidate-window-durability-${mode} PROPERTIES TIMEOUT 60)
+endforeach()
+
 # Every transition of the running count of unfinalized finalization entries, deterministically
 # and without an actor.
 add_executable(test-counted-finalizations test-counted-finalizations.cpp)

@@ -88,9 +88,20 @@ elif ! grep -q "sign_stake_authorization" "$TOOL"; then
 fi
 
 # The node must still be able to load its own consensus key: a boundary that removed
-# both halves would pass every check above and leave a validator unable to sign.
-if ! grep -q "load_consensus_key" "$REPO_ROOT/validator-engine/validator-engine.cpp"; then
+# both halves would pass every check above and leave a validator unable to sign. It
+# loads it only through the locked loader, which holds the key file exclusively while
+# the key signs; a plain load next to it would sign with a file another engine may hold.
+if ! grep -q "load_locked_consensus_key(" "$ENGINE"; then
   echo "validator-engine no longer loads a consensus key at all" >&2
+  status=1
+fi
+if grep -Eq "(^|[^_[:alnum:]])load_consensus_key(_from)?\(" "$ENGINE"; then
+  echo "validator-engine loads a consensus key without holding its file's lock" >&2
+  status=1
+fi
+LOCK="$REPO_ROOT/crypto/pq/consensus-key-lock.cpp"
+if [[ ! -f "$LOCK" ]] || ! grep -q "load_consensus_key_from(" "$LOCK"; then
+  echo "the locked loader no longer loads the key through the shared key file rules" >&2
   status=1
 fi
 

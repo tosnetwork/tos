@@ -68,6 +68,12 @@ std::string identity_hex(std::string_view bytes);
 // rather than followed: the path an operator configured is the file that is read.
 std::variant<ValidatorPQKeyStore, ConsensusKeyFileError> load_consensus_key(std::string_view path) noexcept;
 
+// The same, for a file the caller already holds open (from `detail::open_seed_file`): every
+// rule is checked on, and the seed read through, that descriptor, never by opening `path`
+// again. `path` is where it was opened from, for the directory rule.
+std::variant<ValidatorPQKeyStore, ConsensusKeyFileError> load_consensus_key_from(int fd,
+                                                                                 std::string_view path) noexcept;
+
 // Create a new seed at `path` from the system's secure random source, and return the
 // public key it derives. The file is owner-only from the moment it exists, written
 // through a temporary name and renamed, and both it and its directory are flushed before

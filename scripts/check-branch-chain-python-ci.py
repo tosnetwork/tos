@@ -34,6 +34,7 @@ REQUIRED_NATIVE_TARGETS = {
     "test-skip-after-finality-backlog",
     "test-signing-ledger",
     "test-decision-log-restart",
+    "test-candidate-window-durability",
     "test-counted-finalizations",
     "test-unfinalized-count-resolver",
     "test-state-resolver-teardown",

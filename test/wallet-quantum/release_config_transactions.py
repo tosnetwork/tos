@@ -16,8 +16,12 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT / "test/auth-extensions"), str(ROOT / "test/wallet-quantum")]
 import native
-from cells import Cell, from_boc, read_dict
+from cells import Cell, read_dict
 from fee_tx_parity import transcript
+
+sys.path.append(str(ROOT / "test/executor-parity"))
+from generated_roots import RELEASE, CaptureEmulator, capture, configuration, export, read
+from root_cells import from_boc
 
 
 def main():
@@ -28,7 +32,7 @@ def main():
     args = parser.parse_args()
     out = args.output.resolve()
     out.mkdir(parents=True, exist_ok=True)
-    raw = args.config.read_bytes()
+    raw = read(args.config)
     root = from_boc(raw)
     assert len(root.bits) == 256 and len(root.refs) == 1, "ConfigParams required"
     entries = read_dict(root.refs[0], 32)
@@ -38,6 +42,7 @@ def main():
     assert policy.uint(8) == 0xA1
     namespace = policy.uint(256)
     assert namespace == int("42" * 32, 16), "unexpected generated AUTH namespace"
+    configuration(raw)
     code = native.compile_contract(
         str(Path(__file__).with_name("release-config-probe.fc")), out / "probe.boc"
     )
@@ -56,8 +61,9 @@ def main():
     with patch.object(
         native, "config", side_effect=AssertionError("synthesized configuration forbidden")
     ):
-        emulator = native.Emulator.from_config(root.refs[0], vm_log_verbosity=0)
-    emulator.lib.transaction_emulator_set_unixtime(emulator.ptr, now)
+        emulator = CaptureEmulator.from_config(root.refs[0], vm_log_verbosity=0)
+    emulator.set_time(now)
+    root_records = []
     try:
         for index, (name, fixture, dedicated) in enumerate(cases):
             suite = 255 if dedicated else int(fixture[4].split(":")[1])
@@ -83,6 +89,7 @@ def main():
                 assert state.hash == data.hash, (name, "rejected probe changed state")
                 assert not details["compute_success"] and details["aborted"]
             assert not native.outgoing(from_boc(result["transaction"]))
+            root_records.append(capture(f"{index}:{name}", shard, message, emulator, result))
             scenarios.append(
                 "\t".join(
                     [
@@ -130,6 +137,7 @@ def main():
         scope="Generated config unchanged; whole transactions for PQ availability and rejected-state preservation; not full wallet or external admission acceptance",
     )
     (out / "result.json").write_text(json.dumps(report, indent=2) + "\n")
+    export(root_records, args.driver.resolve(), out / "config.boc", out, RELEASE)
     print(json.dumps(report))
 
 

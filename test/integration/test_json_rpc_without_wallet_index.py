@@ -13,6 +13,7 @@ import logging
 import signal
 import socket
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any
@@ -68,6 +69,28 @@ async def answered(
         except OSError:
             await asyncio.sleep(1)
     raise AssertionError(f"{address} {method}: no answer within 120 s")
+
+
+def readyz(address: str) -> dict[str, Any]:
+    """The index's readiness body; 503 (not caught up) still carries it."""
+    try:
+        with urllib.request.urlopen(f"http://{address}/readyz", timeout=10) as response:
+            body = response.read()
+    except urllib.error.HTTPError as error:
+        body = error.read()
+    document = json.loads(body.decode())
+    require(isinstance(document, dict), f"{address} /readyz: not a JSON object")
+    return document
+
+
+async def first_readyz(address: str) -> dict[str, Any]:
+    """The first readiness answer a freshly started index gives."""
+    for _ in range(600):
+        try:
+            return await asyncio.to_thread(readyz, address)
+        except (urllib.error.URLError, ConnectionError):
+            await asyncio.sleep(0.05)
+    raise AssertionError(f"{address} /readyz: no answer within 30 s")
 
 
 async def main(args: argparse.Namespace) -> None:
@@ -247,7 +270,7 @@ async def main(args: argparse.Namespace) -> None:
                     state = result.get("result", {}).get("index_state", {})
                     replay = state.get("replay", {})
                     if (
-                        replay.get("masterchain_seqno", 0) >= minimum
+                        (replay.get("masterchain_seqno") or 0) >= minimum
                         and replay.get("caught_up")
                         and state.get("complete")
                     ):
@@ -288,6 +311,21 @@ async def main(args: argparse.Namespace) -> None:
                 *index_args, stdout=index_log, stderr=index_log
             )
             processes.append(index_process)
+            # The first readiness answer after a restart already carries the
+            # durable cursor: a restart must not look like a reset.
+            first = await first_readyz(index_address)
+            require(
+                first.get("initialized") is True
+                and isinstance(first.get("masterchain_seqno"), int)
+                and first["masterchain_seqno"] >= before,
+                f"restarted index reported no durable cursor: {first}",
+            )
+            stats = first.get("replay_stats", {})
+            require(
+                isinstance(stats.get("source_requests"), int)
+                and isinstance(stats.get("archive_slice_opens"), int),
+                f"readiness lacks replay statistics: {first}",
+            )
             await caught_up(before + 3)
             require(
                 await recipient_events() == events_before,

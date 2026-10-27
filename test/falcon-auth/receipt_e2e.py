@@ -62,7 +62,7 @@ def deliver(actor, message, label):
     result = actor.e.send(prior, message)
     assert result["success"], result
     actor.shard = from_boc(result["shard_account"])
-    e2e.capture_transaction(label, prior, message, actor.e.lt, result)
+    e2e.capture_transaction(label, prior, message, actor.e, result)
     return observe(result, prior, actor.shard), result
 
 
@@ -376,17 +376,11 @@ def run_cases(args):
     return out, reports
 
 
-def parity(out, driver):
+def parity(out, driver, full=True):
     rows = e2e.TRANSACTIONS
     cases = out / "receipt-scenarios.tsv"
-    cases.write_text(
-        "\n".join(
-            "\t".join([name, str(now), str(lt), before.boc().hex(), msg.boc().hex(), "-"])
-            for name, before, msg, lt, now, _ in rows
-        )
-        + "\n"
-    )
-    left = [row for *_, row in rows]
+    cases.write_text("\n".join(row.old_input() for row in rows) + "\n")
+    left = [row.legacy for row in rows]
     (out / "receipt-cpp.tsv").write_text("\n".join(left) + "\n")
     fixture = from_boc((ROOT / "tosctl/src/executor/real_boc/default_config.boc").read_bytes())
     cfg = out / "receipt-config.boc"
@@ -399,6 +393,7 @@ def parity(out, driver):
     )
     (out / "receipt-rust.tsv").write_text(result.stdout)
     assert left == result.stdout.splitlines(), "receipt transaction executor divergence"
+    e2e.export_roots(rows, driver, cfg, out, "receipt", full)
     return len(left)
 
 
@@ -414,7 +409,7 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
     out, reports = run_cases(args)
-    compared = parity(out, args.driver) if args.driver else 0
+    compared = parity(out, args.driver, args.case is None) if args.driver else 0
     report = dict(
         success=True,
         source_commit=subprocess.check_output(
