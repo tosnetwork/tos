@@ -1148,7 +1148,8 @@ target_link_libraries(test-http-server-limits PRIVATE toshttp tdactor tdutils)
 
 # The real JSON-RPC server and listener, driven over loopback TCP.
 add_executable(test-json-rpc-transport test/test-td-main.cpp test/test-json-rpc-transport.cpp)
-target_link_libraries(test-json-rpc-transport PRIVATE validator-engine-json-rpc tos-service-common)
+# Factory references need the common implementation objects before static archives.
+target_link_libraries(test-json-rpc-transport PRIVATE validator-engine-json-rpc tos-service-common validator-common)
 # The restricted-wallet delegation views the account-capability handlers call,
 # against a fake liteserver.
 add_executable(test-json-rpc-account-capability test/test-td-main.cpp test/test-json-rpc-account-capability.cpp)
