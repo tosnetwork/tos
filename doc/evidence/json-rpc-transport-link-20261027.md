@@ -26,9 +26,22 @@ production source, test selection, sanitizer option or workflow is changed.
 
 ## Retained evidence
 
-Raw logs and generated link commands are retained at
-`/Users/tomisetsu/validation/pr328-ci-link-20261027/` until this repair is accepted.
-`results.json` there contains file sizes and SHA-256 values. Its current digest is
-`5069a07bcd24e3ec302381ffc6c1fb6b4bbcaaa83aac9e98682b969db228d5cc`.
-No raw build output is committed. CMake generation is not a native runtime test;
-Linux ASAN results must be checked on the pushed repair head.
+Raw logs and generated link commands are retained under
+`${HOME}/validation/pr328-ci-link-20261027/` until this repair is accepted.
+The adjacent JSON index records their sizes/hashes, the repaired implementation
+commit and CMake blob identity, and the exact configuration/generation commands.
+From a clean checkout of that implementation commit, choose a fresh build directory:
+
+```sh
+TASK_LINK_BUILD="${HOME}/validation/transport-link-reproduction"
+cmake -S . -B "$TASK_LINK_BUILD" -G Ninja \
+  -DCMAKE_C_COMPILER=/usr/bin/clang -DCMAKE_CXX_COMPILER=/usr/bin/clang++ \
+  -DCMAKE_BUILD_TYPE=Debug -DTOS_USE_ASAN=ON
+ninja -C "$TASK_LINK_BUILD" -t commands test-json-rpc-transport
+```
+
+Repeat from the recorded parent in another clean directory for the negative
+comparison: the original final link omits both common provider objects; the
+repair includes them before the static archives. No raw build output is committed.
+CMake generation is not a native runtime test; Linux ASAN results must be checked
+on the pushed repair head.
