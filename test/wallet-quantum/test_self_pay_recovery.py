@@ -44,13 +44,18 @@ def main():
     challenge = int.from_bytes(hashlib.sha256(b"PUBLIC TEST SUCCESSOR CHALLENGE").digest(), "big")
 
     def identity(
-        target=old.address, expires=native.NOW + 600, random=challenge, authority=successor
+        target=old.address,
+        expires=native.NOW + 600,
+        random=challenge,
+        authority=successor,
+        global_id=native.GLOBAL_ID,
+        network=NETWORK,
     ):
         return (
             Cell()
             .uint(0x51505031, 32)
-            .sint(native.GLOBAL_ID, 32)
-            .uint(NETWORK, 256)
+            .sint(global_id, 32)
+            .uint(network, 256)
             .addr(target)
             .uint(random, 256)
             .uint(expires, 32)
@@ -61,27 +66,32 @@ def main():
     data = Cell().uint(1, 8).uint(0, 1).ref(immutable)
     init = native.state_init(probe, data)
     address = (0, int.from_bytes(init.hash, "big"))
-    digest = Cell().uint(0x51505031, 32).raw(probe.hash).ref(immutable).hash
-    digest_file = out / "digest.bin"
-    digest_file.write_bytes(digest)
-    primary_sig, rescue_sig = out / "primary.sig", out / "rescue.sig"
-    run(
-        os.environ["MLDSA_TOOL"],
-        "sign",
-        new.skfile,
-        b"TOS-QSP-POP-MLDSA44-v1".hex(),
-        digest_file,
-        primary_sig,
-    )
-    run(
-        os.environ["SLH_TOOL"],
-        "sign",
-        new.slh_sk,
-        b"TOS-QSP-POP-SLH128S-v1".hex(),
-        digest_file,
-        rescue_sig,
-    )
-    body = Cell().ref(chain(primary_sig.read_bytes())).ref(chain(rescue_sig.read_bytes()))
+
+    def proof_body(immutable, profile, prefix=""):
+        digest = Cell().uint(0x51505031, 32).raw(profile.hash).ref(immutable).hash
+        digest_file = out / (prefix + "digest.bin")
+        digest_file.write_bytes(digest)
+        primary_sig, rescue_sig = out / (prefix + "primary.sig"), out / (prefix + "rescue.sig")
+        run(
+            os.environ["MLDSA_TOOL"],
+            "sign",
+            new.skfile,
+            b"TOS-QSP-POP-MLDSA44-v1".hex(),
+            digest_file,
+            primary_sig,
+        )
+        run(
+            os.environ["SLH_TOOL"],
+            "sign",
+            new.slh_sk,
+            b"TOS-QSP-POP-SLH128S-v1".hex(),
+            digest_file,
+            rescue_sig,
+        )
+        body = Cell().ref(chain(primary_sig.read_bytes())).ref(chain(rescue_sig.read_bytes()))
+        return body, primary_sig, rescue_sig
+
+    body, primary_sig, rescue_sig = proof_body(immutable, probe)
     rows, scenarios, expected_rows = [], [], []
 
     def send(label, account, message, expected=0, accepted=True):
@@ -121,6 +131,38 @@ def main():
         rows.append(row)
         print(json.dumps(row), flush=True)
         return result
+
+    def deploy_pending_probe(label, profile, pending):
+        state_init = native.state_init(profile, pending)
+        destination = (0, int.from_bytes(state_init.hash, "big"))
+        funding = (
+            Cell()
+            .uint(4, 4)
+            .addr(old.address)
+            .addr(destination)
+            .coins(1_000_000_000)
+            .uint(0, 1)
+            .coins(0)
+            .coins(0)
+            .uint(0, 64)
+            .uint(native.NOW, 32)
+            .uint(1, 1)
+            .uint(1, 1)
+            .ref(state_init)
+            .uint(1, 1)
+            .ref(Cell())
+        )
+        result = send(label + "-deploy", uninitialized(destination, 0), funding)
+        account = from_boc(result["shard_account"])
+        assert native.account_data(account)[0].hash == pending.hash
+        assert not native.outgoing(from_boc(result["transaction"]))
+        return destination, account
+
+    def require_network_rejection(result, pending):
+        assert result["details"]["exit"] == 1801, ("expected network rejection", result["details"])
+        assert not result["details"]["compute_success"] and result["details"]["aborted"]
+        assert native.account_data(from_boc(result["shard_account"]))[0].hash == pending.hash
+        assert not native.outgoing(from_boc(result["transaction"]))
 
     # The existing root locks PRIMARY, then funds the immutable successor probe.
     locked = send("lock", old.account, old.message(role=2, kind=3))
@@ -205,6 +247,96 @@ def main():
         + os.path.relpath(ROOT / "crypto/smartcont/wallet-quantum-self-pay-common.fc", out)
         + '"',
     )
+    # These signatures are valid for each altered identity and actual code profile.
+    # A network refusal must not merely be a transplanted-signature failure.
+    other_global = native.GLOBAL_ID + 1
+    other_global_authority = Cell(
+        successor.bits[:8] + f"{other_global & ((1 << 32) - 1):032b}" + successor.bits[40:],
+        successor.refs,
+    )
+    authority_guard = "(authority_global_id == global_id) & (authority_network == network)"
+    network_cases = [
+        (
+            "probe-runtime-global-id",
+            identity(global_id=other_global, authority=other_global_authority),
+            "throw_unless(auth::wrong_network, global_id == auth_global_id());",
+            "",
+        ),
+        (
+            "probe-authority-global-id",
+            identity(authority=other_global_authority),
+            authority_guard,
+            "(authority_network == network)",
+        ),
+        (
+            "probe-authority-namespace",
+            identity(authority=new.make_authority(policy_value=2, network=NETWORK ^ 1)),
+            authority_guard,
+            "(authority_global_id == global_id)",
+        ),
+    ]
+    network_controls, restore_inputs = [], []
+    for label, changed_identity, guard, replacement in network_cases:
+        pending = Cell().uint(1, 8).uint(0, 1).ref(changed_identity)
+        destination, account = deploy_pending_probe(label, probe, pending)
+        valid_body, _, _ = proof_body(changed_identity, probe, label + "-")
+        result = send(
+            label, account, native.internal(old.address, destination, valid_body), expected=1801
+        )
+        require_network_rejection(result, pending)
+        restore_inputs.append((label, destination, account, pending, valid_body))
+
+        assert source.count(guard) == 1, ("guard not uniquely located", label)
+        mutant_path = out / (label + "-guard-removed.fc")
+        mutant_path.write_text(source.replace(guard, replacement))
+        mutant = native.compile_contract(str(mutant_path), mutant_path.with_suffix(".boc"))
+        assert mutant.hash != probe.hash
+        mutant_destination, mutant_account = deploy_pending_probe(
+            label + "-guard-removed", mutant, pending
+        )
+        mutant_body, _, _ = proof_body(changed_identity, mutant, label + "-guard-removed-")
+        removed = send(
+            label + "-guard-removed",
+            mutant_account,
+            native.internal(old.address, mutant_destination, mutant_body),
+        )
+        saved = native.account_data(from_boc(removed["shard_account"]))[0]
+        assert saved.bits == f"{1:08b}1" and saved.refs[0].hash == changed_identity.hash
+        assert not native.outgoing(from_boc(removed["transaction"]))
+        caught = False
+        try:
+            require_network_rejection(removed, pending)
+        except AssertionError:
+            caught = True
+        assert caught, ("network guard removal was not detected", label)
+        network_controls.append(
+            dict(
+                name=label,
+                normal_exit=1801,
+                removed_exit=0,
+                removed_verified=True,
+                sensitivity="caught",
+                mutant_code_hash=mutant.hash.hex(),
+                mutant_source_sha256=hashlib.sha256(mutant_path.read_bytes()).hexdigest(),
+            )
+        )
+
+    restored_probe = native.compile_contract(
+        "wallet-quantum-possession-probe.fc", out / "restored-probe.boc"
+    )
+    assert restored_probe.hash == probe.hash
+    for control, (label, destination, account, pending, valid_body) in zip(
+        network_controls, restore_inputs
+    ):
+        result = send(
+            label + "-restored",
+            account,
+            native.internal(old.address, destination, valid_body),
+            expected=1801,
+        )
+        require_network_rejection(result, pending)
+        control["restored_exit"] = 1801
+
     changed_path = out / "other-profile.fc"
     changed_path.write_text(source + "\nint other_profile() method_id { return 1; }\n")
     changed_code = native.compile_contract(str(changed_path), out / "other-profile.boc")
@@ -301,10 +433,16 @@ def main():
         cases=rows,
         wallet_code_hash=old.code.hash.hex(),
         probe_code_hash=probe.hash.hex(),
+        network_guard_controls=network_controls,
         provenance=provenance(args.rust_driver),
         rust_parity="passed" if args.rust_driver else "not run",
         scope="Contract recovery; no mobile cold-backup, UI or live-chain acceptance",
     )
+    assert {entry["name"] for entry in network_controls} == {
+        "probe-runtime-global-id",
+        "probe-authority-global-id",
+        "probe-authority-namespace",
+    }, "incomplete probe network guard coverage"
     (out / "report.json").write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps(dict(cases=len(rows), rust_parity=report["rust_parity"])))
 
