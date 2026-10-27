@@ -169,6 +169,10 @@ Neither part is deployed before all of the following are recorded:
   - no own vote or candidate in a session at or below `cc(M) + 2` of its
     lineage;
   - signing resumes at `cc(M) + 3`.
+
+  Recorded in [the drill evidence](evidence/signing-unknown-history-drill/README.md).
+  On this branch the drill passed. The red control on main signed again at once,
+  in the old masterchain session.
 - the local-only restriction of `--signing-decision-log` lifted in a change
   reviewed with the above.
 
