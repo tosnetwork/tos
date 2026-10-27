@@ -32,6 +32,22 @@
 // resolver that resolves the exact ancestor fetches NotarCert(P) from the peer and starts
 // the window on state n+1; the skip shortcut aborts with the same N/N-1 mismatch.
 //
+// The sibling mode builds two notarized candidates at one height, both naming A: the sibling P'
+// on the unfinalized branch and P on the branch a FinalizeCert(C) settles. Two full observer
+// nodes receive the certificates in different orders. Both must finalize P and never P', and
+// both must resolve C to the same block and state n+1, built on P, even after resolving P'
+// first has put the sibling's state in the cache.
+//
+// The delayed-anchor mode finalizes P while the manager still refuses P's state, as it does
+// until the masterchain block that references P is in: the manager serves an older anchor at
+// once and P only after release. One observer resolves C while P is late and must reconstruct
+// from candidate data; a second observer resolves C after release and must use P's anchor. Both
+// must reach the same block and state n+1, and neither may read the older anchor.
+//
+// Each of these fixtures has a red control: the same file built against a test-only mutant of
+// the resolver (make-state-resolver-mutant.py) that takes the skip shortcut, substitutes the
+// sibling, or falls back to the start state while the anchor is late.
+//
 // The source uses only bus events that exist both before and after the exact-ancestor change,
 // so the identical file builds against either resolver. Every run prints the preconditions it
 // established before triggering resolution; a run whose ordering did not hold stops with
@@ -58,6 +74,7 @@
 #include "td/actor/BusRuntime.h"
 #include "td/actor/coro_utils.h"
 #include "tos/quorum.h"
+#include "validator/fabric.h"
 #include "vm/boc.h"
 
 #include "block-auto.h"
@@ -84,8 +101,18 @@ td::Ref<vm::Cell> gen_shard_state(BlockSeqno seqno) {
   return vm::CellBuilder().store_long(0xabcdabcdU, 32).store_long(seqno, 32).finalize_novm();
 }
 
+// The state the sibling P' produces at the same height: a different cell, so its Merkle
+// update and block differ from P's.
+td::Ref<vm::Cell> gen_sibling_state(BlockSeqno seqno) {
+  return vm::CellBuilder().store_long(0x51b11a6eU, 32).store_long(seqno, 32).finalize_novm();
+}
+
 std::string state_hash_hex(BlockSeqno seqno) {
   return gen_shard_state(seqno)->get_hash().to_hex();
+}
+
+std::string sibling_state_hash_hex(BlockSeqno seqno) {
+  return gen_sibling_state(seqno)->get_hash().to_hex();
 }
 
 const ShardIdFull SHARD{basechainId, shardIdAll};
@@ -134,6 +161,10 @@ enum class Mode {
   // Two nodes: NotarCert(P) exists only on the peer, and the real Consensus leader path
   // resolves C.
   PeerConsensus,
+  // Two observers, two notarized siblings at P's height; FinalizeCert(C) settles P's branch.
+  Sibling,
+  // Two observers; P is finalized while the manager still withholds its anchor state.
+  DelayedAnchor,
 };
 
 std::string candidate_id_str(const CandidateId& id) {
@@ -160,9 +191,21 @@ struct Observations {
   size_t peer_served_notar = 0;
   // Written by the database gate.
   size_t held_writes = 0;
+  // Candidates this node's StateResolver handed over as finalized blocks.
+  std::vector<CandidateId> finalized;
 };
 
+// The node under test, and in the two-observer modes the second observer.
 Observations observations;
+Observations second_observations;
+std::atomic<long long> second_node_idx{-1};
+
+Observations& observations_for(const simplex::BusHandle& bus) {
+  if (static_cast<long long>(bus->local_id->idx.value()) == second_node_idx.load()) {
+    return second_observations;
+  }
+  return observations;
+}
 
 // The database write of NotarCert for this slot waits until `released` is set.
 std::atomic<long long> gate_slot{-1};
@@ -174,9 +217,28 @@ std::mutex peer_mutex;
 std::optional<simplex::BusHandle> peer_bus;
 std::optional<PeerValidatorId> peer_idx;
 
-bool notarized(const CandidateId& id) {
-  std::scoped_lock lock(observations.mutex);
-  return observations.notarized.contains(id);
+// What the test-only mutant resolver consults in the red controls. Unused by the production
+// build, which has no hooks.
+std::mutex mutant_mutex;
+// SkipCerts delivered to the node under test.
+std::set<td::uint32> delivered_skips;
+// Sibling mode: the exact parent P and the sibling the mutant puts in its place.
+std::optional<CandidateId> mutant_exact_parent;
+std::optional<CandidateId> mutant_sibling;
+
+bool notarized(const CandidateId& id, Observations& node = observations) {
+  std::scoped_lock lock(node.mutex);
+  return node.notarized.contains(id);
+}
+
+bool finalized(const CandidateId& id, Observations& node = observations) {
+  std::scoped_lock lock(node.mutex);
+  for (const auto& done : node.finalized) {
+    if (done == id) {
+      return true;
+    }
+  }
+  return false;
 }
 
 size_t held_writes() {
@@ -184,9 +246,9 @@ size_t held_writes() {
   return observations.held_writes;
 }
 
-bool overlay_requested(const CandidateId& id) {
-  std::scoped_lock lock(observations.mutex);
-  for (const auto& requested : observations.overlay_requests) {
+bool overlay_requested(const CandidateId& id, Observations& node = observations) {
+  std::scoped_lock lock(node.mutex);
+  for (const auto& requested : node.overlay_requests) {
     if (requested == id) {
       return true;
     }
@@ -219,9 +281,9 @@ size_t peer_served_notar() {
   return observations.peer_served_notar;
 }
 
-size_t misbehavior_reports() {
-  std::scoped_lock lock(observations.mutex);
-  return observations.misbehavior_reports;
+size_t misbehavior_reports(Observations& node = observations) {
+  std::scoped_lock lock(node.mutex);
+  return node.misbehavior_reports;
 }
 
 std::optional<td::int32> held_notar_slot(td::Slice value) {
@@ -305,21 +367,35 @@ class ObserverActor : public td::actor::SpawnsWith<simplex::Bus>, public td::act
   }
 
   template <>
-  void handle(simplex::BusHandle, std::shared_ptr<const simplex::NotarizationObserved> event) {
-    std::scoped_lock lock(observations.mutex);
-    observations.notarized.insert(event->id);
+  void handle(simplex::BusHandle bus, std::shared_ptr<const simplex::NotarizationObserved> event) {
+    auto& node = observations_for(bus);
+    std::scoped_lock lock(node.mutex);
+    node.notarized.insert(event->id);
   }
 
   template <>
-  void handle(simplex::BusHandle, std::shared_ptr<const simplex::LeaderWindowObserved> event) {
-    std::scoped_lock lock(observations.mutex);
-    observations.leader_windows.emplace_back(event->start_slot, event->base);
+  void handle(simplex::BusHandle bus, std::shared_ptr<const simplex::LeaderWindowObserved> event) {
+    auto& node = observations_for(bus);
+    std::scoped_lock lock(node.mutex);
+    node.leader_windows.emplace_back(event->start_slot, event->base);
   }
 
   template <>
-  void handle(simplex::BusHandle, std::shared_ptr<const MisbehaviorReport>) {
-    std::scoped_lock lock(observations.mutex);
-    ++observations.misbehavior_reports;
+  void handle(simplex::BusHandle bus, std::shared_ptr<const MisbehaviorReport>) {
+    auto& node = observations_for(bus);
+    std::scoped_lock lock(node.mutex);
+    ++node.misbehavior_reports;
+  }
+
+  // Stands in for the block accepter: records which candidates the resolver finalized.
+  template <>
+  td::actor::Task<> process(simplex::BusHandle bus, std::shared_ptr<FinalizeBlock> event) {
+    emit(PSTRING() << "MERKLE_ACTOR_FINALIZED node=" << bus->local_id->idx.value() << " id="
+                   << candidate_id_str(event->candidate->id) << " block=" << event->candidate->block_id().to_str());
+    auto& node = observations_for(bus);
+    std::scoped_lock lock(node.mutex);
+    node.finalized.push_back(event->candidate->id);
+    co_return td::Unit{};
   }
 
   template <>
@@ -370,8 +446,9 @@ class OverlayStub : public td::actor::SpawnsWith<simplex::Bus>, public td::actor
       auto id = CandidateId::from_tl(request.ok()->id_);
       emit(PSTRING() << "MERKLE_ACTOR_OVERLAY_REQUEST id=" << candidate_id_str(id) << " want_candidate="
                      << request.ok()->want_candidate_ << " want_notar=" << request.ok()->want_notar_);
-      std::scoped_lock lock(observations.mutex);
-      observations.overlay_requests.push_back(id);
+      auto& node = observations_for(bus);
+      std::scoped_lock lock(node.mutex);
+      node.overlay_requests.push_back(id);
     }
     if (peer.has_value()) {
       // Every request goes to the one peer, so which node serves P is not left to chance.
@@ -394,8 +471,65 @@ class OverlayStub : public td::actor::SpawnsWith<simplex::Bus>, public td::actor
   }
 };
 
+// Shard states the manager can serve beyond the zerostate, keyed by the exact block id. A
+// delayed anchor is refused with notready until it is released, which is how the manager
+// answers for a finalized block whose masterchain reference has not arrived yet.
+struct ManagerAnchors {
+  struct Anchor {
+    td::Ref<vm::Cell> state;
+    td::Ref<BlockData> data;
+    bool delayed = false;
+  };
+  struct Request {
+    size_t node = 0;
+    BlockIdExt block;
+    bool served = false;
+  };
+  std::mutex mutex;
+  std::map<BlockIdExt, Anchor> anchors;
+  bool released = false;
+  std::vector<Request> requests;
+
+  // nullopt: not available (absent, or delayed and not yet released).
+  std::optional<Anchor> lookup(const BlockIdExt& block) {
+    std::scoped_lock lock(mutex);
+    auto it = anchors.find(block);
+    if (it != anchors.end() && (!it->second.delayed || released)) {
+      return it->second;
+    }
+    return std::nullopt;
+  }
+
+  void record(size_t node, const BlockIdExt& block, bool served) {
+    emit(PSTRING() << "MERKLE_ACTOR_MANAGER_STATE node=" << node << " block=" << block.to_str()
+                   << " served=" << (served ? "yes" : "no"));
+    std::scoped_lock lock(mutex);
+    requests.push_back(Request{.node = node, .block = block, .served = served});
+  }
+
+  void release() {
+    std::scoped_lock lock(mutex);
+    released = true;
+  }
+
+  std::vector<Request> requests_of(size_t node) {
+    std::scoped_lock lock(mutex);
+    std::vector<Request> result;
+    for (const auto& request : requests) {
+      if (request.node == node) {
+        result.push_back(request);
+      }
+    }
+    return result;
+  }
+};
+
 class StaticManager : public ManagerFacade {
  public:
+  StaticManager() = default;
+  StaticManager(size_t node, std::shared_ptr<ManagerAnchors> anchors) : node_(node), anchors_(std::move(anchors)) {
+  }
+
   td::actor::Task<GeneratedCandidate> collate_block(CollateParams, td::CancellationToken) override {
     co_return td::Status::Error("this node does not collate");
   }
@@ -410,26 +544,43 @@ class StaticManager : public ManagerFacade {
     co_return td::Status::Error("this node does not accept blocks");
   }
 
-  // Only the zerostate is available from the manager: the whole chain above it must be
-  // replayed from candidate data, which is the path under test.
+  // Without anchors only the zerostate is available from the manager: the whole chain above
+  // it must be replayed from candidate data, which is the path under test.
   td::actor::Task<td::Ref<vm::Cell>> wait_block_state_root(BlockIdExt block_id, td::Timestamp,
                                                            std::optional<CandidateId>) override {
+    std::optional<ManagerAnchors::Anchor> anchor;
+    if (anchors_) {
+      anchor = anchors_->lookup(block_id);
+      anchors_->record(node_, block_id, anchor.has_value() || block_id == FIRST_PARENT);
+    }
+    if (anchor.has_value()) {
+      co_return anchor->state;
+    }
     if (block_id == FIRST_PARENT) {
       co_return gen_shard_state(0);
     }
     co_return td::Status::Error(ErrorCode::notready, "only the zerostate is available");
   }
 
-  td::actor::Task<td::Ref<BlockData>> wait_block_data(BlockIdExt, td::Timestamp) override {
+  td::actor::Task<td::Ref<BlockData>> wait_block_data(BlockIdExt block_id, td::Timestamp) override {
+    if (anchors_) {
+      if (auto anchor = anchors_->lookup(block_id)) {
+        co_return anchor->data;
+      }
+    }
     co_return td::Status::Error(ErrorCode::notready, "no block data is available");
   }
+
+ private:
+  size_t node_ = 0;
+  std::shared_ptr<ManagerAnchors> anchors_;
 };
 
 // A full candidate whose Merkle update moves state `seqno - 1` to `seqno`, laid out exactly as
 // the consensus fixture's collator lays out blocks.
-BlockCandidate make_block(BlockSeqno seqno, const BlockIdExt& prev) {
+BlockCandidate make_block(BlockSeqno seqno, const BlockIdExt& prev, bool sibling = false) {
   BlockSeqno prev_seqno = seqno - 1;
-  double gen_utime = 1'700'000'000.0 + seqno;
+  double gen_utime = 1'700'000'000.0 + seqno + (sibling ? 0.5 : 0.0);
 
   block::gen::BlockInfo::Record info;
   info.version = 0;
@@ -456,8 +607,8 @@ BlockCandidate make_block(BlockSeqno seqno, const BlockIdExt& prev) {
   CHECK(block::gen::pack_cell(block_info, info));
 
   td::Ref<vm::Cell> value_flow = vm::CellBuilder{}.finalize_novm();
-  td::Ref<vm::Cell> merkle_update =
-      vm::CellBuilder::create_merkle_update(gen_shard_state(prev_seqno), gen_shard_state(seqno));
+  td::Ref<vm::Cell> merkle_update = vm::CellBuilder::create_merkle_update(
+      gen_shard_state(prev_seqno), sibling ? gen_sibling_state(seqno) : gen_shard_state(seqno));
   td::Ref<vm::Cell> block_extra = vm::CellBuilder{}.store_long(seqno, 32).finalize_novm();
   td::Ref<vm::Cell> block_root = vm::CellBuilder{}
                                      .store_long(0x11ef55aa, 32)
@@ -513,19 +664,46 @@ class Driver : public td::actor::Actor {
   std::shared_ptr<simplex::Bus> bus_ptr_;
   // candidates_[k] is the full candidate producing state k (index 0 unused).
   std::vector<CandidateRef> candidates_;
+  // Sibling mode: P', the second notarized candidate at P's height, also naming A.
+  CandidateRef sibling_;
+  // Two-observer modes: the second full node and the manager anchors both nodes read.
+  std::shared_ptr<ManagerAnchors> anchors_;
+  td::actor::Runtime second_runtime_;
+  td::actor::ActorOwn<StaticManager> second_manager_;
+  simplex::BusHandle second_bus_;
+
+  bool two_observers() const {
+    return mode_ == Mode::Sibling || mode_ == Mode::DelayedAnchor;
+  }
 
   // Skip-certified slots between A and P. The peer-consensus mode puts a skip run there so
-  // that Pool has to carry A as the available base across it.
+  // that Pool has to carry A as the available base across it; the sibling mode puts P' there.
   td::uint32 gap() const {
-    return mode_ == Mode::PeerConsensus ? 2 : 0;
+    switch (mode_) {
+      case Mode::PeerConsensus:
+        return 2;
+      case Mode::Sibling:
+        return 1;
+      case Mode::HoldRelease:
+      case Mode::HoldRefuse:
+      case Mode::NoHold:
+      case Mode::HoldWrongSlot:
+      case Mode::DelayedAnchor:
+        return 0;
+    }
+    return 0;
   }
 
   td::uint32 slot_of(BlockSeqno seqno) const {
     // Candidates 1..n-1 sit at consecutive slots after `offset` leading skipped slots; P follows
     // A after gap() skipped slots and C follows P. The offset puts C at the last slot of a
-    // leader window, so that installing NotarCert(C) opens the next window on base C.
+    // leader window, so that installing NotarCert(C) opens the next window on base C. In the
+    // sibling mode it puts P at the first slot of a window instead, so that P and its sibling
+    // in the slot before come from different leaders' windows.
     td::uint32 offset =
-        (SLOTS_PER_LEADER_WINDOW - (n_ + gap() + 1) % SLOTS_PER_LEADER_WINDOW) % SLOTS_PER_LEADER_WINDOW;
+        mode_ == Mode::Sibling
+            ? (SLOTS_PER_LEADER_WINDOW - n_ % SLOTS_PER_LEADER_WINDOW) % SLOTS_PER_LEADER_WINDOW
+            : (SLOTS_PER_LEADER_WINDOW - (n_ + gap() + 1) % SLOTS_PER_LEADER_WINDOW) % SLOTS_PER_LEADER_WINDOW;
     return seqno - 1 + offset + (seqno >= n_ ? gap() : 0);
   }
 
@@ -557,19 +735,108 @@ class Driver : public td::actor::Actor {
     return make_certificate(vote, signers)->serialize();
   }
 
-  void deliver(td::BufferSlice message, size_t source) {
+  void deliver_to(simplex::BusHandle& bus, td::BufferSlice message, size_t source) {
     const auto& peer = bus_ptr_->validator_set.at(source);
-    bus_.publish<IncomingProtocolMessage>(peer.idx, peer.adnl_id, ProtocolMessage{std::move(message)});
+    bus.publish<IncomingProtocolMessage>(peer.idx, peer.adnl_id, ProtocolMessage{std::move(message)});
+  }
+
+  void deliver(td::BufferSlice message, size_t source) {
+    deliver_to(bus_, std::move(message), source);
+  }
+
+  void deliver_notar_to(simplex::BusHandle& bus, const CandidateRef& candidate) {
+    deliver_to(bus, certificate(simplex::NotarizeVote{candidate->id}, {0, 1, 2}), 0);
   }
 
   void deliver_notar(BlockSeqno seqno) {
-    deliver(certificate(simplex::NotarizeVote{candidates_.at(seqno)->id}, {0, 1, 2}), 0);
+    deliver_notar_to(bus_, candidates_.at(seqno));
+  }
+
+  void deliver_skip_to(simplex::BusHandle& bus, td::uint32 slot) {
+    // Validators 1 and 2 signed both the notarization and the skip of P's slot, which the
+    // protocol allows: only a finalize vote conflicts with a skip vote.
+    deliver_to(bus, certificate(simplex::SkipVote{slot}, {1, 2, 3}), 3);
   }
 
   void deliver_skip(td::uint32 slot) {
-    // Validators 1 and 2 signed both the notarization and the skip of P's slot, which the
-    // protocol allows: only a finalize vote conflicts with a skip vote.
-    deliver(certificate(simplex::SkipVote{slot}, {1, 2, 3}), 3);
+    {
+      std::scoped_lock lock(mutant_mutex);
+      delivered_skips.insert(slot);
+    }
+    deliver_skip_to(bus_, slot);
+  }
+
+  void deliver_final_to(simplex::BusHandle& bus, const CandidateRef& candidate) {
+    deliver_to(bus, certificate(simplex::FinalizeVote{candidate->id}, {0, 1, 2}), 0);
+  }
+
+  // Leading skips and NotarCerts of candidates 1..n-1, each installed before the next.
+  td::actor::Task<> notarize_prefix(simplex::BusHandle& bus, Observations& node) {
+    for (td::uint32 slot = 0; slot < slot_of(1); ++slot) {
+      deliver_skip_to(bus, slot);
+    }
+    for (BlockSeqno seqno = 1; seqno + 1 <= n_; ++seqno) {
+      deliver_notar_to(bus, candidates_[seqno]);
+      if (!co_await wait_until([&] { return notarized(candidates_[seqno]->id, node); })) {
+        precondition_failed(PSTRING() << "NotarCert of candidate " << seqno << " was never installed");
+      }
+    }
+    co_return td::Unit{};
+  }
+
+  td::actor::Task<> notarize(simplex::BusHandle& bus, Observations& node, const CandidateRef& candidate,
+                             const char* name) {
+    deliver_notar_to(bus, candidate);
+    if (!co_await wait_until([&] { return notarized(candidate->id, node); })) {
+      precondition_failed(PSTRING() << "NotarCert(" << name << ") was never installed");
+    }
+    co_return td::Unit{};
+  }
+
+  td::actor::Task<> finalize(simplex::BusHandle& bus, Observations& node, const CandidateRef& candidate,
+                             const char* name) {
+    deliver_final_to(bus, candidate);
+    if (!co_await wait_until([&] { return finalized(candidate->id, node); })) {
+      precondition_failed(PSTRING() << "FinalizeCert(" << name << ") did not finalize it");
+    }
+    co_return td::Unit{};
+  }
+
+  // Resolves `id` on `bus` and returns the outcome, or fails the test if it never finishes.
+  td::actor::Task<td::Ref<ChainState>> resolve_on(simplex::BusHandle bus, ParentId id, const char* what) {
+    auto outcome = std::make_shared<ResolutionOutcome>();
+    [](simplex::BusHandle bus, ParentId id, std::shared_ptr<ResolutionOutcome> out) -> td::actor::Task<> {
+      auto result = co_await bus.publish<simplex::ResolveState>(id).wrap();
+      std::scoped_lock lock(out->mutex);
+      out->result = std::move(result);
+      co_return td::Unit{};
+    }(bus, id, outcome)
+                                                                                           .start()
+                                                                                           .detach();
+    if (!co_await wait_until([outcome] {
+          std::scoped_lock lock(outcome->mutex);
+          return outcome->result.has_value();
+        })) {
+      test_failed(PSTRING() << "resolution of " << what << " did not finish");
+    }
+    std::scoped_lock lock(outcome->mutex);
+    auto result = std::move(*outcome->result);
+    if (result.is_error()) {
+      test_failed(PSTRING() << "resolution of " << what << " failed: " << result.error());
+    }
+    co_return result.move_as_ok().state;
+  }
+
+  // The resolved state must name exactly `block` and hold `root`.
+  static std::string require_state(const td::Ref<ChainState>& state, const BlockIdExt& block, const std::string& root,
+                                   const char* what) {
+    auto ids = state->block_ids();
+    auto got = state->state().at(0)->get_hash().to_hex();
+    if (ids.size() != 1 || ids[0] != block || got != root) {
+      test_failed(PSTRING() << what << " resolved to " << (ids.empty() ? std::string("nothing") : ids[0].to_str())
+                            << " with state " << got << "; expected " << block.to_str() << " with state " << root);
+    }
+    return got;
   }
 
   template <typename F>
@@ -592,6 +859,11 @@ class Driver : public td::actor::Actor {
 
   // Peer-consensus mode: the one node the target can fetch P from.
   size_t peer() const {
+    return (target() + 1) % VALIDATORS;
+  }
+
+  // Two-observer modes: the second full node.
+  size_t second() const {
     return (target() + 1) % VALIDATORS;
   }
 
@@ -674,7 +946,26 @@ class Driver : public td::actor::Actor {
       peer_idx = validators.at(this->peer()).idx;
     }
 
-    manager_ = td::actor::create_actor<StaticManager>("StaticManager");
+    if (two_observers()) {
+      // A second full node: the same production actors, its own database and manager.
+      anchors_ = std::make_shared<ManagerAnchors>();
+      second_runtime_.register_actor<OverlayStub>("PrivateOverlay");
+      second_runtime_.register_actor<ObserverActor>("MerkleObserver");
+      simplex::CandidateResolver::register_in(second_runtime_);
+      simplex::Pool::register_in(second_runtime_);
+      simplex::StateResolver::register_in(second_runtime_);
+      simplex::Db::register_in(second_runtime_);
+      simplex::DefaultCollatorSchedule::provide_for(second_runtime_);
+      second_node_idx = static_cast<long long>(second());
+      second_manager_ = td::actor::create_actor<StaticManager>("SecondManager", second(), anchors_);
+      auto second_ptr = make_bus(validators, total_weight, second(), second_manager_.get());
+      second_bus_ = second_runtime_.start(std::static_pointer_cast<simplex::Bus>(second_ptr), "merkle-second");
+      second_bus_.publish<Start>(
+          td::make_ref<ChainState>(ChainState::ZerostateTip{FIRST_PARENT, gen_shard_state(0)}, MIN_MC_BLOCK_ID));
+      manager_ = td::actor::create_actor<StaticManager>("StaticManager", target(), anchors_);
+    } else {
+      manager_ = td::actor::create_actor<StaticManager>("StaticManager");
+    }
     auto bus = make_bus(validators, total_weight, target(), manager_.get());
     bus_ptr_ = bus;
     bus_ = runtime_.start(std::static_pointer_cast<simplex::Bus>(bus), "merkle-target");
@@ -696,6 +987,16 @@ class Driver : public td::actor::Actor {
       candidates_[seqno] = td::make_ref<Candidate>(id, parent, leader, std::move(block), std::move(signature));
       parent = id;
     }
+    if (mode_ == Mode::Sibling) {
+      // P' sits in the gap slot just before P, at P's height, and also names A.
+      const auto& A = candidates_.at(n_ - 1);
+      auto block = make_block(n_, A->block_id(), true);
+      td::uint32 slot = slot_of(n_) - 1;
+      auto id = CandidateHashData::create_full(block, A->id).build_id_with(slot);
+      auto leader = bus_ptr_->collator_schedule->expected_collator_for(slot);
+      auto signature = sign(leader.value(), serialize_tl_object(id.to_tl(), true).as_slice());
+      sibling_ = td::make_ref<Candidate>(id, ParentId{A->id}, leader, std::move(block), std::move(signature));
+    }
   }
 
   td::actor::Task<> run_inner() {
@@ -708,12 +1009,25 @@ class Driver : public td::actor::Actor {
     emit(PSTRING() << "MERKLE_ACTOR_CHAIN n=" << n_ << " A=" << candidate_id_str(A->id)
                    << " P=" << candidate_id_str(P->id) << " C=" << candidate_id_str(C->id)
                    << " C_block=" << C->block_id().to_str());
+    emit(PSTRING() << "MERKLE_ACTOR_BLOCKS A_block=" << A->block_id().to_str()
+                   << " P_block=" << P->block_id().to_str());
 
     for (BlockSeqno seqno = 1; seqno <= n_ + 1; ++seqno) {
       co_await bus_.publish<simplex::StoreCandidate>(candidates_[seqno]);
     }
     if (mode_ == Mode::PeerConsensus) {
       co_return co_await run_peer_consensus();
+    }
+    if (two_observers()) {
+      for (BlockSeqno seqno = 1; seqno <= n_ + 1; ++seqno) {
+        co_await second_bus_.publish<simplex::StoreCandidate>(candidates_[seqno]);
+      }
+      if (mode_ == Mode::Sibling) {
+        co_await bus_.publish<simplex::StoreCandidate>(sibling_);
+        co_await second_bus_.publish<simplex::StoreCandidate>(sibling_);
+        co_return co_await run_sibling();
+      }
+      co_return co_await run_delayed_anchor();
     }
 
     for (td::uint32 slot = 0; slot < slot_of(1); ++slot) {
@@ -736,6 +1050,8 @@ class Driver : public td::actor::Actor {
         break;
       case Mode::NoHold:
       case Mode::PeerConsensus:
+      case Mode::Sibling:
+      case Mode::DelayedAnchor:
         break;
     }
     refuse_overlay_requests = mode_ == Mode::HoldRefuse;
@@ -861,6 +1177,9 @@ class Driver : public td::actor::Actor {
         test_failed("the misaimed gate reached resolution");
       case Mode::PeerConsensus:
         test_failed("the peer-consensus scenario ran the single-node path");
+      case Mode::Sibling:
+      case Mode::DelayedAnchor:
+        test_failed("a two-observer scenario ran the single-node path");
     }
     co_return td::Unit{};
   }
@@ -957,6 +1276,181 @@ class Driver : public td::actor::Actor {
            PSTRING() << "MERKLE_ACTOR_PEER_GREEN state=" << started.state_hash << " next_seqno=" << started.next_seqno);
   }
 
+  bool manager_asked(size_t node, const BlockIdExt& block) const {
+    for (const auto& request : anchors_->requests_of(node)) {
+      if (request.block == block) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  td::actor::Task<> run_sibling() {
+    const auto& A = candidates_.at(n_ - 1);
+    const auto& P = candidates_.at(n_);
+    const auto& C = candidates_.at(n_ + 1);
+    const auto& S = sibling_;
+    CHECK(S->parent_id == A->id && P->parent_id == A->id && C->parent_id == P->id);
+    CHECK(S->id.slot + 1 == P->id.slot && P->id.slot % SLOTS_PER_LEADER_WINDOW == 0);
+    CHECK(S->block_id().seqno() == P->block_id().seqno() && S->block_id() != P->block_id());
+    emit(PSTRING() << "MERKLE_ACTOR_SIBLINGS n=" << n_ << " A=" << candidate_id_str(A->id)
+                   << " P=" << candidate_id_str(P->id) << " P_sibling=" << candidate_id_str(S->id)
+                   << " P_block=" << P->block_id().to_str() << " P_sibling_block=" << S->block_id().to_str());
+    {
+      std::scoped_lock lock(mutant_mutex);
+      mutant_exact_parent = P->id;
+      mutant_sibling = S->id;
+    }
+
+    // Observer 1: the sibling is notarized before the branch that will be finalized.
+    co_await notarize_prefix(bus_, observations);
+    co_await notarize(bus_, observations, S, "P'");
+    deliver_skip(S->id.slot);
+    co_await notarize(bus_, observations, P, "P");
+    co_await notarize(bus_, observations, C, "C");
+    co_await finalize(bus_, observations, C, "C");
+
+    // Observer 2: the sibling's certificate arrives after the finalized branch's.
+    co_await notarize_prefix(second_bus_, second_observations);
+    deliver_skip_to(second_bus_, S->id.slot);
+    co_await notarize(second_bus_, second_observations, P, "P");
+    co_await notarize(second_bus_, second_observations, C, "C");
+    co_await notarize(second_bus_, second_observations, S, "P'");
+    co_await finalize(second_bus_, second_observations, C, "C");
+
+    struct Node {
+      Observations& observations;
+      size_t idx;
+      const char* order;
+    };
+    const Node nodes[] = {{observations, target(), "sibling-first"}, {second_observations, second(), "sibling-late"}};
+    for (const auto& node : nodes) {
+      for (BlockSeqno seqno = 1; seqno <= n_ + 1; ++seqno) {
+        if (!finalized(candidates_[seqno]->id, node.observations)) {
+          precondition_failed(PSTRING() << "node " << node.idx << " did not finalize candidate " << seqno);
+        }
+      }
+      if (finalized(S->id, node.observations)) {
+        precondition_failed(PSTRING() << "node " << node.idx << " finalized the sibling P'");
+      }
+      if (misbehavior_reports(node.observations) != 0) {
+        precondition_failed(PSTRING() << "node " << node.idx << " reported the certificate history as misbehavior");
+      }
+      emit(PSTRING() << "MERKLE_ACTOR_SIBLING_PRECONDITION node=" << node.idx << " order=" << node.order
+                     << " notar_cert_P_sibling=installed notar_cert_P=installed notar_cert_C=installed"
+                     << " final_cert_C=installed finalized_P=yes finalized_P_sibling=no misbehavior=0");
+    }
+    emit(PSTRING() << "MERKLE_ACTOR_EXPECT wrong_branch_would_fail_with expected_old=" << state_hash_hex(n_)
+                   << " applied_to=" << sibling_state_hash_hex(n_));
+
+    // Observer 1 resolves the sibling first, so its state is in the cache when C is resolved.
+    emit(PSTRING() << "MERKLE_ACTOR_TRIGGER ResolveState(P_sibling) node=" << target());
+    auto sibling_state = co_await resolve_on(bus_, S->id, "P'");
+    auto sibling_root = require_state(sibling_state, S->block_id(), sibling_state_hash_hex(n_), "P'");
+    emit(PSTRING() << "MERKLE_ACTOR_SIBLING_STATE node=" << target() << " state=" << sibling_root);
+
+    emit(PSTRING() << "MERKLE_ACTOR_TRIGGER ResolveState(C) node=" << target());
+    auto first = co_await resolve_on(bus_, C->id, "C on observer 1");
+    auto first_root = require_state(first, C->block_id(), state_hash_hex(n_ + 1), "C on observer 1");
+    emit(PSTRING() << "MERKLE_ACTOR_RESOLVED node=" << target() << " block=" << C->block_id().to_str()
+                   << " state=" << first_root);
+
+    emit(PSTRING() << "MERKLE_ACTOR_TRIGGER ResolveState(C) node=" << second());
+    auto second_state = co_await resolve_on(second_bus_, C->id, "C on observer 2");
+    auto second_root = require_state(second_state, C->block_id(), state_hash_hex(n_ + 1), "C on observer 2");
+    emit(PSTRING() << "MERKLE_ACTOR_RESOLVED node=" << second() << " block=" << C->block_id().to_str()
+                   << " state=" << second_root);
+
+    if (manager_asked(target(), S->block_id()) || manager_asked(second(), S->block_id())) {
+      test_failed("a manager was asked for the sibling's state");
+    }
+    if (first_root != second_root || first->block_ids() != second_state->block_ids()) {
+      test_failed("the observers resolved C to different blocks or states");
+    }
+    finish(0, PSTRING() << "MERKLE_ACTOR_SIBLING_GREEN state=" << first_root << " block=" << C->block_id().to_str()
+                        << " observers=2 match=yes");
+  }
+
+  td::actor::Task<> run_delayed_anchor() {
+    const auto& A = candidates_.at(n_ - 1);
+    const auto& P = candidates_.at(n_);
+    const auto& C = candidates_.at(n_ + 1);
+    auto block_data = [](const CandidateRef& candidate) {
+      const auto& block = std::get<BlockCandidate>(candidate->block);
+      auto data = create_block(block.id, block.data.clone());
+      CHECK(data.is_ok());
+      return data.move_as_ok();
+    };
+    {
+      // A was referenced by the masterchain long ago; P's reference has not arrived.
+      std::scoped_lock lock(anchors_->mutex);
+      anchors_->anchors[A->block_id()] =
+          ManagerAnchors::Anchor{.state = gen_shard_state(n_ - 1), .data = block_data(A), .delayed = false};
+      anchors_->anchors[P->block_id()] =
+          ManagerAnchors::Anchor{.state = gen_shard_state(n_), .data = block_data(P), .delayed = true};
+    }
+
+    struct Node {
+      simplex::BusHandle& bus;
+      Observations& observations;
+      size_t idx;
+    };
+    Node nodes[] = {{bus_, observations, target()}, {second_bus_, second_observations, second()}};
+    for (auto& node : nodes) {
+      co_await notarize_prefix(node.bus, node.observations);
+      co_await notarize(node.bus, node.observations, P, "P");
+      co_await notarize(node.bus, node.observations, C, "C");
+      co_await finalize(node.bus, node.observations, P, "P");
+      if (finalized(C->id, node.observations) || misbehavior_reports(node.observations) != 0) {
+        precondition_failed(PSTRING() << "node " << node.idx << " finalized C or reported misbehavior");
+      }
+      if (!anchors_->requests_of(node.idx).empty()) {
+        precondition_failed(PSTRING() << "node " << node.idx << " read manager state before resolution");
+      }
+      emit(PSTRING() << "MERKLE_ACTOR_ANCHOR_PRECONDITION node=" << node.idx
+                     << " finalized_P=yes finalized_C=no anchor_P=delayed anchor_A=available misbehavior=0");
+    }
+    emit(PSTRING() << "MERKLE_ACTOR_EXPECT stale_anchor_would_fail_with expected_old=" << state_hash_hex(n_)
+                   << " applied_to=" << state_hash_hex(0));
+
+    // Observer 1 resolves C while the manager still refuses P.
+    emit(PSTRING() << "MERKLE_ACTOR_TRIGGER ResolveState(C) node=" << target() << " anchor_P=delayed");
+    auto first = co_await resolve_on(bus_, C->id, "C while P's anchor is delayed");
+    auto first_root = require_state(first, C->block_id(), state_hash_hex(n_ + 1), "C while P's anchor is delayed");
+    auto first_requests = anchors_->requests_of(target());
+    bool refused_p = false;
+    for (const auto& request : first_requests) {
+      refused_p = refused_p || (request.block == P->block_id() && !request.served);
+    }
+    if (!refused_p) {
+      test_failed("observer 1 never asked the manager for P's anchor while it was delayed");
+    }
+    emit(PSTRING() << "MERKLE_ACTOR_RESOLVED node=" << target() << " block=" << C->block_id().to_str()
+                   << " state=" << first_root << " anchor_P=refused");
+
+    // The masterchain reference arrives: the manager now serves P's state.
+    anchors_->release();
+    emit(PSTRING() << "MERKLE_ACTOR_ANCHOR_RELEASED block=" << P->block_id().to_str());
+    emit(PSTRING() << "MERKLE_ACTOR_TRIGGER ResolveState(C) node=" << second() << " anchor_P=released");
+    auto second_state = co_await resolve_on(second_bus_, C->id, "C after P's anchor arrived");
+    auto second_root = require_state(second_state, C->block_id(), state_hash_hex(n_ + 1), "C after P's anchor arrived");
+    auto second_requests = anchors_->requests_of(second());
+    if (second_requests.size() != 1 || second_requests[0].block != P->block_id() || !second_requests[0].served) {
+      test_failed("observer 2 did not resolve C from P's anchor alone");
+    }
+    emit(PSTRING() << "MERKLE_ACTOR_RESOLVED node=" << second() << " block=" << C->block_id().to_str()
+                   << " state=" << second_root << " anchor_P=served");
+
+    if (manager_asked(target(), A->block_id()) || manager_asked(second(), A->block_id())) {
+      test_failed("a manager was asked for the older anchor A");
+    }
+    if (first_root != second_root || first->block_ids() != second_state->block_ids()) {
+      test_failed("the observers resolved C to different blocks or states");
+    }
+    finish(0, PSTRING() << "MERKLE_ACTOR_ANCHOR_GREEN state=" << first_root << " block=" << C->block_id().to_str()
+                        << " observers=2 match=yes");
+  }
+
   [[noreturn]] void check_state(td::Result<simplex::ResolveState::Result> resolved, const char* label) {
     if (resolved.is_error()) {
       test_failed(PSTRING() << "resolution failed: " << resolved.error());
@@ -974,9 +1468,80 @@ class Driver : public td::actor::Actor {
 
 }  // namespace
 
+#ifdef TOS_STATE_RESOLVER_MUTANT
+// The hooks the generated mutant resolver calls. TOS_TEST_STATE_RESOLVER_MUTANT selects what
+// the resolver gets wrong; unset, the mutant behaves like the production resolver.
+namespace tos::validator::consensus::simplex {
+
+namespace {
+
+const std::string& mutant_kind() {
+  static const std::string kind = [] {
+    const char* value = std::getenv("TOS_TEST_STATE_RESOLVER_MUTANT");
+    return std::string(value == nullptr ? "" : value);
+  }();
+  return kind;
+}
+
+}  // namespace
+
+std::optional<ParentId> state_resolver_mutant_substitute(const ParentId& id) {
+  if (!id.has_value()) {
+    return std::nullopt;
+  }
+  if (mutant_kind() == "skip-shortcut") {
+    // The base Pool would report for a skip-certified slot whose NotarCert it has not
+    // installed: the newest notarized candidate at an older slot, or the null parent.
+    {
+      std::scoped_lock lock(mutant_mutex);
+      if (!delivered_skips.contains(id->slot)) {
+        return std::nullopt;
+      }
+    }
+    if (notarized(*id)) {
+      return std::nullopt;
+    }
+    ParentId base;
+    {
+      std::scoped_lock lock(observations.mutex);
+      for (const auto& candidate : observations.notarized) {
+        if (candidate.slot < id->slot && (!base.has_value() || candidate.slot > base->slot)) {
+          base = candidate;
+        }
+      }
+    }
+    emit(PSTRING() << "MERKLE_ACTOR_MUTANT_FIRED kind=skip-shortcut id=" << candidate_id_str(*id)
+                   << " base=" << (base.has_value() ? candidate_id_str(*base) : std::string("null")));
+    return base;
+  }
+  if (mutant_kind() == "sibling") {
+    std::scoped_lock lock(mutant_mutex);
+    if (mutant_exact_parent.has_value() && mutant_sibling.has_value() && *id == *mutant_exact_parent) {
+      emit(PSTRING() << "MERKLE_ACTOR_MUTANT_FIRED kind=sibling id=" << candidate_id_str(*id)
+                     << " sibling=" << candidate_id_str(*mutant_sibling));
+      return ParentId{*mutant_sibling};
+    }
+  }
+  return std::nullopt;
+}
+
+bool state_resolver_mutant_stale_anchor() {
+  if (mutant_kind() != "stale-anchor") {
+    return false;
+  }
+  emit("MERKLE_ACTOR_MUTANT_FIRED kind=stale-anchor fallback=start-state");
+  return true;
+}
+
+}  // namespace tos::validator::consensus::simplex
+#endif
+
 int main(int argc, char* argv[]) {
   if (argc != 3) {
-    std::fprintf(stderr, "usage: %s hold-release|hold-refuse|no-hold|hold-wrong-slot|peer-consensus <n>\n", argv[0]);
+    std::fprintf(stderr,
+                 "usage: %s hold-release|hold-refuse|no-hold|hold-wrong-slot|peer-consensus|sibling|delayed-anchor "
+                 "<n>\n",
+                 argv[0]);
     return 2;
   }
   std::string mode_name = argv[1];
@@ -991,6 +1556,10 @@ int main(int argc, char* argv[]) {
     mode = Mode::HoldWrongSlot;
   } else if (mode_name == "peer-consensus") {
     mode = Mode::PeerConsensus;
+  } else if (mode_name == "sibling") {
+    mode = Mode::Sibling;
+  } else if (mode_name == "delayed-anchor") {
+    mode = Mode::DelayedAnchor;
   } else {
     std::fprintf(stderr, "unknown mode %s\n", argv[1]);
     return 2;
@@ -1000,6 +1569,12 @@ int main(int argc, char* argv[]) {
     std::fprintf(stderr, "n must be an integer in [2, 200]\n");
     return 2;
   }
+#ifdef TOS_STATE_RESOLVER_MUTANT
+  const char* mutant = std::getenv("TOS_TEST_STATE_RESOLVER_MUTANT");
+  emit(PSTRING() << "MERKLE_ACTOR_BUILD resolver=mutant mutant=" << (mutant == nullptr ? "none" : mutant));
+#else
+  emit("MERKLE_ACTOR_BUILD resolver=production");
+#endif
 
   td::actor::Scheduler scheduler({2});
   td::actor::ActorOwn<Driver> driver;
