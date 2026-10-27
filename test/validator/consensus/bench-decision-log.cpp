@@ -60,8 +60,9 @@ class Bench : public td::actor::Actor {
     CHECK(signing::create_ledger(dir_ + "/signing-ledger", fill(0x77)).is_ok());
     ledger_ = td::actor::create_actor<signing::SigningLedger>("bench-ledger", dir_ + "/signing-ledger");
     for (unsigned i = 0; i < sessions_; ++i) {
-      admissions_.push_back(
-          co_await td::actor::ask(ledger_.get(), &signing::SigningLedger::admit, fill(0x77), fill(1000 + i)));
+      admissions_.push_back(co_await td::actor::ask(ledger_.get(), &signing::SigningLedger::admit, fill(0x77),
+                                                    fill(1000 + i), ShardIdFull{masterchainId, shardIdAll},
+                                                    std::uint32_t{1}));
       CHECK(!admissions_.back()->fenced);
       journals_.push_back(open_rocksdb_consensus_db(PSTRING() << dir_ << "/journal-" << i));
     }

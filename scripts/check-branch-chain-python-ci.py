@@ -217,6 +217,9 @@ def validate_node_store_proof(text: str) -> None:
         "cargo build --manifest-path tosctl/src/Cargo.toml --locked -p tosctl --features node-data-sync-native",
         "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p node-data-sync --features native --lib operations::tests::native_stage_preserves_own_context_and_never_overlays_recovery_material -- --ignored --exact --nocapture | tee build/node-sync-native-preservation.log",
         "grep -Fx 'NATIVE_STAGE_PRESERVATION_OK' build/node-sync-native-preservation.log",
+        "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p node-data-sync --features native --lib -- --ignored --exact --nocapture operations::tests::root_capture_resists_a_service_account_swap operations::tests::foreign_mount_on_state_refuses_and_leaves_the_mounted_tree | tee build/node-sync-capture-controls.log",
+        "grep -Fx 'ROOT_SERVICE_ACCOUNT_SWAP_OK' build/node-sync-capture-controls.log",
+        "grep -Fx 'FOREIGN_MOUNT_REFUSAL_OK' build/node-sync-capture-controls.log",
         "run: uv run python test/integration/node_store_native_reopen.py --root build/node-store-native-reopen --build build --reconstruct build/operator-rust-target/debug/examples/reconstruct_fixture --validate-generation build/operator-rust-target/debug/examples/capture_and_validate",
     )
     for command in required:

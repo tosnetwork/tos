@@ -1,6 +1,6 @@
 use crate::{
     model::{FILE_COUNT_LIMIT, RAW_LIMIT},
-    safe_io::{Root, copy_hash},
+    safe_io::{Kind, Root, copy_hash},
 };
 use anyhow::{Context, Result, ensure};
 use std::{fs, os::unix::fs::MetadataExt, path::Path};
@@ -11,6 +11,9 @@ pub struct TreeFile {
     pub size: u64,
     pub allocated: u64,
 }
+/// Every regular file below `root`. Entries are listed through each held directory and
+/// every subdirectory is opened below that same descriptor, never by path: a link, a
+/// replaced directory or another mount refuses.
 pub fn inventory(root: &Root) -> Result<Vec<TreeFile>> {
     root.attached()?;
     let mut files = Vec::new();
@@ -18,38 +21,38 @@ pub fn inventory(root: &Root) -> Result<Vec<TreeFile>> {
     walk(root, "", &mut files, &mut bytes)?;
     Ok(files)
 }
-fn walk(root: &Root, prefix: &str, files: &mut Vec<TreeFile>, bytes: &mut u64) -> Result<()> {
-    let path = if prefix.is_empty() { root.path.clone() } else { root.path.join(prefix) };
-    let mut entries = Vec::new();
-    for entry in fs::read_dir(path)? {
-        ensure!(entries.len() < FILE_COUNT_LIMIT, "directory entry count limit");
-        entries.push(entry?);
-    }
-    entries.sort_by_key(|entry| entry.file_name());
-    for entry in entries {
+fn walk(directory: &Root, prefix: &str, files: &mut Vec<TreeFile>, bytes: &mut u64) -> Result<()> {
+    let names = directory.names()?;
+    ensure!(names.len() <= FILE_COUNT_LIMIT, "directory entry count limit");
+    for name in names {
         ensure!(files.len() < FILE_COUNT_LIMIT, "tree file count limit");
-        let name = entry
-            .file_name()
-            .into_string()
-            .map_err(|_| anyhow::anyhow!("non-text native filename"))?;
-        let relative = if prefix.is_empty() { name } else { format!("{prefix}/{name}") };
+        let relative = if prefix.is_empty() { name.clone() } else { format!("{prefix}/{name}") };
         crate::paths::relative(&relative)?;
-        let metadata = entry.path().symlink_metadata()?;
-        if metadata.file_type().is_dir() {
-            walk(root, &relative, files, bytes)?;
-        } else {
-            ensure!(
-                metadata.file_type().is_file() && metadata.nlink() == 1,
+        let Some(entry) = directory.entry(&name)? else {
+            anyhow::bail!("tree entry vanished: {relative}");
+        };
+        match entry.kind {
+            Kind::Directory => {
+                let child = directory.open_child(&name)?;
+                ensure!(
+                    child.identity()? == entry.identity,
+                    "tree directory was replaced: {relative}"
+                );
+                walk(&child, &relative, files, bytes)?;
+            }
+            Kind::File if entry.links == 1 => {
+                *bytes = bytes.checked_add(entry.size).context("tree size overflow")?;
+                ensure!(*bytes <= RAW_LIMIT, "tree exceeds raw byte ceiling");
+                files.push(TreeFile {
+                    path: relative,
+                    size: entry.size,
+                    allocated: entry.allocated,
+                });
+            }
+            _ => anyhow::bail!(
                 "tree contains a link or special file: {relative} (links={})",
-                metadata.nlink()
-            );
-            *bytes = bytes.checked_add(metadata.len()).context("tree size overflow")?;
-            ensure!(*bytes <= RAW_LIMIT, "tree exceeds raw byte ceiling");
-            files.push(TreeFile {
-                path: relative,
-                size: metadata.len(),
-                allocated: metadata.blocks().checked_mul(512).context("allocated size overflow")?,
-            });
+                entry.links
+            ),
         }
     }
     Ok(())
@@ -102,25 +105,37 @@ pub fn copy_tree(source: &Root, target: &Root, prefix: &str) -> Result<u64> {
     }
     Ok(total)
 }
+/// One direct subdirectory, opened below the held `root` after checking it is a directory.
+/// `None` when absent; a link, special file, replacement or other mount refuses.
+pub fn optional_directory(root: &Root, name: &str) -> Result<Option<Root>> {
+    ensure!(crate::paths::relative(name)?.len() == 1, "tree must be a direct child");
+    let Some(entry) = root.entry(name)? else {
+        return Ok(None);
+    };
+    ensure!(entry.kind == Kind::Directory, "local tree is a symlink or special file: {name}");
+    let child = root.open_child(name)?;
+    ensure!(child.identity()? == entry.identity, "local tree was replaced: {name}");
+    Ok(Some(child))
+}
 /// Preserve the original recovery tree separately; never use this as a replacement overlay.
 pub fn copy_optional_tree(root: &Root, name: &str, destination: &Root) -> Result<bool> {
-    crate::paths::relative(name)?;
-    match fs::symlink_metadata(root.path.join(name)) {
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
-        Err(error) => Err(error.into()),
-        Ok(metadata) => {
-            ensure!(metadata.file_type().is_dir(), "local tree is a symlink or special file");
-            let source = Root::open(&root.path.join(name))?;
-            // Empty directories also encode existence, especially for signing-state inventories.
-            let target_path = destination.path.join(name);
-            fs::create_dir(&target_path)?;
-            let target = Root::open(&target_path)?;
-            copy_tree(&source, &target, "")?;
-            target.sync()?;
-            destination.sync()?;
+    match optional_directory(root, name)? {
+        None => Ok(false),
+        Some(source) => {
+            copy_held_tree(&source, name, destination)?;
             Ok(true)
         }
     }
+}
+fn copy_held_tree(source: &Root, name: &str, destination: &Root) -> Result<Root> {
+    // Empty directories also encode existence, especially for signing-state inventories.
+    let target_path = destination.path.join(name);
+    fs::create_dir(&target_path)?;
+    let target = Root::open(&target_path)?;
+    copy_tree(source, &target, "")?;
+    target.sync()?;
+    destination.sync()?;
+    Ok(target)
 }
 pub fn allocated_bytes(path: &Path) -> Result<u64> {
     inventory(&Root::open(path)?)?.into_iter().try_fold(0_u64, |sum, file| {
@@ -136,17 +151,12 @@ pub struct PrivateTreeReceipt {
 }
 /// Hash the stopped local tree, optionally copy it, and verify the complete result.
 pub fn preserve(root: &Root, name: &str, destination: Option<&Root>) -> Result<PrivateTreeReceipt> {
-    crate::paths::relative(name)?;
-    if crate::safe_io::absent(&root.path.join(name))? {
+    let Some(original) = optional_directory(root, name)? else {
         return Ok(PrivateTreeReceipt { path: name.to_owned(), present: false, files: vec![] });
-    }
-    let original = Root::open(&root.path.join(name))?;
+    };
     let files = inventory(&original)?;
     let mut receipt = PrivateTreeReceipt { path: name.to_owned(), present: true, files: vec![] };
-    if let Some(target) = destination {
-        copy_optional_tree(root, name, target)?;
-    }
-    let copied = destination.map(|target| Root::open(&target.path.join(name))).transpose()?;
+    let copied = destination.map(|target| copy_held_tree(&original, name, target)).transpose()?;
     if let Some(target) = &copied {
         ensure!(inventory(target)?.len() == files.len(), "local preservation file count changed");
     }

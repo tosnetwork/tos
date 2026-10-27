@@ -48,6 +48,11 @@ enum class NodeBindingOutcome {
                         // before the file system writes it back may lose the change
 };
 
+// Takes the configuration lock of a stopped node, as bind-node does, for another operator
+// edit of its database root. Returns the descriptor holding it (close it to release), or
+// -1 with the reason in `why`: a running node or another edit holds it.
+int lock_stopped_node(const std::string& db_root, std::string& why);
+
 // Parse a validator id as an operator has it: 64 hexadecimal digits, or the controller's
 // masterchain address `-1:` followed by them. Refuses any other workchain and the zero id,
 // which the engine refuses at start.

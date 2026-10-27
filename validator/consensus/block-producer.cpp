@@ -311,6 +311,13 @@ class BlockProducerImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
         break;
       }
       observation->observe(tos::health::Phase::Signed);
+      // Once per session: that this node has signed a candidate in it, observable at the
+      // signing boundary whether or not the candidate is ever published.
+      if (!own_candidate_signed_) {
+        own_candidate_signed_ = true;
+        LOG(INFO) << "consensus: own signature: first candidate signed in session " << bus.session_id.to_hex() << " of "
+                  << bus.shard.to_str() << " catchain " << bus.cc_seqno;
+      }
       td::BufferSlice signature(pq_signature->signature);
       auto candidate = td::make_ref<Candidate>(id, parent, bus.local_id->idx, std::move(block), std::move(signature));
       if (current_leader_window_ != window) {
@@ -347,6 +354,7 @@ class BlockProducerImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
   }
 
   std::optional<td::uint32> current_leader_window_;
+  bool own_candidate_signed_ = false;
   // The leader window (an ordinal) this runtime recorded in the decision log, and so may
   // produce candidates in. Windows only move forward, so one is enough.
   std::optional<td::uint32> recorded_window_;

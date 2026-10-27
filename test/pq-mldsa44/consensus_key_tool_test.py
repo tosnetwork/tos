@@ -1145,6 +1145,146 @@ def check_node_keys(tool: Path, work: Path, home: Path) -> None:
         raise Failure("the capacity check did not leave exactly eight keys")
 
 
+ZEROSTATE_ROOT_HEX = "3c" * 32
+ZEROSTATE_FILE_HEX = "4d" * 32
+
+
+def check_genesis_ceremony(tool: Path, work: Path, shim: Path | None) -> None:
+    """The genesis ceremony writes a complete signing ledger only where nothing has signed."""
+
+    def ceremony(db: Path, *args: str) -> subprocess.CompletedProcess:
+        return run(tool, ["init-signing-ledger", "--genesis-ceremony", str(db), *args])
+
+    good = [VALIDATOR_HEX, ZEROSTATE_ROOT_HEX, ZEROSTATE_FILE_HEX]
+    db = private_dir(work, "db-genesis")
+    made = ceremony(db, *good)
+    if made.returncode != 0:
+        raise Failure(f"the genesis ceremony failed: {made.stderr!r}")
+    header = (db / "consensus" / "signing-ledger" / "ledger").read_bytes()
+    if not header.startswith(b"TOSSLG02"):
+        raise Failure(f"the ceremony wrote no signing ledger header: {header[:16]!r}")
+    for part in (VALIDATOR_HEX, ZEROSTATE_ROOT_HEX, ZEROSTATE_FILE_HEX):
+        if bytes.fromhex(part) not in header:
+            raise Failure(
+                "the ledger does not record the validator and the zerostate it was made for"
+            )
+
+    # Once only: a ledger already there may hold decisions.
+    again = ceremony(db, *good)
+    if (
+        again.returncode != 1
+        or (db / "consensus" / "signing-ledger" / "ledger").read_bytes() != header
+    ):
+        raise Failure(f"a second ceremony was not refused, or changed the ledger: {again!r}")
+
+    # A node that has run validator groups is not a fresh identity.
+    ran = private_dir(work, "db-genesis-ran")
+    (ran / "consensus").mkdir()
+    (ran / "consensus" / "consensus.0.8000000000000000.1.aa").mkdir()
+    refused = ceremony(ran, *good)
+    if refused.returncode != 1 or b"session directories" not in refused.stderr:
+        raise Failure(f"a node with consensus sessions was given a complete ledger: {refused!r}")
+    if (ran / "consensus" / "signing-ledger").exists():
+        raise Failure("a refused ceremony left a signing ledger")
+    # A consensus directory that cannot be listed is not proof that no session is there:
+    # write and search permission only, with a session inside.
+    hidden = private_dir(work, "db-genesis-unreadable")
+    (hidden / "consensus").mkdir()
+    (hidden / "consensus" / "consensus.0.8000000000000000.1.aa").mkdir()
+    (hidden / "consensus").chmod(0o300)
+    try:
+        try:
+            os.listdir(hidden / "consensus")
+            listable = True
+        except PermissionError:
+            listable = False
+        if listable:
+            # Permission bits do not bind this user (root): the case cannot be built here.
+            print("note: an unreadable directory cannot be made for this user; skipped")
+        else:
+            refused = ceremony(hidden, *good)
+            if refused.returncode != 1 or b"cannot be inspected" not in refused.stderr:
+                raise Failure(
+                    f"an unreadable consensus directory was given a complete ledger: {refused!r}"
+                )
+            if (hidden / "consensus" / "signing-ledger").exists():
+                raise Failure("a refused ceremony left a signing ledger in an unreadable directory")
+    finally:
+        (hidden / "consensus").chmod(0o700)
+    # A directory whose reading fails part way is not one read to its end.
+    if shim is not None:
+        failing = private_dir(work, "db-genesis-readdir-fails")
+        (failing / "consensus").mkdir()
+        refused = subprocess.run(
+            [str(tool), "init-signing-ledger", "--genesis-ceremony", str(failing), *good],
+            capture_output=True,
+            timeout=120,
+            env={**os.environ, "LD_PRELOAD": str(shim), "TOS_TEST_FAIL_READDIR": "1"},
+        )
+        if refused.returncode != 1 or b"cannot be read to its end" not in refused.stderr:
+            raise Failure(f"a failed directory read was taken for its end: {refused!r}")
+        if (failing / "consensus" / "signing-ledger").exists():
+            raise Failure("a refused ceremony left a signing ledger after a failed directory read")
+    else:
+        print("note: no shim given; the failed directory read case did not run", file=sys.stderr)
+    # A consensus path that is not a directory is not an absent one.
+    not_dir = private_dir(work, "db-genesis-consensus-file")
+    (not_dir / "consensus").write_bytes(b"")
+    refused = ceremony(not_dir, *good)
+    if refused.returncode != 1 or b"cannot be inspected" not in refused.stderr:
+        raise Failure(f"a consensus path that is a file was taken for no sessions: {refused!r}")
+    # An empty consensus directory is not a session.
+    empty = private_dir(work, "db-genesis-empty-consensus")
+    (empty / "consensus").mkdir()
+    if ceremony(empty, *good).returncode != 0:
+        raise Failure("an empty consensus directory refused the ceremony")
+
+    # A running node holds the configuration lock.
+    locked = private_dir(work, "db-genesis-locked")
+    with held_lock(locked / "config.json.lock"):
+        refused = ceremony(locked, *good)
+    if (
+        refused.returncode != 1
+        or b"running node" not in refused.stderr
+        or (locked / "consensus" / "signing-ledger").exists()
+    ):
+        raise Failure(f"the ceremony ran beside a running node: {refused!r}")
+
+    # Malformed arguments write nothing.
+    for why, args in (
+        ("no --genesis-ceremony", ["init-signing-ledger", str(work / "db-genesis-x"), *good]),
+        (
+            "a short root hash",
+            [
+                "init-signing-ledger",
+                "--genesis-ceremony",
+                str(work / "db-genesis-x"),
+                VALIDATOR_HEX,
+                "3c" * 31,
+                ZEROSTATE_FILE_HEX,
+            ],
+        ),
+        (
+            "a zero validator",
+            [
+                "init-signing-ledger",
+                "--genesis-ceremony",
+                str(work / "db-genesis-x"),
+                "00" * 32,
+                ZEROSTATE_ROOT_HEX,
+                ZEROSTATE_FILE_HEX,
+            ],
+        ),
+    ):
+        (work / "db-genesis-x").mkdir(mode=0o700, exist_ok=True)
+        refused = run(tool, args)
+        if (
+            refused.returncode == 0
+            or (work / "db-genesis-x" / "consensus" / "signing-ledger").exists()
+        ):
+            raise Failure(f"{why} was accepted: {refused!r}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--tool", required=True, help="path to tos-pq-consensus-key")
@@ -1161,6 +1301,7 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as tmp:
         try:
             check(tool, Path(tmp), shim)
+            check_genesis_ceremony(tool, Path(tmp), shim)
         except Failure as failure:
             print(f"CONSENSUS_KEY_TOOL_FAILED {failure}", file=sys.stderr)
             return 1
@@ -1170,7 +1311,8 @@ def main() -> int:
         "pipe, and export | import moves it; bind-node binds a stopped node's configuration "
         "under the configuration lock and refuses everything else; add-node-key, "
         "remove-node-key and list-node-keys hold several keys for a rotation and refuse an "
-        "ambiguous, duplicated, expired, unbounded or last-key change"
+        "ambiguous, duplicated, expired, unbounded or last-key change; the genesis ceremony "
+        "writes a complete signing ledger once, only on a stopped node that has run no session"
     )
     return 0
 
