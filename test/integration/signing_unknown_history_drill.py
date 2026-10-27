@@ -18,6 +18,22 @@ within the same masterchain session.
                   again. M is the fence block the target logs.
   --mode control  a build without the log (main): the red control. Expected: the target
                   signs again at once, in the masterchain session it signed in before.
+  --mode producer-control
+                  a build whose block producer skips its admission checks, set up as in
+                  --mode log: the red control for the signing boundary. Expected: the
+                  target signs a candidate in a fenced session.
+
+Exit status. The drill is a gate: it exits 0 only when the run shows what its mode
+expects, and the summary (drill-summary.json) is written either way for diagnosis.
+  0  the expectation of the mode is met: for --mode log the fence held and signing
+     resumed at cc(M) + 3; for a control mode the control detected what it exists to
+     detect (main signed in the old session; the producer control signed a candidate in
+     a fenced session). A control that stays green is a failure of the drill.
+  1  the drill could not run or read its input (a DRILL_FAILED message says why).
+  3  --mode log: the fence did not hold, signing did not resume as expected, or no
+     fence was recorded.
+  4  a control mode: the control did not show the violation it is meant to show.
+The same codes apply to --analyze-only, which recomputes the verdict from the logs.
 
 Signing is observed two ways.
 - At the signing boundary: the target logs, once per session, the first candidate and
@@ -250,7 +266,7 @@ def analyze(working_dir: Path, summary: dict[str, Any]) -> None:
         1 for line in after if NOT_SIGNING.search(line)
     )
     old = next((s for s in sessions if s["shard"] == MC and s["cc"] == mc_cc), None)
-    if mode == "log":
+    if mode in ("log", "producer-control"):
         violations = [
             s
             for s in sessions
@@ -313,11 +329,42 @@ def analyze(working_dir: Path, summary: dict[str, Any]) -> None:
         }
 
 
+EXIT_EXPECTED = 0
+EXIT_LOG_FAILED = 3
+EXIT_CONTROL_UNDETECTED = 4
+
+
+def judge(mode: str, summary: dict[str, Any]) -> int:
+    """The exit status for `mode` from the verdict, recorded in `summary` as well."""
+    verdict = summary["verdict"]
+    if mode == "log":
+        met = verdict.get("passed") is True
+        expected = "the fence held and signing resumed at cc(M) + 3"
+        failure = EXIT_LOG_FAILED
+    elif mode == "control":
+        met = (
+            verdict.get("red") is True
+            and verdict.get("signed_in_the_old_masterchain_session_before_stop") is True
+        )
+        expected = "the target signed again in the masterchain session it signed in before"
+        failure = EXIT_CONTROL_UNDETECTED
+    else:
+        met = any(
+            "candidate" in violation["own"]
+            for violation in verdict.get("signatures_within_fence", [])
+        )
+        expected = "the target signed a candidate in a fenced session"
+        failure = EXIT_CONTROL_UNDETECTED
+    status = EXIT_EXPECTED if met else failure
+    summary["expectation"] = {"mode": mode, "expected": expected, "met": met, "exit_status": status}
+    return status
+
+
 async def main() -> int:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument("--mode", choices=["log", "control"], required=True)
+    parser.add_argument("--mode", choices=["log", "control", "producer-control"], required=True)
     parser.add_argument(
         "--analyze-only",
         action="store_true",
@@ -341,11 +388,14 @@ async def main() -> int:
     working_dir = args.working_dir.resolve()
     if args.analyze_only:
         summary = json.loads((working_dir / "drill-summary.json").read_text())
-        if summary["mode"] != args.mode:
+        # A producer control is set up as a log run; earlier runs recorded it as one.
+        compatible = {args.mode} | ({"log"} if args.mode == "producer-control" else set())
+        if summary["mode"] not in compatible:
             raise SystemExit("DRILL_FAILED --mode differs from the run's")
         analyze(working_dir, summary)
+        status = judge(args.mode, summary)
         write_summary(working_dir, summary)
-        return 0
+        return status
     working_dir.mkdir(parents=True, exist_ok=False)
     install = Install(args.build.resolve(), args.source.resolve())
     install.toslibjson.client_set_verbosity_level(1)
@@ -394,7 +444,7 @@ async def main() -> int:
             "file_hash": zerostate.masterchain.file_hash.hex(),
         }
         target_args: list[str] = []
-        if args.mode == "log":
+        if args.mode in ("log", "producer-control"):
             ceremony = subprocess.run(
                 [
                     str(install.pq_consensus_key_exe),
@@ -454,14 +504,16 @@ async def main() -> int:
         await dht.stop()
 
     analyze(working_dir, summary)
+    status = judge(args.mode, summary)
     write_summary(working_dir, summary)
-    return 0
+    return status
 
 
 def write_summary(working_dir: Path, summary: dict[str, Any]) -> None:
     out = working_dir / "drill-summary.json"
     out.write_text(json.dumps(summary, indent=2, sort_keys=True))
     print(f"DRILL_SUMMARY {out} {json.dumps(summary['verdict'], sort_keys=True)}")
+    print(f"DRILL_EXPECTATION {json.dumps(summary['expectation'], sort_keys=True)}")
 
 
 if __name__ == "__main__":

@@ -42,6 +42,7 @@ There are two independent observations.
 | Source | `92cdaea2d` | `794bed0d5` (main), plus an INFO line logging the local index | `92cdaea2d`, plus [the producer patch](#retained-raw-output) |
 | `validator-engine` sha256 | `aacd35e875578ceea9066db056b200736ba653886752b22607ccea69ef6e1733` (1) | `aa94b1cb10ec30617efea4d242f0271ffef70bf35f193b88c55919f6baeff830` | `765b520bed06a58cfbc251b58d9b4523e56f1f155f2ffd3704e98783932df17b` |
 | Target | `--signing-decision-log`, genesis-ceremony ledger | no log | `--signing-decision-log`, genesis-ceremony ledger |
+| Mode (`--mode`) | `log` | `control` | `producer-control` (run as `log`, before that mode existed; the setup is the same) |
 | Observed for | `--observe 1320` | `--observe 420` | `--observe 600` |
 | Split pending at the stop | `(0,4000…)` cc 1 tentative | `(0,4000…)` cc 2 tentative | `(0,4000…)` cc 1 tentative |
 | Masterchain session at the stop / first one after restart | cc 0 / cc 0 | cc 0 / cc 0 | cc 0 / cc 0 |
@@ -51,6 +52,7 @@ There are two independent observations.
 | Own signatures in fenced sessions | none (0 boundary lines, 0 certificates) | n/a | **a candidate in 12 fenced sessions** (mc 0–2; `(0,4000…)` 0–3; `(0,8000…)` 0; `(0,c000…)` 0–3), 0 certificates in any of them |
 | Signing after the restart | first in mc 4 = cc(M)+3, `(0,4000…)` 5 = 2+3 and `(0,c000…)` 5 = 2+3; candidates and all three vote kinds | at once: 155 certificates in the old mc session cc 0 | — |
 | Verdict | `passed: true` | `red: true` | `passed: false` (`no_signature_within_fence: false`) |
+| Expectation of the mode / exit status | met / 0 | met (the control went red) / 0 | met (the control went red) / 0 |
 
 (1) Built from the tree committed as `92cdaea2d`, before the commit. Only the embedded
 build-version string differs.
@@ -59,13 +61,44 @@ Control 2 is the gap a certificate-only check leaves open. Its fenced candidates
 in no certificate, so judging by certificates alone would have passed this run. The
 signing-boundary lines catch it.
 
-Summaries, recomputed by the committed runner, with local paths removed:
+Summaries recomputed by the committed runner with `--analyze-only` in each run's mode, local paths removed:
 
 | File | sha256 |
 |---|---|
-| [log-run.json](log-run.json) | `a85077c7eebc5ba3eb4683e2509acd3dcb3ffb3d132c8d338f98d7575706000b` |
-| [control-run.json](control-run.json) | `e48bc5061c07bc072e5ab3646805d0b72cfef31b41b9d7743d6b1bb6fe5e0713` |
-| [producer-control-run.json](producer-control-run.json) | `ceef623d8c848bfd8e4ea1b58cf7bdbbd70802a8ac7c0cc7aa812a0c45469bd0` |
+| [log-run.json](log-run.json) | `651f4bed868f57baba379b69454ff165f4f9d6b0f8645b94737338aeb6918095` |
+| [control-run.json](control-run.json) | `c995f04dd875769323a4e0604183e38cfd47ed7a5f70313faf560f5ebfec9948` |
+| [producer-control-run.json](producer-control-run.json) | `9733b2070e8741f16a29e42b56740c900c23254314c9350b1f9aa4a9e9fc3bf9` |
+
+## Exit status: the drill as a gate
+
+The runner exits 0 only when a run shows what its mode expects. It writes the summary
+in every case, for diagnosis. A control's expectation is that it goes red, so a control
+that stays green is a failure of the drill. The codes, also given in `--help`:
+
+| Code | Meaning |
+|---|---|
+| 0 | Expectation met. `log`: the fence held and signing resumed at cc(M) + 3. `control`: main signed again in its old masterchain session. `producer-control`: the target signed a candidate in a fenced session. |
+| 1 | The drill could not run or read its input (`DRILL_FAILED`). |
+| 3 | `log`: signing within the fence, no resumption at cc(M) + 3, or no fence recorded. |
+| 4 | A control mode did not show the violation it exists to show. |
+
+`--analyze-only` uses the same codes. Replayed on the archived logs of the runs
+above:
+
+| Replay | Exit |
+|---|---|
+| run11 logs `--mode log` | 0 |
+| run12 logs `--mode producer-control` | 0 |
+| run9 logs `--mode control` | 0 |
+| run12 logs `--mode log` (signing inside the fence) | 3 |
+| run11 logs `--mode producer-control` (a control that stays green) | 4 |
+| run11 summary with empty logs, `--mode log` | 3 |
+| run9 summary with empty logs, `--mode control` | 4 |
+| no summary | 1 |
+
+`test/tostester/tests/tostester/test_signing_unknown_history_drill_exit.py` runs the
+same cases without a chain, on synthetic logs, as part of the full pytest. Restoring the
+old always-0 exit turns four of its eight tests red.
 
 ## Earlier runs (not evidence)
 

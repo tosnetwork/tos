@@ -1,5 +1,11 @@
 {
   "consensus_moved_to": "consensus.removed-1793104754",
+  "expectation": {
+    "exit_status": 0,
+    "expected": "the target signed again in the masterchain session it signed in before",
+    "met": true,
+    "mode": "control"
+  },
   "fence": [],
   "mc_cc_at_stop": 0,
   "mc_cc_started_after_restart": [

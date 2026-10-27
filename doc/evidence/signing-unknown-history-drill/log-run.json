@@ -5,6 +5,12 @@
     "rc": 0
   },
   "consensus_moved_to": "consensus.removed-1793107427",
+  "expectation": {
+    "exit_status": 0,
+    "expected": "the fence held and signing resumed at cc(M) + 3",
+    "met": true,
+    "mode": "log"
+  },
   "fence": [
     {
       "at": 1793107534.8652058,
