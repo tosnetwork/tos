@@ -392,6 +392,20 @@ corrupt journal, or a missing journal without matching preparation records, refu
 back or discard these private recovery bundles. Sole managed signing and honest
 local administration are explicit assumptions.
 
+The target's original signing history must still be intact. This procedure
+preserves it; it cannot reconstruct missing own votes from a donor's chain
+snapshot. Do not use `docker/import-snapshot.sh` to recover a validator: that
+importer refuses validator bindings and requested validator roles. Do not clear
+a binding to bypass that refusal or restore an older consensus journal. If the
+history is lost, keep the old signer stopped and retire the affected signing
+identity before provisioning a new one for a later validator set.
+
+The node's database lock is local to that database. Two hosts or databases
+holding the same key have no shared exclusion. Prevent the old signing process
+from restarting before enabling its replacement; neither a recent snapshot nor
+the startup catch-up age threshold establishes exclusive signing or complete
+vote history. Cross-host leases or signer-side durable counters are not provided.
+
 After startup the command watches the shared status collector. Completion releases
 the receiver lease, but retains the old tree and its matched recovery evidence.
 Timeout or health failure never triggers rollback.
