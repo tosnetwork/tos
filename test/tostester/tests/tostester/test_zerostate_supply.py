@@ -795,6 +795,12 @@ def test_canonical_genesis_script_accepts_only_four_validator_keys(tmp_path):
     assert canonical_rewards.masterchain_block_fee == 39_496_630
     assert canonical_rewards.basechain_block_fee == 23_233_312
     assert _config(state, 16, ConfigParam16).min_validators == 4
+    election = _config(state, 15, ConfigParam15)
+    initial = _config_cells(state)[34].copy()
+    initial.load_uint(8)
+    since, until = initial.load_uint(32), initial.load_uint(32)
+    assert until - since == 21_600
+    assert 0 < election.elections_end_before < election.elections_start_before <= until - since
     assert _config(state, 17, ConfigParam17).max_stake_factor == 1 << 16
     canonical_catchain = _config(state, 28, ConfigParam28)
     assert (
@@ -855,6 +861,151 @@ def test_canonical_genesis_script_accepts_only_four_validator_keys(tmp_path):
     assert "genesis PQ identities, public keys and ADNL IDs must be unique" in (
         failed.stderr + failed.stdout
     )
+
+
+def _elector_tick_schedule(state, timestamp):
+    """Execute the generated Elector's real tick transaction and read its election."""
+    import base64
+    import ctypes
+    import sys
+
+    from pytosiq_core import HashMap
+    from pytosiq_core.tlb.account import ShardAccount
+    from pytosiq_core.tlb.transaction import Transaction
+
+    cells = _config_cells(state)
+    config = require(
+        HashMap(
+            32,
+            value_serializer=lambda value, builder: builder.store_ref(value.copy().to_cell()),
+            map_=cells,
+        ).serialize()
+    )
+    elector_id = cells[1].copy().load_bytes(32)
+    accounts, _ = state.accounts
+    elector = next(
+        entry
+        for entry in accounts.values()
+        if entry.account is not None and entry.account.addr.hash_part == elector_id
+    )
+    suffix = "dylib" if sys.platform == "darwin" else "so"
+    lib = ctypes.CDLL(str(BUILD_DIR / "emulator" / f"libemulator.{suffix}"))
+    lib.transaction_emulator_create.argtypes = [ctypes.c_char_p, ctypes.c_int]
+    lib.transaction_emulator_create.restype = ctypes.c_void_p
+    lib.transaction_emulator_destroy.argtypes = [ctypes.c_void_p]
+    lib.string_destroy.argtypes = [ctypes.c_void_p]
+    lib.transaction_emulator_set_unixtime.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+    lib.transaction_emulator_set_unixtime.restype = ctypes.c_bool
+    lib.transaction_emulator_set_lt.argtypes = [ctypes.c_void_p, ctypes.c_uint64]
+    lib.transaction_emulator_set_lt.restype = ctypes.c_bool
+    tick = lib.transaction_emulator_emulate_tick_tock_transaction
+    tick.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_bool]
+    tick.restype = ctypes.c_void_p
+    emulator = lib.transaction_emulator_create(base64.b64encode(config.to_boc()), 0)
+    assert emulator, "native emulator must accept the generated genesis config"
+    try:
+        assert lib.transaction_emulator_set_unixtime(emulator, timestamp)
+        assert lib.transaction_emulator_set_lt(emulator, 1_000_000)
+        raw = tick(emulator, base64.b64encode(elector.serialize().to_boc()), False)
+        assert raw
+        try:
+            result = json.loads(ctypes.string_at(raw))
+        finally:
+            lib.string_destroy(raw)
+    finally:
+        lib.transaction_emulator_destroy(emulator)
+    assert result["success"], result
+    transaction = Transaction.deserialize(
+        Boc(base64.b64decode(result["transaction"])).deserialize()[0].begin_parse()
+    )
+    assert transaction.description.compute_ph.success
+    assert not transaction.description.aborted
+    after = ShardAccount.deserialize(
+        Boc(base64.b64decode(result["shard_account"])).deserialize()[0].begin_parse()
+    )
+    data = require(require(require(after.account).storage.state.state_init).data).begin_parse()
+    election = data.load_maybe_ref()
+    if election is None:
+        return None
+    schedule = election.begin_parse()
+    return schedule.load_uint(32), schedule.load_uint(32)
+
+
+def test_canonical_first_election_finishes_within_bootstrap_term(tmp_path):
+    _write_pq_manifest(tmp_path)
+    subprocess.run(
+        _create_state_command(REPO / "crypto/smartcont/gen-zerostate.fif"),
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+        env=_mainnet_genesis_env(),
+    )
+    state = _load_masterchain_state(tmp_path / "zerostate.boc")
+    params = _config(state, 15, ConfigParam15)
+    current = _config_cells(state)[34].copy()
+    current.load_uint(8)
+    since, until = current.load_uint(32), current.load_uint(32)
+    opening = max(since, until - params.elections_start_before)
+    if opening > since:
+        assert _elector_tick_schedule(state, opening - 1) is None
+    for tick_delay in (0, 1, 59):
+        elect_at, elect_close = require(_elector_tick_schedule(state, opening + tick_delay))
+        assert elect_at == until, "first election must not extend the bootstrap term"
+        assert elect_close == until - params.elections_end_before
+        assert since < elect_close < elect_at
+
+
+@pytest.mark.parametrize(
+    ("original", "replacement", "reason"),
+    [
+        (
+            "16384 constant elections_start_before",
+            "32768 constant elections_start_before",
+            "first election would extend the bootstrap validator term",
+        ),
+        (
+            "21600 constant orig_vset_valid_for",
+            "8192 constant orig_vset_valid_for",
+            "first election would extend the bootstrap validator term",
+        ),
+        (
+            "8192 constant elections_end_before",
+            "16384 constant elections_end_before",
+            "first election must have a positive bidding window",
+        ),
+        (
+            "8192 constant elections_end_before",
+            "0 constant elections_end_before",
+            "first election must close before validator rotation",
+        ),
+    ],
+)
+def test_canonical_genesis_rejects_unsafe_first_election_schedule(
+    tmp_path, original, replacement, reason
+):
+    _write_pq_manifest(tmp_path)
+    source = (REPO / "crypto/smartcont/gen-zerostate.fif").read_text()
+    assert source.count(original) == 1
+    candidate = tmp_path / "invalid-schedule.fif"
+    candidate.write_text(
+        "0x"
+        + bytes(range(32)).hex()
+        + " constant quantum-network-tag\n"
+        + source.replace(original, replacement).split("\n", 1)[1]
+    )
+    result = subprocess.run(
+        _create_state_command(candidate),
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        env=_mainnet_genesis_env(),
+        timeout=60,
+    )
+    assert result.returncode != 0
+    assert reason in result.stderr + result.stdout
+    assert not (tmp_path / "basestate0.boc").exists()
+    assert not (tmp_path / "zerostate.boc").exists()
 
 
 def test_canonical_genesis_rejects_a_different_timestamp(tmp_path):

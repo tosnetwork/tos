@@ -18,9 +18,18 @@ elections. The monetary parameters are specified in
 - ConfigParam 16 has a four-validator minimum.
 - ConfigParam 17 initially requires a 10,000 TOS individual stake, 40,000 TOS
   aggregate stake, and an effective-stake factor of one.
-- The original set is valid for 131,072 seconds. This value covers two complete
-  65,536-second election intervals, but it must still pass the production
-  bootstrap rehearsal before the final zerostate hashes are frozen.
+- The original set is valid for 21,600 seconds (six hours). ConfigParam 15
+  uses a 16,384-second election lead and an 8,192-second closing lead, so the
+  first election opens at genesis +5,216 seconds, closes at +13,408 seconds,
+  and its elected set is due at +21,600 seconds. Elected terms remain 65,536
+  seconds and the stake holding period remains 32,768 seconds. The shorter
+  election lead also applies to subsequent elections.
+- The generator computes this first schedule before producing any state and
+  refuses a rotation later than the bootstrap expiry, an empty bidding window,
+  or a close at/after rotation. The Elector retains its existing 60-second
+  opening-tick tolerance: a tick at least 60 seconds late can still postpone
+  the schedule. The production bootstrap rehearsal must verify timely ticks,
+  enough accepted stakes and actual rotation before final hashes are frozen.
 - There is no hard-coded placeholder-validator fallback in the production
   generator.
 
@@ -60,8 +69,29 @@ The canonical template retains its explicitly pinned `SOURCE_DATE_EPOCH` of
 1789434000 (2026-09-15 01:00:00 UTC). This is a reproducibility input, **not an
 approval to launch a new chain at an expired bootstrap date**. An actual launch
 must review and update the epoch and rehearse the initial-set lifetime before
-freezing the final hashes. This change does not alter supply, reward, stake,
-bootstrap lifetime or fee parameters.
+freezing the final hashes. Editing these defaults does not update an existing
+chain's ConfigParam 15 or its validator set.
+
+### Schedule template contract
+
+The bootstrap schedule is carried by five named constants in
+`crypto/smartcont/gen-zerostate.fif`, each defined exactly once on its own line
+as `<seconds> constant <name>`:
+
+| Constant | Canonical value | Used for |
+| --- | --- | --- |
+| `orig_vset_valid_for` | 21600 | Lifetime of the ConfigParam 34 genesis set |
+| `validators_elected_for` | 65536 | ConfigParam 15 `validators_elected_for` |
+| `elections_start_before` | 16384 | ConfigParam 15 `elections_start_before` |
+| `elections_end_before` | 8192 | ConfigParam 15 `elections_end_before` |
+| `stakes_frozen_for` | 32768 | ConfigParam 15 `stakes_frozen_for` |
+
+They are defined before the first-election guards, and ConfigParam 15 and
+ConfigParam 34 read them only by name. A tool that derives a different network
+profile from this template (for example a testnet ceremony) must replace these
+constant lines, not the `config.election_params!` or `config.validators!`
+lines, so that the guards check the schedule the derived genesis actually
+writes. A profile that the guards refuse produces no zerostate.
 
 ## Public-key manifest and operator ceremony
 
@@ -196,6 +226,7 @@ from `tos-pq-consensus-key`, then decode version 16 and the PQ identities. They 
 wrong timestamps and pre-16 PQ test profiles:
 
 ```bash
+cmake --build build --target create-state gen_fif tos-pq-consensus-key emulator
 uv run pytest -q test/tostester/tests/tostester/test_zerostate_supply.py \
   test/tostester/tests/tostester/test_zerostate_fee_schedule.py \
   test/pq-native/test_z01_genesis_source.py
@@ -203,7 +234,13 @@ python3 scripts/check-config-genesis-data-layout.py
 python3 scripts/check-pq-launch-cap.py
 ```
 
-Sensitivity was checked by changing the canonical version back to 14: the
-real-BOC positive test failed at `14 == 18`, and passed after restoring 18.
+The first-election regression executes the generated Elector's real tick
+transaction through `build/emulator/libemulator.so` (`.dylib` on macOS), using
+the generated ConfigParams 15 and 34. It checks no election before opening,
+then the exact first `elect_at` and `elect_close` at opening and with a 1- or
+59-second tick delay. Invalid parameter combinations must fail generation
+before emitting either zerostate. This proves scheduling, not successful stake
+submission or live validator-set activation.
+
 This generation check does not replace an operational launch rehearsal or
 claim that an existing chain was upgraded by editing its genesis template.
