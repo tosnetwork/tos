@@ -27,6 +27,10 @@
 //                     at most one CandidateId per slot.
 //   release           the write is held: no candidate is signed; once it lands, the candidate is.
 //   shutdown-waiting  the group stops while the write is held: it stops and signs nothing.
+//                     This is counted by the leader's signer, which outlives the group, not by
+//                     the bus's observer, which stops with it.
+//   shutdown-waiting-control
+//                     the same, with one signature made after the stop: the count must see it.
 
 #include <algorithm>
 #include <atomic>
@@ -104,7 +108,7 @@ void emit(const std::string& line) {
   std::_Exit(code);
 }
 
-enum class Mode { CrashRestart, Release, ShutdownWaiting };
+enum class Mode { CrashRestart, Release, ShutdownWaiting, ShutdownWaitingControl };
 
 // ===== The database backend: one durable store shared by both lives of the node =====
 
@@ -596,7 +600,9 @@ class Driver : public td::actor::Actor {
       case Mode::Release:
         co_return co_await run_release();
       case Mode::ShutdownWaiting:
-        co_return co_await run_shutdown_waiting();
+        co_return co_await run_shutdown_waiting(/*inject_after_stop=*/false);
+      case Mode::ShutdownWaitingControl:
+        co_return co_await run_shutdown_waiting(/*inject_after_stop=*/true);
     }
     co_return td::Unit{};
   }
@@ -649,16 +655,37 @@ class Driver : public td::actor::Actor {
     pass("CWD_OK release");
   }
 
-  td::actor::Task<> run_shutdown_waiting() {
+  // The leader's signer outlives every group that held it, so its count of signatures sees a
+  // candidate signed while the group stops, when the bus-owned observer has already gone.
+  std::uint64_t signatures_made() const {
+    return signers_.at(TARGET)->consensus_signatures_produced();
+  }
+
+  td::actor::Task<> run_shutdown_waiting(bool inject_after_stop) {
+    const auto signatures_before = signatures_made();
     hold_pool_state_writes();
     start_node();
     co_await await_held_write();
     co_await settle(PRODUCTION_WINDOW);
     require(candidates().empty(), "a candidate was signed before its leader window was durable");
-    // The write lands only after the stop was requested; the stopping group signs nothing.
+    require(signatures_made() == signatures_before, "the leader signed while its leader window was not durable");
+    // The write lands only after the stop was requested; the stopping group signs nothing,
+    // before or after the bus is gone.
     co_await stop_node(/*crash=*/false);
     co_await settle(0.3);
-    require(candidates().empty(), "a candidate was signed during shutdown");
+    if (inject_after_stop) {
+      // The control: a signature made after the stop, as a producer still running past the
+      // group's end would make one. The check below must see it.
+      CHECK(signers_.at(TARGET)->sign_consensus("a candidate signed after the stop").has_value());
+    }
+    const auto late = signatures_made() - signatures_before;
+    emit(PSTRING() << "CWD_SIGNATURES_AFTER_STOP " << late);
+    if (inject_after_stop) {
+      require(late == 1, PSTRING() << "the control's signature after the stop was counted as " << late);
+      pass("CWD_OK shutdown-waiting-control: a signature after the stop is seen");
+    }
+    require(late == 0, PSTRING() << "the leader signed " << late << " times during shutdown");
+    require(candidates().empty(), "a candidate was published during shutdown");
     pass("CWD_OK shutdown-waiting");
   }
 };
@@ -671,6 +698,7 @@ int main(int argc, char** argv) {
       {"crash-restart", Mode::CrashRestart},
       {"release", Mode::Release},
       {"shutdown-waiting", Mode::ShutdownWaiting},
+      {"shutdown-waiting-control", Mode::ShutdownWaitingControl},
   };
   std::optional<Mode> mode;
   for (const auto& [name, value] : modes) {

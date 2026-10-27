@@ -213,7 +213,7 @@ target_link_libraries(test-candidate-window-durability PRIVATE
     tdactor
     tdutils
 )
-foreach(mode crash-restart release shutdown-waiting)
+foreach(mode crash-restart release shutdown-waiting shutdown-waiting-control)
     add_test(NAME candidate-window-durability-${mode} COMMAND test-candidate-window-durability ${mode})
     set_tests_properties(candidate-window-durability-${mode} PROPERTIES TIMEOUT 60)
 endforeach()
