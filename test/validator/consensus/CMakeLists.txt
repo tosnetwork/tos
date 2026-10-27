@@ -65,7 +65,8 @@ target_link_libraries(test-decision-log-restart PRIVATE
     tdutils
 )
 foreach(mode journal-loss journal-loss-without-log intact-restart log-rollback window-journal-rollback
-             window-log-rollback window-log-rollback-without-journal-record log-rollback-leader)
+             window-log-rollback window-log-rollback-without-journal-record log-rollback-leader
+             stop-during-window-reservation)
     add_test(NAME decision-log-restart-${mode} COMMAND test-decision-log-restart ${mode})
     set_tests_properties(decision-log-restart-${mode} PROPERTIES TIMEOUT 60)
 endforeach()

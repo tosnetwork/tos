@@ -294,6 +294,14 @@ class BlockProducerImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
         LOG(ERROR) << "consensus: no post-quantum consensus signer; not producing a candidate";
         break;
       }
+      // Checked again immediately before signing, with no suspension in between: the session's
+      // decision log may have stopped while the window reservation above was waiting.
+      if (bus.signing_admission && bus.signing_admission->signing_stopped()) {
+        observation->finish(tos::health::Phase::JournalSuppressed);
+        LOG(WARNING) << "consensus: the decision log stopped before the candidate for slot " << slot
+                     << " was signed; not producing it";
+        break;
+      }
       const auto to_sign = data_to_sign.as_slice();
       auto pq_signature = bus.pq_signer->sign_consensus(std::string_view(to_sign.data(), to_sign.size()));
       if (!pq_signature.has_value()) {

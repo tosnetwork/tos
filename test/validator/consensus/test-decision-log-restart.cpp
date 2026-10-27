@@ -42,6 +42,10 @@
 //                           while the journal keeps the node's votes, and the journal's window
 //                           record is lost: the session is fenced and the restarted leader
 //                           signs no candidate and no vote.
+//   stop-during-window-reservation
+//                           (the node leads window 0) the log stops while the leader's window
+//                           reservation is held between its check and its write: the
+//                           reservation is granted afterwards, and still nothing is signed.
 
 #include <algorithm>
 #include <atomic>
@@ -127,7 +131,39 @@ enum class Mode {
   WindowLogRollback,
   WindowLogRollbackWithoutJournalRecord,
   LogRollbackLeader,
+  StopDuringWindowReservation,
 };
+
+// Holds the leader window's reservation after its check and before its write, until the
+// test releases it.
+using GatePromise = decltype(td::actor::StartedTask<>::make_bridge().second);
+std::mutex window_gate_mutex;
+std::vector<GatePromise> window_gate_held;
+std::atomic<int> window_gate_count{0};
+
+td::actor::StartedTask<> window_gate(const signing::Decision& decision) {
+  auto [task, promise] = td::actor::StartedTask<>::make_bridge();
+  if (decision.kind != signing::DecisionKind::LeaderWindow) {
+    promise.set_value(td::Unit{});
+    return std::move(task);
+  }
+  std::scoped_lock lock(window_gate_mutex);
+  window_gate_held.push_back(std::move(promise));
+  ++window_gate_count;
+  return std::move(task);
+}
+
+void release_window_gate() {
+  std::vector<GatePromise> held;
+  {
+    std::scoped_lock lock(window_gate_mutex);
+    held = std::move(window_gate_held);
+    window_gate_held.clear();
+  }
+  for (auto& promise : held) {
+    promise.set_value(td::Unit{});
+  }
+}
 
 bool uses_log(Mode mode) {
   return mode != Mode::JournalLossWithoutLog;
@@ -135,7 +171,8 @@ bool uses_log(Mode mode) {
 
 bool target_leads(Mode mode) {
   return mode == Mode::WindowJournalRollback || mode == Mode::WindowLogRollback ||
-         mode == Mode::WindowLogRollbackWithoutJournalRecord || mode == Mode::LogRollbackLeader;
+         mode == Mode::WindowLogRollbackWithoutJournalRecord || mode == Mode::LogRollbackLeader ||
+         mode == Mode::StopDuringWindowReservation;
 }
 
 // ===== The session database backend, shared by both lives =====
@@ -480,6 +517,7 @@ class Driver : public td::actor::Actor {
   std::unique_ptr<td::actor::Runtime> runtime_;
   td::actor::ActorOwn<CollatingManager> manager_;
   td::actor::ActorOwn<signing::SigningLedger> ledger_;
+  std::shared_ptr<const signing::Admission> admission_;
   simplex::BusHandle bus_;
   std::shared_ptr<simplex::Bus> bus_ptr_;
   std::optional<td::actor::StartedTask<>> stopped_;
@@ -569,10 +607,15 @@ class Driver : public td::actor::Actor {
     ++current_life;
     std::shared_ptr<const signing::Admission> admission;
     if (uses_log(mode_)) {
-      ledger_ =
-          td::actor::create_actor<signing::SigningLedger>(PSTRING() << "ledger" << current_life.load(), ledger_dir_);
+      signing::SessionDecisionLog::WriteGate gate;
+      if (mode_ == Mode::StopDuringWindowReservation) {
+        gate = window_gate;
+      }
+      ledger_ = td::actor::create_actor<signing::SigningLedger>(PSTRING() << "ledger" << current_life.load(),
+                                                                ledger_dir_, signing::default_file_ops(), gate);
       admission = co_await td::actor::ask(ledger_.get(), &signing::SigningLedger::admit,
                                           validators_.at(target_).validator_id.value, SESSION);
+      admission_ = admission;
       emit(PSTRING() << "DLR_ADMISSION life=" << current_life.load() << " fenced=" << admission->fenced
                      << " decisions=" << admission->decisions.size()
                      << (admission->fenced ? " reason=" + admission->reason : std::string()));
@@ -660,6 +703,8 @@ class Driver : public td::actor::Actor {
         co_return co_await run_window_rollback();
       case Mode::LogRollbackLeader:
         co_return co_await run_log_rollback_leader();
+      case Mode::StopDuringWindowReservation:
+        co_return co_await run_stop_during_window_reservation();
     }
     co_return td::Unit{};
   }
@@ -752,6 +797,27 @@ class Driver : public td::actor::Actor {
     pass("DLR_OK log-rollback-leader");
   }
 
+  // The session's log stops while the leader waits on its window reservation: the
+  // reservation itself is granted, and the candidate must still not be signed.
+  td::actor::Task<> run_stop_during_window_reservation() {
+    co_await start_node();
+    if (!co_await wait_until([] { return window_gate_count.load() > 0; })) {
+      finish(1, "DLR_PRECONDITION_FAILED: the leader window reservation never reached its write");
+    }
+    // As when another reservation's failed append could not be recovered.
+    admission_->stopped->store(true, std::memory_order_release);
+    const auto before = signatures_made();
+    release_window_gate();
+    co_await settle(1.5);
+    const auto made = signatures_made() - before;
+    const auto candidates = produced_in(1);
+    co_await stop_node();
+    emit(PSTRING() << "DLR_AFTER_STOP signatures=" << made << " candidates=" << candidates);
+    require(candidates == 0 && made == 0, PSTRING() << "after the log stopped the leader signed " << made << " times, "
+                                                    << candidates << " candidates");
+    pass("DLR_OK stop-during-window-reservation");
+  }
+
   td::actor::Task<> run_window_rollback() {
     co_await start_node();
     if (!co_await wait_until([] { return produced_in(1) > 0; })) {
@@ -797,6 +863,7 @@ int main(int argc, char** argv) {
       {"window-log-rollback", Mode::WindowLogRollback},
       {"window-log-rollback-without-journal-record", Mode::WindowLogRollbackWithoutJournalRecord},
       {"log-rollback-leader", Mode::LogRollbackLeader},
+      {"stop-during-window-reservation", Mode::StopDuringWindowReservation},
   };
   std::optional<Mode> mode;
   for (const auto& [name, value] : modes) {
