@@ -855,6 +855,12 @@ class PoolImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo
       LOG(ERROR) << "consensus: no post-quantum consensus signer; refusing to vote";
       return std::nullopt;
     }
+    // Checked immediately before signing, after every suspension on the way here: a decision
+    // log that stopped recording while this vote waited admits no further signature.
+    if (bus.signing_admission && bus.signing_admission->signing_stopped()) {
+      LOG(ERROR) << "consensus: the decision log admits no signing in this session; not signing " << vote;
+      return std::nullopt;
+    }
     auto vote_to_sign = serialize_tl_object(vote.to_tl(), true);
     auto data_to_sign = create_serialize_tl_object<consensus::tl::dataToSign>(bus.session_id, std::move(vote_to_sign));
     const auto to_sign = data_to_sign.as_slice();

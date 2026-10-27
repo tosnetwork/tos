@@ -277,13 +277,21 @@ class StartupCatchupManagerProbe : public ValidatorManagerImpl {
  public:
   StartupCatchupManagerProbe(std::string root, std::shared_ptr<Journal> journal,
                              td::actor::ActorId<keyring::Keyring> keys, td::actor::ActorId<adnl::Adnl> adnl,
-                             td::actor::ActorId<rldp2::Rldp> rldp)
-      : ValidatorManagerImpl(ValidatorManagerOptions::create(BlockIdExt{}, BlockIdExt{}), std::move(root), keys, adnl,
-                             rldp, {}, {})
+                             td::actor::ActorId<rldp2::Rldp> rldp, bool decision_log = false)
+      : ValidatorManagerImpl(options(decision_log), std::move(root), keys, adnl, rldp, {}, {})
       , journal_(std::move(journal)) {
+  }
+  static td::Ref<ValidatorManagerOptions> options(bool decision_log) {
+    auto opts = ValidatorManagerOptions::create(BlockIdExt{}, BlockIdExt{});
+    opts.write().set_signing_decision_log_enabled(decision_log);
+    return opts;
   }
   void start_up() override {
     db_ = create_db_actor(actor_id(this), db_root_, opts_);
+    if (opts_->get_signing_decision_log_enabled()) {
+      signing_ledger_ = td::actor::create_actor<consensus::signing::SigningLedger>(
+          "probe signing ledger", consensus::signing::ledger_dir(db_root_));
+    }
     callback_ = std::make_unique<ProbeCallback>(journal_);
     ext_message_pool_ = td::actor::create_actor<ExtMessagePool>("catchup ext messages", opts_, actor_id(this));
     allow_validate_ = true;
@@ -410,6 +418,13 @@ class StartupCatchupManagerProbe : public ValidatorManagerImpl {
   td::actor::ActorOwn<IValidatorGroup> construct_group(
       bool observer, ValidatorSessionId session, ShardIdFull,
       const std::function<td::actor::ActorOwn<IValidatorGroup>()>&) override {
+    if (!observer && opts_->get_signing_decision_log_enabled()) {
+      // What the group would be built with: its session's admission, decided before it.
+      auto it = signing_admissions_.find(session);
+      journal_->add(it == signing_admissions_.end() ? "admission none " + session.to_hex()
+                    : it->second->fenced            ? "admission fenced " + session.to_hex()
+                                                    : "admission admitted " + session.to_hex());
+    }
     {
       std::lock_guard<std::mutex> lock(journal_->mu);
       if (observer) {
@@ -433,7 +448,13 @@ class Fixture {
   Epoch old{1}, current{2}, next{3}, outsider{4, 1};
   std::shared_ptr<Journal> journal = std::make_shared<Journal>();
 
-  Fixture() : root_(td::mkdtemp("/tmp", "startup-catchup-manager").move_as_ok()), scheduler_({1}) {
+  // With `decision_log`, the manager keeps an own-decision log under its database root;
+  // `before_start` runs on that root before the manager exists.
+  explicit Fixture(bool decision_log = false, const std::function<void(const std::string&)>& before_start = nullptr)
+      : root_(td::mkdtemp("/tmp", "startup-catchup-manager").move_as_ok()), scheduler_({1}) {
+    if (before_start) {
+      before_start(root_);
+    }
     scheduler_.run_in_context([&] {
       keys_ = keyring::Keyring::create(root_);
       adnl_ = adnl::Adnl::create(root_, keys_.get());
@@ -447,7 +468,7 @@ class Fixture {
         }
       }
       manager_ = td::actor::create_actor<StartupCatchupManagerProbe>("catchup manager", root_, journal, keys_.get(),
-                                                                     adnl_.get(), rldp_.get());
+                                                                     adnl_.get(), rldp_.get(), decision_log);
     });
   }
   ~Fixture() {
@@ -821,4 +842,85 @@ TEST(StartupCatchupManager, T15_PredicateWithoutTheCheckpoint) {
   ASSERT_TRUE(!f.query()[2]);
   f.end(ExitReason::Fresh);
   ASSERT_TRUE(f.query()[2]);
+}
+
+// ===== The own-decision log in the group update =====
+
+namespace {
+
+std::string ledger_of(const std::string& root) {
+  return consensus::signing::ledger_dir(root);
+}
+
+// A ledger for `validator`, optionally with a floor.
+void make_ledger(const std::string& root, const ValidatorId& validator, std::optional<BlockIdExt> floor) {
+  CHECK(consensus::signing::create_ledger(ledger_of(root), validator.value).is_ok());
+  if (floor.has_value()) {
+    consensus::signing::Header header;
+    header.validator = validator.value;
+    header.dir = consensus::signing::binding_of(ledger_of(root)).move_as_ok();
+    header.floor = floor;
+    consensus::signing::default_file_ops()
+        ->replace_file(ledger_of(root), "ledger", consensus::signing::encode_header(header))
+        .ensure();
+  }
+}
+
+// The validator id of member `i` of epoch `index`, as Epoch derives it.
+ValidatorId member_id(int index, size_t i) {
+  return ValidatorId{hash(PSTRING() << "startup-catchup-epoch-" << index << "-" << i << "-validator")};
+}
+
+}  // namespace
+
+// A group is built only once its session's admission is decided: never before, and the
+// group update runs again by itself when the answer arrives.
+TEST(StartupCatchupManager, DecisionLogAdmitsBeforeTheGroup) {
+  Fixture f(true, [&](const std::string& root) { make_ledger(root, member_id(2, 0), std::nullopt); });
+  f.hold(f.current, 0);
+  f.set_tip(f.snapshot(f.current, 1), 10, kFresh);
+  ASSERT_TRUE(!f.decide());
+  f.advance(f.snapshot(f.current, 1), 10, kFresh);
+  auto expected = f.session_of(f.snapshot(f.current, 1));
+  ASSERT_TRUE(f.wait_event("group " + expected.to_hex(), 10.0));
+  ASSERT_EQ(1u, f.journal->count("admission admitted " + expected.to_hex()));
+  ASSERT_EQ(0u, f.journal->count("admission none"));
+}
+
+// Without a ledger nothing is admitted: the group is built, fenced, and signs nothing.
+TEST(StartupCatchupManager, DecisionLogWithoutALedgerFences) {
+  Fixture f(true);
+  f.hold(f.current, 0);
+  f.set_tip(f.snapshot(f.current, 1), 10, kFresh);
+  ASSERT_TRUE(!f.decide());
+  f.advance(f.snapshot(f.current, 1), 10, kFresh);
+  auto expected = f.session_of(f.snapshot(f.current, 1));
+  ASSERT_TRUE(f.wait_event("group " + expected.to_hex(), 10.0));
+  ASSERT_EQ(1u, f.journal->count("admission fenced " + expected.to_hex()));
+}
+
+// A head below the ledger's floor builds no group: it could be a state the floor retired.
+TEST(StartupCatchupManager, DecisionLogWaitsForTheFloor) {
+  const BlockIdExt floor{masterchainId, shardIdAll, 100, hash("floor-root"), hash("floor-file")};
+  Fixture f(true, [&](const std::string& root) { make_ledger(root, member_id(2, 0), floor); });
+  f.hold(f.current, 0);
+  f.set_tip(f.snapshot(f.current, 1), 10, kFresh);
+  ASSERT_TRUE(!f.decide());
+  f.advance(f.snapshot(f.current, 1), 10, kFresh);
+  f.run_for(2.0);
+  std::lock_guard<std::mutex> lock(f.journal->mu);
+  ASSERT_EQ(0u, f.journal->validator_groups.size());
+}
+
+// A chain without the floor's block at the floor's height admits nothing in this process.
+TEST(StartupCatchupManager, DecisionLogRefusesAChainWithoutTheFloor) {
+  const BlockIdExt floor{masterchainId, shardIdAll, 5, hash("floor-root"), hash("floor-file")};
+  Fixture f(true, [&](const std::string& root) { make_ledger(root, member_id(2, 0), floor); });
+  f.hold(f.current, 0);
+  f.set_tip(f.snapshot(f.current, 1), 10, kFresh);
+  ASSERT_TRUE(!f.decide());
+  f.advance(f.snapshot(f.current, 1), 10, kFresh);
+  auto expected = f.session_of(f.snapshot(f.current, 1));
+  ASSERT_TRUE(f.wait_event("group " + expected.to_hex(), 10.0));
+  ASSERT_EQ(1u, f.journal->count("admission fenced " + expected.to_hex()));
 }

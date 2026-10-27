@@ -124,6 +124,8 @@ set(VALIDATOR_SOURCE
   consensus/private-overlay.cpp
   consensus/session-compat.cpp
   consensus/session-compat.h
+  consensus/signing-ledger.cpp
+  consensus/signing-ledger.h
   consensus/trace-collector.cpp
   consensus/stats.cpp
   consensus/types.cpp
