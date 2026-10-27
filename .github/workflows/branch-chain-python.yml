@@ -116,7 +116,7 @@ jobs:
             test-block-accepter test-rldp2-refusal-lifetime \
             test-startup-catchup-policy test-startup-catchup-importer test-startup-catchup-driver \
             test-startup-catchup-probe test-startup-catchup-manager test-startup-orphan-reconcile \
-            test-liteserver-cache test-tl-cli-fixtures
+            test-liteserver-cache test-tl-cli-fixtures test-signing-ledger test-decision-log-restart
           ccache --show-stats
 
       # Answered capacity refusals through the download actors, their query
@@ -336,6 +336,14 @@ jobs:
       # task keeps its resolver entry alive until it ends.
       - name: Check Simplex late candidates for finalized slots
         run: ctest --test-dir build --output-on-failure --no-tests=error -R '^test-late-candidate-window$'
+
+      # The own-decision log: its rules, formats, limits and failure recovery, and a restarted
+      # validator that signs no decision conflicting with one it may already have signed.
+      - name: Check the own-decision log
+        run: |
+          set -e
+          ctest --test-dir build --output-on-failure --no-tests=error -R '^signing-ledger$'
+          ctest --test-dir build --output-on-failure --no-tests=error -R '^decision-log-restart-'
 
       # A leader signs a candidate only after its leader window is durably recorded, so a
       # crash cannot lead a restarted leader to sign a second candidate for the same slot.

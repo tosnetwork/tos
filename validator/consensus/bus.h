@@ -22,6 +22,7 @@
 
 #include "chain-state.h"
 #include "manager-facade.h"
+#include "signing-ledger.h"
 #include "types.h"
 
 namespace tos::validator::consensus {
@@ -256,6 +257,13 @@ class Bus : public td::actor::Bus {
   td::actor::ActorId<overlay::Overlays> overlays;
   td::actor::ActorId<adnl::AdnlSenderEx> adnl_sender;
   std::unique_ptr<Db> db;
+
+  // This session's admission from the own-decision log (signing-ledger.h), decided before the
+  // group started and fixed for its life. Null where no decision log is kept, and the
+  // journal alone then holds this node's decisions, as it always has. When set, every own
+  // vote and every candidate is recorded there before it is signed, nothing is signed while
+  // it is fenced or stopped, and the journal keeps only the signed bytes.
+  std::shared_ptr<const signing::Admission> signing_admission;
 
   td::Promise<td::Unit> stop_promise;
 };

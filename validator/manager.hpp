@@ -29,6 +29,7 @@
 #include "collator-node/collator-node.hpp"
 #include "common/refcnt.hpp"
 #include "consensus/session-compat.h"
+#include "consensus/signing-ledger.h"
 #include "consensus/startup-orphan-reconcile.h"
 #include "consensus/validator-cleanup-manager.h"
 #include "consensus/validator-cleanup-worker.h"
@@ -321,6 +322,29 @@ class ValidatorManagerImpl : public ValidatorManager {
   std::map<ShardIdFull, std::tuple<bool, bool, std::optional<std::size_t>>> observer_group_diagnostic_states_;
   std::map<adnl::AdnlNodeIdShort, td::actor::ActorOwn<CollationManager>> collation_managers_;
   std::set<ValidatorSessionId> destroyed_validator_sessions_;
+
+  // The own-decision log (consensus/signing-ledger.h), when the options enable it. A group
+  // is built only once its session has an admission, decided by the ledger before the
+  // group exists; the admission is requested on first need and the group update runs
+  // again when it arrives. Admissions are kept for the life of the process, so a group
+  // recreated for the same session gets the same log.
+  td::actor::ActorOwn<consensus::signing::SigningLedger> signing_ledger_;
+  std::map<ValidatorSessionId, std::shared_ptr<const consensus::signing::Admission>> signing_admissions_;
+  std::set<ValidatorSessionId> signing_admissions_pending_;
+  // The ledger's floor, and whether this node's chain is known to contain it. No session is
+  // admitted from a state below the floor or on a chain without it.
+  enum class SigningFloorState { Unknown, Requested, Waiting, Checking, Verified, Refused };
+  SigningFloorState signing_floor_state_ = SigningFloorState::Unknown;
+  std::optional<BlockIdExt> signing_floor_;
+  // The admission for `session_id`, or null when it is not decided yet; requesting it then
+  // and rebuilding groups when it arrives.
+  std::shared_ptr<const consensus::signing::Admission> signing_admission_for(ValidatorSessionId session_id,
+                                                                             tos::ValidatorId validator);
+  td::actor::Task<> fetch_signing_floor();
+  td::actor::Task<> fetch_signing_admission(ValidatorSessionId session_id, tos::ValidatorId validator);
+  void checked_signing_floor(td::Result<ConstBlockHandle> handle);
+  void rebuild_groups_after_signing_answer();
+
   // Exact directory names of retired consensus groups whose per-group RocksDB
   // still needs deleting. Separate from destroyed_validator_sessions_ because
   // the two have different lifetimes (see doc/consensus-db-cleanup-queue.md):

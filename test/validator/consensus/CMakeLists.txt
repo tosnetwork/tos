@@ -30,6 +30,47 @@ target_link_libraries(test-consensus PRIVATE
     validator
 )
 
+# The own-decision log: conflict rules, file formats and limits, bindings, and the serialized,
+# failure-safe reservation path, on real files.
+add_executable(test-signing-ledger test-signing-ledger.cpp)
+target_include_directories(test-signing-ledger PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(test-signing-ledger PRIVATE validator tdactor tdutils)
+add_test(NAME signing-ledger COMMAND test-signing-ledger)
+set_tests_properties(signing-ledger PROPERTIES TIMEOUT 120)
+# A measurement, run by hand: the decision log's write latency against the journal write
+# it replaces, with several sessions at once. Not a test.
+add_executable(bench-decision-log EXCLUDE_FROM_ALL bench-decision-log.cpp)
+target_include_directories(bench-decision-log PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(bench-decision-log PRIVATE validator tos_validator tos_block adnl overlay dht tl_api tl-utils
+    tos_crypto tos_pq_consensus_signer tos_pq_consensus tos_mldsa44 tdactor tdutils tddb)
+
+# A restarted validator signs no decision that conflicts with one it may already have signed,
+# whatever happened to its session journal; the production actors over an admission from a
+# real signing ledger.
+add_executable(test-decision-log-restart test-decision-log-restart.cpp)
+target_link_libraries(test-decision-log-restart PRIVATE
+    validator
+    tos_validator
+    tos_block
+    adnl
+    overlay
+    dht
+    tl_api
+    tl-utils
+    tos_crypto
+    tos_pq_consensus_signer
+    tos_pq_consensus
+    tos_mldsa44
+    tdactor
+    tdutils
+)
+foreach(mode journal-loss journal-loss-without-log intact-restart log-rollback window-journal-rollback
+             window-log-rollback window-log-rollback-without-journal-record log-rollback-leader
+             stop-during-window-reservation)
+    add_test(NAME decision-log-restart-${mode} COMMAND test-decision-log-restart ${mode})
+    set_tests_properties(decision-log-restart-${mode} PROPERTIES TIMEOUT 60)
+endforeach()
+
 # The live sign->verify round through PeerValidator::check_signature.
 add_executable(test-consensus-verify test-consensus-verify.cpp)
 set_target_properties(test-consensus-verify PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)

@@ -436,6 +436,9 @@ struct BridgeCreationParams {
   td::actor::ActorId<overlay::Overlays> overlays;
   td::actor::ActorId<adnl::AdnlSenderEx> adnl_sender;
   std::string db_root;
+  // The own-decision log's admission for this session, decided before the group exists;
+  // null where no decision log is kept.
+  std::shared_ptr<const signing::Admission> signing_admission;
 };
 
 class BridgeImpl final : public IValidatorGroup {
@@ -577,6 +580,9 @@ class BridgeImpl final : public IValidatorGroup {
     bus->session_id = params_.session_id;
     bus->overlays = params_.overlays;
     bus->adnl_sender = params_.adnl_sender;
+    // Set before the database is opened and before any actor starts, and never changed
+    // after: every signing path reads the same admission for the group's whole life.
+    bus->signing_admission = params_.signing_admission;
 
     bus->db = open_rocksdb_consensus_db(db_path() + "/db/");
 
@@ -865,7 +871,7 @@ td::actor::ActorOwn<IValidatorGroup> IValidatorGroup::create_bridge(
     std::optional<std::set<adnl::AdnlNodeIdShort>> all_current_validators, std::string db_root,
     td::actor::ActorId<ValidatorManager> validator_manager, td::actor::ActorId<CollationManager> collation_manager,
     bool create_session, bool allow_unsafe_self_blocks_resync, td::Ref<ValidatorManagerOptions> opts,
-    bool monitoring_shard) {
+    bool monitoring_shard, std::shared_ptr<const consensus::signing::Admission> signing_admission) {
   all_current_validators =
       consensus::normalize_twostep_relay_snapshot(all_validators, std::move(all_current_validators));
   LOG_CHECK(config.protocol_version_supported())
@@ -900,6 +906,7 @@ td::actor::ActorOwn<IValidatorGroup> IValidatorGroup::create_bridge(
       .overlays = overlays,
       .adnl_sender = adnl_sender,
       .db_root = db_root,
+      .signing_admission = std::move(signing_admission),
   };
   return td::actor::create_actor<consensus::BridgeImpl>(name_with_seqno, std::move(params));
 }
@@ -941,6 +948,7 @@ td::actor::ActorOwn<IValidatorGroup> IValidatorGroup::create_bridge_observer(
       .overlays = overlays,
       .adnl_sender = adnl_sender,
       .db_root = db_root,
+      .signing_admission = nullptr,  // an observer signs nothing
   };
   return td::actor::create_actor<consensus::BridgeImpl>(name_with_seqno, std::move(params));
 }

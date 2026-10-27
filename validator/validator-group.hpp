@@ -35,7 +35,10 @@ class ValidatorManager;
 namespace consensus {
 std::optional<std::set<adnl::AdnlNodeIdShort>> normalize_twostep_relay_snapshot(
     const std::vector<adnl::AdnlNodeIdShort>& members, std::optional<std::set<adnl::AdnlNodeIdShort>> current);
+namespace signing {
+struct Admission;
 }
+}  // namespace consensus
 
 class IValidatorGroup : public td::actor::Actor {
  public:
@@ -49,7 +52,7 @@ class IValidatorGroup : public td::actor::Actor {
       std::optional<std::set<adnl::AdnlNodeIdShort>> all_current_validators, std::string db_root,
       td::actor::ActorId<ValidatorManager> validator_manager, td::actor::ActorId<CollationManager> collation_manager,
       bool create_session, bool allow_unsafe_self_blocks_resync, td::Ref<ValidatorManagerOptions> opts,
-      bool monitoring_shard);
+      bool monitoring_shard, std::shared_ptr<const consensus::signing::Admission> signing_admission = nullptr);
 
   static td::actor::ActorOwn<IValidatorGroup> create_bridge_observer(
       td::Slice name, ShardIdFull shard, adnl::AdnlNodeIdShort local_adnl_id, ValidatorSessionId session_id,

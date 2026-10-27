@@ -241,6 +241,49 @@ class BlockProducerImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
         owning_bus().publish<TraceEvent>(stats::CollatedEmpty::create(id));
       }
 
+      // With an own-decision log, a leader window is recorded there before its first
+      // candidate is signed, and only the runtime that recorded it produces in it. A window
+      // already in the log when this runtime started was produced in by an earlier one; a
+      // candidate now could differ from what that one signed, so this runtime forfeits it.
+      if (const auto& admission = bus.signing_admission) {
+        const td::uint32 window_index = *window / bus.config.slots_per_leader_window;
+        if (admission->signing_stopped()) {
+          observation->finish(tos::health::Phase::JournalSuppressed);
+          LOG(WARNING) << "consensus: the decision log admits no signing in this session; no candidate for slot "
+                       << slot;
+          break;
+        }
+        if (recorded_window_ != window_index) {
+          if (admission->leader_window_recorded(window_index)) {
+            observation->finish(tos::health::Phase::JournalSuppressed);
+            LOG(WARNING) << "consensus: leader window " << window_index
+                         << " was recorded before this restart; producing nothing in it";
+            break;
+          }
+          auto reserved = co_await td::actor::ask(
+                              admission->log, &signing::SessionDecisionLog::reserve,
+                              signing::Decision{signing::DecisionKind::LeaderWindow, window_index, td::Bits256::zero()})
+                              .wrap();
+          // Only a reservation made now grants this runtime the window: an answer that it
+          // was already decided means another runtime made it.
+          if (reserved.is_error() || reserved.ok().result != signing::ReserveResult::Reserved) {
+            observation->finish(tos::health::Phase::IntentFailure);
+            LOG(WARNING) << "consensus: leader window " << window_index
+                         << " was not recorded in the decision log; producing nothing in it";
+            break;
+          }
+          recorded_window_ = window_index;
+        }
+        if (current_leader_window_ != window) {
+          observation->finish(tos::health::Phase::Superseded);
+          break;
+        }
+        if (finality_behind_) {
+          observation->finish(tos::health::Phase::FinalitySuppressed);
+          break;
+        }
+      }
+
       auto id_to_sign = serialize_tl_object(id.to_tl(), true);
       auto data_to_sign = create_serialize_tl_object<tl::dataToSign>(bus.session_id, std::move(id_to_sign));
       // Signed by the node's custodied post-quantum consensus key, under the frozen
@@ -249,6 +292,14 @@ class BlockProducerImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
       if (bus.pq_signer == nullptr) {
         observation->finish(tos::health::Phase::MissingSigner);
         LOG(ERROR) << "consensus: no post-quantum consensus signer; not producing a candidate";
+        break;
+      }
+      // Checked again immediately before signing, with no suspension in between: the session's
+      // decision log may have stopped while the window reservation above was waiting.
+      if (bus.signing_admission && bus.signing_admission->signing_stopped()) {
+        observation->finish(tos::health::Phase::JournalSuppressed);
+        LOG(WARNING) << "consensus: the decision log stopped before the candidate for slot " << slot
+                     << " was signed; not producing it";
         break;
       }
       const auto to_sign = data_to_sign.as_slice();
@@ -296,6 +347,9 @@ class BlockProducerImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
   }
 
   std::optional<td::uint32> current_leader_window_;
+  // The leader window (an ordinal) this runtime recorded in the decision log, and so may
+  // produce candidates in. Windows only move forward, so one is enough.
+  std::optional<td::uint32> recorded_window_;
   td::CancellationTokenSource cancellation_source_;
 
   // Set while more agreed certificates are waiting to be finalized than the resolver will
