@@ -74,3 +74,9 @@ recomputes all 52 expected records from the retained native BOCs/refusal fields,
 requires exact scenario/row counts and version-16 configurations, and compares
 the complete original inputs/configurations and output records across runners.
 Optimized Python is rejected because these checks require enabled assertions.
+
+The linked Falcon two-hop/receipt consumers additionally retain authentic
+native predecessor and per-send time/configuration context; see
+[their capture contract](../falcon-auth/LINKED-ROOTS.md). Their1076/164-row
+population and wallet-falcon final validator are separate from this workflow's
+52-row fixture contract. Other consumers and full VM coverage remain open.
