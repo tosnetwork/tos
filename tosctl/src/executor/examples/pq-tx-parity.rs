@@ -23,15 +23,26 @@ fn hex_cell(value: &str) -> anyhow::Result<chain_block::Cell> {
 fn main() -> anyhow::Result<()> {
     let args: Vec<_> = env::args().collect();
     anyhow::ensure!(
-        (3..=5).contains(&args.len()),
-        "usage: pq-tx-parity config.boc scenarios.tsv [min-global-version] [--details|--roots]"
+        (3..=6).contains(&args.len()),
+        "usage: pq-tx-parity config.boc scenarios.tsv [min-global-version] [--details|--roots] [--expect-count=N]"
     );
     if args.len() == 5 && args[4] == "--roots" {
         anyhow::ensure!(args[3] == "16", "root mode requires version argument 16");
         return pq_tx_roots::run(&args[1], &args[2]);
     }
-    let detailed = args.len() == 5;
+    let detailed = args.len() >= 5;
     anyhow::ensure!(!detailed || args[4] == "--details", "unknown output option");
+    let expected_count = args
+        .get(5)
+        .map(|value| -> anyhow::Result<usize> {
+            let count = value
+                .strip_prefix("--expect-count=")
+                .ok_or_else(|| anyhow::anyhow!("unknown count option"))?
+                .parse::<usize>()?;
+            anyhow::ensure!(count > 0, "expected scenario count must be positive");
+            Ok(count)
+        })
+        .transpose()?;
     // The scenarios decide which version they need. The post-quantum ones need the
     // instruction to be activated; the ones that compare a version boundary need to run
     // below it, and asserting 16 there would refuse exactly the case under test.
@@ -69,14 +80,32 @@ fn main() -> anyhow::Result<()> {
         };
         let outcome = executor.execute_with_params(Some(message), &mut account, params);
         let (exit, action, messages, account_hash) = match outcome {
-            Ok(transaction) => summarize(&transaction, &account, detailed)?,
+            Ok(transaction) => {
+                let (exit, action, messages, account_hash) =
+                    summarize(&transaction, &account, detailed)?;
+                (exit.to_string(), action, messages, account_hash)
+            }
             // A rejected transaction is a result, not a driver failure.
-            Err(error) => (describe(&error), 0, String::from("-"), String::from("-")),
+            Err(error) => {
+                let exit = match error.downcast_ref::<tos_executor::ExecutorError>() {
+                    Some(tos_executor::ExecutorError::NoFundsToImportMsg)
+                        if expected_count.is_some() =>
+                    {
+                        String::from("import-no-funds")
+                    }
+                    _ => describe(&error).to_string(),
+                };
+                (exit, 0, String::from("-"), String::from("-"))
+            }
         };
         println!("{}\t{}\t{}\t{}\t{}", f[0], exit, action, messages, account_hash);
         count += 1;
     }
-    anyhow::ensure!(count >= 4, "incomplete transaction scenario set");
+    if let Some(expected) = expected_count {
+        anyhow::ensure!(count == expected, "expected {expected} scenarios, executed {count}");
+    } else {
+        anyhow::ensure!(count >= 4, "incomplete transaction scenario set");
+    }
     Ok(())
 }
 

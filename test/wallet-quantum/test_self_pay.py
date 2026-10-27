@@ -174,8 +174,8 @@ class Harness:
         self.account = native.active_account(self.address, self.code, self.data)
         self.rows = []
         self.signatures = {}
-        self.scenarios = []
-        self.transcripts = []
+        self.parity_groups = {}
+        self.parity_names = set()
 
     def make_authority(self, policy_value=1, network=NETWORK, primary=None, rescue=None):
         return (
@@ -257,24 +257,102 @@ class Harness:
             emu.close()
         if name:
             (self.output / (name + ".json")).write_text(json.dumps(result, indent=2) + "\n")
-            if configuration.hash == config().hash and (
-                result["success"] or result.get("external_not_accepted")
-            ):
-                self.scenarios.append(
-                    "\t".join(
-                        [
-                            name,
-                            str(native.NOW),
-                            str(lt),
-                            account.refs[0].boc().hex(),
-                            message.boc().hex(),
-                            "-",
-                        ]
-                    )
+            assert name not in self.parity_names, ("duplicate transaction name", name)
+            self.parity_names.add(name)
+            import_rejected = (
+                not result["success"]
+                and not result.get("external_not_accepted")
+                and name.startswith("balance-")
+                and re.fullmatch(
+                    r"Emulate transaction failed: \[Error : -701 : cannot run message on account "
+                    r"inbound external message rejected by account [0-9A-F]{64} "
+                    r"before smart-contract execution\]",
+                    result.get("error", ""),
                 )
-                with patch.object(fee_tx_parity, "from_boc", from_boc):
-                    self.transcripts.append(fee_tx_parity.transcript(name, result))
+                is not None
+            )
+            assert result["success"] or result.get("external_not_accepted") or import_rejected, (
+                "unclassified native result",
+                name,
+                result,
+            )
+            key = configuration.hash.hex()
+            group = self.parity_groups.setdefault(
+                key, dict(configuration=configuration, scenarios=[], transcripts=[])
+            )
+            group["scenarios"].append(
+                "\t".join(
+                    [
+                        name,
+                        str(native.NOW),
+                        str(lt),
+                        account.refs[0].boc().hex(),
+                        message.boc().hex(),
+                        "-",
+                    ]
+                )
+            )
+            with patch.object(fee_tx_parity, "from_boc", from_boc):
+                group["transcripts"].append(
+                    f"{name}\timport-no-funds\t0\t-\t-"
+                    if import_rejected
+                    else fee_tx_parity.transcript(name, result)
+                )
         return result
+
+    def export_parity(self, rust_driver):
+        fixture = from_boc((ROOT / "tosctl/src/executor/real_boc/default_config.boc").read_bytes())
+        default_hash = config().hash.hex()
+        exported_names = set()
+        groups = []
+        for key, group in sorted(self.parity_groups.items()):
+            directory = self.output if key == default_hash else self.output / "parity-configs" / key
+            directory.mkdir(parents=True, exist_ok=True)
+            scenarios, expected = group["scenarios"], group["transcripts"]
+            names = [row.split("\t", 1)[0] for row in scenarios]
+            assert len(names) == len(expected)
+            assert not exported_names.intersection(names), "duplicate parity transaction"
+            exported_names.update(names)
+            (directory / "config.boc").write_bytes(
+                Cell(fixture.bits, [group["configuration"]]).boc()
+            )
+            (directory / "scenarios.tsv").write_text("\n".join(scenarios) + "\n")
+            (directory / "native.tsv").write_text("\n".join(expected) + "\n")
+            if rust_driver:
+                result = subprocess.run(
+                    [
+                        str(rust_driver.resolve()),
+                        str(directory / "config.boc"),
+                        str(directory / "scenarios.tsv"),
+                        "16",
+                        "--details",
+                        f"--expect-count={len(names)}",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=600,
+                )
+                (directory / "rust.tsv").write_text(result.stdout)
+                (directory / "rust.log").write_text(result.stderr)
+                assert result.returncode == 0, (key, result.returncode, result.stderr[-2000:])
+                assert result.stdout.splitlines() == expected, (
+                    "native/Rust transaction mismatch",
+                    key,
+                )
+            groups.append(
+                dict(
+                    config_hash=key,
+                    directory=str(directory.relative_to(self.output)) or ".",
+                    cases=len(names),
+                    names=names,
+                    rust_parity="passed" if rust_driver else "not run",
+                )
+            )
+        assert exported_names == self.parity_names, (
+            "named transactions omitted from parity export",
+            sorted(self.parity_names - exported_names),
+        )
+        return groups
 
     def send(
         self,
@@ -723,26 +801,7 @@ def main():
         assert saved["primary"] == (1 if label == "signature" else 0)
         mutations[label] = "caught"
 
-    fixture = from_boc((ROOT / "tosctl/src/executor/real_boc/default_config.boc").read_bytes())
-    (h.output / "config.boc").write_bytes(Cell(fixture.bits, [config()]).boc())
-    (h.output / "scenarios.tsv").write_text("\n".join(h.scenarios) + "\n")
-    (h.output / "native.tsv").write_text("\n".join(h.transcripts) + "\n")
-    if args.rust_driver:
-        result = subprocess.run(
-            [
-                str(args.rust_driver.resolve()),
-                str(h.output / "config.boc"),
-                str(h.output / "scenarios.tsv"),
-                "16",
-                "--details",
-            ],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        (h.output / "rust.tsv").write_text(result.stdout)
-        (h.output / "rust.log").write_text(result.stderr)
-        assert result.stdout.splitlines() == h.transcripts, "native/Rust transaction mismatch"
+    parity_groups = h.export_parity(args.rust_driver)
 
     report = dict(
         source_commit=run("git", "-C", ROOT, "rev-parse", "HEAD").strip(),
@@ -754,7 +813,8 @@ def main():
         cases=h.rows,
         balance_sweep=balance_rows,
         mutations=mutations,
-        parity_cases=len(h.scenarios),
+        parity_cases=sum(group["cases"] for group in parity_groups),
+        parity_groups=parity_groups,
         rust_parity="passed" if args.rust_driver else "not run",
         provenance=provenance(args.rust_driver),
         scope="Local transaction fixtures; no mobile or live-chain acceptance",
