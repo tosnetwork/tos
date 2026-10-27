@@ -104,6 +104,11 @@ class PackageWriter : public td::actor::Actor {
 
 class ArchiveLru;
 
+// Process-wide counts of archive slice database opens and closes. A reader
+// whose access pattern makes a slice close and reopen shows up here.
+td::uint64 archive_slice_opens();
+td::uint64 archive_slice_closes();
+
 class ArchiveSlice : public td::actor::Actor {
  public:
   ArchiveSlice(td::uint32 archive_id, bool key_blocks_only, bool temp, bool finalized, td::uint32 shard_split_depth,
