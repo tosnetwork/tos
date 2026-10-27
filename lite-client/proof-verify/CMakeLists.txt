@@ -1,7 +1,7 @@
 # Shared proof verification core and its installed command-line front end.
 # The engine accepts borrowed in-memory material and has no transport/file API.
 add_library(proof-verify-engine STATIC proof-verify.cpp proof-verify.h embedded.cpp embedded.h
-  wallet-transaction.cpp wallet-transaction.h)
+  wallet-transaction.cpp wallet-transaction.h self-pay-simulation-context.cpp self-pay-simulation-context.h)
 target_include_directories(proof-verify-engine PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
   $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}>)
 target_link_libraries(proof-verify-engine PUBLIC lite-client-proof-common tos_block smc-envelope tl_api tl_lite_api
@@ -76,3 +76,7 @@ add_test(NAME proof-material-acquisition COMMAND test-proof-acquisition ${PROJEC
 add_executable(test-proof-readonly-query ../../test/pq-native/proof-readonly-query-test.cpp)
 target_link_libraries(test-proof-readonly-query PRIVATE proof-verify-engine)
 add_test(NAME proof-readonly-query COMMAND test-proof-readonly-query)
+
+add_executable(test-self-pay-simulation-context ../../test/pq-native/self-pay-simulation-context-test.cpp)
+target_link_libraries(test-self-pay-simulation-context PRIVATE proof-verify-engine)
+add_test(NAME self-pay-simulation-context COMMAND test-self-pay-simulation-context)
