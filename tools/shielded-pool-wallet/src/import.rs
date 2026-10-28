@@ -22,7 +22,7 @@ use shielded_pool_circuit::domains::dummy_owner_nf_hash;
 use shielded_pool_circuit::field::Fr;
 use shielded_pool_circuit::notes;
 
-use crate::delivery::{Kind, Plaintext};
+use crate::delivery::{Kind, Plaintext, RECOVERY_PAYLOAD_SLOT};
 use crate::error::{Rejection, Result};
 use crate::keys::PoolInstance;
 
@@ -128,6 +128,9 @@ pub fn import(
     // owner and the wallet can only ever import the zero-amount template.
     // The person who causes that is the recipient, not the sender.
     if plaintext.kind == Kind::Recovery {
+        if plaintext.slot != RECOVERY_PAYLOAD_SLOT {
+            return Ok(Err(Rejection::RecoverySlot));
+        }
         if let Some(amount) = slot.recovered {
             // Rebuilt and matched against the body the chain published, the
             // same way an ordinary output is. The template hash is what the

@@ -53,6 +53,13 @@ class GeneratedBundleTests(unittest.TestCase):
                     OPTIONS.controls,
                     cls.source,
                     runner,
+                    module_candidate=OPTIONS.module_candidate
+                    if index == 0
+                    else OPTIONS.module_repeat_candidate,
+                    module_diagnostic=OPTIONS.module_diagnostic
+                    if index == 0
+                    else OPTIONS.module_repeat_diagnostic,
+                    module_controls=OPTIONS.module_controls,
                 )
 
     def setUp(self):
@@ -92,6 +99,47 @@ class GeneratedBundleTests(unittest.TestCase):
         shutil.copytree(self.bundle(), older)
         self.metadata(lambda m: m.update(run_attempt="1"), older)
         self.verify()
+
+    def test_module_fresh_rng_differs_but_recorded_inputs_match(self):
+        for mode in gate.MODES:
+            first = self.root / "roots" / gate.RUNNERS[0] / "modules" / mode
+            second = self.root / "roots" / gate.RUNNERS[1] / "modules" / mode
+            self.assertNotEqual(
+                (first / "native/native-wallet-signatures.json").read_bytes(),
+                (second / "native/native-wallet-signatures.json").read_bytes(),
+            )
+            self.assertNotEqual(
+                (first / "configuration-0/wallet-module-roots.tsv").read_bytes(),
+                (second / "configuration-0/wallet-module-roots.tsv").read_bytes(),
+            )
+            for name in gate.module_files():
+                if name.startswith("recorded-replay/"):
+                    self.assertEqual(
+                        (first / name).read_bytes(), (second / name).read_bytes(), name
+                    )
+        self.verify()
+
+    def test_module_replay_roots_cannot_be_replaced_by_manifest_hashes(self):
+        name = "modules/candidate/recorded-replay/configuration-0/wallet-module-root-driver.stdout"
+        path = self.bundle() / name
+        rows = path.read_text().splitlines()
+        fields = rows[0].split("\t")
+        fields[2] = "0" * 64
+        rows[0] = "\t".join(fields)
+        path.write_text("\n".join(rows) + "\n")
+        self.refresh(name)
+        with self.assertRaisesRegex(AssertionError, "wallet-module root mismatch"):
+            self.verify()
+
+    def test_module_controls_cannot_be_omitted(self):
+        name = "module-controls.json"
+        path = self.bundle() / name
+        value = json.loads(path.read_text())
+        value["modes"].pop("diagnostic")
+        path.write_text(json.dumps(value))
+        self.refresh(name)
+        with self.assertRaisesRegex(AssertionError, "wallet-module controls incomplete"):
+            self.verify()
 
     def test_latest_bad_bundle_never_falls_back(self):
         older = self.root / "roots" / "older-arm"
@@ -187,7 +235,15 @@ class GeneratedBundleTests(unittest.TestCase):
             self.assertRaisesRegex(AssertionError, "generated bundle file size limit"),
         ):
             gate.bundle(
-                output, OPTIONS.release, post, OPTIONS.controls, self.source, gate.RUNNERS[0]
+                output,
+                OPTIONS.release,
+                post,
+                OPTIONS.controls,
+                self.source,
+                gate.RUNNERS[0],
+                module_candidate=OPTIONS.module_candidate,
+                module_diagnostic=OPTIONS.module_diagnostic,
+                module_controls=OPTIONS.module_controls,
             )
         self.assertFalse(output.exists(), "oversize source was copied before admission")
 
@@ -253,5 +309,13 @@ if __name__ == "__main__":
     parser.add_argument("--release", type=Path, required=True)
     parser.add_argument("--post", type=Path, required=True)
     parser.add_argument("--controls", type=Path, required=True)
+    for name in (
+        "module-candidate",
+        "module-diagnostic",
+        "module-repeat-candidate",
+        "module-repeat-diagnostic",
+        "module-controls",
+    ):
+        parser.add_argument("--" + name, type=Path, required=True)
     OPTIONS, remaining = parser.parse_known_args()
     unittest.main(argv=[__file__, *remaining])

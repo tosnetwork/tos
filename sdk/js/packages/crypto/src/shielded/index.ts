@@ -28,6 +28,7 @@ export {
   ownerCommitment,
   OUTPUT_DATA_BYTES,
   PLAINTEXT_BYTES,
+  RECOVERY_PAYLOAD_SLOT,
   seal,
 } from "./delivery.js";
 export {

@@ -96,6 +96,10 @@ pub struct Entry {
     pub allocated: u64,
     pub links: u64,
     pub identity: (u64, u64),
+    /// Permission and special bits (`st_mode & 0o7777`).
+    pub mode: u32,
+    pub uid: u32,
+    pub gid: u32,
 }
 /// Widen a C integer field to `u64`. The widths of `stat` and `statvfs` fields differ
 /// between Linux targets (`st_nlink` is `u64` on x86-64 and `u32` on arm64), so a
@@ -192,6 +196,9 @@ impl Root {
                 .context("allocated size overflow")?,
             links: wide(stat.st_nlink),
             identity: (wide(stat.st_dev), wide(stat.st_ino)),
+            mode: stat.st_mode & 0o7777,
+            uid: stat.st_uid,
+            gid: stat.st_gid,
         }))
     }
     /// A second handle on the same held directory.
@@ -213,6 +220,19 @@ impl Root {
     pub fn identity(&self) -> Result<(u64, u64)> {
         let metadata = self.directory.metadata()?;
         Ok((metadata.dev(), metadata.ino()))
+    }
+    /// Permission bits, owner and group of the held directory descriptor.
+    pub fn status(&self) -> Result<(u32, u32, u32)> {
+        let metadata = self.directory.metadata()?;
+        Ok((metadata.mode() & 0o7777, metadata.uid(), metadata.gid()))
+    }
+    /// Set the permission bits of the held directory through its descriptor.
+    pub fn set_mode(&self, mode: u32) -> Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+        ensure!(mode <= 0o777, "directory mode carries special bits");
+        self.directory.set_permissions(std::fs::Permissions::from_mode(mode))?;
+        ensure!(self.status()?.0 == mode, "directory mode was not applied");
+        Ok(())
     }
     pub fn create(path: &Path) -> Result<Self> {
         use std::os::unix::fs::DirBuilderExt;

@@ -21,7 +21,7 @@ async fn main() -> std::process::ExitCode {
     match run().await {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(error) => {
-            let code = error.downcast_ref::<commands::StatusExit>().map_or(1, |status| status.0);
+            let code = commands::exit_code(&error);
             eprintln!("{error:#}");
             std::process::ExitCode::from(code)
         }

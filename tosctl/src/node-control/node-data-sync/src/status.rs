@@ -250,3 +250,30 @@ impl std::fmt::Display for StatusExit {
     }
 }
 impl std::error::Error for StatusExit {}
+
+/// The process exit status for a command error: a status observation's own code, 5 when a
+/// stopped source was left stopped, and 1 for every other failure.
+pub fn exit_code(error: &anyhow::Error) -> u8 {
+    if let Some(status) = error.downcast_ref::<StatusExit>() {
+        return status.0;
+    }
+    if error.downcast_ref::<crate::service::SourceLeftStopped>().is_some() {
+        return crate::service::SOURCE_LEFT_STOPPED_EXIT;
+    }
+    1
+}
+
+#[cfg(test)]
+mod exit_tests {
+    use super::*;
+    #[test]
+    fn exit_codes_survive_every_context_layer() {
+        let stopped = anyhow::Error::new(crate::service::SourceLeftStopped("left".to_owned()))
+            .context("capture")
+            .context("command failed");
+        assert_eq!(exit_code(&stopped), 5);
+        let status = anyhow::Error::new(StatusExit(3)).context("service failed");
+        assert_eq!(exit_code(&status), 3);
+        assert_eq!(exit_code(&anyhow::anyhow!("ordinary").context("service failed")), 1);
+    }
+}

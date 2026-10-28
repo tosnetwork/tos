@@ -320,6 +320,7 @@ fn publication_checks_metadata_and_pruning_respects_capture_and_restore_leases()
                 cache: parent.path.join("cache"),
                 publisher_key: hex::encode(trusted),
                 source_url: None,
+                lane: node_data_sync::operations::Lane::Restore,
             };
             operation.write_new("request.json", &serde_json::to_vec(&request)?)?;
             operation.write_new("generation.json", &signed.bytes()?)?;

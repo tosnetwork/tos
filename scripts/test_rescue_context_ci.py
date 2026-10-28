@@ -295,6 +295,34 @@ class RescueCiTests(unittest.TestCase):
 
     def test_generated_root_obligations_cannot_be_removed_or_narrowed(self):
         mutations = [
+            (
+                "          python test/executor-parity/test_wallet_module_inputs.py",
+                "          true",
+            ),
+            (
+                "--mode candidate --output artifacts/module-root-controls.json",
+                "--mode diagnostic --output artifacts/module-root-controls.json",
+            ),
+            (
+                "--mode diagnostic --output artifacts/module-root-controls.json",
+                "--mode candidate --output artifacts/module-root-controls.json",
+            ),
+            (
+                "--module-candidate artifacts/context/quantum-release-primary",
+                "--module-candidate artifacts/context/quantum-module",
+            ),
+            (
+                "--module-diagnostic artifacts/context/quantum-module",
+                "--module-diagnostic artifacts/context/quantum-release-primary",
+            ),
+            (
+                "--module-repeat-candidate artifacts/module-repeat-candidate",
+                "--module-repeat-candidate artifacts/context/quantum-release-primary",
+            ),
+            (
+                "--module-controls artifacts/module-root-controls.json",
+                "--module-controls artifacts/generated-root-controls.json",
+            ),
             ("test/executor-parity/**", "test/unrelated/**"),
             ("test/falcon-auth/linked_roots.py", "test/unrelated/helper.py"),
             ("test/rel02/**", "test/unrelated/replay/**"),

@@ -186,7 +186,19 @@ Back the seed up offline and encrypted, never on the host.
 A new non-validating full node can start from a database snapshot instead of synchronizing from
 scratch. The snapshot replaces chain state the node would otherwise check for
 itself, so the container imports one only when the operator asks for it and
-names its content:
+names its content.
+
+**This is the weakest of the three snapshot lanes** described in
+[node-data sync](../doc/node-data-sync.md#lanes). The archive is authenticated
+only by the `DUMP_SHA256` digest you configure: there is no publisher key, no
+signed manifest, no check of the engine build, cell-storage mode or fork policy,
+and no native reopen of the imported database before the node starts. The
+project's snapshot publisher (`tosctl node dump`) does not produce these
+archives, and its signed catalog cannot be imported here. On an operator host,
+start a new node from that catalog with `tosctl node sync bootstrap`, which keeps
+the full signed-manifest verification; use this importer only for an archive
+produced elsewhere whose digest you hold independently. The container asks for
+the import with:
 
 ```
 -e "SNAPSHOT_IMPORT=1" \
@@ -205,7 +217,7 @@ target's own votes or destroyed-session records. Refusal does not depend on
 key expiry or snapshot age. The startup catch-up threshold is not a signing
 safety fence.
 
-For an existing validator, use the [same-node restore procedure](../doc/node-data-sync.md)
+For an existing validator, use the [same-node restore procedure](../doc/node-data-sync.md#restore-and-recover)
 with its original, intact signing state. If that state is lost, keep the old
 signer stopped and retire its affected signing identity before provisioning a
 fresh one for a later validator set. Never restore an old vote-journal backup

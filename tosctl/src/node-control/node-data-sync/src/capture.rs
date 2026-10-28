@@ -20,6 +20,30 @@ pub fn cold_image_checked(
 ) -> Result<u64> {
     cold_image_impl(frozen, source, image, Some(secret))
 }
+/// Native roots the engine creates only on demand. `static` is opened by the root database
+/// but written only by a hardfork or by an operator who places genesis files; a node that
+/// never had either has no such directory. `tmp` is created at start and may be absent in a
+/// copied tree. An absent on-demand root is captured as an empty directory.
+pub const ON_DEMAND_ROOTS: [&str; 2] = ["static", "tmp"];
+
+/// Every captured native root, opened below the held source descriptor. Runs before the
+/// source is stopped and again during capture: a missing required root, a link, a special
+/// file, a replaced directory or another mount refuses.
+pub fn precheck_roots(source: &Root) -> Result<()> {
+    for name in crate::paths::CHAIN_ROOTS.into_iter().chain(["state", "tmp"]) {
+        captured_root(source, name)?;
+    }
+    Ok(())
+}
+fn captured_root(source: &Root, name: &str) -> Result<Option<Root>> {
+    match trees::optional_directory(source, name)
+        .context("captured native root is a link or special file")?
+    {
+        Some(root) => Ok(Some(root)),
+        None if ON_DEMAND_ROOTS.contains(&name) => Ok(None),
+        None => anyhow::bail!("captured native root is missing: {name}"),
+    }
+}
 fn cold_image_impl(
     frozen: &Frozen,
     source: &Root,
@@ -30,13 +54,12 @@ fn cold_image_impl(
     let mut total = 0_u64;
     let mut count = 0_usize;
     for name in crate::paths::CHAIN_ROOTS.into_iter().chain(["state", "tmp"]) {
-        // Opened below the held source descriptor: a replaced, linked or mounted root refuses.
-        let root = match trees::optional_directory(source, name)
-            .context("captured native root is a link or special file")?
-        {
-            Some(root) => root,
-            None if name == "tmp" => continue,
-            None => anyhow::bail!("captured native root is missing: {name}"),
+        let Some(root) = captured_root(source, name)? else {
+            // Recovery material is never invented; an absent chain root is an empty one.
+            if name != "tmp" {
+                ensure_image_root(image, name)?;
+            }
+            continue;
         };
         for file in trees::inventory(&root)? {
             count = count.checked_add(1).context("capture file count overflow")?;
@@ -49,13 +72,17 @@ fn cold_image_impl(
             }
             trees::copy_file(source, &path, image, &path, file.size)?;
         }
-        if !image.path.join(name).try_exists()? {
-            use std::os::unix::fs::DirBuilderExt;
-            fs::DirBuilder::new().mode(0o700).create(image.path.join(name))?;
-            image.sync()?;
-        }
+        ensure_image_root(image, name)?;
     }
     Ok(total)
+}
+fn ensure_image_root(image: &Root, name: &str) -> Result<()> {
+    if !image.path.join(name).try_exists()? {
+        use std::os::unix::fs::DirBuilderExt;
+        fs::DirBuilder::new().mode(0o700).create(image.path.join(name))?;
+        image.sync()?;
+    }
+    Ok(())
 }
 /// Enumerate only native public file classes after the captured image has recovered and reopened.
 pub fn public_files(image: &Root) -> Result<Vec<trees::TreeFile>> {
@@ -89,6 +116,84 @@ pub fn install_chain_roots(payload: &Root, replacement: &Root) -> Result<()> {
     payload.sync()?;
     replacement.sync()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod on_demand_root_tests {
+    use super::*;
+    /// A stopped source with every engine-created root and one chain file, minus `omit`.
+    fn source(omit: &[&str]) -> Result<(tempfile::TempDir, Root)> {
+        let temporary = tempfile::tempdir()?;
+        let source = Root::create(&temporary.path().canonicalize()?.join("source"))?;
+        for name in ["celldb", "files", "archive", "static", "state", "tmp"] {
+            if !omit.contains(&name) {
+                source.ensure_directory(name)?;
+            }
+        }
+        if !omit.contains(&"celldb") {
+            source.write_new("celldb/CURRENT", b"MANIFEST-000001\n")?;
+        }
+        Ok((temporary, source))
+    }
+    #[test]
+    fn a_source_that_never_had_static_captures_it_as_empty() -> Result<()> {
+        let (temporary, source) = source(&["static"])?;
+        precheck_roots(&source)?;
+        let image = Root::create(&temporary.path().canonicalize()?.join("image"))?;
+        let frozen = Frozen::acquire(&source.path)?;
+        cold_image(&frozen, &source, &image)?;
+        assert!(image.path.join("static").is_dir(), "absent static was not captured as empty");
+        assert_eq!(std::fs::read_dir(image.path.join("static"))?.count(), 0);
+        assert_eq!(std::fs::read(image.path.join("celldb/CURRENT"))?, b"MANIFEST-000001\n");
+        assert!(!source.path.join("static").exists(), "capture created static in the source");
+        Ok(())
+    }
+    #[test]
+    fn a_missing_engine_root_still_refuses_before_and_during_capture() -> Result<()> {
+        for name in ["celldb", "files", "archive", "state"] {
+            let (temporary, source) = source(&[name])?;
+            let message = format!("{:#}", precheck_roots(&source).expect_err(name));
+            assert!(message.contains(&format!("missing: {name}")), "{name}: {message}");
+            let image = Root::create(&temporary.path().canonicalize()?.join("image"))?;
+            let frozen = Frozen::acquire(&source.path)?;
+            let message = format!("{:#}", cold_image(&frozen, &source, &image).expect_err(name));
+            assert!(message.contains(&format!("missing: {name}")), "{name}: {message}");
+        }
+        // An on-demand root that exists but is a link still refuses.
+        let (_temporary, source) = source(&["static"])?;
+        std::os::unix::fs::symlink("celldb", source.path.join("static"))?;
+        let message = format!("{:#}", precheck_roots(&source).expect_err("linked static"));
+        assert!(message.contains("link or special file"), "{message}");
+        Ok(())
+    }
+    #[test]
+    fn node_local_private_trees_are_never_captured_or_published() -> Result<()> {
+        let (temporary, source) = source(&[])?;
+        for path in
+            ["console-client/client", "console-client/server.pub", "keyring/KEY", "keys/seed"]
+        {
+            source.write_new(path, b"node-local private bytes")?;
+        }
+        let image = Root::create(&temporary.path().canonicalize()?.join("image"))?;
+        let frozen = Frozen::acquire(&source.path)?;
+        cold_image(&frozen, &source, &image)?;
+        for name in ["console-client", "keyring", "keys"] {
+            assert!(!image.path.join(name).exists(), "{name} entered the capture image");
+        }
+        for files in public_files(&image)? {
+            assert!(!files.path.contains("console-client"), "published {}", files.path);
+        }
+        for path in [
+            "console-client/client",
+            "chain/console-client/client",
+            "chain/celldb/console-client",
+            "keyring/KEY",
+            "chain/keys/seed",
+        ] {
+            assert!(crate::paths::public_path(path).is_err(), "publishable private path {path}");
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]

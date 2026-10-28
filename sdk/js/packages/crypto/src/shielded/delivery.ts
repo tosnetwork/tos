@@ -39,6 +39,14 @@ export const VERSION = 1;
 export const FLAG_DUMMY = 0x0001;
 export const FLAG_RECOVERY = 0x0002;
 
+/**
+ * Section 3: the slot a withdrawal's recovery payload is sealed and opened
+ * under. It is not one of the transaction's output slots, so the profile
+ * fixes the value; a wallet that used another would never find its own
+ * recovery note.
+ */
+export const RECOVERY_PAYLOAD_SLOT = 2;
+
 /** What an output slot says about itself. */
 export type Kind = "Ordinary" | "Dummy" | "Recovery";
 
@@ -49,6 +57,7 @@ export type Rejection =
   | "Magic"
   | "Version"
   | "Slot"
+  | "RecoverySlot"
   | "Flags"
   | "NoteSecretNotCanonical"
   | "NoteSecretZero"
@@ -272,6 +281,7 @@ export function importNote(
   // bounce returns -- so it is checked against the template hash the
   // withdrawal signed, not against a published note body.
   if (plaintext.kind === "Recovery") {
+    if (plaintext.slot !== RECOVERY_PAYLOAD_SLOT) throw new Refused("RecoverySlot");
     const template = recoveryTemplateHash(owner, slot.outputDataHash);
     if (template !== slot.noteBody) throw new Refused("NoteBodyMismatch");
     return {
