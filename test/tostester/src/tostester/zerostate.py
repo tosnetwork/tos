@@ -124,6 +124,10 @@ class NetworkConfig:
     deployment_fee_schedule: bool = False
     validator_economics_profile: bool = False
     validator_election_stage_a_profile: bool = False
+    # TEST-ONLY: the unaccelerated Stage B rehearsal. It keeps every production
+    # timing and economics value and only allows the explicit faucet override,
+    # because its wallets need more than the production bootstrap balance.
+    validator_election_stage_b_profile: bool = False
     # TEST-ONLY: extend the elected-set period for a lifecycle that must
     # recover an old stake before it can submit another order. None preserves
     # the Stage A 300/180/60/180 election schedule.
@@ -660,6 +664,12 @@ def create_zerostate(
         )
     if config.validator_election_stage_a_profile and not config.validator_economics_profile:
         raise ValueError("validator election Stage A profile requires validator economics profile")
+    if config.validator_election_stage_b_profile and (
+        not config.validator_economics_profile or config.validator_election_stage_a_profile
+    ):
+        raise ValueError(
+            "validator election Stage B profile requires validator economics profile without Stage A"
+        )
     stage_a_elected_for = config.validator_election_stage_a_elected_for
     if stage_a_elected_for is not None:
         if not config.validator_election_stage_a_profile:
@@ -700,9 +710,11 @@ def create_zerostate(
             )
     experiment_faucet_balance = config.validator_election_experiment_faucet_balance_nanotos
     if experiment_faucet_balance is not None:
-        if not config.validator_election_stage_a_profile:
+        if not (
+            config.validator_election_stage_a_profile or config.validator_election_stage_b_profile
+        ):
             raise ValueError(
-                "validator election experiment faucet override requires the Stage A profile"
+                "validator election experiment faucet override requires the Stage A or Stage B profile"
             )
         if (
             isinstance(experiment_faucet_balance, bool)
@@ -776,11 +788,13 @@ def create_zerostate(
             profile["original_vset_valid_for"] = 600
             if bootstrap_valid_for is not None:
                 profile["original_vset_valid_for"] = bootstrap_valid_for
-            if experiment_faucet_balance is not None:
-                profile["main_wallet_genesis_balance"] = str(experiment_faucet_balance)
-                profile["expected_genesis_supply"] = str(
-                    experiment_faucet_balance + 1_000 * NANOTOS_PER_TOS
-                )
+        # TEST-ONLY faucet: the Stage A and Stage B rehearsals fund their
+        # wallets from it; timing above is unchanged by it.
+        if experiment_faucet_balance is not None:
+            profile["main_wallet_genesis_balance"] = str(experiment_faucet_balance)
+            profile["expected_genesis_supply"] = str(
+                experiment_faucet_balance + VALIDATOR_ECONOMICS_SYSTEM_TOS * NANOTOS_PER_TOS
+            )
     else:
         profile = {
             "smc3_genesis_balance": "TM$1",

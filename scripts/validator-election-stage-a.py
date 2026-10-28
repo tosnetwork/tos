@@ -491,6 +491,7 @@ class ValidatorElectionRehearsal:
         config.shard_validators = VALIDATOR_COUNT
         config.validator_economics_profile = True
         config.validator_election_stage_a_profile = self.profile.accelerated
+        config.validator_election_stage_b_profile = self.profile.stage == "b"
         if (
             self.profile.stage == "a"
             and self.profile.elect_start_before != PROFILES["a"].elect_start_before
@@ -510,13 +511,14 @@ class ValidatorElectionRehearsal:
             config.validator_election_experiment_faucet_balance_nanotos = (
                 EXPERIMENT_GENESIS_FAUCET_FUNDING
             )
-        elif self.profile.accelerated:
+        elif self.profile.accelerated or self.profile.stage == "b":
+            # Stage B keeps the production election cycle; only its genesis
+            # wallet is a test faucet, since the rehearsal wallets need more
+            # than the production bootstrap balance.
             config.validator_election_experiment_faucet_balance_nanotos = (
                 LAUNCH_GATE_GENESIS_FAUCET_FUNDING
             )
         else:
-            # Genesis accepts a faucet override only for the Stage A profile, so
-            # an unaccelerated run starts from the production bootstrap wallet.
             config.validator_election_experiment_faucet_balance_nanotos = None
         self.require_genesis_faucet_covers_wallets(
             config.validator_election_experiment_faucet_balance_nanotos

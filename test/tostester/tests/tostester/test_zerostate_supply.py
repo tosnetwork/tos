@@ -447,12 +447,12 @@ def test_validator_economics_without_stage_a_rejects_bootstrap_lifetime_override
         )
 
 
-def test_validator_election_experiment_faucet_override_is_stage_a_only(tmp_path):
+def test_validator_election_experiment_faucet_override_is_stage_a_or_b_only(tmp_path):
     install = Install(BUILD_DIR, REPO)
     keys = [Key() for _ in range(EXPECTED_VALIDATOR_COUNT)]
     experiment_balance = EXPECTED_VALIDATOR_EXPERIMENT_FAUCET_TOS * NANOTOS_PER_TOS
 
-    with pytest.raises(ValueError, match="requires the Stage A profile"):
+    with pytest.raises(ValueError, match="requires the Stage A or Stage B profile"):
         create_zerostate(
             install,
             tmp_path / "not-stage-a",
@@ -495,6 +495,60 @@ def test_validator_election_experiment_faucet_override_is_stage_a_only(tmp_path)
         500 * NANOTOS_PER_TOS,
         experiment_balance,
     ]
+
+
+def test_stage_b_genesis_applies_the_faucet_and_keeps_production_timing(tmp_path):
+    install = Install(BUILD_DIR, REPO)
+    keys = [Key() for _ in range(EXPECTED_VALIDATOR_COUNT)]
+    faucet = 96_080 * NANOTOS_PER_TOS
+
+    with pytest.raises(ValueError, match="Stage B profile requires validator economics"):
+        create_zerostate(
+            install,
+            tmp_path / "stage-b-without-economics",
+            NetworkConfig(validator_election_stage_b_profile=True),
+            keys,
+        )
+    with pytest.raises(ValueError, match="Stage B profile requires validator economics"):
+        create_zerostate(
+            install,
+            tmp_path / "stage-a-and-b",
+            NetworkConfig(
+                validator_economics_profile=True,
+                validator_election_stage_a_profile=True,
+                validator_election_stage_b_profile=True,
+            ),
+            keys,
+        )
+
+    stage_b_dir = tmp_path / "stage-b"
+    stage_b_dir.mkdir()
+    zerostate = create_zerostate(
+        install,
+        stage_b_dir,
+        NetworkConfig(
+            shard_validators=EXPECTED_VALIDATOR_COUNT,
+            validator_economics_profile=True,
+            validator_election_stage_b_profile=True,
+            validator_election_experiment_faucet_balance_nanotos=faucet,
+        ),
+        keys,
+    )
+    state = _load_masterchain_state(zerostate.masterchain.file)
+
+    assert require(state.total_balance).tomis == faucet + 1_000 * NANOTOS_PER_TOS
+    assert _positive_account_balances(state) == [
+        500 * NANOTOS_PER_TOS,
+        500 * NANOTOS_PER_TOS,
+        faucet,
+    ]
+    param15 = _config(state, 15, ConfigParam15)
+    assert (
+        param15.validators_elected_for,
+        param15.elections_start_before,
+        param15.elections_end_before,
+        param15.stake_held_for,
+    ) == (65_536, 32_768, 8_192, 32_768)
 
 
 def test_validator_economics_profile_matches_bootstrap_spec(tmp_path):
