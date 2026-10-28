@@ -960,29 +960,16 @@ td::Status SigningLedger::start_unknown_history(const td::Bits256& validator, co
   header.validator = validator;
   header.dir = binding;
   header.history = History::Pending;
-  // Never earlier than this actor's start: a later t0 only ever fences more.
+  // Never earlier than this actor's start: a later t0 only ever fences more. A fence block
+  // the process already recorded establishes it right after, in admit_now.
   header.t0 = std::max(started_at_, history.t0);
-  const bool settled = history.fence_block.has_value() && !fence_block_refusal(*history.fence_block, header.t0);
-  if (settled) {
-    // The fence block this process applied after taking custody of the identity, before
-    // its first admission: the history is established in the same write.
-    header.history = History::Established;
-    header.fence = history.fence_block->lineages;
-    header.floor = history.fence_block->block;
-  }
   TRY_STATUS(ops_->replace_file(dir_, kHeaderName, encode_header(header)));
   TRY_STATUS(fsync_directory(parent));
   header_ = std::move(header);
   status_ = LedgerStatus::Trusted;
-  if (settled) {
-    LOG(WARNING) << "signing ledger: this node's earlier signing is unknown; fenced at the block "
-                 << history.fence_block->block.to_str() << " this process applied at or after "
-                 << header_.t0 + kHistoryMarginSeconds << ", before its first admission";
-  } else {
-    LOG(WARNING) << "signing ledger: this node's earlier signing is unknown; every session is fenced until a "
-                    "masterchain block generated at or after "
-                 << header_.t0 + kHistoryMarginSeconds;
-  }
+  LOG(WARNING) << "signing ledger: this node's earlier signing is unknown; every session is fenced until a "
+                  "masterchain block generated at or after "
+               << header_.t0 + kHistoryMarginSeconds;
   return td::Status::OK();
 }
 
@@ -1005,8 +992,9 @@ std::shared_ptr<const Admission> SigningLedger::admit_now(const td::Bits256& val
     return Admission::fence(session, "the signing ledger belongs to another validator");
   }
   if (header_.history == History::Pending && history.fence_block.has_value()) {
-    // A pending ledger of an earlier process: this process's own fence block settles it,
-    // measured from the later of the two waits.
+    // A pending ledger, created just now or by an earlier process: the fence block this
+    // process recorded after taking custody settles it, measured from the later of the two
+    // waits. A crash between the two header writes leaves it pending, which only fences.
     const auto t0 = std::max(header_.t0, history.t0);
     if (!fence_block_refusal(*history.fence_block, t0)) {
       if (auto established = establish(*history.fence_block); established.is_error()) {

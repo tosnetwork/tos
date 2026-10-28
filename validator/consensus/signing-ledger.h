@@ -419,8 +419,8 @@ class SigningLedger : public td::actor::Actor {
   std::string log_path(const td::Bits256& session) const;
   std::shared_ptr<const Admission> admit_now(const td::Bits256& validator, const td::Bits256& session,
                                              ShardIdFull shard, std::uint32_t cc, const IdentityHistory& history);
-  // Replaces an absent or untrusted ledger with a pending one for `validator`, established at
-  // once when `history` holds a qualifying fence block.
+  // Replaces an absent or untrusted ledger with a pending one for `validator`, waiting from
+  // the later of `history.t0` and this actor's start.
   td::Status start_unknown_history(const td::Bits256& validator, const IdentityHistory& history);
   // Establishes the pending history at `block`, which the caller has checked qualifies; one
   // header write, undone in memory when it fails.
