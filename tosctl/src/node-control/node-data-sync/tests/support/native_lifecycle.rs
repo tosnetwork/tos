@@ -35,6 +35,7 @@ struct Manager {
     no_index_flag: bool,
     flip_on_stop: bool,
     trip_on_describe: bool,
+    fail_start: bool,
     child: Option<Child>,
     events: Vec<String>,
 }
@@ -93,6 +94,10 @@ impl Manager {
             return Ok(String::new());
         }
         if args.iter().any(|a| a == "start") {
+            if self.fail_start {
+                self.events.push("start-refused".to_owned());
+                anyhow::bail!("fixture service manager refused the start");
+            }
             self.events.push("start".to_owned());
             self.start()?;
             return Ok(String::new());
@@ -183,6 +188,14 @@ fn fixture_environment_available() -> bool {
 }
 impl Fixture {
     fn new() -> Result<Self> {
+        Self::build(false)
+    }
+    /// A new bundle node that has never run: its first-start identity, the console client
+    /// keys and genesis files, and nothing else. The request uses the bootstrap lane.
+    fn new_node() -> Result<Self> {
+        Self::build(true)
+    }
+    fn build(new_node: bool) -> Result<Self> {
         let fixture = PathBuf::from(
             std::env::var_os("NODE_SYNC_NATIVE_FIXTURE")
                 .context("NODE_SYNC_NATIVE_FIXTURE required; run the native lifecycle CI step")?,
@@ -211,9 +224,41 @@ impl Fixture {
         let worker = installed_worker;
         let own = Root::create(&parent.path.join("database"))?;
         let image = fixture.join("image");
-        let stopped = Frozen::acquire(&image)?;
-        capture::cold_image(&stopped, &Root::open(&image)?, &own)?;
-        drop(stopped);
+        if new_node {
+            use std::os::unix::fs::PermissionsExt;
+            own.write_new("config.json.lock", b"")?;
+            own.ensure_directory("error/files")?;
+            own.write_new("error/log.txt", b"")?;
+            for (name, mode) in [
+                ("client", 0o600),
+                ("client.pub", 0o644),
+                ("server.pub", 0o644),
+                ("liteserver.pub", 0o640),
+            ] {
+                own.write_new(
+                    &format!("console-client/{name}"),
+                    format!("console {name}").as_bytes(),
+                )?;
+                fs::set_permissions(
+                    own.path.join("console-client").join(name),
+                    fs::Permissions::from_mode(mode),
+                )?;
+            }
+            let genesis = Root::open(&image.join("static"))?;
+            for file in trees::inventory(&genesis)? {
+                trees::copy_file(
+                    &genesis,
+                    &file.path,
+                    &own,
+                    &format!("static/{}", file.path),
+                    file.size,
+                )?;
+            }
+        } else {
+            let stopped = Frozen::acquire(&image)?;
+            capture::cold_image(&stopped, &Root::open(&image)?, &own)?;
+            drop(stopped);
+        }
         let source_root = Root::open(&source)?;
         trees::copy_file(&source_root, "config.json", &own, "config.json", MANIFEST_LIMIT)?;
         trees::copy_optional_tree(&source_root, "keyring", &own)?;
@@ -286,6 +331,7 @@ impl Fixture {
             cache: cache.root_path().to_owned(),
             publisher_key: hex::encode(key.verifying_key().to_bytes()),
             source_url: None,
+            lane: if new_node { operations::Lane::Bootstrap } else { operations::Lane::Restore },
         };
         let manager = Rc::new(RefCell::new(Manager {
             context,
@@ -294,6 +340,7 @@ impl Fixture {
             no_index_flag: false,
             flip_on_stop: false,
             trip_on_describe: false,
+            fail_start: false,
             child: None,
             events: Vec::new(),
         }));
@@ -561,6 +608,7 @@ fn production_restore_process_exit_recovers() -> Result<()> {
             no_index_flag: false,
             flip_on_stop: false,
             trip_on_describe: false,
+            fail_start: false,
             child: None,
             events: Vec::new(),
         }));
@@ -1039,5 +1087,453 @@ fn restore_requires_stable_budget_roots_before_preparation() -> Result<()> {
     );
     assert!(!fixture.operation.exists());
     assert!(fixture.manager.borrow().events.is_empty());
+    Ok(())
+}
+
+impl Fixture {
+    /// `tosctl node dump create` from this fixture's database as the source, into a fresh
+    /// catalog under the fixture's private work root.
+    fn create(&self, operation: &str) -> Result<String> {
+        let work = &self.request.context.work_root;
+        let publisher = crate::publisher::PublisherSecret::load(&work.join("publisher.seed"))?;
+        let store = work.join("create-catalog");
+        if !store.exists() {
+            let key = ed25519_dalek::SigningKey::from_bytes(&[42; 32]);
+            Catalog::create(&store, key.verifying_key().to_bytes())?;
+        }
+        operations::create(&self.request.context, &work.join(operation), &store, &publisher)
+    }
+    fn running(&self) -> bool {
+        self.manager.borrow().child.is_some()
+    }
+    fn events(&self) -> Vec<String> {
+        self.manager.borrow().events.clone()
+    }
+}
+fn stopped_error(error: &anyhow::Error) -> bool {
+    error.downcast_ref::<crate::service::SourceLeftStopped>().is_some()
+}
+
+/// A full node that never had a hardfork has no `static`; create captures it and restarts it.
+#[test]
+fn production_create_captures_a_source_without_static() -> Result<()> {
+    let _serial =
+        SERIAL.lock().map_err(|_| anyhow::anyhow!("native lifecycle fixture poisoned"))?;
+    if !fixture_environment_available() {
+        return Ok(());
+    }
+    let fixture = Fixture::new()?;
+    let database = &fixture.request.context.database;
+    for file in fs::read_dir(database.join("static"))? {
+        fs::remove_file(file?.path())?;
+    }
+    fs::remove_dir(database.join("static"))?;
+    let _scope = fixture.scope(|_| Ok(()));
+    fixture.manager.borrow_mut().start()?;
+    let generation = fixture.create("create-without-static");
+    assert!(generation.is_ok(), "create refused a source without static: {generation:?}");
+    assert_eq!(fixture.events(), vec!["stop", "start"], "source was not restarted once");
+    assert!(fixture.running(), "source is not running after create");
+    assert!(!database.join("static").exists(), "create invented a static root in the source");
+    fixture.manager.borrow_mut().stop()?;
+    println!("\nPRODUCTION_CREATE_WITHOUT_STATIC_OK");
+    Ok(())
+}
+
+/// Every failure after the stop restarts the source, unless the recheck immediately before
+/// the restart finds that its role, signing custody or storage mode changed, or the start
+/// itself fails: then it stays stopped and the error says so with the distinct status.
+#[test]
+fn production_create_failure_after_stop_restarts_or_reports_the_source() -> Result<()> {
+    let _serial =
+        SERIAL.lock().map_err(|_| anyhow::anyhow!("native lifecycle fixture poisoned"))?;
+    if !fixture_environment_available() {
+        return Ok(());
+    }
+    for case in ["io", "panic", "io-then-mode", "io-then-role", "io-then-start-refused"] {
+        let fixture = Fixture::new()?;
+        let state = Rc::clone(&fixture.manager);
+        let database = fixture.request.context.database.clone();
+        let mode = case.to_owned();
+        let _scope = fixture.scope(move |point| {
+            if point != "before-capture" {
+                return Ok(());
+            }
+            state.borrow_mut().events.push("capture".to_owned());
+            if mode == "panic" {
+                panic!("fixture panic inside the stopped capture");
+            }
+            // An ordinary capture failure: the copy refuses a link in a chain root.
+            std::os::unix::fs::symlink("CURRENT", database.join("celldb/capture-link"))?;
+            match mode.as_str() {
+                "io-then-mode" => state.borrow_mut().configured = true,
+                "io-then-role" => {
+                    let path = database.join("config.json");
+                    let mut config: serde_json::Value = serde_json::from_slice(&fs::read(&path)?)?;
+                    config["validators"] = serde_json::json!([{"id": "AA=="}]);
+                    fs::write(&path, serde_json::to_vec(&config)?)?;
+                }
+                "io-then-start-refused" => state.borrow_mut().fail_start = true,
+                _ => {}
+            }
+            Ok(())
+        });
+        fixture.manager.borrow_mut().start()?;
+        let error = fixture.create("create-failure").err().context("injected failure ignored")?;
+        let message = format!("{error:#}");
+        let restarted = matches!(case, "io" | "panic");
+        assert!(
+            message.contains(if case == "panic" {
+                "capture panicked: fixture panic inside the stopped capture"
+            } else {
+                "tree contains a link or special file: capture-link"
+            }),
+            "{case}: the original failure was lost: {message}"
+        );
+        let events = fixture.events();
+        assert_eq!(&events[..2], &["stop", "capture"], "{case}: {events:?}");
+        if restarted {
+            assert!(!stopped_error(&error), "{case}: restarted source reported as stopped");
+            assert!(message.contains("was restarted"), "{case}: {message}");
+            assert_eq!(&events[2..], &["start"], "{case}: {events:?}");
+            assert!(fixture.running(), "{case}: source is not running again");
+            assert_eq!(crate::status::exit_code(&error), 1);
+        } else {
+            assert!(stopped_error(&error), "{case}: stopped source not reported: {message}");
+            assert_eq!(crate::status::exit_code(&error), 5, "{case}");
+            assert!(
+                message.contains("was NOT restarted")
+                    && message.contains("observed state=inactive")
+                    && message.contains(
+                        "restart it with: systemctl --user start -- floria-sync-lifecycle.service"
+                    ),
+                "{case}: {message}"
+            );
+            let reason = match case {
+                "io-then-mode" => "storage mode or unit changed while stopped",
+                "io-then-role" => "role or signing custody changed while stopped",
+                _ => "the restart failed",
+            };
+            assert!(message.contains(reason), "{case}: wrong reason: {message}");
+            assert!(!events.iter().any(|e| e == "start"), "{case}: started anyway: {events:?}");
+            assert!(!fixture.running(), "{case}: source running");
+        }
+        if fixture.running() {
+            fixture.manager.borrow_mut().stop()?;
+        }
+        println!("CREATE_STOPPED_FAILURE_OK {case}");
+    }
+    println!("\nPRODUCTION_CREATE_RESTART_OK");
+    Ok(())
+}
+
+/// Bytes, kind and permission bits of every entry of a node-local tree.
+fn tree_listing(root: &std::path::Path) -> Result<Vec<(String, bool, u32, Vec<u8>)>> {
+    let tree = Root::open(root)?;
+    trees::private_tree(&tree, 1000, 1 << 20)?
+        .into_iter()
+        .map(|e| {
+            let bytes = if e.directory { vec![] } else { tree.bytes(&e.path, e.size)? };
+            Ok((e.path, e.directory, e.mode, bytes))
+        })
+        .collect()
+}
+
+/// A new node receives verified chain data, keeps its own identity and console keys exactly,
+/// has no local records imported, is never stopped and is started once installed.
+#[test]
+fn production_bootstrap_installs_a_new_node() -> Result<()> {
+    let _serial =
+        SERIAL.lock().map_err(|_| anyhow::anyhow!("native lifecycle fixture poisoned"))?;
+    if !fixture_environment_available() {
+        return Ok(());
+    }
+    let fixture = Fixture::new_node()?;
+    let database = fixture.request.context.database.clone();
+    let before: Vec<_> = ["keyring", "console-client"]
+        .into_iter()
+        .map(|tree| tree_listing(&database.join(tree)))
+        .collect::<Result<_>>()?;
+    let config = fs::read(database.join("config.json"))?;
+    let original = crate::journal::TreeIdentity::read(&database)?;
+    let _scope = fixture.scope(|_| Ok(()));
+    // The same root is no restore target: it has no local StateDb.
+    let mut as_restore = fixture.request.clone();
+    as_restore.lane = operations::Lane::Restore;
+    let error =
+        operations::restore(&as_restore, &fixture.operation).err().context("restore lane")?;
+    assert!(format!("{error:#}").contains("StateDb directory is missing"), "{error:#}");
+    assert!(!fixture.operation.exists(), "refused restore prepared an operation");
+    let journal = operations::restore(&fixture.request, &fixture.operation);
+    assert!(journal.is_ok(), "bootstrap failed: {journal:?}");
+    let journal = journal?;
+    assert_eq!(journal.phase, crate::journal::Phase::CatchingUp);
+    assert_eq!(journal.target_anchor, fixture.signed.manifest.network.init);
+    assert_eq!(fixture.events(), vec!["start"], "bootstrap stopped or restarted the target");
+    assert_ne!(crate::journal::TreeIdentity::read(&database)?, original, "nothing installed");
+    for (tree, listing) in ["keyring", "console-client"].into_iter().zip(before) {
+        assert_eq!(tree_listing(&database.join(tree))?, listing, "{tree} was not kept exactly");
+    }
+    assert_eq!(fs::read(database.join("config.json"))?, config, "own config changed");
+    for root in ["celldb", "files", "archive", "static", "state"] {
+        assert!(database.join(root).is_dir(), "bootstrap did not install {root}");
+    }
+    fixture.manager.borrow_mut().stop()?;
+    println!("\nPRODUCTION_BOOTSTRAP_INSTALL_OK");
+    Ok(())
+}
+
+/// Validators and used databases never enter the new-node lane; nothing is stopped,
+/// started or prepared.
+#[test]
+fn production_bootstrap_refuses_validators_and_used_targets() -> Result<()> {
+    let _serial =
+        SERIAL.lock().map_err(|_| anyhow::anyhow!("native lifecycle fixture poisoned"))?;
+    if !fixture_environment_available() {
+        return Ok(());
+    }
+    let edit_config = |database: &std::path::Path, edit: &dyn Fn(&mut serde_json::Value)| {
+        let path = database.join("config.json");
+        let mut config: serde_json::Value = serde_json::from_slice(&fs::read(&path)?)?;
+        edit(&mut config);
+        fs::write(&path, serde_json::to_vec(&config)?)?;
+        anyhow::Ok(())
+    };
+    for (case, expected) in [
+        ("validator", "snapshot source has validator registrations"),
+        ("custody", "snapshot source has signing custody"),
+        ("election-binding", "enabled election binding"),
+        ("work-keys", "work-root key directory holds key files"),
+        ("database-keys", "holds validator key material"),
+        ("consensus", "consensus is not part of a new node"),
+        ("state", "state is not part of a new node"),
+        ("running", "bootstrap target service must be inactive"),
+    ] {
+        let fixture = Fixture::new_node()?;
+        let context = &fixture.request.context;
+        let database = &context.database;
+        match case {
+            "validator" => {
+                edit_config(database, &|c| c["validators"] = serde_json::json!([{"id": "AA=="}]))?
+            }
+            "custody" => edit_config(database, &|c| {
+                c["extraconfig"] =
+                    serde_json::json!({"pq_consensus": {"consensus_key_file": "seed"}})
+            })?,
+            "election-binding" => {
+                let path = &context.operator_config;
+                let mut operator: serde_json::Value = serde_json::from_slice(&fs::read(path)?)?;
+                operator["bindings"] =
+                    serde_json::json!({"fixture": {"wallet": "fixture-wallet", "enable": true}});
+                fs::write(path, serde_json::to_vec(&operator)?)?;
+            }
+            "work-keys" => {
+                Root::open(&context.work_root)?.write_new("keys/pq-consensus.seed", &[7; 32])?
+            }
+            "database-keys" => fs::create_dir(database.join("keys"))?,
+            "consensus" => fs::create_dir(database.join("consensus"))?,
+            "state" => fs::create_dir(database.join("state"))?,
+            _ => fixture.manager.borrow_mut().start()?,
+        }
+        let _scope = fixture.scope(|point| {
+            anyhow::ensure!(point != "after-stop-before-stage", "refused target was frozen");
+            Ok(())
+        });
+        let error = operations::restore(&fixture.request, &fixture.operation)
+            .err()
+            .with_context(|| format!("{case}: accepted"))?;
+        let message = format!("{error:#}");
+        assert!(message.contains(expected), "{case}: wrong refusal: {message}");
+        assert!(!fixture.operation.exists(), "{case}: an operation was prepared");
+        let events = fixture.events();
+        assert!(!events.iter().any(|e| e == "stop" || e == "start"), "{case}: {events:?}");
+        if fixture.running() {
+            fixture.manager.borrow_mut().stop()?;
+        }
+        println!("BOOTSTRAP_REFUSAL_OK {case}");
+    }
+    println!("\nPRODUCTION_BOOTSTRAP_REFUSALS_OK");
+    Ok(())
+}
+
+/// Recovery of an interrupted bootstrap follows the journal. Before the exchange the old
+/// tree must still be a new node: restaged and installed if it is, refused untouched if
+/// anything started on it. After the exchange the installed replacement is kept with its
+/// own records, even when it has run, and is never treated as new again.
+#[test]
+fn production_bootstrap_recovers_on_both_sides_of_the_exchange() -> Result<()> {
+    let _serial =
+        SERIAL.lock().map_err(|_| anyhow::anyhow!("native lifecycle fixture poisoned"))?;
+    if !fixture_environment_available() {
+        return Ok(());
+    }
+    use crate::journal::{Journal, Phase, Recovery};
+    for case in
+        ["before-exchange", "before-exchange-started", "after-exchange", "after-exchange-started"]
+    {
+        let fixture = Fixture::new_node()?;
+        let database = fixture.request.context.database.clone();
+        let cut =
+            if case.starts_with("before") { "restore-exchange" } else { "restore-start-installed" };
+        let interrupted = Rc::new(RefCell::new(false));
+        let seen = Rc::clone(&interrupted);
+        let scope = fixture.scope(move |point| {
+            if point == cut && !*seen.borrow() {
+                *seen.borrow_mut() = true;
+                anyhow::bail!("fixture crash at {point}");
+            }
+            Ok(())
+        });
+        let error =
+            operations::restore(&fixture.request, &fixture.operation).err().context("cut")?;
+        assert!(format!("{error:#}").contains("fixture crash at"), "{case}: {error:#}");
+        drop(scope);
+        let record = Root::open(&fixture.operation)?;
+        let before = Journal::read(&record)?;
+        let exchanged = case.starts_with("after");
+        assert_eq!(before.phase, if exchanged { Phase::Exchanged } else { Phase::ForwardOnly });
+        assert_eq!(
+            before.recovery()?,
+            if exchanged { Recovery::NewContinueOnly } else { Recovery::OldRefreshRequired }
+        );
+        if case.ends_with("started") {
+            // A native start of whichever tree is installed, outside the tool.
+            fixture.manager.borrow_mut().start()?;
+            thread::sleep(Duration::from_secs(2));
+            fixture.manager.borrow_mut().stop()?;
+            if exchanged {
+                Root::open(&database)?
+                    .write_new("consensus/after-exchange", b"own signing history")?;
+            }
+        }
+        let installed = crate::journal::TreeIdentity::read(&database)?;
+        let _scope = fixture.scope(|_| Ok(()));
+        let outcome = operations::recover(&fixture.operation);
+        // Before the exchange the target is still the new node, which bootstrap never stops.
+        assert!(
+            exchanged || !fixture.events().iter().any(|e| e == "stop"),
+            "{case}: recovery stopped an unexchanged bootstrap target: {:?}",
+            fixture.events()
+        );
+        if case == "before-exchange-started" {
+            let message = format!("{:#}", outcome.err().context("started new node reinterpreted")?);
+            assert!(message.contains("bootstrap target is not a new node database"), "{message}");
+            let after = Journal::read(&record)?;
+            assert_eq!(after, before, "refused recovery moved the journal");
+            assert_eq!(crate::journal::TreeIdentity::read(&database)?, installed);
+            assert!(database.join("celldb").is_dir(), "the engine's own data was discarded");
+            assert!(!fixture.events().iter().any(|e| e == "start"), "{case}: started");
+            println!("BOOTSTRAP_RECOVERY_OK {case}");
+            continue;
+        }
+        assert!(matches!(outcome?, RecoveryOutcome::Installed(_)), "{case}: not installed");
+        let after = Journal::read(&record)?;
+        assert_eq!(after.phase, Phase::CatchingUp, "{case}");
+        assert_eq!(after.recovery()?, Recovery::NewContinueOnly, "{case}");
+        if exchanged {
+            assert_eq!(after.new, before.new, "{case}: the installed replacement was replaced");
+            assert_eq!(crate::journal::TreeIdentity::read(&database)?, installed);
+        }
+        if case == "after-exchange-started" {
+            assert_eq!(
+                Root::open(&database)?.bytes("consensus/after-exchange", 100)?,
+                b"own signing history",
+                "recovery discarded the installed tree's own records"
+            );
+        }
+        // The tool issued exactly one start; the native start above was outside it.
+        assert_eq!(
+            fixture.events().iter().filter(|e| *e == "start").count(),
+            1,
+            "{case}: {:?}",
+            fixture.events()
+        );
+        fixture.manager.borrow_mut().stop()?;
+        println!("BOOTSTRAP_RECOVERY_OK {case}");
+    }
+    println!("\nPRODUCTION_BOOTSTRAP_RECOVERY_OK");
+    Ok(())
+}
+
+/// A correctly signed donor on the same network and build whose chain does not contain the
+/// locally held init block is refused by native validation before anything is exposed.
+#[test]
+fn production_bootstrap_refuses_a_donor_outside_the_held_anchor() -> Result<()> {
+    let _serial =
+        SERIAL.lock().map_err(|_| anyhow::anyhow!("native lifecycle fixture poisoned"))?;
+    if !fixture_environment_available() {
+        return Ok(());
+    }
+    use base64::Engine;
+    let mut fixture = Fixture::new_node()?;
+    let work = Root::open(&fixture.request.context.work_root)?;
+    // The operator holds an init block the donor's chain does not have at that height.
+    let mut held = fixture.signed.manifest.network.clone();
+    held.init = crate::model::FullId {
+        workchain: -1,
+        shard: i64::MIN,
+        seqno: 2.min(fixture.signed.manifest.frontier.seqno),
+        root_hash: "a5".repeat(32),
+        file_hash: "5a".repeat(32),
+    };
+    let mut global: serde_json::Value =
+        serde_json::from_slice(&fs::read(&fixture.request.context.global_config)?)?;
+    let encode = |hex_text: &str| -> Result<String> {
+        Ok(base64::engine::general_purpose::STANDARD.encode(hex::decode(hex_text)?))
+    };
+    global["validator"]["init_block"] = serde_json::json!({
+        "workchain": held.init.workchain, "shard": held.init.shard, "seqno": held.init.seqno,
+        "root_hash": encode(&held.init.root_hash)?, "file_hash": encode(&held.init.file_hash)?,
+    });
+    work.write_new("held-global.json", &serde_json::to_vec(&global)?)?;
+    fixture.request.context.global_config = work.path.join("held-global.json");
+    fixture.manager.borrow_mut().context.global_config = work.path.join("held-global.json");
+    assert_eq!(fixture.request.context.policy()?.0, held, "fixture holds another network");
+    // The publisher signs a manifest that claims the operator's anchor.
+    let mut manifest = fixture.signed.manifest.clone();
+    manifest.network = held.clone();
+    manifest.corroboration.network = held;
+    let key = ed25519_dalek::SigningKey::from_bytes(&[42; 32]);
+    let signed = SignedManifest::sign(manifest, &key)?;
+    work.replace("manifest.json", &signed.bytes()?)?;
+    let original = crate::journal::TreeIdentity::read(&fixture.request.context.database)?;
+    let _scope = fixture.scope(|_| Ok(()));
+    let error = operations::restore(&fixture.request, &fixture.operation)
+        .err()
+        .context("a donor outside the held anchor was installed")?;
+    let mut message = format!("{error:#}");
+    if let Ok(log) = fs::read_to_string(fixture.operation.join("worker.log")) {
+        message.push_str(&log);
+    }
+    // The worker's own refusal and the engine's reopen logs of every staged revision.
+    if let Ok(entries) = fs::read_dir(&fixture.operation) {
+        for entry in entries.flatten() {
+            if let Ok(log) = fs::read_to_string(entry.path().join("worker.log")) {
+                message.push_str(&log);
+            }
+            for pass in 0..2 {
+                let path = entry.path().join(format!("checked/reopen-{pass}.log"));
+                if let Ok(log) = fs::read(&path) {
+                    message.push_str(&String::from_utf8_lossy(&log));
+                }
+            }
+        }
+    }
+    eprintln!("ANCHOR_REFUSAL_EVIDENCE_BEGIN\n{message}\nANCHOR_REFUSAL_EVIDENCE_END");
+    // The engine, reopening the staged image under the operator's global config, proves the
+    // imported state either is or descends from the held init block, and stops when it does
+    // not; the verifier's own lookup of the held init block is the second check behind it.
+    assert!(
+        message.contains("native validation engine exited during reopen")
+            && message.contains("ancestor_is_valid(opts_->init_block_id())"),
+        "wrong refusal: {message}"
+    );
+    assert_eq!(crate::journal::TreeIdentity::read(&fixture.request.context.database)?, original);
+    let journal = Root::open(&fixture.operation)
+        .and_then(|record| crate::journal::Journal::read(&record))
+        .ok();
+    assert!(journal.is_none(), "a refused donor reached the journal: {journal:?}");
+    assert!(fixture.events().is_empty(), "{:?}", fixture.events());
+    println!("\nPRODUCTION_BOOTSTRAP_ANCHOR_REFUSAL_OK");
     Ok(())
 }

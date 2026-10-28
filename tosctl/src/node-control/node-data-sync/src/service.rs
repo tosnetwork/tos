@@ -13,8 +13,25 @@ pub struct Service {
     pub engine: PathBuf,
     pub global_config: PathBuf,
     pub working_directory: PathBuf,
+    /// The context's work root; it decides where the node's `keys` directory lives.
+    pub work_root: PathBuf,
     pub user_manager: bool,
 }
+
+/// Exit status of a command that stopped the selected source service and could not, or by
+/// design would not, start it again. The operator must review and restart it.
+pub const SOURCE_LEFT_STOPPED_EXIT: u8 = 5;
+/// The selected source service was stopped by this command and is not running again.
+/// The message names the unit, the observed state, why it was not restarted, every error
+/// involved and the exact restart command.
+#[derive(Debug)]
+pub struct SourceLeftStopped(pub String);
+impl std::fmt::Display for SourceLeftStopped {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+impl std::error::Error for SourceLeftStopped {}
 struct CheckedService {
     permanent_cells: bool,
     account: Account,
@@ -171,6 +188,19 @@ pub struct Frozen {
     pub(crate) root: PathBuf,
 }
 impl Frozen {
+    /// The held configuration lock is still the one at `database/config.json.lock`.
+    pub fn check_held(&self, database: &Path) -> Result<()> {
+        let held = self._configuration_lock.metadata()?;
+        let selected = fs::symlink_metadata(database.join("config.json.lock"))?;
+        ensure!(
+            self.root == database
+                && selected.file_type().is_file()
+                && held.ino() == selected.ino()
+                && held.dev() == selected.dev(),
+            "start lock belongs to another installed tree"
+        );
+        Ok(())
+    }
     /// Offline primitive shared by explicit service operations and disposable native fixtures.
     pub fn acquire(root: &Path) -> Result<Self> {
         ensure!(
@@ -259,7 +289,27 @@ impl Service {
     /// once disabled it is now a no-op, so the command line decides nothing here.
     pub fn require_restore_target(&self, expected: Option<bool>) -> Result<()> {
         self.describe(expected)?;
-        crate::paths::restore_root(&self.database)
+        crate::paths::restore_root(&self.database, self.keys_location()?)
+    }
+    /// Where `keys` lives, decided from the resolved context: the work root is the database
+    /// root only when both canonical paths are equal, and then they must be one directory.
+    /// A work root that reaches the same directory under another path (a bind mount) refuses.
+    pub fn keys_location(&self) -> Result<crate::paths::KeysLocation> {
+        let work = fs::canonicalize(&self.work_root)?;
+        let database = fs::canonicalize(&self.database)?;
+        ensure!(
+            work == self.work_root && database == self.database,
+            "work and database roots must be canonical and link-free"
+        );
+        let same_path = work == database;
+        let same_tree = crate::safe_io::Root::open(&work)?.identity()?
+            == crate::safe_io::Root::open(&database)?.identity()?;
+        ensure!(same_path == same_tree, "work root reaches the database root under another path");
+        Ok(if same_path {
+            crate::paths::KeysLocation::Database
+        } else {
+            crate::paths::KeysLocation::Elsewhere
+        })
     }
     pub fn start_restore(&self, frozen: Frozen, expected: bool) -> Result<()> {
         self.require_restore_target(Some(expected))?;
@@ -267,6 +317,27 @@ impl Service {
     }
     pub fn validate(&self) -> Result<()> {
         self.describe(None).map(|_| ())
+    }
+    /// The checked service description, in the expected cell-storage mode when one is given.
+    pub fn require_selected_mode(&self, expected: Option<bool>) -> Result<()> {
+        self.describe(expected).map(|_| ())
+    }
+    /// The selected unit is not running: inactive or failed, with no main process.
+    pub fn require_inactive(&self) -> Result<()> {
+        let state = command(
+            self.manager().args(["show", "--property=ActiveState", "--value", "--", &self.unit]),
+            Duration::from_secs(10),
+        )?;
+        let pid = command(
+            self.manager().args(["show", "--property=MainPID", "--value", "--", &self.unit]),
+            Duration::from_secs(10),
+        )?;
+        ensure!(
+            matches!(state.trim(), "inactive" | "failed") && pid.trim() == "0",
+            "selected service is running (state {})",
+            state.trim()
+        );
+        Ok(())
     }
     /// One parser and binding for configured, running and operation-selected storage modes.
     fn describe(&self, expected: Option<bool>) -> Result<CheckedService> {
@@ -408,8 +479,14 @@ impl Service {
     }
     pub fn stop(&self) -> Result<Frozen> {
         self.validate()?;
-        command(self.manager().args(["stop", "--", &self.unit]), Duration::from_secs(120))?;
+        self.stop_command()?;
         self.freeze()
+    }
+    /// Only the stop request to the selected unit's manager; the caller has validated the
+    /// service and freezes it next.
+    pub fn stop_command(&self) -> Result<()> {
+        command(self.manager().args(["stop", "--", &self.unit]), Duration::from_secs(120))
+            .map(|_| ())
     }
     pub fn freeze(&self) -> Result<Frozen> {
         self.validate()?;
@@ -432,14 +509,7 @@ impl Service {
             crate::test_hooks::boundary("restore-start-validating")?;
         }
         self.describe(expected)?;
-        let held = frozen._configuration_lock.metadata()?;
-        let selected = fs::symlink_metadata(self.database.join("config.json.lock"))?;
-        ensure!(
-            selected.file_type().is_file()
-                && held.ino() == selected.ino()
-                && held.dev() == selected.dev(),
-            "start lock belongs to another installed tree"
-        );
+        frozen.check_held(&self.database)?;
         // Source restart remains available even if capture's allocation monitor refused.
         if restore {
             crate::budget::check_active().context("disk refusal before restore-service-start")?;

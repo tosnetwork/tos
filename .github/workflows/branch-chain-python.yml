@@ -440,6 +440,12 @@ jobs:
           grep -Fx 'PRODUCTION_RESTORE_INDEX_BOUNDARIES_OK' build/node-sync-native-lifecycle.log
           grep -Fx 'RESTORE_DISK_BOUNDARIES_OK' build/node-sync-native-lifecycle.log
           grep -Fx 'STAGED_DISK_RECOVERY_OK' build/node-sync-native-lifecycle.log
+          grep -Fx 'PRODUCTION_CREATE_WITHOUT_STATIC_OK' build/node-sync-native-lifecycle.log
+          grep -Fx 'PRODUCTION_CREATE_RESTART_OK' build/node-sync-native-lifecycle.log
+          grep -Fx 'PRODUCTION_BOOTSTRAP_INSTALL_OK' build/node-sync-native-lifecycle.log
+          grep -Fx 'PRODUCTION_BOOTSTRAP_REFUSALS_OK' build/node-sync-native-lifecycle.log
+          grep -Fx 'PRODUCTION_BOOTSTRAP_RECOVERY_OK' build/node-sync-native-lifecycle.log
+          grep -Fx 'PRODUCTION_BOOTSTRAP_ANCHOR_REFUSAL_OK' build/node-sync-native-lifecycle.log
 
       - name: Run the complete Python suite
         run: uv run pytest

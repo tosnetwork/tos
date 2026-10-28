@@ -271,7 +271,7 @@ def validate_node_data_sync_callers(root: Path) -> None:
     require(create.count(confinement) == 2, "publisher confinement must run before and after stop")
     require(
         create.index(confinement)
-        < create.index("service.stop()")
+        < create.index("service.stop_command()")
         < create.rindex(confinement)
         < create.index("capture::cold_image_checked("),
         "publisher confinement must precede capture exposure",
@@ -343,6 +343,12 @@ def validate_node_data_sync_modes(root: Path) -> None:
         "grep -Fx 'PRODUCTION_RESTORE_INDEX_BOUNDARIES_OK'",
         "grep -Fx 'RESTORE_DISK_BOUNDARIES_OK'",
         "grep -Fx 'STAGED_DISK_RECOVERY_OK'",
+        "grep -Fx 'PRODUCTION_CREATE_WITHOUT_STATIC_OK'",
+        "grep -Fx 'PRODUCTION_CREATE_RESTART_OK'",
+        "grep -Fx 'PRODUCTION_BOOTSTRAP_INSTALL_OK'",
+        "grep -Fx 'PRODUCTION_BOOTSTRAP_REFUSALS_OK'",
+        "grep -Fx 'PRODUCTION_BOOTSTRAP_RECOVERY_OK'",
+        "grep -Fx 'PRODUCTION_BOOTSTRAP_ANCHOR_REFUSAL_OK'",
     ):
         require(token in workflow, "native lifecycle CI command or required result missing")
     library = (core / "lib.rs").read_text()
@@ -372,16 +378,36 @@ def validate_node_data_sync_modes(root: Path) -> None:
         require(check in body[start:end], f"storage-mode binding omitted: {label}")
 
     expected = "require_restore_target(Some(signed.manifest.permanent_cells))?;"
+    # Before the exchange every lane checks its target through one function: an existing
+    # node for restore, a new inactive node for bootstrap, both in the selected mode.
+    target = "require_unexchanged_target(request,Some(signed.manifest.permanent_cells))?;"
+    unexchanged = source.split("fnrequire_unexchanged_target(", 1)[1].split("fnselected(", 1)[0]
+    for check, label in (
+        ("Lane::Restore=>{service.require_restore_target(expected)?;", "restore lane target"),
+        ("Lane::Bootstrap=>{service.require_selected_mode(expected)?;", "bootstrap lane mode"),
+        ("service.require_inactive()", "bootstrap lane inactive service"),
+        ("crate::paths::new_node_root(&request.context.database)?;", "bootstrap new-node root"),
+        ("require_no_signing_material(&request.context)", "bootstrap signing material"),
+    ):
+        require(check in unexchanged, f"storage-mode binding omitted: {label}")
     between(create, "letservice=", "letpublic=", "service.permanent_cells()?", "create entry")
     between(
         create,
-        "service.stop()?;",
+        "service.stop_command().and_then(|()|service.freeze())",
         "capture::cold_image_checked(",
         "service.require_mode(permanent)?;",
         "create stopped",
     )
+    restart = source.split("fnrestart_source(", 1)[1].split("fnleft_stopped(", 1)[0]
+    between(
+        restart,
+        "letrecheck=",
+        ".start_in_mode(frozen,permanent)",
+        "service.require_mode(permanent).context(",
+        "source restart",
+    )
     require(
-        "service.start_in_mode(frozen,permanent)?;" in create,
+        "letrestarted=restart_source(context,&service,frozen,permanent,&attached);" in create,
         "storage-mode binding omitted: source restart",
     )
     selected = source.split("fnselected(", 1)[1].split("pubfnpreflight(", 1)[0]
@@ -389,17 +415,23 @@ def validate_node_data_sync_modes(root: Path) -> None:
         selected,
         "restore_storage(request,None)?;",
         "letkey=trusted(",
-        "request.context.service().require_restore_target(None)?;",
+        "require_unexchanged_target(request,None)?;",
         "restore supported target before preparation",
     )
     require(
         "signed.manifest.permanent_cells==request.context.service().permanent_cells()?" in selected,
         "storage-mode binding omitted: preflight",
     )
+    quiesce = source.split("fnquiesce(", 1)[1].split("structTargetRecords", 1)[0]
+    require(
+        "Lane::Restore=>service.stop()," in quiesce
+        and "Lane::Bootstrap=>service.freeze()" in quiesce,
+        "storage-mode binding omitted: lane quiescence",
+    )
     between(
         restore,
         "catalog.hold_download(",
-        "request.context.service().stop()?;",
+        "letfrozen=quiesce(request)?;",
         "prepare_stop(request,&signed,&operation,&operation_id)?;",
         "durable descriptor before stop",
     )
@@ -414,40 +446,55 @@ def validate_node_data_sync_modes(root: Path) -> None:
     between(
         restore,
         "catalog.hold_download(",
-        "request.context.service().stop()?;",
-        expected,
+        "letfrozen=quiesce(request)?;",
+        target,
         "restore transfer",
     )
     between(
         restore,
-        "request.context.service().stop()?;",
+        "letfrozen=quiesce(request)?;",
         "letmutjournal=stage(",
-        expected,
+        target,
         "restore stopped",
     )
-    between(restore, "authorize_references(", "expose_staged(", expected, "restore exposure")
+    between(restore, "authorize_references(", "expose_staged(", target, "restore exposure")
+    check_installed = recover.split("letcheck_installed=", 1)[1].split("};", 1)[0]
+    for check, label in (
+        (
+            "require_unexchanged_target(&request,Some(signed.manifest.permanent_cells))",
+            "recover unexchanged target",
+        ),
+        (expected.removesuffix("?;"), "recover installed replacement"),
+    ):
+        require(check in check_installed, f"storage-mode binding omitted: {label}")
     between(
         recover,
         "letsigned=",
-        "request.context.service().stop()?;",
+        "letfrozen=ifunexchanged{",
         "signed.manifest.permanent_cells==request.context.service().permanent_cells()?",
         "recover entry",
     )
     between(
         recover,
         "signed.manifest.permanent_cells==request.context.service().permanent_cells()?",
-        "request.context.service().stop()?;",
-        expected,
+        "letfrozen=ifunexchanged{",
+        "check_installed()?;",
         "recover supported target before stop",
     )
     between(
         recover,
-        "request.context.service().stop()?;",
+        "letfrozen=ifunexchanged{",
         "matchjournal.recovery()?",
-        expected,
+        "check_installed()?;",
         "recover stopped",
     )
-    between(recover, "authorize_references(", "expose_staged(", expected, "recover exposure")
+    between(
+        recover,
+        "authorize_references(",
+        "expose_staged(",
+        "check_installed()?;",
+        "recover exposure",
+    )
     between(start, "letsigned=", "context.service().freeze()?;", expected, "replacement freeze")
     require(
         "context.service().start_restore(frozen,signed.manifest.permanent_cells)?;" in start,

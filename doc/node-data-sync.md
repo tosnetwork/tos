@@ -5,10 +5,38 @@
 > `--json-rpc-without-wallet-index` is an accepted no-op. Restore decides from the
 > target database, not from that flag.
 
-This is an administrative recovery lane for an **existing** node. It trusts an
-independently pinned publisher key and the publisher's chain database. Hashes,
+These commands move chain data between nodes under an independently pinned
+publisher key. They trust that key and the publisher's chain database. Hashes,
 native reopen checks and reference equality do not make a database dump trustless.
 No consensus rule, persistent-state period or storage-retention setting changes.
+
+## Lanes
+
+There are three ways to give a node chain data from elsewhere. They differ in what
+they trust and which nodes they accept.
+
+| Lane | Commands | Target | Trust anchor |
+|---|---|---|---|
+| Same-node fast rejoin | `tosctl node dump create/verify/publish`, then `tosctl node sync restore` (and `recover`) | an existing node, validator or not, that keeps its own identity, signing history and local StateDb records | pinned publisher key, signed manifest, object hashes, held network identity and fork policy, engine digest, native reopen, two references |
+| New non-validating node | `tosctl node sync bootstrap` (and `recover`), from the same signed catalog | a node database that has never run: its first-start identity, console client keys and genesis files only | the same as restore, plus native proof that the imported chain descends from the locally held zero state and init block |
+| External snapshot archive | `docker/import-snapshot.sh` | a new non-validating container node | only the `DUMP_SHA256` digest the operator configured; see [the container guide](../docker/README.md#database-snapshots) |
+
+Restore and bootstrap use one verification path: the same signed-manifest checks,
+download leases, staging, native validation, reference corroboration, journal,
+forward-only exchange and recovery. Bootstrap differs only in its target: it never
+stops a service, requires the target to be inactive and new, imports no local
+records, and refuses every validator binding.
+
+The container importer is a separate, weaker lane. It accepts a `.tar.lz` archive
+authenticated by one operator-held digest: no publisher key, no manifest signature,
+no build, cell-storage or network check beyond one zero-state hash comparison, and no
+native reopen before the node starts. This publisher does not produce such archives,
+and its catalog cannot be fed to that importer. Use bootstrap for a new node on an
+operator host; the container lane exists for archives produced elsewhere.
+
+A new validator never joins through any of these lanes. Every lane refuses validator
+bindings; restore keeps an existing validator's own signing history, which no
+snapshot can supply.
 
 The default capture method is a stopped-service cold copy. A filesystem snapshot
 backend is a future measured option; these commands do not provision storage.
@@ -42,12 +70,30 @@ Database-root directories have explicit dispositions:
 | `celldb`, `files`, `archive`, `static` | Import only allowlisted chain files; current temporary packages remain eligible, `archive/tmp` does not. |
 | `state` | Reconcile typed chain and target-local records; never copy raw donor StateDb. |
 | `keyring`, `consensus`, `catchains`, `adnl`, `overlays`, `dht-*` | Preserve target identity, signing and transport state. |
+| `console-client` | Preserve the operator bundle's console client keys exactly (see below); never published or transferred. |
+| `keys` | Preserve it as the work-root key directory when the context's `work_root` is the database root; otherwise refuse, since nothing would preserve it. |
 | `error` | Preserve target diagnostic records (`common/errorlog.cpp`), never donor diagnostics. |
 | `tmp` | Keep recovery material with the frozen old root, never overlay it. |
 | `wc0-index` | Refuse; neither preserve across a gap nor silently discard. |
 | `import` | Refuse pending operator input; an empty directory may be recreated. |
 | `packed` | Refuse unsupported legacy archive layout. |
 | Other directories or root symlinks | Refuse and name the path. |
+
+`keyring`, `console-client` and `keys` (when it is in the database) are copied into
+the replacement with their exact contents: every directory, including empty ones,
+every regular file, and the permission bits of each. Every entry must already belong
+to the database root's owner and group, carry no special bits and not be writable
+by other accounts; the replacement is handed to that owner and group, so ownership
+is kept as well. The trees are opened through the held database descriptor, and
+are rechecked (bytes, modes and the complete entry set) after staging, before the
+forward-only boundary. Whether `keys` is in the database is decided from the
+resolved context: the canonical work root equals the database root and both name
+the same directory; a work root that reaches it through another mount refuses.
+
+`static` is created by the engine only on demand: the root database opens it, but
+only a hardfork, or an operator placing genesis files, writes into it. A node
+without it is a normal target and a normal snapshot source; an absent `static` is
+captured as an empty directory.
 
 Preserving `consensus` keeps the target's own-decision log
 (`consensus/signing-ledger/`) with its own history. Never take that directory
@@ -388,8 +434,23 @@ tosctl node dump prune --directory /srv/node-sync/catalog --publisher-key <PINNE
 
 Creation stops and locks only the selected source, copies its matched chain and
 recovery context privately, then restarts the source before validating/compressing.
-If a capture fails, inspect the private operation and service state; no unverified
-generation is published. All temporary-package files selected by the native
+Every check that needs no stopped node runs before the stop: role and signing
+custody, publisher provenance, budget, account, catalog, operation directory, the
+service description, and the shape of every captured root. No unverified generation
+is published.
+
+A failure after the stop restarts the source through the same unit and service
+manager scope the tool stopped it with. Immediately before that restart the tool
+checks again that the source is still non-validating with no signing custody, in
+the same cell-storage mode, on the same database root, and under the configuration
+lock it froze. If any of these changed, if the stop could not be confirmed and
+frozen, or if the start itself fails, the source is left stopped and the command
+exits with status **5**. Its message names the unit, the observed service state,
+why it was not restarted, every error involved and the exact restart command;
+review the cause before restarting. Any other failure exits 1, after the source was
+restarted. A panic in the stopped section is handled the same way. A host crash or
+`SIGKILL` during the stopped window can still leave the source stopped: check the
+service state after any interrupted create. All temporary-package files selected by the native
 allowlist are included; `archive/tmp` is staging and is excluded. Raw donor
 StateDb, keys, config, sessions and recovery files have no public payload variant.
 
@@ -510,11 +571,92 @@ local administration are explicit assumptions.
 
 The target's original signing history must still be intact. This procedure
 preserves it; it cannot reconstruct missing own votes from a donor's chain
-snapshot. Do not use `docker/import-snapshot.sh` to recover a validator: that
-importer refuses validator bindings and requested validator roles. Do not clear
-a binding to bypass that refusal or restore an older consensus journal. If the
-history is lost, keep the old signer stopped and retire the affected signing
-identity before provisioning a new one for a later validator set.
+snapshot. Do not use bootstrap or `docker/import-snapshot.sh` to recover a
+validator: both refuse validator bindings. Do not clear a binding to bypass that
+refusal or restore an older consensus journal. If the history is lost, keep the old
+signer stopped and retire the affected signing identity before provisioning a new
+one for a later validator set.
+
+Restore requires an existing node: a target without its own `state/` is refused
+before anything is prepared or stopped.
+
+## Bootstrap a new node
+
+`tosctl node sync bootstrap` installs a published generation into a node database
+that has never run. It takes the same private request as restore and the same two
+named references:
+
+```sh
+tosctl node sync bootstrap --request bootstrap.json --operation /srv/node-sync/bootstrap-001 \
+  --reference https://reference-a.example.invalid/jsonRPC \
+  --reference https://reference-b.example.invalid/jsonRPC --dry-run
+tosctl node sync bootstrap --request bootstrap.json --operation /srv/node-sync/bootstrap-001 \
+  --reference https://reference-a.example.invalid/jsonRPC \
+  --reference https://reference-b.example.invalid/jsonRPC
+```
+
+The request may say `"lane": "bootstrap"`; a bootstrap request given to `restore`
+refuses. The context describes the new node's own unit and paths, exactly as for
+restore. On the operator bundle, prepare the node and install its unit without
+starting it (`install-node.sh prepare`, then `install-node.sh activate --no-start`),
+then run bootstrap; it starts the unit once the replacement is installed.
+
+The target must be **new**, checked through the held database descriptor before the
+download, after the freeze, at staging and before the exchange. The database root may
+hold only:
+
+- `config.json` and `keyring/`, written by the engine's first start (both required);
+- `config.json.lock`, empty;
+- `error/`, the empty error log of a first start (`files/` and an empty `log.txt`);
+- `console-client/`, the bundle's console client keys;
+- `static/`, genesis files named by their 64-hex file hash;
+- the optional local configuration files listed above.
+
+Every entry must be a regular file or directory on the database's device; a link,
+hard link, special file, bind mount or another mount anywhere, including in
+`static/`, refuses. The trees are bounded (1,024 entries and 16 MiB per private
+tree; 64 files and 4 GiB of genesis files). Anything else, such as chain data,
+`state/`, signing or session state, `keys/`, an index or operator input, means the
+database has run or is not a plain new node, and bootstrap refuses with its path.
+
+Bootstrap never stops or replaces a running node. The selected service must be
+inactive, with no main process, at every check; it is only frozen, never stopped.
+
+Validators are refused. Bootstrap requires, and rechecks at every target check:
+
+- no validator registration and no native signing custody in `config.json`, and no
+  referenced signing seed;
+- no enabled election binding for the node or any configured alias;
+- no `keys/` in the database root, even an empty one;
+- no key file in the work root's `keys/` directory.
+
+An absent or empty database `keys/` alone proves nothing about the other places.
+
+A new node has no local records and no safety anchors of its own. Instead, native
+validation of the staged replacement runs under the operator's own global config
+and must prove that the imported chain descends from the locally held zero state and
+init block, with the locally approved fork list. The engine stops when the imported
+state neither is nor descends from the held init block, and the verifier then looks
+up the held init block on the imported chain. The journal's safety anchor is the
+held init block, so a reference approval cannot precede it. A correctly signed
+donor of the same network and build whose history conflicts with the held anchor is
+refused before anything is exposed. The replacement's local StateDb records are the
+explicit absence of every local key, as a node that never ran has.
+
+The new node's own `config.json`, optional local configs, `keyring/` and
+`console-client/` are preserved exactly, as for restore. Its genesis `static/`
+stays with the old tree inside the operation; the replacement takes the donor's
+chain directories.
+
+Recovery follows the journal. Before the exchange, the installed tree must still be
+the new node: if it is, recovery restages it from the verified generation and
+continues; if anything started on it, recovery refuses and leaves it and the journal
+untouched, because a tree that has run is never treated as new again and its
+records are never discarded. After the exchange, the installed replacement is
+checked as the existing node it now is: recovery keeps its current local records,
+corroborates its current frontier and continues forward, as for restore. An aborted
+preparation leaves the original tree installed and never stopped; keep the service
+inactive and start a new bootstrap with a new operation directory.
 
 The node's database lock is local to that database. An engine also holds an
 exclusive lock on every consensus key file it signs with. A second engine on the
@@ -605,7 +747,14 @@ local engine processes. Tests exercise running/configured mode mismatch, drift
 while stop settles, drift during object transfer, and interruption after the real
 restore stop before staging. Completion retries authenticate request, generation
 and operation records before accepting an already absent receiver lease. The
-unauthenticated receiver-release API is not exposed.
+unauthenticated receiver-release API is not exposed. Creation is exercised on a
+source without `static`, and with failures inside the stopped section: an
+ordinary error and a panic restart the source, while a role, custody or mode
+change found by the restart recheck, or a refused start, leaves it stopped with
+exit status 5. Bootstrap is exercised end to end into a new-node layout, against
+every validator and used-database refusal, through crashes on both sides of the
+exchange (with and without a native start in between), and against a correctly
+signed donor whose history does not contain the held init block.
 
 Interruption hooks and manager overrides are compiled only under `cfg(test)` and
 the non-default `native-lifecycle-tests` feature. The build rejects that feature

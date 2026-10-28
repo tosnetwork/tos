@@ -57,6 +57,98 @@ fn walk(directory: &Root, prefix: &str, files: &mut Vec<TreeFile>, bytes: &mut u
     }
     Ok(())
 }
+/// One directory or regular file of a small private tree, as read through descriptors.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PrivateEntry {
+    /// Relative to the tree; the tree directory itself is the empty path.
+    pub path: String,
+    pub directory: bool,
+    /// Permission and special bits.
+    pub mode: u32,
+    pub uid: u32,
+    pub gid: u32,
+    pub size: u64,
+}
+/// Every directory (including empty ones and the tree itself) and regular file below a held
+/// private tree, in path order. Traversal is through descriptors only: a symlink, special
+/// file, hard-linked file, replaced directory or entry on another device refuses. The entry
+/// count and byte total are bounded by the caller.
+pub fn private_tree(root: &Root, max_entries: usize, max_bytes: u64) -> Result<Vec<PrivateEntry>> {
+    root.attached()?;
+    let (mode, uid, gid) = root.status()?;
+    let device = root.identity()?.0;
+    let mut entries =
+        vec![PrivateEntry { path: String::new(), directory: true, mode, uid, gid, size: 0 }];
+    let mut bytes = 0_u64;
+    private_walk(root, "", device, max_entries, max_bytes, &mut entries, &mut bytes)?;
+    Ok(entries)
+}
+fn private_walk(
+    directory: &Root,
+    prefix: &str,
+    device: u64,
+    max_entries: usize,
+    max_bytes: u64,
+    entries: &mut Vec<PrivateEntry>,
+    bytes: &mut u64,
+) -> Result<()> {
+    for name in directory.names()? {
+        ensure!(entries.len() < max_entries, "private tree entry count limit");
+        let relative = if prefix.is_empty() { name.clone() } else { format!("{prefix}/{name}") };
+        crate::paths::relative(&relative)?;
+        let entry = directory
+            .entry(&name)?
+            .with_context(|| format!("private tree entry vanished: {relative}"))?;
+        ensure!(entry.identity.0 == device, "private tree entry is on another device: {relative}");
+        match entry.kind {
+            Kind::Directory => {
+                let child = directory.open_child(&name)?;
+                ensure!(
+                    child.identity()? == entry.identity,
+                    "private tree directory was replaced: {relative}"
+                );
+                entries.push(PrivateEntry {
+                    path: relative.clone(),
+                    directory: true,
+                    mode: entry.mode,
+                    uid: entry.uid,
+                    gid: entry.gid,
+                    size: 0,
+                });
+                private_walk(&child, &relative, device, max_entries, max_bytes, entries, bytes)?;
+            }
+            Kind::File if entry.links == 1 => {
+                *bytes = bytes.checked_add(entry.size).context("private tree size overflow")?;
+                ensure!(*bytes <= max_bytes, "private tree byte limit");
+                // Opened below the held directory without crossing a mount: a file bind-mounted
+                // from the same filesystem has the same device, and only the open refuses it.
+                let opened = directory
+                    .read(&name, entry.size)
+                    .with_context(|| {
+                        format!("private tree file crosses another mount: {relative}")
+                    })?
+                    .metadata()?;
+                ensure!(
+                    (opened.dev(), opened.ino()) == entry.identity,
+                    "private tree file was replaced: {relative}"
+                );
+                entries.push(PrivateEntry {
+                    path: relative,
+                    directory: false,
+                    mode: entry.mode,
+                    uid: entry.uid,
+                    gid: entry.gid,
+                    size: entry.size,
+                });
+            }
+            _ => anyhow::bail!(
+                "private tree contains a link or special file: {relative} (links={})",
+                entry.links
+            ),
+        }
+    }
+    Ok(())
+}
 pub fn copy_file(
     source: &Root,
     from: &str,

@@ -178,6 +178,16 @@ impl ChainRecords {
     }
 }
 impl LocalRecords {
+    /// The local records of a node that has never run, as `export` reads them: every fixed
+    /// local key explicitly absent, and no retirement record.
+    pub fn never_run() -> Self {
+        Self {
+            records: [Key::DestroyedSessions, Key::PendingObserverCleanup]
+                .into_iter()
+                .map(|key| Record { key, value: None })
+                .collect(),
+        }
+    }
     pub fn validate(&self) -> Result<()> {
         let records = index(&self.records)?;
         ensure!(records.keys().all(Key::local), "non-local key in preservation inventory");
