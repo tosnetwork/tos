@@ -16,7 +16,7 @@ use crate::{
 use chain_block::{
     error, fail, Account, Cell, Coins, CurrencyCollection, Message, Result, Serializable,
     SliceData, TrComputePhase, Transaction, TransactionDescr, TransactionDescrTickTock,
-    TransactionTickTock,
+    TransactionTickTock, MASTERCHAIN_ID,
 };
 use tos_vm::{
     boolean, int,
@@ -37,7 +37,7 @@ impl TickTockTransactionExecutor {
 
 impl TransactionExecutor for TickTockTransactionExecutor {
     ///
-    /// Create end execute tick or tock transaction for special account
+    /// Execute a tick or tock transaction for the supplied account context.
     fn execute_with_params(
         &self,
         in_msg_cell: Option<Cell>,
@@ -53,26 +53,23 @@ impl TransactionExecutor for TickTockTransactionExecutor {
             Some(addr) => addr.clone(),
             None => fail!("Tick Tock contract should have Standard address"),
         };
-        match account.get_tick_tock() {
-            Some(tt) => {
-                if tt.tock != self.tt.is_tock() && tt.tick != self.tt.is_tick() {
-                    fail!("wrong type of account's tick tock flag")
-                }
-            }
-            None => fail!("Account {:x} is not special account for tick tock", account_id),
-        }
-        let account_address = account.get_addr().cloned().unwrap_or_default();
+        // Scheduling selects tick/tock flags; explicit execution derives account
+        // privileges from its address and configuration.
+        let account_address = account
+            .get_addr()
+            .cloned()
+            .ok_or_else(|| error!("Tick Tock account has no address"))?;
+        let (wc_id, _) = account_address.extract_std_address(true)?;
         log::debug!(target: "executor", "tick tock transation account {:x}", account_id);
         let mut acc_balance = account.balance().cloned().unwrap_or_default();
 
-        let is_masterchain = true;
-        let is_special = true;
+        let is_masterchain = wc_id == MASTERCHAIN_ID;
+        let is_special = self.config.is_special_account(is_masterchain, &account_id)?;
         let lt = std::cmp::max(account.last_tr_time().unwrap_or_default(), params.last_tr_lt);
         let mut tr = self.create_transaction(account_id.clone());
         tr.orig_status = account.status();
         tr.set_logical_time(lt);
         tr.set_now(params.block_unixtime);
-        account.set_last_paid(0);
         let storage = self
             .storage_phase(account, &mut acc_balance, &mut tr, is_masterchain, is_special)
             .map_err(|e| {
@@ -82,6 +79,7 @@ impl TransactionExecutor for TickTockTransactionExecutor {
                     e
                 )))
             })?;
+        account.set_last_paid(if is_special { 0 } else { params.block_unixtime });
         let storage_fees_collected = storage.storage_fees_collected.as_u128();
         let mut description = TransactionDescrTickTock {
             tt: self.tt.clone(),
@@ -113,7 +111,7 @@ impl TransactionExecutor for TickTockTransactionExecutor {
         );
         let mut stack = Stack::new();
         stack
-            .push(int!(account.balance().map_or(0, |value| value.coins.as_u128())))
+            .push(int!(acc_balance.coins.as_u128()))
             .push(StackItem::integer(IntegerData::from_unsigned_bytes_be(
                 account_id.get_bytestring(0),
             )))
@@ -146,6 +144,7 @@ impl TransactionExecutor for TickTockTransactionExecutor {
         description.compute_ph = compute_ph;
         description.action = match description.compute_ph {
             TrComputePhase::Vm(ref phase) => {
+                tr.add_fee_coins(&phase.gas_fees)?;
                 if phase.success {
                     log::debug!(target: "executor", "compute_phase: TrComputePhase::Vm success");
                     log::debug!(target: "executor", "action_phase {}", lt);
@@ -155,7 +154,7 @@ impl TransactionExecutor for TickTockTransactionExecutor {
                         &original_acc_balance,
                         &mut acc_balance,
                         &mut CurrencyCollection::default(),
-                        &Coins::zero(),
+                        &phase.gas_fees,
                         actions.unwrap_or_default(),
                         new_data,
                         &account_address,
@@ -196,11 +195,12 @@ impl TransactionExecutor for TickTockTransactionExecutor {
         };
 
         log::debug!(target: "executor", "Desciption.aborted {}", description.aborted);
-        tr.set_end_status(account.status());
-        account.set_balance(acc_balance);
         if description.aborted {
             *account = old_account;
         }
+        // Execution rollback retains collected storage and compute fees.
+        account.set_balance(acc_balance);
+        tr.set_end_status(account.status());
         let lt = self.add_messages(&mut tr, out_msgs, params.last_tr_lt)?;
         account.set_last_tr_time(lt);
         tr.write_description(&TransactionDescr::TickTock(description))?;
