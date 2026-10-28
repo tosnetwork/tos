@@ -60,6 +60,9 @@ if(NOT CMAKE_CROSSCOMPILING)
   add_test(NAME proof-acquisition-c COMMAND ${Python3_EXECUTABLE}
     ${PROJECT_SOURCE_DIR}/test/pq-native/proof-acquisition-c-test.py
     $<TARGET_FILE:tos-proof-embedded> ${PROJECT_SOURCE_DIR}/test/pq-native/data/proof-verify-real)
+  add_test(NAME self-pay-simulation-acquisition COMMAND ${Python3_EXECUTABLE}
+    ${PROJECT_SOURCE_DIR}/test/pq-native/self-pay-simulation-acquisition-test.py
+    $<TARGET_FILE:tos-proof-embedded> ${PROJECT_SOURCE_DIR}/test/pq-native/data/self-pay-simulation-live)
 
   add_library(proof-persisted-fsync-shim SHARED ../../test/pq-native/proof-persisted-fsync-shim.cpp)
   target_link_libraries(proof-persisted-fsync-shim PRIVATE ${CMAKE_DL_LIBS})

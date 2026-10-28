@@ -30,6 +30,9 @@ td::Result<std::unique_ptr<LiteTransport>> connect_liteserver(const std::string&
 
 td::Result<Material> fetch_material(LiteTransport& transport, const Anchor& anchor, const Request& request,
                                     const std::optional<LiveState>& state);
+enum class FetchPurpose { Read, SelfPaySimulation };
+td::Result<Material> fetch_material(LiteTransport& transport, const Anchor& anchor, const Request& request,
+                                    const std::optional<LiveState>& state, FetchPurpose purpose);
 
 td::Result<Material> read_material(const std::string& directory);
 td::Status write_material(const std::string& directory, const Material& material);
