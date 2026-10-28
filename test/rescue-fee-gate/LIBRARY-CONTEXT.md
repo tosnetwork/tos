@@ -64,8 +64,8 @@ release it on exit. The per-scenario engines and their warm-cell sets remain
 separate. This adds no production VM state, thread, cache or resource lifetime,
 and makes no production hardware performance claim.
 
-Both `vm-ingress` architectures run the controls and full endstate comparison
-before writing success receipts. The coverage guard requires both commands and
+Both `vm-ingress` architectures run the Rust fallback/library regression tests,
+controls and full endstate comparison before writing success receipts. The coverage guard requires all commands and
 both architectures, preserving all original suites and commands. The existing
 context upload retains their inputs and outputs. Local matching is not hosted
 acceptance. These cases do not establish all code-entry resolution,

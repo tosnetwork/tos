@@ -23,7 +23,11 @@ class RescueCiTests(unittest.TestCase):
             for b in guard.blocks(self.workflow)
             if b.startswith("      - name: Verify SHA256C library resolution\n")
         )
-        for line in (x for x in block.splitlines(keepends=True) if "          python " in x):
+        for line in (
+            x
+            for x in block.splitlines(keepends=True)
+            if "          python " in x or "          cargo test " in x
+        ):
             with self.subTest(command=line):
                 with self.assertRaisesRegex(ValueError, "library context controls"):
                     self.check(self.workflow.replace(line, ""))
