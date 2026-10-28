@@ -111,6 +111,10 @@ class ReplayLoop {
     }
     if (checkpoint_.committed.seqno() > tip.seqno())
       return td::Status::Error("source is behind durable index progress");
+    // A ceiling below the durable cursor can never be reached again, so the
+    // loop would never settle and never go idle.
+    if (ceiling_ != 0 && checkpoint_.committed.seqno() > ceiling_)
+      return td::Status::Error("durable index progress is past the replay ceiling");
     auto limit = ceiling_ != 0 ? std::min(ceiling_, tip.seqno()) : tip.seqno();
     bool replayed = false;
     if (checkpoint_.committed.seqno() < limit) {

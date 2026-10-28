@@ -932,6 +932,30 @@ std::vector<std::pair<std::string, std::string>> index_content(const std::string
 }
 }  // namespace
 
+// A restart with a ceiling below the durable cursor is refused instead of
+// replaying nothing and never going idle; the ceiling at the cursor settles.
+TEST(WalletIndexSource, a_ceiling_below_the_durable_cursor_is_refused) {
+  auto dir = temporary_directory();
+  RemoveOnExit remove{dir};
+  {
+    ReplayHarness h(make_chain(5, 1), 0, dir);
+    ASSERT_OK(h.run_until_idle());
+    ASSERT_EQ(h.progress.cursor.load(), 5u);
+  }
+  {
+    ReplayHarness h(make_chain(5, 1), 3, dir);
+    auto status = h.replay->step();
+    ASSERT_TRUE(status.is_error());
+    ASSERT_TRUE(status.message().str().find("past the replay ceiling") != std::string::npos);
+    ASSERT_TRUE(!h.replay->idle());
+  }
+  {
+    ReplayHarness h(make_chain(5, 1), 5, dir);
+    ASSERT_OK(h.run_until_idle());
+    ASSERT_EQ(h.progress.cursor.load(), 5u);
+  }
+}
+
 // Readiness belongs to the observation of the source, not to the end of the
 // replay that followed it: a blocked source and a slow consumer both leave
 // /readyz unready, and a ceiling below the tip never makes it ready.

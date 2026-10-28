@@ -163,7 +163,9 @@ source has not been checked successfully for five seconds. The fields are:
 
 `--replay-ceiling <seqno>` stops replay at that masterchain block, for
 measurement and for comparing two replays of the same source. The index never
-reports `caught_up` while it stops short of the source tip. To compare two
+reports `caught_up` while it stops short of the source tip. A ceiling below the
+index's durable cursor is refused (`durable index progress is past the replay
+ceiling`): replay cannot go back, so such a run would never settle. To compare two
 replays, stop both once `settled` is true at the same ceiling, then print each
 index with `tos-wallet-index-dump --index-dir <data-dir>/index` (read-only; one
 line per key and the digest of all of them) and compare the output.
