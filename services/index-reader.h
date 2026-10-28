@@ -13,24 +13,38 @@
 
 namespace tos::services {
 
-// Reservations against the prefetch byte budget, before a result's size is
-// known. A block reserves the largest block any ingress accepts plus the
-// fixed allowance below; when it completes the reservation becomes its
-// measured charge (block_charge).
-inline constexpr size_t kSourceMaxBlockBytes = size_t{4} << 20;
-// Objects a buffered block keeps besides its serialized bytes: the block
-// object, its lazy bag-of-cells reader, the decoded root cell and the handle.
+// The largest block the prefetch lane reads. The archive refuses a larger
+// block after reading only its entry header, before allocating its bytes,
+// and the replay thread then reads that block itself on its own lane.
+inline constexpr size_t kPrefetchBlockBytesMax = size_t{4} << 20;
+// Objects a buffered result keeps besides its bytes: the reply, the raw
+// block and the rounding of its buffer.
 inline constexpr size_t kSourceResultOverheadBytes = 4096;
 // A handle lookup's result, and each handle a prefetched interval keeps.
 inline constexpr size_t kSourceHandleBytes = 1024;
-inline constexpr size_t kSourceBlockReserveBytes = kSourceMaxBlockBytes + kSourceResultOverheadBytes;
+// Reserved against the prefetch byte budget before a block read is issued:
+// the most a prefetched block can hold. On completion the reservation
+// becomes the result's own charge (raw_block_charge), which is never larger.
+inline constexpr size_t kSourceBlockReserveBytes = kPrefetchBlockBytesMax + kSourceResultOverheadBytes;
 
-// What a completed block read holds until it is walked: its serialized bytes
-// (the block keeps exactly the buffer the package read allocated, and its
-// lazy reader decodes cells from it on demand) plus the fixed allowance.
-// Cells the walk decodes are created by the replay thread after the result
-// is taken, as before prefetching.
-size_t block_charge(const td::Result<td::Ref<validator::BlockData>>& result);
+// A block as the prefetch lane reads it: its serialized bytes, undecoded.
+// Cells are decoded only by the thread that uses the block, when it does.
+struct RawBlock {
+  td::BufferSlice data;
+  // Larger than kPrefetchBlockBytesMax: `data` is empty, nothing of the
+  // block was read, and the replay thread reads it on its own lane.
+  bool too_large = false;
+};
+
+// The raw block a size-limited read produced. Its buffer holds only this
+// block's bytes: a buffer small enough to have come from a shared slab is
+// copied into one of its own, so a result never keeps other memory alive.
+td::Result<RawBlock> raw_block(td::Result<td::BufferSlice> read);
+// What a completed block read holds until it is taken: its bytes plus the
+// fixed allowance; a refusal or an error holds only the allowance.
+size_t raw_block_charge(const td::Result<RawBlock>& result);
+// Decode a block's bytes, checking they are the block `id` names.
+td::Result<td::Ref<validator::BlockData>> decode_block(const BlockIdExt& id, td::BufferSlice data);
 
 // Source reads for the replay. Requests are handed to the inbox actor, which
 // runs them in actor context as soon as they are queued; no node actor is
@@ -100,10 +114,15 @@ class IndexReader {
   // fixture through the same request limit, inbox and replies.
   virtual td::Result<validator::ConstBlockHandle> masterchain(uint32_t seqno, Context context);
   virtual td::Result<validator::BlockHandle> handle(BlockIdExt id, Context context);
-  // The wc=0 shard heads a masterchain block records.
-  virtual td::Result<std::vector<BlockIdExt>> shard_heads(validator::ConstBlockHandle master, Context context);
-  virtual td::Result<std::shared_ptr<SourceReply<td::Ref<validator::BlockData>>>> submit_block(
-      validator::ConstBlockHandle handle, Context context);
+  // The wc=0 shard heads a masterchain block records, read and decoded on the
+  // replay thread's lane.
+  virtual td::Result<std::vector<BlockIdExt>> shard_heads(validator::ConstBlockHandle master);
+  // A block's raw bytes, at most kPrefetchBlockBytesMax of them; a larger
+  // block completes as too_large without being read.
+  virtual td::Result<std::shared_ptr<SourceReply<RawBlock>>> submit_block(validator::ConstBlockHandle handle,
+                                                                          Context context);
+  // A block read and decoded on the replay thread's lane, whatever its size.
+  virtual td::Result<td::Ref<validator::BlockData>> read_block(validator::ConstBlockHandle handle);
   virtual td::Result<td::Ref<vm::Cell>> state(validator::ConstBlockHandle handle);
   virtual td::Result<BlockIdExt> tip();
   td::Result<validator::ConstBlockHandle> masterchain(uint32_t seqno) {
@@ -112,7 +131,15 @@ class IndexReader {
   td::Result<validator::BlockHandle> handle(BlockIdExt id) {
     return handle(id, Context{});
   }
-  td::Result<td::Ref<vm::Cell>> block(validator::ConstBlockHandle handle, Context context = {});
+  // The checked root of a block read on the replay thread's lane.
+  td::Result<td::Ref<vm::Cell>> block(validator::ConstBlockHandle handle);
+
+  // The shard heads of a masterchain block, for the prefetch lane: the raw
+  // block is read within the prefetch budget and decoded on the calling
+  // thread, and only the heads are kept; the decoded block is gone when this
+  // returns. Empty when the block is too large for the prefetch lane.
+  td::Result<std::optional<std::vector<BlockIdExt>>> prefetch_shard_heads(validator::ConstBlockHandle master,
+                                                                          Context context);
 
   // The block's root after checking it is the block the handle names.
   static td::Result<td::Ref<vm::Cell>> checked_root(const validator::ConstBlockHandle& handle,
@@ -127,6 +154,26 @@ class IndexReader {
   ReplayStats* stats() const {
     return stats_;
   }
+
+ protected:
+  // Queue a raw block read: `call(db, promise)` reads at most
+  // kPrefetchBlockBytesMax bytes of the block and answers with them, or with
+  // the archive's kFileOverReadLimit refusal.
+  template <class F>
+  td::Result<std::shared_ptr<SourceReply<RawBlock>>> submit_raw_block(F call, Context context) {
+    return submit<RawBlock>(
+        [call = std::move(call)](auto db, td::Promise<RawBlock> promise) mutable {
+          call(db, td::PromiseCreator::lambda([promise = std::move(promise)](td::Result<td::BufferSlice> read) mutable {
+                 promise.set_result(raw_block(std::move(read)));
+               }));
+        },
+        context, kSourceBlockReserveBytes, [](const td::Result<RawBlock>& result) { return raw_block_charge(result); });
+  }
+  // The shard heads recorded in a masterchain block's raw bytes. Virtual so a
+  // fixture whose masterchain blocks record no shard configuration can supply
+  // its heads after the same decoding.
+  virtual td::Result<std::vector<BlockIdExt>> decoded_shard_heads(const validator::ConstBlockHandle& master,
+                                                                  td::BufferSlice data);
 
  private:
   td::actor::ActorId<validator::RootDb> db_;

@@ -205,15 +205,17 @@ class PackageReader : public td::actor::Actor {
  public:
   PackageReader(std::shared_ptr<Package> package, td::uint64 offset,
                 td::Promise<std::pair<std::string, td::BufferSlice>> promise,
-                std::shared_ptr<PackageStatistics> statistics)
+                std::shared_ptr<PackageStatistics> statistics,
+                td::uint32 data_limit = std::numeric_limits<td::uint32>::max())
       : package_(std::move(package))
       , offset_(offset)
+      , data_limit_(data_limit)
       , promise_(std::move(promise))
       , statistics_(std::move(statistics)) {
   }
   void start_up() override {
     auto start = td::Timestamp::now();
-    auto result = package_->read(offset_);
+    auto result = package_->read(offset_, data_limit_);
     if (statistics_ && result.is_ok()) {
       statistics_->record_read((td::Timestamp::now().at() - start.at()) * 1e6, result.ok_ref().second.size());
     }
@@ -225,6 +227,7 @@ class PackageReader : public td::actor::Actor {
  private:
   std::shared_ptr<Package> package_;
   td::uint64 offset_;
+  td::uint32 data_limit_;
   td::Promise<std::pair<std::string, td::BufferSlice>> promise_;
   std::shared_ptr<PackageStatistics> statistics_;
 };
@@ -512,6 +515,11 @@ void ArchiveSlice::get_temp_handle(BlockIdExt block_id, td::Promise<ConstBlockHa
 }
 
 void ArchiveSlice::get_file(ConstBlockHandle handle, FileReference ref_id, td::Promise<td::BufferSlice> promise) {
+  get_file_limited(std::move(handle), std::move(ref_id), std::numeric_limits<td::uint32>::max(), std::move(promise));
+}
+
+void ArchiveSlice::get_file_limited(ConstBlockHandle handle, FileReference ref_id, td::uint32 data_limit,
+                                    td::Promise<td::BufferSlice> promise) {
   if (destroyed_) {
     promise.set_error(td::Status::Error(ErrorCode::notready, td::Slice(kPackageGarbageCollected)));
     return;
@@ -537,7 +545,7 @@ void ArchiveSlice::get_file(ConstBlockHandle handle, FileReference ref_id, td::P
         }
       });
   td::actor::create_actor<PackageReader>(PSTRING() << "reader." << td::PathView(p->path).file_name(), p->package,
-                                         offset, std::move(P), statistics_.pack_statistics)
+                                         offset, std::move(P), statistics_.pack_statistics, data_limit)
       .release();
 }
 

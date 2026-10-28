@@ -35,7 +35,13 @@ struct SourceLimits {
   // refused a read because results it has not reached yet hold every place.
   size_t consumer_reserve = 1;
   // Bytes the prefetch lane may hold: reserved before a request is issued
-  // and set to the measured size when it completes (SourceTicket).
+  // and set to the result's own size when it completes (SourceTicket). A
+  // block read reserves the most a block result can hold (4 MiB + 4 KiB), so
+  // completions never grow the total: in-flight and completed-but-not-taken
+  // block results together are at most min(prefetch places, 15) worst-case
+  // reservations, 15 being how many fit in 64 MiB. With the default limit of
+  // 8 requests and 1 consumer place that is 7, about 28 MiB. Results hold raw
+  // bytes only; cells are decoded by the thread that uses a block.
   size_t prefetch_bytes = size_t{64} << 20;
 };
 
@@ -227,8 +233,24 @@ class SourceReply {
   // keeps while it waits to be taken; a result that lost is dropped.
   void complete(td::Result<T> result, size_t bytes) {
     std::unique_lock<std::mutex> lock(core_->mutex());
+    complete_locked(std::move(result), bytes);
+    lock.unlock();
+    // `result` may still hold a dropped late result: it is destroyed here,
+    // outside the mutex.
+  }
+  // The same with the core mutex held, for completing at a chosen moment.
+  void complete_locked(td::Result<T>&& result, size_t bytes) {
     if (state_ != State::Pending) {
-      lock.unlock();
+      return;
+    }
+    if (std::chrono::steady_clock::now() >= deadline_) {
+      // Too late: the request timed out, whether or not a waiter has seen it
+      // yet. The result is never published; the deadline is cleared so it is
+      // not reported again, and the reservation stays with the ticket until
+      // the reply is released.
+      state_ = State::TimedOut;
+      ticket_.completed_locked();
+      core_->mark_timed_out_locked();
       return;
     }
     state_ = State::Completed;

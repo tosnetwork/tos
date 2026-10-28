@@ -12,6 +12,7 @@
 #include "index-prefetch.h"
 #include "index-progress.h"
 #include "index-reader.h"
+#include "index-replay.h"
 
 namespace tos::services {
 using tos_wallet_index::WalletIndexDb;
@@ -83,7 +84,7 @@ class ReplayLoop {
     if (checkpoint_.committed != tip)
       progress_.ready = false;
     TRY_RESULT(top, reader_.handle(tip));
-    TRY_RESULT(heads, reader_.shard_heads(top, {}));
+    TRY_RESULT(heads, reader_.shard_heads(top));
     heads_ = std::move(heads);
     auto db = tos_wallet_index::wallet_index_db();
     if (!initialized_) {
@@ -165,19 +166,26 @@ class ReplayLoop {
       return td::Status::Error("noncontiguous masterchain replay");
     }
     auto db = tos_wallet_index::wallet_index_db();
-    for (size_t i = 0; i < interval->blocks.size(); ++i) {
+    // A masterchain block too large for the prefetch lane: this thread reads
+    // the interval itself, on its own lane, as replay did before prefetching.
+    std::vector<validator::BlockHandle> own_blocks;
+    if (interval->replay_reads) {
+      TRY_RESULT(heads, reader_.shard_heads(master));
+      TRY_RESULT_ASSIGN(own_blocks,
+                        replay_interval(std::move(heads), next, [this](BlockIdExt id) { return reader_.handle(id); }));
+    }
+    size_t count = interval->replay_reads ? own_blocks.size() : interval->blocks.size();
+    for (size_t i = 0; i < count; ++i) {
       if (stop_requested.load())
         return td::Status::Error("replay interrupted");
-      auto& handle = interval->blocks[i].handle;
+      auto& handle = interval->replay_reads ? own_blocks[i] : interval->blocks[i].handle;
       if (handle == nullptr || handle->id().id.workchain != 0 || !handle->is_applied() ||
           !handle->inited_masterchain_ref_block() || handle->masterchain_ref_block() != next) {
         return td::Status::Error("invalid prefetched shard block");
       }
-      td::Result<td::Ref<validator::BlockData>> data;
-      {
-        StageTimer timer(stats_.prefetch_wait_us);
-        data = prefetcher_.block_data(*interval, i);
-      }
+      // Waiting for prefetched bytes counts as prefetch wait, decoding them
+      // as walk time (both inside block_data).
+      auto data = interval->replay_reads ? reader_.read_block(handle) : prefetcher_.block_data(*interval, i);
       TRY_RESULT(block_data, std::move(data));
       TRY_RESULT(block, IndexReader::checked_root(handle, block_data));
       block_data = {};

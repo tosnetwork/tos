@@ -12,10 +12,11 @@
 namespace tos::services {
 
 // One shard block of a prefetched interval: its handle, and once the prefetch
-// thread has issued it, the reply its data arrives in.
+// thread has issued it, the reply its raw bytes arrive in. Nothing here is
+// decoded: the replay thread decodes the block when it takes it.
 struct PrefetchedBlock {
   validator::BlockHandle handle;
-  std::shared_ptr<SourceReply<td::Ref<validator::BlockData>>> data;  // guarded by the core mutex
+  std::shared_ptr<SourceReply<RawBlock>> data;  // guarded by the core mutex
 };
 
 // The source records for one masterchain block, read ahead of the replay
@@ -28,6 +29,9 @@ struct PrefetchedInterval {
   // this generation, and the replay thread reports it on reaching it.
   td::Status error;
   validator::ConstBlockHandle master;
+  // The masterchain block is too large for the prefetch lane: `blocks` is
+  // empty and the replay thread reads this interval itself, on its own lane.
+  bool replay_reads = false;
   // Parents before children, as replay_interval returns them.
   std::vector<PrefetchedBlock> blocks;
   // How many of `blocks` have their data request issued, or `issue_error`.
@@ -65,7 +69,12 @@ class Prefetcher {
 
   // The interval for `seqno`, waiting until it has been read.
   td::Result<std::shared_ptr<PrefetchedInterval>> interval(uint32_t seqno);
-  // Block `index` of `interval`, waiting until its data has arrived.
+  // Block `index` of `interval`, waiting until its raw bytes have arrived,
+  // and its place and bytes released. Waiting counts as prefetch wait.
+  td::Result<RawBlock> take_block(PrefetchedInterval& interval, size_t index);
+  // The same block decoded on the calling thread; a block too large for the
+  // prefetch lane is read here, on the replay thread's lane. Decoding counts
+  // as walk time.
   td::Result<td::Ref<validator::BlockData>> block_data(PrefetchedInterval& interval, size_t index);
   // The replay thread has finished with the front interval.
   void pop(uint32_t seqno);

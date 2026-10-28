@@ -210,22 +210,37 @@ outstanding at once (queued, running, or completed and not yet walked), one of
 them always kept for the replay thread's own reads. Read-ahead memory is
 bounded twice over:
 
-- *By count.* Each read-ahead block read reserves 4 MiB (the largest block any
-  ingress accepts) plus 4 KiB before it is issued, and once it completes keeps
-  its serialized size plus 4 KiB: the block keeps exactly the buffer its
-  package read allocated, its reader decodes cells from that buffer on
-  demand, and the cells a walk decodes are made by the replay thread
-  afterwards, as before. Every handle a read-ahead interval keeps is charged
-  1 KiB. With 7 read-ahead places and 8 intervals of at most 4096 shard blocks,
-  that is at most 7 x (4 MiB + 4 KiB) + 8 x 4097 KiB, about 60 MiB.
+- *By count.* Read-ahead keeps blocks as serialized bytes only. Each
+  read-ahead block read reserves 4 MiB (the largest block the read-ahead
+  takes) plus 4 KiB before it is issued, and once it completes keeps exactly
+  its serialized size plus 4 KiB, in a buffer holding only that block. No
+  completion can grow a charge. Cells are decoded by the thread that uses a
+  block: the replay thread decodes each shard block when it takes it, one at a
+  time as before, and the prefetch thread decodes one masterchain block at a
+  time to read its shard heads, keeping only the heads. Every handle a
+  read-ahead interval keeps is charged 1 KiB. With 7 read-ahead places and 8
+  intervals of at most 4096 shard blocks, that is at most
+  7 x (4 MiB + 4 KiB) + 8 x 4097 KiB, about 60 MiB, of which the block bytes
+  are at most min(7, 15) worst-case reservations (15 fit in 64 MiB).
 - *By budget.* The charges above are also held to 64 MiB: a read waits until
   its reservation fits, except the read the replay thread needs next, which is
   admitted when nothing else is read ahead.
 
-A block larger than 4 MiB is still accepted and charged its real size; further
-reads wait until the budget allows them again. `replay_stats` reports the
-highest charge reached (`prefetch_bytes_high_water`); compare it with the
-process's resident memory. A full
+Besides these, at most two blocks are decoded at once: the shard block the
+replay thread is walking and the masterchain block the prefetch thread is
+reading heads from. The masterchain block comes from at most 4 MiB of
+serialized bytes; so does the shard block, except a block over 4 MiB, which
+the replay thread reads and decodes whole, as before.
+
+A block larger than 4 MiB is not read ahead: the archive refuses it after
+reading only its entry header, before allocating its bytes, and the replay
+thread reads and decodes that block itself on its own lane when it reaches it,
+as replay did before reading ahead (for a masterchain block, the replay thread
+reads that whole interval itself). `replay_stats` reports the highest charge
+reached (`prefetch_bytes_high_water`); compare it with the process's resident
+memory, which this bound does not include. A source request that completes
+after its 30 s deadline is treated as timed out and its result is never handed
+over. A full
 limit makes readers wait; it never fails a replay. A failed read is reported
 when the replay thread reaches that block, after the blocks before it have been
 committed, and everything read ahead is then dropped and read again. Replay

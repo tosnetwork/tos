@@ -13,6 +13,7 @@
 #include <thread>
 #include <vector>
 
+#include "common/errorcode.h"
 #include "services/index-prefetch.h"
 #include "services/index-reader.h"
 #include "services/index-replay-loop.h"
@@ -22,8 +23,10 @@
 #include "td/utils/port/path.h"
 #include "td/utils/port/thread.h"
 #include "td/utils/tests.h"
+#include "validator/db/package.hpp"
 #include "validator/fabric.h"
 #include "vm/boc.h"
+#include "vm/cells/DataCell.h"
 
 #include "wallet-index-chain-fixture.h"
 
@@ -81,11 +84,29 @@ class SchedulerThread {
   td::thread thread_;
 };
 
+// A masterchain block of the fixture: only its identity matters, so its root
+// is one cell naming its seqno, or that cell with a payload hanging off it.
+td::Ref<vm::Cell> master_root(uint32_t seqno, td::Ref<vm::Cell> payload = {}) {
+  vm::CellBuilder cb;
+  cb.store_long(0x6d617374, 32);
+  cb.store_long(seqno, 32);
+  if (payload.not_null())
+    cb.store_ref(payload);
+  return cb.finalize();
+}
+
+BlockIdExt block_id_of(int workchain, uint32_t seqno, const td::Ref<vm::Cell>& root, const td::BufferSlice& boc) {
+  td::Bits256 file_hash;
+  td::sha256(boc.as_slice(), file_hash.as_slice());
+  if (workchain == masterchainId)
+    return BlockIdExt{masterchainId, shardIdAll, seqno, root->get_hash().bits(), file_hash};
+  return BlockIdExt{workchain, shardIdAll, seqno, root->get_hash().bits(), file_hash};
+}
+
+// The identity of the plain fixture masterchain block `seqno`.
 BlockIdExt master_id(uint32_t seqno) {
-  td::Bits256 hash;
-  hash.set_zero();
-  hash.as_slice().copy_from(td::Slice(reinterpret_cast<const char*>(&seqno), sizeof(seqno)));
-  return BlockIdExt{masterchainId, shardIdAll, seqno, hash, hash};
+  auto root = master_root(seqno);
+  return block_id_of(masterchainId, seqno, root, vm::std_boc_serialize(root, 31).move_as_ok());
 }
 
 // A payload of about `bytes` bytes hanging off a block root, so the block's
@@ -113,6 +134,38 @@ td::Ref<vm::Cell> payload(size_t bytes, uint32_t salt) {
   return level.front();
 }
 
+// The fixture block `root` with `payload` hanging off its value flow, which
+// the index never reads: a block of a chosen size that still indexes.
+td::Ref<vm::Cell> with_payload(const td::Ref<vm::Cell>& root, const td::Ref<vm::Cell>& payload) {
+  auto cs = vm::load_cell_slice(root);
+  vm::CellBuilder flow;
+  flow.store_long(0, 1);
+  flow.store_ref(payload);
+  vm::CellBuilder out;
+  CHECK(out.store_bits_bool(cs.data_bits(), static_cast<unsigned>(cs.size())) &&
+        out.store_ref_bool(cs.prefetch_ref(0)) && out.store_ref_bool(flow.finalize()) &&
+        out.store_ref_bool(cs.prefetch_ref(2)) && out.store_ref_bool(cs.prefetch_ref(3)));
+  return out.finalize();
+}
+
+struct ChainOptions {
+  // Payload hung off each shard block, and off every `oversized_every`-th
+  // shard block instead `oversized_bytes` of it (0: none).
+  size_t payload_bytes = 0;
+  uint32_t oversized_every = 0;
+  size_t oversized_bytes = (size_t{9} << 20) / 2;
+  // Payload hung off each masterchain block, and off masterchain block
+  // `oversized_master` instead `oversized_bytes` of it (0: none).
+  size_t master_payload_bytes = 0;
+  uint32_t oversized_master = 0;
+  // Serialization mode of every block; 0 stores no hashes, so decoding a
+  // block's root materializes every cell under it.
+  int boc_mode = 31;
+  // When set, every block is also stored in a package file in this
+  // directory and raw reads go through the archive's size-limited read.
+  std::string package_dir;
+};
+
 // Masterchain blocks 1..masters; interval n holds `per_interval` basechain
 // blocks, each the child of the one before, the first the child of the last
 // block of interval n-1.
@@ -122,22 +175,41 @@ struct FakeChain {
   std::map<uint32_t, std::vector<BlockIdExt>> order;
   std::map<BlockIdExt, validator::BlockHandle> shards;
   std::map<BlockIdExt, std::string> data;
+  std::shared_ptr<Package> package;
+  std::map<BlockIdExt, td::uint64> offsets;
   uint32_t tip = 0;
 };
 
-std::shared_ptr<FakeChain> make_chain(uint32_t masters, uint32_t per_interval, size_t payload_bytes = 0) {
+std::shared_ptr<FakeChain> make_chain(uint32_t masters, uint32_t per_interval, ChainOptions options) {
   auto chain = std::make_shared<FakeChain>();
+  if (!options.package_dir.empty()) {
+    chain->package =
+        std::make_shared<Package>(Package::open(options.package_dir + "/blocks.pack", false, true).move_as_ok());
+  }
+  auto store = [&](const BlockIdExt& id, const td::BufferSlice& boc) {
+    chain->data[id] = boc.as_slice().str();
+    if (chain->package)
+      chain->offsets[id] = chain->package->append(id.to_str(), boc.as_slice(), false);
+  };
   BlockIdExt previous_shard{0, shardIdAll, 0, td::Bits256::zero(), td::Bits256::zero()};
+  BlockIdExt previous_master;
   uint32_t shard_seqno = 0;
   for (uint32_t n = 1; n <= masters; ++n) {
-    auto master = validator::create_empty_block_handle(master_id(n));
+    size_t master_bytes = n == options.oversized_master ? options.oversized_bytes : options.master_payload_bytes;
+    auto master_cell = master_root(n, master_bytes ? payload(master_bytes, n) : td::Ref<vm::Cell>());
+    auto master_boc = vm::std_boc_serialize(master_cell, options.boc_mode).move_as_ok();
+    auto mid = block_id_of(masterchainId, n, master_cell, master_boc);
+    master_cell = {};
+    store(mid, master_boc);
+    auto master = validator::create_empty_block_handle(mid);
     master->set_merge(false);
     if (n > 1)
-      master->set_prev(master_id(n - 1));
+      master->set_prev(previous_master);
     master->set_applied();
     // A fixture handle is never written; mark it as such.
     master->flushed_upto(master->version());
     chain->masters[n] = master;
+    previous_master = mid;
     for (uint32_t j = 0; j < per_interval; ++j) {
       ++shard_seqno;
       td::Bits256 account;
@@ -145,17 +217,13 @@ std::shared_ptr<FakeChain> make_chain(uint32_t masters, uint32_t per_interval, s
       account.as_slice().copy_from(td::Slice(reinterpret_cast<const char*>(&shard_seqno), sizeof(shard_seqno)));
       auto root = wallet_index_fixture::block(shard_seqno, 1000ull * shard_seqno, 1000 + shard_seqno,
                                               {wallet_index_fixture::Tx{account, 1000ull * shard_seqno - 10, 0}});
-      if (payload_bytes) {
-        vm::CellBuilder cb;
-        cb.store_long(shard_seqno, 32);
-        cb.store_ref(root);
-        cb.store_ref(payload(payload_bytes, shard_seqno));
-        root = cb.finalize();
-      }
-      auto boc = vm::std_boc_serialize(root, 31).move_as_ok();
-      td::Bits256 file_hash;
-      td::sha256(boc.as_slice(), file_hash.as_slice());
-      BlockIdExt id{0, shardIdAll, shard_seqno, root->get_hash().bits(), file_hash};
+      bool oversized = options.oversized_every != 0 && shard_seqno % options.oversized_every == 0;
+      size_t bytes = oversized ? options.oversized_bytes : options.payload_bytes;
+      if (bytes)
+        root = with_payload(root, payload(bytes, shard_seqno));
+      auto boc = vm::std_boc_serialize(root, options.boc_mode).move_as_ok();
+      auto id = block_id_of(0, shard_seqno, root, boc);
+      root = {};
       auto handle = validator::create_empty_block_handle(id);
       handle->set_merge(false);
       handle->set_prev(previous_shard);
@@ -163,33 +231,62 @@ std::shared_ptr<FakeChain> make_chain(uint32_t masters, uint32_t per_interval, s
       handle->set_applied();
       handle->flushed_upto(handle->version());
       chain->shards[id] = handle;
-      chain->data[id] = boc.as_slice().str();
+      store(id, boc);
       chain->order[n].push_back(id);
       previous_shard = id;
     }
     chain->heads[n] = {previous_shard};
   }
+  if (chain->package)
+    chain->package->sync();
   chain->tip = masters;
   return chain;
 }
 
-// What the fixture source does with requests: answer at once, or hold them
-// until the test releases them, and fail chosen ones.
+std::shared_ptr<FakeChain> make_chain(uint32_t masters, uint32_t per_interval, size_t payload_bytes = 0) {
+  ChainOptions options;
+  options.payload_bytes = payload_bytes;
+  return make_chain(masters, per_interval, options);
+}
+
+// What the fixture source does with requests: answer at once, or hold shard
+// block reads until the test releases them, and fail chosen ones.
 struct Gate {
   std::mutex mutex;
   bool hold_blocks = false;
   bool hold_tips = false;
-  std::vector<std::pair<BlockIdExt, td::Promise<td::Ref<validator::BlockData>>>> held_blocks;
+  std::vector<std::pair<BlockIdExt, td::Promise<td::BufferSlice>>> held_blocks;
   std::vector<td::Promise<BlockIdExt>> held_tips;
   // Errors for the next request of these blocks, then cleared.
   std::map<BlockIdExt, std::string> block_errors;
   std::map<uint32_t, std::string> master_errors;
   std::map<BlockIdExt, int> block_requests;
+  // Blocks the replay thread read on its own lane.
+  std::map<BlockIdExt, int> replay_reads;
   size_t held_count() {
     std::lock_guard<std::mutex> lock(mutex);
     return held_blocks.size();
   }
 };
+
+// A block as the archive's size-limited read returns it: from the package
+// file when the chain has one, otherwise refusing a block over the limit the
+// way the archive does.
+td::Result<td::BufferSlice> raw_from(const FakeChain& chain, const BlockIdExt& id) {
+  if (chain.package) {
+    auto offset = chain.offsets.find(id);
+    if (offset == chain.offsets.end())
+      return td::Status::Error("no such block in the fixture");
+    TRY_RESULT(entry, chain.package->read(offset->second, static_cast<td::uint32>(kPrefetchBlockBytesMax)));
+    return std::move(entry.second);
+  }
+  auto it = chain.data.find(id);
+  if (it == chain.data.end())
+    return td::Status::Error("no such block in the fixture");
+  if (it->second.size() > kPrefetchBlockBytesMax)
+    return td::Status::Error(ErrorCode::error, td::Slice(kFileOverReadLimit));
+  return td::BufferSlice(it->second);
+}
 
 td::Result<td::Ref<validator::BlockData>> block_from(const FakeChain& chain, const BlockIdExt& id) {
   auto it = chain.data.find(id);
@@ -199,7 +296,7 @@ td::Result<td::Ref<validator::BlockData>> block_from(const FakeChain& chain, con
 }
 
 void release_blocks(Gate& gate, const FakeChain& chain, bool reverse) {
-  std::vector<std::pair<BlockIdExt, td::Promise<td::Ref<validator::BlockData>>>> held;
+  std::vector<std::pair<BlockIdExt, td::Promise<td::BufferSlice>>> held;
   {
     std::lock_guard<std::mutex> lock(gate.mutex);
     held.swap(gate.held_blocks);
@@ -207,7 +304,7 @@ void release_blocks(Gate& gate, const FakeChain& chain, bool reverse) {
   if (reverse)
     std::reverse(held.begin(), held.end());
   for (auto& [id, promise] : held)
-    promise.set_result(block_from(chain, id));
+    promise.set_result(raw_from(chain, id));
 }
 
 class FakeReader final : public IndexReader {
@@ -253,35 +350,45 @@ class FakeReader final : public IndexReader {
         },
         context);
   }
-  td::Result<std::vector<BlockIdExt>> shard_heads(validator::ConstBlockHandle master, Context context) override {
+  td::Result<std::vector<BlockIdExt>> shard_heads(validator::ConstBlockHandle master) override {
     return query<std::vector<BlockIdExt>>(
         [chain = chain_, seqno = master->id().seqno()](auto, td::Promise<std::vector<BlockIdExt>> promise) {
           promise.set_value(std::vector<BlockIdExt>(chain->heads[seqno]));
-        },
-        context, kSourceBlockReserveBytes);
+        });
   }
-  td::Result<std::shared_ptr<SourceReply<td::Ref<validator::BlockData>>>> submit_block(
-      validator::ConstBlockHandle handle, Context context) override {
-    return submit<td::Ref<validator::BlockData>>(
-        [chain = chain_, gate = gate_, id = handle->id()](auto, td::Promise<td::Ref<validator::BlockData>> promise) {
+  td::Result<std::shared_ptr<SourceReply<RawBlock>>> submit_block(validator::ConstBlockHandle handle,
+                                                                  Context context) override {
+    return submit_raw_block(
+        [chain = chain_, gate = gate_, id = handle->id()](auto, td::Promise<td::BufferSlice> promise) {
           std::unique_lock<std::mutex> lock(gate->mutex);
-          gate->block_requests[id]++;
-          auto error = gate->block_errors.find(id);
-          if (error != gate->block_errors.end()) {
-            auto message = error->second;
-            gate->block_errors.erase(error);
-            lock.unlock();
-            return promise.set_error(td::Status::Error(message));
-          }
-          if (gate->hold_blocks) {
-            gate->held_blocks.emplace_back(id, std::move(promise));
-            return;
+          if (!id.is_masterchain()) {
+            gate->block_requests[id]++;
+            auto error = gate->block_errors.find(id);
+            if (error != gate->block_errors.end()) {
+              auto message = error->second;
+              gate->block_errors.erase(error);
+              lock.unlock();
+              return promise.set_error(td::Status::Error(message));
+            }
+            if (gate->hold_blocks) {
+              gate->held_blocks.emplace_back(id, std::move(promise));
+              return;
+            }
           }
           lock.unlock();
-          promise.set_result(block_from(*chain, id));
+          promise.set_result(raw_from(*chain, id));
         },
-        context, kSourceBlockReserveBytes,
-        [](const td::Result<td::Ref<validator::BlockData>>& r) { return block_charge(r); });
+        context);
+  }
+  td::Result<td::Ref<validator::BlockData>> read_block(validator::ConstBlockHandle handle) override {
+    return query<td::Ref<validator::BlockData>>(
+        [chain = chain_, gate = gate_, id = handle->id()](auto, td::Promise<td::Ref<validator::BlockData>> promise) {
+          {
+            std::lock_guard<std::mutex> lock(gate->mutex);
+            gate->replay_reads[id]++;
+          }
+          promise.set_result(block_from(*chain, id));
+        });
   }
   td::Result<td::Ref<vm::Cell>> state(validator::ConstBlockHandle) override {
     return td::Status::Error("the fixture source keeps no states");
@@ -296,6 +403,16 @@ class FakeReader final : public IndexReader {
       lock.unlock();
       promise.set_value(chain->masters.at(chain->tip)->id());
     });
+  }
+
+ protected:
+  // The fixture's masterchain blocks record no shard configuration: decode
+  // and check the block as the source does, then supply its heads.
+  td::Result<std::vector<BlockIdExt>> decoded_shard_heads(const validator::ConstBlockHandle& master,
+                                                          td::BufferSlice data) override {
+    TRY_RESULT(block, decode_block(master->id(), std::move(data)));
+    TRY_STATUS(checked_root(master, block));
+    return std::vector<BlockIdExt>(chain_->heads.at(master->id().seqno()));
   }
 
  private:
@@ -378,7 +495,7 @@ TEST(WalletIndexSource, out_of_order_completions_are_handed_over_in_order) {
     td::thread releaser([&] {
       std::mt19937 random(seed);
       while (!done.load()) {
-        std::vector<std::pair<BlockIdExt, td::Promise<td::Ref<validator::BlockData>>>> held;
+        std::vector<std::pair<BlockIdExt, td::Promise<td::BufferSlice>>> held;
         {
           std::lock_guard<std::mutex> lock(gate->mutex);
           // Let several pile up so their completions can be reordered.
@@ -390,7 +507,7 @@ TEST(WalletIndexSource, out_of_order_completions_are_handed_over_in_order) {
         else
           std::shuffle(held.begin(), held.end(), random);
         for (auto& [id, promise] : held)
-          promise.set_result(block_from(*chain, id));
+          promise.set_result(raw_from(*chain, id));
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
       }
     });
@@ -423,7 +540,7 @@ TEST(WalletIndexSource, the_result_needed_next_is_admitted_when_later_ones_fill_
       while (!done.load()) {
         // Hold the earliest until a later one has completed and kept its
         // bytes, then release the earliest last.
-        std::vector<std::pair<BlockIdExt, td::Promise<td::Ref<validator::BlockData>>>> held;
+        std::vector<std::pair<BlockIdExt, td::Promise<td::BufferSlice>>> held;
         {
           std::lock_guard<std::mutex> lock(gate->mutex);
           if (gate->held_blocks.size() >= 2)
@@ -431,7 +548,7 @@ TEST(WalletIndexSource, the_result_needed_next_is_admitted_when_later_ones_fill_
         }
         std::reverse(held.begin(), held.end());
         for (auto& [id, promise] : held)
-          promise.set_result(block_from(*chain, id));
+          promise.set_result(raw_from(*chain, id));
         // A lone request is released after a pause, so the test also
         // covers the case where nothing later is outstanding.
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
@@ -442,7 +559,7 @@ TEST(WalletIndexSource, the_result_needed_next_is_admitted_when_later_ones_fill_
             held.swap(gate->held_blocks);
         }
         for (auto& [id, promise] : held)
-          promise.set_result(block_from(*chain, id));
+          promise.set_result(raw_from(*chain, id));
       }
     });
     td::Result<std::vector<BlockIdExt>> seen = td::Status::Error("not run");
@@ -696,14 +813,14 @@ TEST(WalletIndexSource, resets_racing_completions_never_leak_an_old_generation) 
   td::thread releaser([&] {
     std::mt19937 random(11);
     while (!done.load()) {
-      std::vector<std::pair<BlockIdExt, td::Promise<td::Ref<validator::BlockData>>>> held;
+      std::vector<std::pair<BlockIdExt, td::Promise<td::BufferSlice>>> held;
       {
         std::lock_guard<std::mutex> lock(gate->mutex);
         held.swap(gate->held_blocks);
       }
       std::shuffle(held.begin(), held.end(), random);
       for (auto& [id, promise] : held)
-        promise.set_result(block_from(*chain, id));
+        promise.set_result(raw_from(*chain, id));
       std::this_thread::sleep_for(std::chrono::microseconds(random() % 500));
     }
   });
@@ -934,4 +1051,306 @@ TEST(WalletIndexSource, a_restarted_replay_matches_an_uninterrupted_one) {
   // More than the schema and the checkpoint: every block left events.
   ASSERT_TRUE(straight.size() > 48);
   ASSERT_TRUE(straight == restarted);
+}
+
+namespace {
+// Prefetch-lane bytes held and places taken, read under the core mutex.
+struct Held {
+  size_t bytes = 0;
+  size_t outstanding = 0;
+};
+Held held(SourceCore& core) {
+  std::lock_guard<std::mutex> lock(core.mutex());
+  return Held{core.prefetch_bytes_locked(), core.outstanding_locked()};
+}
+
+// Requests issued and completed so far are equal, and stay equal for a
+// moment: nothing more is being read.
+bool quiet(SourceCore& core) {
+  auto settled = [&] { return core.counters().requests.load() == core.counters().completed.load(); };
+  if (!settled())
+    return false;
+  std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  return settled();
+}
+}  // namespace
+
+// The archive's size-limited read refuses an entry over the limit from its
+// header alone, and reads one within it whole; without a limit it reads
+// anything, as every node path does.
+TEST(WalletIndexSource, a_size_limited_archive_read_refuses_before_reading_the_bytes) {
+  auto dir = temporary_directory();
+  RemoveOnExit remove{dir};
+  auto package = Package::open(dir + "/limit.pack", false, true).move_as_ok();
+  std::string big(kPrefetchBlockBytesMax + 1, 'b');
+  std::string fits(kPrefetchBlockBytesMax, 'f');
+  auto big_at = package.append("big", big, false);
+  auto fits_at = package.append("fits", fits, false);
+  auto refused = package.read(big_at, static_cast<td::uint32>(kPrefetchBlockBytesMax));
+  ASSERT_TRUE(refused.is_error());
+  ASSERT_EQ(refused.error().message().str(), std::string(kFileOverReadLimit));
+  auto as_raw = raw_block(refused.move_as_error());
+  ASSERT_OK(as_raw);
+  ASSERT_TRUE(as_raw.ok().too_large);
+  ASSERT_EQ(as_raw.ok().data.size(), 0u);
+  ASSERT_EQ(raw_block_charge(as_raw), kSourceResultOverheadBytes);
+  auto read = package.read(fits_at, static_cast<td::uint32>(kPrefetchBlockBytesMax));
+  ASSERT_OK(read);
+  ASSERT_TRUE(read.ok().second.as_slice() == td::Slice(fits));
+  auto unlimited = package.read(big_at);
+  ASSERT_OK(unlimited);
+  ASSERT_EQ(unlimited.ok().second.size(), big.size());
+}
+
+// Large and oversized blocks complete together while nothing is consumed:
+// every read reserved the largest result before it was issued, so the
+// completions never take the prefetch lane past its budget, the oversized
+// ones hold no bytes, and the buffers retained are the charged ones. The
+// replay thread then reads each oversized block on its own lane, and every
+// reservation is returned.
+TEST(WalletIndexSource, large_and_oversized_results_completing_together_stay_within_the_budget) {
+  auto dir = temporary_directory();
+  RemoveOnExit remove{dir};
+  ChainOptions options;
+  options.payload_bytes = (size_t{7} << 20) / 2;  // serialized: about 3.9 MiB, under the limit
+  options.oversized_every = 3;                    // serialized: about 4.8 MiB, over it
+  options.package_dir = dir;
+  auto chain = make_chain(8, 2, options);
+  SourceLimits limits{8, 1, 4 * kSourceBlockReserveBytes};
+  for (auto& [id, data] : chain->data) {
+    if (!id.is_masterchain() && data.size() <= kPrefetchBlockBytesMax)
+      ASSERT_TRUE(data.size() > (size_t{7} << 20) / 2);
+  }
+  // What a prefetched interval charges for its handles, outside the
+  // reservation of any read.
+  const size_t handles = 8 * 3 * kSourceHandleBytes;
+  auto core = make_core(limits);
+  auto gate = std::make_shared<Gate>();
+  gate->hold_blocks = true;
+  SchedulerThread scheduler(core, 0.05);
+  FakeReader reader(core, chain, gate);
+  auto buffers_before = td::BufferAllocator::get_buffer_mem();
+  Prefetcher prefetcher(reader, Prefetcher::Options{});
+  prefetcher.start();
+  prefetcher.follow(1, before_first(), chain->tip);
+  size_t released = 0;
+  // The most results of each kind completed in one release.
+  size_t most_large = 0, most_oversized = 0;
+  for (int round = 0; round < 50; ++round) {
+    // Let the prefetch lane fill to its limits with every block held, then
+    // complete all of them at once.
+    ASSERT_TRUE(eventually([&] { return gate->held_count() > 0 || quiet(*core); }));
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    auto before = held(*core);
+    ASSERT_TRUE(before.bytes <= limits.prefetch_bytes + handles);
+    auto count = gate->held_count();
+    if (count == 0)
+      break;
+    released += count;
+    {
+      std::lock_guard<std::mutex> lock(gate->mutex);
+      size_t large = 0, oversized = 0;
+      for (auto& entry : gate->held_blocks)
+        ++(chain->data.at(entry.first).size() > kPrefetchBlockBytesMax ? oversized : large);
+      most_large = std::max(most_large, large);
+      most_oversized = std::max(most_oversized, oversized);
+    }
+    release_blocks(*gate, *chain, round % 2 == 1);
+    auto after = held(*core);
+    ASSERT_TRUE(after.bytes <= limits.prefetch_bytes + handles);
+  }
+  ASSERT_TRUE(released >= 4);
+  ASSERT_TRUE(most_large >= 2);
+  ASSERT_TRUE(most_oversized >= 1);
+  ASSERT_TRUE(eventually([&] { return quiet(*core); }));
+  auto full = held(*core);
+  ASSERT_TRUE(full.bytes <= limits.prefetch_bytes + handles);
+  ASSERT_TRUE(core->counters().prefetch_bytes_high_water.load() <= limits.prefetch_bytes + handles);
+  // The buffers kept alive are the charged ones: nothing beyond the charge
+  // (bytes plus a fixed allowance each) is retained for a completed result.
+  auto buffers_held =
+      td::BufferAllocator::get_buffer_mem() - std::min(buffers_before, td::BufferAllocator::get_buffer_mem());
+  ASSERT_TRUE(buffers_held <= full.bytes + (size_t{1} << 20));
+  {
+    std::lock_guard<std::mutex> lock(gate->mutex);
+    ASSERT_TRUE(gate->replay_reads.empty());
+    gate->hold_blocks = false;
+  }
+  release_blocks(*gate, *chain, false);
+  auto seen = consume(prefetcher, 1, chain->tip);
+  ASSERT_OK(seen);
+  ASSERT_TRUE(seen.ok() == expected_order(*chain, 1, chain->tip));
+  size_t oversized = 0;
+  {
+    std::lock_guard<std::mutex> lock(gate->mutex);
+    for (auto& [id, data] : chain->data) {
+      if (!id.is_masterchain() && data.size() > kPrefetchBlockBytesMax) {
+        ++oversized;
+        ASSERT_EQ(gate->replay_reads[id], 1);
+      }
+    }
+  }
+  ASSERT_EQ(oversized, 5u);
+  ASSERT_TRUE(eventually([&] {
+    auto now = held(*core);
+    return now.bytes == 0 && now.outstanding == 0;
+  }));
+  core->shutdown();
+}
+
+// A block over the prefetch limit is read by the replay thread on its own
+// lane and indexed like any other: replay reaches the tip, every shard block
+// is walked, and only the oversized block was read on the replay lane.
+TEST(WalletIndexSource, an_oversized_block_is_read_on_the_replay_lane_and_applied) {
+  auto dir = temporary_directory();
+  RemoveOnExit remove{dir};
+  ChainOptions options;
+  options.oversized_every = 5;
+  auto chain = make_chain(4, 2, options);
+  ReplayHarness h(chain, 0, dir);
+  ASSERT_OK(h.run_until_idle());
+  ASSERT_EQ(h.progress.cursor.load(), 4u);
+  ASSERT_EQ(h.stats.shard_blocks.load(), 8u);
+  auto oversized = chain->order.at(3).at(0);
+  ASSERT_TRUE(chain->data.at(oversized).size() > kPrefetchBlockBytesMax);
+  std::lock_guard<std::mutex> lock(h.gate->mutex);
+  ASSERT_EQ(h.gate->replay_reads.size(), 1u);
+  ASSERT_EQ(h.gate->replay_reads[oversized], 1);
+}
+
+// A masterchain block over the prefetch limit: the prefetch lane reads none
+// of its interval, and the replay thread reads that interval's shard heads,
+// handles and blocks itself, then continues from what was read ahead.
+TEST(WalletIndexSource, an_oversized_masterchain_block_is_replayed_on_the_replay_lane) {
+  auto dir = temporary_directory();
+  RemoveOnExit remove{dir};
+  ChainOptions options;
+  options.oversized_master = 2;
+  auto chain = make_chain(4, 2, options);
+  ASSERT_TRUE(chain->data.at(chain->masters.at(2)->id()).size() > kPrefetchBlockBytesMax);
+  ReplayHarness h(chain, 0, dir);
+  ASSERT_OK(h.run_until_idle());
+  ASSERT_EQ(h.progress.cursor.load(), 4u);
+  ASSERT_EQ(h.stats.shard_blocks.load(), 8u);
+  std::lock_guard<std::mutex> lock(h.gate->mutex);
+  ASSERT_EQ(h.gate->replay_reads.size(), 2u);
+  for (auto& id : chain->order.at(2)) {
+    ASSERT_EQ(h.gate->replay_reads[id], 1);
+    ASSERT_EQ(h.gate->block_requests.count(id), 0u);
+  }
+}
+
+// Blocks serialized without stored hashes decode into every cell they hold.
+// The prefetch lane keeps such shard blocks as bytes until the replay thread
+// takes them, and decodes each masterchain block only long enough to read
+// its shard heads: with the whole read-ahead done, no decoded cells remain.
+TEST(WalletIndexSource, prefetch_leaves_no_decoded_blocks_behind) {
+  ChainOptions options;
+  options.payload_bytes = 256u << 10;
+  options.master_payload_bytes = 256u << 10;
+  options.boc_mode = 0;
+  auto chain = make_chain(4, 2, options);
+  auto core = make_core();
+  auto gate = std::make_shared<Gate>();
+  SchedulerThread scheduler(core, 0.05);
+  FakeReader reader(core, chain, gate);
+  // One decoded block of this chain is about this many cells.
+  auto cells_per_block = static_cast<td::int64>(options.payload_bytes / 128);
+  auto cells_before = vm::DataCell::get_total_data_cells();
+  Prefetcher prefetcher(reader, Prefetcher::Options{});
+  prefetcher.start();
+  prefetcher.follow(1, before_first(), chain->tip);
+  ASSERT_TRUE(eventually([&] { return prefetcher.buffered() == 4 && quiet(*core); }));
+  // Four masterchain reads and eight shard block reads, all complete.
+  ASSERT_TRUE(core->counters().completed.load() >= 12u);
+  auto cells_prefetched = vm::DataCell::get_total_data_cells() - cells_before;
+  ASSERT_TRUE(cells_prefetched < cells_per_block / 4);
+  // Taking a block decodes it on the taking thread.
+  auto interval = prefetcher.interval(1);
+  ASSERT_OK(interval);
+  auto data = prefetcher.block_data(*interval.ok(), 0);
+  ASSERT_OK(data);
+  ASSERT_OK(IndexReader::checked_root(interval.ok()->blocks[0].handle, data.ok()));
+  ASSERT_TRUE(vm::DataCell::get_total_data_cells() - cells_before > cells_per_block);
+  data = td::Status::Error("released");
+  auto second = prefetcher.block_data(*interval.ok(), 1);
+  ASSERT_OK(second);
+  ASSERT_OK(IndexReader::checked_root(interval.ok()->blocks[1].handle, second.ok()));
+  second = td::Status::Error("released");
+  interval = td::Status::Error("released");
+  prefetcher.pop(1);
+  auto rest = consume(prefetcher, 2, chain->tip);
+  ASSERT_OK(rest);
+  ASSERT_TRUE(rest.ok() == expected_order(*chain, 2, chain->tip));
+  core->shutdown();
+}
+
+// A completion at or after the request's deadline is a timeout: the result
+// is never handed over, whether a waiter was blocked on it or nobody waits.
+// One that arrives before the deadline is handed over. Either way the
+// reservation returns when the reply is released.
+TEST(WalletIndexSource, a_completion_after_the_deadline_is_a_timeout) {
+  const auto deadline = std::chrono::milliseconds(10);
+  const size_t reserve = 64u << 10;
+  for (bool waited : {true, false}) {
+    auto core = make_core();
+    auto generation = core->generation();
+    auto started = Clock::now();
+    auto ticket = core->acquire(SourceLane::Prefetch, generation, reserve, deadline);
+    ASSERT_OK(ticket);
+    auto reply = std::make_shared<SourceReply<int>>(core, ticket.move_as_ok(), SourceLane::Prefetch, generation);
+    td::Result<int> taken = td::Status::Error("not taken");
+    if (waited) {
+      td::thread waiter([&] { taken = reply->take(); });
+      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+      {
+        // The waiter cannot get the mutex back between its deadline and the
+        // completion at 50 ms.
+        std::unique_lock<std::mutex> lock(core->mutex());
+        std::this_thread::sleep_until(started + std::chrono::milliseconds(50));
+        reply->complete_locked(42, 8);
+      }
+      waiter.join();
+      ASSERT_TRUE(taken.is_error());
+      ASSERT_TRUE(taken.error().message().str().find("timed out") != std::string::npos);
+    } else {
+      std::this_thread::sleep_until(started + std::chrono::milliseconds(50));
+      reply->complete(42, 8);
+    }
+    ASSERT_TRUE(core->timed_out());
+    ASSERT_TRUE(stop_requested.load());
+    // The late result was never published: its reservation is unchanged and
+    // nothing can take it.
+    ASSERT_EQ(held(*core).bytes, reserve);
+    ASSERT_TRUE(reply->take().is_error());
+    reply.reset();
+    auto now = held(*core);
+    ASSERT_EQ(now.bytes, 0u);
+    ASSERT_EQ(now.outstanding, 0u);
+    stop_requested = false;
+  }
+  // In time: handed over, and nothing times out.
+  bool checked = false;
+  for (int attempt = 0; attempt < 5 && !checked; ++attempt) {
+    auto core = make_core();
+    auto generation = core->generation();
+    auto ticket = core->acquire(SourceLane::Prefetch, generation, reserve, deadline);
+    ASSERT_OK(ticket);
+    auto issued = Clock::now();
+    auto reply = std::make_shared<SourceReply<int>>(core, ticket.move_as_ok(), SourceLane::Prefetch, generation);
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    if (Clock::now() - issued >= std::chrono::milliseconds(9))
+      continue;  // the host stalled this thread past the deadline; try again
+    reply->complete(42, 8);
+    auto result = reply->take();
+    ASSERT_OK(result);
+    ASSERT_EQ(result.ok(), 42);
+    ASSERT_TRUE(!core->timed_out());
+    reply.reset();
+    auto now = held(*core);
+    ASSERT_EQ(now.bytes, 0u);
+    ASSERT_EQ(now.outstanding, 0u);
+    checked = true;
+  }
+  ASSERT_TRUE(checked);
 }

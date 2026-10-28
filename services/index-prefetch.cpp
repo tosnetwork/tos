@@ -1,5 +1,6 @@
 /* Copyright 2026 TOS Blockchain Teams. SPDX-License-Identifier: GPL-3.0-or-later */
 #include <algorithm>
+#include <optional>
 
 #include "index-prefetch.h"
 #include "index-replay.h"
@@ -95,11 +96,15 @@ td::Result<std::shared_ptr<PrefetchedInterval>> Prefetcher::interval(uint32_t se
   }
 }
 
-td::Result<td::Ref<validator::BlockData>> Prefetcher::block_data(PrefetchedInterval& interval, size_t index) {
+td::Result<RawBlock> Prefetcher::take_block(PrefetchedInterval& interval, size_t index) {
+  std::optional<StageTimer> waited;
+  if (reader_.stats() != nullptr) {
+    waited.emplace(reader_.stats()->prefetch_wait_us);
+  }
   if (index >= interval.blocks.size()) {
     return td::Status::Error("source prefetch block index out of range");
   }
-  std::shared_ptr<SourceReply<td::Ref<validator::BlockData>>> reply;
+  std::shared_ptr<SourceReply<RawBlock>> reply;
   {
     std::unique_lock<std::mutex> lock(core_->mutex());
     while (true) {
@@ -123,8 +128,9 @@ td::Result<td::Ref<validator::BlockData>> Prefetcher::block_data(PrefetchedInter
     return td::Status::Error("source prefetch result already taken");
   }
   auto result = reader_.take(*reply);
-  // Release this block's place now rather than with the interval.
-  std::shared_ptr<SourceReply<td::Ref<validator::BlockData>>> drop;
+  // Release this block's place and bytes now rather than with the interval:
+  // the bytes have moved to the caller.
+  std::shared_ptr<SourceReply<RawBlock>> drop;
   {
     std::lock_guard<std::mutex> lock(core_->mutex());
     drop = std::move(interval.blocks[index].data);
@@ -132,6 +138,19 @@ td::Result<td::Ref<validator::BlockData>> Prefetcher::block_data(PrefetchedInter
   drop.reset();
   reply.reset();
   return result;
+}
+
+td::Result<td::Ref<validator::BlockData>> Prefetcher::block_data(PrefetchedInterval& interval, size_t index) {
+  TRY_RESULT(raw, take_block(interval, index));
+  const auto& handle = interval.blocks[index].handle;
+  if (raw.too_large) {
+    return reader_.read_block(handle);
+  }
+  std::optional<StageTimer> decoding;
+  if (reader_.stats() != nullptr) {
+    decoding.emplace(reader_.stats()->walk_us);
+  }
+  return decode_block(handle->id(), std::move(raw.data));
 }
 
 void Prefetcher::pop(uint32_t seqno) {
@@ -157,8 +176,15 @@ td::Status Prefetcher::read_interval(PrefetchedInterval& interval, const BlockId
     return td::Status::Error("noncontiguous masterchain replay");
   }
   interval.master = master;
-  TRY_RESULT(heads, reader_.shard_heads(master, context));
-  TRY_RESULT(blocks, replay_interval(std::move(heads), interval.seqno,
+  // One masterchain block is decoded at a time, on this thread, and only its
+  // shard heads outlive the call.
+  TRY_RESULT(heads, reader_.prefetch_shard_heads(master, context));
+  if (!heads) {
+    interval.replay_reads = true;
+    interval.handles = SourceCharge(core_, kSourceHandleBytes);
+    return td::Status::OK();
+  }
+  TRY_RESULT(blocks, replay_interval(std::move(heads.value()), interval.seqno,
                                      [this, context](BlockIdExt id) { return reader_.handle(id, context); }));
   // The handles stay with the interval until the replay thread has walked
   // it: charge them, without blocking, against the prefetch budget.
