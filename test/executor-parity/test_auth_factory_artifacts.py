@@ -5,10 +5,12 @@ not manufacture execution receipts or claim hosted architecture execution.
 """
 
 import argparse
+import ast
 import json
 import subprocess
 from pathlib import Path
 
+import auth_factory_artifacts as validator
 from auth_factory_artifacts import (
     CONTROL_NAMES,
     ROOT,
@@ -127,7 +129,45 @@ def controls(artifacts, source):
         assert tuple(labels) == CONTROL_NAMES, "auth control population/order"
         result["families"][family] = labels
     assert validate_payloads(original, source) == baseline, "auth restored baseline changed"
+    prove_guards(original, source)
     return result
+
+
+def prove_guards(original, source):
+    """A removed guard must admit its corruption, so the intact test goes red."""
+    for label, witness in (
+        ("context", "auth original input/context changed"),
+        ("dirty", "auth receipt from dirty source"),
+        ("coherent-native-rust", "auth native root/refusal changed"),
+    ):
+        tree = ast.parse(Path(validator.__file__).read_text())
+
+        class DeleteGuard(ast.NodeTransformer):
+            count = 0
+
+            def visit_Assert(self, node):
+                if isinstance(node.msg, ast.Constant) and node.msg.value == witness:
+                    self.count += 1
+                    return ast.copy_location(ast.Pass(), node)
+                return node
+
+        deletion = DeleteGuard()
+        tree = deletion.visit(tree)
+        assert deletion.count == 1, "auth guard deletion anchor changed"
+        namespace = {"__name__": "auth_guard_mutant", "__file__": validator.__file__}
+        exec(compile(ast.fix_missing_locations(tree), validator.__file__, "exec"), namespace)
+        payloads = next(
+            value for name, value, _ in mutations(original, "auth", frozen()) if name == label
+        )
+        try:
+            validate_payloads(payloads, source)
+        except AssertionError as error:
+            assert witness in str(error), (label, "wrong baseline refusal", str(error))
+        else:
+            raise AssertionError((label, "intact guard accepted corruption"))
+        # This must succeed. An unrelated failure is a setup error, not a kill.
+        namespace["validate_payloads"](payloads, source)
+        print("PASS: actual guard deletion admits", label, "; intact guard rejects it")
 
 
 def main():
