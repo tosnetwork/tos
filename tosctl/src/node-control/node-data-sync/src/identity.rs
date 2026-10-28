@@ -396,8 +396,11 @@ impl Identity {
         Ok(())
     }
     /// Only database-root local entries are overlaid. External files remain at their own
-    /// locations. Every recorded local directory, including empty ones, is recreated first,
-    /// then every local file, each with its recorded permission bits.
+    /// locations. Every recorded local directory, including empty ones, is created first with
+    /// owner write permission, then every local file is written with its recorded bits, and
+    /// only then are the recorded directory bits applied, deepest first: a recorded
+    /// read-only directory (for example `0500`) would otherwise refuse its own contents to a
+    /// non-root invoker. The installed trees are then checked against the record.
     pub fn overlay(&self, old_db: &Path, replacement: &Root, backup: &Root) -> Result<()> {
         self.verify(backup)?;
         let old_db = fs::canonicalize(old_db)?;
@@ -410,16 +413,18 @@ impl Identity {
         };
         let mut directories: Vec<_> = self.directories.iter().collect();
         directories.sort_by(|a, b| a.path.cmp(&b.path));
+        let mut local_directories = Vec::new();
         for directory in directories {
             if let Ok(relative) = directory.path.strip_prefix(&old_db) {
                 use std::os::unix::fs::DirBuilderExt;
                 ensure!(local_tree(relative), "unexpected private directory");
                 ensure!(directory.mode <= 0o777, "private directory carries special bits");
+                let relative = relative.to_str().context("non-text identity path")?;
+                // Writable by its owner until every entry below it is installed.
                 fs::DirBuilder::new().mode(0o700).create(replacement.path.join(relative))?;
-                replacement
-                    .open_child(relative.to_str().context("non-text identity path")?)?
-                    .set_mode(directory.mode)?;
+                replacement.open_child(relative)?.set_mode(0o700)?;
                 replacement.sync()?;
+                local_directories.push((relative.to_owned(), directory.mode));
             } else {
                 ensure!(
                     directory.path.symlink_metadata()?.file_type().is_dir(),
@@ -467,6 +472,59 @@ impl Identity {
                     "external identity changed after backup"
                 );
             }
+        }
+        // Deepest first, so no directory is closed before its children are final.
+        local_directories.sort_by(|a, b| b.0.cmp(&a.0));
+        for (relative, mode) in &local_directories {
+            let directory = replacement.open_child(relative)?;
+            directory.set_mode(*mode)?;
+            directory.sync()?;
+        }
+        replacement.sync()?;
+        self.verify_installed(&old_db, replacement)
+    }
+    /// The overlaid local trees, with their final bits, are exactly the record: every
+    /// directory with its mode, every file with its bytes and mode, and nothing else.
+    fn verify_installed(&self, old_db: &Path, replacement: &Root) -> Result<()> {
+        for root in &self.roots {
+            let Ok(relative) = root.strip_prefix(old_db) else {
+                continue;
+            };
+            let relative = relative.to_str().context("non-text identity path")?;
+            let tree = replacement.open_child(relative)?;
+            let mut directories = BTreeSet::new();
+            let mut files = BTreeSet::new();
+            for entry in
+                crate::trees::private_tree(&tree, IDENTITY_ENTRY_LIMIT, IDENTITY_TOTAL_LIMIT)?
+            {
+                let full =
+                    if entry.path.is_empty() { root.clone() } else { root.join(&entry.path) };
+                if entry.directory {
+                    directories.insert(PrivateDirectory { path: full, mode: entry.mode });
+                } else {
+                    let bytes = tree.bytes(&entry.path, entry.size)?;
+                    files.insert((full, entry.mode, sha256(&bytes)));
+                }
+            }
+            let recorded_directories: BTreeSet<_> =
+                self.directories.iter().filter(|d| d.path.starts_with(root)).cloned().collect();
+            let recorded_files: BTreeSet<_> = self
+                .files
+                .iter()
+                .filter(|f| f.source.starts_with(root))
+                .map(|f| {
+                    Ok((
+                        f.source.clone(),
+                        f.mode.context("recorded identity file has no mode")?,
+                        f.sha256.clone().context("recorded identity file has no digest")?,
+                    ))
+                })
+                .collect::<Result<_>>()?;
+            ensure!(
+                directories == recorded_directories && files == recorded_files,
+                "installed identity tree differs from its record: {}",
+                root.display()
+            );
         }
         Ok(())
     }
@@ -737,6 +795,107 @@ mod tree_contract_tests {
                 Ok((e.path, e.directory, e.mode, e.uid, e.gid, bytes))
             })
             .collect()
+    }
+    /// A recorded read-only directory holding keys is restored by a non-root invoker. Root
+    /// ignores directory write bits, so as root the test re-runs itself as another account.
+    #[test]
+    fn read_only_identity_directories_are_restored_with_their_contents() -> Result<()> {
+        use std::os::unix::process::CommandExt;
+        const INNER: &str = "NODE_SYNC_READ_ONLY_TREE_BASE";
+        // SAFETY: geteuid has no preconditions.
+        if unsafe { libc::geteuid() } == 0 && std::env::var_os(INNER).is_none() {
+            let temporary = tempfile::tempdir()?;
+            let base = temporary.path().canonicalize()?;
+            fs::set_permissions(temporary.path(), fs::Permissions::from_mode(0o755))?;
+            let directory = std::ffi::CString::new(base.as_os_str().as_encoded_bytes())?;
+            // SAFETY: a terminated path of a private temporary directory.
+            ensure!(unsafe { libc::chown(directory.as_ptr(), 65534, 65534) } == 0, "chown");
+            let output = std::process::Command::new(std::env::current_exe()?)
+                .args([
+                    "--exact",
+                    "identity::tree_contract_tests::read_only_identity_directories_are_restored_with_their_contents",
+                    "--nocapture",
+                ])
+                .env(INNER, &base)
+                .uid(65534)
+                .gid(65534)
+                .output()?;
+            let text = String::from_utf8_lossy(&output.stdout);
+            assert!(
+                output.status.success() && text.contains("READ_ONLY_IDENTITY_TREE_OK"),
+                "unprivileged run failed: {text}{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return Ok(());
+        }
+        // SAFETY: geteuid has no preconditions.
+        ensure!(unsafe { libc::geteuid() } != 0, "this regression needs a non-root invoker");
+        let temporary;
+        let base = match std::env::var_os(INNER) {
+            Some(base) => PathBuf::from(base),
+            None => {
+                temporary = tempfile::tempdir()?;
+                temporary.path().canonicalize()?
+            }
+        };
+        let db = Root::create(&base.join("db"))?;
+        db.write_new("config.json", b"{}")?;
+        db.write_new("keyring/KEY", b"transport key")?;
+        db.write_new("console-client/client", b"console key")?;
+        db.write_new("console-client/nested/inner/key", b"nested key")?;
+        for name in ["operator.json", "global.json", "unit.service"] {
+            fs::write(base.join(name), b"{}")?;
+        }
+        let set = |path: &str, mode: u32| {
+            fs::set_permissions(db.path.join(path), fs::Permissions::from_mode(mode))
+        };
+        // Deepest first, so each directory is still writable while its children change.
+        for (path, mode) in [
+            ("keyring/KEY", 0o400),
+            ("keyring", 0o500),
+            ("console-client/nested/inner", 0o500),
+            ("console-client/nested", 0o500),
+            ("console-client", 0o500),
+        ] {
+            set(path, mode)?;
+        }
+        let backup = Root::create(&base.join("backup"))?;
+        let identity = Identity::capture(
+            &db.path,
+            &base,
+            &db.path,
+            &base.join("operator.json"),
+            &base.join("global.json"),
+            &[base.join("unit.service")],
+            &backup,
+        )?;
+        let replacement = Root::create(&base.join("replacement"))?;
+        let overlaid = identity.overlay(&db.path, &replacement, &backup);
+        let result = (|| -> Result<()> {
+            overlaid?;
+            for tree in ["keyring", "console-client"] {
+                assert_eq!(
+                    listing(&replacement.path.join(tree))?,
+                    listing(&db.path.join(tree))?,
+                    "{tree} was not restored exactly"
+                );
+            }
+            Ok(())
+        })();
+        // Leave the temporary trees removable.
+        for root in [&db.path, &replacement.path] {
+            for path in [
+                "keyring",
+                "console-client",
+                "console-client/nested",
+                "console-client/nested/inner",
+            ] {
+                let _ = fs::set_permissions(root.join(path), fs::Permissions::from_mode(0o700));
+            }
+        }
+        result?;
+        println!("READ_ONLY_IDENTITY_TREE_OK");
+        Ok(())
     }
     #[test]
     fn identity_trees_keep_bytes_modes_owner_and_empty_directories() -> Result<()> {
