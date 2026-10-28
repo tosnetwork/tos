@@ -16,13 +16,16 @@ from pytosiq_core.tlb.config import (
     ConfigParam0,
     ConfigParam2,
     ConfigParam4,
+    ConfigParam5,
     ConfigParam8,
     ConfigParam9,
     ConfigParam10,
+    ConfigParam13,
     ConfigParam14,
     ConfigParam15,
     ConfigParam16,
     ConfigParam17,
+    ConfigParam18,
     ConfigParam20,
     ConfigParam21,
     ConfigParam28,
@@ -47,7 +50,11 @@ REPO = Path(__file__).resolve().parents[4]
 BUILD_DIR = Path(os.environ.get("TOS_BUILD_DIR", REPO / "build"))
 NANOTOS_PER_TOS = 1_000_000_000
 EXPECTED_TOTAL_SUPPLY_TOS = 5_000_000_000
-EXPECTED_VALIDATOR_GENESIS_SUPPLY_TOS = 101_000
+EXPECTED_BOOTSTRAP_WALLET_TOS = 80_151
+EXPECTED_SYSTEM_CONTRACTS_TOS = 500 + 500  # Elector + configuration contract
+EXPECTED_VALIDATOR_GENESIS_SUPPLY_TOS = (
+    EXPECTED_BOOTSTRAP_WALLET_TOS + EXPECTED_SYSTEM_CONTRACTS_TOS
+)
 EXPECTED_VALIDATOR_EXPERIMENT_FAUCET_TOS = 136_120
 EXPECTED_VALIDATOR_COUNT = 4
 EXPECTED_SIMPLEX_PARAMS = (400, 4, 1000, 250)
@@ -272,7 +279,7 @@ def test_validator_election_stage_a_profile_is_isolated_and_accelerated(tmp_path
     assert _positive_account_balances(state) == [
         500 * NANOTOS_PER_TOS,
         500 * NANOTOS_PER_TOS,
-        100_000 * NANOTOS_PER_TOS,
+        EXPECTED_BOOTSTRAP_WALLET_TOS * NANOTOS_PER_TOS,
     ]
 
     param15 = _config(state, 15, ConfigParam15)
@@ -507,7 +514,7 @@ def test_validator_economics_profile_matches_bootstrap_spec(tmp_path):
     assert _positive_account_balances(state) == [
         500 * NANOTOS_PER_TOS,
         500 * NANOTOS_PER_TOS,
-        100_000 * NANOTOS_PER_TOS,
+        EXPECTED_BOOTSTRAP_WALLET_TOS * NANOTOS_PER_TOS,
     ]
 
     config_address = _config(state, 0, ConfigParam0).config_addr
@@ -518,6 +525,11 @@ def test_validator_economics_profile_matches_bootstrap_spec(tmp_path):
     param10 = _config(state, 10, ConfigParam10)
     assert 3 in require(param10.critical_params)
     assert 4 in require(param10.critical_params)
+    # The localnet carries the same blackhole and critical ConfigParam 5.
+    assert 5 in require(param10.critical_params)
+    burning = _config(state, 5, ConfigParam5)
+    assert burning.blackhole_addr == b"\xff" * 32
+    assert (burning.fee_burn_nom, burning.fee_burn_denom) == (0, 1)
 
     # Every wallet contract compares the signed global_id against
     # ConfigParam 19 and fails closed when it is absent, so no configuration
@@ -784,7 +796,7 @@ def test_canonical_genesis_script_accepts_only_four_validator_keys(tmp_path):
     assert _positive_account_balances(state) == [
         500 * NANOTOS_PER_TOS,
         500 * NANOTOS_PER_TOS,
-        100_000 * NANOTOS_PER_TOS,
+        EXPECTED_BOOTSTRAP_WALLET_TOS * NANOTOS_PER_TOS,
     ]
     assert (
         _config(state, 2, ConfigParam2).minter_addr == _config(state, 0, ConfigParam0).config_addr
@@ -1071,6 +1083,220 @@ def test_canonical_genesis_makes_global_id_mandatory_and_critical(tmp_path):
     assert 19 in _config_cells(state)
     assert 19 in require(_config(state, 9, ConfigParam9).mandatory_params)
     assert 19 in require(_config(state, 10, ConfigParam10).critical_params)
+
+
+def _canonical_state(directory: Path) -> ShardStateUnsplit:
+    """Generate the canonical genesis under the test namespace and load it."""
+    _write_pq_manifest(directory)
+    subprocess.run(
+        _create_state_command(REPO / "crypto/smartcont/gen-zerostate.fif"),
+        cwd=directory,
+        check=True,
+        capture_output=True,
+        text=True,
+        env=_mainnet_genesis_env(),
+    )
+    return _load_masterchain_state(directory / "zerostate.boc")
+
+
+def test_bootstrap_wallet_amount_matches_its_derivation():
+    """Pin the inputs of the bootstrap wallet amount, not just the result.
+
+    These are dated measurements from the 2026-10-28 bootstrap budget analysis
+    of the epoch-5 bootstrap path, not values derived from chain configuration:
+    each validator receives 20,000 TOS of overlapping-election principal plus a
+    25 TOS fee allowance, the wallet keeps a 50 TOS margin, and the wallet's own
+    eight funding transfers plus the final sweep were budgeted at 0.028622334
+    TOS, rounded up to whole TOS. Changing any one of them without the others
+    must fail here.
+    """
+    validators = 4
+    principal_tos = 20_000
+    fee_allowance_tos = 25
+    margin_tos = 50
+    wallet_fees_nanotos = 28_622_334
+    wallet_fees_tos = -(-wallet_fees_nanotos // NANOTOS_PER_TOS)
+    assert wallet_fees_tos == 1
+    assert (
+        validators * (principal_tos + fee_allowance_tos) + margin_tos + wallet_fees_tos
+        == EXPECTED_BOOTSTRAP_WALLET_TOS
+    )
+    assert EXPECTED_VALIDATOR_GENESIS_SUPPLY_TOS == 81_151
+
+
+def test_canonical_genesis_sets_burning_config(tmp_path):
+    """ConfigParam 5 names the masterchain blackhole and burns no fees.
+
+    It must be critical: an ordinary vote that moved the blackhole onto a
+    spendable account would destroy that account's inbound value, and a
+    non-zero fee burn would change validator income. It is deliberately not
+    mandatory: removing it only restores the 0/1 default.
+    """
+    state = _canonical_state(tmp_path)
+    burning = _config(state, 5, ConfigParam5)
+    assert burning.blackhole_addr == b"\xff" * 32
+    assert (burning.fee_burn_nom, burning.fee_burn_denom) == (0, 1)
+    assert 5 in require(_config(state, 10, ConfigParam10).critical_params)
+    assert 5 not in require(_config(state, 9, ConfigParam9).mandatory_params)
+
+
+@pytest.mark.parametrize(
+    ("arguments", "error"),
+    [
+        ("0 1", None),
+        ("1 1", None),
+        ("2 1", "fee burn numerator must not exceed the denominator"),
+        ("0 0", "fee burn denominator must be at least 1"),
+        ("-1 1", "fee burn numerator must not be negative"),
+        ("0 4294967296", "fee burn denominator must fit 32 bits"),
+    ],
+)
+def test_burning_config_word_refuses_invalid_ratios(tmp_path, arguments, error):
+    script = tmp_path / "burning.fif"
+    script.write_text(
+        f'256 1<<1- 15 / 15 * {arguments} config.burning!\n."burning config written" cr\n'
+    )
+    result = subprocess.run(
+        _create_state_command(script), cwd=tmp_path, capture_output=True, text=True
+    )
+    output = result.stdout + result.stderr
+    if error is None:
+        assert result.returncode == 0, output
+        assert "burning config written" in output
+    else:
+        assert result.returncode != 0
+        assert error in output
+        assert "burning config written" not in output
+
+
+def test_canonical_genesis_complaint_pricing(tmp_path):
+    state = _canonical_state(tmp_path)
+    pricing = _config(state, 13, ConfigParam13)
+    assert (pricing.deposit, pricing.bit_price, pricing.cell_price) == (
+        1 * NANOTOS_PER_TOS,
+        1,
+        500,
+    )
+
+
+def test_canonical_genesis_storage_prices(tmp_path):
+    """Exactly one entry, effective since 0, with cell-only basechain rent."""
+    state = _canonical_state(tmp_path)
+    prices = _config(state, 18, ConfigParam18)
+    assert list(prices) == [0]
+    entry = prices[0]
+    assert (
+        entry.utime_since,
+        entry.bit_price_ps,
+        entry.cell_price_ps,
+        entry.mc_bit_price_ps,
+        entry.mc_cell_price_ps,
+    ) == (0, 0, 135, 1000, 500_000)
+
+
+def _emulate_internal_message(config_cells, destination: bytes, value: int):
+    """Deliver a non-bounce internal message with no body to a nonexistent
+    masterchain account through the native emulator, under a given config."""
+    import base64
+    import ctypes
+    import sys
+
+    from pytosiq_core import Address, Cell, HashMap
+    from pytosiq_core.tlb.account import ShardAccount
+    from pytosiq_core.tlb.block import CurrencyCollection
+    from pytosiq_core.tlb.transaction import InternalMsgInfo, MessageAny, Transaction
+
+    config = require(
+        HashMap(
+            32,
+            value_serializer=lambda item, builder: builder.store_ref(item.copy().to_cell()),
+            map_=config_cells,
+        ).serialize()
+    )
+    message = MessageAny(
+        info=InternalMsgInfo(
+            ihr_disabled=True,
+            bounce=False,
+            bounced=False,
+            src=Address((-1, b"\x11" * 32)),
+            dest=Address((-1, destination)),
+            value=CurrencyCollection(value),
+            ihr_fee=0,
+            fwd_fee=0,
+            created_lt=1_000_000,
+            created_at=EXPECTED_MAINNET_GENESIS_UTIME,
+        ),
+        init=None,
+        body=Cell.empty(),
+    ).serialize()
+    absent = ShardAccount(None, b"\x00" * 32, 0).serialize()
+
+    suffix = "dylib" if sys.platform == "darwin" else "so"
+    lib = ctypes.CDLL(str(BUILD_DIR / "emulator" / f"libemulator.{suffix}"))
+    lib.transaction_emulator_create.argtypes = [ctypes.c_char_p, ctypes.c_int]
+    lib.transaction_emulator_create.restype = ctypes.c_void_p
+    lib.transaction_emulator_destroy.argtypes = [ctypes.c_void_p]
+    lib.string_destroy.argtypes = [ctypes.c_void_p]
+    lib.transaction_emulator_set_unixtime.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+    lib.transaction_emulator_set_unixtime.restype = ctypes.c_bool
+    lib.transaction_emulator_set_lt.argtypes = [ctypes.c_void_p, ctypes.c_uint64]
+    lib.transaction_emulator_set_lt.restype = ctypes.c_bool
+    emulate = lib.transaction_emulator_emulate_transaction
+    emulate.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_char_p]
+    emulate.restype = ctypes.c_void_p
+    emulator = lib.transaction_emulator_create(base64.b64encode(config.to_boc()), 0)
+    assert emulator, "native emulator must accept the generated genesis config"
+    try:
+        assert lib.transaction_emulator_set_unixtime(emulator, EXPECTED_MAINNET_GENESIS_UTIME + 60)
+        assert lib.transaction_emulator_set_lt(emulator, 2_000_000)
+        raw = emulate(
+            emulator,
+            base64.b64encode(absent.to_boc()),
+            base64.b64encode(message.to_boc()),
+        )
+        assert raw
+        try:
+            result = json.loads(ctypes.string_at(raw))
+        finally:
+            lib.string_destroy(raw)
+    finally:
+        lib.transaction_emulator_destroy(emulator)
+    assert result["success"], result
+    transaction = Transaction.deserialize(
+        Boc(base64.b64decode(result["transaction"])).deserialize()[0].begin_parse()
+    )
+    after = ShardAccount.deserialize(
+        Boc(base64.b64decode(result["shard_account"])).deserialize()[0].begin_parse()
+    )
+    return transaction, after
+
+
+def test_genesis_blackhole_destroys_inbound_value(tmp_path):
+    """Value sent to the ConfigParam 5 blackhole is burned, not credited.
+
+    This is what makes the bootstrap wallet's final mode 128+32 sweep a burn.
+    The same message under the same configuration without ConfigParam 5 is
+    credited to an ordinary new account, which shows the emulator is applying
+    the parameter rather than refusing the message for some other reason.
+    """
+    state = _canonical_state(tmp_path)
+    cells = dict(_config_cells(state))
+    # The published sweep destination, not whatever the configuration names.
+    blackhole = b"\xff" * 32
+    value = 5 * NANOTOS_PER_TOS
+
+    burned, account = _emulate_internal_message(cells, blackhole, value)
+    # The account has no code, so the compute phase is skipped either way; what
+    # differs is whether the credit phase credits the value.
+    assert burned.description.credit_ph.credit.tomis == 0
+    assert burned.total_fees.tomis == 0
+    assert burned.end_status.type_ == "nonexist"
+    assert account.account is None, "the blackhole account must stay nonexistent"
+
+    cells.pop(5, None)
+    credited, account = _emulate_internal_message(cells, blackhole, value)
+    assert credited.description.credit_ph.credit.tomis == value
+    assert require(account.account).storage.balance.tomis == value
 
 
 def test_legacy_classical_key_helper_defaults_to_four_keys(tmp_path):

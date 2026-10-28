@@ -31,6 +31,13 @@ on here rather than through a local default. The current bits, low to high, are
 [tos-types.h](../tos/tos-types.h) is the authority; this list is a convenience and
 must be checked against it rather than trusted.
 
+Genesis sets version 16 with capabilities `0x1ee`
+([gen-zerostate.fif](../crypto/smartcont/gen-zerostate.fif#L189-L190)). `capFullCollatedData (512)` is
+deliberately off: this is a bounded launch exception, not an oversight.
+Mainnet-scale networks enable it; TOS enables it only after measured evidence
+of proof size, validation latency and the ConfigParam 29 4 / 10 MiB limits on a
+large or cold state.
+
 A binary declares which of these it implements in `Collator::supported_capabilities()`
 and the matching validator method. Declaring fewer than the configuration enables does
 not make a node refuse: see the fall-through described under `version` below, which
@@ -174,15 +181,19 @@ measured or product reason to differ.
 
 | Param | Where | Why |
 |---|---|---|
-| 11 `ConfigVotingSetup` | [L373-L389](../crypto/smartcont/gen-zerostate.fif#L373-L389) | Mainnet-scale proposal rounds. Because the registering round already counts and a proposal is removed only when its remaining count goes negative, ordinary/critical proposals get 7/8 voting rounds. Acceptance happens at `min_wins`; removal happens only once losses exceed `max_losses`. `elector_sandbox.rs` exercises the lifecycle. |
-| 12 workchains | [L68-L88](../crypto/smartcont/gen-zerostate.fif#L68-L88) | See [ConfigParam 12](#configparam-12): the forced split floor is removed. |
-| 21 basechain gas | [L227-L244](../crypto/smartcont/gen-zerostate.fif#L227-L244) | Per-transaction and special limits are 2,000,000. The worst measured shielded-pool withdrawal is 1,068,664 gas, against a contract ceiling of 1,380,000, so the mainnet-scale 1,000,000 would make every withdrawal fail. 2,000,000 keeps one worst-case transaction near 50 ms. `block_gas_limit` equals the ConfigParam 23 hard limit and is informational; blocks are bounded by ConfigParam 22/23. |
-| 23 basechain block limits | [L297-L304](../crypto/smartcont/gen-zerostate.fif#L297-L304) | Gas tiers 2M / 10M / 20M follow mainnet-scale networks. They are to be re-measured as whole-block validation time on the production hardware class. |
-| 29 consensus | [L263](../crypto/smartcont/gen-zerostate.fif#L263) | The 4 MiB block / 10 MiB collated-data limits sit above the ConfigParam 23 byte limit, so a collator size over-estimate does not turn into a dropped slot. |
-| 30 Simplex | [L264-L289](../crypto/smartcont/gen-zerostate.fif#L264-L289) | The target block rate is 400 ms. `first_block_timeout` is 700 ms. `min_block_interval` is 300 ms, set explicitly. Shard leaders own 16 slots with `max_leader_window_desync` 64; masterchain leaders own 4 slots with a desync of 250. The issuance in ConfigParam 14 assumes the resulting block rate. |
-| 31 fundamental addresses | [L121](../crypto/smartcont/gen-zerostate.fif#L121), [L146](../crypto/smartcont/gen-zerostate.fif#L146) | Only the elector is listed. The bootstrap main wallet is an ordinary account and pays fees. |
-| 34 initial validator set | [L434-L438](../crypto/smartcont/gen-zerostate.fif#L434-L438) | The genesis set is valid for 21,600 s (6 h). With the ConfigParam 15 windows (65,536 / 32,768 / 8,192 / 32,768) the first election opens at genesis, closes about 3.7 h later and the elected set takes office at 6 h. Retired consensus sessions are deleted only after a key block; under a sustained ~6.4M gas per block load `consensus/` grew about 31 MB/min, which over the previous 131,072 s lifetime would exceed 60 GB on a 99 GB disk. |
-| 43 size limits | [L308-L328](../crypto/smartcont/gen-zerostate.fif#L308-L328) | Mainnet-scale bounds, written out explicitly. No TOS contract on a production path loads more than 3 libraries per transaction or sends extra currencies. |
+| 5 `BurningConfig` | [L153-L157](../crypto/smartcont/gen-zerostate.fif#L153-L157), [L396-L401](../crypto/smartcont/gen-zerostate.fif#L396-L401) | Blackhole `-1:ffff…ffff`, fee burn 0/1. Inbound value to the blackhole is destroyed and counted in `ValueFlow.burned`; it is the bootstrap wallet's final sweep destination (mode 128+32), which burns the remainder and deletes the wallet. Fees are not burned: distribution is validator-led and there is no treasury. Critical (in ConfigParam 10), so an ordinary vote cannot move the blackhole onto a spendable account or start burning fees; not mandatory, because removing it only restores the 0/1, no-blackhole default. Mainnet-scale networks burn half of the fees to the same blackhole. |
+| 8 `GlobalVersion` | [L189-L190](../crypto/smartcont/gen-zerostate.fif#L189-L190) | Version 16, capabilities `0x1ee`. `capFullCollatedData` stays off as a bounded launch exception; see [ConfigParam 8](#configparam-8). |
+| 11 `ConfigVotingSetup` | [L422-L438](../crypto/smartcont/gen-zerostate.fif#L422-L438) | Mainnet-scale proposal rounds. Because the registering round already counts and a proposal is removed only when its remaining count goes negative, ordinary/critical proposals get 7/8 voting rounds. Acceptance happens at `min_wins`; removal happens only once losses exceed `max_losses`. `elector_sandbox.rs` exercises the lifecycle. |
+| 12 workchains | [L91-L113](../crypto/smartcont/gen-zerostate.fif#L91-L113) | See [ConfigParam 12](#configparam-12): the forced split floor is removed. |
+| 13 `ComplaintPricing` | [L440-L448](../crypto/smartcont/gen-zerostate.fif#L440-L448) | Deposit 1 TOS, 1 per bit, 500 per cell, as mainnet-scale networks charge. The elector charges `deposit + ((bits + 1024) * bit_price + (cells + 2) * cell_price) * seconds until the stake unfreezes` and accepts a complaint only while its fine exceeds that charge. At the former 100 TOS deposit the mildest ConfigParam 40 tier (62.5 TOS + 1/256 of a 10,000 TOS stake = 101.5625 TOS) barely cleared it and a complaint with a larger proof could not be filed; at 1 TOS a 4,096-bit, 8-cell complaint held for 32,768 s is charged 1.3316 TOS. `elector_sandbox.rs` files a mildest-tier complaint under both deposits. |
+| 18 `StoragePrices` | [L228-L234](../crypto/smartcont/gen-zerostate.fif#L228-L234) | One entry, effective since 0: basechain 0 per bit and 135 per cell, masterchain 1,000 per bit and 500,000 per cell (per second, scaled by 2^16). The basechain values are the latest base rent of mainnet-scale networks, which charge cells only; TOS uses them from genesis instead of from a later activation time. Masterchain rent is unchanged on purpose: it is the state-cost boundary that keeps ordinary accounts off the masterchain. The 1/20 price cut applies to masterchain gas and forwarding (ConfigParams 20 and 24) only. |
+| 21 basechain gas | [L237-L274](../crypto/smartcont/gen-zerostate.fif#L237-L274) | Per-transaction and special limits are 2,000,000. The worst measured shielded-pool withdrawal is 1,068,664 gas, against a contract ceiling of 1,380,000, so the mainnet-scale 1,000,000 would make every withdrawal fail. 2,000,000 keeps one worst-case transaction near 50 ms. `block_gas_limit` equals the ConfigParam 23 hard limit and is informational; blocks are bounded by ConfigParam 22/23. |
+| 23 basechain block limits | [L326-L335](../crypto/smartcont/gen-zerostate.fif#L326-L335) | Gas tiers 2M / 10M / 20M follow mainnet-scale networks. They are to be re-measured as whole-block validation time on the production hardware class. |
+| 29 consensus | [L286-L292](../crypto/smartcont/gen-zerostate.fif#L286-L292) | The 4 MiB block / 10 MiB collated-data limits sit above the ConfigParam 23 byte limit, so a collator size over-estimate does not turn into a dropped slot. |
+| 30 Simplex | [L293-L318](../crypto/smartcont/gen-zerostate.fif#L293-L318) | The target block rate is 400 ms. `first_block_timeout` is 700 ms. `min_block_interval` is 300 ms, set explicitly. Shard leaders own 16 slots with `max_leader_window_desync` 64; masterchain leaders own 4 slots with a desync of 250. The issuance in ConfigParam 14 assumes the resulting block rate. |
+| 31 fundamental addresses | [L143-L147](../crypto/smartcont/gen-zerostate.fif#L143-L147), [L179](../crypto/smartcont/gen-zerostate.fif#L179) | Only the elector is listed. The bootstrap main wallet is an ordinary account and pays fees. |
+| 34 initial validator set | [L486-L489](../crypto/smartcont/gen-zerostate.fif#L486-L489) | The genesis set is valid for 21,600 s (6 h). With the ConfigParam 15 windows (65,536 / 32,768 / 8,192 / 32,768) the first election opens at genesis, closes about 3.7 h later and the elected set takes office at 6 h. Retired consensus sessions are deleted only after a key block; under a sustained ~6.4M gas per block load `consensus/` grew about 31 MB/min, which over the previous 131,072 s lifetime would exceed 60 GB on a 99 GB disk. |
+| 43 size limits | [L337-L370](../crypto/smartcont/gen-zerostate.fif#L337-L370) | Mainnet-scale bounds, written out explicitly. No TOS contract on a production path loads more than 3 libraries per transaction or sends extra currencies. |
 
 Measured on the four-validator public testnet (production hardware class: 6 vCPU,
 12 GB RAM, virtio disk), comparing epoch 2 under the earlier values with epoch 3
@@ -206,7 +217,7 @@ The remaining masterchain parameters follow the native TOS schema in [block.tlb]
 | 2 | `minter_addr:bits256` | minter address (falls back to ConfigParam 0 if absent) |
 | 3 | `fee_collector_addr:bits256` | fee-collector address (falls back to ConfigParam 1 if absent) |
 | 4 | `dns_root_addr:bits256` | root native DNS resolver |
-| 5 | `BurningConfig` | fee-burning configuration |
+| 5 | `BurningConfig` | `blackhole_addr:(Maybe bits256) fee_burn_num:# fee_burn_denom:#`: inbound value to the masterchain blackhole account is destroyed, and `fee_burn_num/fee_burn_denom` of collected fees is burned. Absent means no blackhole and 0/1. Genesis: blackhole `-1:ffff…ffff`, 0/1, critical |
 
 **Governance and config change**
 
@@ -215,7 +226,7 @@ The remaining masterchain parameters follow the native TOS schema in [block.tlb]
 | 9 | `mandatory_params:(Hashmap 32 True)` | params that must always be present |
 | 10 | `critical_params:(Hashmap 32 True)` | params whose change needs a critical vote |
 | 11 | `ConfigVotingSetup` | config-change proposal/voting setup |
-| 13 | `ComplaintPricing` | validator-complaint deposit and pricing |
+| 13 | `ComplaintPricing` | `deposit bit_price cell_price`: what filing a validator complaint costs; the elector charges `deposit + ((bits + 1024) * bit_price + (cells + 2) * cell_price) * seconds until the stake unfreezes`. Genesis: 1 TOS / 1 / 500 |
 
 **Validator election and stake**
 

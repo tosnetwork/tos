@@ -80,11 +80,11 @@ account.balance.tomis                // account balance
 
 ## Initial Supply
 
-The validator-led production zerostate allocates a provisional **101,000 TOS**:
+The validator-led production zerostate allocates a provisional **81,151 TOS**:
 
 | Recipient | Amount | Address |
 |-----------|--------|---------|
-| Validator-bootstrap main wallet | 100,000 TOS | published with the final zerostate |
+| Validator-bootstrap main wallet | 80,151 TOS | `-1:111...111` |
 | Elector contract | 500 TOS | `-1:333...333` |
 | Config contract | 500 TOS | `-1:555...555` |
 

@@ -4120,6 +4120,139 @@ fn complaint_body(query_id: u64, election: u32, accused: &[u8; 32]) -> chain_blo
     body.into_cell().expect("complaint body")
 }
 
+/// `complaint_prices#1a deposit:Tomis bit_price:Tomis cell_price:Tomis`, the cell
+/// ConfigParam 13 holds.
+fn complaint_prices_cell(deposit: u64, bit_price: u64, cell_price: u64) -> chain_block::Cell {
+    use chain_block::{Coins, IBitstring, Serializable};
+    let mut cell = chain_block::BuilderData::new();
+    cell.append_u8(0x1a).expect("complaint prices tag");
+    for price in [deposit, bit_price, cell_price] {
+        Coins::new(price).write_to(&mut cell).expect("a price");
+    }
+    cell.into_cell().expect("complaint prices")
+}
+
+fn set_complaint_prices(chain: &mut Chain, cell: chain_block::Cell) {
+    let mut config = chain.blockchain.config_params().clone();
+    config
+        .set_config(chain_block::ConfigParamEnum::ConfigParam13(chain_block::ConfigParam13 {
+            cell,
+        }))
+        .expect("ConfigParam 13");
+    chain.blockchain.set_config(config).expect("the chain adopts the complaint prices");
+}
+
+/// The cheapest punishment ConfigParam 40 defines: ordinary severity, short
+/// interval, 62.5 TOS plus 1/256 of the stake.
+const MILDEST_FLAT_FINE: u64 = 62_500_000_000;
+const MILDEST_FINE_PART: u32 = 1 << 24;
+/// 64 full cells, 65,472 bits: about the size of a proof carrying three
+/// ML-DSA-44 signatures (2,420 bytes each).
+const PROOF_CELLS: usize = 64;
+
+/// A complaint asking for the mildest fine, carrying a proof of `PROOF_CELLS` cells.
+fn mildest_tier_complaint_body(
+    query_id: u64,
+    election: u32,
+    accused: &[u8; 32],
+) -> chain_block::Cell {
+    use chain_block::IBitstring;
+    let mut proof: Option<chain_block::Cell> = None;
+    for index in 0..PROOF_CELLS {
+        let mut cell = chain_block::BuilderData::new();
+        let mut bytes = [0u8; 127];
+        bytes[0] = index as u8;
+        cell.append_raw(&bytes, 1016).expect("proof bytes");
+        cell.append_bits(0x55, 7).expect("proof tail bits");
+        if let Some(next) = proof.take() {
+            cell.checked_append_reference(next).expect("proof chain");
+        }
+        proof = Some(cell.into_cell().expect("proof cell"));
+    }
+    let mut description = chain_block::BuilderData::new();
+    description.append_u64(query_id).expect("what distinguishes one complaint from another");
+    description
+        .checked_append_reference(proof.expect("a non-empty proof"))
+        .expect("the proof");
+
+    let mut body = chain_block::BuilderData::new();
+    body.append_u32(NEW_COMPLAINT).expect("operation");
+    body.append_u64(query_id).expect("query id");
+    body.append_u32(election).expect("the election complained about");
+    body.append_i8(0xbcu8 as i8).expect("complaint tag");
+    body.append_raw(accused, 256).expect("the accused validator");
+    body.checked_append_reference(description.into_cell().expect("description"))
+        .expect("description");
+    body.append_u32(0).expect("created at, rewritten by the contract");
+    body.append_u8(0).expect("ordinary severity");
+    body.append_raw(&[0u8; 32], 256).expect("reward address, rewritten by the contract");
+    body.append_bits(0, 4).expect("paid, rewritten by the contract");
+    body.append_bits(8, 4).expect("the length of the suggested fine");
+    body.append_u64(MILDEST_FLAT_FINE).expect("suggested fine");
+    body.append_u32(MILDEST_FINE_PART).expect("suggested fine part");
+    body.into_cell().expect("complaint body")
+}
+
+/// The genesis complaint deposit decides whether the mildest misbehaviour is worth
+/// reporting at all.
+///
+/// The elector charges `deposit + ((bits + 1024) * bit_price + (cells + 2) *
+/// cell_price) * seconds until the stake unfreezes` and refuses a complaint whose fine
+/// does not exceed that charge (reply 8). The validators here hold 10,000 to 11,000 TOS,
+/// so the mildest fine is 101.5625 to 105.47 TOS. The proof alone costs about 10 TOS
+/// over the 98,304 s a just-rotated stake stays frozen: about 67,300 bits and 66 cells
+/// give 101,300 nanotos a second. With a 100 TOS deposit that is about 110 TOS and the
+/// complaint is refused; with the genesis 1 TOS deposit it is about 11 TOS and accepted.
+#[test]
+fn the_genesis_complaint_deposit_lets_the_mildest_fine_be_reported() {
+    let (mut chain, validators, election) = elect_install_and_rotate();
+    let genesis_prices = parameter_from_config(chain.blockchain.config_params(), 13)
+        .expect("genesis sets ConfigParam 13");
+    assert_eq!(
+        genesis_prices,
+        complaint_prices_cell(TOS, 1, 500),
+        "genesis complaint prices are not 1 TOS / 1 / 500"
+    );
+
+    let accused = validator_id_at(&chain, index_of(&chain, &validators[3]));
+    let complainant =
+        chain.blockchain.treasury("mild-complainant", 10_000 * TOS).expect("an account");
+    // Enough value that the elector's other check, paid + 1 TOS <= value, never decides.
+    let value = 300 * TOS;
+
+    set_complaint_prices(&mut chain, complaint_prices_cell(100 * TOS, 1, 500));
+    let refused = chain
+        .blockchain
+        .send_message(complainant.build_message(
+            &chain.elector,
+            value,
+            true,
+            Some(mildest_tier_complaint_body(1, election, &accused)),
+        ))
+        .expect("the complaint is delivered");
+    assert!(
+        replies(&refused).contains(&(COMPLAINT_ACCEPTED + 8)),
+        "under a 100 TOS deposit the mildest fine should not cover the complaint's charge"
+    );
+    assert!(complaint_hashes(&chain, election).is_empty(), "a refused complaint was stored");
+
+    set_complaint_prices(&mut chain, genesis_prices);
+    let filed = chain
+        .blockchain
+        .send_message(complainant.build_message(
+            &chain.elector,
+            value,
+            true,
+            Some(mildest_tier_complaint_body(1, election, &accused)),
+        ))
+        .expect("the complaint is delivered");
+    assert!(
+        replies(&filed).contains(&COMPLAINT_ACCEPTED),
+        "the genesis complaint prices refused a mildest-tier complaint"
+    );
+    assert_eq!(complaint_hashes(&chain, election).len(), 1, "the complaint was not stored");
+}
+
 /// The hashes of the complaints the elector is holding for an election, which is how a
 /// vote names the one it is for.
 ///

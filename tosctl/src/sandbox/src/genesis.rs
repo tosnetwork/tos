@@ -150,13 +150,15 @@ mod tests {
     use super::*;
 
     /// Regression test for the canonical mainnet genesis template: under the
-    /// validator-led bootstrap economics, genesis mints exactly 101,000 TOS —
-    /// a bounded 100,000-TOS validator-bootstrap main wallet plus 500 TOS
-    /// each for the elector and config contracts (see https://github.com/tosnetwork/doc/blob/main/tos-blockchain/Currency.md,
+    /// validator-led bootstrap economics, genesis mints exactly 81,151 TOS —
+    /// an 80,151-TOS validator-bootstrap main wallet (four validators' 20,000
+    /// TOS principal plus 25 TOS of fees each, a 50 TOS margin and 1 TOS of
+    /// rounded wallet fees) plus 500 TOS each for the elector and config
+    /// contracts (see https://github.com/tosnetwork/doc/blob/main/tos-blockchain/Currency.md,
     /// https://github.com/tosnetwork/doc/blob/main/tos-blockchain/Zerostate.md). No premine, treasury, or team allocation exists;
     /// the ~10 million TOS total-supply target for the first two years is a
     /// creation target reached through validator block rewards (ConfigParam 14),
-    /// not a genesis balance. Genesis itself remains exactly 101,000 TOS.
+    /// not a genesis balance. Genesis itself remains exactly 81,151 TOS.
     #[test]
     fn mainnet_genesis_total_supply_matches_validator_bootstrap_allocation() {
         let tos_root = find_tos_root().expect("TOS_ROOT (or a parent build dir) must be locatable");
@@ -164,13 +166,13 @@ mod tests {
         let balance = generate_zerostate_total_balance(&fif_path).expect("zerostate generation");
 
         const NANOTOS_PER_TOS: u128 = 1_000_000_000;
-        const EXPECTED_TOTAL_SUPPLY_TOS: u128 = 101_000;
+        const EXPECTED_TOTAL_SUPPLY_TOS: u128 = 81_151;
 
         let total_nanotos = balance.coins.as_u128();
         assert_eq!(
             total_nanotos,
             EXPECTED_TOTAL_SUPPLY_TOS * NANOTOS_PER_TOS,
-            "genesis total supply must be exactly 101,000 TOS, got {} nanotos ({} TOS)",
+            "genesis total supply must be exactly 81,151 TOS, got {} nanotos ({} TOS)",
             total_nanotos,
             total_nanotos / NANOTOS_PER_TOS
         );
@@ -187,7 +189,7 @@ mod tests {
     /// makes this red.
     #[test]
     fn mainnet_block_create_fees_match_two_year_emission_calibration() {
-        // 10,000,000 TOS total = 101,000 genesis + 9,899,000 emitted over 2yr,
+        // About 10,000,000 TOS total = 81,151 genesis + 9,899,000 emitted over 2yr,
         // linearly rescaled from the prior 499,899,000-over-7-years calibration.
         const EXPECTED_MASTERCHAIN_FEE_NANOTOS: u128 = 39_496_630;
         const EXPECTED_BASECHAIN_FEE_NANOTOS: u128 = 23_233_312;
