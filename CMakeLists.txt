@@ -1993,6 +1993,14 @@ set_tests_properties(workflow-supply-chain-source PROPERTIES LABELS "source-guar
 add_test(NAME workflow-supply-chain-self-test
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-workflow-supply-chain.py --self-test)
 set_tests_properties(workflow-supply-chain-self-test PROPERTIES LABELS "source-guard")
+# Security-remediation mutation runner: every anchor in its table applies exactly
+# as reviewed, and the runners report a crashing mutant as a red test.
+add_test(NAME security-remediation-mutation-anchors
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-security-remediation-mutations.py --check-anchors)
+set_tests_properties(security-remediation-mutation-anchors PROPERTIES LABELS "source-guard")
+add_test(NAME security-remediation-tooling-self-test
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-security-remediation-tooling.py)
+set_tests_properties(security-remediation-tooling-self-test PROPERTIES LABELS "source-guard")
 add_test(NAME release-artifacts-binding
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_release_artifacts.py)
 set_tests_properties(release-artifacts-binding PROPERTIES LABELS "source-guard")
