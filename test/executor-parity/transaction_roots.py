@@ -18,7 +18,8 @@ if not __debug__:
     raise RuntimeError("root comparison requires enabled Python assertions")
 
 MAX_ROWS = 10_000
-MAX_ROW_BYTES = 1024 * 1024
+# Original basechain wallet state-bound fixtures reach 2,881,435 bytes/row.
+MAX_ROW_BYTES = 4 * 1024 * 1024
 MAX_INPUT_BYTES = 64 * 1024 * 1024
 PRECOMPILED_NAMES = (
     "ext-accept",

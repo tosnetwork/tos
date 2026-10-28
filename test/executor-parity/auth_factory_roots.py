@@ -41,7 +41,7 @@ SOURCES = {
 }
 
 PROFILE = ROOT / "test/executor-parity/data/auth-factory-inputs.json"
-PROFILE_SHA256 = "d96489563d2f3c98405769baa646336961322d8bcac03ebe765e6f2092b7c4ea"
+PROFILE_SHA256 = "836d582900ce9e3c94570c50c15429a9a33da18bf23f7cb5a48dbfcdf546de30"
 
 
 def digest(data):
@@ -114,6 +114,7 @@ def run(family, driver, output, build=None, signer=None, record_profile=None):
     output.mkdir(parents=True)
     original = native.Emulator
     groups, ledger, retained = {}, [], 0
+    input_sizes = []
 
     class Recording(original):
         # Observation belongs inside _initialize, preserving the original test
@@ -155,6 +156,9 @@ def run(family, driver, output, build=None, signer=None, record_profile=None):
             }
             record = Capture(name, original_shard, inbound, self.lt, self.capture_now, oracle, "")
             line = record.root_input()
+            input_sizes.append(
+                dict(name=name, version=self.capture_version, bytes=len(line.encode()))
+            )
             expected = expected_row(name, oracle, allow_library=True)
             cfg = self.capture_config.hash.hex()
             retained += len(line.encode()) + len(json.dumps(oracle).encode())
@@ -208,6 +212,7 @@ def run(family, driver, output, build=None, signer=None, record_profile=None):
             with patch.object(sys, "argv", args):
                 assert namespace["main"]() == 0, "original ML-DSA assertions failed"
     assert ledger, "empty auth native call population"
+    (output / "input-sizes.json").write_text(json.dumps(input_sizes, indent=2) + "\n")
     profile = dict(
         family=family, producer_sources=producer_sources(family), cases=cases, calls=ledger
     )
