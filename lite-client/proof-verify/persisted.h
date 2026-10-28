@@ -34,10 +34,11 @@ int tos_proof_acquire_verify_live_persisted(const char *directory, int initializ
  * Pointer ranges are valid and disjoint as in the embedded ABI. The trusted
  * directory and callback lifetime/timeout rules above still apply.
  */
-int tos_proof_acquire_simulate_self_pay_persisted(
-    const char *directory, const char *anchor, size_t anchor_size, const char *request, size_t request_size,
-    int64_t local_now, tos_proof_query_callback query, void *query_context, const uint8_t *message, size_t message_size,
-    char *result, size_t result_capacity, size_t *result_size);
+int tos_proof_acquire_simulate_self_pay_persisted(const char *directory, const char *anchor, size_t anchor_size,
+                                                  const char *request, size_t request_size, int64_t local_now,
+                                                  tos_proof_query_callback query, void *query_context,
+                                                  const uint8_t *message, size_t message_size, char *result,
+                                                  size_t result_capacity, size_t *result_size);
 #ifdef __cplusplus
 }
 #endif

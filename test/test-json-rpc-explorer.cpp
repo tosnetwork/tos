@@ -235,8 +235,7 @@ TEST(JsonRpcExplorer, exact_registry_precedes_public_state_decoding) {
   expect_state_invalid("mldsa44_auth_module_v1", vm::CellBuilder().store_long(42, 32).store_ref(key(1311)).finalize());
 }
 TEST(JsonRpcExplorer, self_pay_state_has_no_fee_authority_and_preserves_unsigned_counters) {
-  ASSERT_EQ(td::hex_encode(code("quantum_self_pay_v1")->get_hash().as_slice()),
-            tos::kQuantumSelfPayV1CodeHash);
+  ASSERT_EQ(td::hex_encode(code("quantum_self_pay_v1")->get_hash().as_slice()), tos::kQuantumSelfPayV1CodeHash);
   ASSERT_TRUE(decode_public_state(code("quantum_self_pay_v1"), self_pay_data(0), -3).is_ok());
   for (unsigned policy : {1u, 2u}) {
     auto result = decode_public_state(code("quantum_self_pay_v1"), self_pay_data(2, 1, policy), -3);

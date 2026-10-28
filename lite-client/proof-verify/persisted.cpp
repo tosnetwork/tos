@@ -124,8 +124,8 @@ static int run_persisted(const char *directory, int initialize, const char *anch
         }
       };
       const auto acquire = simulation ? tos_proof_acquire_self_pay_simulation : tos_proof_acquire;
-      const int acquired = acquire(anchor, anchor_size, request, request_size, prior.data(), prior.size(),
-                                   query, query_context, collect, &collected);
+      const int acquired = acquire(anchor, anchor_size, request, request_size, prior.data(), prior.size(), query,
+                                   query_context, collect, &collected);
       if (acquired != 0)
         return -2;
       material = collected.parts.data();
@@ -133,14 +133,14 @@ static int run_persisted(const char *directory, int initialize, const char *anch
     }
     std::vector<char> answer(capacity), next(1u << 20);
     size_t answer_size = 0, next_size = 0;
-    const int status = simulation
-                           ? tos_proof_simulate_self_pay_embedded(
-                                 anchor, anchor_size, request, request_size, prior.data(), prior.size(), local_now,
-                                 material, material_count, message, message_size, answer.data(), answer.size(),
-                                 &answer_size, next.data(), next.size(), &next_size)
-                           : tos_proof_verify_embedded(anchor, anchor_size, request, request_size, prior.data(),
-                                                       prior.size(), local_now, material, material_count, answer.data(),
-                                                       answer.size(), &answer_size, next.data(), next.size(), &next_size);
+    const int status =
+        simulation ? tos_proof_simulate_self_pay_embedded(anchor, anchor_size, request, request_size, prior.data(),
+                                                          prior.size(), local_now, material, material_count, message,
+                                                          message_size, answer.data(), answer.size(), &answer_size,
+                                                          next.data(), next.size(), &next_size)
+                   : tos_proof_verify_embedded(anchor, anchor_size, request, request_size, prior.data(), prior.size(),
+                                               local_now, material, material_count, answer.data(), answer.size(),
+                                               &answer_size, next.data(), next.size(), &next_size);
     if (status != 0)
       return status;
     if (!next_size)
@@ -190,10 +190,12 @@ extern "C" int tos_proof_acquire_verify_live_persisted(const char *directory, in
                        capacity, result_size, query, query_context);
 }
 
-extern "C" int tos_proof_acquire_simulate_self_pay_persisted(
-    const char *directory, const char *anchor, size_t anchor_size, const char *request, size_t request_size,
-    int64_t local_now, tos_proof_query_callback query, void *query_context, const uint8_t *message, size_t message_size,
-    char *result, size_t capacity, size_t *result_size) {
+extern "C" int tos_proof_acquire_simulate_self_pay_persisted(const char *directory, const char *anchor,
+                                                             size_t anchor_size, const char *request,
+                                                             size_t request_size, int64_t local_now,
+                                                             tos_proof_query_callback query, void *query_context,
+                                                             const uint8_t *message, size_t message_size, char *result,
+                                                             size_t capacity, size_t *result_size) {
   if (!query || !message || !message_size || message_size > (1u << 20)) {
     if (result_size)
       *result_size = 0;
