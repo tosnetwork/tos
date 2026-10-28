@@ -172,6 +172,7 @@ class ArchiveSlice : public td::actor::Actor {
   friend struct ArchivePruneTestAccess;
 
   void before_query();
+  void load_index();
   void do_close();
   template <typename T>
   td::Promise<T> begin_async_query(td::Promise<T> promise);
@@ -210,6 +211,9 @@ class ArchiveSlice : public td::actor::Actor {
   td::uint32 slice_size_{100};
   bool shard_separated_{false};
   td::uint32 shard_split_depth_ = 0;
+  // A reader opened this index before it had a layout (no "status" key) and
+  // so loaded no packages.
+  bool index_status_missing_{false};
 
   enum Status { st_closed, st_open, st_want_close } status_ = st_closed;
   size_t active_queries_ = 0;

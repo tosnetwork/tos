@@ -68,6 +68,12 @@ ArchiveManager::ArchiveManager(td::actor::ActorId<RootDb> root, std::string db_r
 }
 
 void ArchiveManager::add_handle(BlockHandle handle, td::Promise<td::Unit> promise) {
+  // Refused here: choosing the package of a masterchain block creates it
+  // when it does not exist yet.
+  if (mode_ != td::DbOpenMode::db_primary) {
+    promise.set_error(td::Status::Error(ErrorCode::error, td::Slice(kArchiveReadOnly)));
+    return;
+  }
   if (handle->handle_moved_to_archive()) {
     update_handle(std::move(handle), std::move(promise));
     return;
@@ -84,6 +90,12 @@ void ArchiveManager::add_handle(BlockHandle handle, td::Promise<td::Unit> promis
 }
 
 void ArchiveManager::update_handle(BlockHandle handle, td::Promise<td::Unit> promise) {
+  // Refused here: a failed descriptor lookup below marks the handle flushed
+  // and succeeds, which would hide the refusal.
+  if (mode_ != td::DbOpenMode::db_primary) {
+    promise.set_error(td::Status::Error(ErrorCode::error, td::Slice(kArchiveReadOnly)));
+    return;
+  }
   const FileDescription *f;
   if (handle->handle_moved_to_archive()) {
     CHECK(handle->inited_unix_time());
@@ -108,6 +120,11 @@ void ArchiveManager::update_handle(BlockHandle handle, td::Promise<td::Unit> pro
 
 td::actor::Task<> ArchiveManager::move_block_to_archive(BlockHandle handle,
                                                         std::vector<std::pair<FileReference, td::BufferSlice>> files) {
+  // Refused here: choosing the package of a masterchain block creates it
+  // when it does not exist yet.
+  if (mode_ != td::DbOpenMode::db_primary) {
+    co_return td::Status::Error(ErrorCode::error, td::Slice(kArchiveReadOnly));
+  }
   CHECK(handle->inited_unix_time());
   auto p = handle->id().is_masterchain()
                ? get_package_id_force(handle->masterchain_ref_block(), handle->id().shard_full(), handle->id().seqno(),
@@ -140,6 +157,12 @@ td::actor::Task<> ArchiveManager::move_block_to_archive(BlockHandle handle,
 
 void ArchiveManager::add_file(BlockHandle handle, FileReference ref_id, td::BufferSlice data,
                               td::Promise<td::Unit> promise) {
+  // Refused here: a failed descriptor lookup below is skipped and the call
+  // still succeeds, which would hide the refusal.
+  if (mode_ != td::DbOpenMode::db_primary) {
+    promise.set_error(td::Status::Error(ErrorCode::error, td::Slice(kArchiveReadOnly)));
+    return;
+  }
   bool copy_to_key = false;
   if (handle->inited_is_key_block() && handle->is_key_block() && handle->inited_unix_time() &&
       handle->inited_logical_time() && handle->inited_masterchain_ref_block()) {
@@ -374,6 +397,10 @@ void ArchiveManager::register_perm_state(FileReferenceShort id) {
 }
 
 void ArchiveManager::add_zero_state(BlockIdExt block_id, td::BufferSlice data, td::Promise<td::Unit> promise) {
+  if (mode_ != td::DbOpenMode::db_primary) {
+    promise.set_error(td::Status::Error(ErrorCode::error, td::Slice(kArchiveReadOnly)));
+    return;
+  }
   auto id = FileReference{fileref::ZeroState{block_id}};
   auto hash = id.hash();
   if (perm_states_.find({0, hash}) != perm_states_.end()) {
@@ -397,6 +424,10 @@ void ArchiveManager::add_zero_state(BlockIdExt block_id, td::BufferSlice data, t
 
 void ArchiveManager::add_zero_state_gen(BlockIdExt block_id, std::function<td::Status(td::FileFd &)> write_state,
                                         td::Promise<td::Unit> promise) {
+  if (mode_ != td::DbOpenMode::db_primary) {
+    promise.set_error(td::Status::Error(ErrorCode::error, td::Slice(kArchiveReadOnly)));
+    return;
+  }
   // Streaming zero-state persist: the writer is invoked with an open
   // FileFd for the destination archive entry and copies the bytes in
   // 1 MiB chunks (see copy_tempfile_to_writer). No BufferSlice of state
@@ -468,6 +499,10 @@ void ArchiveManager::add_persistent_state_gen(BlockIdExt block_id, BlockIdExt ma
 void ArchiveManager::add_persistent_state_impl(
     const FileReferenceShort &id, td::Promise<td::Unit> promise,
     std::function<void(std::string, td::Promise<std::string>)> create_writer) {
+  if (mode_ != td::DbOpenMode::db_primary) {
+    promise.set_error(td::Status::Error(ErrorCode::error, td::Slice(kArchiveReadOnly)));
+    return;
+  }
   if (perm_states_.find({id.seqno_of_persistent_state(), id.hash()}) != perm_states_.end()) {
     promise.set_value(td::Unit());
     return;
@@ -674,6 +709,10 @@ void ArchiveManager::get_block_by_seqno(AccountIdPrefixFull account_id, BlockSeq
 }
 
 void ArchiveManager::delete_package(PackageId id, td::Promise<td::Unit> promise) {
+  if (mode_ != td::DbOpenMode::db_primary) {
+    promise.set_error(td::Status::Error(ErrorCode::error, td::Slice(kArchiveReadOnly)));
+    return;
+  }
   auto key = create_serialize_tl_object<tos_api::db_files_package_key>(id.id, id.key, id.temp);
 
   std::string value;
@@ -712,6 +751,10 @@ void ArchiveManager::delete_package(PackageId id, td::Promise<td::Unit> promise)
 }
 
 void ArchiveManager::deleted_package(PackageId id, td::Promise<td::Unit> promise) {
+  if (mode_ != td::DbOpenMode::db_primary) {
+    promise.set_error(td::Status::Error(ErrorCode::error, td::Slice(kArchiveReadOnly)));
+    return;
+  }
   auto key = create_serialize_tl_object<tos_api::db_files_package_key>(id.id, id.key, id.temp);
 
   std::string value;
@@ -796,6 +839,11 @@ td::actor::ActorOwn<ArchiveSlice> ArchiveManager::create_archive_slice(const Pac
 td::Result<const ArchiveManager::FileDescription *> ArchiveManager::get_file_desc(ShardIdFull shard, PackageId id,
                                                                                   BlockSeqno seqno, UnixTime ts,
                                                                                   LogicalTime lt, bool force) {
+  // A forced lookup creates the package or records the block in its index;
+  // a reader only looks packages up.
+  if (force && mode_ != td::DbOpenMode::db_primary) {
+    return td::Status::Error(ErrorCode::error, td::Slice(kArchiveReadOnly));
+  }
   auto &f = get_file_map(id);
   auto it = f.find(id);
   if (it != f.end()) {
@@ -816,6 +864,7 @@ td::Result<const ArchiveManager::FileDescription *> ArchiveManager::get_file_des
 
 const ArchiveManager::FileDescription *ArchiveManager::add_file_desc(ShardIdFull shard, PackageId id, BlockSeqno seqno,
                                                                      UnixTime ts, LogicalTime lt) {
+  CHECK(mode_ == td::DbOpenMode::db_primary);
   auto &f = get_file_map(id);
   CHECK(f.count(id) == 0);
 
@@ -870,6 +919,7 @@ const ArchiveManager::FileDescription *ArchiveManager::add_file_desc(ShardIdFull
 
 void ArchiveManager::update_desc(FileMap &f, const FileDescription &desc, ShardIdFull shard, BlockSeqno seqno,
                                  UnixTime ts, LogicalTime lt) {
+  CHECK(mode_ == td::DbOpenMode::db_primary);
   auto it = desc.first_blocks.find(shard);
   if (it != desc.first_blocks.end() && it->second.seqno <= seqno) {
     return;
@@ -1005,13 +1055,18 @@ PackageId ArchiveManager::get_prev_temp_file_desc_idx(PackageId idx) {
 }
 
 void ArchiveManager::start_up() {
-  td::mkdir(db_root_).ensure();
-  td::mkdir(db_root_ + "/archive/").ensure();
-  td::mkdir(db_root_ + "/archive/tmp/").ensure();
-  td::mkdir(db_root_ + "/archive/packages/").ensure();
-  td::mkdir(db_root_ + "/archive/states/").ensure();
-  td::mkdir(db_root_ + "/files/").ensure();
-  td::mkdir(db_root_ + "/files/packages/").ensure();
+  // Only the owning node lays out its tree. A reader reads the tree as it is:
+  // its index open fails if there is none, and a missing package directory
+  // only means no package there.
+  if (mode_ == td::DbOpenMode::db_primary) {
+    td::mkdir(db_root_).ensure();
+    td::mkdir(db_root_ + "/archive/").ensure();
+    td::mkdir(db_root_ + "/archive/tmp/").ensure();
+    td::mkdir(db_root_ + "/archive/packages/").ensure();
+    td::mkdir(db_root_ + "/archive/states/").ensure();
+    td::mkdir(db_root_ + "/files/").ensure();
+    td::mkdir(db_root_ + "/files/packages/").ensure();
+  }
   if (opts_->get_max_open_archive_files() > 0) {
     archive_lru_ = td::actor::create_actor<ArchiveLru>("archive_lru", opts_->get_max_open_archive_files());
   }
@@ -1119,6 +1174,12 @@ void ArchiveManager::start_up() {
 }
 
 void ArchiveManager::alarm() {
+  // A read-only reader has no directory of its own to write statistics to,
+  // and never writes into the node's; its statistics stay available through
+  // prepare_stats.
+  if (mode_ == td::DbOpenMode::db_readonly) {
+    return;
+  }
   alarm_timestamp() = td::Timestamp::in(60.0);
   auto stats = statistics_.to_string_and_reset();
   std::string stats_file = db_root_ + "/db_stats.txt";

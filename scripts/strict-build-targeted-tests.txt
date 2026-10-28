@@ -13,6 +13,7 @@ archive-prune
 archive-prune-held-reader-shutdown
 archive-reader-no-package-sync
 archive-reader-no-package-repair
+archive-reader-no-node-writes
 streaming-boc-cell-bounds
 streaming-boc-valid-ondisk
 state-spool-amplification

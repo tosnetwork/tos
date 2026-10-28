@@ -29,6 +29,11 @@ namespace validator {
 
 class RootDb;
 
+// The refusal the archive gives to a write when its database was opened as a
+// reader (secondary or read-only): a reader never adds blocks, files or
+// states to, or deletes packages from, the archive of the node it reads.
+inline constexpr const char *kArchiveReadOnly = "archive is read-only: its database was opened as a reader";
+
 class ArchiveManager : public td::actor::Actor {
  public:
   ArchiveManager(td::actor::ActorId<RootDb> root, std::string db_root, td::Ref<ValidatorManagerOptions> opts,
