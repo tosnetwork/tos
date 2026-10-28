@@ -89,15 +89,17 @@ The validator-led production zerostate allocates a provisional **81,151 TOS**:
 | Config contract | 500 TOS | `-1:555...555` |
 
 There is no PoW giver, general treasury, team, investor, foundation, or
-ecosystem allocation. Approximately 500 million TOS is created later for
-produced blocks under ConfigParam 14 and routed through the existing Elector
-reward path; the remaining community-agent allocation (approximately 4.5
-billion TOS of the five-billion total-supply policy) is created through a
-separate protocol reward mechanism, is not funded at genesis, and is never
-held by a treasury wallet. Five hundred million TOS of validator creation,
-five billion TOS of total supply, and seven years are approximate policy
-targets rather than a hard consensus cap or deadline. See
-[TOS Validator-Led Distribution and Bootstrap Economics](https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-validator-only-token-economics.md).
+ecosystem allocation. TOS has no fixed maximum supply. After genesis, native
+TOS is created only by validator block rewards under ConfigParam 14 and routed
+through the existing Elector reward path. The production template calibrates
+those rewards so that the validator bootstrap creates approximately
+10,000,000 TOS gross over roughly its first two years, the 81,151-TOS genesis
+included (about 9,899,000 TOS from produced blocks). ConfigParam 14 is a flat
+per-block rate: it keeps creating at the same rate after two years until
+governance changes it. After the bootstrap, governance targets a low perpetual
+issuance of about 2% of the prevailing supply per year through a separate
+ConfigParam 14 change. These figures are calibration and policy targets, not a
+hard consensus cap or deadline.
 
 ## Related Docs
 
