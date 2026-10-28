@@ -62,7 +62,7 @@ class Bench : public td::actor::Actor {
     for (unsigned i = 0; i < sessions_; ++i) {
       admissions_.push_back(co_await td::actor::ask(ledger_.get(), &signing::SigningLedger::admit, fill(0x77),
                                                     fill(1000 + i), ShardIdFull{masterchainId, shardIdAll},
-                                                    std::uint32_t{1}));
+                                                    std::uint32_t{1}, signing::IdentityHistory{}));
       CHECK(!admissions_.back()->fenced);
       journals_.push_back(open_rocksdb_consensus_db(PSTRING() << dir_ << "/journal-" << i));
     }

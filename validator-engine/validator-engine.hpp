@@ -315,8 +315,6 @@ class ValidatorEngine : public td::actor::Actor {
   // --disable-validator-consensus-cleanup is given.
   bool validator_consensus_cleanup_ = true;
   bool test_crash_cleanup_before_erase_ = false;
-  // Experimental, local networks only: see doc/signing-decision-log.md.
-  bool signing_decision_log_ = false;
   td::optional<tos::validator::ExtMessageWorkProfile> ext_message_work_profile_;
   double block_ttl_ = 0;
   double sync_ttl_ = 0;
@@ -390,9 +388,6 @@ class ValidatorEngine : public td::actor::Actor {
   }
   void set_validator_consensus_cleanup(bool v) {
     validator_consensus_cleanup_ = v;
-  }
-  void set_signing_decision_log(bool v) {
-    signing_decision_log_ = v;
   }
   void set_test_crash_cleanup_before_erase(bool v) {
     test_crash_cleanup_before_erase_ = v;

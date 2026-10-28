@@ -168,12 +168,48 @@ void test_fence_rule() {
     require(fenced_by_history(fence, ShardIdFull{7, shardIdAll}, 1000), "an absent workchain is fenced");
     require(fenced_by_history({}, all, 1000), "an empty fence fences everything");
   }
-  // The log runs on a local network only.
-  require(refuse_off_local_network(3).is_ok(), "a local network is accepted");
-  require(refuse_off_local_network(2).is_error(), "the public testnet is refused");
-  require(refuse_off_local_network(1).is_error(), "mainnet is refused");
-  require(refuse_off_local_network(0).is_error(), "any other network is refused");
+  // A split child not yet in the configuration reads its parent's counter (the ancestor
+  // branch), so the parent's entry fences the child's tentative session at parent + 2.
+  {
+    const std::vector<FenceEntry> fence = {{masterchainId, shardIdAll, 10}, {basechainId, shardIdAll, 5}};
+    require(fenced_by_history(fence, left, 5), "a split child at the parent's counter is fenced");
+    require(fenced_by_history(fence, right, 7), "a split child's tentative parent + 2 is fenced");
+    require(!fenced_by_history(fence, right, 8), "a split child at parent + 3 is admitted");
+  }
   std::printf("fence rule: ok\n");
+}
+
+// ===== Which block may be the fence block, and t0 =====
+
+void test_fence_block_rule() {
+  const BlockIdExt id{masterchainId, shardIdAll, 7, fill(0x07), fill(0x5f)};
+  const std::vector<FenceEntry> two = {{masterchainId, shardIdAll, 50}, {basechainId, shardIdAll, 70}};
+  // t0 is rounded up from a fractional clock: 1000.4 is 1001, and the block must be generated
+  // at 1092 or later. The times are written out, not derived from the constant.
+  require(custody_time(1000.4) == 1001, "a fractional custody time is rounded up");
+  require(custody_time(1000.0) == 1000, "a whole custody time stays");
+  const auto t0 = custody_time(1000.4);
+  require(fence_block_refusal(FenceBlock{id, 1091, two}, t0).has_value(), "t0 + 90 is refused");
+  require(!fence_block_refusal(FenceBlock{id, 1092, two}, t0).has_value(), "t0 + 91 is accepted");
+  // Exactly kMaxFenceEntries lineages are accepted, one more is refused.
+  std::vector<FenceEntry> at_cap;
+  for (std::size_t i = 0; i < kMaxFenceEntries; ++i) {
+    at_cap.push_back({basechainId, static_cast<std::uint64_t>(i) * 2 + 1, 70});
+  }
+  require(at_cap.size() == 256, "the cap is 256 lineages");
+  require(!fence_block_refusal(FenceBlock{id, 2000, at_cap}, t0).has_value(), "256 lineages are accepted");
+  at_cap.push_back({basechainId, 0x8000000000000000ULL, 70});
+  require(fence_block_refusal(FenceBlock{id, 2000, at_cap}, t0).has_value(), "257 lineages are refused");
+  require(fence_block_refusal(FenceBlock{id, 2000, {}}, t0).has_value(), "an empty fence is refused");
+  require(fence_block_refusal(FenceBlock{id, 2000, {{masterchainId, shardIdAll, kCounterSentinel}}}, t0).has_value(),
+          "a lineage without a counter is refused");
+  // No admission is never "sign without a record".
+  auto fenced = admission_for_validator_group(nullptr, fill(0x31));
+  require(fenced != nullptr && fenced->fenced && fenced->signing_stopped(),
+          "a validator group built without an admission signs nothing");
+  auto given = Admission::fence(fill(0x32), "given");
+  require(admission_for_validator_group(given, fill(0x32)) == given, "a given admission is kept");
+  std::printf("fence block rule: ok\n");
 }
 
 // ===== Records and logs =====
@@ -366,7 +402,7 @@ class Driver : public td::actor::Actor {
   td::actor::Task<std::shared_ptr<const Admission>> admit(td::actor::ActorId<SigningLedger> ledger, td::Bits256 session,
                                                           ShardIdFull shard = ShardIdFull{masterchainId, shardIdAll},
                                                           std::uint32_t cc = 1) {
-    co_return co_await td::actor::ask(ledger, &SigningLedger::admit, validator_, session, shard, cc);
+    co_return co_await td::actor::ask(ledger, &SigningLedger::admit, validator_, session, shard, cc, IdentityHistory{});
   }
 
   td::actor::Task<Reservation> reserve(const std::shared_ptr<const Admission>& admission, Decision d) {
@@ -381,6 +417,7 @@ class Driver : public td::actor::Actor {
     co_await test_failed_appends();
     co_await test_prune_and_floor();
     co_await test_unknown_history();
+    co_await test_identity_history();
     co_await test_untrusted_becomes_pending();
     co_await test_genesis_ledger();
     co_await test_persistent_creation_failure();
@@ -393,8 +430,81 @@ class Driver : public td::actor::Actor {
 
   td::actor::Task<bool> offer(td::actor::ActorId<SigningLedger> ledger, std::uint32_t seqno, std::uint32_t gen_utime,
                               std::vector<FenceEntry> lineages) {
-    const BlockIdExt block{masterchainId, shardIdAll, seqno, fill(static_cast<unsigned char>(seqno)), fill(0x5f)};
-    co_return co_await td::actor::ask(ledger, &SigningLedger::offer_fence_block, block, gen_utime, std::move(lineages));
+    co_return co_await td::actor::ask(ledger, &SigningLedger::offer_fence_block, validator_, std::uint64_t{0},
+                                      fence_block(seqno, gen_utime, std::move(lineages)));
+  }
+
+  static FenceBlock fence_block(std::uint32_t seqno, std::uint32_t gen_utime, std::vector<FenceEntry> lineages) {
+    return FenceBlock{BlockIdExt{masterchainId, shardIdAll, seqno, fill(static_cast<unsigned char>(seqno)), fill(0x5f)},
+                      gen_utime, std::move(lineages)};
+  }
+
+  td::actor::Task<std::shared_ptr<const Admission>> admit_with(td::actor::ActorId<SigningLedger> ledger,
+                                                               td::Bits256 session, std::uint32_t cc,
+                                                               IdentityHistory history) {
+    co_return co_await td::actor::ask(ledger, &SigningLedger::admit, validator_, session,
+                                      ShardIdFull{masterchainId, shardIdAll}, cc, std::move(history));
+  }
+
+  // The identity's history as the manager passes it: its custody time t0, and the fence block
+  // it applied after t0, recorded before any ledger existed.
+  td::actor::Task<> test_identity_history() {
+    const std::vector<FenceEntry> at_m = {{masterchainId, shardIdAll, 50}, {basechainId, shardIdAll, 70}};
+    {
+      // A fence block recorded before the first admission establishes the new ledger at once:
+      // the elected identity signs in its first session above the fence.
+      const auto dir = scratch() + "/signing-ledger";
+      auto ledger = td::actor::create_actor<SigningLedger>("early-m", dir, default_file_ops(), nullptr, clock_at(1000));
+      IdentityHistory history{1000, fence_block(20, 1091, at_m)};
+      auto first = co_await admit_with(ledger.get(), fill(0x40), 53, history);
+      require(!first->fenced, "the first session above a fence recorded before admission signs");
+      require(co_await td::actor::ask(ledger.get(), &SigningLedger::history) == History::Established,
+              "established at its creation");
+      require((co_await admit_with(ledger.get(), fill(0x41), 52, history))->fenced, "+2 stays fenced");
+      auto floor = co_await td::actor::ask(ledger.get(), &SigningLedger::floor);
+      require(floor.has_value() && floor->seqno() == 20, "the fence block is the floor");
+    }
+    {
+      // t0 is the custody time when it is later than this actor's start: a block that
+      // qualifies against the start does not against custody (late custody).
+      const auto dir = scratch() + "/signing-ledger";
+      auto ledger = td::actor::create_actor<SigningLedger>("late", dir, default_file_ops(), nullptr, clock_at(1000));
+      auto early =
+          co_await admit_with(ledger.get(), fill(0x42), 53, IdentityHistory{1600, fence_block(20, 1690, at_m)});
+      require(early->fenced && early->history_unknown, "a block before custody + 91 leaves the history pending");
+      require(early->reason.find("1691") != std::string::npos, "the wait is measured from custody");
+      require(!co_await td::actor::ask(ledger.get(), &SigningLedger::offer_fence_block, validator_, std::uint64_t{1600},
+                                       fence_block(21, 1690, at_m)),
+              "custody + 90 does not settle it");
+      require(!co_await td::actor::ask(ledger.get(), &SigningLedger::offer_fence_block, fill(0x99), std::uint64_t{1600},
+                                       fence_block(22, 1691, at_m)),
+              "another identity's fence block does not settle it");
+      require(co_await td::actor::ask(ledger.get(), &SigningLedger::history) == History::Pending, "still pending");
+      require(co_await td::actor::ask(ledger.get(), &SigningLedger::offer_fence_block, validator_, std::uint64_t{1600},
+                                      fence_block(23, 1691, at_m)),
+              "custody + 91 settles it");
+      require(!(co_await admit_with(ledger.get(), fill(0x43), 53, IdentityHistory{1600, std::nullopt}))->fenced,
+              "+3 signs once settled");
+    }
+    {
+      // A pending ledger of an earlier process: this process's fence block settles it at the
+      // first admission, measured from the later of the stored t0 and this custody.
+      const auto dir = scratch() + "/signing-ledger";
+      {
+        auto ledger = td::actor::create_actor<SigningLedger>("first", dir, default_file_ops(), nullptr, clock_at(9000));
+        require((co_await admit_with(ledger.get(), fill(0x44), 1, IdentityHistory{}))->fenced, "pending");
+      }
+      auto ledger = td::actor::create_actor<SigningLedger>("second", dir, default_file_ops(), nullptr, clock_at(3000));
+      auto refused =
+          co_await admit_with(ledger.get(), fill(0x45), 53, IdentityHistory{3000, fence_block(30, 3091, at_m)});
+      require(refused->fenced, "a block before the stored t0 + 91 does not settle a stored pending history");
+      auto admitted =
+          co_await admit_with(ledger.get(), fill(0x46), 53, IdentityHistory{3000, fence_block(31, 9091, at_m)});
+      require(!admitted->fenced, "a block after both waits settles it at admission");
+      require(co_await td::actor::ask(ledger.get(), &SigningLedger::history) == History::Established, "established");
+    }
+    std::printf("identity history: ok\n");
+    co_return td::Unit{};
   }
 
   td::actor::Task<> test_unknown_history() {
@@ -547,7 +657,7 @@ class Driver : public td::actor::Actor {
     {
       auto ledger = td::actor::create_actor<SigningLedger>("trusted", dir);
       auto other = co_await td::actor::ask(ledger.get(), &SigningLedger::admit, fill(0x99), fill(0x01),
-                                           ShardIdFull{masterchainId, shardIdAll}, std::uint32_t{1});
+                                           ShardIdFull{masterchainId, shardIdAll}, std::uint32_t{1}, IdentityHistory{});
       require(other->fenced, "another validator's ledger admits nothing");
     }
     // The directory copied elsewhere (a restore, a migration) is not the one written.
@@ -750,6 +860,7 @@ int main() {
   SET_VERBOSITY_LEVEL(verbosity_ERROR);
   test_index();
   test_fence_rule();
+  test_fence_block_rule();
   const auto dir = scratch();
   test_log_format(dir);
   test_header_format();

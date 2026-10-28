@@ -134,9 +134,6 @@ struct ValidatorManagerOptionsImpl : public ValidatorManagerOptions {
   bool get_validator_consensus_cleanup_enabled() const override {
     return validator_consensus_cleanup_enabled_;
   }
-  bool get_signing_decision_log_enabled() const override {
-    return signing_decision_log_enabled_;
-  }
   bool get_test_crash_cleanup_before_erase() const override {
     return test_crash_cleanup_before_erase_;
   }
@@ -284,9 +281,6 @@ struct ValidatorManagerOptionsImpl : public ValidatorManagerOptions {
   void set_validator_consensus_cleanup_enabled(bool value) override {
     validator_consensus_cleanup_enabled_ = value;
   }
-  void set_signing_decision_log_enabled(bool value) override {
-    signing_decision_log_enabled_ = value;
-  }
   void set_test_crash_cleanup_before_erase(bool value) override {
     test_crash_cleanup_before_erase_ = value;
   }
@@ -419,8 +413,6 @@ struct ValidatorManagerOptionsImpl : public ValidatorManagerOptions {
   bool disable_rocksdb_stats_;
   // On by default; see ValidatorManagerOptions::get_validator_consensus_cleanup_enabled.
   bool validator_consensus_cleanup_enabled_ = true;
-  // Off by default; see ValidatorManagerOptions::get_signing_decision_log_enabled.
-  bool signing_decision_log_enabled_ = false;
   bool test_crash_cleanup_before_erase_ = false;
   bool nonfinal_ls_queries_enabled_ = false;
   td::optional<std::string> secondary_working_dir_;

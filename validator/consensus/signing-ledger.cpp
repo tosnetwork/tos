@@ -3,6 +3,7 @@
  *
  * SPDX-License-Identifier: LGPL-2.0-or-later
  */
+#include <algorithm>
 #include <cerrno>
 #include <cmath>
 #include <cstring>
@@ -613,6 +614,16 @@ std::shared_ptr<const Admission> Admission::fence(td::Bits256 session, std::stri
   return admission;
 }
 
+std::shared_ptr<const Admission> admission_for_validator_group(std::shared_ptr<const Admission> admission,
+                                                               td::Bits256 session) {
+  if (admission != nullptr) {
+    return admission;
+  }
+  LOG(ERROR) << "signing ledger: a validator group for session " << session.to_hex()
+             << " was built without an admission; it signs nothing";
+  return Admission::fence(session, "the validator group was built without an admission from the signing ledger");
+}
+
 // ===== Header =====
 
 std::string encode_header(const Header& header) {
@@ -755,14 +766,28 @@ td::Status create_ledger(const std::string& dir, const td::Bits256& validator, s
 
 // ===== The fence =====
 
-td::Status refuse_off_local_network(std::int32_t global_id) {
-  if (global_id == kLocalNetworkGlobalId) {
-    return td::Status::OK();
+std::optional<std::string> fence_block_refusal(const FenceBlock& block, std::uint64_t t0) {
+  // In 64 bits, as everything about the margin is.
+  if (static_cast<std::uint64_t>(block.gen_utime) < t0 + kHistoryMarginSeconds) {
+    return PSTRING() << "generated at " << block.gen_utime << ", before " << t0 + kHistoryMarginSeconds;
   }
-  return td::Status::Error(PSTRING() << "--signing-decision-log is experimental and runs only on a local network "
-                                        "(global id "
-                                     << kLocalNetworkGlobalId << "); this network's global id is " << global_id
-                                     << " (1 is mainnet, 2 the public testnet). Remove the flag.");
+  if (block.lineages.empty() || block.lineages.size() > kMaxFenceEntries) {
+    return PSTRING() << "a fence of " << block.lineages.size() << " lineages cannot be recorded (between 1 and "
+                     << kMaxFenceEntries << ")";
+  }
+  for (const auto& entry : block.lineages) {
+    if (entry.cc == kCounterSentinel) {
+      return PSTRING() << "no catchain counter for shard " << ShardIdFull{entry.workchain, entry.shard}.to_str();
+    }
+  }
+  return std::nullopt;
+}
+
+std::uint64_t custody_time(double unix_seconds) {
+  if (!(unix_seconds > 0)) {
+    return 0;
+  }
+  return static_cast<std::uint64_t>(std::ceil(unix_seconds));
 }
 
 bool fenced_by_history(const std::vector<FenceEntry>& fence, ShardIdFull shard, std::uint32_t cc) {
@@ -796,11 +821,7 @@ SigningLedger::SigningLedger(std::string dir, std::shared_ptr<FileOps> ops, Sess
 }
 
 void SigningLedger::start_up() {
-  {
-    const double now = clock_ ? clock_() : td::Clocks::system();
-    // Rounded up: a later start time only ever fences more.
-    started_at_ = static_cast<std::uint64_t>(std::ceil(now));
-  }
+  started_at_ = custody_time(clock_ ? clock_() : td::Clocks::system());
   const std::string path = dir_ + "/" + kHeaderName;
   const int fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
   if (fd < 0) {
@@ -881,11 +902,34 @@ td::Status SigningLedger::write_header() {
 }
 
 td::actor::Task<std::shared_ptr<const Admission>> SigningLedger::admit(td::Bits256 validator, td::Bits256 session,
-                                                                       ShardIdFull shard, std::uint32_t cc) {
-  co_return admit_now(validator, session, shard, cc);
+                                                                       ShardIdFull shard, std::uint32_t cc,
+                                                                       IdentityHistory history) {
+  co_return admit_now(validator, session, shard, cc, history);
 }
 
-td::Status SigningLedger::start_unknown_history(const td::Bits256& validator) {
+td::Status SigningLedger::establish(const FenceBlock& block) {
+  auto previous = header_;
+  header_.history = History::Established;
+  header_.fence = block.lineages;
+  if (!header_.floor.has_value() || header_.floor->seqno() < block.block.seqno()) {
+    header_.floor = block.block;
+  }
+  if (auto written = write_header(); written.is_error()) {
+    header_ = std::move(previous);
+    return written;
+  }
+  std::string lineages_text;
+  for (const auto& entry : header_.fence) {
+    lineages_text += PSTRING() << " " << ShardIdFull{entry.workchain, entry.shard}.to_str() << "=" << entry.cc;
+  }
+  LOG(WARNING) << "signing ledger: unknown history fenced at " << block.block.to_str() << " (generated "
+               << block.gen_utime << ", waiting from " << header_.t0 << ") over " << header_.fence.size()
+               << " lineages; sessions more than " << kFenceCounterMargin
+               << " catchain counters above them sign again; counters:" << lineages_text;
+  return td::Status::OK();
+}
+
+td::Status SigningLedger::start_unknown_history(const td::Bits256& validator, const IdentityHistory& history) {
   const std::string path = dir_ + "/" + kHeaderName;
   if (file_exists(path)) {
     // The untrusted header is kept beside the new one, never deleted; at most kMaxSetAside.
@@ -916,24 +960,40 @@ td::Status SigningLedger::start_unknown_history(const td::Bits256& validator) {
   header.validator = validator;
   header.dir = binding;
   header.history = History::Pending;
-  header.t0 = started_at_;
+  // Never earlier than this actor's start: a later t0 only ever fences more.
+  header.t0 = std::max(started_at_, history.t0);
+  const bool settled = history.fence_block.has_value() && !fence_block_refusal(*history.fence_block, header.t0);
+  if (settled) {
+    // The fence block this process applied after taking custody of the identity, before
+    // its first admission: the history is established in the same write.
+    header.history = History::Established;
+    header.fence = history.fence_block->lineages;
+    header.floor = history.fence_block->block;
+  }
   TRY_STATUS(ops_->replace_file(dir_, kHeaderName, encode_header(header)));
   TRY_STATUS(fsync_directory(parent));
   header_ = std::move(header);
   status_ = LedgerStatus::Trusted;
-  LOG(WARNING) << "signing ledger: this node's earlier signing is unknown; every session is fenced until a "
-                  "masterchain block generated at or after "
-               << started_at_ + kHistoryMarginSeconds;
+  if (settled) {
+    LOG(WARNING) << "signing ledger: this node's earlier signing is unknown; fenced at the block "
+                 << history.fence_block->block.to_str() << " this process applied at or after "
+                 << header_.t0 + kHistoryMarginSeconds << ", before its first admission";
+  } else {
+    LOG(WARNING) << "signing ledger: this node's earlier signing is unknown; every session is fenced until a "
+                    "masterchain block generated at or after "
+                 << header_.t0 + kHistoryMarginSeconds;
+  }
   return td::Status::OK();
 }
 
 std::shared_ptr<const Admission> SigningLedger::admit_now(const td::Bits256& validator, const td::Bits256& session,
-                                                          ShardIdFull shard, std::uint32_t cc) {
+                                                          ShardIdFull shard, std::uint32_t cc,
+                                                          const IdentityHistory& history) {
   if (auto it = admitted_.find(session); it != admitted_.end()) {
     return it->second;
   }
   if (status_ != LedgerStatus::Trusted) {
-    if (auto started = start_unknown_history(validator); started.is_error()) {
+    if (auto started = start_unknown_history(validator, history); started.is_error()) {
       LOG(ERROR) << "signing ledger: no pending ledger could be created: " << started << "; no session will sign";
       // The original trust failure is kept as it is; each reply carries it with only this
       // attempt's error, so nothing retained grows with the number of admissions.
@@ -944,10 +1004,25 @@ std::shared_ptr<const Admission> SigningLedger::admit_now(const td::Bits256& val
   if (header_.validator != validator) {
     return Admission::fence(session, "the signing ledger belongs to another validator");
   }
+  if (header_.history == History::Pending && history.fence_block.has_value()) {
+    // A pending ledger of an earlier process: this process's own fence block settles it,
+    // measured from the later of the two waits.
+    const auto t0 = std::max(header_.t0, history.t0);
+    if (!fence_block_refusal(*history.fence_block, t0)) {
+      if (auto established = establish(*history.fence_block); established.is_error()) {
+        LOG(ERROR) << "signing ledger: the fence block was not recorded: " << established;
+      }
+    }
+  }
   if (header_.history == History::Pending) {
-    return Admission::fence(session, PSTRING() << "this node's earlier signing is unknown; waiting for a masterchain "
-                                                  "block generated at or after "
-                                               << header_.t0 + kHistoryMarginSeconds);
+    auto fenced = std::make_shared<Admission>();
+    fenced->fenced = true;
+    fenced->history_unknown = true;
+    fenced->session = session;
+    fenced->reason = PSTRING() << "this node's earlier signing is unknown; waiting for a masterchain block generated "
+                                  "at or after "
+                               << std::max(header_.t0, history.t0) + kHistoryMarginSeconds;
+    return fenced;
   }
   if (header_.history == History::Established && fenced_by_history(header_.fence, shard, cc)) {
     return Admission::fence(session, PSTRING() << "the session of " << shard.to_str() << " with catchain counter " << cc
@@ -1116,49 +1191,27 @@ td::actor::Task<History> SigningLedger::history() {
   co_return header_.history;
 }
 
-td::actor::Task<bool> SigningLedger::offer_fence_block(BlockIdExt block, std::uint32_t gen_utime,
-                                                       std::vector<FenceEntry> lineages) {
+td::actor::Task<bool> SigningLedger::offer_fence_block(td::Bits256 validator, std::uint64_t t0, FenceBlock block) {
   if (status_ != LedgerStatus::Trusted) {
-    // No ledger yet: the first admission creates a pending one, and the next offer counts.
+    // No ledger yet: the first admission creates one, from the same fence block.
+    co_return false;
+  }
+  if (header_.validator != validator) {
+    // Another identity's ledger; its admissions are fenced whatever this block is.
     co_return false;
   }
   if (header_.history != History::Pending) {
     co_return true;
   }
-  // In 64 bits, as everything about the margin is.
-  if (static_cast<std::uint64_t>(gen_utime) < header_.t0 + kHistoryMarginSeconds) {
+  if (auto refused = fence_block_refusal(block, std::max(header_.t0, t0))) {
+    LOG(WARNING) << "signing ledger: block " << block.block.to_str() << " cannot be the fence block: " << *refused
+                 << "; the history stays pending";
     co_return false;
   }
-  if (lineages.empty() || lineages.size() > kMaxFenceEntries) {
-    LOG(ERROR) << "signing ledger: a fence of " << lineages.size() << " lineages cannot be recorded (at most "
-               << kMaxFenceEntries << "); the history stays pending";
+  if (auto established = establish(block); established.is_error()) {
+    LOG(ERROR) << "signing ledger: the fence block was not recorded: " << established;
     co_return false;
   }
-  for (const auto& entry : lineages) {
-    if (entry.cc == kCounterSentinel) {
-      LOG(WARNING) << "signing ledger: block " << block.to_str() << " gives no catchain counter for shard "
-                   << entry.workchain << ":" << entry.shard << "; it cannot be the fence block";
-      co_return false;
-    }
-  }
-  auto previous = header_;
-  header_.history = History::Established;
-  header_.fence = std::move(lineages);
-  if (!header_.floor.has_value() || header_.floor->seqno() < block.seqno()) {
-    header_.floor = block;
-  }
-  if (auto written = write_header(); written.is_error()) {
-    header_ = std::move(previous);
-    LOG(ERROR) << "signing ledger: the fence block was not recorded: " << written;
-    co_return false;
-  }
-  std::string lineages_text;
-  for (const auto& entry : header_.fence) {
-    lineages_text += PSTRING() << " " << ShardIdFull{entry.workchain, entry.shard}.to_str() << "=" << entry.cc;
-  }
-  LOG(WARNING) << "signing ledger: unknown history fenced at " << block.to_str() << " over " << header_.fence.size()
-               << " lineages; sessions more than " << kFenceCounterMargin
-               << " catchain counters above them sign again; counters:" << lineages_text;
   co_return true;
 }
 

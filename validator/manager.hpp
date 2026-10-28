@@ -323,12 +323,14 @@ class ValidatorManagerImpl : public ValidatorManager {
   std::map<adnl::AdnlNodeIdShort, td::actor::ActorOwn<CollationManager>> collation_managers_;
   std::set<ValidatorSessionId> destroyed_validator_sessions_;
 
-  // The own-decision log (consensus/signing-ledger.h), when the options enable it. A group
-  // is built only once its session has an admission, decided by the ledger before the
-  // group exists; the admission is requested on first need and the group update runs
-  // again when it arrives. Admissions are kept for the life of the process, so a group
+  // The own-decision log (consensus/signing-ledger.h), kept by every node that holds a
+  // consensus key; created when custody is first installed, so an observer has none. A
+  // validator group is built only once its session has an admission, decided by the ledger
+  // before the group exists; the admission is requested on first need and the group update
+  // runs again when it arrives. Admissions are kept for the life of the process, so a group
   // recreated for the same session gets the same log.
   td::actor::ActorOwn<consensus::signing::SigningLedger> signing_ledger_;
+  void ensure_signing_ledger();
   std::map<ValidatorSessionId, std::shared_ptr<const consensus::signing::Admission>> signing_admissions_;
   std::set<ValidatorSessionId> signing_admissions_pending_;
   // The ledger's floor, and whether this node's chain is known to contain it. No session is
@@ -343,13 +345,30 @@ class ValidatorManagerImpl : public ValidatorManager {
                                                                              ShardIdFull shard, CatchainSeqno cc);
   td::actor::Task<> fetch_signing_floor();
   td::actor::Task<> fetch_signing_admission(ValidatorSessionId session_id, tos::ValidatorId validator,
-                                            ShardIdFull shard, CatchainSeqno cc);
-  // While the ledger's history is unknown, every new masterchain block is offered as its
-  // fence block, before any group of that block is admitted.
-  bool signing_history_settled_ = false;
-  // With the own-decision log enabled, refuses a network other than a local one.
-  td::Status signing_decision_log_network_check(const MasterchainState &state) const;
-  void offer_signing_fence_block();
+                                            ShardIdFull shard, CatchainSeqno cc,
+                                            consensus::signing::IdentityHistory history);
+  // Per validator identity this process holds a consensus key for: when it took custody
+  // (t0, consensus/signing-ledger.h "Unknown signing history") and the fence block M it has
+  // applied since, recorded whether or not a ledger exists yet. In memory only: a restart
+  // takes custody again, so it needs a new M anyway. One entry per held identity, each with
+  // at most kMaxFenceEntries lineages.
+  struct SigningIdentity {
+    td::uint64 t0 = 0;
+    std::optional<consensus::signing::FenceBlock> fence_block;
+  };
+  std::map<tos::ValidatorId, SigningIdentity> signing_identities_;
+  // Custody of `validator_id` changed: a key added or removed. The identity's record is reset
+  // (t0 = now, M discarded) while any key is held for it, and dropped when none is.
+  void signing_custody_changed(tos::ValidatorId validator_id);
+  consensus::signing::IdentityHistory signing_identity_history(tos::ValidatorId validator_id);
+  // Records, for every identity without one, the newly applied masterchain block as its fence
+  // block when it qualifies, and offers it to the ledger once.
+  void record_signing_fence_blocks();
+  // The wall clock custody times are read from; tests replace it.
+  virtual double signing_custody_clock() const;
+  // A node whose first admission at the zerostate finds its history unknown logs the
+  // genesis-ceremony hint once.
+  bool signing_genesis_hint_logged_ = false;
   void checked_signing_floor(td::Result<ConstBlockHandle> handle);
   void rebuild_groups_after_signing_answer();
 
@@ -545,6 +564,7 @@ class ValidatorManagerImpl : public ValidatorManager {
       promise.set_error(std::move(status));
       return;
     }
+    signing_custody_changed(validator_id);
     promise.set_value(td::Unit());
   }
   // Refuses an unexpired key that a previous, current or next validator set lists for this
