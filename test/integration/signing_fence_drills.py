@@ -48,6 +48,8 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import base64
+import binascii
 import hashlib
 import importlib.util
 import json
@@ -390,6 +392,122 @@ def parse_config34(text: str) -> dict[str, Any] | None:
     return {"utime_since": int(since.group(1)), "weights": weights}
 
 
+LEDGER_MAGIC_PREFIX = b"TOSSLG"
+QUIET_SECONDS = 600
+BLOCK_TIME_ROUNDING = 1.0
+
+
+def node_binding(node_dir: Path) -> dict[str, str | None]:
+    """The validator id a node is bound to, read two ways: its engine configuration and its
+    signing-ledger header (8-byte magic, then the 32-byte validator id)."""
+    config_id = None
+    try:
+        config = json.loads((node_dir / "config.json").read_text())
+        raw = config.get("extraconfig", {}).get("pq_consensus", {}).get("validator_id")
+        if isinstance(raw, str):
+            config_id = base64.b64decode(raw, validate=True).hex().upper()
+    except (OSError, ValueError, binascii.Error):
+        config_id = None
+    ledger_id = None
+    try:
+        header = (node_dir / "consensus" / "signing-ledger" / "ledger").read_bytes()
+        if header.startswith(LEDGER_MAGIC_PREFIX) and len(header) >= 40:
+            ledger_id = header[8:40].hex().upper()
+    except OSError:
+        ledger_id = None
+    return {"config": config_id, "ledger": ledger_id}
+
+
+def control_stall(
+    working_dir: Path,
+    summary: dict[str, Any],
+    incoming_ids: dict[str, str],
+    handover_at: float | None,
+    certs: list[Any],
+) -> dict[str, Any]:
+    """The control arm's evidence (a build without the per-identity record). Bound to the named
+    incoming ids through each node's config.json binding and its signing-ledger header, which
+    must both exist and agree; each incoming node fenced at the new set's first masterchain
+    counter by its ledger's fence; and a quiet masterchain: no certificate in any session at or
+    above the new set's first counter, none in any session later than handover_at + 1 s, over
+    at least 600 s of observation."""
+    dirs = node_dirs(working_dir, int(summary.get("nodes", 6)))
+    nodes = []
+    first_counters = []
+    for node, vid in sorted(incoming_ids.items()):
+        directory = dirs[int(node) - 1]
+        binding = node_binding(directory)
+        lines = [x for path in sorted(directory.glob("log*")) for x in read_lines(path)]
+        fences = [
+            {s: int(c) for s, c in COUNTER.findall(m["counters"])}
+            for line in lines
+            if (m := FENCE.search(line))
+        ]
+        member_ccs = sorted(
+            {int(m["cc"]) for line in lines if (m := INDEX_LINE.search(line)) and m["shard"] == MC}
+        )
+        first_cc = member_ccs[0] if member_ccs else None
+        admissions = {}
+        for line in lines:
+            if (m := ADMISSION.search(line)) and m["shard"] == MC:
+                admissions.setdefault(int(m["cc"]), set()).add(m["verdict"])
+        fenced_at_first = first_cc is not None and admissions.get(first_cc) == {"fenced"}
+        never_admitted = all("admitted" not in v for v in admissions.values())
+        if first_cc is not None:
+            first_counters.append(first_cc)
+        nodes.append(
+            {
+                "node": int(node),
+                "validator": vid,
+                "binding": binding,
+                "bound": binding["config"] == vid and binding["ledger"] == vid,
+                "ledger_fence": fences[0] if fences else None,
+                "first_masterchain_counter": first_cc,
+                "fenced_at_first_counter": fenced_at_first,
+                "never_admitted_in_masterchain": never_admitted,
+            }
+        )
+    first = (
+        min(first_counters) if len(first_counters) == len(incoming_ids) and first_counters else None
+    )
+    observed_until = summary.get("observed_until")
+    mc_certs = [c for c in certs if c["shard"] == MC and c["at"] is not None]
+    at_or_above_first = [c["cc"] for c in mc_certs if first is not None and c["cc"] >= first]
+    late = [
+        {"cc": c["cc"], "after_handover_s": c["at"] - handover_at}
+        for c in mc_certs
+        if handover_at is not None and c["at"] > handover_at + BLOCK_TIME_ROUNDING
+    ]
+    observed = (
+        None
+        if handover_at is None or observed_until is None
+        else observed_until - (handover_at + BLOCK_TIME_ROUNDING)
+    )
+    quiet = (
+        first is not None
+        and not at_or_above_first
+        and not late
+        and observed is not None
+        and observed >= QUIET_SECONDS
+    )
+    return {
+        "nodes": nodes,
+        "new_set_first_counter": first,
+        "certificates_at_or_above_first_counter": sorted(set(at_or_above_first)),
+        "certificates_after_handover_plus_1s": late[:20],
+        "quiet_observed_seconds": observed,
+        "quiet": quiet,
+        "all_bound": bool(nodes) and all(n["bound"] for n in nodes),
+        "all_fenced_at_first_counter": bool(nodes)
+        and all(
+            n["ledger_fence"]
+            and n["fenced_at_first_counter"]
+            and n["never_admitted_in_masterchain"]
+            for n in nodes
+        ),
+    }
+
+
 def analyze_handover(working_dir: Path, summary: dict[str, Any]) -> None:
     """Counter-based and bound to identities. A pass needs, for the run's named incoming
     and outgoing validator ids:
@@ -505,7 +623,6 @@ def analyze_handover(working_dir: Path, summary: dict[str, Any]) -> None:
         and len(incoming) == len(incoming_ids)
         and all(i["fence_block_record"] and i["fence_mc"] is not None for i in incoming)
     )
-    lowest_fence = min((i["fence_mc"] for i in incoming if i["fence_mc"] is not None), default=None)
     mc_after_handover = sorted(
         {
             c["cc"]
@@ -530,11 +647,18 @@ def analyze_handover(working_dir: Path, summary: dict[str, Any]) -> None:
             and not i["own_signatures_at_or_below_fence"]
             for i in incoming
         ),
-        "stalled_at_or_below_fence": identities_ok
-        and roster["transition"] is True
-        and lowest_fence is not None
-        and not any(cc > lowest_fence + 2 for cc in mc_after_handover),
     }
+    # The control arm runs a build without the per-identity record, so it is judged by its own
+    # evidence (RESULTS.md: post-failure analysis change #2).
+    control = control_stall(working_dir, summary, incoming_ids, handover_at, certs)
+    summary["verdict"]["control"] = control
+    summary["verdict"]["stalled_at_or_below_fence"] = (
+        bool(incoming_ids)
+        and roster["transition"] is True
+        and control["all_bound"]
+        and control["all_fenced_at_first_counter"]
+        and control["quiet"]
+    )
 
 
 def judge_handover(mode: str, summary: dict[str, Any]) -> int:
@@ -966,6 +1090,12 @@ def collect_handover(source: Path, working_dir: Path, count: int) -> None:
         for path in sorted(node.glob("log*")):
             if path.is_file():
                 shutil.copy2(path, dest / path.name)
+        if (node / "config.json").is_file():
+            shutil.copy2(node / "config.json", dest / "config.json")
+        header = node / "consensus" / "signing-ledger" / "ledger"
+        if header.is_file():
+            (dest / "consensus" / "signing-ledger").mkdir(parents=True)
+            shutil.copy2(header, dest / "consensus" / "signing-ledger" / "ledger")
 
 
 async def main() -> int:

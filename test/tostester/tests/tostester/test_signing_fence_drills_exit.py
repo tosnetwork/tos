@@ -7,6 +7,7 @@ chain: D1 (restore from a file copy), D2 (genesis with and without the ceremony)
 
 from __future__ import annotations
 
+import base64
 import importlib.util
 import json
 import subprocess
@@ -447,36 +448,120 @@ def test_handover_incoming_identity_that_never_signs_fails(tmp_path: Path) -> No
     assert status == 3
 
 
+def control_run(
+    tmp: Path,
+    name: str,
+    *,
+    mc_certs: list[tuple[int, int]],
+    config_ids: dict[int, str | None] | None = None,
+    ledger_ids: dict[int, str | None] | None = None,
+    after_members: dict[int, int] | None = None,
+    first_admission: str = "fenced",
+    observed_for: int = 700,
+) -> Path:
+    """A control run on a build without the per-identity record: incoming nodes 5 and 6 are
+    members of the new set from masterchain counter 11, fenced there by their ledger's fence;
+    each is bound to its id by config.json and by its ledger header. `mc_certs` are (time,
+    counter) masterchain certificates; the handover is at 150 s."""
+    logs: dict[int, dict[str, list[str]]] = {
+        1: {"log": [certificate(t, cc, "VVVV") for t, cc in mc_certs]}
+    }
+    for node, idx in ((5, 2), (6, 0)):
+        logs[node] = {
+            "log": [
+                fence_line(60, f"{MC}=9 (0,8000000000000000)=4"),
+                index(140, 11, idx),
+                admission(141, 11, first_admission),
+                index(150, 12, 3 - idx),
+                admission(151, 12, "fenced"),
+            ]
+        }
+    summary: dict[str, Any] = {
+        "drill": "handover",
+        "mode": "control",
+        "nodes": 6,
+        "incoming_validators": {"5": IDS[5], "6": IDS[6]},
+        "outgoing_validators": {"3": IDS[3], "4": IDS[4]},
+        "observed_until": HANDOVER_UTIME + 1 + observed_for,
+    }
+    directory = write_nodes(tmp / name, logs, summary)
+    (directory / "config34-before.txt").write_text(
+        config34(1_800_000_000, {1: 100, 2: 100, 3: 100, 4: 100})
+    )
+    members = after_members if after_members is not None else {1: 100, 2: 100, 5: 100, 6: 100}
+    (directory / "config34-after.txt").write_text(config34(HANDOVER_UTIME, members))
+    for node in (5, 6):
+        config_id = (config_ids or {}).get(node, IDS[node])
+        ledger_id = (ledger_ids or {}).get(node, IDS[node])
+        if config_id is not None:
+            b64 = base64.b64encode(bytes.fromhex(config_id)).decode()
+            config = {"extraconfig": {"pq_consensus": {"validator_id": b64}}}
+            (directory / f"node{node}" / "config.json").write_text(json.dumps(config))
+        if ledger_id is not None:
+            ledger = directory / f"node{node}" / "consensus" / "signing-ledger"
+            ledger.mkdir(parents=True)
+            (ledger / "ledger").write_bytes(b"TOSSLG02" + bytes.fromhex(ledger_id) + b"\0" * 16)
+    return directory
+
+
+STALL_CERTS = [(100, 10), (150, 10)]  # the old set's last session, up to the handover
+
+
 def test_handover_control_shows_the_stall(tmp_path: Path) -> None:
-    run = handover_run(tmp_path, "stall", "control", mc_certs=[(200, 11), (230, 12)], own_by={})
-    status, summary = analyze(run, "handover", "control")
-    assert summary["verdict"]["stalled_at_or_below_fence"] is True
+    status, summary = analyze(
+        control_run(tmp_path, "stall", mc_certs=STALL_CERTS), "handover", "control"
+    )
+    control = summary["verdict"]["control"]
+    assert control["all_bound"] and control["all_fenced_at_first_counter"] and control["quiet"]
     assert status == 0
-    run = handover_run(tmp_path, "moved-on", "control", mc_certs=[(200, 13)], own_by={})
-    status, _ = analyze(run, "handover", "control")
+
+
+def test_handover_control_fails_when_the_binding_mismatches(tmp_path: Path) -> None:
+    other = "EE" * 32
+    runs = [
+        control_run(tmp_path, "config-mismatch", mc_certs=STALL_CERTS, config_ids={5: other}),
+        control_run(tmp_path, "ledger-mismatch", mc_certs=STALL_CERTS, ledger_ids={6: other}),
+        control_run(tmp_path, "config-missing", mc_certs=STALL_CERTS, config_ids={5: None}),
+        control_run(tmp_path, "ledger-missing", mc_certs=STALL_CERTS, ledger_ids={6: None}),
+    ]
+    for run in runs:
+        status, summary = analyze(run, "handover", "control")
+        assert summary["verdict"]["control"]["all_bound"] is False, run.name
+        assert status == 4, run.name
+
+
+def test_handover_control_fails_when_the_chain_moves_on(tmp_path: Path) -> None:
+    # A certificate in the new set's session, or any later than handover + 1 s, is not a stall.
+    status, _ = analyze(
+        control_run(tmp_path, "new-session", mc_certs=[*STALL_CERTS, (300, 11)]),
+        "handover",
+        "control",
+    )
+    assert status == 4
+    status, _ = analyze(
+        control_run(tmp_path, "old-late", mc_certs=[*STALL_CERTS, (152, 10)]), "handover", "control"
+    )
     assert status == 4
 
 
-def test_handover_control_needs_the_roster_change_and_records(tmp_path: Path) -> None:
-    runs = [
-        handover_run(
-            tmp_path,
-            "ctl-same",
-            "control",
-            mc_certs=[(200, 11)],
-            own_by={},
-            after_members={1: 100, 2: 100, 3: 100, 4: 100},
-        ),
-        handover_run(
-            tmp_path, "ctl-no-m", "control", mc_certs=[(200, 11)], own_by={}, m_id_records=False
-        ),
-        handover_run(
-            tmp_path, "ctl-no-ids", "control", mc_certs=[(200, 11)], own_by={}, identities=False
-        ),
-    ]
-    for run in runs:
-        status, _ = analyze(run, "handover", "control")
-        assert status == 4, run.name
+def test_handover_control_needs_600_seconds_of_quiet(tmp_path: Path) -> None:
+    status, _ = analyze(
+        control_run(tmp_path, "short", mc_certs=STALL_CERTS, observed_for=599),
+        "handover",
+        "control",
+    )
+    assert status == 4
+
+
+def test_handover_control_needs_the_roster_change_and_the_fence(tmp_path: Path) -> None:
+    run = control_run(
+        tmp_path, "same", mc_certs=STALL_CERTS, after_members={1: 100, 2: 100, 3: 100, 4: 100}
+    )
+    status, _ = analyze(run, "handover", "control")
+    assert status == 4
+    run = control_run(tmp_path, "admitted", mc_certs=STALL_CERTS, first_admission="admitted")
+    status, _ = analyze(run, "handover", "control")
+    assert status == 4
 
 
 def test_a_summary_of_another_drill_is_refused(tmp_path: Path) -> None:
