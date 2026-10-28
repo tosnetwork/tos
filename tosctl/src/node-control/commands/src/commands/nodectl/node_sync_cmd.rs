@@ -18,6 +18,9 @@ enum SyncAction {
     /// Restore only verified donor chain data, retaining this node's own signing history
     Restore(RestoreArgs),
     #[cfg(feature = "node-data-sync-native")]
+    /// Install verified chain data into a new non-validating node that has never run
+    Bootstrap(RestoreArgs),
+    #[cfg(feature = "node-data-sync-native")]
     /// Resume an interrupted operation forward; never roll back an exposed replacement
     Recover(RecoverArgs),
     /// Report freshness, coherent lag and agreement with two named references
@@ -80,17 +83,28 @@ impl NodeSyncCmd {
         match &self.action {
             SyncAction::Status(cmd) => status(target, cmd).await,
             #[cfg(feature = "node-data-sync-native")]
-            SyncAction::Restore(args) => {
+            SyncAction::Restore(args) | SyncAction::Bootstrap(args) => {
+                use node_data_sync::operations::Lane;
                 ensure!(
                     args.status.references.len() >= 2,
-                    "restore/recover requires two named references"
+                    "restore/bootstrap/recover requires two named references"
                 );
                 Collector::new(&args.status.references)?;
-                let request: node_data_sync::operations::RestoreRequest =
+                let mut request: node_data_sync::operations::RestoreRequest =
                     serde_json::from_slice(&node_data_sync::context::read_bytes(
                         &args.request,
                         node_data_sync::model::MANIFEST_LIMIT,
                     )?)?;
+                let lane = if matches!(self.action, SyncAction::Bootstrap(_)) {
+                    Lane::Bootstrap
+                } else {
+                    Lane::Restore
+                };
+                ensure!(
+                    request.lane == lane || request.lane == Lane::Restore,
+                    "a bootstrap request must be run with tosctl node sync bootstrap"
+                );
+                request.lane = lane;
                 bind_context(&request.context).await?;
                 let plan = node_data_sync::operations::preflight(&request)?;
                 println!("{}", serde_json::to_string(&plan)?);
@@ -124,9 +138,17 @@ impl NodeSyncCmd {
                         recovered_status(&result.0, &operation, &args.status).await
                     }
                     node_data_sync::operations::RecoveryOutcome::Aborted(report) => {
+                        let reason = match report.lane {
+                            node_data_sync::operations::Lane::Restore => {
+                                "Preparation aborted without exchange or automatic start. The original tree remains installed. If the selected service is inactive, use restart_command to start it; verify service state before starting a new restore."
+                            }
+                            node_data_sync::operations::Lane::Bootstrap => {
+                                "Bootstrap preparation aborted without exchange or automatic start. The new node's original tree remains installed and was never stopped. Keep the service inactive and run a new bootstrap with a new operation directory; starting it now makes it sync from genesis, after which only the join from the global config applies."
+                            }
+                        };
                         println!(
                             "{}",
-                            serde_json::json!({"state":"aborted","reason":"Preparation aborted without exchange or automatic start. The original tree remains installed. If the selected service is inactive, use restart_command to start it; verify service state before starting a new restore.","recovery":report})
+                            serde_json::json!({"state":"aborted","reason":reason,"recovery":report})
                         );
                         Ok(())
                     }

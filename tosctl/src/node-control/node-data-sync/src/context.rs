@@ -68,6 +68,7 @@ impl NodeContext {
             engine: self.engine.clone(),
             global_config: self.global_config.clone(),
             working_directory: self.working_directory.clone(),
+            work_root: self.work_root.clone(),
         }
     }
     pub fn validate_paths(&self) -> Result<()> {
