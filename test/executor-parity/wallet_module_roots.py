@@ -30,7 +30,7 @@ from transaction_roots import compare, expected_row
 
 DATA = Path(__file__).with_name("data")
 HASHES = {
-    "wallet-module-inputs.json": "45315a72d2a401e72d465c64fe034815bf84f365c848ced2debb5192192db8d8",
+    "wallet-module-inputs.json": "d8838b2ec89acfc420c6b969fa9b6011efb6ecd31d3ffbbbd02b191cf3dc5b14",
     "wallet-module-signatures.json": "fe5dca514bccef7b96756094f313a6235f6bee58243931408f668e53db917ac2",
 }
 MAX_BYTES = 2 * 1024 * 1024

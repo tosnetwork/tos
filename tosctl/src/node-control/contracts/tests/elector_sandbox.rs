@@ -4171,9 +4171,7 @@ fn mildest_tier_complaint_body(
     }
     let mut description = chain_block::BuilderData::new();
     description.append_u64(query_id).expect("what distinguishes one complaint from another");
-    description
-        .checked_append_reference(proof.expect("a non-empty proof"))
-        .expect("the proof");
+    description.checked_append_reference(proof.expect("a non-empty proof")).expect("the proof");
 
     let mut body = chain_block::BuilderData::new();
     body.append_u32(NEW_COMPLAINT).expect("operation");
