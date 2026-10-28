@@ -27,12 +27,12 @@
   },
   "compiler_binaries": {
     "FIFT_PATH": {
-      "bytes": 10189680,
-      "sha256": "2ed6f29a3a0dfb962050d3fa8f61ff76ec1299f31db9615f9ddcd31325092fbe"
+      "bytes": 10998144,
+      "sha256": "d1fa057c08a2afd9492daaaca2c833f3b33e98ca944c8f2b6722e5e0e66bbac9"
     },
     "FUNC_PATH": {
-      "bytes": 1076616,
-      "sha256": "0ac8fa4a11c39ce92f95cdb73feb391559d32a4148e863c4b8545675c07a5eb8"
+      "bytes": 1303360,
+      "sha256": "43b36c34f046a1efe8e116abe9575df54ce692e0633f0cdfae93b1ec15e5865d"
     }
   },
   "config": {
@@ -232,8 +232,8 @@
       "sha256": "a0460678b51e3672cfc5318456312b97368e47656e79e211b483373f9da2be9f"
     },
     "repository/tosctl/src/node-control/contracts/src/wallet_quantum_fee_decode_tests.rs": {
-      "bytes": 3308,
-      "sha256": "c0a4d5634188d82e9aad1ab13615ffa84123d5fce6393e75697d867c077cb9da"
+      "bytes": 3305,
+      "sha256": "3474791c71049fa84583f0862b8b1b065c9cd3a11766b0aa159efd2f88d23f20"
     },
     "repository/tosctl/src/node-control/contracts/src/wallet_quantum_genesis.rs": {
       "bytes": 17951,
@@ -365,7 +365,7 @@
     "final-head CI and activation approval"
   ],
   "scope": "Build or reproduce a reviewable Quantum candidate from an explicit chain config.\n\nThe bundle contains ordinary, self-contained code, its exact source and public\nwire/crypto/KDF vectors. It is not a reviewed release, a wallet enrollment, a\ncustody backup, or authorization to activate the candidate configuration.\n",
-  "source_revision": "67997843c01116f3f8f7dd407c5143938faec7b4",
+  "source_revision": "da4ef34c15459a1b973780c5bff55b9d4e73b764",
   "status": "unapproved-review-candidate",
   "tracked_working_tree_changes": false
 }
