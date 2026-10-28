@@ -17,6 +17,58 @@ SPEC.loader.exec_module(guard)
 
 
 class RescueCiTests(unittest.TestCase):
+    def test_original_wallet_root_gates_cannot_be_deleted(self):
+        lines = self.workflow.splitlines(keepends=True)
+        commands = [
+            line
+            for line in lines
+            if "python test/executor-parity/" in line
+            and any(
+                name in line
+                for name in (
+                    "wallet_variant_roots.py",
+                    "test_wallet_variant_roots.py",
+                    "test_wallet_variant_bundle.py",
+                    "wallet_variant_bundle.py --bundle",
+                )
+            )
+        ]
+        self.assertEqual(len(commands), 6)
+        for command in commands:
+            with self.subTest(command=command):
+                with self.assertRaisesRegex(
+                    ValueError, "wallet producer/control/bundle commands changed"
+                ):
+                    self.check(self.workflow.replace(command, ""))
+        producer = "      - name: Verify original wallet variant roots\n"
+        block = next(part for part in guard.blocks(self.workflow) if part.startswith(producer))
+        with self.assertRaisesRegex(ValueError, "both release-wallet architectures"):
+            self.check(
+                self.workflow.replace(
+                    block,
+                    block.replace(
+                        "matrix.suite)\n", "matrix.suite) && matrix.runner == 'ubuntu-24.04'\n"
+                    ),
+                )
+            )
+        for text, witness in (
+            (
+                "run: python test/executor-parity/wallet_variant_bundle.py --check-download",
+                "wallet download preflight missing",
+            ),
+            ("pattern: wallet-variant-roots-*", "wallet bundle download missing"),
+            (
+                "run: python test/executor-parity/wallet_variant_bundle.py --compare wallet-roots --receipts receipts",
+                "wallet final comparison/source missing",
+            ),
+        ):
+            with self.assertRaisesRegex(ValueError, witness):
+                self.check(self.workflow.replace(text, "REMOVED"))
+        for runner in guard.RUNNERS:
+            self.assertIn(
+                "Verify original wallet variant roots", self.check()[("release-wallet", runner)]
+            )
+
     @classmethod
     def setUpClass(cls):
         cls.workflow = guard.WORKFLOW.read_text()

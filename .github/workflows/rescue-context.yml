@@ -670,6 +670,23 @@ jobs:
           path: artifacts/generated-roots
           if-no-files-found: error
           retention-days: 14
+      - name: Verify original wallet variant roots
+        if: contains(fromJSON('["release-wallet"]'), matrix.suite)
+        run: |
+          python test/executor-parity/wallet_variant_roots.py --family preparation --driver "$CARGO_TARGET_DIR/debug/examples/pq-tx-parity" --output artifacts/wallet-variants/preparation
+          python test/executor-parity/wallet_variant_roots.py --family self_pay --driver "$CARGO_TARGET_DIR/debug/examples/pq-tx-parity" --output artifacts/wallet-variants/self_pay
+          python test/executor-parity/wallet_variant_roots.py --family self_pay_recovery --driver "$CARGO_TARGET_DIR/debug/examples/pq-tx-parity" --output artifacts/wallet-variants/self_pay_recovery
+          python test/executor-parity/test_wallet_variant_roots.py --artifacts artifacts/wallet-variants --output artifacts/wallet-variant-controls.json
+          python test/executor-parity/test_wallet_variant_bundle.py --artifacts artifacts/wallet-variants --controls artifacts/wallet-variant-controls.json --output artifacts/wallet-variant-bundle-controls.json
+          python test/executor-parity/wallet_variant_bundle.py --bundle artifacts/wallet-variant-roots --artifacts artifacts/wallet-variants --controls artifacts/wallet-variant-controls.json --runner '${{ matrix.runner }}'
+      - name: Retain original wallet variant roots
+        if: contains(fromJSON('["release-wallet"]'), matrix.suite)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: wallet-variant-roots-${{ matrix.runner }}-attempt-${{ github.run_attempt }}
+          path: artifacts/wallet-variant-roots
+          if-no-files-found: error
+          retention-days: 14
       - name: Record successful suite
         run: |
           python scripts/check-rescue-context-ci.py --write-receipt artifacts/context/suite-success.json \
@@ -747,3 +764,15 @@ jobs:
         env:
           SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: python test/executor-parity/generated_bundle.py --compare roots --receipts receipts
+      - name: Bound original wallet root artifact download
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python test/executor-parity/wallet_variant_bundle.py --check-download
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: wallet-variant-roots-*
+          path: wallet-roots
+      - name: Compare original wallet roots from both architectures
+        env:
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: python test/executor-parity/wallet_variant_bundle.py --compare wallet-roots --receipts receipts

@@ -67,5 +67,16 @@ Rust executor are unchanged. The baseline root adapter fails explicitly on the
 actual import-refusal input; adding the typed outcome closes that observation
 gap rather than changing transaction semantics.
 
-CI integration, dual-architecture artifact acceptance and independent review
-remain required before this local batch is delivered.
+The existing `release-wallet` suite runs all three factories and78 artifact
+corruption controls on x86-64 and ARM64. Its small separate bundle is bounded
+before download and bound to the exact source, workflow event, run and successful
+suite attempt. Both existing final parity jobs recheck every native oracle and
+compare the architectures. Invalid newer attempts cannot disappear behind older
+successful artifacts. The52 original suite build/control steps remain unchanged;
+the successful release-wallet receipt additionally requires the new producer and
+upload. The source guard rejects removal, skipping or alteration of these gates.
+
+`test_wallet_variant_bundle.py` exercises22 bundle/attempt/download controls with
+actual wallet payloads and modeled CI identities. Its two architecture labels do
+not constitute hosted architecture execution. Actual dual-architecture CI and
+independent review remain required before this batch is delivered.
