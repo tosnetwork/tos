@@ -2449,8 +2449,9 @@ if (NOT TOS_ONLY_TOSLIB AND NOT USE_EMSCRIPTEN AND NOT EMSCRIPTEN)
     target_link_libraries(test-archive-prune PRIVATE ${CMAKE_DL_LIBS})
     add_test(NAME archive-reader-no-package-sync COMMAND test-archive-prune --reader-package-sync)
     add_test(NAME archive-reader-no-package-repair COMMAND test-archive-prune --reader-package-repair)
-    set_tests_properties(archive-reader-no-package-sync archive-reader-no-package-repair PROPERTIES TIMEOUT 90
-      ENVIRONMENT "LD_PRELOAD=$<TARGET_FILE:test-fsync-count-shim>")
+    add_test(NAME archive-reader-no-node-writes COMMAND test-archive-prune --reader-write-guards)
+    set_tests_properties(archive-reader-no-package-sync archive-reader-no-package-repair archive-reader-no-node-writes
+      PROPERTIES TIMEOUT 90 ENVIRONMENT "LD_PRELOAD=$<TARGET_FILE:test-fsync-count-shim>")
   endif()
 endif()
 

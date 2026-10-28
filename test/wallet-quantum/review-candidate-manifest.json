@@ -196,8 +196,8 @@
       "sha256": "81b937c31175302516a2624dcfd53e43525431e208a541970f2bc045482dc281"
     },
     "repository/test/auth-extensions/native.py": {
-      "bytes": 8327,
-      "sha256": "b32dfb791ec13030bee78cb6ab89a8ff795ce38a6b7d5c9cdba90e5401dc0a82"
+      "bytes": 11419,
+      "sha256": "02cda13ee97cb6bf3076f2bd81d31edc504c2a510384a85c571d88e7d73456bc"
     },
     "repository/test/pq-falcon512/vectors.json": {
       "bytes": 129214,

@@ -439,6 +439,8 @@ jobs:
           grep -Fx 'PRODUCTION_BOOTSTRAP_REFUSALS_OK' build/node-sync-native-lifecycle.log
           grep -Fx 'PRODUCTION_BOOTSTRAP_RECOVERY_OK' build/node-sync-native-lifecycle.log
           grep -Fx 'PRODUCTION_BOOTSTRAP_ANCHOR_REFUSAL_OK' build/node-sync-native-lifecycle.log
+          grep -Fx 'PRODUCTION_CREATE_WITHOUT_ZERO_STATE_OK' build/node-sync-native-lifecycle.log
+          grep -Fx 'PRODUCTION_VALIDATION_REQUIRED_ANCESTOR_OK' build/node-sync-native-lifecycle.log
 
       - name: Run the complete Python suite
         run: uv run pytest
