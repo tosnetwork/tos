@@ -3,6 +3,7 @@
     Copyright 2025-2026 TOS Blockchain Teams
     SPDX-License-Identifier: LGPL-2.0-or-later
 */
+#include <algorithm>
 #include <atomic>
 #include <cstdlib>
 #include <dlfcn.h>
@@ -639,6 +640,319 @@ void reader_package_sync(const std::string &root) {
             << std::endl;
 }
 
+// A package whose legacy (`0:shard`) and current (`0_shard`) file names both
+// exist needs a repair that merges or deletes files. Only the primary may run
+// it. A reader (secondary or read-only) refuses that package, changes no file,
+// and keeps serving the packages before and after it at their own indices. It
+// checks the files again only when the slice is reopened.
+namespace reader_repair {
+
+using namespace reader_sync;
+
+const PackageId kId{200, false, false};
+constexpr tos::BlockSeqno kFirstMc = 201;       // package 0: masterchain, seqnos 200..299
+constexpr tos::BlockSeqno kLaterMc = 301;       // package 2: masterchain, seqnos 300..399
+const tos::BlockSeqno kShardBlocks[] = {1, 2};  // package 1: workchain 0, referring to kFirstMc
+
+td::uint64 archive_id_of(td::uint32 package_index) {
+  return (static_cast<td::uint64>(package_index) << 32) + kId.id;
+}
+
+tos::BlockIdExt shard_block_id(tos::BlockSeqno seqno) {
+  return {tos::basechainId, tos::shardIdAll, seqno, tos::RootHash::zero(), tos::FileHash::zero()};
+}
+
+BlockHandle shard_handle(tos::BlockSeqno seqno) {
+  auto result = BlockHandleImpl::create_empty(shard_block_id(seqno));
+  result->set_logical_time(200000 + seqno);
+  result->set_unix_time(200000 + seqno);
+  result->set_masterchain_ref_block(kFirstMc);
+  handles().push_back(result);
+  return result;
+}
+
+FileReference shard_ref(tos::BlockSeqno seqno) {
+  return FileReference(fileref::Block{shard_block_id(seqno)});
+}
+
+std::string shard_payload(tos::BlockSeqno seqno) {
+  return PSTRING() << "shard-block-" << seqno << "-" << std::string(700, static_cast<char>('A' + seqno % 26));
+}
+
+td::actor::ActorOwn<ArchiveSlice> open_slice_with(td::actor::Scheduler &scheduler, const std::string &root,
+                                                  td::DbOpenMode mode, DbStatistics statistics) {
+  td::actor::ActorOwn<ArchiveSlice> slice;
+  scheduler.run_in_context([&] {
+    slice = td::actor::create_actor<ArchiveSlice>("reader-repair", kId.id, kId.key, kId.temp, false, 0, root,
+                                                  td::actor::ActorId<ArchiveLru>{}, statistics, mode);
+  });
+  return slice;
+}
+
+td::Status add_shard_file(td::actor::Scheduler &scheduler, td::actor::ActorId<ArchiveSlice> slice,
+                          tos::BlockSeqno seqno) {
+  return request<td::Unit>(scheduler,
+                           [&](td::Promise<td::Unit> promise) {
+                             td::actor::send_closure(slice, &ArchiveSlice::add_file, shard_handle(seqno),
+                                                     shard_ref(seqno), td::BufferSlice(shard_payload(seqno)),
+                                                     std::move(promise));
+                           })
+      .move_as_status();
+}
+
+td::Result<std::string> get_shard_file(td::actor::Scheduler &scheduler, td::actor::ActorId<ArchiveSlice> slice,
+                                       tos::BlockSeqno seqno) {
+  auto result = request<td::BufferSlice>(scheduler, [&](td::Promise<td::BufferSlice> promise) {
+    td::actor::send_closure(slice, &ArchiveSlice::get_file, shard_handle(seqno), shard_ref(seqno), std::move(promise));
+  });
+  if (result.is_error()) {
+    return result.move_as_error();
+  }
+  return result.ok().as_slice().str();
+}
+
+td::Result<std::string> get_slice_bytes(td::actor::Scheduler &scheduler, td::actor::ActorId<ArchiveSlice> slice,
+                                        td::uint64 archive_id, td::uint32 limit) {
+  auto result = request<td::BufferSlice>(scheduler, [&](td::Promise<td::BufferSlice> promise) {
+    td::actor::send_closure(slice, &ArchiveSlice::get_slice, archive_id, 0, limit, std::move(promise));
+  });
+  if (result.is_error()) {
+    return result.move_as_error();
+  }
+  return result.ok().as_slice().str();
+}
+
+td::Result<td::uint64> get_archive_id(td::actor::Scheduler &scheduler, td::actor::ActorId<ArchiveSlice> slice,
+                                      tos::BlockSeqno masterchain_seqno, tos::ShardIdFull shard) {
+  return request<td::uint64>(scheduler, [&](td::Promise<td::uint64> promise) {
+    td::actor::send_closure(slice, &ArchiveSlice::get_archive_id, masterchain_seqno, shard, std::move(promise));
+  });
+}
+
+td::Status catch_up(td::actor::Scheduler &scheduler, td::actor::ActorId<ArchiveSlice> slice) {
+  return request<td::Unit>(scheduler,
+                           [&](td::Promise<td::Unit> promise) {
+                             td::actor::send_closure(slice, &ArchiveSlice::try_catch_up_with_primary,
+                                                     CatchUpMode::Force, std::move(promise));
+                           })
+      .move_as_status();
+}
+
+// Closes the slice's files; the slice reopens them on its next query.
+void close_files(td::actor::Scheduler &scheduler, td::actor::ActorId<ArchiveSlice> slice) {
+  scheduler.run_in_context([&] { td::actor::send_closure(slice, &ArchiveSlice::close_files); });
+  request<td::Unit>(scheduler, [&](td::Promise<td::Unit> promise) {
+    td::actor::send_lambda(slice, [promise = std::move(promise)]() mutable { promise.set_value(td::Unit()); });
+  }).ensure();
+}
+
+td::uint64 counter(const std::string &stats, const std::string &name) {
+  auto key = name + " COUNT : ";
+  auto at = stats.find(key);
+  check(at != std::string::npos, "statistics report the package counter");
+  return std::stoull(stats.substr(at + key.size()));
+}
+
+template <class T>
+void require_refusal(const td::Result<T> &result, const char *message) {
+  check(result.is_error() && result.error().message() == td::Slice(kArchivePackageNeedsRepair), message);
+}
+
+enum class Conflict { Merge, NoData };
+
+const char *conflict_name(Conflict conflict) {
+  return conflict == Conflict::Merge ? "merge" : "no-data";
+}
+
+struct Fixture {
+  std::string root;
+  std::string directory;
+  std::string path_new;
+  std::string path_legacy;
+  std::string path_later;
+  std::string new_bytes;
+};
+
+// The primary writes package 0 (masterchain), package 1 (workchain 0) and
+// package 2 (masterchain, a later range) in that order. Then the legacy name
+// of package 1 is created the way a node that rolled back across the file
+// name change leaves it: the package header, zeros up to where it resumed
+// appending, and data after that.
+Fixture make_fixture(const std::string &root, Conflict conflict) {
+  Fixture fixture;
+  fixture.root = root;
+  fixture.directory = root + kId.path();
+  std::filesystem::create_directories(fixture.directory);
+  {
+    td::actor::Scheduler scheduler({2});
+    auto slice = open_slice(scheduler, root, kId, td::DbOpenMode::db_primary);
+    check(add_file(scheduler, slice.get(), kFirstMc).is_ok(), "fixture: first masterchain package");
+    for (auto seqno : kShardBlocks) {
+      check(add_shard_file(scheduler, slice.get(), seqno).is_ok(), "fixture: workchain package");
+    }
+    check(add_file(scheduler, slice.get(), kLaterMc).is_ok(), "fixture: later masterchain package");
+    auto later = get_archive_id(scheduler, slice.get(), kLaterMc, tos::ShardIdFull{tos::masterchainId});
+    check(later.is_ok() && later.ok() == archive_id_of(2), "fixture: the later package is package 2");
+    close_slice(scheduler, slice);
+  }
+  release_handles();
+  const std::string shard_name = kId.name() + ".0_" + tos::shard_to_str(tos::shardIdAll) + ".pack";
+  const std::string legacy_name = kId.name() + ".0:" + tos::shard_to_str(tos::shardIdAll) + ".pack";
+  fixture.path_new = fixture.directory + shard_name;
+  fixture.path_legacy = fixture.directory + legacy_name;
+  const PackageId later_id{300, false, false};
+  fixture.path_later = root + later_id.path() + later_id.name() + ".pack";
+  check(std::filesystem::exists(fixture.path_new), "fixture: the workchain package uses the current name");
+  check(std::filesystem::exists(fixture.path_later), "fixture: the later package has its own file");
+  check(!std::filesystem::exists(fixture.path_legacy), "fixture: no legacy name before the conflict is made");
+  fixture.new_bytes = td::read_file_str(fixture.path_new).move_as_ok();
+
+  // The first entry: 4-byte package header, 8-byte entry header, name, data.
+  const size_t first_entry_end = tos::Package::header_size() + 8 + shard_ref(kShardBlocks[0]).filename().size() +
+                                 shard_payload(kShardBlocks[0]).size();
+  check(first_entry_end < fixture.new_bytes.size(), "fixture: the package holds two entries");
+  std::string legacy = fixture.new_bytes;
+  const size_t zero_end = conflict == Conflict::Merge ? first_entry_end : legacy.size();
+  std::fill(legacy.begin() + tos::Package::header_size(), legacy.begin() + static_cast<std::ptrdiff_t>(zero_end), '\0');
+  td::write_file(fixture.path_legacy, legacy).ensure();
+  return fixture;
+}
+
+// What the primary's repair leaves, and the primary still reads every entry.
+void primary_repairs(const Fixture &fixture, Conflict conflict, const char *stage) {
+  {
+    td::actor::Scheduler scheduler({2});
+    auto slice = open_slice(scheduler, fixture.root, kId, td::DbOpenMode::db_primary);
+    for (auto seqno : kShardBlocks) {
+      auto read = get_shard_file(scheduler, slice.get(), seqno);
+      check(read.is_ok() && read.ok() == shard_payload(seqno), "the primary reads the repaired package");
+    }
+    close_slice(scheduler, slice);
+  }
+  release_handles();
+  if (conflict == Conflict::Merge) {
+    check(!std::filesystem::exists(fixture.path_new), "the primary's merge removes the current name");
+    auto merged = td::read_file_str(fixture.path_legacy);
+    check(merged.is_ok() && merged.ok() == fixture.new_bytes, "the primary merges the data into the legacy name");
+  } else {
+    check(!std::filesystem::exists(fixture.path_legacy), "the primary removes a legacy file without data");
+    auto kept = td::read_file_str(fixture.path_new);
+    check(kept.is_ok() && kept.ok() == fixture.new_bytes, "the primary keeps the current file unchanged");
+  }
+  std::cout << "PASS: primary repairs the " << conflict_name(conflict) << " conflict (" << stage << ")" << std::endl;
+}
+
+// A reader refuses the conflicted package on every selection path, still
+// serves the packages before and after it at their own indices, and leaves
+// every file present and byte-identical without a single fsync.
+void reader_refuses(const Fixture &fixture, Conflict conflict, td::DbOpenMode mode, const Shim &shim) {
+  const auto before = snapshot(fixture.directory);
+  DbStatistics statistics;
+  statistics.init();
+  shim.reset();
+  {
+    td::actor::Scheduler scheduler({2});
+    auto slice = open_slice_with(scheduler, fixture.root, mode, statistics);
+    // The first query opens every package of the slice; the files must be
+    // untouched right after that open.
+    auto first = get_file(scheduler, slice.get(), kFirstMc);
+    check(first.is_ok() && first.ok() == payload(kFirstMc), "a reader reads the package before the refused one");
+    check(std::filesystem::exists(fixture.path_new) && std::filesystem::exists(fixture.path_legacy),
+          "opening a reader leaves both package names in place");
+    check(snapshot(fixture.directory) == before, "opening a reader leaves every package file byte-identical");
+    // The packages around the refused one keep their own indices.
+    auto first_id = get_archive_id(scheduler, slice.get(), kFirstMc, tos::ShardIdFull{tos::masterchainId});
+    check(first_id.is_ok() && first_id.ok() == archive_id_of(0), "the package before keeps archive id 0");
+
+    auto later = get_file(scheduler, slice.get(), kLaterMc);
+    check(later.is_ok() && later.ok() == payload(kLaterMc), "a reader reads the package after the refused one");
+    auto later_id = get_archive_id(scheduler, slice.get(), kLaterMc, tos::ShardIdFull{tos::masterchainId});
+    check(later_id.is_ok() && later_id.ok() == archive_id_of(2), "the package after keeps archive id 2");
+    auto later_bytes = get_slice_bytes(scheduler, slice.get(), archive_id_of(2), 1 << 16);
+    check(later_bytes.is_ok() && later_bytes.ok() == td::read_file_str(fixture.path_later).move_as_ok(),
+          "get_slice for the package after returns that package's bytes");
+
+    for (auto seqno : kShardBlocks) {
+      require_refusal(get_shard_file(scheduler, slice.get(), seqno),
+                      "a reader refuses get_file from a package that needs repair");
+    }
+    require_refusal(get_archive_id(scheduler, slice.get(), kFirstMc, tos::ShardIdFull{tos::basechainId}),
+                    "a reader refuses get_archive_id for a package that needs repair");
+    require_refusal(get_slice_bytes(scheduler, slice.get(), archive_id_of(1), 1 << 12),
+                    "a reader refuses get_slice for a package that needs repair");
+
+    close_files(scheduler, slice.get());
+    auto stats = statistics.to_string_and_reset();
+    check(counter(stats, "tos.pack.open") == 2, "a reader opens only the two readable packages");
+    check(counter(stats, "tos.pack.close") == 2, "a reader closes as many packages as it opened");
+    close_slice(scheduler, slice);
+  }
+  release_handles();
+  check(shim.count() == 0, "a reader never syncs a package that needs repair");
+  check(std::filesystem::exists(fixture.path_new) && std::filesystem::exists(fixture.path_legacy),
+        "a reader leaves both package names in place");
+  check(snapshot(fixture.directory) == before, "a reader leaves every package file byte-identical");
+  std::cout << "PASS: " << mode_name(mode) << " reader refuses the " << conflict_name(conflict)
+            << " conflict and changes nothing" << std::endl;
+}
+
+// The placeholder is not refreshed while the slice stays open, not even by a
+// forced catch-up; the same reader reads the repaired package once the slice
+// is closed and reopened.
+void reader_rechecks_on_reopen(const Fixture &fixture) {
+  {
+    td::actor::Scheduler scheduler({2});
+    auto slice = open_slice(scheduler, fixture.root, kId, td::DbOpenMode::db_secondary);
+    require_refusal(get_shard_file(scheduler, slice.get(), kShardBlocks[0]),
+                    "the reader refuses the package before it is repaired");
+
+    // The file outcome of the primary's merge (checked by primary_repairs):
+    // the merged data under the legacy name, and no current name.
+    td::write_file(fixture.path_legacy + ".repaired", fixture.new_bytes).ensure();
+    std::filesystem::rename(fixture.path_legacy + ".repaired", fixture.path_legacy);
+    std::filesystem::remove(fixture.path_new);
+
+    check(catch_up(scheduler, slice.get()).is_ok(), "the reader catches up with the primary");
+    require_refusal(get_shard_file(scheduler, slice.get(), kShardBlocks[0]),
+                    "an open reader keeps refusing after the files are repaired");
+
+    close_files(scheduler, slice.get());
+    for (auto seqno : kShardBlocks) {
+      auto read = get_shard_file(scheduler, slice.get(), seqno);
+      check(read.is_ok() && read.ok() == shard_payload(seqno), "the reopened reader reads the repaired package");
+    }
+    auto id = get_archive_id(scheduler, slice.get(), kFirstMc, tos::ShardIdFull{tos::basechainId});
+    check(id.is_ok() && id.ok() == archive_id_of(1), "the repaired package keeps archive id 1");
+    close_slice(scheduler, slice);
+  }
+  release_handles();
+  std::cout << "PASS: a reader re-checks a refused package only when the slice is reopened" << std::endl;
+}
+
+}  // namespace reader_repair
+
+void reader_package_repair(const std::string &root) {
+  using namespace reader_repair;
+  auto shim = load_shim();
+  for (auto conflict : {Conflict::Merge, Conflict::NoData}) {
+    // Primary control on its own fixture first: the primary's repair is the
+    // same with and without the reader refusal.
+    auto control = make_fixture(PSTRING() << root << "/" << conflict_name(conflict) << "-primary", conflict);
+    primary_repairs(control, conflict, "no reader first");
+
+    auto fixture = make_fixture(PSTRING() << root << "/" << conflict_name(conflict) << "-readers", conflict);
+    check(setenv("TOS_FSYNC_COUNT_PREFIX", fixture.directory.c_str(), 1) == 0, "scope the fsync count");
+    for (auto mode : {td::DbOpenMode::db_secondary, td::DbOpenMode::db_readonly}) {
+      reader_refuses(fixture, conflict, mode, shim);
+    }
+    check(unsetenv("TOS_FSYNC_COUNT_PREFIX") == 0, "unscope the fsync count");
+    primary_repairs(fixture, conflict, "after the readers");
+  }
+  reader_rechecks_on_reopen(make_fixture(root + "/reopen", Conflict::Merge));
+  std::cout << "PASS: readers refuse packages that need repair and change no file; the primary still repairs"
+            << std::endl;
+}
+
 int main(int argc, char **argv) {
   auto root = td::mkdtemp("", "archive-prune-").move_as_ok();
   if (argc == 2 && std::string(argv[1]) == "--held-reader-shutdown") {
@@ -654,6 +968,11 @@ int main(int argc, char **argv) {
   }
   if (argc == 2 && std::string(argv[1]) == "--reader-package-sync") {
     reader_package_sync(root + "/reader-package-sync");
+    td::rmrf(root).ensure();
+    return 0;
+  }
+  if (argc == 2 && std::string(argv[1]) == "--reader-package-repair") {
+    reader_package_repair(root + "/reader-package-repair");
     td::rmrf(root).ensure();
     return 0;
   }

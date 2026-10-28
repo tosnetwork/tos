@@ -33,6 +33,8 @@ use shielded_pool_circuit::field::Fr;
 #[derive(Clone)]
 pub struct ObservedOutput {
     /// Which of the three slots of its transaction, or slot 0 for a deposit.
+    /// A withdrawal's recovery payload is not an output slot and is passed
+    /// with `RECOVERY_PAYLOAD_SLOT`.
     pub slot: u8,
     /// The exact bytes, as the contract hashed them.
     pub output_data: Vec<u8>,

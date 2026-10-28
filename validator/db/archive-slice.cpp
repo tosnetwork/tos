@@ -694,7 +694,7 @@ void ArchiveSlice::get_slice(td::uint64 archive_id, td::uint64 offset, td::uint3
       promise.set_error(td::Status::Error(ErrorCode::notready, "no such package"));
       return;
     }
-    p = packages_[value].get();
+    TRY_RESULT_PROMISE_ASSIGN(promise, p, readable_package(packages_[value].get()));
   } else {
     TRY_RESULT_PROMISE_ASSIGN(promise, p, choose_package(value, ShardIdFull{masterchainId}, false));
   }
@@ -902,7 +902,11 @@ void ArchiveSlice::get_temp_max_seqnos(td::Promise<std::map<ShardIdFull, BlockSe
                              }
                              return td::Status::OK();
                            });
+    // A temporary slice holds a single masterchain-prefixed package, whose
+    // legacy and current file names are the same, so it never has a repair
+    // placeholder and every package here is open.
     for (auto &pack : packages_) {
+      CHECK(!pack->needs_repair);
       pack->package->iterate([this](std::string name, td::BufferSlice, td::uint64) -> bool {
         auto F = FileReference::create(name);
         if (F.is_ok()) {
@@ -944,7 +948,7 @@ void ArchiveSlice::do_close() {
   status_ = st_closed;
   kv_ = {};
   if (statistics_.pack_statistics) {
-    statistics_.pack_statistics->record_close(packages_.size());
+    statistics_.pack_statistics->record_close(opened_package_count());
   }
   packages_.clear();
   id_to_package_.clear();
@@ -1142,7 +1146,7 @@ td::Result<ArchiveSlice::PackageInfo *> ArchiveSlice::choose_package(BlockSeqno 
     if (packages_.empty()) {
       return td::Status::Error(ErrorCode::notready, "archive package is not open yet");
     }
-    return packages_[0].get();
+    return readable_package(packages_[0].get());
   }
   if (masterchain_seqno < archive_id_) {
     return td::Status::Error(ErrorCode::notready, "too small masterchain seqno");
@@ -1172,10 +1176,27 @@ td::Result<ArchiveSlice::PackageInfo *> ArchiveSlice::choose_package(BlockSeqno 
     if (!add_package(masterchain_seqno, shard_prefix, 0, default_package_version())) {
       return td::Status::Error(ErrorCode::notready, "archive package is not open yet");
     }
-    return packages_[v].get();
+    return readable_package(packages_[v].get());
   } else {
-    return packages_[it->second].get();
+    return readable_package(packages_[it->second].get());
   }
+}
+
+td::Result<ArchiveSlice::PackageInfo *> ArchiveSlice::readable_package(PackageInfo *package) {
+  if (package->needs_repair) {
+    return td::Status::Error(ErrorCode::error, td::Slice(kArchivePackageNeedsRepair));
+  }
+  return package;
+}
+
+size_t ArchiveSlice::opened_package_count() const {
+  size_t count = 0;
+  for (const auto &package : packages_) {
+    if (!package->needs_repair) {
+      ++count;
+    }
+  }
+  return count;
 }
 
 td::Result<ArchiveSlice::PackageInfo *> ArchiveSlice::choose_package(const ConstBlockHandle &handle, bool force) {
@@ -1191,6 +1212,18 @@ bool ArchiveSlice::add_package(td::uint32 seqno, ShardIdFull shard_prefix, td::u
   std::string path_legacy = PSTRING() << db_root_ << p_id.path() << get_package_file_name(p_id, shard_prefix, true);
   std::string path_new = PSTRING() << db_root_ << p_id.path() << get_package_file_name(p_id, shard_prefix, false);
   if (path_legacy != path_new && td::stat(path_legacy).is_ok() && td::stat(path_new).is_ok()) {
+    if (mode_ != td::DbOpenMode::db_primary) {
+      // Repairing unlinks or merges package files, and only the owning node
+      // may change them. The placeholder keeps this package's index position,
+      // so the packages after it keep theirs, and refuses every query for it.
+      // It is re-checked only when the slice is reopened.
+      LOG(WARNING) << "archive package '" << path_new << "' : " << kArchivePackageNeedsRepair;
+      auto idx = td::narrow_cast<td::uint32>(packages_.size());
+      id_to_package_[{seqno, shard_prefix}] = idx;
+      packages_.push_back(std::make_unique<PackageInfo>(nullptr, td::actor::ActorOwn<PackageWriter>(), seqno,
+                                                        shard_prefix, path_new, idx, version, true));
+      return true;
+    }
     auto S = repair_pack_files(path_new, path_legacy, version, size);
     if (S.is_error()) {
       LOG(ERROR) << "Repair pack file '" << path_new << "' : " << S;
@@ -1271,7 +1304,7 @@ void ArchiveSlice::destroy(td::Promise<td::Unit> promise) {
   }
 
   if (statistics_.pack_statistics) {
-    statistics_.pack_statistics->record_close(packages_.size());
+    statistics_.pack_statistics->record_close(opened_package_count());
   }
   packages_.clear();
   id_to_package_.clear();

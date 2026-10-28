@@ -37,6 +37,12 @@ pub const VERSION: u8 = 1;
 pub const FLAG_DUMMY: u16 = 0x0001;
 pub const FLAG_RECOVERY: u16 = 0x0002;
 
+/// Section 3: the slot a withdrawal's recovery payload is sealed and opened
+/// under. It is not one of the transaction's output slots, so the profile
+/// fixes the value; a wallet that used another would never find its own
+/// recovery note.
+pub const RECOVERY_PAYLOAD_SLOT: u8 = 2;
+
 /// What an output slot says about itself.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Kind {
