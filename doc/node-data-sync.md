@@ -199,6 +199,15 @@ is no fallback. When validation does not finish within its deadline, the error
 names the last failed request, its anchor or frontier, and the engine's answer,
 truncated to 4 KiB.
 
+The shard-state reads cover exactly what the frontier commits to. The shard
+inventory is the one recorded in the frontier block itself, and the engine's
+answer must equal it. The active workchains come from a Merkle proof of the
+configuration whose root equals the state hash the frontier block records. A
+proof of any other state, even one with the same global id and height, is
+refused. Each listed shard state is then read once through the engine to force a
+native load; those account-state answers are not proof-checked, and nothing is
+derived from them.
+
 Managed service commands use a conservative subset of native options, with a
 separate token for each option and value. Attached or clustered short options,
 long equals forms, duplicate path selectors, unknown options and positional tokens
