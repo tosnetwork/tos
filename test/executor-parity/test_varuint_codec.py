@@ -12,10 +12,22 @@ REPLAY_COMMANDS = (
     "python3 test/executor-parity/test_varuint_codec.py",
     "python3 test/executor-parity/varuint_codec.py --native build/emulator/test-varuint-codec --rust tosctl/src/target/release/examples/varuint-codec --output result/varuint-codec",
     "cmp result/storage-encoding.rejected.tsv tosctl/src/block/src/tests/data/storage_stat/storage-encoding-rejected.tsv",
+    "cargo test --manifest-path tosctl/src/Cargo.toml --locked --release -p tos_vm --test test_config",
+    'cmake --build build --target test-vm-endstate --parallel "$(nproc)"',
+    "cargo build --manifest-path tosctl/src/Cargo.toml --locked --release -p tos_vm --example vm-endstate",
+    "mkdir -p result/vm-varuint",
+    "python3 test/rescue-fee-gate/vm_varuint_scenarios.py --write result/vm-varuint/inputs.tsv",
+    "build/crypto/pq/test-vm-endstate result/vm-varuint/inputs.tsv > result/vm-varuint/native.tsv",
+    "python3 test/rescue-fee-gate/vm_varuint_scenarios.py --check result/vm-varuint/native.tsv",
+    "tosctl/src/target/release/examples/vm-endstate result/vm-varuint/inputs.tsv > result/vm-varuint/rust.tsv",
+    "python3 test/rescue-fee-gate/vm_endstate_compare.py result/vm-varuint/native.tsv result/vm-varuint/rust.tsv",
 )
 FINAL_COMMANDS = tuple(
     f"cmp artifacts/epoch-replay-x86-64/varuint-codec/{name} artifacts/epoch-replay-arm64/varuint-codec/{name}"
     for name in ("inputs.tsv", "native.stdout", "rust.stdout")
+) + tuple(
+    f"cmp artifacts/epoch-replay-x86-64/vm-varuint/{name} artifacts/epoch-replay-arm64/vm-varuint/{name}"
+    for name in ("inputs.tsv", "native.tsv", "rust.tsv")
 )
 
 

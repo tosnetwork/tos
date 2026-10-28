@@ -14,6 +14,21 @@ are the existing C++ rules; production C++ is unchanged. The Rust primitive macr
 now uses the actual TL-B parameter, including Coins=16, with at most n-1 bytes.
 The canonical Coins representation remains the same.
 
+VM integer instructions use permissive loads instead of the strict block decoder.
+`GETEXTRABALANCE` reads the dictionary from balance tuple item 1. Its first five
+calls cap dictionary load charges at 200 gas each, retaining excess as free gas;
+later calls pay normal load costs. Child execution carries the call counter back,
+and gas isolation charges deferred gas and resets the allowance counter.
+`vm_varuint_scenarios.py` compares 20 programs covering padded integer values,
+missing keys, cold/warm deep paths, the fifth/sixth-call boundary and child
+execution with/without gas isolation. Native scalar results and simple-path gas
+are asserted independently before full VM end-state comparison. This finite
+matrix does not establish all malformed-dictionary or library-resolution cases.
+
+Runtime gas budgets also reference the serialized integer types. Those callers
+must be audited separately before accepting this candidate; correcting a wire
+width must not silently reduce the VM's runtime credit or purchasable gas.
+
 The adapters are separate executables with 8 MiB input, 4,096 row, 2,048 byte/row
 and 1,023 bit cell bounds. The runner reuses the REL-02 subprocess supervisor for
 CPU/address-space/file/wall limits and cancellation cleanup. Its comparator has a
