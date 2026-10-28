@@ -11,11 +11,39 @@ import argparse
 import json
 import re
 import shlex
+import signal
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def run_test_binary(test_args: list[str], cwd: Path) -> None:
+    """Run the test binary and pass its output through byte for byte.
+
+    A failing test can abort, and the crash handler then prints raw stack bytes
+    that are not UTF-8. The output is copied unchanged and decoded leniently only
+    for matching, so a crash is reported as a failure instead of a decode error.
+    """
+    result = subprocess.run(test_args, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    sys.stdout.buffer.write(result.stdout)
+    sys.stdout.buffer.flush()
+    status = result.returncode
+    if status != 0:
+        if status < 0:
+            try:
+                name = signal.Signals(-status).name
+            except ValueError:
+                name = "unknown signal"
+            print(f"native test killed by signal {name} ({-status})", file=sys.stderr, flush=True)
+            raise SystemExit(128 - status)
+        print(f"native test exited with status {status}", file=sys.stderr, flush=True)
+        raise SystemExit(status)
+    text = result.stdout.decode("utf-8", errors="replace")
+    if not re.search(r"\b[1-9][0-9]* test\(s\) passed", text):
+        raise SystemExit("native filter executed no tests")
 
 
 def run(build: Path, test_filter: str | None = None):
@@ -51,12 +79,7 @@ def run(build: Path, test_filter: str | None = None):
         args[args.index("-o") + 1] = output
         subprocess.run(args, cwd=build, check=True)
         test_args = [output] + (["--filter", test_filter] if test_filter else [])
-        result = subprocess.run(test_args, cwd=build, capture_output=True, text=True)
-        print(result.stdout, end="")
-        print(result.stderr, end="")
-        result.check_returncode()
-        if not re.search(r"\b[1-9][0-9]* test\(s\) passed", result.stderr + result.stdout):
-            raise RuntimeError("native filter executed no tests")
+        run_test_binary(test_args, build)
 
 
 if __name__ == "__main__":
