@@ -19,11 +19,14 @@ VM integer instructions use permissive loads instead of the strict block decoder
 calls cap dictionary load charges at 200 gas each, retaining excess as free gas;
 later calls pay normal load costs. Child execution carries the call counter back,
 and gas isolation charges deferred gas and resets the allowance counter.
-`vm_varuint_scenarios.py` compares 20 programs covering padded integer values,
+`vm_varuint_scenarios.py` compares 20 extra-balance programs covering padded integer values,
 missing keys, cold/warm deep paths, the fifth/sixth-call boundary and child
 execution with/without gas isolation. Native scalar results and simple-path gas
 are asserted independently before full VM end-state comparison. This finite
 matrix does not establish all malformed-dictionary or library-resolution cases.
+Eight additional programs check GETGASFEE/GETGASFEESIMPLE, including the
+variable branch's signed fee addition. Their values, gas and end states are
+checked independently and compared between both VMs.
 
 Runtime gas budgets are separate from serialized integer types. External credit
 uses the configured credit capped by affordable gas, without a wire-width clamp.
@@ -43,15 +46,21 @@ derived cache type, without changing the gas configuration's wire layout. The
 fixed basechain deployment profile caches its ceiling threshold 13333344 and has
 a serialization/derivation consistency test.
 
-`gas_purchase.py` authors 6602 threshold/budget records, including zero price,
+`gas_purchase.py` authors 6602 threshold/budget/fee records, including zero price,
 signed scalar boundaries, negative thresholds, floor division and the native
-out-of-range integer sentinel. Native results must satisfy those independent
+out-of-range integer sentinel. Each record also checks the native full and simple
+fee values, taking the input balance's low 64 bits as the scalar fee argument.
+Native results must satisfy those independent
 rules before Rust is compared, byte for byte. The adapters allow at most 8 MiB,
 8192 rows, 1024 bytes/row, a 64-byte name and a u128 balance; output is bounded
 to 1 MiB. This is finite arithmetic coverage, not full configuration coverage.
-`purchase_transactions.py` additionally compares 11 actual C API cases: initial
+`purchase_transactions.py` additionally compares 13 actual C API cases: initial
 limits, skips, serialization failures, funded signed-fee configurations and
-complete accepted roots. Original inputs are retained and hash-bound. Both
+complete accepted roots and balances. The two variable-fee cases require a
+negative fee to refuse transaction serialization and a signed flat-fee addition
+to charge the native amount. VM getters retain signed results; transaction and
+operator callers require nonnegative payable amounts through checked conversion.
+Original inputs are retained and hash-bound. Both
 scalar and transaction transcripts are compared across architectures in CI.
 
 The adapters are separate executables with 8 MiB input, 4,096 row, 2,048 byte/row

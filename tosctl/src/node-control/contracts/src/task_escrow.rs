@@ -112,8 +112,9 @@ impl TaskEscrowContract {
             .map(|prices| prices.calc_fwd_fee(0, 0))
             .max()
             .ok_or_else(|| anyhow::anyhow!("no forwarding schedule to price a transfer"))?;
-        let value = gas
-            .calc_gas_fee(Self::MAX_ACTION_GAS)
+        let gas_fee = u128::try_from(gas.calc_gas_fee(Self::MAX_ACTION_GAS)?)
+            .map_err(|_| anyhow::anyhow!("Task Escrow gas fee is negative"))?;
+        let value = gas_fee
             .checked_add(transfer)
             .and_then(|value| value.checked_add(transfer))
             .ok_or_else(|| anyhow::anyhow!("Task Escrow action value overflowed"))?;

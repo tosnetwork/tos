@@ -58,6 +58,24 @@ def cases():
             rows.append(
                 (f"extra-balance-child-{flags}-{parent_count}-{child_count}", code, expected)
             )
+    for fee in (0, 100, 1 << 63, (1 << 64) - 1):
+        prices = Cell().uint(0xD1, 8).uint(0, 64).uint(fee, 64).uint(0xDE, 8)
+        for value in (65536, 1000, 1000, 10000, 1000000, 1000000, 1000000):
+            prices.uint(value, 64)
+        for simple, opcode in ((False, 0x36), (True, 0x3B)):
+            code = prog(
+                op([0x6D] * 14),
+                op([0x6D, 0x6D]),
+                op([0x89], prices),
+                op([0x89], prices),
+                op([0x6D] * 3),
+                op(
+                    [0x6F, 0x07, 0x6F, 0x0F, 0x6F, 0x01, 0xED, 0x57, 0x80, 0x1F, 0x70, 0xF8, opcode]
+                ),
+            )
+            signed_fee = fee if fee < (1 << 63) else fee - (1 << 64)
+            value = 31 if simple else 31 + signed_fee
+            rows.append((f"gasfee-{fee}-{int(simple)}", code, str(value)))
     return rows
 
 
@@ -83,14 +101,18 @@ def main(args):
             assert row[5] == row[6] == Cell().hash.hex().upper(), (name, row)
             # Eight PUSHINTs, PUSHREF, PAIR, TUPLE 8, SINGLE and POP c7
             # cost 277. Each query costs 18+26, plus cell loads; RET is 5.
-            if "-child-" not in name:
+            if name.startswith("gasfee-"):
+                # NULLs 342, ref slices 36+100+25, tuples 101, POP 26,
+                # arguments 44, fee opcode 26 and implicit RET 5.
+                assert int(row[2]) == 705 and int(row[3]) == 29, (name, row)
+            elif "-child-" not in name:
                 count = int(name.rsplit("-", 1)[1]) if "-deep-" in name else 1
                 loads = (
                     min(count, 5) * 200 + max(count - 5, 0) * (14 * 25) if "-deep-" in name else 100
                 )
                 assert int(row[2]) == 277 + 44 * count + loads + 5, (name, row)
                 assert int(row[3]) == 14 + 2 * count, (name, row)
-        print(f"{len(rows)} native GETEXTRABALANCE outcomes satisfy permissive reads")
+        print(f"{len(rows)} native extra-balance/fee outcomes satisfy authored rules")
 
 
 if __name__ == "__main__":

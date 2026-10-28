@@ -237,7 +237,8 @@ fn calc_gas_fee(engine: &mut Engine, name: &'static str, simple: bool) -> Status
     let index = if is_masterchain { 2 } else { 3 };
     let slice = engine.smci_extra_param(14, index)?.as_slice()?;
     let prices = GasLimitsPrices::construct_from(&mut slice.clone())?;
-    let gas_fee = if simple { prices.calc_gas_fee_simple(gas) } else { prices.calc_gas_fee(gas) };
+    let gas_fee =
+        if simple { prices.calc_gas_fee_simple(gas)? } else { prices.calc_gas_fee(gas)? };
     engine.cc.stack.push(StackItem::int(gas_fee));
     Ok(())
 }

@@ -36,8 +36,11 @@ fn main() -> anyhow::Result<()> {
             ..GasLimitsPrices::default()
         };
         let threshold = config.calc_max_gas_threshold(config.gas_limit)?;
-        let gas = config.calc_gas(fields[5].parse()?, config.gas_limit, threshold)?;
-        println!("{name}\t{threshold}\t{gas}");
+        let value: u128 = fields[5].parse()?;
+        let gas = config.calc_gas(value, config.gas_limit, threshold)?;
+        let fee = config.calc_gas_fee(value as u64)?;
+        let simple = config.calc_gas_fee_simple(value as u64)?;
+        println!("{name}\t{threshold}\t{gas}\t{fee}\t{simple}");
     }
     anyhow::ensure!(count != 0, "empty input");
     Ok(())

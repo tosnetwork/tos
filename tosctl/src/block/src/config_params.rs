@@ -1619,25 +1619,28 @@ impl GasLimitsPrices {
     }
 
     /// Calculate gas fee by gas used value
-    pub fn calc_gas_fee(&self, gas_used: u64) -> u128 {
-        // There is a flat_gas_limit value which is the minimum gas value possible and has fixed price.
-        // If actual gas value is less then flat_gas_limit then flat_gas_price paid.
-        // If actual gas value is bigger then flat_gas_limit then flat_gas_price paid for first
-        // flat_gas_limit gas and remaining value costs gas_price
+    pub fn calc_gas_fee(&self, gas_used: u64) -> Result<i128> {
+        // The fixed branch retains the unsigned flat fee. The variable branch
+        // uses a signed scalar addition, as in the native pricing expression.
         if gas_used <= self.flat_gas_limit {
-            self.flat_gas_price as u128
+            Ok(i128::from(self.flat_gas_price))
         } else {
-            // gas_price is pseudo value (shifted by 16 as forward and storage price)
-            // after calculation divide by 0xffff with ceil rounding
-            self.flat_gas_price as u128
-                + (((gas_used - self.flat_gas_limit) as u128 * self.gas_price as u128 + 0xffff)
-                    >> 16)
+            let delta = gas_used
+                .checked_sub(self.flat_gas_limit)
+                .ok_or_else(|| error!("gas fee difference underflow"))?;
+            self.calc_gas_fee_simple(delta)?
+                .checked_add(i128::from(self.flat_gas_price as i64))
+                .ok_or_else(|| error!("gas fee sum overflow"))
         }
     }
 
     /// Calculate gas fee by gas used value without flat gas price
-    pub fn calc_gas_fee_simple(&self, gas_used: u64) -> u128 {
-        (gas_used as u128 * self.gas_price as u128 + 0xffff) >> 16
+    pub fn calc_gas_fee_simple(&self, gas_used: u64) -> Result<i128> {
+        let rounded = i128::from(gas_used as i64)
+            .checked_mul(i128::from(self.gas_price))
+            .and_then(|value| value.checked_add(65535))
+            .ok_or_else(|| error!("gas fee product overflow"))?;
+        Ok(rounded >> 16)
     }
 
     /// Get gas price in nanocoins

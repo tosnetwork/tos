@@ -287,8 +287,8 @@ impl BlockchainConfig {
     }
 
     /// Calculate gas fee for account
-    pub fn calc_gas_fee(&self, gas_used: u64, address: &MsgAddressInt) -> u128 {
-        self.get_gas_config(address.is_masterchain()).calc_gas_fee(gas_used)
+    pub fn calc_gas_fee(&self, gas_used: u64, address: &MsgAddressInt) -> Result<u128> {
+        Ok(u128::try_from(self.get_gas_config(address.is_masterchain()).calc_gas_fee(gas_used)?)?)
     }
 
     /// Get `GasLimitsPrices` for account gas fee calculation

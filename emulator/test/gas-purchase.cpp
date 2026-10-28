@@ -51,7 +51,14 @@ int main(int argc, char** argv) {
       config.flat_gas_limit = number(flat);
       config.flat_gas_price = number(fee);
       config.compute_threshold();
+      // The fee API takes uint64; retain the input's low 64 bits, independently
+      // of the signed conversion used by the reference scalar overload.
+      auto low = td::mod(amount, td::make_refint(1) << 64);
+      auto low_text = low->to_dec_string();
+      auto gas_used = std::stoull(low_text);
+      auto simple = td::rshift(td::make_refint(config.gas_price) * gas_used, 16, 1);
       std::cout << name << '\t' << config.max_gas_threshold->to_dec_string() << '\t' << config.gas_bought_for(amount)
+                << '\t' << config.compute_gas_price(gas_used)->to_dec_string() << '\t' << simple->to_dec_string()
                 << '\n';
     }
     require(!input.bad() && count != 0, "incomplete input");

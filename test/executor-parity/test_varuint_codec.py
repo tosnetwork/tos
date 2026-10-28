@@ -84,7 +84,7 @@ class VaruintComparatorTests(unittest.TestCase):
         good = gas_purchase.expected_output()
         gas_purchase.compare_outputs(good, good)
         rows = good.decode().splitlines()
-        for field, value in enumerate(("wrong-name", "999", "999")):
+        for field, value in enumerate(("wrong-name", "999", "999", "999", "999")):
             changed = rows.copy()
             parts = changed[0].split("\t")
             self.assertNotEqual(parts[field], value)
@@ -118,7 +118,8 @@ class VaruintComparatorTests(unittest.TestCase):
                 inputs=dict(config="a" * 64, shard="b" * 64, message="c" * 64),
                 outcome="encode-rejected",
             )
-            if budget <= purchase_transactions.WIRE_MAX:
+            expected_fee = gas_purchase.expected_fee(price, flat, fee, 31) if budget else 0
+            if budget <= purchase_transactions.WIRE_MAX and expected_fee >= 0:
                 compute = (
                     dict(exit=None, skipped=True, reason="100")
                     if budget == 0
@@ -137,16 +138,27 @@ class VaruintComparatorTests(unittest.TestCase):
                     account="e" * 64,
                     shard_account="f" * 64,
                     compute=compute,
+                    balance=balance + value - expected_fee,
                 )
             rows.append(row)
         purchase_transactions.compare_reports(rows, rows)
-        for field in ("outcome", "inputs", "transaction", "account", "shard_account", "compute"):
+        for field in (
+            "outcome",
+            "inputs",
+            "transaction",
+            "account",
+            "shard_account",
+            "compute",
+            "balance",
+        ):
             damaged = copy.deepcopy(rows)
             target = next(row for row in damaged if row["outcome"] == "accepted")
             if field == "inputs":
                 target[field]["config"] = "0" * 64
             elif field == "compute":
                 target[field]["gas_limit"] = 1
+            elif field == "balance":
+                target[field] += 1
             else:
                 target[field] = "encode-rejected" if field == "outcome" else "0" * 64
             with self.assertRaises(AssertionError):

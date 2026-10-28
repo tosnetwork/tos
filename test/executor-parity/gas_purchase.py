@@ -40,6 +40,16 @@ def expected(price, limit, flat, fee, value):
     return threshold, (native_long + flat) & MASK
 
 
+def expected_fee(price, flat, fee, gas):
+    if gas <= flat:
+        return fee
+    return -(-(price * signed(gas - flat)) // 65536) + signed(fee)
+
+
+def expected_simple_fee(price, gas):
+    return -(-(price * signed(gas)) // 65536)
+
+
 def cases():
     rows = []
     for price, limit, flat, fee in itertools.product(
@@ -60,15 +70,20 @@ def cases():
 
 
 def expected_output():
-    return "".join(
-        f"{name}\t{threshold}\t{gas}\n" for name, _, (threshold, gas) in cases()
-    ).encode()
+    rows = []
+    for name, args, (threshold, gas) in cases():
+        price, _, flat, fee, value = args
+        used = value & MASK
+        rows.append(
+            f"{name}\t{threshold}\t{gas}\t{expected_fee(price, flat, fee, used)}\t{expected_simple_fee(price, used)}\n"
+        )
+    return "".join(rows).encode()
 
 
 def compare_outputs(native, rust):
     assert len(native) <= MAX_OUTPUT and len(rust) <= MAX_OUTPUT, "gas purchase output byte limit"
     assert native == expected_output(), "native gas purchase differs from authored scalar rules"
-    assert rust == native, "native/Rust gas threshold or purchased gas differs"
+    assert rust == native, "native/Rust gas purchase or fee result differs"
 
 
 def main():
@@ -104,7 +119,7 @@ def main():
         rust_sha256=hashlib.sha256(rust).hexdigest(),
     )
     (directory / "result.json").write_text(json.dumps(result, indent=2) + "\n")
-    print(f"PASS: {len(rows)} authored native/Rust gas-purchase thresholds and budgets")
+    print(f"PASS: {len(rows)} authored native/Rust thresholds, budgets and fee values")
 
 
 if __name__ == "__main__":

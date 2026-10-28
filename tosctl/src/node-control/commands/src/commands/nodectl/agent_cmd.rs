@@ -2615,9 +2615,9 @@ fn agent_deploy_fee_reserve(
         anyhow::bail!("signed Task deployment request exceeds chain message limits");
     }
 
-    let reserve = schedule
-        .gas
-        .calc_gas_fee(AGENT_ACCOUNT_MAX_ACTION_GAS)
+    let gas_fee = u128::try_from(schedule.gas.calc_gas_fee(AGENT_ACCOUNT_MAX_ACTION_GAS)?)
+        .context("Task deployment gas fee is negative")?;
+    let reserve = gas_fee
         .checked_add(schedule.forwarding.calc_fwd_fee(outbound.bits(), outbound.cells()))
         .and_then(|value| {
             value.checked_add(schedule.forwarding.calc_fwd_fee(inbound.bits(), inbound.cells()))

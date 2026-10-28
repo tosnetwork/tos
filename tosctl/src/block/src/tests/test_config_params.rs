@@ -39,6 +39,25 @@ fn native_gas_purchase_width_and_threshold_rounding() {
 }
 
 #[test]
+fn native_gas_purchase_fee_signed_scalars() {
+    for (flat_price, expected) in
+        [(0, 31_i128), (100, 131), (1 << 63, -9223372036854775777), (u64::MAX, 30)]
+    {
+        let mut gas = GasLimitsPrices {
+            gas_price: 65536,
+            flat_gas_price: flat_price,
+            ..GasLimitsPrices::default()
+        };
+        assert_eq!(gas.calc_gas_fee(31).expect("fee"), expected);
+        assert_eq!(gas.calc_gas_fee_simple(31).expect("simple fee"), 31);
+        gas.flat_gas_limit = 100;
+        assert_eq!(gas.calc_gas_fee(31).expect("flat fee"), i128::from(flat_price));
+    }
+    let gas = GasLimitsPrices { gas_price: 65536, ..GasLimitsPrices::default() };
+    assert_eq!(gas.calc_gas_fee_simple(u64::MAX).expect("signed gas"), -1);
+}
+
+#[test]
 fn native_gas_purchase_signed_scalar_boundaries() {
     for (price, limit, flat, fee, balance, threshold, purchased) in [
         (65536, u64::MAX, 0, 0, 0_u128, -1_i128, u64::MAX),

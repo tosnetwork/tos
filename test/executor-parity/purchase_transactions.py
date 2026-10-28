@@ -36,6 +36,8 @@ def cases():
         ("flat-at", 65536, 1000000, 100, 100, 100, 1 << 60),
         ("negative-threshold-funded", 65536, 1000, 100, 1 << 63, 0, 1 << 100),
         ("signed-flat-funded", 65536, 1000, 100, (1 << 64) - 1, 898, 1 << 100),
+        ("negative-variable-fee", 65536, 1000, 0, 1 << 63, 100, 1 << 100),
+        ("signed-variable-fee", 65536, 1000, 0, (1 << 64) - 1, 100, 1 << 100),
     ]
 
 
@@ -78,6 +80,7 @@ def worker(library, output):
         row = dict(name=name, inputs=inputs, **classify(result))
         if result["success"]:
             row["compute"] = result["details"]
+            row["balance"] = native.account_data(native.from_boc(result["shard_account"]))[1]
         rows.append(row)
     (output / "outcomes.json").write_text(json.dumps(rows, indent=2) + "\n")
 
@@ -89,18 +92,21 @@ def compare_reports(native_rows, rust_rows):
         assert row["name"] == name
         gas_max = gas_purchase.expected(price, limit, flat, fee, balance + value)[1]
         budget = min(gas_max, gas_purchase.expected(price, limit, flat, fee, value)[1])
+        expected_fee = gas_purchase.expected_fee(price, flat, fee, 31) if budget else 0
+        rejected = budget > WIRE_MAX or expected_fee < 0
         fields = {"name", "inputs", "outcome"}
-        if budget <= WIRE_MAX:
-            fields |= {"transaction", "account", "shard_account", "compute"}
+        if not rejected:
+            fields |= {"transaction", "account", "shard_account", "compute", "balance"}
         assert set(row) == fields and set(row["inputs"]) == {"config", "shard", "message"}
         hashes = [*row["inputs"].values()]
-        if budget <= WIRE_MAX:
+        if not rejected:
             hashes += [row[k] for k in ("transaction", "account", "shard_account")]
         assert all(isinstance(h, str) and re.fullmatch("[0-9a-f]{64}", h) for h in hashes)
-        if budget > WIRE_MAX:
+        if rejected:
             assert row["outcome"] == "encode-rejected" and "compute" not in row, row
         else:
             assert row["outcome"] == "accepted", row
+            assert row["balance"] == balance + value - expected_fee, row
             compute = row["compute"]
             if budget == 0:
                 assert compute == dict(exit=None, skipped=True, reason="100"), row
