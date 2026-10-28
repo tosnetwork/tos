@@ -251,3 +251,64 @@ fn a_dummy_carries_no_balance_and_still_consumes_its_index() {
     funded.amount = 1;
     assert_eq!(refusal(&instance, &funded, &chain_slot(&instance, &funded)), Rejection::Amount);
 }
+
+/// Section 3: a withdrawal's recovery payload is sealed and opened under
+/// `RECOVERY_PAYLOAD_SLOT`. One sealed under another slot value opens under
+/// that value -- the keys and the template are otherwise valid -- and is
+/// still refused, before and after the bounce, so two wallets cannot
+/// disagree about where a recovery note lives and both report success.
+#[test]
+fn a_recovery_template_is_recognised_only_under_the_recovery_slot() {
+    let instance = instance();
+    let index = 11;
+    let recovery = |slot: u8| -> (Plaintext, ChainSlot, ChainSlot) {
+        let sealed_as = Plaintext {
+            slot,
+            kind: Kind::Recovery,
+            amount: 0,
+            note_secret: Fr::from(0x0b0bu64),
+            owner_nf_key_hash: instance.owner_nf_key_hash(index).expect("an owner hash"),
+            note_key_index: index,
+            pq_auth_key_hash: instance.pq_auth_key_hash(index).expect("a key hash"),
+        };
+        let sealed = delivery::seal(
+            &instance.mlkem_encapsulation_key().expect("a key"),
+            domain(),
+            &sealed_as,
+        )
+        .expect("seal");
+        // Opened under the slot it was sealed with, so the AEAD passes and
+        // only the import rule can refuse it.
+        let opened = delivery::open(&instance, &sealed, slot).expect("open");
+        let output_data_hash = wire::output_data_hash(&sealed);
+        let owner = notes::owner_commitment(
+            opened.owner_nf_key_hash,
+            opened.pq_auth_key_hash,
+            opened.note_secret,
+        );
+        let template = ChainSlot {
+            output_data_hash,
+            note_body: wire::recovery_template_hash(owner, output_data_hash),
+            recovered: None,
+        };
+        let bounced = ChainSlot {
+            output_data_hash,
+            note_body: notes::note_body_commitment(owner, Fr::from(777u64), output_data_hash),
+            recovered: Some(777),
+        };
+        (opened, template, bounced)
+    };
+
+    let (opened, template, bounced) = recovery(delivery::RECOVERY_PAYLOAD_SLOT);
+    let note = import(&instance, &opened, &template).expect("import").expect("a template");
+    assert!(!note.spendable, "a template was imported as spendable");
+    let note = import(&instance, &opened, &bounced).expect("import").expect("a recovery note");
+    assert_eq!(note.amount, 777);
+    assert!(note.spendable, "a bounced recovery note is not spendable");
+
+    for slot in [0u8, 1] {
+        let (opened, template, bounced) = recovery(slot);
+        assert_eq!(refusal(&instance, &opened, &template), Rejection::RecoverySlot);
+        assert_eq!(refusal(&instance, &opened, &bounced), Rejection::RecoverySlot);
+    }
+}

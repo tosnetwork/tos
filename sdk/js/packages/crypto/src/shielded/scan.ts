@@ -30,7 +30,11 @@ import type { PoolInstance } from "./keys.js";
 
 /** One output slot as the chain carries it. */
 export interface ObservedOutput {
-  /** Which of the three slots of its transaction, or slot 0 for a deposit. */
+  /**
+   * Which of the three slots of its transaction, or slot 0 for a deposit. A
+   * withdrawal's recovery payload is not an output slot and is passed with
+   * `RECOVERY_PAYLOAD_SLOT`.
+   */
   slot: number;
   /** The exact bytes, as the contract hashed them. */
   outputData: Uint8Array;
