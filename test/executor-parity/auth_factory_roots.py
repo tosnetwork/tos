@@ -11,7 +11,9 @@ import argparse
 import hashlib
 import inspect
 import json
+import os
 import runpy
+import subprocess
 import sys
 import unittest
 import weakref
@@ -109,7 +111,17 @@ class ObservedLibrary:
         return getattr(self.library, name)
 
 
-def run(family, driver, output, build=None, signer=None, record_profile=None):
+def run(family, driver, output, build=None, signer=None, record_profile=None, allow_dirty=False):
+    source_head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
+    source_tree = subprocess.check_output(
+        ["git", "rev-parse", "HEAD^{tree}"], cwd=ROOT, text=True
+    ).strip()
+    source_diff = subprocess.check_output(["git", "diff", "HEAD"], cwd=ROOT)
+    assert allow_dirty or not source_diff, "auth capture requires clean tracked source"
+    harness = Path(__file__).read_bytes()
+    assert allow_dirty or harness == subprocess.check_output(
+        ["git", "show", source_head + ":test/executor-parity/auth_factory_roots.py"], cwd=ROOT
+    ), "auth capture harness differs from committed source"
     assert not output.exists(), "auth output must be fresh"
     output.mkdir(parents=True)
     original = native.Emulator
@@ -252,6 +264,36 @@ def run(family, driver, output, build=None, signer=None, record_profile=None):
         frozen_profile=record_profile is None,
         scope="local original-input profile; artifact/hosted gates pending",
     )
+    assert (
+        subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
+        == source_head
+    ), "auth source changed during execution"
+    assert (
+        subprocess.check_output(["git", "diff", "HEAD"], cwd=ROOT) == source_diff
+        and Path(__file__).read_bytes() == harness
+    ), "auth source changed during execution"
+    tool_paths = {"driver": driver, "emulator": Path(os.environ["EMULATOR_PATH"])}
+    for name in ("func", "fift", "tol"):
+        tool_paths[name] = (
+            (build / ("tol/tol" if name == "tol" else "crypto/" + name))
+            if family == "mldsa"
+            else Path(os.environ[name.upper() + "_PATH"])
+        )
+    if family == "mldsa":
+        tool_paths["signer"] = signer
+    receipt = dict(
+        family=family,
+        source=source_head,
+        tree=source_tree,
+        dirty=bool(source_diff),
+        harness_sha256=digest(harness),
+        profile_sha256=digest((output / "profile.json").read_bytes()),
+        executables={
+            name: dict(path=str(path.resolve()), sha256=digest(path.read_bytes()))
+            for name, path in tool_paths.items()
+        },
+    )
+    (output / "receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")
     (output / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
     print(json.dumps(summary))
     return summary
@@ -267,6 +309,11 @@ def main():
     parser.add_argument(
         "--record-profile", type=Path, help="Author-only candidate profile generation"
     )
+    parser.add_argument(
+        "--allow-dirty",
+        action="store_true",
+        help="Author diagnostics only; receipts remain inadmissible",
+    )
     args = parser.parse_args()
     run(
         args.family,
@@ -275,6 +322,7 @@ def main():
         args.build,
         args.signer,
         args.record_profile,
+        args.allow_dirty,
     )
 
 
