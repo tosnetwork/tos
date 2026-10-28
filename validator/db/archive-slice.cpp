@@ -60,6 +60,13 @@ class PackageStatistics {
     write_time.insert(time);
   }
 
+  // Read and write timing samples not yet drained by to_string_and_reset.
+  size_t pending_samples() const {
+    std::lock_guard read_guard(read_mutex);
+    std::lock_guard write_guard(write_mutex);
+    return read_time.size() + write_time.size();
+  }
+
   std::string to_string_and_reset() {
     std::stringstream ss;
     ss.setf(std::ios::fixed);
@@ -101,6 +108,10 @@ class PackageStatistics {
   mutable std::mutex read_mutex;
   mutable std::mutex write_mutex;
 };
+
+size_t DbStatistics::pending_package_samples() const {
+  return pack_statistics ? pack_statistics->pending_samples() : 0;
+}
 
 void DbStatistics::init() {
   rocksdb_statistics = td::RocksDb::create_statistics();

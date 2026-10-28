@@ -67,6 +67,7 @@ class PackageStatistics;
 struct DbStatistics {
   void init();
   std::string to_string_and_reset();
+  size_t pending_package_samples() const;
 
   std::shared_ptr<PackageStatistics> pack_statistics;
   std::shared_ptr<rocksdb::Statistics> rocksdb_statistics;

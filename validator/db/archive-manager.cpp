@@ -1174,14 +1174,14 @@ void ArchiveManager::start_up() {
 }
 
 void ArchiveManager::alarm() {
-  // A read-only reader has no directory of its own to write statistics to,
-  // and never writes into the node's; its statistics stay available through
-  // prepare_stats.
+  // Draining the samples is what bounds them, so every mode drains them on
+  // every period. A read-only reader then discards them: it has no directory
+  // of its own to write statistics to, and never writes into the node's.
+  alarm_timestamp() = td::Timestamp::in(60.0);
+  auto stats = statistics_.to_string_and_reset();
   if (mode_ == td::DbOpenMode::db_readonly) {
     return;
   }
-  alarm_timestamp() = td::Timestamp::in(60.0);
-  auto stats = statistics_.to_string_and_reset();
   std::string stats_file = db_root_ + "/db_stats.txt";
   if (mode_ == td::DbOpenMode::db_secondary) {
     stats_file = opts_->get_secondary_working_dir().value() + "/db_stats.txt";

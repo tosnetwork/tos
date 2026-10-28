@@ -116,6 +116,16 @@ struct ArchivePruneTestAccess {
     });
   }
 
+  // Package timing samples the manager holds that no alarm has drained yet,
+  // and whether its periodic alarm is armed.
+  static void package_samples(td::actor::ActorId<ArchiveManager> manager,
+                              td::Promise<std::pair<size_t, bool>> promise) {
+    td::actor::send_lambda(manager, [manager, promise = std::move(promise)]() mutable {
+      auto &self = manager.get_actor_unsafe();
+      promise.set_value({self.statistics_.pending_package_samples(), static_cast<bool>(self.alarm_timestamp())});
+    });
+  }
+
   // Runs the manager's periodic statistics alarm now.
   static void run_alarm(td::actor::ActorId<ArchiveManager> manager, td::Promise<td::Unit> promise) {
     td::actor::send_lambda(manager, [manager, promise = std::move(promise)]() mutable {
@@ -1266,9 +1276,35 @@ void reader_statistics_file(const std::string &root) {
       ArchivePruneTestAccess::run_alarm(manager, std::move(promise));
     }).ensure();
   };
-  with_manager(root, opts, td::DbOpenMode::db_primary, [](auto &, auto) {});
+  // The primary stores one file, so that a reader has a package to read.
+  with_manager(root, opts, td::DbOpenMode::db_primary, [](auto &scheduler, auto manager) {
+    check(call(scheduler,
+               [&](auto promise) {
+                 td::actor::send_closure(manager, &ArchiveManager::add_file, mc_handle(1), ref(1),
+                                         td::BufferSlice("statistics"), std::move(promise));
+               })
+              .is_ok(),
+          "primary: a file to read");
+  });
   check(!std::filesystem::exists(node_stats), "no statistics file before an alarm");
-  with_manager(root, opts, td::DbOpenMode::db_readonly, alarm);
+  // A read-only reader writes no statistics file, but its alarm still drains
+  // the samples its package reads record; otherwise they grow without bound.
+  with_manager(root, opts, td::DbOpenMode::db_readonly, [&](auto &scheduler, auto manager) {
+    auto read = request<td::BufferSlice>(scheduler, [&](td::Promise<td::BufferSlice> promise) {
+      td::actor::send_closure(manager, &ArchiveManager::get_file, mc_handle(1), ref(1), std::move(promise));
+    });
+    check(read.is_ok() && read.ok().as_slice() == "statistics", "the read-only reader reads the primary's file");
+    const auto samples = [&] {
+      return request<std::pair<size_t, bool>>(
+                 scheduler, [&](auto promise) { ArchivePruneTestAccess::package_samples(manager, std::move(promise)); })
+          .move_as_ok();
+    };
+    check(samples().first > 0, "the read recorded a timing sample");
+    alarm(scheduler, manager);
+    auto after = samples();
+    check(after.first == 0, "a read-only reader's alarm drains the timing samples");
+    check(after.second, "a read-only reader's alarm stays armed");
+  });
   check(!std::filesystem::exists(node_stats), "a read-only reader writes no statistics into the node's tree");
   with_manager(root, opts, td::DbOpenMode::db_secondary, alarm);
   check(std::filesystem::exists(working + "/db_stats.txt"), "a secondary writes statistics into its working dir");
