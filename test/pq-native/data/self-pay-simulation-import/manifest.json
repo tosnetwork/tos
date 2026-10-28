@@ -1,0 +1,14 @@
+{
+  "format": "tos-self-pay-simulation-import-inputs/1",
+  "node_source": "f2d2d391ed4a2e3da77582fca7c5fc956adaf198",
+  "scope": "Public11 signed deployment to authenticated absent zero-balance address; recorded local clock; not broadcast; import rejection is not a successful transaction.",
+  "files": {
+    "request.json": "f6ec8a4a6caf76f4f30bdbd2ac4b69881c5f4bf0167bde492e9ac1e2ce83542f",
+    "anchor.json": "bd7337758deff3391f5023d61c5c8466b1940505793f393747f3c4f4ce1cea52",
+    "message.boc": "625931d3a3f7b2022d4087e9016b7902280cecb0c7b3481675619fb41fdb5e70",
+    "clock.txt": "017cc4054ee4430afe97ed2c41e7cb83ac227b4af3058333dd35946a9e834d87",
+    "material/exec-config.tl": "54108ca75385f6217996ca2003d1947512e4745fe8e379c037cd9bfd734133df",
+    "material/account.tl": "e7230c3c644f693f506fac3d39278943306a1f17a5b5ae1c2a998463d3fa9e86",
+    "material/chain-0000.tl": "f7a3ceb5d59f0f4ceb1d6b3b71380df6fd67371f38f17de192cb9d4c630bcaea"
+  }
+}
