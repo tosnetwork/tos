@@ -136,18 +136,39 @@ source has not been checked successfully for five seconds. The fields are:
   the cursor replay resumes from. It is `null` only for an index that has never
   recorded a checkpoint (a fresh directory), and `initialized` is then `false`.
 - `source_seqno`: the source tip, `null` until the source has been read once.
-- `caught_up`: whether replay has reached the observed tip.
+- `caught_up`: whether replay has reached the observed tip. Readiness expires
+  five seconds after the tip was *asked for*, not after the replay that
+  followed finished, so a slow walk or a source that stops answering never
+  makes an old observation look fresh.
+- `replay_ceiling`: the `--replay-ceiling` value, `null` without one.
+- `settled`: replay has reached its limit (the tip, or the ceiling below it)
+  and the last token-candidate pass had nothing left to do.
 - `replay_stats` (readiness only): cumulative counters since the process
-  started: `mc_blocks`, `shard_blocks`, `source_requests` and `source_wait_ms`
-  (every source read, including dispatch), `catch_ups` and `catch_up_ms`
-  (observing the source tip), `walk_ms` (indexing shard blocks, including their
-  write batches), `commits` and `commit_ms` (checkpoint advances), `drains` and
-  `drain_ms` (token-candidate passes), `archive_slice_opens` and
-  `archive_slice_closes` (source archive slice databases opened and closed), and
-  `open_fds` (descriptors held, sampled once a second). The service also logs
-  the change of these counters every 60 seconds (`replay stats over 60s: ...`).
-  A count of slice opens close to the count of source requests means the source
-  archive slices are being reopened for each read.
+  started: `mc_blocks`, `shard_blocks`, `source_requests` (every source read
+  issued, by the replay or the prefetch thread), `source_wait_ms` (time the
+  replay thread waited for source results), of which `prefetch_wait_ms` (waits
+  for blocks read ahead), `source_completed` and `source_service_ms` (reads
+  completed and their summed time from issue to completion),
+  `source_outstanding_high_water` and `prefetch_bytes_high_water` (the most
+  reads outstanding at once and the most read-ahead bytes held), `catch_ups`
+  and `catch_up_ms` (observing the source tip), `walk_ms` (indexing shard
+  blocks, including their write batches), `commits` and `commit_ms`
+  (checkpoint advances), `drains` and `drain_ms` (token-candidate passes),
+  `archive_slice_opens` and `archive_slice_closes` (source archive slice
+  databases opened and closed), and `open_fds` (descriptors held, sampled once
+  a second). The service also logs the change of these counters every 60
+  seconds (`replay stats over 60s: ...`). A count of slice opens close to the
+  count of source requests means the source archive slices are being reopened
+  for each read.
+
+`--replay-ceiling <seqno>` stops replay at that masterchain block, for
+measurement and for comparing two replays of the same source. The index never
+reports `caught_up` while it stops short of the source tip. A ceiling below the
+index's durable cursor is refused (`durable index progress is past the replay
+ceiling`): replay cannot go back, so such a run would never settle. To compare two
+replays, stop both once `settled` is true at the same ceiling, then print each
+index with `tos-wallet-index-dump --index-dir <data-dir>/index` (read-only; one
+line per key and the digest of all of them) and compare the output.
 
 `index_state.replay` in token and NFT responses carries the same fields except
 `replay_stats`. Token and NFT responses
@@ -182,14 +203,58 @@ releases the request actor and its connection. Writes are not retried by the RPC
 adapter. Saturation/backend failure returns an RPC error; it does not fall back
 to an embedded validator index.
 
-Replay holds one source request at a time, at most 4096 shard identities per
-masterchain interval, and configures an archive LRU eviction target of 128 files. This is not a hard
+Replay reads ahead of its cursor: a prefetch thread reads up to 8 masterchain
+intervals past the checkpoint, never past the observed tip, while the replay
+thread walks and commits them in order. Only the replay thread changes the
+index, the checkpoint or the reported cursor, and it repeats every application,
+ancestry and root-hash check on what was read ahead. At most 8 source reads are
+outstanding at once (queued, running, or completed and not yet walked), one of
+them always kept for the replay thread's own reads. Read-ahead memory is
+bounded twice over:
+
+- *By count.* Read-ahead keeps blocks as serialized bytes only. Each
+  read-ahead block read reserves 4 MiB (the largest block the read-ahead
+  takes) plus 4 KiB before it is issued, and once it completes keeps exactly
+  its serialized size plus 4 KiB, in a buffer holding only that block. No
+  completion can grow a charge. Cells are decoded by the thread that uses a
+  block: the replay thread decodes each shard block when it takes it, one at a
+  time as before, and the prefetch thread decodes one masterchain block at a
+  time to read its shard heads, keeping only the heads. Every handle a
+  read-ahead interval keeps is charged 1 KiB. With 7 read-ahead places and 8
+  intervals of at most 4096 shard blocks, that is at most
+  7 x (4 MiB + 4 KiB) + 8 x 4097 KiB, about 60 MiB, of which the block bytes
+  are at most min(7, 15) worst-case reservations (15 fit in 64 MiB).
+- *By budget.* The charges above are also held to 64 MiB: a read waits until
+  its reservation fits, except the read the replay thread needs next, which is
+  admitted when nothing else is read ahead.
+
+Besides these, at most two blocks are decoded at once: the shard block the
+replay thread is walking and the masterchain block the prefetch thread is
+reading heads from. The masterchain block comes from at most 4 MiB of
+serialized bytes; so does the shard block, except a block over 4 MiB, which
+the replay thread reads and decodes whole, as before.
+
+A block larger than 4 MiB is not read ahead: the archive refuses it after
+reading only its entry header, before allocating its bytes, and the replay
+thread reads and decodes that block itself on its own lane when it reaches it,
+as replay did before reading ahead (for a masterchain block, the replay thread
+reads that whole interval itself). `replay_stats` reports the highest charge
+reached (`prefetch_bytes_high_water`); compare it with the process's resident
+memory, which this bound does not include. A source request that completes
+after its 30 s deadline is treated as timed out and its result is never handed
+over. A full
+limit makes readers wait; it never fails a replay. A failed read is reported
+when the replay thread reaches that block, after the blocks before it have been
+committed, and everything read ahead is then dropped and read again. Replay
+holds at most 4096 shard identities per masterchain interval, and configures
+an archive LRU eviction target of 128 files. This is not a hard
 ceiling: the newest normal/key/temp slices are permanent, and package files open
 before eviction. File descriptors and transient usage can exceed this target. Its cell block cache
 is configured to 128 MiB. A source request that fails to finish within 30 seconds
-stops the service with exit status 1; restart resumes its durable cursor.
-Cancellation refuses new source requests, clears undispatched mailbox entries and
-stops the current bounded candidate drain without losing its persisted work. The existing bounded token
+stops the service with exit status 1, whether or not anything still waits for
+it; restart resumes its durable cursor. Cancellation refuses new source
+requests, wakes every waiting reader, drops queued requests unrun and stops the
+current bounded candidate drain without losing its persisted work. The existing bounded token
 backlog and per-block verification gas budgets remain in effect. Disk usage for
 indexed owners follows the account population; event retention is bounded as
 before. Monitor process memory, source archive retention, cursor lag and disk space.

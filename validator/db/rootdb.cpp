@@ -70,6 +70,15 @@ void RootDb::get_block_data(ConstBlockHandle handle, td::Promise<td::Ref<BlockDa
   }
 }
 
+void RootDb::get_block_file(ConstBlockHandle handle, td::uint32 data_limit, td::Promise<td::BufferSlice> promise) {
+  if (!handle->received()) {
+    promise.set_error(td::Status::Error(ErrorCode::notready, "not in db"));
+    return;
+  }
+  td::actor::send_closure(archive_db_, &ArchiveManager::get_file_limited, handle, fileref::Block{handle->id()},
+                          data_limit, std::move(promise));
+}
+
 void RootDb::store_block_signatures(BlockHandle handle, td::Ref<block::BlockSignatureSet> data,
                                     Ref<block::ValidatorSet> vset, td::Promise<td::Unit> promise) {
   if (handle->inited_signatures() || handle->moved_to_archive()) {
