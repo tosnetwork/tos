@@ -6,17 +6,45 @@ use adnl::client::{AdnlClient, AdnlClientConfig};
 use anyhow::{Context, Result, ensure};
 use base64::Engine;
 use chain_block::{
-    Block, Deserializable, MerkleProof, ShardHashes, ShardStateUnsplit, read_single_root_boc,
+    Block, Deserializable, MerkleProof, ShardHashes, ShardStateUnsplit, UInt256,
+    read_single_root_boc,
 };
 use std::collections::BTreeSet;
 use tl_api::{AnyBoxedSerialize, BoxedSerialize, TLObject, tos};
 
 pub struct CheckedStates {
-    pub zero: Vec<u8>,
     pub tip: Vec<u8>,
     pub coverage: Vec<String>,
     pub ancestors: BTreeSet<FullId>,
 }
+
+/// Upper bound for one retained diagnostic; the worker log must stay readable.
+pub const DIAGNOSTIC_LIMIT: usize = 4096;
+
+/// Truncate a diagnostic to `DIAGNOSTIC_LIMIT` bytes at a character boundary.
+pub fn bounded_diagnostic(text: &str) -> String {
+    if text.len() <= DIAGNOSTIC_LIMIT {
+        return text.to_owned();
+    }
+    let mut end = DIAGNOSTIC_LIMIT;
+    while !text.is_char_boundary(end) {
+        end = end.saturating_sub(1);
+    }
+    format!("{}...", &text[..end])
+}
+
+/// The engine's own spelling of a block id, so diagnostics and engine errors can be matched.
+pub fn describe(id: &FullId) -> String {
+    format!(
+        "({},{:016x},{}):{}:{}",
+        id.workchain,
+        u64::from_le_bytes(id.shard.to_le_bytes()),
+        id.seqno,
+        id.root_hash.to_ascii_uppercase(),
+        id.file_hash.to_ascii_uppercase()
+    )
+}
+
 /// Local-only requests to a fresh validation identity inside a separate network namespace.
 /// These requests force native reads; startup statistics alone are not a shard-state check.
 pub async fn check_states(
@@ -30,21 +58,31 @@ pub async fn check_states(
     client.shutdown().await?;
     result
 }
-async fn query<T: BoxedSerialize>(client: &mut AdnlClient, request: &T) -> Result<TLObject> {
+async fn query<T: BoxedSerialize>(
+    client: &mut AdnlClient,
+    what: &str,
+    request: &T,
+) -> Result<TLObject> {
     let envelope = tos::rpc::lite_server::Query { data: tl_api::serialize_boxed(request)? }
         .into_tl_object()
         .into();
-    let answer = client.query(&envelope).await?;
+    let answer = client.query(&envelope).await.with_context(|| format!("native {what}"))?;
     if answer.is::<tos::lite_server::Error>() {
         let error = answer
             .downcast::<tos::lite_server::Error>()
-            .map_err(|_| anyhow::anyhow!("invalid native error response"))?;
-        anyhow::bail!("native state read failed ({}): {}", error.code(), error.message());
+            .map_err(|_| anyhow::anyhow!("native {what}: invalid native error response"))?;
+        anyhow::bail!(
+            "native {what}: native state read failed ({}): {}",
+            error.code(),
+            error.message()
+        );
     }
     Ok(answer)
 }
-fn downcast<T: tl_api::AnyBoxedSerialize>(answer: TLObject) -> Result<T> {
-    answer.downcast::<T>().map_err(|_| anyhow::anyhow!("unexpected native validation response"))
+fn downcast<T: tl_api::AnyBoxedSerialize>(what: &str, answer: TLObject) -> Result<T> {
+    answer
+        .downcast::<T>()
+        .map_err(|_| anyhow::anyhow!("native {what}: unexpected native validation response"))
 }
 async fn check_inner(
     client: &mut AdnlClient,
@@ -59,7 +97,10 @@ async fn check_inner(
     }
     .into_tl_object()
     .into();
-    let stats: tos::engine::validator::Stats = downcast(client.query(&readiness).await?)?;
+    let stats: tos::engine::validator::Stats = downcast(
+        "GetStats",
+        client.query(&readiness).await.context("native GetStats control query")?,
+    )?;
     let tip = stats
         .stats()
         .iter()
@@ -69,29 +110,10 @@ async fn check_inner(
         FullId::from_stats(&tip.value)?.seqno >= frontier.seqno,
         "native local replay has not reached the coherent frontier"
     );
-    let zero: tos::lite_server::BlockState = downcast(
-        query(client, &tos::rpc::lite_server::GetState { id: held.zero.native()? }).await?,
-    )?;
-    ensure!(
-        zero.id() == &held.zero.native()?,
-        "native zero-state identity differs from held anchor"
-    );
-    let zero_bytes = zero.data().clone();
-    ensure!(
-        zero_bytes.len() as u64 <= MANIFEST_LIMIT && sha256(&zero_bytes) == held.zero.file_hash,
-        "native zero-state file hash mismatch"
-    );
-    let zero_root = read_single_root_boc(&zero_bytes)?;
-    ensure!(
-        hex::encode(zero_root.repr_hash().as_slice()) == held.zero.root_hash,
-        "native zero-state root hash mismatch"
-    );
-    ensure!(
-        ShardStateUnsplit::construct_from_cell(zero_root)?.global_id() == held.global_id,
-        "native zero-state global id differs"
-    );
+    let what = format!("GetBlock for frontier {}", describe(frontier));
     let block: tos::lite_server::BlockData = downcast(
-        query(client, &tos::rpc::lite_server::GetBlock { id: frontier.native()? }).await?,
+        &what,
+        query(client, &what, &tos::rpc::lite_server::GetBlock { id: frontier.native()? }).await?,
     )?;
     ensure!(block.id() == &frontier.native()?, "native block identity mismatch");
     let tip = block.data().clone();
@@ -112,8 +134,12 @@ async fn check_inner(
             && info.shard() == frontier.native()?.shard(),
         "native tip coordinates or global id differ"
     );
+    let frontier_state = frontier_state_hash(&parsed)?;
+    let what = format!("GetAllShardsInfo for frontier {}", describe(frontier));
     let response: tos::lite_server::AllShardsInfo = downcast(
-        query(client, &tos::rpc::lite_server::GetAllShardsInfo { id: frontier.native()? }).await?,
+        &what,
+        query(client, &what, &tos::rpc::lite_server::GetAllShardsInfo { id: frontier.native()? })
+            .await?,
     )?;
     ensure!(response.id() == &frontier.native()?, "native shard inventory frontier mismatch");
     let shards = ShardHashes::construct_from_cell(read_single_root_boc(response.data())?)?;
@@ -130,9 +156,15 @@ async fn check_inner(
         ));
         Ok(true)
     })?;
+    let what = format!("GetConfigAll for frontier {}", describe(frontier));
     let configuration: tos::lite_server::ConfigInfo = downcast(
-        query(client, &tos::rpc::lite_server::GetConfigAll { mode: 0, id: frontier.native()? })
-            .await?,
+        &what,
+        query(
+            client,
+            &what,
+            &tos::rpc::lite_server::GetConfigAll { mode: 0, id: frontier.native()? },
+        )
+        .await?,
     )?;
     ensure!(configuration.id() == &frontier.native()?, "native configuration frontier mismatch");
     let proof =
@@ -163,48 +195,176 @@ async fn check_inner(
             workchain: block.shard().workchain_id(),
             id: address.into(),
         };
+        let what = format!("GetAccountState in shard state {block}");
         let read: tos::lite_server::AccountState = downcast(
-            query(client, &tos::rpc::lite_server::GetAccountState { id: block.clone(), account })
-                .await?,
+            &what,
+            query(
+                client,
+                &what,
+                &tos::rpc::lite_server::GetAccountState { id: block.clone(), account },
+            )
+            .await?,
         )?;
         ensure!(read.shardblk() == &block, "native account read used a different shard state");
         coverage.push(block.shard().to_string());
     }
     let mut ancestors = BTreeSet::new();
-    for fork in forks.iter().chain(std::iter::once(&held.init)) {
-        fork.masterchain()?;
-        ensure!(fork.seqno <= frontier.seqno, "held fork or init anchor is ahead of generation");
-        if fork.seqno == 0 {
-            ensure!(
-                fork == &held.zero,
-                "zero-height safety anchor differs from held network zero state"
-            );
-            ancestors.insert(fork.clone());
+    for anchor in anchor_set(held, forks)? {
+        if !needs_proof(frontier, &anchor)? {
+            ancestors.insert(anchor);
             continue;
         }
-        let response: tos::lite_server::BlockHeader = downcast(
-            query(
-                client,
-                &tos::rpc::lite_server::LookupBlock {
-                    mode: 1,
-                    id: tos::tos_node::blockid::BlockId {
-                        workchain: -1,
-                        shard: i64::MIN,
-                        seqno: i32::from_le_bytes(fork.seqno.to_le_bytes()),
-                    },
-                    lt: None,
-                    utime: None,
-                },
-            )
-            .await?,
-        )?;
-        ensure!(
-            response.id() == &fork.native()?,
-            "held fork or init block is not on imported native chain"
+        let what = format!(
+            "GetBlockProof from frontier {} to anchor {}",
+            describe(frontier),
+            describe(&anchor)
         );
-        ancestors.insert(fork.clone());
+        let answer = query(client, &what, &anchor_request(frontier, &anchor)?)
+            .await
+            .map_err(|error| anchor_read_refusal(&anchor, error))?;
+        let response: tos::lite_server::PartialBlockProof = downcast(&what, answer)?;
+        verify_anchor_proof(held, frontier, &frontier_state, &anchor, &response)
+            .with_context(|| format!("native {what}"))?;
+        ancestors.insert(anchor);
     }
-    Ok(CheckedStates { zero: zero_bytes, tip, coverage, ancestors })
+    Ok(CheckedStates { tip, coverage, ancestors })
+}
+
+/// Every anchor the image must descend from: the held zero state and init block, the
+/// approved forks and any anchor the caller requires (for example a restore target's own
+/// safety anchors). A set, so an init block equal to the zero state is proven once.
+pub fn anchor_set(held: &Network, forks: &[FullId]) -> Result<BTreeSet<FullId>> {
+    held.validate()?;
+    let mut anchors = BTreeSet::from([held.zero.clone(), held.init.clone()]);
+    for fork in forks {
+        fork.masterchain()?;
+        anchors.insert(fork.clone());
+    }
+    Ok(anchors)
+}
+
+/// Whether an anchor needs a native ancestry proof from the frontier. The frontier itself
+/// needs none; an anchor beyond the frontier can never be its ancestor.
+pub fn needs_proof(frontier: &FullId, anchor: &FullId) -> Result<bool> {
+    frontier.masterchain()?;
+    anchor.masterchain()?;
+    ensure!(
+        anchor.seqno <= frontier.seqno,
+        "held anchor {} is ahead of generation frontier {}",
+        describe(anchor),
+        describe(frontier)
+    );
+    if anchor.seqno == frontier.seqno {
+        ensure!(
+            anchor == frontier,
+            "held anchor {} differs from the generation frontier at the same height",
+            describe(anchor)
+        );
+        return Ok(false);
+    }
+    Ok(true)
+}
+
+/// One backward proof link from the frontier to the anchor, built from the frontier's own
+/// state (mode bit 0x1000) rather than the engine's latest state.
+pub fn anchor_request(
+    frontier: &FullId,
+    anchor: &FullId,
+) -> Result<tos::rpc::lite_server::GetBlockProof> {
+    Ok(tos::rpc::lite_server::GetBlockProof {
+        mode: 0x1001,
+        known_block: frontier.native()?,
+        target_block: Some(anchor.native()?),
+    })
+}
+
+/// The hash of the masterchain state the frontier block produced. Every ancestry proof must
+/// be a proof of exactly this state, so it inherits the frontier's corroborated identity.
+pub fn frontier_state_hash(tip: &Block) -> Result<UInt256> {
+    Ok(tip.read_state_update()?.new_hash)
+}
+
+/// The engine builds a backward link from the anchor's own stored proof link. A source keeps
+/// those for key blocks and for blocks its archive has not yet removed; an older ordinary
+/// block cannot be proven and the image is refused. The zero state needs no proof link.
+pub fn anchor_read_refusal(anchor: &FullId, error: anyhow::Error) -> anyhow::Error {
+    let text = format!("{error:#}").to_ascii_lowercase();
+    let missing = format!("cannot load proof link for {}", describe(anchor)).to_ascii_lowercase();
+    if anchor.seqno != 0 && text.contains(&missing) {
+        return error.context(format!(
+            "anchor proof not retained: the source no longer holds the proof link of anchor {}; \
+             only the zero state and anchors whose proof link the source still holds can be proven",
+            describe(anchor)
+        ));
+    }
+    error
+}
+
+fn bounded_proof(what: &str, bytes: &[u8]) -> Result<MerkleProof> {
+    ensure!(!bytes.is_empty(), "{what} is empty");
+    ensure!(bytes.len() as u64 <= MANIFEST_LIMIT, "{what} exceeds the byte limit");
+    read_single_root_boc(bytes)
+        .and_then(MerkleProof::construct_from_cell)
+        .with_context(|| format!("{what} is not a Merkle proof"))
+}
+
+/// Verify a native answer proving that `anchor` is an earlier masterchain block of the
+/// frontier. The proof is a Merkle proof of the frontier's masterchain state, bound to the
+/// state hash the frontier block itself records, whose previous-block dictionary holds the
+/// anchor with exactly its root and file hash.
+pub fn verify_anchor_proof(
+    held: &Network,
+    frontier: &FullId,
+    frontier_state: &UInt256,
+    anchor: &FullId,
+    response: &tos::lite_server::PartialBlockProof,
+) -> Result<()> {
+    ensure!(needs_proof(frontier, anchor)?, "the frontier needs no ancestry proof");
+    let from = frontier.native()?;
+    let to = anchor.native()?;
+    ensure!(bool::from(response.complete().clone()), "ancestry proof is incomplete");
+    ensure!(response.from() == &from && response.to() == &to, "ancestry proof has other endpoints");
+    let [link] = response.steps().as_slice() else {
+        anyhow::bail!("ancestry proof must be exactly one link, found {}", response.steps().len());
+    };
+    let tos::lite_server::BlockLink::LiteServer_BlockLinkBack(link) = link else {
+        anyhow::bail!("ancestry proof link is not a backward link");
+    };
+    ensure!(link.from == from && link.to == to, "ancestry proof link has other endpoints");
+    let header = bounded_proof("frontier header proof", &link.proof)?;
+    ensure!(
+        hex::encode(header.hash.as_slice()) == frontier.root_hash,
+        "frontier header proof belongs to another block"
+    );
+    let state_proof = bounded_proof("frontier state proof", &link.state_proof)?;
+    ensure!(
+        &state_proof.hash == frontier_state,
+        "ancestry proof is not a proof of the frontier block's state"
+    );
+    let state: ShardStateUnsplit = state_proof.virtualize()?;
+    ensure!(
+        state.global_id() == held.global_id
+            && state.seq_no() == frontier.seqno
+            && state.shard().is_masterchain(),
+        "ancestry proof state has another network or height"
+    );
+    let extra = state.read_custom()?.context("ancestry proof state has no masterchain extra")?;
+    extra.prev_blocks.check_block(&to).map_err(|error| {
+        anyhow::anyhow!(
+            "anchor {} is not an earlier block of the frontier: {error}",
+            describe(anchor)
+        )
+    })?;
+    if anchor.seqno == 0 {
+        ensure!(link.dest_proof.is_empty(), "zero-state anchor has an unexpected header proof");
+    } else {
+        let destination = bounded_proof("anchor header proof", &link.dest_proof)?;
+        ensure!(
+            hex::encode(destination.hash.as_slice()) == anchor.root_hash,
+            "anchor header proof belongs to another block"
+        );
+    }
+    Ok(())
 }
 
 /// Configure only fresh validation credentials; no donor identity is accepted.
@@ -243,3 +403,7 @@ pub fn fresh_control(db: &Root, address: &str) -> Result<AdnlClientConfig> {
     let (_, config) = AdnlClientConfig::from_json(&serde_json::json!({"server_address":address.to_string(), "server_key":{"type_id":1209251014,"pub_key":b64(&server_pub)}, "client_key":{"type_id":1209251014,"pvt_key":b64(&client_seed)}, "timeouts":{"read":{"secs":5,"nanos":0},"write":{"secs":5,"nanos":0}}}).to_string())?;
     Ok(config)
 }
+
+#[cfg(test)]
+#[path = "../tests/support/anchor_proof.rs"]
+mod tests;
