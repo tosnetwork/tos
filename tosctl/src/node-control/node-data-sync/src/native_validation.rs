@@ -6,8 +6,8 @@ use adnl::client::{AdnlClient, AdnlClientConfig};
 use anyhow::{Context, Result, ensure};
 use base64::Engine;
 use chain_block::{
-    Block, Deserializable, MerkleProof, ShardHashes, ShardStateUnsplit, UInt256,
-    read_single_root_boc,
+    Block, BlockIdExt, ConfigParams, Deserializable, MerkleProof, Serializable, ShardHashes,
+    ShardStateUnsplit, UInt256, read_single_root_boc,
 };
 use std::collections::BTreeSet;
 use tl_api::{AnyBoxedSerialize, BoxedSerialize, TLObject, tos};
@@ -141,21 +141,8 @@ async fn check_inner(
         query(client, &what, &tos::rpc::lite_server::GetAllShardsInfo { id: frontier.native()? })
             .await?,
     )?;
-    ensure!(response.id() == &frontier.native()?, "native shard inventory frontier mismatch");
-    let shards = ShardHashes::construct_from_cell(read_single_root_boc(response.data())?)?;
-    let mut blocks = vec![frontier.native()?];
-    let mut seen = BTreeSet::new();
-    shards.iterate_shards(|shard, descr| {
-        ensure!(blocks.len() < 1024, "native monitored shard count limit");
-        seen.insert(shard.workchain_id());
-        blocks.push(chain_block::BlockIdExt::with_params(
-            shard,
-            descr.seq_no,
-            descr.root_hash,
-            descr.file_hash,
-        ));
-        Ok(true)
-    })?;
+    let shards = verify_shard_inventory(frontier, &parsed, &response)
+        .with_context(|| format!("native {what}"))?;
     let what = format!("GetConfigAll for frontier {}", describe(frontier));
     let configuration: tos::lite_server::ConfigInfo = downcast(
         &what,
@@ -166,27 +153,9 @@ async fn check_inner(
         )
         .await?,
     )?;
-    ensure!(configuration.id() == &frontier.native()?, "native configuration frontier mismatch");
-    let proof =
-        MerkleProof::construct_from_cell(read_single_root_boc(configuration.config_proof())?)?;
-    let state: ShardStateUnsplit = proof.virtualize()?;
-    ensure!(
-        state.global_id() == held.global_id && state.seq_no() == frontier.seqno,
-        "native configuration state identity mismatch"
-    );
-    let config = state.read_custom()?.context("masterchain state lacks configuration")?.config;
-    config.workchains()?.iterate_with_keys(|workchain: i32, descr| {
-        if descr.active && !seen.contains(&workchain) {
-            ensure!(blocks.len() < 1024, "native monitored workchain count limit");
-            blocks.push(chain_block::BlockIdExt::with_params(
-                chain_block::ShardIdent::with_workchain_id(workchain)?,
-                0,
-                descr.zerostate_root_hash,
-                descr.zerostate_file_hash,
-            ));
-        }
-        Ok(true)
-    })?;
+    let config = verify_configuration(held, frontier, &frontier_state, &configuration)
+        .with_context(|| format!("native {what}"))?;
+    let blocks = monitored_blocks(frontier, &shards, &config)?;
     let mut coverage = Vec::new();
     for block in blocks {
         let mut address = [0; 32];
@@ -205,6 +174,9 @@ async fn check_inner(
             )
             .await?,
         )?;
+        // This read only forces the engine to load the shard state. Its proofs are not
+        // checked and nothing is derived from the answer: the coverage entry comes from
+        // `blocks`, which is bound to the frontier above.
         ensure!(read.shardblk() == &block, "native account read used a different shard state");
         coverage.push(block.shard().to_string());
     }
@@ -367,6 +339,90 @@ pub fn verify_anchor_proof(
     Ok(())
 }
 
+/// The shard inventory the frontier block itself records. The engine's answer is kept as a
+/// native read, but must be exactly this inventory. The answer's block proof is not checked:
+/// its data is compared with the held, file-hash-checked tip, so the proof adds nothing.
+pub fn verify_shard_inventory(
+    frontier: &FullId,
+    tip: &Block,
+    response: &tos::lite_server::AllShardsInfo,
+) -> Result<ShardHashes> {
+    ensure!(response.id() == &frontier.native()?, "native shard inventory frontier mismatch");
+    let recorded = tip
+        .read_extra()?
+        .read_custom()?
+        .context("frontier block has no masterchain extra")?
+        .shards()
+        .clone();
+    ensure!(!response.data().is_empty(), "native shard inventory is empty");
+    ensure!(
+        response.data().len() as u64 <= MANIFEST_LIMIT,
+        "native shard inventory exceeds the byte limit"
+    );
+    let answered = ShardHashes::construct_from_cell(read_single_root_boc(response.data())?)?;
+    ensure!(
+        answered.serialize()?.repr_hash() == recorded.serialize()?.repr_hash(),
+        "native shard inventory differs from the frontier block's shard hashes"
+    );
+    Ok(recorded)
+}
+
+/// The configuration the frontier's own masterchain state holds. The answer must be a
+/// Merkle proof of exactly the state the frontier block records, so a proof of another
+/// state with the same coordinates is refused. The answer's own header proof is not used:
+/// the state hash comes from the held, file-hash-checked tip.
+pub fn verify_configuration(
+    held: &Network,
+    frontier: &FullId,
+    frontier_state: &UInt256,
+    response: &tos::lite_server::ConfigInfo,
+) -> Result<ConfigParams> {
+    ensure!(response.id() == &frontier.native()?, "native configuration frontier mismatch");
+    let proof = bounded_proof("configuration state proof", response.config_proof())?;
+    ensure!(
+        &proof.hash == frontier_state,
+        "configuration proof is not a proof of the frontier block's state"
+    );
+    let state: ShardStateUnsplit = proof.virtualize()?;
+    ensure!(
+        state.global_id() == held.global_id
+            && state.seq_no() == frontier.seqno
+            && state.shard().is_masterchain(),
+        "native configuration state identity mismatch"
+    );
+    Ok(state.read_custom()?.context("masterchain state lacks configuration")?.config)
+}
+
+/// Every shard block and every active workchain's zero state the frontier commits to,
+/// derived only from the verified tip and the configuration bound to its state.
+pub fn monitored_blocks(
+    frontier: &FullId,
+    shards: &ShardHashes,
+    config: &ConfigParams,
+) -> Result<Vec<BlockIdExt>> {
+    let mut blocks = vec![frontier.native()?];
+    let mut seen = BTreeSet::new();
+    shards.iterate_shards(|shard, descr| {
+        ensure!(blocks.len() < 1024, "native monitored shard count limit");
+        seen.insert(shard.workchain_id());
+        blocks.push(BlockIdExt::with_params(shard, descr.seq_no, descr.root_hash, descr.file_hash));
+        Ok(true)
+    })?;
+    config.workchains()?.iterate_with_keys(|workchain: i32, descr| {
+        if descr.active && !seen.contains(&workchain) {
+            ensure!(blocks.len() < 1024, "native monitored workchain count limit");
+            blocks.push(BlockIdExt::with_params(
+                chain_block::ShardIdent::with_workchain_id(workchain)?,
+                0,
+                descr.zerostate_root_hash,
+                descr.zerostate_file_hash,
+            ));
+        }
+        Ok(true)
+    })?;
+    Ok(blocks)
+}
+
 /// Configure only fresh validation credentials; no donor identity is accepted.
 pub fn fresh_control(db: &Root, address: &str) -> Result<AdnlClientConfig> {
     let config = db.bytes("config.json", MANIFEST_LIMIT)?;
@@ -407,3 +463,7 @@ pub fn fresh_control(db: &Root, address: &str) -> Result<AdnlClientConfig> {
 #[cfg(test)]
 #[path = "../tests/support/anchor_proof.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../tests/support/frontier_inventory.rs"]
+mod inventory_tests;
