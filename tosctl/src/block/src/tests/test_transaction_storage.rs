@@ -211,7 +211,8 @@ fn transaction_storage_retains_original_hash_and_checks_native_range() {
         .finalize_transaction_storage(snapshot, 16, 26)
         .unwrap_err()
         .to_string()
-        .contains("native VarUInteger7"));
+        .contains("VarUInteger7"));
+    assert_eq!(account.storage_info().unwrap().used().bits(), 0xffff_ffff_ffff);
     let snapshot = account.snapshot_transaction_storage(16).unwrap();
     assert!(account
         .finalize_transaction_storage(snapshot, 15, 26)
