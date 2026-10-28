@@ -1,8 +1,10 @@
 """The codec comparator rejects both-side wrong claims and damaged record populations."""
 
+import copy
 import re
 import unittest
 
+import gas_credit
 import varuint_codec as codec
 
 REPLAY_COMMANDS = (
@@ -21,13 +23,22 @@ REPLAY_COMMANDS = (
     "python3 test/rescue-fee-gate/vm_varuint_scenarios.py --check result/vm-varuint/native.tsv",
     "tosctl/src/target/release/examples/vm-endstate result/vm-varuint/inputs.tsv > result/vm-varuint/rust.tsv",
     "python3 test/rescue-fee-gate/vm_endstate_compare.py result/vm-varuint/native.tsv result/vm-varuint/rust.tsv",
+    "cargo test --manifest-path tosctl/src/Cargo.toml --locked --release -p tos_executor --lib native_runtime_credit",
+    "python3 test/executor-parity/gas_credit.py --native build/emulator/libemulator.so --rust tosctl/src/target/release/libtos_emulator.so --output result/gas-credit",
 )
-FINAL_COMMANDS = tuple(
-    f"cmp artifacts/epoch-replay-x86-64/varuint-codec/{name} artifacts/epoch-replay-arm64/varuint-codec/{name}"
-    for name in ("inputs.tsv", "native.stdout", "rust.stdout")
-) + tuple(
-    f"cmp artifacts/epoch-replay-x86-64/vm-varuint/{name} artifacts/epoch-replay-arm64/vm-varuint/{name}"
-    for name in ("inputs.tsv", "native.tsv", "rust.tsv")
+FINAL_COMMANDS = (
+    tuple(
+        f"cmp artifacts/epoch-replay-x86-64/varuint-codec/{name} artifacts/epoch-replay-arm64/varuint-codec/{name}"
+        for name in ("inputs.tsv", "native.stdout", "rust.stdout")
+    )
+    + tuple(
+        f"cmp artifacts/epoch-replay-x86-64/vm-varuint/{name} artifacts/epoch-replay-arm64/vm-varuint/{name}"
+        for name in ("inputs.tsv", "native.tsv", "rust.tsv")
+    )
+    + tuple(
+        f"cmp artifacts/epoch-replay-x86-64/gas-credit/{kind}/outcomes.json artifacts/epoch-replay-arm64/gas-credit/{kind}/outcomes.json"
+        for kind in ("native", "rust")
+    )
 )
 
 
@@ -51,6 +62,35 @@ def workflow_contract(text):
 
 
 class VaruintComparatorTests(unittest.TestCase):
+    def test_runtime_credit_report_controls(self):
+        rows = []
+        for name, _, _, _, expected in gas_credit.cases():
+            row = dict(
+                name=name,
+                outcome=expected,
+                inputs=dict(config="a" * 64, shard="b" * 64, message="c" * 64),
+            )
+            if expected == "accepted":
+                row.update(transaction="d" * 64, account="e" * 64, shard_account="f" * 64)
+            rows.append(row)
+        gas_credit.compare_reports(rows, rows)
+        for field in ("outcome", "transaction", "account", "shard_account", "inputs"):
+            damaged = copy.deepcopy(rows)
+            target = next(row for row in damaged if row["outcome"] == "accepted")
+            if field == "inputs":
+                target["inputs"]["config"] = "0" * 64
+            else:
+                target[field] = "encode-rejected" if field == "outcome" else "0" * 64
+            with self.assertRaises(AssertionError):
+                gas_credit.compare_reports(rows, damaged)
+        for damaged in (rows[:-1], rows[::-1], rows + rows[:1]):
+            with self.assertRaises(AssertionError):
+                gas_credit.compare_reports(damaged, damaged)
+        damaged = copy.deepcopy(rows)
+        next(row for row in damaged if row["outcome"] == "accepted")["outcome"] = "encode-rejected"
+        with self.assertRaises(AssertionError):
+            gas_credit.compare_reports(damaged, damaged)
+
     def test_all_authored_types_and_boundaries(self):
         rows = codec.cases()
         self.assertEqual(len(rows), 330)

@@ -116,6 +116,8 @@ jobs:
           python3 test/rescue-fee-gate/vm_varuint_scenarios.py --check result/vm-varuint/native.tsv
           tosctl/src/target/release/examples/vm-endstate result/vm-varuint/inputs.tsv > result/vm-varuint/rust.tsv
           python3 test/rescue-fee-gate/vm_endstate_compare.py result/vm-varuint/native.tsv result/vm-varuint/rust.tsv
+          cargo test --manifest-path tosctl/src/Cargo.toml --locked --release -p tos_executor --lib native_runtime_credit
+          python3 test/executor-parity/gas_credit.py --native build/emulator/libemulator.so --rust tosctl/src/target/release/libtos_emulator.so --output result/gas-credit
           python3 test/executor-parity/storage_cache_carry.py --output result/storage-cache-carry.json
           cmp result/storage-cache-carry.json tosctl/src/executor/tests/fixtures/storage-cache-carry.json
           python3 test/executor-parity/storage_rollback_carry.py --output result/storage-rollback-carry.json
@@ -188,6 +190,8 @@ jobs:
           cmp artifacts/epoch-replay-x86-64/vm-varuint/inputs.tsv artifacts/epoch-replay-arm64/vm-varuint/inputs.tsv
           cmp artifacts/epoch-replay-x86-64/vm-varuint/native.tsv artifacts/epoch-replay-arm64/vm-varuint/native.tsv
           cmp artifacts/epoch-replay-x86-64/vm-varuint/rust.tsv artifacts/epoch-replay-arm64/vm-varuint/rust.tsv
+          cmp artifacts/epoch-replay-x86-64/gas-credit/native/outcomes.json artifacts/epoch-replay-arm64/gas-credit/native/outcomes.json
+          cmp artifacts/epoch-replay-x86-64/gas-credit/rust/outcomes.json artifacts/epoch-replay-arm64/gas-credit/rust/outcomes.json
           test ! -s artifacts/epoch-replay-x86-64/source-status.txt
           test ! -s artifacts/epoch-replay-arm64/source-status.txt
           cat artifacts/epoch-replay-x86-64/metrics.json

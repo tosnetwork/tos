@@ -384,11 +384,10 @@ pub trait TransactionExecutor {
             vm_phase.msg_state_used = use_msg_state;
         }
 
-        vm_phase.gas_credit = match gas.get_gas_credit() as u32 {
-            0 => None,
-            value => Some(value.try_into()?),
-        };
-        vm_phase.gas_limit = (gas.get_gas_limit() as u64).try_into()?;
+        // Keep runtime limits independent of the produced transaction's wire
+        // fields, including when a precompiled fallback replaces the VM budget.
+        let initial_credit = gas.get_gas_credit();
+        let initial_limit = gas.get_gas_limit();
 
         let code = if let Some(code) = result_acc.get_code() {
             code
@@ -397,6 +396,7 @@ pub trait TransactionExecutor {
             if is_external {
                 fail!(ExecutorError::NoAcceptError(vm_phase.exit_code, None))
             } else {
+                encode_compute_gas_limits(&mut vm_phase, initial_limit, initial_credit)?;
                 vm_phase.exit_arg = None;
                 vm_phase.success = false;
                 vm_phase.gas_fees =
@@ -525,6 +525,10 @@ pub trait TransactionExecutor {
         // gas limit as credit, which can exceed the serialized credit width.
         // Acceptance depends on the complete VM credit being zero.
         let credit = gas.get_gas_credit();
+        if credit != 0 && is_external {
+            fail!(ExecutorError::NoAcceptError(vm_phase.exit_code, raw_exit_arg))
+        }
+        encode_compute_gas_limits(&mut vm_phase, initial_limit, initial_credit)?;
         //for external messages gas will not be exacted if VM throws the exception and gas_credit != 0
         if let Some(precompiled) = precompiled.as_ref() {
             vm_phase.gas_used = precompiled.gas_usage.try_into()?;
@@ -535,9 +539,6 @@ pub trait TransactionExecutor {
             vm_phase.vm_steps = vm.steps();
         }
         if credit != 0 {
-            if is_external {
-                fail!(ExecutorError::NoAcceptError(vm_phase.exit_code, raw_exit_arg))
-            }
             vm_phase.gas_fees = Coins::zero();
         } else {
             // credit == 0 means contract accepted
@@ -1771,6 +1772,21 @@ fn override_gas(acc: &Account, now: u32) -> Option<u64> {
     }
 }
 
+fn encode_compute_gas_limits(phase: &mut TrComputePhaseVm, limit: i64, credit: i64) -> Result<()> {
+    phase.gas_credit = if credit == 0 {
+        None
+    } else {
+        let credit = u32::try_from(credit)
+            .map_err(|err| error!("compute gas credit cannot be encoded: {err}"))?;
+        Some(
+            VarUInteger3::try_from(credit)
+                .map_err(|err| error!("compute gas credit cannot be encoded: {err}"))?,
+        )
+    };
+    phase.gas_limit = u64::try_from(limit)?.try_into()?;
+    Ok(())
+}
+
 fn init_gas(
     acc: &Account,
     now: u32,
@@ -1796,11 +1812,7 @@ fn init_gas(
     } else {
         gas_max.min(gas_info.calc_gas(msg_balance, gas_limit, max_gas_threshold))
     };
-    let gas_credit = if is_external {
-        gas_info.gas_credit.min(gas_max).min(VarUInteger3::MAX.as_u64())
-    } else {
-        0
-    };
+    let gas_credit = if is_external { gas_info.gas_credit.min(gas_max) } else { 0 };
     log::debug!(
         target: "executor",
         "gas before: gm: {}, gl: {}, gc: {}, price: {}",

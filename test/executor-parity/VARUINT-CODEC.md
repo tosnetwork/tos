@@ -25,9 +25,18 @@ execution with/without gas isolation. Native scalar results and simple-path gas
 are asserted independently before full VM end-state comparison. This finite
 matrix does not establish all malformed-dictionary or library-resolution cases.
 
-Runtime gas budgets also reference the serialized integer types. Those callers
-must be audited separately before accepting this candidate; correcting a wire
-width must not silently reduce the VM's runtime credit or purchasable gas.
+Runtime gas budgets are separate from serialized integer types. External credit
+uses the configured credit capped by affordable gas, without a wire-width clamp.
+The initial credit/limit are recorded before precompiled budget overrides, then
+converted to transaction fields only after unaccepted/skip outcomes are resolved.
+`gas_credit.py` compares 26 actual native/Rust C API cases at credits 65535,
+65536, 2^32 and 2^32+1, with ordinary/precompiled execution, accepted/unaccepted
+messages, unaffordable precompiled usage and a burn-then-throw control. Accepted
+transaction/account/shard roots must agree, and failures must emit no outputs;
+native encoding refusals must specifically reach transaction serialization.
+Each worker persists the original config/shard/message and binds their hashes.
+The purchasable-gas caller still references the serialized VarUInteger7 maximum;
+that unresolved coupling blocks acceptance of this candidate.
 
 The adapters are separate executables with 8 MiB input, 4,096 row, 2,048 byte/row
 and 1,023 bit cell bounds. The runner reuses the REL-02 subprocess supervisor for
