@@ -21,7 +21,7 @@ use std::io::Write as _;
 use ark_ff::PrimeField;
 use shielded_pool_circuit::field::Fr;
 use shielded_pool_circuit::{notes, wire};
-use shielded_pool_wallet::delivery::{self, Kind, Plaintext};
+use shielded_pool_wallet::delivery::{self, Kind, Plaintext, RECOVERY_PAYLOAD_SLOT};
 use shielded_pool_wallet::descriptor::Descriptor;
 use shielded_pool_wallet::import::{import, ChainSlot};
 use shielded_pool_wallet::keys::{fr_be32, PoolInstance};
@@ -111,7 +111,12 @@ fn recovery_vector(seed: &[u8; 32], other_seed: &[u8; 32], domain: Fr) -> String
             slot,
             sealed,
             output_data_hash,
-            note_body: notes::note_body_commitment(owner, Fr::from(amount), output_data_hash),
+            // A recovery template is published as the template hash the
+            // withdrawal signed, not as a note body.
+            note_body: match kind {
+                Kind::Recovery => wire::recovery_template_hash(owner, output_data_hash),
+                _ => notes::note_body_commitment(owner, Fr::from(amount), output_data_hash),
+            },
         });
     };
 
@@ -126,6 +131,14 @@ fn recovery_vector(seed: &[u8; 32], other_seed: &[u8; 32], domain: Fr) -> String
     note(&wallet, Kind::Ordinary, 4, 3_000, 0xa5, 1, false);
     // Ours, opens, and is then refused: the owner hash is not one we derive.
     note(&wallet, Kind::Ordinary, 2, 500, 0xa6, 0, true);
+    // A withdrawal's recovery template, under the slot section 3 fixes for
+    // it: recovered, carrying no balance until a bounce, and below the dummy
+    // so the dummy stays the highest index used.
+    note(&wallet, Kind::Recovery, 5, 0, 0xa7, RECOVERY_PAYLOAD_SLOT, false);
+    // The same, sealed under an output slot instead. It opens under that
+    // slot and is refused, so a wallet that sealed it there finds out; a
+    // refused payload does not consume its index.
+    note(&wallet, Kind::Recovery, 3, 0, 0xa8, 1, false);
 
     let outputs: Vec<ObservedOutput> = observed
         .iter()
@@ -274,8 +287,8 @@ fn main() {
     out.push_str("  \"plaintexts\": [\n");
     let cases: [(Kind, u128, u64, u8); 3] = [
         (Kind::Ordinary, 1_000_000_000, 3, 0),
-        (Kind::Dummy, 0, 4, 2),
-        (Kind::Recovery, 0, 5, 1),
+        (Kind::Dummy, 0, 4, 1),
+        (Kind::Recovery, 0, 5, RECOVERY_PAYLOAD_SLOT),
     ];
     for (position, (kind, amount, index, slot)) in cases.iter().enumerate() {
         if position > 0 {

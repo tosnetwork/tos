@@ -62,11 +62,11 @@ describe("mnemonic-only recovery", () => {
   it("leaves no trace of a payload addressed to somebody else", () => {
     const { wallet, outputs } = scenario();
     const recovered = recover(wallet, outputs);
-    // Six outputs went in. One of them is a stranger's: it does not open, so
+    // Eight outputs went in. One of them is a stranger's: it does not open, so
     // it is neither a note nor a diagnostic. A wallet that recorded it would
     // be telling its owner about somebody else's payment.
-    expect(outputs.length).toBe(6);
-    expect(recovered.notes.length + recovered.diagnostics.length).toBe(5);
+    expect(outputs.length).toBe(8);
+    expect(recovered.notes.length + recovered.diagnostics.length).toBe(7);
   });
 
   it("keeps both notes a reused descriptor produced, and burns the index", () => {
@@ -97,10 +97,12 @@ describe("mnemonic-only recovery", () => {
   it("finds the gaps as well as the notes", () => {
     const { wallet, outputs } = scenario();
     const recovered = recover(wallet, outputs);
-    // Indices 0, 4 and 6 are used; 1, 2, 3 and 5 are not. A wallet that
-    // counted rather than looked would reissue 1.
-    expect(usedIndices(recovered).map(Number)).toEqual([0, 4, 6]);
-    for (const index of [0n, 4n, 6n]) {
+    // Indices 0, 4, 5 and 6 are used -- 5 by a recovery template, which is
+    // recovered although it carries no balance; 1, 2 and 3 are not, because a
+    // refused payload consumes nothing. A wallet that counted rather than
+    // looked would reissue 1.
+    expect(usedIndices(recovered).map(Number)).toEqual([0, 4, 5, 6]);
+    for (const index of [0n, 4n, 5n, 6n]) {
       expect(mayIssue(recovered, index), `index ${index}`).toBe(false);
     }
   });
