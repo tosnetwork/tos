@@ -424,7 +424,8 @@ def validate_node_data_sync_modes(root: Path) -> None:
     )
     quiesce = source.split("fnquiesce(", 1)[1].split("structTargetRecords", 1)[0]
     require(
-        "Lane::Restore=>service.stop()," in quiesce and "Lane::Bootstrap=>service.freeze()" in quiesce,
+        "Lane::Restore=>service.stop()," in quiesce
+        and "Lane::Bootstrap=>service.freeze()" in quiesce,
         "storage-mode binding omitted: lane quiescence",
     )
     between(
@@ -459,7 +460,10 @@ def validate_node_data_sync_modes(root: Path) -> None:
     between(restore, "authorize_references(", "expose_staged(", target, "restore exposure")
     check_installed = recover.split("letcheck_installed=", 1)[1].split("};", 1)[0]
     for check, label in (
-        ("require_unexchanged_target(&request,Some(signed.manifest.permanent_cells))", "recover unexchanged target"),
+        (
+            "require_unexchanged_target(&request,Some(signed.manifest.permanent_cells))",
+            "recover unexchanged target",
+        ),
         (expected.removesuffix("?;"), "recover installed replacement"),
     ):
         require(check in check_installed, f"storage-mode binding omitted: {label}")
@@ -484,7 +488,13 @@ def validate_node_data_sync_modes(root: Path) -> None:
         "check_installed()?;",
         "recover stopped",
     )
-    between(recover, "authorize_references(", "expose_staged(", "check_installed()?;", "recover exposure")
+    between(
+        recover,
+        "authorize_references(",
+        "expose_staged(",
+        "check_installed()?;",
+        "recover exposure",
+    )
     between(start, "letsigned=", "context.service().freeze()?;", expected, "replacement freeze")
     require(
         "context.service().start_restore(frozen,signed.manifest.permanent_cells)?;" in start,
