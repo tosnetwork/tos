@@ -142,6 +142,10 @@ class ArchiveSlice : public td::actor::Actor {
   void get_handle(BlockIdExt block_id, td::Promise<BlockHandle> promise);
   void get_temp_handle(BlockIdExt block_id, td::Promise<ConstBlockHandle> promise);
   void get_file(ConstBlockHandle handle, FileReference ref_id, td::Promise<td::BufferSlice> promise);
+  // As get_file, but an entry larger than `data_limit` is refused with
+  // kFileOverReadLimit before its data is read.
+  void get_file_limited(ConstBlockHandle handle, FileReference ref_id, td::uint32 data_limit,
+                        td::Promise<td::BufferSlice> promise);
 
   /* from LTDB */
   void get_block_by_unix_time(AccountIdPrefixFull account_id, UnixTime ts, td::Promise<ConstBlockHandle> promise);

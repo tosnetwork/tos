@@ -73,7 +73,7 @@ td::uint64 Package::size() const {
   return fd_.get_size().move_as_ok() - header_size();
 }
 
-td::Result<std::pair<std::string, td::BufferSlice>> Package::read(td::uint64 offset) const {
+td::Result<std::pair<std::string, td::BufferSlice>> Package::read(td::uint64 offset, td::uint32 data_limit) const {
   offset += header_size();
 
   td::uint32 header[2];
@@ -88,6 +88,9 @@ td::Result<std::pair<std::string, td::BufferSlice>> Package::read(td::uint64 off
   offset += 8;
   auto fname_size = header[0] >> 16;
   auto data_size = header[1];
+  if (data_size > data_limit) {
+    return td::Status::Error(ErrorCode::error, td::Slice(kFileOverReadLimit));
+  }
 
   std::string fname(fname_size, '\0');
   TRY_RESULT(s2, fd_.pread(fname, offset));
