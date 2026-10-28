@@ -836,15 +836,28 @@ impl Engine {
 
     fn load_library_cell(&self, hash: SliceData) -> Result<Cell> {
         for library in &self.libraries {
-            if let Some(lib_bucket) = library.get(hash.clone())? {
-                let lib = lib_bucket.reference(0)?;
-                if !hash.contains_bytes(lib.repr_hash().as_slice()) {
-                    fail!(
-                        ExceptionCode::DictionaryError,
-                        "Librariy hash does not correspond to map key {:x}",
-                        hash
-                    )
+            let lib_bucket = match library.get(hash.clone()) {
+                Ok(Some(bucket)) => bucket,
+                Ok(None) => continue,
+                Err(error)
+                    if matches!(
+                        tvm_exception_code(&error),
+                        Some(ExceptionCode::CellUnderflow | ExceptionCode::DictionaryError)
+                    ) =>
+                {
+                    continue;
                 }
+                Err(error) => return Err(error),
+            };
+            let lib = match lib_bucket.reference(0) {
+                Ok(cell) => cell,
+                Err(error) if tvm_exception_code(&error) == Some(ExceptionCode::CellUnderflow) => {
+                    continue;
+                }
+                Err(error) => return Err(error),
+            };
+            // An unusable entry must not hide a valid entry in a later collection.
+            if hash.contains_bytes(lib.repr_hash().as_slice()) {
                 return Ok(lib);
             }
         }

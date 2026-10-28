@@ -127,20 +127,21 @@ fn raw_result(result: &Result<i32, Error>, stack: &Stack) -> anyhow::Result<(Str
 fn main() -> anyhow::Result<()> {
     let args: Vec<_> = env::args().collect();
     anyhow::ensure!(
-        args.len() == 2 || args.len() == 3,
-        "usage: vm-endstate scenarios.tsv [libraries.boc]"
+        (2..=6).contains(&args.len()),
+        "usage: vm-endstate scenarios.tsv [libraries.boc ...] (at most 4)"
     );
-    let libraries = if let Some(path) = args.get(2) {
+    let mut libraries = Vec::new();
+    let mut remaining = 1024 * 1024;
+    for path in &args[2..] {
         let mut bytes = Vec::new();
-        fs::File::open(path)?.take(1024 * 1024 + 1).read_to_end(&mut bytes)?;
+        fs::File::open(path)?.take(remaining as u64 + 1).read_to_end(&mut bytes)?;
         anyhow::ensure!(
-            !bytes.is_empty() && bytes.len() <= 1024 * 1024,
+            !bytes.is_empty() && bytes.len() <= remaining,
             "invalid library collection size"
         );
-        vec![HashmapE::with_hashmap(256, Some(read_single_root_boc(bytes)?))]
-    } else {
-        vec![]
-    };
+        remaining -= bytes.len();
+        libraries.push(HashmapE::with_hashmap(256, Some(read_single_root_boc(bytes)?)));
+    }
     let data = fs::read_to_string(&args[1])?;
     let mut count = 0;
     for line in data.lines() {

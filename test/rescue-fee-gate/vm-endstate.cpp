@@ -50,19 +50,19 @@ td::Ref<vm::Cell> read_boc(const std::string& field) {
   return c.move_as_ok();
 }
 
-td::Ref<vm::Cell> read_libraries(const std::string& path) {
-  constexpr std::size_t max_bytes = 1024 * 1024;
+td::Ref<vm::Cell> read_libraries(const std::string& path, std::size_t& remaining) {
   std::ifstream file(path, std::ios::binary);
   if (!file) {
     throw std::runtime_error("missing library collection");
   }
-  std::string bytes(max_bytes + 1, '\0');
+  std::string bytes(remaining + 1, '\0');
   file.read(bytes.data(), bytes.size());
   const auto size = file.gcount();
-  if (file.bad() || size <= 0 || static_cast<std::size_t>(size) > max_bytes) {
+  if (file.bad() || size <= 0 || static_cast<std::size_t>(size) > remaining) {
     throw std::runtime_error("invalid library collection size");
   }
   bytes.resize(size);
+  remaining -= size;
   auto root = vm::std_boc_deserialize(td::Slice(bytes), false, true);
   if (root.is_error()) {
     throw std::runtime_error("invalid library collection BOC");
@@ -175,12 +175,16 @@ std::string stack_text(const vm::Stack& stack) {
 
 int main(int argc, char** argv) {
   try {
-    if (argc != 2 && argc != 3) {
-      throw std::runtime_error("usage: vm-endstate scenarios.tsv [libraries.boc]");
+    if (argc < 2 || argc > 6) {
+      throw std::runtime_error("usage: vm-endstate scenarios.tsv [libraries.boc ...] (at most 4)");
     }
     vm::init_vm().ensure();
     SET_VERBOSITY_LEVEL(0);
-    auto libraries = argc == 3 ? read_libraries(argv[2]) : td::Ref<vm::Cell>{};
+    std::vector<td::Ref<vm::Cell>> libraries;
+    std::size_t remaining = 1024 * 1024;
+    for (int i = 2; i < argc; ++i) {
+      libraries.push_back(read_libraries(argv[i], remaining));
+    }
     std::ifstream file(argv[1]);
     if (!file) {
       throw std::runtime_error("missing scenarios");
@@ -203,8 +207,10 @@ int main(int argc, char** argv) {
       }
       push(stack, f[4]);
       vm::VmState st{vm::load_cell_slice_ref(read_boc(f[9])), version, std::move(stack), vm::GasLimits{budget, budget}};
-      if (!st.register_library_collection(libraries)) {
-        throw std::runtime_error("library collection was refused");
+      for (const auto& library : libraries) {
+        if (!st.register_library_collection(library)) {
+          throw std::runtime_error("library collection was refused");
+        }
       }
       // run() returns out of gas as 13, so ~13 reports it as -14, as transactions do.
       const int exit = ~st.run();
