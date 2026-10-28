@@ -23,6 +23,21 @@ int tos_proof_acquire_verify_live_persisted(const char *directory, int initializ
                                             size_t anchor_size, const char *request, size_t request_size,
                                             int64_t local_now, tos_proof_query_callback query, void *query_context,
                                             char *result, size_t result_capacity, size_t *result_size);
+/* Same lock and durable commit as live reads, but acquires full simulation
+ * inputs and locally executes the exact signed message. Requires an existing
+ * enrollment/checkpoint; never initializes or restores missing state. Message
+ * <=1 MiB, result capacity <=2 MiB; other bounds follow the simulation/acquisition
+ * ABI. The message is never passed to the query callback. A successful result
+ * is only local_estimate, never a receipt, balance cache update or outbox release.
+ * Return codes -1..-6 are the simulation ABI's errors; -7 persistence refused,
+ * -8 busy. Acquisition failure is -2. Valid outputs are cleared on every failure.
+ * Pointer ranges are valid and disjoint as in the embedded ABI. The trusted
+ * directory and callback lifetime/timeout rules above still apply.
+ */
+int tos_proof_acquire_simulate_self_pay_persisted(
+    const char *directory, const char *anchor, size_t anchor_size, const char *request, size_t request_size,
+    int64_t local_now, tos_proof_query_callback query, void *query_context, const uint8_t *message, size_t message_size,
+    char *result, size_t result_capacity, size_t *result_size);
 #ifdef __cplusplus
 }
 #endif

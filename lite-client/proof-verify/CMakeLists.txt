@@ -71,6 +71,13 @@ if(NOT CMAKE_CROSSCOMPILING)
   else()
     set(PROOF_PERSIST_LOADER LD_PRELOAD)
   endif()
+  add_test(NAME self-pay-simulation-persisted COMMAND ${Python3_EXECUTABLE}
+    ${PROJECT_SOURCE_DIR}/test/pq-native/self-pay-simulation-persisted-test.py
+    $<TARGET_FILE:tos-proof-embedded> ${PROJECT_SOURCE_DIR}/test/pq-native/data/self-pay-simulation-live)
+  add_test(NAME self-pay-simulation-persisted-sync-fault COMMAND ${CMAKE_COMMAND} -E env
+    "${PROOF_PERSIST_LOADER}=$<TARGET_FILE:proof-persisted-fsync-shim>"
+    ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/test/pq-native/self-pay-simulation-persisted-test.py
+    $<TARGET_FILE:tos-proof-embedded> ${PROJECT_SOURCE_DIR}/test/pq-native/data/self-pay-simulation-live --sync-fault)
   add_test(NAME proof-verify-persisted-sync-fault COMMAND ${CMAKE_COMMAND} -E env
     "${PROOF_PERSIST_LOADER}=$<TARGET_FILE:proof-persisted-fsync-shim>"
     ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/test/pq-native/proof-verify-persisted-test.py
