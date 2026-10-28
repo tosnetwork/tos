@@ -216,71 +216,198 @@ def test_genesis_without_the_ceremony_control(tmp_path: Path) -> None:
 
 # ===== D5: a handover that replaces half the weight =====
 
+IDS = {i: f"{i:02X}" * 32 for i in range(1, 7)}
+HANDOVER = 150  # seconds after 08:00:00, the new set's utime_since
+HANDOVER_UTIME = 1_800_000_000 + HANDOVER
 
-def mc_cert(t: int, cc: int) -> str:
-    return certificate(t, cc, "VVVV")
+
+def config34(since: int, members: dict[int, int]) -> str:
+    records = " ".join(
+        f"validator_pq validator_id:x{IDS[i]} key_id:x{'AB' * 32} weight:{w} adnl_addr:x{'CD' * 32}"
+        for i, w in members.items()
+    )
+    return f"ConfigParam(34) = ( validators_ext utime_since:{since} utime_until:{since + 600} total:4 main:4 total_weight:{sum(members.values())} list:( {records} ))"
+
+
+def fence_block_of(t: int, node: int) -> str:
+    return (
+        f"[ 3]{at(t)}[manager.cpp:1][!manager]\tsigning ledger: fence block of validator {IDS[node]} is "
+        f"(-1,8000000000000000,17):AA:BB (custody from 1800000000)"
+    )
 
 
 def handover_run(
-    tmp: Path, mode: str, mc_counters: list[int], incoming_own: dict[int, list[int]]
+    tmp: Path,
+    name: str,
+    mode: str,
+    *,
+    mc_certs: list[tuple[int, int]],
+    own_by: dict[int, list[tuple[int, int]]],
+    after_members: dict[int, int] | None = None,
+    m_id_records: bool = True,
+    identities: bool = True,
 ) -> Path:
-    """Incoming nodes 5 and 6 each fence at masterchain counter 10 (so 13 is the first above)."""
+    """Incoming nodes 5 and 6 fence at masterchain counter 10, so 13 is their first counter
+    above it; in sessions 13 and 14 they hold indices 2 and 3. `mc_certs` are (time, counter)
+    certificates signed by all four; `own_by` the incoming nodes' own signatures (time, counter)."""
     logs: dict[int, dict[str, list[str]]] = {
-        1: {"log": [mc_cert(100 + i, cc) for i, cc in enumerate(mc_counters)]}
+        1: {"log": [certificate(t, cc, "VVVV") for t, cc in mc_certs]}
     }
-    for node in (5, 6):
+    for node, idx in ((5, 2), (6, 3)):
         lines = [admission(50, 11, "fenced"), fence_line(60, f"{MC}=10 (0,8000000000000000)=4")]
-        for cc in incoming_own.get(node, []):
-            lines.append(own(200 + cc, cc, "notarize vote"))
+        if m_id_records:
+            lines.append(fence_block_of(55, node))
+        lines += [index(100, cc, idx) for cc in (11, 12, 13, 14)]
+        lines += [own(t, cc, "notarize vote") for t, cc in own_by.get(node, [])]
         logs[node] = {"log": lines}
-    summary = {"drill": "handover", "mode": mode, "nodes": 6, "incoming": [5, 6]}
-    name = f"{mode}-{'-'.join(map(str, mc_counters))}-{json.dumps(incoming_own, sort_keys=True).__hash__() & 0xFFFF}"
-    return write_nodes(tmp / name, logs, summary)
-
-
-def test_handover_passes_on_counters_above_every_fence(tmp_path: Path) -> None:
-    status, summary = analyze(
-        handover_run(tmp_path, "log", [10, 11, 12, 13, 14], {5: [13], 6: [14]}), "handover", "log"
+    summary: dict[str, Any] = {"drill": "handover", "mode": mode, "nodes": 6}
+    if identities:
+        summary["incoming_validators"] = {"5": IDS[5], "6": IDS[6]}
+        summary["outgoing_validators"] = {"3": IDS[3], "4": IDS[4]}
+    directory = write_nodes(tmp / name, logs, summary)
+    (directory / "config34-before.txt").write_text(
+        config34(1_800_000_000, {1: 100, 2: 100, 3: 100, 4: 100})
     )
+    members = after_members if after_members is not None else {1: 100, 2: 100, 5: 100, 6: 100}
+    (directory / "config34-after.txt").write_text(config34(HANDOVER_UTIME, members))
+    return directory
+
+
+GOOD_CERTS = [(200, 13), (230, 14)]
+GOOD_OWN = {5: [(201, 13)], 6: [(231, 14)]}
+
+
+def test_handover_passes_with_identities_roster_and_counters(tmp_path: Path) -> None:
+    status, summary = analyze(
+        handover_run(tmp_path, "pass", "log", mc_certs=GOOD_CERTS, own_by=GOOD_OWN),
+        "handover",
+        "log",
+    )
+    assert summary["verdict"]["roster"]["transition"] is True
     assert summary["verdict"]["passed"] is True
     assert status == 0
 
 
-def test_handover_that_never_crosses_the_counters_fails(tmp_path: Path) -> None:
-    # Up for a long time, but no certificate above cc(M) + 2: DRILL_FAILED, not a pass.
-    status, summary = analyze(
-        handover_run(tmp_path, "log", [10, 11, 12], {5: [], 6: []}), "handover", "log"
+def test_handover_without_identities_fails(tmp_path: Path) -> None:
+    run = handover_run(
+        tmp_path, "no-ids", "log", mc_certs=GOOD_CERTS, own_by=GOOD_OWN, identities=False
     )
+    status, summary = analyze(run, "handover", "log")
+    assert summary["verdict"]["identities_and_fence_records"] is False
+    assert status == 3
+
+
+def test_handover_without_fence_block_records_fails(tmp_path: Path) -> None:
+    run = handover_run(
+        tmp_path, "no-m", "log", mc_certs=GOOD_CERTS, own_by=GOOD_OWN, m_id_records=False
+    )
+    status, summary = analyze(run, "handover", "log")
+    assert summary["verdict"]["identities_and_fence_records"] is False
+    assert status == 3
+
+
+def test_handover_with_only_pre_handover_activity_fails(tmp_path: Path) -> None:
+    # Certificates and own signatures above the fence, all before the new set took office.
+    run = handover_run(
+        tmp_path,
+        "pre",
+        "log",
+        mc_certs=[(120, 13), (130, 14)],
+        own_by={5: [(121, 13)], 6: [(131, 14)]},
+    )
+    status, _ = analyze(run, "handover", "log")
+    assert status == 3
+
+
+def test_handover_without_a_roster_change_fails(tmp_path: Path) -> None:
+    run = handover_run(
+        tmp_path,
+        "same",
+        "log",
+        mc_certs=GOOD_CERTS,
+        own_by=GOOD_OWN,
+        after_members={1: 100, 2: 100, 3: 100, 4: 100},
+    )
+    status, summary = analyze(run, "handover", "log")
+    assert summary["verdict"]["roster"]["transition"] is False
+    assert status == 3
+
+
+def test_handover_below_half_the_weight_fails(tmp_path: Path) -> None:
+    run = handover_run(
+        tmp_path,
+        "light",
+        "log",
+        mc_certs=GOOD_CERTS,
+        own_by=GOOD_OWN,
+        after_members={1: 100, 2: 100, 5: 10, 6: 10},
+    )
+    status, summary = analyze(run, "handover", "log")
+    assert summary["verdict"]["roster"]["incoming_weight_share"] < 0.5
+    assert status == 3
+
+
+def test_handover_that_never_crosses_the_counters_fails(tmp_path: Path) -> None:
+    run = handover_run(tmp_path, "stuck", "log", mc_certs=[(200, 11), (230, 12)], own_by={})
+    status, summary = analyze(run, "handover", "log")
     assert summary["verdict"]["passed"] is False
     assert status == 3
 
 
 def test_handover_signature_at_or_below_the_fence_fails(tmp_path: Path) -> None:
+    own_by = {5: [(180, 12), (201, 13)], 6: [(231, 14)]}
     status, _ = analyze(
-        handover_run(tmp_path, "log", [10, 13, 14], {5: [12, 13], 6: [14]}), "handover", "log"
+        handover_run(tmp_path, "within", "log", mc_certs=GOOD_CERTS, own_by=own_by),
+        "handover",
+        "log",
     )
     assert status == 3
 
 
 def test_handover_incoming_identity_that_never_signs_fails(tmp_path: Path) -> None:
+    own_by = {5: [(201, 13)]}
     status, _ = analyze(
-        handover_run(tmp_path, "log", [10, 13, 14], {5: [13], 6: []}), "handover", "log"
+        handover_run(tmp_path, "silent", "log", mc_certs=[(200, 13)], own_by=own_by),
+        "handover",
+        "log",
     )
     assert status == 3
 
 
 def test_handover_control_shows_the_stall(tmp_path: Path) -> None:
-    status, summary = analyze(
-        handover_run(tmp_path, "control", [10, 11, 12], {}), "handover", "control"
-    )
+    run = handover_run(tmp_path, "stall", "control", mc_certs=[(200, 11), (230, 12)], own_by={})
+    status, summary = analyze(run, "handover", "control")
     assert summary["verdict"]["stalled_at_or_below_fence"] is True
     assert status == 0
-    status, _ = analyze(handover_run(tmp_path, "control", [10, 13], {}), "handover", "control")
+    run = handover_run(tmp_path, "moved-on", "control", mc_certs=[(200, 13)], own_by={})
+    status, _ = analyze(run, "handover", "control")
     assert status == 4
 
 
+def test_handover_control_needs_the_roster_change_and_records(tmp_path: Path) -> None:
+    runs = [
+        handover_run(
+            tmp_path,
+            "ctl-same",
+            "control",
+            mc_certs=[(200, 11)],
+            own_by={},
+            after_members={1: 100, 2: 100, 3: 100, 4: 100},
+        ),
+        handover_run(
+            tmp_path, "ctl-no-m", "control", mc_certs=[(200, 11)], own_by={}, m_id_records=False
+        ),
+        handover_run(
+            tmp_path, "ctl-no-ids", "control", mc_certs=[(200, 11)], own_by={}, identities=False
+        ),
+    ]
+    for run in runs:
+        status, _ = analyze(run, "handover", "control")
+        assert status == 4, run.name
+
+
 def test_a_summary_of_another_drill_is_refused(tmp_path: Path) -> None:
-    directory = handover_run(tmp_path, "log", [13], {})
+    directory = handover_run(tmp_path, "other-drill", "log", mc_certs=[], own_by={})
     done = subprocess.run(
         [
             sys.executable,

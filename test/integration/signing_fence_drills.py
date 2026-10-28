@@ -54,6 +54,7 @@ import json
 import logging
 import re
 import shutil
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -186,80 +187,173 @@ def judge_genesis(mode: str, summary: dict[str, Any]) -> int:
 # ===== D5: a handover that replaces half the weight =====
 
 
+CONFIG34_BEFORE = "config34-before.txt"
+CONFIG34_AFTER = "config34-after.txt"
+INDEX_LINE = re.compile(
+    r"of (?P<shard>\(\S+\)) catchain (?P<cc>\d+): local validator index (?P<idx>\d+)"
+)
+
+
+def parse_config34(text: str) -> dict[str, Any] | None:
+    """utime_since and {validator id: weight} from lite-client `getconfig 34` output."""
+    since = re.search(r"utime_since:(\d+)", text)
+    records = re.split(r"\bvalidator_pq\b", text)[1:]
+    weights: dict[str, int] = {}
+    for record in records:
+        vid = re.search(r"validator_id:x([0-9A-Fa-f]{64})", record)
+        weight = re.search(r"\bweight:(\d+)", record)
+        if vid is None or weight is None:
+            return None
+        weights[vid.group(1).upper()] = int(weight.group(1))
+    if since is None or not weights:
+        return None
+    return {"utime_since": int(since.group(1)), "weights": weights}
+
+
 def analyze_handover(working_dir: Path, summary: dict[str, Any]) -> None:
-    """Counter-based: per incoming node, its fence, its admissions and its own signatures; the
-    masterchain counters certificates were obtained in, on every node."""
-    count = int(summary["nodes"])
+    """Counter-based and bound to identities. A pass needs, for the run's named incoming
+    and outgoing validator ids:
+      - each incoming identity's own fence-block record (M_id) and its fence counters;
+      - the roster transition in ConfigParam 34: before, every outgoing id and no incoming one;
+        after, every incoming id and no outgoing one, with the incoming ids holding at least
+        half the weight; its utime_since is the handover time;
+      - after the handover, a masterchain certificate in a session above each incoming
+        identity's cc(M) + 2 carrying that identity's own signature;
+      - own signatures by each incoming identity above its fence and none at or below.
+    """
+    count = int(summary.get("nodes", 6))
     dirs = node_dirs(working_dir, count)
+    incoming_ids: dict[str, str] = {
+        str(k): v.upper() for k, v in (summary.get("incoming_validators") or {}).items()
+    }
+    outgoing_ids: dict[str, str] = {
+        str(k): v.upper() for k, v in (summary.get("outgoing_validators") or {}).items()
+    }
+
+    def read(name: str) -> dict[str, Any] | None:
+        path = working_dir / name
+        return parse_config34(path.read_text()) if path.is_file() else None
+
+    before, after = read(CONFIG34_BEFORE), read(CONFIG34_AFTER)
+    roster: dict[str, Any] = {"before": before, "after": after, "transition": False}
+    handover_at = None
+    if before and after and incoming_ids and outgoing_ids:
+        total_after = sum(after["weights"].values())
+        incoming_weight = sum(after["weights"].get(v, 0) for v in incoming_ids.values())
+        roster.update(
+            incoming_weight_share=incoming_weight / total_after if total_after else 0.0,
+            outgoing_in_before=all(v in before["weights"] for v in outgoing_ids.values()),
+            incoming_absent_before=all(v not in before["weights"] for v in incoming_ids.values()),
+            incoming_in_after=all(v in after["weights"] for v in incoming_ids.values()),
+            outgoing_absent_after=all(v not in after["weights"] for v in outgoing_ids.values()),
+        )
+        roster["transition"] = (
+            after["utime_since"] > before["utime_since"]
+            and roster["outgoing_in_before"]
+            and roster["incoming_absent_before"]
+            and roster["incoming_in_after"]
+            and roster["outgoing_absent_after"]
+            and roster["incoming_weight_share"] >= 0.5
+        )
+        if roster["transition"]:
+            handover_at = float(after["utime_since"])
     certs = certificates(dirs)
-    mc_cert_counters = sorted({c["cc"] for c in certs if c["shard"] == MC})
     incoming = []
-    for node in summary["incoming"]:
-        lines = [x for path in sorted(dirs[node - 1].glob("log*")) for x in read_lines(path)]
-        fences = []
-        for line in lines:
-            if m := FENCE.search(line):
-                fences.append({s: int(c) for s, c in COUNTER.findall(m["counters"])})
-        fence_mc = fences[0].get(MC) if fences else None
-        admissions = {}
-        for line in lines:
-            if m := ADMISSION.search(line):
-                admissions.setdefault(f"{m['shard']}.{m['cc']}", m["verdict"])
+    for node, vid in sorted(incoming_ids.items()):
+        lines = [x for path in sorted(dirs[int(node) - 1].glob("log*")) for x in read_lines(path)]
+        m_id = [
+            m["block"]
+            for line in lines
+            if (m := FENCE_BLOCK_OF.search(line)) and m["validator"].upper() == vid
+        ]
+        fences = [
+            {s: int(c) for s, c in COUNTER.findall(m["counters"])}
+            for line in lines
+            if (m := FENCE.search(line))
+        ]
+        counters = fences[0] if fences else {}
+        fence_mc = counters.get(MC)
+        index = {
+            (m["shard"], int(m["cc"])): int(m["idx"])
+            for line in lines
+            if (m := INDEX_LINE.search(line))
+        }
         own_within, own_above = [], []
         for line in lines:
             if not (m := OWN.search(line)):
                 continue
             shard, cc = m["shard"], int(m["cc"])
-            # The fence counter of this lineage: the shard's own entry, or any entry of its workchain.
-            counters = fences[0] if fences else {}
             entry = counters.get(shard)
             if entry is None:
                 related = [c for s, c in counters.items() if s.split(",")[0] == shard.split(",")[0]]
                 entry = max(related) if related else None
             item = {"shard": shard, "cc": cc, "kind": m["kind"], "at": stamp(line)}
-            if entry is None or cc <= entry + 2:
-                own_within.append(item)
-            else:
-                own_above.append(item)
-        recorded = [m["validator"] for line in lines if (m := FENCE_BLOCK_OF.search(line))]
-        incoming.append(
+            (own_within if entry is None or cc <= entry + 2 else own_above).append(item)
+        signed_after_handover = sorted(
             {
-                "node": node,
-                "fence_block_recorded_for": recorded,
-                "fence_counters": fences[0] if fences else None,
-                "fence_mc": fence_mc,
-                "admissions": admissions,
-                "own_signatures_at_or_below_fence": own_within,
-                "own_signatures_above_fence": own_above,
-                "mc_certificate_above_fence": fence_mc is not None
-                and any(cc > fence_mc + 2 for cc in mc_cert_counters),
+                c["cc"]
+                for c in certs
+                if c["shard"] == MC
+                and fence_mc is not None
+                and c["cc"] > fence_mc + 2
+                and handover_at is not None
+                and c["at"] is not None
+                and c["at"] >= handover_at
+                and (idx := index.get((MC, c["cc"]))) is not None
+                and c["votes"][idx : idx + 1] == "V"
             }
         )
-    started_mc = sorted(
-        {
-            cc
-            for d in dirs
-            for path in d.glob("log*")
-            for shard, cc in keys(STARTED, read_lines(path))
-            if shard == MC
-        }
+        own_above_after = [
+            o
+            for o in own_above
+            if handover_at is not None and o["at"] is not None and o["at"] >= handover_at
+        ]
+        incoming.append(
+            {
+                "node": int(node),
+                "validator": vid,
+                "fence_block_record": m_id,
+                "fence_counters": counters or None,
+                "fence_mc": fence_mc,
+                "masterchain_sessions_signed_above_fence_after_handover": signed_after_handover,
+                "own_signatures_at_or_below_fence": own_within,
+                "own_signatures_above_fence_after_handover": own_above_after,
+            }
+        )
+    identities_ok = (
+        bool(incoming)
+        and len(incoming) == len(incoming_ids)
+        and all(i["fence_block_record"] and i["fence_mc"] is not None for i in incoming)
     )
     lowest_fence = min((i["fence_mc"] for i in incoming if i["fence_mc"] is not None), default=None)
+    mc_after_handover = sorted(
+        {
+            c["cc"]
+            for c in certs
+            if c["shard"] == MC
+            and handover_at is not None
+            and c["at"] is not None
+            and c["at"] >= handover_at
+        }
+    )
     summary["verdict"] = {
-        "masterchain_certificate_counters": mc_cert_counters,
-        "masterchain_started_counters": started_mc,
+        "roster": roster,
+        "handover_at": handover_at,
         "incoming": incoming,
-        "every_fence_recorded": all(i["fence_mc"] is not None for i in incoming),
-        "passed": bool(incoming)
+        "identities_and_fence_records": identities_ok,
+        "masterchain_certificate_counters_after_handover": mc_after_handover,
+        "passed": identities_ok
+        and roster["transition"] is True
         and all(
-            i["fence_mc"] is not None
-            and i["mc_certificate_above_fence"]
-            and i["own_signatures_above_fence"]
+            i["masterchain_sessions_signed_above_fence_after_handover"]
+            and i["own_signatures_above_fence_after_handover"]
             and not i["own_signatures_at_or_below_fence"]
             for i in incoming
         ),
-        "stalled_at_or_below_fence": lowest_fence is not None
-        and not any(cc > lowest_fence + 2 for cc in mc_cert_counters),
+        "stalled_at_or_below_fence": identities_ok
+        and roster["transition"] is True
+        and lowest_fence is not None
+        and not any(cc > lowest_fence + 2 for cc in mc_after_handover),
     }
 
 
@@ -268,14 +362,16 @@ def judge_handover(mode: str, summary: dict[str, Any]) -> int:
     if mode == "log":
         met = verdict["passed"] is True
         expected = (
-            "every incoming identity: masterchain certificates above cc(M) + 2, own signatures above "
-            "its fence and none at or below"
+            "named incoming identities with fence records, a >= 50% weight roster transition in "
+            "ConfigParam 34, and after it masterchain certificates above each cc(M) + 2 signed by "
+            "the incoming identities, own signatures above the fence and none at or below"
         )
         failure = EXIT_LOG_FAILED
     else:
-        met = verdict["every_fence_recorded"] and verdict["stalled_at_or_below_fence"] is True
+        met = verdict["stalled_at_or_below_fence"] is True
         expected = (
-            "the masterchain made no certificate above the incoming set's fence: the handover stall"
+            "named incoming identities with fence records and the roster transition, then no "
+            "masterchain certificate above the incoming set's fence: the handover stall"
         )
         failure = EXIT_CONTROL_UNDETECTED
     status = EXIT_EXPECTED if met else failure
@@ -447,6 +543,237 @@ async def run_genesis(args: argparse.Namespace, working_dir: Path, summary: dict
         await sample(nodes[0], args.observe, args.min_seqno, samples["after-ceremony"])
 
 
+# The stake each staker sends, as the local election driver stakes; the fee covers the
+# elector's processing, and the wallet keeps a reserve for its own fees.
+STAKE = 11_000 * 10**9
+STAKE_FEE = 1_200_000_000
+WALLET_FUNDS = STAKE + STAKE_FEE + 10 * 10**9
+
+
+async def lite_command(lite: list[str], config: Path, command: str) -> str:
+    def run() -> str:
+        argv = [*lite, "-C", str(config), "-v", "0", "-c", "time", "-c", command, "-c", "quit"]
+        done = subprocess.run(argv, capture_output=True, text=True, timeout=60, check=False)
+        return done.stdout + done.stderr
+
+    return await asyncio.to_thread(run)
+
+
+async def lite_runmethod_int(lite: list[str], config: Path, address: str, method: str) -> int:
+    output = await lite_command(lite, config, f"runmethod {address} {method}")
+    match = re.search(r"result:\s*\[\s*(-?(?:0x[0-9a-fA-F]+|\d+))", output)
+    if match is None:
+        raise RuntimeError(f"cannot parse {method}: {output[-500:]}")
+    return int(match.group(1), 0)
+
+
+async def send_and_wait(wallet: Any, message: Any, what: str, timeout: float = 180) -> None:
+    """Sends one wallet message and waits until the wallet's seqno moves past it."""
+    seqno = (await wallet.current).seqno
+    await wallet.send(message, seqno)
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        await asyncio.sleep(2)
+        try:
+            if (await wallet.current).seqno > seqno:
+                return
+        except Exception:  # an account between blocks
+            continue
+    raise SystemExit(f"DRILL_FAILED {what}: the wallet's message was not processed")
+
+
+async def run_handover(
+    args: argparse.Namespace, working_dir: Path, summary: dict[str, Any]
+) -> None:
+    """D5 live: four genesis validators V1..V4 and two fresh identities N5, N6 (no ledger, no
+    ceremony) on a disposable chain with short elections. At the first election V1, V2, N5
+    and N6 stake and V3, V4 do not, so the incoming set replaces half the weight."""
+    import nacl.signing
+    from contract import WalletV1Blueprint
+    from pytosiq_core import Cell, CurrencyCollection, InternalMsgInfo, MessageAny, WalletMessage
+    from tosapi import tos_api
+    from tostester.network import StartOptions
+    from tostester.pq_election_fixture import (
+        ELECTOR,
+        build_production_pool_stake_order,
+        elector_body_from_pool_order,
+    )
+    from tostester.pq_initial_validator import deterministic_pq_initial_validator_seed
+
+    log = logging.getLogger("drill")
+    builder = args.stake_order_builder.resolve()
+    if not builder.is_file():
+        raise SystemExit(f"DRILL_FAILED no stake order builder at {builder}")
+    stakers = [1, 2, 5, 6]
+    summary.update(nodes=6, incoming=[5, 6], stakers=stakers, elected_for=args.elected_for)
+    async with tostester_network(args, working_dir) as network:
+        config = network.config
+        config.validator_economics_profile = True
+        config.validator_election_stage_a_profile = True
+        config.validator_election_stage_a_elected_for = args.elected_for
+        config.validator_election_stage_a_start_before = args.elected_for // 2
+        config.validator_election_experiment_faucet_balance_nanotos = 1_000_000_000 * 10**9
+        config.bootstrap_validator_set_valid_for = args.elected_for
+        dht = network.create_dht_node()
+        wallets = {
+            i: WalletV1Blueprint(
+                workchain=-1,
+                private_key=nacl.signing.SigningKey(
+                    hashlib.sha256(f"handover-wallet-{i}".encode()).digest()
+                ),
+            )
+            for i in range(1, 7)
+        }
+        nodes = []
+        for i in range(1, 7):
+            node = network.create_full_node()
+            if i <= 4:
+                node.make_initial_pq_validator(
+                    wallets[i].address.hash_part, deterministic_pq_initial_validator_seed(i)
+                )
+            else:
+                # A fresh identity: no ledger and no ceremony.
+                node.make_noninitial_pq_validator(
+                    wallets[i].address.hash_part, deterministic_pq_initial_validator_seed(i)
+                )
+            node.announce_to(dht)
+            nodes.append(node)
+        engine_args = tuple(args.engine_arg)
+        async with asyncio.TaskGroup() as group:
+            group.create_task(dht.run())
+            for node in nodes:
+                group.create_task(node.run(StartOptions(args=engine_args)))
+        summary["started_at"] = time.time()
+        lite_config = working_dir / "lite-client.json"
+        lite_config.write_text(nodes[0].liteserver_config.to_json())
+        lite = [str(args.build.resolve() / "lite-client/lite-client")]
+        client = await nodes[0].toslib_client()
+        await network.wait_mc_block(3)
+        summary["incoming_validators"] = {
+            str(i): wallets[i].address.hash_part.hex().upper() for i in (5, 6)
+        }
+        summary["outgoing_validators"] = {
+            str(i): wallets[i].address.hash_part.hex().upper() for i in (3, 4)
+        }
+        config34_before = await lite_command(lite, lite_config, "getconfig 34")
+        (working_dir / CONFIG34_BEFORE).write_text(config34_before)
+        since_before = (parse_config34(config34_before) or {}).get("utime_since")
+        if since_before is None:
+            raise SystemExit("DRILL_FAILED cannot read ConfigParam 34 before the election")
+        faucet = network.zerostate.main_wallet(client)
+        for i in stakers:
+            await send_and_wait(
+                faucet,
+                WalletMessage(
+                    send_mode=3,
+                    message=MessageAny(
+                        info=InternalMsgInfo(
+                            ihr_disabled=True,
+                            bounce=False,
+                            bounced=False,
+                            src=faucet.address,
+                            dest=wallets[i].address,
+                            value=CurrencyCollection(WALLET_FUNDS),
+                            ihr_fee=0,
+                            fwd_fee=0,
+                            created_lt=0,
+                            created_at=0,
+                        ),
+                        init=wallets[i].state_init,
+                        body=Cell.empty(),
+                    ),
+                ),
+                f"funding the wallet of node {i}",
+            )
+        log.info("staker wallets deployed and funded")
+        election = 0
+        deadline = time.monotonic() + 3 * args.elected_for
+        while time.monotonic() < deadline and not election:
+            try:
+                election = await lite_runmethod_int(
+                    lite, lite_config, f"-1:{'33' * 32}", "active_election_id"
+                )
+            except RuntimeError:
+                election = 0
+            if not election:
+                await asyncio.sleep(5)
+        if not election:
+            raise SystemExit("DRILL_FAILED no election opened")
+        summary["election"] = election
+        submitted = []
+        for i in stakers:
+            node = nodes[i - 1]
+            request = tos_api.Engine_validator_createPqStakeAuthorizationRequest(
+                election_date=election,
+                max_factor=1 << 16,
+                adnl_addr=node.adnl_identity,
+                src_addr=wallets[i].address.hash_part,
+            )
+            response, _, _ = await node.engine_console.request_with_raw(request)
+            auth = request.parse_result(response)
+            order = await asyncio.to_thread(
+                build_production_pool_stake_order,
+                builder,
+                query_id=(election << 8) | i,
+                stake_amount=STAKE,
+                stake_at=election,
+                max_factor=1 << 16,
+                adnl_addr=node.adnl_identity,
+                algorithm_id=1,
+                public_key=auth.public_key,
+                signature=auth.signature,
+            )
+            wallet = wallets[i].materialize(client)
+            await send_and_wait(
+                wallet,
+                WalletMessage(
+                    send_mode=3,
+                    message=MessageAny(
+                        info=InternalMsgInfo(
+                            ihr_disabled=True,
+                            bounce=True,
+                            bounced=False,
+                            src=wallet.address,
+                            dest=ELECTOR,
+                            value=CurrencyCollection(STAKE + STAKE_FEE),
+                            ihr_fee=0,
+                            fwd_fee=0,
+                            created_lt=0,
+                            created_at=0,
+                        ),
+                        init=None,
+                        body=elector_body_from_pool_order(order),
+                    ),
+                ),
+                f"the stake of node {i}",
+            )
+            submitted.append(i)
+        summary["stakes_submitted"] = submitted
+        summary["stakes_submitted_at"] = time.time()
+        log.info(f"stakes of nodes {submitted} sent in election {election}")
+        # The roster transition, as ConfigParam 34 records it once the new set takes office.
+        deadline = time.monotonic() + 3 * args.elected_for
+        while True:
+            text = await lite_command(lite, lite_config, "getconfig 34")
+            parsed = parse_config34(text)
+            if parsed and parsed["utime_since"] > since_before:
+                (working_dir / CONFIG34_AFTER).write_text(text)
+                break
+            if time.monotonic() > deadline:
+                raise SystemExit("DRILL_FAILED the elected set never took office")
+            await asyncio.sleep(10)
+        # Counters, not time, decide the verdict; the observation only bounds the run. A log
+        # run stops early once the analysis passes.
+        deadline = time.monotonic() + args.observe
+        while time.monotonic() < deadline:
+            await asyncio.sleep(30)
+            probe = dict(summary)
+            analyze_handover(working_dir, probe)
+            if args.mode == "log" and probe["verdict"]["passed"]:
+                break
+        summary["observed_until"] = time.time()
+
+
 def collect_handover(source: Path, working_dir: Path, count: int) -> None:
     for index in range(1, count + 1):
         node = source / f"node{index}"
@@ -486,6 +813,21 @@ async def main() -> int:
     parser.add_argument(
         "--incoming", default="5,6", help="handover: the incoming nodes, comma-separated"
     )
+    parser.add_argument(
+        "--elected-for", type=int, default=600, help="handover: validator set lifetime, seconds"
+    )
+    parser.add_argument(
+        "--stake-order-builder",
+        type=Path,
+        default=Path("/tos/build/fix-322/cargo-target/release/examples/pq_pool_stake_order"),
+        help="handover: the tosctl pq_pool_stake_order example binary",
+    )
+    parser.add_argument(
+        "--engine-arg",
+        action="append",
+        default=[],
+        help="handover: an extra validator-engine argument for every node (repeatable)",
+    )
     args = parser.parse_args()
     working_dir = args.working_dir.resolve()
 
@@ -517,9 +859,19 @@ async def main() -> int:
         "working_dir": str(working_dir),
     }
     try:
-        if args.drill == "handover":
-            if args.collect_from is None:
-                raise SystemExit("DRILL_FAILED handover needs --collect-from")
+        if args.drill == "handover" and args.collect_from is None:
+            if args.build is None:
+                raise SystemExit("DRILL_FAILED --build is required for a live drill")
+            summary["build"] = str(args.build.resolve())
+            await run_handover(args, working_dir, summary)
+        elif args.drill == "handover":
+            source = args.collect_from.resolve()
+            identities = json.loads((source / "handover-identities.json").read_text())
+            summary["incoming_validators"] = identities["incoming"]
+            summary["outgoing_validators"] = identities["outgoing"]
+            for name in (CONFIG34_BEFORE, CONFIG34_AFTER):
+                if (source / name).is_file():
+                    shutil.copy2(source / name, working_dir / name)
             summary["nodes"] = args.nodes
             summary["incoming"] = [int(x) for x in args.incoming.split(",")]
             summary["collected_from"] = str(args.collect_from.resolve())
