@@ -7,25 +7,52 @@
 
 namespace tos::services {
 using validator::RootDb;
-td::Result<validator::ConstBlockHandle> IndexReader::masterchain(uint32_t seqno) {
-  return query<validator::ConstBlockHandle>([seqno](auto db, auto promise) {
-    td::actor::send_closure(db, &RootDb::get_block_by_seqno, AccountIdPrefixFull(masterchainId, shardIdAll), seqno,
-                            std::move(promise));
-  });
+
+size_t block_charge(const td::Result<td::Ref<validator::BlockData>>& result) {
+  if (result.is_error() || result.ok().is_null()) {
+    return kSourceResultOverheadBytes;
+  }
+  return result.ok()->data().size() + kSourceResultOverheadBytes;
 }
-td::Result<validator::BlockHandle> IndexReader::handle(BlockIdExt id) {
+
+td::Result<validator::ConstBlockHandle> IndexReader::masterchain(uint32_t seqno, Context context) {
+  return query<validator::ConstBlockHandle>(
+      [seqno](auto db, auto promise) {
+        td::actor::send_closure(db, &RootDb::get_block_by_seqno, AccountIdPrefixFull(masterchainId, shardIdAll), seqno,
+                                std::move(promise));
+      },
+      context);
+}
+td::Result<validator::BlockHandle> IndexReader::handle(BlockIdExt id, Context context) {
   return query<validator::BlockHandle>(
-      [id](auto db, auto promise) { td::actor::send_closure(db, &RootDb::get_block_handle, id, std::move(promise)); });
+      [id](auto db, auto promise) { td::actor::send_closure(db, &RootDb::get_block_handle, id, std::move(promise)); },
+      context);
 }
-td::Result<td::Ref<vm::Cell>> IndexReader::block(validator::ConstBlockHandle handle) {
-  TRY_RESULT(data, query<td::Ref<validator::BlockData>>([handle](auto db, auto promise) {
-               td::actor::send_closure(db, &RootDb::get_block_data, handle, std::move(promise));
-             }));
+td::Result<std::shared_ptr<SourceReply<td::Ref<validator::BlockData>>>> IndexReader::submit_block(
+    validator::ConstBlockHandle handle, Context context) {
+  return submit<td::Ref<validator::BlockData>>(
+      [handle](auto db, auto promise) {
+        td::actor::send_closure(db, &RootDb::get_block_data, handle, std::move(promise));
+      },
+      context, kSourceBlockReserveBytes,
+      [](const td::Result<td::Ref<validator::BlockData>>& r) { return block_charge(r); });
+}
+td::Result<td::Ref<vm::Cell>> IndexReader::checked_root(const validator::ConstBlockHandle& handle,
+                                                        const td::Ref<validator::BlockData>& data) {
   if (data.is_null() || data->root_cell().is_null() ||
       data->root_cell()->get_hash().as_slice() != handle->id().root_hash.as_slice()) {
     return td::Status::Error("source block root hash mismatch");
   }
   return data->root_cell();
+}
+td::Result<td::Ref<vm::Cell>> IndexReader::block(validator::ConstBlockHandle handle, Context context) {
+  TRY_RESULT(reply, submit_block(handle, context));
+  TRY_RESULT(data, take(*reply, context.lane == SourceLane::Consumer));
+  return checked_root(handle, data);
+}
+td::Result<std::vector<BlockIdExt>> IndexReader::shard_heads(validator::ConstBlockHandle master, Context context) {
+  TRY_RESULT(root, block(std::move(master), context));
+  return index_shard_heads(std::move(root));
 }
 td::Result<td::Ref<vm::Cell>> IndexReader::state(validator::ConstBlockHandle handle) {
   return query<td::Ref<vm::Cell>>([handle](auto db, auto promise) {
