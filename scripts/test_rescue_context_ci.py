@@ -17,6 +17,28 @@ SPEC.loader.exec_module(guard)
 
 
 class RescueCiTests(unittest.TestCase):
+    def test_library_context_cannot_be_deleted_or_limited_to_one_architecture(self):
+        block = next(
+            b
+            for b in guard.blocks(self.workflow)
+            if b.startswith("      - name: Verify SHA256C library resolution\n")
+        )
+        for line in (x for x in block.splitlines(keepends=True) if "          python " in x):
+            with self.subTest(command=line):
+                with self.assertRaisesRegex(ValueError, "library context controls"):
+                    self.check(self.workflow.replace(line, ""))
+        with self.assertRaisesRegex(ValueError, "library context controls"):
+            self.check(
+                self.workflow.replace(
+                    block,
+                    block.replace(
+                        "matrix.suite)\n", "matrix.suite) && matrix.runner == 'ubuntu-24.04'\n"
+                    ),
+                )
+            )
+        for runner in guard.RUNNERS:
+            self.assertIn("Verify SHA256C library resolution", self.check()[("vm-ingress", runner)])
+
     def test_original_wallet_root_gates_cannot_be_deleted(self):
         lines = self.workflow.splitlines(keepends=True)
         commands = [

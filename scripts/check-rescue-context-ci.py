@@ -306,6 +306,7 @@ def validate(text, contract, source_guard):
                     "Retain original wallet variant roots",
                     "Verify original auth factory roots",
                     "Retain original auth factory roots",
+                    "Verify SHA256C library resolution",
                     "Compile cache statistics",
                     "Record exact source and public evidence hashes",
                 },
@@ -314,8 +315,11 @@ def validate(text, contract, source_guard):
     validate_generated_roots(prefix, suites_text, parity, step_map)
     validate_wallet_roots(suites_text, parity, step_map)
     validate_auth_roots(prefix, parity, step_map)
+    validate_library_context(step_map)
     coverage = {pair: [row["name"] for row in steps if selected(row, *pair)] for pair in pairs()}
     for pair in coverage:
+        if pair[0] == "vm-ingress":
+            coverage[pair].append("Verify SHA256C library resolution")
         if pair[0] == "release-wallet":
             coverage[pair].extend(
                 [
@@ -326,6 +330,27 @@ def validate(text, contract, source_guard):
                 ]
             )
     return coverage
+
+
+def validate_library_context(steps):
+    name = "Verify SHA256C library resolution"
+    expected = """      - name: Verify SHA256C library resolution
+        if: contains(fromJSON('["vm-ingress"]'), matrix.suite)
+        run: |
+          python test/rescue-fee-gate/test_vm_library_context.py --native build/crypto/pq/test-vm-endstate --rust "$CARGO_TARGET_DIR/debug/examples/vm-endstate" --output artifacts/context/library
+          python test/rescue-fee-gate/vm_endstate_compare.py artifacts/context/library/native.tsv artifacts/context/library/rust.tsv
+"""
+    require(
+        steps.get(name) == expected,
+        "library context controls require both vm-ingress architectures",
+    )
+    order = list(steps)
+    require(
+        order.index("Require source restoration")
+        < order.index(name)
+        < order.index("Record successful suite"),
+        "library context checks must precede suite success",
+    )
 
 
 def validate_wallet_roots(suites, parity, steps):
