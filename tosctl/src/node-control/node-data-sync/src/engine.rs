@@ -78,7 +78,7 @@ fn canonical(path: &std::path::Path) -> Result<()> {
 #[cfg(feature = "native")]
 pub async fn validate_image(request: &ValidationRequest) -> Result<ValidationResult> {
     use crate::{
-        native_validation::{check_states, fresh_control},
+        native_validation::{bounded_diagnostic, check_states, fresh_control},
         records,
     };
     // The verifier is operation-owned, including after an abrupt launcher exit.
@@ -178,10 +178,13 @@ pub async fn validate_image(request: &ValidationRequest) -> Result<ValidationRes
                 .spawn()?,
         );
         let deadline = Instant::now() + Duration::from_secs(180);
+        // The last failed check is kept so that a deadline names the read that never passed
+        // instead of only reporting that one did not.
+        let mut last = String::from("no read attempt completed");
         let states = loop {
             ensure!(
                 process.0.try_wait()?.is_none(),
-                "native validation engine exited during reopen"
+                "native validation engine exited during reopen; last check: {last}"
             );
             ensure!(log.metadata()?.len() <= 32 << 20, "native validation log byte limit");
             let result = tokio::time::timeout(
@@ -189,12 +192,14 @@ pub async fn validate_image(request: &ValidationRequest) -> Result<ValidationRes
                 check_states(&adnl, &held, &expected, &ancestry),
             )
             .await;
-            if let Ok(Ok(states)) = result {
-                break states;
+            match result {
+                Ok(Ok(states)) => break states,
+                Ok(Err(error)) => last = bounded_diagnostic(&format!("{error:#}")),
+                Err(_) => last = "read attempt exceeded 15 s".to_owned(),
             }
             ensure!(
                 Instant::now() < deadline,
-                "native recovery or required shard-state read did not complete"
+                "native recovery or required shard-state read did not complete; last check: {last}"
             );
             tokio::time::sleep(Duration::from_millis(500)).await;
         };
@@ -214,7 +219,6 @@ pub async fn validate_image(request: &ValidationRequest) -> Result<ValidationRes
     }
     let (states, chain) = checked.context("native validation produced no checked generation")?;
     refuse_pending_recovery(&image.path.join("tmp/persistent-state"))?;
-    output.write_new("zero-state.boc", &states.zero)?;
     output.write_new("tip-block.boc", &states.tip)?;
     output.write_new("state-records.cbor", &chain.bytes()?)?;
     let engine_parent = request.engine.parent().context("engine parent")?;

@@ -74,7 +74,7 @@ pub fn public_path(path: &str) -> Result<()> {
     let p = relative(path)?;
     let allowed = match p.as_slice() {
         ["state-records.cbor"] => true,
-        ["metadata", "zero-state.boc" | "tip-block.boc"] => true,
+        ["metadata", "tip-block.boc"] => true,
         ["chain", "celldb", name] => db_file(name),
         ["chain", "files", "globalindex", name] => db_file(name),
         ["chain", "static", name] => hex_id(name),
