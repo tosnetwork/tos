@@ -21,8 +21,8 @@ use chain_block::{
     TransactionDescr, UInt256,
 };
 use tos_sandbox::{Blockchain, MessageBuilder, Treasury};
-use tos_vm::stack::StackItem;
 use tos_vm::stack::integer::IntegerData;
+use tos_vm::stack::StackItem;
 
 use crate::model::Model;
 
@@ -429,7 +429,6 @@ pub struct Net {
     pub next_nonce: u64,
     pub burn_fee: u64,
     pub mint_fee: u64,
-    pub traced: usize,
     pub state_flags: u8,
 }
 
@@ -532,7 +531,6 @@ impl Net {
             next_nonce: 0,
             burn_fee: BURN_FEE,
             mint_fee: MINT_FEE,
-            traced: 0,
             state_flags: 0,
         };
         net.configure();
@@ -1458,11 +1456,19 @@ impl Net {
         addr: &MsgAddressInt,
         tx: &Transaction,
     ) {
-        use chain_block::{HashmapType, ShardAccount, TrActionPhase, base64_encode, write_boc};
+        use chain_block::{base64_encode, write_boc, HashmapType, ShardAccount, TrActionPhase};
+        use std::io::Write;
+        use std::sync::atomic::{AtomicU64, Ordering};
+
+        // A test may create several independent worlds. Their per-world
+        // counters must not reuse a trace filename and erase earlier inputs.
+        static NEXT_TRACE: AtomicU64 = AtomicU64::new(1);
+        let index = NEXT_TRACE
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| value.checked_add(1))
+            .expect("trace sequence exhausted");
         let test = std::thread::current().name().unwrap_or("unnamed").replace("::", "-");
         let dir = dir.join(test);
         std::fs::create_dir_all(&dir).expect("a trace directory");
-        self.traced += 1;
 
         let config = HashmapType::data(&self.bc.config_params().config_params)
             .cloned()
@@ -1517,6 +1523,7 @@ impl Net {
         .expect("the outgoing messages");
         let after = self.bc.get_account(addr);
         let record = serde_json::json!({
+            "trace_index": index,
             "unixtime": self.bc.now(),
             "lt": tx.logical_time().to_string(),
             "config": boc(config),
@@ -1535,8 +1542,12 @@ impl Net {
                 "code": after.and_then(|a| a.get_code_hash()).map(|h| h.as_hex_string()),
             },
         });
-        std::fs::write(dir.join(format!("{:04}.json", self.traced)), record.to_string())
-            .expect("a trace record");
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(dir.join(format!("{index:04}.json")))
+            .expect("a fresh trace record");
+        file.write_all(record.to_string().as_bytes()).expect("a complete trace record");
     }
 }
 
