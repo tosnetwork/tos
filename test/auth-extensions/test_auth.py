@@ -5,6 +5,7 @@ account authorization boundary. The separate relay test exercises an actual
 signed module transaction and delivers its emitted message to the account.
 """
 
+import hashlib
 import re
 import tempfile
 import unittest
@@ -24,10 +25,13 @@ from native import (
     active_account,
     compile_contract,
     config,
+    distinct_cells,
     external,
+    genesis_size_limits,
     internal,
     outgoing,
     state_init,
+    uninitialized_account,
 )
 
 SECRET = Ed25519PrivateKey.from_private_bytes(bytes([0x42]) * 32)
@@ -71,6 +75,8 @@ class Account:
         extensions=False,
         pubkey=KEY,
         global_version=CURRENT_GLOBAL_VERSION,
+        workchain=-1,
+        limits=None,
     ):
         self.impl, self.agent = impl, impl == "agent"
         if self.agent:
@@ -86,13 +92,16 @@ class Account:
                 .ref(policy())
             )
         else:
-            ext = make_dict({OTHER[1]: Cell().sint(-1, 1)}, 256) if extensions else None
+            if isinstance(extensions, Cell):
+                ext = extensions
+            else:
+                ext = make_dict({OTHER[1]: Cell().sint(-1, 1)}, 256) if extensions else None
             data = Cell().uint(1, 1).uint(seqno, 32).uint(0, 32).uint(pubkey, 256).maybe(ext)
         if mode is not None:
             data.ref(auth_cell(mode, epoch, nonce, module))
-        self.address = (-1, int.from_bytes(state_init(CODES[impl], data).hash, "big"))
+        self.address = (workchain, int.from_bytes(state_init(CODES[impl], data).hash, "big"))
         self.shard = active_account(self.address, CODES[impl], data)
-        self.e = Emulator(global_version)
+        self.e = Emulator(global_version, limits=limits)
 
     def close(self):
         self.e.close()
@@ -233,6 +242,201 @@ class Account:
         req = self.request(1, Cell().uint(mode, 2).addr(module))
         co = self.cosign(req) if self.auth()[0] == 3 else None
         return self.send(self.envelope(req, co), expected=expected)
+
+    def extensions(self):
+        s = self.data.slice()
+        s.uint(1 + 32 + 32 + 256)
+        return s.maybe()
+
+    def state_cells(self):
+        return distinct_cells(CODES[self.impl], self.data)
+
+
+# ---------------------------------------------------------------------------
+# Account-state bound. The executor fails the action phase with result 50 when
+# the account state outgrows ConfigParam 43, and that discards the committed
+# seqno with the rest of the new data, so a signed request that grows the
+# wallet past the limit used to be accepted and charged on every delivery.
+
+LEAF = Cell().sint(-1, 1)
+# The wallet's bound: data root, authentication cell and 509 dictionary cells.
+STATE_SOURCES = {
+    "wallet-func": ("wallet-v5-code.fc", r"const int state::max_cells_beyond_code = (\d+);"),
+    "wallet-tol": ("wallet-v5.tol", r"const STATE_MAX_CELLS_BEYOND_CODE = (\d+)"),
+}
+
+
+def beyond_code(impl):
+    source, pattern = STATE_SOURCES[impl]
+    text = (ROOT / "crypto/smartcont" / source).read_text()
+    found = re.findall(pattern, text)
+    assert len(found) == 1, (impl, found)
+    return int(found[0])
+
+
+def state_bound(impl):
+    return distinct_cells(CODES[impl]) + beyond_code(impl)
+
+
+def key(tag, i):
+    return int.from_bytes(hashlib.sha256(f"{tag}:{i}".encode()).digest(), "big")
+
+
+def shared_block(prefix):
+    """Eight keys under one prefix: their subtrees are identical, so the
+    whole block is four distinct cells, and removing one key breaks the sharing.
+    """
+    return [(prefix << 3) | i for i in range(8)]
+
+
+def dictionary_with(cells, required=()):
+    """An extensions dictionary of exactly `cells` distinct cells."""
+    keys = list(required)
+
+    def count(ks):
+        return distinct_cells(make_dict(dict.fromkeys(ks, LEAF), 256)) if ks else 0
+
+    need = cells - count(keys)
+    assert need >= 0, (cells, count(keys))
+    # Each further unrelated key adds its leaf and one fork.
+    keys += [key("fill", i) for i in range((need + (0 if keys else 1)) // 2)]
+    if count(keys) == cells - 1:
+        # A key next to an existing one at bit 1 shares its new leaf with it:
+        # one fork and one leaf replace the old leaf, so it adds one cell.
+        keys.append(next(k ^ 2 for k in keys[len(required) :] if not k & 1))
+    result = make_dict(dict.fromkeys(keys, LEAF), 256)
+    assert count(keys) == cells, (count(keys), cells)
+    return result
+
+
+def account_at(impl, total, required=(), mode=None, workchain=-1, limits=None):
+    """A V5 account whose state (code and data) is exactly `total` cells."""
+    if limits is None:
+        limits = genesis_size_limits()[0]
+    empty = Account(impl, mode=mode, workchain=workchain, limits=limits)
+    fixed = empty.state_cells()
+    empty.close()
+    # An empty dictionary is one bit in the root; filling it adds only its own cells.
+    a = Account(
+        impl,
+        mode=mode,
+        workchain=workchain,
+        limits=limits,
+        extensions=dictionary_with(total - fixed, required),
+    )
+    assert a.state_cells() == total, (impl, a.state_cells(), total)
+    return a
+
+
+def observe(a, body, deliveries=2):
+    """Deliver one signed external `deliveries` times and record each outcome."""
+    observations = []
+    for _ in range(deliveries):
+        balance = account_data(a.shard)[1]
+        result = a.e.send(a.shard, external(a.address, body))
+        seen = {"accepted": result["success"], "balance_before": balance}
+        if result["success"]:
+            a.shard = from_boc(result["shard_account"])
+            seen["details"] = result["details"]
+            seen["outgoing"] = len(outgoing(from_boc(result["transaction"])))
+        else:
+            seen["exit"] = result.get("vm_exit_code")
+        seen["balance_after"] = account_data(a.shard)[1]
+        seen["seqno"] = a.counters()[1]
+        seen["extensions"] = None if a.extensions() is None else a.extensions().hash
+        observations.append(seen)
+    return observations
+
+
+def past_limit_by_addition(impl, workchain=-1):
+    """One below the limit; one request adds two extensions beside a send."""
+    limits, fields = genesis_size_limits()
+    limit = fields["max_mc_acc_state_cells" if workchain == -1 else "max_acc_state_cells"]
+    a = account_at(impl, limit - 1, workchain=workchain, limits=limits)
+    second = Cell().uint(2, 8).addr((workchain, key("new", 2)))
+    actions = (
+        Cell()
+        .maybe(send_action(3, internal(a.address, TARGET, Cell(), 1_000_000_000)))
+        .uint(1, 1)
+        .uint(2, 8)
+        .addr((workchain, key("new", 1)))
+        .ref(second)
+    )
+    return a, a.legacy_body(actions)
+
+
+def past_limit_by_removal(impl):
+    """At the limit; removing one key of a shared block grows the dictionary."""
+    limits, fields = genesis_size_limits()
+    block = shared_block(key("block", 0) >> 3)
+    a = account_at(impl, fields["max_mc_acc_state_cells"], required=block, limits=limits)
+    actions = Cell().uint(0, 1).uint(1, 1).uint(3, 8).addr((-1, block[0]))
+    return a, a.legacy_body(actions)
+
+
+def past_limit_by_staging(impl):
+    """At the limit without an authentication cell; staging adds that cell."""
+    limits, fields = genesis_size_limits()
+    a = account_at(impl, fields["max_mc_acc_state_cells"], limits=limits)
+    actions = Cell().uint(0, 1).uint(1, 1).uint(5, 8).uint(0, 64).addr(MODULE)
+    return a, a.legacy_body(actions)
+
+
+SCENARIOS = {
+    "addition": past_limit_by_addition,
+    "removal": past_limit_by_removal,
+    "staging": past_limit_by_staging,
+}
+
+
+def refused_once_problems(observations, seqno, extensions):
+    """Why the observations are not one charged refusal (exit 149) and a dead replay."""
+    first, second = observations
+    problems = []
+    details = first.get("details") or {}
+    if not first["accepted"] or details.get("exit") != 149:
+        problems.append(f"first delivery: expected exit 149, got {first}")
+    else:
+        # A throw after ACCEPT and COMMIT keeps the committed state: compute
+        # counts as successful and an empty action list runs successfully.
+        if not details["compute_success"] or details["aborted"]:
+            problems.append(f"the commit must hold: {details}")
+        if details["action"] != {"success": True, "code": 0, "actions": 0}:
+            problems.append(f"expected an empty successful action phase: {details['action']}")
+        if not details["gas"] > 0:
+            problems.append(f"expected gas to be charged: {details}")
+    if first.get("outgoing") != 0:
+        problems.append(f"no message may leave: {first}")
+    if first["seqno"] != seqno + 1:
+        problems.append(f"the seqno must be consumed: {first['seqno']} after {seqno}")
+    if first["extensions"] != extensions:
+        problems.append("the extensions must be unchanged")
+    if not first["balance_after"] < first["balance_before"]:
+        problems.append(f"the request must be charged once: {first}")
+    if second["accepted"] or second.get("exit") != 133:
+        problems.append(f"the replay must be refused with 133: {second}")
+    if second["balance_after"] != second["balance_before"]:
+        problems.append(f"the replay must not be charged: {second}")
+    return problems
+
+
+def result_50_problems(observations, seqno):
+    """Why the observations are not the unguarded failure: result 50, the
+    seqno lost, and the same request accepted and charged on every delivery."""
+    problems = []
+    for n, seen in enumerate(observations):
+        details = seen.get("details") or {}
+        if not seen["accepted"] or details.get("exit") != 0:
+            problems.append(f"delivery {n}: expected compute exit 0, got {seen}")
+        elif (details["action"] or {}).get("success") is not False or details["action"][
+            "code"
+        ] != 50:
+            problems.append(f"delivery {n}: expected action result 50, got {details['action']}")
+        if seen["seqno"] != seqno:
+            problems.append(f"delivery {n}: the seqno must stay {seqno}, got {seen['seqno']}")
+        if not seen["balance_after"] < seen["balance_before"]:
+            problems.append(f"delivery {n}: expected a charge, got {seen}")
+    return problems
 
 
 class AuthenticationTests(unittest.TestCase):
@@ -663,6 +867,180 @@ class AuthenticationTests(unittest.TestCase):
         self.assertEqual(a.counters()[1], 1)
         self.assertEqual(len(outgoing(from_boc(result["transaction"]))), 1)
         GAS["agent-legacy-deploy"] = result["details"]["gas"]
+
+    def wallets(self):
+        return [impl for impl in CODES if impl != "agent"]
+
+    def check_refused_once(self, scenario, impl, **kwargs):
+        a, body = SCENARIOS[scenario](impl, **kwargs)
+        self.addCleanup(a.close)
+        seqno = a.counters()[1]
+        extensions = a.extensions().hash
+        problems = refused_once_problems(observe(a, body), seqno, extensions)
+        self.assertEqual(problems, [], f"{impl} {scenario}")
+        return a
+
+    def test_growth_past_the_state_limit_is_consumed_not_replayed(self):
+        # Masterchain at the genesis limit. Without the bound this request
+        # reaches result 50: the mutation check drives exactly this fixture.
+        for impl in self.wallets():
+            with self.subTest(impl=impl):
+                self.check_refused_once("addition", impl)
+
+    def test_basechain_growth_past_the_state_limit_is_consumed_not_replayed(self):
+        for impl in self.wallets():
+            with self.subTest(impl=impl):
+                self.check_refused_once("addition", impl, workchain=0)
+
+    def test_removal_that_breaks_shared_subtrees_is_bounded(self):
+        # Removing one key of a shared block replaces shared cells with new
+        # ones: the dictionary grows although it holds fewer keys.
+        for impl in self.wallets():
+            with self.subTest(impl=impl, case="below the bound"):
+                block = shared_block(key("block", 1) >> 3)
+                a = Account(impl, extensions=dictionary_with(40, block))
+                self.addCleanup(a.close)
+                before = a.state_cells()
+                a.send(
+                    a.legacy_body(Cell().uint(0, 1).uint(1, 1).uint(3, 8).addr((-1, block[0]))),
+                    ext=True,
+                )
+                self.assertGreater(a.state_cells(), before, "the fixture must grow on removal")
+                self.assertLessEqual(a.state_cells(), state_bound(impl))
+            with self.subTest(impl=impl, case="at the limit"):
+                self.check_refused_once("removal", impl)
+
+    def test_staging_at_the_state_limit_is_consumed_not_replayed(self):
+        for impl in self.wallets():
+            with self.subTest(impl=impl):
+                self.check_refused_once("staging", impl)
+
+    def test_extension_bound_boundary(self):
+        # Exactly two cells below the bound, an addition lands on it; the next
+        # is refused through every path that can add an extension.
+        for impl in self.wallets():
+            with self.subTest(impl=impl):
+                bound = state_bound(impl)
+                a = account_at(impl, bound - 2, required=[EXTENSION[1]])
+                self.addCleanup(a.close)
+
+                def add(n):
+                    return Cell().uint(0, 1).uint(1, 1).uint(2, 8).addr((-1, key("edge", n)))
+
+                result = a.send(a.legacy_body(add(1)), ext=True)
+                self.assertEqual(a.state_cells(), bound)
+                GAS[f"{impl}-state-bound-add"] = result["details"]["gas"]
+                full = a.data.hash
+                # A signed internal and an extension request revert whole.
+                a.send(a.legacy_body(add(2), prefix=SIGNED_INTERNAL), sender=OTHER, expected=149)
+                a.send(
+                    Cell()
+                    .uint(0x6578746E, 32)
+                    .uint(0, 64)
+                    .uint(0, 1)
+                    .uint(1, 1)
+                    .uint(2, 8)
+                    .addr((-1, key("edge", 2))),
+                    sender=EXTENSION,
+                    expected=149,
+                )
+                self.assertEqual(a.data.hash, full)
+                # A signed external is consumed: charged once, dead on replay.
+                seqno, extensions = a.counters()[1], a.extensions().hash
+                problems = refused_once_problems(
+                    observe(a, a.legacy_body(add(2))), seqno, extensions
+                )
+                self.assertEqual(problems, [])
+                self.assertEqual(a.state_cells(), bound)
+                # Removing one makes room again.
+                a.send(
+                    a.legacy_body(
+                        Cell().uint(0, 1).uint(1, 1).uint(3, 8).addr((-1, key("edge", 1)))
+                    ),
+                    ext=True,
+                )
+                a.send(a.legacy_body(add(2)), ext=True)
+                self.assertEqual(a.state_cells(), bound)
+
+    def test_wallet_above_the_bound_still_transacts(self):
+        # Only an oversized StateInit can place a wallet above the bound.
+        # Requests that do not grow it still pass, so it can spend and shrink.
+        limits, fields = genesis_size_limits()
+        limit = fields["max_mc_acc_state_cells"]
+        for impl in self.wallets():
+            with self.subTest(impl=impl):
+                # An odd key: dictionary_with pairs only even keys.
+                removable = next(k for k in (key("fill", i) for i in range(64)) if k & 1)
+                a = account_at(impl, limit - 1, mode=1, limits=limits)
+                self.addCleanup(a.close)
+                result = a.send(a.legacy_body(), ext=True)
+                self.assertEqual(len(outgoing(from_boc(result["transaction"]))), 1)
+                a.send(
+                    a.legacy_body(Cell().uint(0, 1).uint(1, 1).uint(3, 8).addr((-1, removable))),
+                    ext=True,
+                )
+                self.assertEqual(a.state_cells(), limit - 3)
+                # Staging again replaces the authentication cell in place.
+                restage = Cell().uint(0, 1).uint(1, 1).uint(5, 8).uint(1, 64).addr(OTHER)
+                a.send(a.legacy_body(restage), ext=True)
+                self.assertEqual(a.auth()[:2], (1, 2))
+                self.assertEqual(a.state_cells(), limit - 3)
+                self.assertEqual(a.counters()[1], 3)
+            with self.subTest(impl=impl, case="first staging grows the state"):
+                # Without an authentication cell the first staging adds one;
+                # above the bound that growth is refused even below the limit.
+                b = account_at(impl, limit - 1, limits=limits)
+                self.addCleanup(b.close)
+                stage = Cell().uint(0, 1).uint(1, 1).uint(5, 8).uint(0, 64).addr(MODULE)
+                b.send(b.legacy_body(stage), ext=True, expected=149, commits=True)
+                self.assertEqual(b.auth(), (0, 0, 0, 0))
+
+    def test_genesis_size_limits_leave_headroom_for_the_wallet(self):
+        # The guard holds a wallet to code + data root + authentication cell +
+        # 509 dictionary cells. Lowering ConfigParam 43 below that would let a
+        # bounded wallet reach result 50 again.
+        _, fields = genesis_size_limits()
+        limit = min(fields["max_mc_acc_state_cells"], fields["max_acc_state_cells"])
+        for impl in self.wallets():
+            with self.subTest(impl=impl):
+                self.assertEqual(beyond_code(impl), 1 + 1 + 509)
+                self.assertLess(state_bound(impl), limit)
+
+    def test_deploy_with_libraries_is_refused(self):
+        # The bound counts code and data only. The executor counts libraries
+        # too, so it must be impossible for a V5 account to hold any: the
+        # wallet emits no library action, and a deploy that carries them is
+        # refused before compute.
+        library = Cell().uint(0xDEADBEEF, 32)
+        libraries = make_dict(
+            {int.from_bytes(library.hash, "big"): Cell().uint(0, 1).ref(library)}, 256
+        )
+        for impl in self.wallets():
+            for carried in (None, libraries):
+                with self.subTest(impl=impl, libraries=carried is not None):
+                    a = Account(impl)
+                    self.addCleanup(a.close)
+                    data = account_data(a.shard)[0]
+                    init = state_init(CODES[impl], data, carried)
+                    address = (-1, int.from_bytes(init.hash, "big"))
+                    body = a.legacy_body(Cell().uint(0, 1).uint(0, 1))
+                    result = a.e.send(uninitialized_account(address), external(address, body, init))
+                    if carried is None:
+                        self.assertTrue(result["success"], result)
+                        self.assertEqual(result["details"]["exit"], 0)
+                    else:
+                        self.assertFalse(result["success"], result)
+                        self.assertTrue(result.get("external_not_accepted"), result)
+                        # The refusal is the executor's library rule, which
+                        # starts at global version 15: before it, the same
+                        # deploy goes through.
+                        old = Emulator(14)
+                        self.addCleanup(old.close)
+                        before = old.send(
+                            uninitialized_account(address), external(address, body, init)
+                        )
+                        self.assertTrue(before["success"], before)
+                        self.assertEqual(before["details"]["exit"], 0)
 
     def test_wallet_rejects_destruction_and_arbitrary_actions(self):
         for a in self.accounts(mode=2):

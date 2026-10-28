@@ -3,6 +3,7 @@
 import ctypes
 import json
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -74,7 +75,51 @@ def size_limits(max_msg_cells, max_msg_bits=1 << 21):
     )
 
 
-def config(global_version=CURRENT_GLOBAL_VERSION, max_msg_cells=None):
+# size_limits_config_v3#03 in crypto/block/block.tlb, field by field. The
+# Maybe uint32 is spelled as its presence bit and its value.
+GENESIS_SIZE_LIMIT_FIELDS = (
+    ("max_msg_bits", 32),
+    ("max_msg_cells", 32),
+    ("max_library_cells", 32),
+    ("max_vm_data_depth", 16),
+    ("max_ext_msg_size", 32),
+    ("max_ext_msg_depth", 16),
+    ("max_acc_state_cells", 32),
+    ("max_mc_acc_state_cells", 32),
+    ("max_acc_public_libraries", 32),
+    ("defer_out_queue_size_limit", 32),
+    ("max_msg_extra_currencies", 32),
+    ("max_acc_fixed_prefix_length", 8),
+    ("acc_state_cells_for_storage_dict", 32),
+    ("has_max_transaction_library_loads", 1),
+    ("max_transaction_library_loads", 32),
+    ("max_total_msg_bits", 32),
+    ("max_total_msg_cells", 32),
+    ("out_msg_queue_size_hard_limit", 32),
+    ("out_msg_queue_size_soft_limit", 32),
+)
+
+
+def genesis_size_limits():
+    """ConfigParam 43 exactly as crypto/smartcont/gen-zerostate.fif writes it.
+
+    The committed emulator fixture carries an older constructor with other
+    account-state limits, so tests about those limits load genesis instead.
+    Returns the cell and its fields by name.
+    """
+    genesis = (ROOT / "crypto/smartcont/gen-zerostate.fif").read_text()
+    blocks = re.findall(r"<b x\{03\} s,(.*?)b> 43 config!", genesis, re.DOTALL)
+    assert len(blocks) == 1, "genesis must write ConfigParam 43 exactly once"
+    values = [(int(v), int(w)) for v, w in re.findall(r"(\d+) (\d+) u,", blocks[0])]
+    assert [w for _, w in values] == [w for _, w in GENESIS_SIZE_LIMIT_FIELDS], values
+    cell = Cell().uint(0x03, 8)
+    for value, width in values:
+        cell.uint(value, width)
+    fields = {name: value for (name, _), (value, _) in zip(GENESIS_SIZE_LIMIT_FIELDS, values)}
+    return cell, fields
+
+
+def config(global_version=CURRENT_GLOBAL_VERSION, max_msg_cells=None, limits=None):
     fixture = from_boc((ROOT / "tosctl/src/executor/real_boc/default_config.boc").read_bytes())
     entries = read_dict(fixture.refs[0], 32)
     entries[0] = Cell().ref(Cell().uint(int(fixture.bits, 2), 256))
@@ -86,11 +131,44 @@ def config(global_version=CURRENT_GLOBAL_VERSION, max_msg_cells=None):
     entries[19] = Cell().ref(Cell().sint(GLOBAL_ID, 32))
     if max_msg_cells is not None:
         entries[43] = Cell().ref(size_limits(max_msg_cells))
+    if limits is not None:
+        assert max_msg_cells is None
+        entries[43] = Cell().ref(limits)
     return make_dict(entries, 32)
 
 
-def state_init(code, data):
-    return Cell().uint(0, 2).maybe(code).maybe(data).uint(0, 1)
+def state_init(code, data, library=None):
+    return Cell().uint(0, 2).maybe(code).maybe(data).maybe(library)
+
+
+def distinct_cells(*roots):
+    """Distinct cells under the roots together, the executor's state count."""
+    seen, stack = set(), [r for r in roots if r is not None]
+    while stack:
+        c = stack.pop()
+        if c.hash not in seen:
+            seen.add(c.hash)
+            stack.extend(c.refs)
+    return len(seen)
+
+
+def uninitialized_account(address, balance=100_000_000_000):
+    """A funded account with no code yet (account_uninit$00)."""
+    account = (
+        Cell()
+        .uint(1, 1)
+        .addr(address)
+        .varuint(0, 7)
+        .varuint(0, 7)
+        .uint(0, 3)
+        .uint(NOW, 32)
+        .uint(0, 1)
+        .uint(0, 64)
+        .coins(balance)
+        .uint(0, 1)
+        .uint(0, 2)
+    )
+    return Cell().uint(0, 256).uint(0, 64).ref(account)
 
 
 def active_account(address, code, data, balance=100_000_000_000):
@@ -158,8 +236,14 @@ def internal(sender, destination, body, value=1_000_000_000, bounced=False):
     )
 
 
-def external(destination, body):
-    return Cell().uint(8, 4).addr(destination).coins(0).uint(0, 1).uint(1, 1).ref(body)
+def external(destination, body, init=None):
+    """ext_in_msg_info; a StateInit, when given, and the body each in a reference."""
+    message = Cell().uint(8, 4).addr(destination).coins(0)
+    if init is None:
+        message.uint(0, 1)
+    else:
+        message.uint(1, 1).uint(1, 1).ref(init)
+    return message.uint(1, 1).ref(body)
 
 
 def transaction_details(transaction):
@@ -210,7 +294,10 @@ def transaction_details(transaction):
             a.coins()
         if a.uint(1):
             a.coins()
-        result["action"] = {"success": ok, "code": a.sint(32)}
+        code = a.sint(32)
+        if a.uint(1):
+            a.sint(32)
+        result["action"] = {"success": ok, "code": code, "actions": a.uint(16)}
     return result
 
 
@@ -222,9 +309,13 @@ def outgoing(transaction):
 
 class Emulator:
     def __init__(
-        self, global_version=CURRENT_GLOBAL_VERSION, max_msg_cells=None, vm_log_verbosity=1
+        self,
+        global_version=CURRENT_GLOBAL_VERSION,
+        max_msg_cells=None,
+        vm_log_verbosity=1,
+        limits=None,
     ):
-        self._initialize(config(global_version, max_msg_cells), vm_log_verbosity)
+        self._initialize(config(global_version, max_msg_cells, limits), vm_log_verbosity)
 
     @classmethod
     def from_config(cls, configuration, vm_log_verbosity=1):
