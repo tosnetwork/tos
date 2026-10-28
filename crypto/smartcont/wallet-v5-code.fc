@@ -31,6 +31,7 @@ const int error::extension_wrong_workchain = 145;
 const int error::only_extension_can_change_signature_mode = 146;
 const int error::invalid_c5 = 147;
 const int error::invalid_global_id = 148;
+const int error::state_too_large = 149;
 
 const int size::bool = 1;
 const int size::seqno = 32;
@@ -59,6 +60,48 @@ slice remove_last_bits(slice s, int l) asm "SDSKIPLAST";
 
 #include "wallet-v5-action-list.fc";
 
+;; Account-state bound. The executor recounts the distinct cells of code, data
+;; and libraries after compute, and a state above ConfigParam 43 fails the
+;; action phase with result 50. That discards the whole new data, including a
+;; seqno this wallet already committed, so the same signed request would be
+;; accepted and charged again on every delivery. Every request that can grow
+;; the state (extension changes, staging and module requests) is therefore
+;; refused in compute instead, after the commit, with error::state_too_large.
+;;
+;; The bound is the code plus the data root, the authentication cell and 509
+;; extension-dictionary cells (about 255 extensions). It is checked on the
+;; executor's own metric, so a removal that breaks the sharing of identical
+;; dictionary subtrees is caught as well. A V5 account holds no libraries: the
+;; executor refuses a deploy that carries them and this wallet emits no
+;; library actions, so code and data are the whole count.
+const int state::max_cells_beyond_code = 511;
+const int state::unbounded = 4294967296;
+
+cell wallet_code() asm "MYCODE";
+
+;; Distinct cells of code and data together, or -1 above max_cells; the walk
+;; stops at that bound, so the gas it costs is bounded by it as well.
+int wallet_state_cells(cell data, int max_cells) inline {
+  ;; The wrapper cell is the one extra cell counted: nothing in the state can
+  ;; equal it, since it would have to contain both code and data.
+  cell state = begin_cell().store_ref(wallet_code()).store_ref(data).end_cell();
+  (int cells, _, _, int ok) = state.compute_data_size?(max_cells + 1);
+  return ok ? cells - 1 : -1;
+}
+
+;; Above the bound, which only an oversized StateInit can reach, a request that
+;; adds no extension still passes when it does not grow the state, so such a
+;; wallet keeps transacting and can shrink back.
+() enforce_state_bound(cell old_data, int added) impure inline_ref {
+  (int code_cells, _, _) = wallet_code().compute_data_size(state::unbounded);
+  if (wallet_state_cells(get_data(), code_cells + state::max_cells_beyond_code) >= 0) {
+    return ();
+  }
+  throw_if(error::state_too_large, added);
+  int cells = wallet_state_cells(get_data(), state::unbounded);
+  throw_if(error::state_too_large, wallet_state_cells(old_data, cells - 1) >= 0);
+}
+
 cell wallet_auth_state() inline {
   slice ds = get_data().begin_parse().skip_bits(321);
   ds~load_dict();
@@ -68,7 +111,8 @@ cell wallet_auth_state() inline {
 }
 
 () wallet_store_auth(cell auth, int advance_seqno) impure inline {
-  slice ds = get_data().begin_parse();
+  cell old_data = get_data();
+  slice ds = old_data.begin_parse();
   int signature_allowed = ds~load_int(1);
   int seqno = ds~load_uint(32);
   slice key_fields = ds~load_bits(288);
@@ -83,6 +127,7 @@ cell wallet_auth_state() inline {
   }
   set_data(begin_cell().store_int(signature_allowed, 1).store_uint(seqno, 32)
     .store_slice(key_fields).store_dict(extensions).store_ref(auth).end_cell());
+  enforce_state_bound(old_data, false);
 }
 
 () wallet_process_auth(slice sender, slice body) impure {
@@ -122,6 +167,9 @@ cell wallet_auth_state() inline {
     return ();
   }
 
+  cell old_data = get_data();
+  int added = false;
+  int changed = false;
   while (true) {
     int is_add_extension = cs~check_and_remove_add_extension_prefix();
     int is_remove_extension = is_add_extension ? 0 : cs~check_and_remove_remove_extension_prefix();
@@ -139,6 +187,7 @@ cell wallet_auth_state() inline {
       if (is_add_extension) {
         (extensions, int is_success) = extensions.udict_add_builder?(size::address_hash_size, address_hash, begin_cell().store_int(-1, 1));
         throw_unless(error::add_extension, is_success);
+        added = true;
       } else {
         (extensions, int is_success) = extensions.udict_delete?(size::address_hash_size, address_hash);
         throw_unless(error::remove_extension, is_success);
@@ -151,6 +200,7 @@ cell wallet_auth_state() inline {
               .store_dict(extensions)
               .store_slice(auth_tail)
               .end_cell());
+      changed = true;
 
     } elseif (cs~check_and_remove_set_signature_allowed_prefix()) {
       throw_unless(error::only_extension_can_change_signature_mode, is_extension);
@@ -174,6 +224,9 @@ cell wallet_auth_state() inline {
       throw(error::unsupported_action);
     }
     ifnot (cs.slice_refs()) {
+      if (changed) {
+        enforce_state_bound(old_data, added);
+      }
       return ();
     }
     cs = cs.preload_ref().begin_parse();

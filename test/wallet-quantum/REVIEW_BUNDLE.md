@@ -97,6 +97,14 @@ version-16 candidate with the explicit `0x42` namespace. Its configuration and
 source identities changed; all three contract code identities remain unchanged.
 The prior version-18 receipts retain their original configuration and manifest
 identities. They are historical measurements, not acceptance of this new baseline.
+
+The wallet V5 account-state bound refresh changes one more pinned file,
+`test/auth-extensions/native.py`: the shared emulator harness gained the
+genesis ConfigParam 43 loader, a distinct-cell counter, StateInit-carrying
+external messages and the action-phase message count that the V5 tests use.
+The Quantum wallet, module and vault sources are untouched; a fresh build
+reproduces the same three code identities, the same configuration and the
+other 74 file identities.
 The new bundle reproduction and corruption controls are indexed in
 [`auth-v16-validation.json`](../../doc/evidence/auth-v16-validation.json).
 
