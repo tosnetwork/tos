@@ -83,7 +83,8 @@ INDEX = re.compile(
     r"of (?P<shard>\(\S+\)) catchain (?P<cc>\d+): local validator index (?P<idx>\d+)"
 )
 FENCE = re.compile(
-    r"signing ledger: unknown history fenced at (?P<block>\S+) over (?P<n>\d+) lineages.*counters:(?P<counters>.*)$"
+    r"signing ledger: unknown history fenced at (?P<block>\S+)(?: \([^)]*\))? over (?P<n>\d+) lineages"
+    r".*counters:(?P<counters>.*)$"
 )
 COUNTER = re.compile(r"(\(\S+\))=(\d+)")
 CREATED = re.compile(r"Created validator group (?P<shard>\(\S+\))\.(?P<cc>\d+):")
