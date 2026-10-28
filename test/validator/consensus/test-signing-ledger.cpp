@@ -473,6 +473,32 @@ class Driver : public td::actor::Actor {
           co_await admit_with(ledger.get(), fill(0x42), 53, IdentityHistory{1600, fence_block(20, 1690, at_m)});
       require(early->fenced && early->history_unknown, "a block before custody + 91 leaves the history pending");
       require(early->reason.find("1691") != std::string::npos, "the wait is measured from custody");
+    }
+    {
+      // The stored custody t0 survives a restart: a process whose own custody time reads
+      // earlier (a clock stepped back) still waits from the stored one.
+      const auto dir = scratch() + "/signing-ledger";
+      {
+        auto ledger =
+            td::actor::create_actor<SigningLedger>("stored", dir, default_file_ops(), nullptr, clock_at(1000));
+        require((co_await admit_with(ledger.get(), fill(0x47), 53, IdentityHistory{1600, std::nullopt}))->fenced,
+                "pending from custody at 1600");
+      }
+      auto ledger =
+          td::actor::create_actor<SigningLedger>("stored-restart", dir, default_file_ops(), nullptr, clock_at(1000));
+      auto early =
+          co_await admit_with(ledger.get(), fill(0x48), 53, IdentityHistory{1000, fence_block(24, 1100, at_m)});
+      require(early->fenced, "a block before the stored custody t0 + 91 does not settle it after a restart");
+      require(!co_await td::actor::ask(ledger.get(), &SigningLedger::offer_fence_block, validator_, std::uint64_t{1000},
+                                       fence_block(25, 1690, at_m)),
+              "nor does an offer measured from the earlier clock");
+    }
+    {
+      const auto dir = scratch() + "/signing-ledger";
+      auto ledger = td::actor::create_actor<SigningLedger>("late-2", dir, default_file_ops(), nullptr, clock_at(1000));
+      auto early =
+          co_await admit_with(ledger.get(), fill(0x42), 53, IdentityHistory{1600, fence_block(20, 1690, at_m)});
+      require(early->fenced, "pending");
       require(!co_await td::actor::ask(ledger.get(), &SigningLedger::offer_fence_block, validator_, std::uint64_t{1600},
                                        fence_block(21, 1690, at_m)),
               "custody + 90 does not settle it");
