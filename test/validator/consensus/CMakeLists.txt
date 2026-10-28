@@ -71,6 +71,11 @@ foreach(mode journal-loss journal-loss-without-log intact-restart log-rollback w
     set_tests_properties(decision-log-restart-${mode} PROPERTIES TIMEOUT 60)
 endforeach()
 
+# A drill tool, not a test: prints a session journal's vote records with the SHA-256 of each
+# signature, so a drill can tell replayed signatures from new ones by their bytes.
+add_executable(dump-consensus-journal dump-consensus-journal.cpp)
+target_link_libraries(dump-consensus-journal PRIVATE validator tl_api tl-utils tddb tdutils)
+
 # The live sign->verify round through PeerValidator::check_signature.
 add_executable(test-consensus-verify test-consensus-verify.cpp)
 set_target_properties(test-consensus-verify PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)

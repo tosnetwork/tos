@@ -151,7 +151,7 @@ def test_restore_copy_log_arm_fails_on_a_signature_in_the_fence(tmp_path: Path) 
     status, summary = analyze(
         restore_run(tmp_path, "log", True, True, False), "restore-copy", "log"
     )
-    assert summary["verdict"]["no_signature_within_fence"] is False
+    assert summary["verdict"]["no_new_signature_within_fence"] is False
     assert status == 3
 
 
@@ -164,6 +164,79 @@ def test_restore_copy_control_red_and_green(tmp_path: Path) -> None:
         restore_run(tmp_path, "control", False, False, False), "restore-copy", "control"
     )
     assert status == 4
+
+
+# The rule after the first D1 run: a post-restart certificate carrying the target's signature
+# inside the fence is excluded only when its stored target signature is byte-identical to one
+# in the target's snapshot journal of that session.
+
+REPLAYED_VOTE = "FinalizeVote{id={0, U62xb1/C32ivdaKl2tVmpkJeSphpB6PHc9pFw1VH9Tw=, ?}}"
+
+
+def journal_record(
+    vote_sha: str, signature_sha: str, kind: str = "cert", who: int = 3
+) -> dict[str, Any]:
+    return {
+        "kind": kind,
+        "shard": MC,
+        "cc": 0,
+        "vote": REPLAYED_VOTE,
+        "vote_sha256": vote_sha,
+        "signatures": [{"who": 1, "sha256": "peer"}, {"who": who, "sha256": signature_sha}],
+    }
+
+
+def replay_run(tmp: Path, name: str, stored: list[dict[str, Any]] | None) -> Path:
+    """The passing D1 log run plus a certificate of session 0, inside the fence, that the
+    restarted target obtained 2 s after its group was built: the replayed slot-0 case."""
+    (tmp / name).mkdir()
+    directory = restore_run(tmp / name, "log", True, False, False)
+    target_log = directory / "node4" / "log"
+    replayed = (
+        f"[ 3]{at(112)}[pool.cpp:1][!valgroup{MC}.0.SimplexPool]\t"
+        f"Obtained certificate for {REPLAYED_VOTE}: .VVV"
+    )
+    target_log.write_text(target_log.read_text() + replayed + "\n")
+    snapshot = [
+        journal_record("vote-a", "sig-a", kind="own_signed", who=-1),
+        journal_record("vote-a", "sig-a"),
+    ]
+    journals: dict[str, Any] = {"snapshot": snapshot}
+    if stored is not None:
+        journals["4"] = stored
+    (directory / "journal-evidence.json").write_text(json.dumps({"journals": journals}))
+    return directory
+
+
+def test_restore_copy_replayed_slot_zero_certificate_is_excluded(tmp_path: Path) -> None:
+    run = replay_run(tmp_path, "replayed", [journal_record("vote-a", "sig-a")])
+    status, summary = analyze(run, "restore-copy", "log")
+    assert summary["verdict"]["replayed_excluded"] == 1
+    assert summary["verdict"]["no_new_signature_within_fence"] is True
+    assert status == 0
+
+
+def test_restore_copy_new_in_fence_target_vote_fails(tmp_path: Path) -> None:
+    # The stored target signature is not in the snapshot: a new signature inside the fence.
+    run = replay_run(tmp_path, "new", [journal_record("vote-a", "sig-new")])
+    status, summary = analyze(run, "restore-copy", "log")
+    assert summary["verdict"]["no_new_signature_within_fence"] is False
+    assert status == 3
+
+
+def test_restore_copy_replayed_certificate_with_one_modified_vote_fails(tmp_path: Path) -> None:
+    # The same signature bytes over different unsigned vote bytes are not the replayed vote.
+    run = replay_run(tmp_path, "modified", [journal_record("vote-b", "sig-a")])
+    status, _ = analyze(run, "restore-copy", "log")
+    assert status == 3
+
+
+def test_restore_copy_certificate_without_a_stored_record_fails(tmp_path: Path) -> None:
+    # Nothing proves the logged certificate is replayed history: it counts.
+    status, _ = analyze(replay_run(tmp_path, "unproven", []), "restore-copy", "log")
+    assert status == 3
+    status, _ = analyze(replay_run(tmp_path, "no-journal", None), "restore-copy", "log")
+    assert status == 3
 
 
 # ===== D2: genesis with and without the ceremony =====

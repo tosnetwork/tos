@@ -113,11 +113,191 @@ def node_dirs(working_dir: Path, count: int) -> list[Path]:
 # ===== D1: restore from a file copy =====
 
 
+JOURNAL_EVIDENCE = "journal-evidence.json"
+SESSION_DIR_NAME = re.compile(r"^consensus\.(-?\d+)\.(\d+)\.(\d+)\.[0-9A-Fa-f]{64}$")
+CERT_LINE = re.compile(
+    r"\[!valgroup(?P<shard>\(\S+\))\.(?P<cc>\d+)\.SimplexPool\]\s*Obtained certificate for (?P<vote>.*?): (?P<votes>[.V]+)"
+)
+TARGET_INDEX = re.compile(
+    r"of (?P<shard>\(\S+\)) catchain (?P<cc>\d+): local validator index (?P<idx>\d+)"
+)
+
+
+def session_of_dir(name: str) -> tuple[str, int] | None:
+    """(shard as the logs print it, catchain counter) of a consensus.<wc>.<shard>.<cc>.<id> directory."""
+    m = SESSION_DIR_NAME.match(name)
+    if m is None:
+        return None
+    return f"({m[1]},{int(m[2]):016x})", int(m[3])
+
+
+def extract_journals(working_dir: Path, tool: Path, nodes: int = 4) -> dict[str, Any]:
+    """Dumps the vote records of every session journal of the target's snapshot and of every
+    node's database as it is now, from copies (opening RocksDB writes into its directory, so
+    the evidence itself is never opened). Writes journal-evidence.json."""
+    copies = working_dir / "journal-copies"
+    copies.mkdir()
+    sources = {"snapshot": working_dir / f"node{TARGET + 1}.snapshot"}
+    sources.update({str(i): working_dir / f"node{i}" for i in range(1, nodes + 1)})
+    evidence: dict[str, Any] = {"tool": str(tool), "journals": {}}
+    for label, root in sources.items():
+        records: list[dict[str, Any]] = []
+        for session_dir in sorted((root / "consensus").glob("consensus.*")):
+            session = session_of_dir(session_dir.name)
+            if session is None or not (session_dir / "db").is_dir():
+                continue
+            copy = copies / label / session_dir.name
+            shutil.copytree(session_dir / "db", copy, symlinks=True)
+            done = subprocess.run(
+                [str(tool), str(copy)], capture_output=True, text=True, timeout=600, check=False
+            )
+            if done.returncode != 0:
+                raise SystemExit(
+                    f"DRILL_FAILED cannot read the journal {session_dir}: {done.stderr[-500:]}"
+                )
+            for line in done.stdout.splitlines():
+                record = json.loads(line)
+                record["shard"], record["cc"] = session
+                records.append(record)
+        evidence["journals"][label] = records
+    (working_dir / JOURNAL_EVIDENCE).write_text(json.dumps(evidence, sort_keys=True) + "\n")
+    return evidence
+
+
 def analyze_restore_copy(working_dir: Path, summary: dict[str, Any]) -> None:
-    """The restart analysis of the unknown-history drill, plus the reason the ledger is not trusted."""
+    """The restart analysis of the unknown-history drill, with one rule changed after the first
+    D1 run (see RESULTS.md): a certificate obtained after the restart that carries the target's
+    signature is not counted as a new signature only when that signature is provably replayed
+    history, i.e. the certificate as the node that logged it stored it holds a target signature
+    byte-identical (same unsigned vote bytes, same signature bytes) to one in the target's
+    snapshot journal of that session. Anything else counts: a certificate with no stored record,
+    one whose target signature is not in the snapshot, and every own signature the target logs
+    inside the fence."""
     analyze_restart(working_dir, summary)
-    after = read_lines(working_dir / f"node{TARGET + 1}" / "log")
-    summary["verdict"]["ledger_untrusted_as_a_copy"] = any(UNTRUSTED_COPY in line for line in after)
+    inherited = summary.pop("verdict")
+    summary["inherited_verdict"] = inherited
+    target_dir = working_dir / f"node{TARGET + 1}"
+    after = read_lines(target_dir / "log")
+    before = read_lines(target_dir / "log.before-restart")
+    index = {
+        (m["shard"], int(m["cc"])): int(m["idx"])
+        for line in before + after
+        if (m := TARGET_INDEX.search(line))
+    }
+    evidence_path = working_dir / JOURNAL_EVIDENCE
+    journals = json.loads(evidence_path.read_text())["journals"] if evidence_path.is_file() else {}
+
+    def target_signatures(
+        records: list[dict[str, Any]], shard: str, cc: int, vote: str | None
+    ) -> set[tuple[str, str]]:
+        """(vote bytes hash, signature bytes hash) of the target's signatures in these records."""
+        idx = index.get((shard, cc))
+        out = set()
+        for r in records:
+            if r["shard"] != shard or r["cc"] != cc or (vote is not None and r["vote"] != vote):
+                continue
+            for sig in r["signatures"]:
+                if (r["kind"] == "own_signed" and sig["who"] == -1) or (
+                    r["kind"] == "cert" and sig["who"] == idx
+                ):
+                    out.add((r["vote_sha256"], sig["sha256"]))
+        return out
+
+    snapshot = journals.get("snapshot", [])
+    sessions = {(x["shard"], x["cc"]): x for x in summary["sessions_after_restart"]}
+    candidates = []
+    for node in range(1, 5):
+        for path in sorted((working_dir / f"node{node}").glob("log*")):
+            if path.name in ("log.before-restart", "log.snapshot"):
+                continue
+            for line in read_lines(path):
+                m = CERT_LINE.search(line)
+                if not m:
+                    continue
+                shard, cc = m["shard"], int(m["cc"])
+                session = sessions.get((shard, cc))
+                idx = index.get((shard, cc))
+                at = stamp(line)
+                if (
+                    session is None
+                    or idx is None
+                    or at is None
+                    or at < session["group_built_after_restart_at"]
+                ):
+                    continue
+                if m["votes"][idx : idx + 1] != "V":
+                    continue
+                stored = target_signatures(journals.get(str(node), []), shard, cc, m["vote"])
+                replayed = target_signatures(snapshot, shard, cc, m["vote"])
+                excluded = bool(stored) and stored <= replayed
+                candidates.append(
+                    {
+                        "node": node,
+                        "shard": shard,
+                        "cc": cc,
+                        "vote": m["vote"],
+                        "at": at,
+                        "stored_target_signatures": len(stored),
+                        "replayed_from_snapshot": excluded,
+                    }
+                )
+    new_signatures: dict[tuple[str, int], int] = {}
+    for c in candidates:
+        if not c["replayed_from_snapshot"]:
+            new_signatures[(c["shard"], c["cc"])] = new_signatures.get((c["shard"], c["cc"]), 0) + 1
+    violations = [
+        {
+            "shard": x["shard"],
+            "cc": x["cc"],
+            "new_certificate_signatures": new_signatures.get((x["shard"], x["cc"]), 0),
+            "own": x["own_signatures_after_restart"],
+        }
+        for x in summary["sessions_after_restart"]
+        if x["within_fence"]
+        and (new_signatures.get((x["shard"], x["cc"]), 0) > 0 or x["own_signatures_after_restart"])
+    ]
+    fences = summary.get("fence") or []
+    at_m = fences[0]["counters"].get(MC) if fences else None
+    mc_cc = int(summary.get("mc_cc_at_stop") or 0)
+    kinds: list[str] = list(inherited.get("own_signature_kinds_above_fence", []))
+    new_in_old_session = new_signatures.get((MC, mc_cc), 0)
+    first_resumed = min(
+        (cc for (shard, cc), n in new_signatures.items() if shard == MC and n > 0), default=None
+    )
+    verdict: dict[str, Any] = {
+        "rule": "replayed only if byte-identical to the target's snapshot journal",
+        "journal_evidence": bool(journals),
+        "candidates": candidates,
+        "replayed_excluded": sum(1 for c in candidates if c["replayed_from_snapshot"]),
+        "fence_recorded": inherited.get("fence_recorded", False),
+        "signed_in_the_old_masterchain_session_before_stop": inherited.get(
+            "signed_in_the_old_masterchain_session_before_stop", False
+        ),
+        "ledger_untrusted_as_a_copy": any(UNTRUSTED_COPY in line for line in after),
+        "signatures_within_fence": violations,
+        "no_new_signature_within_fence": not violations,
+        "every_session_within_fence_fenced": inherited.get(
+            "every_session_within_fence_fenced", False
+        ),
+        "masterchain_first_new_signature_cc": first_resumed,
+        "masterchain_first_own_signature_cc": inherited.get("masterchain_first_own_signature_cc"),
+        "masterchain_expected_first_cc": None if at_m is None else at_m + 3,
+        "own_signature_kinds_above_fence": kinds,
+        "new_signatures_in_the_old_masterchain_session_after_restart": new_in_old_session,
+    }
+    verdict["passed"] = (
+        verdict["fence_recorded"]
+        and verdict["signed_in_the_old_masterchain_session_before_stop"]
+        and verdict["no_new_signature_within_fence"]
+        and verdict["every_session_within_fence_fenced"]
+        and at_m is not None
+        and first_resumed == at_m + 3
+        and verdict["masterchain_first_own_signature_cc"] == at_m + 3
+        and "candidate" in kinds
+        and any(k.endswith("vote") for k in kinds)
+    )
+    verdict["red"] = new_in_old_session > 0
+    summary["verdict"] = verdict
 
 
 def judge_restore_copy(mode: str, summary: dict[str, Any]) -> int:
@@ -485,6 +665,8 @@ async def run_restore_copy(
         if restarted_at - stopped_at > 90:
             raise SystemExit("DRILL_FAILED the target did not restart within 90 s")
         await asyncio.sleep(args.observe)
+    # Every node is stopped now: the journals are read from copies.
+    extract_journals(working_dir, args.dump_tool.resolve())
 
 
 async def mc_seqno(node: Any) -> int:
@@ -793,6 +975,16 @@ async def main() -> int:
     parser.add_argument("--drill", choices=sorted(ANALYZE), required=True)
     parser.add_argument("--mode", choices=["log", "control"], required=True)
     parser.add_argument("--analyze-only", action="store_true")
+    parser.add_argument(
+        "--extract-journals",
+        action="store_true",
+        help="restore-copy: dump the session journals of an earlier run (from copies), then analyse",
+    )
+    parser.add_argument(
+        "--dump-tool",
+        type=Path,
+        default=Path("/tos/build/fix-322/build/test/validator/consensus/dump-consensus-journal"),
+    )
     parser.add_argument("--working-dir", type=Path, required=True)
     parser.add_argument("--build", type=Path)
     parser.add_argument("--source", type=Path, default=Path(__file__).resolve().parents[2])
@@ -831,6 +1023,16 @@ async def main() -> int:
     args = parser.parse_args()
     working_dir = args.working_dir.resolve()
 
+    if args.extract_journals:
+        if args.drill != "restore-copy":
+            print("DRILL_FAILED --extract-journals is for --drill restore-copy", file=sys.stderr)
+            return EXIT_FAILED
+        try:
+            extract_journals(working_dir, args.dump_tool.resolve())
+        except SystemExit as stop:
+            print(stop.code, file=sys.stderr)
+            return EXIT_FAILED
+        args.analyze_only = True
     if args.analyze_only:
         try:
             summary = json.loads((working_dir / "drill-summary.json").read_text())
