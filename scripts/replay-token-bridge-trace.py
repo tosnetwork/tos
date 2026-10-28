@@ -42,7 +42,12 @@ MAX_TRACE_BYTES = 256 * 1024 * 1024
 
 
 def trace_population(directory: Path, expected: int | None = None) -> list[Path]:
-    if expected is not None and not 0 < expected <= MAX_TRACE_RECORDS:
+    # Legacy consumers (including service-actor capacity tests) have different
+    # populations and larger receipts. Bridge-specific caps are opt-in together
+    # with its exact population contract.
+    if expected is None:
+        return sorted(directory.rglob("*.json"))
+    if not 0 < expected <= MAX_TRACE_RECORDS:
         raise ValueError("expected trace population is outside the record limit")
     records = sorted(itertools.islice(directory.rglob("*.json"), MAX_TRACE_RECORDS + 1))
     if len(records) > MAX_TRACE_RECORDS:

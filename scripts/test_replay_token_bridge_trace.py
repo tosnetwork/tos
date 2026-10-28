@@ -149,24 +149,32 @@ class TracePopulation(unittest.TestCase):
     def test_record_limit(self):
         with patch.object(replay, "MAX_TRACE_RECORDS", 1):
             with self.assertRaisesRegex(ValueError, "record limit exceeded"):
-                replay.trace_population(self.root)
+                replay.trace_population(self.root, 1)
 
     def test_file_limit(self):
         with patch.object(replay, "MAX_TRACE_FILE", 1):
             with self.assertRaisesRegex(ValueError, "byte limit exceeded"):
-                replay.trace_population(self.root)
+                replay.trace_population(self.root, 2)
 
     def test_total_limit(self):
         size = (self.root / "0001.json").stat().st_size
         with patch.object(replay, "MAX_TRACE_BYTES", size):
             with self.assertRaisesRegex(ValueError, "byte limit exceeded"):
-                replay.trace_population(self.root)
+                replay.trace_population(self.root, 2)
 
     def test_expected_limit(self):
         for count in (0, -1, replay.MAX_TRACE_RECORDS + 1):
             with self.subTest(count=count):
                 with self.assertRaisesRegex(ValueError, "outside the record limit"):
                     replay.trace_population(self.root, count)
+
+    def test_legacy_population_preserves_other_consumers(self):
+        with (
+            patch.object(replay, "MAX_TRACE_RECORDS", 1),
+            patch.object(replay, "MAX_TRACE_FILE", 1),
+            patch.object(replay, "MAX_TRACE_BYTES", 1),
+        ):
+            self.assertEqual(len(replay.trace_population(self.root)), 2)
 
     def test_population_checked_before_engine(self):
         with patch.object(
