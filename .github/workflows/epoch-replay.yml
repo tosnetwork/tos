@@ -96,11 +96,17 @@ jobs:
         env:
           EMULATOR_PATH: ${{ github.workspace }}/build/emulator/libemulator.so
         run: |
+          cargo test --manifest-path tosctl/src/Cargo.toml --locked --release -p chain_block --lib native_varuint
           cargo test --manifest-path tosctl/src/Cargo.toml --locked --release -p chain_block --lib storage_stat
           cargo test --manifest-path tosctl/src/Cargo.toml --locked --release -p chain_block --lib transaction_storage
           cmake --build build --target test-storage-encoding --parallel "$(nproc)"
           python3 test/executor-parity/storage_encoding.py --native build/emulator/test-storage-encoding --output result/storage-encoding.json
           cmp result/storage-encoding.fixture.tsv tosctl/src/block/src/tests/data/storage_stat/storage-encoding.tsv
+          cmp result/storage-encoding.rejected.tsv tosctl/src/block/src/tests/data/storage_stat/storage-encoding-rejected.tsv
+          cmake --build build --target test-varuint-codec --parallel "$(nproc)"
+          cargo build --manifest-path tosctl/src/Cargo.toml --locked --release -p chain_block --example varuint-codec
+          python3 test/executor-parity/test_varuint_codec.py
+          python3 test/executor-parity/varuint_codec.py --native build/emulator/test-varuint-codec --rust tosctl/src/target/release/examples/varuint-codec --output result/varuint-codec
           python3 test/executor-parity/storage_cache_carry.py --output result/storage-cache-carry.json
           cmp result/storage-cache-carry.json tosctl/src/executor/tests/fixtures/storage-cache-carry.json
           python3 test/executor-parity/storage_rollback_carry.py --output result/storage-rollback-carry.json
@@ -167,6 +173,9 @@ jobs:
           cmp artifacts/epoch-replay-x86-64/source-commit.txt artifacts/epoch-replay-arm64/source-commit.txt
           test "$(cat artifacts/epoch-replay-x86-64/source-commit.txt)" = "$(git rev-parse HEAD)"
           cmp artifacts/epoch-replay-x86-64/build-inputs.sha256 artifacts/epoch-replay-arm64/build-inputs.sha256
+          cmp artifacts/epoch-replay-x86-64/varuint-codec/inputs.tsv artifacts/epoch-replay-arm64/varuint-codec/inputs.tsv
+          cmp artifacts/epoch-replay-x86-64/varuint-codec/native.stdout artifacts/epoch-replay-arm64/varuint-codec/native.stdout
+          cmp artifacts/epoch-replay-x86-64/varuint-codec/rust.stdout artifacts/epoch-replay-arm64/varuint-codec/rust.stdout
           test ! -s artifacts/epoch-replay-x86-64/source-status.txt
           test ! -s artifacts/epoch-replay-arm64/source-status.txt
           cat artifacts/epoch-replay-x86-64/metrics.json

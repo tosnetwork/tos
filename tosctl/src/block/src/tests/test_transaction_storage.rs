@@ -220,3 +220,21 @@ fn transaction_storage_retains_original_hash_and_checks_native_range() {
         .to_string()
         .contains("version mismatch"));
 }
+
+#[test]
+fn transaction_storage_rejects_native_varuint_coins() {
+    use crate::{read_single_root_boc, ShardAccount};
+    let mut lines = include_str!("data/storage_stat/storage-encoding-rejected.tsv").lines();
+    assert_eq!(lines.next(), Some("#native-account-rejections-v1"));
+    let mut count = 0;
+    for line in lines {
+        let fields: Vec<_> = line.split('\t').collect();
+        assert_eq!(fields.len(), 2);
+        let cell = read_single_root_boc(hex::decode(fields[1]).unwrap()).unwrap();
+        let shard = ShardAccount::construct_from_cell(cell.clone()).unwrap();
+        assert!(shard.read_account().is_err(), "{}", fields[0]);
+        assert_eq!(shard.serialize().unwrap().repr_hash(), cell.repr_hash());
+        count += 1;
+    }
+    assert_eq!(count, 2);
+}
