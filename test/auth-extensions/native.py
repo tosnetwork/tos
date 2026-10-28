@@ -297,7 +297,8 @@ def transaction_details(transaction):
         code = a.sint(32)
         if a.uint(1):
             a.sint(32)
-        result["action"] = {"success": ok, "code": code, "actions": a.uint(16)}
+        result["action"] = {"success": ok, "code": code}
+        result["action_count"] = a.uint(16)
     return result
 
 

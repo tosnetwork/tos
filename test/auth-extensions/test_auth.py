@@ -401,8 +401,11 @@ def refused_once_problems(observations, seqno, extensions):
         # counts as successful and an empty action list runs successfully.
         if not details["compute_success"] or details["aborted"]:
             problems.append(f"the commit must hold: {details}")
-        if details["action"] != {"success": True, "code": 0, "actions": 0}:
-            problems.append(f"expected an empty successful action phase: {details['action']}")
+        if details["action"] != {"success": True, "code": 0} or details.get("action_count") != 0:
+            problems.append(
+                f"expected an empty successful action phase: {details['action']}, "
+                f"{details.get('action_count')} actions"
+            )
         if not details["gas"] > 0:
             problems.append(f"expected gas to be charged: {details}")
     if first.get("outgoing") != 0:
