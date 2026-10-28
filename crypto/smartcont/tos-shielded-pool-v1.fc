@@ -1,4 +1,4 @@
-;; The shielded pool, V1. Deposit path only so far.
+;; The shielded pool, V1: deposit, transact and reserve top-up.
 ;;
 ;; Sections 12.1, 14.1 and 16.1 of the V1 implementation profile. Everything
 ;; this handler needs below the message itself lives in crypto/smartcont/
@@ -25,7 +25,12 @@
 ;;   202 the amount is not one the configuration admits
 ;;   203 the message does not fund its own execution and principal
 ;;   204 the end state would not be backed
-;;   205 the anchor kind/id/root is not one this pool preserved
+;;
+;; A transact whose anchor this pool did not preserve -- one from another
+;; instance, or one the rings have overwritten -- is refused by the anchor
+;; check in shielded/anchors.fc, which lists its own codes: 152 for a current
+;; anchor, 153 for a recent one, 154 or 155 for an epoch checkpoint, 151 for
+;; an unknown kind.
 ;;
 ;; Requires the shielded library and the unified global version 16 baseline,
 ;; including POSEIDON2_HASH7 and POSEIDON2_PATH7.

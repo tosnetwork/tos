@@ -2449,7 +2449,8 @@ if (NOT TOS_ONLY_TOSLIB AND NOT USE_EMSCRIPTEN AND NOT EMSCRIPTEN)
     add_dependencies(test-archive-prune test-fsync-count-shim)
     target_link_libraries(test-archive-prune PRIVATE ${CMAKE_DL_LIBS})
     add_test(NAME archive-reader-no-package-sync COMMAND test-archive-prune --reader-package-sync)
-    set_tests_properties(archive-reader-no-package-sync PROPERTIES TIMEOUT 90
+    add_test(NAME archive-reader-no-package-repair COMMAND test-archive-prune --reader-package-repair)
+    set_tests_properties(archive-reader-no-package-sync archive-reader-no-package-repair PROPERTIES TIMEOUT 90
       ENVIRONMENT "LD_PRELOAD=$<TARGET_FILE:test-fsync-count-shim>")
   endif()
 endif()

@@ -328,7 +328,7 @@ def validate_generated_roots(prefix, suites, parity, steps):
     )
     require(
         digest("        run:" + run.rstrip() + "\n")
-        == "63c3f704f496d10487a265e1bca24c4b8108bc5305f86d1c23b8471e3a4c32e3",
+        == "ea53ec07c9c9310a8e3dc662f87fd742bc32a3fdfaced66b7f2ac4ed06282fc0",
         "generated producer/control/bundle commands changed",
     )
     order = list(steps)

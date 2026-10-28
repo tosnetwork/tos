@@ -28,6 +28,9 @@ pub enum Rejection {
     Magic,
     Version,
     Slot,
+    /// A recovery template sealed under a slot other than
+    /// `RECOVERY_PAYLOAD_SLOT`.
+    RecoverySlot,
     /// Reserved flag bits set, or a combination section 3 forbids.
     Flags,
     NoteSecretNotCanonical,

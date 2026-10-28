@@ -13,9 +13,18 @@
 
 import { describe, expect, it } from "vitest";
 
-import { Refused, decodePlaintext, encodePlaintext, importNote, open, seal } from "./delivery.js";
+import {
+  RECOVERY_PAYLOAD_SLOT,
+  Refused,
+  decodePlaintext,
+  encodePlaintext,
+  importNote,
+  open,
+  ownerCommitment,
+  seal,
+} from "./delivery.js";
 import vectors from "./generated/wallet-vectors.json" with { type: "json" };
-import { PoolInstance, outputDataHash } from "./keys.js";
+import { PoolInstance, outputDataHash, recoveryTemplateHash } from "./keys.js";
 
 const fromHex = (text: string): Uint8Array =>
   Uint8Array.from(text.match(/../g) ?? [], (pair) => Number.parseInt(pair, 16));
@@ -189,5 +198,42 @@ describe("section 3 delivery", () => {
         p.noteSecret = 7n;
       }),
     ).toBe("NoteBodyMismatch");
+  });
+
+  it("recognises a recovery template only under the recovery slot", () => {
+    const instance = wallet();
+    const vector = need(
+      vectors.plaintexts.find((entry) => entry.kind === "Recovery"),
+      "a recovery plaintext vector",
+    );
+    expect(vector.slot, "the Rust reference seals recovery elsewhere").toBe(RECOVERY_PAYLOAD_SLOT);
+    const template = open(instance, fromHex(vector.sealed), vector.slot);
+
+    // Sealed and opened under the given slot, so the AEAD passes and only the
+    // import rule can refuse it; the template hash matches the bytes.
+    const imported = (slot: number) => {
+      const sealed = seal(instance.mlkemEncapsulationKey(), instance.executionDomain, {
+        ...template,
+        slot,
+      });
+      const opened = open(instance, sealed, slot);
+      const dataHash = outputDataHash(sealed);
+      const owner = ownerCommitment(opened.ownerNfKeyHash, opened.pqAuthKeyHash, opened.noteSecret);
+      return importNote(instance, opened, {
+        outputDataHash: dataHash,
+        noteBody: recoveryTemplateHash(owner, dataHash),
+      });
+    };
+
+    expect(imported(RECOVERY_PAYLOAD_SLOT).spendable).toBe(false);
+    for (const slot of [0, 1]) {
+      let why: string | undefined;
+      try {
+        imported(slot);
+      } catch (error) {
+        why = (error as Refused).why;
+      }
+      expect(why, `a recovery template under slot ${slot}`).toBe("RecoverySlot");
+    }
   });
 });

@@ -43,7 +43,11 @@ def ports_free(base: int, count: int) -> bool:
 
 
 def call(
-    address: str, method: str, params: dict[str, Any] | None = None, source: str = ""
+    address: str,
+    method: str,
+    params: dict[str, Any] | None = None,
+    source: str = "",
+    timeout: float = 10,
 ) -> dict[str, Any]:
     payload = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params or {}})
     request = urllib.request.Request(
@@ -53,10 +57,33 @@ def call(
     )
     if source:
         request.add_header("X-Real-IP", source)
-    with urllib.request.urlopen(request, timeout=10) as response:
+    with urllib.request.urlopen(request, timeout=timeout) as response:
         document = json.loads(response.read().decode())
     require(isinstance(document, dict), f"{address} {method}: not a JSON-RPC answer")
     return document
+
+
+async def synced(name: str, address: str, target: int, deadline: float) -> float:
+    """Wait until the node's masterchain head reaches a fixed seqno.
+
+    Every call is bounded by what remains of the shared deadline. Returns the
+    seconds waited; on timeout, fails with the last answer or error.
+    """
+    started = time.monotonic()
+    last: object = "no answer"
+    while (remaining := deadline - time.monotonic()) > 0:
+        try:
+            answer = await asyncio.to_thread(
+                call, address, "getMasterchainInfo", None, "", min(10.0, remaining)
+            )
+            last = answer
+            seqno = answer.get("result", {}).get("last", {}).get("seqno")
+            if isinstance(seqno, int) and seqno >= target:
+                return time.monotonic() - started
+        except (OSError, ValueError) as error:
+            last = error
+        await asyncio.sleep(min(1.0, max(0.0, deadline - time.monotonic())))
+    raise AssertionError(f"{name}: masterchain head did not reach {target}: last answer {last!r}")
 
 
 async def answered(
@@ -149,6 +176,18 @@ async def main(args: argparse.Namespace) -> None:
         client = await validators[0].toslib_client()
         wallet = network.zerostate.main_wallet(client).address.to_str(is_user_friendly=False)
 
+        # A follower that is still catching up answers getAddressInformation
+        # with "not in db". Wait until both endpoints reach one validator head
+        # sampled here, so a later "not in db" is a real failure.
+        head = (await client.get_masterchain_info()).last
+        require(head is not None, "validator reported no masterchain head")
+        assert head is not None
+        target = head.seqno
+        require(target >= 3, f"validator head {target} is below 3")
+        deadline = time.monotonic() + 120
+        for name, address in (("validator", unindexed), ("follower", indexed)):
+            waited = await synced(name, address, target, deadline)
+            logging.info("%s reached masterchain seqno %d after %.1f s", name, target, waited)
         for name, address in (("validator", unindexed), ("follower", indexed)):
             info = await answered(address, "getMasterchainInfo")
             require("result" in info, f"{name}: getMasterchainInfo failed: {info}")

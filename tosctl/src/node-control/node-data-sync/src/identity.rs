@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeSet,
     fs,
+    io::Write,
     path::{Path, PathBuf},
 };
 
@@ -21,14 +22,39 @@ pub struct PrivateFile {
     pub stored: String,
     pub size: Option<u64>,
     pub sha256: Option<String>,
+    /// Permission bits of the copied source, present exactly when its bytes are.
+    pub mode: Option<u32>,
 }
+/// One directory of an identity tree, including empty ones and the tree root itself.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(deny_unknown_fields)]
+pub struct PrivateDirectory {
+    pub path: PathBuf,
+    pub mode: u32,
+}
+/// Identity trees: name, whether it lives in the database root (otherwise the work root),
+/// and whether it must exist.
+const IDENTITY_TREES: [(&str, bool, bool); 3] =
+    [("keyring", true, true), ("console-client", true, false), ("keys", false, false)];
+const IDENTITY_ENTRY_LIMIT: usize = 100_000;
+/// Identity and configuration of one node, captured privately before its database root is
+/// replaced, and restored into the replacement.
+///
+/// Contract for the database-local trees (`keyring`, `console-client`, and `keys` when the
+/// work root is the database root): every directory, including empty ones, and every
+/// regular file is recorded with its permission bits; the replacement recreates exactly
+/// that set with exactly those bits. Every recorded entry must belong to the database
+/// root's owner and group, carry no special bits and not be writable by other accounts;
+/// the replacement is handed to that same owner and group, so ownership is preserved too.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Identity {
     pub format: u8,
     pub files: Vec<PrivateFile>,
     pub protected_files: Vec<PathBuf>,
-    pub directories: Vec<PathBuf>,
+    /// The identity trees present, by absolute path.
+    pub roots: Vec<PathBuf>,
+    pub directories: Vec<PrivateDirectory>,
 }
 impl Identity {
     pub fn capture(
@@ -74,24 +100,54 @@ impl Identity {
                 "private config overlaps chain, recovery or signing-state data"
             );
         }
+        // Database-local identity entries, and seeds, belong to the account that runs the
+        // node, which owns the database root.
+        let owner = database.owner()?;
+        let (seed_owner, _) = owner;
+        let mut roots = Vec::new();
         let mut directories = Vec::new();
-        for name in ["keyring", "keys"] {
-            let base = if name == "keyring" { &db } else { &work };
+        let mut local_files = BTreeSet::new();
+        for (name, local, required) in IDENTITY_TREES {
+            let base = if local { &db } else { &work };
             let path = base.join(name);
             let parent = database.open_anchored(base)?;
             match crate::trees::optional_directory(&parent, name)
                 .context("required identity directory is missing or unsafe")?
             {
-                None if name == "keys" => {}
+                None if !required => {}
                 None => anyhow::bail!("required identity directory is missing: {}", path.display()),
                 Some(tree) => {
-                    inventory_tree(&tree, &mut sources)?;
-                    directories.push(path);
+                    let in_database = path.starts_with(&db);
+                    for entry in crate::trees::private_tree(
+                        &tree,
+                        IDENTITY_ENTRY_LIMIT,
+                        IDENTITY_TOTAL_LIMIT,
+                    )? {
+                        let full = if entry.path.is_empty() {
+                            path.clone()
+                        } else {
+                            path.join(&entry.path)
+                        };
+                        if in_database {
+                            check_local_entry(&full, entry.mode, (entry.uid, entry.gid), owner)?;
+                        }
+                        if entry.directory {
+                            directories.push(PrivateDirectory { path: full, mode: entry.mode });
+                        } else {
+                            ensure!(
+                                sources.len() < IDENTITY_ENTRY_LIMIT,
+                                "identity inventory count limit"
+                            );
+                            if in_database {
+                                local_files.insert(full.clone());
+                            }
+                            sources.push(full);
+                        }
+                    }
+                    roots.push(path);
                 }
             }
         }
-        // A seed belongs to the account that runs the node, which owns the database root.
-        let (seed_owner, _) = database.owner()?;
         let config = database.bytes("config.json", IDENTITY_FILE_LIMIT)?;
         let config: serde_json::Value = serde_json::from_slice(&config)?;
         for id in registered_keys(&config)? {
@@ -142,20 +198,30 @@ impl Identity {
             if let Some(seed) = seeds.remove(&source) {
                 // Rechecked on the same descriptor just before its bytes are copied.
                 check_seed(&seed, seed_owner)?;
+                let mode = descriptor_mode(&seed)?;
+                if local_files.contains(&source) {
+                    check_local_entry(&source, mode, descriptor_owner(&seed)?, owner)?;
+                }
                 let mut output = backup.create_file(&stored)?;
                 let (size, digest) = copy_hash(seed, &mut output, 32)?;
                 ensure!(size == 32, "configured consensus seed changed length while held");
                 total = total.checked_add(size).context("identity size overflow")?;
                 output.sync_all()?;
                 backup.sync_parent(&stored)?;
-                files.push(PrivateFile { source, stored, size: Some(size), sha256: Some(digest) });
+                files.push(PrivateFile {
+                    source,
+                    stored,
+                    size: Some(size),
+                    sha256: Some(digest),
+                    mode: Some(mode),
+                });
                 continue;
             }
             let optional = LOCAL_CONFIGS.iter().any(|name| source == db.join(name));
             let (parent, name) = anchored_file(&database, &source)?;
             match parent.kind(name)? {
                 None if optional => {
-                    files.push(PrivateFile { source, stored, size: None, sha256: None })
+                    files.push(PrivateFile { source, stored, size: None, sha256: None, mode: None })
                 }
                 None => anyhow::bail!("identity file is missing: {}", source.display()),
                 Some(kind) => {
@@ -165,6 +231,11 @@ impl Identity {
                         source.display()
                     );
                     let input = parent.read(name, IDENTITY_FILE_LIMIT)?;
+                    // Mode and owner come from the same descriptor whose bytes are copied.
+                    let mode = descriptor_mode(&input)?;
+                    if local_files.contains(&source) {
+                        check_local_entry(&source, mode, descriptor_owner(&input)?, owner)?;
+                    }
                     let mut output = backup.create_file(&stored)?;
                     let (size, digest) = copy_hash(input, &mut output, IDENTITY_FILE_LIMIT)?;
                     total = total.checked_add(size).context("identity size overflow")?;
@@ -176,21 +247,56 @@ impl Identity {
                         stored,
                         size: Some(size),
                         sha256: Some(digest),
+                        mode: Some(mode),
                     });
                 }
             }
         }
         ensure!(seeds.is_empty(), "a checked consensus seed was not backed up");
-        let identity = Self { format: 1, files, protected_files, directories };
+        let identity = Self { format: 2, files, protected_files, roots, directories };
         backup.write_new("identity.json", &serde_json::to_vec(&identity)?)?;
         identity.verify(backup)?;
         Ok(identity)
     }
     pub fn verify(&self, backup: &Root) -> Result<()> {
-        ensure!(self.format == 1 && self.files.len() <= 100_000, "unsupported identity inventory");
         ensure!(
-            self.directories.len() <= 2 && self.directories.iter().all(|path| path.is_absolute()),
-            "invalid identity directory inventory"
+            self.format == 2 && self.files.len() <= IDENTITY_ENTRY_LIMIT,
+            "unsupported identity inventory"
+        );
+        let roots: BTreeSet<_> = self.roots.iter().collect();
+        ensure!(
+            roots.len() == self.roots.len()
+                && self.roots.len() <= IDENTITY_TREES.len()
+                && self.roots.iter().all(|root| {
+                    root.is_absolute()
+                        && root.file_name().and_then(|n| n.to_str()).is_some_and(|name| {
+                            IDENTITY_TREES.iter().any(|(tree, _, _)| *tree == name)
+                        })
+                }),
+            "invalid identity tree inventory"
+        );
+        ensure!(self.directories.len() <= IDENTITY_ENTRY_LIMIT, "identity directory count limit");
+        let mut directories = BTreeSet::new();
+        for directory in &self.directories {
+            ensure!(
+                directory.path.is_absolute()
+                    && directory.mode <= 0o7777
+                    && directories.insert(&directory.path),
+                "invalid or duplicate identity directory"
+            );
+        }
+        for directory in &self.directories {
+            let parent = directory.path.parent().context("identity directory parent")?;
+            ensure!(
+                roots.contains(&directory.path)
+                    || (roots.iter().any(|root| directory.path.starts_with(root))
+                        && directories.contains(&parent.to_path_buf())),
+                "identity directory is outside its tree or lacks its parent"
+            );
+        }
+        ensure!(
+            self.roots.iter().all(|root| directories.contains(root)),
+            "identity tree root has no recorded directory"
         );
         let protected: BTreeSet<_> = self.protected_files.iter().collect();
         ensure!(protected.len() == self.protected_files.len(), "duplicate protected configuration");
@@ -206,13 +312,21 @@ impl Identity {
                 "duplicate or relative identity source"
             );
             ensure!(file.stored == format!("files/{index:06}"), "invalid private bundle path");
-            match (&file.size, &file.sha256) {
-                (None, None) => ensure!(
+            if roots.iter().any(|root| file.source.starts_with(root)) {
+                let parent = file.source.parent().context("identity file parent")?;
+                ensure!(
+                    directories.contains(&parent.to_path_buf()),
+                    "identity tree file has no recorded directory"
+                );
+            }
+            match (&file.size, &file.sha256, &file.mode) {
+                (None, None, None) => ensure!(
                     crate::safe_io::absent(&backup.path.join(&file.stored))?,
                     "absent identity file has stored bytes"
                 ),
-                (Some(size), Some(digest)) => {
+                (Some(size), Some(digest), Some(mode)) => {
                     ensure!(*size <= IDENTITY_FILE_LIMIT, "identity file limit");
+                    ensure!(*mode <= 0o7777, "invalid identity file mode");
                     let bytes = backup.bytes(&file.stored, *size)?;
                     ensure!(
                         bytes.len() as u64 == *size && sha256(&bytes) == *digest,
@@ -220,20 +334,26 @@ impl Identity {
                     );
                     total = total.checked_add(*size).context("identity size overflow")?;
                 }
-                _ => anyhow::bail!("identity absence and digest disagree"),
+                _ => anyhow::bail!("identity absence, digest and mode disagree"),
             }
         }
         ensure!(total <= IDENTITY_TOTAL_LIMIT, "identity total limit");
         Ok(())
     }
-    /// Recheck every source below the held database descriptor `database`.
+    /// Recheck every source below the held database descriptor `database`: bytes and mode of
+    /// every file, and the complete directory and file set of every identity tree.
     pub fn verify_sources(&self, database: &Root) -> Result<()> {
         for file in &self.files {
             let (parent, name) = anchored_file(database, &file.source)?;
             match file.size {
                 Some(size) => {
+                    let input = parent.read(name, size)?;
                     ensure!(
-                        crate::safe_io::file_hash(parent.read(name, size)?, size)?
+                        Some(descriptor_mode(&input)?) == file.mode,
+                        "own identity/config mode changed during preparation"
+                    );
+                    ensure!(
+                        crate::safe_io::file_hash(input, size)?
                             == (size, file.sha256.clone().context("identity digest")?),
                         "own identity/config changed during preparation"
                     );
@@ -244,44 +364,100 @@ impl Identity {
                 ),
             }
         }
+        for root in &self.roots {
+            let tree = database.open_anchored(root)?;
+            let mut seen_directories = BTreeSet::new();
+            let mut seen_files = BTreeSet::new();
+            for entry in
+                crate::trees::private_tree(&tree, IDENTITY_ENTRY_LIMIT, IDENTITY_TOTAL_LIMIT)?
+            {
+                let full =
+                    if entry.path.is_empty() { root.clone() } else { root.join(&entry.path) };
+                if entry.directory {
+                    seen_directories.insert(PrivateDirectory { path: full, mode: entry.mode });
+                } else {
+                    seen_files.insert(full);
+                }
+            }
+            let recorded_directories: BTreeSet<_> =
+                self.directories.iter().filter(|d| d.path.starts_with(root)).cloned().collect();
+            let recorded_files: BTreeSet<_> = self
+                .files
+                .iter()
+                .filter(|f| f.source.starts_with(root))
+                .map(|f| f.source.clone())
+                .collect();
+            ensure!(
+                seen_directories == recorded_directories && seen_files == recorded_files,
+                "own identity tree changed during preparation: {}",
+                root.display()
+            );
+        }
         Ok(())
     }
-    /// Only database-root local files are overlaid. External files remain at their own locations.
+    /// Only database-root local entries are overlaid. External files remain at their own
+    /// locations. Every recorded local directory, including empty ones, is created first with
+    /// owner write permission, then every local file is written with its recorded bits, and
+    /// only then are the recorded directory bits applied, deepest first: a recorded
+    /// read-only directory (for example `0500`) would otherwise refuse its own contents to a
+    /// non-root invoker. The installed trees are then checked against the record.
     pub fn overlay(&self, old_db: &Path, replacement: &Root, backup: &Root) -> Result<()> {
         self.verify(backup)?;
         let old_db = fs::canonicalize(old_db)?;
-        for directory in &self.directories {
-            if let Ok(relative) = directory.strip_prefix(&old_db) {
+        let local_tree = |relative: &Path| {
+            relative
+                .components()
+                .next()
+                .and_then(|c| c.as_os_str().to_str())
+                .is_some_and(|first| IDENTITY_TREES.iter().any(|(name, _, _)| *name == first))
+        };
+        let mut directories: Vec<_> = self.directories.iter().collect();
+        directories.sort_by(|a, b| a.path.cmp(&b.path));
+        let mut local_directories = Vec::new();
+        for directory in directories {
+            if let Ok(relative) = directory.path.strip_prefix(&old_db) {
                 use std::os::unix::fs::DirBuilderExt;
-                ensure!(
-                    matches!(relative.to_str(), Some("keyring" | "keys")),
-                    "unexpected private directory"
-                );
+                ensure!(local_tree(relative), "unexpected private directory");
+                ensure!(directory.mode <= 0o777, "private directory carries special bits");
+                let relative = relative.to_str().context("non-text identity path")?;
+                // Writable by its owner until every entry below it is installed.
                 fs::DirBuilder::new().mode(0o700).create(replacement.path.join(relative))?;
+                replacement.open_child(relative)?.set_mode(0o700)?;
                 replacement.sync()?;
+                local_directories.push((relative.to_owned(), directory.mode));
             } else {
                 ensure!(
-                    directory.symlink_metadata()?.file_type().is_dir(),
+                    directory.path.symlink_metadata()?.file_type().is_dir(),
                     "external private directory changed"
                 );
             }
         }
         for file in &self.files {
             if let Ok(relative) = file.source.strip_prefix(&old_db) {
-                let relative = relative.to_str().context("non-text identity path")?;
                 ensure!(
-                    self.protected_files.contains(&file.source)
-                        || relative.starts_with("keyring/")
-                        || relative.starts_with("keys/"),
+                    self.protected_files.contains(&file.source) || local_tree(relative),
                     "unexpected local identity overlay"
                 );
-                if let Some(size) = file.size {
-                    replacement.write_new(relative, &backup.bytes(&file.stored, size)?)?;
-                } else {
-                    ensure!(
+                let relative = relative.to_str().context("non-text identity path")?;
+                match (file.size, file.mode) {
+                    (Some(size), Some(mode)) => {
+                        use std::os::unix::fs::PermissionsExt;
+                        ensure!(mode <= 0o777, "private file carries special bits");
+                        let bytes = backup.bytes(&file.stored, size)?;
+                        let mut output = replacement.create_file(relative)?;
+                        output.write_all(&bytes)?;
+                        output.set_permissions(fs::Permissions::from_mode(mode))?;
+                        output.sync_all()?;
+                        replacement.sync_parent(relative)?;
+                        ensure!(
+                            descriptor_mode(&output)? == mode,
+                            "private file mode was not applied"
+                        );
+                    }
+                    _ => ensure!(
                         crate::safe_io::absent(&replacement.path.join(relative))?,
                         "replacement supplied an absent local config"
-                    );
+                    ),
                 }
             } else if let Some(size) = file.size {
                 let parent = Root::open(file.source.parent().context("external identity parent")?)?;
@@ -297,8 +473,90 @@ impl Identity {
                 );
             }
         }
+        // Deepest first, so no directory is closed before its children are final.
+        local_directories.sort_by(|a, b| b.0.cmp(&a.0));
+        for (relative, mode) in &local_directories {
+            let directory = replacement.open_child(relative)?;
+            directory.set_mode(*mode)?;
+            directory.sync()?;
+        }
+        replacement.sync()?;
+        self.verify_installed(&old_db, replacement)
+    }
+    /// The overlaid local trees, with their final bits, are exactly the record: every
+    /// directory with its mode, every file with its bytes and mode, and nothing else.
+    fn verify_installed(&self, old_db: &Path, replacement: &Root) -> Result<()> {
+        for root in &self.roots {
+            let Ok(relative) = root.strip_prefix(old_db) else {
+                continue;
+            };
+            let relative = relative.to_str().context("non-text identity path")?;
+            let tree = replacement.open_child(relative)?;
+            let mut directories = BTreeSet::new();
+            let mut files = BTreeSet::new();
+            for entry in
+                crate::trees::private_tree(&tree, IDENTITY_ENTRY_LIMIT, IDENTITY_TOTAL_LIMIT)?
+            {
+                let full =
+                    if entry.path.is_empty() { root.clone() } else { root.join(&entry.path) };
+                if entry.directory {
+                    directories.insert(PrivateDirectory { path: full, mode: entry.mode });
+                } else {
+                    let bytes = tree.bytes(&entry.path, entry.size)?;
+                    files.insert((full, entry.mode, sha256(&bytes)));
+                }
+            }
+            let recorded_directories: BTreeSet<_> =
+                self.directories.iter().filter(|d| d.path.starts_with(root)).cloned().collect();
+            let recorded_files: BTreeSet<_> = self
+                .files
+                .iter()
+                .filter(|f| f.source.starts_with(root))
+                .map(|f| {
+                    Ok((
+                        f.source.clone(),
+                        f.mode.context("recorded identity file has no mode")?,
+                        f.sha256.clone().context("recorded identity file has no digest")?,
+                    ))
+                })
+                .collect::<Result<_>>()?;
+            ensure!(
+                directories == recorded_directories && files == recorded_files,
+                "installed identity tree differs from its record: {}",
+                root.display()
+            );
+        }
         Ok(())
     }
+}
+fn descriptor_mode(file: &fs::File) -> Result<u32> {
+    use std::os::unix::fs::MetadataExt;
+    Ok(file.metadata()?.mode() & 0o7777)
+}
+fn descriptor_owner(file: &fs::File) -> Result<(u32, u32)> {
+    use std::os::unix::fs::MetadataExt;
+    let metadata = file.metadata()?;
+    Ok((metadata.uid(), metadata.gid()))
+}
+/// A database-local identity entry is kept with its exact bits and handed back to the
+/// database owner, so it must already belong to that owner and group, carry no special
+/// bits, and not be writable by other accounts.
+fn check_local_entry(path: &Path, mode: u32, actual: (u32, u32), owner: (u32, u32)) -> Result<()> {
+    ensure!(
+        actual == owner,
+        "identity entry {} belongs to {}:{}, not to the database owner {}:{}",
+        path.display(),
+        actual.0,
+        actual.1,
+        owner.0,
+        owner.1
+    );
+    ensure!(
+        mode & 0o7000 == 0 && mode & 0o002 == 0,
+        "identity entry {} has special or world-writable mode {mode:o}",
+        path.display()
+    );
+    Ok(())
 }
 /// Owner, mode, link count and length of a consensus seed, read from its open descriptor.
 fn check_seed(seed: &fs::File, owner: u32) -> Result<()> {
@@ -327,13 +585,6 @@ fn before_identity_copy() {
             hook();
         }
     });
-}
-fn inventory_tree(tree: &Root, sources: &mut Vec<PathBuf>) -> Result<()> {
-    for file in crate::trees::inventory(tree)? {
-        ensure!(sources.len() < 100_000, "identity inventory count limit");
-        sources.push(tree.path.join(file.path));
-    }
-    Ok(())
 }
 /// The parent of `source`, opened below the held database when it lies inside it.
 fn anchored_file<'a>(database: &Root, source: &'a Path) -> Result<(Root, &'a str)> {
@@ -478,6 +729,257 @@ mod seed_tests {
                 );
             }
         }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tree_contract_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+    struct Node {
+        _temporary: tempfile::TempDir,
+        base: PathBuf,
+        db: Root,
+        work: PathBuf,
+    }
+    /// A node whose identity trees hold files of several modes and an empty nested
+    /// directory; `keys_in_database` puts the work root (and its `keys`) in the database.
+    fn node(keys_in_database: bool) -> Result<Node> {
+        let temporary = tempfile::tempdir()?;
+        let base = temporary.path().canonicalize()?;
+        let db = Root::create(&base.join("db"))?;
+        let work =
+            if keys_in_database { db.path.clone() } else { Root::create(&base.join("work"))?.path };
+        db.write_new("config.json", b"{}")?;
+        db.write_new("keyring/KEY", b"transport key")?;
+        db.write_new("console-client/client", b"console private key")?;
+        db.write_new("console-client/client.pub", b"console public key")?;
+        db.write_new("console-client/server.pub", b"server public key")?;
+        db.ensure_directory("console-client/empty/inner")?;
+        let keys = Root::open(&work)?;
+        keys.write_new("keys/pq-consensus.seed", &[7; 32])?;
+        let mode =
+            |path: &Path, mode: u32| fs::set_permissions(path, fs::Permissions::from_mode(mode));
+        mode(&db.path.join("console-client/client.pub"), 0o644)?;
+        mode(&db.path.join("console-client/server.pub"), 0o640)?;
+        mode(&db.path.join("console-client/empty"), 0o750)?;
+        mode(&db.path.join("console-client/empty/inner"), 0o710)?;
+        mode(&db.path.join("console-client"), 0o751)?;
+        mode(&db.path.join("keyring"), 0o700)?;
+        for name in ["operator.json", "global.json", "unit.service"] {
+            fs::write(base.join(name), b"{}")?;
+        }
+        Ok(Node { _temporary: temporary, base, db, work })
+    }
+    fn capture(node: &Node, backup: &str) -> Result<(Identity, Root)> {
+        let backup = Root::create(&node.base.join(backup))?;
+        let identity = Identity::capture(
+            &node.db.path,
+            &node.work,
+            &node.db.path,
+            &node.base.join("operator.json"),
+            &node.base.join("global.json"),
+            &[node.base.join("unit.service")],
+            &backup,
+        )?;
+        Ok((identity, backup))
+    }
+    /// Every entry of a tree with kind, bits, owner, group and bytes.
+    fn listing(root: &Path) -> Result<Vec<(String, bool, u32, u32, u32, Vec<u8>)>> {
+        let tree = Root::open(root)?;
+        crate::trees::private_tree(&tree, 1000, 1 << 20)?
+            .into_iter()
+            .map(|e| {
+                let bytes = if e.directory { vec![] } else { tree.bytes(&e.path, e.size)? };
+                Ok((e.path, e.directory, e.mode, e.uid, e.gid, bytes))
+            })
+            .collect()
+    }
+    /// A recorded read-only directory holding keys is restored by a non-root invoker. Root
+    /// ignores directory write bits, so as root the test re-runs itself as another account.
+    #[test]
+    fn read_only_identity_directories_are_restored_with_their_contents() -> Result<()> {
+        use std::os::unix::process::CommandExt;
+        const INNER: &str = "NODE_SYNC_READ_ONLY_TREE_BASE";
+        // SAFETY: geteuid has no preconditions.
+        if unsafe { libc::geteuid() } == 0 && std::env::var_os(INNER).is_none() {
+            let temporary = tempfile::tempdir()?;
+            let base = temporary.path().canonicalize()?;
+            fs::set_permissions(temporary.path(), fs::Permissions::from_mode(0o755))?;
+            let directory = std::ffi::CString::new(base.as_os_str().as_encoded_bytes())?;
+            // SAFETY: a terminated path of a private temporary directory.
+            ensure!(unsafe { libc::chown(directory.as_ptr(), 65534, 65534) } == 0, "chown");
+            let output = std::process::Command::new(std::env::current_exe()?)
+                .args([
+                    "--exact",
+                    "identity::tree_contract_tests::read_only_identity_directories_are_restored_with_their_contents",
+                    "--nocapture",
+                ])
+                .env(INNER, &base)
+                .uid(65534)
+                .gid(65534)
+                .output()?;
+            let text = String::from_utf8_lossy(&output.stdout);
+            assert!(
+                output.status.success() && text.contains("READ_ONLY_IDENTITY_TREE_OK"),
+                "unprivileged run failed: {text}{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return Ok(());
+        }
+        // SAFETY: geteuid has no preconditions.
+        ensure!(unsafe { libc::geteuid() } != 0, "this regression needs a non-root invoker");
+        let temporary;
+        let base = match std::env::var_os(INNER) {
+            Some(base) => PathBuf::from(base),
+            None => {
+                temporary = tempfile::tempdir()?;
+                temporary.path().canonicalize()?
+            }
+        };
+        let db = Root::create(&base.join("db"))?;
+        db.write_new("config.json", b"{}")?;
+        db.write_new("keyring/KEY", b"transport key")?;
+        db.write_new("console-client/client", b"console key")?;
+        db.write_new("console-client/nested/inner/key", b"nested key")?;
+        for name in ["operator.json", "global.json", "unit.service"] {
+            fs::write(base.join(name), b"{}")?;
+        }
+        let set = |path: &str, mode: u32| {
+            fs::set_permissions(db.path.join(path), fs::Permissions::from_mode(mode))
+        };
+        // Deepest first, so each directory is still writable while its children change.
+        for (path, mode) in [
+            ("keyring/KEY", 0o400),
+            ("keyring", 0o500),
+            ("console-client/nested/inner", 0o500),
+            ("console-client/nested", 0o500),
+            ("console-client", 0o500),
+        ] {
+            set(path, mode)?;
+        }
+        let backup = Root::create(&base.join("backup"))?;
+        let identity = Identity::capture(
+            &db.path,
+            &base,
+            &db.path,
+            &base.join("operator.json"),
+            &base.join("global.json"),
+            &[base.join("unit.service")],
+            &backup,
+        )?;
+        let replacement = Root::create(&base.join("replacement"))?;
+        let overlaid = identity.overlay(&db.path, &replacement, &backup);
+        let result = (|| -> Result<()> {
+            overlaid?;
+            for tree in ["keyring", "console-client"] {
+                assert_eq!(
+                    listing(&replacement.path.join(tree))?,
+                    listing(&db.path.join(tree))?,
+                    "{tree} was not restored exactly"
+                );
+            }
+            Ok(())
+        })();
+        // Leave the temporary trees removable.
+        for root in [&db.path, &replacement.path] {
+            for path in [
+                "keyring",
+                "console-client",
+                "console-client/nested",
+                "console-client/nested/inner",
+            ] {
+                let _ = fs::set_permissions(root.join(path), fs::Permissions::from_mode(0o700));
+            }
+        }
+        result?;
+        println!("READ_ONLY_IDENTITY_TREE_OK");
+        Ok(())
+    }
+    #[test]
+    fn identity_trees_keep_bytes_modes_owner_and_empty_directories() -> Result<()> {
+        for keys_in_database in [false, true] {
+            let node = node(keys_in_database)?;
+            let (identity, backup) = capture(&node, "backup")?;
+            let replacement = Root::create(&node.base.join("replacement"))?;
+            identity.overlay(&node.db.path, &replacement, &backup)?;
+            replacement.hand_over(node.db.owner()?)?;
+            let mut trees = vec!["keyring", "console-client"];
+            if keys_in_database {
+                trees.push("keys");
+            } else {
+                assert!(!replacement.path.join("keys").exists(), "external keys were copied in");
+            }
+            for tree in trees {
+                assert_eq!(
+                    listing(&replacement.path.join(tree))?,
+                    listing(&node.db.path.join(tree))?,
+                    "{tree} was not preserved exactly (keys in database: {keys_in_database})"
+                );
+            }
+            identity.verify_sources(&node.db)?;
+        }
+        Ok(())
+    }
+    #[test]
+    fn a_changed_identity_tree_is_detected_before_exposure() -> Result<()> {
+        let changes: [(&str, fn(&Node) -> Result<()>); 4] = [
+            ("file mode", |n| {
+                Ok(fs::set_permissions(
+                    n.db.path.join("console-client/client.pub"),
+                    fs::Permissions::from_mode(0o600),
+                )?)
+            }),
+            ("directory mode", |n| {
+                Ok(fs::set_permissions(
+                    n.db.path.join("console-client/empty"),
+                    fs::Permissions::from_mode(0o700),
+                )?)
+            }),
+            ("new file", |n| n.db.write_new("console-client/extra", b"x")),
+            ("new empty directory", |n| n.db.ensure_directory("keyring/new")),
+        ];
+        for (label, change) in changes {
+            let node = node(false)?;
+            let (identity, _backup) = capture(&node, "backup")?;
+            change(&node)?;
+            let error = identity.verify_sources(&node.db).expect_err(label);
+            assert!(
+                format!("{error:#}").contains("changed during preparation"),
+                "{label}: {error:#}"
+            );
+        }
+        Ok(())
+    }
+    #[test]
+    fn a_local_identity_entry_of_another_owner_or_unsafe_mode_refuses() -> Result<()> {
+        for (label, mode) in [("world-writable", 0o666), ("setgid directory", 0o2750)] {
+            let node = node(false)?;
+            let path = if mode == 0o2750 {
+                node.db.path.join("console-client/empty")
+            } else {
+                node.db.path.join("console-client/client")
+            };
+            fs::set_permissions(&path, fs::Permissions::from_mode(mode))?;
+            let error = capture(&node, "backup").err().context(label)?;
+            assert!(
+                format!("{error:#}").contains("special or world-writable"),
+                "{label}: {error:#}"
+            );
+        }
+        let Some(other) = crate::safe_io::ownership_tests::other_owner() else {
+            eprintln!("SKIP: no second owner is available to this test process");
+            return Ok(());
+        };
+        let node = node(false)?;
+        let target = std::ffi::CString::new(
+            node.db.path.join("console-client/client").as_os_str().as_encoded_bytes(),
+        )?;
+        // SAFETY: a terminated path in a private temporary directory.
+        ensure!(unsafe { libc::chown(target.as_ptr(), other.0, other.1) } == 0, "chown");
+        let error = capture(&node, "backup").err().context("foreign owner accepted")?;
+        assert!(format!("{error:#}").contains("not to the database owner"), "{error:#}");
         Ok(())
     }
 }

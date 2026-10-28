@@ -22,6 +22,18 @@ use std::{
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
+/// Which target a request installs into.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Lane {
+    /// Same-node fast rejoin: an existing node keeps its own identity, signing history and
+    /// local StateDb records; only chain data is replaced.
+    #[default]
+    Restore,
+    /// A new non-validating node that has never run: it has its own identity and no local
+    /// records, and receives chain data from the signed catalog.
+    Bootstrap,
+}
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RestoreRequest {
@@ -30,9 +42,12 @@ pub struct RestoreRequest {
     pub cache: PathBuf,
     pub publisher_key: String,
     pub source_url: Option<String>,
+    #[serde(default)]
+    pub lane: Lane,
 }
 #[derive(Serialize)]
 pub struct Preparation {
+    pub lane: Lane,
     pub generation: String,
     pub network: crate::model::Network,
     pub raw_bytes: u64,
@@ -78,9 +93,63 @@ fn restore_owners(request: &RestoreRequest, operation: Option<&Path>) -> Result<
     }
     Ok(())
 }
+/// The target check before the exchange. A restore target is an existing node. A bootstrap
+/// target must still be a database that has never run, with its service inactive and no
+/// validator or signing material anywhere, the database root, the work root or the
+/// configured signing references.
+fn require_unexchanged_target(request: &RestoreRequest, expected: Option<bool>) -> Result<()> {
+    let service = request.context.service();
+    match request.lane {
+        Lane::Restore => {
+            service.require_restore_target(expected)?;
+            ensure!(
+                trees::optional_directory(&Root::open(&request.context.database)?, "state")?
+                    .is_some(),
+                "StateDb directory is missing: restore needs an existing node with its own local records; install a new node with tosctl node sync bootstrap"
+            );
+            Ok(())
+        }
+        Lane::Bootstrap => {
+            service.require_selected_mode(expected)?;
+            service.require_inactive().context(
+                "bootstrap target service must be inactive; bootstrap never stops or replaces a running node",
+            )?;
+            crate::paths::new_node_root(&request.context.database)?;
+            require_no_signing_material(&request.context)
+        }
+    }
+}
+/// A new node must hold no validator binding or key: no validator registration or signing
+/// custody in `config.json`, no enabled election binding, no referenced signing seed, and
+/// no key file in the work-root key directory. An empty or absent database `keys/` alone
+/// proves none of this.
+fn require_no_signing_material(context: &NodeContext) -> Result<()> {
+    context
+        .source_role()
+        .context("bootstrap refuses a validator target; recover a validator with restore")?;
+    let config: serde_json::Value = serde_json::from_slice(
+        &Root::open(&context.database)?.bytes("config.json", MANIFEST_LIMIT)?,
+    )?;
+    ensure!(
+        crate::identity::seed_references(&config)?.is_empty(),
+        "bootstrap refuses a target that references a signing seed"
+    );
+    let work = Root::open(&context.work_root)?;
+    if let Some(keys) = trees::optional_directory(&work, "keys")
+        .context("work-root key directory is a link or special file")?
+    {
+        let entries = trees::private_tree(&keys, 1024, 64 << 20)?;
+        ensure!(
+            entries.iter().all(|entry| entry.directory),
+            "bootstrap refuses a target whose work-root key directory holds key files: {}",
+            keys.path.display()
+        );
+    }
+    Ok(())
+}
 fn selected(request: &RestoreRequest) -> Result<(SignedManifest, [u8; 32])> {
     restore_storage(request, None)?;
-    request.context.service().require_restore_target(None)?;
+    require_unexchanged_target(request, None)?;
     restore_owners(request, None)?;
     let key = trusted(&request.publisher_key)?;
     let signed = SignedManifest::parse(&read_bytes(&request.manifest, MANIFEST_LIMIT)?, &key)?;
@@ -136,12 +205,20 @@ pub fn preflight(request: &RestoreRequest) -> Result<Preparation> {
             "local StateDb records and full-id safety anchors",
             "old tmp/import remains only with old CellDb",
         ],
+        lane: request.lane,
         generation: signed.verify(&key)?,
         network: signed.manifest.network,
         raw_bytes: raw,
         compressed_bytes: compressed,
         database: request.context.database.clone(),
-        warning: "Trusted publisher data; own identity, sessions, local safety anchors and old recovery material must be preserved. Offline inspection and native ancestry checks run after stopping, before FORWARD_ONLY. No rollback is available after replacement exposure.",
+        warning: match request.lane {
+            Lane::Restore => {
+                "Trusted publisher data; own identity, sessions, local safety anchors and old recovery material must be preserved. Offline inspection and native ancestry checks run after stopping, before FORWARD_ONLY. No rollback is available after replacement exposure."
+            }
+            Lane::Bootstrap => {
+                "Trusted publisher data for a new non-validating node; its own identity and console keys are preserved, and it has no local records. The target must stay inactive; native validation must prove descent from the held zero state and init block before FORWARD_ONLY. No rollback is available after replacement exposure."
+            }
+        },
     })
 }
 fn separate(a: &Path, b: &Path) -> Result<()> {
@@ -250,18 +327,42 @@ pub fn create(
         &context.disk_policy,
     )?;
     let image = Root::create(&operation.path.join("image"))?;
+    // Everything that needs no stopped node is checked before the stop.
+    capture::precheck_roots(&Root::open(&context.database)?)?;
+    service.validate()?;
+    let attached = TreeIdentity::read(&context.database)?;
     let started = Instant::now();
     let capture_started = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
-    let frozen = service.stop()?;
-    // Repeat role checks after quiescence: configuration may have changed while stop settled.
-    context.source_role()?;
-    service.require_mode(permanent)?;
-    publisher.validate(&context.database, store, operation_path)?;
-    #[cfg(all(test, feature = "native-lifecycle-tests"))]
-    crate::test_hooks::boundary("before-capture")?;
-    let copied =
-        capture::cold_image_checked(&frozen, &Root::open(&context.database)?, &image, publisher)?;
-    service.start_in_mode(frozen, permanent)?;
+    // From the stop command on, every failure either restarts the source or reports that it
+    // did not, with the distinct source-left-stopped exit status. Only a frozen source is
+    // ever restarted: without the freeze its quiescence and lock are unproven.
+    let frozen = service.stop_command().and_then(|()| service.freeze()).map_err(|error| {
+        left_stopped(&service, "the stop could not be confirmed and frozen", &error)
+    })?;
+    let captured = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<u64> {
+        // Repeat role checks after quiescence: configuration may have changed while stop settled.
+        context.source_role()?;
+        service.require_mode(permanent)?;
+        publisher.validate(&context.database, store, operation_path)?;
+        #[cfg(all(test, feature = "native-lifecycle-tests"))]
+        crate::test_hooks::boundary("before-capture")?;
+        capture::cold_image_checked(&frozen, &Root::open(&context.database)?, &image, publisher)
+    }))
+    .unwrap_or_else(|panic| Err(anyhow::anyhow!("capture panicked: {}", panic_text(&panic))));
+    let restarted = restart_source(context, &service, frozen, permanent, &attached);
+    let copied = match (captured, restarted) {
+        (Ok(copied), Ok(())) => copied,
+        (Err(error), Ok(())) => {
+            return Err(error.context(format!(
+                "capture failed after the source was stopped; the source service {} was restarted",
+                context.unit
+            )));
+        }
+        (Ok(_), Err(stopped)) => return Err(stopped.into()),
+        (Err(error), Err(stopped)) => {
+            return Err(anyhow::Error::new(stopped).context(format!("capture failed: {error:#}")));
+        }
+    };
     operation.write_new(
         "capture.json",
         &serde_json::to_vec(&crate::model::CaptureReceipt {
@@ -292,6 +393,57 @@ pub fn create(
     )?;
     operation.write_new("generation.json", &signed.bytes()?)?;
     signed.verify(&signing_key.verifying_key().to_bytes())
+}
+
+/// Restart the source this command stopped, through the same unit and manager scope, only
+/// after rechecking immediately before the start that it is still a non-validating source
+/// in the frozen storage mode, on the same database root, under the same held lock. Any
+/// mismatch, or a failed start, leaves it stopped and is reported as such.
+fn restart_source(
+    context: &NodeContext,
+    service: &crate::service::Service,
+    frozen: Frozen,
+    permanent: bool,
+    attached: &TreeIdentity,
+) -> std::result::Result<(), crate::service::SourceLeftStopped> {
+    let recheck = (|| -> Result<()> {
+        context.source_role().context("role or signing custody changed while stopped")?;
+        service.require_mode(permanent).context("storage mode or unit changed while stopped")?;
+        ensure!(
+            TreeIdentity::read(&context.database)? == *attached,
+            "database root was replaced while stopped"
+        );
+        frozen.check_held(&context.database).context("held lock changed while stopped")
+    })();
+    if let Err(error) = recheck {
+        drop(frozen);
+        return Err(left_stopped(service, "the restart recheck refused", &error));
+    }
+    service
+        .start_in_mode(frozen, permanent)
+        .map_err(|error| left_stopped(service, "the restart failed", &error))
+}
+fn left_stopped(
+    service: &crate::service::Service,
+    reason: &str,
+    error: &anyhow::Error,
+) -> crate::service::SourceLeftStopped {
+    let (state, command) = service
+        .abort_guidance()
+        .unwrap_or_else(|guidance| ("unknown".to_owned(), format!("unavailable: {guidance:#}")));
+    crate::service::SourceLeftStopped(format!(
+        "the source service {} was stopped by this command and was NOT restarted: {reason}: {error:#}; observed state={state}; review the cause, then restart it with: {command}",
+        service.unit
+    ))
+}
+fn panic_text(payload: &Box<dyn std::any::Any + Send>) -> String {
+    if let Some(text) = payload.downcast_ref::<&str>() {
+        (*text).to_owned()
+    } else if let Some(text) = payload.downcast_ref::<String>() {
+        text.clone()
+    } else {
+        "non-text panic payload".to_owned()
+    }
 }
 
 /// Complete all transport and verification before stopping the target.
@@ -347,12 +499,12 @@ pub fn restore(request: &RestoreRequest, operation_path: &Path) -> Result<Journa
     }
     #[cfg(all(test, feature = "native-lifecycle-tests"))]
     crate::test_hooks::boundary("after-download")?;
-    request.context.service().require_restore_target(Some(signed.manifest.permanent_cells))?;
+    require_unexchanged_target(request, Some(signed.manifest.permanent_cells))?;
     prepare_stop(request, &signed, &operation, &operation_id)?;
-    let frozen = request.context.service().stop()?;
+    let frozen = quiesce(request)?;
     #[cfg(all(test, feature = "native-lifecycle-tests"))]
     crate::test_hooks::boundary("after-stop-before-stage")?;
-    request.context.service().require_restore_target(Some(signed.manifest.permanent_cells))?;
+    require_unexchanged_target(request, Some(signed.manifest.permanent_cells))?;
     let service_files = request.context.preservation_files()?;
     #[cfg(all(test, feature = "native-lifecycle-tests"))]
     crate::test_hooks::boundary("before-stage")?;
@@ -371,11 +523,22 @@ pub fn restore(request: &RestoreRequest, operation_path: &Path) -> Result<Journa
     crate::budget::check_active()?;
     request.context.validate_paths()?;
     authorize_references(request, &operation, &mut journal, &signed.manifest.frontier)?;
-    request.context.service().require_restore_target(Some(signed.manifest.permanent_cells))?;
+    require_unexchanged_target(request, Some(signed.manifest.permanent_cells))?;
     expose_staged(&operation, &mut journal)?;
     drop(frozen);
     start_installed(&request.context, &operation, &mut journal)?;
     Ok(journal)
+}
+/// A restore stops the existing node. A bootstrap never stops anything: its new target must
+/// already be inactive, and is only frozen.
+fn quiesce(request: &RestoreRequest) -> Result<Frozen> {
+    let service = request.context.service();
+    match request.lane {
+        Lane::Restore => service.stop(),
+        Lane::Bootstrap => service.freeze().context(
+            "bootstrap target service must be inactive; bootstrap never stops or replaces a running node",
+        ),
+    }
 }
 /// Fixed name of the private StateDb capture inside an operation directory. There is at
 /// most one: a leftover from an interrupted run is removed before the next capture, and
@@ -454,6 +617,51 @@ fn export_installed(
         }
     }
 }
+/// What the installed tree contributes to a staged replacement.
+struct TargetRecords {
+    /// Local StateDb records preserved into the replacement.
+    local: records::LocalRecords,
+    /// Blocks the imported frontier must descend from, proven by native validation.
+    anchors: BTreeSet<FullId>,
+    /// Fork history the installed tree already holds.
+    old_forks: Vec<FullId>,
+    /// The journal's safety anchor: reference approval may not precede it.
+    anchor: FullId,
+}
+/// A restore target contributes its own records and safety anchors. A bootstrap target has
+/// never run, so it has no records; the imported chain must instead descend from the
+/// locally held zero state and init block of the configured network.
+fn target_records(request: &RestoreRequest, own: &Root, operation: &Root) -> Result<TargetRecords> {
+    match request.lane {
+        Lane::Restore => {
+            let (old, local) = export_installed(
+                own,
+                operation,
+                &request.context.disk_policy,
+                &request.context.budget_roots,
+            )?;
+            Ok(TargetRecords {
+                anchors: required(&old, &local)?,
+                old_forks: old.forks()?,
+                anchor: old.frontier()?,
+                local,
+            })
+        }
+        Lane::Bootstrap => {
+            ensure!(
+                own.kind("state")?.is_none(),
+                "bootstrap target has local StateDb records; it is not a new node"
+            );
+            let (network, _) = request.context.policy()?;
+            Ok(TargetRecords {
+                local: records::LocalRecords::never_run(),
+                anchors: BTreeSet::from([network.zero.clone(), network.init.clone()]),
+                old_forks: vec![],
+                anchor: network.init,
+            })
+        }
+    }
+}
 struct StoppedTarget<'a> {
     operation_id: &'a str,
     frozen: &'a Frozen,
@@ -482,7 +690,15 @@ fn stage_with_space(
     let StoppedTarget { operation_id, frozen, service_files } = target;
     ensure!(frozen.root == request.context.database, "preservation lock belongs to another root");
     let own = Root::open(&request.context.database)?;
-    crate::paths::restore_root(&own.path)?;
+    match request.lane {
+        Lane::Restore => {
+            crate::paths::restore_root(&own.path, request.context.service().keys_location()?)?
+        }
+        Lane::Bootstrap => {
+            crate::paths::new_node_root(&own.path)?;
+            require_no_signing_material(&request.context)?;
+        }
+    }
     let mut private_names = vec![
         "consensus".to_owned(),
         "catchains".to_owned(),
@@ -512,25 +728,25 @@ fn stage_with_space(
     let raw = signed.manifest.files.iter().try_fold(0_u64, |sum, file| {
         sum.checked_add(file.size).context("manifest raw size overflow")
     })?;
-    let state =
-        trees::optional_directory(&own, "state")?.context("StateDb directory is missing")?;
+    let state_reserve = match request.lane {
+        Lane::Restore => {
+            let state = trees::optional_directory(&own, "state")?
+                .context("StateDb directory is missing")?;
+            state_capture_reservation(&state)?
+        }
+        Lane::Bootstrap => 0,
+    };
     let reserve = crate::budget::reservation(raw, 0, private_bytes)?
-        .checked_add(state_capture_reservation(&state)?)
+        .checked_add(state_reserve)
         .context("task reservation overflow")?;
-    drop(state);
     crate::budget::admit(
         &request.context.disk_policy,
         &[crate::budget::allocated(&request.context.budget_roots)?],
         reserve,
         space,
     )?;
-    let (old, local) = export_installed(
-        &own,
-        operation,
-        &request.context.disk_policy,
-        &request.context.budget_roots,
-    )?;
-    let anchors = required(&old, &local)?;
+    let target = target_records(request, &own, operation)?;
+    let (local, anchors) = (target.local, target.anchors);
     let donor = chain(signed, objects)?;
     ensure!(
         anchors.iter().all(|a| a.seqno <= signed.manifest.frontier.seqno),
@@ -574,7 +790,12 @@ fn stage_with_space(
         signed.manifest.permanent_cells,
     )?;
     let evidence = checked.ancestors.into_iter().collect();
-    records::reconcile_forks(&signed.manifest.approved_forks, &donor, &old.forks()?, &evidence)?;
+    records::reconcile_forks(
+        &signed.manifest.approved_forks,
+        &donor,
+        &target.old_forks,
+        &evidence,
+    )?;
     records::reconcile_anchors(&donor, &anchors, &evidence)?;
     identity.overlay(&own.path, &replacement, &backup)?;
     let mut local_trees = Vec::new();
@@ -631,7 +852,7 @@ fn stage_with_space(
         installed: own.path.to_str().context("installed path")?.to_owned(),
         staged: replacement.path.to_str().context("stage path")?.to_owned(),
         preservation_sha256: sha256(&preservation),
-        target_anchor: old.frontier()?,
+        target_anchor: target.anchor,
         phase,
     };
     journal.write(operation)?;
@@ -695,6 +916,7 @@ fn start_installed(context: &NodeContext, operation: &Root, journal: &mut Journa
 
 #[derive(Debug, Serialize)]
 pub struct AbortReport {
+    pub lane: Lane,
     pub service_state: String,
     pub restart_command: String,
     pub removed_stage: Option<String>,
@@ -852,6 +1074,7 @@ pub fn recover(operation_path: &Path) -> Result<RecoveryOutcome> {
             catalog.prune()?;
             let (service_state, restart_command) = request.context.service().abort_guidance()?;
             Ok(RecoveryOutcome::Aborted(AbortReport {
+                lane: request.lane,
                 service_state,
                 restart_command,
                 removed_stage,
@@ -897,12 +1120,23 @@ pub fn recover(operation_path: &Path) -> Result<RecoveryOutcome> {
             && signed.manifest.permanent_cells == request.context.service().permanent_cells()?,
         "recovery generation differs from held policy, build or storage mode"
     );
-    request.context.service().require_restore_target(Some(signed.manifest.permanent_cells))?;
-    if journal.recovery()? == Recovery::NewContinueOnly {
+    // The journal, not the tree's contents, says which tree is installed. Only an unexchanged
+    // bootstrap target is checked as a new node; an installed replacement is checked as the
+    // existing node it now is, and never treated as new again.
+    let unexchanged = journal.recovery()? == Recovery::OldRefreshRequired;
+    let check_installed = || -> Result<()> {
+        if unexchanged {
+            require_unexchanged_target(&request, Some(signed.manifest.permanent_cells))
+        } else {
+            request.context.service().require_restore_target(Some(signed.manifest.permanent_cells))
+        }
+    };
+    check_installed()?;
+    if !unexchanged {
         journal.check_references(&operation, false)?;
     }
-    let frozen = request.context.service().stop()?;
-    request.context.service().require_restore_target(Some(signed.manifest.permanent_cells))?;
+    let frozen = if unexchanged { quiesce(&request)? } else { request.context.service().stop()? };
+    check_installed()?;
     match journal.recovery()? {
         Recovery::OldRefreshRequired => {
             // The old root could have booted and signed: capture its latest local state, never reuse a stale overlay.
@@ -921,10 +1155,7 @@ pub fn recover(operation_path: &Path) -> Result<RecoveryOutcome> {
                 Some(&journal),
             )?;
             authorize_references(&request, &operation, &mut journal, &signed.manifest.frontier)?;
-            request
-                .context
-                .service()
-                .require_restore_target(Some(signed.manifest.permanent_cells))?;
+            check_installed()?;
             expose_staged(&operation, &mut journal)?;
         }
         Recovery::NewContinueOnly => {
@@ -1012,6 +1243,7 @@ mod tests {
             cache: root.path.join("cache"),
             publisher_key: "00".repeat(32),
             source_url: None,
+            lane: Lane::Restore,
         })
     }
     /// A tree of one installed database with a native (versionless) StateDb, an unrelated
@@ -1178,6 +1410,54 @@ mod tests {
         );
         assert_eq!(listing(&state)?, mounted_before, "a write landed in the mounted tree");
         assert_eq!(listing(&fixture.decoy)?, decoy_before);
+        // A new-node target refuses another mount anywhere: on a whole tree, and as one
+        // bind-mounted genesis file.
+        let hash = "ab".repeat(32);
+        for (label, mounted) in
+            [("tree", "console-client".to_owned()), ("file", format!("static/{hash}"))]
+        {
+            let fresh = Root::create(&fixture.base.join(format!("new-node-{label}")))?;
+            fresh.write_new("config.json", b"{}")?;
+            fresh.write_new("keyring/KEY", b"key")?;
+            fresh.write_new("console-client/client", b"console")?;
+            fresh.write_new(&format!("static/{hash}"), b"genesis")?;
+            crate::paths::new_node_root(&fresh.path)?;
+            let target =
+                std::ffi::CString::new(fresh.path.join(&mounted).as_os_str().as_encoded_bytes())?;
+            let result = if label == "tree" {
+                // SAFETY: as above.
+                unsafe {
+                    libc::mount(
+                        c"tmpfs".as_ptr(),
+                        target.as_ptr(),
+                        c"tmpfs".as_ptr(),
+                        0,
+                        std::ptr::null(),
+                    )
+                }
+            } else {
+                let elsewhere = fixture.base.join("bind-source");
+                fs::write(&elsewhere, b"other bytes")?;
+                let source = std::ffi::CString::new(elsewhere.as_os_str().as_encoded_bytes())?;
+                // SAFETY: terminated paths; a private namespace's mount table.
+                unsafe {
+                    libc::mount(
+                        source.as_ptr(),
+                        target.as_ptr(),
+                        std::ptr::null(),
+                        libc::MS_BIND,
+                        std::ptr::null(),
+                    )
+                }
+            };
+            ensure!(result == 0, "{label} mount: {}", std::io::Error::last_os_error());
+            let text = format!("{:#}", crate::paths::new_node_root(&fresh.path).expect_err(label));
+            assert!(
+                text.contains("bootstrap target is not a new node database")
+                    && (text.contains("another device") || text.contains("cross-device")),
+                "{label}: wrong refusal: {text}"
+            );
+        }
         println!("\nFOREIGN_MOUNT_REFUSAL_INNER_OK");
         Ok(())
     }
@@ -1328,6 +1608,33 @@ mod tests {
         own.write_new("consensus/session/own-vote", b"own newest signed vote")?;
         own.write_new("catchains/own-journal", b"own session journal")?;
         own.write_new("error/files/target-report", b"own diagnostics")?;
+        // The operator bundle's console client keys, with their own modes and an empty
+        // directory: node-local private data kept exactly.
+        {
+            use std::os::unix::fs::PermissionsExt;
+            own.write_new("console-client/client", b"console private key")?;
+            own.write_new("console-client/client.pub", b"console public key")?;
+            own.ensure_directory("console-client/empty")?;
+            fs::set_permissions(
+                own.path.join("console-client/client.pub"),
+                fs::Permissions::from_mode(0o644),
+            )?;
+            fs::set_permissions(
+                own.path.join("console-client/empty"),
+                fs::Permissions::from_mode(0o750),
+            )?;
+        }
+        let console = |root: &Path| -> Result<Vec<(String, bool, u32, u32, u32, Vec<u8>)>> {
+            let tree = Root::open(&root.join("console-client"))?;
+            trees::private_tree(&tree, 100, 1 << 20)?
+                .into_iter()
+                .map(|e| {
+                    let bytes = if e.directory { vec![] } else { tree.bytes(&e.path, e.size)? };
+                    Ok((e.path, e.directory, e.mode, e.uid, e.gid, bytes))
+                })
+                .collect()
+        };
+        let console_before = console(&own.path)?;
         parent.write_new("operator.json", b"{}")?;
         parent.write_new("fixture.service", b"fixture definition bytes")?;
         let engine_sha256 =
@@ -1373,6 +1680,7 @@ mod tests {
             cache: objects.root_path().to_owned(),
             publisher_key: hex::encode(key.verifying_key().to_bytes()),
             source_url: None,
+            lane: Lane::Restore,
         };
         let operation = Root::create(&parent.path.join("operation"))?;
         operation.write_new("request.json", &serde_json::to_vec(&request)?)?;
@@ -1410,6 +1718,11 @@ mod tests {
         );
         assert_eq!(replacement.bytes("catchains/own-journal", 100)?, b"own session journal");
         assert_eq!(replacement.bytes("error/files/target-report", 100)?, b"own diagnostics");
+        assert_eq!(
+            console(&replacement.path)?,
+            console_before,
+            "console client keys were not preserved exactly"
+        );
         assert!(
             fs::read_dir(replacement.path.join("tmp"))?.next().is_none(),
             "old recovery was overlaid onto imported cells"

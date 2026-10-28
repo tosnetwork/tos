@@ -355,6 +355,13 @@ V1 uses ML-KEM-768 plus XChaCha20-Poly1305-IETF.
 
 For each output slot `slot ∈ {0,1,2}` (deposit uses slot 0):
 
+A withdrawal's recovery payload (§12.2 `recovery_output_data`, §15.1) is not one of the three output slots, but it
+is sealed exactly the same way with the fixed value **`slot = 2`** (`RECOVERY_PAYLOAD_SLOT`) in the KDF input, the AAD
+and the plaintext `slot` byte. A wallet MUST seal it with that value and a scanner MUST open it with that value; a
+recovery payload sealed under any other slot value is not a recovery payload of this profile. Sharing the value with
+output slot 2 is safe: every seal uses a fresh ML-KEM encapsulation, the flags differ, and both payload hashes are
+bound by the proof.
+
 1. encapsulate to recipient `mlkem768_encapsulation_key`;
 2. get `shared_secret[32]` and `kem_ct[1088]`;
 3. derive 56 bytes:
@@ -482,6 +489,7 @@ For a **recovery template** (`flags=2`):
 
 - require `amount=0`;
 - require the derived normal owner-NF hash and derived PQ-key hash match plaintext;
+- require plaintext `slot = 2` (§3);
 - recompute `recovery_owner_commitment` and `recovery_template_hash` and require equality with the signed
   withdrawal recovery record;
 - do **not** import it as a spendable note until a genuine bounce creates a recovery note with an actual amount.
@@ -1345,7 +1353,7 @@ recovery_owner_commitment:Fr
 
 For transfer, `recovery_owner_commitment=0` and recovery data is the canonical empty cell.
 For withdrawal, recovery output data is another canonical 1233-byte payload with
-`recovery_template` flag set and encrypted amount=0.
+`recovery_template` flag set and encrypted amount=0, sealed with `slot = 2` (§3).
 
 Auth bundle:
 
@@ -1791,7 +1799,7 @@ boundary amount observers see.
 For withdrawal, wallet prepares:
 
 - fresh `recovery_owner_commitment`;
-- fixed 1233-byte `recovery_output_data` encrypted to itself;
+- fixed 1233-byte `recovery_output_data` encrypted to itself with `slot = 2` (§3);
 - recovery payload flag bit1=1;
 - encrypted plaintext amount = 0.
 
@@ -2159,7 +2167,8 @@ Mainnet/testnet activation is blocked until all are true:
     injection alone is not counted as E2E evidence.
 17. **Anchor concurrency:** every externally visible pre-transaction root is inserted once before its transaction's append batch; recent-root validity lasts until exact `(root_version % 4096)` slot overwrite. Tests cover pure deposit, pure transact and mixed 1/3-leaf traffic at the overwrite boundary; epoch checkpoints remain valid 24h.
 18. **Mnemonic recovery:** fresh wallet from only mnemonic + chain data recovers ML-KEM key, used note-key indices,
-    note-specific owner-NF/ML-DSA keys and every unspent note.
+    note-specific owner-NF/ML-DSA keys and every unspent note, including a withdrawal recovery template sealed with
+    `slot = 2`; a recovery template sealed under another slot value is refused, not imported.
 19. **Wire exactness:** malformed extra refs, trailing bits, wrong byte-chain lengths, non-canonical fields,
     bad anchor kind/id and wrong IMT path length/order all fail closed.
 20. **Gas ceilings:** each §14.1 ceiling is exactly what the rule there gives for a **derived** bound, and the
