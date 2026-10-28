@@ -72,6 +72,16 @@ def main():
     changed[0]["transaction"] = "0" * 64
     rejected(lambda: tick_context.compare_reports(native, changed))
     count += 1
+    changed = copy.deepcopy(native)
+    inactive = next(row for row in changed if row["name"].startswith("state-uninit-accept"))
+    inactive["details"]["compute"] = dict(skipped=1)
+    rejected(lambda: tick_context.compare_reports(changed, changed))
+    count += 1
+    changed = copy.deepcopy(native)
+    absent = next(row for row in changed if row["name"].startswith("state-none-"))
+    absent["stage"] = "storage"
+    rejected(lambda: tick_context.compare_reports(changed, changed))
+    count += 1
     workflow = (tick_context.ROOT / ".github/workflows/epoch-replay.yml").read_text()
     workflow_contract(workflow)
     deleted = 0

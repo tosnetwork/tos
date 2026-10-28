@@ -199,7 +199,11 @@ impl TransactionExecutor for TickTockTransactionExecutor {
             *account = old_account;
         }
         // Execution rollback retains collected storage and compute fees.
-        account.set_balance(acc_balance);
+        if account.is_uninit() && acc_balance.is_zero()? {
+            *account = Account::default();
+        } else {
+            account.set_balance(acc_balance);
+        }
         tr.set_end_status(account.status());
         let lt = self.add_messages(&mut tr, out_msgs, params.last_tr_lt)?;
         account.set_last_tr_time(lt);

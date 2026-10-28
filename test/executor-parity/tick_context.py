@@ -18,7 +18,7 @@ from run_rust import binary_hash, execute  # noqa: E402
 
 
 def cases():
-    return [
+    rows = [
         dict(
             name=f"{variant}-wc{wc}-cp31{int(fundamental)}-flags{flags}-tock{int(tock)}",
             variant=variant,
@@ -33,6 +33,35 @@ def cases():
         for flags in (None, 0, 1, 2, 3)
         for tock in (False, True)
     ]
+    rows += [
+        dict(
+            name=f"state-{status}-{variant}-wc{wc}-cp31{int(fundamental)}-tock{int(tock)}",
+            status=status,
+            variant=variant,
+            wc=wc,
+            fundamental=fundamental,
+            flags=None,
+            tock=tock,
+        )
+        for status in ("uninit", "frozen")
+        for variant in ("accept", "zero")
+        for wc in (-1, 0)
+        for fundamental in (False, True)
+        for tock in (False, True)
+    ]
+    rows += [
+        dict(
+            name=f"state-none-tock{int(tock)}",
+            status="none",
+            variant="accept",
+            wc=0,
+            fundamental=False,
+            flags=None,
+            tock=tock,
+        )
+        for tock in (False, True)
+    ]
+    return rows
 
 
 def fixture(case, *, balance=None, paid=None, lt=0, due=None, canonical=False, data=None):
@@ -41,6 +70,9 @@ def fixture(case, *, balance=None, paid=None, lt=0, due=None, canonical=False, d
     members = {0x4545: Cell()} if case["fundamental"] else {}
     entries[31] = Cell().ref(Cell().maybe(make_dict(members, 256)))
     configuration = make_dict(entries, 32)
+    status = case.get("status", "active")
+    if status == "none":
+        return configuration, Cell().uint(0, 320).ref(Cell().uint(0, 1))
     variant = case["variant"]
     code_bytes = (
         "303030c801fa02c9ed54f800"
@@ -57,9 +89,15 @@ def fixture(case, *, balance=None, paid=None, lt=0, due=None, canonical=False, d
     init.maybe(code).maybe(Cell() if data is None else data).uint(0, 1)
     if balance is None:
         balance = 0 if variant == "zero" else 100_000_000_000
-    storage = Cell().uint(lt, 64).coins(balance).uint(0, 1).uint(1, 1)
-    storage.bits += init.bits
-    storage.refs = list(init.refs)
+    storage = Cell().uint(lt, 64).coins(balance).uint(0, 1)
+    if status == "active":
+        storage.uint(1, 1)
+        storage.bits += init.bits
+        storage.refs = list(init.refs)
+    else:
+        storage.uint(status == "frozen", 2)
+        if status == "frozen":
+            storage.uint(0x1234, 256)
     seen = {}
 
     def visit(cell):
@@ -88,12 +126,16 @@ def fixture(case, *, balance=None, paid=None, lt=0, due=None, canonical=False, d
         account.coins(123456)
     account.bits += storage.bits
     account.refs = list(storage.refs)
+    if canonical and status == "uninit" and balance == 0:
+        account = Cell().uint(0, 1)
     return configuration, Cell().uint(0, 320).ref(account)
 
 
 def account_fields(account):
     cell = account.slice()
-    assert cell.uint(1) == 1
+    if not cell.uint(1):
+        cell.end()
+        return dict(none=True)
     address = cell.addr()
     cells, bits = cell.varuint(7), cell.varuint(7)
     assert cell.uint(3) == 0
@@ -180,7 +222,13 @@ def worker(library, output):
         else:
             assert "transaction" not in result and "shard_account" not in result
             error = result["error"]
-            row["stage"] = "storage" if "storage phase" in error else "other"
+            row["stage"] = (
+                "storage"
+                if "storage phase" in error
+                else "account"
+                if "account_none" in error or "Standard address" in error
+                else "other"
+            )
         rows.append(row)
     (output / "outcomes.json").write_text(json.dumps(rows, indent=2) + "\n")
 
@@ -191,9 +239,10 @@ def check_native(rows):
         cfg, shard = fixture(case)
         assert row["name"] == case["name"]
         assert row["inputs"] == dict(config=cfg.hash.hex(), shard=shard.hash.hex())
-        if case["variant"] == "future":
+        if case["variant"] == "future" or case.get("status") == "none":
             assert set(row) == {"name", "inputs", "success", "stage"}
-            assert not row["success"] and row["stage"] == "storage"
+            expected_stage = "storage" if case["variant"] == "future" else "account"
+            assert not row["success"] and row["stage"] == expected_stage
             continue
         assert row["success"] and set(row) == {
             "name",
@@ -230,6 +279,9 @@ def check_native(rows):
         if case["variant"] == "zero":
             fee = 0
             assert d["compute"] == dict(skipped=2)
+        elif case.get("status", "active") != "active":
+            fee = 0
+            assert d["compute"] == dict(skipped=0), case["name"]
         else:
             throws = case["variant"] == "throw"
             gas = (
@@ -247,13 +299,16 @@ def check_native(rows):
                 limit=special_limit if special else limit,
                 exit=42 if throws else 0,
             )
-        aborted = case["variant"] in ("throw", "zero")
+        aborted = case["variant"] in ("throw", "zero") or case.get("status", "active") != "active"
         assert d["aborted"] == aborted and d["action"] == (not aborted) and not d["destroyed"]
         assert d["total"] == storage_fee + fee
         after = d["account"]
-        assert after["balance"] == before["balance"] - storage_fee - fee
-        assert after["paid"] == (0 if special else native.NOW) and after["due"] == 0
-        assert after["address"] == before["address"] and after["lt"] == 2_000_001
+        if case.get("status") == "uninit" and case["variant"] == "zero":
+            assert after == dict(none=True)
+        else:
+            assert after["balance"] == before["balance"] - storage_fee - fee
+            assert after["paid"] == (0 if special else native.NOW) and after["due"] == 0
+            assert after["address"] == before["address"] and after["lt"] == 2_000_001
         # Independently construct the selected Account and its authenticated wrapper.
         # Do not copy metadata or state-update fields from the native result.
         _, predicted = fixture(
