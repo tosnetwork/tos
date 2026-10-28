@@ -710,7 +710,10 @@ def test_experiment_pool_capital_supports_three_concurrent_unrecovered_stakes(
     launch_gate.pools = experiment.pools = [object()] * 4
     launch_gate.configure_network_profile(launch_config)
     experiment.configure_network_profile(experiment_config)
-    assert launch_config.validator_election_experiment_faucet_balance_nanotos is None
+    assert (
+        launch_config.validator_election_experiment_faucet_balance_nanotos
+        == stage_a.LAUNCH_GATE_GENESIS_FAUCET_FUNDING
+    )
     assert (
         experiment_config.validator_election_experiment_faucet_balance_nanotos
         == stage_a.EXPERIMENT_GENESIS_FAUCET_FUNDING
@@ -720,6 +723,53 @@ def test_experiment_pool_capital_supports_three_concurrent_unrecovered_stakes(
         + stage_a.NEGATIVE_WALLET_FUNDING
         + stage_a.EXPERIMENT_FAUCET_FEE_RESERVE
     )
+
+
+def _genesis_faucet(config) -> int:
+    """What the Genesis main wallet holds for this configuration, as tostester builds it."""
+    from tostester.zerostate import VALIDATOR_ECONOMICS_FAUCET_TOS
+
+    configured = getattr(config, "validator_election_experiment_faucet_balance_nanotos", None)
+    return configured if configured is not None else VALIDATOR_ECONOMICS_FAUCET_TOS * stage_a.NANO
+
+
+def test_default_launch_gate_genesis_faucet_funds_every_wallet_it_sends(tmp_path):
+    """The default rehearsal pays four validator wallets and the negative-test
+    wallet out of the Genesis main wallet. The production bootstrap balance is
+    sized for the bootstrap alone, so the rehearsal must bring its own faucet."""
+    args = stage_a.parse_args([])
+    assert (args.mode, args.stage) == ("launch-gate", "a")
+    rehearsal = stage_a.ValidatorElectionRehearsal(
+        run_dir=tmp_path / "default",
+        base_port=26_000,
+        build_dir=REPO / "build",
+        sample_interval=10,
+        profile=stage_a.PROFILES[args.stage],
+    )
+    config = stage_a.NetworkConfig()
+    rehearsal.configure_network_profile(config)
+
+    sent = 4 * rehearsal.validator_wallet_funding() + stage_a.NEGATIVE_WALLET_FUNDING
+    assert sent == 95_080 * stage_a.NANO
+    assert _genesis_faucet(config) >= sent + stage_a.LAUNCH_GATE_FAUCET_FEE_RESERVE, (
+        "the default rehearsal would run its Genesis faucet dry while funding wallets"
+    )
+
+
+def test_unaccelerated_rehearsal_refuses_a_faucet_it_would_exhaust(tmp_path):
+    """Genesis takes a faucet override only for Stage A, so Stage B starts from
+    the production bootstrap wallet and must be refused before Genesis rather
+    than fail partway through funding."""
+    rehearsal = stage_a.ValidatorElectionRehearsal(
+        run_dir=tmp_path / "stage-b",
+        base_port=26_000,
+        build_dir=REPO / "build",
+        sample_interval=10,
+        profile=stage_a.PROFILES["b"],
+    )
+    config = stage_a.NetworkConfig()
+    with pytest.raises(ValueError, match="Genesis faucet cannot fund the rehearsal wallets"):
+        rehearsal.configure_network_profile(config)
 
 
 def test_experiment_candidate_records_node_authorized_pool_owner(tmp_path, monkeypatch):
