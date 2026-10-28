@@ -5,6 +5,8 @@ import re
 import unittest
 
 import gas_credit
+import gas_purchase
+import purchase_transactions
 import varuint_codec as codec
 
 REPLAY_COMMANDS = (
@@ -25,6 +27,13 @@ REPLAY_COMMANDS = (
     "python3 test/rescue-fee-gate/vm_endstate_compare.py result/vm-varuint/native.tsv result/vm-varuint/rust.tsv",
     "cargo test --manifest-path tosctl/src/Cargo.toml --locked --release -p tos_executor --lib native_runtime_credit",
     "python3 test/executor-parity/gas_credit.py --native build/emulator/libemulator.so --rust tosctl/src/target/release/libtos_emulator.so --output result/gas-credit",
+    "cargo test --manifest-path tosctl/src/Cargo.toml --locked --release -p chain_block --lib native_gas_purchase",
+    "cargo test --manifest-path tosctl/src/Cargo.toml --locked --release -p tos_executor --lib native_gas_purchase",
+    "cargo test --manifest-path tosctl/src/Cargo.toml --locked --release -p tos_executor --lib deployment_price_tests",
+    'cmake --build build --target test-gas-purchase --parallel "$(nproc)"',
+    "cargo build --manifest-path tosctl/src/Cargo.toml --locked --release -p chain_block --example gas-purchase",
+    "python3 test/executor-parity/gas_purchase.py --native build/emulator/test-gas-purchase --rust tosctl/src/target/release/examples/gas-purchase --output result/gas-purchase",
+    "python3 test/executor-parity/purchase_transactions.py --native build/emulator/libemulator.so --rust tosctl/src/target/release/libtos_emulator.so --output result/purchase-transactions",
 )
 FINAL_COMMANDS = (
     tuple(
@@ -37,6 +46,14 @@ FINAL_COMMANDS = (
     )
     + tuple(
         f"cmp artifacts/epoch-replay-x86-64/gas-credit/{kind}/outcomes.json artifacts/epoch-replay-arm64/gas-credit/{kind}/outcomes.json"
+        for kind in ("native", "rust")
+    )
+    + tuple(
+        f"cmp artifacts/epoch-replay-x86-64/gas-purchase/{name} artifacts/epoch-replay-arm64/gas-purchase/{name}"
+        for name in ("inputs.tsv", "native.stdout", "rust.stdout")
+    )
+    + tuple(
+        f"cmp artifacts/epoch-replay-x86-64/purchase-transactions/{kind}/outcomes.json artifacts/epoch-replay-arm64/purchase-transactions/{kind}/outcomes.json"
         for kind in ("native", "rust")
     )
 )
@@ -62,6 +79,86 @@ def workflow_contract(text):
 
 
 class VaruintComparatorTests(unittest.TestCase):
+    def test_purchase_scalar_controls(self):
+        self.assertEqual(len(gas_purchase.cases()), 6602)
+        good = gas_purchase.expected_output()
+        gas_purchase.compare_outputs(good, good)
+        rows = good.decode().splitlines()
+        for field, value in enumerate(("wrong-name", "999", "999")):
+            changed = rows.copy()
+            parts = changed[0].split("\t")
+            self.assertNotEqual(parts[field], value)
+            parts[field] = value
+            changed[0] = "\t".join(parts)
+            damaged = ("\n".join(changed) + "\n").encode()
+            with self.assertRaisesRegex(AssertionError, "native/Rust"):
+                gas_purchase.compare_outputs(good, damaged)
+            with self.assertRaisesRegex(AssertionError, "authored"):
+                gas_purchase.compare_outputs(damaged, damaged)
+        for damaged in (
+            b"",
+            b"\n".join(good.splitlines()[1:]) + b"\n",
+            good + good.splitlines()[0] + b"\n",
+            good.replace(b"\n", b"\r\n"),
+        ):
+            with self.assertRaises(AssertionError):
+                gas_purchase.compare_outputs(damaged, damaged)
+        with self.assertRaisesRegex(AssertionError, "byte limit"):
+            gas_purchase.compare_outputs(b"x" * (gas_purchase.MAX_OUTPUT + 1), b"")
+
+    def test_purchase_transaction_controls(self):
+        rows = []
+        for name, price, limit, flat, fee, value, balance in purchase_transactions.cases():
+            budget = min(
+                gas_purchase.expected(price, limit, flat, fee, balance + value)[1],
+                gas_purchase.expected(price, limit, flat, fee, value)[1],
+            )
+            row = dict(
+                name=name,
+                inputs=dict(config="a" * 64, shard="b" * 64, message="c" * 64),
+                outcome="encode-rejected",
+            )
+            if budget <= purchase_transactions.WIRE_MAX:
+                compute = (
+                    dict(exit=None, skipped=True, reason="100")
+                    if budget == 0
+                    else dict(
+                        gas_limit=budget,
+                        exit=0,
+                        gas=31,
+                        compute_success=True,
+                        aborted=False,
+                        action=dict(success=True, code=0),
+                    )
+                )
+                row.update(
+                    outcome="accepted",
+                    transaction="d" * 64,
+                    account="e" * 64,
+                    shard_account="f" * 64,
+                    compute=compute,
+                )
+            rows.append(row)
+        purchase_transactions.compare_reports(rows, rows)
+        for field in ("outcome", "inputs", "transaction", "account", "shard_account", "compute"):
+            damaged = copy.deepcopy(rows)
+            target = next(row for row in damaged if row["outcome"] == "accepted")
+            if field == "inputs":
+                target[field]["config"] = "0" * 64
+            elif field == "compute":
+                target[field]["gas_limit"] = 1
+            else:
+                target[field] = "encode-rejected" if field == "outcome" else "0" * 64
+            with self.assertRaises(AssertionError):
+                purchase_transactions.compare_reports(rows, damaged)
+        for damaged in (rows[:-1], rows[::-1], rows + rows[:1]):
+            with self.assertRaises(AssertionError):
+                purchase_transactions.compare_reports(damaged, damaged)
+        damaged = copy.deepcopy(rows)
+        next(row for row in damaged if row["outcome"] == "accepted")["compute"]["gas_limit"] = 1
+        with self.assertRaises(AssertionError):
+            purchase_transactions.compare_reports(damaged, damaged)
+
     def test_runtime_credit_report_controls(self):
         rows = []
         for name, _, _, _, expected in gas_credit.cases():

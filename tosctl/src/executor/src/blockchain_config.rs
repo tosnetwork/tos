@@ -116,7 +116,7 @@ impl DefaultConfig for GasLimitsPrices {
     }
 
     fn default_wc() -> Self {
-        let mut prices = GasLimitsPrices {
+        GasLimitsPrices {
             // ConfigParam 21 mirrors the basechain deployment zero state.
             gas_price: 436907,
             flat_gas_limit: 100,
@@ -127,12 +127,9 @@ impl DefaultConfig for GasLimitsPrices {
             block_gas_limit: 20000000,
             freeze_due_limit: 100000000,
             delete_due_limit: 1000000000,
-            max_gas_threshold: 0,
-        };
-        // Keep the cached execution threshold consistent with decoding the
-        // serialized gas table. Choosing this profile does not change credit.
-        prices.max_gas_threshold = prices.calc_max_gas_threshold(prices.gas_limit);
-        prices
+            // Ceiling threshold of these fixed deployment parameters.
+            max_gas_threshold: 13333344,
+        }
     }
 }
 
@@ -398,6 +395,16 @@ mod deployment_price_tests {
     use super::*;
 
     #[test]
+    fn default_basechain_threshold_matches_its_serialized_parameters() -> Result<()> {
+        use chain_block::{Deserializable, Serializable};
+        let gas = GasLimitsPrices::default_wc();
+        assert_eq!(gas.max_gas_threshold, gas.calc_max_gas_threshold(gas.gas_limit)?);
+        let decoded = GasLimitsPrices::construct_from_cell(gas.serialize()?)?;
+        assert_eq!(gas, decoded);
+        Ok(())
+    }
+
+    #[test]
     fn default_masterchain_prices_match_serialized_deployment_limits() -> Result<()> {
         let gas = GasLimitsPrices::default_mc();
         assert_eq!((gas.gas_price, gas.flat_gas_price), (32_768_000, 50_000));
@@ -407,7 +414,7 @@ mod deployment_price_tests {
         );
         assert_eq!((gas.block_gas_limit, gas.flat_gas_limit), (2_500_000, 100));
         assert_eq!((gas.freeze_due_limit, gas.delete_due_limit), (100_000_000, 1_000_000_000));
-        assert_eq!(gas.max_gas_threshold, gas.calc_max_gas_threshold(gas.gas_limit));
+        assert_eq!(gas.max_gas_threshold, gas.calc_max_gas_threshold(gas.gas_limit)?);
         let forward = MsgForwardPrices::default_mc();
         assert_eq!(
             (forward.lump_price, forward.bit_price, forward.cell_price),

@@ -23,7 +23,7 @@ use crate::{
     HashmapType, IBitstring, MsgAddressInt, Result, Serializable, SliceData, UInt256,
     BASE_WORKCHAIN_ID, MAX_SPLIT_DEPTH,
 };
-use num::BigInt;
+use num::{BigInt, ToPrimitive};
 use std::collections::BTreeMap;
 
 #[cfg(test)]
@@ -1609,7 +1609,8 @@ pub struct GasLimitsPrices {
     pub delete_due_limit: u64,
     pub flat_gas_limit: u64,
     pub flat_gas_price: u64,
-    pub max_gas_threshold: u128,
+    // Derived runtime threshold; signed scalar conversions can make it negative.
+    pub max_gas_threshold: i128,
 }
 
 impl GasLimitsPrices {
@@ -1645,25 +1646,70 @@ impl GasLimitsPrices {
     }
 
     /// Calculate gas by coins balance
-    pub fn calc_gas(&self, value: u128, gas_limit: u64, max_gas_threshold: u128) -> u64 {
-        if value >= max_gas_threshold {
-            return gas_limit;
+    pub fn calc_gas(&self, value: u128, gas_limit: u64, max_gas_threshold: i128) -> Result<u64> {
+        if max_gas_threshold <= 0 || value >= max_gas_threshold as u128 {
+            return Ok(gas_limit);
         }
-        if value < self.flat_gas_price as u128 {
-            return 0;
+        // The reference integer overloads take signed 64-bit scalar arguments.
+        let flat_price = self.flat_gas_price as i64;
+        if flat_price >= 0 && value < flat_price as u128 {
+            return Ok(0);
         }
-        let res = ((value - self.flat_gas_price as u128) << 16) / (self.gas_price as u128);
-        (self.flat_gas_limit + res as u64).min(crate::VarUInteger7::MAX.as_u64())
+        // Negate in a wider type, then retain the scalar argument's 64 bits.
+        let offset = i128::from(flat_price)
+            .checked_neg()
+            .ok_or_else(|| error!("gas flat-price negation overflow"))? as i64;
+        let scaled = BigInt::from(value)
+            .checked_add(&BigInt::from(offset))
+            .and_then(|v| v.checked_mul(&BigInt::from(65536)))
+            .ok_or_else(|| error!("gas purchase numerator overflow"))?;
+        let native_long = if self.gas_price == 0 {
+            // An invalid integer converts to the same sentinel as an
+            // out-of-range signed integer in the reference implementation.
+            i64::MIN
+        } else {
+            let price = BigInt::from(self.gas_price);
+            let mut quotient =
+                scaled.checked_div(&price).ok_or_else(|| error!("gas purchase division failed"))?;
+            // Integer division is floor division, including negative numerators.
+            if scaled.sign() == num::bigint::Sign::Minus {
+                let restored = quotient
+                    .checked_mul(&price)
+                    .ok_or_else(|| error!("gas purchase product overflow"))?;
+                if restored != scaled {
+                    quotient = quotient
+                        .checked_sub(&BigInt::from(1))
+                        .ok_or_else(|| error!("gas purchase rounding overflow"))?;
+                }
+            }
+            quotient.to_i64().unwrap_or(i64::MIN)
+        };
+        // The reference adds unsigned 64-bit gas values. Widen the checked
+        // addition before retaining its low 64 bits.
+        let total = u128::from(native_long as u64)
+            .checked_add(u128::from(self.flat_gas_limit))
+            .ok_or_else(|| error!("gas purchase sum overflow"))?;
+        Ok(total as u64)
     }
 
     /// Calculate max gas threshold
-    pub fn calc_max_gas_threshold(&self, gas_limit: u64) -> u128 {
-        let mut result = self.flat_gas_price as u128;
-        if gas_limit > self.flat_gas_limit {
-            result +=
-                ((self.gas_price as u128) * ((gas_limit - self.flat_gas_limit) as u128)) >> 16;
+    pub fn calc_max_gas_threshold(&self, gas_limit: u64) -> Result<i128> {
+        if gas_limit <= self.flat_gas_limit {
+            return Ok(i128::from(self.flat_gas_price));
         }
-        result
+        let delta = gas_limit
+            .checked_sub(self.flat_gas_limit)
+            .ok_or_else(|| error!("gas threshold difference underflow"))?
+            as i64;
+        // A u64 by i64 product, plus rounding, fits i128. Preserve the signed
+        // scalar conversions and the ceiling used by the reference expression.
+        let rounded = i128::from(self.gas_price)
+            .checked_mul(i128::from(delta))
+            .and_then(|v| v.checked_add(65535))
+            .ok_or_else(|| error!("gas threshold product overflow"))?;
+        (rounded >> 16)
+            .checked_add(i128::from(self.flat_gas_price as i64))
+            .ok_or_else(|| error!("gas threshold sum overflow"))
     }
 }
 
@@ -1706,7 +1752,7 @@ impl Deserializable for GasLimitsPrices {
                 }
             }
         }
-        self.max_gas_threshold = self.calc_max_gas_threshold(self.gas_limit);
+        self.max_gas_threshold = self.calc_max_gas_threshold(self.gas_limit)?;
         Ok(())
     }
 }

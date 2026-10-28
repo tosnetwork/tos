@@ -236,11 +236,29 @@ fn native_runtime_credit_is_not_a_wire_integer() {
         let mut gas_config = cfg.get_gas_config(false).clone();
         gas_config.gas_credit = credit;
         gas_config.gas_limit = 1 << 34;
-        gas_config.max_gas_threshold = gas_config.calc_max_gas_threshold(gas_config.gas_limit);
+        gas_config.max_gas_threshold =
+            gas_config.calc_max_gas_threshold(gas_config.gas_limit).expect("gas threshold");
         let gas =
-            init_gas(&Account::default(), 0, 10_u128.pow(18), 0, true, false, true, &gas_config);
+            init_gas(&Account::default(), 0, 10_u128.pow(18), 0, true, false, true, &gas_config)
+                .expect("runtime gas");
         assert_eq!(gas.get_gas_credit(), credit as i64);
     }
+}
+
+#[test]
+fn native_gas_purchase_init_preserves_the_reference_budget() {
+    let mut gas_config = GasLimitsPrices {
+        gas_price: 65536,
+        gas_limit: 100,
+        flat_gas_limit: 200,
+        flat_gas_price: u64::MAX,
+        ..GasLimitsPrices::default()
+    };
+    gas_config.max_gas_threshold =
+        gas_config.calc_max_gas_threshold(gas_config.gas_limit).expect("threshold");
+    let gas = init_gas(&Account::default(), 0, 1, 0, false, false, true, &gas_config).expect("gas");
+    assert_eq!(gas.get_gas_max(), 202);
+    assert_eq!(gas.get_gas_limit(), 201);
 }
 
 #[test]

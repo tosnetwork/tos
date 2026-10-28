@@ -347,7 +347,7 @@ pub trait TransactionExecutor {
             is_special,
             is_ordinary,
             gas_config,
-        );
+        )?;
         if gas.get_gas_limit() == 0 && gas.get_gas_credit() == 0 {
             log::debug!(target: "executor", "skip computing phase no gas");
             return Ok((TrComputePhase::skipped(ComputeSkipReason::NoGas), None, None));
@@ -1796,21 +1796,21 @@ fn init_gas(
     is_special: bool,
     is_ordinary: bool,
     gas_info: &GasLimitsPrices,
-) -> Gas {
+) -> Result<Gas> {
     let (gas_limit, max_gas_threshold) = if let Some(gas_limit) = override_gas(acc, now) {
-        (gas_limit, gas_info.calc_max_gas_threshold(gas_limit))
+        (gas_limit, gas_info.calc_max_gas_threshold(gas_limit)?)
     } else {
         (gas_info.gas_limit, gas_info.max_gas_threshold)
     };
     let gas_max = if is_special {
         gas_info.special_gas_limit
     } else {
-        gas_info.calc_gas(acc_balance, gas_limit, max_gas_threshold).min(gas_limit)
+        gas_info.calc_gas(acc_balance, gas_limit, max_gas_threshold)?
     };
     let gas_limit = if !is_ordinary || is_special {
         gas_max
     } else {
-        gas_max.min(gas_info.calc_gas(msg_balance, gas_limit, max_gas_threshold))
+        gas_max.min(gas_info.calc_gas(msg_balance, gas_limit, max_gas_threshold)?)
     };
     let gas_credit = if is_external { gas_info.gas_credit.min(gas_max) } else { 0 };
     log::debug!(
@@ -1818,12 +1818,12 @@ fn init_gas(
         "gas before: gm: {}, gl: {}, gc: {}, price: {}",
         gas_max, gas_limit, gas_credit, gas_info.get_real_gas_price()
     );
-    Gas::new(
+    Ok(Gas::new(
         gas_limit as i64,
         gas_credit as i64,
         gas_max as i64,
         gas_info.get_real_gas_price() as i64,
-    )
+    ))
 }
 
 fn check_state_init(

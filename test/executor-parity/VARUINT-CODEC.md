@@ -35,8 +35,24 @@ messages, unaffordable precompiled usage and a burn-then-throw control. Accepted
 transaction/account/shard roots must agree, and failures must emit no outputs;
 native encoding refusals must specifically reach transaction serialization.
 Each worker persists the original config/shard/message and binds their hashes.
-The purchasable-gas caller still references the serialized VarUInteger7 maximum;
-that unresolved coupling blocks acceptance of this candidate.
+Purchased gas likewise has no serialized VarUInteger7 clamp. The derived runtime
+threshold is signed, and its calculation uses the reference's ceiling and signed
+scalar conversions. Gas-purchase methods return checked results; decoding and
+executor initialization propagate errors. This changes the Rust source API and
+derived cache type, without changing the gas configuration's wire layout. The
+fixed basechain deployment profile caches its ceiling threshold 13333344 and has
+a serialization/derivation consistency test.
+
+`gas_purchase.py` authors 6602 threshold/budget records, including zero price,
+signed scalar boundaries, negative thresholds, floor division and the native
+out-of-range integer sentinel. Native results must satisfy those independent
+rules before Rust is compared, byte for byte. The adapters allow at most 8 MiB,
+8192 rows, 1024 bytes/row, a 64-byte name and a u128 balance; output is bounded
+to 1 MiB. This is finite arithmetic coverage, not full configuration coverage.
+`purchase_transactions.py` additionally compares 11 actual C API cases: initial
+limits, skips, serialization failures, funded signed-fee configurations and
+complete accepted roots. Original inputs are retained and hash-bound. Both
+scalar and transaction transcripts are compared across architectures in CI.
 
 The adapters are separate executables with 8 MiB input, 4,096 row, 2,048 byte/row
 and 1,023 bit cell bounds. The runner reuses the REL-02 subprocess supervisor for
