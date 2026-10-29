@@ -190,23 +190,37 @@ This rehearsal does not replace the four-operator election test.
 
 ## First ordinary elections
 
-The production transition is:
+The bootstrap main wallet (`-1:111…111`) holds **80,151 TOS**: for each of the
+four original validators 20,000 TOS of overlapping-election principal plus a
+25 TOS fee allowance (4 × 20,025 = 80,100), a 50 TOS margin, and 1 TOS for the
+wallet's own measured transfer fees rounded up. The production transition is:
 
 ```text
 four zerostate validators begin producing blocks
-  -> the bounded main wallet funds four published controlling wallets
-  -> every wallet submits the first 10,000-TOS election stake
-  -> every wallet keeps enough principal for the overlapping election
+  -> for each validator, the bootstrap wallet funds the owner wallet (20,015 TOS)
+     and the operator wallet (10 TOS)
+  -> each owner deploys a single-nominator pool and sends it 20,010 TOS
+  -> each operator orders the first 10,000-TOS election stake through its pool;
+     the pool, not the bootstrap wallet, submits the stake
+  -> the pool keeps enough principal for the overlapping election
   -> the Elector installs the first ordinary set
   -> a second overlapping elected set is installed
-  -> remaining bootstrap-wallet funds are burned
+  -> the bootstrap wallet's final transfer, mode 128+32 to the ConfigParam 5
+     blackhole -1:ffff…ffff, burns the remainder and deletes the wallet; the
+     wallet and blackhole transaction hashes and the masterchain block whose
+     ValueFlow.burned records the burn are published
   -> permissionless recurring elections continue
 ```
 
 Each original validator may receive no more than 20,000 TOS of stake principal
-plus the separately measured fee allowance specified by the economic design.
-Funding does not make an address a validator: the candidate must submit a valid
-bid and be selected by the Elector.
+plus the 25 TOS fee allowance. The amount is provisional for mainnet until the
+production rehearsal confirms the measured fees. Funding does not make an
+address a validator: the candidate must submit a valid bid and be selected by
+the Elector.
+
+The sweep burns only while ConfigParam 5 names the blackhole: without it, value
+sent to `-1:ffff…ffff` creates an ordinary uninitialized account holding the
+funds. ConfigParam 5 is critical, so an ordinary vote cannot move it.
 
 The production rehearsal must exercise the complete path, including failed
 submission recovery, configuration installation, stake recovery, and bonus

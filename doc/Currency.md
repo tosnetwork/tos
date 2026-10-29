@@ -80,11 +80,11 @@ account.balance.tomis                // account balance
 
 ## Initial Supply
 
-The validator-led production zerostate allocates a provisional **101,000 TOS**:
+The validator-led production zerostate allocates a provisional **81,151 TOS**:
 
 | Recipient | Amount | Address |
 |-----------|--------|---------|
-| Validator-bootstrap main wallet | 100,000 TOS | published with the final zerostate |
+| Validator-bootstrap main wallet | 80,151 TOS | `-1:111...111` |
 | Elector contract | 500 TOS | `-1:333...333` |
 | Config contract | 500 TOS | `-1:555...555` |
 
@@ -93,7 +93,7 @@ ecosystem allocation. TOS has no fixed maximum supply. After genesis, native
 TOS is created only by validator block rewards under ConfigParam 14 and routed
 through the existing Elector reward path. The production template calibrates
 those rewards so that the validator bootstrap creates approximately
-10,000,000 TOS gross over roughly its first two years, the 101,000-TOS genesis
+10,000,000 TOS gross over roughly its first two years, the 81,151-TOS genesis
 included (about 9,899,000 TOS from produced blocks). ConfigParam 14 is a flat
 per-block rate: it keeps creating at the same rate after two years until
 governance changes it. After the bootstrap, governance targets a low perpetual

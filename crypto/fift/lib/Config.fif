@@ -185,4 +185,18 @@ variable special-dict
 // 256 address bits are stored. Absent parameter 4 means "DNS unavailable".
 { make-smc-addr-cell 4 config! } : config.dns_root_smc!
 
+// ConfigParam 5: burning_config#01 blackhole_addr:(Maybe bits256)
+// fee_burn_num:# fee_burn_denom:#. Inbound value to the masterchain blackhole
+// account is destroyed instead of credited; fee_burn_num/fee_burn_denom of the
+// collected fees is destroyed as well. This word always writes a blackhole.
+// blackhole-addr fee-burn-num fee-burn-denom --
+{ dup 1 < abort"fee burn denominator must be at least 1"
+  dup 32 ufits not abort"fee burn denominator must fit 32 bits"
+  over 0< abort"fee burn numerator must not be negative"
+  2dup > abort"fee burn numerator must not exceed the denominator"
+  // Fift integers are 257-bit signed, so a non-negative address always fits.
+  rot dup 0< abort"blackhole address must not be negative" -rot
+  <b x{01} s, 1 1 u, 3 roll 256 u, rot 32 u, swap 32 u, b> 5 config!
+} : config.burning!
+
 { <b swap dict, b> 7 config! } : config.to_mint!
