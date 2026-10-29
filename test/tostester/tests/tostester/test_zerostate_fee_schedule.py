@@ -31,12 +31,12 @@ def normalise(line: str) -> str:
     return " ".join(line.split())
 
 
-def fif_line(source: str, name: str) -> str:
+def fif_line(source: str, name: str, where: str = "gen-zerostate.fif") -> str:
     pattern = re.compile(rf"^(?!//)(.*\bconfig\.{name}!)\s*$", re.MULTILINE)
     matches = pattern.findall(source)
     expected = 1
     if len(matches) != expected:
-        raise AssertionError(f"{name}: {len(matches)} definitions in gen-zerostate.fif")
+        raise AssertionError(f"{name}: {len(matches)} definitions in {where}")
     return normalise(matches[0])
 
 
@@ -77,3 +77,27 @@ def test_masterchain_prices_are_reduced_without_changing_resource_or_debt_limits
     assert normalise(cheap["mc_fwd_prices"]) == (
         "100 10 sg* 10 sg* 3/2 sg*/ 1/3 sg*/ 1/3 sg*/ config.mc_fwd_prices!"
     )
+
+
+# Lines the localnet template writes verbatim, outside the profile-specific
+# substitutions. A localnet that prices complaints or storage differently, or
+# that has no blackhole, measures a chain nobody runs.
+VERBATIM_LINES = ("complaint_prices", "storage_prices", "burning")
+
+
+@pytest.mark.parametrize("name", VERBATIM_LINES)
+def test_the_localnet_template_writes_the_deployed_line(name: str) -> None:
+    import tostester.zerostate as zerostate_module
+
+    template = zerostate_module._TEMPLATE
+    assert fif_line(template, name, "the tostester template") == fif_line(
+        GEN_ZEROSTATE.read_text(), name
+    ), f"tostester's config.{name}! differs from gen-zerostate.fif's"
+
+
+def test_both_templates_define_the_same_blackhole() -> None:
+    import tostester.zerostate as zerostate_module
+
+    definition = "AllOnes 15 * constant blackhole_addr"
+    assert zerostate_module._TEMPLATE.count(definition) == 1
+    assert GEN_ZEROSTATE.read_text().count(definition) == 1

@@ -10,10 +10,12 @@ or an approved production release.
 The frozen configuration uses the public test namespace `0x42` repeated 32
 times, global ID 1, version 16, basechain credit 20,000 and masterchain credit
 10,000. Its ConfigParams SHA-256 (of `config.boc`) is
-`90471221a3b1b9f7e06678797f5aed83f6eeb803db74c80646ff66e086d7d954`.
-It was last refreshed when the genesis template's ConfigParam 15 election lead
-moved from 32,768 to 16,384 seconds; that parameter is the only one that
-changed, and the code identities below did not change.
+`eb7abf8cc485807ea86f75fa9ac1a2b91736ce3bcccc906813eb52e6d51633d1`.
+It was last refreshed for the epoch-6 genesis template: ConfigParam 5 is new
+(blackhole -1:ffff...ffff, no fee burning), ConfigParam 10 adds 5 to the critical
+set, ConfigParam 13 lowers the complaint deposit from 100 to 1 TOS and
+ConfigParam 18 sets basechain rent to 0 per bit and 135 per cell. No other
+parameter changed, and the code identities below did not change.
 The wallet code embeds this namespace; a deployment under another namespace
 needs its own reviewed code/configuration identities.
 
@@ -97,6 +99,14 @@ version-16 candidate with the explicit `0x42` namespace. Its configuration and
 source identities changed; all three contract code identities remain unchanged.
 The prior version-18 receipts retain their original configuration and manifest
 identities. They are historical measurements, not acceptance of this new baseline.
+
+The wallet V5 account-state bound refresh changes one more pinned file,
+`test/auth-extensions/native.py`: the shared emulator harness gained the
+genesis ConfigParam 43 loader, a distinct-cell counter, StateInit-carrying
+external messages and the action-phase message count that the V5 tests use.
+The Quantum wallet, module and vault sources are untouched; a fresh build
+reproduces the same three code identities, the same configuration and the
+other 74 file identities.
 The new bundle reproduction and corruption controls are indexed in
 [`auth-v16-validation.json`](../../doc/evidence/auth-v16-validation.json).
 

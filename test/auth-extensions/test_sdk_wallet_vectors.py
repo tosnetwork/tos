@@ -17,7 +17,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from cells import Cell, from_boc
+from cells import from_boc
 from native import (
     CURRENT_GLOBAL_VERSION,
     GLOBAL_ID,
@@ -30,6 +30,7 @@ from native import (
     external,
     outgoing,
     state_init,
+    uninitialized_account,
 )
 
 VECTORS = ROOT / "sdk/js/packages/wallets/test-vectors/network-bound-transfers.json"
@@ -43,40 +44,6 @@ def raw_address(text):
 
 def boc(text):
     return from_boc(base64.b64decode(text))
-
-
-def uninitialized_account(address, balance=100_000_000_000):
-    """A funded account with no code yet (account_uninit$00)."""
-    account = (
-        Cell()
-        .uint(1, 1)
-        .addr(address)
-        .varuint(0, 7)
-        .varuint(0, 7)
-        .uint(0, 3)
-        .uint(NOW, 32)
-        .uint(0, 1)
-        .uint(0, 64)
-        .coins(balance)
-        .uint(0, 1)
-        .uint(0, 2)
-    )
-    return Cell().uint(0, 256).uint(0, 64).ref(account)
-
-
-def external_with_init(destination, init, body):
-    """ext_in_msg_info with the StateInit and the body each in a reference."""
-    return (
-        Cell()
-        .uint(8, 4)
-        .addr(destination)
-        .coins(0)
-        .uint(1, 1)
-        .uint(1, 1)
-        .ref(init)
-        .uint(1, 1)
-        .ref(body)
-    )
 
 
 class SdkWalletVectorTests(unittest.TestCase):
@@ -186,7 +153,7 @@ class SdkWalletVectorTests(unittest.TestCase):
         address = raw_address(vector["address"])
         emulator = Emulator(version)
         self.addCleanup(emulator.close)
-        message = external_with_init(address, state_init(code, data), boc(vector["deploy"]))
+        message = external(address, boc(vector["deploy"]), state_init(code, data))
         return emulator.send(uninitialized_account(address), message), data
 
     def test_a_deploy_signed_for_this_network_deploys_the_wallet(self):

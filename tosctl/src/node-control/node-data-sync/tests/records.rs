@@ -219,20 +219,18 @@ fn publication_checks_metadata_and_pruning_respects_capture_and_restore_leases()
         &state::shardclient::ShardClient { block: tip.native()? }.into_boxed(),
     )?);
     let source = Root::create(&temp.path().join("source"))?;
-    source.write_new("zero", &zero_boc)?;
     source.write_new("tip", &tip_boc)?;
     source.write_new("records", &records.bytes()?)?;
     let writer = objects.writer()?;
     assert!(catalog.prune().is_err(), "pruner bypassed active capture");
     let mut files = vec![
-        writer.put("metadata/zero-state.boc", source.read("zero", 1 << 20)?, 1 << 20)?,
         writer.put("metadata/tip-block.boc", source.read("tip", 1 << 20)?, 1 << 20)?,
         writer.put("state-records.cbor", source.read("records", 1 << 20)?, 1 << 20)?,
     ];
     files.sort_by(|a, b| a.path.cmp(&b.path));
     drop(writer);
     let mut manifest = Manifest {
-        format: 2,
+        format: node_data_sync::model::MANIFEST_FORMAT,
         corroboration: reference_fixture::historical_receipt(
             &Network { global_id: 3, zero: zero_id.clone(), init: zero_id.clone() },
             &tip,
@@ -523,7 +521,6 @@ fn publication_checks_metadata_and_pruning_respects_capture_and_restore_leases()
         )?;
         let checked = Root::create(&parent.path.join("checked"))?;
         checked.write_new("state-records.cbor", &records.bytes()?)?;
-        checked.write_new("zero-state.boc", &zero_boc)?;
         checked.write_new("tip-block.boc", &tip_boc)?;
         parent.write_new("capture.json", &serde_json::to_vec(&manifest.capture)?)?;
         let encode = |s: &str| -> Result<String> {
@@ -694,7 +691,7 @@ fn publication_checks_metadata_and_pruning_respects_capture_and_restore_leases()
     bad.network.global_id = 2;
     bad.corroboration.network = bad.network.clone();
     assert!(
-        node_data_sync::metadata::validate(&bad, &zero_boc, &tip_boc).is_err(),
+        node_data_sync::metadata::validate(&bad, &tip_boc).is_err(),
         "public metadata accepted the wrong global id"
     );
     assert!(

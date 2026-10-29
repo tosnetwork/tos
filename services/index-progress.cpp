@@ -17,13 +17,14 @@ uint64_t delta(uint64_t now, uint64_t before) {
 }  // namespace
 
 ReplayStats::Snapshot ReplayStats::snapshot(double uptime_s, uint64_t archive_slice_opens,
-                                            uint64_t archive_slice_closes) const {
+                                            uint64_t archive_slice_closes, const SourceCounters* source) const {
   Snapshot s;
   s.uptime_s = uptime_s;
   s.mc_blocks = mc_blocks.load(std::memory_order_relaxed);
   s.shard_blocks = shard_blocks.load(std::memory_order_relaxed);
   s.source_requests = source_requests.load(std::memory_order_relaxed);
   s.source_wait_us = source_wait_us.load(std::memory_order_relaxed);
+  s.prefetch_wait_us = prefetch_wait_us.load(std::memory_order_relaxed);
   s.catch_ups = catch_ups.load(std::memory_order_relaxed);
   s.catch_up_us = catch_up_us.load(std::memory_order_relaxed);
   s.walk_us = walk_us.load(std::memory_order_relaxed);
@@ -34,6 +35,12 @@ ReplayStats::Snapshot ReplayStats::snapshot(double uptime_s, uint64_t archive_sl
   s.archive_slice_opens = archive_slice_opens;
   s.archive_slice_closes = archive_slice_closes;
   s.open_fds = open_fds.load(std::memory_order_relaxed);
+  if (source != nullptr) {
+    s.source_completed = source->completed.load(std::memory_order_relaxed);
+    s.source_service_us = source->service_us.load(std::memory_order_relaxed);
+    s.source_outstanding_high_water = source->outstanding_high_water.load(std::memory_order_relaxed);
+    s.prefetch_bytes_high_water = source->prefetch_bytes_high_water.load(std::memory_order_relaxed);
+  }
   return s;
 }
 
@@ -41,6 +48,11 @@ std::string replay_stats_json(const ReplayStats::Snapshot& s) {
   return "{\"uptime_s\":" + std::to_string(static_cast<uint64_t>(s.uptime_s)) +
          ",\"mc_blocks\":" + std::to_string(s.mc_blocks) + ",\"shard_blocks\":" + std::to_string(s.shard_blocks) +
          ",\"source_requests\":" + std::to_string(s.source_requests) + ",\"source_wait_ms\":" + ms(s.source_wait_us) +
+         ",\"prefetch_wait_ms\":" + ms(s.prefetch_wait_us) +
+         ",\"source_completed\":" + std::to_string(s.source_completed) +
+         ",\"source_service_ms\":" + ms(s.source_service_us) +
+         ",\"source_outstanding_high_water\":" + std::to_string(s.source_outstanding_high_water) +
+         ",\"prefetch_bytes_high_water\":" + std::to_string(s.prefetch_bytes_high_water) +
          ",\"catch_ups\":" + std::to_string(s.catch_ups) + ",\"catch_up_ms\":" + ms(s.catch_up_us) +
          ",\"walk_ms\":" + ms(s.walk_us) + ",\"commits\":" + std::to_string(s.commits) +
          ",\"commit_ms\":" + ms(s.commit_us) + ",\"drains\":" + std::to_string(s.drains) +
@@ -59,6 +71,8 @@ std::string replay_stats_log_line(const ReplayStats::Snapshot& now, const Replay
          "/s) shard_blocks=" + std::to_string(delta(now.shard_blocks, previous.shard_blocks)) +
          " source_requests=" + std::to_string(delta(now.source_requests, previous.source_requests)) +
          " source_wait_ms=" + ms(delta(now.source_wait_us, previous.source_wait_us)) +
+         " prefetch_wait_ms=" + ms(delta(now.prefetch_wait_us, previous.prefetch_wait_us)) +
+         " source_service_ms=" + ms(delta(now.source_service_us, previous.source_service_us)) +
          " catch_up_ms=" + ms(delta(now.catch_up_us, previous.catch_up_us)) +
          " walk_ms=" + ms(delta(now.walk_us, previous.walk_us)) +
          " commit_ms=" + ms(delta(now.commit_us, previous.commit_us)) +
@@ -73,6 +87,8 @@ std::string Progress::json(double now) const {
   return "{\"masterchain_seqno\":" + known(cursor_known.load(), cursor.load()) +
          ",\"source_seqno\":" + known(tip_known.load(), tip.load()) +
          ",\"caught_up\":" + (is_ready(now) ? "true" : "false") +
+         ",\"replay_ceiling\":" + known(ceiling.load() != 0, ceiling.load()) +
+         ",\"settled\":" + (settled.load() ? "true" : "false") +
          ",\"initialized\":" + (cursor_known.load() ? "true" : "false") + "}";
 }
 

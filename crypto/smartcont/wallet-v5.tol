@@ -37,6 +37,7 @@
 //   183       | throw(134)    | Protocol      | 1134
 //   184       | throw(136)    | Permanent     | 1136
 //   205       | throw(138)    | Protocol      | 1138       | receive_external(UnknownOpcode)
+//   -         | throw(149)    | Permanent     | 1149       | enforceStateBound
 //
 // Compatibility note: wallet-v5 is mostly external-message driven, so this
 // migration keeps the signed external/internal body format, extension action
@@ -85,6 +86,7 @@ const ERROR_EXTENSION_WRONG_WORKCHAIN = 145
 const ERROR_ONLY_EXTENSION_CAN_CHANGE_SIGNATURE_MODE = 146
 const ERROR_INVALID_C5 = 147
 const ERROR_INVALID_GLOBAL_ID = 148
+const ERROR_STATE_TOO_LARGE = 149
 
 const SIZE_BOOL = 1
 const SIZE_SEQNO = 32
@@ -123,6 +125,24 @@ const WALLET_V5_ERROR_EXTENSION_WRONG_WORKCHAIN = 1145
 const WALLET_V5_ERROR_ONLY_EXTENSION_CAN_CHANGE_SIGNATURE_MODE = 1146
 const WALLET_V5_ERROR_INVALID_C5 = 1147
 const WALLET_V5_ERROR_INVALID_GLOBAL_ID = 1148
+const WALLET_V5_ERROR_STATE_TOO_LARGE = 1149
+
+// Account-state bound, as in wallet-v5-code.fc. The executor recounts the
+// distinct cells of code, data and libraries after compute, and a state above
+// ConfigParam 43 fails the action phase with result 50. That discards the
+// whole new data, including a seqno this wallet already committed, so the same
+// signed request would be accepted and charged again on every delivery. Every
+// request that can grow the state (extension changes, staging and module
+// requests) is therefore refused in compute instead, after the commit.
+//
+// The bound is the code plus the data root, the authentication cell and 509
+// extension-dictionary cells (about 255 extensions). It is checked on the
+// executor's own metric, so a removal that breaks the sharing of identical
+// dictionary subtrees is caught as well. A V5 account holds no libraries: the
+// executor refuses a deploy that carries them and this wallet emits no
+// library actions, so code and data are the whole count.
+const STATE_MAX_CELLS_BEYOND_CODE = 511
+const STATE_UNBOUNDED = 4294967296
 
 struct WalletV5Storage {
     isSignatureAllowed: bool;
@@ -230,6 +250,36 @@ fun verifyC5Actions(c5: cell, isExternal: bool): cell {
     return walletV5VerifyC5Actions(c5, isExternal);
 }
 
+// Distinct cells of code and data together, or -1 above maxCells; the walk
+// stops at that bound, so the gas it costs is bounded by it as well. The
+// wrapper cell is the one extra cell counted: nothing in the state can equal
+// it, since it would have to contain both code and data.
+fun walletStateCells(data: cell, maxCells: int): int {
+    val state = beginCell().storeRef(contract.getCode()).storeRef(data).endCell();
+    val (cells, _, _, ok) = state.calculateSize(maxCells + 1);
+    if (!ok) {
+        return -1;
+    }
+    return cells - 1;
+}
+
+// Above the bound, which only an oversized StateInit can reach, a request that
+// adds no extension still passes when it does not grow the state, so such a
+// wallet keeps transacting and can shrink back.
+fun enforceStateBound(oldData: cell, added: bool): void {
+    val (codeCells, _, _) = contract.getCode().calculateSizeStrict(STATE_UNBOUNDED);
+    if (walletStateCells(currentData(), codeCells + STATE_MAX_CELLS_BEYOND_CODE) >= 0) {
+        return;
+    }
+    if (added) {
+        throw ERROR_STATE_TOO_LARGE;
+    }
+    val cells = walletStateCells(currentData(), STATE_UNBOUNDED);
+    if (walletStateCells(oldData, cells - 1) >= 0) {
+        throw ERROR_STATE_TOO_LARGE;
+    }
+}
+
 // Optional trailing reference leaves legacy initialization bytes unchanged.
 fun walletAuthState(): cell? {
     var ds = currentData().beginParse().skipBits(321);
@@ -240,7 +290,8 @@ fun walletAuthState(): cell? {
 }
 
 fun walletStoreAuth(auth: cell, advanceSeqno: bool): void {
-    var ds = currentData().beginParse();
+    val oldData = currentData();
+    var ds = oldData.beginParse();
     var signatureAllowed = ds.loadInt(1);
     var seqno = ds.loadUint(32);
     val keyFields = ds.loadBits(288);
@@ -255,6 +306,7 @@ fun walletStoreAuth(auth: cell, advanceSeqno: bool): void {
     }
     contract.setData(beginCell().storeInt(signatureAllowed, 1).storeUint(seqno, 32)
         .storeSlice(keyFields).storeDict(extensions).storeRef(auth).endCell());
+    enforceStateBound(oldData, false);
 }
 
 fun verifyAuthActions(actions: cell): cell {
@@ -402,6 +454,9 @@ fun processActions(cs: slice, isExternal: bool, isExtension: bool): void {
         return;
     }
 
+    val oldData = currentData();
+    var added = false;
+    var changed = false;
     while (true) {
         val isAddExtension = cs.tryStripPrefix(PREFIX_ADD_EXTENSION, 8);
         var isRemoveExtension = false;
@@ -431,6 +486,7 @@ fun processActions(cs: slice, isExternal: bool, isExtension: bool): void {
                 if (!isSuccess) {
                     throw ERROR_ADD_EXTENSION;
                 }
+                added = true;
             } else {
                 val isSuccess = extensions.uDictDelete(SIZE_ADDRESS_HASH, addressHash);
                 if (!isSuccess) {
@@ -449,6 +505,7 @@ fun processActions(cs: slice, isExternal: bool, isExtension: bool): void {
                     .storeSlice(authTail)
                     .endCell()
             );
+            changed = true;
         } else {
             if (cs.tryStripPrefix(PREFIX_SET_SIGNATURE_ALLOWED, 8)) {
                 if (!isExtension) {
@@ -483,6 +540,9 @@ fun processActions(cs: slice, isExternal: bool, isExtension: bool): void {
         }
 
         if (!cs.remainingRefsCount()) {
+            if (changed) {
+                enforceStateBound(oldData, added);
+            }
             return;
         }
         cs = cs.preloadRef().beginParse();

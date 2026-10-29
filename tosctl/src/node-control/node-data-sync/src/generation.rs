@@ -50,11 +50,9 @@ pub fn assemble(
         let native = file.path.strip_prefix("chain/").context("public file native path")?;
         files.push(writer.put(&file.path, image.read(native, file.size)?, file.size)?);
     }
-    for (public, local) in [
-        ("state-records.cbor", "state-records.cbor"),
-        ("metadata/zero-state.boc", "zero-state.boc"),
-        ("metadata/tip-block.boc", "tip-block.boc"),
-    ] {
+    for (public, local) in
+        [("state-records.cbor", "state-records.cbor"), ("metadata/tip-block.boc", "tip-block.boc")]
+    {
         let file = checked.read(local, MANIFEST_LIMIT)?;
         let size = file.metadata()?.len();
         files.push(writer.put(public, file, size)?);
@@ -67,7 +65,7 @@ pub fn assemble(
         &crate::model::sha256(&serde_json::to_vec(&result.validation)?),
     )?;
     let manifest = Manifest {
-        format: 2,
+        format: crate::model::MANIFEST_FORMAT,
         corroboration: approval.receipt()?,
         network,
         frontier,
@@ -87,7 +85,7 @@ pub fn assemble(
         files,
     };
     // Bind the exact image to the independently held public anchor before making it signable.
-    crate::metadata::validate(&manifest, &checked.bytes("zero-state.boc", MANIFEST_LIMIT)?, &tip)?;
+    crate::metadata::validate(&manifest, &tip)?;
     approval.receipt()?;
     let signed = SignedManifest::sign(manifest, signing_key)?;
     crate::catalog::verify_generation(&signed, objects, &signing_key.verifying_key().to_bytes())?;

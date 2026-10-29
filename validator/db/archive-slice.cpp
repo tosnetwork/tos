@@ -60,6 +60,13 @@ class PackageStatistics {
     write_time.insert(time);
   }
 
+  // Read and write timing samples not yet drained by to_string_and_reset.
+  size_t pending_samples() const {
+    std::lock_guard read_guard(read_mutex);
+    std::lock_guard write_guard(write_mutex);
+    return read_time.size() + write_time.size();
+  }
+
   std::string to_string_and_reset() {
     std::stringstream ss;
     ss.setf(std::ios::fixed);
@@ -101,6 +108,10 @@ class PackageStatistics {
   mutable std::mutex read_mutex;
   mutable std::mutex write_mutex;
 };
+
+size_t DbStatistics::pending_package_samples() const {
+  return pack_statistics ? pack_statistics->pending_samples() : 0;
+}
 
 void DbStatistics::init() {
   rocksdb_statistics = td::RocksDb::create_statistics();
@@ -205,15 +216,17 @@ class PackageReader : public td::actor::Actor {
  public:
   PackageReader(std::shared_ptr<Package> package, td::uint64 offset,
                 td::Promise<std::pair<std::string, td::BufferSlice>> promise,
-                std::shared_ptr<PackageStatistics> statistics)
+                std::shared_ptr<PackageStatistics> statistics,
+                td::uint32 data_limit = std::numeric_limits<td::uint32>::max())
       : package_(std::move(package))
       , offset_(offset)
+      , data_limit_(data_limit)
       , promise_(std::move(promise))
       , statistics_(std::move(statistics)) {
   }
   void start_up() override {
     auto start = td::Timestamp::now();
-    auto result = package_->read(offset_);
+    auto result = package_->read(offset_, data_limit_);
     if (statistics_ && result.is_ok()) {
       statistics_->record_read((td::Timestamp::now().at() - start.at()) * 1e6, result.ok_ref().second.size());
     }
@@ -225,6 +238,7 @@ class PackageReader : public td::actor::Actor {
  private:
   std::shared_ptr<Package> package_;
   td::uint64 offset_;
+  td::uint32 data_limit_;
   td::Promise<std::pair<std::string, td::BufferSlice>> promise_;
   std::shared_ptr<PackageStatistics> statistics_;
 };
@@ -251,6 +265,10 @@ void ArchiveSlice::tear_down() {
 void ArchiveSlice::add_handle(BlockHandle handle, td::Promise<td::Unit> promise) {
   if (destroyed_) {
     promise.set_error(td::Status::Error(ErrorCode::notready, td::Slice(kPackageGarbageCollected)));
+    return;
+  }
+  if (mode_ != td::DbOpenMode::db_primary) {
+    promise.set_error(td::Status::Error(ErrorCode::error, td::Slice(kArchiveSliceReadOnly)));
     return;
   }
   if (handle->id().seqno() == 0) {
@@ -334,6 +352,12 @@ void ArchiveSlice::add_handle(BlockHandle handle, td::Promise<td::Unit> promise)
 void ArchiveSlice::update_handle(BlockHandle handle, td::Promise<td::Unit> promise) {
   if (destroyed_) {
     promise.set_error(td::Status::Error(ErrorCode::notready, td::Slice(kPackageGarbageCollected)));
+    return;
+  }
+  // Refused before the flushed-handle shortcut so that a reader gets the same
+  // answer whatever the handle's state.
+  if (mode_ != td::DbOpenMode::db_primary) {
+    promise.set_error(td::Status::Error(ErrorCode::error, td::Slice(kArchiveSliceReadOnly)));
     return;
   }
   if (!handle->need_flush() && (temp_ || handle->handle_moved_to_archive())) {
@@ -512,6 +536,11 @@ void ArchiveSlice::get_temp_handle(BlockIdExt block_id, td::Promise<ConstBlockHa
 }
 
 void ArchiveSlice::get_file(ConstBlockHandle handle, FileReference ref_id, td::Promise<td::BufferSlice> promise) {
+  get_file_limited(std::move(handle), std::move(ref_id), std::numeric_limits<td::uint32>::max(), std::move(promise));
+}
+
+void ArchiveSlice::get_file_limited(ConstBlockHandle handle, FileReference ref_id, td::uint32 data_limit,
+                                    td::Promise<td::BufferSlice> promise) {
   if (destroyed_) {
     promise.set_error(td::Status::Error(ErrorCode::notready, td::Slice(kPackageGarbageCollected)));
     return;
@@ -537,7 +566,7 @@ void ArchiveSlice::get_file(ConstBlockHandle handle, FileReference ref_id, td::P
         }
       });
   td::actor::create_actor<PackageReader>(PSTRING() << "reader." << td::PathView(p->path).file_name(), p->package,
-                                         offset, std::move(P), statistics_.pack_statistics)
+                                         offset, std::move(P), statistics_.pack_statistics, data_limit)
       .release();
 }
 
@@ -713,6 +742,10 @@ void ArchiveSlice::get_min_masterchain_seqno(td::Promise<BlockSeqno> promise) {
 void ArchiveSlice::get_archive_id(BlockSeqno masterchain_seqno, ShardIdFull shard_prefix,
                                   td::Promise<td::uint64> promise) {
   before_query();
+  if (index_status_missing_) {
+    promise.set_error(td::Status::Error(ErrorCode::notready, "archive package is not open yet"));
+    return;
+  }
   if (!sliced_mode_) {
     promise.set_result(archive_id_);
   } else {
@@ -761,88 +794,7 @@ void ArchiveSlice::before_query() {
       default:
         UNREACHABLE();
     }
-    std::string value;
-    auto R2 = kv_->get("status", value);
-    R2.ensure();
-    sliced_mode_ = false;
-    slice_size_ = 100;
-
-    if (R2.move_as_ok() == td::KeyValue::GetStatus::Ok) {
-      if (value == "sliced") {
-        sliced_mode_ = true;
-        R2 = kv_->get("slices", value);
-        R2.ensure();
-        auto tot = td::to_integer<td::uint32>(value);
-        R2 = kv_->get("slice_size", value);
-        R2.ensure();
-        slice_size_ = td::to_integer<td::uint32>(value);
-        CHECK(slice_size_ > 0);
-        R2 = kv_->get("shard_split_depth", value);
-        R2.ensure();
-        if (R2.move_as_ok() == td::KeyValue::GetStatus::Ok) {
-          shard_split_depth_ = td::to_integer<td::uint32>(value);
-          CHECK(shard_split_depth_ <= 60);
-          shard_separated_ = true;
-        } else {
-          shard_split_depth_ = 0;
-          shard_separated_ = false;
-        }
-        for (td::uint32 i = 0; i < tot; i++) {
-          R2 = kv_->get(PSTRING() << "status." << i, value);
-          R2.ensure();
-          CHECK(R2.move_as_ok() == td::KeyValue::GetStatus::Ok);
-          auto len = td::to_integer<td::uint64>(value);
-          R2 = kv_->get(PSTRING() << "version." << i, value);
-          R2.ensure();
-          td::uint32 ver = 0;
-          if (R2.move_as_ok() == td::KeyValue::GetStatus::Ok) {
-            ver = td::to_integer<td::uint32>(value);
-          }
-          td::uint32 seqno;
-          ShardIdFull shard_prefix;
-          if (shard_separated_) {
-            R2 = kv_->get(PSTRING() << "info." << i, value);
-            R2.ensure();
-            CHECK(R2.move_as_ok() == td::KeyValue::GetStatus::Ok);
-            unsigned long long shard;
-            CHECK(sscanf(value.c_str(), "%u.%d:%016llx", &seqno, &shard_prefix.workchain, &shard) == 3);
-            shard_prefix.shard = shard;
-          } else {
-            seqno = archive_id_ + slice_size_ * i;
-            shard_prefix = ShardIdFull{masterchainId};
-          }
-          if (!add_package(seqno, shard_prefix, len, ver)) {
-            break;
-          }
-        }
-      } else {
-        auto len = td::to_integer<td::uint64>(value);
-        add_package(archive_id_, ShardIdFull{masterchainId}, len, 0);
-      }
-    } else {
-      if (!temp_ && !key_blocks_only_) {
-        sliced_mode_ = true;
-        kv_->begin_transaction().ensure();
-        kv_->set("status", "sliced").ensure();
-        kv_->set("slices", "1").ensure();
-        kv_->set("slice_size", td::to_string(slice_size_)).ensure();
-        kv_->set("status.0", "0").ensure();
-        kv_->set("version.0", td::to_string(default_package_version())).ensure();
-        shard_separated_ = true;
-        kv_->set("info.0", package_info_to_str(archive_id_, ShardIdFull{masterchainId})).ensure();
-        kv_->set("shard_split_depth", td::to_string(shard_split_depth_)).ensure();
-        kv_->commit_transaction().ensure();
-        add_package(archive_id_, ShardIdFull{masterchainId}, 0, default_package_version());
-      } else {
-        kv_->begin_transaction().ensure();
-        kv_->set("status", "0").ensure();
-        kv_->commit_transaction().ensure();
-        add_package(archive_id_, ShardIdFull{masterchainId}, 0, 0);
-        if (temp_) {
-          temp_max_seqnos_ready_ = true;
-        }
-      }
-    }
+    load_index();
   }
   status_ = st_open;
   if (!archive_lru_.empty()) {
@@ -850,6 +802,111 @@ void ArchiveSlice::before_query() {
                             packages_.size() + ESTIMATED_DB_OPEN_FILES);
   }
   try_catch_up_with_primary_impl(CatchUpMode::Throttled).ensure();
+}
+
+// Reads the slice layout and its packages from the index. The owning node
+// writes the initial layout of a new index here.
+void ArchiveSlice::load_index() {
+  std::string value;
+  auto R2 = kv_->get("status", value);
+  R2.ensure();
+  sliced_mode_ = false;
+  slice_size_ = 100;
+
+  if (R2.move_as_ok() == td::KeyValue::GetStatus::Ok) {
+    if (index_status_missing_) {
+      // The slice was queried while its index had no layout; whatever was
+      // derived from it then is rebuilt from the layout now present.
+      index_status_missing_ = false;
+      temp_max_seqnos_.clear();
+      temp_max_seqnos_ready_ = false;
+    }
+    if (value == "sliced") {
+      sliced_mode_ = true;
+      R2 = kv_->get("slices", value);
+      R2.ensure();
+      auto tot = td::to_integer<td::uint32>(value);
+      R2 = kv_->get("slice_size", value);
+      R2.ensure();
+      slice_size_ = td::to_integer<td::uint32>(value);
+      CHECK(slice_size_ > 0);
+      R2 = kv_->get("shard_split_depth", value);
+      R2.ensure();
+      if (R2.move_as_ok() == td::KeyValue::GetStatus::Ok) {
+        shard_split_depth_ = td::to_integer<td::uint32>(value);
+        CHECK(shard_split_depth_ <= 60);
+        shard_separated_ = true;
+      } else {
+        shard_split_depth_ = 0;
+        shard_separated_ = false;
+      }
+      for (td::uint32 i = 0; i < tot; i++) {
+        R2 = kv_->get(PSTRING() << "status." << i, value);
+        R2.ensure();
+        CHECK(R2.move_as_ok() == td::KeyValue::GetStatus::Ok);
+        auto len = td::to_integer<td::uint64>(value);
+        R2 = kv_->get(PSTRING() << "version." << i, value);
+        R2.ensure();
+        td::uint32 ver = 0;
+        if (R2.move_as_ok() == td::KeyValue::GetStatus::Ok) {
+          ver = td::to_integer<td::uint32>(value);
+        }
+        td::uint32 seqno;
+        ShardIdFull shard_prefix;
+        if (shard_separated_) {
+          R2 = kv_->get(PSTRING() << "info." << i, value);
+          R2.ensure();
+          CHECK(R2.move_as_ok() == td::KeyValue::GetStatus::Ok);
+          unsigned long long shard;
+          CHECK(sscanf(value.c_str(), "%u.%d:%016llx", &seqno, &shard_prefix.workchain, &shard) == 3);
+          shard_prefix.shard = shard;
+        } else {
+          seqno = archive_id_ + slice_size_ * i;
+          shard_prefix = ShardIdFull{masterchainId};
+        }
+        if (!add_package(seqno, shard_prefix, len, ver)) {
+          break;
+        }
+      }
+    } else {
+      auto len = td::to_integer<td::uint64>(value);
+      add_package(archive_id_, ShardIdFull{masterchainId}, len, 0);
+    }
+  } else {
+    if (mode_ != td::DbOpenMode::db_primary) {
+      // Only the owning node writes the initial layout. Until it is there the
+      // reader has no packages, so every query answers not ready; a secondary
+      // reads the layout again after it catches up with the primary, a
+      // read-only reader when the slice is reopened.
+      if (!index_status_missing_) {
+        LOG(WARNING) << "archive slice index '" << db_path_ << "' has no layout yet; the slice is not ready";
+      }
+      index_status_missing_ = true;
+      return;
+    }
+    if (!temp_ && !key_blocks_only_) {
+      sliced_mode_ = true;
+      kv_->begin_transaction().ensure();
+      kv_->set("status", "sliced").ensure();
+      kv_->set("slices", "1").ensure();
+      kv_->set("slice_size", td::to_string(slice_size_)).ensure();
+      kv_->set("status.0", "0").ensure();
+      kv_->set("version.0", td::to_string(default_package_version())).ensure();
+      shard_separated_ = true;
+      kv_->set("info.0", package_info_to_str(archive_id_, ShardIdFull{masterchainId})).ensure();
+      kv_->set("shard_split_depth", td::to_string(shard_split_depth_)).ensure();
+      kv_->commit_transaction().ensure();
+      add_package(archive_id_, ShardIdFull{masterchainId}, 0, default_package_version());
+    } else {
+      kv_->begin_transaction().ensure();
+      kv_->set("status", "0").ensure();
+      kv_->commit_transaction().ensure();
+      add_package(archive_id_, ShardIdFull{masterchainId}, 0, 0);
+      if (temp_) {
+        temp_max_seqnos_ready_ = true;
+      }
+    }
+  }
 }
 
 void ArchiveSlice::open_files() {
@@ -1010,6 +1067,15 @@ td::Status ArchiveSlice::try_catch_up_with_primary_impl(CatchUpMode mode) {
 
   TRY_STATUS(static_cast<td::RocksDbSecondary *>(kv_.get())->try_catch_up_with_primary());
 
+  if (index_status_missing_) {
+    // The slice opened before the primary committed its layout, so nothing of
+    // it was loaded; read it as a fresh open would, layout included.
+    CHECK(packages_.empty() && id_to_package_.empty());
+    load_index();
+    last_catch_up_ = td::Timestamp::now();
+    return td::Status::OK();
+  }
+
   std::string value;
   auto R2 = kv_->get("status", value);
   R2.ensure();
@@ -1164,6 +1230,8 @@ td::Result<ArchiveSlice::PackageInfo *> ArchiveSlice::choose_package(BlockSeqno 
     if (!force) {
       return td::Status::Error(ErrorCode::notready, "no such package");
     }
+    // Only the writes, which a reader refuses at their entry, create a package.
+    CHECK(mode_ == td::DbOpenMode::db_primary);
     begin_transaction();
     size_t v = packages_.size();
     kv_->set("slices", td::to_string(v + 1)).ensure();

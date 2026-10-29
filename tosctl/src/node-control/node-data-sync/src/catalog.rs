@@ -450,11 +450,7 @@ pub fn verify_generation(
             .context("generation metadata missing")?;
         objects.bytes(object, MANIFEST_LIMIT)
     };
-    crate::metadata::validate(
-        &value.manifest,
-        &metadata("metadata/zero-state.boc")?,
-        &metadata("metadata/tip-block.boc")?,
-    )?;
+    crate::metadata::validate(&value.manifest, &metadata("metadata/tip-block.boc")?)?;
     let chain = crate::records::ChainRecords::parse(&metadata("state-records.cbor")?)?;
     ensure!(chain.frontier()? == value.manifest.frontier, "StateDb and manifest frontiers differ");
     ensure!(
