@@ -119,8 +119,11 @@ Result<RocksDbSecondary> RocksDbSecondary::open(std::string path, RocksDbOptions
     // default column family
     delete handles[0];
   }
-  TRY_STATUS(from_rocksdb(db->TryCatchUpWithPrimary()));
-  return RocksDbSecondary(std::shared_ptr<rocksdb::DB>(db), std::move(options));
+  // Catch-up can fail after OpenAsSecondary succeeds (for example while the
+  // primary removes the index). Own the database before that fallible step.
+  auto owner = std::shared_ptr<rocksdb::DB>(db);
+  TRY_STATUS(from_rocksdb(owner->TryCatchUpWithPrimary()));
+  return RocksDbSecondary(std::move(owner), std::move(options));
 }
 
 Status RocksDbSecondary::try_catch_up_with_primary() {

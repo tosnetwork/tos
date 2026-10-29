@@ -225,6 +225,7 @@ void ArchiveManager::add_temp_file_short(FileReference ref_id, td::BufferSlice d
 }
 
 void ArchiveManager::get_handle(BlockIdExt block_id, td::Promise<BlockHandle> promise) {
+  TRY_STATUS_PROMISE(promise, ensure_index());
   auto f = get_file_desc_by_seqno(block_id.shard_full(), block_id.seqno(), false);
   if (f) {
     auto P = td::PromiseCreator::lambda([SelfId = actor_id(this), block_id, idx = get_max_temp_file_desc_idx(),
@@ -279,6 +280,7 @@ void ArchiveManager::get_handle_finish(BlockHandle handle, td::Promise<BlockHand
 }
 
 void ArchiveManager::get_file_short(FileReference ref_id, td::Promise<td::BufferSlice> promise) {
+  TRY_STATUS_PROMISE(promise, ensure_index());
   bool search_in_key = false;
   BlockIdExt block_id;
   ref_id.ref().visit(td::overloaded(
@@ -310,6 +312,7 @@ void ArchiveManager::get_file_short(FileReference ref_id, td::Promise<td::Buffer
 }
 
 void ArchiveManager::get_key_block_proof(FileReference ref_id, td::Promise<td::BufferSlice> promise) {
+  TRY_STATUS_PROMISE(promise, ensure_index());
   bool search_in_key = false;
   BlockIdExt block_id;
   ref_id.ref().visit(td::overloaded(
@@ -336,6 +339,7 @@ void ArchiveManager::get_key_block_proof(FileReference ref_id, td::Promise<td::B
 }
 
 void ArchiveManager::get_temp_file_short(FileReference ref_id, td::Promise<td::BufferSlice> promise) {
+  TRY_STATUS_PROMISE(promise, ensure_index());
   get_temp_file_short_cont(std::move(ref_id), get_max_temp_file_desc_idx(), std::numeric_limits<td::uint32>::max(),
                            std::move(promise));
 }
@@ -376,6 +380,7 @@ void ArchiveManager::get_file(ConstBlockHandle handle, FileReference ref_id, td:
 
 void ArchiveManager::get_file_limited(ConstBlockHandle handle, FileReference ref_id, td::uint32 data_limit,
                                       td::Promise<td::BufferSlice> promise) {
+  TRY_STATUS_PROMISE(promise, ensure_index());
   if (handle->moved_to_archive()) {
     auto f = get_file_desc(handle->id().shard_full(), get_package_id(handle->masterchain_ref_block()), 0, 0, 0, false);
     if (f.is_ok()) {
@@ -664,6 +669,7 @@ void ArchiveManager::get_persistent_state_file_size(BlockIdExt block_id, BlockId
 
 void ArchiveManager::get_block_by_unix_time(AccountIdPrefixFull account_id, UnixTime ts,
                                             td::Promise<ConstBlockHandle> promise) {
+  TRY_STATUS_PROMISE(promise, ensure_index());
   auto f1 = get_file_desc_by_unix_time(account_id, ts, false);
   auto f2 = get_next_file_desc(f1, account_id, false);
   if (!f1) {
@@ -690,6 +696,7 @@ void ArchiveManager::get_block_by_unix_time(AccountIdPrefixFull account_id, Unix
 
 void ArchiveManager::get_block_by_lt(AccountIdPrefixFull account_id, LogicalTime lt,
                                      td::Promise<ConstBlockHandle> promise) {
+  TRY_STATUS_PROMISE(promise, ensure_index());
   auto f1 = get_file_desc_by_lt(account_id, lt, false);
   auto f2 = get_next_file_desc(f1, account_id, false);
   if (!f1) {
@@ -716,6 +723,7 @@ void ArchiveManager::get_block_by_lt(AccountIdPrefixFull account_id, LogicalTime
 
 void ArchiveManager::get_block_by_seqno(AccountIdPrefixFull account_id, BlockSeqno seqno,
                                         td::Promise<ConstBlockHandle> promise) {
+  TRY_STATUS_PROMISE(promise, ensure_index());
   auto f = get_file_desc_by_seqno(account_id, seqno, false);
   if (f) {
     td::actor::send_closure(f->file_actor_id(), &ArchiveSlice::get_block_by_seqno, account_id, seqno,
@@ -1071,24 +1079,17 @@ PackageId ArchiveManager::get_prev_temp_file_desc_idx(PackageId idx) {
   return it->first;
 }
 
-void ArchiveManager::start_up() {
-  // Only the owning node lays out its tree. A reader reads the tree as it is:
-  // its index open fails if there is none, and a missing package directory
-  // only means no package there.
-  if (mode_ == td::DbOpenMode::db_primary) {
-    td::mkdir(db_root_).ensure();
-    td::mkdir(db_root_ + "/archive/").ensure();
-    td::mkdir(db_root_ + "/archive/tmp/").ensure();
-    td::mkdir(db_root_ + "/archive/packages/").ensure();
-    td::mkdir(db_root_ + "/archive/states/").ensure();
-    td::mkdir(db_root_ + "/files/").ensure();
-    td::mkdir(db_root_ + "/files/packages/").ensure();
+td::Status ArchiveManager::index_open_error(const td::Status &error) {
+  if (!next_index_warning_ || next_index_warning_.is_in_past()) {
+    LOG(WARNING) << "archive index '" << db_root_ << "/files/globalindex' is not ready: " << error;
+    next_index_warning_ = td::Timestamp::in(60.0);
   }
-  if (opts_->get_max_open_archive_files() > 0) {
-    archive_lru_ = td::actor::create_actor<ArchiveLru>("archive_lru", opts_->get_max_open_archive_files());
-  }
-  if (!opts_->get_disable_rocksdb_stats()) {
-    statistics_.init();
+  return td::Status::Error(ErrorCode::notready, PSTRING() << "archive index is not ready: " << error.message());
+}
+
+td::Status ArchiveManager::ensure_index() {
+  if (index_) {
+    return td::Status::OK();
   }
   td::RocksDbOptions db_options;
   db_options.statistics = statistics_.rocksdb_statistics;
@@ -1097,14 +1098,22 @@ void ArchiveManager::start_up() {
       index_ = std::static_pointer_cast<td::KeyValue>(std::make_shared<td::RocksDb>(
           td::RocksDb::open(db_root_ + "/files/globalindex", std::move(db_options)).move_as_ok()));
       break;
-    case td::DbOpenMode::db_secondary:
-      index_ = std::static_pointer_cast<td::KeyValue>(std::make_shared<td::RocksDbSecondary>(
-          td::RocksDbSecondary::open(db_root_ + "/files/globalindex", std::move(db_options)).move_as_ok()));
+    case td::DbOpenMode::db_secondary: {
+      auto result = td::RocksDbSecondary::open(db_root_ + "/files/globalindex", std::move(db_options));
+      if (result.is_error()) {
+        return index_open_error(result.error());
+      }
+      index_ = std::make_shared<td::RocksDbSecondary>(result.move_as_ok());
       break;
-    case td::DbOpenMode::db_readonly:
-      index_ = std::static_pointer_cast<td::KeyValue>(std::make_shared<td::RocksDbReadOnly>(
-          td::RocksDbReadOnly::open(db_root_ + "/files/globalindex", std::move(db_options)).move_as_ok()));
+    }
+    case td::DbOpenMode::db_readonly: {
+      auto result = td::RocksDbReadOnly::open(db_root_ + "/files/globalindex", std::move(db_options));
+      if (result.is_error()) {
+        return index_open_error(result.error());
+      }
+      index_ = std::make_shared<td::RocksDbReadOnly>(result.move_as_ok());
       break;
+    }
   }
   std::string value;
   auto v = index_->get(create_serialize_tl_object<tos_api::db_files_index_key>().as_slice(), value);
@@ -1131,6 +1140,35 @@ void ArchiveManager::start_up() {
     auto R = td::to_integer_safe<td::uint32>(value);
     R.ensure();
     finalized_up_to_ = R.move_as_ok();
+  }
+  return td::Status::OK();
+}
+
+void ArchiveManager::start_up() {
+  // Only the owning node lays out its tree. A reader reads the tree as it is:
+  // its index open fails if there is none, and a missing package directory
+  // only means no package there.
+  if (mode_ == td::DbOpenMode::db_primary) {
+    td::mkdir(db_root_).ensure();
+    td::mkdir(db_root_ + "/archive/").ensure();
+    td::mkdir(db_root_ + "/archive/tmp/").ensure();
+    td::mkdir(db_root_ + "/archive/packages/").ensure();
+    td::mkdir(db_root_ + "/archive/states/").ensure();
+    td::mkdir(db_root_ + "/files/").ensure();
+    td::mkdir(db_root_ + "/files/packages/").ensure();
+  }
+  if (opts_->get_max_open_archive_files() > 0) {
+    archive_lru_ = td::actor::create_actor<ArchiveLru>("archive_lru", opts_->get_max_open_archive_files());
+  }
+  if (!opts_->get_disable_rocksdb_stats()) {
+    statistics_.init();
+    alarm_timestamp() = td::Timestamp::in(60.0);
+  }
+  auto status = ensure_index();
+  if (status.is_error()) {
+    // Queries retry the open and report notready until the owning node has
+    // made its index available. No package actors were created on failure.
+    return;
   }
 
   if (mode_ == td::DbOpenMode::db_primary) {
@@ -1184,10 +1222,6 @@ void ArchiveManager::start_up() {
       break;
     }
   }
-
-  if (!opts_->get_disable_rocksdb_stats()) {
-    alarm_timestamp() = td::Timestamp::in(60.0);
-  }
 }
 
 void ArchiveManager::alarm() {
@@ -1218,6 +1252,7 @@ void ArchiveManager::alarm() {
 }
 
 void ArchiveManager::try_catch_up_with_primary(CatchUpMode mode, td::Promise<td::Unit> promise) {
+  TRY_STATUS_PROMISE(promise, ensure_index());
   if (mode_ != td::DbOpenMode::db_secondary || mode == CatchUpMode::None) {
     promise.set_value(td::Unit());
     return;
@@ -1235,7 +1270,10 @@ void ArchiveManager::try_catch_up_with_primary(CatchUpMode mode, td::Promise<td:
   auto v = index_->get(create_serialize_tl_object<tos_api::db_files_index_key>().as_slice(), value);
   v.ensure();
 
-  CHECK(v.move_as_ok() == td::KeyValue::GetStatus::Ok)
+  if (v.move_as_ok() == td::KeyValue::GetStatus::NotFound) {
+    promise.set_error(td::Status::Error(ErrorCode::notready, "archive has no packages yet"));
+    return;
+  }
   auto R = fetch_tl_object<tos_api::db_files_index_value>(value, true);
   R.ensure();
   auto x = R.move_as_ok();
@@ -1324,6 +1362,7 @@ void ArchiveManager::try_catch_up_with_primary(CatchUpMode mode, td::Promise<td:
 }
 
 td::Status ArchiveManager::catch_up_package(const PackageId &id) {
+  TRY_STATUS(ensure_index());
   auto key = create_serialize_tl_object<tos_api::db_files_package_key>(id.id, id.key, id.temp);
 
   std::string value;
@@ -1362,7 +1401,12 @@ td::Status ArchiveManager::catch_up_package(const PackageId &id) {
 }
 
 void ArchiveManager::get_max_masterchain_seqno(bool force_catch_up, td::Promise<BlockSeqno> promise) {
+  TRY_STATUS_PROMISE(promise, ensure_index());
   auto fd = get_file_desc_by_seqno(tos::AccountIdPrefixFull(tos::masterchainId, tos::shardIdAll), INT_MAX, false);
+  if (!fd) {
+    promise.set_error(td::Status::Error(ErrorCode::notready, "archive has no masterchain blocks"));
+    return;
+  }
   if (mode_ == td::DbOpenMode::db_secondary && force_catch_up) {
     auto R = td::PromiseCreator::lambda(
         [promise = std::move(promise), file = fd->file.get()](td::Result<td::Unit> R) mutable {
@@ -1379,8 +1423,13 @@ void ArchiveManager::get_max_masterchain_seqno(bool force_catch_up, td::Promise<
 }
 
 void ArchiveManager::get_min_masterchain_seqno(td::Promise<BlockSeqno> promise) {
+  TRY_STATUS_PROMISE(promise, ensure_index());
   auto fd = get_file_map(PackageId{0, false, false})
                 .get_next_file_desc(ShardIdFull(tos::masterchainId, tos::shardIdAll), nullptr);
+  if (!fd) {
+    promise.set_error(td::Status::Error(ErrorCode::notready, "archive has no masterchain blocks"));
+    return;
+  }
   td::actor::send_closure(fd->file, &ArchiveSlice::get_min_masterchain_seqno, std::move(promise));
 }
 
@@ -1601,6 +1650,7 @@ PackageId ArchiveManager::get_package_id_force(BlockSeqno masterchain_seqno, Sha
 
 void ArchiveManager::get_archive_id(BlockSeqno masterchain_seqno, ShardIdFull shard_prefix,
                                     td::Promise<td::uint64> promise) {
+  TRY_STATUS_PROMISE(promise, ensure_index());
   auto F = get_file_desc_by_seqno(ShardIdFull{masterchainId}, masterchain_seqno, false);
   if (!F) {
     promise.set_error(td::Status::Error(ErrorCode::notready, "archive not found"));
@@ -1613,6 +1663,7 @@ void ArchiveManager::get_archive_id(BlockSeqno masterchain_seqno, ShardIdFull sh
 
 void ArchiveManager::get_archive_slice(td::uint64 archive_id, td::uint64 offset, td::uint32 limit,
                                        td::Promise<td::BufferSlice> promise) {
+  TRY_STATUS_PROMISE(promise, ensure_index());
   auto arch = static_cast<BlockSeqno>(archive_id);
   TRY_RESULT_PROMISE(promise, f,
                      get_file_desc(ShardIdFull{masterchainId}, PackageId{arch, false, false}, 0, 0, 0, false));
@@ -1663,6 +1714,10 @@ void ArchiveManager::prepare_stats(td::Promise<std::vector<std::pair<std::string
 }
 
 void ArchiveManager::iterate_temp_block_handles(std::function<void(const BlockHandleInterface &)> f) {
+  auto status = ensure_index();
+  if (status.is_error()) {
+    return;
+  }
   for (auto &[_, file] : temp_files_) {
     if (file.deleted) {
       continue;
