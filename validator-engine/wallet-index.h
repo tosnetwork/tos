@@ -50,11 +50,12 @@ constexpr size_t kEventTrimDrainPerPass = 256;
 
 // Global age-based retention. The per-account cap above bounds one account's
 // history but not the number of accounts, so one-transaction accounts would
-// accumulate forever. Events whose block gen_utime is older than this window
-// are dropped regardless of account, so total index size is bounded by the
-// retention window rather than by the count of distinct accounts ever seen.
-// Aligned to the archive TTL. Declared here so the retention test can assert
-// the exact bound.
+// accumulate forever. Events first referenced by a masterchain block at or
+// before the window base (the last one generated this long before the newest
+// replayed) are dropped regardless of account, so total index size is bounded
+// by the retention window rather than by the count of distinct accounts ever
+// seen. Aligned to the archive TTL. Declared here so the retention test can
+// assert the exact bound.
 constexpr uint32_t kEventRetentionSeconds = 7 * 24 * 60 * 60;  // 7 days
 // Extra expired age rows a per-block prune may drop beyond the number added in
 // the block. As with kEventTrimDrainPerPass, a prune pass always removes at
@@ -66,7 +67,7 @@ constexpr size_t kEventPruneDrainPerBlock = 256;
 // none) is reset on open: emptied whole and started again, fresh and
 // forward-only, from the blocks applied from then on. Nothing written under
 // another layout is imported or served.
-constexpr uint32_t kWalletIndexSchemaVersion = 3;
+constexpr uint32_t kWalletIndexSchemaVersion = 4;
 
 // Bound the TVM verification work a single block can demand: token candidates
 // verified per block, the block's own and deferred ones together. Candidates
@@ -212,7 +213,8 @@ class WalletIndexDb {
   static td::Result<ReplayCheckpoint> parse_replay_checkpoint(td::Slice value);
   td::Result<td::optional<ReplayCheckpoint>> replay_checkpoint();
   td::Status initialize_replay(const tos::BlockIdExt& anchor);
-  td::Status commit_replay_checkpoint(const ReplayCheckpoint& checkpoint);
+  // Also moves the retention window base (see get_window_base) when given.
+  td::Status commit_replay_checkpoint(const ReplayCheckpoint& checkpoint, td::optional<uint32_t> window_base = {});
   td::Result<bool> replay_block_committed(const tos::BlockIdExt& id);
   td::Status record_replay_block(const tos::BlockIdExt& id);
   // Open (or create) the index DB at `path`. The directory is created if needed.
@@ -298,31 +300,33 @@ class WalletIndexDb {
   // `added_this_block` rows so the bound cannot be outrun. Bounded work per call.
   td::Status trim_events(const HashKey& account, size_t added_this_block);
 
-  // --- Event age index: 0x14 + gen_utime_be(4) + account(32) + lt_be(8) -> sentinel ---
-  // Written alongside every put_event so the index can be pruned by block time,
-  // reaching entire dormant accounts that the per-account trim_events never
-  // revisits. Keyed by gen_utime first (a shard-agnostic global time scale;
-  // account+lt break ties) so a time range scan finds the oldest events. Stores
+  // --- Event age index: 0x14 + mc_ref_seqno_be(4) + account(32) + lt_be(8) -> sentinel ---
+  // Written alongside every put_event so the index can be pruned by position
+  // in the chain, reaching entire dormant accounts that the per-account
+  // trim_events never revisits. Keyed by the seqno of the masterchain block
+  // that first referenced the event's shard block, so the retained window is
+  // exactly the transactions the window base did not yet reference: per shard
+  // that is every transaction above the end lt of the base's tip, which an
+  // importer can check against the chain (see wallet-index-lineage.h). Stores
   // plain lt (not ~lt) so the pruner can reconstruct the 0x12 event key.
   // Joins the current write batch.
-  td::Status put_event_age(const HashKey& account, uint64_t lt, uint32_t gen_utime);
-  // Delete event rows (and their age companions) whose block gen_utime is
-  // strictly older than `cutoff_gen_utime`, at most `budget` of them, so work
-  // per block is bounded and any backlog drains over successive blocks. Events
-  // exactly at the cutoff are retained. Deletes join the current batch.
-  td::Status prune_events_by_age(uint32_t cutoff_gen_utime, size_t budget);
-  // Non-decreasing chain-time watermark (max block gen_utime indexed); read
-  // returns 0 when unset, put joins the current batch. The writer advances it to
-  // max(current, block gen_utime) so a late or recovery block cannot regress the
-  // prune cutoff and silently retain expired rows.
-  td::Result<uint32_t> get_event_watermark();
-  td::Status put_event_watermark(uint32_t gen_utime);
-  // Advance the watermark to max(current, gen_utime) and prune events older than
-  // the resulting cutoff (at most age_rows_added + drain of them), within the
-  // current batch. Fails closed: any error -- including a watermark read error,
-  // which must never fall back to 0 and regress the watermark -- is returned so
-  // the caller aborts the block instead of committing a broken retention state.
-  td::Status advance_retention(uint32_t gen_utime, size_t age_rows_added);
+  td::Status put_event_age(const HashKey& account, uint64_t lt, uint32_t mc_ref_seqno);
+  // Delete event rows (and their age companions) first referenced below
+  // `cutoff_mc_seqno`, at most `budget` of them, so work per block is bounded
+  // and any backlog drains over successive blocks. Deletes join the current
+  // batch.
+  td::Status prune_events_by_age(uint32_t cutoff_mc_seqno, size_t budget);
+  // The retention window base: the seqno of the last masterchain block
+  // generated more than kEventRetentionSeconds before the newest one replayed.
+  // Rows first referenced by it or an earlier one are outside the window. 0
+  // when unset. put joins the current batch and refuses to move it back.
+  td::Result<uint32_t> get_window_base();
+  td::Status put_window_base(uint32_t mc_seqno);
+  // Prune events outside the window (at most age_rows_added + drain of them),
+  // within the current batch. Fails closed: any error -- including a base read
+  // error, which must never fall back to 0 -- is returned so the caller aborts
+  // the block instead of committing a broken retention state.
+  td::Status advance_retention(size_t age_rows_added);
   td::Status for_each_key_with_prefix(td::Slice prefix, size_t limit,
                                       std::function<td::Status(td::Slice)> cb);
   // Walk at most `limit` events for `account`, newest first.

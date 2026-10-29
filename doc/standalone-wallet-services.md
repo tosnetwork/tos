@@ -179,7 +179,16 @@ retain `index_state` and add `index_state.replay`. Pending, parked, lost or
 unfinished candidates still make `index_state.complete` false independently of
 block catch-up. Ownership discovery covers accounts nominated by transactions;
 custom genesis token/NFT contracts that never transact are outside that coverage.
-Event retention remains bounded by the existing index's age and per-account limits.
+Event retention is bounded per account (10,000 events) and by a window of
+masterchain blocks. The window base is the last masterchain block generated
+more than seven days before the newest replayed one. Events whose shard block
+that base or an earlier masterchain block referenced are pruned. In each shard
+that is every transaction at or below the end lt of the shard tip the base
+names, so an importer can check a history window against the chain. The base
+moves only forward, with the replay checkpoint. On a source that joined after
+the base, it sits just below the first masterchain block the source holds.
+Schema version 4 keys the age index by that masterchain reference; an index of
+an earlier version is reset on open.
 
 ## Migrate or rebuild
 

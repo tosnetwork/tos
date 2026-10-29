@@ -331,7 +331,7 @@ class FakeReader final : public IndexReader {
           }
           auto it = chain->masters.find(seqno);
           if (it == chain->masters.end())
-            return promise.set_error(td::Status::Error("no such masterchain block"));
+            return promise.set_error(td::Status::Error(tos::ErrorCode::notready, "no such masterchain block"));
           promise.set_value(it->second);
         },
         context);

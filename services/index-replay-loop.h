@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "block/block-auto.h"
+#include "common/errorcode.h"
 #include "validator-engine/wallet-index-writer.h"
 #include "validator-engine/wallet-index.h"
 
@@ -13,6 +14,7 @@
 #include "index-progress.h"
 #include "index-reader.h"
 #include "index-replay.h"
+#include "index-window.h"
 
 namespace tos::services {
 using tos_wallet_index::WalletIndexDb;
@@ -203,7 +205,7 @@ class ReplayLoop {
       Wc0IndexResult result;
       {
         StageTimer timer(stats_.walk_us);
-        result = tos_wallet_index::wc0_index_block(std::move(block), {}, handle->id(), true);
+        result = tos_wallet_index::wc0_index_block(std::move(block), {}, handle->id(), true, next);
       }
       if (result != Wc0IndexResult::Done) {
         if (drain() && result == Wc0IndexResult::AtPendingCap)
@@ -214,11 +216,30 @@ class ReplayLoop {
     }
     auto committed = checkpoint_;
     committed.committed = master->id();
+    // The retention window base moves with the checkpoint, so the window and
+    // the replayed position always agree. A handle without a generation time
+    // (never so for an applied block of a real source) leaves it where it is.
+    TRY_RESULT(stored_base, db->get_window_base());
+    uint32_t newest_time = master->inited_unix_time() ? master->unix_time() : 0;
+    TRY_RESULT(base, advance_window_base(stored_base, next, newest_time, tos_wallet_index::kEventRetentionSeconds,
+                                         [this](uint32_t seqno) -> td::Result<td::optional<uint32_t>> {
+                                           auto handle = reader_.masterchain(seqno);
+                                           if (handle.is_error()) {
+                                             if (handle.error().code() == ErrorCode::notready) {
+                                               return td::optional<uint32_t>{};
+                                             }
+                                             return handle.move_as_error();
+                                           }
+                                           if (!handle.ok()->inited_unix_time()) {
+                                             return td::Status::Error("masterchain handle has no generation time");
+                                           }
+                                           return td::optional<uint32_t>{handle.ok()->unix_time()};
+                                         }));
     {
       StageTimer timer(stats_.commit_us);
       stats_.commits.fetch_add(1, std::memory_order_relaxed);
       std::lock_guard<std::mutex> guard(db->write_mutex());
-      TRY_STATUS(db->commit_replay_checkpoint(committed));
+      TRY_STATUS(db->commit_replay_checkpoint(committed, base));
     }
     checkpoint_ = committed;
     progress_.cursor = committed.committed.seqno();

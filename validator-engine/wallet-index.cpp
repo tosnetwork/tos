@@ -27,7 +27,7 @@ constexpr uint8_t kTokenTag = 0x10;         // 0x10 + owner(32) + master(32)
 constexpr uint8_t kNftTag = 0x11;           // 0x11 + owner(32) + nft(32)
 constexpr uint8_t kEventTag = 0x12;         // 0x12 + account(32) + ~lt_be(8)
 constexpr uint8_t kNftOwnerTag = 0x13;      // 0x13 + nft(32) -> owner(32)
-constexpr uint8_t kEventAgeTag = 0x14;      // 0x14 + gen_utime_be(4) + account(32) + lt_be(8) -> sentinel(1)
+constexpr uint8_t kEventAgeTag = 0x14;      // 0x14 + mc_ref_seqno_be(4) + account(32) + lt_be(8) -> sentinel(1)
 constexpr uint8_t kTokenQueueTag = 0x15;    // 0x15 + bucket(1) + seq_be(8) -> kind(1) + address(32) + attempts(1)
 constexpr uint8_t kTokenIndexTag = 0x16;    // 0x16 + kind(1) + address(32) -> bucket(1) + seq_be(8)
 constexpr uint8_t kTokenWalletTag = 0x17;   // 0x17 + wallet(32) -> present(1) + owner(32) + master(32) + lt_be(8)
@@ -35,10 +35,11 @@ constexpr uint8_t kTokenPairTag = 0x18;     // 0x18 + owner(32) + master(32) -> 
 constexpr uint8_t kPendingBlockTag = 0x19;  // 0x19 + block id (as 0x1E) -> remaining candidates
 constexpr uint8_t kTokenParkedTag = 0x1A;   // 0x1A + kind(1) + address(32) -> lt_be(8)
 // Meta namespace, sorts before every data tag. 0x00 0x01 -> schema version
-// (u32_be); 0x00 0x02 -> event-retention watermark (u32_be, max gen_utime seen).
+// (u32_be); 0x00 0x02 -> retention window base (u32_be): the seqno of the last
+// masterchain block outside the retained window.
 constexpr uint8_t kMetaTag = 0x00;
 constexpr uint8_t kMetaSchemaSub = 0x01;
-constexpr uint8_t kMetaWatermarkSub = 0x02;
+constexpr uint8_t kMetaWindowBaseSub = 0x02;
 // Token backlog bookkeeping (u64_be each; absent means 0): 0x00 0x03 -> next
 // queue sequence number, 0x00 0x04 -> entries, 0x00 0x05 -> candidates lost.
 // 0x00 0x07 -> candidates that need another shard's state. 0x00 0x06 +
@@ -137,9 +138,9 @@ void make_event_key(const HashKey& account, uint64_t lt, char out[kEventKeyLen])
   put_u64_be(out + 1 + 32, lt);
 }
 
-void make_event_age_key(uint32_t gen_utime, const HashKey& account, uint64_t lt, char out[kEventAgeKeyLen]) {
+void make_event_age_key(uint32_t mc_ref_seqno, const HashKey& account, uint64_t lt, char out[kEventAgeKeyLen]) {
   out[0] = static_cast<char>(kEventAgeTag);
-  put_u32_be(out + 1, gen_utime);
+  put_u32_be(out + 1, mc_ref_seqno);
   std::memcpy(out + 1 + 4, account.data(), 32);
   put_u64_be(out + 1 + 4 + 32, lt);
 }
@@ -692,16 +693,17 @@ td::Status WalletIndexDb::trim_events(const HashKey& account, size_t added_this_
   return td::Status::OK();
 }
 
-td::Status WalletIndexDb::put_event_age(const HashKey& account, uint64_t lt, uint32_t gen_utime) {
+td::Status WalletIndexDb::put_event_age(const HashKey& account, uint64_t lt, uint32_t mc_ref_seqno) {
   char key[kEventAgeKeyLen];
-  make_event_age_key(gen_utime, account, lt, key);
+  make_event_age_key(mc_ref_seqno, account, lt, key);
   // Value is a one-byte sentinel; the key carries everything the pruner needs.
   const char sentinel = 0;
   return db_->set(td::Slice{key, kEventAgeKeyLen}, td::Slice{&sentinel, 1});
 }
 
-td::Status WalletIndexDb::prune_events_by_age(uint32_t cutoff_gen_utime, size_t budget) {
-  // Delete event rows whose block gen_utime is strictly older than the cutoff,
+td::Status WalletIndexDb::prune_events_by_age(uint32_t cutoff_mc_seqno, size_t budget) {
+  // Delete event rows whose shard block was first referenced by a masterchain
+  // block below the cutoff,
   // reached through the age index rather than the per-account event prefix, so
   // whole dormant accounts are dropped. Scan [0x14, 0x14 | cutoff_be): the
   // exclusive upper bound retains events exactly at the cutoff. Bounded to
@@ -720,7 +722,7 @@ td::Status WalletIndexDb::prune_events_by_age(uint32_t cutoff_gen_utime, size_t 
   const char begin[1] = {static_cast<char>(kEventAgeTag)};
   char end[1 + 4];
   end[0] = static_cast<char>(kEventAgeTag);
-  put_u32_be(end + 1, cutoff_gen_utime);
+  put_u32_be(end + 1, cutoff_mc_seqno);
 
   std::vector<std::string> doomed_age;
   auto status = db_->for_each_in_range(td::Slice{begin, 1}, td::Slice{end, sizeof(end)},
@@ -752,9 +754,9 @@ td::Status WalletIndexDb::prune_events_by_age(uint32_t cutoff_gen_utime, size_t 
   return td::Status::OK();
 }
 
-td::Result<uint32_t> WalletIndexDb::get_event_watermark() {
+td::Result<uint32_t> WalletIndexDb::get_window_base() {
   char key[kMetaKeyLen];
-  make_meta_key(kMetaWatermarkSub, key);
+  make_meta_key(kMetaWindowBaseSub, key);
   std::string value;
   auto status = db_->get(td::Slice{key, kMetaKeyLen}, value);
   if (status.is_error()) {
@@ -764,29 +766,37 @@ td::Result<uint32_t> WalletIndexDb::get_event_watermark() {
     return 0u;
   }
   if (value.size() != 4) {
-    return td::Status::Error("wc0-index: malformed event watermark");
+    return td::Status::Error("wc0-index: malformed retention window base");
   }
   return get_u32_be(value.data());
 }
 
-td::Status WalletIndexDb::put_event_watermark(uint32_t gen_utime) {
+td::Status WalletIndexDb::put_window_base(uint32_t mc_seqno) {
+  // The base never moves back: a lower one would make pruned history look
+  // retained. A read error must not fall back to 0 either.
+  TRY_RESULT(stored, get_window_base());
+  if (mc_seqno < stored) {
+    return td::Status::Error("wc0-index: retention window base cannot move back");
+  }
   char key[kMetaKeyLen];
-  make_meta_key(kMetaWatermarkSub, key);
+  make_meta_key(kMetaWindowBaseSub, key);
   char v[4];
-  put_u32_be(v, gen_utime);
+  put_u32_be(v, mc_seqno);
   return db_->set(td::Slice{key, kMetaKeyLen}, td::Slice{v, sizeof(v)});
 }
 
-td::Status WalletIndexDb::advance_retention(uint32_t gen_utime, size_t age_rows_added) {
-  // The watermark, the age rows, and the prune together define the retention
-  // invariant, so any error must propagate and let the caller abort the block
-  // rather than commit a broken retention state. A watermark read error in
-  // particular must NOT fall back to 0: that could regress the non-decreasing
-  // watermark and let a late or recovery block retain expired rows.
-  TRY_RESULT(stored_watermark, get_event_watermark());
-  uint32_t watermark = stored_watermark > gen_utime ? stored_watermark : gen_utime;
-  TRY_STATUS(put_event_watermark(watermark));
-  uint32_t cutoff = watermark > kEventRetentionSeconds ? watermark - kEventRetentionSeconds : 0;
+td::Status WalletIndexDb::advance_retention(size_t age_rows_added) {
+  // The window base, the age rows and the prune together define the retention
+  // invariant, so any error propagates and the caller aborts the block rather
+  // than commit a broken retention state. A base read error in particular must
+  // not fall back to 0.
+  TRY_RESULT(base, get_window_base());
+  if (base == 0) {
+    return td::Status::OK();  // no window base yet: nothing is outside the window
+  }
+  // Rows first referenced by the base or an earlier masterchain block are
+  // outside the window: prune below base + 1.
+  uint32_t cutoff = base == std::numeric_limits<uint32_t>::max() ? base : base + 1;
   return prune_events_by_age(cutoff, age_rows_added + kEventPruneDrainPerBlock);
 }
 
@@ -2196,14 +2206,19 @@ td::Status WalletIndexDb::initialize_replay(const tos::BlockIdExt& anchor) {
   return commit_replay_checkpoint({anchor, committed});
 }
 
-td::Status WalletIndexDb::commit_replay_checkpoint(const ReplayCheckpoint& checkpoint) {
+td::Status WalletIndexDb::commit_replay_checkpoint(const ReplayCheckpoint& checkpoint,
+                                                   td::optional<uint32_t> window_base) {
   // Caller holds write_mutex. Every interval's receipt is in the same DB as
-  // its indexed records; advancing the cursor and clearing receipts is atomic.
+  // its indexed records; advancing the cursor and clearing receipts is atomic,
+  // and so is moving the retention window base with them.
   TRY_STATUS(begin_batch());
   char value[2 * kIncompleteBlockKeyLen];
   make_block_key(0, checkpoint.anchor, value);
   make_block_key(0, checkpoint.committed, value + kIncompleteBlockKeyLen);
   auto status = db_->set(td::Slice(kReplayCheckpointKey, 2), td::Slice(value, sizeof(value)));
+  if (status.is_ok() && window_base) {
+    status = put_window_base(window_base.value());
+  }
   if (status.is_ok())
     status = db_->erase_range(td::Slice("\x30", 1), td::Slice("\x31", 1));
   if (status.is_error()) {

@@ -11,6 +11,10 @@ import tempfile
 from pathlib import Path
 
 
+# The wallet-index schema version the binaries under test write.
+SCHEMA = 4
+
+
 def block(seqno: int) -> bytes:
     return (
         struct.pack(">BiQI", 0, -1, 1 << 63, seqno) + bytes([seqno]) * 32 + bytes([seqno + 1]) * 32
@@ -18,10 +22,10 @@ def block(seqno: int) -> bytes:
 
 
 def fixture() -> bytes:
-    records = [(b"\0\1", struct.pack(">I", 3)), (b"\0\x20", block(1) + block(5))]
+    records = [(b"\0\1", struct.pack(">I", SCHEMA)), (b"\0\x20", block(1) + block(5))]
     return (
         b"TOSIDX01"
-        + struct.pack(">I", 3)
+        + struct.pack(">I", SCHEMA)
         + b"".join(struct.pack(">II", len(k), len(v)) + k + v for k, v in records)
         + bytes(8)
     )

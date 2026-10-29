@@ -87,8 +87,11 @@ class WalletIndexVerificationBudget {
 // finishes some first and tries again; the block keeps its recovery mark
 // meanwhile.
 enum class Wc0IndexResult { Done, AtPendingCap, NotDone };
+// `mc_ref_seqno` is the masterchain block that first referenced the block
+// (standalone replay passes its interval); 0 falls back to the block's own
+// master reference.
 Wc0IndexResult wc0_index_block(td::Ref<vm::Cell> block_root, td::Ref<vm::Cell> state_root, tos::BlockIdExt block_id,
-                               bool replay = false);
+                               bool replay = false, uint32_t mc_ref_seqno = 0);
 // One bounded background pass, for the standalone replay thread. Never call
 // concurrently with the legacy queue worker.
 bool drain_wc0_index(const std::atomic<bool>* cancelled = nullptr);
