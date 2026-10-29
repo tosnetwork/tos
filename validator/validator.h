@@ -229,6 +229,9 @@ struct ValidatorManagerOptions : public td::CntObject {
   virtual td::optional<double> get_catchain_max_block_delay() const = 0;
   virtual td::optional<double> get_catchain_max_block_delay_slow() const = 0;
   virtual bool get_state_serializer_enabled() const = 0;
+  // Test-only scheduling override. The manager refuses it unless the loaded chain's
+  // global id is 3; production keeps the normal randomized serialization delay.
+  virtual bool get_test_state_serializer_no_delay() const = 0;
   virtual td::Ref<CollatorOptions> get_collator_options() const = 0;
   virtual bool get_parallel_validation() const = 0;
   virtual double get_catchain_broadcast_speed_multiplier() const = 0;
@@ -280,6 +283,7 @@ struct ValidatorManagerOptions : public td::CntObject {
   virtual void set_catchain_max_block_delay(double value) = 0;
   virtual void set_catchain_max_block_delay_slow(double value) = 0;
   virtual void set_state_serializer_enabled(bool value) = 0;
+  virtual void set_test_state_serializer_no_delay(bool value) = 0;
   virtual void set_collator_options(td::Ref<CollatorOptions> value) = 0;
   virtual void set_catchain_broadcast_speed_multiplier(double value) = 0;
   virtual void set_permanent_celldb(bool value) = 0;

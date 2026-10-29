@@ -105,6 +105,11 @@ class NetworkConfig:
     # does not change ConfigParam 15 or subsequent election durations.
     # None preserves the historical genesis bytes.
     bootstrap_validator_set_valid_for: int | None = None
+    # TEST-ONLY: preload the same PQ identities as ConfigParam 36 with a later
+    # activation time. The configuration contract rotates them on chain, creating
+    # a real key block for persistent-state bootstrap fixtures. Requires a fixed
+    # local Genesis; ordinary networks leave the next set absent.
+    bootstrap_next_validator_set_since: int | None = None
     # TEST-ONLY by default: a cheap gas and forwarding schedule, so that a
     # test's wallets never run out of play money. Two kinds of harness must
     # not use it and must ask for the deployment schedule instead -- the one
@@ -464,6 +469,7 @@ TM$1 1 500 config.complaint_prices!
 
 {validators}
 {genesis_now} dup {original_vset_valid_for} + {mc_validators} config.validators!
+{next_validator_set}
 
 {new_consensus_config}
 config.new_consensus_params_all!
@@ -708,6 +714,12 @@ def create_zerostate(
             raise ValueError(
                 "bootstrap validator-set lifetime must be a positive uint32 duration in seconds"
             )
+    next_since = config.bootstrap_next_validator_set_since
+    if next_since is not None:
+        if config.global_id != 3 or fixed_time is None or not pq_validators:
+            raise ValueError("preloaded next validator set requires fixed local PQ Genesis")
+        if type(next_since) is not int or not fixed_time < next_since <= 0xFFFF_FFFF:
+            raise ValueError("next validator set must start after Genesis and fit uint32")
     experiment_faucet_balance = config.validator_election_experiment_faucet_balance_nanotos
     if experiment_faucet_balance is not None:
         if not (
@@ -827,6 +839,19 @@ def create_zerostate(
     assert isinstance(election_params, str)
     profile["punishment_params"] = _punishment_params(election_params)
 
+    next_validator_set = ""
+    if next_since is not None:
+        valid_for = profile["original_vset_valid_for"]
+        assert isinstance(valid_for, int)
+        assert fixed_time is not None
+        if next_since >= fixed_time + valid_for or next_since + valid_for > 0xFFFF_FFFF:
+            raise ValueError("next validator set must overlap the initial set and fit uint32")
+        next_validator_set = (
+            f"<b x{{12}} s, {next_since} 32 u, {next_since + valid_for} 32 u, "
+            f"validator# 16 u, {validator_count} 16 u, "
+            "validators-weight @ 64 u, validator-dict @ first dict, b> 36 config!"
+        )
+
     new_consensus_config = ""
     for consensus_config in (config.mc_consensus, config.shard_consensus):
         if isinstance(consensus_config, SimplexConsensusConfig):
@@ -906,6 +931,7 @@ def create_zerostate(
             block_limit_mul=config.block_limit_mul,
             validators="\n".join(keys),
             mc_validators=len(keys),
+            next_validator_set=next_validator_set,
             new_consensus_config=new_consensus_config,
             dns_config_param=dns_config_param,
             voting_config_param=voting_config_param,
