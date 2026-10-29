@@ -163,6 +163,9 @@ jobs:
       with:
         fetch-depth: 0
 
+    - name: Check candidate bundle source identities before builds
+      run: python3 scripts/check-wallet-quantum-review-sources.py --self-test
+
     - name: Reuse only a proven identical Ready snapshot
       id: snapshot
       env:

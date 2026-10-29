@@ -2,7 +2,7 @@
 
 Every original storage hash/bit length is derived from the authored fields and
 then checked through the production C++ Account decoder. Two nonminimal coin
-controls must be rejected by that decoder; they remain the separate U3 finding.
+controls must be rejected by both decoders without changing the accepted corpus.
 """
 
 import argparse
@@ -167,6 +167,12 @@ args.output.with_suffix(".fixture.tsv").write_text(
         )
         + "\n"
         for row in fixture["rows"]
+    )
+)
+args.output.with_suffix(".rejected.tsv").write_text(
+    "#native-account-rejections-v1\n"
+    + "".join(
+        row["name"] + "\t" + row["shard"] + "\n" for row in rows if not row["native_accepted"]
     )
 )
 print(f"PASS: 282 native-accepted storage layouts; two nonminimal controls rejected: {args.output}")

@@ -177,6 +177,91 @@ fn an_external_that_does_not_accept_is_refused() {
 }
 
 #[test]
+fn native_runtime_credit_is_checked_after_acceptance_and_skips() {
+    for credit in [65535, 65536, 1 << 32, (1 << 32) + 1] {
+        for usage in [None, Some(5000), Some((1 << 34) + 1)] {
+            for accepts in [false, true] {
+                let contract = if accepts { accept_code() } else { no_accept_code() };
+                let mut params = config(&contract, usage).raw_config().clone();
+                let mut gas = params.gas_prices(false).expect("gas prices");
+                gas.gas_limit = 1 << 34;
+                gas.gas_credit = credit;
+                params.set_config(ConfigParamEnum::ConfigParam21(gas)).expect("param 21");
+                let cfg = BlockchainConfig::with_config(params).expect("a configuration");
+                let mut acc = account(contract, BALANCE);
+                let executor = OrdinaryTransactionExecutor::new(cfg);
+                let result = executor.execute_with_params(
+                    Some(external()),
+                    &mut acc,
+                    ExecuteParams {
+                        block_unixtime: 1_750_000_000,
+                        block_lt: 2_000_000,
+                        last_tr_lt: 2_000_000,
+                        ..ExecuteParams::default()
+                    },
+                );
+                if usage == Some((1 << 34) + 1) {
+                    assert!(matches!(
+                        result
+                            .expect_err("unaffordable precompiled usage")
+                            .downcast_ref::<ExecutorError>(),
+                        Some(ExecutorError::ExtMsgComputeSkipped(_))
+                    ));
+                } else if !accepts {
+                    assert!(matches!(
+                        result.expect_err("unaccepted external").downcast_ref::<ExecutorError>(),
+                        Some(ExecutorError::NoAcceptError(0, _))
+                    ));
+                } else if credit == 65535 {
+                    let tr = result.expect("canonical credit");
+                    let description = tr.read_description().expect("description");
+                    let Some(TrComputePhase::Vm(phase)) = description.compute_phase_ref() else {
+                        panic!("VM phase");
+                    };
+                    assert_eq!(phase.gas_credit.expect("initial credit").as_u32(), 65535);
+                    assert_eq!(phase.gas_limit.as_u64(), 0);
+                } else {
+                    let err = result.expect_err("accepted credit cannot fit the transaction field");
+                    assert!(err.to_string().contains("gas credit"), "{err}");
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn native_runtime_credit_is_not_a_wire_integer() {
+    for credit in [65535, 65536, 1 << 32, (1 << 32) + 1] {
+        let cfg = config(&no_accept_code(), None);
+        let mut gas_config = cfg.get_gas_config(false).clone();
+        gas_config.gas_credit = credit;
+        gas_config.gas_limit = 1 << 34;
+        gas_config.max_gas_threshold =
+            gas_config.calc_max_gas_threshold(gas_config.gas_limit).expect("gas threshold");
+        let gas =
+            init_gas(&Account::default(), 0, 10_u128.pow(18), 0, true, false, true, &gas_config)
+                .expect("runtime gas");
+        assert_eq!(gas.get_gas_credit(), credit as i64);
+    }
+}
+
+#[test]
+fn native_gas_purchase_init_preserves_the_reference_budget() {
+    let mut gas_config = GasLimitsPrices {
+        gas_price: 65536,
+        gas_limit: 100,
+        flat_gas_limit: 200,
+        flat_gas_price: u64::MAX,
+        ..GasLimitsPrices::default()
+    };
+    gas_config.max_gas_threshold =
+        gas_config.calc_max_gas_threshold(gas_config.gas_limit).expect("threshold");
+    let gas = init_gas(&Account::default(), 0, 1, 0, false, false, true, &gas_config).expect("gas");
+    assert_eq!(gas.get_gas_max(), 202);
+    assert_eq!(gas.get_gas_limit(), 201);
+}
+
+#[test]
 fn precompiled_credit_above_u32_does_not_imply_acceptance() {
     for limit in [(1u64 << 32) - 1, 1u64 << 32, (1u64 << 32) + 1] {
         for (contract, accepts) in [(no_accept_code(), false), (accept_code(), true)] {

@@ -71,6 +71,9 @@ REQUIRED_SOURCE_GUARDS = frozenset(
         "tosctl-pq-stake-builder-source",
         "validator-id-key-hash-source",
         "validator-session-assembly-source",
+        "varuint-codec-contract",
+        "wallet-quantum-review-sources",
+        "wallet-quantum-review-sources-self-test",
         "workflow-supply-chain-self-test",
         "workflow-supply-chain-source",
     }

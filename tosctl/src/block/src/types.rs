@@ -439,6 +439,9 @@ macro_rules! define_VarIntegerN {
 
             // Interface to write value with type rule
             fn write_to_cell(value: &BigInt) -> Result<BuilderData> {
+                if value.sign() == Sign::Minus {
+                    fail!("cannot serialize a negative {}", stringify!($varname))
+                }
                 let len = Self::get_len(value);
                 if len >= $N {
                     fail!("serialization of {} error {} >= {}", stringify!($varname), len, $N)
@@ -456,7 +459,11 @@ macro_rules! define_VarIntegerN {
                 if len >= $N {
                     fail!("deserialization of {} error {} >= {}", stringify!($varname), len, $N)
                 }
-                Ok(BigInt::from_bytes_be(Sign::Plus, &cell.get_next_bytes(len)?))
+                if len != 0 && cell.get_byte(0)? == 0 {
+                    fail!("nonminimal {} encoding", stringify!($varname))
+                }
+                let bytes = cell.get_next_bytes(len)?;
+                Ok(BigInt::from_bytes_be(Sign::Plus, &bytes))
             }
         }
 
@@ -548,6 +555,14 @@ macro_rules! define_VarIntegerN {
                 self.0 = Self::read_from_cell(cell)?;
                 Ok(())
             }
+            fn skip(cell: &mut SliceData) -> Result<()> {
+                let len = cell.get_next_int(Self::get_len_len())? as usize;
+                if len >= $N {
+                    fail!("invalid {} length {}", stringify!($varname), len)
+                }
+                cell.move_by(len * 8)?;
+                Ok(())
+            }
         }
 
         impl fmt::Display for $varname {
@@ -576,7 +591,7 @@ macro_rules! define_VarIntegerN {
             pub const fn is_zero(&self) -> bool {
                 self.0 == 0
             }
-            pub const MAX: Self = Self(((1 as $tt) << (8 * $N)) - 1);
+            pub const MAX: Self = Self(((1 as $tt) << (8 * ($N - 1))) - 1);
             pub fn add_checked(&mut self, other: &Self) -> bool {
                 if let Some(result) = self.0.checked_add(other.0) {
                     if let Err(err) = Self::check_overflow(&result) {
@@ -600,13 +615,19 @@ macro_rules! define_VarIntegerN {
             }
             fn check_overflow(value: &$tt) -> Result<()> {
                 let bytes = ((0 as $tt).leading_zeros() / 8 - value.leading_zeros() / 8) as usize;
-                match bytes > $N {
-                    true => fail!("value {} is bigger than {} bytes", value, $N),
+                match bytes >= $N {
+                    true => fail!(
+                        "{} value {} requires {} bytes, expected fewer than {}",
+                        stringify!($varname),
+                        value,
+                        bytes,
+                        $N
+                    ),
                     false => Ok(()),
                 }
             }
             pub fn get_len(&self) -> usize {
-                let bits = 8 - ($N as u8).leading_zeros();
+                let bits = 8 - (($N - 1) as u8).leading_zeros();
                 let bytes = ((0 as $tt).leading_zeros() / 8 - self.0.leading_zeros() / 8) as usize;
                 bits as usize + bytes * 8
             }
@@ -617,9 +638,9 @@ macro_rules! define_VarIntegerN {
 
         impl Serializable for $varname {
             fn write_to(&self, cell: &mut BuilderData) -> Result<()> {
-                let bits = 8 - ($N as u8).leading_zeros();
+                let bits = 8 - (($N - 1) as u8).leading_zeros();
                 let bytes = ((0 as $tt).leading_zeros() / 8 - self.0.leading_zeros() / 8) as usize;
-                if bytes > $N {
+                if bytes >= $N {
                     fail!(
                         "cannot store {} {}, required {} bytes",
                         self,
@@ -636,8 +657,14 @@ macro_rules! define_VarIntegerN {
 
         impl Deserializable for $varname {
             fn read_from(&mut self, slice: &mut SliceData) -> Result<()> {
-                let bits = 8 - ($N as u8).leading_zeros();
+                let bits = 8 - (($N - 1) as u8).leading_zeros();
                 let bytes = slice.get_next_int(bits as usize)? as usize;
+                if bytes >= $N {
+                    fail!("invalid {} length {}", stringify!($varname), bytes)
+                }
+                if bytes != 0 && slice.get_byte(0)? == 0 {
+                    fail!("nonminimal {} encoding", stringify!($varname))
+                }
                 let max = std::mem::size_of::<$tt>();
                 let mut buffer = [0; std::mem::size_of::<$tt>()];
                 slice.get_next_bytes_to_slice(&mut buffer[max - bytes..])?;
@@ -645,8 +672,11 @@ macro_rules! define_VarIntegerN {
                 Ok(())
             }
             fn skip(slice: &mut SliceData) -> Result<()> {
-                let bits = 8 - ($N as u8).leading_zeros();
+                let bits = 8 - (($N - 1) as u8).leading_zeros();
                 let bytes = slice.get_next_int(bits as usize)?;
+                if bytes as usize >= $N {
+                    fail!("invalid {} length {}", stringify!($varname), bytes)
+                }
                 slice.move_by(8 * bytes as usize)?;
                 Ok(())
             }
@@ -852,9 +882,8 @@ macro_rules! define_VarIntegerN {
     };
 }
 
-// Coins is `VarUInteger 16`, but macro is defined in the way,
-// that it uses `$N.leading_zeros` to define type length, so length 15 is used here
-define_VarIntegerN!(Coins, 15, u128);
+// The TL-B parameter is an exclusive bound on the payload byte count.
+define_VarIntegerN!(Coins, 16, u128);
 // Macro which defines the type using BigInt as underlying type,
 // calculates length with `($N - 1).log2 + 1`, so proper length is used here
 define_VarIntegerN!(VarUInteger32, 32, BigInt);

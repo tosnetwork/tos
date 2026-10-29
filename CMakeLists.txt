@@ -1934,6 +1934,15 @@ set_tests_properties(full-node-master-startup PROPERTIES LABELS "security-findin
 add_test(NAME validator-consensus-cleanup-flags
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/validator-consensus-cleanup-flags-test.py
           $<TARGET_FILE:validator-engine>)
+add_test(NAME wallet-quantum-review-sources
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-wallet-quantum-review-sources.py)
+set_tests_properties(wallet-quantum-review-sources PROPERTIES LABELS "source-guard")
+add_test(NAME wallet-quantum-review-sources-self-test
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-wallet-quantum-review-sources.py --self-test)
+set_tests_properties(wallet-quantum-review-sources-self-test PROPERTIES LABELS "source-guard")
+add_test(NAME varuint-codec-contract
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/executor-parity/test_varuint_codec.py)
+set_tests_properties(varuint-codec-contract PROPERTIES LABELS "source-guard")
 add_test(NAME branch-chain-python-ci-source
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-branch-chain-python-ci.py)
 set_tests_properties(branch-chain-python-ci-source PROPERTIES LABELS "source-guard")
