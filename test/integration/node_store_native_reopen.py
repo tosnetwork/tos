@@ -13,12 +13,50 @@ import socket
 from dataclasses import replace
 from pathlib import Path
 
+from tosapi import tos_api
+from toslib.client import ToslibClient
+from toslib.engine_console import EngineConsoleClient
 from toslib.toslibjson import ToslibError
 from tostester.install import Install
 from tostester.network import Network, StartOptions, _retryable_startup_lite_error
 from tostester.pq_initial_validator import deterministic_pq_initial_validator_seed
 
 REPO = Path(__file__).resolve().parents[2]
+
+
+async def wait_capture_frontier(
+    client: ToslibClient, console: EngineConsoleClient, timeout: float = 180
+):
+    # Masterchain progress can precede the first basechain block. Capturing then
+    # leaves a zero-state shard reference that native GetAccountState cannot read
+    # as a block. Wait for this fixture's basechain to appear and advance too.
+    candidate = None
+    async with asyncio.timeout(timeout):
+        while True:
+            try:
+                if candidate is None:
+                    tip = (await client.get_masterchain_info()).last
+                    if tip is not None and tip.seqno >= 5:
+                        shards = (await client.get_shards(tip)).shards
+                        if any(shard.workchain == 0 for shard in shards) and all(
+                            shard.seqno > 0 for shard in shards
+                        ):
+                            candidate = tip
+                if candidate is not None:
+                    # The captured frontier is StateDb's ShardClient record. Latch
+                    # the candidate so a moving masterchain tip cannot starve this wait.
+                    request = tos_api.Engine_validator_getStatsRequest()
+                    stats = request.parse_result(await console.request(request)).stats
+                    processed = next(
+                        (stat.value for stat in stats if stat.key == "shardclientmasterchainseqno"),
+                        None,
+                    )
+                    if processed is not None and int(processed) >= candidate.seqno:
+                        return candidate
+            except ToslibError as error:
+                if not _retryable_startup_lite_error(error):
+                    raise
+            await asyncio.sleep(0.2)
 
 
 async def run(root: Path, build: Path, reconstruct: Path, validate_generation: Path | None = None):
@@ -75,12 +113,7 @@ async def run(root: Path, build: Path, reconstruct: Path, validate_generation: P
         await source.run(options)
         await asyncio.wait_for(network.wait_mc_block(5), 180)
         client = await source.toslib_client()
-        async with asyncio.timeout(180):
-            while True:
-                before = (await client.get_masterchain_info()).last
-                if before is not None and before.seqno >= 5:
-                    break
-                await asyncio.sleep(0.2)
+        before = await wait_capture_frontier(client, source.engine_console)
         await source.stop()
         if validate_generation is not None:
             # The harness shares genesis files through symlinks; production capture refuses links.
