@@ -92,11 +92,13 @@ are not required: pending token candidates use current shard states.
 
 An archive reader can discover a package just before the source prunes it. If
 its lazy index open then fails, queries return `notready` and the slice remains
-closed; a secondary's next catch-up retires the deleted package. A missing or
-unopenable global archive index also reports `notready`, with a new open attempt
-on later queries, so restoring the source index does not require restarting the
-reader. These refusals do not recreate source indexes or repair package files.
-Warnings are limited to one per minute for each slice and for the global index.
+closed; a secondary's next catch-up retires the deleted package. If the global
+archive index cannot be opened at startup, queries also report `notready`, with
+a new open attempt on later queries, so restoring the source index does not
+require restarting the reader. These refusals do not recreate source indexes
+or repair package files.
+Warnings for these failures are limited to one per minute for each slice and for
+the global index.
 The owning node still treats an index it cannot open as a fatal local fault.
 
 ### Preparing the source node
