@@ -63,6 +63,11 @@ static int run_persisted(const char *directory, int initialize, const char *anch
     auto parsed = pv::parse_request(td::Slice(request, request_size));
     if (parsed.is_error() || parsed.ok().mode != pv::Mode::Live)
       return -1;
+    // A zero-capacity simulation result can never hold the required JSON estimate.
+    // Reject it before acquiring proofs; otherwise vector<char>(0).data() may be
+    // null and the embedded ABI would misclassify this as invalid input (-1).
+    if (simulation && capacity == 0)
+      return -3;
     Fd dir(::open(directory, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC));
     struct stat ds{};
     if (dir.value < 0 || ::fstat(dir.value, &ds) != 0 || ds.st_uid != ::geteuid() || (ds.st_mode & 0077))

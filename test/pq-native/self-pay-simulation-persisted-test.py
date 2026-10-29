@@ -101,6 +101,7 @@ def call(
     raw_message=message,
     raw_request=request,
     contention=False,
+    result_capacity=2 << 20,
 ):
     asked, errors, competing = [], [], []
 
@@ -148,12 +149,12 @@ def call(
         buf,
         len(raw_message),
         output,
-        2 << 20,
+        result_capacity,
         c.byref(used),
     )
     assert not errors, errors
     if rc:
-        assert used.value == 0 and not any(output.raw[: 2 << 20]), "failure leaked estimate"
+        assert used.value == 0 and not any(output.raw[:result_capacity]), "failure leaked estimate"
     return rc, output.raw[: used.value], asked, competing
 
 
@@ -166,6 +167,11 @@ with tempfile.TemporaryDirectory(prefix="tos-simulation-persisted-") as name:
     enroll(directory)
     state = directory / "checkpoint.json"
     before = state.read_bytes()
+    rc, _, asked, _ = call(directory, result_capacity=0)
+    check(
+        "zero-result-capacity-before-acquisition",
+        rc == -3 and not asked and state.read_bytes() == before,
+    )
     rc, result, _, competing = call(directory, contention=True)
     value = json.loads(result)
     check(
