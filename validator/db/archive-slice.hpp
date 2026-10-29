@@ -67,6 +67,7 @@ class PackageStatistics;
 struct DbStatistics {
   void init();
   std::string to_string_and_reset();
+  size_t pending_package_samples() const;
 
   std::shared_ptr<PackageStatistics> pack_statistics;
   std::shared_ptr<rocksdb::Statistics> rocksdb_statistics;
@@ -141,6 +142,10 @@ class ArchiveSlice : public td::actor::Actor {
   void get_handle(BlockIdExt block_id, td::Promise<BlockHandle> promise);
   void get_temp_handle(BlockIdExt block_id, td::Promise<ConstBlockHandle> promise);
   void get_file(ConstBlockHandle handle, FileReference ref_id, td::Promise<td::BufferSlice> promise);
+  // As get_file, but an entry larger than `data_limit` is refused with
+  // kFileOverReadLimit before its data is read.
+  void get_file_limited(ConstBlockHandle handle, FileReference ref_id, td::uint32 data_limit,
+                        td::Promise<td::BufferSlice> promise);
 
   /* from LTDB */
   void get_block_by_unix_time(AccountIdPrefixFull account_id, UnixTime ts, td::Promise<ConstBlockHandle> promise);
@@ -172,6 +177,7 @@ class ArchiveSlice : public td::actor::Actor {
   friend struct ArchivePruneTestAccess;
 
   void before_query();
+  void load_index();
   void do_close();
   template <typename T>
   td::Promise<T> begin_async_query(td::Promise<T> promise);
@@ -210,6 +216,9 @@ class ArchiveSlice : public td::actor::Actor {
   td::uint32 slice_size_{100};
   bool shard_separated_{false};
   td::uint32 shard_split_depth_ = 0;
+  // A reader opened this index before it had a layout (no "status" key) and
+  // so loaded no packages.
+  bool index_status_missing_{false};
 
   enum Status { st_closed, st_open, st_want_close } status_ = st_closed;
   size_t active_queries_ = 0;

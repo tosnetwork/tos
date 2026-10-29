@@ -1140,6 +1140,120 @@ fn production_create_captures_a_source_without_static() -> Result<()> {
     Ok(())
 }
 
+/// A source that joined at an init block holds no zero-state file anywhere. Create proves the
+/// held zero state from the frontier's own state instead of reading it, and publishes.
+#[test]
+fn production_create_captures_a_source_without_zero_state() -> Result<()> {
+    let _serial =
+        SERIAL.lock().map_err(|_| anyhow::anyhow!("native lifecycle fixture poisoned"))?;
+    if !fixture_environment_available() {
+        return Ok(());
+    }
+    let fixture = Fixture::new()?;
+    let database = &fixture.request.context.database;
+    for file in fs::read_dir(database.join("static"))? {
+        fs::remove_file(file?.path())?;
+    }
+    fs::remove_dir(database.join("static"))?;
+    let mut removed = 0;
+    for file in fs::read_dir(database.join("archive/states"))? {
+        let file = file?;
+        if file.file_name().to_string_lossy().starts_with("zerostate_") {
+            fs::remove_file(file.path())?;
+            removed += 1;
+        }
+    }
+    ensure!(removed > 0, "fixture source has no zero-state file to remove");
+    let _scope = fixture.scope(|_| Ok(()));
+    fixture.manager.borrow_mut().start()?;
+    let generation = fixture.create("create-without-zero-state");
+    let mut message = format!("{generation:?}");
+    if let Ok(log) = fs::read_to_string(
+        fixture.request.context.work_root.join("create-without-zero-state/worker.log"),
+    ) {
+        message.push_str(&log);
+    }
+    assert!(generation.is_ok(), "create refused a source without a zero state: {message}");
+    assert_eq!(fixture.events(), vec!["stop", "start"], "source was not restarted once");
+    let work = Root::open(&fixture.request.context.work_root)?;
+    let checked: crate::engine::ValidationResult = serde_json::from_slice(
+        &work.bytes("create-without-zero-state/checked/validation.json", MANIFEST_LIMIT)?,
+    )?;
+    assert!(
+        checked.ancestors.contains(&fixture.signed.manifest.network.zero),
+        "the held zero state was not proven: {:?}",
+        checked.ancestors
+    );
+    for file in fs::read_dir(database.join("archive/states"))? {
+        let name = file?.file_name();
+        assert!(!name.to_string_lossy().starts_with("zerostate_"), "create restored {name:?}");
+    }
+    fixture.manager.borrow_mut().stop()?;
+    println!("\nPRODUCTION_CREATE_WITHOUT_ZERO_STATE_OK");
+    Ok(())
+}
+
+/// The verifier that create and restore run proves a required non-zero ancestor from the
+/// frontier's own state, including the ancestor's header proof. A restore passes its target's
+/// own safety anchors this way. The engine refuses at startup a held init block above the
+/// source's StateDb init record, and this genesis-synced fixture's init record stays at the zero
+/// state, so a non-zero held init block cannot be exercised here; the required-ancestor lane
+/// runs the same ancestry proof.
+#[test]
+fn production_validation_proves_a_required_non_zero_ancestor() -> Result<()> {
+    let _serial =
+        SERIAL.lock().map_err(|_| anyhow::anyhow!("native lifecycle fixture poisoned"))?;
+    if !fixture_environment_available() {
+        return Ok(());
+    }
+    use chain_block::{Block, Deserializable, read_single_root_boc};
+    let fixture = Fixture::new()?;
+    let cache = Objects::open(&fixture.request.cache)?;
+    let tip = fixture
+        .signed
+        .manifest
+        .files
+        .iter()
+        .find(|object| object.path == "metadata/tip-block.boc")
+        .context("generation has no tip block")?;
+    let tip =
+        Block::construct_from_cell(read_single_root_boc(&cache.bytes(tip, MANIFEST_LIMIT)?)?)?;
+    let (_, previous) = tip.read_info()?.read_prev_ref()?.prev1()?.master_block_id();
+    let anchor = crate::model::FullId::from_native(&previous);
+    ensure!(anchor.seqno > 0, "fixture frontier has no non-zero predecessor");
+    let work = Root::open(&fixture.request.context.work_root)?;
+    let operation = Root::create(&work.path.join("validate-required-anchor"))?;
+    let image = Root::create(&operation.path.join("image"))?;
+    let own = Root::open(&fixture.request.context.database)?;
+    let frozen = Frozen::acquire(&own.path)?;
+    capture::cold_image(&frozen, &own, &image)?;
+    drop(frozen);
+    let result = crate::worker::validate(
+        &fixture.request.context,
+        &image,
+        &operation,
+        vec![anchor.clone()],
+        false,
+    );
+    let result = result.with_context(|| {
+        let log = fs::read_to_string(operation.path.join("worker.log")).unwrap_or_default();
+        format!("required ancestor refused; worker.log: {log}")
+    })?;
+    assert_eq!(result.validation.frontier, fixture.signed.manifest.frontier);
+    assert!(result.ancestors.contains(&anchor), "not proven: {:?}", result.ancestors);
+    assert!(
+        result.ancestors.contains(&fixture.signed.manifest.network.zero),
+        "held zero state not proven: {:?}",
+        result.ancestors
+    );
+    assert!(
+        !operation.path.join("checked/zero-state.boc").exists(),
+        "validation still writes a zero-state file"
+    );
+    println!("\nPRODUCTION_VALIDATION_REQUIRED_ANCESTOR_OK");
+    Ok(())
+}
+
 /// Every failure after the stop restarts the source, unless the recheck immediately before
 /// the restart finds that its role, signing custody or storage mode changed, or the start
 /// itself fails: then it stays stopped and the error says so with the distinct status.
@@ -1522,7 +1636,8 @@ fn production_bootstrap_refuses_a_donor_outside_the_held_anchor() -> Result<()> 
     eprintln!("ANCHOR_REFUSAL_EVIDENCE_BEGIN\n{message}\nANCHOR_REFUSAL_EVIDENCE_END");
     // The engine, reopening the staged image under the operator's global config, proves the
     // imported state either is or descends from the held init block, and stops when it does
-    // not; the verifier's own lookup of the held init block is the second check behind it.
+    // not; the verifier's own ancestry proof of the held init block from the frontier's state
+    // is the second check behind it.
     assert!(
         message.contains("native validation engine exited during reopen")
             && message.contains("ancestor_is_valid(opts_->init_block_id())"),

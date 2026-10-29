@@ -344,6 +344,8 @@ def validate_node_data_sync_modes(root: Path) -> None:
         "grep -Fx 'RESTORE_DISK_BOUNDARIES_OK'",
         "grep -Fx 'STAGED_DISK_RECOVERY_OK'",
         "grep -Fx 'PRODUCTION_CREATE_WITHOUT_STATIC_OK'",
+        "grep -Fx 'PRODUCTION_CREATE_WITHOUT_ZERO_STATE_OK'",
+        "grep -Fx 'PRODUCTION_VALIDATION_REQUIRED_ANCESTOR_OK'",
         "grep -Fx 'PRODUCTION_CREATE_RESTART_OK'",
         "grep -Fx 'PRODUCTION_BOOTSTRAP_INSTALL_OK'",
         "grep -Fx 'PRODUCTION_BOOTSTRAP_REFUSALS_OK'",

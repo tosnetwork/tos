@@ -17,7 +17,11 @@ from .pq_launch_limits import (
 )
 
 NANOTOS_PER_TOS = 1_000_000_000
-VALIDATOR_ECONOMICS_FAUCET_TOS = 100_000
+# Bootstrap main wallet of the validator-economics profile, identical to
+# main_wallet_genesis_balance in crypto/smartcont/gen-zerostate.fif.
+VALIDATOR_ECONOMICS_FAUCET_TOS = 80_151
+# Elector (500 TOS) plus configuration contract (500 TOS).
+VALIDATOR_ECONOMICS_SYSTEM_TOS = 1_000
 
 
 def _launch_validator_counts(validator_count: int, minimum: int) -> dict[str, int]:
@@ -120,6 +124,10 @@ class NetworkConfig:
     deployment_fee_schedule: bool = False
     validator_economics_profile: bool = False
     validator_election_stage_a_profile: bool = False
+    # TEST-ONLY: the unaccelerated Stage B rehearsal. It keeps every production
+    # timing and economics value and only allows the explicit faucet override,
+    # because its wallets need more than the production bootstrap balance.
+    validator_election_stage_b_profile: bool = False
     # TEST-ONLY: extend the elected-set period for a lifecycle that must
     # recover an old stake before it can submit another order. None preserves
     # the Stage A 300/180/60/180 election schedule.
@@ -383,7 +391,9 @@ config_addr config.config_smc!
 elector_addr config.elector_smc!
 
 // 1 sg* 100 sg* 1000 sg* 1000000 sg* config.storage_prices!  // old values (too high)
-1 500 1000 500000 config.storage_prices!
+// Same single since-0 entry as crypto/smartcont/gen-zerostate.fif: cell-only
+// basechain rent, masterchain rent unchanged.
+0 135 1000 500000 config.storage_prices!
 config.special!
 
 // gas_price gas_limit special_gas_limit gas_credit block_gas_limit freeze_due_limit delete_due_limit flat_gas_limit flat_gas_price
@@ -422,6 +432,11 @@ untriple make-block-limits 23 config!
 // runtime; clients fail closed while the account does not exist.
 {dns_config_param}
 
+// ConfigParam 5, as in gen-zerostate.fif: no fee burning (0/1) and the
+// masterchain blackhole -1:ffff...ffff, whose inbound value is destroyed.
+AllOnes 15 * constant blackhole_addr
+blackhole_addr 0 1 config.burning!
+
 
 // No genesis extra-currency minting. PoW/test givers are not registered in
 // either profile; the validator-economics profile also has no native premine.
@@ -429,7 +444,7 @@ untriple make-block-limits 23 config!
 // ConfigParam 19 (global_id) is mandatory and critical, as in gen-zerostate.fif:
 // every wallet contract fails closed without it.
 ( 0 1 9 10 12 14 15 16 17 18 19 20 21 22 23 24 25 28 34 {auth_policy_membership} ) config.mandatory_params!
-( -999 -1000 -1001 0 1 3 4 9 10 12 14 15 16 17 19 32 34 36 {auth_policy_membership} ) config.critical_params!
+( -999 -1000 -1001 0 1 3 4 5 9 10 12 14 15 16 17 19 32 34 36 {auth_policy_membership} ) config.critical_params!
 {auth_policy_param}
 
 // [ min_tot_rounds max_tot_rounds min_wins max_losses min_store_sec max_store_sec bit_pps cell_pps ]
@@ -444,8 +459,8 @@ config.param_proposals_setup!
 // in one voting round. Empty unless the profile opts in.
 {voting_config_param}
 
-// deposit bit_pps cell_pps
-TM$100 1 500 config.complaint_prices!
+// deposit bit_pps cell_pps (as in gen-zerostate.fif)
+TM$1 1 500 config.complaint_prices!
 
 {validators}
 {genesis_now} dup {original_vset_valid_for} + {mc_validators} config.validators!
@@ -649,6 +664,12 @@ def create_zerostate(
         )
     if config.validator_election_stage_a_profile and not config.validator_economics_profile:
         raise ValueError("validator election Stage A profile requires validator economics profile")
+    if config.validator_election_stage_b_profile and (
+        not config.validator_economics_profile or config.validator_election_stage_a_profile
+    ):
+        raise ValueError(
+            "validator election Stage B profile requires validator economics profile without Stage A"
+        )
     stage_a_elected_for = config.validator_election_stage_a_elected_for
     if stage_a_elected_for is not None:
         if not config.validator_election_stage_a_profile:
@@ -689,9 +710,11 @@ def create_zerostate(
             )
     experiment_faucet_balance = config.validator_election_experiment_faucet_balance_nanotos
     if experiment_faucet_balance is not None:
-        if not config.validator_election_stage_a_profile:
+        if not (
+            config.validator_election_stage_a_profile or config.validator_election_stage_b_profile
+        ):
             raise ValueError(
-                "validator election experiment faucet override requires the Stage A profile"
+                "validator election experiment faucet override requires the Stage A or Stage B profile"
             )
         if (
             isinstance(experiment_faucet_balance, bool)
@@ -736,7 +759,9 @@ def create_zerostate(
             "elector_genesis_balance": "TM$500",
             "config_genesis_balance": "TM$500",
             "main_wallet_genesis_balance": f"TM${VALIDATOR_ECONOMICS_FAUCET_TOS}",
-            "expected_genesis_supply": "TM$101000",
+            "expected_genesis_supply": (
+                f"TM${VALIDATOR_ECONOMICS_FAUCET_TOS + VALIDATOR_ECONOMICS_SYSTEM_TOS}"
+            ),
             **validator_counts,
             "min_stake": "TM$10000",
             "max_stake": "TM$10000000",
@@ -763,11 +788,13 @@ def create_zerostate(
             profile["original_vset_valid_for"] = 600
             if bootstrap_valid_for is not None:
                 profile["original_vset_valid_for"] = bootstrap_valid_for
-            if experiment_faucet_balance is not None:
-                profile["main_wallet_genesis_balance"] = str(experiment_faucet_balance)
-                profile["expected_genesis_supply"] = str(
-                    experiment_faucet_balance + 1_000 * NANOTOS_PER_TOS
-                )
+        # TEST-ONLY faucet: the Stage A and Stage B rehearsals fund their
+        # wallets from it; timing above is unchanged by it.
+        if experiment_faucet_balance is not None:
+            profile["main_wallet_genesis_balance"] = str(experiment_faucet_balance)
+            profile["expected_genesis_supply"] = str(
+                experiment_faucet_balance + VALIDATOR_ECONOMICS_SYSTEM_TOS * NANOTOS_PER_TOS
+            )
     else:
         profile = {
             "smc3_genesis_balance": "TM$1",
