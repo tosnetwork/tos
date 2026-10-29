@@ -26,6 +26,7 @@ from __future__ import annotations
 import argparse
 import base64
 import ctypes
+import itertools
 import json
 import sys
 from pathlib import Path
@@ -35,6 +36,43 @@ sys.path.insert(0, str(ROOT / "test/auth-extensions"))
 from cells import Cell, from_boc, make_dict, read_dict  # noqa: E402
 
 DEFAULT_CONFIG = ROOT / "tosctl/src/executor/real_boc/default_config.boc"
+MAX_TRACE_RECORDS = 10_000
+MAX_TRACE_FILE = 16 * 1024 * 1024
+MAX_TRACE_BYTES = 256 * 1024 * 1024
+
+
+def trace_population(directory: Path, expected: int | None = None) -> list[Path]:
+    # Legacy consumers (including service-actor capacity tests) have different
+    # populations and larger receipts. Bridge-specific caps are opt-in together
+    # with its exact population contract.
+    if expected is None:
+        return sorted(directory.rglob("*.json"))
+    if not 0 < expected <= MAX_TRACE_RECORDS:
+        raise ValueError("expected trace population is outside the record limit")
+    records = sorted(itertools.islice(directory.rglob("*.json"), MAX_TRACE_RECORDS + 1))
+    if len(records) > MAX_TRACE_RECORDS:
+        raise ValueError("trace record limit exceeded")
+    if expected is not None and len(records) != expected:
+        raise ValueError(f"trace population mismatch: expected {expected}, found {len(records)}")
+    seen, total = set(), 0
+    for path in records:
+        if path.is_symlink() or not path.is_file():
+            raise ValueError("trace records must be regular files")
+        size = path.stat().st_size
+        total += size
+        if size > MAX_TRACE_FILE or total > MAX_TRACE_BYTES:
+            raise ValueError("trace byte limit exceeded")
+        if expected is not None:
+            record = json.loads(path.read_text())
+            index = record.get("trace_index")
+            if type(index) is not int or not 1 <= index <= expected:
+                raise ValueError("invalid trace index")
+            if index in seen:
+                raise ValueError("duplicate trace index")
+            if path.stem != f"{index:04}":
+                raise ValueError("trace filename/index mismatch")
+            seen.add(index)
+    return records
 
 
 def complete_config(recorded: str) -> bytes:
@@ -300,7 +338,7 @@ def failed_deployment_kept_by_rust(expect: dict, got: dict, before: dict, init) 
     exact shape is set apart: an account that did not exist or held no code
     before, a message carrying the StateInit, a compute phase that ran and
     failed with no action phase, a bounce, and code and data equal to the
-    StateInit's. Every other field of the transaction must still agree.
+    StateInit's. This classifier is diagnostic only: every differing field still fails replay.
     """
     return (
         before["state"] in ("none", "uninit")
@@ -338,14 +376,18 @@ def main() -> int:
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument("trace_dir", type=Path)
+    parser.add_argument("--expected-records", type=int)
     parser.add_argument("--emulator", type=Path, default=ROOT / "build/emulator/libemulator.so")
     args = parser.parse_args()
 
-    engine = Engine(args.emulator)
-    records = sorted(args.trace_dir.rglob("*.json"))
+    try:
+        records = trace_population(args.trace_dir, args.expected_records)
+    except ValueError as error:
+        parser.error(str(error))
     if not records:
         print(f"no trace records under {args.trace_dir}", file=sys.stderr)
         return 2
+    engine = Engine(args.emulator)
     differences = []
     kept_deployments = []
     for path in records:
@@ -378,11 +420,6 @@ def main() -> int:
         init = message_init(from_boc(base64.b64decode(record["message"])))
         if failed_deployment_kept_by_rust(expect, got, before, init):
             kept_deployments.append(str(path.relative_to(args.trace_dir)))
-            got["balance"], got["data"], got["code"] = (
-                expect["balance"],
-                expect["data"],
-                expect["code"],
-            )
         keys = ["gas_used"] if "gas_used" in expect else []
         for key in keys + [
             "aborted",
@@ -404,7 +441,7 @@ def main() -> int:
         print(
             f"{len(kept_deployments)} failed deployments that the Rust executor keeps as an empty "
             "active account and the native engine does not create (an executor difference, "
-            "reported, not a contract one):"
+            "reported and rejected):"
         )
         for line in kept_deployments:
             print("  " + line)

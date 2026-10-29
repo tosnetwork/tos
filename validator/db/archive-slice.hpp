@@ -67,6 +67,7 @@ class PackageStatistics;
 struct DbStatistics {
   void init();
   std::string to_string_and_reset();
+  size_t pending_package_samples() const;
 
   std::shared_ptr<PackageStatistics> pack_statistics;
   std::shared_ptr<rocksdb::Statistics> rocksdb_statistics;
@@ -109,6 +110,16 @@ class ArchiveLru;
 // packages of the node it reads.
 inline constexpr const char *kArchiveSliceReadOnly = "archive slice is read-only: its database was opened as a reader";
 
+// The refusal a reader gives for a package whose legacy and current file
+// names both exist. Merging them is a repair that only the owning node may
+// run, so a reader neither repairs nor reads that package. The reader checks
+// the files again only when the slice is reopened (the slice is closed and
+// queried again, or the reader restarts); its catch-up with the primary does
+// not refresh a refused package.
+inline constexpr const char *kArchivePackageNeedsRepair =
+    "archive package needs repair by the node: both its legacy and its current file names exist; open the database as "
+    "primary first, then reopen this reader";
+
 // Process-wide counts of archive slice database opens and closes. A reader
 // whose access pattern makes a slice close and reopen shows up here.
 td::uint64 archive_slice_opens();
@@ -131,6 +142,10 @@ class ArchiveSlice : public td::actor::Actor {
   void get_handle(BlockIdExt block_id, td::Promise<BlockHandle> promise);
   void get_temp_handle(BlockIdExt block_id, td::Promise<ConstBlockHandle> promise);
   void get_file(ConstBlockHandle handle, FileReference ref_id, td::Promise<td::BufferSlice> promise);
+  // As get_file, but an entry larger than `data_limit` is refused with
+  // kFileOverReadLimit before its data is read.
+  void get_file_limited(ConstBlockHandle handle, FileReference ref_id, td::uint32 data_limit,
+                        td::Promise<td::BufferSlice> promise);
 
   /* from LTDB */
   void get_block_by_unix_time(AccountIdPrefixFull account_id, UnixTime ts, td::Promise<ConstBlockHandle> promise);
@@ -162,6 +177,7 @@ class ArchiveSlice : public td::actor::Actor {
   friend struct ArchivePruneTestAccess;
 
   void before_query();
+  void load_index();
   void do_close();
   template <typename T>
   td::Promise<T> begin_async_query(td::Promise<T> promise);
@@ -200,6 +216,9 @@ class ArchiveSlice : public td::actor::Actor {
   td::uint32 slice_size_{100};
   bool shard_separated_{false};
   td::uint32 shard_split_depth_ = 0;
+  // A reader opened this index before it had a layout (no "status" key) and
+  // so loaded no packages.
+  bool index_status_missing_{false};
 
   enum Status { st_closed, st_open, st_want_close } status_ = st_closed;
   size_t active_queries_ = 0;
@@ -215,14 +234,16 @@ class ArchiveSlice : public td::actor::Actor {
 
   struct PackageInfo {
     PackageInfo(std::shared_ptr<Package> package, td::actor::ActorOwn<PackageWriter> writer, BlockSeqno seqno,
-                ShardIdFull shard_prefix, std::string path, td::uint32 idx, td::uint32 version)
+                ShardIdFull shard_prefix, std::string path, td::uint32 idx, td::uint32 version,
+                bool needs_repair = false)
         : package(std::move(package))
         , writer(std ::move(writer))
         , seqno(seqno)
         , shard_prefix(shard_prefix)
         , path(std::move(path))
         , idx(idx)
-        , version(version) {
+        , version(version)
+        , needs_repair(needs_repair) {
     }
     std::shared_ptr<Package> package;
     td::actor::ActorOwn<PackageWriter> writer;
@@ -231,7 +252,14 @@ class ArchiveSlice : public td::actor::Actor {
     std::string path;
     td::uint32 idx;
     td::uint32 version;
+    // A reader's placeholder for a package it refused to repair: it holds the
+    // package's index position and is never returned to a query.
+    bool needs_repair;
   };
+  // Packages whose file was opened (and counted as opened); a placeholder
+  // for a refused package opens nothing.
+  size_t opened_package_count() const;
+  td::Result<PackageInfo *> readable_package(PackageInfo *package);
   std::vector<std::unique_ptr<PackageInfo>> packages_;
   std::map<std::pair<BlockSeqno, ShardIdFull>, td::uint32> id_to_package_;
 

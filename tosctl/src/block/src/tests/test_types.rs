@@ -298,7 +298,7 @@ fn test_varuinteger7_from_into() {
 fn test_varuinteger7_serialization() {
     VarUInteger7::try_from(u64::MAX).expect_err("should not be contructable");
     VarUInteger7::try_from(0x01FF_FFFF_FFFF_FFFFu64).expect_err("should not be contructable");
-    let v = VarUInteger7::try_from(0x00FF_FFFF_FFFF_FFFFu64).unwrap();
+    let v = VarUInteger7::try_from(0x0000_FFFF_FFFF_FFFFu64).unwrap();
     v.serialize().unwrap();
 
     let mut v = VarUInteger7::default();
@@ -514,13 +514,13 @@ fn test_coins_parsing() {
 
 #[test]
 fn test_checked_operations() {
-    let mut v = VarUInteger7::try_from(0x00FF_FFFF_FFFF_FFFFu64).unwrap();
+    let mut v = VarUInteger7::try_from(0x0000_FFFF_FFFF_FFFFu64).unwrap();
     let one = VarUInteger7::one();
     assert!(!v.add_checked(&one));
     assert!(v.sub_checked(&one));
     assert!(v.add_checked(&one));
 
-    let mut v = VarUInteger3::try_from(0x00FF_FFFFu32).unwrap();
+    let mut v = VarUInteger3::try_from(0x0000_FFFFu32).unwrap();
     let one = VarUInteger3::one();
     assert!(!v.add_checked(&one));
     assert!(v.sub_checked(&one));
@@ -551,4 +551,108 @@ fn test_math_traits() {
     let mut a = Coins::zero();
     assert!(!a.sub_checked(&Coins::one()), "should not sub with negative");
     assert!(a.checked_sub(&Coins::one()).is_none(), "should not sub with negative");
+}
+
+// These codec bounds follow the TL-B type parameter: len < n. Strict decoding
+// additionally requires a nonzero first byte; unchecked skip only checks size.
+fn native_varuint_read_cases<T: Deserializable + Serializable>(n: usize) {
+    let width = usize::BITS as usize - (n - 1).leading_zeros() as usize;
+    for length in 0..(1 << width) {
+        for first in [0u8, 1, 128, 255] {
+            let mut builder = BuilderData::default();
+            builder.append_bits(length, width).unwrap();
+            if length != 0 {
+                let mut payload = vec![255; length];
+                payload[0] = first;
+                builder.append_raw(&payload, length * 8).unwrap();
+            }
+            let cell = builder.into_cell().unwrap();
+            let mut slice = SliceData::load_cell(cell.clone()).unwrap();
+            let result = T::construct_from(&mut slice);
+            let expected = length < n && (length == 0 || first != 0);
+            assert_eq!(result.is_ok(), expected, "n={n}, len={length}, first={first}");
+            if let Ok(value) = result {
+                assert_eq!(value.serialize().unwrap().repr_hash(), cell.repr_hash());
+            } else {
+                assert_eq!(slice.remaining_bits(), length * 8);
+            }
+            if length != 0 {
+                let mut builder = BuilderData::default();
+                builder.append_bits(length, width).unwrap();
+                builder.append_raw(&vec![255; length], length * 8 - 1).unwrap();
+                assert!(T::construct_from(&mut SliceData::load_builder(builder).unwrap()).is_err());
+            }
+        }
+    }
+    for bits in 0..width {
+        let builder = BuilderData::with_raw(vec![0], bits).unwrap();
+        assert!(T::construct_from(&mut SliceData::load_builder(builder).unwrap()).is_err());
+    }
+}
+
+fn native_varuint_skip_cases<T: Deserializable>(n: usize) {
+    let width = usize::BITS as usize - (n - 1).leading_zeros() as usize;
+    for length in 0..(1 << width) {
+        let mut builder = BuilderData::default();
+        builder.append_bits(length, width).unwrap();
+        builder.append_raw(&vec![0; length], length * 8).unwrap();
+        let mut slice = SliceData::load_builder(builder).unwrap();
+        assert_eq!(T::skip(&mut slice).is_ok(), length < n, "n={n}, len={length}");
+        if length < n {
+            assert_eq!(slice.remaining_bits(), 0);
+        }
+        if length != 0 {
+            let mut builder = BuilderData::default();
+            builder.append_bits(length, width).unwrap();
+            builder.append_raw(&vec![0; length], length * 8 - 1).unwrap();
+            assert!(T::skip(&mut SliceData::load_builder(builder).unwrap()).is_err());
+        }
+    }
+}
+
+#[test]
+fn test_native_varuint3_read() {
+    native_varuint_read_cases::<VarUInteger3>(3);
+}
+
+#[test]
+fn test_native_varuint7_read() {
+    native_varuint_read_cases::<VarUInteger7>(7);
+}
+
+#[test]
+fn test_native_varuint16_read() {
+    native_varuint_read_cases::<Coins>(16);
+}
+
+#[test]
+fn test_native_varuint32_read() {
+    native_varuint_read_cases::<VarUInteger32>(32);
+}
+
+#[test]
+fn test_native_varuint_skip() {
+    native_varuint_skip_cases::<VarUInteger3>(3);
+    native_varuint_skip_cases::<VarUInteger7>(7);
+    native_varuint_skip_cases::<Coins>(16);
+    native_varuint_skip_cases::<VarUInteger32>(32);
+}
+
+#[test]
+fn test_native_varuint_primitive_bounds() {
+    assert_eq!(VarUInteger3::MAX.inner(), (1u32 << 16) - 1);
+    assert_eq!(VarUInteger7::MAX.inner(), (1u64 << 48) - 1);
+    assert_eq!(Coins::MAX.inner(), (1u128 << 120) - 1);
+    assert!(VarUInteger3::try_from(1u32 << 16).is_err());
+    assert!(VarUInteger7::try_from(1u64 << 48).is_err());
+    write_read_and_assert(VarUInteger3::try_from((1u32 << 16) - 1).unwrap());
+    write_read_and_assert(VarUInteger7::try_from((1u64 << 48) - 1).unwrap());
+    write_read_and_assert(Coins::try_from((1u128 << 120) - 1).unwrap());
+}
+
+#[test]
+fn test_native_varuint32_unsigned_write() {
+    let negative = VarUInteger32::from_str("-1").unwrap();
+    assert!(negative.serialize().is_err());
+    write_read_and_assert(VarUInteger32::from_str("0").unwrap());
 }

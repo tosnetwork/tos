@@ -15,6 +15,34 @@ use tos_vm::stack::{Stack, StackItem};
 mod common;
 use common::*;
 
+#[test]
+fn test_get_extra_balance_permissive_varuint() {
+    use chain_block::{BuilderData, HashmapE, HashmapType, IBitstring, Serializable};
+
+    for (width, value) in [(0, 0), (1, 0), (1, 1), (2, 0), (2, 1), (31, 1)] {
+        let mut payload = BuilderData::new();
+        payload.append_bits(width, 5).unwrap();
+        for byte in 0..width {
+            payload.append_bits(if byte + 1 == width { value } else { 0 }, 8).unwrap();
+        }
+        let mut dict = HashmapE::with_bit_len(32);
+        dict.set(0_u32.write_to_bitstring().unwrap(), &SliceData::load_builder(payload).unwrap())
+            .unwrap();
+        for (key, expected) in [(0, value), (1, 0)] {
+            test_case_with_ref(
+                format!(
+                    "PUSHINT 0 PUSHINT 0 PUSHINT 0 PUSHINT 0 PUSHINT 0 PUSHINT 0 \
+                     PUSHINT 0 PUSHINT 0 PUSHREF PAIR TUPLE 8 SINGLE POP c7 \
+                     PUSHINT {key} GETEXTRABALANCE"
+                ),
+                dict.data().unwrap().clone(),
+            )
+            .with_block_version(16)
+            .expect_int_stack(&[expected as i32]);
+        }
+    }
+}
+
 fn test_case_with_c7(code: &str) -> TestCaseInputs {
     let prefix = "
         PUSHINT 0

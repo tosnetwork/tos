@@ -36,4 +36,8 @@ enum ErrorCode : int {
 // from a transient failure matches on them, so each is defined once.
 inline constexpr const char *kStateGarbageCollected = "state already gc'd";
 inline constexpr const char *kPackageGarbageCollected = "package already gc'd";
+// Message of the error a size-limited file read returns when the stored
+// entry is larger than the limit. Only the entry header has been read: the
+// data was never allocated.
+inline constexpr const char *kFileOverReadLimit = "file larger than the read limit";
 }

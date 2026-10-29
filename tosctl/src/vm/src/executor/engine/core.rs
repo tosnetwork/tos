@@ -101,7 +101,7 @@ pub struct Engine {
     // and written back before the parent resumes. Any new path that builds an
     // Engine inside an execution must carry it the same way.
     pub(in crate::executor) slh_counter: u32,
-    // get_extra_balance_counter: usize, // TODO: what is it?
+    get_extra_balance_counter: usize,
     // SliceData::load_cell() is faster than trying to cache SliceData for each
     // visited cell with HashMap<UInt256, SliceData>
     visited_cells: HashSet<UInt256>,
@@ -226,6 +226,7 @@ impl Engine {
             modifiers: BehaviorModifiers::default(),
             checked_signatures_count: 0,
             slh_counter: 0,
+            get_extra_balance_counter: 0,
             visited_cells: HashSet::new(),
             cstate: None,
             time: 0,
@@ -835,15 +836,28 @@ impl Engine {
 
     fn load_library_cell(&self, hash: SliceData) -> Result<Cell> {
         for library in &self.libraries {
-            if let Some(lib_bucket) = library.get(hash.clone())? {
-                let lib = lib_bucket.reference(0)?;
-                if !hash.contains_bytes(lib.repr_hash().as_slice()) {
-                    fail!(
-                        ExceptionCode::DictionaryError,
-                        "Librariy hash does not correspond to map key {:x}",
-                        hash
-                    )
+            let lib_bucket = match library.get(hash.clone()) {
+                Ok(Some(bucket)) => bucket,
+                Ok(None) => continue,
+                Err(error)
+                    if matches!(
+                        tvm_exception_code(&error),
+                        Some(ExceptionCode::CellUnderflow | ExceptionCode::DictionaryError)
+                    ) =>
+                {
+                    continue;
                 }
+                Err(error) => return Err(error),
+            };
+            let lib = match lib_bucket.reference(0) {
+                Ok(cell) => cell,
+                Err(error) if tvm_exception_code(&error) == Some(ExceptionCode::CellUnderflow) => {
+                    continue;
+                }
+                Err(error) => return Err(error),
+            };
+            // An unusable entry must not hide a valid entry in a later collection.
+            if hash.contains_bytes(lib.repr_hash().as_slice()) {
                 return Ok(lib);
             }
         }
@@ -851,13 +865,56 @@ impl Engine {
     }
 
     /// Loads cell to slice checking in precashed map
-    pub fn load_hashed_cell(&mut self, mut cell: Cell, resolve_special: bool) -> Result<SliceData> {
+    pub fn load_hashed_cell(&mut self, cell: Cell, resolve_special: bool) -> Result<SliceData> {
+        self.load_cell_with_allowance(cell, resolve_special, &mut None)
+    }
+
+    pub(in crate::executor) fn lookup_extra_balance(
+        &mut self,
+        dict: &HashmapE,
+        key: SliceData,
+    ) -> Result<Option<SliceData>> {
+        struct Loader<'a> {
+            engine: &'a mut Engine,
+            allowance: Option<i64>,
+        }
+        impl GasConsumer for Loader<'_> {
+            fn load_cell(&mut self, cell: Cell) -> Result<SliceData> {
+                self.engine.load_cell_with_allowance(cell, true, &mut self.allowance)
+            }
+            fn finalize_cell(&mut self, builder: BuilderData) -> Result<Cell> {
+                self.engine.finalize_cell(builder)
+            }
+            fn finalize_cell_and_load(&mut self, builder: BuilderData) -> Result<SliceData> {
+                let cell = self.finalize_cell(builder)?;
+                self.load_cell(cell)
+            }
+        }
+        self.get_extra_balance_counter = self.get_extra_balance_counter.saturating_add(1);
+        let allowance = (self.get_extra_balance_counter <= 5).then_some(200);
+        dict.get_with_gas(key, &mut Loader { engine: self, allowance })
+    }
+
+    fn load_cell_with_allowance(
+        &mut self,
+        mut cell: Cell,
+        resolve_special: bool,
+        allowance: &mut Option<i64>,
+    ) -> Result<SliceData> {
         let mut library_loaded = false;
         loop {
             if !library_loaded {
                 let hash = cell.repr_hash();
                 let first = self.visited_cells.insert(hash);
-                self.try_use_gas(Gas::load_cell_price(first))?;
+                let gas = Gas::load_cell_price(first);
+                if let Some(remaining) = allowance {
+                    let charged = gas.min(*remaining);
+                    self.consume_gas(charged)?;
+                    *remaining -= charged;
+                    self.free_gas_consumed = self.free_gas_consumed.saturating_add(gas - charged);
+                } else {
+                    self.try_use_gas(gas)?;
+                }
             }
             let mut slice = SliceData::load_cell(cell)?;
             if !resolve_special || slice.cell_type() == CellType::Ordinary {
@@ -1069,6 +1126,7 @@ impl Engine {
                 self.use_gas(self.free_gas_consumed);
             }
             self.checked_signatures_count = 0;
+            self.get_extra_balance_counter = 0;
             self.free_gas_consumed = 0;
         }
         let (visited_cells, checked_signatures_count, free_gas_consumed) = if params.isolate_gas {
@@ -1111,6 +1169,7 @@ impl Engine {
             checked_signatures_count,
             // Not reset by isolate_gas.
             slh_counter: self.slh_counter,
+            get_extra_balance_counter: self.get_extra_balance_counter,
             visited_cells,
             cstate: None,
             time: self.time,
@@ -1147,6 +1206,7 @@ impl Engine {
         };
         // Before anything below can fail (the child gas charge may run out of gas).
         self.slh_counter = child.slh_counter;
+        self.get_extra_balance_counter = child.get_extra_balance_counter;
         // let mut result = child.execute().unwrap_or_else(|err| tvm_exception_or_custom_code(&err));
         log::debug!(
             target: "tvm",

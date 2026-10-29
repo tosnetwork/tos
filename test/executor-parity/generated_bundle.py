@@ -12,6 +12,7 @@ import urllib.request
 from pathlib import Path
 
 from generated_roots import POST, RELEASE, ROOT, validate
+from wallet_module_roots import MODES, module_files, validate_run
 
 FOLDERS = {RELEASE: "release", POST: "post"}
 RUNNERS = ("ubuntu-24.04", "ubuntu-24.04-arm")
@@ -40,7 +41,8 @@ CONTROL_CASES = (
 
 
 def filenames():
-    paths = {"controls.json"}
+    paths = {"controls.json", "module-controls.json"}
+    paths.update(f"modules/{mode}/{name}" for mode in MODES for name in module_files())
     for family, folder in FOLDERS.items():
         files = ["config.boc", "scenarios.tsv", "native.tsv", "rust.tsv", "result.json"]
         files += [
@@ -83,6 +85,12 @@ def control_result(value, source):
     }, "generated controls incomplete"
 
 
+def module_control_result(value, source):
+    assert value == dict(
+        source=source, modes={mode: dict(fresh=16, recorded=16) for mode in MODES}
+    ), "wallet-module controls incomplete"
+
+
 def metadata(source, runner):
     return dict(
         source=source,
@@ -94,9 +102,22 @@ def metadata(source, runner):
     )
 
 
-def bundle(output, release, post, controls, source, runner):
+def bundle(
+    output,
+    release,
+    post,
+    controls,
+    source,
+    runner,
+    *,
+    module_candidate,
+    module_diagnostic,
+    module_controls,
+):
     assert not output.exists(), "generated bundle destination exists"
-    sources = {"controls.json": controls}
+    sources = {"controls.json": controls, "module-controls.json": module_controls}
+    for mode, original in (("candidate", module_candidate), ("diagnostic", module_diagnostic)):
+        sources.update({f"modules/{mode}/{name}": original / name for name in module_files()})
     for family, original in [(RELEASE, release), (POST, post)]:
         for name in filenames():
             folder, _, filename = name.partition("/")
@@ -123,7 +144,7 @@ def bundle(output, release, post, controls, source, runner):
     output.mkdir(parents=True)
     for name, value in payloads.items():
         path = output / name
-        path.parent.mkdir(exist_ok=True)
+        path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(value)
     (output / "bundle.json").write_bytes(encoded)
     validate_bundle(output, source, manifest["event"], manifest["run_id"], manifest["run_attempt"])
@@ -131,19 +152,23 @@ def bundle(output, release, post, controls, source, runner):
 
 def validate_bundle(directory, source, event, run_id, attempt):
     assert not directory.is_symlink() and directory.is_dir(), "invalid generated bundle directory"
-    entries = children(directory, 4)
-    assert {p.name for p in entries} == {"bundle.json", "controls.json", *FOLDERS.values()}, (
-        "unexpected generated bundle entries"
-    )
     expected = filenames()
-    actual = {"controls.json", "bundle.json"}
-    for folder in FOLDERS.values():
+    # Derive the bounded directory shape only from the fixed allowlist. No walk
+    # follows arbitrary supplied paths or symlinks.
+    tree = {}
+    for name in expected | {"bundle.json"}:
+        path = Path(name)
+        for parent in (path.parent, *path.parent.parents):
+            tree.setdefault(parent, set())
+        tree[path.parent].add(path.name)
+        for child in path.parent.parents:
+            relative = path.parent.relative_to(child)
+            tree[child].add(relative.parts[0])
+    for folder, names in tree.items():
         child = directory / folder
-        assert child.is_dir() and not child.is_symlink()
-        entries = children(child, 10)
-        assert len(entries) == 10, "generated bundle file count mismatch"
-        actual.update(folder + "/" + p.name for p in entries)
-    assert actual == expected | {"bundle.json"}, "unexpected generated bundle paths"
+        assert child.is_dir() and not child.is_symlink(), "invalid generated bundle directory"
+        entries = children(child, len(names))
+        assert {p.name for p in entries} == names, "unexpected generated bundle paths"
     value = json.loads(bounded(directory / "bundle.json"))
     assert set(value) == {"source", "event", "run_id", "run_attempt", "suite", "runner", "files"}
     assert (value["source"], value["event"], value["run_id"], value["suite"]) == (
@@ -170,7 +195,15 @@ def validate_bundle(directory, source, event, run_id, attempt):
     signatures = tuple(
         validate(directory / folder, family, source) for family, folder in FOLDERS.items()
     )
-    return value, signatures
+    module_control_result(json.loads(bounded(directory / "module-controls.json")), source)
+    modules = tuple(
+        (
+            validate_run(directory / "modules" / mode, mode, source, False),
+            validate_run(directory / "modules" / mode / "recorded-replay", mode, source, True),
+        )
+        for mode in MODES
+    )
+    return value, (signatures, modules)
 
 
 def receipt_guard():
@@ -209,30 +242,32 @@ def compare_bundles(directory, receipts, source, event, run_id, attempt):
         chosen.append(candidates[key])
     assert chosen[0] == chosen[1], "generated architecture mismatch"
     print(
-        "PASS: generated15 outcomes/13 three-root transactions; exact source/run/suite attempts and controls"
+        "PASS: generated15 outcomes/13 transactions plus Module38 fresh/38 recorded three-root executions; exact source/run/suite attempts and controls"
     )
 
 
-def artifact_selection(artifacts, attempt):
-    selected = [a for a in artifacts if a["name"].startswith("rescue-roots-")]
+def artifact_selection(artifacts, attempt, prefix="rescue-roots-", *, max_total=MAX_TOTAL):
+    selected = [a for a in artifacts if a["name"].startswith(prefix)]
     assert 0 < len(selected) <= MAX_BUNDLES, "generated download population limit"
     names = set()
     total = 0
     for artifact in selected:
         match = re.fullmatch(
-            r"rescue-roots-(ubuntu-24\.04(?:-arm)?)-attempt-([1-9][0-9]*)", artifact["name"]
+            re.escape(prefix) + r"(ubuntu-24\.04(?:-arm)?)-attempt-([1-9][0-9]*)", artifact["name"]
         )
         assert match and int(match[2]) <= int(attempt), "invalid generated download identity"
         assert artifact["name"] not in names, "duplicate generated download identity"
         names.add(artifact["name"])
-        assert artifact["expired"] is False and type(artifact["size_in_bytes"]) is int
-        assert 0 < artifact["size_in_bytes"] <= MAX_TOTAL, "generated download size limit"
+        assert artifact["expired"] is False and type(artifact["size_in_bytes"]) is int, (
+            "expired or invalid generated download metadata"
+        )
+        assert 0 < artifact["size_in_bytes"] <= max_total, "generated download size limit"
         total += artifact["size_in_bytes"]
-    assert total <= MAX_TOTAL * MAX_BUNDLES
+    assert total <= max_total * MAX_BUNDLES
     return len(selected)
 
 
-def preflight():
+def preflight(prefix="rescue-roots-", *, max_total=MAX_TOTAL):
     repository, run_id = os.environ["GITHUB_REPOSITORY"], os.environ["GITHUB_RUN_ID"]
     assert re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository)
     assert re.fullmatch(r"[1-9][0-9]*", run_id)
@@ -264,7 +299,9 @@ def preflight():
         page += 1
     print(
         "PASS: bounded generated artifact selection",
-        artifact_selection(artifacts, os.environ["GITHUB_RUN_ATTEMPT"]),
+        artifact_selection(
+            artifacts, os.environ["GITHUB_RUN_ATTEMPT"], prefix, max_total=max_total
+        ),
     )
 
 
@@ -277,12 +314,25 @@ def main():
     parser.add_argument("--release", type=Path)
     parser.add_argument("--post", type=Path)
     parser.add_argument("--controls", type=Path)
+    parser.add_argument("--module-candidate", type=Path)
+    parser.add_argument("--module-diagnostic", type=Path)
+    parser.add_argument("--module-controls", type=Path)
     parser.add_argument("--receipts", type=Path)
     parser.add_argument("--runner", choices=RUNNERS)
     args = parser.parse_args()
     source = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     if args.bundle:
-        bundle(args.bundle, args.release, args.post, args.controls, source, args.runner)
+        bundle(
+            args.bundle,
+            args.release,
+            args.post,
+            args.controls,
+            source,
+            args.runner,
+            module_candidate=args.module_candidate,
+            module_diagnostic=args.module_diagnostic,
+            module_controls=args.module_controls,
+        )
     elif args.compare:
         assert os.environ["SOURCE_SHA"] == source, "generated expected checkout mismatch"
         compare_bundles(

@@ -17,6 +17,76 @@ use crate::{
 };
 use rand::Rng;
 
+#[test]
+fn native_gas_purchase_width_and_threshold_rounding() {
+    for (price, limit, flat, fee, balance, threshold, purchased) in [
+        (65536, 1_u64 << 50, 0, 0, 1_u128 << 49, 1_i128 << 50, 1_u64 << 49),
+        (1, 1_000_000, 0, 0, 15, 16, 983040),
+        (65537, 1_000_000, 0, 0, 1000015, 1000016, 999999),
+        (65536, 100, 200, 100, 99, 100, 0),
+        (65536, 100, 200, 100, 100, 100, 100),
+    ] {
+        let config = GasLimitsPrices {
+            gas_price: price,
+            gas_limit: limit,
+            flat_gas_limit: flat,
+            flat_gas_price: fee,
+            ..GasLimitsPrices::default()
+        };
+        assert_eq!(config.calc_max_gas_threshold(limit).expect("threshold"), threshold);
+        assert_eq!(config.calc_gas(balance, limit, threshold).expect("gas"), purchased);
+    }
+}
+
+#[test]
+fn native_gas_purchase_fee_signed_scalars() {
+    for (flat_price, expected) in
+        [(0, 31_i128), (100, 131), (1 << 63, -9223372036854775777), (u64::MAX, 30)]
+    {
+        let mut gas = GasLimitsPrices {
+            gas_price: 65536,
+            flat_gas_price: flat_price,
+            ..GasLimitsPrices::default()
+        };
+        assert_eq!(gas.calc_gas_fee(31).expect("fee"), expected);
+        assert_eq!(gas.calc_gas_fee_simple(31).expect("simple fee"), 31);
+        gas.flat_gas_limit = 100;
+        assert_eq!(gas.calc_gas_fee(31).expect("flat fee"), i128::from(flat_price));
+    }
+    let gas = GasLimitsPrices { gas_price: 65536, ..GasLimitsPrices::default() };
+    assert_eq!(gas.calc_gas_fee_simple(u64::MAX).expect("signed gas"), -1);
+}
+
+#[test]
+fn native_gas_purchase_signed_scalar_boundaries() {
+    for (price, limit, flat, fee, balance, threshold, purchased) in [
+        (65536, u64::MAX, 0, 0, 0_u128, -1_i128, u64::MAX),
+        (0, 100, 0, 1 << 63, 0, i64::MIN as i128, 100),
+        (65536, 100, 200, u64::MAX, 0, u64::MAX as i128, 201),
+        (0, 0, 100, u64::MAX, 0, u64::MAX as i128, (1 << 63) + 100),
+        (1, 0, 100, u64::MAX, 1 << 63, u64::MAX as i128, (1 << 63) + 100),
+        (
+            u64::MAX,
+            i64::MAX as u64,
+            0,
+            1 << 63,
+            0,
+            2596148429267404590470998844768257,
+            18446744073709518847,
+        ),
+    ] {
+        let config = GasLimitsPrices {
+            gas_price: price,
+            gas_limit: limit,
+            flat_gas_limit: flat,
+            flat_gas_price: fee,
+            ..GasLimitsPrices::default()
+        };
+        assert_eq!(config.calc_max_gas_threshold(limit).expect("threshold"), threshold);
+        assert_eq!(config.calc_gas(balance, limit, threshold).expect("gas"), purchased);
+    }
+}
+
 fn get_config_param0() -> ConfigParam0 {
     ConfigParam0 { config_addr: AccountId::from([1; 32]) }
 }
@@ -122,7 +192,7 @@ fn get_gas_limit_prices() -> GasLimitsPrices {
         flat_gas_price: rng.gen(),
         max_gas_threshold: 0,
     };
-    glp.max_gas_threshold = glp.calc_max_gas_threshold(glp.gas_limit);
+    glp.max_gas_threshold = glp.calc_max_gas_threshold(glp.gas_limit).expect("gas threshold");
     glp
 }
 

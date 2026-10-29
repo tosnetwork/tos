@@ -17,6 +17,136 @@ SPEC.loader.exec_module(guard)
 
 
 class RescueCiTests(unittest.TestCase):
+    def test_library_context_cannot_be_deleted_or_limited_to_one_architecture(self):
+        block = next(
+            b
+            for b in guard.blocks(self.workflow)
+            if b.startswith("      - name: Verify SHA256C library resolution\n")
+        )
+        for line in (
+            x
+            for x in block.splitlines(keepends=True)
+            if "          python " in x or "          cargo test " in x
+        ):
+            with self.subTest(command=line):
+                with self.assertRaisesRegex(ValueError, "library context controls"):
+                    self.check(self.workflow.replace(line, ""))
+        with self.assertRaisesRegex(ValueError, "library context controls"):
+            self.check(
+                self.workflow.replace(
+                    block,
+                    block.replace(
+                        "matrix.suite)\n", "matrix.suite) && matrix.runner == 'ubuntu-24.04'\n"
+                    ),
+                )
+            )
+        for runner in guard.RUNNERS:
+            self.assertIn("Verify SHA256C library resolution", self.check()[("vm-ingress", runner)])
+
+    def test_original_wallet_root_gates_cannot_be_deleted(self):
+        lines = self.workflow.splitlines(keepends=True)
+        commands = [
+            line
+            for line in lines
+            if "python test/executor-parity/" in line
+            and any(
+                name in line
+                for name in (
+                    "wallet_variant_roots.py",
+                    "test_wallet_variant_roots.py",
+                    "test_wallet_variant_bundle.py",
+                    "wallet_variant_bundle.py --bundle",
+                )
+            )
+        ]
+        self.assertEqual(len(commands), 6)
+        for command in commands:
+            with self.subTest(command=command):
+                with self.assertRaisesRegex(
+                    ValueError, "wallet producer/control/bundle commands changed"
+                ):
+                    self.check(self.workflow.replace(command, ""))
+        producer = "      - name: Verify original wallet variant roots\n"
+        block = next(part for part in guard.blocks(self.workflow) if part.startswith(producer))
+        with self.assertRaisesRegex(ValueError, "both release-wallet architectures"):
+            self.check(
+                self.workflow.replace(
+                    block,
+                    block.replace(
+                        "matrix.suite)\n", "matrix.suite) && matrix.runner == 'ubuntu-24.04'\n"
+                    ),
+                )
+            )
+        for text, witness in (
+            (
+                "run: python test/executor-parity/wallet_variant_bundle.py --check-download",
+                "wallet download preflight missing",
+            ),
+            ("pattern: wallet-variant-roots-*", "wallet bundle download missing"),
+            (
+                "run: python test/executor-parity/wallet_variant_bundle.py --compare wallet-roots --receipts receipts",
+                "wallet final comparison/source missing",
+            ),
+        ):
+            with self.assertRaisesRegex(ValueError, witness):
+                self.check(self.workflow.replace(text, "REMOVED"))
+        for runner in guard.RUNNERS:
+            self.assertIn(
+                "Verify original wallet variant roots", self.check()[("release-wallet", runner)]
+            )
+
+    def test_original_auth_root_gates_cannot_be_deleted(self):
+        lines = self.workflow.splitlines(keepends=True)
+        commands = [
+            line
+            for line in lines
+            if "python test/executor-parity/" in line
+            and any(
+                name in line
+                for name in (
+                    "auth_factory_roots.py",
+                    "test_auth_factory_artifacts.py",
+                    "test_auth_factory_bundle.py",
+                    "auth_factory_artifacts.py --bundle",
+                )
+            )
+        ]
+        self.assertEqual(len(commands), 5)
+        for command in commands:
+            with self.subTest(command=command):
+                with self.assertRaisesRegex(
+                    ValueError, "auth producer/control/bundle commands changed"
+                ):
+                    self.check(self.workflow.replace(command, ""))
+        producer = "      - name: Verify original auth factory roots\n"
+        block = next(part for part in guard.blocks(self.workflow) if part.startswith(producer))
+        with self.assertRaisesRegex(ValueError, "both release-wallet architectures"):
+            self.check(
+                self.workflow.replace(
+                    block,
+                    block.replace(
+                        "matrix.suite)\n", "matrix.suite) && matrix.runner == 'ubuntu-24.04'\n"
+                    ),
+                )
+            )
+        for text, witness in (
+            (
+                "run: python test/executor-parity/auth_factory_artifacts.py --check-download",
+                "auth download preflight missing",
+            ),
+            ("pattern: auth-factory-roots-*", "auth bundle download missing"),
+            (
+                "run: python test/executor-parity/auth_factory_artifacts.py --compare auth-roots --receipts receipts",
+                "auth final comparison/source missing",
+            ),
+        ):
+            with self.assertRaisesRegex(ValueError, witness):
+                self.check(self.workflow.replace(text, "REMOVED"))
+        for runner in guard.RUNNERS:
+            self.assertIn(
+                "Verify original auth factory roots", self.check()[("release-wallet", runner)]
+            )
+
     @classmethod
     def setUpClass(cls):
         cls.workflow = guard.WORKFLOW.read_text()
@@ -295,6 +425,34 @@ class RescueCiTests(unittest.TestCase):
 
     def test_generated_root_obligations_cannot_be_removed_or_narrowed(self):
         mutations = [
+            (
+                "          python test/executor-parity/test_wallet_module_inputs.py",
+                "          true",
+            ),
+            (
+                "--mode candidate --output artifacts/module-root-controls.json",
+                "--mode diagnostic --output artifacts/module-root-controls.json",
+            ),
+            (
+                "--mode diagnostic --output artifacts/module-root-controls.json",
+                "--mode candidate --output artifacts/module-root-controls.json",
+            ),
+            (
+                "--module-candidate artifacts/context/quantum-release-primary",
+                "--module-candidate artifacts/context/quantum-module",
+            ),
+            (
+                "--module-diagnostic artifacts/context/quantum-module",
+                "--module-diagnostic artifacts/context/quantum-release-primary",
+            ),
+            (
+                "--module-repeat-candidate artifacts/module-repeat-candidate",
+                "--module-repeat-candidate artifacts/context/quantum-release-primary",
+            ),
+            (
+                "--module-controls artifacts/module-root-controls.json",
+                "--module-controls artifacts/generated-root-controls.json",
+            ),
             ("test/executor-parity/**", "test/unrelated/**"),
             ("test/falcon-auth/linked_roots.py", "test/unrelated/helper.py"),
             ("test/rel02/**", "test/unrelated/replay/**"),

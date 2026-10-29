@@ -183,6 +183,31 @@ A stopped copy is recoverable, not proof that every asynchronous write drained:
 every public generation undergoes native recovery, shard-state reads and a second
 reopen before it can be signed.
 
+Ancestry is proven, not looked up. For every anchor (the held zero state, the held
+init block, each approved fork and, on restore, each target safety anchor) the
+verifier asks the reopened engine for one backward block-proof link from the
+coherent frontier. It accepts only a Merkle proof of the frontier's masterchain
+state whose hash equals the state hash recorded in the frontier block itself (whose
+bytes were already checked against the frontier full ID), with the held global id
+and the frontier's height, and whose previous-block dictionary holds the anchor
+with exactly its root and file hash. No zero-state bytes and no anchor block data
+are read. The engine builds that link from the anchor's own stored proof link: the
+zero state needs none, key blocks keep theirs, and recent blocks keep theirs until
+archive GC removes them. An older ordinary anchor whose proof link the image no
+longer holds cannot be proven and refuses with "anchor proof not retained"; there
+is no fallback. When validation does not finish within its deadline, the error
+names the last failed request, its anchor or frontier, and the engine's answer,
+truncated to 4 KiB.
+
+The shard-state reads cover exactly what the frontier commits to. The shard
+inventory is the one recorded in the frontier block itself, and the engine's
+answer must equal it. The active workchains come from a Merkle proof of the
+configuration whose root equals the state hash the frontier block records. A
+proof of any other state, even one with the same global id and height, is
+refused. Each listed shard state is then read once through the engine to force a
+native load; those account-state answers are not proof-checked, and nothing is
+derived from them.
+
 Managed service commands use a conservative subset of native options, with a
 separate token for each option and value. Attached or clustered short options,
 long equals forms, duplicate path selectors, unknown options and positional tokens
@@ -391,6 +416,12 @@ create publisher secrets. Keep that file outside the entire source database, pub
 The shared creation path checks its provenance before stopping and again before capture;
 symlinks, hard links, replacement and capture aliases refuse.
 
+The source may have joined the network at an init block (a refreshed global config
+with `init_block`) instead of syncing from the zero state. Such a node never holds a
+zero-state file, and none is required: native validation proves the held zero state
+and init block from the frontier's state, and a generation publishes only the tip
+block as metadata.
+
 ### Publisher host prerequisites
 
 Check these before the first `create`; each one otherwise refuses at run time:
@@ -463,8 +494,9 @@ recovery restages current own records and rechecks; new-installed recovery keeps
 the current tree and checks its current coherent frontier before restart. Any
 unavailable, behind or disagreeing named source refuses; there is no fallback.
 Endpoint independence is an operator assumption. A base URL and its `/jsonRPC`
-spelling identify the same source. Manifest and journal format 2 require these
-receipts; old formats refuse explicitly. The five-minute post-start check remains
+spelling identify the same source. Manifest format 3 and journal format 2 require
+these receipts; old formats refuse explicitly. Format 3 has no
+`metadata/zero-state.boc`; a format-2 generation refuses. The five-minute post-start check remains
 separate from this pre-exposure check.
 
 The catalog contains `latest.json`, signed `generations/<digest>.json` and
@@ -636,8 +668,10 @@ A new node has no local records and no safety anchors of its own. Instead, nativ
 validation of the staged replacement runs under the operator's own global config
 and must prove that the imported chain descends from the locally held zero state and
 init block, with the locally approved fork list. The engine stops when the imported
-state neither is nor descends from the held init block, and the verifier then looks
-up the held init block on the imported chain. The journal's safety anchor is the
+state neither is nor descends from the held init block, and the verifier then proves,
+from a Merkle proof of the frontier's state tied to the tip block, that the held zero
+state, the held init block and every approved fork are earlier masterchain blocks of
+the imported chain. The journal's safety anchor is the
 held init block, so a reference approval cannot precede it. A correctly signed
 donor of the same network and build whose history conflicts with the held anchor is
 refused before anything is exposed. The replacement's local StateDb records are the
@@ -748,13 +782,15 @@ while stop settles, drift during object transfer, and interruption after the rea
 restore stop before staging. Completion retries authenticate request, generation
 and operation records before accepting an already absent receiver lease. The
 unauthenticated receiver-release API is not exposed. Creation is exercised on a
-source without `static`, and with failures inside the stopped section: an
+source without `static`, on a source without any zero-state file, and with failures
+inside the stopped section: an
 ordinary error and a panic restart the source, while a role, custody or mode
 change found by the restart recheck, or a refused start, leaves it stopped with
 exit status 5. Bootstrap is exercised end to end into a new-node layout, against
 every validator and used-database refusal, through crashes on both sides of the
 exchange (with and without a native start in between), and against a correctly
-signed donor whose history does not contain the held init block.
+signed donor whose history does not contain the held init block. The production
+verifier is exercised proving a required non-zero ancestor with its header proof.
 
 Interruption hooks and manager overrides are compiled only under `cfg(test)` and
 the non-default `native-lifecycle-tests` feature. The build rejects that feature

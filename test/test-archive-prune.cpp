@@ -3,6 +3,7 @@
     Copyright 2025-2026 TOS Blockchain Teams
     SPDX-License-Identifier: LGPL-2.0-or-later
 */
+#include <algorithm>
 #include <atomic>
 #include <cstdlib>
 #include <dlfcn.h>
@@ -14,6 +15,7 @@
 
 #include "td/actor/actor.h"
 #include "td/db/RocksDb.h"
+#include "td/db/RocksDbReadOnly.h"
 #include "td/utils/Time.h"
 #include "td/utils/filesystem.h"
 #include "td/utils/port/path.h"
@@ -102,6 +104,33 @@ struct ArchivePruneTestAccess {
       auto it = files.find(id);
       CHECK(it != files.end());
       promise.set_value(it->second.deleted && it->second.file.empty());
+    });
+  }
+
+  // Whether the manager has a live, undeleted package `id` in its map.
+  static void package_live(td::actor::ActorId<ArchiveManager> manager, PackageId id, td::Promise<bool> promise) {
+    td::actor::send_lambda(manager, [manager, id, promise = std::move(promise)]() mutable {
+      auto &files = manager.get_actor_unsafe().get_file_map(id);
+      auto it = files.find(id);
+      promise.set_value(it != files.end() && !it->second.deleted && !it->second.file.empty());
+    });
+  }
+
+  // Package timing samples the manager holds that no alarm has drained yet,
+  // and whether its periodic alarm is armed.
+  static void package_samples(td::actor::ActorId<ArchiveManager> manager,
+                              td::Promise<std::pair<size_t, bool>> promise) {
+    td::actor::send_lambda(manager, [manager, promise = std::move(promise)]() mutable {
+      auto &self = manager.get_actor_unsafe();
+      promise.set_value({self.statistics_.pending_package_samples(), static_cast<bool>(self.alarm_timestamp())});
+    });
+  }
+
+  // Runs the manager's periodic statistics alarm now.
+  static void run_alarm(td::actor::ActorId<ArchiveManager> manager, td::Promise<td::Unit> promise) {
+    td::actor::send_lambda(manager, [manager, promise = std::move(promise)]() mutable {
+      manager.get_actor_unsafe().alarm();
+      promise.set_value(td::Unit());
     });
   }
 };
@@ -626,6 +655,21 @@ void reader_package_sync(const std::string &root) {
       auto block = add_block(scheduler, slice.get(), 111);
       check(block.is_error() && block.message() == td::Slice(kArchiveSliceReadOnly),
             "a reader refuses add_block as read-only");
+      // A stored, flushed handle takes the update shortcut; a reader refuses
+      // it before that shortcut too.
+      auto flushed = handle(112);
+      flushed->set_handle_moved_to_archive();
+      flushed->flushed_upto(flushed->version());
+      auto update = request<td::Unit>(scheduler, [&](td::Promise<td::Unit> promise) {
+                      td::actor::send_closure(slice.get(), &ArchiveSlice::update_handle, flushed, std::move(promise));
+                    }).move_as_status();
+      check(update.is_error() && update.message() == td::Slice(kArchiveSliceReadOnly),
+            "a reader refuses update_handle as read-only");
+      auto added = request<td::Unit>(scheduler, [&](td::Promise<td::Unit> promise) {
+                     td::actor::send_closure(slice.get(), &ArchiveSlice::add_handle, handle(113), std::move(promise));
+                   }).move_as_status();
+      check(added.is_error() && added.message() == td::Slice(kArchiveSliceReadOnly),
+            "a reader refuses add_handle as read-only");
       close_slice(scheduler, slice);
     }
     release_handles();
@@ -637,6 +681,814 @@ void reader_package_sync(const std::string &root) {
   check(unsetenv("TOS_FSYNC_COUNT_PREFIX") == 0, "unscope the fsync count");
   std::cout << "PASS: readers never sync or write packages; the primary still syncs and its data survives a reopen"
             << std::endl;
+}
+
+// A package whose legacy (`0:shard`) and current (`0_shard`) file names both
+// exist needs a repair that merges or deletes files. Only the primary may run
+// it. A reader (secondary or read-only) refuses that package, changes no file,
+// and keeps serving the packages before and after it at their own indices. It
+// checks the files again only when the slice is reopened.
+namespace reader_repair {
+
+using namespace reader_sync;
+
+const PackageId kId{200, false, false};
+constexpr tos::BlockSeqno kFirstMc = 201;       // package 0: masterchain, seqnos 200..299
+constexpr tos::BlockSeqno kLaterMc = 301;       // package 2: masterchain, seqnos 300..399
+const tos::BlockSeqno kShardBlocks[] = {1, 2};  // package 1: workchain 0, referring to kFirstMc
+
+td::uint64 archive_id_of(td::uint32 package_index) {
+  return (static_cast<td::uint64>(package_index) << 32) + kId.id;
+}
+
+tos::BlockIdExt shard_block_id(tos::BlockSeqno seqno) {
+  return {tos::basechainId, tos::shardIdAll, seqno, tos::RootHash::zero(), tos::FileHash::zero()};
+}
+
+BlockHandle shard_handle(tos::BlockSeqno seqno) {
+  auto result = BlockHandleImpl::create_empty(shard_block_id(seqno));
+  result->set_logical_time(200000 + seqno);
+  result->set_unix_time(200000 + seqno);
+  result->set_masterchain_ref_block(kFirstMc);
+  handles().push_back(result);
+  return result;
+}
+
+FileReference shard_ref(tos::BlockSeqno seqno) {
+  return FileReference(fileref::Block{shard_block_id(seqno)});
+}
+
+std::string shard_payload(tos::BlockSeqno seqno) {
+  return PSTRING() << "shard-block-" << seqno << "-" << std::string(700, static_cast<char>('A' + seqno % 26));
+}
+
+td::actor::ActorOwn<ArchiveSlice> open_slice_with(td::actor::Scheduler &scheduler, const std::string &root,
+                                                  td::DbOpenMode mode, DbStatistics statistics) {
+  td::actor::ActorOwn<ArchiveSlice> slice;
+  scheduler.run_in_context([&] {
+    slice = td::actor::create_actor<ArchiveSlice>("reader-repair", kId.id, kId.key, kId.temp, false, 0, root,
+                                                  td::actor::ActorId<ArchiveLru>{}, statistics, mode);
+  });
+  return slice;
+}
+
+td::Status add_shard_file(td::actor::Scheduler &scheduler, td::actor::ActorId<ArchiveSlice> slice,
+                          tos::BlockSeqno seqno) {
+  return request<td::Unit>(scheduler,
+                           [&](td::Promise<td::Unit> promise) {
+                             td::actor::send_closure(slice, &ArchiveSlice::add_file, shard_handle(seqno),
+                                                     shard_ref(seqno), td::BufferSlice(shard_payload(seqno)),
+                                                     std::move(promise));
+                           })
+      .move_as_status();
+}
+
+td::Result<std::string> get_shard_file(td::actor::Scheduler &scheduler, td::actor::ActorId<ArchiveSlice> slice,
+                                       tos::BlockSeqno seqno) {
+  auto result = request<td::BufferSlice>(scheduler, [&](td::Promise<td::BufferSlice> promise) {
+    td::actor::send_closure(slice, &ArchiveSlice::get_file, shard_handle(seqno), shard_ref(seqno), std::move(promise));
+  });
+  if (result.is_error()) {
+    return result.move_as_error();
+  }
+  return result.ok().as_slice().str();
+}
+
+td::Result<std::string> get_slice_bytes(td::actor::Scheduler &scheduler, td::actor::ActorId<ArchiveSlice> slice,
+                                        td::uint64 archive_id, td::uint32 limit) {
+  auto result = request<td::BufferSlice>(scheduler, [&](td::Promise<td::BufferSlice> promise) {
+    td::actor::send_closure(slice, &ArchiveSlice::get_slice, archive_id, 0, limit, std::move(promise));
+  });
+  if (result.is_error()) {
+    return result.move_as_error();
+  }
+  return result.ok().as_slice().str();
+}
+
+td::Result<td::uint64> get_archive_id(td::actor::Scheduler &scheduler, td::actor::ActorId<ArchiveSlice> slice,
+                                      tos::BlockSeqno masterchain_seqno, tos::ShardIdFull shard) {
+  return request<td::uint64>(scheduler, [&](td::Promise<td::uint64> promise) {
+    td::actor::send_closure(slice, &ArchiveSlice::get_archive_id, masterchain_seqno, shard, std::move(promise));
+  });
+}
+
+td::Status catch_up(td::actor::Scheduler &scheduler, td::actor::ActorId<ArchiveSlice> slice) {
+  return request<td::Unit>(scheduler,
+                           [&](td::Promise<td::Unit> promise) {
+                             td::actor::send_closure(slice, &ArchiveSlice::try_catch_up_with_primary,
+                                                     CatchUpMode::Force, std::move(promise));
+                           })
+      .move_as_status();
+}
+
+// Closes the slice's files; the slice reopens them on its next query.
+void close_files(td::actor::Scheduler &scheduler, td::actor::ActorId<ArchiveSlice> slice) {
+  scheduler.run_in_context([&] { td::actor::send_closure(slice, &ArchiveSlice::close_files); });
+  request<td::Unit>(scheduler, [&](td::Promise<td::Unit> promise) {
+    td::actor::send_lambda(slice, [promise = std::move(promise)]() mutable { promise.set_value(td::Unit()); });
+  }).ensure();
+}
+
+td::uint64 counter(const std::string &stats, const std::string &name) {
+  auto key = name + " COUNT : ";
+  auto at = stats.find(key);
+  check(at != std::string::npos, "statistics report the package counter");
+  return std::stoull(stats.substr(at + key.size()));
+}
+
+template <class T>
+void require_refusal(const td::Result<T> &result, const char *message) {
+  check(result.is_error() && result.error().message() == td::Slice(kArchivePackageNeedsRepair), message);
+}
+
+enum class Conflict { Merge, NoData };
+
+const char *conflict_name(Conflict conflict) {
+  return conflict == Conflict::Merge ? "merge" : "no-data";
+}
+
+struct Fixture {
+  std::string root;
+  std::string directory;
+  std::string path_new;
+  std::string path_legacy;
+  std::string path_later;
+  std::string new_bytes;
+};
+
+// The primary writes package 0 (masterchain), package 1 (workchain 0) and
+// package 2 (masterchain, a later range) in that order. Then the legacy name
+// of package 1 is created the way a node that rolled back across the file
+// name change leaves it: the package header, zeros up to where it resumed
+// appending, and data after that.
+Fixture make_fixture(const std::string &root, Conflict conflict) {
+  Fixture fixture;
+  fixture.root = root;
+  fixture.directory = root + kId.path();
+  std::filesystem::create_directories(fixture.directory);
+  {
+    td::actor::Scheduler scheduler({2});
+    auto slice = open_slice(scheduler, root, kId, td::DbOpenMode::db_primary);
+    check(add_file(scheduler, slice.get(), kFirstMc).is_ok(), "fixture: first masterchain package");
+    for (auto seqno : kShardBlocks) {
+      check(add_shard_file(scheduler, slice.get(), seqno).is_ok(), "fixture: workchain package");
+    }
+    check(add_file(scheduler, slice.get(), kLaterMc).is_ok(), "fixture: later masterchain package");
+    auto later = get_archive_id(scheduler, slice.get(), kLaterMc, tos::ShardIdFull{tos::masterchainId});
+    check(later.is_ok() && later.ok() == archive_id_of(2), "fixture: the later package is package 2");
+    close_slice(scheduler, slice);
+  }
+  release_handles();
+  const std::string shard_name = kId.name() + ".0_" + tos::shard_to_str(tos::shardIdAll) + ".pack";
+  const std::string legacy_name = kId.name() + ".0:" + tos::shard_to_str(tos::shardIdAll) + ".pack";
+  fixture.path_new = fixture.directory + shard_name;
+  fixture.path_legacy = fixture.directory + legacy_name;
+  const PackageId later_id{300, false, false};
+  fixture.path_later = root + later_id.path() + later_id.name() + ".pack";
+  check(std::filesystem::exists(fixture.path_new), "fixture: the workchain package uses the current name");
+  check(std::filesystem::exists(fixture.path_later), "fixture: the later package has its own file");
+  check(!std::filesystem::exists(fixture.path_legacy), "fixture: no legacy name before the conflict is made");
+  fixture.new_bytes = td::read_file_str(fixture.path_new).move_as_ok();
+
+  // The first entry: 4-byte package header, 8-byte entry header, name, data.
+  const size_t first_entry_end = tos::Package::header_size() + 8 + shard_ref(kShardBlocks[0]).filename().size() +
+                                 shard_payload(kShardBlocks[0]).size();
+  check(first_entry_end < fixture.new_bytes.size(), "fixture: the package holds two entries");
+  std::string legacy = fixture.new_bytes;
+  const size_t zero_end = conflict == Conflict::Merge ? first_entry_end : legacy.size();
+  std::fill(legacy.begin() + tos::Package::header_size(), legacy.begin() + static_cast<std::ptrdiff_t>(zero_end), '\0');
+  td::write_file(fixture.path_legacy, legacy).ensure();
+  return fixture;
+}
+
+// What the primary's repair leaves, and the primary still reads every entry.
+void primary_repairs(const Fixture &fixture, Conflict conflict, const char *stage) {
+  {
+    td::actor::Scheduler scheduler({2});
+    auto slice = open_slice(scheduler, fixture.root, kId, td::DbOpenMode::db_primary);
+    for (auto seqno : kShardBlocks) {
+      auto read = get_shard_file(scheduler, slice.get(), seqno);
+      check(read.is_ok() && read.ok() == shard_payload(seqno), "the primary reads the repaired package");
+    }
+    close_slice(scheduler, slice);
+  }
+  release_handles();
+  if (conflict == Conflict::Merge) {
+    check(!std::filesystem::exists(fixture.path_new), "the primary's merge removes the current name");
+    auto merged = td::read_file_str(fixture.path_legacy);
+    check(merged.is_ok() && merged.ok() == fixture.new_bytes, "the primary merges the data into the legacy name");
+  } else {
+    check(!std::filesystem::exists(fixture.path_legacy), "the primary removes a legacy file without data");
+    auto kept = td::read_file_str(fixture.path_new);
+    check(kept.is_ok() && kept.ok() == fixture.new_bytes, "the primary keeps the current file unchanged");
+  }
+  std::cout << "PASS: primary repairs the " << conflict_name(conflict) << " conflict (" << stage << ")" << std::endl;
+}
+
+// A reader refuses the conflicted package on every selection path, still
+// serves the packages before and after it at their own indices, and leaves
+// every file present and byte-identical without a single fsync.
+void reader_refuses(const Fixture &fixture, Conflict conflict, td::DbOpenMode mode, const Shim &shim) {
+  const auto before = snapshot(fixture.directory);
+  DbStatistics statistics;
+  statistics.init();
+  shim.reset();
+  {
+    td::actor::Scheduler scheduler({2});
+    auto slice = open_slice_with(scheduler, fixture.root, mode, statistics);
+    // The first query opens every package of the slice; the files must be
+    // untouched right after that open.
+    auto first = get_file(scheduler, slice.get(), kFirstMc);
+    check(first.is_ok() && first.ok() == payload(kFirstMc), "a reader reads the package before the refused one");
+    check(std::filesystem::exists(fixture.path_new) && std::filesystem::exists(fixture.path_legacy),
+          "opening a reader leaves both package names in place");
+    check(snapshot(fixture.directory) == before, "opening a reader leaves every package file byte-identical");
+    // The packages around the refused one keep their own indices.
+    auto first_id = get_archive_id(scheduler, slice.get(), kFirstMc, tos::ShardIdFull{tos::masterchainId});
+    check(first_id.is_ok() && first_id.ok() == archive_id_of(0), "the package before keeps archive id 0");
+
+    auto later = get_file(scheduler, slice.get(), kLaterMc);
+    check(later.is_ok() && later.ok() == payload(kLaterMc), "a reader reads the package after the refused one");
+    auto later_id = get_archive_id(scheduler, slice.get(), kLaterMc, tos::ShardIdFull{tos::masterchainId});
+    check(later_id.is_ok() && later_id.ok() == archive_id_of(2), "the package after keeps archive id 2");
+    auto later_bytes = get_slice_bytes(scheduler, slice.get(), archive_id_of(2), 1 << 16);
+    check(later_bytes.is_ok() && later_bytes.ok() == td::read_file_str(fixture.path_later).move_as_ok(),
+          "get_slice for the package after returns that package's bytes");
+
+    for (auto seqno : kShardBlocks) {
+      require_refusal(get_shard_file(scheduler, slice.get(), seqno),
+                      "a reader refuses get_file from a package that needs repair");
+    }
+    require_refusal(get_archive_id(scheduler, slice.get(), kFirstMc, tos::ShardIdFull{tos::basechainId}),
+                    "a reader refuses get_archive_id for a package that needs repair");
+    require_refusal(get_slice_bytes(scheduler, slice.get(), archive_id_of(1), 1 << 12),
+                    "a reader refuses get_slice for a package that needs repair");
+
+    close_files(scheduler, slice.get());
+    auto stats = statistics.to_string_and_reset();
+    check(counter(stats, "tos.pack.open") == 2, "a reader opens only the two readable packages");
+    check(counter(stats, "tos.pack.close") == 2, "a reader closes as many packages as it opened");
+    close_slice(scheduler, slice);
+  }
+  release_handles();
+  check(shim.count() == 0, "a reader never syncs a package that needs repair");
+  check(std::filesystem::exists(fixture.path_new) && std::filesystem::exists(fixture.path_legacy),
+        "a reader leaves both package names in place");
+  check(snapshot(fixture.directory) == before, "a reader leaves every package file byte-identical");
+  std::cout << "PASS: " << mode_name(mode) << " reader refuses the " << conflict_name(conflict)
+            << " conflict and changes nothing" << std::endl;
+}
+
+// The placeholder is not refreshed while the slice stays open, not even by a
+// forced catch-up; the same reader reads the repaired package once the slice
+// is closed and reopened.
+void reader_rechecks_on_reopen(const Fixture &fixture) {
+  {
+    td::actor::Scheduler scheduler({2});
+    auto slice = open_slice(scheduler, fixture.root, kId, td::DbOpenMode::db_secondary);
+    require_refusal(get_shard_file(scheduler, slice.get(), kShardBlocks[0]),
+                    "the reader refuses the package before it is repaired");
+
+    // The file outcome of the primary's merge (checked by primary_repairs):
+    // the merged data under the legacy name, and no current name.
+    td::write_file(fixture.path_legacy + ".repaired", fixture.new_bytes).ensure();
+    std::filesystem::rename(fixture.path_legacy + ".repaired", fixture.path_legacy);
+    std::filesystem::remove(fixture.path_new);
+
+    check(catch_up(scheduler, slice.get()).is_ok(), "the reader catches up with the primary");
+    require_refusal(get_shard_file(scheduler, slice.get(), kShardBlocks[0]),
+                    "an open reader keeps refusing after the files are repaired");
+
+    close_files(scheduler, slice.get());
+    for (auto seqno : kShardBlocks) {
+      auto read = get_shard_file(scheduler, slice.get(), seqno);
+      check(read.is_ok() && read.ok() == shard_payload(seqno), "the reopened reader reads the repaired package");
+    }
+    auto id = get_archive_id(scheduler, slice.get(), kFirstMc, tos::ShardIdFull{tos::basechainId});
+    check(id.is_ok() && id.ok() == archive_id_of(1), "the repaired package keeps archive id 1");
+    close_slice(scheduler, slice);
+  }
+  release_handles();
+  std::cout << "PASS: a reader re-checks a refused package only when the slice is reopened" << std::endl;
+}
+
+}  // namespace reader_repair
+
+void reader_package_repair(const std::string &root) {
+  using namespace reader_repair;
+  auto shim = load_shim();
+  for (auto conflict : {Conflict::Merge, Conflict::NoData}) {
+    // Primary control on its own fixture first: the primary's repair is the
+    // same with and without the reader refusal.
+    auto control = make_fixture(PSTRING() << root << "/" << conflict_name(conflict) << "-primary", conflict);
+    primary_repairs(control, conflict, "no reader first");
+
+    auto fixture = make_fixture(PSTRING() << root << "/" << conflict_name(conflict) << "-readers", conflict);
+    check(setenv("TOS_FSYNC_COUNT_PREFIX", fixture.directory.c_str(), 1) == 0, "scope the fsync count");
+    for (auto mode : {td::DbOpenMode::db_secondary, td::DbOpenMode::db_readonly}) {
+      reader_refuses(fixture, conflict, mode, shim);
+    }
+    check(unsetenv("TOS_FSYNC_COUNT_PREFIX") == 0, "unscope the fsync count");
+    primary_repairs(fixture, conflict, "after the readers");
+  }
+  reader_rechecks_on_reopen(make_fixture(root + "/reopen", Conflict::Merge));
+  std::cout << "PASS: readers refuse packages that need repair and change no file; the primary still repairs"
+            << std::endl;
+}
+
+// A reader (secondary or read-only) writes nothing into the node's tree: not
+// the initial layout of a slice index, not the archive directories, not the
+// statistics file, and nothing through the archive manager's writes.
+namespace reader_guards {
+
+using namespace reader_sync;
+
+const PackageId kSliced{400, false, false};
+const PackageId kTemp{3600, false, true};
+constexpr td::uint32 kSplitDepth = 2;  // not the default, so a stale layout picks the wrong package
+constexpr tos::BlockSeqno kMc = 401;
+constexpr tos::BlockSeqno kShard = 7;
+
+template <class ActorT>
+void barrier(td::actor::Scheduler &scheduler, td::actor::ActorId<ActorT> actor) {
+  request<td::Unit>(scheduler, [&](td::Promise<td::Unit> promise) {
+    td::actor::send_lambda(actor, [promise = std::move(promise)]() mutable { promise.set_value(td::Unit()); });
+  }).ensure();
+}
+
+void require_read_only(const td::Status &status, const char *message) {
+  check(status.is_error() && status.message() == td::Slice(kArchiveReadOnly), message);
+}
+
+template <class T>
+void require_not_ready(const td::Result<T> &result, const char *message) {
+  check(result.is_error() && result.error().code() == tos::ErrorCode::notready, message);
+}
+
+std::string index_path(const std::string &root, PackageId id) {
+  return root + id.path() + id.name() + ".index";
+}
+
+// An index that exists but has no keys yet: what a primary leaves when it
+// stops between opening a new slice index and committing its layout.
+void make_empty_index(const std::string &root, PackageId id) {
+  std::filesystem::create_directories(root + id.path());
+  auto db = td::RocksDb::open(index_path(root, id)).move_as_ok();
+}
+
+bool index_has_status(const std::string &root, PackageId id) {
+  auto db = td::RocksDbReadOnly::open(index_path(root, id)).move_as_ok();
+  std::string value;
+  return db.get("status", value).move_as_ok() == td::KeyValue::GetStatus::Ok;
+}
+
+td::actor::ActorOwn<ArchiveSlice> open_slice_at(td::actor::Scheduler &scheduler, const std::string &root, PackageId id,
+                                                td::DbOpenMode mode, td::uint32 split_depth,
+                                                DbStatistics statistics = {}) {
+  td::actor::ActorOwn<ArchiveSlice> slice;
+  scheduler.run_in_context([&] {
+    slice = td::actor::create_actor<ArchiveSlice>("reader-guards", id.id, id.key, id.temp, false, split_depth, root,
+                                                  td::actor::ActorId<ArchiveLru>{}, statistics, mode);
+  });
+  return slice;
+}
+
+BlockHandle mc_handle(tos::BlockSeqno seqno) {
+  return reader_sync::handle(seqno);
+}
+
+BlockHandle shard_handle(tos::BlockSeqno seqno) {
+  auto result = BlockHandleImpl::create_empty(reader_repair::shard_block_id(seqno));
+  result->set_logical_time(300000 + seqno);
+  result->set_unix_time(300000 + seqno);
+  result->set_masterchain_ref_block(kMc);
+  handles().push_back(result);
+  return result;
+}
+
+FileReference shard_ref(tos::BlockSeqno seqno) {
+  return FileReference(fileref::Block{reader_repair::shard_block_id(seqno)});
+}
+
+td::Status put(td::actor::Scheduler &scheduler, td::actor::ActorId<ArchiveSlice> slice, BlockHandle block,
+               FileReference file, std::string data) {
+  return request<td::Unit>(scheduler,
+                           [&](td::Promise<td::Unit> promise) {
+                             td::actor::send_closure(slice, &ArchiveSlice::add_file, std::move(block), std::move(file),
+                                                     td::BufferSlice(data), std::move(promise));
+                           })
+      .move_as_status();
+}
+
+td::Result<std::string> fetch(td::actor::Scheduler &scheduler, td::actor::ActorId<ArchiveSlice> slice,
+                              ConstBlockHandle block, FileReference file) {
+  auto result = request<td::BufferSlice>(scheduler, [&](td::Promise<td::BufferSlice> promise) {
+    td::actor::send_closure(slice, &ArchiveSlice::get_file, std::move(block), std::move(file), std::move(promise));
+  });
+  if (result.is_error()) {
+    return result.move_as_error();
+  }
+  return result.ok().as_slice().str();
+}
+
+td::Result<std::map<tos::ShardIdFull, tos::BlockSeqno>> temp_max_seqnos(td::actor::Scheduler &scheduler,
+                                                                        td::actor::ActorId<ArchiveSlice> slice) {
+  return request<std::map<tos::ShardIdFull, tos::BlockSeqno>>(scheduler, [&](auto promise) {
+    td::actor::send_closure(slice, &ArchiveSlice::get_temp_max_seqnos, std::move(promise));
+  });
+}
+
+td::uint64 sliced_archive_id(td::uint32 package_index) {
+  return (static_cast<td::uint64>(package_index) << 32) + kSliced.id;
+}
+
+// The primary's writes into a slice whose index it finds empty: it lays out
+// a shard-separated index with kSplitDepth, then a masterchain package and a
+// workchain package.
+void primary_fills_sliced(td::actor::Scheduler &scheduler, const std::string &root) {
+  auto primary = open_slice_at(scheduler, root, kSliced, td::DbOpenMode::db_primary, kSplitDepth);
+  check(put(scheduler, primary.get(), mc_handle(kMc), ref(kMc), payload(kMc)).is_ok(), "primary: masterchain file");
+  check(put(scheduler, primary.get(), shard_handle(kShard), shard_ref(kShard), payload(kShard)).is_ok(),
+        "primary: workchain file");
+  close_slice(scheduler, primary);
+}
+
+// A sliced reader that read the primary's layout reads both packages, with the
+// workchain one at its own shard-separated archive id.
+void reads_sliced_layout(td::actor::Scheduler &scheduler, td::actor::ActorId<ArchiveSlice> reader, const char *who) {
+  auto mc = fetch(scheduler, reader, mc_handle(kMc), ref(kMc));
+  check(mc.is_ok() && mc.ok() == payload(kMc), who);
+  auto shard = fetch(scheduler, reader, shard_handle(kShard), shard_ref(kShard));
+  check(shard.is_ok() && shard.ok() == payload(kShard), who);
+  auto id = reader_repair::get_archive_id(scheduler, reader, kMc, tos::ShardIdFull{tos::basechainId});
+  check(id.is_ok() && id.ok() == sliced_archive_id(1), "the workchain package has shard-separated archive id 1");
+  auto writers = request<std::pair<size_t, size_t>>(scheduler, [&](auto promise) {
+                   ArchivePruneTestAccess::package_writers(reader, std::move(promise));
+                 }).move_as_ok();
+  check(writers.first == 2 && writers.second == 0, "the reader holds the two packages once, without writers");
+}
+
+// Every query on a slice whose index has no layout answers not ready.
+void not_ready(td::actor::Scheduler &scheduler, td::actor::ActorId<ArchiveSlice> reader) {
+  require_not_ready(fetch(scheduler, reader, mc_handle(kMc), ref(kMc)), "get_file is not ready without a layout");
+  require_not_ready(reader_repair::get_archive_id(scheduler, reader, kMc, tos::ShardIdFull{tos::masterchainId}),
+                    "get_archive_id is not ready without a layout");
+  require_not_ready(reader_repair::get_slice_bytes(scheduler, reader, sliced_archive_id(0), 1 << 12),
+                    "get_slice is not ready without a layout");
+  require_not_ready(reader_repair::get_slice_bytes(scheduler, reader, kSliced.id, 1 << 12),
+                    "get_slice of package 0 is not ready without a layout");
+}
+
+void secondary_missing_layout(const std::string &root) {
+  make_empty_index(root, kSliced);
+  const auto directory = root + kSliced.path();
+  const auto before = snapshot(directory);
+  DbStatistics statistics;
+  statistics.init();
+  {
+    td::actor::Scheduler scheduler({2});
+    auto reader = open_slice_at(scheduler, root, kSliced, td::DbOpenMode::db_secondary, 0, statistics);
+    not_ready(scheduler, reader.get());
+    check(!index_has_status(root, kSliced), "a secondary does not write the layout of an empty index");
+    check(snapshot(directory) == before, "a secondary leaves an empty index unchanged");
+    check(reader_repair::catch_up(scheduler, reader.get()).is_ok(), "catch-up with no layout yet");
+    not_ready(scheduler, reader.get());
+
+    primary_fills_sliced(scheduler, root);
+    for (int round = 0; round < 3; ++round) {
+      check(reader_repair::catch_up(scheduler, reader.get()).is_ok(), "the secondary catches up with the primary");
+      reads_sliced_layout(scheduler, reader.get(), "the secondary reads the layout after it catches up");
+    }
+    reader_repair::close_files(scheduler, reader.get());
+    auto stats = statistics.to_string_and_reset();
+    check(reader_repair::counter(stats, "tos.pack.open") == 2, "repeated catch-up opens each package once");
+    check(reader_repair::counter(stats, "tos.pack.close") == 2, "the reader closes as many packages as it opened");
+    close_slice(scheduler, reader);
+  }
+  release_handles();
+  std::cout << "PASS: secondary reads nothing and writes nothing until the layout exists, then reads it" << std::endl;
+}
+
+void secondary_missing_layout_temp(const std::string &root) {
+  make_empty_index(root, kTemp);
+  const auto directory = root + kTemp.path();
+  const auto before = snapshot(directory);
+  {
+    td::actor::Scheduler scheduler({2});
+    auto reader = open_slice_at(scheduler, root, kTemp, td::DbOpenMode::db_secondary, 0);
+    require_not_ready(fetch(scheduler, reader.get(), nullptr, ref(kMc)), "a temporary get_file is not ready");
+    require_not_ready(reader_repair::get_archive_id(scheduler, reader.get(), kMc, tos::ShardIdFull{tos::masterchainId}),
+                      "a temporary get_archive_id is not ready");
+    auto empty_max = temp_max_seqnos(scheduler, reader.get());
+    check(empty_max.is_ok() && empty_max.ok().empty(), "a temporary reader without a layout knows no blocks");
+    check(!index_has_status(root, kTemp), "a secondary does not write the layout of an empty temporary index");
+    check(snapshot(directory) == before, "a secondary leaves an empty temporary index unchanged");
+
+    auto primary = open_slice_at(scheduler, root, kTemp, td::DbOpenMode::db_primary, 0);
+    check(put(scheduler, primary.get(), nullptr, ref(kMc), payload(kMc)).is_ok(), "primary: temporary file");
+    close_slice(scheduler, primary);
+    for (int round = 0; round < 3; ++round) {
+      check(reader_repair::catch_up(scheduler, reader.get()).is_ok(), "the secondary catches up with the primary");
+      auto read = fetch(scheduler, reader.get(), nullptr, ref(kMc));
+      check(read.is_ok() && read.ok() == payload(kMc), "the secondary reads the unsliced layout after catch-up");
+      auto writers = request<std::pair<size_t, size_t>>(scheduler, [&](auto promise) {
+                       ArchivePruneTestAccess::package_writers(reader.get(), std::move(promise));
+                     }).move_as_ok();
+      check(writers.first == 1, "the temporary reader holds its one package once");
+      auto max = temp_max_seqnos(scheduler, reader.get());
+      check(max.is_ok() && max.ok().size() == 1 && max.ok().begin()->second == kMc,
+            "the temporary reader's block heights come from the layout read after catch-up");
+    }
+    close_slice(scheduler, reader);
+  }
+  release_handles();
+  std::cout << "PASS: secondary reads an unsliced layout once it exists" << std::endl;
+}
+
+void readonly_missing_layout(const std::string &root) {
+  make_empty_index(root, kSliced);
+  const auto directory = root + kSliced.path();
+  const auto before = snapshot(directory);
+  {
+    td::actor::Scheduler scheduler({2});
+    auto reader = open_slice_at(scheduler, root, kSliced, td::DbOpenMode::db_readonly, 0);
+    not_ready(scheduler, reader.get());
+    check(!index_has_status(root, kSliced), "a read-only reader does not write the layout of an empty index");
+    check(snapshot(directory) == before, "a read-only reader leaves an empty index unchanged");
+
+    primary_fills_sliced(scheduler, root);
+    reader_repair::close_files(scheduler, reader.get());
+    reads_sliced_layout(scheduler, reader.get(), "the read-only reader reads the layout after it reopens");
+    close_slice(scheduler, reader);
+  }
+  release_handles();
+  std::cout << "PASS: read-only reader reads nothing and writes nothing until it reopens on a layout" << std::endl;
+}
+
+td::Ref<ValidatorManagerOptions> manager_options(bool stats) {
+  auto opts = ValidatorManagerOptions::create(block_id(0), block_id(0));
+  opts.write().set_disable_rocksdb_stats(!stats);
+  return opts;
+}
+
+// Starts a manager on `root`, waits for its start-up, runs `body`, then tears
+// it down with its scheduler.
+template <class Body>
+void with_manager(const std::string &root, td::Ref<ValidatorManagerOptions> opts, td::DbOpenMode mode, Body body) {
+  {
+    td::actor::Scheduler scheduler({2});
+    td::actor::ActorOwn<ArchiveManager> manager;
+    scheduler.run_in_context([&] {
+      manager =
+          td::actor::create_actor<ArchiveManager>("reader-guards", td::actor::ActorId<RootDb>{}, root, opts, mode);
+    });
+    barrier(scheduler, manager.get());
+    body(scheduler, manager.get());
+    scheduler.run_in_context([&] { manager.reset(); });
+  }
+  release_handles();
+}
+
+void reader_creates_no_directories(const std::string &root) {
+  auto opts = manager_options(false);
+  with_manager(root, opts, td::DbOpenMode::db_primary, [](auto &, auto) {});
+  for (const char *empty : {"/archive/tmp/", "/files/packages/"}) {
+    check(std::filesystem::remove(root + empty), "the primary created the directory");
+  }
+  const auto before = snapshot(root);
+  for (auto mode : {td::DbOpenMode::db_secondary, td::DbOpenMode::db_readonly}) {
+    with_manager(root, opts, mode, [](auto &, auto) {});
+    check(!std::filesystem::exists(root + "/archive/tmp/"), "a reader does not create archive/tmp");
+    check(!std::filesystem::exists(root + "/files/packages/"), "a reader does not create files/packages");
+    check(snapshot(root) == before, "a reader leaves the tree unchanged");
+  }
+  std::cout << "PASS: a reader manager creates no directories" << std::endl;
+}
+
+void reader_statistics_file(const std::string &root) {
+  const auto working = root + "-secondary-work";
+  std::filesystem::create_directories(working);
+  auto opts = manager_options(true);
+  opts.write().set_secondary_working_dir(td::optional<std::string>(working));
+  const auto node_stats = root + "/db_stats.txt";
+  const auto alarm = [](auto &scheduler, auto manager) {
+    request<td::Unit>(scheduler, [&](td::Promise<td::Unit> promise) {
+      ArchivePruneTestAccess::run_alarm(manager, std::move(promise));
+    }).ensure();
+  };
+  // The primary stores one file, so that a reader has a package to read.
+  with_manager(root, opts, td::DbOpenMode::db_primary, [](auto &scheduler, auto manager) {
+    check(call(scheduler,
+               [&](auto promise) {
+                 td::actor::send_closure(manager, &ArchiveManager::add_file, mc_handle(1), ref(1),
+                                         td::BufferSlice("statistics"), std::move(promise));
+               })
+              .is_ok(),
+          "primary: a file to read");
+  });
+  check(!std::filesystem::exists(node_stats), "no statistics file before an alarm");
+  // A read-only reader writes no statistics file, but its alarm still drains
+  // the samples its package reads record; otherwise they grow without bound.
+  with_manager(root, opts, td::DbOpenMode::db_readonly, [&](auto &scheduler, auto manager) {
+    auto read = request<td::BufferSlice>(scheduler, [&](td::Promise<td::BufferSlice> promise) {
+      td::actor::send_closure(manager, &ArchiveManager::get_file, mc_handle(1), ref(1), std::move(promise));
+    });
+    check(read.is_ok() && read.ok().as_slice() == "statistics", "the read-only reader reads the primary's file");
+    const auto samples = [&] {
+      return request<std::pair<size_t, bool>>(
+                 scheduler, [&](auto promise) { ArchivePruneTestAccess::package_samples(manager, std::move(promise)); })
+          .move_as_ok();
+    };
+    check(samples().first > 0, "the read recorded a timing sample");
+    alarm(scheduler, manager);
+    auto after = samples();
+    check(after.first == 0, "a read-only reader's alarm drains the timing samples");
+    check(after.second, "a read-only reader's alarm stays armed");
+  });
+  check(!std::filesystem::exists(node_stats), "a read-only reader writes no statistics into the node's tree");
+  with_manager(root, opts, td::DbOpenMode::db_secondary, alarm);
+  check(std::filesystem::exists(working + "/db_stats.txt"), "a secondary writes statistics into its working dir");
+  check(!std::filesystem::exists(node_stats), "a secondary writes no statistics into the node's tree");
+  with_manager(root, opts, td::DbOpenMode::db_primary, alarm);
+  check(std::filesystem::exists(node_stats), "the primary writes its statistics into its tree");
+  std::cout << "PASS: only the primary writes statistics into the node's tree" << std::endl;
+}
+
+template <class Dispatch>
+td::Status call(td::actor::Scheduler &scheduler, Dispatch dispatch) {
+  return request<td::Unit>(scheduler, dispatch).move_as_status();
+}
+
+void reader_manager_refuses_writes(const std::string &root) {
+  auto opts = manager_options(false);
+  const PackageId archived{0, false, false};
+  // The primary stores block 1 in package 0 and its temporary copy.
+  with_manager(root, opts, td::DbOpenMode::db_primary, [](auto &scheduler, auto manager) {
+    auto block = mc_handle(1);
+    check(call(scheduler,
+               [&](auto promise) {
+                 td::actor::send_closure(manager, &ArchiveManager::update_handle, block, std::move(promise));
+               })
+              .is_ok(),
+          "primary: temporary handle");
+    check(call(scheduler,
+               [&](auto promise) {
+                 td::actor::send_closure(manager, &ArchiveManager::add_handle, block, std::move(promise));
+               })
+              .is_ok(),
+          "primary: archived handle");
+  });
+  const auto before = snapshot(root);
+  const auto noop_writer = [](td::FileFd &) { return td::Status::OK(); };
+  const PersistentStateType unsplit{UnsplitStateType{}};
+  for (auto mode : {td::DbOpenMode::db_secondary, td::DbOpenMode::db_readonly}) {
+    with_manager(root, opts, mode, [&](auto &scheduler, auto manager) {
+      auto live = request<bool>(scheduler, [&](auto promise) {
+                    ArchivePruneTestAccess::package_live(manager, archived, std::move(promise));
+                  }).move_as_ok();
+      check(live, "the reader loaded the primary's package");
+
+      require_read_only(call(scheduler,
+                             [&](auto promise) {
+                               td::actor::send_closure(manager, &ArchiveManager::add_zero_state, block_id(0),
+                                                       td::BufferSlice("zero"), std::move(promise));
+                             }),
+                        "a reader refuses add_zero_state");
+      require_read_only(call(scheduler,
+                             [&](auto promise) {
+                               td::actor::send_closure(manager, &ArchiveManager::add_zero_state_gen, block_id(0),
+                                                       noop_writer, std::move(promise));
+                             }),
+                        "a reader refuses add_zero_state_gen");
+      require_read_only(call(scheduler,
+                             [&](auto promise) {
+                               td::actor::send_closure(manager, &ArchiveManager::add_persistent_state, block_id(1),
+                                                       block_id(1), unsplit, td::BufferSlice("state"),
+                                                       std::move(promise));
+                             }),
+                        "a reader refuses add_persistent_state");
+      require_read_only(call(scheduler,
+                             [&](auto promise) {
+                               td::actor::send_closure(manager, &ArchiveManager::add_persistent_state_gen, block_id(1),
+                                                       block_id(1), unsplit, noop_writer, std::move(promise));
+                             }),
+                        "a reader refuses add_persistent_state_gen");
+
+      // add_handle into the existing package 0, then into a package that
+      // does not exist yet.
+      for (tos::BlockSeqno seqno : {2U, 40001U}) {
+        require_read_only(call(scheduler,
+                               [&](auto promise) {
+                                 td::actor::send_closure(manager, &ArchiveManager::add_handle, mc_handle(seqno),
+                                                         std::move(promise));
+                               }),
+                          "a reader refuses add_handle");
+      }
+      // update_handle of an archived handle that needs a flush, then of a
+      // temporary one.
+      auto moved = mc_handle(3);
+      moved->set_handle_moved_to_archive();
+      require_read_only(call(scheduler,
+                             [&](auto promise) {
+                               td::actor::send_closure(manager, &ArchiveManager::update_handle, moved,
+                                                       std::move(promise));
+                             }),
+                        "a reader refuses update_handle of an archived handle");
+      require_read_only(call(scheduler,
+                             [&](auto promise) {
+                               td::actor::send_closure(manager, &ArchiveManager::update_handle, mc_handle(4),
+                                                       std::move(promise));
+                             }),
+                        "a reader refuses update_handle of a temporary handle");
+
+      // add_file on the temporary path, then on the archived path into the
+      // existing package 0 and into a package that does not exist yet.
+      require_read_only(call(scheduler,
+                             [&](auto promise) {
+                               td::actor::send_closure(manager, &ArchiveManager::add_file, mc_handle(5), ref(5),
+                                                       td::BufferSlice(payload(5)), std::move(promise));
+                             }),
+                        "a reader refuses add_file on the temporary path");
+      for (tos::BlockSeqno seqno : {6U, 40002U}) {
+        auto archived_block = mc_handle(seqno);
+        archived_block->set_handle_moved_to_archive();
+        require_read_only(call(scheduler,
+                               [&](auto promise) {
+                                 td::actor::send_closure(manager, &ArchiveManager::add_file, archived_block, ref(seqno),
+                                                         td::BufferSlice(payload(seqno)), std::move(promise));
+                               }),
+                          "a reader refuses add_file on the archived path");
+      }
+      require_read_only(call(scheduler,
+                             [&](auto promise) {
+                               td::actor::send_closure(manager, &ArchiveManager::add_key_block_proof, 1U, 1U, 1U,
+                                                       FileReference(fileref::Proof{block_id(1)}),
+                                                       td::BufferSlice("proof"), std::move(promise));
+                             }),
+                        "a reader refuses add_key_block_proof");
+      require_read_only(call(scheduler,
+                             [&](auto promise) {
+                               td::actor::send_closure(manager, &ArchiveManager::add_temp_file_short, ref(7),
+                                                       td::BufferSlice(payload(7)), std::move(promise));
+                             }),
+                        "a reader refuses add_temp_file_short");
+      require_read_only(call(scheduler,
+                             [&](auto promise) {
+                               std::vector<std::pair<FileReference, td::BufferSlice>> files;
+                               files.emplace_back(ref(8), td::BufferSlice(payload(8)));
+                               td::connect(std::move(promise),
+                                           td::actor::ask(manager, &ArchiveManager::move_block_to_archive,
+                                                          mc_handle(40008), std::move(files)));
+                             }),
+                        "a reader refuses move_block_to_archive");
+
+      // Package deletion, then the deletion record on its own (last: it
+      // marks the package deleted in this reader's map).
+      require_read_only(call(scheduler,
+                             [&](auto promise) {
+                               ArchivePruneTestAccess::prune_package(manager, archived, false, std::move(promise));
+                             }),
+                        "a reader refuses delete_package");
+      live = request<bool>(scheduler, [&](auto promise) {
+               ArchivePruneTestAccess::package_live(manager, archived, std::move(promise));
+             }).move_as_ok();
+      check(live, "a refused delete_package leaves the package live");
+      require_read_only(call(scheduler,
+                             [&](auto promise) {
+                               ArchivePruneTestAccess::prune_package(manager, archived, true, std::move(promise));
+                             }),
+                        "a reader refuses deleted_package");
+    });
+    check(snapshot(root) == before, "a reader leaves the states, temporary files and index unchanged");
+    std::cout << "PASS: " << mode_name(mode) << " manager refuses every write" << std::endl;
+  }
+  // Primary control: the same zero-state write lands in the node's tree.
+  const auto zero_state = root + "/archive/states/" + FileReference{fileref::ZeroState{block_id(0)}}.filename_short();
+  check(!std::filesystem::exists(zero_state), "no zero state before the primary control");
+  with_manager(root, opts, td::DbOpenMode::db_primary, [](auto &scheduler, auto manager) {
+    check(call(scheduler,
+               [&](auto promise) {
+                 td::actor::send_closure(manager, &ArchiveManager::add_zero_state, block_id(0), td::BufferSlice("zero"),
+                                         std::move(promise));
+               })
+              .is_ok(),
+          "the primary stores a zero state");
+  });
+  check(std::filesystem::exists(zero_state), "the primary's zero state is in its tree");
+  std::cout << "PASS: the primary still stores states" << std::endl;
+}
+
+}  // namespace reader_guards
+
+void reader_write_guards(const std::string &root) {
+  using namespace reader_guards;
+  secondary_missing_layout(root + "/secondary-layout");
+  secondary_missing_layout_temp(root + "/secondary-layout-temp");
+  readonly_missing_layout(root + "/readonly-layout");
+  reader_creates_no_directories(root + "/directories");
+  reader_statistics_file(root + "/statistics");
+  reader_manager_refuses_writes(root + "/manager-writes");
+  std::cout << "PASS: readers write nothing into the node's tree" << std::endl;
 }
 
 int main(int argc, char **argv) {
@@ -654,6 +1506,16 @@ int main(int argc, char **argv) {
   }
   if (argc == 2 && std::string(argv[1]) == "--reader-package-sync") {
     reader_package_sync(root + "/reader-package-sync");
+    td::rmrf(root).ensure();
+    return 0;
+  }
+  if (argc == 2 && std::string(argv[1]) == "--reader-package-repair") {
+    reader_package_repair(root + "/reader-package-repair");
+    td::rmrf(root).ensure();
+    return 0;
+  }
+  if (argc == 2 && std::string(argv[1]) == "--reader-write-guards") {
+    reader_write_guards(root + "/reader-write-guards");
     td::rmrf(root).ensure();
     return 0;
   }

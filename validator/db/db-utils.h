@@ -25,6 +25,9 @@ class PercentileStats {
   void insert(double value);
   std::string to_string() const;
   void clear();
+  size_t size() const {
+    return values_.size();
+  }
 
  private:
   std::multiset<double> values_;

@@ -1016,6 +1016,14 @@ target_include_directories(test-wallet-index-apply PRIVATE ${CMAKE_CURRENT_SOURC
 target_link_libraries(test-wallet-index-apply PRIVATE validator-disk validator-common validator-db
                       tos_validator smc-envelope tos_db tos_crypto tddb tdutils tdactor adnl overlay tl_api dht)
 
+# The standalone wallet index's source pipeline and replay loop over a fixture source.
+add_executable(test-wallet-index-source test/test-td-main.cpp test/test-wallet-index-source.cpp
+  services/index-source.cpp services/index-reader.cpp services/index-prefetch.cpp services/index-progress.cpp)
+target_include_directories(test-wallet-index-source PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto ${CMAKE_CURRENT_SOURCE_DIR}/test)
+target_link_libraries(test-wallet-index-source PRIVATE tos-service-common validator-disk validator-common validator-db
+                      tos_validator smc-envelope tos_db tos_crypto tddb tdutils tdactor adnl overlay tl_api dht)
+
 add_executable(test-control-getter-transport test/validator/control-getter-transport-test.cpp)
 target_include_directories(test-control-getter-transport PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/crypto ${CMAKE_CURRENT_BINARY_DIR}/crypto)
 target_link_libraries(test-control-getter-transport PRIVATE control-getter fift-lib adnl keyring dht tl_lite_api tl-lite-utils)
@@ -1926,6 +1934,15 @@ set_tests_properties(full-node-master-startup PROPERTIES LABELS "security-findin
 add_test(NAME validator-consensus-cleanup-flags
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/validator-consensus-cleanup-flags-test.py
           $<TARGET_FILE:validator-engine>)
+add_test(NAME wallet-quantum-review-sources
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-wallet-quantum-review-sources.py)
+set_tests_properties(wallet-quantum-review-sources PROPERTIES LABELS "source-guard")
+add_test(NAME wallet-quantum-review-sources-self-test
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-wallet-quantum-review-sources.py --self-test)
+set_tests_properties(wallet-quantum-review-sources-self-test PROPERTIES LABELS "source-guard")
+add_test(NAME varuint-codec-contract
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/executor-parity/test_varuint_codec.py)
+set_tests_properties(varuint-codec-contract PROPERTIES LABELS "source-guard")
 add_test(NAME branch-chain-python-ci-source
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-branch-chain-python-ci.py)
 set_tests_properties(branch-chain-python-ci-source PROPERTIES LABELS "source-guard")
@@ -1993,6 +2010,14 @@ set_tests_properties(workflow-supply-chain-source PROPERTIES LABELS "source-guar
 add_test(NAME workflow-supply-chain-self-test
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-workflow-supply-chain.py --self-test)
 set_tests_properties(workflow-supply-chain-self-test PROPERTIES LABELS "source-guard")
+# Security-remediation mutation runner: every anchor in its table applies exactly
+# as reviewed, and the runners report a crashing mutant as a red test.
+add_test(NAME security-remediation-mutation-anchors
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-security-remediation-mutations.py --check-anchors)
+set_tests_properties(security-remediation-mutation-anchors PROPERTIES LABELS "source-guard")
+add_test(NAME security-remediation-tooling-self-test
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-security-remediation-tooling.py)
+set_tests_properties(security-remediation-tooling-self-test PROPERTIES LABELS "source-guard")
 add_test(NAME release-artifacts-binding
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_release_artifacts.py)
 set_tests_properties(release-artifacts-binding PROPERTIES LABELS "source-guard")
@@ -2232,11 +2257,13 @@ tos_test(test-consensus-config-admission)
 tos_test(test-weak-ptr-registry)
 tos_test(test-wallet-index)
 tos_test(test-wallet-index-apply)
+tos_test(test-wallet-index-source)
 # Keep the security fixes exercised before merge, not only by main's full
 # CTest pass. The branch workflow also verifies this inventory is complete.
 set_tests_properties(
   test-wallet-index
   test-wallet-index-apply
+  test-wallet-index-source
   test-candidate-data-cache
   test-shard-block-confirmations
   test-adnl-ext-input-budget
@@ -2439,8 +2466,10 @@ if (NOT TOS_ONLY_TOSLIB AND NOT USE_EMSCRIPTEN AND NOT EMSCRIPTEN)
     add_dependencies(test-archive-prune test-fsync-count-shim)
     target_link_libraries(test-archive-prune PRIVATE ${CMAKE_DL_LIBS})
     add_test(NAME archive-reader-no-package-sync COMMAND test-archive-prune --reader-package-sync)
-    set_tests_properties(archive-reader-no-package-sync PROPERTIES TIMEOUT 90
-      ENVIRONMENT "LD_PRELOAD=$<TARGET_FILE:test-fsync-count-shim>")
+    add_test(NAME archive-reader-no-package-repair COMMAND test-archive-prune --reader-package-repair)
+    add_test(NAME archive-reader-no-node-writes COMMAND test-archive-prune --reader-write-guards)
+    set_tests_properties(archive-reader-no-package-sync archive-reader-no-package-repair archive-reader-no-node-writes
+      PROPERTIES TIMEOUT 90 ENVIRONMENT "LD_PRELOAD=$<TARGET_FILE:test-fsync-count-shim>")
   endif()
 endif()
 

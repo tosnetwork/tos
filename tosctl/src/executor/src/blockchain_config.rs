@@ -62,15 +62,21 @@ pub struct AccStoragePrices {
 
 impl Default for AccStoragePrices {
     fn default() -> Self {
-        AccStoragePrices {
-            prices: vec![StoragePrices {
-                utime_since: 0,
-                bit_price_ps: 1,
-                cell_price_ps: 500,
-                mc_bit_price_ps: 1000,
-                mc_cell_price_ps: 500000,
-            }],
-        }
+        AccStoragePrices { prices: vec![genesis_storage_prices()] }
+    }
+}
+
+/// The single ConfigParam 18 entry crypto/smartcont/gen-zerostate.fif writes:
+/// effective since 0, cell-only basechain rent, masterchain rent unchanged.
+/// Contracts read it through GETSTORAGEFEE and the storage phase charges it,
+/// so a sandbox on any other table measures reserves on a chain nobody runs.
+fn genesis_storage_prices() -> StoragePrices {
+    StoragePrices {
+        utime_since: 0,
+        bit_price_ps: 0,
+        cell_price_ps: 135,
+        mc_bit_price_ps: 1000,
+        mc_cell_price_ps: 500000,
     }
 }
 
@@ -116,7 +122,7 @@ impl DefaultConfig for GasLimitsPrices {
     }
 
     fn default_wc() -> Self {
-        let mut prices = GasLimitsPrices {
+        GasLimitsPrices {
             // ConfigParam 21 mirrors the basechain deployment zero state.
             gas_price: 436907,
             flat_gas_limit: 100,
@@ -127,12 +133,9 @@ impl DefaultConfig for GasLimitsPrices {
             block_gas_limit: 20000000,
             freeze_due_limit: 100000000,
             delete_due_limit: 1000000000,
-            max_gas_threshold: 0,
-        };
-        // Keep the cached execution threshold consistent with decoding the
-        // serialized gas table. Choosing this profile does not change credit.
-        prices.max_gas_threshold = prices.calc_max_gas_threshold(prices.gas_limit);
-        prices
+            // Ceiling threshold of these fixed deployment parameters.
+            max_gas_threshold: 13333344,
+        }
     }
 }
 
@@ -215,13 +218,7 @@ impl BlockchainConfig {
         // opcodes resolve to real, non-zero fees. (Kept minimal on purpose -- no workchain
         // descriptors etc. -- so existing sandbox behaviour is otherwise unchanged.)
         let mut storage = ConfigParam18::default();
-        let _ = storage.insert(&StoragePrices {
-            utime_since: 0,
-            bit_price_ps: 1,
-            cell_price_ps: 500,
-            mc_bit_price_ps: 1000,
-            mc_cell_price_ps: 500000,
-        });
+        let _ = storage.insert(&genesis_storage_prices());
         let _ = config.set_config(ConfigParamEnum::ConfigParam18(storage));
         // GLOBALID reads ConfigParam 19 from c7[14]. Keep the emulator's raw
         // configuration consistent with the sandbox masterchain state, whose
@@ -290,8 +287,8 @@ impl BlockchainConfig {
     }
 
     /// Calculate gas fee for account
-    pub fn calc_gas_fee(&self, gas_used: u64, address: &MsgAddressInt) -> u128 {
-        self.get_gas_config(address.is_masterchain()).calc_gas_fee(gas_used)
+    pub fn calc_gas_fee(&self, gas_used: u64, address: &MsgAddressInt) -> Result<u128> {
+        Ok(u128::try_from(self.get_gas_config(address.is_masterchain()).calc_gas_fee(gas_used)?)?)
     }
 
     /// Get `GasLimitsPrices` for account gas fee calculation
@@ -398,6 +395,16 @@ mod deployment_price_tests {
     use super::*;
 
     #[test]
+    fn default_basechain_threshold_matches_its_serialized_parameters() -> Result<()> {
+        use chain_block::{Deserializable, Serializable};
+        let gas = GasLimitsPrices::default_wc();
+        assert_eq!(gas.max_gas_threshold, gas.calc_max_gas_threshold(gas.gas_limit)?);
+        let decoded = GasLimitsPrices::construct_from_cell(gas.serialize()?)?;
+        assert_eq!(gas, decoded);
+        Ok(())
+    }
+
+    #[test]
     fn default_masterchain_prices_match_serialized_deployment_limits() -> Result<()> {
         let gas = GasLimitsPrices::default_mc();
         assert_eq!((gas.gas_price, gas.flat_gas_price), (32_768_000, 50_000));
@@ -407,7 +414,7 @@ mod deployment_price_tests {
         );
         assert_eq!((gas.block_gas_limit, gas.flat_gas_limit), (2_500_000, 100));
         assert_eq!((gas.freeze_due_limit, gas.delete_due_limit), (100_000_000, 1_000_000_000));
-        assert_eq!(gas.max_gas_threshold, gas.calc_max_gas_threshold(gas.gas_limit));
+        assert_eq!(gas.max_gas_threshold, gas.calc_max_gas_threshold(gas.gas_limit)?);
         let forward = MsgForwardPrices::default_mc();
         assert_eq!(
             (forward.lump_price, forward.bit_price, forward.cell_price),
@@ -417,6 +424,51 @@ mod deployment_price_tests {
             (forward.ihr_price_factor, forward.first_frac, forward.next_frac),
             (98_304, 21_845, 21_845)
         );
+        Ok(())
+    }
+
+    /// The one non-comment `config.storage_prices!` line of the genesis template,
+    /// as `[bit, cell, mc_bit, mc_cell]`.
+    fn genesis_template_storage_prices(source: &str) -> [u64; 4] {
+        let mut lines = source.lines().map(str::trim).filter_map(|line| {
+            if line.starts_with("//") {
+                return None;
+            }
+            line.strip_suffix(" config.storage_prices!")
+        });
+        let line = lines.next().expect("Genesis must set ConfigParam 18");
+        assert!(lines.next().is_none(), "Genesis ConfigParam 18 must be unambiguous");
+        let values: Vec<u64> = line
+            .split_whitespace()
+            .map(|word| word.parse().expect("storage prices must be explicit integers"))
+            .collect();
+        values.try_into().expect("four storage prices")
+    }
+
+    #[test]
+    fn default_storage_prices_are_the_genesis_template_prices() -> Result<()> {
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../crypto/smartcont/gen-zerostate.fif"
+        ));
+        let template = genesis_template_storage_prices(source);
+        let default = genesis_storage_prices();
+        assert_eq!(default.utime_since, 0, "the genesis entry is effective since 0");
+        assert_eq!(
+            [
+                default.bit_price_ps,
+                default.cell_price_ps,
+                default.mc_bit_price_ps,
+                default.mc_cell_price_ps
+            ],
+            template,
+            "the sandbox storage prices differ from gen-zerostate.fif"
+        );
+
+        // Both places the sandbox carries ConfigParam 18 use that entry.
+        let config = BlockchainConfig::default();
+        let raw = config.raw_config().storage_prices()?.prices()?;
+        assert_eq!(raw, vec![default], "the sandbox ConfigParam 18 is not the genesis entry");
         Ok(())
     }
 }

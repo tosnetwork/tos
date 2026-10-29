@@ -14,12 +14,31 @@ use shielded_pool_circuit_crosscheck::anchor_probe::{AnchorProbe, EPOCH_SLOTS, R
 use shielded_pool_circuit_crosscheck::frontier_probe::FrontierProbe;
 use shielded_pool_circuit_crosscheck::pool::{Pool, DEPLOYED_DENOMINATIONS};
 
-/// `gen-zerostate.fif`: `1 500 1000 500000 config.storage_prices!` --
-/// bit_price_ps, cell_price_ps, then the masterchain pair. The pool is a
-/// basechain contract, so the first two are its prices. Both are per unit per
-/// second, scaled by 2^16.
-const BIT_PRICE_PS: u128 = 1;
-const CELL_PRICE_PS: u128 = 500;
+/// The basechain `(bit_price_ps, cell_price_ps)` of the one non-comment
+/// `config.storage_prices!` line in `gen-zerostate.fif`: bit_price_ps,
+/// cell_price_ps, then the masterchain pair. The pool is a basechain contract,
+/// so the first two are its prices. Both are per unit per second, scaled by
+/// 2^16. Read from the template, so the sizing follows the genesis it reports on.
+fn basechain_storage_prices() -> (u128, u128) {
+    let source = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../../crypto/smartcont/gen-zerostate.fif"
+    ));
+    let mut lines = source.lines().map(str::trim).filter_map(|line| {
+        if line.starts_with("//") {
+            return None;
+        }
+        line.strip_suffix(" config.storage_prices!")
+    });
+    let line = lines.next().expect("Genesis must set ConfigParam 18");
+    assert!(lines.next().is_none(), "Genesis ConfigParam 18 must be unambiguous");
+    let mut values = line
+        .split_whitespace()
+        .map(|word| word.parse::<u128>().expect("storage prices must be explicit integers"));
+    let bit = values.next().expect("basechain bit price");
+    let cell = values.next().expect("basechain cell price");
+    (bit, cell)
+}
 const SCALE: u128 = 1 << 16;
 
 const TOS: u128 = 1_000_000_000;
@@ -44,9 +63,10 @@ fn report(what: &str, pool: &Pool) -> u128 {
     let cells = u128::from(info.used().cells());
     let bits = u128::from(info.used().bits());
 
-    // `1 500 1000 500000 config.storage_prices!`: the price is per unit per
-    // second scaled by 2^16, so the unscaled rate is this over 65,536.
-    let per_second_scaled = cells * CELL_PRICE_PS + bits * BIT_PRICE_PS;
+    // The price is per unit per second scaled by 2^16, so the unscaled rate is
+    // this over 65,536.
+    let (bit_price_ps, cell_price_ps) = basechain_storage_prices();
+    let per_second_scaled = cells * cell_price_ps + bits * bit_price_ps;
     let per_day = per_second_scaled * 86_400 / SCALE;
     let per_year = per_second_scaled * 31_557_600 / SCALE;
 

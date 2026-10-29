@@ -54,7 +54,7 @@ fn cached_fee_decode_is_canonical_and_bounded() {
     let mut extra = BuilderData::from_cell(original.cell()).unwrap();
     extra.checked_append_reference(Cell::default()).unwrap();
     assert!(FeeIntent::from_cached_cell(extra.into_cell().unwrap(), epoch).is_err());
-    // VarUInteger16 permits a wider serialized form; pending intents must use
+    // Strict Coins decoding and the cache hash check independently require
     // the same shortest representation as the signing encoder.
     let mut source = SliceData::load_cell(original.cell().clone()).unwrap();
     let prefix = source.get_next_bits(763).unwrap();

@@ -1,0 +1,3766 @@
+{
+  "preparation": {
+    "cases": [
+      "prepare",
+      "repeat_fresh_funding",
+      "deployed-module",
+      "deployed-vault",
+      "wrong_key",
+      "partial_send_size_limit",
+      "wrong_domain",
+      "changed_amount",
+      "wrong_source",
+      "wrong_network",
+      "wrong_global",
+      "expired",
+      "overlong",
+      "wrong_wallet_chain",
+      "wrong_pair",
+      "module_floor",
+      "vault_floor",
+      "setup_cap",
+      "incoming_only",
+      "deleted_verifier_accepts_wrong_domain",
+      "deleted_floor",
+      "deleted_cap",
+      "deleted_incoming_budget",
+      "restored"
+    ],
+    "configurations": [
+      {
+        "dictionary": "12f5cdf08a638a82b8467d1d7acfdbcd3d46ad87e9d6e3d61d44cfdd4e06cc33",
+        "wire_sha256": "e889900cd50e549f4cffcf5741525396519a809bb6ac62c68912c0086ad129d5"
+      },
+      {
+        "dictionary": "c04966b66a80bd99859d2f89af572ca1827896679fe8aa8f2278ca8f28520bdd",
+        "wire_sha256": "cfd1dcb30fa52ee09e2a3310a8c74382d268152189688f842ed72542a7a6ea91"
+      }
+    ],
+    "rows": [
+      {
+        "name": "preparation-000:prepare",
+        "dictionary": "12f5cdf08a638a82b8467d1d7acfdbcd3d46ad87e9d6e3d61d44cfdd4e06cc33",
+        "input_sha256": "afcd37706de8c017264e6d2e51a5fced12871921652aeb343696a7d0e27bc522",
+        "expected": [
+          "accepted",
+          "bf96bfb8e6f796efda7f4a6dfb726d59ae5937f66b5d83284b53e78fedd5a328",
+          "53318974cfd96fcd2b24e20e568356297f89d5a630061813861e6bc64543e16f",
+          "bc6cb2764006d292621f12dee0ba151622de007aa4e1041d00a518f6cc63d23b"
+        ]
+      },
+      {
+        "name": "preparation-001:repeat_fresh_funding",
+        "dictionary": "12f5cdf08a638a82b8467d1d7acfdbcd3d46ad87e9d6e3d61d44cfdd4e06cc33",
+        "input_sha256": "e070807ab213a9aea2515588c571051325b73b6e41155e6ac50a3691114e00e7",
+        "expected": [
+          "accepted",
+          "65703533dcce4331ce27b0654f09bdba684a4420338558c42e39d50ae75ad609",
+          "0a83d312ba724ed4f79c15bcf97bec36cf7ce9fcefea7647ab1d020b98315880",
+          "3cd93aae123ccdbba4252f3ae865bc090c9eb93a3084c3606a926c554738bbc7"
+        ]
+      },
+      {
+        "name": "preparation-002:deployment",
+        "dictionary": "12f5cdf08a638a82b8467d1d7acfdbcd3d46ad87e9d6e3d61d44cfdd4e06cc33",
+        "input_sha256": "5000f828286a8c73b281399d891a7d6781ac1edc42dbd52bc7219a3c825eed07",
+        "expected": [
+          "accepted",
+          "3cfffbf2d3445c560d8cde49c18cf2e0e31371dd5b31fe6ef8c1789a94b744b2",
+          "c652caacb5fe0b388ac5a7f58e9d24b3bb541f28ebc535c9c72c15bdbae17ece",
+          "f33ce07378786ead19d9b99fd39eec28a5cd1e24543923d6a45f20734f43c82c"
+        ]
+      },
+      {
+        "name": "preparation-003:deployment",
+        "dictionary": "12f5cdf08a638a82b8467d1d7acfdbcd3d46ad87e9d6e3d61d44cfdd4e06cc33",
+        "input_sha256": "d544d830353df0ad7cc74452900da69ad6db13800fa30662504f92d80b874c97",
+        "expected": [
+          "accepted",
+          "2e60a7f93b06a01c874860b7a5d3c5e119a7b704f27a6b41246a963e43750098",
+          "8361e573961ad91994f7969fa24ac00ae8fd6e4578ba725fdd0765021dfd4f56",
+          "42f35367caa7ae57ff33326fab87a5410d6a069f2af4fb07eca3afdb9eeb25ea"
+        ]
+      },
+      {
+        "name": "preparation-004:wrong_key",
+        "dictionary": "12f5cdf08a638a82b8467d1d7acfdbcd3d46ad87e9d6e3d61d44cfdd4e06cc33",
+        "input_sha256": "53e16e4baa119437dda8d73cd95285f2fbdb27af844d5e441193e4ac95e70019",
+        "expected": [
+          "accepted",
+          "bc0f9875d5f6e169755d8f29b642b63ff4cdcb37ddbe01160fe1a8f24e359f9b",
+          "5c707bfd73a4397cfecffee17eee7c4d858da084656798a45d53a934d8d0e47a",
+          "45b7719e878b0ea394364363508b3d6c78e055bb1f332ba1db31b09313cf6e1c"
+        ]
+      },
+      {
+        "name": "preparation-005:partial_send_size_limit",
+        "dictionary": "c04966b66a80bd99859d2f89af572ca1827896679fe8aa8f2278ca8f28520bdd",
+        "input_sha256": "2fc2c3b3baafa76cb93647b88c019f400cb14f1eb1a4ad27bf96af976f34bb37",
+        "expected": [
+          "accepted",
+          "ad876aff2aae7eaae676f30fc7cb243476eb788b9458a6ec1a8e4e236c76fe06",
+          "87f92a88386a128604a2cd1a0b3140fa913126ae51840b4024734bfa9ff37aaa",
+          "7e81e097aae2f23709c145caa8a6d1cdd7c5444a732fb928ac7b4dc3cc48b6d4"
+        ]
+      },
+      {
+        "name": "preparation-006:wrong_domain",
+        "dictionary": "12f5cdf08a638a82b8467d1d7acfdbcd3d46ad87e9d6e3d61d44cfdd4e06cc33",
+        "input_sha256": "7a38950cc686c8beddbeb8f763b244d8b171fe13418e49b71575351ce5a4b18c",
+        "expected": [
+          "accepted",
+          "efd058130722316d3b4f7f2c8f20fcf85b3710e246f353442e9afc2dc96b546a",
+          "ea45802989d2bcf391852dc2c2e1a783d1e9eef9cf234e46f6a2bce0c6f4c0e7",
+          "9806aa16ae838d65f84f629b1a5c82d40369df48853aaa5b289a8fe24a99e655"
+        ]
+      },
+      {
+        "name": "preparation-007:changed_amount",
+        "dictionary": "12f5cdf08a638a82b8467d1d7acfdbcd3d46ad87e9d6e3d61d44cfdd4e06cc33",
+        "input_sha256": "25bb69eac90a761723373b291129b45c498b164648d9d52faee8cc5d61eb3a79",
+        "expected": [
+          "accepted",
+          "e0dc6788d2426a4275486df6c07709dc594370b75a911bb2ef65c371c06df986",
+          "d2b61145b0a733f0c51d781f83802df89bc4b754ca3316e4c44dd46ac689a0e9",
+          "8176e8df85eb05815b47e068d471fa23575a22480ba7e235b058bb59a6967711"
+        ]
+      },
+      {
+        "name": "preparation-008:wrong_source",
+        "dictionary": "12f5cdf08a638a82b8467d1d7acfdbcd3d46ad87e9d6e3d61d44cfdd4e06cc33",
+        "input_sha256": "81cf320b24cadee63dc6ac269dda299afe874806ba853d69974d253a33df624b",
+        "expected": [
+          "accepted",
+          "2c65c4ec6daab70bc096d95412c6f9371c2fcbf7561abfa5a34760b825558c29",
+          "318ab2f80e711898a5220d363b1cb9f8b24c7e33629d0b824c8b7b3cc202038c",
+          "4fc049650b3b13e604d5daa41f549964ffffc4a3e0850800b0f509d020c1b7aa"
+        ]
+      },
+      {
+        "name": "preparation-009:wrong_network",
+        "dictionary": "12f5cdf08a638a82b8467d1d7acfdbcd3d46ad87e9d6e3d61d44cfdd4e06cc33",
+        "input_sha256": "b906eb1b0dda6164a51ea9fb8617455ca08842b91f45f79a80bf60673723e188",
+        "expected": [
+          "accepted",
+          "021137f59f80eddbe837f8a60d27441aecce05f7f74d0ca46a804375229a43b5",
+          "cefd19a150276db00141accc637f8fb85eb7fe968007a3eefdf382dab7b698ec",
+          "4d629b42fdb8242791a8b2374c8d1762a07aae3b3a76612e8a1b8fd4fd6f54b3"
+        ]
+      },
+      {
+        "name": "preparation-010:wrong_global",
+        "dictionary": "12f5cdf08a638a82b8467d1d7acfdbcd3d46ad87e9d6e3d61d44cfdd4e06cc33",
+        "input_sha256": "d1b888d45836176d3dd6f1066f2ecdef202b68bcf3cf7753f746b6403e00c254",
+        "expected": [
+          "accepted",
+          "c349ba88edc6bb2fd31593c3434e517ec1587336256c3c5e7b0f383491a09811",
+          "128c2ae81a4109acfa2163190b9632bda6c214c8a2d5d4f9f0e93153cbf2d643",
+          "98e195d13d678f3acb1995517261274fdffe324ede4a75e084a96673d6d0ce15"
+        ]
+      },
+      {
+        "name": "preparation-011:expired",
+        "dictionary": "12f5cdf08a638a82b8467d1d7acfdbcd3d46ad87e9d6e3d61d44cfdd4e06cc33",
+        "input_sha256": "db49934d992f91b19f3d592e9e9240a75a589331bb9237bd6000dc51788d6c5f",
+        "expected": [
+          "accepted",
+          "ee5cdbf4b2bbe2487a57f90a001a616931313761929b743707e394b44d39ef1c",
+          "201bec5bb8f66a1e4bc05e5e06c8b863cf5027a2a1739990b14d08e2e9fa7282",
+          "de20c40113777065aadc31c219bfb47953e9193fbfeaaa8fcd7fb381c6991c76"
+        ]
+      },
+      {
+        "name": "preparation-012:overlong",
+        "dictionary": "12f5cdf08a638a82b8467d1d7acfdbcd3d46ad87e9d6e3d61d44cfdd4e06cc33",
+        "input_sha256": "3e41b2b9386137ecc63c9065b62fa44818d6054b9acb7bef0720343f62e78db0",
+        "expected": [
+          "accepted",
+          "932970c7952defbb1533d672c1067d00c5e251c67713ec4e9250971f1a0084ec",
+          "dd289c28594ac851d20d53198434068b63510cb0fdfe113fe0d6ca1718419a5a",
+          "15d394899a757b570959445109236a1c64a166a49bd0f5177aa95d27b88a831a"
+        ]
+      },
+      {
+        "name": "preparation-013:wrong_wallet_chain",
+        "dictionary": "12f5cdf08a638a82b8467d1d7acfdbcd3d46ad87e9d6e3d61d44cfdd4e06cc33",
+        "input_sha256": "311e79a4100483bb3cdfa0645f1c5da686d1b872d72eafaffc520087e2b53d6d",
+        "expected": [
+          "accepted",
+          "fda09c654a236dfe94187afe6f7d91d7c165e1aab3620d6e0d420a05dba7aedf",
+          "8f909c6500b40151209cc99ee6a1254cb8872f6cf5f691d6f119f8f2542efc86",
+          "aa426d0ecc178029977b39d105530356fe709b6b66a5f53b28e8d9d3e746e8ed"
+        ]
+      },
+      {
+        "name": "preparation-014:wrong_pair",
+        "dictionary": "12f5cdf08a638a82b8467d1d7acfdbcd3d46ad87e9d6e3d61d44cfdd4e06cc33",
+        "input_sha256": "cf082381772a3128a80fd74e12133dc29abea93530ccce8dbda40f545ec90416",
+        "expected": [
+          "accepted",
+          "c48c04e589b53543ed69578b648ce3e9f7f76f2236a2d556e1297cc31d29289e",
+          "0de4c762bc63a6d26629b5bbd85118cb26dfcdf0e16cc819e837a8c4a9f8f373",
+          "271720df245dead37609363f8f3eb99ba1e1678760e38f0672983eee789a8712"
+        ]
+      },
+      {
+        "name": "preparation-015:module_floor",
+        "dictionary": "12f5cdf08a638a82b8467d1d7acfdbcd3d46ad87e9d6e3d61d44cfdd4e06cc33",
+        "input_sha256": "c45dc9734aa917737bae5f2e524dc3092ab74cac3bac2932e276e8df2f94b6a3",
+        "expected": [
+          "accepted",
+          "8b399aad4395a23926393426c02d5233652ce03802bf6d0825baae10f7ef3081",
+          "5992bca5d3638459d01c6978bf42e99fd34564d6f4cfb9e4678c41ad9087bf41",
+          "14832d3c579f65ad70fa7547eed9ea7aae550b57655dd999a9e5b4f03c8855a1"
+        ]
+      },
+      {
+        "name": "preparation-016:vault_floor",
+        "dictionary": "12f5cdf08a638a82b8467d1d7acfdbcd3d46ad87e9d6e3d61d44cfdd4e06cc33",
+        "input_sha256": "0c81beb2c43dc61fdb733eef7d38a4ca2a52255a82124603ae60fb4631d131b4",
+        "expected": [
+          "accepted",
+          "b966d4cec2981cf7ec521a47d202516d4a983c0b4f3e8cc281a963eb3081a9d1",
+          "16aad17dd274301bf1ec7ab792aa69ae60678632a9fd5fe6575e091e9f52f256",
+          "7603e454a8988012a4e6d961ab96043ded2150bf0b6eea58263ba2acb35133e8"
+        ]
+      },
+      {
+        "name": "preparation-017:setup_cap",
+        "dictionary": "12f5cdf08a638a82b8467d1d7acfdbcd3d46ad87e9d6e3d61d44cfdd4e06cc33",
+        "input_sha256": "a42a2747dcf0508cc79bdec0a0f458ee19970ddce63fffda6d192bed23252e1c",
+        "expected": [
+          "accepted",
+          "28bbb0fe449b849868ddd2ff33e161ea2f16ad2d80a8ebec0ed4c03535efc451",
+          "16d5340f4ef823b878e344a91be6a016a6703dcea36ee364fdd4ddc4a5988f69",
+          "eb420d6e8e613255716179bdb9729593fa8f2dea240d426f4ca7ac704141f718"
+        ]
+      },
+      {
+        "name": "preparation-018:incoming_only",
+        "dictionary": "12f5cdf08a638a82b8467d1d7acfdbcd3d46ad87e9d6e3d61d44cfdd4e06cc33",
+        "input_sha256": "0aa7a042a8629ee3034b550b08ec5268a4ca736839d5c66b57e5e8c4f92c90c4",
+        "expected": [
+          "accepted",
+          "1953847a9f558f50ee352c8e06a18f8ae445254ebaf923b7d16eeba24b040e86",
+          "5c2c2499429c65b0e72dc62c64fc9b684e75217bb41378b22831aa5450151d5b",
+          "2b3e1747dff383b14a9786d51b598471bcfd10bbc5425a7451d942fc0a312d25"
+        ]
+      },
+      {
+        "name": "preparation-019:deleted_verifier_accepts_wrong_domain",
+        "dictionary": "12f5cdf08a638a82b8467d1d7acfdbcd3d46ad87e9d6e3d61d44cfdd4e06cc33",
+        "input_sha256": "b8947dabfd7877b8a82558e1f46ed574b789ff64cc4eeba5b1723049d29aae8b",
+        "expected": [
+          "accepted",
+          "deb9debb4e1f96e9088ca1fef8794b897df45bc66cb32e795178a8524d60e8e9",
+          "129d7e15ccaa5ed5bf1ca9b762b5337c842dec35872993a08876ed0bd4133ebf",
+          "63ab1fe1d83330ba81ae635dd09466c74093dfa07fa1f08c157b609e89cec58a"
+        ]
+      },
+      {
+        "name": "preparation-020:deleted_floor",
+        "dictionary": "12f5cdf08a638a82b8467d1d7acfdbcd3d46ad87e9d6e3d61d44cfdd4e06cc33",
+        "input_sha256": "68e8f3beaaab1942dcf184c3dd1c29ef64aed4cca9e6f7d521c3fe51be780feb",
+        "expected": [
+          "accepted",
+          "64b4e7de75c99e08acd878d3e0a038b7da4eeb4a4e05c8f42525d283b8e703c5",
+          "244361340e1aa1cc2be0d788e9b6bbcdd9f4ec7108d0d3c0851bf744f4d358d6",
+          "8d45b7732b17b7e445a55ce64168cab3717f8f0c54b05ac67db27e014dd97a13"
+        ]
+      },
+      {
+        "name": "preparation-021:deleted_cap",
+        "dictionary": "12f5cdf08a638a82b8467d1d7acfdbcd3d46ad87e9d6e3d61d44cfdd4e06cc33",
+        "input_sha256": "578e81c8dabdcb11bccebe5347bb7ffe40af91e42794237ce99d376b079ddd6d",
+        "expected": [
+          "accepted",
+          "b5bf18bb029b1abb9054742a9aa4affb13f60a7d0861f19296c364055a6afd34",
+          "f518302726a7734c11c43ec4a290d4e1ede4d8524647c38c4230c2d12ff03617",
+          "ac6178e9a03c1f5d6221a11b05de176f9c640260091adb43026f6d0d8cec62ef"
+        ]
+      },
+      {
+        "name": "preparation-022:deleted_incoming_budget",
+        "dictionary": "12f5cdf08a638a82b8467d1d7acfdbcd3d46ad87e9d6e3d61d44cfdd4e06cc33",
+        "input_sha256": "452f0e007c80fa78cac6364655a9ac4e784f76b9dc8b72aae0715cfd29b83e28",
+        "expected": [
+          "accepted",
+          "1478764013b28c8a81ea84a1bbedbb791153374504f250fea5d7c13b7d8faed4",
+          "74b1a1dd4e50cfde1b4fb74a6ecfa5226ee8da4861eeb793a39febdfd9661aa8",
+          "16be663b92cf1858c7b9aa760c252962206ad12945457ff4e9711b81763ecfac"
+        ]
+      },
+      {
+        "name": "preparation-023:restored",
+        "dictionary": "12f5cdf08a638a82b8467d1d7acfdbcd3d46ad87e9d6e3d61d44cfdd4e06cc33",
+        "input_sha256": "fde674b864fae9b205461059193eca36b4ef2ea4fd69406d3dd42a46f3e34fc7",
+        "expected": [
+          "accepted",
+          "dbaef85969634166b48d1d7d7c6009a1078b84e6b14b9031181f8ff54ec571e2",
+          "8ad1e7a78791b008cb5c51bdcca1656654db3671adc10a80fa9ed39a3caa16e5",
+          "a5a633d58920a3d093aa61ebaf0eaa64ece7b4bbcd11dc8e6e2f1affd9f14f42"
+        ]
+      }
+    ]
+  },
+  "self_pay": {
+    "cases": [
+      "pre-funded-deployment-1",
+      "pre-funded-deployment-2",
+      "primary",
+      "primary-replay",
+      "primary-below",
+      "primary-exact",
+      "primary-forged",
+      "primary-domain",
+      "rescue",
+      "rescue-replay",
+      "rescue-below",
+      "rescue-exact",
+      "rescue-forged",
+      "rescue-domain",
+      "network",
+      "global-id",
+      "address",
+      "authority",
+      "epoch",
+      "nonce",
+      "expired",
+      "too-far",
+      "primary-lock",
+      "unknown-role",
+      "unknown-kind",
+      "trailing-envelope-bit",
+      "trailing-envelope-ref",
+      "trailing-request-bit",
+      "trailing-request-ref",
+      "exotic-request",
+      "exotic-signature",
+      "signature-length-1--1",
+      "signature-length-1-1",
+      "signature-length-2--1",
+      "signature-length-2-1",
+      "exotic-installed-authority",
+      "trailing-installed-authority",
+      "exotic-payload",
+      "exotic-payload-replay",
+      "trailing-payload",
+      "trailing-payload-replay",
+      "missing-policy",
+      "missing-policy-rescue",
+      "retired-policy",
+      "retired-policy-rescue",
+      "cutoff-policy",
+      "cutoff-policy-rescue",
+      "malformed-policy",
+      "malformed-policy-rescue",
+      "seqno-max",
+      "primary-max",
+      "rescue-max",
+      "epoch-max-1",
+      "epoch-max-3",
+      "saturated-control-3",
+      "epoch-max-4",
+      "saturated-control-4",
+      "send",
+      "send-replay",
+      "bad-mode",
+      "bad-mode-replay",
+      "destroy",
+      "destroy-replay",
+      "both-balances",
+      "both-balances-replay",
+      "empty-message",
+      "empty-message-replay",
+      "truncated-message",
+      "truncated-message-replay",
+      "invalid-ext-mode",
+      "invalid-ext-mode-replay",
+      "too-many",
+      "too-many-replay",
+      "max-actions",
+      "max-actions-replay",
+      "deposit",
+      "legacy-auth",
+      "self-message",
+      "bad-configure",
+      "bad-configure-replay",
+      "bad-lock",
+      "bad-lock-replay",
+      "bad-migrate-key",
+      "bad-migrate-key-replay",
+      "bad-migrate-network",
+      "bad-migrate-network-replay",
+      "saturated-bad-migrate",
+      "corrected-migrate",
+      "control-1-below",
+      "control-1-exact",
+      "control-3-below",
+      "control-3-exact",
+      "control-4-below",
+      "control-4-exact",
+      "maximum-state-actions-1-below",
+      "maximum-state-actions-1-exact",
+      "maximum-state-actions-2-below",
+      "maximum-state-actions-2-exact",
+      "short-key",
+      "long-key",
+      "exotic-successor",
+      "trailing-successor",
+      "lock-without-policy",
+      "migrate-policy-1-without-cp48",
+      "migrate-policy-2-without-cp48",
+      "local-retired-migrate-ready",
+      "global-retired-migrate-ready",
+      "scheduled-retired-migrate-ready"
+    ],
+    "configurations": [
+      {
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "wire_sha256": "ce8d7e747529d00699e7e72b048308b0ee684f8c1f8eca2e1f832fcd9079e064"
+      },
+      {
+        "dictionary": "a580ed69ac4e508431c8cacbca9ca7c56ba9f12606732858b655193136bee086",
+        "wire_sha256": "331c7bb425d8b04b2ead333d9d64bc3c7bba40b81f459fc5c1c2aafb1f2c98ca"
+      },
+      {
+        "dictionary": "5adc6df387eab801af6f4c5214fefa467c2adf8f00d41d110cb285e86ae916cc",
+        "wire_sha256": "01beb4ac601c6c4dd055f72edaaa0169aec8053356708c5793ec87b3d9ef232d"
+      },
+      {
+        "dictionary": "442f3922ed5d9cbf1278a4895ec6155db9981b2d6d7dc0038eda70aaa9bf8c54",
+        "wire_sha256": "7bc37f16cd07229582e3c962cc2dfeb7d510c48e2715d099afc9f558646c1513"
+      },
+      {
+        "dictionary": "c32c3ec3e45c4d8f246d71f97c79063aa409ee19001c5b5a2aa448bbc308d3d1",
+        "wire_sha256": "8d82bbf44d5831fb3538c58277017a204b06c03933c6370b99a4e797abbe6ac1"
+      },
+      {
+        "dictionary": "8ecfa968e6e1539d4f0acf11c95a9a0d8a266df96bca8f01a5359933ab36fa53",
+        "wire_sha256": "87381f6fc6c9135d23b63e8d752b296332563f94b286b233bef8552b6c148b42"
+      },
+      {
+        "dictionary": "b6e342734fd85c43c8e5b63e589a8cf633799e7c71c6fe744aa49132e49c9ae5",
+        "wire_sha256": "5accba4f7fc889fd2b53d7a8497aeda4ea1578bd90da15d314abe2b66b12b061"
+      },
+      {
+        "dictionary": "d0042c202450a1bd52070242726908d5e8b0ceb079a5bf72035182517181ade4",
+        "wire_sha256": "c3a2dd5887b7a4fb90db72463a04337b7a08e8f1a27cc038236c8326ab0aa3db"
+      },
+      {
+        "dictionary": "4721bc829592b2da844dda83717cc28c6b973a3619cb63ee0e26c8baafadcae6",
+        "wire_sha256": "8eb19b0674f4e00fbec1061016749ab9633bf1d821f6b8f6b0eedd12377b1e26"
+      },
+      {
+        "dictionary": "6c9c404e51264f2af52244cd13a76a3122624b97e199b8e7431e73a5154ab705",
+        "wire_sha256": "a2506c8e3c2dbc9191dc4959d1652c8af180a2a26ec10714203c3c9918c13dcd"
+      },
+      {
+        "dictionary": "bd3a1036e0af1b5d13e87278eacb54b229f8c32b1a43a1fe512faa435920514d",
+        "wire_sha256": "fecc9d109ff4f31c59cbf6266eea875abbe88a0a8d682ac5655406952cba5dd2"
+      },
+      {
+        "dictionary": "e42958c74439fad27a83b143ce3e053fdeb176abe134d54aa6cefbfb9c4b4960",
+        "wire_sha256": "a34558970a3a9e14a8ac9e4e6991ff5afe57a82240db308854c1b74f7ab6720d"
+      },
+      {
+        "dictionary": "64ca6852271222b057ecd0bb28e212a0aaf2125e88420f3cb11ac9ea1311cfd3",
+        "wire_sha256": "5341cf0602cee0ee207ba237c0cfa7993202b54ae105eb9bc8d951f8ca0c7bd8"
+      },
+      {
+        "dictionary": "2f0c41d14ab0a17e821141df6d36f483259210e43c275b8b05cfcda78cbb6cb0",
+        "wire_sha256": "e73c388a091245808840a792b8200c948246beb5a5662f682727471ebd5098f5"
+      },
+      {
+        "dictionary": "0e38ef2372b055ec79fa3952d031b3700dfaafe897ba9f58c7ddd38b48ce25ba",
+        "wire_sha256": "88770e401a0b382f7aa6838b14ffbb0dcb248d76389de142e3998a20bafd19c4"
+      },
+      {
+        "dictionary": "6ba3011c9a048b8868352cc864b842be740c5c87f5066810f77d3c1dd62c7477",
+        "wire_sha256": "32faca4ebd209574f9c0898ff738c912faa7e1a78f1feb13325b7ce75a849d8b"
+      },
+      {
+        "dictionary": "5eb682e4d6dcb0b3ff6d5ebc8d325f927f2f71b7d4f164bf08fdc69d4b9c59ee",
+        "wire_sha256": "6865061db98e07084a1778142b9a6739ee8d8a9146a1cc9a1030fda738e6360b"
+      },
+      {
+        "dictionary": "434199e838fbfce7b8fa310a7605586d03a593f7880e924fb8ea43570d5f9e25",
+        "wire_sha256": "fa2e9c970ba2221e23d022e604143e42165618e048404c909ce6110deef41b5f"
+      },
+      {
+        "dictionary": "4e865f07056dadef160e4628c21d2d2f8635d9ff9b739c7e86203435b06d5a09",
+        "wire_sha256": "6259a0c332866777f59c65931cf44960d8f08320c7cc66b7a81a8b3fda402e26"
+      },
+      {
+        "dictionary": "67307809e1d842847dfce3ef09347bd724d844cb8be064656e87c0000b815fa3",
+        "wire_sha256": "33d2e2b6f093f86c70022f1d3b029f832935a37d992dff5def83162b4eedf2fb"
+      },
+      {
+        "dictionary": "299fd2e0483cd34c76657b13606bacb497edfe5bb343f88fae95c80b8b361221",
+        "wire_sha256": "fa130534370478a1c28c3329f677e8e49f629cd3da3e5fe6ba82c5018ac384e9"
+      },
+      {
+        "dictionary": "10961fdbe319c3f7110bf15da276204755eebb913255f17a1a83f6b14abe8120",
+        "wire_sha256": "87edb56a985f651c9c4fbdb7772ab16a79053d806bd58c3a61f1bd14f9e5bdd0"
+      },
+      {
+        "dictionary": "3239d9b9ca7fb83699d9ae17c7bdab5ed4dd8181ad529aa7d92ddcdf0ec41dfb",
+        "wire_sha256": "9c32a29a705f2314fc0f7aeba0fa374c03eb8354d8cdb33203f5d155578db7a4"
+      },
+      {
+        "dictionary": "d5ebffd0ec686f6795ee65792cfaf1b3ef8667b10676c35231b5c240d74e02b6",
+        "wire_sha256": "d5181d2e41f1d7224a2b8d9a661569d0bba53d0cf79cd1dc7c68b63a8d4e8c09"
+      },
+      {
+        "dictionary": "2606a93253118604f7022bec2e67870a120e16ddf4824da11b1f9496e711dee9",
+        "wire_sha256": "697ed0843fa8bacee63435a16726d2b1478f6b8591f05fc3147d3e0829747214"
+      },
+      {
+        "dictionary": "1996bfeb3da64a5864eb8b4c922962e3eab514eb05806506349749c8b512dad3",
+        "wire_sha256": "d4b523ceb95153ea1731c8110fc82f0a3eb7ef30d25c20f0b48849901570d65c"
+      },
+      {
+        "dictionary": "aa3f7d2954965349fe9da71773ebdfba9146a330cab63d254bb15f24e93a34b3",
+        "wire_sha256": "bd04c8879d49d0b9ab6c2cb395c840d122f167a8b55686b6d1aa1d9860d16375"
+      },
+      {
+        "dictionary": "f7a8ba86a246713b9b35ef30c60e6493c816ad5458eb12b97208ad0eda20bccd",
+        "wire_sha256": "a4f0086e28b999fd9a78e27acb85fe540a2392eb7555f470fd0818539cd07ae0"
+      },
+      {
+        "dictionary": "9a076464340386a2c2f128d5b4125c7eb02c03ebeea04b9a624a18c75c960dc7",
+        "wire_sha256": "5f6bd3210adac5dc51fe6ff3ba138aabda4e2fdacc2a0444a6fab036031f021d"
+      },
+      {
+        "dictionary": "8bc6d98ff4badb9a9cc96c4cc437edb713e6a015c73bacb9325a6b1609b2f826",
+        "wire_sha256": "9826a21044ca803bcad92d8c0c791835a5465ef53e7cc359d93db4b207a47667"
+      },
+      {
+        "dictionary": "54bb0e8fe5a669b155f772e2f66abee698e2e69a7ba91cc5c9f9737aa9226d10",
+        "wire_sha256": "4c2c4d528285db909810e3c6f1c57e0ce2c52aff4b6f98a7b079c2a2360c8a32"
+      },
+      {
+        "dictionary": "2056ed2275094810fb4845d3b98d2d8151b95c67d6c52faeaca70ed71eae79ad",
+        "wire_sha256": "814e1454bbf9f439d20772f2621cb55121c6d66ef74054ae8fa380a1e74522f7"
+      },
+      {
+        "dictionary": "a8a69f66fa09dc24357e20b91e1a1a894ddc2e68886ba590591e30e425844eaf",
+        "wire_sha256": "a6e5d6a56d21e27b7c502a3bd5ce0a0e6f8aa994c43c8d84f8f5ae25cdc116ab"
+      },
+      {
+        "dictionary": "b6577c06719bef4176f478033654536e027d538e8bda71256c5f237825160f42",
+        "wire_sha256": "965c1ed8a97441e8fd085b642da729aab82a49a79571b7935f73a72c3106b3d0"
+      },
+      {
+        "dictionary": "29dc935860fd72a7930981021641bd68867067abdaaa46bf9b0c1e51720c69b4",
+        "wire_sha256": "1e9d457b851109c6a6297f3a64b8e75a2349456635fc355efc3027298c273f8b"
+      },
+      {
+        "dictionary": "3ad1ccf62e77f26fa691f3bb5a80f1a5047093c11b349edceb8dd8115022c7cf",
+        "wire_sha256": "d437a61f82a56ec6d633917f200563bfe94001330bb3c3aef906cdf6d099136d"
+      },
+      {
+        "dictionary": "c1226a107acd5442182c57420e40aeaee7ea2e8979612be45bdaa448551cb500",
+        "wire_sha256": "6e726ec506f5eb06cb57c7594e36248be43c370d1e72f707dae6b2f0dd9f3bb4"
+      },
+      {
+        "dictionary": "c0b46d474cdf383288bcc247e406ae430bf7132cd058e73b5b1f3aeef40f27c1",
+        "wire_sha256": "a4dbd9eed4caad42bcee908b70ff227d08a30f929983caeaf8aa287c211fcae7"
+      },
+      {
+        "dictionary": "89e9bdbdfc15b6fa21bc67c0d480c33dc688fda9185ace9b1169cc0fc147e6ef",
+        "wire_sha256": "d454591ee5a124dc6878774d640272e43b136487792f8bf17f9376d0539fb062"
+      },
+      {
+        "dictionary": "bf20d56254d0ff6720c858361f4f12ddc99ec7fe9fe5a4976e533704823cdd55",
+        "wire_sha256": "4647676e28e64877aaf3cf77bebbe63a76cb07388c901b72494b8ede07422111"
+      },
+      {
+        "dictionary": "769246cc6f19a3e838cd7643ed1a606e9673703e9d7e3bff4d5a3ebfa3d60a2e",
+        "wire_sha256": "dfb5b9a48dd5fa34df1ebf0190415fa1e542b51dba7385491de6b05addec8333"
+      },
+      {
+        "dictionary": "49557b6cfd421e6d1d4e905a53eb749e9ae2256f3782f0a0bd36be53a3c79d73",
+        "wire_sha256": "6c975a3f035f2aaf1bf7e3d3ece6a0a7b82d8263c23228236ae5e223c4b67616"
+      },
+      {
+        "dictionary": "ce59399836f176dbbadbd9396f8b54ea4a251b4dbc5b09a299de3226d69a923d",
+        "wire_sha256": "98dac74f9b8f74381153dfcd08feb5d7b58ba1141ae8280de1c4b9a495edef7d"
+      },
+      {
+        "dictionary": "9a59d840b8c0df6c29a7d78d412246905012b21b30cd123eb152bdde13e3fa80",
+        "wire_sha256": "9f65a568bd65f193dcad6f10ef7435b366e487db69587d35500ce6a2cbaf3053"
+      },
+      {
+        "dictionary": "cd9ce7142a7b03d4ce0dbb516dacfb9ba04837e95ed4ee47da5606d8844a2c20",
+        "wire_sha256": "bff8d4ab9885052dd8de051c94686f9e2396e19f635fdc7ee34b906a0d3ac369"
+      },
+      {
+        "dictionary": "46edd4ce5c7e2fd50cf578382a296b5e1e1758429ec360312f37c89d6cbff8cb",
+        "wire_sha256": "7f9217c36e6ca21b347c506e252b9508b07a0007e06b8fef9c56ff0fdc7d4833"
+      },
+      {
+        "dictionary": "bf65facc4988dc4ad69756599505ce4bc3e2220e99e850778167417fcbf17972",
+        "wire_sha256": "c6e3b1f36f7fdb2aa1d8a100b69d933e9ce4b67078694fdf6786910802999117"
+      },
+      {
+        "dictionary": "81d4b5e991f1532e713c830ed82a9dd0b70db3894c1f620b268bdda5c995a336",
+        "wire_sha256": "c8bf0632cce9bffd01b4fa437cf12442846303cbb1f103445a8b3bcf0004b101"
+      },
+      {
+        "dictionary": "8246eeb32edb8c953868d674b74614ef389431e8941b4345230d4bf7805993f8",
+        "wire_sha256": "ecdf88c749e264ef8ed2a4e58869d9e71c65d43cf50f9b42e4800990ae2a6ab2"
+      },
+      {
+        "dictionary": "6ccec64ab7d4bf6bc81e84c16312b93ce15bdb914fe9dd5e0234a8f3048fd658",
+        "wire_sha256": "83729c3836819a62702fffc7f17f44e442a8937fc5bdc23ad6d59e37ae5a6ac5"
+      },
+      {
+        "dictionary": "dd08ec460b4ba7c3d2480d9653a9cb7d331937b459e965421fc2e144c72007ad",
+        "wire_sha256": "f2deed6aba59b259e0c8f2fde0a9352be6d967ef6c62f0c420cf9ae0d8be0116"
+      },
+      {
+        "dictionary": "65ad1b9c74cb73353080e257c2454ad8d93be20261a799f00ac5efa7f6ee204a",
+        "wire_sha256": "0d88a6302321ead74ee40f2db851014a452814107f85eca7f40cbd30c0b9ba84"
+      },
+      {
+        "dictionary": "69496023bab7e4558a2fd061d9220cdfc2f9e0e73f28e5ce0589e477b7ef710f",
+        "wire_sha256": "4a5d5fef4aa246428401632dcc39bb593a476eb3b026fd9ae3b3e0acfeebe56b"
+      },
+      {
+        "dictionary": "242176d58d71bc36a5985db8b20d1cfdac6af6693f946a9e7458a08e270b03c8",
+        "wire_sha256": "88845fac815597b344a427458267292c4cde44a516ee8249e5b51f2fff179b05"
+      }
+    ],
+    "rows": [
+      {
+        "name": "self_pay-000:pre-funded-deployment-1",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "29242ae703adbe2d482671904dd910fb24d987a2723c373c344c5dd7a2ff4362",
+        "expected": [
+          "accepted",
+          "355beb081062da6fb3957866a957a246180d9504778bb2a85482538d11a4093f",
+          "c78c55b48d2f7b68a4e9b9e4247311b9f2a414e6324600f606601c698aa8f78c",
+          "e46fba478646c64df5558012f6ab082387647a9fad26caec404da814f207a532"
+        ]
+      },
+      {
+        "name": "self_pay-001:pre-funded-deployment-2",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "f38c6442443b05b735c49f32b77e2b18035e0693014e0a7069928c54d52170b8",
+        "expected": [
+          "accepted",
+          "23c6f864d00c7a2d17985ce07baf860f8d49ac2562119532dfea547307dbf84e",
+          "37edb21eea6776f3aad33687a6d9f4478c24fbddf4ba414569b86bd12456098b",
+          "84176be7164cfe8c56ccff4d4d1be6762c8a60d5b54b072c6abb341cb1b3a05f"
+        ]
+      },
+      {
+        "name": "self_pay-002:primary",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "755e677bdcf452bf39a8953f8f93828b94d1a33e5f366fcaa699207e51e1b3df",
+        "expected": [
+          "accepted",
+          "fc7e53797ebd2a8148f4b5fc420418b4c8fb501ffc8676516b7d56e8b5a8a26d",
+          "5332573fb19ee7f6375c7cc9c82508cea6f48881e344ca74aac0a82ac4bfb5ec",
+          "a893226031b6ab14477f90aafbe42f11a953aa1c4650dcb724206e86efa3a760"
+        ]
+      },
+      {
+        "name": "self_pay-003:primary-replay",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "96d024d4027009b6cad86f7df02aa2544d68ae7bf106d94f22e228cb4dd02b62",
+        "expected": [
+          "rejected",
+          "1804",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-004:deployment",
+        "dictionary": "a580ed69ac4e508431c8cacbca9ca7c56ba9f12606732858b655193136bee086",
+        "input_sha256": "c81770b8d5548d3e2d279536f999bb009e3a5105288d8b77fa4538b99c99b34b",
+        "expected": [
+          "rejected",
+          "-14",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-005:deployment",
+        "dictionary": "5adc6df387eab801af6f4c5214fefa467c2adf8f00d41d110cb285e86ae916cc",
+        "input_sha256": "575c8c19c424dd34f60c5e0ff057817fbeb4cf6dd092d7d340c0779d49cf694a",
+        "expected": [
+          "accepted",
+          "62af0d02da31a1210d1608fce918511da03202b32cee9f6a289f5d54fe1ea003",
+          "5332573fb19ee7f6375c7cc9c82508cea6f48881e344ca74aac0a82ac4bfb5ec",
+          "42d6a117f8b095fdc15c0bfd02d6f83db40665bf62d055789a615a9a50402168"
+        ]
+      },
+      {
+        "name": "self_pay-006:deployment",
+        "dictionary": "442f3922ed5d9cbf1278a4895ec6155db9981b2d6d7dc0038eda70aaa9bf8c54",
+        "input_sha256": "12080182af03c7cbcfc4d1a97065edc3402608443f3a40dac625b8644455ab2a",
+        "expected": [
+          "rejected",
+          "-14",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-007:deployment",
+        "dictionary": "c32c3ec3e45c4d8f246d71f97c79063aa409ee19001c5b5a2aa448bbc308d3d1",
+        "input_sha256": "98255a3d8975c839509849398dfd3eb296a1f5607d1afc49530f80a9c76cc0e4",
+        "expected": [
+          "accepted",
+          "64dd18979cb84fcb60a2f7ae1930f45c35a1ffe67132a6e90f71db2fbc75df32",
+          "5332573fb19ee7f6375c7cc9c82508cea6f48881e344ca74aac0a82ac4bfb5ec",
+          "235faae77d351ad0a59bd7ebab7106379054147ff2b3684fdf9bf319c628d3b4"
+        ]
+      },
+      {
+        "name": "self_pay-008:deployment",
+        "dictionary": "8ecfa968e6e1539d4f0acf11c95a9a0d8a266df96bca8f01a5359933ab36fa53",
+        "input_sha256": "ee378d5403e32856d3ccbffc0f6c9e12f9ca88b73b16b93b7584eb3b5e6c5d40",
+        "expected": [
+          "rejected",
+          "-14",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-009:deployment",
+        "dictionary": "b6e342734fd85c43c8e5b63e589a8cf633799e7c71c6fe744aa49132e49c9ae5",
+        "input_sha256": "e605076f384d3f7bad8333e2e8a28e0242774be32684dd1b5fe414bedab12247",
+        "expected": [
+          "accepted",
+          "71969e81514647e574bfde245c0b637ca06c42dd90b41fd27006635c37dc63ed",
+          "5332573fb19ee7f6375c7cc9c82508cea6f48881e344ca74aac0a82ac4bfb5ec",
+          "6bcd75f6aa65a590af279ce4d3ae61caeafa3a00ada3c0f25c1ef67a59a4c6b9"
+        ]
+      },
+      {
+        "name": "self_pay-010:deployment",
+        "dictionary": "d0042c202450a1bd52070242726908d5e8b0ceb079a5bf72035182517181ade4",
+        "input_sha256": "5657dc63f2fa459a280a6175efccc5edf104f95cc62492ad4869a3071752f09c",
+        "expected": [
+          "accepted",
+          "9656a6e80210cf2eb678d50d26ff5b3a77c6ba4e9f014a686cdddaf5a4c72086",
+          "5332573fb19ee7f6375c7cc9c82508cea6f48881e344ca74aac0a82ac4bfb5ec",
+          "fa6986dee6543191e65cfc2a0864ee80f4c7e648d986b3f955e4f6b2ea664a10"
+        ]
+      },
+      {
+        "name": "self_pay-011:deployment",
+        "dictionary": "4721bc829592b2da844dda83717cc28c6b973a3619cb63ee0e26c8baafadcae6",
+        "input_sha256": "8635bf4d595015551b2e0ff2cc9eff6398d716086282f4eb1568cc5a4ed9e06d",
+        "expected": [
+          "rejected",
+          "-14",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-012:deployment",
+        "dictionary": "6c9c404e51264f2af52244cd13a76a3122624b97e199b8e7431e73a5154ab705",
+        "input_sha256": "d6c43d6cc02db782a28c7293b816a9cf6b605484ee36bf1857d77d94d45cd7c3",
+        "expected": [
+          "rejected",
+          "-14",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-013:deployment",
+        "dictionary": "bd3a1036e0af1b5d13e87278eacb54b229f8c32b1a43a1fe512faa435920514d",
+        "input_sha256": "8c442140cf02a74d4e5332fce632e618223002b4c7876c4dc5b9fcc94478403a",
+        "expected": [
+          "rejected",
+          "-14",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-014:deployment",
+        "dictionary": "e42958c74439fad27a83b143ce3e053fdeb176abe134d54aa6cefbfb9c4b4960",
+        "input_sha256": "3c221edefb3c862a7c782f037509af48a60e698126125348222d5d6bd0d932da",
+        "expected": [
+          "accepted",
+          "e516b5fbe19ae403effc097f0b67df5b521fa25ddebcfe7b13bbb0d2bfda2b4d",
+          "5332573fb19ee7f6375c7cc9c82508cea6f48881e344ca74aac0a82ac4bfb5ec",
+          "41a54ba798bcd40c1dc56073f1932aaea9904b049064c066f510bd08339df91a"
+        ]
+      },
+      {
+        "name": "self_pay-015:deployment",
+        "dictionary": "64ca6852271222b057ecd0bb28e212a0aaf2125e88420f3cb11ac9ea1311cfd3",
+        "input_sha256": "d37192f9be2e9fd83ed529a281073e40741d6be5e24ddb36aaa2b75b3d805f71",
+        "expected": [
+          "rejected",
+          "-14",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-016:deployment",
+        "dictionary": "2f0c41d14ab0a17e821141df6d36f483259210e43c275b8b05cfcda78cbb6cb0",
+        "input_sha256": "273d912b69044faaa9bd731cf1d2bdf53ed7f0af68a4c3760b8b1e6968784ba6",
+        "expected": [
+          "accepted",
+          "fac9801aefcd5578ba46f3cdb666488100e1abae97451f137687c49a36c54013",
+          "5332573fb19ee7f6375c7cc9c82508cea6f48881e344ca74aac0a82ac4bfb5ec",
+          "2869cae9c0fd0b8add9465e998725c0217c48885ef36769b62ccfbfab90fabd1"
+        ]
+      },
+      {
+        "name": "self_pay-017:deployment",
+        "dictionary": "0e38ef2372b055ec79fa3952d031b3700dfaafe897ba9f58c7ddd38b48ce25ba",
+        "input_sha256": "39d3a12614e6fba61dd401be8a13806faba428a5d1e9f69d8aa2cf0cf8151078",
+        "expected": [
+          "accepted",
+          "ea59ab59ff6ac88f6ed41bec9a933b48edb7046ff7994c38d9e055f3d409ff21",
+          "5332573fb19ee7f6375c7cc9c82508cea6f48881e344ca74aac0a82ac4bfb5ec",
+          "f2f014c7b51dd1e2328d1af72d59120a67c38c8d9d1b4b0fc56071244aa2cc22"
+        ]
+      },
+      {
+        "name": "self_pay-018:deployment",
+        "dictionary": "6ba3011c9a048b8868352cc864b842be740c5c87f5066810f77d3c1dd62c7477",
+        "input_sha256": "1a0750a3a6d1b7aa92dc37dc8d34bc107ac56b6002430e8bfa5854b48b2900f4",
+        "expected": [
+          "accepted",
+          "af6e52c883d519658650f580eb2fbc2586edc2c00acb677a0904d35ccc87fe9c",
+          "5332573fb19ee7f6375c7cc9c82508cea6f48881e344ca74aac0a82ac4bfb5ec",
+          "fd007cdbb502c26651c994d8bee133f4f79b70af178b5baa3636f38f5596b515"
+        ]
+      },
+      {
+        "name": "self_pay-019:primary-below",
+        "dictionary": "64ca6852271222b057ecd0bb28e212a0aaf2125e88420f3cb11ac9ea1311cfd3",
+        "input_sha256": "82828f2a25dfc87df44dfc69d078e09eec1877a76531a291db2ee07e00695fce",
+        "expected": [
+          "rejected",
+          "-14",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-020:primary-exact",
+        "dictionary": "6ba3011c9a048b8868352cc864b842be740c5c87f5066810f77d3c1dd62c7477",
+        "input_sha256": "d7b83590436bef3d34dd2cc6b2b7f135b7db70038308eb6f357c64b3c216f076",
+        "expected": [
+          "accepted",
+          "af6e52c883d519658650f580eb2fbc2586edc2c00acb677a0904d35ccc87fe9c",
+          "5332573fb19ee7f6375c7cc9c82508cea6f48881e344ca74aac0a82ac4bfb5ec",
+          "fd007cdbb502c26651c994d8bee133f4f79b70af178b5baa3636f38f5596b515"
+        ]
+      },
+      {
+        "name": "self_pay-021:primary-forged",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "5b39f3016e7f58f0af70c1921c8f30ec259674e5a95521a8fefa1c490a872625",
+        "expected": [
+          "rejected",
+          "1808",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-022:primary-domain",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "a31bfab6cda27ba704498e0846c01f90b5916b95f05122092ce1e6113901c6d4",
+        "expected": [
+          "rejected",
+          "1808",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-023:rescue",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "c987b12b91e5cd426f6ac2fcb678bd22c60891d6002103db81c575e0d0141c4f",
+        "expected": [
+          "accepted",
+          "452518a1c1304f9db1bbbf6af2301d2eb1df7823c764283dfef51fe6a3c710a8",
+          "33ac835eecae5d093ac10a405faa9f18c23fc73a3f83f6bd1500eb3776b4b041",
+          "fc0c0f0c9d53b618f475fc514ebff55cb70498dcda842db04db28ef3d696ce55"
+        ]
+      },
+      {
+        "name": "self_pay-024:rescue-replay",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "e29191bacfe61a542811fdc67807d1dd8d922136120bffcfe532ff8e5aee6c85",
+        "expected": [
+          "rejected",
+          "1804",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-025:deployment",
+        "dictionary": "a580ed69ac4e508431c8cacbca9ca7c56ba9f12606732858b655193136bee086",
+        "input_sha256": "4a1e5d741de47f5c79f7fb0c0ae90803c9960ba9ea6a633b8995fea991deb910",
+        "expected": [
+          "rejected",
+          "-14",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-026:deployment",
+        "dictionary": "5adc6df387eab801af6f4c5214fefa467c2adf8f00d41d110cb285e86ae916cc",
+        "input_sha256": "5d6b7ee7bf59f81d4023832e4cffa1496bc621478159710a8d0c5b805fa145fd",
+        "expected": [
+          "rejected",
+          "-14",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-027:deployment",
+        "dictionary": "5eb682e4d6dcb0b3ff6d5ebc8d325f927f2f71b7d4f164bf08fdc69d4b9c59ee",
+        "input_sha256": "41fb55b690494bfcd4d77e2b9fd53311899df98675fb66d383e535553b052eaf",
+        "expected": [
+          "rejected",
+          "-14",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-028:deployment",
+        "dictionary": "434199e838fbfce7b8fa310a7605586d03a593f7880e924fb8ea43570d5f9e25",
+        "input_sha256": "fdf210a382a8812cde862eb5415d5597e5ded0591ccdff6ca0ef24807845b527",
+        "expected": [
+          "rejected",
+          "-14",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-029:deployment",
+        "dictionary": "4e865f07056dadef160e4628c21d2d2f8635d9ff9b739c7e86203435b06d5a09",
+        "input_sha256": "e05794f9d8bec1e6b46bd5e4ba7ce556ea4c9afec2687cb0b8a744ce7d3fc24d",
+        "expected": [
+          "rejected",
+          "-14",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-030:deployment",
+        "dictionary": "67307809e1d842847dfce3ef09347bd724d844cb8be064656e87c0000b815fa3",
+        "input_sha256": "122635631d0330e21d75b7c41c36f9708d7342e3b89f7ef29171d69b57bb96ea",
+        "expected": [
+          "accepted",
+          "8a8b013668b6ea2c253a5a377485aa627ddbdfcd24abf03e9465740ceaa1659f",
+          "33ac835eecae5d093ac10a405faa9f18c23fc73a3f83f6bd1500eb3776b4b041",
+          "9237e075be27ae2fb95b496b2dac4b5806605ab9799c5317121ad4da8f43f762"
+        ]
+      },
+      {
+        "name": "self_pay-031:deployment",
+        "dictionary": "299fd2e0483cd34c76657b13606bacb497edfe5bb343f88fae95c80b8b361221",
+        "input_sha256": "60eb7b59688e160052acc15c9bdd6849b6e9d80698563846ad4a7b0a51514e83",
+        "expected": [
+          "rejected",
+          "-14",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-032:deployment",
+        "dictionary": "10961fdbe319c3f7110bf15da276204755eebb913255f17a1a83f6b14abe8120",
+        "input_sha256": "ffbd048f52e4e812bf907d0bdf93f9deb1d50ac0bfe4be172f838e9102f5654d",
+        "expected": [
+          "accepted",
+          "7bb3807c4dba9c7620323b85dfa28017e5fcc762e3aec82d3cecbae55e8e7a13",
+          "33ac835eecae5d093ac10a405faa9f18c23fc73a3f83f6bd1500eb3776b4b041",
+          "5eef81951870deb82e8ddfab7689d1e82f333ace8b6fa52f893c211ea799a0f8"
+        ]
+      },
+      {
+        "name": "self_pay-033:deployment",
+        "dictionary": "3239d9b9ca7fb83699d9ae17c7bdab5ed4dd8181ad529aa7d92ddcdf0ec41dfb",
+        "input_sha256": "d57865db6049110882c5495fbee80831821e106c3915cbe50978c36626a3b879",
+        "expected": [
+          "accepted",
+          "20ac43e481cfe45a7ae8b307b87117a272ced2b4bafc16f4844c06a2d2fb1ece",
+          "33ac835eecae5d093ac10a405faa9f18c23fc73a3f83f6bd1500eb3776b4b041",
+          "a0dd4f2311e80d514ecb8e161b5002ca7f78be0f9cd30506099b9dcb32568175"
+        ]
+      },
+      {
+        "name": "self_pay-034:deployment",
+        "dictionary": "d5ebffd0ec686f6795ee65792cfaf1b3ef8667b10676c35231b5c240d74e02b6",
+        "input_sha256": "81f0453443460ee935ef88d69c5c041c59ed168eb75cc6d56722887df23c9f2e",
+        "expected": [
+          "accepted",
+          "eaa5ffc00ac84c8563ec6888685fb6003f7fffae373c1a8b135691d391c753da",
+          "33ac835eecae5d093ac10a405faa9f18c23fc73a3f83f6bd1500eb3776b4b041",
+          "b12d2b4b02605baebb8c86e333c0941bbb9a7c78f9a37aec0cd65bde1dbd6120"
+        ]
+      },
+      {
+        "name": "self_pay-035:deployment",
+        "dictionary": "2606a93253118604f7022bec2e67870a120e16ddf4824da11b1f9496e711dee9",
+        "input_sha256": "1840c0c88954a5adcfa78a1253487508e1a93e05a79aaf6bac3942011886f9c8",
+        "expected": [
+          "rejected",
+          "-14",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-036:deployment",
+        "dictionary": "1996bfeb3da64a5864eb8b4c922962e3eab514eb05806506349749c8b512dad3",
+        "input_sha256": "0e4b9cdf34a75df8d63d1afcfd4491c589f572d7ae0799cff768fe4c62d98098",
+        "expected": [
+          "accepted",
+          "6a77d2ce2cc16444eef1d8e40f3014314c88b1c406506f11f992eca024824e5a",
+          "33ac835eecae5d093ac10a405faa9f18c23fc73a3f83f6bd1500eb3776b4b041",
+          "46817cf63ebe988686c51b6ee739362cc3d45af60cd45fedbedf42f2cc269003"
+        ]
+      },
+      {
+        "name": "self_pay-037:deployment",
+        "dictionary": "aa3f7d2954965349fe9da71773ebdfba9146a330cab63d254bb15f24e93a34b3",
+        "input_sha256": "3ba92dee43c6c0e955635cd4a57d0b532f0df5b3c8954d608891784ee808e745",
+        "expected": [
+          "rejected",
+          "-14",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-038:deployment",
+        "dictionary": "f7a8ba86a246713b9b35ef30c60e6493c816ad5458eb12b97208ad0eda20bccd",
+        "input_sha256": "702ae849171f4225afd78cd4226cbda3726a706cfc9a35ea1ce69e606cf3bdf9",
+        "expected": [
+          "accepted",
+          "1372426a527453f1c6724fef13cfbfb1fd39cbd6ca5c4f5db437e8a85fc21b0b",
+          "33ac835eecae5d093ac10a405faa9f18c23fc73a3f83f6bd1500eb3776b4b041",
+          "8469667ec7e69ab1fac92537ba98d55541b46af91397ca7fea1f82bc42a83988"
+        ]
+      },
+      {
+        "name": "self_pay-039:rescue-below",
+        "dictionary": "aa3f7d2954965349fe9da71773ebdfba9146a330cab63d254bb15f24e93a34b3",
+        "input_sha256": "8edc8b6935acca8f6ccccd68f7336f1ba8a9eb8a94717948d04e7ed2daf0f0a5",
+        "expected": [
+          "rejected",
+          "-14",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-040:rescue-exact",
+        "dictionary": "f7a8ba86a246713b9b35ef30c60e6493c816ad5458eb12b97208ad0eda20bccd",
+        "input_sha256": "56b468eaf3c7fc92ac073d7288609f4d95c306528e14f276ee0bcd1cb2545262",
+        "expected": [
+          "accepted",
+          "1372426a527453f1c6724fef13cfbfb1fd39cbd6ca5c4f5db437e8a85fc21b0b",
+          "33ac835eecae5d093ac10a405faa9f18c23fc73a3f83f6bd1500eb3776b4b041",
+          "8469667ec7e69ab1fac92537ba98d55541b46af91397ca7fea1f82bc42a83988"
+        ]
+      },
+      {
+        "name": "self_pay-041:rescue-forged",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "3a0e71f45aa2fcdfbcfddd1be321cfc078722de49179d84405e4a35c37ca039f",
+        "expected": [
+          "rejected",
+          "1808",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-042:rescue-domain",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "a11ceaf9bb1e0ad0efa4f3c45e67518d4f175f32fac8dce05679a88f29c70286",
+        "expected": [
+          "rejected",
+          "1808",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-043:network",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "954801b88431ef7bd6461c1041938d1a3dea80de6f5f1e8b8ea6b3b6e4e3600d",
+        "expected": [
+          "rejected",
+          "1801",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-044:global-id",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "463ac6a6338a40efe6c80665dab89400ab9a30a1ee61c2b7c7f87575ac4a2c3e",
+        "expected": [
+          "rejected",
+          "1801",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-045:address",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "cd839166fe03ababfa532cf06fa248af7b1a0e496f707b751d72c88f1093e270",
+        "expected": [
+          "rejected",
+          "1802",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-046:authority",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "b94f2d23a676c9709930572147984ebfcc5402ab93871748869d8c3159c53f23",
+        "expected": [
+          "rejected",
+          "1809",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-047:epoch",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "12e8039f95d8542f8383266fbe468441c51cbd9c377d18e0dee0e041b37043c6",
+        "expected": [
+          "rejected",
+          "1803",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-048:nonce",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "fbec110ce86684d834cea52713aeb84f1199704cebbd9fa8d8f4a66b9ebbadca",
+        "expected": [
+          "rejected",
+          "1804",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-049:expired",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "8b0867dac2e9ec774502090e169ac6e7d8787ebb29b262244057c0d0f358a8ba",
+        "expected": [
+          "rejected",
+          "1805",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-050:too-far",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "1813908fec018aa17ae449642e41cf58c506bff6bc8ee9e1b74cc5a6cccb7c5c",
+        "expected": [
+          "rejected",
+          "1805",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-051:primary-lock",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "aa842e655b9b0e47d70690fe8da5d9ef8337135bef670645260e5a00982cc455",
+        "expected": [
+          "rejected",
+          "1812",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-052:unknown-role",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "d4e29f392e64f6fd61a2a2def69a07df989f4ea0d5b1fe331f5f9f4e2518b953",
+        "expected": [
+          "rejected",
+          "1812",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-053:unknown-kind",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "2e4ba3e3b80ae23de2a1fe9c4626fff53036797aa30d377c219d0a6cdd8f414f",
+        "expected": [
+          "rejected",
+          "1812",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-054:trailing-envelope-bit",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "91cb34f71be310d8d9e56278ae3371bd6850eb9a53d00549d949b5adf41e1061",
+        "expected": [
+          "rejected",
+          "9",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-055:trailing-envelope-ref",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "a7acd77493bfd65b9d5b18b3da1fd7bafd44fce48e9dad7a42ce9b9809593c42",
+        "expected": [
+          "rejected",
+          "9",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-056:trailing-request-bit",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "aa43b9d0ab3dd316f0558dd11d2e625655a589a7e15d56c7ad3aba67ea268332",
+        "expected": [
+          "rejected",
+          "9",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-057:trailing-request-ref",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "2f111a98560cf9011467df16221dc0bdcc9f0afdf1b8c9c87fe15fcd33a7894d",
+        "expected": [
+          "rejected",
+          "9",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-058:exotic-request",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "485b39f23af1c67af2bc90f52f8684129e1d4154c8cc748fe5512e026f0d313f",
+        "expected": [
+          "rejected",
+          "1820",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-059:exotic-signature",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "6cad2ccc33747f1f3512e982fbfa07862fe43411399ff1ea2d99b1f6f8c2496c",
+        "expected": [
+          "rejected",
+          "9",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-060:signature-length-1--1",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "9f43355aaec6818f78a1acc9c3379a14b276000f6c6c6ba888d5c01dae8da4ec",
+        "expected": [
+          "rejected",
+          "9",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-061:signature-length-1-1",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "04cb0e92bf4aacef485679371a017e7033ef732fff261985f0a49e3f775130d5",
+        "expected": [
+          "rejected",
+          "9",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-062:signature-length-2--1",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "2b3ccb7f44b193ac2d986e245452ad0b4c29697a1bdd2ebc4dc95fa06264ce67",
+        "expected": [
+          "rejected",
+          "9",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-063:signature-length-2-1",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "efdff8cd46bc0c96415b8fe8b129670f52792d2a2770d1ad9669fff94b71c5fc",
+        "expected": [
+          "rejected",
+          "9",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-064:exotic-installed-authority",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "1b77c17dbb9cd1aa8bc14fab8d4ca0240e4938622d00b60b78ee56e2d260222d",
+        "expected": [
+          "rejected",
+          "1820",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-065:trailing-installed-authority",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "bde5bab789e172bd21f471fb1627a1402cf8d62df2f4f3f401b8cd2ae653fb3d",
+        "expected": [
+          "rejected",
+          "9",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-066:exotic-payload",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "3ce3c6a2aaaed5cff9566c6f652fecafbee7063276b166b34dc932e6ad7583e0",
+        "expected": [
+          "accepted",
+          "25fcd3504b3b0a0417c68fef326ad3d8aaaa8d2082de376ac347dc7c834e25bf",
+          "08c3b5485002aa877cde28134c7f957f173882e07eaa847d03f705f91fa22197",
+          "02eef15c7534b9cdecfc5de19192b57d0696bb0d58dcc1696514036842e30fc3"
+        ]
+      },
+      {
+        "name": "self_pay-067:exotic-payload-replay",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "caf11f0f94d9526cc28995e8ca7d6ee210fa9fd6f1a1bf53e2d77d1a02ba94f9",
+        "expected": [
+          "rejected",
+          "1804",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-068:trailing-payload",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "dd8b2781463ea3c6ba4f66184463e650f437a4ca2d8630c0e8955ab5977c170f",
+        "expected": [
+          "accepted",
+          "98c399864cec02fb2e51a62d217878def660310ab28bad4b732b8a77cc5fa6ec",
+          "5ac9acf648c820d0eac536069c2035574914c6acad6b99073fd822506d30d149",
+          "6b330a7d44e92932b32a78b517d803be34eca5167a87c1e76cbe16b06607d54c"
+        ]
+      },
+      {
+        "name": "self_pay-069:trailing-payload-replay",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "fc61e251142a03002085f12479fc8b0d1df64cffdb9dc079b7a95a51394f6686",
+        "expected": [
+          "rejected",
+          "1804",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-070:missing-policy",
+        "dictionary": "9a076464340386a2c2f128d5b4125c7eb02c03ebeea04b9a624a18c75c960dc7",
+        "input_sha256": "4974d5dfcf2fc3b189d904dca2922f30aafdc173c42eb2c221c9db1d2b5cc4db",
+        "expected": [
+          "rejected",
+          "1820",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-071:missing-policy-rescue",
+        "dictionary": "9a076464340386a2c2f128d5b4125c7eb02c03ebeea04b9a624a18c75c960dc7",
+        "input_sha256": "2d148b15e6e5e3e199696c58d3fb1f9ce2ce7d080600467110a2edfa87eb0dd7",
+        "expected": [
+          "accepted",
+          "452518a1c1304f9db1bbbf6af2301d2eb1df7823c764283dfef51fe6a3c710a8",
+          "33ac835eecae5d093ac10a405faa9f18c23fc73a3f83f6bd1500eb3776b4b041",
+          "fc0c0f0c9d53b618f475fc514ebff55cb70498dcda842db04db28ef3d696ce55"
+        ]
+      },
+      {
+        "name": "self_pay-072:retired-policy",
+        "dictionary": "8bc6d98ff4badb9a9cc96c4cc437edb713e6a015c73bacb9325a6b1609b2f826",
+        "input_sha256": "6650b7d335d373a831f95e49c446f54c239ac6b086e740b2e9eedbb9ec6658d9",
+        "expected": [
+          "rejected",
+          "1813",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-073:retired-policy-rescue",
+        "dictionary": "8bc6d98ff4badb9a9cc96c4cc437edb713e6a015c73bacb9325a6b1609b2f826",
+        "input_sha256": "6acdcc21eb97db1bb66b58ca68f4908edd43eee5b2c7d9b30777ff8bcf5b9a37",
+        "expected": [
+          "accepted",
+          "452518a1c1304f9db1bbbf6af2301d2eb1df7823c764283dfef51fe6a3c710a8",
+          "33ac835eecae5d093ac10a405faa9f18c23fc73a3f83f6bd1500eb3776b4b041",
+          "fc0c0f0c9d53b618f475fc514ebff55cb70498dcda842db04db28ef3d696ce55"
+        ]
+      },
+      {
+        "name": "self_pay-074:cutoff-policy",
+        "dictionary": "54bb0e8fe5a669b155f772e2f66abee698e2e69a7ba91cc5c9f9737aa9226d10",
+        "input_sha256": "3b015b24c17e7b451542d98269954291b766b7c3a2261311e39a2ae73f1a4ff4",
+        "expected": [
+          "rejected",
+          "1813",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-075:cutoff-policy-rescue",
+        "dictionary": "54bb0e8fe5a669b155f772e2f66abee698e2e69a7ba91cc5c9f9737aa9226d10",
+        "input_sha256": "3124813275d6cdef4918e823913c114d3c1fa9657d7ed06dec2f3fbfa8300360",
+        "expected": [
+          "accepted",
+          "452518a1c1304f9db1bbbf6af2301d2eb1df7823c764283dfef51fe6a3c710a8",
+          "33ac835eecae5d093ac10a405faa9f18c23fc73a3f83f6bd1500eb3776b4b041",
+          "fc0c0f0c9d53b618f475fc514ebff55cb70498dcda842db04db28ef3d696ce55"
+        ]
+      },
+      {
+        "name": "self_pay-076:malformed-policy",
+        "dictionary": "2056ed2275094810fb4845d3b98d2d8151b95c67d6c52faeaca70ed71eae79ad",
+        "input_sha256": "eb39b073e9a3e0d4ec7709fb53b7bb080dc81c9d86c59a773f12ac78facb09d9",
+        "expected": [
+          "rejected",
+          "9",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-077:malformed-policy-rescue",
+        "dictionary": "2056ed2275094810fb4845d3b98d2d8151b95c67d6c52faeaca70ed71eae79ad",
+        "input_sha256": "6c2c2a5a17a1f5661c14ae0d0465bdd79109ed5d3568c7d12f56a5bbe87f9f57",
+        "expected": [
+          "accepted",
+          "452518a1c1304f9db1bbbf6af2301d2eb1df7823c764283dfef51fe6a3c710a8",
+          "33ac835eecae5d093ac10a405faa9f18c23fc73a3f83f6bd1500eb3776b4b041",
+          "fc0c0f0c9d53b618f475fc514ebff55cb70498dcda842db04db28ef3d696ce55"
+        ]
+      },
+      {
+        "name": "self_pay-078:seqno-max",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "d0bfe3b7500b04c5a17a30c5515cba909a93c78ce55628e2ddf0ebdd01593086",
+        "expected": [
+          "rejected",
+          "1810",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-079:primary-max",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "26a037586750dce366b6753485c4185691c6944a0b4930a6bcb8e2c1151b27a3",
+        "expected": [
+          "rejected",
+          "1810",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-080:rescue-max",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "b8657bd74c4ea2ec44b4d4fc743dd9c65680261558d5eb6a9ab5054aac3898fc",
+        "expected": [
+          "rejected",
+          "1810",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-081:epoch-max-1",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "f123966343de181f0ade3572b11ae913c79df3d4afc6d376a2eaa9b28b43e7ef",
+        "expected": [
+          "rejected",
+          "1810",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-082:epoch-max-3",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "dbcba9e5f26e695952d2d491a984f9c8066245a009973dc2d56a4e499a8194ea",
+        "expected": [
+          "rejected",
+          "1810",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-083:saturated-control-3",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "63c2d53bb2ea66aba834f88165380d7c9451070fbe43a6005f2af1af61ad2abd",
+        "expected": [
+          "accepted",
+          "85e029cb554e7287d5b6e8d503c88e38f74a78221f4c6b83208c8a83b6273196",
+          "45e65ac2116f2a692daef1bb9ba70de6e3a4b2b9e40a475915b07aeee0edc5ee",
+          "81696bcac5269f6467e8cc6b17cedda5b7b53b9cd4ffe89d197daccd36a5d57d"
+        ]
+      },
+      {
+        "name": "self_pay-084:epoch-max-4",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "776330e0c22932c38c1b825d275dc8a0ceb556a74b08fb062342cee1abdc9a0d",
+        "expected": [
+          "rejected",
+          "1810",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-085:saturated-control-4",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "efce2cde403fb1a08e49456a2ca1a2f4c4f4dcd535feb159d9de1a471c0e2368",
+        "expected": [
+          "accepted",
+          "412e786ee47dfba7d0332e87bc4ecb6f7901a2d556ff6e2582539c06db15a746",
+          "96e7908c60395076055775656423fab356ce06f9e86c9764a86c217c76e9e5cc",
+          "1ba730a741f1b8fa0185104fb5dd83bfd94fe2172f133ed14c22f8e3c3719c99"
+        ]
+      },
+      {
+        "name": "self_pay-086:send",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "210e279899b099416f1f050adf003289bef3113321a7be333fa2497bf340d03d",
+        "expected": [
+          "accepted",
+          "38109657cf9bb2b8eef94eef404f49bd1353d30345eacc0a96181ac81647f559",
+          "4ce5c1da2fcc1aa1b7a28c6b996b02fa52a72c0b1190da951ee73fb17833b3d1",
+          "fc40c23735224bedfb0dc89bed4ac8dc03bb60862dddad5dff8ade790b30ca45"
+        ]
+      },
+      {
+        "name": "self_pay-087:send-replay",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "4c61933af8584a71365bc3b48c47bd6b7748de7b1a6c91aa02f8f4ca12603ac9",
+        "expected": [
+          "rejected",
+          "1804",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-088:bad-mode",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "f15040e03167bece7564b22b7fecc90e208f11f226bafee8ed710dfb004c2acf",
+        "expected": [
+          "accepted",
+          "6830b62196aafa097442a20ef31d034ef1f92dd3197a0bd92240e7c6b0e5d4ae",
+          "7636a973de162351d86222592be8827394475eed61023a2e70ce16feef20c14c",
+          "cf63db477113bd0e0073ce65dc79e36c3dd4509f57cce8eee9a76e8301c412a6"
+        ]
+      },
+      {
+        "name": "self_pay-089:bad-mode-replay",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "35a72b1ef29dc85767e183f3166494f5b63cb81c1549705365db36bfca1a64fa",
+        "expected": [
+          "rejected",
+          "1804",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-090:destroy",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "854d4cfb0735b6d358f2898ccc16a82ed4f8de2fb08cf01f9ed3c6546691995d",
+        "expected": [
+          "accepted",
+          "8946955dd60eb930ff7e8449ae69c0486c27491a38f55a9c115072e9747f78eb",
+          "df6623f2425617c1fa22ca0dc66d00b7646652f127b5177c658011677aa47f72",
+          "d2b242e893eef2693f78229bb279f44a9236c9a2f53ec010325b24d03f3e2f15"
+        ]
+      },
+      {
+        "name": "self_pay-091:destroy-replay",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "be2dc06dac9dfc127965803a5dd6be1546dd50888fc57f30c840d84e59df9eeb",
+        "expected": [
+          "rejected",
+          "1804",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-092:both-balances",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "ecafcf31b841c7c5820282206b671fa1365422094493379f73b63a50c455d1c8",
+        "expected": [
+          "accepted",
+          "d2497b7408cb2d9fe183e265df7dd1ea8a53b12a0f1f7f9eae8bbea12f5486d2",
+          "c6974283153cf8acb1359b19e57a610dc814956c69ed4df424ab739d7bd51a73",
+          "f89022bc11b92c2b4913dfe5f05cbff215e05b0acb65f92174cf44da85960d05"
+        ]
+      },
+      {
+        "name": "self_pay-093:both-balances-replay",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "a47cf877c3c082838353ac9b9492894f20da0568ea83371d7a841a8cddaa1421",
+        "expected": [
+          "rejected",
+          "1804",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-094:empty-message",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "f7b0d155c058cd836bb69575cfda7a9040a7ec0c2f9b26f63d1feb0e467ac7e4",
+        "expected": [
+          "accepted",
+          "fbadf0694f261da7d4be338d20ff29d5a0acef19d39ba6f4560f8ac049c9ead1",
+          "007bc6923792b04760c9e5337f512363eb8ddc01f524213c9ad0463a7690b27f",
+          "13290756cba10fe4e29f68d39e5e997e626a7d873ad25343fc95cf0c82477d06"
+        ]
+      },
+      {
+        "name": "self_pay-095:empty-message-replay",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "d54906ad16b93c4c5f497c3f61372333fc49ed7399a1b6b2e1e02eceab3416c7",
+        "expected": [
+          "rejected",
+          "1804",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-096:truncated-message",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "f6d19f8f39b25d05e1fa381fb535477537e5767bec7d2e2aeae7d9db5b5defe8",
+        "expected": [
+          "accepted",
+          "a5c6173f345bbed185809192a4436ad58fa6a78a9d6046a92ba5255190605023",
+          "e7233ea36a6a0ab5a6b787f9487d6b72f4dd1999b60fca6b6aea54ecd689344f",
+          "81c45f671d25c873eedb2f39e1bef11cc3cf47f39ffbc49ba63576b43be265fd"
+        ]
+      },
+      {
+        "name": "self_pay-097:truncated-message-replay",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "617e77f8e61ca434ca6f007bd8d151b20a613354f09f22adf1302c97b035ab92",
+        "expected": [
+          "rejected",
+          "1804",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-098:invalid-ext-mode",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "1be5d6ad7279acbf1986a1c53056f30b54ef543a14be9d0c40c7ac708d64d0bd",
+        "expected": [
+          "accepted",
+          "003505ea5425d72020ea8b979143b7b3bd484ea4224e90e876eb40954b33209b",
+          "79bf874ecb2bce2b4df0e43114b001c27834443598d730e7f5dacf777dac3948",
+          "f487b85d18d19ba07670ad286ee6c89740bbe603623ed2829d2045dba4ef8c7d"
+        ]
+      },
+      {
+        "name": "self_pay-099:invalid-ext-mode-replay",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "44fa834a42508e21275be71c8038aad028015d7d7de63a6c9eb96e43abd0b39c",
+        "expected": [
+          "rejected",
+          "1804",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-100:too-many",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "44918412c5214109d420344bc212c63fd7a237decea4110713b87f131ae4ca28",
+        "expected": [
+          "accepted",
+          "01ffc3ddf3cd28680ba4043801d13cda23690ba08df85cb523a049c5a0bcd2a9",
+          "cbed37c96811afe4e36be20a9e0f63fab1bc4f7743f06bc265f99dd379216e7c",
+          "3ac8ff171903f7d2f5d1c3e0635e4bbdc91afbee1c59edc39a06e07d071fc31b"
+        ]
+      },
+      {
+        "name": "self_pay-101:too-many-replay",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "ae69cbf890b3a1ac6c399b0194f342675c33047db06fd147ace2a8b62faa9e6e",
+        "expected": [
+          "rejected",
+          "1804",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-102:max-actions",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "0f4a301ac292c6d79a69fe00fedb2d32202146c8ddf77e929175b1526c1d88ba",
+        "expected": [
+          "accepted",
+          "fd64e98013fbdfa062ec2f5a1edc27f19befe25c857302b0b4e3433ebbf11d52",
+          "25acf7bce6c75c2c08c93c6e60113104cde6a769ef3fecb39c96de205ed61e03",
+          "8cc5cd4b42e65d453ef34c36f27f7fc553690114726ace43872190d7c823c20c"
+        ]
+      },
+      {
+        "name": "self_pay-103:max-actions-replay",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "3f48ad87bf9081cbf7a56661677854c2764e302a3ee754f05abbca9acc05fbbd",
+        "expected": [
+          "rejected",
+          "1804",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-104:deposit",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "25e35f10ba8edbb6bb495773b0058cf2bd9a16610a6d70b49e7397a343f40bc1",
+        "expected": [
+          "accepted",
+          "190c1ea21957cd5d1935ca110bbc9a28a99f040cbaebefddc002c4318b743836",
+          "b356d8eced6438c5cf332948fbc29ba7b0a8a8c203d127d7d287916a2ca4eb50",
+          "68ae7db358eb88a76536665071c21caf5144136d1f069e69199bb8a1dba2763a"
+        ]
+      },
+      {
+        "name": "self_pay-105:legacy-auth",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "19e563ef3a08bcdfa999fcfc12ab0b2797e0c709e7c5fb721d594dcb17ac2d74",
+        "expected": [
+          "accepted",
+          "a58998b27039039491cdc7460666062a20de866a9499d7494e34d51631418155",
+          "b356d8eced6438c5cf332948fbc29ba7b0a8a8c203d127d7d287916a2ca4eb50",
+          "e56bae7349ede94bdee245a9696c7b62da40b0373007559b8fe383a5c8068699"
+        ]
+      },
+      {
+        "name": "self_pay-106:self-message",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "a6b6da19b8551012f290138f0c49768db3f24ba93a4c36644109ac4b7d82c94c",
+        "expected": [
+          "accepted",
+          "c746ae16946093dc47bce9ea3854330be0cdf0b1cad6e103affa1d33fd343505",
+          "b356d8eced6438c5cf332948fbc29ba7b0a8a8c203d127d7d287916a2ca4eb50",
+          "845f6e7ccf8ead3506ff514779b358cd190182b909513ef2c110357b338710e0"
+        ]
+      },
+      {
+        "name": "self_pay-107:bad-configure",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "dfef7b68a35a9cc5b70f2cd2a6e57939824c945a800778096d6aa5bf75cdcfeb",
+        "expected": [
+          "accepted",
+          "a3448924c4c2b2fc0b7d0bd7a902f7bc297c83d5cbc565efc4db6a38f6e3b266",
+          "c50e3682b0b641f30ec4d32d3d79c60089f150ec7c863c0505fa89e3b9fd0ca8",
+          "22dfd68fd8fff9fede69d83033b45c72bf57ab4789e02691ed548b96a32b4d08"
+        ]
+      },
+      {
+        "name": "self_pay-108:bad-configure-replay",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "e0b329f8971a312e4fd637f34d016910f1119330b9ef8293a712fc4c3916ce1b",
+        "expected": [
+          "rejected",
+          "1803",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-109:bad-lock",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "b90749d9beaf27fa459a37ebdf15cb2e9044495e16f60b1c055c1d72bd7c2e5a",
+        "expected": [
+          "accepted",
+          "f1b07d636e73f9dcaf76904fb305dbea9146d0f4bea6f47fed9ef74dbf5e6d14",
+          "49071a7d7adaebd1e3daaf58a107c654818362fa1e742e5aa252af9c94e98f8c",
+          "7c3c3543c42c5f47aabddd961a0bcc4ba48bd9ffdcd4568b69b15f7e5002df64"
+        ]
+      },
+      {
+        "name": "self_pay-110:bad-lock-replay",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "f5aae464a29a12cdeb927bd4c37b070260ae80d9104e1833a2b254364660b5c4",
+        "expected": [
+          "rejected",
+          "1803",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-111:bad-migrate-key",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "c70c4785f2b8837e551c803a3ab86e79abcebb346eb9879d69b8a0ebfbacdf4d",
+        "expected": [
+          "accepted",
+          "e43a9f10e51a02347060f6a9dbb5e4227d8f181c49934b765278cf58875de573",
+          "c708aa59c3e02b252ded33a693b8d8faf541416a7acda9bc7c1e670db190ba1e",
+          "d79c80343b6576667383bba4a85048733b9a7d78c4636b9fdb0ad1af832762d5"
+        ]
+      },
+      {
+        "name": "self_pay-112:bad-migrate-key-replay",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "d1aff46aab865e62158d39efb8fb07d6e47e4be4f02a2e4ddec8e2ba41928708",
+        "expected": [
+          "rejected",
+          "1803",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-113:bad-migrate-network",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "6d9517bb870758c4c8b3ced3554f808948c45c8582aee28c87bd6ff944b2cf22",
+        "expected": [
+          "accepted",
+          "bb709971e516e2d63c6b938d2aff3c35c77d160fd3981ec9e4f0d6265617ac48",
+          "6a27014f111ee350f72f0afc5f6d97996c36f31924a0ea4c06be4231d6e9466c",
+          "fb99a66b2cfecf2fc8826ac1e537aff3dbf624c7c77fe7b17a8c0d9f6fb3e9e2"
+        ]
+      },
+      {
+        "name": "self_pay-114:bad-migrate-network-replay",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "29a7575ee3c21642d993b39f4128085204ad21bae18cb5a27009b4597916d726",
+        "expected": [
+          "rejected",
+          "1803",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-115:saturated-bad-migrate",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "1e9c0249c62563dad61600816a5b2cc55db40f9b6433c6b66b719593276e6102",
+        "expected": [
+          "accepted",
+          "f0e1d69e15c316710deb4c77dc64e5c19a53ffd208c962581bdb633ad3dbed38",
+          "99a21674a8cfe42352dd3c4c632357a40ab773c1475106b6beb78e5473db68ca",
+          "899fa179512945818132eae06348144e66699e652055a391c058e2c1a97050dd"
+        ]
+      },
+      {
+        "name": "self_pay-116:corrected-migrate",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "e3f5b780d43251c21645fdcd64a211c7168251837df74b94023ad3f52935eba6",
+        "expected": [
+          "accepted",
+          "10ed117cb73c466c57b57dda4a4c8d2787f31b24d1a53aee1070fea23440003f",
+          "be218ffac84fc18c71e3186be34fc5b739ac8471ba36eb40ad95245dd3d86fcd",
+          "f49902d73778d980a79ed1a8d28ee04eec49a7b306085a8d3e03cf357277731b"
+        ]
+      },
+      {
+        "name": "self_pay-117:deployment",
+        "dictionary": "a580ed69ac4e508431c8cacbca9ca7c56ba9f12606732858b655193136bee086",
+        "input_sha256": "4c543cc7ccfe7c16cc27eb3d302518887a995d2d3a6e8987b3c9367101df7695",
+        "expected": [
+          "rejected",
+          "-14",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-118:deployment",
+        "dictionary": "5adc6df387eab801af6f4c5214fefa467c2adf8f00d41d110cb285e86ae916cc",
+        "input_sha256": "72358d3fef742828991172eee54a8801a3562d2abca8c150947629ddca32c8d7",
+        "expected": [
+          "rejected",
+          "-14",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-119:deployment",
+        "dictionary": "5eb682e4d6dcb0b3ff6d5ebc8d325f927f2f71b7d4f164bf08fdc69d4b9c59ee",
+        "input_sha256": "8369e170654472ba88a8371f03e0a1f9d292cc8f4cc71f8f686c1ad18dc3d714",
+        "expected": [
+          "rejected",
+          "-14",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-120:deployment",
+        "dictionary": "434199e838fbfce7b8fa310a7605586d03a593f7880e924fb8ea43570d5f9e25",
+        "input_sha256": "53c2a5f85c3338c45a9c4751cc1a65dde7f333eb5e9aa23c80c2579e00e9924b",
+        "expected": [
+          "rejected",
+          "-14",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-121:deployment",
+        "dictionary": "4e865f07056dadef160e4628c21d2d2f8635d9ff9b739c7e86203435b06d5a09",
+        "input_sha256": "af8b7b02d491b006e18aa9e935a65965487053403a121c84b116c3516a3a7d4a",
+        "expected": [
+          "rejected",
+          "-14",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-122:deployment",
+        "dictionary": "67307809e1d842847dfce3ef09347bd724d844cb8be064656e87c0000b815fa3",
+        "input_sha256": "7c52a493502a193532cc1dba9c6dfa7ac415e7948648bc68de4e2914b27f6bd3",
+        "expected": [
+          "rejected",
+          "-14",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-123:deployment",
+        "dictionary": "a8a69f66fa09dc24357e20b91e1a1a894ddc2e68886ba590591e30e425844eaf",
+        "input_sha256": "50af18db6753a3054e6e7c043f8c95c74de90025fa191a201d8cd4bb8080573e",
+        "expected": [
+          "rejected",
+          "-14",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-124:deployment",
+        "dictionary": "b6577c06719bef4176f478033654536e027d538e8bda71256c5f237825160f42",
+        "input_sha256": "d43f23647cb6997b23021314369b1c9771213057a5d4d483a6ebfdfaba8ee62c",
+        "expected": [
+          "accepted",
+          "102534405e78b29b9aa0684d7332963abb11802bf1b0c74114032cf7a81f4af0",
+          "10c11ed9badb1c023c151146d2564e97631f996ab57329d6fea69cb33553beae",
+          "ceced9fc56fb240364d923c81d3013498f01c0b686a698dab8dcf47096a9cb6d"
+        ]
+      },
+      {
+        "name": "self_pay-125:deployment",
+        "dictionary": "29dc935860fd72a7930981021641bd68867067abdaaa46bf9b0c1e51720c69b4",
+        "input_sha256": "256260f8ab061dcf0671a0423d5573c9ea34252f68ac35a20807f6f39afbe6a7",
+        "expected": [
+          "accepted",
+          "95816e3d584f79090666d5dd3dec839969159d1724f07b82fe2cff2fda542bf4",
+          "10c11ed9badb1c023c151146d2564e97631f996ab57329d6fea69cb33553beae",
+          "8c926ababc5bc5438c58275a7a4de076dd8a8da23b390175edac81af23038a48"
+        ]
+      },
+      {
+        "name": "self_pay-126:deployment",
+        "dictionary": "3ad1ccf62e77f26fa691f3bb5a80f1a5047093c11b349edceb8dd8115022c7cf",
+        "input_sha256": "f75e2a0fbca24f0fa11667be7c167880fa07893bc7c45716935f8f762639cd11",
+        "expected": [
+          "rejected",
+          "-14",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-127:deployment",
+        "dictionary": "c1226a107acd5442182c57420e40aeaee7ea2e8979612be45bdaa448551cb500",
+        "input_sha256": "d26f0dc3a5fbb2164b20fd851fba2e030759afcfdf8fe16a89a9a26c367a8cdb",
+        "expected": [
+          "accepted",
+          "626c20c1372de5b0ebf0cdd2d3de3222a70aee44844fceccce182c9014d995d6",
+          "10c11ed9badb1c023c151146d2564e97631f996ab57329d6fea69cb33553beae",
+          "e9e3248973bc91405e553146ede1fc4a02dfac38bfb5c469ec0027e1ac1055ce"
+        ]
+      },
+      {
+        "name": "self_pay-128:deployment",
+        "dictionary": "c0b46d474cdf383288bcc247e406ae430bf7132cd058e73b5b1f3aeef40f27c1",
+        "input_sha256": "48ee05aa08fe896ded721b75a725cbcc9cc1713ce76cd138f6ba0b3b9721a2ef",
+        "expected": [
+          "accepted",
+          "8f20657d1f144ec83b97a6c0d7038b7aee73630219f4d77e64aa3b1ebe2554ed",
+          "10c11ed9badb1c023c151146d2564e97631f996ab57329d6fea69cb33553beae",
+          "55ddce90a34bfc42bd4a0ed0a074b3f9fecac931fc658ce0048212d4819e30fc"
+        ]
+      },
+      {
+        "name": "self_pay-129:deployment",
+        "dictionary": "89e9bdbdfc15b6fa21bc67c0d480c33dc688fda9185ace9b1169cc0fc147e6ef",
+        "input_sha256": "2b83b28d0a86d12097e9d8b902a0822e87871df62c01fa12f43009599504db83",
+        "expected": [
+          "rejected",
+          "-14",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-130:deployment",
+        "dictionary": "bf20d56254d0ff6720c858361f4f12ddc99ec7fe9fe5a4976e533704823cdd55",
+        "input_sha256": "31e98e978d12e60215daa242d242ed2ef01da69d56e2257ea219634e592614fc",
+        "expected": [
+          "accepted",
+          "c53f215140f7057b467c0460b9204037ca5a6528d20127d9aa79de3e7cafc540",
+          "10c11ed9badb1c023c151146d2564e97631f996ab57329d6fea69cb33553beae",
+          "ba7271b39122978154ffa035431ba21a502362652fe88012a4b9522b01cefd47"
+        ]
+      },
+      {
+        "name": "self_pay-131:control-1-below",
+        "dictionary": "89e9bdbdfc15b6fa21bc67c0d480c33dc688fda9185ace9b1169cc0fc147e6ef",
+        "input_sha256": "1afe04fb7e1ac60f5df565aa978cf64f8aa4750154f1352c4711fbd003b54a23",
+        "expected": [
+          "rejected",
+          "-14",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-132:control-1-exact",
+        "dictionary": "bf20d56254d0ff6720c858361f4f12ddc99ec7fe9fe5a4976e533704823cdd55",
+        "input_sha256": "68344785e82e533ce1cbbee9cf995d6dd4f10d328999d9c204c9896a3cb3d11a",
+        "expected": [
+          "accepted",
+          "c53f215140f7057b467c0460b9204037ca5a6528d20127d9aa79de3e7cafc540",
+          "10c11ed9badb1c023c151146d2564e97631f996ab57329d6fea69cb33553beae",
+          "ba7271b39122978154ffa035431ba21a502362652fe88012a4b9522b01cefd47"
+        ]
+      },
+      {
+        "name": "self_pay-133:deployment",
+        "dictionary": "a580ed69ac4e508431c8cacbca9ca7c56ba9f12606732858b655193136bee086",
+        "input_sha256": "73cc2d7f3c1c86568ec622c8bdd4f2e10fef5163cabfac545ac45e28e48fea30",
+        "expected": [
+          "rejected",
+          "-14",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-134:deployment",
+        "dictionary": "5adc6df387eab801af6f4c5214fefa467c2adf8f00d41d110cb285e86ae916cc",
+        "input_sha256": "7d8c1b710c0fc772935b82d4f61bfbe022cc5ac69c48cbd491c6bd120da046b8",
+        "expected": [
+          "rejected",
+          "-14",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-135:deployment",
+        "dictionary": "5eb682e4d6dcb0b3ff6d5ebc8d325f927f2f71b7d4f164bf08fdc69d4b9c59ee",
+        "input_sha256": "d27ac5a6aea35231ca8a6ded79f62b6d6fca7c2f2413a70add784251c33f1842",
+        "expected": [
+          "rejected",
+          "-14",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-136:deployment",
+        "dictionary": "434199e838fbfce7b8fa310a7605586d03a593f7880e924fb8ea43570d5f9e25",
+        "input_sha256": "4aad7cef6d261451567562d4be297a729f6630befd1c43ca6d77521ef3fe5759",
+        "expected": [
+          "rejected",
+          "-14",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-137:deployment",
+        "dictionary": "4e865f07056dadef160e4628c21d2d2f8635d9ff9b739c7e86203435b06d5a09",
+        "input_sha256": "2a87411d43c09d0c2945a6e2ce18b1d9f4fa23cd0015a7d71c490476a08f4315",
+        "expected": [
+          "rejected",
+          "-14",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-138:deployment",
+        "dictionary": "67307809e1d842847dfce3ef09347bd724d844cb8be064656e87c0000b815fa3",
+        "input_sha256": "c51a0dc50c4ce79b28ea2f52859616644db1fcd028b528a887b00749d077c0c8",
+        "expected": [
+          "rejected",
+          "-14",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-139:deployment",
+        "dictionary": "a8a69f66fa09dc24357e20b91e1a1a894ddc2e68886ba590591e30e425844eaf",
+        "input_sha256": "861e4ac8f7c39cfc2f5906598cd9146021ffff64a2fa5332f1632536db66b4aa",
+        "expected": [
+          "accepted",
+          "99f366f328714862fad8d247af07abb237a348583c8733f776546b48a63df72d",
+          "5119afeaebe155b9704dfa22a49b29adcf75425ff574ddbc669ade10893f62fa",
+          "ea68620319b2f4ac64b681c165ca731547596a40ea461a27b0cb12e18734517b"
+        ]
+      },
+      {
+        "name": "self_pay-140:deployment",
+        "dictionary": "769246cc6f19a3e838cd7643ed1a606e9673703e9d7e3bff4d5a3ebfa3d60a2e",
+        "input_sha256": "d40d3bfe01d6319e169e8b490f9e5db85d0a50ce90c12476c0dc7728a5451bd8",
+        "expected": [
+          "rejected",
+          "-14",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-141:deployment",
+        "dictionary": "49557b6cfd421e6d1d4e905a53eb749e9ae2256f3782f0a0bd36be53a3c79d73",
+        "input_sha256": "a8d5928f2873a12f95ee265bbcb9c4115aa6df773c68ce3922e53a0c6d819783",
+        "expected": [
+          "rejected",
+          "-14",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-142:deployment",
+        "dictionary": "ce59399836f176dbbadbd9396f8b54ea4a251b4dbc5b09a299de3226d69a923d",
+        "input_sha256": "e7589fafbaee854636d678029f722b66bab16466b9c0b0bd7e4ff722c6b2149d",
+        "expected": [
+          "accepted",
+          "e1ad26b10be049ba70da849f9e6bf6b6b3d0c4cedad568074d271fbc0eeba5db",
+          "5119afeaebe155b9704dfa22a49b29adcf75425ff574ddbc669ade10893f62fa",
+          "80e87ecb78b13a9bbd88c05b0a68507e755e199f25cbec8e62420aa102bc789e"
+        ]
+      },
+      {
+        "name": "self_pay-143:deployment",
+        "dictionary": "9a59d840b8c0df6c29a7d78d412246905012b21b30cd123eb152bdde13e3fa80",
+        "input_sha256": "02a97ed37872b8fea645bd46ddfd521a724b5b0a0fdb897e52c99925cc78ae63",
+        "expected": [
+          "rejected",
+          "-14",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-144:deployment",
+        "dictionary": "cd9ce7142a7b03d4ce0dbb516dacfb9ba04837e95ed4ee47da5606d8844a2c20",
+        "input_sha256": "dcf54d995eeb1284d0d6f547d91eedb296faad9848a7115b8ef6d5f2e838b360",
+        "expected": [
+          "accepted",
+          "6142ab985331582256916c0c6a9a5017e2c2566119da7f8d7a0003defb54b7a1",
+          "5119afeaebe155b9704dfa22a49b29adcf75425ff574ddbc669ade10893f62fa",
+          "c1398794ca9077b42727592841f2bb081d988cf1bda4ec8040917649c8d76d79"
+        ]
+      },
+      {
+        "name": "self_pay-145:deployment",
+        "dictionary": "46edd4ce5c7e2fd50cf578382a296b5e1e1758429ec360312f37c89d6cbff8cb",
+        "input_sha256": "3bf2ba3251e70eb24fcaf3b8a1720db6989154d1df62401e9482f8a98f918bf9",
+        "expected": [
+          "accepted",
+          "6a7f3d4c396309a391f7b0d2274e707a818c89713395b34d7c0e36b12183c86c",
+          "5119afeaebe155b9704dfa22a49b29adcf75425ff574ddbc669ade10893f62fa",
+          "6d8ab35cc2a63f9fc88e60112d592a4cf40dc2ecaedad7763d89917cc349e391"
+        ]
+      },
+      {
+        "name": "self_pay-146:deployment",
+        "dictionary": "bf65facc4988dc4ad69756599505ce4bc3e2220e99e850778167417fcbf17972",
+        "input_sha256": "9efdcebe2df799ecb30edefc4f29480757b301e776cf296bae70b4aeaddf64c1",
+        "expected": [
+          "accepted",
+          "52e8bff97abe21a8d696744a46ccd7363abf3d818a1d9055b8c25f9d30f31d24",
+          "5119afeaebe155b9704dfa22a49b29adcf75425ff574ddbc669ade10893f62fa",
+          "aa805783e504bfa87629a8b6cdefbef6c3879c5a233cc762b7a78d4aa98e0f97"
+        ]
+      },
+      {
+        "name": "self_pay-147:deployment",
+        "dictionary": "81d4b5e991f1532e713c830ed82a9dd0b70db3894c1f620b268bdda5c995a336",
+        "input_sha256": "c0abc5772f767efbc622e52ed2c3f929a26985644f17c5fae29ae5bdd8983a2e",
+        "expected": [
+          "accepted",
+          "4b8bcb3f5e2f9403f7142ee5c0dec2ed341568e88834f4062cb85680a3dfb384",
+          "5119afeaebe155b9704dfa22a49b29adcf75425ff574ddbc669ade10893f62fa",
+          "6ca5a3a379f4c5549c840cf696248088ded04cc8fd0f80bce440231be2526704"
+        ]
+      },
+      {
+        "name": "self_pay-148:control-3-below",
+        "dictionary": "9a59d840b8c0df6c29a7d78d412246905012b21b30cd123eb152bdde13e3fa80",
+        "input_sha256": "95c7c48ce163ae5dbe8bf6549418cc78b4c16de039fcf279e6b6321e48f2fa33",
+        "expected": [
+          "rejected",
+          "-14",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-149:control-3-exact",
+        "dictionary": "81d4b5e991f1532e713c830ed82a9dd0b70db3894c1f620b268bdda5c995a336",
+        "input_sha256": "95e80f0dce2b9ad8b938cb70ba0912f95779e9d10f37dfad484e756f111474c2",
+        "expected": [
+          "accepted",
+          "4b8bcb3f5e2f9403f7142ee5c0dec2ed341568e88834f4062cb85680a3dfb384",
+          "5119afeaebe155b9704dfa22a49b29adcf75425ff574ddbc669ade10893f62fa",
+          "6ca5a3a379f4c5549c840cf696248088ded04cc8fd0f80bce440231be2526704"
+        ]
+      },
+      {
+        "name": "self_pay-150:deployment",
+        "dictionary": "a580ed69ac4e508431c8cacbca9ca7c56ba9f12606732858b655193136bee086",
+        "input_sha256": "46d8a2f573ee6e14310a2412542b69c9010784586af34f56412d9425ceb3731a",
+        "expected": [
+          "rejected",
+          "-14",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-151:deployment",
+        "dictionary": "5adc6df387eab801af6f4c5214fefa467c2adf8f00d41d110cb285e86ae916cc",
+        "input_sha256": "9282d17940b15317d4ae0b9cfcfbb1bb1e1ebb79ff3916aa5ea4282c0714dd1f",
+        "expected": [
+          "rejected",
+          "-14",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-152:deployment",
+        "dictionary": "5eb682e4d6dcb0b3ff6d5ebc8d325f927f2f71b7d4f164bf08fdc69d4b9c59ee",
+        "input_sha256": "b23e228300a91fb75aae12f5121acf2a31ca671fdb7895e14ee46be78b5eea36",
+        "expected": [
+          "rejected",
+          "-14",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-153:deployment",
+        "dictionary": "434199e838fbfce7b8fa310a7605586d03a593f7880e924fb8ea43570d5f9e25",
+        "input_sha256": "eb1e27fce8febb27d5105891184c03eda02701cb9f90a399176b91d1da4df3b0",
+        "expected": [
+          "rejected",
+          "-14",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-154:deployment",
+        "dictionary": "4e865f07056dadef160e4628c21d2d2f8635d9ff9b739c7e86203435b06d5a09",
+        "input_sha256": "b3794d78ac96e647d4884a96c70c7a4c8a9f62b4a1bd7801ddbadfd4da42fdc4",
+        "expected": [
+          "rejected",
+          "-14",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-155:deployment",
+        "dictionary": "67307809e1d842847dfce3ef09347bd724d844cb8be064656e87c0000b815fa3",
+        "input_sha256": "4aedda765e9677de90353e7744c9e41370bd9fb7b8ffc769ec63025f5d2140e7",
+        "expected": [
+          "rejected",
+          "-14",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-156:deployment",
+        "dictionary": "a8a69f66fa09dc24357e20b91e1a1a894ddc2e68886ba590591e30e425844eaf",
+        "input_sha256": "3064a79d885d678a9271fe3c54c62566c7671cc12541d4a71470083e2c32fb30",
+        "expected": [
+          "accepted",
+          "ed8bd182ca1b484a076be7a37b3b0010125e4e52ad6d50cc419caf7b9c4764cf",
+          "96e7908c60395076055775656423fab356ce06f9e86c9764a86c217c76e9e5cc",
+          "ad40081ae2ccedee7c54343d231caf856d4b15c6db2ec3a7b829e3ebade8315c"
+        ]
+      },
+      {
+        "name": "self_pay-157:deployment",
+        "dictionary": "769246cc6f19a3e838cd7643ed1a606e9673703e9d7e3bff4d5a3ebfa3d60a2e",
+        "input_sha256": "123692f83beb87eb4eaf1c495f3e62ccabc79f548be9daa99b9dab1f66978ec7",
+        "expected": [
+          "rejected",
+          "-14",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-158:deployment",
+        "dictionary": "49557b6cfd421e6d1d4e905a53eb749e9ae2256f3782f0a0bd36be53a3c79d73",
+        "input_sha256": "89b4e15b1032b681ee2d44750020c001906b954d648e589f6fbb1139f9dbd29e",
+        "expected": [
+          "accepted",
+          "64a698587fa82d4da9103465ad422dd3bce80a89b9989d1cc406a7bd9579cc6c",
+          "96e7908c60395076055775656423fab356ce06f9e86c9764a86c217c76e9e5cc",
+          "3252c75658717dfe236db0f2edc82408b3757b953a51d7b69f0ba4fe006ee34d"
+        ]
+      },
+      {
+        "name": "self_pay-159:deployment",
+        "dictionary": "8246eeb32edb8c953868d674b74614ef389431e8941b4345230d4bf7805993f8",
+        "input_sha256": "6e03511149d7fb2e079d2218ca24ec12a59f5ed3639496f28c09e4439f27ca41",
+        "expected": [
+          "rejected",
+          "-14",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-160:deployment",
+        "dictionary": "6ccec64ab7d4bf6bc81e84c16312b93ce15bdb914fe9dd5e0234a8f3048fd658",
+        "input_sha256": "2ce021c7d03084d1f59ecccf272751e7b324b4ddd33da34215db3c717349f16c",
+        "expected": [
+          "rejected",
+          "-14",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-161:deployment",
+        "dictionary": "dd08ec460b4ba7c3d2480d9653a9cb7d331937b459e965421fc2e144c72007ad",
+        "input_sha256": "2255de5765289c523e2e4beabebaa7304d39b0d7fa76ac060d3a20a51b220eec",
+        "expected": [
+          "accepted",
+          "47cc90713f570f826a06eca83c1c08dd2c5e62916125ffe1da03b35657d4544c",
+          "96e7908c60395076055775656423fab356ce06f9e86c9764a86c217c76e9e5cc",
+          "03578553334d02c699a5fe4d5d36c649d4dff083ac4dfbab7231be7f79dc8449"
+        ]
+      },
+      {
+        "name": "self_pay-162:deployment",
+        "dictionary": "65ad1b9c74cb73353080e257c2454ad8d93be20261a799f00ac5efa7f6ee204a",
+        "input_sha256": "a314fe0611ef8768d54a1b0f6327dda76e2b42048688e3b8b4ec4f1e4fe08b4a",
+        "expected": [
+          "accepted",
+          "8c11dac83b896486172b810bce5adb335838a8dac4b6e13c7d08f6a1d39425a3",
+          "96e7908c60395076055775656423fab356ce06f9e86c9764a86c217c76e9e5cc",
+          "b5c87f0b9b283b1976de78e1bd9944cb5ee95068ed0a43b90a6055ac2e088e32"
+        ]
+      },
+      {
+        "name": "self_pay-163:deployment",
+        "dictionary": "69496023bab7e4558a2fd061d9220cdfc2f9e0e73f28e5ce0589e477b7ef710f",
+        "input_sha256": "6840c53922863e0aea817d7d71ff86c365a4360878bc6ee28d82b8f9a5e88968",
+        "expected": [
+          "accepted",
+          "2bdf63fe9e53ccf426d1abd96d452b6b9c0e687f3725c8ab87bd458a47958c05",
+          "96e7908c60395076055775656423fab356ce06f9e86c9764a86c217c76e9e5cc",
+          "a48e28aff5c6ef7d73c5b7fac7aa5a3438eccf169a5cec28e8d4603aa77237fc"
+        ]
+      },
+      {
+        "name": "self_pay-164:deployment",
+        "dictionary": "242176d58d71bc36a5985db8b20d1cfdac6af6693f946a9e7458a08e270b03c8",
+        "input_sha256": "bf3d3d6cad26e2d0fc4e3bccafb300b50bcfe80bcb70ce63f145bb24e5366610",
+        "expected": [
+          "rejected",
+          "-14",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-165:control-4-below",
+        "dictionary": "242176d58d71bc36a5985db8b20d1cfdac6af6693f946a9e7458a08e270b03c8",
+        "input_sha256": "60ae1d1e789f883292c2faefc8c548fe61b79e4ebc27469e39b1bf81e72b7aa5",
+        "expected": [
+          "rejected",
+          "-14",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-166:control-4-exact",
+        "dictionary": "69496023bab7e4558a2fd061d9220cdfc2f9e0e73f28e5ce0589e477b7ef710f",
+        "input_sha256": "55dc9c7c23f1019a09ea6e1a57ff48e28dcfdd5cbed9f672f24a94e594b898b5",
+        "expected": [
+          "accepted",
+          "2bdf63fe9e53ccf426d1abd96d452b6b9c0e687f3725c8ab87bd458a47958c05",
+          "96e7908c60395076055775656423fab356ce06f9e86c9764a86c217c76e9e5cc",
+          "a48e28aff5c6ef7d73c5b7fac7aa5a3438eccf169a5cec28e8d4603aa77237fc"
+        ]
+      },
+      {
+        "name": "self_pay-167:deployment",
+        "dictionary": "a580ed69ac4e508431c8cacbca9ca7c56ba9f12606732858b655193136bee086",
+        "input_sha256": "de9d973ded256abbe7c058ab8bf4cf1374cd7a8fd7ea8258d9bad6bfc9ee6f8f",
+        "expected": [
+          "rejected",
+          "-14",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-168:deployment",
+        "dictionary": "5adc6df387eab801af6f4c5214fefa467c2adf8f00d41d110cb285e86ae916cc",
+        "input_sha256": "3571fa9106ae83268d39fb381821a52cb3b2fe0fba7cc8b454f53728486eaf99",
+        "expected": [
+          "accepted",
+          "5d790ba956a47442402570bc6fd091419449f57ac4e166d29c1229fe1f3b15bd",
+          "66d0cec89e1cf8bebecd10baaf8ae20ea4a738d85161b2cb3d13624f3f8a5dd2",
+          "c23974f0301f9fd69272c489d7dbb8bd8654d057c5e72896e1ba5bc1cd73e8ac"
+        ]
+      },
+      {
+        "name": "self_pay-169:deployment",
+        "dictionary": "442f3922ed5d9cbf1278a4895ec6155db9981b2d6d7dc0038eda70aaa9bf8c54",
+        "input_sha256": "a9565ba4f6879fd517d9a42236401b6defcfc1babeec2b8cd1bf57926291434b",
+        "expected": [
+          "rejected",
+          "-14",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-170:deployment",
+        "dictionary": "c32c3ec3e45c4d8f246d71f97c79063aa409ee19001c5b5a2aa448bbc308d3d1",
+        "input_sha256": "cf90fbd27d9d9efcd302f72010872992049743354cecaf825feaf2439d919824",
+        "expected": [
+          "accepted",
+          "2d158c20ba3cab28edaa9279a88c2a7b0fca7ccc41ca17a6d8e985d0a2245c80",
+          "66d0cec89e1cf8bebecd10baaf8ae20ea4a738d85161b2cb3d13624f3f8a5dd2",
+          "9239d8bda5f5a044f4c0719ae0c44d6453d1a2f39b7638fc67ccd7f83ce62ab1"
+        ]
+      },
+      {
+        "name": "self_pay-171:deployment",
+        "dictionary": "8ecfa968e6e1539d4f0acf11c95a9a0d8a266df96bca8f01a5359933ab36fa53",
+        "input_sha256": "57bf486f53d29a15acc739415a44de83fa53533483345c8139b33ad15c404611",
+        "expected": [
+          "rejected",
+          "-14",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-172:deployment",
+        "dictionary": "b6e342734fd85c43c8e5b63e589a8cf633799e7c71c6fe744aa49132e49c9ae5",
+        "input_sha256": "e2dee0f78636a3eff80e9acc6cb5832fac93c21c4573eaed9f5f7fe7f3ccdbdd",
+        "expected": [
+          "accepted",
+          "17e8db5f7d951295e78dc6451da5f4241fdea290bc01f2cb71fd9d3235f3e314",
+          "66d0cec89e1cf8bebecd10baaf8ae20ea4a738d85161b2cb3d13624f3f8a5dd2",
+          "a6823ae08e83fecdf6551cb0c9128c7e6320d63ec4cd396b5aadcd67aa0cbf74"
+        ]
+      },
+      {
+        "name": "self_pay-173:deployment",
+        "dictionary": "d0042c202450a1bd52070242726908d5e8b0ceb079a5bf72035182517181ade4",
+        "input_sha256": "01d69dea532aec0071d9f6b5be753710ff42e19647ae3eedab1321c6a389a12f",
+        "expected": [
+          "accepted",
+          "fe1fe01af429a8829db2e12fbb63aac4b20bb535f3cd1c6f8f658a136e0df5f5",
+          "66d0cec89e1cf8bebecd10baaf8ae20ea4a738d85161b2cb3d13624f3f8a5dd2",
+          "5d4c62c5a87209b1fb244ea936dd01f04806a87c6a9b160f7e5dce9ca9c44bbc"
+        ]
+      },
+      {
+        "name": "self_pay-174:deployment",
+        "dictionary": "4721bc829592b2da844dda83717cc28c6b973a3619cb63ee0e26c8baafadcae6",
+        "input_sha256": "f2ecfc8c3b7376d5aaf86e793d2ad1610b0df03ea0826cb138dcaa1ef0431ab3",
+        "expected": [
+          "rejected",
+          "-14",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-175:deployment",
+        "dictionary": "6c9c404e51264f2af52244cd13a76a3122624b97e199b8e7431e73a5154ab705",
+        "input_sha256": "7b54c2b3110d498287f94a3ed9e18fe8b1a8416fb99e174deda70db1f805a5e7",
+        "expected": [
+          "rejected",
+          "-14",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-176:deployment",
+        "dictionary": "bd3a1036e0af1b5d13e87278eacb54b229f8c32b1a43a1fe512faa435920514d",
+        "input_sha256": "fee7e1b3b36edc68281d5f9160e8b2d544deca79e52973aba436d6cdb4add6b8",
+        "expected": [
+          "rejected",
+          "-14",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-177:deployment",
+        "dictionary": "e42958c74439fad27a83b143ce3e053fdeb176abe134d54aa6cefbfb9c4b4960",
+        "input_sha256": "7ad231b466e1b736fe16ad70cd7167ccecdcc5b70d38fdd17b834e0ccad885be",
+        "expected": [
+          "accepted",
+          "423d10fba6e8e295c6f8529244ea921e646ebb8249983065e7e01a3e623a2cbc",
+          "66d0cec89e1cf8bebecd10baaf8ae20ea4a738d85161b2cb3d13624f3f8a5dd2",
+          "dc8c0c1b63cc9b6f99ccea5c6e2e628bf9c25beb9682f09c0acf75ae639f00c5"
+        ]
+      },
+      {
+        "name": "self_pay-178:deployment",
+        "dictionary": "64ca6852271222b057ecd0bb28e212a0aaf2125e88420f3cb11ac9ea1311cfd3",
+        "input_sha256": "4e5c4f3e6a9c4753a25fd9d16a97bc4c1fcc9d840db3f69d09e86881d96e5a05",
+        "expected": [
+          "rejected",
+          "-14",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-179:deployment",
+        "dictionary": "2f0c41d14ab0a17e821141df6d36f483259210e43c275b8b05cfcda78cbb6cb0",
+        "input_sha256": "c7e860e69ddb3dd0ffd29e73f8ce7be2b1b43a4bc9fdcf0d39d6fbd2762d567c",
+        "expected": [
+          "accepted",
+          "c7af3800d141a2e24f8dcf7198696c54e2ed7f81ec60e6d608ddaedd98e6a27e",
+          "66d0cec89e1cf8bebecd10baaf8ae20ea4a738d85161b2cb3d13624f3f8a5dd2",
+          "2dfd851b3c2d0bb1373bbf9f2787b0a4f58e3b23d147b362343c964523e0e23e"
+        ]
+      },
+      {
+        "name": "self_pay-180:deployment",
+        "dictionary": "0e38ef2372b055ec79fa3952d031b3700dfaafe897ba9f58c7ddd38b48ce25ba",
+        "input_sha256": "739fe0cc2c7ca80e6510c330adc5d3b61975058e372f23a34835925c85ebb5d8",
+        "expected": [
+          "accepted",
+          "ac673628ab5e94e72e6e7240c73bb2dca82b4e5103dd4bb5e8f772533eb5a553",
+          "66d0cec89e1cf8bebecd10baaf8ae20ea4a738d85161b2cb3d13624f3f8a5dd2",
+          "9fa50f73401c76466df6f583f7ad1ee3e3d0f1e66a3ea0885cc60cfb711b0ce6"
+        ]
+      },
+      {
+        "name": "self_pay-181:deployment",
+        "dictionary": "6ba3011c9a048b8868352cc864b842be740c5c87f5066810f77d3c1dd62c7477",
+        "input_sha256": "dba11778d1f7971a931060b569aebceb78bf31ac7b018779b6222e716edc191f",
+        "expected": [
+          "accepted",
+          "595ef0c78451645fd331e1c2c880e2f79d3ceaa0199d7ce4a6d8e4caeb85a64e",
+          "66d0cec89e1cf8bebecd10baaf8ae20ea4a738d85161b2cb3d13624f3f8a5dd2",
+          "fbcd3d9b09dd5730ef9a34f7c0e4610caaa564c93a5ac43d9c49417b1e7cb582"
+        ]
+      },
+      {
+        "name": "self_pay-182:maximum-state-actions-1-below",
+        "dictionary": "64ca6852271222b057ecd0bb28e212a0aaf2125e88420f3cb11ac9ea1311cfd3",
+        "input_sha256": "99c6f91f702ace0affdf362293e1b10775532c400fa0e9ec11e857eba54e7564",
+        "expected": [
+          "rejected",
+          "-14",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-183:maximum-state-actions-1-exact",
+        "dictionary": "6ba3011c9a048b8868352cc864b842be740c5c87f5066810f77d3c1dd62c7477",
+        "input_sha256": "6f51dfad66bd54ae4495efd9c97628522c7322ce3828cd30dd3ae886eb1049d4",
+        "expected": [
+          "accepted",
+          "595ef0c78451645fd331e1c2c880e2f79d3ceaa0199d7ce4a6d8e4caeb85a64e",
+          "66d0cec89e1cf8bebecd10baaf8ae20ea4a738d85161b2cb3d13624f3f8a5dd2",
+          "fbcd3d9b09dd5730ef9a34f7c0e4610caaa564c93a5ac43d9c49417b1e7cb582"
+        ]
+      },
+      {
+        "name": "self_pay-184:deployment",
+        "dictionary": "a580ed69ac4e508431c8cacbca9ca7c56ba9f12606732858b655193136bee086",
+        "input_sha256": "17cdc7da3732a003d784dfc72c4caf5748bb8becebca4395de9b4f136204a349",
+        "expected": [
+          "rejected",
+          "-14",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-185:deployment",
+        "dictionary": "5adc6df387eab801af6f4c5214fefa467c2adf8f00d41d110cb285e86ae916cc",
+        "input_sha256": "b65435035094f9c883960af6ea47f46923c39be07ab3afb3ae86708f8930caa7",
+        "expected": [
+          "rejected",
+          "-14",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-186:deployment",
+        "dictionary": "5eb682e4d6dcb0b3ff6d5ebc8d325f927f2f71b7d4f164bf08fdc69d4b9c59ee",
+        "input_sha256": "373ddb0845933692aa3ccff3d34b9c49e000a652e6f2e68a501f47d7e00114b2",
+        "expected": [
+          "rejected",
+          "-14",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-187:deployment",
+        "dictionary": "434199e838fbfce7b8fa310a7605586d03a593f7880e924fb8ea43570d5f9e25",
+        "input_sha256": "ef9bbc25c6556c72ac507b2165ba6c996249c3723ce8affbc82fac4a8ba804ef",
+        "expected": [
+          "rejected",
+          "-14",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-188:deployment",
+        "dictionary": "4e865f07056dadef160e4628c21d2d2f8635d9ff9b739c7e86203435b06d5a09",
+        "input_sha256": "ddb7cc4f17453b921c5712f9a86b41caa38d9846d30b59bc4831e2c6ecbd7c38",
+        "expected": [
+          "rejected",
+          "-14",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-189:deployment",
+        "dictionary": "67307809e1d842847dfce3ef09347bd724d844cb8be064656e87c0000b815fa3",
+        "input_sha256": "3e1d6de9b0b094c90772f427fae2937aae56cab3ca0d32e4ceba7966f4d8f567",
+        "expected": [
+          "accepted",
+          "36c8e5e4c785800ad45d32ed3e9df5853e5ea3636f4c11dd22ccf29e0af3fc16",
+          "2b72424c81080923d83cfd238eed15b276f5de6bb770b614f3a32e0532dc4985",
+          "ffd0b8d83700e4b45a74d62ddb0363911e55ac2bf205f1f43eaf038667dd7d20"
+        ]
+      },
+      {
+        "name": "self_pay-190:deployment",
+        "dictionary": "299fd2e0483cd34c76657b13606bacb497edfe5bb343f88fae95c80b8b361221",
+        "input_sha256": "d094656f5150fce7432dedcc2b5b56b141883aeda290ce2361d2977d3b563889",
+        "expected": [
+          "rejected",
+          "-14",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-191:deployment",
+        "dictionary": "10961fdbe319c3f7110bf15da276204755eebb913255f17a1a83f6b14abe8120",
+        "input_sha256": "4833422aadef398ef1c8af76840df4862185a03cf8fd44fffa6520ba1eb25c75",
+        "expected": [
+          "accepted",
+          "89991670465b00d432962181a64d841bc386ff9bfd9e67b6e99d4bd691f78f2e",
+          "2b72424c81080923d83cfd238eed15b276f5de6bb770b614f3a32e0532dc4985",
+          "492b70902c892fa3daaf0e5c9b4eefd84455cefd1c7204d163fef5e162948d4f"
+        ]
+      },
+      {
+        "name": "self_pay-192:deployment",
+        "dictionary": "3239d9b9ca7fb83699d9ae17c7bdab5ed4dd8181ad529aa7d92ddcdf0ec41dfb",
+        "input_sha256": "0c443c031a3db0e1b9ecd665db7aa06a8df10200801eee2ff8a1e2db8f5de270",
+        "expected": [
+          "accepted",
+          "c419bcd53bbe7fca7c6e7947c819d5b8d327b382b8bcf99c919b4a2c7e58d1f0",
+          "2b72424c81080923d83cfd238eed15b276f5de6bb770b614f3a32e0532dc4985",
+          "1b37210bda2b1b544a35ebe5dc5cc1043fb0c865d2ba086406a6828ac5d77f6b"
+        ]
+      },
+      {
+        "name": "self_pay-193:deployment",
+        "dictionary": "d5ebffd0ec686f6795ee65792cfaf1b3ef8667b10676c35231b5c240d74e02b6",
+        "input_sha256": "6476585ba2895a16a41394b5a9d63ed635456b890539cc7533df2abe5bf606fc",
+        "expected": [
+          "accepted",
+          "6c2f63bfbe53243913b2cde6cbf711e1593704e3dcd2676c42b4082f56682f9a",
+          "2b72424c81080923d83cfd238eed15b276f5de6bb770b614f3a32e0532dc4985",
+          "b60047d7a6041bdadf68a61b14276c3aa8eb7e6ad25afc23bb108b284c8189ab"
+        ]
+      },
+      {
+        "name": "self_pay-194:deployment",
+        "dictionary": "2606a93253118604f7022bec2e67870a120e16ddf4824da11b1f9496e711dee9",
+        "input_sha256": "a531e017de814a302e0887c5ccf75a45c6463517a54fed730fea5981483a81aa",
+        "expected": [
+          "rejected",
+          "-14",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-195:deployment",
+        "dictionary": "1996bfeb3da64a5864eb8b4c922962e3eab514eb05806506349749c8b512dad3",
+        "input_sha256": "e362621aebbb8fe0e76bffa18752bc2726c3a62030c52886990e6af7d78b340d",
+        "expected": [
+          "accepted",
+          "56e6ed1e3702a22614694727bb6f6c214503623c207a836e6be27004cd463e02",
+          "2b72424c81080923d83cfd238eed15b276f5de6bb770b614f3a32e0532dc4985",
+          "f0d4d99a5725ca7b395ab7d5d0ac1e78155417a933e1878d92f01fa1c4f5a218"
+        ]
+      },
+      {
+        "name": "self_pay-196:deployment",
+        "dictionary": "aa3f7d2954965349fe9da71773ebdfba9146a330cab63d254bb15f24e93a34b3",
+        "input_sha256": "f265eee32f428e3fc10d5aabc9e50e2b3c64ea2d41be6a2d323a2d7d691023e9",
+        "expected": [
+          "rejected",
+          "-14",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-197:deployment",
+        "dictionary": "f7a8ba86a246713b9b35ef30c60e6493c816ad5458eb12b97208ad0eda20bccd",
+        "input_sha256": "6c5d2cf79f649c535911e0f4b306a9830d90db651f01d0162001819fad283728",
+        "expected": [
+          "accepted",
+          "3730589e829eed72d086ca208df904a7858627d46745a5b3ff45a3e481e023af",
+          "2b72424c81080923d83cfd238eed15b276f5de6bb770b614f3a32e0532dc4985",
+          "42a39ab6833cb90ed5bcf8400868948459cbc98739eb649843ef0641176f7546"
+        ]
+      },
+      {
+        "name": "self_pay-198:maximum-state-actions-2-below",
+        "dictionary": "aa3f7d2954965349fe9da71773ebdfba9146a330cab63d254bb15f24e93a34b3",
+        "input_sha256": "ac2fad553843433e77854480eb282324cad36897436e328bb790dfc7d8a4c04e",
+        "expected": [
+          "rejected",
+          "-14",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-199:maximum-state-actions-2-exact",
+        "dictionary": "f7a8ba86a246713b9b35ef30c60e6493c816ad5458eb12b97208ad0eda20bccd",
+        "input_sha256": "20e830445d996f18fe423d00e9f7effa1e694dac1e5d399494af100f01015543",
+        "expected": [
+          "accepted",
+          "3730589e829eed72d086ca208df904a7858627d46745a5b3ff45a3e481e023af",
+          "2b72424c81080923d83cfd238eed15b276f5de6bb770b614f3a32e0532dc4985",
+          "42a39ab6833cb90ed5bcf8400868948459cbc98739eb649843ef0641176f7546"
+        ]
+      },
+      {
+        "name": "self_pay-200:short-key",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "1a4239bd33d07bda81392e3f8c9c2ea0994e5396a0520188b1e88c371d19f1d0",
+        "expected": [
+          "accepted",
+          "357ba9cf48dd933a935a7da9bebe40668d46669a278e256f7579cf863b744234",
+          "4e0509a981cf795f0c54283f7f99858f9c11d66aa32f236234eff00e40c0cba2",
+          "98857ce18065065f85839e93213965eb4160f9165200274a0d7c3ed18523cf94"
+        ]
+      },
+      {
+        "name": "self_pay-201:long-key",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "c058b8f380c1792318a742e491512514408e5a78db61e66409e1d2496ee477bb",
+        "expected": [
+          "accepted",
+          "e12629a643fad6e4f3ac09a7ac512afcd8728bade6b4a4db726f0e03d474d9ab",
+          "49b617d308654108fcd4dce004b0382be8e769dc2ce4870a6f1d3561dab0f7f3",
+          "77a0e81e1171800a8a47062050f3f7fdf53749e9510b221ed71cd4d2deaa81b1"
+        ]
+      },
+      {
+        "name": "self_pay-202:exotic-successor",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "b63550e0469ee016d2cb56be12ea58e615b20afc685f91f0d92c69921f14ecf3",
+        "expected": [
+          "accepted",
+          "43b8dbb192eab5c2e96dda2c565dd8a10179365e4992c0c2d42fb709ee9a513a",
+          "dda83a73c6e11e9908b5480622c73e35a0c1d5581b22263ab59aac13aea7bfcc",
+          "55422f2c11c0ff27b125d4b41712d1eee60050144c21210431a95eed8b0399ec"
+        ]
+      },
+      {
+        "name": "self_pay-203:trailing-successor",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "4c7419d216fde75de40447ca1732b9402d3bf558a623b8b42e457ba28ed5af84",
+        "expected": [
+          "accepted",
+          "fd673df24617ae0848bf456a6a6135cdc567723f232b6fb51f04c8723b68f12d",
+          "1bf16784bad82df665e635ea4f301b6b18a8d80c0c31273970cbc649d9a9db8e",
+          "89fd27cf5ce0878312679cdfe464cdfa17b577073ce02c372fa34ca7b0e3135a"
+        ]
+      },
+      {
+        "name": "self_pay-204:lock-without-policy",
+        "dictionary": "9a076464340386a2c2f128d5b4125c7eb02c03ebeea04b9a624a18c75c960dc7",
+        "input_sha256": "40081c7d1e56b13c6109db7adaf9d194a9b80a0274a325dbb2900a9d7c87724a",
+        "expected": [
+          "accepted",
+          "80cac112015dfedfb964ed6cf26ed279ff692e0e1781addc3c1485326075bca9",
+          "5119afeaebe155b9704dfa22a49b29adcf75425ff574ddbc669ade10893f62fa",
+          "55b423973b3c049d4a18dbb43ba1480724e91c4be1ee4d3135389b37a243761f"
+        ]
+      },
+      {
+        "name": "self_pay-205:migrate-policy-1-without-cp48",
+        "dictionary": "9a076464340386a2c2f128d5b4125c7eb02c03ebeea04b9a624a18c75c960dc7",
+        "input_sha256": "5d12908afdb47fa778100c2c100b7e7a6da6ec05e37861357fdcb47f672543cb",
+        "expected": [
+          "accepted",
+          "a6d36362b5afcf15bc6074a19d0b112506c3420e6c1deb28faf4078a6f55de0c",
+          "6b3e239f6959f24330abdf6befe98a4783613e0d0ccee4f6668e350b6e488c0d",
+          "6a69be07266505fcb6a23cdec1c86c7384311eb36046102a91eb44264d25f60b"
+        ]
+      },
+      {
+        "name": "self_pay-206:migrate-policy-2-without-cp48",
+        "dictionary": "9a076464340386a2c2f128d5b4125c7eb02c03ebeea04b9a624a18c75c960dc7",
+        "input_sha256": "714edf6a20905ea318216b722088feedb4c590170cd2cad51dcb1c8e81a88851",
+        "expected": [
+          "accepted",
+          "276c5336fb7c77f5212d187505b58bd44969e10ccd8a281a7678b14cdc864a33",
+          "96e7908c60395076055775656423fab356ce06f9e86c9764a86c217c76e9e5cc",
+          "6f45167b7b7ea3e6ccfee790ea9d1f32b9611a58cd659412c0df9652b6035607"
+        ]
+      },
+      {
+        "name": "self_pay-207:local-retired-migrate-ready",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "89c97dc228c21674d39cee75483447c302aace86c7bad0e4300c84d857aca18f",
+        "expected": [
+          "accepted",
+          "a53ffa2a18118fc32cc40334a72177b4bbb86224ab04d3c9414edcd46eceaed3",
+          "2928c3c8e6fb5bc6c149e23efb5c2d35bc93294ff3f67a2fce4a976f7f71b327",
+          "caf0a263977af14330686c68d9193f07c5628be11768c65c2a9c8c1aacbed4e0"
+        ]
+      },
+      {
+        "name": "self_pay-208:global-retired-migrate-ready",
+        "dictionary": "8bc6d98ff4badb9a9cc96c4cc437edb713e6a015c73bacb9325a6b1609b2f826",
+        "input_sha256": "dfeba7ecc9cedb01851da8dd9630c8d6e2b12135ca89578d0ae1ad25f7a79696",
+        "expected": [
+          "accepted",
+          "4f7536a2907a6c3bc34b06ab4ec1c00e3000f99066ed22fe462a9cda43f9c8d7",
+          "f3d57382ae96fcab79805f70e8272d914bfa74807a35ea9bc6b9ad177b5caf44",
+          "4b0f00e1163182f0a7379e6c55b0ae193da53f19f961da779152d5aeeba79786"
+        ]
+      },
+      {
+        "name": "self_pay-209:scheduled-retired-migrate-ready",
+        "dictionary": "54bb0e8fe5a669b155f772e2f66abee698e2e69a7ba91cc5c9f9737aa9226d10",
+        "input_sha256": "7c41a81e197796baff48cc0ccfd5fe082230496def7691a5e84de671e48a6682",
+        "expected": [
+          "accepted",
+          "9e5b64250244589c29b6df9c4af53da6a620d10391674136a6f1a8145fef8232",
+          "4d4ab1f7008fca1c9369a027a9f2b3e5148d0bfa383cf01dffb27c17d8060075",
+          "67083dc882d59a95fea44169a6283fcd193f0716b7a8975afab745142e50b904"
+        ]
+      },
+      {
+        "name": "self_pay-210:balance-1-0",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "f29caf0d06ab42579620c955a275905cb2088961d9f778101872337162e9f269",
+        "expected": [
+          "refused",
+          "import-no-funds",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-211:balance-1-1000000",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "1d97882b2fc9d7f57278aa6980c690850f0351029f7591682bbd732474e59252",
+        "expected": [
+          "refused",
+          "import-no-funds",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-212:balance-1-20000000",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "a00790e338d644053ba2b153776a665b8494b7270affa163f8afd34b91b2d666",
+        "expected": [
+          "refused",
+          "import-no-funds",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-213:balance-1-50000000",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "c78e8aa0db2e2c969547df3c3dba6edc00296e77dda843fecb72dfd66d77f981",
+        "expected": [
+          "refused",
+          "import-no-funds",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-214:balance-1-75000000",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "f3f4ef49f0bc9b414261df1016c4c1ff458bdc8f21458e971db95e055e87b539",
+        "expected": [
+          "accepted",
+          "3b7be46676c5264ba7fc5b16ef4d69bf1380da8d352c6331d38e4381713d8d1d",
+          "dd677bb4428ca305dfbda20875905374109b8f86cac74f08f620372904374da3",
+          "bd5125a2a74190642843f9fad5f2c9ba979c8ef3b9e366a02648c7b9bf049d15"
+        ]
+      },
+      {
+        "name": "self_pay-215:balance-1-75000000-replay",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "e9f1d77d50658f1dfcaa0b5dcba3aa68193e0f38785fc7b978078140625b8dff",
+        "expected": [
+          "refused",
+          "import-no-funds",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-216:balance-1-90000000",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "41cb6f2df9167f05d2a910108731e0c005e1d28a11a64251eb187bd1abba4aa1",
+        "expected": [
+          "accepted",
+          "1b56d5b6d9c533b0144a8eb5ca99038e81864ef1256e3a1428bd7fad81ee5a28",
+          "dd677bb4428ca305dfbda20875905374109b8f86cac74f08f620372904374da3",
+          "0db52f54aa3113530e6814f2ba22347e10b64facdcc50d41883dddd97c5d1743"
+        ]
+      },
+      {
+        "name": "self_pay-217:balance-1-90000000-replay",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "21954924a05550d93695fa4385ec56750d6fb059b792dbc287b311f3e1fbf2a4",
+        "expected": [
+          "refused",
+          "import-no-funds",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-218:balance-1-100000000",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "64a1885587b1cda67174276aac2f29f9f0aac9f79c76d0911633f6d26d6c36bc",
+        "expected": [
+          "accepted",
+          "58e5de123fa2e5ab0fc0a8347b5d1eaf839b35df35135bddc27130aa64254d71",
+          "dd677bb4428ca305dfbda20875905374109b8f86cac74f08f620372904374da3",
+          "64dfef298be69a9bfc97c66885ebf4f7f5a5b1552e8452589b418bff94300831"
+        ]
+      },
+      {
+        "name": "self_pay-219:balance-1-100000000-replay",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "b5cd07051c4f4dd9b12d49ab63c8935bc19e2a32c7c0de3f9f57764863b12a65",
+        "expected": [
+          "refused",
+          "import-no-funds",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-220:balance-1-125000000",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "5d2d706de5b4ee8b07ee224eac99e97bc5c787555d21c0c131f15e699fecc8fb",
+        "expected": [
+          "accepted",
+          "bb45288a2e12ffc75995bc6be71adfe55144a82f3a1902098b2cbb7017dcd1e9",
+          "dd677bb4428ca305dfbda20875905374109b8f86cac74f08f620372904374da3",
+          "5bd52964b51210c1bf6df4b947ade727ad7b8b25ac9fb5cac510bd5c7eb01681"
+        ]
+      },
+      {
+        "name": "self_pay-221:balance-1-125000000-replay",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "8ad77ae36bb7c280fe66c532d4398e98ac4926cfd8e1020bdff19fcc1d2f6b5e",
+        "expected": [
+          "refused",
+          "import-no-funds",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-222:balance-1-150000000",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "636e601c94fa4ce5c6a22b73c29b9997e7ddab71bb6a10f383dd7946a59f966d",
+        "expected": [
+          "accepted",
+          "c224e3ce000b6e4eaac3da823792b8ed432aa6a066f30e131b1e73b41cc4688f",
+          "dd677bb4428ca305dfbda20875905374109b8f86cac74f08f620372904374da3",
+          "a71ae4dad4b1c445af3ede8c29ae77f6f0309e3051014d7b68ffdb3b2bc085c2"
+        ]
+      },
+      {
+        "name": "self_pay-223:balance-1-150000000-replay",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "db9f2216dc6fc42c759cd33b3748267bfd21b80a00d365c658dc57c502b894c7",
+        "expected": [
+          "refused",
+          "import-no-funds",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-224:balance-1-250000000",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "07d7416c8be3618cbecfb3362efe2ae7b748e351ea65cd7b557adfa00b13d5b6",
+        "expected": [
+          "accepted",
+          "90ff1e22b6380db7eedf82e64332fd4fbd1e4d8346677e0d5170255281a625b1",
+          "dd677bb4428ca305dfbda20875905374109b8f86cac74f08f620372904374da3",
+          "64abb6d11880688bd2c27e059b45ba531610c1dfeea6acbe70a0a383a7e6705f"
+        ]
+      },
+      {
+        "name": "self_pay-225:balance-1-250000000-replay",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "0fbd3a85359e272f53d4487c59e4155953df5eaa9f1091d942190d82f23067f1",
+        "expected": [
+          "refused",
+          "import-no-funds",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-226:balance-1-1000000000",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "559c5ff883b399d5c95fc1dc955c861fce964369256ad726b0e9f2559073fc2d",
+        "expected": [
+          "accepted",
+          "f57378698bb22768d9b1fb083acea26ac172a1ab35331507bfc267250ac1aba4",
+          "9ee7941a4fc2134cc0f24a65c79017196bc0b1048455a98b53a054286cdd6a75",
+          "154688ba150eff2a093744692b1d0fe7782ece89398fb904bab8ab858d329f57"
+        ]
+      },
+      {
+        "name": "self_pay-227:balance-1-1000000000-replay",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "67e978f1f8014c54135f74ee5831d9eb4c6e2f1a9de1793d3d15900b935eb9e8",
+        "expected": [
+          "refused",
+          "import-no-funds",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-228:balance-2-0",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "3ec07f2398099227a7c2e74d56de44b1bfb5acd0875dd01fb75791b0769ff5bc",
+        "expected": [
+          "refused",
+          "import-no-funds",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-229:balance-2-1000000",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "bbc0384e663a8e4833dc0ad76ac03e14348f7b0f5b8dbc24ea02cf5fb502a78f",
+        "expected": [
+          "refused",
+          "import-no-funds",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-230:balance-2-20000000",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "29813930ac62a3bb1d0758ea10825c8aaa8a55768b436258188894f0fd353bc8",
+        "expected": [
+          "refused",
+          "import-no-funds",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-231:balance-2-50000000",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "5674327f252e6e495cf6328c2e99368ae9fa024adfaf86a14984a394a368509c",
+        "expected": [
+          "refused",
+          "import-no-funds",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-232:balance-2-75000000",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "6501cac6cce40d02cecd0b2b5a16da7266408af01c0fbb486ca58e35dbd3c0bc",
+        "expected": [
+          "refused",
+          "import-no-funds",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-233:balance-2-90000000",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "d4f5b72d147f2dd37b1792ec977a27524783ffa7847eadf63f463d088f638176",
+        "expected": [
+          "refused",
+          "import-no-funds",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-234:balance-2-100000000",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "b476e10df07948dc95cd75484be6891ddde453a3ca87d17d5589bb3ffc7d1d99",
+        "expected": [
+          "refused",
+          "import-no-funds",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-235:balance-2-125000000",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "ffd866c2440909fddd232dfeec80c6b424222c9116f7f71e841552044c094db2",
+        "expected": [
+          "rejected",
+          "-14",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-236:balance-2-150000000",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "bef2e7b8c41d4b3b5215ee5136c4e2587bb2f36b073867a190e9a69d1bc9d786",
+        "expected": [
+          "accepted",
+          "24a28a05f0323d5957ae11e1d3b4edbad99a761e56c6151c0889c90c4999dde6",
+          "31a9aba846e13e62188460e4ea56650125fbf100ebbac1a30cbfeb5fc165de57",
+          "b889abb7aaa979fd00ca3be85a8799c08253c3cf96c8d4e8e56137ddd270159a"
+        ]
+      },
+      {
+        "name": "self_pay-237:balance-2-150000000-replay",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "946d33560948069479e4123fdfbaaf8e9e22b0da3c3f41f00a8f2d1c7c1d9c94",
+        "expected": [
+          "refused",
+          "import-no-funds",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-238:balance-2-250000000",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "67f7779fb809d42d9297b3f5d5863aeaac9595a183178b3b8955092da6a92343",
+        "expected": [
+          "accepted",
+          "f7bb57a827d630611ffd672336159f28431b370162837c2bdf06a4a60e8bead1",
+          "31a9aba846e13e62188460e4ea56650125fbf100ebbac1a30cbfeb5fc165de57",
+          "3463db7e5de27429f6dcdff888387d682de19a9122e8d3849dac84119b8846bb"
+        ]
+      },
+      {
+        "name": "self_pay-239:balance-2-250000000-replay",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "06e2f817038970518cefacb1c18642b1e4adc223453572b48d0eacc3e4d1be65",
+        "expected": [
+          "refused",
+          "import-no-funds",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-240:balance-2-1000000000",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "e0cac5b5b72df7a7b0a1e48f4676b71e0668df0aacd4f52d2ab68852573e579b",
+        "expected": [
+          "accepted",
+          "ad2e43bfb0476ed4f3a2b09b909a7672f9c411c3f0bb9d9b791f456b1ea32ab3",
+          "91b642d87e610ba956955fc95f179d02dfe375601904dc5beff16c95461e6948",
+          "52eea1b9761339ad13998a113e9f6cb2dedc0745a6eabd4a0e91b410900e2a54"
+        ]
+      },
+      {
+        "name": "self_pay-241:balance-2-1000000000-replay",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "1ec18b18c5cc1fb400b62ee9d9fb65db4f8db6637badbac9c2bd13947513ee0a",
+        "expected": [
+          "refused",
+          "import-no-funds",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay-242:mutation-signature",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "2ca2b9b9763df0ee14781f9c239a3f550295f14094b35c3a7a371f38ba8ed7de",
+        "expected": [
+          "accepted",
+          "e835e016088abf7f3bd9ab48ac6456d2eff99706c83c6d4d9f8a28fb87458b14",
+          "6a840a8874001369624da35e5e4d71616173c7c24600ccc09aaeff81c969cb18",
+          "0a3676957107d995b5c879501b79ddda5b942d3456801474323cf186beffba98"
+        ]
+      },
+      {
+        "name": "self_pay-243:mutation-commit",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "deb4640fe36bde8f9d325dc266b524a5576c9483069cd0a2c9d289d52fa3816c",
+        "expected": [
+          "accepted",
+          "d44f94418255884a5004025665e783a10d3df31abca3a4d2b94bdeb2c4e80720",
+          "beffbd4ad0ec300002285bec3f6723b3ac188d2678a02eb9bc3f4290d8c225cf",
+          "28f22a6d78bc844f1ecd9bc53797f886f8ca956e4c63241116f6dd80d2d4a021"
+        ]
+      }
+    ]
+  },
+  "self_pay_recovery": {
+    "cases": [
+      "lock",
+      "fund-probe",
+      "deploy-and-verify-probe",
+      "idempotent-probe",
+      "external-probe-refused",
+      "different-wallet",
+      "different-challenge",
+      "expired-proof",
+      "excessive-deadline",
+      "zero-challenge",
+      "different-authority",
+      "trailing-body-bit",
+      "trailing-body-ref",
+      "probe-runtime-global-id-deploy",
+      "probe-runtime-global-id",
+      "probe-runtime-global-id-guard-removed-deploy",
+      "probe-runtime-global-id-guard-removed",
+      "probe-authority-global-id-deploy",
+      "probe-authority-global-id",
+      "probe-authority-global-id-guard-removed-deploy",
+      "probe-authority-global-id-guard-removed",
+      "probe-authority-namespace-deploy",
+      "probe-authority-namespace",
+      "probe-authority-namespace-guard-removed-deploy",
+      "probe-authority-namespace-guard-removed",
+      "probe-runtime-global-id-restored",
+      "probe-authority-global-id-restored",
+      "probe-authority-namespace-restored",
+      "different-code-profile",
+      "forged-proof-1",
+      "forged-proof-2",
+      "migrate",
+      "old-authority-refused",
+      "old-rescue-key-refused",
+      "new-rescue-payment",
+      "retirement-preserved"
+    ],
+    "configurations": [
+      {
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "wire_sha256": "ce8d7e747529d00699e7e72b048308b0ee684f8c1f8eca2e1f832fcd9079e064"
+      }
+    ],
+    "rows": [
+      {
+        "name": "self_pay_recovery-000:lock",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "1c0615f2a40b06c3218e6f643530d2e190af2c26a3c54270a5ed61d721e2534e",
+        "expected": [
+          "accepted",
+          "80cac112015dfedfb964ed6cf26ed279ff692e0e1781addc3c1485326075bca9",
+          "5119afeaebe155b9704dfa22a49b29adcf75425ff574ddbc669ade10893f62fa",
+          "55b423973b3c049d4a18dbb43ba1480724e91c4be1ee4d3135389b37a243761f"
+        ]
+      },
+      {
+        "name": "self_pay_recovery-001:fund-probe",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "ec61003e065e4f5e5c8c72c487323eb4b6a7103a7abfc24b89e30a2d6b146775",
+        "expected": [
+          "accepted",
+          "2c1f2b8023e41ce56a29b8d870a1a33c234fe11ae5833b66196b59512955541b",
+          "472bb4d29e99299dd3962ec55345b1daa82191f35f065903786f60e58c53b1c4",
+          "38bf271e09095d0d712dabfedc95eeb056a85a0d9538582f8fb0a9bb10473c99"
+        ]
+      },
+      {
+        "name": "self_pay_recovery-002:deploy-and-verify-probe",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "0df5a23b171ec5de4825975da9cd7916ea06022c1378d80799a65ee177687c1f",
+        "expected": [
+          "accepted",
+          "1ce1aa5ed2558f80ce889e3570a5953c305719fd8afa660adc5c32036ba7daac",
+          "0bd58c648131a9797203f9b009c9f432601de7247cf9beedc0f790aef7db30cc",
+          "a3ecb9e074647ef2715aacbaa3978bf73bc3a2bf4c1f81b149f77aa8494fb4e7"
+        ]
+      },
+      {
+        "name": "self_pay_recovery-003:idempotent-probe",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "0cf93ece5466c3c097d6f3becc4e15267dbf2b11685aa6d5763665df42da01d2",
+        "expected": [
+          "accepted",
+          "b6c4e51dd55a60cb11f6893b90c894decc80ce05463840fc93de1c2c2f670f9b",
+          "1305be08f8eefbd939522e585becc2c1fcb295544856594f671a48cf806c4470",
+          "2252768cae7aff1c71773c27354d4677e93942394777e10807991f0082632f60"
+        ]
+      },
+      {
+        "name": "self_pay_recovery-004:external-probe-refused",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "82fcd04f556e5a66150bae42e979c4fd3162085e0b6c5daf688c5babecad73fd",
+        "expected": [
+          "rejected",
+          "1807",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay_recovery-005:different-wallet",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "b62d49551686cf6ada6e0d600971cb1e52362bf11f3e003a720545765fa53915",
+        "expected": [
+          "accepted",
+          "d4ab41a8b5bd74037210b0d973dc4287ad80a27911f5e3d5d7112d8ad7b58e75",
+          "445d9e1eaf6c9f1ddb86c240c7685d4ea6699b4caa63434e774b796cc9d0bd29",
+          "8bdd1c80cbea0977576d439b160ab747ff21da052d9fb0e69a73ec45820d6e87"
+        ]
+      },
+      {
+        "name": "self_pay_recovery-006:different-challenge",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "d75a3b6dca8d6f8340261d89bcdea37e6a36f93c5de5d767563bba26574f71d7",
+        "expected": [
+          "accepted",
+          "98891e45cee97c61437f164f1e63659357dfd6d192698071d596ba38e0fe1b77",
+          "ab1fbbff5d4f9d16e54837e31250f8e7552642e8b8df09bf47e6238cdc9679a2",
+          "9724ae249a09216c4bdc57f38ca98ece39b6175d71e01de2a6a127dac539c048"
+        ]
+      },
+      {
+        "name": "self_pay_recovery-007:expired-proof",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "9d12a93863f8ac43c48bbcafd92695a52585a80239c1178f64d68c04afc2c7ea",
+        "expected": [
+          "accepted",
+          "6d75f31aba7bd950ee81536c77fb4235cca221e3858a63b2051e8b057c24c013",
+          "bb0b8238305878bd0cf488ff665192298d82f28ecee35232881179f07bb75c30",
+          "8f3d3f809532221342ad6cebc03c69459d5b76979c96e68ec55466afa876a026"
+        ]
+      },
+      {
+        "name": "self_pay_recovery-008:excessive-deadline",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "745687e7356c1fa6fdc90e0dc801874cd55b745c5f1b1d7fec333a02208586ef",
+        "expected": [
+          "accepted",
+          "4e0be1f2d3e7abacd747d74b1d92cb93ec534d8b9259586d35a3043c0aa84da6",
+          "42feda71d9bcffc2e844af8dfcba197ce36c79a751a2ce36468df20ffc731c3a",
+          "f0ca57e8c01972f8de9a98852d3f11b11c71e761df2951442a30162949316a6e"
+        ]
+      },
+      {
+        "name": "self_pay_recovery-009:zero-challenge",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "25126ec8a789b2128185c34103179f57d3b6fea910f9f50fc72e42b7765e9a44",
+        "expected": [
+          "accepted",
+          "b9088f935ed4e224391a41762d3674f446893bb5a5cadd447ecad7cf8c17b4da",
+          "e0a2d0c414e14c0e6fc610a15aad16fb2eb40f8c27a2b411ad8a3d421135e7bf",
+          "0b6939bcd8cbcde609359e7b4657e606133150cc6f0aac831eb05a91f275c23b"
+        ]
+      },
+      {
+        "name": "self_pay_recovery-010:different-authority",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "5abf3da1b557d96a0899bd60be093b02304a47dc3651322c9b48537fc350062a",
+        "expected": [
+          "accepted",
+          "241dd7dff201951bc960c319e0092d55fcef60b8dfd3d030785f27b873484e43",
+          "d6ffc3c97f68d6321b0669f2d18085fae799f6a98cf7db0026b01f22c4ad76e2",
+          "0c435142b58c6cefa593a08bf668b617292c02d01a13e5aba42f8d0974c93933"
+        ]
+      },
+      {
+        "name": "self_pay_recovery-011:trailing-body-bit",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "3b1068d4f7a8c2ce77b7d191cf58232457edc38a46015b0ea1d3d2224f16b8dd",
+        "expected": [
+          "accepted",
+          "5e67029d377a44230bf78b9d75997846aca32061b6844a50f1654607e25f7158",
+          "e41fb7b915057273f6f78f9312e7b7c840b5604bea147ea77a33aca566043a6a",
+          "05ecaf1847c0e414c3d130486fab5683717341f70d1c66fbbce7e2eb4fa4c850"
+        ]
+      },
+      {
+        "name": "self_pay_recovery-012:trailing-body-ref",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "e89c0010ddd799a5f80e9151055f20d645d710e151809a4c8ddcf7679c2c143b",
+        "expected": [
+          "accepted",
+          "7a1757574cb62505227112010091161db269f521e4888f1cd4bae93ed04f2efa",
+          "e41fb7b915057273f6f78f9312e7b7c840b5604bea147ea77a33aca566043a6a",
+          "3151e5c8d9d55865f25f2728188a86822a4271d0763d27ddb1f177e3ab01b9c9"
+        ]
+      },
+      {
+        "name": "self_pay_recovery-013:probe-runtime-global-id-deploy",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "3deb5839ded08fa5eb00f9d6efcc906c980df49d07a3187799c2b57cb01fee8e",
+        "expected": [
+          "accepted",
+          "edecaf9287e278ccfd71da3a568ce38b2af2a770021cfb441d06ed967b8322ed",
+          "f1f954c7dccec49498ea91120344626191056de26063ef572ded40a5a20df154",
+          "b229386476c2166b409a6b7d8e87ec51206300624ba136e7dc806cfaa97fa923"
+        ]
+      },
+      {
+        "name": "self_pay_recovery-014:probe-runtime-global-id",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "2e733c261f54bc064765d6ec48c67cb805a1b64924b3c1898391b79a653f275d",
+        "expected": [
+          "accepted",
+          "c169039277159752bd65f230c0d9f590397ca5f137f14733a88048587b56ce91",
+          "f9e9050b289a5b4ba58a3fd3f540c5dd08bf4522098a79da3c0cf3903ddadf8e",
+          "48895cedbd373248ef668c8d78e4d33a37c841f33fed24fc59ff8c35eebe891b"
+        ]
+      },
+      {
+        "name": "self_pay_recovery-015:probe-runtime-global-id-guard-removed-deploy",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "c35964123f4ed40c0d91364fec75fa88465d5f2693c07b8a470ab2abc59467cd",
+        "expected": [
+          "accepted",
+          "8234227c83be938fdb0841c62e9b98a1a34e4f3da4706638d0d195738bf47045",
+          "0b6b9c12a6ecdb9e871de9849debb4de6042afe084e60314c2151762dc9c281d",
+          "bdd36b161bd31324185a1981f3d094bc892f682ee9c926ec601f5aeaebe23b46"
+        ]
+      },
+      {
+        "name": "self_pay_recovery-016:probe-runtime-global-id-guard-removed",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "c7d4b2e21b532dfd88dab17360ab23890f0aef7f4e424aaf4666a7d1c7b91a9a",
+        "expected": [
+          "accepted",
+          "581453c356a7625fbd82432aaa73b42a87846a175a28cf172c1595e14b69f03b",
+          "be9c0da32c4f7f320bad9d436b4796e6e63556fd2c5ddd0967780caa0a4a2120",
+          "be588bfc46499f84f8327ab91b82750a16d6558fc0019ebb858d16ba5551f47c"
+        ]
+      },
+      {
+        "name": "self_pay_recovery-017:probe-authority-global-id-deploy",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "9ce326bae422276ed087c2c291e9466323845be8dddf8e7ce58c7a50a2a8724c",
+        "expected": [
+          "accepted",
+          "c4e882f9a2a769bb1422ff35afdeb648d71b70e50ee324833a36ac3355439a0c",
+          "a579e1d5bac9b7f0fab08e00f2d1c9be179be77a14d08203e22b18557ce13fd9",
+          "99defadb4b5d31f88a65ad98f5623dff0f76e0a2834ad38000ae4d38a6a33e47"
+        ]
+      },
+      {
+        "name": "self_pay_recovery-018:probe-authority-global-id",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "f87ad1ec9734913bdcb064f933b584d005375a441f5d05f3143e09c27fa8d541",
+        "expected": [
+          "accepted",
+          "ba398d0c1fd169db55feff56f631b44c8cab82f454c049f59934f6315d2a6ed6",
+          "75581c87564b760ca235b23e44fc4f6a5e0f624fdfadb7d8bea7d1d3c9b63b4f",
+          "fc8667af7115398fb690aa58ef7e94386fd3cd29aa4b16a73f1a5cd9ddf74a59"
+        ]
+      },
+      {
+        "name": "self_pay_recovery-019:probe-authority-global-id-guard-removed-deploy",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "5180bb0b0c91d6b195c934383bb6b05145812f13c5954d8f519e16685a7692e3",
+        "expected": [
+          "accepted",
+          "34a5f8e03def7147416f9269853507d97d7f49352a5861bc510538e757b143b6",
+          "89bc38433a07d35a31e7290b568738a5b5071ed8c4c061b1ca0d602fda5ffa43",
+          "fe6d187dcec10446e6b41a818f4ae1e7140338ae98fcc5e0eefb95f0952eb7cc"
+        ]
+      },
+      {
+        "name": "self_pay_recovery-020:probe-authority-global-id-guard-removed",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "ec3b67eb5dc6b5078e1898b64b618def258854b97c16de99902ef59412e7f9f2",
+        "expected": [
+          "accepted",
+          "846c59f61f0273e217b12f9c506b4aea425a3b3b2b6efc4b19a6bf5d629e3899",
+          "88f831144444873b1a158bc5596c9c4d0125ce857168f5e5bdfbb8599d4ad2d1",
+          "ea9f023a6475e5dba322c12b44e25aca3aeb6fc420fdb767c80042b0038074eb"
+        ]
+      },
+      {
+        "name": "self_pay_recovery-021:probe-authority-namespace-deploy",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "7b8bcc6b2acdaf4ce7d16d5978903d6d2ae2e5178acae75331994ae4d40925fe",
+        "expected": [
+          "accepted",
+          "9068ca92a1725c0cee2619a5319e89ca0d58608e9af7a7067a9d05b5215a5cc1",
+          "4f4014ecdaeeeb8cecff95cb5f50f6efe049534a1b399c790e51b3188a249b75",
+          "412933a076091005b1319ba70f448898161868caef9b3e1c1533479efdcad3f6"
+        ]
+      },
+      {
+        "name": "self_pay_recovery-022:probe-authority-namespace",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "b79569812b55fd3ed0be68d630855552c9a6f016efb2f046d53d7139af9ea1d3",
+        "expected": [
+          "accepted",
+          "7c95374064ca62c819b9920eaa397731cfd937517925a3e0bb55cca64f4f71de",
+          "e41e3d7254131ad027fada8197031bf25fa033f8db19a5462e6b4dd217ded1a5",
+          "96c869b03d5090f0f752437c673e2a10a7c11a12143db9b398d513fa30c4b7bb"
+        ]
+      },
+      {
+        "name": "self_pay_recovery-023:probe-authority-namespace-guard-removed-deploy",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "a7393a13633bbadab0ddfb8038e252a876b7a2e91f9572e25d12deb9cc7dd772",
+        "expected": [
+          "accepted",
+          "4ef5fb25a3c9a3b630c4c0fc1a298c959647c44c82e53800389b39616e7f5b5d",
+          "a614fc1024b8bfe02c4cc982d9e6ecd3fd5a7828369d2c221dec2d496185c627",
+          "923ea99e4ac7b427ed9910963b018eedf474a458d383d6b8a16e279ccc22512c"
+        ]
+      },
+      {
+        "name": "self_pay_recovery-024:probe-authority-namespace-guard-removed",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "da7cd38b1d9d844234a71bcca9bbb66c941a00192468f9372516a310827af66a",
+        "expected": [
+          "accepted",
+          "e50f228acc822928dfee6000928d4f537d13f3fcabc28c440a8a83437db66db1",
+          "a6cebb7a5dff7e55f787133c08431966dbe9c392a1a14d913ed1cf341cde4b37",
+          "8d9c10371fe6a7ac17fa4726aa64eb3cf97bc3ee789c02cbde78ce0582478706"
+        ]
+      },
+      {
+        "name": "self_pay_recovery-025:probe-runtime-global-id-restored",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "a7d9aa54c49e5f5917e6f26525f63955d4e00f4660bd1506660e53230d64de84",
+        "expected": [
+          "accepted",
+          "c169039277159752bd65f230c0d9f590397ca5f137f14733a88048587b56ce91",
+          "f9e9050b289a5b4ba58a3fd3f540c5dd08bf4522098a79da3c0cf3903ddadf8e",
+          "48895cedbd373248ef668c8d78e4d33a37c841f33fed24fc59ff8c35eebe891b"
+        ]
+      },
+      {
+        "name": "self_pay_recovery-026:probe-authority-global-id-restored",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "92debd5a3b8ffea7603bd6909112b267fc56e21b11b2429263aa6116267d62a1",
+        "expected": [
+          "accepted",
+          "ba398d0c1fd169db55feff56f631b44c8cab82f454c049f59934f6315d2a6ed6",
+          "75581c87564b760ca235b23e44fc4f6a5e0f624fdfadb7d8bea7d1d3c9b63b4f",
+          "fc8667af7115398fb690aa58ef7e94386fd3cd29aa4b16a73f1a5cd9ddf74a59"
+        ]
+      },
+      {
+        "name": "self_pay_recovery-027:probe-authority-namespace-restored",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "94fcf3df9a777385e49d6d3720e75673f80e006f5198f2d43b8b65c347763d1a",
+        "expected": [
+          "accepted",
+          "7c95374064ca62c819b9920eaa397731cfd937517925a3e0bb55cca64f4f71de",
+          "e41e3d7254131ad027fada8197031bf25fa033f8db19a5462e6b4dd217ded1a5",
+          "96c869b03d5090f0f752437c673e2a10a7c11a12143db9b398d513fa30c4b7bb"
+        ]
+      },
+      {
+        "name": "self_pay_recovery-028:different-code-profile",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "23ad1bb224f26097e3299d4e3915d391e95fdecff8ad5ede6c3395212647c351",
+        "expected": [
+          "accepted",
+          "14db0cfbab5ea8a9feb586652d7bc7bbe20c3c690e19bc03de225b9e14890f21",
+          "db82916bf910e7508f586481b5a76bcd8301c632c5af83951cba4aa892131db5",
+          "df5a59464c0273ac091dc027ef7805d719a765d3458fd8549745d7414c2eba61"
+        ]
+      },
+      {
+        "name": "self_pay_recovery-029:forged-proof-1",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "c07b5d9290857f85a02e0d50bd569f429b6398d25e13ff5fc55f8052d54d83f9",
+        "expected": [
+          "accepted",
+          "2dd3a45620131ec43c59f45837d6045de024cff142f49bbc7df3d5ad83dd07cf",
+          "9539be7ed897c53f71b13f7a6c2a15753b59010b7ac7f0382d2cc40a921073b1",
+          "e40d8c14d3ac6dba7835591042e4b0344800385bf958b4fc3997c0e588fa80a5"
+        ]
+      },
+      {
+        "name": "self_pay_recovery-030:forged-proof-2",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "4b9700b80e324aeb988f61cfb4a19fb3e669e00e7dd92de1c37cb5f0add417a6",
+        "expected": [
+          "accepted",
+          "74ab02497d1bb40552d7b56579668e5ea4c3da00fa6860b71ed7fa5349a9f8c9",
+          "8a78137c597405c2b11545bf66c43d0d4958bb99216cdd819a01a72725534e53",
+          "b2b813625484395c71ffbb76fdd066434c265130a41e0c29605be0d52dff74fe"
+        ]
+      },
+      {
+        "name": "self_pay_recovery-031:migrate",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "348074310a833228e4602f0ef0e5af535977f6cbe138f62de75942948ac0d5b2",
+        "expected": [
+          "accepted",
+          "d71c696fe269d043df22103ef46538f57aff42b2db443df4e70812e12b7ae1d4",
+          "6e40fa72f7f061bd4d8ed2bcd6ef9ec366bf9c103e4b048566326a329f60aa37",
+          "3bf464616aa85b659ceab324b584fa5560f18983a30454ca5c71f20bb4646b83"
+        ]
+      },
+      {
+        "name": "self_pay_recovery-032:old-authority-refused",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "2e0f86711714a599a46b27f46d769a0805cb35aa5860505f35c3e46b38c60747",
+        "expected": [
+          "rejected",
+          "1809",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay_recovery-033:old-rescue-key-refused",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "618875ebde8320b56228be86d040a6a39b3e54008ea93c395e6e2495f4e3dbe1",
+        "expected": [
+          "rejected",
+          "1808",
+          "-",
+          "-"
+        ]
+      },
+      {
+        "name": "self_pay_recovery-034:new-rescue-payment",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "1f214400448f4cbd36f09740b87be21d3d4f3bb2062e07d9f11aa5f346bfaecf",
+        "expected": [
+          "accepted",
+          "05e5b0354e022f73f0afd2d176257167500e187744541142c2360563283dd3de",
+          "0e985daa3d036786f37fb2502eb688f094d30c4a35f5ba8dae678f4bead0e2d7",
+          "79d26b6eb4147a98bd3ebac620d655a1b231aac6e07dad8ca54e8b6823547895"
+        ]
+      },
+      {
+        "name": "self_pay_recovery-035:retirement-preserved",
+        "dictionary": "8a0d8a2de9c67b11b53a312c9f8b09e1373f75d1a587bcf19bbd7e217faf5703",
+        "input_sha256": "6d3ce85ff757aced7c5eca8e75f6a671efd63ae191db1bc9d5ccbaa4d7e6a54a",
+        "expected": [
+          "rejected",
+          "1817",
+          "-",
+          "-"
+        ]
+      }
+    ]
+  }
+}
