@@ -586,6 +586,9 @@ refunds, relayers, SDK send paths).
   fuzz corpora kept and re-run?
 - **TE-12** For consensus, networking and recovery changes: has the change run in a
   multi-validator local network with real consensus, including stop, restart and partition?
+- **TE-13** When a test/exporter claims a complete input population, is every input
+  retained exactly once across instances, workers and retries, with overwritten,
+  missing, duplicate, stale or extra records rejected by the consumer?
 
 ## 17. Build, CI and release integrity
 
