@@ -22,6 +22,12 @@ TARGET = "test-wallet-index"
 
 MUTATIONS = [
     (
+        "absent-and-empty-is-verified",
+        "  if (!head) {\n",
+        '  if (!head) {\n    if (links.empty()) {\n      return {LineageVerdict::OutsideWindow, ""};\n    }\n',
+        ["OmittedHistoryOfAnAbsentAccountNeedsBlocks"],
+    ),
+    (
         "creation-is-complete",
         """      return {LineageVerdict::NeedsBlocks, i + 1 < links.size() ? "rows precede an account creation in the window"
                                                                 : "history starts inside the window"};""",

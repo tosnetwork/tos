@@ -78,12 +78,12 @@ LineageResult verify_account_lineage(const td::Bits256& account, const td::optio
     links.push_back(link.move_as_ok());
   }
   if (!head) {
-    // Rows of an account H no longer holds: authentic or not, nothing in H
-    // anchors them. Only the window's blocks can decide.
-    if (links.empty()) {
-      return {LineageVerdict::OutsideWindow, ""};
-    }
-    return {LineageVerdict::NeedsBlocks, "account is absent from the checked state"};
+    // Nothing in H anchors an account it does not hold. Rows may be forged,
+    // and no rows may be a history omitted for an account destroyed inside
+    // the window, which H cannot tell from one that never existed. Only the
+    // window's blocks can decide.
+    return {LineageVerdict::NeedsBlocks, links.empty() ? "account is absent from the checked state and has no rows"
+                                                       : "account is absent from the checked state"};
   }
   if (head.value().last_trans_lt <= window_bound) {
     if (!links.empty()) {

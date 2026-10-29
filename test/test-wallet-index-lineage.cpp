@@ -172,6 +172,14 @@ TEST(WalletIndexLineage, AccountAbsentFromTheStateNeedsBlocks) {
   ASSERT_TRUE(result.verdict == LineageVerdict::NeedsBlocks);
 }
 
+// An account destroyed inside the window is absent from H, and a snapshot
+// may drop its whole history: H cannot tell that from an account that never
+// existed, so an empty history of an absent account is not verified.
+TEST(WalletIndexLineage, OmittedHistoryOfAnAbsentAccountNeedsBlocks) {
+  auto result = verify_account_lineage(address(0x10), {}, 1000, {}, kCap);
+  ASSERT_TRUE(result.verdict == LineageVerdict::NeedsBlocks);
+}
+
 TEST(WalletIndexLineage, HistoryCutAtTheRetentionCapIsComplete) {
   auto account = address(0x10);
   auto all = chain(account, {1100, 1200, 1300, 1400}, 1050);

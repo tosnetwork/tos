@@ -63,7 +63,8 @@ struct AccountHead {
 enum class LineageVerdict {
   // Every in-window transaction is present and nothing else is: verified.
   Complete,
-  // The account has no transaction inside the window and no rows: verified.
+  // The account is in H's state, its last transaction is before the window
+  // and it has no rows: verified.
   OutsideWindow,
   // The rows are authentic, but the history reaches a transaction with no
   // predecessor inside the window, or the account is absent from H's state:
