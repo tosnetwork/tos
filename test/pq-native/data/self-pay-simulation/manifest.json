@@ -37,7 +37,7 @@
     "crypto/smc-envelope/QuantumSelfPayCode.h": "908198c64cfb5499ece6ebc778623e002b374c985b833347116d249d90d4d270",
     "scripts/update-self-pay-simulation-fixtures.py": "dc142ede16a664f9a7bb730f7874c5fa0c2e4940391da5db35a82755e35be274",
     "test/auth-extensions/cells.py": "81b937c31175302516a2624dcfd53e43525431e208a541970f2bc045482dc281",
-    "test/auth-extensions/native.py": "b32dfb791ec13030bee78cb6ab89a8ff795ce38a6b7d5c9cdba90e5401dc0a82",
+    "test/auth-extensions/native.py": "02cda13ee97cb6bf3076f2bd81d31edc504c2a510384a85c571d88e7d73456bc",
     "test/mldsa-auth/protocol.py": "9d6a3d900d0eb86731a0df1f73e82a86a6931e9b20ab89042ac9f6c95aecb5aa",
     "test/wallet-quantum/fee_tx_parity.py": "37b2ed54faa7813f73fa1e9d9fdb3b1f6a4a6ceb65fee020b74e38f7ee85ee09",
     "test/wallet-quantum/test_auth_policy.py": "390ebacc6d3880ab41b3eb5eabeb8614a2efa6be00d9ec3476edc13964948dd5",
