@@ -18,9 +18,37 @@ import socket
 import subprocess
 import time
 from pathlib import Path
+from typing import TypedDict
 
 
-def sha256(path):
+class ReplayStats(TypedDict):
+    mc_blocks: int
+
+
+class Readiness(TypedDict):
+    masterchain_seqno: int | None
+    source_seqno: int | None
+    caught_up: bool
+    replay_ceiling: int | None
+    settled: bool
+    initialized: bool
+    replay_stats: ReplayStats
+
+
+class IndexResult(TypedDict):
+    seconds: float
+    readyz: Readiness
+    first_readyz: Readiness
+    command: list[str]
+
+
+class SourceInventory(TypedDict):
+    files: int
+    directories: int
+    metadata_sha256: str
+
+
+def sha256(path: Path) -> str:
     value = hashlib.sha256()
     with path.open("rb") as stream:
         for chunk in iter(lambda: stream.read(1 << 20), b""):
@@ -28,23 +56,36 @@ def sha256(path):
     return value.hexdigest()
 
 
-def source_inventory(path):
+def source_inventory(path: Path) -> SourceInventory:
     digest = hashlib.sha256()
     count = 0
-    for directory in ("state", "celldb", "archive"):
-        for root, dirs, files in os.walk(path / directory):
-            dirs.sort()
-            for name in sorted(files):
-                item = Path(root) / name
-                stat = item.lstat()
-                record = (str(item.relative_to(path)), stat.st_size, stat.st_mtime_ns)
-                digest.update(json.dumps(record, separators=(",", ":")).encode())
-                digest.update(b"\n")
-                count += 1
-    return {"files": count, "metadata_sha256": digest.hexdigest()}
+    directory_count = 0
+
+    def record(item: Path) -> None:
+        stat = item.lstat()
+        metadata = (str(item.relative_to(path)), stat.st_mode, stat.st_size, stat.st_mtime_ns)
+        digest.update(json.dumps(metadata, separators=(",", ":")).encode())
+        digest.update(b"\n")
+
+    for root, dirs, files in os.walk(path):
+        dirs.sort()
+        record(Path(root))
+        directory_count += 1
+        for name in dirs:
+            item = Path(root) / name
+            if item.is_symlink():
+                record(item)
+        for name in sorted(files):
+            record(Path(root) / name)
+            count += 1
+    return {
+        "files": count,
+        "directories": directory_count,
+        "metadata_sha256": digest.hexdigest(),
+    }
 
 
-def command(args, receipt):
+def command(args: list[str], receipt: Path) -> str:
     process = subprocess.run(args, capture_output=True, text=True, timeout=60)
     receipt.write_text(process.stdout + process.stderr)
     if process.returncode:
@@ -52,7 +93,16 @@ def command(args, receipt):
     return process.stdout
 
 
-def index(binary, source, data, ceiling, label, output, expect_missing=False, durable_floor=None):
+def index(
+    binary: Path,
+    source: Path,
+    data: Path,
+    ceiling: int,
+    label: str,
+    output: Path,
+    expect_missing: bool = False,
+    durable_floor: int | None = None,
+) -> IndexResult:
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
         port = probe.getsockname()[1]
@@ -69,8 +119,8 @@ def index(binary, source, data, ceiling, label, output, expect_missing=False, du
         str(ceiling),
     ]
     started = time.monotonic()
-    body = None
-    first_readyz = None
+    body: Readiness | None = None
+    first_readyz: Readiness | None = None
     print(f"START {label}: ceiling={ceiling}", flush=True)
     with log.open("wb") as stream:
         process = subprocess.Popen(cmd, stdout=stream, stderr=subprocess.STDOUT)
@@ -86,10 +136,13 @@ def index(binary, source, data, ceiling, label, output, expect_missing=False, du
                     if response.status not in (200, 503):
                         raise RuntimeError(f"unexpected readiness status {response.status}")
                     body = json.loads(response.read(65536))
+                    assert body is not None
                     if first_readyz is None:
                         first_readyz = body
                     if durable_floor is not None:
-                        assert body["initialized"] and body["masterchain_seqno"] >= durable_floor
+                        assert body["initialized"]
+                        cursor = body["masterchain_seqno"]
+                        assert cursor is not None and cursor >= durable_floor
                 except (OSError, http.client.HTTPException):
                     time.sleep(0.1)
                     continue
@@ -116,7 +169,8 @@ def index(binary, source, data, ceiling, label, output, expect_missing=False, du
                     raise RuntimeError(f"{label} did not stop after SIGTERM")
         if process.returncode != 0:
             raise RuntimeError(f"{label} shutdown exited {process.returncode}")
-    result = {
+    assert body is not None and first_readyz is not None
+    result: IndexResult = {
         "seconds": round(time.monotonic() - started, 3),
         "readyz": body,
         "first_readyz": first_readyz,
@@ -127,7 +181,7 @@ def index(binary, source, data, ceiling, label, output, expect_missing=False, du
     return result
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--build", type=Path, required=True)
     parser.add_argument("--full-source", type=Path, required=True)
@@ -151,7 +205,7 @@ def main():
     before = {str(source): source_inventory(source) for source in (full_source, joined_source)}
     service = (args.build / "services/tos-wallet-index").resolve(strict=True)
     tool = (args.build / "services/tos-wallet-index-snapshot").resolve(strict=True)
-    results = {
+    results: dict[str, object] = {
         "source_commit": args.source_commit,
         "service_sha256": sha256(service),
         "snapshot_tool_sha256": sha256(tool),
@@ -186,7 +240,9 @@ def main():
             ],
             root / "create-checkpoint.log",
         )
-        digest = re.search(r"sha256=([0-9a-f]{64})", text).group(1)
+        matched_digest = re.search(r"sha256=([0-9a-f]{64})", text)
+        assert matched_digest is not None, "snapshot command did not report a digest"
+        digest = matched_digest.group(1)
         (root / "resumed").mkdir()
         command(
             [
@@ -202,7 +258,7 @@ def main():
             ],
             root / "restore-checkpoint.log",
         )
-        results["resumed"] = index(
+        resumed = index(
             service,
             joined_source,
             root / "resumed",
@@ -211,10 +267,8 @@ def main():
             root,
             durable_floor=args.checkpoint,
         )
-        assert (
-            results["resumed"]["readyz"]["replay_stats"]["mc_blocks"]
-            == args.target - args.checkpoint
-        )
+        results["resumed"] = resumed
+        assert resumed["readyz"]["replay_stats"]["mc_blocks"] == args.target - args.checkpoint
         hashes = []
         records = []
         for label in ("full", "resumed"):
@@ -232,7 +286,9 @@ def main():
                 root / f"export-{label}.log",
             )
             hashes.append(sha256(destination))
-            records.append(int(re.search(r"records=(\d+)", text).group(1)))
+            matched_records = re.search(r"records=(\d+)", text)
+            assert matched_records is not None, "snapshot command did not report a record count"
+            records.append(int(matched_records.group(1)))
         assert hashes[0] == hashes[1], "full logical index differs after native snapshot resume"
         assert records[0] == records[1] and records[0] > 2
         results.update(
@@ -247,7 +303,7 @@ def main():
         )
         (root / "receipt.json").write_text(json.dumps(results, indent=2) + "\n")
         assert results["sources_unchanged"], (
-            "source chain file metadata changed during read-only replay"
+            "stopped source file metadata changed during read-only replay"
         )
     print(json.dumps(results, indent=2), flush=True)
     print("NATIVE_WALLET_SNAPSHOT_CONTINUITY_OK", flush=True)
