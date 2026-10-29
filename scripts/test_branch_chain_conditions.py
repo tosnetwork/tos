@@ -48,6 +48,7 @@ class BranchConditionTests(unittest.TestCase):
             "Retain Quantum candidate configuration and boot evidence",
             "Retain public explorer RPC response receipts",
             "Retain public self-pay proofs",
+            "Retain native init-block publisher evidence",
         ):
             archive = re.search(
                 rf"(?ms)^      - name: {re.escape(name)}\n.*?(?=^      - |\Z)",
@@ -82,6 +83,24 @@ class BranchConditionTests(unittest.TestCase):
         for index, workflow in enumerate(mutants):
             with self.subTest(index=index), self.assertRaises(RuntimeError):
                 self.guard.validate_unconditional_steps(workflow)
+
+    def test_init_block_lifecycle_cannot_be_omitted_or_commented_out(self):
+        self.guard.validate_init_block_lifecycle(self.workflow)
+        for marker in (
+            "uv run python test/integration/node_sync_init_block.py",
+            "grep -Fx 'NATIVE_SERIALIZER_NONLOCAL_REFUSAL_OK'",
+            "grep -Fx 'NATIVE_INIT_BLOCK_JOIN_OK'",
+            "export NODE_SYNC_NATIVE_INIT_ROOT=",
+            "grep -Fx 'PRODUCTION_INIT_BLOCK_PUBLISH_BOOTSTRAP_OK'",
+        ):
+            lines = [line for line in self.workflow.splitlines() if marker in line]
+            self.assertEqual(len(lines), 1)
+            for replacement in ("", "          # " + lines[0].lstrip()):
+                with self.subTest(marker=marker, replacement=replacement):
+                    with self.assertRaisesRegex(RuntimeError, "init-block lifecycle command"):
+                        self.guard.validate_init_block_lifecycle(
+                            self.workflow.replace(lines[0], replacement, 1)
+                        )
 
     def test_node_store_proof_cannot_be_omitted(self):
         self.guard.validate_node_store_proof(self.workflow)
@@ -236,6 +255,9 @@ class NodeFailureLogTests(unittest.TestCase):
                 "build/quantum-candidate-ci/network",
                 "build/explorer-rpc-candidate-v16/attempt-1/network",
                 "build/explorer-rpc-ordinary-v16/attempt-2/network",
+                "build/node-sync-init-block/network",
+                "build/node-sync-init-block/nonlocal-1",
+                "build/node-sync-init-block/nonlocal-2",
                 "test/integration/.network",
                 "test/integration/.pq-unsafe-rotation-ci/nonzero",
                 "test/integration/.pq-consensus-key-rotation-ci/rotation",

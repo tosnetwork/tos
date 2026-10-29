@@ -7,6 +7,8 @@ from pathlib import Path
 NETWORKS = (
     "build/quantum-*-ci/network",
     "build/explorer-rpc-*-v16/attempt-*/network",
+    "build/node-sync-init-block/network",
+    "build/node-sync-init-block/nonlocal-*",
     "test/integration/.network",
     "test/integration/.pq-unsafe-rotation-ci/*",
     "test/integration/.pq-consensus-key-rotation-ci/*",

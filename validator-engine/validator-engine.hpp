@@ -347,6 +347,7 @@ class ValidatorEngine : public td::actor::Actor {
   bool not_all_shards_ = false;
   std::vector<tos::ShardIdFull> add_shard_cmds_;
   bool state_serializer_disabled_flag_ = false;
+  bool test_state_serializer_no_delay_ = false;
   double broadcast_speed_multiplier_catchain_ = 3.33;
   bool permanent_celldb_ = false;
   bool skip_key_sync_ = false;
@@ -481,6 +482,9 @@ class ValidatorEngine : public td::actor::Actor {
   }
   void set_state_serializer_disabled_flag() {
     state_serializer_disabled_flag_ = true;
+  }
+  void set_test_state_serializer_no_delay() {
+    test_state_serializer_no_delay_ = true;
   }
   void set_broadcast_speed_multiplier_catchain(double value) {
     broadcast_speed_multiplier_catchain_ = value;

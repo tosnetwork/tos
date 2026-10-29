@@ -404,6 +404,15 @@ jobs:
         timeout-minutes: 10
         run: uv run python test/integration/node_store_native_reopen.py --root build/node-store-native-reopen --build build --reconstruct build/operator-rust-target/debug/examples/reconstruct_fixture --validate-generation build/operator-rust-target/debug/examples/capture_and_validate
 
+      - name: Join a native dump source at a persistent init block
+        timeout-minutes: 15
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run python test/integration/node_sync_init_block.py --root build/node-sync-init-block --build build --capture build/operator-rust-target/debug/examples/capture_and_validate | tee build/node-sync-init-block.log
+          grep -Fx 'NATIVE_SERIALIZER_NONLOCAL_REFUSAL_OK' build/node-sync-init-block.log
+          grep -Fx 'NATIVE_INIT_BLOCK_JOIN_OK' build/node-sync-init-block.log
+
       - name: Verify native restore preservation and forward-only exchange
         timeout-minutes: 25
         shell: bash
@@ -415,6 +424,7 @@ jobs:
           export CARGO_TARGET_DIR="$GITHUB_WORKSPACE/build/operator-rust-target"
           export NODE_SYNC_NATIVE_FIXTURE="$GITHUB_WORKSPACE/build/node-store-native-reopen/checked-generation"
           export NODE_SYNC_NATIVE_SOURCE="$GITHUB_WORKSPACE/build/node-store-native-reopen/network/node5"
+          export NODE_SYNC_NATIVE_INIT_ROOT="$GITHUB_WORKSPACE/build/node-sync-init-block"
           export NODE_SYNC_NATIVE_ENGINE="$GITHUB_WORKSPACE/build/validator-engine/validator-engine"
           export NODE_SYNC_NATIVE_WORKER="$GITHUB_WORKSPACE/build/operator-rust-target/debug/node-data-sync-worker"
           cargo test --manifest-path tosctl/src/Cargo.toml --locked -p node-data-sync --features native --lib operations::tests::native_stage_preserves_own_context_and_never_overlays_recovery_material -- --ignored --exact --nocapture | tee build/node-sync-native-preservation.log
@@ -448,6 +458,20 @@ jobs:
           grep -Fx 'PRODUCTION_BOOTSTRAP_ANCHOR_REFUSAL_OK' build/node-sync-native-lifecycle.log
           grep -Fx 'PRODUCTION_CREATE_WITHOUT_ZERO_STATE_OK' build/node-sync-native-lifecycle.log
           grep -Fx 'PRODUCTION_VALIDATION_REQUIRED_ANCESTOR_OK' build/node-sync-native-lifecycle.log
+          grep -Fx 'PRODUCTION_INIT_BLOCK_PUBLISH_BOOTSTRAP_OK' build/node-sync-native-lifecycle.log
+
+      - name: Retain native init-block publisher evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: native-init-block-publisher-${{ github.sha }}
+          path: |
+            build/node-sync-init-block/init-block-receipt.json
+            build/node-sync-init-block/checked-generation/checked/validation.json
+            build/node-sync-init-block.log
+            build/node-sync-native-lifecycle.log
+          if-no-files-found: warn
+          retention-days: 14
 
       - name: Run the complete Python suite
         run: uv run pytest

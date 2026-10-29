@@ -137,6 +137,7 @@ def validate_unconditional_steps(text: str) -> None:
         "Retain Quantum candidate configuration and boot evidence",
         "Retain public explorer RPC response receipts",
         "Retain public self-pay proofs",
+        "Retain native init-block publisher evidence",
     ):
         archive = re.search(
             rf"(?ms)^      - name: {re.escape(archive_name)}\n"
@@ -226,6 +227,21 @@ def validate_node_store_proof(text: str) -> None:
         require(
             re.search(rf"(?m)^ +{re.escape(command)}$", text) is not None,
             f"native StateDb proof command is absent: {command}",
+        )
+
+
+def validate_init_block_lifecycle(text: str) -> None:
+    required = (
+        "uv run python test/integration/node_sync_init_block.py --root build/node-sync-init-block --build build --capture build/operator-rust-target/debug/examples/capture_and_validate | tee build/node-sync-init-block.log",
+        "grep -Fx 'NATIVE_SERIALIZER_NONLOCAL_REFUSAL_OK' build/node-sync-init-block.log",
+        "grep -Fx 'NATIVE_INIT_BLOCK_JOIN_OK' build/node-sync-init-block.log",
+        'export NODE_SYNC_NATIVE_INIT_ROOT="$GITHUB_WORKSPACE/build/node-sync-init-block"',
+        "grep -Fx 'PRODUCTION_INIT_BLOCK_PUBLISH_BOOTSTRAP_OK' build/node-sync-native-lifecycle.log",
+    )
+    for command in required:
+        require(
+            re.search(rf"(?m)^ +{re.escape(command)}$", text) is not None,
+            f"native init-block lifecycle command is absent: {command}",
         )
 
 
@@ -353,6 +369,7 @@ def validate_node_data_sync_modes(root: Path) -> None:
         "grep -Fx 'PRODUCTION_BOOTSTRAP_ANCHOR_REFUSAL_OK'",
     ):
         require(token in workflow, "native lifecycle CI command or required result missing")
+    validate_init_block_lifecycle(workflow)
     library = (core / "lib.rs").read_text()
     require(
         '#[cfg(all(test, feature = "native-lifecycle-tests"))]\nmod test_hooks;' in library,
