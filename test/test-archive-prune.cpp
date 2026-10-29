@@ -72,7 +72,7 @@ struct ArchivePruneTestAccess {
                        td::Promise<std::unique_ptr<td::KeyValueReader>> promise) {
     td::actor::send_lambda(slice, [slice, promise = std::move(promise)]() mutable {
       auto &self = slice.get_actor_unsafe();
-      self.before_query();
+      TRY_STATUS_PROMISE(promise, self.before_query());
       promise.set_value(self.kv_->snapshot());
     });
   }
@@ -81,6 +81,28 @@ struct ArchivePruneTestAccess {
     td::actor::send_lambda(slice, [slice, promise = std::move(promise)]() mutable {
       auto &self = slice.get_actor_unsafe();
       promise.set_value(self.destroyed_ && self.kv_ == nullptr);
+    });
+  }
+
+  static void index_closed(td::actor::ActorId<ArchiveSlice> slice, td::Promise<bool> promise) {
+    td::actor::send_lambda(slice, [slice, promise = std::move(promise)]() mutable {
+      auto &self = slice.get_actor_unsafe();
+      promise.set_value(self.status_ == ArchiveSlice::st_closed && !self.kv_ && self.packages_.empty() &&
+                        self.id_to_package_.empty() && self.active_queries_ == 0);
+    });
+  }
+
+  static void make_catch_up_due(td::actor::ActorId<ArchiveSlice> slice, td::Promise<td::Unit> promise) {
+    td::actor::send_lambda(slice, [slice, promise = std::move(promise)]() mutable {
+      slice.get_actor_unsafe().last_catch_up_ = {};
+      promise.set_value(td::Unit());
+    });
+  }
+
+  static void manager_index_closed(td::actor::ActorId<ArchiveManager> manager, td::Promise<bool> promise) {
+    td::actor::send_lambda(manager, [manager, promise = std::move(promise)]() mutable {
+      auto &self = manager.get_actor_unsafe();
+      promise.set_value(!self.index_ && self.files_.empty() && self.key_files_.empty() && self.temp_files_.empty());
     });
   }
 
@@ -1491,6 +1513,417 @@ void reader_write_guards(const std::string &root) {
   std::cout << "PASS: readers write nothing into the node's tree" << std::endl;
 }
 
+namespace reader_open {
+
+using namespace reader_sync;
+
+template <class T>
+void require_index_not_ready(const td::Result<T> &result, const char *prefix) {
+  check(result.is_error(), "an unavailable reader index must refuse the query");
+  check(result.error().code() == tos::ErrorCode::notready, "the refusal must be notready");
+  check(result.error().message().str().find(prefix) == 0, "the refusal must identify the failed index open");
+}
+
+void check_closed(td::actor::Scheduler &scheduler, td::actor::ActorId<ArchiveSlice> reader) {
+  check(
+      request<bool>(scheduler, [&](auto promise) { ArchivePruneTestAccess::index_closed(reader, std::move(promise)); })
+          .move_as_ok(),
+      "failed opens leave a closed slice with no index, packages or active queries");
+}
+
+// The secondary learns a package from the global index, but has not opened
+// its index when the primary removes it. All ordering uses actor replies;
+// the package is deliberately older than the one preloaded at startup.
+void lazy_prune(const std::string &root, td::DbOpenMode mode, PackageId id) {
+  std::filesystem::create_directories(std::filesystem::path(root).parent_path());
+  auto opts = ValidatorManagerOptions::create(block_id(0), block_id(0));
+  opts.write().set_disable_rocksdb_stats(true);
+  opts.write().set_archive_preload_period(0);
+  opts.write().set_max_open_archive_files(128);
+  const PackageId newest{80000, false, false};
+  const auto prefix = root + id.path() + id.name();
+  td::actor::Scheduler scheduler({2});
+  td::actor::ActorOwn<ArchiveManager> primary, secondary;
+  scheduler.run_in_context([&] {
+    primary = td::actor::create_actor<ArchiveManager>("primary-lazy-prune", td::actor::ActorId<RootDb>{}, root, opts);
+  });
+  for (auto package_id : {id, newest}) {
+    auto source = request<td::actor::ActorId<ArchiveSlice>>(scheduler, [&](auto promise) {
+                    ArchivePruneTestAccess::create_package(primary.get(), package_id, std::move(promise));
+                  }).move_as_ok();
+    auto archive_id = request<td::uint64>(scheduler, [&](auto promise) {
+      td::actor::send_closure(source, &ArchiveSlice::get_archive_id, package_id.id,
+                              tos::ShardIdFull{tos::masterchainId}, std::move(promise));
+    });
+    check(archive_id.is_ok() && archive_id.ok() == package_id.id, "primary package exists and is queryable");
+  }
+  scheduler.run_in_context([&] {
+    secondary =
+        td::actor::create_actor<ArchiveManager>("reader-lazy-prune", td::actor::ActorId<RootDb>{}, root, opts, mode);
+  });
+  auto reader = request<td::actor::ActorId<ArchiveSlice>>(scheduler, [&](auto promise) {
+                  ArchivePruneTestAccess::get_slice(secondary.get(), id, std::move(promise));
+                }).move_as_ok();
+  auto preloaded = request<td::actor::ActorId<ArchiveSlice>>(scheduler, [&](auto promise) {
+                     ArchivePruneTestAccess::get_slice(secondary.get(), newest, std::move(promise));
+                   }).move_as_ok();
+  request<td::uint64>(scheduler, [&](auto promise) {
+    td::actor::send_closure(preloaded, &ArchiveSlice::get_archive_id, newest.id, tos::ShardIdFull{tos::masterchainId},
+                            std::move(promise));
+  }).ensure();
+  check_closed(scheduler, reader);
+  request<td::Unit>(scheduler, [&](auto promise) {
+    ArchivePruneTestAccess::prune_package(primary.get(), id, false, std::move(promise));
+  }).ensure();
+  check(!std::filesystem::exists(prefix + ".pack") && !std::filesystem::exists(prefix + ".index"),
+        "primary deletion finishes before the first reader query");
+  check(reader.is_alive(), "reader has not observed the deletion record yet");
+  const auto opens_before = archive_slice_opens();
+  const char *reason = "archive slice index is not ready:";
+  for (unsigned attempt = 0; attempt < 32; ++attempt) {
+    require_index_not_ready(request<td::uint64>(scheduler,
+                                                [&](auto promise) {
+                                                  td::actor::send_closure(reader, &ArchiveSlice::get_archive_id, id.id,
+                                                                          tos::ShardIdFull{tos::masterchainId},
+                                                                          std::move(promise));
+                                                }),
+                            reason);
+    check_closed(scheduler, reader);
+  }
+  require_index_not_ready(request<td::BufferSlice>(scheduler,
+                                                   [&](auto promise) {
+                                                     td::actor::send_closure(reader, &ArchiveSlice::get_file, nullptr,
+                                                                             ref(id.id + 1), std::move(promise));
+                                                   }),
+                          reason);
+  require_index_not_ready(request<td::BufferSlice>(scheduler,
+                                                   [&](auto promise) {
+                                                     td::actor::send_closure(reader, &ArchiveSlice::get_slice, id.id, 0,
+                                                                             64, std::move(promise));
+                                                   }),
+                          reason);
+  require_index_not_ready(request<td::Unit>(scheduler,
+                                            [&](auto promise) {
+                                              td::actor::send_closure(reader, &ArchiveSlice::try_catch_up_with_primary,
+                                                                      CatchUpMode::Force, std::move(promise));
+                                            }),
+                          reason);
+  if (!id.key) {
+    require_index_not_ready(request<BlockHandle>(scheduler,
+                                                 [&](auto promise) {
+                                                   td::actor::send_closure(reader, &ArchiveSlice::get_handle,
+                                                                           block_id(id.id + 1), std::move(promise));
+                                                 }),
+                            reason);
+    require_index_not_ready(request<ConstBlockHandle>(scheduler,
+                                                      [&](auto promise) {
+                                                        td::actor::send_closure(reader, &ArchiveSlice::get_temp_handle,
+                                                                                block_id(id.id + 1),
+                                                                                std::move(promise));
+                                                      }),
+                            reason);
+    require_index_not_ready(request<ConstBlockHandle>(
+                                scheduler,
+                                [&](auto promise) {
+                                  td::actor::send_closure(reader, &ArchiveSlice::get_block_by_seqno,
+                                                          tos::AccountIdPrefixFull(tos::masterchainId, tos::shardIdAll),
+                                                          id.id + 1, std::move(promise));
+                                }),
+                            reason);
+    require_index_not_ready(request<tos::BlockSeqno>(scheduler,
+                                                     [&](auto promise) {
+                                                       td::actor::send_closure(reader,
+                                                                               &ArchiveSlice::get_max_masterchain_seqno,
+                                                                               std::move(promise));
+                                                     }),
+                            reason);
+    require_index_not_ready(request<tos::BlockSeqno>(scheduler,
+                                                     [&](auto promise) {
+                                                       td::actor::send_closure(reader,
+                                                                               &ArchiveSlice::get_min_masterchain_seqno,
+                                                                               std::move(promise));
+                                                     }),
+                            reason);
+  }
+  if (id.temp) {
+    require_index_not_ready(request<std::map<tos::ShardIdFull, tos::BlockSeqno>>(
+                                scheduler,
+                                [&](auto promise) {
+                                  td::actor::send_closure(reader, &ArchiveSlice::get_temp_max_seqnos,
+                                                          std::move(promise));
+                                }),
+                            reason);
+  }
+  scheduler.run_in_context([&] { td::actor::send_closure(reader, &ArchiveSlice::open_files); });
+  check_closed(scheduler, reader);
+  check(archive_slice_opens() == opens_before, "failed attempts are not counted as successful opens");
+  check(!std::filesystem::exists(prefix + ".index"), "a reader never recreates a removed index");
+  if (mode == td::DbOpenMode::db_secondary) {
+    request<td::Unit>(scheduler, [&](auto promise) {
+      td::actor::send_closure(secondary, &ArchiveManager::try_catch_up_with_primary, CatchUpMode::Force,
+                              std::move(promise));
+    }).ensure();
+    pump_until(scheduler, [&] { return !reader.is_alive(); }, "catch-up retires the unavailable slice");
+    check(!request<bool>(
+               scheduler,
+               [&](auto promise) { ArchivePruneTestAccess::package_live(secondary.get(), id, std::move(promise)); })
+               .move_as_ok(),
+          "the deletion record retires the stale package description");
+  }
+  scheduler.run_in_context([&] {
+    secondary.reset();
+    primary.reset();
+  });
+  std::cout << "PASS: " << mode_name(mode) << " discovery -> prune -> lazy open; " << id.name() << std::endl;
+}
+
+void slice_recovers(const std::string &root, td::DbOpenMode mode, bool corrupt_index) {
+  const PackageId id{20000, false, false};
+  const auto directory = root + id.path();
+  const auto current = directory + id.name() + ".index/CURRENT";
+  std::filesystem::create_directories(directory);
+  auto seed = [&](td::actor::Scheduler &scheduler) {
+    auto primary = open_slice(scheduler, root, id, td::DbOpenMode::db_primary);
+    add_file(scheduler, primary.get(), id.id + 1).ensure();
+    close_slice(scheduler, primary);
+  };
+  std::string saved_current;
+  if (corrupt_index) {
+    {
+      td::actor::Scheduler scheduler({2});
+      seed(scheduler);
+    }
+    release_handles();
+    saved_current = td::read_file_str(current).move_as_ok();
+    td::write_file(current, "invalid manifest\n").ensure();
+  }
+  {
+    td::actor::Scheduler scheduler({2});
+    auto reader = open_slice(scheduler, root, id, mode);
+    require_index_not_ready(get_file(scheduler, reader.get(), id.id + 1), "archive slice index is not ready:");
+    check_closed(scheduler, reader.get());
+    if (corrupt_index) {
+      td::write_file(current, saved_current).ensure();
+    } else {
+      seed(scheduler);
+    }
+    auto data = get_file(scheduler, reader.get(), id.id + 1);
+    check(data.is_ok() && data.ok() == payload(id.id + 1), "the same reader recovers after the index is available");
+    close_slice(scheduler, reader);
+  }
+  release_handles();
+  std::cout << "PASS: " << mode_name(mode) << " slice retries " << (corrupt_index ? "corrupt" : "missing")
+            << " index and reads the source bytes" << std::endl;
+}
+
+void missing_package_recovers(const std::string &root, td::DbOpenMode mode) {
+  const PackageId id{20000, false, false};
+  const auto directory = root + id.path();
+  const PackageId second{id.id + 100, false, false};
+  const auto package = directory + second.name() + ".pack";
+  std::filesystem::create_directories(directory);
+  {
+    td::actor::Scheduler scheduler({2});
+    auto primary = open_slice(scheduler, root, id, td::DbOpenMode::db_primary);
+    add_file(scheduler, primary.get(), id.id + 1).ensure();
+    add_file(scheduler, primary.get(), second.id + 1).ensure();
+    close_slice(scheduler, primary);
+  }
+  release_handles();
+  std::filesystem::rename(package, package + ".held");
+  {
+    td::actor::Scheduler scheduler({2});
+    auto reader = open_slice(scheduler, root, id, mode);
+    auto missing = get_file(scheduler, reader.get(), second.id + 1);
+    check(missing.is_error() && missing.error().code() == tos::ErrorCode::notready &&
+              missing.error().message() == "archive package is not open yet",
+          "a missing package after a successful index open is notready");
+    check_closed(scheduler, reader.get());
+    std::filesystem::rename(package + ".held", package);
+    auto recovered = get_file(scheduler, reader.get(), second.id + 1);
+    check(recovered.is_ok() && recovered.ok() == payload(second.id + 1),
+          "a reader discards the partial layout and reads a restored package");
+    close_slice(scheduler, reader);
+  }
+  release_handles();
+  std::cout << "PASS: " << mode_name(mode) << " missing package leaves no partial open and recovers" << std::endl;
+}
+
+void catch_up_recovers(const std::string &root) {
+  const PackageId id{20000, false, false};
+  const auto directory = root + id.path();
+  const auto current = directory + id.name() + ".index/CURRENT";
+  std::filesystem::create_directories(directory);
+  {
+    td::actor::Scheduler scheduler({2});
+    auto primary = open_slice(scheduler, root, id, td::DbOpenMode::db_primary);
+    add_file(scheduler, primary.get(), id.id + 1).ensure();
+    close_slice(scheduler, primary);
+  }
+  release_handles();
+  {
+    td::actor::Scheduler scheduler({2});
+    auto reader = open_slice(scheduler, root, id, td::DbOpenMode::db_secondary);
+    get_file(scheduler, reader.get(), id.id + 1).ensure();
+    const auto opens_before = archive_slice_opens();
+    std::filesystem::rename(current, current + ".held");
+    request<td::Unit>(scheduler, [&](auto promise) {
+      ArchivePruneTestAccess::make_catch_up_due(reader.get(), std::move(promise));
+    }).ensure();
+    const char *reason = "archive slice index catch-up is not ready:";
+    require_index_not_ready(get_file(scheduler, reader.get(), id.id + 1), reason);
+    require_index_not_ready(request<td::Unit>(scheduler,
+                                              [&](auto promise) {
+                                                td::actor::send_closure(reader,
+                                                                        &ArchiveSlice::try_catch_up_with_primary,
+                                                                        CatchUpMode::Force, std::move(promise));
+                                              }),
+                            reason);
+    std::filesystem::rename(current + ".held", current);
+    auto recovered = get_file(scheduler, reader.get(), id.id + 1);
+    check(recovered.is_ok() && recovered.ok() == payload(id.id + 1),
+          "an open secondary recovers from catch-up failure without restarting");
+    check(archive_slice_opens() == opens_before, "catch-up recovery reuses the existing index");
+    close_slice(scheduler, reader);
+  }
+  release_handles();
+  std::cout << "PASS: an open secondary reports catch-up failures and recovers" << std::endl;
+}
+
+void manager_recovers(const std::string &root, td::DbOpenMode mode, bool corrupt_index) {
+  std::filesystem::create_directories(std::filesystem::path(root).parent_path());
+  auto opts = ValidatorManagerOptions::create(block_id(0), block_id(0));
+  opts.write().set_disable_rocksdb_stats(true);
+  const PackageId id{20000, false, false};
+  const auto current = root + "/files/globalindex/CURRENT";
+  auto seed = [&](td::actor::Scheduler &scheduler) {
+    td::actor::ActorOwn<ArchiveManager> primary;
+    scheduler.run_in_context([&] {
+      primary =
+          td::actor::create_actor<ArchiveManager>("primary-index-recovery", td::actor::ActorId<RootDb>{}, root, opts);
+    });
+    auto slice = request<td::actor::ActorId<ArchiveSlice>>(scheduler, [&](auto promise) {
+                   ArchivePruneTestAccess::create_package(primary.get(), id, std::move(promise));
+                 }).move_as_ok();
+    request<td::uint64>(scheduler, [&](auto promise) {
+      td::actor::send_closure(slice, &ArchiveSlice::get_archive_id, id.id, tos::ShardIdFull{tos::masterchainId},
+                              std::move(promise));
+    }).ensure();
+    scheduler.run_in_context([&] { primary.reset(); });
+  };
+  std::string saved_current;
+  if (corrupt_index) {
+    {
+      td::actor::Scheduler scheduler({2});
+      seed(scheduler);
+    }
+    saved_current = td::read_file_str(current).move_as_ok();
+    td::write_file(current, "invalid manifest\n").ensure();
+  }
+  td::actor::Scheduler scheduler({2});
+  td::actor::ActorOwn<ArchiveManager> reader;
+  scheduler.run_in_context([&] {
+    reader = td::actor::create_actor<ArchiveManager>("reader-index-recovery", td::actor::ActorId<RootDb>{}, root, opts,
+                                                     mode);
+  });
+  for (unsigned attempt = 0; attempt < 16; ++attempt) {
+    require_index_not_ready(request<tos::BlockSeqno>(scheduler,
+                                                     [&](auto promise) {
+                                                       td::actor::send_closure(
+                                                           reader, &ArchiveManager::get_max_masterchain_seqno, true,
+                                                           std::move(promise));
+                                                     }),
+                            "archive index is not ready:");
+    check(request<bool>(
+              scheduler,
+              [&](auto promise) { ArchivePruneTestAccess::manager_index_closed(reader.get(), std::move(promise)); })
+              .move_as_ok(),
+          "failed global opens leave no index or package actors");
+  }
+  require_index_not_ready(request<tos::BlockSeqno>(scheduler,
+                                                   [&](auto promise) {
+                                                     td::actor::send_closure(reader,
+                                                                             &ArchiveManager::get_min_masterchain_seqno,
+                                                                             std::move(promise));
+                                                   }),
+                          "archive index is not ready:");
+  require_index_not_ready(request<td::Unit>(scheduler,
+                                            [&](auto promise) {
+                                              td::actor::send_closure(reader,
+                                                                      &ArchiveManager::try_catch_up_with_primary,
+                                                                      CatchUpMode::Force, std::move(promise));
+                                            }),
+                          "archive index is not ready:");
+  if (corrupt_index) {
+    td::write_file(current, saved_current).ensure();
+  } else {
+    check(!std::filesystem::exists(root), "failed reader startup does not create the source tree");
+    seed(scheduler);
+  }
+  auto archive_id = request<td::uint64>(scheduler, [&](auto promise) {
+    td::actor::send_closure(reader, &ArchiveManager::get_archive_id, id.id + 1, tos::ShardIdFull{tos::masterchainId},
+                            std::move(promise));
+  });
+  check(archive_id.is_ok() && archive_id.ok() == id.id, "the same manager loads the recovered global index");
+  scheduler.run_in_context([&] { reader.reset(); });
+  std::cout << "PASS: " << mode_name(mode) << " manager retries " << (corrupt_index ? "corrupt" : "missing")
+            << " global index without restarting" << std::endl;
+}
+
+void empty_global_index(const std::string &root, td::DbOpenMode mode) {
+  std::filesystem::create_directories(root);
+  auto opts = ValidatorManagerOptions::create(block_id(0), block_id(0));
+  opts.write().set_disable_rocksdb_stats(true);
+  reader_guards::with_manager(root, opts, td::DbOpenMode::db_primary, [](auto &, auto) {});
+  reader_guards::with_manager(root, opts, mode, [&](auto &scheduler, auto reader) {
+    const char *reason = "archive has no masterchain blocks";
+    require_index_not_ready(request<tos::BlockSeqno>(scheduler,
+                                                     [&](auto promise) {
+                                                       td::actor::send_closure(
+                                                           reader, &ArchiveManager::get_max_masterchain_seqno, true,
+                                                           std::move(promise));
+                                                     }),
+                            reason);
+    require_index_not_ready(request<tos::BlockSeqno>(scheduler,
+                                                     [&](auto promise) {
+                                                       td::actor::send_closure(
+                                                           reader, &ArchiveManager::get_min_masterchain_seqno,
+                                                           std::move(promise));
+                                                     }),
+                            reason);
+    if (mode == td::DbOpenMode::db_secondary) {
+      require_index_not_ready(request<td::Unit>(scheduler,
+                                                [&](auto promise) {
+                                                  td::actor::send_closure(reader,
+                                                                          &ArchiveManager::try_catch_up_with_primary,
+                                                                          CatchUpMode::Force, std::move(promise));
+                                                }),
+                              "archive has no packages yet");
+    }
+  });
+  std::cout << "PASS: " << mode_name(mode) << " empty global index reports notready" << std::endl;
+}
+
+}  // namespace reader_open
+
+void reader_open_failures(const std::string &root) {
+  for (auto mode : {td::DbOpenMode::db_secondary, td::DbOpenMode::db_readonly}) {
+    const auto directory = root + "/" + reader_sync::mode_name(mode);
+    for (auto id : {PackageId{20000, false, false}, PackageId{20000, true, false}, PackageId{20000, false, true}}) {
+      reader_open::lazy_prune(directory + "/" + id.name(), mode, id);
+    }
+    reader_open::missing_package_recovers(directory + "/missing-package", mode);
+    reader_open::empty_global_index(directory + "/empty-index", mode);
+    for (bool corrupt_index : {false, true}) {
+      const auto suffix = corrupt_index ? "/corrupt" : "/missing";
+      reader_open::slice_recovers(directory + "/slice" + suffix, mode, corrupt_index);
+      reader_open::manager_recovers(directory + "/manager" + suffix, mode, corrupt_index);
+    }
+  }
+  reader_open::catch_up_recovers(root + "/catch-up");
+  std::cout << "PASS: unavailable reader indexes fail without aborting and recover without restart" << std::endl;
+}
+
 int main(int argc, char **argv) {
   auto root = td::mkdtemp("", "archive-prune-").move_as_ok();
   if (argc == 2 && std::string(argv[1]) == "--held-reader-shutdown") {
@@ -1516,6 +1949,11 @@ int main(int argc, char **argv) {
   }
   if (argc == 2 && std::string(argv[1]) == "--reader-write-guards") {
     reader_write_guards(root + "/reader-write-guards");
+    td::rmrf(root).ensure();
+    return 0;
+  }
+  if (argc == 2 && std::string(argv[1]) == "--reader-open-failures") {
+    reader_open_failures(root + "/reader-open-failures");
     td::rmrf(root).ensure();
     return 0;
   }

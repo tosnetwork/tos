@@ -262,6 +262,10 @@ class ArchiveManager : public td::actor::Actor {
   td::DbOpenMode mode_;
 
   std::shared_ptr<td::KeyValue> index_;
+  td::Timestamp next_index_warning_;
+
+  td::Status ensure_index();
+  td::Status index_open_error(const td::Status &error);
 
   PackageId get_package_id(BlockSeqno seqno) const;
   PackageId get_package_id_force(BlockSeqno masterchain_seqno, ShardIdFull shard, BlockSeqno seqno, UnixTime ts,
