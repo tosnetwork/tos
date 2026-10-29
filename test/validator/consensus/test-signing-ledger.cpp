@@ -418,6 +418,7 @@ class Driver : public td::actor::Actor {
     co_await test_prune_and_floor();
     co_await test_unknown_history();
     co_await test_identity_history();
+    co_await test_bound_identity();
     co_await test_untrusted_becomes_pending();
     co_await test_genesis_ledger();
     co_await test_persistent_creation_failure();
@@ -426,6 +427,67 @@ class Driver : public td::actor::Actor {
 
   static std::function<double()> clock_at(double t) {
     return [t] { return t; };
+  }
+
+  td::actor::Task<> test_bound_identity() {
+    const auto dir = scratch() + "/signing-ledger";
+    const auto other = fill(0x88);
+    const auto session = fill(0xA3);
+    const ShardIdFull mc{masterchainId, shardIdAll};
+    const auto m = fence_block(40, 1691, {{masterchainId, shardIdAll, 50}});
+    require(create_ledger(dir, validator_).is_ok(), "original identity ledger");
+    {
+      auto ledger = td::actor::create_actor<SigningLedger>("original", dir);
+      auto a = co_await admit(ledger.get(), session);
+      require((co_await reserve(a, notar(1, 0xA))).result == ReserveResult::Reserved, "original decision");
+    }
+    {
+      auto ledger =
+          td::actor::create_actor<SigningLedger>("rebound", dir, default_file_ops(), nullptr, clock_at(1600), other);
+      require(!(co_await td::actor::ask(ledger.get(), &SigningLedger::floor)).has_value(),
+              "the previous identity's floor is not inherited");
+      auto pending = co_await td::actor::ask(ledger.get(), &SigningLedger::admit, other, session, mc, std::uint32_t{53},
+                                             IdentityHistory{1600, std::nullopt});
+      require(pending->fenced && pending->history_unknown, "a rebound identity must establish its own history");
+      auto a = co_await td::actor::ask(ledger.get(), &SigningLedger::admit, other, session, mc, std::uint32_t{53},
+                                       IdentityHistory{1600, m});
+      require(!a->fenced, "a rebound identity above its own fence signs");
+      require((co_await reserve(a, notar(1, 0xB))).result == ReserveResult::Reserved,
+              "a different identity does not reuse the previous identity's decisions");
+      auto wrong = co_await admit(ledger.get(), session);
+      require(wrong->fenced, "a cached admission cannot cross the bound identity");
+    }
+    require(::rename(dir.c_str(), (dir + ".parked").c_str()) == 0, "temporarily remove the original directory");
+    {
+      auto ledger = td::actor::create_actor<SigningLedger>("rebound-restart", dir, default_file_ops(), nullptr,
+                                                           clock_at(1800), other);
+      auto a = co_await td::actor::ask(ledger.get(), &SigningLedger::admit, other, session, mc, std::uint32_t{53},
+                                       IdentityHistory{1800, std::nullopt});
+      require(!a->fenced && a->decisions.size() == 1, "restart finds the identity's ledger without the original");
+      require((co_await reserve(a, notar(1, 0xC))).result == ReserveResult::Conflict, "rebound decisions survive");
+    }
+    require(::rename((dir + ".parked").c_str(), dir.c_str()) == 0, "restore original directory");
+    {
+      auto ledger = td::actor::create_actor<SigningLedger>("original-return", dir, default_file_ops(), nullptr,
+                                                           clock_at(1800), validator_);
+      auto a = co_await admit(ledger.get(), session);
+      require(!a->fenced && a->decisions.size() == 1, "return to the original identity preserves its log");
+      require((co_await reserve(a, notar(1, 0xB))).result == ReserveResult::Conflict, "original decision is preserved");
+    }
+    for (std::size_t i = 1; i < kMaxIdentityLedgers; ++i) {
+      const auto id = fill(static_cast<unsigned char>(0x90 + i));
+      require(create_ledger(dir + "." + id.to_hex(), id).is_ok(), "fill retained identity limit");
+    }
+    const auto extra = fill(0x99);
+    auto full = td::actor::create_actor<SigningLedger>("identity-limit", dir, default_file_ops(), nullptr,
+                                                       clock_at(1600), extra);
+    auto refused = co_await td::actor::ask(full.get(), &SigningLedger::admit, extra, session, mc, std::uint32_t{53},
+                                           IdentityHistory{1600, m});
+    require(refused->fenced && refused->reason.find("retained identity ledger limit") != std::string::npos,
+            "one past the identity limit is refused for that reason");
+    require(!std::filesystem::exists(dir + "." + extra.to_hex()), "no directory beyond the identity bound");
+    std::printf("bound identity and retained directory limit: ok\n");
+    co_return td::Unit{};
   }
 
   td::actor::Task<bool> offer(td::actor::ActorId<SigningLedger> ledger, std::uint32_t seqno, std::uint32_t gen_utime,
@@ -486,6 +548,12 @@ class Driver : public td::actor::Actor {
       }
       auto ledger =
           td::actor::create_actor<SigningLedger>("stored-restart", dir, default_file_ops(), nullptr, clock_at(1000));
+      require(
+          co_await td::actor::ask(ledger.get(), &SigningLedger::history_start, validator_, std::uint64_t{1580}) == 1600,
+          "the manager reads the persisted custody lower bound before choosing a fence block");
+      require(
+          co_await td::actor::ask(ledger.get(), &SigningLedger::history_start, validator_, std::uint64_t{1700}) == 1700,
+          "later process custody still wins");
       auto early =
           co_await admit_with(ledger.get(), fill(0x48), 53, IdentityHistory{1000, fence_block(24, 1100, at_m)});
       require(early->fenced, "a block before the stored custody t0 + 91 does not settle it after a restart");

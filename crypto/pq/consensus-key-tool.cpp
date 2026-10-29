@@ -501,6 +501,10 @@ std::string refuse_unless_no_sessions(const std::string& consensus) {
                 "identity at genesis";
       break;
     }
+    if (std::strncmp(entry->d_name, "signing-ledger.", 15) == 0) {
+      refused = consensus + " holds a retained identity signing ledger; this is not a fresh genesis identity";
+      break;
+    }
   }
   ::closedir(dir);
   return refused;

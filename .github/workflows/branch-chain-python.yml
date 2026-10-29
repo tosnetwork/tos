@@ -342,7 +342,7 @@ jobs:
       - name: Check the own-decision log
         run: |
           set -e
-          ctest --test-dir build --output-on-failure --no-tests=error -R '^signing-ledger$'
+          ctest --test-dir build --output-on-failure --no-tests=error -R '^(signing-ledger|test-startup-catchup-manager|consensus-key-tool)$'
           ctest --test-dir build --output-on-failure --no-tests=error -R '^decision-log-restart-'
 
       # A leader signs a candidate only after its leader window is durably recorded, so a

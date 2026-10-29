@@ -4259,7 +4259,7 @@ std::shared_ptr<const consensus::signing::Admission> ValidatorManagerImpl::signi
   if (auto it = signing_admissions_.find(session_id); it != signing_admissions_.end()) {
     return it->second;
   }
-  ensure_signing_ledger();
+  ensure_signing_ledger(validator);
   switch (signing_floor_state_) {
     case SigningFloorState::Unknown:
       signing_floor_state_ = SigningFloorState::Requested;
@@ -4312,10 +4312,11 @@ std::shared_ptr<const consensus::signing::Admission> ValidatorManagerImpl::signi
   return nullptr;
 }
 
-void ValidatorManagerImpl::ensure_signing_ledger() {
+void ValidatorManagerImpl::ensure_signing_ledger(tos::ValidatorId validator_id) {
   if (signing_ledger_.empty()) {
     signing_ledger_ = td::actor::create_actor<consensus::signing::SigningLedger>(
-        "SigningLedger", consensus::signing::ledger_dir(db_root_));
+        "SigningLedger", consensus::signing::ledger_dir(db_root_), consensus::signing::default_file_ops(), nullptr,
+        nullptr, validator_id.value);
   }
 }
 
@@ -4331,14 +4332,35 @@ void ValidatorManagerImpl::signing_custody_changed(tos::ValidatorId validator_id
     }
     return;
   }
-  ensure_signing_ledger();
+  ensure_signing_ledger(validator_id);
   // Added, rebound or re-added: what this process applied before now says nothing about
   // when the identity's earlier signer stopped.
   const auto t0 = consensus::signing::custody_time(signing_custody_clock());
   signing_identities_[validator_id] = SigningIdentity{.t0 = t0, .fence_block = std::nullopt};
+  fetch_signing_history_start(validator_id, t0).start().detach();
   LOG(INFO) << "signing ledger: custody of validator " << validator_id.value.to_hex() << " from " << t0
             << "; its fence block, if it needs one, is generated at or after "
             << t0 + consensus::signing::kHistoryMarginSeconds;
+}
+
+td::actor::Task<> ValidatorManagerImpl::fetch_signing_history_start(tos::ValidatorId validator_id, td::uint64 custody) {
+  auto start = co_await td::actor::ask(signing_ledger_.get(), &consensus::signing::SigningLedger::history_start,
+                                       validator_id.value, custody)
+                   .wrap();
+  auto it = signing_identities_.find(validator_id);
+  if (it == signing_identities_.end() || it->second.t0 != custody || it->second.history_ready) {
+    co_return td::Unit{};
+  }
+  if (start.is_error()) {
+    LOG(ERROR) << "signing ledger: cannot read the custody lower bound: " << start.error();
+    co_return td::Unit{};
+  }
+  it->second.t0 = start.move_as_ok();
+  it->second.history_ready = true;
+  // A block may have arrived while the ledger was loading. It can now be considered
+  // against the effective lower bound, without losing a later persisted custody time.
+  record_signing_fence_blocks();
+  co_return td::Unit{};
 }
 
 consensus::signing::IdentityHistory ValidatorManagerImpl::signing_identity_history(tos::ValidatorId validator_id) {
@@ -4349,6 +4371,7 @@ consensus::signing::IdentityHistory ValidatorManagerImpl::signing_identity_histo
              .emplace(validator_id, SigningIdentity{.t0 = consensus::signing::custody_time(signing_custody_clock()),
                                                     .fence_block = std::nullopt})
              .first;
+    fetch_signing_history_start(validator_id, it->second.t0).start().detach();
   }
   return consensus::signing::IdentityHistory{.t0 = it->second.t0, .fence_block = it->second.fence_block};
 }
@@ -4359,7 +4382,7 @@ void ValidatorManagerImpl::record_signing_fence_blocks() {
   }
   bool any_open = false;
   for (const auto &[_, identity] : signing_identities_) {
-    any_open = any_open || !identity.fence_block.has_value();
+    any_open = any_open || (identity.history_ready && !identity.fence_block.has_value());
   }
   if (!any_open) {
     return;
@@ -4376,7 +4399,7 @@ void ValidatorManagerImpl::record_signing_fence_blocks() {
     block.lineages.push_back({id.workchain, id.shard, last_masterchain_state_->get_shard_cc_seqno(id)});
   }
   for (auto &[validator_id, identity] : signing_identities_) {
-    if (identity.fence_block.has_value()) {
+    if (!identity.history_ready || identity.fence_block.has_value()) {
       continue;
     }
     if (auto refused = consensus::signing::fence_block_refusal(block, identity.t0)) {
@@ -4395,7 +4418,12 @@ void ValidatorManagerImpl::record_signing_fence_blocks() {
     // Settles a pending ledger of this identity now; one created later is established from
     // the same record at its first admission.
     td::actor::send_closure(signing_ledger_, &consensus::signing::SigningLedger::offer_fence_block, validator_id.value,
-                            identity.t0, block, [](td::Result<bool>) {});
+                            identity.t0, block, [](td::Result<bool> settled) {
+                              if (settled.is_error()) {
+                                LOG(ERROR)
+                                    << "signing ledger: the fence block could not be offered: " << settled.error();
+                              }
+                            });
   }
 }
 

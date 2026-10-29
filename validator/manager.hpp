@@ -330,7 +330,7 @@ class ValidatorManagerImpl : public ValidatorManager {
   // runs again when it arrives. Admissions are kept for the life of the process, so a group
   // recreated for the same session gets the same log.
   td::actor::ActorOwn<consensus::signing::SigningLedger> signing_ledger_;
-  void ensure_signing_ledger();
+  void ensure_signing_ledger(tos::ValidatorId validator_id);
   std::map<ValidatorSessionId, std::shared_ptr<const consensus::signing::Admission>> signing_admissions_;
   std::set<ValidatorSessionId> signing_admissions_pending_;
   // The ledger's floor, and whether this node's chain is known to contain it. No session is
@@ -347,19 +347,22 @@ class ValidatorManagerImpl : public ValidatorManager {
   td::actor::Task<> fetch_signing_admission(ValidatorSessionId session_id, tos::ValidatorId validator,
                                             ShardIdFull shard, CatchainSeqno cc,
                                             consensus::signing::IdentityHistory history);
-  // Per validator identity this process holds a consensus key for: when it took custody
-  // (t0, consensus/signing-ledger.h "Unknown signing history") and the fence block M it has
+  // Per validator identity this process holds a consensus key for: the later of custody,
+  // ledger startup and persisted pending t0, and the fence block M it has
   // applied since, recorded whether or not a ledger exists yet. In memory only: a restart
   // takes custody again, so it needs a new M anyway. One entry per held identity, each with
   // at most kMaxFenceEntries lineages.
   struct SigningIdentity {
     td::uint64 t0 = 0;
     std::optional<consensus::signing::FenceBlock> fence_block;
+    bool history_ready = false;
   };
   std::map<tos::ValidatorId, SigningIdentity> signing_identities_;
   // Custody of `validator_id` changed: a key added or removed. The identity's record is reset
-  // (t0 = now, M discarded) while any key is held for it, and dropped when none is.
+  // (t0 reconciled with the ledger, M discarded) while any key is held for it, and dropped
+  // when none is. The engine binds one validator identity for the life of the process.
   void signing_custody_changed(tos::ValidatorId validator_id);
+  td::actor::Task<> fetch_signing_history_start(tos::ValidatorId validator_id, td::uint64 custody);
   consensus::signing::IdentityHistory signing_identity_history(tos::ValidatorId validator_id);
   // Records, for every identity without one, the newly applied masterchain block as its fence
   // block when it qualifies, and offers it to the ledger once.

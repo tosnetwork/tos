@@ -816,12 +816,30 @@ bool fenced_by_history(const std::vector<FenceEntry>& fence, ShardIdFull shard, 
 // ===== SigningLedger =====
 
 SigningLedger::SigningLedger(std::string dir, std::shared_ptr<FileOps> ops, SessionDecisionLog::WriteGate gate,
-                             std::function<double()> clock)
-    : dir_(std::move(dir)), ops_(std::move(ops)), gate_(std::move(gate)), clock_(std::move(clock)) {
+                             std::function<double()> clock, std::optional<td::Bits256> validator)
+    : dir_(std::move(dir))
+    , original_dir_(dir_)
+    , bound_validator_(validator)
+    , ops_(std::move(ops))
+    , gate_(std::move(gate))
+    , clock_(std::move(clock)) {
 }
 
 void SigningLedger::start_up() {
   started_at_ = custody_time(clock_ ? clock_() : td::Clocks::system());
+  if (bound_validator_) {
+    const auto own_dir = original_dir_ + "." + bound_validator_->to_hex();
+    // Never fall back to an older ledger after an identity has its own directory, even
+    // when that directory's header is damaged or the original directory was removed.
+    struct stat st{};
+    if (::lstat(own_dir.c_str(), &st) == 0 || errno != ENOENT) {
+      dir_ = own_dir;
+    }
+  }
+  load_header();
+}
+
+void SigningLedger::load_header() {
   const std::string path = dir_ + "/" + kHeaderName;
   const int fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
   if (fd < 0) {
@@ -871,6 +889,13 @@ void SigningLedger::start_up() {
     untrusted_reason_ = decoded.error().message().str();
     LOG(ERROR) << "signing ledger " << dir_ << ": " << untrusted_reason_
                << "; a pending ledger for unknown history replaces it at the first admission";
+    return;
+  }
+  if (bound_validator_ && decoded.ok().validator != *bound_validator_ && dir_ == original_dir_) {
+    // A deliberate stopped-node rebind must neither reuse nor overwrite another
+    // identity's decisions. Keep the original directory intact, including its binding.
+    dir_ = original_dir_ + "." + bound_validator_->to_hex();
+    load_header();
     return;
   }
   auto binding = binding_of(dir_);
@@ -930,6 +955,7 @@ td::Status SigningLedger::establish(const FenceBlock& block) {
 }
 
 td::Status SigningLedger::start_unknown_history(const td::Bits256& validator, const IdentityHistory& history) {
+  TRY_STATUS(check_identity_capacity());
   const std::string path = dir_ + "/" + kHeaderName;
   if (file_exists(path)) {
     // The untrusted header is kept beside the new one, never deleted; at most kMaxSetAside.
@@ -976,6 +1002,9 @@ td::Status SigningLedger::start_unknown_history(const td::Bits256& validator, co
 std::shared_ptr<const Admission> SigningLedger::admit_now(const td::Bits256& validator, const td::Bits256& session,
                                                           ShardIdFull shard, std::uint32_t cc,
                                                           const IdentityHistory& history) {
+  if (bound_validator_ && validator != *bound_validator_) {
+    return Admission::fence(session, "the signing ledger is bound to another validator");
+  }
   if (auto it = admitted_.find(session); it != admitted_.end()) {
     return it->second;
   }
@@ -1177,6 +1206,50 @@ td::actor::Task<std::string> SigningLedger::untrusted_reason() {
 
 td::actor::Task<History> SigningLedger::history() {
   co_return header_.history;
+}
+
+td::actor::Task<std::uint64_t> SigningLedger::history_start(td::Bits256 validator, std::uint64_t custody) {
+  auto start = std::max(started_at_, custody);
+  if (status_ == LedgerStatus::Trusted && header_.validator == validator && header_.history == History::Pending) {
+    start = std::max(start, header_.t0);
+  }
+  co_return start;
+}
+
+td::Status SigningLedger::check_identity_capacity() const {
+  if (dir_ == original_dir_ || file_exists(dir_)) {
+    return td::Status::OK();
+  }
+  const auto parent = parent_of(original_dir_);
+  const auto prefix = original_dir_.substr(original_dir_.find_last_of('/') + 1) + ".";
+  DIR* directory = ::opendir(parent.c_str());
+  if (directory == nullptr) {
+    return td::Status::Error("cannot inspect retained identity ledgers: " + errno_text());
+  }
+  std::size_t count = 0;
+  int error = 0;
+  while (count < kMaxIdentityLedgers) {
+    errno = 0;
+    const auto* entry = ::readdir(directory);
+    if (entry == nullptr) {
+      error = errno;
+      break;
+    }
+    const std::string name(entry->d_name);
+    if (name.starts_with(prefix) && name.size() == prefix.size() + 64) {
+      ++count;
+    }
+  }
+  ::closedir(directory);
+  if (error != 0) {
+    return td::Status::Error("cannot read retained identity ledgers: " + std::string(std::strerror(error)));
+  }
+  if (count >= kMaxIdentityLedgers) {
+    return td::Status::Error(
+        "the retained identity ledger limit is reached; preserve and remove obsolete ledgers "
+        "on the stopped node before rebinding again");
+  }
+  return td::Status::OK();
 }
 
 td::actor::Task<bool> SigningLedger::offer_fence_block(td::Bits256 validator, std::uint64_t t0, FenceBlock block) {

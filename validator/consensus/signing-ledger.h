@@ -370,6 +370,9 @@ std::string encode_header(const Header& header);
 td::Result<Header> decode_header(td::Slice bytes);
 
 std::string ledger_dir(const std::string& db_root);
+// Retained ledgers for deliberate identity rebindings, in addition to the original one.
+// They are never deleted automatically; refuse another identity once this bound is reached.
+inline constexpr std::size_t kMaxIdentityLedgers = 4;
 
 // Creates a complete ledger for `validator` in an empty `dir`: one that asserts the node
 // has never signed. Only what knows that, the genesis ceremony or a test, may call this.
@@ -384,7 +387,8 @@ class SigningLedger : public td::actor::Actor {
  public:
   // `clock` reads unix seconds, for tests of the start time; null reads the system clock.
   SigningLedger(std::string dir, std::shared_ptr<FileOps> ops = default_file_ops(),
-                SessionDecisionLog::WriteGate gate = nullptr, std::function<double()> clock = nullptr);
+                SessionDecisionLog::WriteGate gate = nullptr, std::function<double()> clock = nullptr,
+                std::optional<td::Bits256> validator = std::nullopt);
 
   void start_up() override;
 
@@ -404,6 +408,9 @@ class SigningLedger : public td::actor::Actor {
   td::actor::Task<bool> offer_fence_block(td::Bits256 validator, std::uint64_t t0, FenceBlock block);
 
   td::actor::Task<History> history();
+  // The earliest custody time a fence may use, including a pending ledger from a previous
+  // process and this actor's start. Read before the manager chooses its first fence block.
+  td::actor::Task<std::uint64_t> history_start(td::Bits256 validator, std::uint64_t custody);
 
   // Forgets sessions that can no longer be recreated, and raises the floor to `floor`, in
   // one header write; their logs are deleted only after it.
@@ -415,6 +422,8 @@ class SigningLedger : public td::actor::Actor {
   td::actor::Task<std::string> untrusted_reason();
 
  private:
+  void load_header();
+  td::Status check_identity_capacity() const;
   td::Status write_header();
   std::string log_path(const td::Bits256& session) const;
   std::shared_ptr<const Admission> admit_now(const td::Bits256& validator, const td::Bits256& session,
@@ -427,6 +436,8 @@ class SigningLedger : public td::actor::Actor {
   td::Status establish(const FenceBlock& block);
 
   std::string dir_;
+  std::string original_dir_;
+  std::optional<td::Bits256> bound_validator_;
   std::shared_ptr<FileOps> ops_;
   SessionDecisionLog::WriteGate gate_;
   std::function<double()> clock_;

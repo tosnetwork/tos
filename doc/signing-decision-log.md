@@ -44,7 +44,9 @@ restored or recreated. Such a node:
    - An untrusted header is set aside as `ledger.untrusted.N` beside the new
      one, and is never deleted. At most four are kept; a fifth untrusted start
      signs nothing until an operator removes old ones.
-   - A restart while pending keeps the stored `t0`.
+   - A restart while pending uses the latest of the stored `t0`, the process's
+     new custody time and the ledger actor's start time. The manager reads this
+     lower bound before choosing M, including when the host clock moved back.
 2. **Signs nothing while pending.** Its validator groups run, but quiescent: no
    vote and no candidate.
 3. **Fixes the fence at block M.** M is the first masterchain block this
@@ -120,6 +122,26 @@ Limits, stated plainly:
   validator never signs in it until it restarts (taking a new `t0` and M).
   Roll-restart validators, one at a time, after a workchain is added.
 
+## Rebinding a stopped node
+
+`bind-node --replace` may bind the same database to another validator identity.
+The original `consensus/signing-ledger/` is preserved. When its header names a
+different identity, the new identity uses
+`consensus/signing-ledger.<VALIDATOR_ID_HEX>/` and passes through the ordinary
+unknown-history fence. Switching back reopens that identity's retained ledger,
+including its decisions and masterchain floor. An existing identity directory
+always takes precedence, even if the original directory is absent or its own
+header is damaged; damage causes unknown-history recovery, never fallback to
+another history.
+
+At most four identity directories are created in addition to the original.
+The fifth new identity is refused until the stopped node's operator preserves
+and removes an obsolete retained ledger. There is no automatic eviction; removing
+an identity's ledger means it must pass the unknown-history fence on its next use.
+Only the bound identity's ledger is opened, so inactive histories add no open
+log file descriptors or in-memory session records. Each retained directory has
+the same header, session and decision limits as the original.
+
 ## Genesis ceremony
 
 A validator identity created fresh for a new zerostate has never signed. It does
@@ -146,7 +168,7 @@ tos-pq-consensus-key init-signing-ledger --genesis-ceremony \
 The command:
 
 - holds `DB_ROOT/config.json.lock` while it runs, so the node must be stopped;
-- refuses when a signing ledger already exists;
+- refuses when a signing ledger or any retained identity ledger already exists;
 - refuses when `consensus/` holds any `consensus.*` session directory, or cannot
   be listed completely.
 
@@ -189,10 +211,11 @@ back together. The rolled-back ledger is indistinguishable from the original,
 so the node is **not** fenced. It can sign again in a session where it signed
 after the snapshot was taken. The log does not protect against this. Never
 roll a running or recently running validator back in place. If it has been
-rolled back, delete `consensus/signing-ledger/` before starting it, so that it
+rolled back, remove every `consensus/signing-ledger/` and `consensus/signing-ledger.*`
+identity directory before starting it, so that it
 goes through the unknown-history fence.
 
-Do not copy `consensus/signing-ledger/` between hosts or back it up for restore.
+Do not copy any signing-ledger directory between hosts or back it up for restore.
 A file copy is detected and treated as unknown history. A copy that keeps inode
 numbers and birth times, as above, is not detected.
 
@@ -209,7 +232,7 @@ the weight signing throughout; with four validators that is strictly one at a
 time.
 
 **Downgrade, then upgrade again.** After running a binary without the log,
-remove `consensus/signing-ledger/` (with the node stopped) before running one
+remove all signing-ledger directories (with the node stopped) before running one
 with it again. Otherwise the journal holds votes the log never saw, and the
 cross-check fences those sessions.
 
@@ -249,7 +272,10 @@ Gates for making it mandatory, run on a local chain:
 - a fresh chain with the ceremony (blocks at the normal time) and without it
   (no blocks, the genesis hint on every validator);
 - per-process file descriptor attribution and an equal-duration soak with and
-  without the log.
+  without the log. Both arms must finish with all four validators and two observers
+  present in every sample, with complete measurements and unchanged process start
+  times. Missing, interrupted or restarted processes fail the comparison before
+  resource averages are computed.
 
 ## Release note (for the release that makes the log mandatory)
 
@@ -268,4 +294,4 @@ Gates for making it mandatory, run on a local chain:
 > the node's first start, only for an identity that has never signed; without
 > it the chain does not start. Do not restart a validator-elect within about
 > 15 minutes of its taking office. After a downgrade, remove
-> `consensus/signing-ledger/` before upgrading again.
+> all signing-ledger directories, including retained identities, before upgrading again.

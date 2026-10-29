@@ -31,6 +31,7 @@ import argparse
 import asyncio
 import hashlib
 import json
+import math
 import os
 import re
 import sys
@@ -52,7 +53,7 @@ def classify(target: str, node_dir: str) -> str:
     if not target.startswith(node_dir + "/"):
         return "other"
     rest = target[len(node_dir) :]
-    if rest.startswith("/consensus/signing-ledger/"):
+    if re.match(r"/consensus/signing-ledger(?:\.[0-9A-Fa-f]{64})?/", rest):
         return "signing_ledger"
     if rest.startswith("/consensus/consensus."):
         return "consensus_db"
@@ -68,9 +69,11 @@ def classify(target: str, node_dir: str) -> str:
 
 def census(pid: int, node_dir: str) -> dict[str, Any] | None:
     try:
+        # Field 22 after the parenthesized command name, which may itself contain spaces.
+        start_ticks = int(Path(f"/proc/{pid}/stat").read_text().rpartition(")")[2].split()[19])
         status = Path(f"/proc/{pid}/status").read_text()
         names = os.listdir(f"/proc/{pid}/fd")
-    except OSError:
+    except (OSError, ValueError, IndexError):
         return None
     vm_rss = re.search(r"^VmRSS:\s+(\d+) kB", status, re.M)
     if vm_rss is None:
@@ -88,9 +91,10 @@ def census(pid: int, node_dir: str) -> dict[str, Any] | None:
         classes[kind] = classes.get(kind, 0) + 1
         if m := SESSION_DIR.search(target):
             sessions.add(m.group(1))
-        if kind == "signing_ledger" and "/signing-ledger/log." in target:
+        if kind == "signing_ledger" and "/log." in target:
             ledger_logs += 1
     return {
+        "start_ticks": start_ticks,
         "rss_bytes": rss_kib * 1024,
         "fds": len(names),
         "classes": classes,
@@ -233,9 +237,75 @@ def class_series(rows: list[dict[str, Any]], kind: str) -> list[tuple[float, flo
     return out
 
 
+def sample_errors(meta: dict[str, Any], rows: list[dict[str, Any]]) -> list[str]:
+    """Refuse incomplete measurements before averaging can hide a lost process."""
+    roles = meta.get("roles")
+    if (
+        not isinstance(roles, dict)
+        or sorted(roles.values()) != ["observer"] * 2 + ["validator"] * 4
+    ):
+        return ["expected inventory of four validators and two observers is missing"]
+    duration, interval = meta.get("duration"), meta.get("interval")
+    if (
+        not isinstance(duration, (int, float))
+        or not isinstance(interval, (int, float))
+        or any(not math.isfinite(n) or n <= 0 for n in (duration, interval))
+    ):
+        return ["duration or sampling interval is missing or invalid"]
+    if "ended_at" not in meta or len(rows) < 2:
+        return ["run did not finish or has fewer than two samples"]
+    identities: dict[str, tuple[int, int]] = {}
+    previous = None
+    for index, row in enumerate(rows):
+        age = row.get("age")
+        if not isinstance(age, (int, float)) or not math.isfinite(age) or age < 0:
+            return [f"sample {index}: invalid age"]
+        if (previous is None and age > interval) or (
+            previous is not None and (age <= previous or age - previous > 2 * interval)
+        ):
+            return [f"sample {index}: missing or unordered samples"]
+        previous = age
+        nodes = row.get("nodes")
+        if not isinstance(nodes, dict) or nodes.keys() != roles.keys():
+            return [f"sample {index}: node inventory differs from the run metadata"]
+        for name, role in roles.items():
+            node = nodes[name]
+            if not isinstance(node, dict) or node.get("role") != role:
+                return [f"sample {index}: {name} is missing or has the wrong role"]
+            for field in (
+                "pid",
+                "start_ticks",
+                "rss_bytes",
+                "fds",
+                "live_sessions",
+                "signing_ledger_log_fds",
+            ):
+                value = node.get(field)
+                minimum = 1 if field in ("pid", "start_ticks", "rss_bytes", "fds") else 0
+                if type(value) is not int or value < minimum:
+                    return [f"sample {index}: {name} has no valid {field}"]
+            classes = node.get("classes")
+            if (
+                not isinstance(classes, dict)
+                or not classes
+                or any(type(n) is not int or n < 0 for n in classes.values())
+            ):
+                return [f"sample {index}: {name} has no complete fd census"]
+            identity = (node["pid"], node["start_ticks"])
+            if name in identities and identities[name] != identity:
+                return [f"sample {index}: {name} restarted during the run"]
+            identities[name] = identity
+    if rows[-1]["age"] < duration:
+        return ["samples end before the requested run duration"]
+    return []
+
+
 def compare(off_dir: Path, on_dir: Path) -> dict[str, Any]:
-    _, off = load(off_dir)
-    _, on = load(on_dir)
+    off_meta, off = load(off_dir)
+    on_meta, on = load(on_dir)
+    errors = {"off": sample_errors(off_meta, off), "on": sample_errors(on_meta, on)}
+    if any(errors.values()):
+        return {"passed": False, "sample_errors": errors}
     horizon = min(off[-1]["age"], on[-1]["age"]) if off and on else 0
     off = [r for r in off if r["age"] <= horizon]
     on = [r for r in on if r["age"] <= horizon]
@@ -281,6 +351,7 @@ def compare(off_dir: Path, on_dir: Path) -> dict[str, Any]:
     return {
         "matched_age_hours": horizon / 3600.0,
         "samples": {"off": len(off), "on": len(on)},
+        "sample_errors": errors,
         "rss": rss,
         "signing_ledger_log_fd_violations": ledger_violations,
         "fd_class_growth": growth,

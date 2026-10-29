@@ -1543,6 +1543,54 @@ TEST(StartupCatchupManager, LateCustody) {
   ASSERT_EQ(std::string("admitted"), admission_of(f, f.session_of(above)));
 }
 
+TEST(StartupCatchupManager, PendingRestartWithEarlierClockEventuallySigns) {
+  const auto stored_t0 = consensus::signing::custody_time(td::Clocks::system()) + 30;
+  Fixture f([&](const std::string& root) {
+    make_ledger(root, member_id(2, 0), std::nullopt);
+    consensus::signing::Header header;
+    header.validator = member_id(2, 0).value;
+    header.dir = consensus::signing::binding_of(ledger_of(root)).move_as_ok();
+    header.history = consensus::signing::History::Pending;
+    header.t0 = stored_t0;
+    consensus::signing::default_file_ops()
+        ->replace_file(ledger_of(root), "ledger", consensus::signing::encode_header(header))
+        .ensure();
+  });
+  f.hold(f.current, 0);
+  auto first = f.snapshot(f.current, 1);
+  f.set_tip(first, 10, kFresh);
+  ASSERT_TRUE(!f.decide());
+  f.advance(first, 11, kAfterTheMarginOfStart);
+  ASSERT_EQ(std::string("fenced"), admission_of(f, f.session_of(first)));
+  auto record = f.identity_record(f.current, 0);
+  ASSERT_TRUE(record.has_value());
+  ASSERT_TRUE(record->first >= stored_t0);
+  ASSERT_EQ(-1, record->second);
+  f.advance(first, 12, -(consensus::signing::kHistoryMarginSeconds + 40.0));
+  f.run_for(0.5);
+  record = f.identity_record(f.current, 0);
+  ASSERT_TRUE(record.has_value());
+  ASSERT_EQ(12, record->second);
+  auto above = f.snapshot(f.current, 4);
+  f.advance(above, 13, -(consensus::signing::kHistoryMarginSeconds + 40.0));
+  ASSERT_EQ(std::string("admitted"), admission_of(f, f.session_of(above)));
+}
+
+TEST(StartupCatchupManager, ReboundIdentityWithExistingLedgerEventuallySigns) {
+  // The database was bound to an earlier staking identity. Its ledger stays intact.
+  Fixture f([&](const std::string& root) { make_ledger(root, member_id(1, 0), std::nullopt); });
+  f.hold(f.current, 0);
+  auto first = f.snapshot(f.current, 1);
+  f.set_tip(first, 10, kFresh);
+  ASSERT_TRUE(!f.decide());
+  f.advance(first, 10, kFresh);
+  ASSERT_EQ(std::string("fenced"), admission_of(f, f.session_of(first)));
+  f.advance(first, 11, kAfterTheMarginOfStart);
+  auto above = f.snapshot(f.current, 4);
+  f.advance(above, 12, kAfterTheMarginOfStart);
+  ASSERT_EQ(std::string("admitted"), admission_of(f, f.session_of(above)));
+}
+
 // A rebind: identity A's record is dropped with its custody, and identity B waits from its
 // own custody time; A's fence block is never used for B.
 TEST(StartupCatchupManager, Rebind) {
