@@ -231,5 +231,59 @@
         "description": "Bounded native log excerpt: first/restored nonlocal refusal, immediate local serialization, fresh observer downloads, capture and join receipt. Trailing whitespace and surplus final blank lines are normalized; diagnostic content is unchanged."
       }
     ]
+  },
+  "pre_anchor_proof_control": {
+    "purpose": "Required red-before control: the same init-block join, create/publish and third-node bootstrap test fails on the validation path used before backward anchor proofs, then passes with the normal worker.",
+    "date_utc": "2026-10-29",
+    "commit": "e4d776709ef6cc6e0ec6504b1bdf324e6bd55f60",
+    "tree": "97dccf3165ed332c17d24b9d76dfb0a8c02da6e9",
+    "runner": "scripts/check-init-block-pre-anchor-control.py",
+    "commands": [
+      "uv run python test/integration/node_sync_init_block.py --root <out>/node-sync-init-block --build <build> --capture <cargo-target>/debug/examples/capture_and_validate --base-port 43500",
+      "python3 scripts/check-init-block-pre-anchor-control.py --build-dir <build> --target-dir <cargo-target> --init-root <out>/node-sync-init-block --output-dir <out>/control --jobs 4"
+    ],
+    "environment": "Native build of this commit (CMake Release, Clang 21.1.8, RocksDB and jemalloc); Rust dev profile, bfd linker, 4 build jobs at the lowest priority under a CPU-temperature pause guard (paused six times for at most 6 s each).",
+    "fixture": {
+      "result": "NATIVE_INIT_BLOCK_JOIN_OK",
+      "init_block_seqno": 151
+    },
+    "mutation": "restore the held zero-state GetState read and the LookupBlock ancestry loop in place of the backward anchor proofs",
+    "source": "tosctl/src/node-control/node-data-sync/src/native_validation.rs",
+    "source_sha256": "77e7ca1b8762d514950e1cc96fd863c68cdba95cb61b047dedb66652216a9917",
+    "pre_anchor_proof_source_sha256": "4dba80d22466be96ef385eceb0688d0ceb9aade90d36c31d64d77ca3fb9ce1b8",
+    "restored_source_sha256": "77e7ca1b8762d514950e1cc96fd863c68cdba95cb61b047dedb66652216a9917",
+    "normal_worker_sha256": "12602f30ff2e2e49549decbe1f9ff75344c227188d4e03ade1d265a58ea3a9fd",
+    "pre_anchor_proof_worker_sha256": "1ec7d43d293c105fb6c08aebc735fcf15e8a17bcae7456e46ce4f961b332667e",
+    "red": {
+      "exit_status": 101,
+      "elapsed_seconds": 208.435,
+      "worker_sha256": "1ec7d43d293c105fb6c08aebc735fcf15e8a17bcae7456e46ce4f961b332667e",
+      "output_sha256": "9f9843c91cc9295080710331c613310377f6ac1f61dad7853e4c69a3566b9bfb",
+      "output_bytes": 3769
+    },
+    "red_failure": "production create rejected init-block source; worker: native recovery or required shard-state read did not complete; last check: native GetState for held zero state (-1,8000000000000000,0):E691E357...: native state read failed (651): zerostate not in db",
+    "green": {
+      "exit_status": 0,
+      "elapsed_seconds": 78.048,
+      "worker_sha256": "12602f30ff2e2e49549decbe1f9ff75344c227188d4e03ade1d265a58ea3a9fd",
+      "output_sha256": "ebecbdc5b3e45136d2addd3eecc3f71665c5527646bf9032c85c7565f12a2331",
+      "output_bytes": 4151
+    },
+    "green_marker": "PRODUCTION_INIT_BLOCK_PUBLISH_BOOTSTRAP_OK",
+    "result": "INIT_BLOCK_PRE_ANCHOR_CONTROL_OK",
+    "raw_output_note": "output_sha256 values are of the complete raw test outputs; the committed excerpts start at the test run, with trailing whitespace and surplus final blank lines removed.",
+    "retained_outputs": [
+      {
+        "file": "init-block-pre-anchor-proof-red.txt",
+        "sha256": "d49af2e283eb1237c163e5039196ad37de16c5c851f2815a07428184aa8dbbea",
+        "bytes": 841
+      },
+      {
+        "file": "init-block-pre-anchor-proof-green.txt",
+        "sha256": "187c3f8d058e3cb0b872b0289d25c4d46fd19cd1a09e013a4c8c52c54358b814",
+        "bytes": 1330
+      }
+    ],
+    "ci": "branch-chain-python.yml runs the same runner after the native lifecycle suite and requires INIT_BLOCK_PRE_ANCHOR_CONTROL_OK."
   }
 }
