@@ -353,6 +353,10 @@ pub trait TransactionExecutor {
             return Ok((TrComputePhase::skipped(ComputeSkipReason::NoGas), None, None));
         }
 
+        if msg.is_none() && !acc.is_active() {
+            return Ok((TrComputePhase::skipped(ComputeSkipReason::NoState), None, None));
+        }
+
         let mut libraries = vec![];
         let prepared = prepared_account.is_some();
         let mut result_acc = prepared_account.unwrap_or_else(|| acc.clone());

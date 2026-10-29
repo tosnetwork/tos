@@ -125,6 +125,8 @@ jobs:
           cargo build --manifest-path tosctl/src/Cargo.toml --locked --release -p chain_block --example gas-purchase
           python3 test/executor-parity/gas_purchase.py --native build/emulator/test-gas-purchase --rust tosctl/src/target/release/examples/gas-purchase --output result/gas-purchase
           python3 test/executor-parity/purchase_transactions.py --native build/emulator/libemulator.so --rust tosctl/src/target/release/libtos_emulator.so --output result/purchase-transactions
+          python3 test/executor-parity/tick_context.py --native build/emulator/libemulator.so --rust tosctl/src/target/release/libtos_emulator.so --output result/tick-context
+          python3 test/executor-parity/test_tick_context.py --artifacts result/tick-context
           python3 test/executor-parity/storage_cache_carry.py --output result/storage-cache-carry.json
           cmp result/storage-cache-carry.json tosctl/src/executor/tests/fixtures/storage-cache-carry.json
           python3 test/executor-parity/storage_rollback_carry.py --output result/storage-rollback-carry.json
@@ -204,6 +206,8 @@ jobs:
           cmp artifacts/epoch-replay-x86-64/gas-purchase/rust.stdout artifacts/epoch-replay-arm64/gas-purchase/rust.stdout
           cmp artifacts/epoch-replay-x86-64/purchase-transactions/native/outcomes.json artifacts/epoch-replay-arm64/purchase-transactions/native/outcomes.json
           cmp artifacts/epoch-replay-x86-64/purchase-transactions/rust/outcomes.json artifacts/epoch-replay-arm64/purchase-transactions/rust/outcomes.json
+          cmp artifacts/epoch-replay-x86-64/tick-context/native/outcomes.json artifacts/epoch-replay-arm64/tick-context/native/outcomes.json
+          cmp artifacts/epoch-replay-x86-64/tick-context/rust/outcomes.json artifacts/epoch-replay-arm64/tick-context/rust/outcomes.json
           test ! -s artifacts/epoch-replay-x86-64/source-status.txt
           test ! -s artifacts/epoch-replay-arm64/source-status.txt
           cat artifacts/epoch-replay-x86-64/metrics.json
