@@ -137,7 +137,20 @@ def sha256(data: bytes) -> str:
 
 
 def git(*args: str) -> str:
-    return subprocess.check_output(["git", "-C", str(ROOT), *args], text=True).strip()
+    # The checkout may belong to another user (a CI container runs as root over
+    # the runner's workspace); trust exactly this checkout, independent of any
+    # global git configuration. Any git failure is fatal.
+    result = subprocess.run(
+        ["git", "-c", f"safe.directory={ROOT}", "-C", str(ROOT), *args],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"git {' '.join(args)} failed ({result.returncode}): {result.stderr.strip()}"
+        )
+    return result.stdout.strip()
 
 
 def mutated(original: bytes) -> bytes:
@@ -227,7 +240,14 @@ def main() -> int:
     receipt = json.loads((init_root / "init-block-receipt.json").read_text())
     if receipt.get("result") != "NATIVE_INIT_BLOCK_JOIN_OK" or receipt["init_block"]["seqno"] <= 0:
         raise RuntimeError("the init-block fixture did not join at a nonzero init block")
-    if git("status", "--porcelain", "--", str(SOURCE.relative_to(ROOT))):
+    # Fail closed: an unreadable status is never taken as a clean source.
+    try:
+        dirty = git("status", "--porcelain", "--", str(SOURCE.relative_to(ROOT)))
+    except RuntimeError as error:
+        raise RuntimeError(
+            f"cannot confirm that native_validation.rs is unmodified: {error}"
+        ) from error
+    if dirty:
         raise RuntimeError("native_validation.rs has local changes; the control needs the commit")
     env = {
         **os.environ,
