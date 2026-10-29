@@ -354,6 +354,8 @@ class ValidatorManagerImpl : public ValidatorManager {
   // at most kMaxFenceEntries lineages.
   struct SigningIdentity {
     td::uint64 t0 = 0;
+    // While history_ready is false this is only the first provisional block. It is
+    // hidden from admissions and revalidated against the persisted lower bound.
     std::optional<consensus::signing::FenceBlock> fence_block;
     bool history_ready = false;
   };
@@ -367,6 +369,7 @@ class ValidatorManagerImpl : public ValidatorManager {
   // Records, for every identity without one, the newly applied masterchain block as its fence
   // block when it qualifies, and offers it to the ledger once.
   void record_signing_fence_blocks();
+  void offer_signing_fence_block(tos::ValidatorId validator_id, const SigningIdentity &identity);
   // The wall clock custody times are read from; tests replace it.
   virtual double signing_custody_clock() const;
   // A node whose first admission at the zerostate finds its history unknown logs the

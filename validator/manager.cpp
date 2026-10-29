@@ -4357,9 +4357,16 @@ td::actor::Task<> ValidatorManagerImpl::fetch_signing_history_start(tos::Validat
   }
   it->second.t0 = start.move_as_ok();
   it->second.history_ready = true;
-  // A block may have arrived while the ledger was loading. It can now be considered
-  // against the effective lower bound, without losing a later persisted custody time.
-  record_signing_fence_blocks();
+  // Retain the first block applied during the read, but never offer it until the
+  // persisted lower bound is known. If it is too early, the next applied block is
+  // tried. Do not rescan a tip that might have been applied before this custody.
+  if (it->second.fence_block) {
+    if (consensus::signing::fence_block_refusal(*it->second.fence_block, it->second.t0)) {
+      it->second.fence_block.reset();
+    } else {
+      offer_signing_fence_block(validator_id, it->second);
+    }
+  }
   co_return td::Unit{};
 }
 
@@ -4373,7 +4380,8 @@ consensus::signing::IdentityHistory ValidatorManagerImpl::signing_identity_histo
              .first;
     fetch_signing_history_start(validator_id, it->second.t0).start().detach();
   }
-  return consensus::signing::IdentityHistory{.t0 = it->second.t0, .fence_block = it->second.fence_block};
+  return consensus::signing::IdentityHistory{
+      .t0 = it->second.t0, .fence_block = it->second.history_ready ? it->second.fence_block : std::nullopt};
 }
 
 void ValidatorManagerImpl::record_signing_fence_blocks() {
@@ -4382,7 +4390,7 @@ void ValidatorManagerImpl::record_signing_fence_blocks() {
   }
   bool any_open = false;
   for (const auto &[_, identity] : signing_identities_) {
-    any_open = any_open || (identity.history_ready && !identity.fence_block.has_value());
+    any_open = any_open || !identity.fence_block.has_value();
   }
   if (!any_open) {
     return;
@@ -4399,7 +4407,7 @@ void ValidatorManagerImpl::record_signing_fence_blocks() {
     block.lineages.push_back({id.workchain, id.shard, last_masterchain_state_->get_shard_cc_seqno(id)});
   }
   for (auto &[validator_id, identity] : signing_identities_) {
-    if (!identity.history_ready || identity.fence_block.has_value()) {
+    if (identity.fence_block.has_value()) {
       continue;
     }
     if (auto refused = consensus::signing::fence_block_refusal(block, identity.t0)) {
@@ -4410,21 +4418,28 @@ void ValidatorManagerImpl::record_signing_fence_blocks() {
       continue;
     }
     identity.fence_block = block;
-    LOG(INFO) << "signing ledger: fence block of validator " << validator_id.value.to_hex() << " is "
-              << block.block.to_str() << " (custody from " << identity.t0 << ")";
-    if (signing_ledger_.empty()) {
-      continue;
+    if (identity.history_ready) {
+      offer_signing_fence_block(validator_id, identity);
     }
-    // Settles a pending ledger of this identity now; one created later is established from
-    // the same record at its first admission.
-    td::actor::send_closure(signing_ledger_, &consensus::signing::SigningLedger::offer_fence_block, validator_id.value,
-                            identity.t0, block, [](td::Result<bool> settled) {
-                              if (settled.is_error()) {
-                                LOG(ERROR)
-                                    << "signing ledger: the fence block could not be offered: " << settled.error();
-                              }
-                            });
   }
+}
+
+void ValidatorManagerImpl::offer_signing_fence_block(tos::ValidatorId validator_id, const SigningIdentity &identity) {
+  CHECK(identity.history_ready && identity.fence_block.has_value());
+  const auto &block = *identity.fence_block;
+  LOG(INFO) << "signing ledger: fence block of validator " << validator_id.value.to_hex() << " is "
+            << block.block.to_str() << " (custody from " << identity.t0 << ")";
+  if (signing_ledger_.empty()) {
+    return;
+  }
+  // Settles a pending ledger of this identity now; one created later is established from
+  // the same record at its first admission.
+  td::actor::send_closure(signing_ledger_, &consensus::signing::SigningLedger::offer_fence_block, validator_id.value,
+                          identity.t0, block, [](td::Result<bool> settled) {
+                            if (settled.is_error()) {
+                              LOG(ERROR) << "signing ledger: the fence block could not be offered: " << settled.error();
+                            }
+                          });
 }
 
 td::actor::Task<> ValidatorManagerImpl::fetch_signing_floor() {

@@ -495,6 +495,20 @@ class StartupCatchupManagerProbe : public ValidatorManagerImpl {
     new_masterchain_block();
     promise.set_value(td::Unit());
   }
+  // Keep both applications in the same manager turn, before the ledger read can reply.
+  // This makes the startup race deterministic instead of depending on actor scheduling.
+  void hold_with_early_blocks(std::shared_ptr<const pq::ValidatorPQKeyStore> store, ValidatorId id, Snapshot snapshot,
+                              double age, td::Promise<bool> promise) {
+    hold(std::move(store), id, 0);
+    set_tip(snapshot, 10, 5.0);
+    decide_startup_catchup();
+    set_tip(snapshot, 10, age);
+    new_masterchain_block();
+    set_tip(std::move(snapshot), 11, age);
+    new_masterchain_block();
+    promise.set_value(!startup_catchup_.active() && !signing_identities_.at(id).history_ready &&
+                      !signing_identity_history(id).fence_block.has_value());
+  }
   void decide(td::Promise<bool> promise) {
     decide_startup_catchup();
     promise.set_value(startup_catchup_.active());
@@ -727,6 +741,12 @@ class Fixture {
     scheduler_.run_in_context([&] {
       td::actor::send_closure(manager_, &StartupCatchupManagerProbe::hold, epoch.custody[i],
                               epoch.members[i].validator_id, 0u);
+    });
+  }
+  bool hold_with_early_blocks(const Epoch& epoch, size_t i, Snapshot snapshot, double age) {
+    return ask<bool>([&](td::Promise<bool> promise) {
+      td::actor::send_closure(manager_, &StartupCatchupManagerProbe::hold_with_early_blocks, epoch.custody[i],
+                              epoch.members[i].validator_id, std::move(snapshot), age, std::move(promise));
     });
   }
   void hold_expiring(const Epoch& epoch, int index, size_t i, td::uint32 expire_at) {
@@ -1492,12 +1512,8 @@ TEST(StartupCatchupManager, WithoutALedgerTheTestnetFencesAndCreatesOne) {
 // waited for a block after the first admission and fenced the incoming set's first sessions.
 TEST(StartupCatchupManager, FenceBlockRecordedBeforeFirstAdmission) {
   Fixture f;
-  f.hold(f.next, 0);
   auto before = f.snapshot(f.current, 1);
-  f.set_tip(before, 10, kFresh);
-  ASSERT_TRUE(!f.decide());
-  f.advance(before, 10, kAfterTheMarginOfStart);
-  f.advance(f.snapshot(f.current, 1), 11, kAfterTheMarginOfStart);
+  ASSERT_TRUE(f.hold_with_early_blocks(f.next, 0, before, kAfterTheMarginOfStart));
   f.run_for(0.5);
   ASSERT_TRUE(!f.ledger_exists());  // recorded in memory, before any ledger
   auto record = f.identity_record(f.next, 0);
@@ -1556,11 +1572,8 @@ TEST(StartupCatchupManager, PendingRestartWithEarlierClockEventuallySigns) {
         ->replace_file(ledger_of(root), "ledger", consensus::signing::encode_header(header))
         .ensure();
   });
-  f.hold(f.current, 0);
   auto first = f.snapshot(f.current, 1);
-  f.set_tip(first, 10, kFresh);
-  ASSERT_TRUE(!f.decide());
-  f.advance(first, 11, kAfterTheMarginOfStart);
+  ASSERT_TRUE(f.hold_with_early_blocks(f.current, 0, first, kAfterTheMarginOfStart));
   ASSERT_EQ(std::string("fenced"), admission_of(f, f.session_of(first)));
   auto record = f.identity_record(f.current, 0);
   ASSERT_TRUE(record.has_value());

@@ -54,7 +54,13 @@ restored or recreated. Such a node:
    process records M for each identity it holds as soon as it applies it,
    whether or not a ledger exists yet, so a validator-elect whose node has run
    long enough is established at its first admission and signs in the first
-   session of its set. The ledger then records, for M:
+   session of its set. While the ledger's custody lower bound is loading, the
+   manager retains one provisional block, hidden from admissions. It validates
+   that block before offering it to the ledger. If a later persisted custody
+   time makes it too early, the candidate is discarded and selection resumes
+   with the next applied block. A slow read combined with a clock correction can
+   therefore conservatively delay M; it cannot release an unvalidated candidate.
+   The ledger then records, for M:
    - the catchain counter of the masterchain;
    - the catchain counter of every shard in M's configuration.
 
