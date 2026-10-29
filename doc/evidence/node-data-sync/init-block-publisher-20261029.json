@@ -1,0 +1,235 @@
+{
+  "scope": "Actual local native init-block join, production dump create and publish, bootstrap of a separate never-started identity, and two-pass native installed-state readback.",
+  "date_utc": "2026-10-29",
+  "published_implementation_commit": "f4ca417f985c7410d0dfbc34e279649290e7cbc4",
+  "implementation_tree": "885c32813d3cadcf37e832d85dd6cc9ee00df7d0",
+  "local_verification_commit": "eb5b55fa24f86ae875e3d705ef530777d13fc645",
+  "base_commit": "245ac393a9b13400929857bb21faa61cfc2b4998",
+  "native_build": {
+    "local_build_commit": "ac69d6691c10c49a98ff56d0e9657f6bce00b75e",
+    "relationship_to_published_source": "All validator, validator-engine, crypto and top-level CMake source files are byte-identical to the published implementation. Later commits change the Python/Rust test harness, CI and documentation. The binary retains the native build revision rather than claiming it was rebuilt at the later harness commit.",
+    "profile": "CMake Release, Clang 21.1.8, Linux x86_64, RocksDB and jemalloc enabled",
+    "engine_sha256": "1b2e0efbceba4de52288e34e3a330c74e4ff36054f719496097ae4e79d88907f",
+    "changed_native_input_sha256": {
+      "validator/validator.h": "7bc8e013fb67aabd001e6cb45e10c11f7d0103d2106f7d5e7079005c7dc00416",
+      "validator/validator-options.hpp": "5855e6c75a1d8092d2180fd941a8f705484feefcd62fafe643ba5d0f21f9d2e4",
+      "validator/manager.cpp": "d4fa30b0ead7193227f29985a4f441197e69d1864eb7616ad00b71cb5a8b1799",
+      "validator/state-serializer.cpp": "87bfaee2bdc34ea0c98ccd3dd7ca60a8ece90b25c569945bbde8f6dbb74433d8",
+      "validator-engine/validator-engine.hpp": "f84f328cf311c05f85770a94481483959ba74a365e32d3a7fd5af6894cf7d1f6",
+      "validator-engine/validator-engine.cpp": "a691b2fe133d133633752611e123589bfbe674786a449a37d9034b208d61f228"
+    },
+    "rust_profile": "Rust 1.97.1 dev/test, native and native-lifecycle-tests features; normal worker production sources unchanged by this work",
+    "python": "3.14.8",
+    "namespace_isolation": "Native worker validation used separate user and network namespaces. The container default sandbox cannot map uid 0, so local execution used the environment escalation mechanism without bypassing the validation isolation."
+  },
+  "upstream_comparison": {
+    "reference_commit": "857b8a57a178e6ae0fe7fa86e7d81c5233de8560",
+    "reference_path": "validator/state-serializer.cpp:206",
+    "result": "The inherited scheduler still chooses Random::fast(0, 3600 * 6). Its engine CLI has no immediate local-test serialization control. The new explicit local-only option leaves that default expression unchanged."
+  },
+  "results": {
+    "genesis_native_tests": {
+      "exit_status": 0,
+      "passed": 11,
+      "includes": "Real PQ-key/Fift generation, absent-by-default Config36, exact interval/count/weight/descriptor checks, missing-Config36 mutation red then restored green, invalid bounds and nonlocal refusal."
+    },
+    "ci_guard_tests": {
+      "exit_status": 0,
+      "passed": 11,
+      "includes": "Ten omission/comment-out cases for the new executable command, environment and three required markers; narrow always-upload exception; bounded private-file-excluding failure logs."
+    },
+    "nonlocal_native_controls": {
+      "global_ids": [
+        1,
+        2
+      ],
+      "fresh_refusals": 2,
+      "restored_refusals": 2,
+      "same_chains_produce_blocks_without_option": true
+    },
+    "join_receipt": {
+      "result": "NATIVE_INIT_BLOCK_JOIN_OK",
+      "genesis_time": 1793196031,
+      "init_block": {
+        "@type": "tosNode.blockIdExt",
+        "workchain": -1,
+        "shard": -9223372036854775808,
+        "seqno": 192,
+        "root_hash": "qlDB/Z3B93R+U3IP+1IkQ6lYlIi0Wuw+UiXW0yxbOkA=",
+        "file_hash": "rnDsxEPPr77iE3rqtJyMeqYwUU9CVuUFleOTnNPxns0="
+      },
+      "frontier": {
+        "@type": "tos.blockIdExt",
+        "workchain": -1,
+        "shard": -9223372036854775808,
+        "seqno": 218,
+        "root_hash": "i0HhUKMl5FrK0tdPSA6YCFEdnP5lH6cdd7gm4wbq63E=",
+        "file_hash": "nqX10S4Ombq5P/ZwdqQPV9NyI1D7ULIDjkWBXsY5opQ="
+      },
+      "source": "node5",
+      "target": "node6",
+      "zero_state_files": 0,
+      "static_supplied": false
+    },
+    "initial_native_validation": {
+      "validation": {
+        "engine_sha256": "1b2e0efbceba4de52288e34e3a330c74e4ff36054f719496097ae4e79d88907f",
+        "policy_sha256": "e88cb34c3431154163820ada51cb252ee14f56e2dac47ba7705c7e82ce3f7b62",
+        "frontier": {
+          "workchain": -1,
+          "shard": -9223372036854775808,
+          "seqno": 218,
+          "root_hash": "8b41e150a325e45acad2d74f480e9808511d9cfe651fa71d77b826e306eaeb71",
+          "file_hash": "9ea5f5d12e0e99bab93ff67076a40f57d3722350fb50b2038e45815ec639a294"
+        },
+        "passes": 2,
+        "permanent_cells": false,
+        "recovery_resolved": true,
+        "monitored_states_readable": true,
+        "elapsed_millis": 3774,
+        "recovery_context_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "started_utc": 1793259584,
+        "finished_utc": 1793259588
+      },
+      "coverage": [
+        "-1:8000000000000000",
+        "0:8000000000000000"
+      ],
+      "ancestors": [
+        {
+          "workchain": -1,
+          "shard": -9223372036854775808,
+          "seqno": 0,
+          "root_hash": "e0da47f94cf59c7a5fd7632756a97c079916fb3298171d86cc5c565af165b7c6",
+          "file_hash": "fd63277cc30a6420dd1b9004c81aa635aef7cc0f66657d1e46244b3d97d9c659"
+        },
+        {
+          "workchain": -1,
+          "shard": -9223372036854775808,
+          "seqno": 192,
+          "root_hash": "aa50c1fd9dc1f7747e53720ffb522443a9589488b45aec3e5225d6d32c5b3a40",
+          "file_hash": "ae70ecc443cfafbee2137aeab49c8c7aa630514f4256e50595e3939cd3f19ecd"
+        }
+      ]
+    },
+    "restored_publication_receipt": {
+      "generation": "dfd5f0b898e3bfa4efb4f2cb23a717e5ec80190ba7a44dda76902e601af72914",
+      "init_block": {
+        "file_hash": "ae70ecc443cfafbee2137aeab49c8c7aa630514f4256e50595e3939cd3f19ecd",
+        "root_hash": "aa50c1fd9dc1f7747e53720ffb522443a9589488b45aec3e5225d6d32c5b3a40",
+        "seqno": 192,
+        "shard": -9223372036854775808,
+        "workchain": -1
+      },
+      "receiver_preservation_checked_before_start": true,
+      "validation": {
+        "elapsed_millis": 3783,
+        "engine_sha256": "1b2e0efbceba4de52288e34e3a330c74e4ff36054f719496097ae4e79d88907f",
+        "finished_utc": 1793260427,
+        "frontier": {
+          "file_hash": "9ea5f5d12e0e99bab93ff67076a40f57d3722350fb50b2038e45815ec639a294",
+          "root_hash": "8b41e150a325e45acad2d74f480e9808511d9cfe651fa71d77b826e306eaeb71",
+          "seqno": 218,
+          "shard": -9223372036854775808,
+          "workchain": -1
+        },
+        "monitored_states_readable": true,
+        "passes": 2,
+        "permanent_cells": false,
+        "policy_sha256": "e88cb34c3431154163820ada51cb252ee14f56e2dac47ba7705c7e82ce3f7b62",
+        "recovery_context_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "recovery_resolved": true,
+        "started_utc": 1793260423
+      },
+      "zero_state_files": 0
+    },
+    "rust_native_lifecycle": {
+      "exit_status": 0,
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "elapsed_test_seconds": 95.47
+    },
+    "format_and_static_checks": "Changed-file Ruff check/format, changed-line clang-format, Rustfmt and git diff --check passed. Targeted basedpyright reported zero errors; inherited gradual-typing warnings remain."
+  },
+  "native_sensitivity": {
+    "mutation": {
+      "mutation": "omit held nonzero init from native anchor_set; keep zero-state proof",
+      "source_before_sha256": "77e7ca1b8762d514950e1cc96fd863c68cdba95cb61b047dedb66652216a9917",
+      "source_mutated_sha256": "ecd5f2366fd0b3240ee77fd8ceb355be167ad274cec37fab6ad210e100756d5b",
+      "mutant_worker_sha256": "1c9a2dd61409e871a75772ebcf2dbd93e6096f08316922709ea2565f14d22e1d",
+      "replacement_before": "let mut anchors = BTreeSet::from([held.zero.clone(), held.init.clone()]);",
+      "replacement_after": "let mut anchors = BTreeSet::from([held.zero.clone()]);"
+    },
+    "required_failure": "create did not prove its held init block",
+    "cases": [
+      {
+        "case": "red",
+        "exit_status": 101,
+        "elapsed_seconds": 38.293,
+        "worker_sha256": "1c9a2dd61409e871a75772ebcf2dbd93e6096f08316922709ea2565f14d22e1d",
+        "retained_output": "init-block-publisher-red.txt"
+      },
+      {
+        "case": "green",
+        "exit_status": 0,
+        "elapsed_seconds": 95.92,
+        "worker_sha256": "7fb52ca6f5f3cdd50c523f2c78e43e7c12359e4fc8c97f3411c86b7f770728a0",
+        "retained_output": "init-block-publisher-green.txt"
+      }
+    ],
+    "code_restored": true,
+    "reason_old_zero_only_fixture_is_insensitive": "When held.init equals held.zero, removing held.init from a set changes nothing. The real joined source has distinct nonzero init 192, so the new native regression fails at the omitted proof."
+  },
+  "reproduction": {
+    "build_recipe": ".github/workflows/branch-chain-python.yml (existing native dependency setup and build targets plus the new init-block/lifecycle steps)",
+    "genesis_test": "TOS_BUILD_DIR=$PWD/build uv run pytest -q test/tostester/tests/tostester/test_zerostate_init_block.py",
+    "ci_guard_test": "python3 scripts/test_branch_chain_conditions.py && python3 scripts/check-branch-chain-python-ci.py",
+    "native_fixture": "uv run python test/integration/node_sync_init_block.py --root build/node-sync-init-block --build build --capture build/operator-rust-target/debug/examples/capture_and_validate",
+    "native_test_environment": {
+      "NODE_STORE_NATIVE_DIR": "$PWD/build/third-party/rocksdb",
+      "CARGO_TARGET_DIR": "$PWD/build/operator-rust-target",
+      "NODE_SYNC_NATIVE_FIXTURE": "$PWD/build/node-sync-init-block/checked-generation",
+      "NODE_SYNC_NATIVE_SOURCE": "$PWD/build/node-sync-init-block/network/node5",
+      "NODE_SYNC_NATIVE_INIT_ROOT": "$PWD/build/node-sync-init-block",
+      "NODE_SYNC_NATIVE_ENGINE": "$PWD/build/validator-engine/validator-engine",
+      "NODE_SYNC_NATIVE_WORKER": "$PWD/build/operator-rust-target/debug/node-data-sync-worker"
+    },
+    "selected_native_test": "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p node-data-sync --features native-lifecycle-tests --lib production_init_block_source_publishes_and_bootstraps_a_third_node -- --test-threads=1 --nocapture",
+    "omission_control": [
+      "Preserve the normal worker binary. In tosctl/src/node-control/node-data-sync/src/native_validation.rs replace exactly the recorded anchor_set line, run cargo build --manifest-path tosctl/src/Cargo.toml --locked -p node-data-sync --features native --bin node-data-sync-worker, and preserve that mutant worker separately.",
+      "Restore the source file before compiling/running the lifecycle test. Point NODE_SYNC_NATIVE_WORKER at the mutant: require exit 101 and the exact held-init proof assertion, with no success marker.",
+      "Point NODE_SYNC_NATIVE_WORKER at the preserved normal worker and repeat the same native test: require one pass, zero failures and PRODUCTION_INIT_BLOCK_PUBLISH_BOOTSTRAP_OK."
+    ]
+  },
+  "resource_and_boundary_review": {
+    "native_state": "Two fixed boolean option fields and shared virtual dispatch entries; no new container, queue, actor, retained buffer, file descriptor, or resource lifetime. The existing serializer timer uses zero delay only after loaded on-chain global_id 3 admission; public defaults are unchanged.",
+    "harness": "Four local validators, one joining observer, one never-started target; finite read/capture deadlines and 15-minute CI fixture timeout. Expected fatal controls disable core dumps. Captured source data was 1590897 bytes; database preallocation and debug workers remained disposable local build/run output.",
+    "identity": "Source keys unchanged; receiver keys distinct and preserved; exact receiver config bytes checked at the reached pre-start boundary, then full semantic equality after only native out_port 0 to 3278 and absent to empty GC expansion.",
+    "test_adapters": "The initial capture uses two real live validator RPC references. The lifecycle uses the existing manager/reference test adapters; manager starts actual native engines, and all storage/ancestry/installed-state validation runs through the actual worker and engine."
+  },
+  "evidence_retention": {
+    "committed": "Only this result index and bounded essential join/red/green output excerpts are committed. Trailing whitespace and surplus final blank lines are normalized; the exact red failure and native success content remain preserved without relying on inaccessible raw-log hashes.",
+    "ci": "native-init-block-publisher-<commit> artifact retains join receipt, initial native validation JSON and lifecycle output for 14 days; bounded node failure logs are collected separately. Node keys and database trees are excluded.",
+    "files": [
+      {
+        "file": "init-block-publisher-red.txt",
+        "sha256": "e0a021936f57f087c197db76ad87c733c0d9e00708d687f32afe42fd26aa1393",
+        "bytes": 701,
+        "description": "Complete native test output after Cargo compilation warnings; exact failure or success receipt retained. Trailing whitespace and surplus final blank lines are normalized; diagnostic content is unchanged."
+      },
+      {
+        "file": "init-block-publisher-green.txt",
+        "sha256": "81b631f22bf739db970205a2b2a7b107d89359e8de0998f1656ca7506386b689",
+        "bytes": 1330,
+        "description": "Complete native test output after Cargo compilation warnings; exact failure or success receipt retained. Trailing whitespace and surplus final blank lines are normalized; diagnostic content is unchanged."
+      },
+      {
+        "file": "init-block-publisher-join.txt",
+        "sha256": "fdbd1c9f30de17d6d3dcc1e05b1152597fb5664125ecbde4dbc340f51de450ea",
+        "bytes": 2962,
+        "description": "Bounded native log excerpt: first/restored nonlocal refusal, immediate local serialization, fresh observer downloads, capture and join receipt. Trailing whitespace and surplus final blank lines are normalized; diagnostic content is unchanged."
+      }
+    ]
+  }
+}
