@@ -45,6 +45,9 @@ class RootDb : public Db {
 
   void store_block_data(BlockHandle handle, td::Ref<BlockData> block, td::Promise<td::Unit> promise) override;
   void get_block_data(ConstBlockHandle handle, td::Promise<td::Ref<BlockData>> promise) override;
+  // The block's serialized bytes as stored, undecoded. A block larger than
+  // `data_limit` is refused with kFileOverReadLimit before its bytes are read.
+  void get_block_file(ConstBlockHandle handle, td::uint32 data_limit, td::Promise<td::BufferSlice> promise);
 
   void store_block_signatures(BlockHandle handle, td::Ref<block::BlockSignatureSet> data, Ref<block::ValidatorSet> vset,
                               td::Promise<td::Unit> promise) override;

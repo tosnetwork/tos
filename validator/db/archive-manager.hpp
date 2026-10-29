@@ -29,6 +29,11 @@ namespace validator {
 
 class RootDb;
 
+// The refusal the archive gives to a write when its database was opened as a
+// reader (secondary or read-only): a reader never adds blocks, files or
+// states to, or deletes packages from, the archive of the node it reads.
+inline constexpr const char *kArchiveReadOnly = "archive is read-only: its database was opened as a reader";
+
 class ArchiveManager : public td::actor::Actor {
  public:
   ArchiveManager(td::actor::ActorId<RootDb> root, std::string db_root, td::Ref<ValidatorManagerOptions> opts,
@@ -47,6 +52,10 @@ class ArchiveManager : public td::actor::Actor {
   void get_temp_file_short(FileReference ref_id, td::Promise<td::BufferSlice> promise);
   void get_file_short(FileReference ref_id, td::Promise<td::BufferSlice> promise);
   void get_file(ConstBlockHandle handle, FileReference ref_id, td::Promise<td::BufferSlice> promise);
+  // As get_file, but an entry larger than `data_limit` is refused with
+  // kFileOverReadLimit after reading only its header.
+  void get_file_limited(ConstBlockHandle handle, FileReference ref_id, td::uint32 data_limit,
+                        td::Promise<td::BufferSlice> promise);
 
   void add_zero_state(BlockIdExt block_id, td::BufferSlice data, td::Promise<td::Unit> promise);
   void add_zero_state_gen(BlockIdExt block_id, std::function<td::Status(td::FileFd &)> write_state,
@@ -222,7 +231,8 @@ class ArchiveManager : public td::actor::Actor {
   void deleted_package(PackageId seqno, td::Promise<td::Unit> promise);
   void get_handle_cont(BlockIdExt block_id, PackageId id, td::Promise<BlockHandle> promise);
   void get_handle_finish(BlockHandle handle, td::Promise<BlockHandle> promise);
-  void get_temp_file_short_cont(FileReference ref_id, PackageId idx, td::Promise<td::BufferSlice> promise);
+  void get_temp_file_short_cont(FileReference ref_id, PackageId idx, td::uint32 data_limit,
+                                td::Promise<td::BufferSlice> promise);
 
   td::Result<const FileDescription *> get_file_desc(ShardIdFull shard, PackageId id, BlockSeqno seqno, UnixTime ts,
                                                     LogicalTime lt, bool force);

@@ -6,6 +6,9 @@ use sha2::{Digest, Sha256};
 use std::{collections::BTreeSet, str::FromStr};
 
 pub const MANIFEST_LIMIT: u64 = 32 << 20;
+/// Generation manifest format. Format 3 publishes no zero-state file: the held zero state
+/// and init block are proven natively, so a source that joined at an init block can publish.
+pub const MANIFEST_FORMAT: u16 = 3;
 pub const FILE_COUNT_LIMIT: usize = 100_000;
 pub const RAW_LIMIT: u64 = 80 << 30;
 pub const TRANSFER_LIMIT: u64 = 24 << 30;
@@ -232,7 +235,7 @@ pub struct Manifest {
 impl Manifest {
     pub fn validate(&self) -> Result<()> {
         ensure!(
-            self.format == 2 && self.database_version == 2,
+            self.format == MANIFEST_FORMAT && self.database_version == 2,
             "unsupported generation format or database schema"
         );
         self.network.validate()?;
@@ -320,8 +323,7 @@ impl Manifest {
             raw <= RAW_LIMIT && compressed <= TRANSFER_LIMIT,
             "generation byte budget exceeded"
         );
-        for required in ["state-records.cbor", "metadata/zero-state.boc", "metadata/tip-block.boc"]
-        {
+        for required in ["state-records.cbor", "metadata/tip-block.boc"] {
             ensure!(paths.contains(&required.to_owned()), "generation missing {required}");
         }
         let mut previous = None;

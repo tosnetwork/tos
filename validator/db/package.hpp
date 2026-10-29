@@ -19,6 +19,8 @@
 */
 #pragma once
 
+#include <limits>
+
 #include "td/actor/actor.h"
 #include "td/utils/buffer.h"
 #include "td/utils/port/FileFd.h"
@@ -38,7 +40,11 @@ class Package {
   td::uint64 append(std::string filename, td::Slice data, bool sync = true);
   void sync();
   td::uint64 size() const;
-  td::Result<std::pair<std::string, td::BufferSlice>> read(td::uint64 offset) const;
+  // Read the entry at `offset`. An entry whose data is larger than
+  // `data_limit` is refused with kFileOverReadLimit after reading only its
+  // header, before the data is allocated.
+  td::Result<std::pair<std::string, td::BufferSlice>> read(
+      td::uint64 offset, td::uint32 data_limit = std::numeric_limits<td::uint32>::max()) const;
 
   td::Result<td::uint64> advance(td::uint64 offset);
   td::Status iterate(std::function<bool(std::string, td::BufferSlice, td::uint64)> func);

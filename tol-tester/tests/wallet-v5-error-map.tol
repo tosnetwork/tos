@@ -21,10 +21,13 @@ fun test_permanent_errors(): int {
     val err1 = walletV5ErrorForThrow(ERROR_INVALID_SEQNO, PREFIX_SIGNED_EXTERNAL, 0);
     val err2 = walletV5ErrorForThrow(ERROR_EXPIRED, PREFIX_SIGNED_EXTERNAL, 0);
     val err3 = walletV5ErrorForThrow(ERROR_ADD_EXTENSION, PREFIX_EXTENSION_ACTION, 55);
+    val err4 = walletV5ErrorForThrow(ERROR_STATE_TOO_LARGE, PREFIX_SIGNED_EXTERNAL, 0);
     assert (err1.errorClass == ErrorClass.Permanent) throw 111;
     assert (err2.errorClass == ErrorClass.Permanent) throw 112;
     assert (err3.errorClass == ErrorClass.Permanent) throw 113;
-    return err1.errorCode + err2.errorCode + err3.errorCode;
+    assert (err4.errorClass == ErrorClass.Permanent) throw 114;
+    assert (err4.errorCode == WALLET_V5_ERROR_STATE_TOO_LARGE) throw 115;
+    return err1.errorCode + err2.errorCode + err3.errorCode + err4.errorCode;
 }
 
 @method_id(103)
@@ -40,6 +43,6 @@ fun test_protocol_errors(): int {
 
 /**
 @testcase | 101 | | 3413
-@testcase | 102 | | 3408
+@testcase | 102 | | 4557
 @testcase | 103 | | 3433
  */
