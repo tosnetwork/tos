@@ -10,7 +10,6 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-
 # The wallet-index schema version the binaries under test write.
 SCHEMA = 4
 
