@@ -1,0 +1,15 @@
+{
+  "format": "tos-self-pay-simulation-future-profile-inputs/1",
+  "node_source": "f2d2d391ed4a2e3da77582fca7c5fc956adaf198",
+  "version": 17,
+  "scope": "Ordinary unallocated basechain; no candidate-funded-genesis policy bypass, no broadcast. Full config acquired from same-target Elector getter, account absence independently proved. Exact StateInit deployment message uses public11 key.",
+  "files": {
+    "request.json": "adefe3f57fe7ffdccc5778c4f19d5d79aae63c2c1a6d69e778bedb1e88fde38e",
+    "anchor.json": "84a2a30a26586f027d2954e34807b4802d90d58daf9e75ea332f387a8d9eb47d",
+    "message.boc": "a52d3ec7c8787adecbcfae8e5ba7366497a43dd2f08b0153fb48ce2c300b2fef",
+    "clock.txt": "6187a79eca83c6f47c72f830ca45b2fbe8a3cfda9db13ed4297679aa9bb4bcd7",
+    "material/exec-config.tl": "1aa1fa7ab675937e265a495abb7331b0c9033c3b4d94bc2f5fff9ab2c63539b2",
+    "material/account.tl": "639eefa98f228460350ce6cb1c52b315d90d088b11f057ea3e09ff88c345431b",
+    "material/chain-0000.tl": "08978927c099291364741f4d47d8410f03d22a188712b884512e32941c669739"
+  }
+}

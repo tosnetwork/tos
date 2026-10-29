@@ -67,8 +67,8 @@ def main():
         (
             "wallet-transaction-cells",
             engine,
-            " || header.cell_count > kMaxWalletTransactionCells",
-            "",
+            "header.cell_count > kMaxWalletTransactionCells",
+            "false",
             "cell-count-16385",
         ),
         (

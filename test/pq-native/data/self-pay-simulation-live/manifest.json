@@ -1,0 +1,18 @@
+{
+  "format": "tos-self-pay-simulation-live-inputs/1",
+  "node_source": "f2d2d391ed4a2e3da77582fca7c5fc956adaf198",
+  "adapter_source": "b00a55d6128083cd2bbcd5253c382d87a84c3643",
+  "scope": "Recorded fresh isolated VM16 PQ chain; public11 host signer; no mobile custody or broadcast. Request policy clock is captured local time.",
+  "files": {
+    "request.json": "41964aa91f7e6af7eb6e97f8cb3957a7a4c0b4d9356fea8f24bf437f579aaad5",
+    "anchor.json": "96e6476e3ecc269e5ac8b00bc3b7fd133de4776716bf7795eccd2b46767cde1a",
+    "forged-message.boc": "b59d00b52165054c28c1c2bcf148872ad9c1fe37f46d845f9c379e5beeeac23e",
+    "expected.json": "deb59651c970e51bd6020af84634d45918364d0034d18b1939faee73f85642af",
+    "message.boc": "853a3e8124bd6b65f7461fad8f386208bdb6da2828a157c5e63f3bf56b41876a",
+    "clock.txt": "f9a68e04be081d43506bfca947e747600831740f20605b6705c8f8603a904c58",
+    "material/masterchain-info.tl": "5e47f9c7fff4afa81d7e2e064c88675508820f283da5dff4322209d5fe844a09",
+    "material/exec-config.tl": "0eeb25ba0021e6c4c132668c131bf6ce46a8c1320c25baa2c538b038c4047cb0",
+    "material/account.tl": "31d9860a18217e5c1bcf0e8cf2ee9332c603fd29019e3a728f5cf322bcc72286",
+    "material/chain-0000.tl": "5e4f4acb7abca457f1fd99de93aeb972f3019a69665d225b0169924a7058b024"
+  }
+}

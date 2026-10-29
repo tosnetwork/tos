@@ -7,6 +7,7 @@
 #include "block/block-auto.h"
 #include "block/block-parse.h"
 #include "crypto/pq/pq-bytes.h"
+#include "crypto/smc-envelope/QuantumSelfPayCode.h"
 #include "td/utils/base64.h"
 #include "td/utils/crypto.h"
 #include "td/utils/filesystem.h"
@@ -234,8 +235,7 @@ TEST(JsonRpcExplorer, exact_registry_precedes_public_state_decoding) {
   expect_state_invalid("mldsa44_auth_module_v1", vm::CellBuilder().store_long(42, 32).store_ref(key(1311)).finalize());
 }
 TEST(JsonRpcExplorer, self_pay_state_has_no_fee_authority_and_preserves_unsigned_counters) {
-  ASSERT_EQ(td::hex_encode(code("quantum_self_pay_v1")->get_hash().as_slice()),
-            "4f4d4d55622992eeee9b4db05c2b447ca05d9c49e6ad5d027c7f9b16d759b93b");
+  ASSERT_EQ(td::hex_encode(code("quantum_self_pay_v1")->get_hash().as_slice()), tos::kQuantumSelfPayV1CodeHash);
   ASSERT_TRUE(decode_public_state(code("quantum_self_pay_v1"), self_pay_data(0), -3).is_ok());
   for (unsigned policy : {1u, 2u}) {
     auto result = decode_public_state(code("quantum_self_pay_v1"), self_pay_data(2, 1, policy), -3);

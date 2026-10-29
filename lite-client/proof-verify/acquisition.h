@@ -18,6 +18,21 @@ typedef int (*tos_proof_emit_callback)(void *context, uint32_t kind, const uint8
 int tos_proof_acquire(const char *anchor, size_t anchor_size, const char *request, size_t request_size,
                       const char *state, size_t state_size, tos_proof_query_callback query, void *query_context,
                       tos_proof_emit_callback emit, void *emit_context);
+/* Fetch unverified inputs for tos_proof_simulate_self_pay_embedded. Requires a
+ * same-anchor persisted live state and a basechain-account-only live request, without
+ * getters or selected config params. Uses the same target for account and full
+ * execution config; never receives or sends a signed message. Responses share
+ * a 64 MiB budget minus actual anchor/request/state bytes and a 1 MiB message
+ * reserve; account/config responses are each <=16 MiB. All callback data remains
+ * unverified. Discard every emitted part on ANY nonzero return, including emit
+ * failure after partial collection. No live state is committed.
+ * Returns 0 acquired, -1 input, -2 acquisition/resource refusal, -3 collector,
+ * -4 internal failure. Callback trust/lifetime rules above also apply.
+ */
+int tos_proof_acquire_self_pay_simulation(const char *anchor, size_t anchor_size, const char *request,
+                                          size_t request_size, const char *state, size_t state_size,
+                                          tos_proof_query_callback query, void *query_context,
+                                          tos_proof_emit_callback emit, void *emit_context);
 #ifdef __cplusplus
 }
 #endif

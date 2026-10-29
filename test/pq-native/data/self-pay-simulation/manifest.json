@@ -1,0 +1,55 @@
+{
+  "cases": [
+    "pre-funded-deployment-1",
+    "pre-funded-deployment-2",
+    "primary",
+    "primary-replay",
+    "primary-forged",
+    "primary-domain",
+    "rescue",
+    "rescue-replay",
+    "rescue-forged",
+    "rescue-domain",
+    "send",
+    "bad-mode",
+    "max-actions"
+  ],
+  "code_hash": "4f4d4d55622992eeee9b4db05c2b447ca05d9c49e6ad5d027c7f9b16d759b93b",
+  "files": {
+    "config.boc": "ce8d7e747529d00699e7e72b048308b0ee684f8c1f8eca2e1f832fcd9079e064",
+    "scenarios.tsv": "baaf3e111e9712a4a1a8e5d346ae4dc87138ebae7e14febd66cccc616571cf1f"
+  },
+  "format": "tos-self-pay-simulation-inputs/1",
+  "scope": "Diagnostic VM16 input fixtures; public seeds11/22, synthetic header/target/prev-blocks in native test. No proofs, phone custody or payment acceptance.",
+  "sources": {
+    "crypto/fift/lib/Asm.fif": "a1df048428646f7f5ea2addc206a0cb2089982d967d589d5408aba90d2fedc4e",
+    "crypto/fift/lib/Fift.fif": "bad419afb217f533cfba08eaec1ba33dbbd8b061bf5299447ea672e2561ed7a4",
+    "crypto/smartcont/auth-policy.fc": "8cbe92ade5089e39785292cdc7643246c6e17a4001773366e7d5c3f260769e10",
+    "crypto/smartcont/pq-bytes.fc": "4ba7d80363b073325406dea3f64a5b0626a4f58b9af99508551131777f10ecef",
+    "crypto/smartcont/pq.fc": "a0c96e263fcebd66f68bdd71a6cd5266678b588d2b851568729464980640f12d",
+    "crypto/smartcont/stdlib.fc": "77d121550d99c533cffe10d5f479c04777e6e7c34b712421473cfe6a24615717",
+    "crypto/smartcont/wallet-quantum-auth.fc": "1bac82c410681286ed1da875d1e4596fb2e3c28326954eab1c95c7b42e7caa6b",
+    "crypto/smartcont/wallet-quantum-common.fc": "bf4425ef33cd29570ba2d28a8239b5091a6455eb4589396795e7591627cdc697",
+    "crypto/smartcont/wallet-quantum-possession-probe.fc": "37726dff1a38e2b7ac1f28e9d189fd3fa46f47f0a6d1b6bd1b4524f5e2b1ddbd",
+    "crypto/smartcont/wallet-quantum-self-pay-common.fc": "75e21ee7b37a5dd54e0ecb88a1b52bd60ac884737325a83c767e5ac303e572d5",
+    "crypto/smartcont/wallet-quantum-self-pay.fc": "b403a75f11af0d905732bc672c635f0738ec84d5873d7705e3f49f18793b821a",
+    "crypto/smartcont/wallet-v5-action-list.fc": "8f8a60733c2233cad1b3e3c2364f652aaabc99debb02c1ef40a612618e92ddba",
+    "crypto/smc-envelope/QuantumSelfPayCode.h": "908198c64cfb5499ece6ebc778623e002b374c985b833347116d249d90d4d270",
+    "scripts/update-self-pay-simulation-fixtures.py": "dc142ede16a664f9a7bb730f7874c5fa0c2e4940391da5db35a82755e35be274",
+    "test/auth-extensions/cells.py": "81b937c31175302516a2624dcfd53e43525431e208a541970f2bc045482dc281",
+    "test/auth-extensions/native.py": "02cda13ee97cb6bf3076f2bd81d31edc504c2a510384a85c571d88e7d73456bc",
+    "test/mldsa-auth/protocol.py": "9d6a3d900d0eb86731a0df1f73e82a86a6931e9b20ab89042ac9f6c95aecb5aa",
+    "test/wallet-quantum/fee_tx_parity.py": "37b2ed54faa7813f73fa1e9d9fdb3b1f6a4a6ceb65fee020b74e38f7ee85ee09",
+    "test/wallet-quantum/test_auth_policy.py": "390ebacc6d3880ab41b3eb5eabeb8614a2efa6be00d9ec3476edc13964948dd5",
+    "test/wallet-quantum/test_self_pay.py": "e1dcb4e865321c64fa574d27522a6ef0edca7726ba27f596db0cf6c52dd62043",
+    "test/wallet-quantum/test_self_pay_recovery.py": "94d200b914bba18325f03bcec68e3f46b39b66cd4a056a4c94e98c17b665053f",
+    "tosctl/src/executor/real_boc/default_config.boc": "e7f513e2177473b0a84aecad9266d4d7f7518029d07544f213b28b0fd0cbb3d0"
+  },
+  "tools": {
+    "EMULATOR_PATH": "de7f71d416b3f59dd19e89ef64c0ef814ba3be046ebc8e92414deb286bf6cb74",
+    "FIFT_PATH": "fdce8ac3f8f604320a4dd15712954fc7bb7aab5b553f84df1a2613823a4ae616",
+    "FUNC_PATH": "1d07641839d7c0ff58ab25a1d1c57805e320d106c905c4d3ad8e2a209da7db69",
+    "MLDSA_TOOL": "49979a8b3fa2566ea079ceaa8691756f729fdda9d0c506ba40bd7b34790ba4fd",
+    "SLH_TOOL": "8cbd4cd972bc899fa0dec9d1d71738c3b114c8eef9d9de8cf6fb07818cb70eb7"
+  }
+}
