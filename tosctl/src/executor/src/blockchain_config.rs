@@ -62,15 +62,21 @@ pub struct AccStoragePrices {
 
 impl Default for AccStoragePrices {
     fn default() -> Self {
-        AccStoragePrices {
-            prices: vec![StoragePrices {
-                utime_since: 0,
-                bit_price_ps: 1,
-                cell_price_ps: 500,
-                mc_bit_price_ps: 1000,
-                mc_cell_price_ps: 500000,
-            }],
-        }
+        AccStoragePrices { prices: vec![genesis_storage_prices()] }
+    }
+}
+
+/// The single ConfigParam 18 entry crypto/smartcont/gen-zerostate.fif writes:
+/// effective since 0, cell-only basechain rent, masterchain rent unchanged.
+/// Contracts read it through GETSTORAGEFEE and the storage phase charges it,
+/// so a sandbox on any other table measures reserves on a chain nobody runs.
+fn genesis_storage_prices() -> StoragePrices {
+    StoragePrices {
+        utime_since: 0,
+        bit_price_ps: 0,
+        cell_price_ps: 135,
+        mc_bit_price_ps: 1000,
+        mc_cell_price_ps: 500000,
     }
 }
 
@@ -215,13 +221,7 @@ impl BlockchainConfig {
         // opcodes resolve to real, non-zero fees. (Kept minimal on purpose -- no workchain
         // descriptors etc. -- so existing sandbox behaviour is otherwise unchanged.)
         let mut storage = ConfigParam18::default();
-        let _ = storage.insert(&StoragePrices {
-            utime_since: 0,
-            bit_price_ps: 1,
-            cell_price_ps: 500,
-            mc_bit_price_ps: 1000,
-            mc_cell_price_ps: 500000,
-        });
+        let _ = storage.insert(&genesis_storage_prices());
         let _ = config.set_config(ConfigParamEnum::ConfigParam18(storage));
         // GLOBALID reads ConfigParam 19 from c7[14]. Keep the emulator's raw
         // configuration consistent with the sandbox masterchain state, whose
@@ -417,6 +417,51 @@ mod deployment_price_tests {
             (forward.ihr_price_factor, forward.first_frac, forward.next_frac),
             (98_304, 21_845, 21_845)
         );
+        Ok(())
+    }
+
+    /// The one non-comment `config.storage_prices!` line of the genesis template,
+    /// as `[bit, cell, mc_bit, mc_cell]`.
+    fn genesis_template_storage_prices(source: &str) -> [u64; 4] {
+        let mut lines = source.lines().map(str::trim).filter_map(|line| {
+            if line.starts_with("//") {
+                return None;
+            }
+            line.strip_suffix(" config.storage_prices!")
+        });
+        let line = lines.next().expect("Genesis must set ConfigParam 18");
+        assert!(lines.next().is_none(), "Genesis ConfigParam 18 must be unambiguous");
+        let values: Vec<u64> = line
+            .split_whitespace()
+            .map(|word| word.parse().expect("storage prices must be explicit integers"))
+            .collect();
+        values.try_into().expect("four storage prices")
+    }
+
+    #[test]
+    fn default_storage_prices_are_the_genesis_template_prices() -> Result<()> {
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../crypto/smartcont/gen-zerostate.fif"
+        ));
+        let template = genesis_template_storage_prices(source);
+        let default = genesis_storage_prices();
+        assert_eq!(default.utime_since, 0, "the genesis entry is effective since 0");
+        assert_eq!(
+            [
+                default.bit_price_ps,
+                default.cell_price_ps,
+                default.mc_bit_price_ps,
+                default.mc_cell_price_ps
+            ],
+            template,
+            "the sandbox storage prices differ from gen-zerostate.fif"
+        );
+
+        // Both places the sandbox carries ConfigParam 18 use that entry.
+        let config = BlockchainConfig::default();
+        let raw = config.raw_config().storage_prices()?.prices()?;
+        assert_eq!(raw, vec![default], "the sandbox ConfigParam 18 is not the genesis entry");
         Ok(())
     }
 }
