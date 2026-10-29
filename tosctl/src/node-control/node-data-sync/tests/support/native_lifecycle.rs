@@ -1,4 +1,7 @@
 //! Native lifecycle acceptance driven through production entry points.
+#[path = "receiver_config.rs"]
+mod receiver_config;
+
 use crate::{
     capture,
     cas::Objects,
@@ -1394,7 +1397,8 @@ fn production_init_block_source_publishes_and_bootstraps_a_third_node() -> Resul
     assert_eq!(tree_listing(&database.join("keyring"))?, target_keys);
     // The first native start expands the configured default out_port and empty GC
     // list, and reformats JSON. Preserve exact bytes before that start above, then
-    // require every configuration value to match after only those known expansions.
+    // require every configuration value to match after those known expansions and
+    // the engine's map-based ADNL serialization.
     let mut expected_config: serde_json::Value = serde_json::from_slice(&target_config)?;
     if expected_config["out_port"] == 0 {
         expected_config["out_port"] = serde_json::json!(3278);
@@ -1404,8 +1408,10 @@ fn production_init_block_source_publishes_and_bootstraps_a_third_node() -> Resul
         .context("receiver configuration is not an object")?
         .entry("gc")
         .or_insert_with(|| serde_json::json!({"@type": "engine.gc", "ids": []}));
-    let running_config: serde_json::Value =
+    let mut running_config: serde_json::Value =
         serde_json::from_slice(&fs::read(database.join("config.json"))?)?;
+    receiver_config::canonicalize_adnl(&mut expected_config)?;
+    receiver_config::canonicalize_adnl(&mut running_config)?;
     assert_eq!(running_config, expected_config, "receiver configuration changed after start");
     no_zero_state(database)?;
     // Reopen and read the installed receiver through the real worker/engine twice.
