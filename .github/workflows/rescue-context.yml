@@ -40,6 +40,8 @@ on:
       - 'third-party/lms-reference/**'
       - 'tosctl/src/**'
       - 'test/auth-extensions/**'
+      - 'test/mldsa-auth/**'
+      - 'tol/**'
       - 'test/executor-parity/**'
       - 'test/falcon-auth/linked_roots.py'
       - 'test/rel02/**'
@@ -651,6 +653,12 @@ jobs:
           git diff --exit-code
       - name: Require source restoration
         run: git diff --exit-code
+      - name: Verify SHA256C library resolution
+        if: contains(fromJSON('["vm-ingress"]'), matrix.suite)
+        run: |
+          cargo test --manifest-path tosctl/src/Cargo.toml --locked -p tos_vm --test test_library_fallback --test test_library
+          python test/rescue-fee-gate/test_vm_library_context.py --native build/crypto/pq/test-vm-endstate --rust "$CARGO_TARGET_DIR/debug/examples/vm-endstate" --output artifacts/context/library
+          python test/rescue-fee-gate/vm_endstate_compare.py artifacts/context/library/native.tsv artifacts/context/library/rust.tsv
       - name: Verify generated transaction root controls and bundle
         if: contains(fromJSON('["release-wallet"]'), matrix.suite)
         run: |
@@ -685,6 +693,27 @@ jobs:
         with:
           name: wallet-variant-roots-${{ matrix.runner }}-attempt-${{ github.run_attempt }}
           path: artifacts/wallet-variant-roots
+          if-no-files-found: error
+          retention-days: 14
+      - name: Verify original auth factory roots
+        if: contains(fromJSON('["release-wallet"]'), matrix.suite)
+        env:
+          TOL_PATH: ${{ github.workspace }}/build/tol/tol
+        run: |
+          cmake --build build --target tol -j"$(nproc)"
+          cmake -S test/mldsa-auth -B build-auth-signer -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-auth-signer --target test-mldsa44-sign -j"$(nproc)"
+          python test/executor-parity/auth_factory_roots.py --family auth --driver "$CARGO_TARGET_DIR/debug/examples/pq-tx-parity" --output artifacts/auth-factories/auth
+          python test/executor-parity/auth_factory_roots.py --family mldsa --build build --signer build-auth-signer/test-mldsa44-sign --driver "$CARGO_TARGET_DIR/debug/examples/pq-tx-parity" --output artifacts/auth-factories/mldsa
+          python test/executor-parity/test_auth_factory_artifacts.py --artifacts artifacts/auth-factories --output artifacts/auth-factory-controls.json
+          python test/executor-parity/test_auth_factory_bundle.py --artifacts artifacts/auth-factories --controls artifacts/auth-factory-controls.json --output artifacts/auth-factory-bundle-controls.json
+          python test/executor-parity/auth_factory_artifacts.py --bundle artifacts/auth-factory-roots --artifacts artifacts/auth-factories --controls artifacts/auth-factory-controls.json --runner '${{ matrix.runner }}'
+      - name: Retain original auth factory roots
+        if: contains(fromJSON('["release-wallet"]'), matrix.suite)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: auth-factory-roots-${{ matrix.runner }}-attempt-${{ github.run_attempt }}
+          path: artifacts/auth-factory-roots
           if-no-files-found: error
           retention-days: 14
       - name: Record successful suite
@@ -776,3 +805,15 @@ jobs:
         env:
           SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: python test/executor-parity/wallet_variant_bundle.py --compare wallet-roots --receipts receipts
+      - name: Bound original auth root artifact download
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python test/executor-parity/auth_factory_artifacts.py --check-download
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: auth-factory-roots-*
+          path: auth-roots
+      - name: Compare original auth roots from both architectures
+        env:
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: python test/executor-parity/auth_factory_artifacts.py --compare auth-roots --receipts receipts

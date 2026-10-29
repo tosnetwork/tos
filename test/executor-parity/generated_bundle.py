@@ -246,7 +246,7 @@ def compare_bundles(directory, receipts, source, event, run_id, attempt):
     )
 
 
-def artifact_selection(artifacts, attempt, prefix="rescue-roots-"):
+def artifact_selection(artifacts, attempt, prefix="rescue-roots-", *, max_total=MAX_TOTAL):
     selected = [a for a in artifacts if a["name"].startswith(prefix)]
     assert 0 < len(selected) <= MAX_BUNDLES, "generated download population limit"
     names = set()
@@ -261,13 +261,13 @@ def artifact_selection(artifacts, attempt, prefix="rescue-roots-"):
         assert artifact["expired"] is False and type(artifact["size_in_bytes"]) is int, (
             "expired or invalid generated download metadata"
         )
-        assert 0 < artifact["size_in_bytes"] <= MAX_TOTAL, "generated download size limit"
+        assert 0 < artifact["size_in_bytes"] <= max_total, "generated download size limit"
         total += artifact["size_in_bytes"]
-    assert total <= MAX_TOTAL * MAX_BUNDLES
+    assert total <= max_total * MAX_BUNDLES
     return len(selected)
 
 
-def preflight(prefix="rescue-roots-"):
+def preflight(prefix="rescue-roots-", *, max_total=MAX_TOTAL):
     repository, run_id = os.environ["GITHUB_REPOSITORY"], os.environ["GITHUB_RUN_ID"]
     assert re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository)
     assert re.fullmatch(r"[1-9][0-9]*", run_id)
@@ -299,7 +299,9 @@ def preflight(prefix="rescue-roots-"):
         page += 1
     print(
         "PASS: bounded generated artifact selection",
-        artifact_selection(artifacts, os.environ["GITHUB_RUN_ATTEMPT"], prefix),
+        artifact_selection(
+            artifacts, os.environ["GITHUB_RUN_ATTEMPT"], prefix, max_total=max_total
+        ),
     )
 
 

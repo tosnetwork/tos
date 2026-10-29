@@ -14,6 +14,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from suite_scenarios import DROP, op, prog, pushint, runvm  # noqa: E402
+from vm_datasize_scenarios import cases as datasize_cases  # noqa: E402
 from vm_sha256c_scenarios import cases as sha256c_cases  # noqa: E402
 
 VERSION = 16
@@ -318,7 +319,7 @@ KNOWN = []
 
 def main(args):
     scenarios()
-    for name, code, budget, _ in sha256c_cases():
+    for name, code, budget, _ in sha256c_cases() + datasize_cases():
         add(name, code, budget=budget)
     if args in (["--known"], ["--known-stack"]):
         print(",".join(KNOWN if args == ["--known"] else KNOWN_STACK))

@@ -304,6 +304,9 @@ def validate(text, contract, source_guard):
                     "Retain generated transaction roots",
                     "Verify original wallet variant roots",
                     "Retain original wallet variant roots",
+                    "Verify original auth factory roots",
+                    "Retain original auth factory roots",
+                    "Verify SHA256C library resolution",
                     "Compile cache statistics",
                     "Record exact source and public evidence hashes",
                 },
@@ -311,13 +314,44 @@ def validate(text, contract, source_guard):
             )
     validate_generated_roots(prefix, suites_text, parity, step_map)
     validate_wallet_roots(suites_text, parity, step_map)
+    validate_auth_roots(prefix, parity, step_map)
+    validate_library_context(step_map)
     coverage = {pair: [row["name"] for row in steps if selected(row, *pair)] for pair in pairs()}
     for pair in coverage:
+        if pair[0] == "vm-ingress":
+            coverage[pair].append("Verify SHA256C library resolution")
         if pair[0] == "release-wallet":
             coverage[pair].extend(
-                ["Verify original wallet variant roots", "Retain original wallet variant roots"]
+                [
+                    "Verify original wallet variant roots",
+                    "Retain original wallet variant roots",
+                    "Verify original auth factory roots",
+                    "Retain original auth factory roots",
+                ]
             )
     return coverage
+
+
+def validate_library_context(steps):
+    name = "Verify SHA256C library resolution"
+    expected = """      - name: Verify SHA256C library resolution
+        if: contains(fromJSON('["vm-ingress"]'), matrix.suite)
+        run: |
+          cargo test --manifest-path tosctl/src/Cargo.toml --locked -p tos_vm --test test_library_fallback --test test_library
+          python test/rescue-fee-gate/test_vm_library_context.py --native build/crypto/pq/test-vm-endstate --rust "$CARGO_TARGET_DIR/debug/examples/vm-endstate" --output artifacts/context/library
+          python test/rescue-fee-gate/vm_endstate_compare.py artifacts/context/library/native.tsv artifacts/context/library/rust.tsv
+"""
+    require(
+        steps.get(name) == expected,
+        "library context controls require both vm-ingress architectures",
+    )
+    order = list(steps)
+    require(
+        order.index("Require source restoration")
+        < order.index(name)
+        < order.index("Record successful suite"),
+        "library context checks must precede suite success",
+    )
 
 
 def validate_wallet_roots(suites, parity, steps):
@@ -379,6 +413,71 @@ def validate_wallet_roots(suites, parity, steps):
         < parity.index(download)
         < parity.index(final),
         "wallet download must be bounded before extraction/comparison",
+    )
+
+
+def validate_auth_roots(prefix, parity, steps):
+    for path in ("test/mldsa-auth/**", "tol/**"):
+        require(f"      - '{path}'\n" in prefix, f"missing auth root trigger {path}")
+    name = "Verify original auth factory roots"
+    require(name in steps, "missing original auth root producer")
+    require("Retain original auth factory roots" in steps, "missing auth root upload")
+    before, run = steps[name].split("        run:", 1)
+    require(
+        before
+        == "      - name: "
+        + name
+        + "\n        if: contains(fromJSON('[\"release-wallet\"]'), matrix.suite)\n"
+        + "        env:\n          TOL_PATH: ${{ github.workspace }}/build/tol/tol\n",
+        "auth roots require both release-wallet architectures",
+    )
+    require(
+        digest("        run:" + run.rstrip() + "\n")
+        == "9dd881fbdd03517f1ee9561980b6521fb5a6f527277006c2d8f383dd4f0feca1",
+        "auth producer/control/bundle commands changed",
+    )
+    order = list(steps)
+    require(
+        order.index("Require source restoration")
+        < order.index(name)
+        < order.index("Retain original auth factory roots")
+        < order.index("Record successful suite"),
+        "auth root checks/upload must precede suite success",
+    )
+    require(
+        steps.get("Retain original auth factory roots", "")
+        == """      - name: Retain original auth factory roots
+        if: contains(fromJSON('["release-wallet"]'), matrix.suite)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: auth-factory-roots-${{ matrix.runner }}-attempt-${{ github.run_attempt }}
+          path: artifacts/auth-factory-roots
+          if-no-files-found: error
+          retention-days: 14
+""",
+        "auth bundle upload policy changed",
+    )
+    require(
+        "run: python test/executor-parity/auth_factory_artifacts.py --check-download\n" in parity,
+        "auth download preflight missing",
+    )
+    download = """      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: auth-factory-roots-*
+          path: auth-roots
+"""
+    require(download in parity, "auth bundle download missing")
+    final = """      - name: Compare original auth roots from both architectures
+        env:
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: python test/executor-parity/auth_factory_artifacts.py --compare auth-roots --receipts receipts
+"""
+    require(final in parity, "auth final comparison/source missing")
+    require(
+        parity.index("auth_factory_artifacts.py --check-download")
+        < parity.index(download)
+        < parity.index(final),
+        "auth download must be bounded before extraction/comparison",
     )
 
 

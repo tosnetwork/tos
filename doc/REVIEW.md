@@ -175,6 +175,9 @@ alongside the native engine).
 - **DT-8** When a version gate changes a protocol constant or list (reserved accounts, limits,
   exempt addresses), is every independent copy of that constant updated, with a test that
   compares the copies?
+- **DT-9** When a traversal can stop early (a bound, gas exhaustion or an exception),
+  does its order match the reference, including visited/cache effects on subsequent
+  work? Test early termination followed by reuse, not only final aggregate counts.
 
 ## 4. Resource bounds and unmetered work
 
