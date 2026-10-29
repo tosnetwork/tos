@@ -88,22 +88,29 @@ class ReplayLoop {
     heads_ = std::move(heads);
     auto db = tos_wallet_index::wallet_index_db();
     if (!initialized_) {
-      auto first = reader_.masterchain(1);
-      if (first.is_error()) {
-        return td::Status::Error(PSTRING() << "source has no masterchain block 1 (" << first.error().message()
-                                           << "); a node that joined at a persistent state cannot serve a full "
-                                              "replay: prepare the source as described in "
-                                              "doc/standalone-wallet-services.md, \"Preparing the source node\"");
-      }
-      auto anchor = first.move_as_ok();
-      TRY_STATUS(db->initialize_replay(anchor->id()));
       TRY_RESULT(stored, db->replay_checkpoint());
-      CHECK(stored);
-      checkpoint_ = stored.value();
-      if (checkpoint_.committed.seqno()) {
-        TRY_RESULT(committed, reader_.masterchain(checkpoint_.committed.seqno()));
-        if (committed->id() != checkpoint_.committed)
+      if (stored && stored.value().committed.seqno() != 0) {
+        // A matching full block identity binds the restored checkpoint to
+        // this source chain. Historical block 1 is needed only by a fresh
+        // replay; a source retaining this checkpoint and its successors can
+        // resume a trusted index snapshot without retaining the whole chain.
+        auto resumed = stored.value();
+        TRY_RESULT(committed, reader_.masterchain(resumed.committed.seqno()));
+        if (committed->id() != resumed.committed || !committed->is_applied())
           return td::Status::Error("source differs from committed replay chain");
+        checkpoint_ = resumed;
+      } else {
+        auto first = reader_.masterchain(1);
+        if (first.is_error()) {
+          return td::Status::Error(PSTRING() << "source has no masterchain block 1 (" << first.error().message()
+                                             << "); a fresh replay needs the complete archive or a verified "
+                                                "index snapshot: see doc/standalone-wallet-services.md");
+        }
+        auto anchor = first.move_as_ok();
+        TRY_STATUS(db->initialize_replay(anchor->id()));
+        TRY_RESULT(initialized, db->replay_checkpoint());
+        CHECK(initialized);
+        checkpoint_ = initialized.value();
       }
       initialized_ = true;
       progress_.cursor = checkpoint_.committed.seqno();

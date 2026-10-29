@@ -665,8 +665,10 @@ target_link_libraries(test-storage PRIVATE storage tos_db memprof tl_api tl-util
 add_executable(test-rocksdb test/test-rocksdb.cpp)
 target_link_libraries(test-rocksdb PRIVATE memprof tddb tdutils)
 
-add_executable(test-wallet-index test/test-td-main.cpp test/test-wallet-index.cpp validator-engine/wallet-index.cpp
-  validator-engine/wallet-index-writer.cpp validator/wc0-block-hook.cpp services/index-progress.cpp)
+add_executable(test-wallet-index test/test-td-main.cpp test/test-wallet-index.cpp test/test-wallet-index-snapshot.cpp
+  validator-engine/wallet-index.cpp
+  validator-engine/wallet-index-writer.cpp validator-engine/wallet-index-snapshot.cpp
+  validator/wc0-block-hook.cpp services/index-progress.cpp)
 target_link_libraries(test-wallet-index PRIVATE smc-envelope tos_crypto tddb memprof tdutils)
 
 add_executable(test-tddb test/test-td-main.cpp ${TDDB_TEST_SOURCE})
@@ -2256,6 +2258,10 @@ tos_test(test-rldp2-decoder-heap)
 tos_test(test-consensus-config-admission)
 tos_test(test-weak-ptr-registry)
 tos_test(test-wallet-index)
+add_test(NAME wallet-index-snapshot-cli
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_wallet_index_snapshot_cli.py
+    --binary $<TARGET_FILE:tos-wallet-index-snapshot>)
+set_tests_properties(wallet-index-snapshot-cli PROPERTIES LABELS "security-findings" TIMEOUT 180)
 tos_test(test-wallet-index-apply)
 tos_test(test-wallet-index-source)
 # Keep the security fixes exercised before merge, not only by main's full

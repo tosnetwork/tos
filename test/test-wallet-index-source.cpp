@@ -23,6 +23,7 @@
 #include "td/utils/port/path.h"
 #include "td/utils/port/thread.h"
 #include "td/utils/tests.h"
+#include "validator-engine/wallet-index-snapshot.h"
 #include "validator/db/package.hpp"
 #include "validator/fabric.h"
 #include "vm/boc.h"
@@ -1075,6 +1076,89 @@ TEST(WalletIndexSource, a_restarted_replay_matches_an_uninterrupted_one) {
   // More than the schema and the checkpoint: every block left events.
   ASSERT_TRUE(straight.size() > 48);
   ASSERT_TRUE(straight == restarted);
+}
+
+TEST(WalletIndexSource, a_verified_snapshot_resumes_without_historical_block_one) {
+  auto chain = make_chain(24, 2);
+  auto straight_dir = temporary_directory();
+  auto donor_dir = temporary_directory();
+  auto restored_dir = temporary_directory();
+  RemoveOnExit straight_remove{straight_dir}, donor_remove{donor_dir}, restored_remove{restored_dir};
+  {
+    ReplayHarness h(chain, 0, straight_dir);
+    ASSERT_OK(h.run_until_idle());
+  }
+  {
+    ReplayHarness h(chain, 17, donor_dir);
+    ASSERT_OK(h.run_until_idle());
+    ASSERT_EQ(h.progress.cursor.load(), 17u);
+  }
+  auto snapshot = donor_dir + "/snapshot";
+  auto made = tos_wallet_index::WalletIndexSnapshotFile::create(donor_dir + "/index", snapshot).move_as_ok();
+  tos_wallet_index::WalletIndexSnapshotFile::restore(snapshot, restored_dir + "/index", made.sha256).ensure();
+  // The new source retained the authenticated checkpoint, but never had
+  // historical blocks 1..16. Its later source reads still use the production
+  // inbox, prefetcher, decoder, replay loop, writer and RocksDB checkpoint.
+  for (uint32_t i = 1; i < 17; ++i)
+    chain->masters.erase(i);
+  {
+    ReplayHarness h(chain, 0, restored_dir);
+    ASSERT_OK(h.run_until_idle());
+    ASSERT_EQ(h.progress.cursor.load(), 24u);
+    ASSERT_EQ(h.stats.mc_blocks.load(), 7u);
+    ASSERT_TRUE(h.progress.is_ready(td::Time::now()));
+  }
+  ASSERT_TRUE(index_content(straight_dir) == index_content(restored_dir));
+}
+
+TEST(WalletIndexSource, snapshot_resume_requires_the_full_applied_checkpoint_identity) {
+  auto chain = make_chain(12, 1);
+  auto dir = temporary_directory();
+  RemoveOnExit remove{dir};
+  {
+    ReplayHarness h(chain, 7, dir);
+    ASSERT_OK(h.run_until_idle());
+  }
+  auto expected = chain->masters.at(7);
+  auto foreign = expected->id();
+  foreign.root_hash.as_slice()[0] ^= 1;
+  auto replacement = validator::create_empty_block_handle(foreign);
+  replacement->set_applied();
+  replacement->flushed_upto(replacement->version());
+  chain->masters[7] = replacement;
+  chain->masters.erase(1);
+  {
+    ReplayHarness h(chain, 0, dir);
+    auto status = h.replay->step();
+    ASSERT_TRUE(status.is_error());
+    ASSERT_TRUE(status.message().str().find("differs from committed replay chain") != std::string::npos);
+    ASSERT_EQ(tos_wallet_index::wallet_index_db()->replay_checkpoint().move_as_ok().value().committed, expected->id());
+    ASSERT_TRUE(!h.progress.ready.load());
+  }
+  // Matching hashes alone do not make an unapplied checkpoint a source anchor.
+  replacement = validator::create_empty_block_handle(expected->id());
+  replacement->flushed_upto(replacement->version());
+  chain->masters[7] = replacement;
+  {
+    ReplayHarness h(chain, 0, dir);
+    auto status = h.replay->step();
+    ASSERT_TRUE(status.is_error());
+    ASSERT_TRUE(status.message().str().find("differs from committed replay chain") != std::string::npos);
+    ASSERT_TRUE(!h.progress.ready.load());
+  }
+}
+
+TEST(WalletIndexSource, a_fresh_index_still_requires_block_one) {
+  auto dir = temporary_directory();
+  RemoveOnExit remove{dir};
+  auto chain = make_chain(12, 1);
+  chain->masters.erase(1);
+  ReplayHarness h(chain, 0, dir);
+  auto status = h.replay->step();
+  ASSERT_TRUE(status.is_error());
+  ASSERT_TRUE(status.message().str().find("source has no masterchain block 1") != std::string::npos);
+  ASSERT_TRUE(!h.progress.ready.load());
+  ASSERT_TRUE(!tos_wallet_index::wallet_index_db()->replay_checkpoint().move_as_ok());
 }
 
 namespace {

@@ -1,0 +1,334 @@
+/* Copyright 2026 TOS Blockchain Teams. SPDX-License-Identifier: GPL-3.0-or-later */
+#include <csignal>
+#include <filesystem>
+#include <string>
+#include <vector>
+
+#if defined(__linux__) || defined(__APPLE__)
+#include <sys/resource.h>
+#include <sys/stat.h>
+#endif
+
+#include "../validator-engine/wallet-index-snapshot.h"
+#include "td/db/RocksDb.h"
+#include "td/utils/ScopeGuard.h"
+#include "td/utils/crypto.h"
+#include "td/utils/filesystem.h"
+#include "td/utils/port/path.h"
+#include "td/utils/tests.h"
+#include "vm/cells/CellBuilder.h"
+
+namespace {
+using namespace tos_wallet_index;
+using Rows = std::vector<std::pair<std::string, std::string>>;
+namespace fs = std::filesystem;
+
+tos::BlockIdExt master(uint32_t seqno) {
+  td::Bits256 root, file;
+  root.as_slice().fill(static_cast<char>(seqno));
+  file.as_slice().fill(static_cast<char>(seqno + 1));
+  return {tos::masterchainId, tos::shardIdAll, seqno, root, file};
+}
+
+Rows rows(const std::string& path) {
+  auto db = td::RocksDb::open(path).move_as_ok();
+  Rows result;
+  db.for_each([&](td::Slice key, td::Slice value) {
+      result.emplace_back(key.str(), value.str());
+      return td::Status::OK();
+    }).ensure();
+  return result;
+}
+
+void append_u32(std::string& out, uint32_t value) {
+  for (int i = 3; i >= 0; --i)
+    out.push_back(static_cast<char>((value >> (i * 8)) & 255));
+}
+
+td::Bits256 digest(td::Slice bytes) {
+  td::Bits256 result;
+  td::sha256(bytes, result.as_slice());
+  return result;
+}
+
+std::string encode(const Rows& rows) {
+  std::string result("TOSIDX01");
+  append_u32(result, kWalletIndexSchemaVersion);
+  for (const auto& [key, value] : rows) {
+    append_u32(result, static_cast<uint32_t>(key.size()));
+    append_u32(result, static_cast<uint32_t>(value.size()));
+    result += key;
+    result += value;
+  }
+  result.append(8, '\0');
+  return result;
+}
+
+struct Fixture {
+  std::string dir = td::mkdtemp(td::get_temporary_dir(), "wallet-snapshot-").move_as_ok();
+  std::string source = dir + "/source", snapshot = dir + "/snapshot", restored = dir + "/restored";
+  Fixture() {
+    auto db = WalletIndexDb::open(source).move_as_ok();
+    db->initialize_replay(master(1)).ensure();
+    db->commit_replay_checkpoint({master(1), master(5)}).ensure();
+    db->begin_batch().ensure();
+    vm::CellBuilder value;
+    value.store_long(123, 32);
+    db->put_event(master(2).root_hash, 123, value.finalize()).ensure();
+    auto shard = master(6);
+    shard.id.workchain = 0;
+    db->record_replay_block(shard).ensure();
+    db->put_incomplete_block(shard, 6).ensure();
+    db->commit_batch().ensure();
+  }
+  ~Fixture() {
+    td::rmrf(dir).ensure();
+  }
+  bool staging_exists() const {
+    for (const auto& entry : fs::directory_iterator(dir))
+      if (entry.path().filename().string().find(".wallet-index-import-") == 0)
+        return true;
+    return false;
+  }
+  void expect_bad(std::string bytes, const std::string& reason) {
+    auto bad = dir + "/bad";
+    td::write_file(bad, bytes).ensure();
+    auto status = WalletIndexSnapshotFile::restore(bad, restored, digest(bytes));
+    ASSERT_TRUE(status.is_error());
+    ASSERT_TRUE(status.error().message().str().find(reason) != std::string::npos);
+    ASSERT_TRUE(!fs::exists(restored));
+    ASSERT_TRUE(!staging_exists());
+  }
+};
+}  // namespace
+
+TEST(WalletIndexSnapshot, RoundTripPreservesEveryRecordAndCheckpoint) {
+  Fixture f;
+  auto original = rows(f.source);
+  auto made = WalletIndexSnapshotFile::create(f.source, f.snapshot).move_as_ok();
+  ASSERT_EQ(made.records, original.size());
+  auto bytes = td::read_file(f.snapshot).move_as_ok();
+  ASSERT_EQ(digest(bytes.as_slice()), made.sha256);
+  auto checked = WalletIndexSnapshotFile::verify(f.snapshot, made.sha256).move_as_ok();
+  ASSERT_EQ(checked.checkpoint.anchor, master(1));
+  ASSERT_EQ(checked.checkpoint.committed, master(5));
+  auto restored = WalletIndexSnapshotFile::restore(f.snapshot, f.restored, made.sha256).move_as_ok();
+  ASSERT_EQ(restored.sha256, made.sha256);
+  ASSERT_TRUE(rows(f.restored) == original);
+  ASSERT_TRUE(!f.staging_exists());
+  // Replay receipts and unfinished work survive; restore does not manufacture
+  // a complete or ready index by deleting recovery/completeness metadata.
+  auto db = WalletIndexDb::open(f.restored).move_as_ok();
+  auto shard = master(6);
+  shard.id.workchain = 0;
+  ASSERT_TRUE(db->replay_block_committed(shard).move_as_ok());
+  ASSERT_TRUE(db->token_backlog_stats().move_as_ok().unfinished_block);
+}
+
+TEST(WalletIndexSnapshot, ExportRefusesALiveWriterAndNeverMigratesSchema) {
+  Fixture f;
+  {
+    auto active = WalletIndexDb::open(f.source).move_as_ok();
+    auto locked = WalletIndexSnapshotFile::create(f.source, f.snapshot);
+    ASSERT_TRUE(locked.is_error());
+    ASSERT_TRUE(locked.error().message().str().find("lock") != std::string::npos);
+    ASSERT_TRUE(!fs::exists(f.snapshot));
+  }
+  {
+    auto raw = td::RocksDb::open(f.source).move_as_ok();
+    raw.set(td::Slice("\0\1", 2), td::Slice("\0\0\0\2", 4)).ensure();
+    raw.flush().ensure();
+  }
+  auto before = rows(f.source);
+  auto wrong = WalletIndexSnapshotFile::create(f.source, f.snapshot);
+  ASSERT_TRUE(wrong.is_error());
+  ASSERT_TRUE(wrong.error().message().str().find("schema") != std::string::npos);
+  ASSERT_TRUE(rows(f.source) == before);
+  ASSERT_TRUE(!fs::exists(f.snapshot));
+}
+
+TEST(WalletIndexSnapshot, TrustedDigestAndDestinationCannotBeBypassed) {
+  Fixture f;
+  auto made = WalletIndexSnapshotFile::create(f.source, f.snapshot).move_as_ok();
+  auto wrong = made.sha256;
+  wrong.as_slice()[0] ^= 1;
+  auto rejected = WalletIndexSnapshotFile::restore(f.snapshot, f.restored, wrong);
+  ASSERT_TRUE(rejected.is_error());
+  ASSERT_TRUE(rejected.error().message().str().find("trusted digest") != std::string::npos);
+  ASSERT_TRUE(!fs::exists(f.restored));
+  ASSERT_TRUE(!f.staging_exists());
+  fs::create_directory(f.restored);
+  td::write_file(f.restored + "/keep", "untouched").ensure();
+  auto exists = WalletIndexSnapshotFile::restore(f.snapshot, f.restored, made.sha256);
+  ASSERT_TRUE(exists.is_error());
+  ASSERT_TRUE(exists.error().message().str().find("already exists") != std::string::npos);
+  ASSERT_EQ(td::read_file(f.restored + "/keep").move_as_ok().as_slice().str(), "untouched");
+  ASSERT_TRUE(WalletIndexSnapshotFile::create(f.source, f.snapshot).is_error());
+}
+
+TEST(WalletIndexSnapshot, ADestinationCreatedDuringImportIsNeverReplaced) {
+  Fixture f;
+  auto made = WalletIndexSnapshotFile::create(f.source, f.snapshot).move_as_ok();
+  bool raced = false;
+  auto rejected = WalletIndexSnapshotFile::restore(f.snapshot, f.restored, made.sha256, [&] {
+    if (!raced && f.staging_exists()) {
+      ASSERT_TRUE(fs::create_directory(f.restored));
+      raced = true;
+    }
+    return false;
+  });
+  ASSERT_TRUE(raced);
+  ASSERT_TRUE(rejected.is_error());
+  ASSERT_TRUE(rejected.error().message().str().find("without replacing destination") != std::string::npos);
+  ASSERT_TRUE(fs::is_directory(f.restored));
+  ASSERT_TRUE(fs::is_empty(f.restored));
+  ASSERT_TRUE(!f.staging_exists());
+}
+
+TEST(WalletIndexSnapshot, ParserRejectsAuthenticatedMalformedRecords) {
+  Fixture f;
+  auto original = rows(f.source);
+  auto bytes = encode(original);
+  auto wrong_schema = bytes;
+  wrong_schema[11] = static_cast<char>(kWalletIndexSchemaVersion + 1);
+  f.expect_bad(wrong_schema, "format or schema");
+  f.expect_bad(bytes.substr(0, bytes.size() - 1), "truncated");
+  f.expect_bad(bytes + "x", "trailing data");
+  auto duplicate = original;
+  duplicate.insert(duplicate.begin(), duplicate.front());
+  f.expect_bad(encode(duplicate), "strictly ordered");
+  auto missing = original;
+  missing.erase(missing.begin());
+  f.expect_bad(encode(missing), "no schema or replay checkpoint");
+  auto bad_checkpoint = original;
+  for (auto& [key, value] : bad_checkpoint)
+    if (key == std::string("\0\x20", 2))
+      value[0] = 1;
+  f.expect_bad(encode(bad_checkpoint), "invalid replay checkpoint");
+  bad_checkpoint = original;
+  for (auto& [key, value] : bad_checkpoint)
+    if (key == std::string("\0\x20", 2))
+      value[5] = 0;
+  f.expect_bad(encode(bad_checkpoint), "invalid replay checkpoint identity");
+  auto oversized = bytes.substr(0, 12);
+  append_u32(oversized, kWalletSnapshotMaxKeyBytes + 1);
+  append_u32(oversized, 0);
+  f.expect_bad(oversized, "transfer limits");
+  oversized = bytes.substr(0, 12);
+  append_u32(oversized, 1);
+  append_u32(oversized, kWalletSnapshotMaxValueBytes + 1);
+  f.expect_bad(oversized, "transfer limits");
+}
+
+TEST(WalletIndexSnapshot, BoundsAcceptTheirMaximumAndCancelCleansStaging) {
+  Fixture f;
+  auto data = rows(f.source);
+  data.emplace_back(std::string(kWalletSnapshotMaxKeyBytes, 'z'), std::string(kWalletSnapshotMaxValueBytes, 'v'));
+  auto bytes = encode(data);
+  auto hash = digest(bytes);
+  td::write_file(f.snapshot, bytes).ensure();
+  bytes.clear();
+  bytes.shrink_to_fit();
+  data.clear();
+  data.shrink_to_fit();
+  ASSERT_TRUE(WalletIndexSnapshotFile::verify(f.snapshot, hash).is_ok());
+  bool saw_staging = false;
+  auto interrupted = WalletIndexSnapshotFile::restore(f.snapshot, f.restored, hash, [&] {
+    saw_staging = f.staging_exists();
+    return saw_staging;
+  });
+  ASSERT_TRUE(saw_staging);
+  ASSERT_TRUE(interrupted.is_error());
+  ASSERT_TRUE(interrupted.error().message().str().find("interrupted") != std::string::npos);
+  ASSERT_TRUE(!fs::exists(f.restored));
+  ASSERT_TRUE(!f.staging_exists());
+  ASSERT_TRUE(WalletIndexSnapshotFile::restore(f.snapshot, f.restored, hash).is_ok());
+  auto raw = td::RocksDb::open(f.restored).move_as_ok();
+  std::string value;
+  ASSERT_EQ(raw.get(std::string(kWalletSnapshotMaxKeyBytes, 'z'), value).move_as_ok(), td::KeyValue::GetStatus::Ok);
+  ASSERT_EQ(value.size(), kWalletSnapshotMaxValueBytes);
+}
+
+TEST(WalletIndexSnapshot, BytesChangingAfterVerificationNeverPublish) {
+  Fixture f;
+  auto made = WalletIndexSnapshotFile::create(f.source, f.snapshot).move_as_ok();
+  bool changed = false;
+  auto result = WalletIndexSnapshotFile::restore(f.snapshot, f.restored, made.sha256, [&] {
+    if (!changed && f.staging_exists()) {
+      auto bytes = td::read_file(f.snapshot).move_as_ok().as_slice().str();
+      // The last record is a replay receipt with a one-byte value. Preserve
+      // framing and checkpoint metadata so the second hash is what refuses it.
+      bytes[bytes.size() - 9] ^= 1;
+      td::write_file(f.snapshot, bytes).ensure();
+      changed = true;
+    }
+    return false;
+  });
+  ASSERT_TRUE(changed);
+  ASSERT_TRUE(result.is_error());
+  ASSERT_TRUE(result.error().message().str().find("trusted digest") != std::string::npos);
+  ASSERT_TRUE(!fs::exists(f.restored));
+  ASSERT_TRUE(!f.staging_exists());
+}
+
+TEST(WalletIndexSnapshot, AConcurrentAppendCannotExceedTheVerifiedSize) {
+  Fixture f;
+  auto made = WalletIndexSnapshotFile::create(f.source, f.snapshot).move_as_ok();
+  bool changed = false;
+  auto result = WalletIndexSnapshotFile::restore(f.snapshot, f.restored, made.sha256, [&] {
+    if (!changed && f.staging_exists()) {
+      auto file = td::FileFd::open(f.snapshot, td::FileFd::Write | td::FileFd::Append).move_as_ok();
+      file.write_all("growing input").ensure();
+      changed = true;
+    }
+    return false;
+  });
+  ASSERT_TRUE(changed);
+  ASSERT_TRUE(result.is_error());
+  ASSERT_TRUE(result.error().message().str().find("trailing data") != std::string::npos);
+  ASSERT_TRUE(!fs::exists(f.restored));
+  ASSERT_TRUE(!f.staging_exists());
+}
+
+#if defined(__linux__) || defined(__APPLE__)
+TEST(WalletIndexSnapshot, NonRegularInputIsRefusedWithoutBlocking) {
+  Fixture f;
+  ASSERT_EQ(::mkfifo(f.snapshot.c_str(), 0600), 0);
+  auto rejected = WalletIndexSnapshotFile::verify(f.snapshot, td::Bits256::zero());
+  ASSERT_TRUE(rejected.is_error());
+  ASSERT_TRUE(rejected.error().message().str().find("regular file") != std::string::npos);
+}
+
+TEST(WalletIndexSnapshot, AFailedBatchWriteReturnsAnErrorAndRemovesStaging) {
+  Fixture f;
+  auto records = rows(f.source);
+  records.emplace_back("z", std::string(2u << 20, 'v'));
+  auto bytes = encode(records);
+  td::write_file(f.snapshot, bytes).ensure();
+  struct rlimit original;
+  ASSERT_EQ(getrlimit(RLIMIT_FSIZE, &original), 0);
+  auto original_signal = std::signal(SIGXFSZ, SIG_IGN);
+  bool injected = false;
+  SCOPE_EXIT {
+    ASSERT_EQ(setrlimit(RLIMIT_FSIZE, &original), 0);
+    std::signal(SIGXFSZ, original_signal);
+  };
+  auto failed = WalletIndexSnapshotFile::restore(f.snapshot, f.restored, digest(bytes), [&] {
+    if (!injected && f.staging_exists()) {
+      // The private DB is open by this point. Refuse its next WAL append,
+      // exercising a real RocksDB Write failure, not an earlier open error.
+      auto limited = original;
+      limited.rlim_cur = 1;
+      ASSERT_EQ(setrlimit(RLIMIT_FSIZE, &limited), 0);
+      injected = true;
+    }
+    return false;
+  });
+  ASSERT_EQ(setrlimit(RLIMIT_FSIZE, &original), 0);
+  ASSERT_TRUE(injected);
+  ASSERT_TRUE(failed.is_error());
+  ASSERT_TRUE(failed.error().message().str().find("File too large") != std::string::npos);
+  ASSERT_TRUE(!fs::exists(f.restored));
+  ASSERT_TRUE(!f.staging_exists());
+}
+#endif

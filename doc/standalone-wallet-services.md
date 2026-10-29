@@ -3,7 +3,7 @@
 Build the services from the same checkout as the node:
 
 ```sh
-cmake --build build --target tos-rpc tos-wallet-index validator-engine
+cmake --build build --target tos-rpc tos-wallet-index tos-wallet-index-snapshot validator-engine
 ```
 
 The deployment has three independent processes. A validator or a non-validating
@@ -81,8 +81,10 @@ interval walks full shard block identities, including split/merge predecessors,
 and processes parents before children. It verifies block root hashes and refuses
 a different chain anchor or a discontinuous masterchain sequence.
 
-Keep the complete block archive from block 1 on the source, including through
-bootstrap, recovery and a full rebuild. The default seven-day archive retention
+For a fresh replay, keep the complete block archive from block 1 on the source,
+including through bootstrap, recovery and a full rebuild. A restored index
+snapshot instead needs its committed checkpoint and every following block, as
+described below. The default seven-day archive retention
 is insufficient for rebuilding an older chain: configure `--archive-ttl` to cover
 the chain's full age and the planned rebuild/outage period, and monitor available
 disk space. An index process cannot hold back another process's archive pruning.
@@ -118,7 +120,8 @@ To prepare a source for a full replay:
    block 1 has been applied. Check progress with `GET /readyz` (below).
 
 An existing node that joined at a persistent state cannot be converted in place:
-its database starts after block 1. Prepare a second node as above.
+its database starts after block 1. Prepare a second node as above, or restore a
+trusted index snapshot whose checkpoint is retained by that node.
 
 Index entries and a per-block replay receipt commit in one WAL-synced batch.
 After all blocks in an interval are committed, another atomic batch advances the
@@ -190,7 +193,129 @@ Event retention remains bounded by the existing index's age and per-account limi
 
 For a rebuild, stop the index service and select a new data directory. The source
 node and public RPC can keep running. Do not delete or overwrite the node database.
-The new index replays history; it does not merely erase the old warning.
+The new index replays history; it does not merely erase the old warning. For a
+recent trusted index checkpoint, the snapshot procedure below replaces the full
+historical replay with transfer and replay of the remaining tail.
+
+### Bootstrap or recover from an index snapshot
+
+`tos-wallet-index-snapshot` transfers the standalone index's logical records,
+including its schema, full masterchain anchor/checkpoint identities, replay
+receipts, pending work and completeness flags. It copies no node database,
+validator key, signing history or secondary-reader files. Use the same software
+release on donor and recipient; a different index schema is refused without
+resetting or migrating the donor.
+
+This is a **trusted index publisher** procedure. Obtain the SHA-256 digest from
+an authenticated operator channel independently of the file. The digest binds
+the exact bytes you approved; it does not prove that the publisher indexed
+historical ownership/events correctly. The resumed service separately checks
+that the complete checkpoint block identity is applied on its source chain.
+It then verifies every subsequent interval through the usual replay path.
+
+1. On a healthy donor, wait for `/readyz` to report `caught_up: true` and inspect
+   token completeness. Stop the index service cleanly. The node can keep running.
+   Export while the index is stopped:
+
+   ```sh
+   build/services/tos-wallet-index-snapshot --action create \
+     --index-dir /srv/tos-wallet-index/index \
+     --snapshot /srv/snapshots/wallet-index.snapshot
+   ```
+
+   The output file must not exist; its parent directory must exist. Export takes
+   the RocksDB owner lock and fails if the index service is still running. It
+   reports `sha256`, byte/record counts, and the full `anchor` and `checkpoint`.
+   Publish that receipt with the file and retain the donor/source release ID.
+   Restart the donor after export. Export does not clear known incompleteness;
+   a donor needing a rebuild is unsuitable as a recovery source.
+
+2. Prepare a source node on the recipient that retains the reported checkpoint
+   **and every masterchain/shard block after it**. A node joined at a persistent
+   state is sufficient only if that state is at or before the checkpoint and
+   the checkpoint is actually applied/available locally. A later init block
+   does not supply missing earlier history. Use a newer matching snapshot or
+   restore the missing archive if necessary. Keep archive retention longer than
+   the maximum snapshot age, transfer time, replay time and planned outage.
+
+3. Transfer the file, obtain the trusted digest, and verify it. Verification is
+   read-only and does not open an index database:
+
+   ```sh
+   build/services/tos-wallet-index-snapshot --action verify \
+     --snapshot /srv/snapshots/wallet-index.snapshot \
+     --sha256 TRUSTED_SHA256_HEX
+   ```
+
+4. Create a new service data directory, keeping any previous index for rollback,
+   and restore into its **absent** `index` subdirectory:
+
+   ```sh
+   mkdir /srv/tos-wallet-index-new
+   build/services/tos-wallet-index-snapshot --action restore \
+     --snapshot /srv/snapshots/wallet-index.snapshot \
+     --sha256 TRUSTED_SHA256_HEX \
+     --index-dir /srv/tos-wallet-index-new/index
+   ```
+
+   The parent must have at least three times the snapshot size plus 128 MiB
+   free, in addition to the already stored input, for staging and compaction.
+   This is a conservative admission check, not a reservation against other
+   processes; disk errors still fail the import. Existing files, directories
+   and symlinks at the destination are never replaced. Restore verifies the
+   file before opening a database, hashes its bytes again while importing
+   through the same descriptor, syncs the completed database, then publishes
+   it with one atomic no-replace rename on Linux/macOS. It performs no network
+   lookup and does not claim that the index is ready.
+
+5. Start `tos-wallet-index` with the new `--data-dir` and the prepared source.
+   The first `/readyz` reports the imported durable cursor. Readiness stays
+   false until the source checkpoint identity is checked, the tail is replayed,
+   and a fresh tip observation confirms catch-up. A missing checkpoint pauses
+   replay; a different root/file hash or an unapplied checkpoint is refused.
+   A fresh index, or one with no committed block, still requires block 1.
+   Inspect token completeness before switching the public RPC backend.
+
+The cost is proportional to **snapshot bytes plus the blocks since its
+checkpoint**, rather than replaying every block since genesis. Regularly publish
+recent snapshots to bound historical replay by their maximum age. Snapshot
+transfer/import time still depends on the index size and host I/O, and the
+tail can catch up only when replay throughput exceeds ongoing chain growth.
+This procedure makes no fixed wall-clock or production-throughput promise.
+
+Before publication, errors and SIGTERM remove staging and leave the destination
+absent. SIGKILL/power loss can leave a private `.wallet-index-import-*` sibling
+directory or temporary export file; it is never selected automatically. Remove
+that orphan after confirming no import/export is running and retry with the
+original trusted file. After publication, a failure to sync the parent is
+reported explicitly as **installed/published, durability unconfirmed**; inspect
+and verify that destination before retrying. A second restore always refuses
+an existing destination.
+
+#### Transfer format and resource bounds
+
+The format is `TOSIDX01`, a four-byte big-endian index schema version, then
+strictly increasing unique records, each with big-endian four-byte key/value
+lengths followed by the bytes. An all-zero length pair terminates the stream;
+truncation, trailing bytes, duplicate/out-of-order keys and absent or malformed
+schema/checkpoint metadata are refused. SHA-256 covers the entire file.
+
+The transfer envelope permits keys through 1 KiB (current index keys are at most
+81 bytes) and individual values through 64 MiB. This is an explicit transfer
+limit, not a new consensus or database-record limit: for scale, a million
+34-byte pending-candidate entries plus their header fit under it. Export and
+import both refuse a larger record; the full-replay recovery path remains
+available. Verification uses a 64 KiB chunk buffer plus bounded metadata.
+Import holds one value at a time and a write batch of at most 1 MiB of ordinary
+records or one maximum-size record; RocksDB may copy that batch and has a
+16 MiB write-buffer setting with no block cache. The table-cache eviction target
+is 128 open files; iterators and non-table files can hold additional descriptors,
+so it is not a hard process FD ceiling. Consequently the 64 MiB value
+limit is not a 64 MiB RSS claim. Record count never accumulates in memory, and
+each scan is limited to the file size captured before it starts. Cancellation
+is checked at most every 64 KiB of file I/O and before publication; a current
+RocksDB write/flush must return before cancellation can finish. All database
+handles, batches and file descriptors are scoped to the offline command.
 
 ## Limits and failure handling
 

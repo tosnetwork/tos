@@ -2157,15 +2157,21 @@ td::Result<td::optional<WalletIndexDb::ReplayCheckpoint>> WalletIndexDb::replay_
   TRY_RESULT(status, db_->get(td::Slice(kReplayCheckpointKey, 2), value));
   if (status == td::KeyValue::GetStatus::NotFound)
     return td::optional<ReplayCheckpoint>{};
-  if (value.size() != 2 * kIncompleteBlockKeyLen)
+  TRY_RESULT(result, parse_replay_checkpoint(value));
+  return td::optional<ReplayCheckpoint>(result);
+}
+
+td::Result<WalletIndexDb::ReplayCheckpoint> WalletIndexDb::parse_replay_checkpoint(td::Slice value) {
+  if (value.size() != 2 * kIncompleteBlockKeyLen || value[0] != 0 || value[kIncompleteBlockKeyLen] != 0)
     return td::Status::Error("invalid replay checkpoint");
   ReplayCheckpoint result{parse_block_key(td::Slice(value).substr(0, kIncompleteBlockKeyLen)),
                           parse_block_key(td::Slice(value).substr(kIncompleteBlockKeyLen))};
-  if (!result.anchor.is_masterchain() || result.anchor.seqno() == 0 || !result.committed.is_masterchain() ||
-      result.committed.seqno() < result.anchor.seqno() - 1) {
+  if (!result.anchor.is_masterchain_ext() || !result.anchor.is_valid_full() || result.anchor.seqno() != 1 ||
+      !result.committed.is_masterchain_ext() || !result.committed.id.is_valid_full() ||
+      (result.committed.seqno() != 0 && !result.committed.is_valid_full())) {
     return td::Status::Error("invalid replay checkpoint identity");
   }
-  return td::optional<ReplayCheckpoint>(result);
+  return result;
 }
 
 td::Status WalletIndexDb::initialize_replay(const tos::BlockIdExt& anchor) {

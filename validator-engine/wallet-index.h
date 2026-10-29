@@ -198,6 +198,7 @@ enum class TokenVerifyOutcome {
 };
 
 class WalletIndexSnapshot;
+class WalletIndexSnapshotFile;
 
 class WalletIndexDb {
  public:
@@ -208,6 +209,7 @@ class WalletIndexDb {
     tos::BlockIdExt anchor;
     tos::BlockIdExt committed;
   };
+  static td::Result<ReplayCheckpoint> parse_replay_checkpoint(td::Slice value);
   td::Result<td::optional<ReplayCheckpoint>> replay_checkpoint();
   td::Status initialize_replay(const tos::BlockIdExt& anchor);
   td::Status commit_replay_checkpoint(const ReplayCheckpoint& checkpoint);
@@ -533,6 +535,7 @@ class WalletIndexDb {
   void abort_batch();
 
  private:
+  friend class WalletIndexSnapshotFile;
   friend class WalletIndexSnapshot;
   explicit WalletIndexDb(std::unique_ptr<td::RocksDb> db);
   // A second WalletIndexDb over a RocksDB snapshot. Private: its write methods
