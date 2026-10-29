@@ -21,8 +21,8 @@ use chain_block::{
     TransactionDescr, UInt256,
 };
 use tos_sandbox::{Blockchain, MessageBuilder, Treasury};
-use tos_vm::stack::integer::IntegerData;
 use tos_vm::stack::StackItem;
+use tos_vm::stack::integer::IntegerData;
 
 use crate::model::Model;
 
@@ -1456,7 +1456,7 @@ impl Net {
         addr: &MsgAddressInt,
         tx: &Transaction,
     ) {
-        use chain_block::{base64_encode, write_boc, HashmapType, ShardAccount, TrActionPhase};
+        use chain_block::{HashmapType, ShardAccount, TrActionPhase, base64_encode, write_boc};
         use std::io::Write;
         use std::sync::atomic::{AtomicU64, Ordering};
 
