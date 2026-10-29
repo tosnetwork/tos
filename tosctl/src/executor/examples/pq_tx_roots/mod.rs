@@ -173,6 +173,9 @@ pub fn run(config_path: &str, scenarios: &str) -> anyhow::Result<()> {
                 Some(ExecutorError::PrecompiledComputeOutOfGas) => {
                     println!("{}\trefused\tprecompiled-compute-failed\t-\t-", row.name);
                 }
+                Some(ExecutorError::NoFundsToImportMsg) => {
+                    println!("{}\trefused\timport-no-funds\t-\t-", row.name);
+                }
                 _ => anyhow::bail!("unexpected root execution error for {}: {error}", row.name),
             },
         }

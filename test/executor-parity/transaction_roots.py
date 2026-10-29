@@ -45,13 +45,13 @@ ACCEPTED_PRECOMPILED = {
 }
 
 
-def expected_row(name, result):
+def expected_row(name, result, *, allow_library=False):
     """Keep accepted failures, external refusals and compute errors distinct."""
     assert type(result.get("success")) is bool, "missing native success classification"
     if result["success"]:
         assert result.get("external_not_accepted", False) is False and "vm_exit_code" not in result
-        transaction = from_boc(result["transaction"])
-        shard = from_boc(result["shard_account"])
+        transaction = from_boc(result["transaction"], allow_library=allow_library)
+        shard = from_boc(result["shard_account"], allow_library=allow_library)
         assert len(shard.refs) == 1, "invalid native ShardAccount"
         return [
             name,
@@ -72,7 +72,7 @@ def expected_row(name, result):
     return [name, "refused", "precompiled-compute-failed", "-", "-"]
 
 
-def compare(driver, configuration, records, output, label):
+def compare(driver, configuration, records, output, label, *, expected_result=None):
     """records are ordered (explicit original input line, native result) pairs."""
     assert 0 < len(records) <= MAX_ROWS, "root scenario count limit"
     assert (
@@ -91,7 +91,8 @@ def compare(driver, configuration, records, output, label):
         size += len(line.encode()) + 1
         assert size <= MAX_INPUT_BYTES, "root input byte limit"
         lines.append(line)
-        expected.append(expected_row(fields[0], result))
+        classify = expected_row if expected_result is None else expected_result
+        expected.append(classify(fields[0], result))
         raw = {
             key: result[key]
             for key in (

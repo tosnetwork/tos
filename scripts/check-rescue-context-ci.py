@@ -302,13 +302,84 @@ def validate(text, contract, source_guard):
                     "Build the fee lifecycle CLI",
                     "Verify generated transaction root controls and bundle",
                     "Retain generated transaction roots",
+                    "Verify original wallet variant roots",
+                    "Retain original wallet variant roots",
                     "Compile cache statistics",
                     "Record exact source and public evidence hashes",
                 },
                 f"unexpected skip rule: {name}",
             )
     validate_generated_roots(prefix, suites_text, parity, step_map)
-    return {pair: [row["name"] for row in steps if selected(row, *pair)] for pair in pairs()}
+    validate_wallet_roots(suites_text, parity, step_map)
+    coverage = {pair: [row["name"] for row in steps if selected(row, *pair)] for pair in pairs()}
+    for pair in coverage:
+        if pair[0] == "release-wallet":
+            coverage[pair].extend(
+                ["Verify original wallet variant roots", "Retain original wallet variant roots"]
+            )
+    return coverage
+
+
+def validate_wallet_roots(suites, parity, steps):
+    name = "Verify original wallet variant roots"
+    require(name in steps, "missing original wallet root producer")
+    require("Retain original wallet variant roots" in steps, "missing wallet root upload")
+    before, run = steps[name].split("        run:", 1)
+    require(
+        before
+        == "      - name: "
+        + name
+        + "\n        if: contains(fromJSON('[\"release-wallet\"]'), matrix.suite)\n",
+        "wallet roots require both release-wallet architectures",
+    )
+    require(
+        digest("        run:" + run.rstrip() + "\n")
+        == "7d5af09f7663eb4d6456820777f37ee39ad72269726607b844041b7548a1e35c",
+        "wallet producer/control/bundle commands changed",
+    )
+    order = list(steps)
+    require(
+        order.index("Require source restoration")
+        < order.index(name)
+        < order.index("Retain original wallet variant roots")
+        < order.index("Record successful suite"),
+        "wallet root checks/upload must precede suite success",
+    )
+    require(
+        steps.get("Retain original wallet variant roots", "")
+        == """      - name: Retain original wallet variant roots
+        if: contains(fromJSON('["release-wallet"]'), matrix.suite)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: wallet-variant-roots-${{ matrix.runner }}-attempt-${{ github.run_attempt }}
+          path: artifacts/wallet-variant-roots
+          if-no-files-found: error
+          retention-days: 14
+""",
+        "wallet bundle upload policy changed",
+    )
+    require(
+        "run: python test/executor-parity/wallet_variant_bundle.py --check-download\n" in parity,
+        "wallet download preflight missing",
+    )
+    download = """      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: wallet-variant-roots-*
+          path: wallet-roots
+"""
+    require(download in parity, "wallet bundle download missing")
+    final = """      - name: Compare original wallet roots from both architectures
+        env:
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: python test/executor-parity/wallet_variant_bundle.py --compare wallet-roots --receipts receipts
+"""
+    require(final in parity, "wallet final comparison/source missing")
+    require(
+        parity.index("wallet_variant_bundle.py --check-download")
+        < parity.index(download)
+        < parity.index(final),
+        "wallet download must be bounded before extraction/comparison",
+    )
 
 
 def validate_generated_roots(prefix, suites, parity, steps):
