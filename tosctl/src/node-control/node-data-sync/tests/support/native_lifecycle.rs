@@ -1328,7 +1328,16 @@ fn production_init_block_source_publishes_and_bootstraps_a_third_node() -> Resul
         let _scope = source.scope(|_| Ok(()));
         source.manager.borrow_mut().start()?;
         let result = source.create("create-init-block-source");
-        ensure!(result.is_ok(), "production create rejected init-block source: {result:?}");
+        if result.is_err() {
+            // The worker's own refusal names the failing native read; keep it with the error.
+            let log = fs::read_to_string(
+                source.request.context.work_root.join("create-init-block-source/worker.log"),
+            )
+            .unwrap_or_default();
+            anyhow::bail!(
+                "production create rejected init-block source: {result:?}; worker.log: {log}"
+            );
+        }
         generation = result?;
         assert_eq!(source.events(), vec!["stop", "start"]);
         source.manager.borrow_mut().stop()?;

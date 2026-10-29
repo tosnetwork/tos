@@ -92,6 +92,8 @@ class BranchConditionTests(unittest.TestCase):
             "grep -Fx 'NATIVE_INIT_BLOCK_JOIN_OK'",
             "export NODE_SYNC_NATIVE_INIT_ROOT=",
             "grep -Fx 'PRODUCTION_INIT_BLOCK_PUBLISH_BOOTSTRAP_OK'",
+            "python3 scripts/check-init-block-pre-anchor-control.py",
+            "grep -Fx 'INIT_BLOCK_PRE_ANCHOR_CONTROL_OK'",
         ):
             lines = [line for line in self.workflow.splitlines() if marker in line]
             self.assertEqual(len(lines), 1)

@@ -820,6 +820,17 @@ environment. The `native-init-block-publisher-<commit>` CI artifact retains the
 join receipt, native validation result and lifecycle output for 14 days; database
 trees and node keys are excluded.
 
+`scripts/check-init-block-pre-anchor-control.py` is the red-before control for
+that test. It builds a worker whose validation path reads the held zero state with
+`GetState` and looks the init block up by height, as it did before anchors were
+proven with backward block proofs, and runs the same lifecycle test against it. The
+test must fail with the worker naming the zero-state read as the last failed check,
+because the joined observer never held the zero state. The same test is then run
+with the normal worker and must pass. The worker source is restored and its hash
+rechecked before the test is compiled; CI requires
+`INIT_BLOCK_PRE_ANCHOR_CONTROL_OK` and retains the control's JSON result and both
+outputs.
+
 Interruption hooks and manager overrides are compiled only under `cfg(test)` and
 the non-default `native-lifecycle-tests` feature. The build rejects that feature
 in the release profile; source guards reject default activation or unguarded hook

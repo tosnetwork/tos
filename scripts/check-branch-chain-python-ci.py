@@ -237,6 +237,8 @@ def validate_init_block_lifecycle(text: str) -> None:
         "grep -Fx 'NATIVE_INIT_BLOCK_JOIN_OK' build/node-sync-init-block.log",
         'export NODE_SYNC_NATIVE_INIT_ROOT="$GITHUB_WORKSPACE/build/node-sync-init-block"',
         "grep -Fx 'PRODUCTION_INIT_BLOCK_PUBLISH_BOOTSTRAP_OK' build/node-sync-native-lifecycle.log",
+        "python3 scripts/check-init-block-pre-anchor-control.py --build-dir build --target-dir build/operator-rust-target --init-root build/node-sync-init-block --output-dir build/init-block-pre-anchor-control | tee build/init-block-pre-anchor-control.log",
+        "grep -Fx 'INIT_BLOCK_PRE_ANCHOR_CONTROL_OK' build/init-block-pre-anchor-control.log",
     )
     for command in required:
         require(
