@@ -15,6 +15,14 @@ from unittest import mock
 import run_rust as gate
 
 
+def descendant_gone(pid):
+    """A process that has exited, or exits while its status is read, is gone; a zombie is too."""
+    try:
+        return Path(f"/proc/{pid}/stat").read_text().split()[2] == "Z"
+    except (FileNotFoundError, ProcessLookupError):
+        return True
+
+
 class BoundsAndProcesses(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
@@ -67,6 +75,13 @@ class BoundsAndProcesses(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "byte limit"):
                 gate.execute([sys.executable, "-c", "print('1234')"], self.root, "diagnostics")
 
+    def test_descendant_gone_treats_a_vanishing_status_as_exit(self):
+        for error in (FileNotFoundError, ProcessLookupError):
+            with self.subTest(error=error.__name__):
+                with mock.patch.object(Path, "read_text", side_effect=error()):
+                    self.assertTrue(descendant_gone(1))
+        self.assertFalse(descendant_gone(os.getpid()))
+
     def test_timeout_kills_descendant_group(self):
         program = "import os,time\npid=os.fork()\nif pid: print(pid,flush=True)\ntime.sleep(20)\n"
         with mock.patch.object(gate, "TIMEOUT", 1):
@@ -74,8 +89,7 @@ class BoundsAndProcesses(unittest.TestCase):
                 gate.execute([sys.executable, "-c", program], self.root, "timeout")
         pid = int((self.root / "timeout.stdout").read_text())
         for _ in range(40):
-            status = Path(f"/proc/{pid}/stat")
-            if not status.exists() or status.read_text().split()[2] == "Z":
+            if descendant_gone(pid):
                 break
             time.sleep(0.05)
         else:

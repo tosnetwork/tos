@@ -112,11 +112,15 @@ workchain-dict !
 
 config.workchains!
 
-// Version 0.5 validator-led genesis balances. The 100,000-TOS main wallet is
-// a provisional cap: four original validator wallets receive 20,000 TOS of
-// overlapping-election principal plus at most 100 TOS of measured bootstrap
-// fees each, and the residual is burned after the bootstrap procedure.
-TM$100000 constant main_wallet_genesis_balance
+// Validator-led genesis balances. The bootstrap main wallet holds exactly what
+// the four original validators need: 4 x (20,000 TOS of overlapping-election
+// principal + 25 TOS of measured per-validator bootstrap fees) + a 50 TOS
+// margin + the measured bootstrap wallet's own fees rounded up to 1 TOS, i.e.
+// 80,100 + 50 + 1 = 80,151 TOS. Its final transfer (mode 128+32) goes to the
+// ConfigParam 5 blackhole below, which destroys the remainder and deletes the
+// wallet, so no residual survives the bootstrap. The amount is provisional for
+// mainnet until the bootstrap rehearsal confirms the measured fees.
+TM$80151 constant main_wallet_genesis_balance
 TM$500 constant elector_genesis_balance
 TM$500 constant config_genesis_balance
 
@@ -145,6 +149,12 @@ dup constant smc1_addr
 Masterchain over
 2dup ."main wallet address = " .addr cr 2dup 6 .Addr cr
 "main-wallet" +suffix +".addr" save-address-verbose
+
+// Masterchain blackhole -1:ffff...ffff, installed as ConfigParam 5 below. No
+// account exists or can be deployed there by key; inbound value is destroyed.
+// It is the bootstrap wallet's final sweep destination.
+AllOnes 15 * constant blackhole_addr
+."blackhole address (ConfigParam 5) = " Masterchain blackhole_addr .addr cr
 
 // No PoW/test giver, faucet, team wallet, investor wallet, foundation wallet,
 // ecosystem wallet, or general treasury is funded by production genesis.
@@ -216,7 +226,12 @@ config_addr config.config_smc!
 elector_addr config.elector_smc!
 
 // 1 sg* 100 sg* 1000 sg* 1000000 sg* config.storage_prices!  // old values (too high)
-1 500 1000 500000 config.storage_prices!
+// One entry, effective since 0. Basechain rent is cell-only (0 per bit, 135
+// per cell per 2^16 s), the reference implementation's latest basechain rent.
+// Masterchain rent stays 1000 / 500000 on purpose: it is the state-cost
+// boundary that keeps ordinary accounts off the masterchain. The 1/20 price
+// cut applies to masterchain gas and forwarding (ConfigParams 20 and 24) only.
+0 135 1000 500000 config.storage_prices!
 config.special!
 
 // gas_price gas_limit special_gas_limit gas_credit block_gas_limit freeze_due_limit delete_due_limit flat_gas_limit flat_gas_price
@@ -358,8 +373,8 @@ triple untriple config.block_limits!
 // 2.5 finalized masterchain and basechain blocks per second, retaining the
 // 1.7:1 masterchain-to-basechain ratio and targeting approximately
 // 9,899,000 TOS of post-genesis validator creation over the first two years
-// (which, with the 101,000 TOS genesis balance, reaches ~10,000,000 TOS total
-// supply). Linearly rescaled from the prior seven-year / 499,899,000 TOS
+// (which, with the 81,151 TOS genesis balance, reaches about 9,980,000, i.e.
+// about 10,000,000 TOS total supply). Linearly rescaled from the prior seven-year / 499,899,000 TOS
 // calibration; rescaling the flat per-block fee preserves the block-rate
 // assumptions exactly. This is the bootstrap-phase rate only: the two-year
 // cutoff and any subsequent inflation are a separate ConfigParam 14 proposal.
@@ -378,6 +393,13 @@ config_addr config.minter_smc!
 // critical Config Contract proposal because parameter 4 is in ConfigParam 10.
 dns_root_addr config.dns_root_smc!
 
+// ConfigParam 5: no fee burning (0/1); masterchain blackhole -1:ffff...ffff.
+// Inbound value to the blackhole is destroyed and counted in ValueFlow.burned.
+// Collected fees stay with validators: distribution is validator-led and there
+// is no treasury. Parameter 5 is critical (ConfigParam 10), so an ordinary vote
+// cannot move the blackhole onto a spendable account or start burning fees.
+blackhole_addr 0 1 config.burning!
+
 // ConfigParam 7 governs extra currencies only and is intentionally omitted, so
 // genesis mints no extra currency. Native TOS creation is separate: each
 // produced block creates the amount configured by ConfigParam 14 above.
@@ -389,12 +411,12 @@ dns_root_addr config.dns_root_smc!
 // parameters. The VM profile (8) also requires critical governance approval and
 // cannot be omitted.
 ( 0 1 8 9 10 12 14 15 16 17 18 19 20 21 22 23 24 25 28 34 ) config.mandatory_params!
-( -999 -1000 -1001 0 1 3 4 8 9 10 12 14 15 16 17 19 32 34 36 ) config.critical_params!
+( -999 -1000 -1001 0 1 3 4 5 8 9 10 12 14 15 16 17 19 32 34 36 ) config.critical_params!
 
 def? quantum-network-tag {
   @' quantum-network-tag config.auth_policy!
   ( 0 1 8 9 10 12 14 15 16 17 18 19 20 21 22 23 24 25 28 34 48 ) config.mandatory_params!
-  ( -999 -1000 -1001 0 1 3 4 8 9 10 12 14 15 16 17 19 32 34 36 48 ) config.critical_params!
+  ( -999 -1000 -1001 0 1 3 4 5 8 9 10 12 14 15 16 17 19 32 34 36 48 ) config.critical_params!
 } if
 
 // [ min_tot_rounds max_tot_rounds min_wins max_losses min_store_sec max_store_sec bit_pps cell_pps ]
@@ -416,7 +438,14 @@ _( 4 7 3 5 5000000 20000000 2 1000 )
 config.param_proposals_setup!
 
 // deposit bit_pps cell_pps
-TM$100 1 500 config.complaint_prices!
+// The Elector charges a complaint deposit + ((bits + 1024) * bit_pps +
+// (cells + 2) * cell_pps) * seconds left until the stake unfreezes, and
+// accepts it only while the suggested fine exceeds that charge. At a 100 TOS
+// deposit the mildest tier (62.5 TOS + 1/256 of a 10,000 TOS stake =
+// 101.5625 TOS) barely clears it and a larger proof cannot be filed at all, so
+// low-tier misbehaviour would go unreported. At 1 TOS a 4,096-bit, 8-cell
+// complaint held for 32,768 s is charged 1.3316 TOS.
+TM$1 1 500 config.complaint_prices!
 
 // Public-only manifest: four records of controller ID (32 bytes), ADNL ID
 // (32 bytes), and ML-DSA-44 public key (1312 bytes). No classical fallback.

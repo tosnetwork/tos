@@ -44,6 +44,7 @@ fn closed_payload_rejects_every_local_and_recovery_class() {
         "chain//celldb/CURRENT",
         "/chain/celldb/CURRENT",
         "chain/static/../../config.json",
+        "metadata/zero-state.boc",
     ] {
         assert!(paths::public_path(path).is_err(), "accepted {path}");
     }
@@ -55,6 +56,7 @@ fn closed_payload_rejects_every_local_and_recovery_class() {
         "chain/files/packages/temp.archive.3.index/CURRENT",
         "chain/archive/packages/arch0000/archive.3.-1_8000000000000000.pack",
         "state-records.cbor",
+        "metadata/tip-block.boc",
     ] {
         paths::public_path(path).unwrap_or_else(|e| panic!("refused {path}: {e}"));
     }
@@ -303,7 +305,7 @@ fn private_capture_preserves_config_absence_and_referenced_seeds() -> Result<()>
 fn manifest() -> node_data_sync::model::Manifest {
     use node_data_sync::model::{Manifest, NativeValidation, Network, Object};
     let mut manifest = Manifest {
-        format: 2,
+        format: node_data_sync::model::MANIFEST_FORMAT,
         corroboration: reference_fixture::historical_receipt(
             &reference_fixture::network(&id(10)),
             &id(10),
@@ -340,7 +342,7 @@ fn manifest() -> node_data_sync::model::Manifest {
             started_utc: 1,
             finished_utc: 2,
         },
-        files: ["metadata/tip-block.boc", "metadata/zero-state.boc", "state-records.cbor"]
+        files: ["metadata/tip-block.boc", "state-records.cbor"]
             .into_iter()
             .map(|path| Object {
                 kind: node_data_sync::model::ObjectKind::RegularFile,
@@ -392,6 +394,34 @@ fn signatures_bind_the_network_receipt_and_closed_file_inventory() -> Result<()>
     let mut trailing = bytes;
     trailing.push(b' ');
     assert!(SignedManifest::parse(&trailing, &trusted).is_err());
+    Ok(())
+}
+
+/// Format 3 publishes no zero-state file. A format-2 generation, or one that still lists the
+/// zero-state file, refuses explicitly instead of carrying a path nothing checks.
+#[test]
+fn earlier_format_and_zero_state_file_are_refused() -> Result<()> {
+    use node_data_sync::model::{MANIFEST_FORMAT, Object, ObjectKind};
+    assert_eq!(MANIFEST_FORMAT, 3);
+    manifest().validate()?;
+    let mut earlier = manifest();
+    earlier.format = 2;
+    let error = earlier.validate().err().map(|e| e.to_string()).unwrap_or_default();
+    assert!(error.contains("unsupported generation format"), "format 2 accepted: {error}");
+    let mut listed = manifest();
+    listed.files.insert(
+        1,
+        Object {
+            kind: ObjectKind::RegularFile,
+            path: "metadata/zero-state.boc".to_owned(),
+            size: 1,
+            sha256: "12".repeat(32),
+            compressed_size: 10,
+            compressed_sha256: "34".repeat(32),
+            codec: "zstd".to_owned(),
+        },
+    );
+    assert!(listed.validate().is_err(), "a listed zero-state file was accepted");
     Ok(())
 }
 

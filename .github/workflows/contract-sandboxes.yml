@@ -514,8 +514,9 @@ jobs:
         run: |
           python3 scripts/test_replay_token_bridge_trace.py
           cmake --build build --target emulator -j"$(nproc)"
+          test ! -e "$TOKEN_BRIDGE_TRACE_DIR"
           cargo test --manifest-path tosctl/src/Cargo.toml -p contracts --locked --test token_bridge_sandbox
-          python3 scripts/replay-token-bridge-trace.py "$TOKEN_BRIDGE_TRACE_DIR"
+          python3 scripts/replay-token-bridge-trace.py "$TOKEN_BRIDGE_TRACE_DIR" --expected-records 5097
 
       # From version 15 a failed action phase also pays the fines of the
       # messages it already sent; both executors must charge them identically.

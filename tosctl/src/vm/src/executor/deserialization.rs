@@ -817,11 +817,14 @@ fn datasize(engine: &mut Engine, name: &'static str, how: u8) -> Status {
     let mut bits = 0usize;
     let mut refs = 0usize;
     let mut visited = HashSet::new();
+    // C++ VmStorageStat descends through ref0 first. Push children in reverse
+    // so this LIFO walk preserves that order, including which cells become
+    // warm when a bound or gas exhaustion stops the scan early.
     let mut cell_stack = Vec::new();
     if let Ok(slice) = engine.cmd.var(1).as_slice() {
         refs = slice.remaining_references();
         bits = slice.remaining_bits();
-        for i in 0..slice.remaining_references() {
+        for i in (0..slice.remaining_references()).rev() {
             if let Ok(cell) = slice.reference(i) {
                 cell_stack.push(cell);
             }
@@ -839,7 +842,7 @@ fn datasize(engine: &mut Engine, name: &'static str, how: u8) -> Status {
             let slice = engine.load_hashed_cell(cell, false)?;
             refs = refs.saturating_add(slice.remaining_references());
             bits = bits.saturating_add(slice.remaining_bits());
-            for i in 0..slice.remaining_references() {
+            for i in (0..slice.remaining_references()).rev() {
                 if let Ok(cell) = slice.reference(i) {
                     cell_stack.push(cell);
                 }

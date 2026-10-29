@@ -28,6 +28,9 @@ jobs:
         with:
           python-version: '3.14'
 
+      - name: Check candidate bundle inputs before configure or compile
+        run: python3 scripts/check-wallet-quantum-review-sources.py --self-test
+
       - name: Verify rescue suite coverage and failure controls
         run: |
           python3 scripts/check-rescue-context-ci.py

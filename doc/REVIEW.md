@@ -175,6 +175,9 @@ alongside the native engine).
 - **DT-8** When a version gate changes a protocol constant or list (reserved accounts, limits,
   exempt addresses), is every independent copy of that constant updated, with a test that
   compares the copies?
+- **DT-9** When a traversal can stop early (a bound, gas exhaustion or an exception),
+  does its order match the reference, including visited/cache effects on subsequent
+  work? Test early termination followed by reuse, not only final aggregate counts.
 
 ## 4. Resource bounds and unmetered work
 
@@ -586,6 +589,9 @@ refunds, relayers, SDK send paths).
   fuzz corpora kept and re-run?
 - **TE-12** For consensus, networking and recovery changes: has the change run in a
   multi-validator local network with real consensus, including stop, restart and partition?
+- **TE-13** When a test/exporter claims a complete input population, is every input
+  retained exactly once across instances, workers and retries, with overwritten,
+  missing, duplicate, stale or extra records rejected by the consumer?
 
 ## 17. Build, CI and release integrity
 

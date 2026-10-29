@@ -16,7 +16,9 @@ use tos_vm::{smart_contract_info::PrevBlocksInfo, stack::read_stack_item};
 
 const MAX_FILE: usize = 64 * 1024 * 1024;
 const MAX_CONFIG: usize = 8 * 1024 * 1024;
-const MAX_ROW: usize = 1024 * 1024;
+// The original basechain wallet state-bound fixtures carry 65,536 cells:
+// their largest measured explicit-input row is 2,881,435 bytes.
+const MAX_ROW: usize = 4 * 1024 * 1024;
 const MAX_ROWS: usize = 10_000;
 const MAX_VISITS: usize = 2_000_000;
 const MAX_DEPTH: usize = 1024;
@@ -173,9 +175,27 @@ pub fn run(config_path: &str, scenarios: &str) -> anyhow::Result<()> {
                 Some(ExecutorError::PrecompiledComputeOutOfGas) => {
                     println!("{}\trefused\tprecompiled-compute-failed\t-\t-", row.name);
                 }
+                Some(ExecutorError::NoFundsToImportMsg) => {
+                    println!("{}\trefused\timport-no-funds\t-\t-", row.name);
+                }
                 _ => anyhow::bail!("unexpected root execution error for {}: {error}", row.name),
             },
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse, MAX_ROW};
+
+    #[test]
+    fn root_row_byte_boundary_precedes_typed_parsing() {
+        let exact = "x".repeat(MAX_ROW);
+        let Err(error) = parse(&exact) else { panic!("invalid typed row accepted") };
+        assert!(error.to_string().contains("requires nine fields"));
+        let oversized = "x".repeat(MAX_ROW + 1);
+        let Err(error) = parse(&oversized) else { panic!("oversized row accepted") };
+        assert!(error.to_string().contains("row byte limit exceeded"));
+    }
 }

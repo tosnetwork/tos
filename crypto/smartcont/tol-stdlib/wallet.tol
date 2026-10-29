@@ -23,6 +23,7 @@ const WALLET_V5_FUNC_THROW_EXTENSION_WRONG_WORKCHAIN = 145
 const WALLET_V5_FUNC_THROW_ONLY_EXTENSION_CAN_CHANGE_SIGNATURE_MODE = 146
 const WALLET_V5_FUNC_THROW_INVALID_C5 = 147
 const WALLET_V5_FUNC_THROW_INVALID_GLOBAL_ID = 148
+const WALLET_V5_FUNC_THROW_STATE_TOO_LARGE = 149
 
 const WALLET_V5_SIZE_BOOL = 1
 const WALLET_V5_SIZE_SEQNO = 32
@@ -61,6 +62,7 @@ const WALLET_V5_STDLIB_ERROR_EXTENSION_WRONG_WORKCHAIN = 1145
 const WALLET_V5_STDLIB_ERROR_ONLY_EXTENSION_CAN_CHANGE_SIGNATURE_MODE = 1146
 const WALLET_V5_STDLIB_ERROR_INVALID_C5 = 1147
 const WALLET_V5_STDLIB_ERROR_INVALID_GLOBAL_ID = 1148
+const WALLET_V5_STDLIB_ERROR_STATE_TOO_LARGE = 1149
 
 struct WalletV5StdlibStorage {
     isSignatureAllowed: bool;
@@ -174,6 +176,9 @@ fun walletV5ErrorForFuncThrow(funcThrow: int, originalOp: uint32, queryId: uint6
     }
     if (funcThrow == WALLET_V5_FUNC_THROW_INVALID_GLOBAL_ID) {
         return slice3Error(queryId, originalOp, ErrorClass.Protocol, WALLET_V5_STDLIB_ERROR_INVALID_GLOBAL_ID);
+    }
+    if (funcThrow == WALLET_V5_FUNC_THROW_STATE_TOO_LARGE) {
+        return slice3Error(queryId, originalOp, ErrorClass.Permanent, WALLET_V5_STDLIB_ERROR_STATE_TOO_LARGE);
     }
     return slice3Error(queryId, originalOp, ErrorClass.Protocol, WALLET_V5_STDLIB_ERROR_INVALID_C5);
 }

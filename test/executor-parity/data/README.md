@@ -14,9 +14,10 @@ they never replace the ordinary fresh native signing path or native output roots
 The original scenario and public-signature baseline is
 `7da918d588e8e08c71d4ecf3fcfd89185fb62470`. Input schema v2 records this as
 `scenario_source`, separately from `configuration_source`, the integrated-source
-generator commit `fecd6e5fb3107db1cb9638faf7f185b6ecd5d8a7`. The signature file
+generator commit `7cfdfa80c85581d0b406046382e2d442da9ff690`. The signature file
 retains its original source. Only the candidate mode's two configuration identities
-change after the CP15 election-lead update; all diagnostic identities, recorded
+change after the epoch-6 genesis template update (new CP5, CP10 critical set,
+CP13 complaint deposit, CP18 storage prices); all diagnostic identities, recorded
 inputs and native outputs remain unchanged. Fresh unsigned bindings and ordered
 public request identities were independently rechecked with the original builders.
 

@@ -211,7 +211,7 @@ fn get_gas_limit_prices() -> GasLimitsPrices {
         flat_gas_price: 90,
         max_gas_threshold: 0,
     };
-    glp.max_gas_threshold = glp.calc_max_gas_threshold(glp.gas_limit);
+    glp.max_gas_threshold = glp.calc_max_gas_threshold(glp.gas_limit).expect("gas threshold");
     glp
 }
 

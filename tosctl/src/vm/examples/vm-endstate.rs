@@ -3,8 +3,8 @@
 // test/rescue-fee-gate/vm-endstate.cpp, then two more: what execute() returned (ok, an exception
 // code, or a custom code) and the argument its error carries ("missing" when it carries none, "-"
 // when there is no error). See test/rescue-fee-gate/vm_endstate_compare.py.
-use chain_block::{read_single_root_boc, Error, ExceptionCode, SliceData};
-use std::{env, fs};
+use chain_block::{read_single_root_boc, Error, ExceptionCode, HashmapE, SliceData};
+use std::{env, fs, io::Read};
 use tos_vm::{
     error::{tvm_exception_code, tvm_exception_or_custom_code, TvmError},
     executor::{gas::gas_state::Gas, Engine},
@@ -126,7 +126,22 @@ fn raw_result(result: &Result<i32, Error>, stack: &Stack) -> anyhow::Result<(Str
 
 fn main() -> anyhow::Result<()> {
     let args: Vec<_> = env::args().collect();
-    anyhow::ensure!(args.len() == 2, "usage: vm-endstate scenarios.tsv");
+    anyhow::ensure!(
+        (2..=6).contains(&args.len()),
+        "usage: vm-endstate scenarios.tsv [libraries.boc ...] (at most 4)"
+    );
+    let mut libraries = Vec::new();
+    let mut remaining = 1024 * 1024;
+    for path in &args[2..] {
+        let mut bytes = Vec::new();
+        fs::File::open(path)?.take(remaining as u64 + 1).read_to_end(&mut bytes)?;
+        anyhow::ensure!(
+            !bytes.is_empty() && bytes.len() <= remaining,
+            "invalid library collection size"
+        );
+        remaining -= bytes.len();
+        libraries.push(HashmapE::with_hashmap(256, Some(read_single_root_boc(bytes)?)));
+    }
     let data = fs::read_to_string(&args[1])?;
     let mut count = 0;
     for line in data.lines() {
@@ -151,7 +166,7 @@ fn main() -> anyhow::Result<()> {
             ctrls,
             stack,
             Gas::test_with_limit(budget),
-            vec![],
+            libraries.clone(),
         )?;
         engine.set_block_version(version);
         let result = engine.execute();

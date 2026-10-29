@@ -88,7 +88,6 @@ from tostester.pq_election_fixture import (  # noqa: E402
     participant_ids_from_runmethod,
     require_pq_stake_authorization_binding,
 )
-from tostester.zerostate import VALIDATOR_ECONOMICS_FAUCET_TOS  # noqa: E402
 from tosapi import tos_api, toslib_api  # noqa: E402
 
 T = TypeVar("T")
@@ -179,6 +178,10 @@ NOMINATOR_FUNDING = NOMINATOR_DEPOSIT + 100 * NANO
 # depositors out needs nobody's permission.
 RESCUER_FUNDING = 50 * NANO
 POOL_DEPLOY_VALUE = 20 * NANO
+# The ordinary fixture funds four direct validators, a pool validator, nine
+# nominators and a rescuer, more than the production bootstrap wallet holds.
+# Genesis gives this test-only network an explicit faucet instead.
+LIFECYCLE_FAUCET_FUNDING = 100_000 * NANO
 
 # Value the operator wallet attaches to each pool order for the pool's gas and
 # the forwarding of the stake message to the Elector.
@@ -887,7 +890,7 @@ def require_lifecycle_funding_budget(*, integrated: bool, agent_count: int) -> d
         raise ValueError(f"lifecycle needs {OPENFOX_AGENT_COUNT} agent nominators")
     faucet = (
         INTEGRATED_FAUCET_FUNDING
-        if integrated else VALIDATOR_ECONOMICS_FAUCET_TOS * NANO
+        if integrated else LIFECYCLE_FAUCET_FUNDING
     )
     primary_wallet = INTEGRATED_POOL_VALIDATOR_FUNDING if integrated else POOL_VALIDATOR_FUNDING
     support_wallet = INTEGRATED_DIRECT_VALIDATOR_FUNDING if integrated else DIRECT_VALIDATOR_FUNDING
@@ -2679,6 +2682,10 @@ class PoolLifecycle:
             # a faucet send advance seqno while its unfunded out-message fails.
             network.config.validator_election_experiment_faucet_balance_nanotos = (
                 150_000 * NANO
+            )
+        else:
+            network.config.validator_election_experiment_faucet_balance_nanotos = (
+                LIFECYCLE_FAUCET_FUNDING
             )
         network.config.shard_validators = 4
         network.config.validator_economics_profile = True

@@ -92,6 +92,7 @@ from tostester.pq_election_fixture import (  # noqa: E402
 from tostester.pq_initial_validator import (  # noqa: E402
     make_deterministic_pq_initial_validator,
 )
+from tostester.zerostate import VALIDATOR_ECONOMICS_FAUCET_TOS  # noqa: E402
 from x01_window_evidence import validate as validate_x01_window  # noqa: E402
 from x02_config34_proof import VERIFIER_RELATIVE as ANCHORED_VERIFIER  # noqa: E402
 from x02_config34_proof import verify_bundle as verify_config34_bundle  # noqa: E402
@@ -114,6 +115,15 @@ EXPERIMENT_GENESIS_FAUCET_FUNDING = (
     VALIDATOR_COUNT * EXPERIMENT_VALIDATOR_WALLET_FUNDING
     + NEGATIVE_WALLET_FUNDING
     + EXPERIMENT_FAUCET_FEE_RESERVE
+)
+# The launch-gate rehearsal funds four validator wallets and the negative-test
+# wallet, more than the production bootstrap wallet holds. Genesis gives this
+# test-only network an explicit faucet instead of the production balance.
+LAUNCH_GATE_FAUCET_FEE_RESERVE = 1_000 * NANO
+LAUNCH_GATE_GENESIS_FAUCET_FUNDING = (
+    VALIDATOR_COUNT * VALIDATOR_WALLET_FUNDING
+    + NEGATIVE_WALLET_FUNDING
+    + LAUNCH_GATE_FAUCET_FEE_RESERVE
 )
 PQ_FULL_FOLLOWUP_FAUCET_CAPITAL = 2 * VALIDATOR_COUNT * (PQ_STAKE_MESSAGE_VALUE + 40 * NANO)
 PQ_FULL_FAUCET_FEE_RESERVE = 1_000 * NANO
@@ -481,6 +491,7 @@ class ValidatorElectionRehearsal:
         config.shard_validators = VALIDATOR_COUNT
         config.validator_economics_profile = True
         config.validator_election_stage_a_profile = self.profile.accelerated
+        config.validator_election_stage_b_profile = self.profile.stage == "b"
         if (
             self.profile.stage == "a"
             and self.profile.elect_start_before != PROFILES["a"].elect_start_before
@@ -500,8 +511,37 @@ class ValidatorElectionRehearsal:
             config.validator_election_experiment_faucet_balance_nanotos = (
                 EXPERIMENT_GENESIS_FAUCET_FUNDING
             )
+        elif self.profile.accelerated or self.profile.stage == "b":
+            # Stage B keeps the production election cycle; only its genesis
+            # wallet is a test faucet, since the rehearsal wallets need more
+            # than the production bootstrap balance.
+            config.validator_election_experiment_faucet_balance_nanotos = (
+                LAUNCH_GATE_GENESIS_FAUCET_FUNDING
+            )
         else:
             config.validator_election_experiment_faucet_balance_nanotos = None
+        self.require_genesis_faucet_covers_wallets(
+            config.validator_election_experiment_faucet_balance_nanotos
+        )
+
+    def require_genesis_faucet_covers_wallets(self, configured: int | None) -> None:
+        """Refuse before Genesis a run whose wallet funding the faucet cannot pay.
+
+        `setup_wallets` sends four validator wallets and the negative-test wallet
+        from the Genesis main wallet. Without an override that wallet holds the
+        production bootstrap balance, which is sized for the bootstrap only.
+        """
+        faucet = configured if configured is not None else VALIDATOR_ECONOMICS_FAUCET_TOS * NANO
+        required = (
+            VALIDATOR_COUNT * self.validator_wallet_funding()
+            + NEGATIVE_WALLET_FUNDING
+            + LAUNCH_GATE_FAUCET_FEE_RESERVE
+        )
+        if faucet < required:
+            raise ValueError(
+                "Genesis faucet cannot fund the rehearsal wallets: "
+                f"required={required} faucet={faucet}"
+            )
 
     def validator_start_options(self, validator_index: int | None = None) -> StartOptions:
         # Keep archive RocksDB/package handles bounded during the multi-day

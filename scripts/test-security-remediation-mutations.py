@@ -8,6 +8,7 @@ A passing mutant is a failure: the regression must notice the removed control.
 import argparse
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -54,7 +55,7 @@ CASES = {
     ),
     "integrity": (
         "scripts/verify-build-tool.py",
-        'digest.hexdigest() != pin["sha256"]',
+        'sha256.hexdigest() != pin["sha256"]',
         "False",
         ["python3", "scripts/test-build-tool-pins.py"],
     ),
@@ -96,11 +97,69 @@ CASES = {
     ),
 }
 
+# str.replace mutates every copy of an anchor, so each anchor's occurrence count
+# is pinned. These cases intentionally cover two parsers or renderers at once;
+# every other anchor must occur exactly once. A new copy is a reviewed change.
+ANCHOR_COUNTS = {"http": 2, "header-names": 2, "html": 2}
+
+# The connect case removes both independent gates to restore the original
+# trust-on-first-envelope behavior: the transport gate in the bridge and the
+# consumer gate in the client. Both anchors are checked like every other case.
+CONNECT_EDITS = [
+    (
+        "sdk/js/packages/connect/src/bridge.ts",
+        "!senderPk || !this.walletPublicKey ||\n"
+        "            bytesToHex(senderPk) !== bytesToHex(this.walletPublicKey)",
+        "!senderPk",
+    ),
+    (
+        "sdk/js/packages/connect/src/TosConnect.ts",
+        "if (!this._walletPublicKey || fromHex.toLowerCase() !== "
+        "bytesToHex(this._walletPublicKey)) return;",
+        "",
+    ),
+]
+CONNECT_COMMAND = ["pnpm", "--dir", "sdk/js", "--filter", "@tos/connect", "test"]
+
+
+def anchor_table(cases=None, connect_edits=None):
+    """Every (case, path, before, after, expected count) the runner may apply."""
+    cases = CASES if cases is None else cases
+    connect_edits = CONNECT_EDITS if connect_edits is None else connect_edits
+    table = [
+        (name, path, before, after, ANCHOR_COUNTS.get(name, 1))
+        for name, (path, before, after, _command) in cases.items()
+    ]
+    table += [("connect", path, before, after, 1) for path, before, after in connect_edits]
+    return table
+
+
+def anchor_problems(root: Path, cases=None, connect_edits=None) -> list[str]:
+    """Report every anchor that would not apply exactly as reviewed."""
+    problems = []
+    for name, path, before, after, expected in anchor_table(cases, connect_edits):
+        if before == after:
+            problems.append(f"{name}: {path}: mutation leaves the anchor unchanged")
+            continue
+        try:
+            source = (root / path).read_bytes().decode("utf-8")
+        except FileNotFoundError:
+            problems.append(f"{name}: {path}: file is missing")
+            continue
+        except UnicodeDecodeError as error:
+            problems.append(f"{name}: {path}: not UTF-8 ({error})")
+            continue
+        found = source.count(before)
+        if found != expected:
+            problems.append(f"{name}: {path}: anchor found {found} times, expected {expected}")
+    return problems
+
 
 def mutation(name, path, before, after, command, logdir):
     path = ROOT / path
     original = path.read_bytes()
     source = original.decode()
+    # Second line of defence behind the load-time anchor check.
     if before not in source:
         raise RuntimeError(f"{name}: mutation target missing")
     try:
@@ -109,7 +168,8 @@ def mutation(name, path, before, after, command, logdir):
             result = subprocess.run(command, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT)
         if result.returncode == 0:
             raise RuntimeError(f"{name}: removed control was not detected")
-        red = (logdir / f"{name}-red.log").read_text()
+        # A crashing native test prints raw stack bytes; match on a lossy decode.
+        red = (logdir / f"{name}-red.log").read_bytes().decode("utf-8", errors="replace")
         executed_failure = (
             (command[0] == "cargo" and "test result: FAILED" in red)
             or (command[0] == "pnpm" and "FAIL  packages/connect/src/bridge-trust.test.ts" in red)
@@ -132,45 +192,66 @@ def mutation(name, path, before, after, command, logdir):
     print(f"{name}: green exit 0", flush=True)
 
 
+def check_anchors_or_exit():
+    """Refuse to start any mutation while any part of the table is stale."""
+    problems = anchor_problems(ROOT)
+    if problems:
+        for problem in problems:
+            print(problem, file=sys.stderr)
+        raise SystemExit(2)
+    table = anchor_table()
+    cases = len({name for name, *_rest in table})
+    return f"MUTATION_ANCHORS_OK: {len(table)} anchors in {cases} cases"
+
+
+def run_connect(logdir):
+    bridge_path, bridge_before, bridge_after = CONNECT_EDITS[0]
+    client_path, client_before, client_after = CONNECT_EDITS[1]
+    bridge = ROOT / bridge_path
+    client = ROOT / client_path
+    saved_bridge, saved_client = bridge.read_bytes(), client.read_bytes()
+    try:
+        source = saved_bridge.decode()
+        if source.count(bridge_before) != 1:
+            raise RuntimeError("connect: mutation target missing")
+        bridge.write_text(source.replace(bridge_before, bridge_after))
+        mutation("connect", client_path, client_before, client_after, CONNECT_COMMAND, logdir)
+    finally:
+        bridge.write_bytes(saved_bridge)
+        client.write_bytes(saved_client)
+    # Re-run with both independent gates restored.
+    subprocess.run(CONNECT_COMMAND, cwd=ROOT, check=True, stdout=subprocess.DEVNULL)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("cases", nargs="+", choices=list(CASES) + ["connect"])
-    parser.add_argument("--logs", type=Path, required=True)
+    known = list(CASES) + ["connect"]
+    # Checked below rather than with choices=: older argparse rejects an empty
+    # nargs="*" list against choices, which --check-anchors relies on.
+    parser.add_argument("cases", nargs="*", metavar="case", help=f"one of {', '.join(known)}")
+    parser.add_argument("--logs", type=Path)
+    parser.add_argument(
+        "--check-anchors",
+        action="store_true",
+        help="only check that every anchor in the table applies exactly as reviewed",
+    )
     args = parser.parse_args()
+    if not args.check_anchors and not args.cases:
+        parser.error("name at least one case, or pass --check-anchors")
+    unknown = [name for name in args.cases if name not in known]
+    if unknown:
+        parser.error(f"unknown case: {', '.join(unknown)}")
+    if args.cases and args.logs is None:
+        parser.error("--logs is required when running cases")
+    # The whole table is checked, not only the selected cases, before any build starts.
+    summary = check_anchors_or_exit()
+    if args.check_anchors:
+        print(summary)
+        raise SystemExit(0)
     os.environ.setdefault("TOS_ROOT", str(ROOT))
     args.logs.mkdir(parents=True, exist_ok=True)
     for name in args.cases:
         if name == "connect":
-            # Both the transport and consumer gates are removed to restore the
-            # original trust-on-first-envelope behavior. Restore both afterward.
-            a = ROOT / "sdk/js/packages/connect/src/bridge.ts"
-            b = ROOT / "sdk/js/packages/connect/src/TosConnect.ts"
-            saved_a, saved_b = a.read_bytes(), b.read_bytes()
-            try:
-                a.write_text(
-                    a.read_text().replace(
-                        "!senderPk || !this.walletPublicKey ||\n            bytesToHex(senderPk) !== bytesToHex(this.walletPublicKey)",
-                        "!senderPk",
-                    )
-                )
-                before = "if (!this._walletPublicKey || fromHex.toLowerCase() !== bytesToHex(this._walletPublicKey)) return;"
-                mutation(
-                    name,
-                    str(b.relative_to(ROOT)),
-                    before,
-                    "",
-                    ["pnpm", "--dir", "sdk/js", "--filter", "@tos/connect", "test"],
-                    args.logs.resolve(),
-                )
-            finally:
-                a.write_bytes(saved_a)
-                b.write_bytes(saved_b)
-            # Re-run with both independent gates restored.
-            subprocess.run(
-                ["pnpm", "--dir", "sdk/js", "--filter", "@tos/connect", "test"],
-                cwd=ROOT,
-                check=True,
-                stdout=subprocess.DEVNULL,
-            )
+            run_connect(args.logs.resolve())
         else:
             mutation(name, *CASES[name], args.logs.resolve())

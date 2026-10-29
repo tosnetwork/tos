@@ -21,7 +21,7 @@ use crate::{
 };
 use chain_block::{
     fail, Deserializable, ExceptionCode, GasLimitsPrices, HashmapE, MsgForwardPrices, Serializable,
-    Status, StoragePrices, VarUInteger32,
+    Status, StoragePrices,
 };
 
 fn execute_config_param(engine: &mut Engine, name: &'static str, opt: bool) -> Status {
@@ -53,11 +53,15 @@ pub(super) fn execute_extra_balance(engine: &mut Engine) -> Status {
     engine.load_instruction(Instruction::new("GETEXTRABALANCE"))?;
     fetch_stack(engine, 1)?;
     let index = engine.cmd.var(0).as_integer_value(0..=u32::MAX)?;
-    let extra = engine.smci_param(7)?.tuple_item_ref(7)?.as_dict()?;
+    let extra = engine.smci_param(7)?.tuple_item_ref(1)?.as_dict()?;
     let dict = HashmapE::with_hashmap(32, extra.cloned());
     let key = index.write_to_bitstring()?;
-    let value = if let Some(mut slice) = dict.get(key)? {
-        StackItem::int(VarUInteger32::construct_from(&mut slice)?.inner())
+    let value = if let Some(mut slice) = engine.lookup_extra_balance(&dict, key)? {
+        // VM integer loads permit leading zero bytes; strict block decoding does not.
+        let bytes = slice.get_next_int(5)? as usize;
+        let value =
+            num::BigInt::from_bytes_be(num::bigint::Sign::Plus, &slice.get_next_bytes(bytes)?);
+        StackItem::int(value)
     } else {
         StackItem::int(0)
     };
@@ -233,7 +237,8 @@ fn calc_gas_fee(engine: &mut Engine, name: &'static str, simple: bool) -> Status
     let index = if is_masterchain { 2 } else { 3 };
     let slice = engine.smci_extra_param(14, index)?.as_slice()?;
     let prices = GasLimitsPrices::construct_from(&mut slice.clone())?;
-    let gas_fee = if simple { prices.calc_gas_fee_simple(gas) } else { prices.calc_gas_fee(gas) };
+    let gas_fee =
+        if simple { prices.calc_gas_fee_simple(gas)? } else { prices.calc_gas_fee(gas)? };
     engine.cc.stack.push(StackItem::int(gas_fee));
     Ok(())
 }
