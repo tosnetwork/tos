@@ -634,13 +634,21 @@ mod persistence_tests {
         .await
     }
 
+    /// Owner-only, like a deployment directory; independent of the process umask.
+    fn private_dir() -> tempfile::TempDir {
+        tempfile::Builder::new()
+            .permissions(std::fs::Permissions::from_mode(0o700))
+            .tempdir()
+            .expect("private directory")
+    }
+
     #[tokio::test]
     #[allow(clippy::await_holding_lock, reason = "the guard must cover the drop and reopen")]
     async fn writer_lock_blocks_reopen_and_migration_until_drop() {
         use crate::storage::storage_trait::Storage;
         // No child may be forked while this test's lock is meant to be released.
         let _guard = crate::process_test_guard();
-        let dir = tempfile::tempdir().expect("directory");
+        let dir = private_dir();
         let path = dir.path().join("vault.json");
         let first = open(&path).await.expect("first instance");
         first.flush().await.expect("persist");
@@ -680,7 +688,7 @@ mod persistence_tests {
             );
             return;
         }
-        let dir = tempfile::tempdir().expect("directory");
+        let dir = private_dir();
         let path = dir.path().join("vault.json");
         let first = open(&path).await.expect("parent owns Vault");
         let child = |released: bool| {
@@ -713,7 +721,7 @@ mod persistence_tests {
 
     #[tokio::test]
     async fn save_does_not_follow_predictable_temporary_symlink() {
-        let dir = tempfile::tempdir().expect("directory");
+        let dir = private_dir();
         let path = dir.path().join("vault.json");
         let victim = dir.path().join("unrelated");
         std::fs::write(&victim, b"preserve unrelated file").expect("victim fixture");

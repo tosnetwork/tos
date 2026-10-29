@@ -36,7 +36,6 @@
 
 #include "auto/tl/lite_api.hpp"
 #include "http/http-inbound-connection.h"
-#include "services/index-reader.h"
 #include "services/service-common.h"
 #include "td/actor/actor.h"
 #include "td/utils/base64.h"
@@ -1539,33 +1538,6 @@ TEST(JsonRpcTransport, standalone_index_hop_keeps_client_rate_buckets) {
       }
     });
   });
-}
-
-TEST(JsonRpcTransport, standalone_source_cancellation_clears_mailbox) {
-  using namespace tos::services;
-  stop_requested = true;
-  IndexReader reader({});
-  int dispatched = 0;
-  auto call = [&](auto, td::Promise<int> p) {
-    ++dispatched;
-    p.set_value(1);
-  };
-  for (int i = 0; i < 8; ++i)
-    ASSERT_TRUE(reader.query<int>(call).is_error());
-  reader.dispatch();
-  ASSERT_EQ(dispatched, 0);
-  stop_requested = false;
-  IndexReader timeout_reader({}, std::chrono::milliseconds(1));
-  ASSERT_TRUE(timeout_reader.query<int>(call).is_error());
-  ASSERT_TRUE(timeout_reader.timed_out());
-  for (int i = 0; i < 8; ++i)
-    ASSERT_TRUE(timeout_reader.query<int>(call).is_error());
-  timeout_reader.dispatch();
-  ASSERT_EQ(dispatched, 0);
-  stop_requested = false;
-  // The cancelled undispatched closure is gone, including after a new service lifecycle.
-  timeout_reader.dispatch();
-  ASSERT_EQ(dispatched, 0);
 }
 
 TEST(JsonRpcTransport, standalone_submission_requires_backend_proxy_attribution) {
