@@ -13,9 +13,7 @@ from pathlib import Path
 
 def block(seqno: int) -> bytes:
     return (
-        struct.pack(">BiQI", 0, -1, 1 << 63, seqno)
-        + bytes([seqno]) * 32
-        + bytes([seqno + 1]) * 32
+        struct.pack(">BiQI", 0, -1, 1 << 63, seqno) + bytes([seqno]) * 32 + bytes([seqno + 1]) * 32
     )
 
 
@@ -56,20 +54,55 @@ def main() -> None:
         run("--action", "verify", "--snapshot", snapshot, code=2)
         run("--action", "verify", "--snapshot", snapshot, "--sha256", "z" * 64, code=2)
         run(
-            "--action", "verify", "--snapshot", snapshot, "--sha256", "0" * 64,
-            code=1, contains="trusted digest",
+            "--action",
+            "verify",
+            "--snapshot",
+            snapshot,
+            "--sha256",
+            "0" * 64,
+            code=1,
+            contains="trusted digest",
         )
-        run("--action", "verify", "--snapshot", snapshot, "--sha256", digest, contains="checkpoint=")
+        run(
+            "--action", "verify", "--snapshot", snapshot, "--sha256", digest, contains="checkpoint="
+        )
         restored = root / "index"
-        run("--action", "restore", "--snapshot", snapshot, "--sha256", digest, "--index-dir", restored)
+        run(
+            "--action",
+            "restore",
+            "--snapshot",
+            snapshot,
+            "--sha256",
+            digest,
+            "--index-dir",
+            restored,
+        )
         exported = root / "output.snapshot"
-        run("--action", "create", "--snapshot", exported, "--index-dir", restored, contains=f"sha256={digest}")
+        run(
+            "--action",
+            "create",
+            "--snapshot",
+            exported,
+            "--index-dir",
+            restored,
+            contains=f"sha256={digest}",
+        )
         assert exported.read_bytes() == snapshot.read_bytes()
         run(
-            "--action", "restore", "--snapshot", snapshot, "--sha256", digest, "--index-dir", restored,
-            code=1, contains="already exists",
+            "--action",
+            "restore",
+            "--snapshot",
+            snapshot,
+            "--sha256",
+            digest,
+            "--index-dir",
+            restored,
+            code=1,
+            contains="already exists",
         )
-        print("WALLET_INDEX_SNAPSHOT_CLI_OK: verify/restore/export round trip and refusal exit codes")
+        print(
+            "WALLET_INDEX_SNAPSHOT_CLI_OK: verify/restore/export round trip and refusal exit codes"
+        )
 
 
 if __name__ == "__main__":
