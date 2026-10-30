@@ -80,7 +80,9 @@ def request(port: int, method: str, path: str, body: bytes | None = None) -> tup
         connection.close()
 
 
-def check_running(process: subprocess.Popen, port: int, verification: str, answers: bool) -> None:
+def check_running(
+    process: subprocess.Popen[str], port: int, verification: str, answers: bool
+) -> None:
     """The service listens while it verifies, never ready, and shows the retries.
 
     `answers`: whether index queries are answered (flagged) or refused.
