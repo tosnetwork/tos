@@ -792,6 +792,45 @@ exchange (with and without a native start in between), and against a correctly
 signed donor whose history does not contain the held init block. The production
 verifier is exercised proving a required non-zero ancestor with its header proof.
 
+The init-block lifecycle has its own live fixture,
+`test/integration/node_sync_init_block.py`. Four PQ validators start from a
+Genesis in the previous absolute 2^17-second bucket. ConfigParam 36 preloads the
+same validator identities with a later validity interval; the configuration
+contract activates that set on chain after basechain progress, producing a real
+persistent key block. A fresh observer starts with that full init-block ID and no
+database or static Genesis files, downloads the persistent states from those
+validators and follows the chain. Its persisted StateDb init record must equal
+the held nonzero anchor. The production lifecycle test publishes from that
+observer, bootstraps an independently keyed, never-started receiver from the
+published catalog and reopens the installed receiver twice through the native
+verifier. Both the init block and the zero state must be proven from its frontier;
+neither a deleted Genesis file nor a manually rewritten StateDb is a join fixture.
+
+The fixture explicitly sets the native engine's
+`--test-state-serializer-no-delay` option so the normal randomized delay of up to
+six hours does not make CI probabilistic. It changes only when serialization is
+scheduled; the production serializer, proof validation and state downloader still
+run. The default is unchanged. Both fresh and restored starts refuse the option
+unless the **loaded on-chain global ID is 3**; the fixture checks IDs 1 and 2 and
+also proves that those same chains start without the option. CI requires the
+`NATIVE_INIT_BLOCK_JOIN_OK`, `NATIVE_SERIALIZER_NONLOCAL_REFUSAL_OK` and
+`PRODUCTION_INIT_BLOCK_PUBLISH_BOOTSTRAP_OK` markers. The corresponding Rust test
+uses `NODE_SYNC_NATIVE_INIT_ROOT` in addition to the ordinary native fixture
+environment. The `native-init-block-publisher-<commit>` CI artifact retains the
+join receipt, native validation result and lifecycle output for 14 days; database
+trees and node keys are excluded.
+
+`scripts/check-init-block-pre-anchor-control.py` is the red-before control for
+that test. It builds a worker whose validation path reads the held zero state with
+`GetState` and looks the init block up by height, as it did before anchors were
+proven with backward block proofs, and runs the same lifecycle test against it. The
+test must fail with the worker naming the zero-state read as the last failed check,
+because the joined observer never held the zero state. The same test is then run
+with the normal worker and must pass. The worker source is restored and its hash
+rechecked before the test is compiled; CI requires
+`INIT_BLOCK_PRE_ANCHOR_CONTROL_OK` and retains the control's JSON result and both
+outputs.
+
 Interruption hooks and manager overrides are compiled only under `cfg(test)` and
 the non-default `native-lifecycle-tests` feature. The build rejects that feature
 in the release profile; source guards reject default activation or unguarded hook

@@ -1,0 +1,21 @@
+INFO:tostester.network:Running node-0 and saving its raw log to /workspace/scratch/6bbaf75c3031/issue-360-live-2/nonlocal-1/node0/log
+INFO:node-0:[0][t 2][manager.cpp:2801][!manager] test-state-serializer-no-delay requires on-chain global id 3
+INFO:tostester.network:Running node-0 and saving its raw log to /workspace/scratch/6bbaf75c3031/issue-360-live-2/nonlocal-1/node0/log
+INFO:tostester.network:Running node-0 and saving its raw log to /workspace/scratch/6bbaf75c3031/issue-360-live-2/nonlocal-1/node0/log
+INFO:node-0:[0][t 1][manager.cpp:2818][!manager] test-state-serializer-no-delay requires on-chain global id 3
+INFO:tostester.network:Running node-0 and saving its raw log to /workspace/scratch/6bbaf75c3031/issue-360-live-2/nonlocal-2/node0/log
+INFO:node-0:[0][t 1][manager.cpp:2801][!manager] test-state-serializer-no-delay requires on-chain global id 3
+INFO:tostester.network:Running node-0 and saving its raw log to /workspace/scratch/6bbaf75c3031/issue-360-live-2/nonlocal-2/node0/log
+INFO:tostester.network:Running node-0 and saving its raw log to /workspace/scratch/6bbaf75c3031/issue-360-live-2/nonlocal-2/node0/log
+INFO:node-0:[0][t 2][manager.cpp:2818][!manager] test-state-serializer-no-delay requires on-chain global id 3
+NATIVE_SERIALIZER_NONLOCAL_REFUSAL_OK
+INFO:node-4:[2][t 2][state-serializer.cpp:225][!serializer] serializer delay = 0.000000s
+INFO:node-2:[2][t 1][state-serializer.cpp:225][!serializer] serializer delay = 0.000000s
+INFO:node-1:[2][t 2][state-serializer.cpp:225][!serializer] serializer delay = 0.000000s
+INFO:node-3:[2][t 1][state-serializer.cpp:225][!serializer] serializer delay = 0.000000s
+INFO:node-5:[2][t 2][download-state.cpp:1756][!downloadstate] finished downloading and storing shard state (-1,8000000000000000,192):AA50C1FD9DC1F7747E53720FFB522443A9589488B45AEC3E5225D6D32C5B3A40:AE70ECC443CFAFBEE2137AEAB49C8C7AA630514F4256E50595E3939CD3F19ECD
+INFO:node-5:[2][t 2][download-state.cpp:1756][!downloadstate] finished downloading and storing shard state (0,8000000000000000,191):E762A70473E0FD3720CA17B82BD84E6D5BDAA4FBFC5AF9DB84A68B5AA1C4FA28:A99CEB559CFD5518AF480D06175ABF81CAF380CBF494EFD1DC5F6BEA3EA4B291
+NATIVE_GENERATION_VALIDATED 218
+NATIVE_COLD_GENERATION_VALIDATED copied_bytes=1590897 generation=13b28511b701153a1cc784447ca7dd429977379cc2084f019b0c1310ed7e465d
+{"result": "NATIVE_INIT_BLOCK_JOIN_OK", "genesis_time": 1793196031, "init_block": {"@type": "tosNode.blockIdExt", "workchain": -1, "shard": -9223372036854775808, "seqno": 192, "root_hash": "qlDB/Z3B93R+U3IP+1IkQ6lYlIi0Wuw+UiXW0yxbOkA=", "file_hash": "rnDsxEPPr77iE3rqtJyMeqYwUU9CVuUFleOTnNPxns0="}, "frontier": {"@type": "tos.blockIdExt", "workchain": -1, "shard": -9223372036854775808, "seqno": 218, "root_hash": "i0HhUKMl5FrK0tdPSA6YCFEdnP5lH6cdd7gm4wbq63E=", "file_hash": "nqX10S4Ombq5P/ZwdqQPV9NyI1D7ULIDjkWBXsY5opQ="}, "source": "node5", "target": "node6", "zero_state_files": 0, "static_supplied": false}
+NATIVE_INIT_BLOCK_JOIN_OK

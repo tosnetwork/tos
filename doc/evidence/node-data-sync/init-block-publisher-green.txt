@@ -1,0 +1,8 @@
+running 1 test
+test native_lifecycle::production_init_block_source_publishes_and_bootstraps_a_third_node ...
+INIT_BLOCK_PUBLISH_RECEIPT {"generation":"dfd5f0b898e3bfa4efb4f2cb23a717e5ec80190ba7a44dda76902e601af72914","init_block":{"file_hash":"ae70ecc443cfafbee2137aeab49c8c7aa630514f4256e50595e3939cd3f19ecd","root_hash":"aa50c1fd9dc1f7747e53720ffb522443a9589488b45aec3e5225d6d32c5b3a40","seqno":192,"shard":-9223372036854775808,"workchain":-1},"receiver_preservation_checked_before_start":true,"validation":{"elapsed_millis":3783,"engine_sha256":"1b2e0efbceba4de52288e34e3a330c74e4ff36054f719496097ae4e79d88907f","finished_utc":1793260427,"frontier":{"file_hash":"9ea5f5d12e0e99bab93ff67076a40f57d3722350fb50b2038e45815ec639a294","root_hash":"8b41e150a325e45acad2d74f480e9808511d9cfe651fa71d77b826e306eaeb71","seqno":218,"shard":-9223372036854775808,"workchain":-1},"monitored_states_readable":true,"passes":2,"permanent_cells":false,"policy_sha256":"e88cb34c3431154163820ada51cb252ee14f56e2dac47ba7705c7e82ce3f7b62","recovery_context_sha256":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","recovery_resolved":true,"started_utc":1793260423},"zero_state_files":0}
+
+PRODUCTION_INIT_BLOCK_PUBLISH_BOOTSTRAP_OK
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 104 filtered out; finished in 95.47s

@@ -1,0 +1,15 @@
+running 1 test
+test native_lifecycle::production_init_block_source_publishes_and_bootstraps_a_third_node ...
+thread 'native_lifecycle::production_init_block_source_publishes_and_bootstraps_a_third_node' (155263) panicked at node-control/node-data-sync/src/../tests/support/native_lifecycle.rs:1339:5:
+create did not prove its held init block
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+FAILED
+
+failures:
+
+failures:
+    native_lifecycle::production_init_block_source_publishes_and_bootstraps_a_third_node
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 104 filtered out; finished in 35.10s
+
+error: test failed, to rerun pass `-p node-data-sync --lib`

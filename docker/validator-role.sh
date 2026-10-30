@@ -244,6 +244,7 @@ LONG_OPTIONS_WITHOUT_ARGUMENT="
   celldb-disable-bloom-filter
   unsynced-liteserver
   fast-state-serializer
+  test-state-serializer-no-delay
   disable-state-serializer
   permanent-celldb
   skip-key-sync
