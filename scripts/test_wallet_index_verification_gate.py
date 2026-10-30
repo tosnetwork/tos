@@ -8,6 +8,9 @@ index keeps running its verification: without --allow-partial-verification
 it answers no query, with it every history answer is flagged, and in both
 cases it is never ready while replay is held for that verification. A Refused
 or malformed state is never served, and the service exits before it listens.
+A fresh index is not served either until the source has shown whether it
+holds masterchain block 1 (a replay from it) or not (a build from the
+window's blocks).
 Each state is installed with the real snapshot tool, over a fixture node
 database that holds no chain, so every verification attempt fails with a
 retryable error that /readyz must show. A Full index is the control: the
@@ -28,6 +31,8 @@ from pathlib import Path
 # The wallet-index schema version the binaries under test write.
 SCHEMA = 4
 REFUSAL = "imported from an untrusted snapshot"
+# A case whose index directory the service creates itself.
+FRESH = b"fresh"
 NOT_VERIFIED = "not verified against this node's chain"
 
 
@@ -85,9 +90,11 @@ def check_running(
 ) -> None:
     """The service listens while it verifies, never ready, and shows the retries.
 
-    `answers`: whether index queries are answered (flagged) or refused.
+    `answers`: whether index queries are answered (flagged) or refused. The
+    query is checked as soon as the service listens, before anything else.
     """
     deadline = time.monotonic() + 30
+    queried = False
     while True:
         if process.poll() is not None:
             output, _ = process.communicate()
@@ -96,6 +103,9 @@ def check_running(
             status, body = request(port, "GET", "/readyz")
         except OSError:
             status, body = None, ""
+        if status is not None and not queried:
+            check_query(port, answers)
+            queried = True
         if status is not None:
             assert status == 503, (status, body)
             readyz = json.loads(body)
@@ -110,6 +120,10 @@ def check_running(
         if time.monotonic() > deadline:
             raise AssertionError((verification, "never reported a retried failure", body))
         time.sleep(0.2)
+
+
+def check_query(port: int, answers: bool) -> None:
+    """An index query is answered flagged, or refused with no history."""
     query = json.dumps(
         {
             "jsonrpc": "2.0",
@@ -120,11 +134,11 @@ def check_running(
     ).encode()
     status, body = request(port, "POST", "/jsonRPC", query)
     if answers:
-        assert NOT_VERIFIED not in body, (status, body)
-        assert '"history_verified":false' in body, (status, body)
+        assert NOT_VERIFIED not in body, ("query refused", status, body)
+        assert '"history_verified":false' in body, ("query answered unflagged", status, body)
     else:
-        assert NOT_VERIFIED in body, (status, body)
-        assert '"events"' not in body, body
+        assert NOT_VERIFIED in body, ("query answered", status, body)
+        assert '"events"' not in body, ("query answered", body)
 
 
 def main() -> None:
@@ -139,6 +153,7 @@ def main() -> None:
     # (name, state record, verification record, extra service flags, expected outcome)
     cases = [
         ("untrusted-import", None, None, [], "quarantined"),
+        ("fresh-unbuilt", FRESH, None, [], "quarantined"),
         ("partial", b"\x02", record, [], "partial"),
         ("partial-allowed", b"\x02", record, ["--allow-partial-verification"], "partial-answers"),
         ("refused", b"\x03", None, [], "refused"),
@@ -159,19 +174,27 @@ def main() -> None:
         for name, state, verification, flags, expected in cases:
             data = root / name
             data.mkdir()
-            file = root / f"{name}.snapshot"
-            file.write_bytes(snapshot(state, verification))
-            if state is None:
-                action = ["--action", "import-untrusted"]
-            else:
-                digest = hashlib.sha256(file.read_bytes()).hexdigest()
-                action = ["--action", "restore", "--sha256", digest]
-            subprocess.run(
-                [str(tool), *action, "--snapshot", str(file), "--index-dir", str(data / "index")],
-                check=True,
-                capture_output=True,
-                timeout=30,
-            )
+            if state != FRESH:
+                file = root / f"{name}.snapshot"
+                file.write_bytes(snapshot(state, verification))
+                if state is None:
+                    action = ["--action", "import-untrusted"]
+                else:
+                    digest = hashlib.sha256(file.read_bytes()).hexdigest()
+                    action = ["--action", "restore", "--sha256", digest]
+                subprocess.run(
+                    [
+                        str(tool),
+                        *action,
+                        "--snapshot",
+                        str(file),
+                        "--index-dir",
+                        str(data / "index"),
+                    ],
+                    check=True,
+                    capture_output=True,
+                    timeout=30,
+                )
             port = free_port()
             process = subprocess.Popen(
                 [
@@ -218,8 +241,8 @@ def main() -> None:
             else:
                 assert REFUSAL not in output and "verification state" not in output, (name, output)
     print(
-        "WALLET_INDEX_VERIFICATION_GATE_OK: unverified indexes are never served unflagged, never ready, "
-        "and malformed or refused states are refused before listening"
+        "WALLET_INDEX_VERIFICATION_GATE_OK: unverified and undecided fresh indexes are never served "
+        "unflagged, never ready, and malformed or refused states are refused before listening"
     )
 
 

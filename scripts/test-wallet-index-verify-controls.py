@@ -8,7 +8,12 @@ link check and its check of each handle against the block's own bytes, the
 check of the anchor against the node's first block, the per-row masterchain
 reference, the refusal of a row stored
 under another logical time, the refusal of in-window history left out
-entirely, and the marking of accounts the head state cannot vouch for. The
+entirely, and the marking of accounts the head state cannot vouch for; and
+for the build of a fresh index from the window's blocks: the per-account
+retention and trim, the drop of rows the base referenced, the binding to the
+head and its replacement, the refusal of a used index, the Quarantined
+state before any row, the interval bound, the link to the interval below,
+and the applied, held head. The
 named tests must fail with the mutation and pass again once the source is
 restored. The source is restored in `finally` and its hash is checked.
 """
@@ -27,6 +32,71 @@ WRITER = ROOT / "validator-engine/wallet-index-writer.cpp"
 TARGET = "test-wallet-index-source"
 
 MUTATIONS = [
+    (
+        "build-keeps-every-row-of-an-account",
+        "      if (list.size() > tos_wallet_index::kMaxEventsPerAccount) {\n"
+        "        list.resize(tos_wallet_index::kMaxEventsPerAccount);\n      }\n",
+        "",
+        ["WalletIndexVerify_a_build_keeps_the_newest_rows_of_an_account_per_interval"],
+    ),
+    (
+        "build-without-trim",
+        "      TRY_STATUS(db.trim_events(account, list.size()));\n",
+        "",
+        ["WalletIndexVerify_a_build_keeps_the_newest_rows_of_an_account_per_interval"],
+    ),
+    (
+        "build-keeps-rows-the-base-referenced",
+        "          if (lt <= bound) {\n            return td::Status::OK();\n          }\n"
+        "          // A transaction's cells",
+        "          // A transaction's cells",
+        ["WalletIndexVerify_a_fresh_index_is_built_from_the_windows_blocks"],
+    ),
+    (
+        "build-ignores-a-lost-binding",
+        "      bound = roots == record.roots;",
+        "      bound = true;",
+        ["WalletIndexVerify_a_build_on_a_lost_binding_is_replaced_before_anything_is_cleared"],
+    ),
+    (
+        "build-replacement-keeps-the-built-rows",
+        "      TRY_STATUS(db.clear_built_index());\n",
+        "",
+        ["WalletIndexVerify_a_build_on_a_lost_binding_is_replaced_before_anything_is_cleared"],
+    ),
+    (
+        "build-over-a-used-index",
+        '    if (!fresh) {\n      return terminal("an index that holds data',
+        '    if (false) {\n      return terminal("an index that holds data',
+        ["WalletIndexVerify_a_build_stops_at_a_bound_a_gap_or_an_unlinked_block"],
+    ),
+    (
+        "build-record-without-quarantine",
+        "    TRY_STATUS(db.put_verification_state(VerificationState::Quarantined));\n"
+        "    TRY_STATUS(db.put_build_record(record));",
+        "    TRY_STATUS(db.put_build_record(record));",
+        ["WalletIndexVerify_an_interrupted_build_resumes_to_the_same_index"],
+    ),
+    (
+        "build-interval-unbounded",
+        "          interval_bytes += kBuildRowBytes;\n          if (interval_bytes > limits.interval_bytes) {",
+        "          interval_bytes += kBuildRowBytes;\n          if (false) {",
+        ["WalletIndexVerify_a_build_stops_at_a_bound_a_gap_or_an_unlinked_block"],
+    ),
+    (
+        "build-without-the-link-below",
+        "                   (record.expected && block.value().prev && "
+        "block.value().prev.value() == record.expected.value()));\n    if (!linked",
+        "                   (record.expected && block.value().prev));\n    if (!linked",
+        ["WalletIndexVerify_a_build_stops_at_a_bound_a_gap_or_an_unlinked_block"],
+    ),
+    (
+        "build-head-unapplied-or-foreign",
+        "  if (!top || top.value().id != tip || !top.value().applied) {\n"
+        "    return terminal(\"the source's tip is not",
+        "  if (!top) {\n    return terminal(\"the source's tip is not",
+        ["WalletIndexVerify_a_build_starts_only_at_an_applied_held_head"],
+    ),
     (
         "foreign-checkpoint-accepted",
         "  if (top.value().id != checkpoint) {",
@@ -54,12 +124,13 @@ MUTATIONS = [
     (
         "handle-prev-trusted-over-the-bytes",
         [
-            # The preparation's walk and the block pass's walk each check it.
+            # One check, shared by the preparation's walk, the block pass's
+            # walk and the build.
             (
                 SOURCE,
                 "(block.prev && block.handle_prev && block.prev.value() == block.handle_prev.value());",
                 "(true);",
-                2,
+                1,
             ),
         ],
         None,
@@ -115,8 +186,8 @@ MUTATIONS = [
     ),
     (
         "block-pass-holds-no-interval-memory-bound",
-        "        if (interval_bytes > limits.interval_bytes) {",
-        "        if (false) {",
+        "\n        if (interval_bytes > limits.interval_bytes) {",
+        "\n        if (false) {",
         ["WalletIndexVerify_an_interval_over_the_memory_bound_stops_the_pass"],
     ),
     (

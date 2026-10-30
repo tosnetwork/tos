@@ -1,6 +1,7 @@
 /* Copyright 2026 TOS Blockchain Teams. SPDX-License-Identifier: GPL-3.0-or-later */
 #include <algorithm>
 #include <limits>
+#include <map>
 #include <mutex>
 
 #include "block/block-auto.h"
@@ -43,6 +44,13 @@ td::Status terminal(std::string message) {
 // A logic or data failure keeps its message and becomes terminal.
 td::Status terminal(const td::Status& status) {
   return td::Status::Error(kVerifyTerminalError, status.message());
+}
+
+// A block's previous identity, as its checked bytes name it, is the one the
+// node's handle records too.
+bool linked_inside(const VerifyMasterchainBlock& block) {
+  return (!block.prev && !block.handle_prev && block.id.seqno() == 1) ||
+         (block.prev && block.handle_prev && block.prev.value() == block.handle_prev.value());
 }
 
 std::string account_text(const td::Bits256& account) {
@@ -317,6 +325,54 @@ class ReaderVerifySource final : public VerifySource {
       const VerifyMasterchainBlock& master,
       const std::function<td::Status(const td::Bits256&, uint64_t, const td::Bits256&)>& cb,
       const std::atomic<bool>* cancel) override {
+    return for_each_interval_transaction_cell(
+        master,
+        [&](const td::Bits256& account, uint64_t lt, const td::Ref<vm::Cell>& cell) {
+          return cb(account, lt, cell->get_hash().bits());
+        },
+        cancel);
+  }
+  td::Result<BlockIdExt> first_block_from_head(const BlockIdExt& head) override {
+    TRY_RESULT(handle, reader_.masterchain(head.seqno()));
+    if (handle->id() != head || !handle->is_applied()) {
+      return terminal("the node's masterchain block differs from the head the index is built to");
+    }
+    TRY_RESULT(read, checked_block_root(reader_, handle));
+    if (!read) {
+      return terminal("the node does not hold the bytes of the head the index is built to");
+    }
+    block::gen::Block::Record block;
+    if (!tlb::unpack_cell(read.value(), block)) {
+      return terminal("the head's block does not decode");
+    }
+    vm::CellSlice update{vm::NoVm(), block.state_update};
+    if (!(update.is_special() && update.prefetch_long(8) == 4 && update.size_ext() == 0x20228)) {
+      return terminal("the head's block has no valid state update");
+    }
+    td::Bits256 new_state_hash = update.prefetch_ref(1)->get_hash(0).bits();
+    TRY_RESULT(state, reader_.state(handle));
+    td::Bits256 state_hash = td::Bits256::zero();
+    if (state.not_null()) {
+      state_hash = state->get_hash().bits();
+    }
+    if (state.is_null() || state_hash != new_state_hash) {
+      return terminal("the head's masterchain state is not the one its block names");
+    }
+    auto config = block::ConfigInfo::extract_config(state, head, block::ConfigInfo::needPrevBlocks);
+    if (config.is_error()) {
+      return terminal(PSTRING() << "the head's masterchain state does not decode: " << config.error().message());
+    }
+    BlockIdExt first;
+    if (!config.ok()->get_old_mc_block_id(1, first) || !first.is_masterchain_ext() || first.seqno() != 1 ||
+        !first.is_valid_full()) {
+      return terminal("the head's masterchain state does not record masterchain block 1");
+    }
+    return first;
+  }
+  td::Status for_each_interval_transaction_cell(
+      const VerifyMasterchainBlock& master,
+      const std::function<td::Status(const td::Bits256&, uint64_t, const td::Ref<vm::Cell>&)>& cb,
+      const std::atomic<bool>* cancel) override {
     auto seqno = master.id.seqno();
     TRY_RESULT(handle, reader_.masterchain(seqno));
     if (handle->id() != master.id) {
@@ -328,7 +384,7 @@ class ReaderVerifySource final : public VerifySource {
       return terminal(PSTRING() << "the shard blocks of masterchain block " << seqno
                                 << " cannot be walked: " << walked.error().message());
     }
-    return walk_interval_blocks(
+    return walk_interval_block_cells(
         walked.ok(), [this](const validator::BlockHandle& block) { return checked_block_root(reader_, block); }, cb,
         cancel);
   }
@@ -451,6 +507,81 @@ class TipTable {
   std::vector<std::vector<WindowShardTip>> blocks_;
 };
 
+// The window below `top`, which the node holds and has applied: walking
+// down over the contiguous run of blocks the node holds, each linked to the
+// one above it, to the window base (the last block generated more than the
+// retention period before `top`) or to the first block the node does not
+// hold. The tips of every walked block, oldest first; with a base it is the
+// table's first row.
+struct WindowWalk {
+  bool has_base = true;
+  uint32_t base = 0;
+  uint32_t horizon_time = 0;
+  TipTable table{0};
+};
+
+td::Result<WindowWalk> walk_window(VerifySource& source, VerifyMasterchainBlock top, size_t tip_table_bytes) {
+  // Walk down from the checkpoint over the contiguous run of blocks the node
+  // holds, each linked to the one above it, to the window base.
+  constexpr uint32_t retention = tos_wallet_index::kEventRetentionSeconds;
+  bool has_cutoff = top.unix_time > retention;
+  uint32_t cutoff = has_cutoff ? top.unix_time - retention : 0;
+  TipTable table(tip_table_bytes);
+  // A block's previous identity is taken from its checked bytes, and the
+  // node's handle must record the same.
+  if (!linked_inside(top)) {
+    return terminal(PSTRING() << "masterchain block " << top.id.seqno()
+                              << " is not linked: its bytes and the node's handle name different previous blocks");
+  }
+  auto above = top;
+  TRY_STATUS(table.push(std::move(top.tips)));
+  bool has_base = true;
+  uint32_t base = top.id.seqno();
+  uint32_t horizon_time = above.unix_time;
+  for (uint32_t seqno = top.id.seqno() - 1;; --seqno) {
+    if (seqno == 0) {
+      // Every block from the chain's first one is inside the window.
+      has_base = false;
+      base = 0;
+      horizon_time = 0;
+      break;
+    }
+    TRY_RESULT(block, source.masterchain_block(seqno));
+    if (!block) {
+      // The lowest block the node holds is the verified horizon; what it
+      // already referenced cannot be checked and is dropped.
+      break;
+    }
+    if (!above.prev || above.prev.value() != block.value().id) {
+      return terminal(PSTRING() << "the node's masterchain blocks " << seqno << " and " << seqno + 1
+                                << " are not linked");
+    }
+    if (!linked_inside(block.value())) {
+      return terminal(PSTRING() << "masterchain block " << seqno
+                                << " is not linked: its bytes and the node's handle name different previous blocks");
+    }
+    if (!block.value().applied) {
+      return terminal(PSTRING() << "the node holds masterchain block " << seqno << " but has not applied it");
+    }
+    base = seqno;
+    horizon_time = block.value().unix_time;
+    bool outside = has_cutoff && block.value().unix_time < cutoff;
+    above.id = block.value().id;
+    above.prev = block.value().prev;
+    TRY_STATUS(table.push(std::move(block.value().tips)));
+    if (outside) {
+      break;
+    }
+  }
+  table.finish(has_base ? base : 1);
+  WindowWalk window;
+  window.has_base = has_base;
+  window.base = base;
+  window.horizon_time = horizon_time;
+  window.table = std::move(table);
+  return window;
+}
+
 }  // namespace
 
 std::unique_ptr<VerifySource> make_reader_verify_source(IndexReader& reader) {
@@ -510,63 +641,11 @@ td::Result<VerifyOutcome> prepare_quarantined_index(WalletIndexDb& db, VerifySou
     anchor_verified = true;
   }
 
-  // Walk down from the checkpoint over the contiguous run of blocks the node
-  // holds, each linked to the one above it, to the window base.
-  constexpr uint32_t retention = tos_wallet_index::kEventRetentionSeconds;
-  bool has_cutoff = top.value().unix_time > retention;
-  uint32_t cutoff = has_cutoff ? top.value().unix_time - retention : 0;
-  TipTable table(limits.tip_table_bytes);
-  // A block's previous identity is taken from its checked bytes, and the
-  // node's handle must record the same.
-  auto linked_inside = [](const VerifyMasterchainBlock& block) {
-    return (!block.prev && !block.handle_prev && block.id.seqno() == 1) ||
-           (block.prev && block.handle_prev && block.prev.value() == block.handle_prev.value());
-  };
-  if (!linked_inside(top.value())) {
-    return terminal(PSTRING() << "masterchain block " << checkpoint.seqno()
-                              << " is not linked: its bytes and the node's handle name different previous blocks");
-  }
-  auto above = top.value();
-  TRY_STATUS(table.push(std::move(top.value().tips)));
-  bool has_base = true;
-  uint32_t base = checkpoint.seqno();
-  uint32_t horizon_time = above.unix_time;
-  for (uint32_t seqno = checkpoint.seqno() - 1;; --seqno) {
-    if (seqno == 0) {
-      // Every block from the chain's first one is inside the window.
-      has_base = false;
-      base = 0;
-      horizon_time = 0;
-      break;
-    }
-    TRY_RESULT(block, source.masterchain_block(seqno));
-    if (!block) {
-      // The lowest block the node holds is the verified horizon; what it
-      // already referenced cannot be checked and is dropped.
-      break;
-    }
-    if (!above.prev || above.prev.value() != block.value().id) {
-      return terminal(PSTRING() << "the node's masterchain blocks " << seqno << " and " << seqno + 1
-                                << " are not linked");
-    }
-    if (!linked_inside(block.value())) {
-      return terminal(PSTRING() << "masterchain block " << seqno
-                                << " is not linked: its bytes and the node's handle name different previous blocks");
-    }
-    if (!block.value().applied) {
-      return terminal(PSTRING() << "the node holds masterchain block " << seqno << " but has not applied it");
-    }
-    base = seqno;
-    horizon_time = block.value().unix_time;
-    bool outside = has_cutoff && block.value().unix_time < cutoff;
-    above.id = block.value().id;
-    above.prev = block.value().prev;
-    TRY_STATUS(table.push(std::move(block.value().tips)));
-    if (outside) {
-      break;
-    }
-  }
-  table.finish(has_base ? base : 1);
+  TRY_RESULT(window, walk_window(source, std::move(top.value()), limits.tip_table_bytes));
+  bool has_base = window.has_base;
+  uint32_t base = window.base;
+  uint32_t horizon_time = window.horizon_time;
+  auto& table = window.table;
   // With a base block it is row 0 of the table and assigns no row.
   size_t first = has_base ? 1 : 0;
   size_t last = table.size() - 1;
@@ -810,6 +889,15 @@ td::Status terminal_gap(const std::string& block) {
 td::Status walk_block_transactions(
     const td::Ref<vm::Cell>& root,
     const std::function<td::Status(const td::Bits256&, uint64_t, const td::Bits256&)>& cb) {
+  return walk_block_transaction_cells(root,
+                                      [&](const td::Bits256& account, uint64_t lt, const td::Ref<vm::Cell>& cell) {
+                                        return cb(account, lt, cell->get_hash().bits());
+                                      });
+}
+
+td::Status walk_block_transaction_cells(
+    const td::Ref<vm::Cell>& root,
+    const std::function<td::Status(const td::Bits256&, uint64_t, const td::Ref<vm::Cell>&)>& cb) {
   block::gen::Block::Record blk;
   block::gen::BlockExtra::Record extra;
   if (!(tlb::unpack_cell(root, blk) && tlb::unpack_cell(blk.extra, extra))) {
@@ -837,7 +925,7 @@ td::Status walk_block_transactions(
               if (!tlb::unpack_cell(cell, transaction)) {
                 return true;
               }
-              status = cb(account, static_cast<uint64_t>(transaction.lt), cell->get_hash().bits());
+              status = cb(account, static_cast<uint64_t>(transaction.lt), cell);
               return status.is_ok();
             });
         return walked && status.is_ok();
@@ -942,10 +1030,6 @@ td::Result<VerifyOutcome> run_block_pass_step(WalletIndexDb& db, VerifySource& s
     }
     base_tips = std::move(block.value().tips);
   }
-  auto linked_inside = [](const VerifyMasterchainBlock& block) {
-    return (!block.prev && !block.handle_prev && block.id.seqno() == 1) ||
-           (block.prev && block.handle_prev && block.prev.value() == block.handle_prev.value());
-  };
 
   if (record.phase == BlockPassPhase::Authenticate) {
     // Down from H to the block above the base, each block the one its
@@ -1225,6 +1309,190 @@ td::Result<VerifyOutcome> run_ownership_step(WalletIndexDb& db, VerifySource& so
   done.step = VerifyStep::Done;
   done.reason = PSTRING() << "fully verified; candidate losses superseded by the derivation at the head: "
                           << superseded.first << " lost, " << superseded.second << " unverifiable";
+  return done;
+}
+
+namespace {
+// A fresh build record: H = the source's tip, the window below it, H's roots.
+td::Result<WalletIndexDb::BuildRecord> new_build_record(VerifySource& source, const VerifyLimits& limits) {
+  TRY_RESULT(tip, source.tip());
+  if (!tip.is_masterchain() || tip.seqno() == 0) {
+    return td::Status::Error("source has no applied masterchain block");
+  }
+  TRY_RESULT(top, source.masterchain_block(tip.seqno()));
+  if (!top || top.value().id != tip || !top.value().applied) {
+    return terminal("the source's tip is not a masterchain block it holds and has applied");
+  }
+  TRY_RESULT(window, walk_window(source, std::move(top.value()), limits.tip_table_bytes));
+  WalletIndexDb::BuildRecord record;
+  record.schema = tos_wallet_index::kWalletIndexSchemaVersion;
+  record.head = tip;
+  TRY_RESULT_ASSIGN(record.roots, source.state_roots(tip));
+  record.base = window.has_base ? window.base : 0;
+  record.horizon_seqno = record.base;
+  record.horizon_time = window.horizon_time;
+  record.cursor = record.base + 1;
+  if (window.has_base) {
+    TRY_RESULT(base_block, source.masterchain_block(record.base));
+    if (!base_block) {
+      return terminal("the node no longer holds the window base it just walked to");
+    }
+    record.expected = base_block.value().id;
+  }
+  return record;
+}
+
+// One account's rows of one interval, newest kept first.
+struct IntervalRows {
+  std::vector<std::pair<uint64_t, td::Ref<vm::Cell>>> rows;
+};
+}  // namespace
+
+td::Result<VerifyOutcome> run_build_step(WalletIndexDb& db, VerifySource& source, const VerifyLimits& limits,
+                                         const std::atomic<bool>* cancel) {
+  auto stored = db.build_record();
+  if (stored.is_error()) {
+    return terminal(stored.error());
+  }
+  if (!stored.ok()) {
+    // Only an index nothing was ever written to is built.
+    TRY_RESULT(fresh, db.is_fresh());
+    if (!fresh) {
+      return terminal("an index that holds data and no build record is never built over");
+    }
+    TRY_RESULT(record, new_build_record(source, limits));
+    Batches batch(db, 1);
+    TRY_STATUS(batch.begin());
+    TRY_STATUS(db.put_verification_state(VerificationState::Quarantined));
+    TRY_STATUS(db.put_build_record(record));
+    TRY_STATUS(batch.commit());
+    return working(PSTRING() << "build: from masterchain block " << record.cursor << " to " << record.head.seqno());
+  }
+  auto record = stored.ok().value();
+  // The binding: H still held, applied, the same, with the same state roots.
+  {
+    TRY_RESULT(held, source.masterchain_block(record.head.seqno()));
+    bool bound = held && held.value().id == record.head && held.value().applied;
+    if (bound) {
+      TRY_RESULT(roots, source.state_roots(record.head));
+      bound = roots == record.roots;
+    }
+    if (!bound || record.schema != tos_wallet_index::kWalletIndexSchemaVersion) {
+      // The replacement is complete before anything is cleared; one batch
+      // swaps it in, so a restart always finds a build record.
+      TRY_RESULT(fresh, new_build_record(source, limits));
+      Batches batch(db, 1);
+      TRY_STATUS(batch.begin());
+      TRY_STATUS(db.clear_built_index());
+      TRY_STATUS(db.put_verification_state(VerificationState::Quarantined));
+      TRY_STATUS(db.put_build_record(fresh));
+      TRY_STATUS(batch.commit());
+      return working(PSTRING() << "build: restarted to masterchain block " << fresh.head.seqno());
+    }
+  }
+  const auto& head = record.head;
+  // Rows the base already referenced are not the window's, as the
+  // preparation and the block pass drop them.
+  bool has_base = record.base != 0;
+  std::vector<WindowShardTip> base_tips;
+  if (has_base && record.cursor <= head.seqno()) {
+    TRY_RESULT(base_block, source.masterchain_block(record.base));
+    if (!base_block) {
+      return terminal(PSTRING() << "the node no longer holds the window base, masterchain block " << record.base);
+    }
+    base_tips = std::move(base_block.value().tips);
+  }
+  for (uint32_t steps = 0; steps < limits.intervals_per_step && record.cursor <= head.seqno(); ++steps) {
+    if (cancel != nullptr && cancel->load()) {
+      return td::Status::Error("build interrupted");
+    }
+    auto seqno = record.cursor;
+    TRY_RESULT(block, source.masterchain_block(seqno));
+    if (!block) {
+      return terminal(PSTRING() << "the window has a gap: the node does not hold masterchain block " << seqno);
+    }
+    bool linked = linked_inside(block.value()) &&
+                  ((!record.expected && !block.value().prev) ||
+                   (record.expected && block.value().prev && block.value().prev.value() == record.expected.value()));
+    if (!linked || !block.value().applied || (seqno == head.seqno() && block.value().id != head)) {
+      return terminal(PSTRING() << "masterchain block " << seqno << " is not linked to the head the index is built to");
+    }
+    // Collect first: an account may gain more transactions in one interval
+    // than the retention keeps, and only the newest of them are written.
+    std::map<td::Bits256, IntervalRows> rows;
+    size_t interval_bytes = 0;
+    TRY_STATUS(source.for_each_interval_transaction_cell(
+        block.value(),
+        [&](const td::Bits256& account, uint64_t lt, const td::Ref<vm::Cell>& cell) -> td::Status {
+          TRY_RESULT(bound, base_lt_bound(base_tips, has_base, account));
+          if (lt <= bound) {
+            return td::Status::OK();
+          }
+          // A transaction's cells held until the batch, its row, its age row
+          // and its batch entries: a conservative bound per row.
+          constexpr size_t kBuildRowBytes = 4096;
+          interval_bytes += kBuildRowBytes;
+          if (interval_bytes > limits.interval_bytes) {
+            return terminal(PSTRING() << "masterchain interval " << seqno << " needs more than "
+                                      << (limits.interval_bytes >> 20) << " MiB to build; it is not built");
+          }
+          rows[account].rows.emplace_back(lt, cell);
+          return td::Status::OK();
+        },
+        cancel));
+    Batches batch(db, 1);
+    TRY_STATUS(batch.begin());
+    for (auto& [account, account_rows] : rows) {
+      auto& list = account_rows.rows;
+      std::sort(list.begin(), list.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+      if (list.size() > tos_wallet_index::kMaxEventsPerAccount) {
+        list.resize(tos_wallet_index::kMaxEventsPerAccount);
+      }
+      for (auto& [lt, cell] : list) {
+        TRY_STATUS(db.put_event(account, lt, cell));
+        TRY_STATUS(db.put_event_age(account, lt, seqno));
+      }
+      // Replay's per-account retention over what is already committed.
+      TRY_STATUS(db.trim_events(account, list.size()));
+    }
+    record.cursor = seqno + 1;
+    record.expected = block.value().id;
+    TRY_STATUS(db.put_build_record(record));
+    TRY_STATUS(batch.commit());
+  }
+  if (record.cursor <= head.seqno()) {
+    return working(PSTRING() << "build: at masterchain block " << record.cursor << " of " << head.seqno());
+  }
+  // Every interval up to H is in: publish the built index as Partial.
+  TRY_RESULT(first, source.first_block_from_head(head));
+  Batches batch(db, 1);
+  TRY_STATUS(batch.begin());
+  TRY_STATUS(db.erase_build_record());
+  TRY_STATUS(db.put_replay_checkpoint({first, head}));
+  TRY_STATUS(db.put_window_base(record.base));
+  WalletIndexDb::VerificationRecord verification;
+  verification.schema = record.schema;
+  verification.checkpoint = head;
+  verification.base = record.base;
+  verification.horizon_seqno = record.horizon_seqno;
+  verification.horizon_time = record.horizon_time;
+  verification.head = head;
+  verification.anchor_verified = true;
+  TRY_STATUS(db.put_verification_record(verification));
+  WalletIndexDb::BlockPassRecord pass;
+  pass.schema = record.schema;
+  pass.head = head;
+  pass.roots = record.roots;
+  pass.base = record.base;
+  pass.phase = BlockPassPhase::Done;
+  pass.cursor = head.seqno() + 1;
+  pass.expected = head;
+  TRY_STATUS(db.put_block_pass_record(pass));
+  TRY_STATUS(db.put_verification_state(VerificationState::Partial));
+  TRY_STATUS(batch.commit());
+  VerifyOutcome done;
+  done.step = VerifyStep::Done;
+  done.reason = PSTRING() << "built from masterchain block " << record.base + 1 << " to " << head.seqno();
   return done;
 }
 

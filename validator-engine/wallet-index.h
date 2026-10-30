@@ -448,6 +448,36 @@ class WalletIndexDb {
   // account with code there was derived again), returning their previous
   // counts (lost, unverifiable). Joins the current batch.
   td::Result<std::pair<uint64_t, uint64_t>> reset_superseded_token_losses();
+  // --- Bulk window builder (services/index-verify.h) ---
+  // Progress of building an index from the window's blocks, meta 0x00 0x34,
+  // bound to the head H it builds to, H's sorted state roots, the window
+  // base and the schema. Present from the first batch of a build, before
+  // any row, until the batch that publishes the built index.
+  struct BuildRecord {
+    uint32_t schema = 0;
+    tos::BlockIdExt head;
+    std::vector<td::Bits256> roots;
+    uint32_t base = 0;
+    uint32_t horizon_seqno = 0;
+    uint32_t horizon_time = 0;
+    // The next interval to build, and the identity of the one before it
+    // (unset when the window starts at the chain's first block).
+    uint32_t cursor = 0;
+    td::optional<tos::BlockIdExt> expected;
+  };
+  td::Result<td::optional<BuildRecord>> build_record();
+  // put and erase join the current batch.
+  td::Status put_build_record(const BuildRecord& record);
+  td::Status erase_build_record();
+  // Drop every row a build or a verification wrote (0x12, 0x14, 0x31, 0x35)
+  // and the block pass and ownership progress; joins the current batch.
+  td::Status clear_built_index();
+  // The replay checkpoint, into the current batch (commit_replay_checkpoint
+  // commits a batch of its own).
+  td::Status put_replay_checkpoint(const ReplayCheckpoint& checkpoint);
+  // An index nothing was ever written to: no checkpoint and no record but
+  // the schema.
+  td::Result<bool> is_fresh();
   // Tests only: count `lost` candidates given up (joins the current batch).
   td::Status add_lost_token_candidates_for_testing(uint64_t lost);
   // Prune events outside the window (at most age_rows_added + drain of them),

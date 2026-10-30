@@ -95,6 +95,11 @@ int main(int argc, char** argv) {
   bool prepared = false;
   // The block pass over the verified window has finished (stage 4a).
   bool pass_done = false;
+  // A fresh index is not served until the source has shown whether it holds
+  // masterchain block 1 (a fresh replay) or not (a build from the window).
+  bool deciding = false;
+  // The index is being built from the window's blocks (stage 4c).
+  bool building = false;
   {
     using tos_wallet_index::VerificationState;
     auto state = index.ok()->get_verification_state();
@@ -108,6 +113,22 @@ int main(int argc, char** argv) {
       return 2;
     }
     gate.set(state.ok());
+    auto fresh = index.ok()->is_fresh();
+    auto build = index.ok()->build_record();
+    if (fresh.is_error() || build.is_error()) {
+      LOG(ERROR) << "cannot read the index's state: " << (fresh.is_error() ? fresh.error() : build.error());
+      return 2;
+    }
+    if (build.ok()) {
+      // A build that did not finish: it resumes, never served meanwhile.
+      building = true;
+      gate.set(VerificationState::Quarantined);
+      gate.hold("build: resuming");
+    } else if (fresh.ok()) {
+      deciding = true;
+      gate.set(VerificationState::Quarantined);
+      gate.hold("deciding between a replay from block 1 and a build");
+    }
     if (record.ok()) {
       const auto& stored = record.ok().value();
       prepared = true;
@@ -244,6 +265,60 @@ int main(int argc, char** argv) {
         logged = current;
       }
       auto* index_db = tos_wallet_index::wallet_index_db();
+      if (deciding) {
+        // A node that has applied no masterchain block yet does not hold
+        // block 1 either: the decision waits for its first one.
+        auto tip = verify_source->tip();
+        if (tip.is_ok() && (!tip.ok().is_masterchain() || tip.ok().seqno() == 0)) {
+          tip = td::Status::Error("the source has applied no masterchain block yet");
+        }
+        if (tip.is_error()) {
+          if (stop_requested.load() ||
+              !verification_failed(tip.error(), "while waiting for the source's first block")) {
+            break;
+          }
+          continue;
+        }
+        auto first = verify_source->masterchain_block(1);
+        if (first.is_error()) {
+          if (stop_requested.load() || !verification_failed(first.error(), "while looking for masterchain block 1")) {
+            break;
+          }
+          continue;
+        }
+        gate.retry.succeeded();
+        deciding = false;
+        if (first.ok()) {
+          // A replay from block 1 builds a fully verified index by itself.
+          gate.release();
+          gate.set(tos_wallet_index::VerificationState::Full);
+        } else {
+          building = true;
+          LOG(WARNING) << "the source does not hold masterchain block 1: building the index from the window's blocks";
+        }
+        continue;
+      }
+      if (building) {
+        auto outcome = run_build_step(*index_db, *verify_source, VerifyLimits{}, &stop_requested);
+        if (outcome.is_error()) {
+          if (stop_requested.load() || !verification_failed(outcome.error(), "building from the window's blocks")) {
+            break;
+          }
+          continue;
+        }
+        gate.retry.succeeded();
+        auto& done = outcome.ok();
+        if (done.step == VerifyStep::Working) {
+          gate.hold(done.reason);
+          continue;
+        }
+        building = false;
+        pass_done = true;
+        gate.hold("ownership: starting");
+        gate.set(tos_wallet_index::VerificationState::Partial);
+        LOG(WARNING) << "the index was " << done.reason << "; deriving ownership at that head, replay held";
+        continue;
+      }
       auto action = next_service_action(gate.state(), prepared, pass_done);
       if (action == ServiceAction::Stop) {
         stop_with(2);

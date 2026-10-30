@@ -97,6 +97,15 @@ class VerifySource {
       const VerifyMasterchainBlock& master,
       const std::function<td::Status(const td::Bits256&, uint64_t, const td::Bits256&)>& cb,
       const std::atomic<bool>* cancel) = 0;
+  // The same transactions with their cells: (account, lt, cell).
+  virtual td::Status for_each_interval_transaction_cell(
+      const VerifyMasterchainBlock& master,
+      const std::function<td::Status(const td::Bits256&, uint64_t, const td::Ref<vm::Cell>&)>& cb,
+      const std::atomic<bool>* cancel) = 0;
+  // The full identity of masterchain block 1 as `head`'s masterchain state
+  // records it (its prev_blocks), the state first bound to the new state hash
+  // `head`'s checked block names. Terminal when either cannot be checked.
+  virtual td::Result<BlockIdExt> first_block_from_head(const BlockIdExt& head) = 0;
 };
 
 // Walk one interval's shard blocks in order: `read_root` gives a block's
@@ -106,12 +115,22 @@ template <class Block, class ReadRoot>
 td::Status walk_interval_blocks(const std::vector<Block>& blocks, ReadRoot read_root,
                                 const std::function<td::Status(const td::Bits256&, uint64_t, const td::Bits256&)>& cb,
                                 const std::atomic<bool>* cancel);
+// The same walk, handing over each transaction's cell.
+template <class Block, class ReadRoot>
+td::Status walk_interval_block_cells(
+    const std::vector<Block>& blocks, ReadRoot read_root,
+    const std::function<td::Status(const td::Bits256&, uint64_t, const td::Ref<vm::Cell>&)>& cb,
+    const std::atomic<bool>* cancel);
 
 // The basechain transactions a block's checked root holds, as replay indexes
-// them (entries replay skips are skipped here too): (account, lt, hash).
+// them (entries replay skips are skipped here too): (account, lt, hash), or
+// with the transaction's cell.
 td::Status walk_block_transactions(
     const td::Ref<vm::Cell>& root,
     const std::function<td::Status(const td::Bits256&, uint64_t, const td::Bits256&)>& cb);
+td::Status walk_block_transaction_cells(
+    const td::Ref<vm::Cell>& root,
+    const std::function<td::Status(const td::Bits256&, uint64_t, const td::Ref<vm::Cell>&)>& cb);
 
 // The production source: the node database through the index reader.
 std::unique_ptr<VerifySource> make_reader_verify_source(IndexReader& reader);
@@ -203,10 +222,11 @@ td::Result<bool> block_pass_done(tos_wallet_index::WalletIndexDb& db);
 
 td::Status terminal_gap(const std::string& block);
 
-template <class Block, class ReadRoot>
-td::Status walk_interval_blocks(const std::vector<Block>& blocks, ReadRoot read_root,
-                                const std::function<td::Status(const td::Bits256&, uint64_t, const td::Bits256&)>& cb,
-                                const std::atomic<bool>* cancel) {
+// The interval's blocks in order, each one's checked root handed to `walk`;
+// a block whose bytes the node does not hold is a gap and terminal.
+template <class Block, class ReadRoot, class Walk>
+td::Status walk_interval_roots(const std::vector<Block>& blocks, ReadRoot read_root, Walk walk,
+                               const std::atomic<bool>* cancel) {
   for (const auto& block : blocks) {
     if (cancel != nullptr && cancel->load()) {
       return td::Status::Error("block pass interrupted");
@@ -215,9 +235,26 @@ td::Status walk_interval_blocks(const std::vector<Block>& blocks, ReadRoot read_
     if (!root) {
       return terminal_gap(block->id().to_str());
     }
-    TRY_STATUS(walk_block_transactions(root.value(), cb));
+    TRY_STATUS(walk(root.value()));
   }
   return td::Status::OK();
+}
+
+template <class Block, class ReadRoot>
+td::Status walk_interval_blocks(const std::vector<Block>& blocks, ReadRoot read_root,
+                                const std::function<td::Status(const td::Bits256&, uint64_t, const td::Bits256&)>& cb,
+                                const std::atomic<bool>* cancel) {
+  return walk_interval_roots(
+      blocks, read_root, [&](const td::Ref<vm::Cell>& root) { return walk_block_transactions(root, cb); }, cancel);
+}
+
+template <class Block, class ReadRoot>
+td::Status walk_interval_block_cells(
+    const std::vector<Block>& blocks, ReadRoot read_root,
+    const std::function<td::Status(const td::Bits256&, uint64_t, const td::Ref<vm::Cell>&)>& cb,
+    const std::atomic<bool>* cancel) {
+  return walk_interval_roots(
+      blocks, read_root, [&](const td::Ref<vm::Cell>& root) { return walk_block_transaction_cells(root, cb); }, cancel);
 }
 
 // What the service's replay thread does next with its index. Replay, its
@@ -267,6 +304,27 @@ tos_wallet_index::Wc0IndexStateFetcher make_head_state_fetcher(
 // Pin the writer to H's states: drop the state it cached, then install the
 // pinned fetcher. The service does this before draining the token work.
 void pin_writer_to_head(std::vector<tos_wallet_index::OwnershipHeadState> states);
+
+// One bounded step of the bulk window builder (stage 4c): an index on a
+// source that does not hold masterchain block 1 is built from the window's
+// blocks instead of replayed from block 1.
+// 1. The first step (fresh index only) picks H = the source's tip and the
+//    window base as the preparation does, and writes the build record and
+//    the Quarantined state in one batch, before any row.
+// 2. Interval by interval from the base up to H, each linked to the one
+//    below it, every basechain transaction's row and age row, as replay
+//    writes them, at most kMaxEventsPerAccount new rows per account, then
+//    replay's per-account trim; one synced batch per interval with the
+//    record's progress.
+// 3. After H, one batch publishes: the replay checkpoint (block 1's identity
+//    from H's state), the window base, the verification and block-pass
+//    records (every row came from the blocks), and the Partial state; the
+//    ownership derivation (stage 4b) then makes it Full.
+// A record whose H or H's state roots the source no longer has is replaced,
+// with every built row cleared, in one batch. Returns Working, or Done when
+// the index is published as Partial.
+td::Result<VerifyOutcome> run_build_step(tos_wallet_index::WalletIndexDb& db, VerifySource& source,
+                                         const VerifyLimits& limits = {}, const std::atomic<bool>* cancel = nullptr);
 
 // Reason codes stored with an unverified account (0x31).
 enum class UnverifiedReason : uint8_t { Absent = 1, StartsInWindow = 2 };

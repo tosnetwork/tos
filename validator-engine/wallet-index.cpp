@@ -1276,6 +1276,147 @@ td::Result<std::pair<uint64_t, uint64_t>> WalletIndexDb::reset_superseded_token_
   return std::make_pair(lost, unverifiable);
 }
 
+namespace {
+// 0x00 0x34 -> build record: version(1) schema_be(4) head(block key, 81)
+// base_be(4) horizon_seqno_be(4) horizon_time_be(4) cursor_be(4)
+// has_expected(1) expected(block key, 81) roots_be(4) roots(32 each).
+constexpr uint8_t kMetaBuildSub = 0x34;
+constexpr size_t kBuildFixedLen = 1 + 4 + kIncompleteBlockKeyLen + 4 + 4 + 4 + 4 + 1 + kIncompleteBlockKeyLen + 4;
+}  // namespace
+
+td::Result<td::optional<WalletIndexDb::BuildRecord>> WalletIndexDb::build_record() {
+  char key[kMetaKeyLen];
+  make_meta_key(kMetaBuildSub, key);
+  std::string value;
+  TRY_RESULT(status, db_->get(td::Slice{key, kMetaKeyLen}, value));
+  if (status == td::KeyValue::GetStatus::NotFound) {
+    return td::optional<BuildRecord>{};
+  }
+  auto malformed = [] { return td::Status::Error("wc0-index: malformed build record"); };
+  if (value.size() < kBuildFixedLen || value[0] != 1) {
+    return malformed();
+  }
+  const char* p = value.data() + 1;
+  BuildRecord record;
+  record.schema = get_u32_be(p);
+  p += 4;
+  if (p[0] != 0) {
+    return malformed();
+  }
+  record.head = parse_block_key(td::Slice{p, kIncompleteBlockKeyLen});
+  p += kIncompleteBlockKeyLen;
+  record.base = get_u32_be(p);
+  record.horizon_seqno = get_u32_be(p + 4);
+  record.horizon_time = get_u32_be(p + 8);
+  record.cursor = get_u32_be(p + 12);
+  auto has_expected = static_cast<uint8_t>(p[16]);
+  p += 17;
+  if (has_expected > 1 || p[0] != 0) {
+    return malformed();
+  }
+  if (has_expected) {
+    record.expected = parse_block_key(td::Slice{p, kIncompleteBlockKeyLen});
+  }
+  p += kIncompleteBlockKeyLen;
+  auto roots = get_u32_be(p);
+  p += 4;
+  if (roots > kBlockPassMaxRoots || value.size() != kBuildFixedLen + size_t{32} * roots) {
+    return malformed();
+  }
+  for (uint32_t i = 0; i < roots; ++i, p += 32) {
+    td::Bits256 root;
+    std::memcpy(root.data(), p, 32);
+    record.roots.push_back(root);
+  }
+  if (!record.head.is_masterchain_ext() || !record.head.is_valid_full() || record.base > record.head.seqno() ||
+      record.cursor > record.head.seqno() + 1 || !std::is_sorted(record.roots.begin(), record.roots.end())) {
+    return malformed();
+  }
+  return td::optional<BuildRecord>(std::move(record));
+}
+
+td::Status WalletIndexDb::put_build_record(const BuildRecord& record) {
+  if (!batch_open_) {
+    return td::Status::Error("wc0-index: the build record requires a write batch");
+  }
+  if (record.roots.size() > kBlockPassMaxRoots) {
+    return td::Status::Error("wc0-index: too many shard states in the build record");
+  }
+  std::string value(kBuildFixedLen + 32 * record.roots.size(), '\0');
+  char* p = value.data();
+  p[0] = 1;
+  put_u32_be(p + 1, record.schema);
+  p += 5;
+  make_block_key(0, record.head, p);
+  p += kIncompleteBlockKeyLen;
+  put_u32_be(p, record.base);
+  put_u32_be(p + 4, record.horizon_seqno);
+  put_u32_be(p + 8, record.horizon_time);
+  put_u32_be(p + 12, record.cursor);
+  p[16] = record.expected ? 1 : 0;
+  p += 17;
+  if (record.expected) {
+    make_block_key(0, record.expected.value(), p);
+  }
+  p += kIncompleteBlockKeyLen;
+  put_u32_be(p, static_cast<uint32_t>(record.roots.size()));
+  p += 4;
+  for (const auto& root : record.roots) {
+    std::memcpy(p, root.data(), 32);
+    p += 32;
+  }
+  char key[kMetaKeyLen];
+  make_meta_key(kMetaBuildSub, key);
+  return db_->set(td::Slice{key, kMetaKeyLen}, td::Slice{value});
+}
+
+td::Status WalletIndexDb::erase_build_record() {
+  if (!batch_open_) {
+    return td::Status::Error("wc0-index: erasing the build record requires a write batch");
+  }
+  char key[kMetaKeyLen];
+  make_meta_key(kMetaBuildSub, key);
+  return db_->erase(td::Slice{key, kMetaKeyLen});
+}
+
+td::Status WalletIndexDb::clear_built_index() {
+  if (!batch_open_) {
+    return td::Status::Error("wc0-index: clearing a built index requires a write batch");
+  }
+  for (uint8_t tag : {kEventTag, kEventAgeTag, kUnverifiedAccountTag}) {
+    const char begin[1] = {static_cast<char>(tag)};
+    const char end[1] = {static_cast<char>(tag + 1)};
+    TRY_STATUS(db_->erase_range(td::Slice{begin, 1}, td::Slice{end, 1}));
+  }
+  return clear_block_pass_work();
+}
+
+td::Status WalletIndexDb::put_replay_checkpoint(const ReplayCheckpoint& checkpoint) {
+  if (!batch_open_) {
+    return td::Status::Error("wc0-index: the replay checkpoint requires a write batch");
+  }
+  char value[2 * kIncompleteBlockKeyLen];
+  make_block_key(0, checkpoint.anchor, value);
+  make_block_key(0, checkpoint.committed, value + kIncompleteBlockKeyLen);
+  const char key[2] = {0, 0x20};
+  return db_->set(td::Slice(key, 2), td::Slice(value, sizeof(value)));
+}
+
+td::Result<bool> WalletIndexDb::is_fresh() {
+  bool fresh = true;
+  auto status = db_->for_each([&](td::Slice key, td::Slice) {
+    if (key != td::Slice("\0\1", 2)) {
+      fresh = false;
+      return td::Status::Error("wc0-index: not fresh");
+    }
+    return td::Status::OK();
+  });
+  if (status.is_error() && fresh) {
+    return status.move_as_error();
+  }
+  return fresh;
+}
+
 td::Status WalletIndexDb::add_lost_token_candidates_for_testing(uint64_t lost) {
   if (!batch_open_) {
     return td::Status::Error("wc0-index: counting lost candidates requires a write batch");

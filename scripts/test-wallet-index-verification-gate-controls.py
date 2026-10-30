@@ -3,9 +3,13 @@
 
 Each control removes one guard, rebuilds the service, and requires the gate
 regression to fail; the source is then restored and the regression must pass.
-The guards are the service's startup refusal of a Refused index,
-and the JSON-RPC refusal of every index query while the index is not
-verified. Sources are restored in `finally` and their hashes are checked.
+The guards are the service's startup refusal of a Refused index, the
+JSON-RPC refusal of every index query while the index is not verified, and
+the Quarantined state a fresh index holds until the service has decided
+between a replay from block 1 and a build. A control naming the failure it
+expects requires the regression to fail with it: the fresh index's control
+must fail on an answered query. Sources are restored in `finally` and their
+hashes are checked.
 """
 
 import argparse
@@ -21,12 +25,21 @@ CONTROLS = [
         ROOT / "services/index-main.cpp",
         "    if (state.ok() == VerificationState::Refused) {",
         "    if (false) {",
+        None,
     ),
     (
         "query refusal",
         ROOT / "validator-engine/json-rpc-server.cpp",
         "  if (opts_.index_only && opts_.index_serving && !opts_.index_serving()) {",
         "  if (false) {",
+        None,
+    ),
+    (
+        "fresh index held until decided",
+        ROOT / "services/index-main.cpp",
+        "      deciding = true;\n      gate.set(VerificationState::Quarantined);",
+        "      deciding = true;",
+        "query answered",
     ),
 ]
 
@@ -49,8 +62,8 @@ def build(build_dir: Path, jobs: int) -> None:
     )
 
 
-def gate(build_dir: Path) -> int:
-    return subprocess.run(
+def gate(build_dir: Path) -> tuple[int, str]:
+    result = subprocess.run(
         [
             sys.executable,
             str(ROOT / "scripts/test_wallet_index_verification_gate.py"),
@@ -61,9 +74,12 @@ def gate(build_dir: Path) -> int:
             "--source-fixture-binary",
             str(build_dir / "wallet-index-source-fixture"),
         ],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    ).returncode
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        errors="replace",
+    )
+    return result.returncode, result.stdout
 
 
 def main() -> int:
@@ -72,27 +88,28 @@ def main() -> int:
     parser.add_argument("--jobs", type=int, default=2)
     args = parser.parse_args()
     build_dir = args.build_dir.resolve()
-    for name, source, guard, _ in CONTROLS:
+    for name, source, guard, _, _ in CONTROLS:
         if source.read_text().count(guard) != 1:
             raise RuntimeError(f"{name} anchor is not unique")
     build(build_dir, args.jobs)
-    if gate(build_dir) != 0:
+    if gate(build_dir)[0] != 0:
         print("the gate regression fails on the unmodified source", file=sys.stderr)
         return 1
     failed = []
-    for name, source, guard, removed in CONTROLS:
+    for name, source, guard, removed, expected in CONTROLS:
         original = source.read_bytes()
         digest = hashlib.sha256(original).hexdigest()
         try:
             source.write_text(original.decode().replace(guard, removed, 1))
             build(build_dir, args.jobs)
-            red = gate(build_dir) != 0
+            code, output = gate(build_dir)
+            red = code != 0 and (expected is None or expected in output)
         finally:
             source.write_bytes(original)
         if hashlib.sha256(source.read_bytes()).hexdigest() != digest:
             raise RuntimeError(f"{source} was not restored")
         build(build_dir, args.jobs)
-        green = gate(build_dir) == 0
+        green = gate(build_dir)[0] == 0
         print(f"{name}: red={red} green={green}")
         if not red or not green:
             failed.append(name)

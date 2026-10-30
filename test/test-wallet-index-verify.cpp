@@ -199,6 +199,22 @@ struct FixtureSource final : public VerifySource {
     }
     return td::Status::OK();
   }
+  td::Status for_each_interval_transaction_cell(
+      const VerifyMasterchainBlock& master,
+      const std::function<td::Status(const td::Bits256&, uint64_t, const td::Ref<vm::Cell>&)>& cb,
+      const std::atomic<bool>*) override {
+    for (auto& cell : interval_cells[master.id.seqno()]) {
+      auto link = tos_wallet_index::parse_transaction_link(cell).move_as_ok();
+      TRY_STATUS(cb(link.account, link.lt, cell));
+    }
+    return td::Status::OK();
+  }
+  td::Result<BlockIdExt> first_block_from_head(const BlockIdExt& head) override {
+    if (head != master_id(head.seqno()) || !first_block) {
+      return td::Status::Error(tos::services::kVerifyTerminalError, "the head's state does not record block 1");
+    }
+    return first_block.value();
+  }
   // The window's blocks hold these transactions, each in the interval of the
   // first masterchain block whose tip for its shard ends above it.
   void hold(const std::vector<td::Ref<vm::Cell>>& cells) {
@@ -207,6 +223,7 @@ struct FixtureSource final : public VerifySource {
       for (uint32_t m = 1; m <= tip_seqno; ++m) {
         if (tos_wallet_index::window_lt_bound(blocks.at(m).tips, link.account).move_as_ok() > link.lt) {
           intervals[m].emplace_back(link.account, link.lt, link.hash);
+          interval_cells[m].push_back(cell);
           break;
         }
       }
@@ -214,6 +231,9 @@ struct FixtureSource final : public VerifySource {
   }
   td::Bits256 root = td::Bits256::zero();
   std::map<uint32_t, std::vector<std::tuple<td::Bits256, uint64_t, td::Bits256>>> intervals;
+  std::map<uint32_t, std::vector<td::Ref<vm::Cell>>> interval_cells;
+  // Block 1's identity as the head's state records it.
+  td::optional<BlockIdExt> first_block = master_id(1);
   // H's basechain shard states, for the ownership derivation.
   std::vector<tos_wallet_index::OwnershipHeadState> states;
   uint32_t tip_seqno;
@@ -1423,4 +1443,329 @@ TEST(WalletIndexVerify, the_serving_gate_follows_the_verification_state) {
   ASSERT_TRUE(contains(lenient.json_fields(),
                        "\"verification\":\"partial\",\"verified_horizon\":{\"masterchain_seqno\":13,\"unix_time\":"
                        "1300000,\"unverified_accounts\":2}"));
+}
+
+namespace {
+using tos::services::run_build_step;
+
+td::Result<tos::services::VerifyOutcome> build_to_end(TempIndex& index, FixtureSource& source,
+                                                      const VerifyLimits& limits = {}) {
+  for (int i = 0; i < 100000; ++i) {
+    TRY_RESULT(outcome, run_build_step(*index.db, source, limits));
+    if (outcome.step != VerifyStep::Working) {
+      return outcome;
+    }
+  }
+  return td::Status::Error("the build never finished");
+}
+
+// A HeadCase whose window's blocks hold every transaction of its accounts,
+// with two empty basechain shard states at the head for the derivation.
+void held(HeadCase& c) {
+  c.source.states = halves(fixture::shard_state({}), fixture::shard_state({}));
+  for (auto* chain : {&c.linked, &c.created, &c.destroyed, &c.dormant})
+    c.source.hold(*chain);
+}
+
+std::vector<td::Ref<vm::Cell>> every_row(HeadCase& c) {
+  std::vector<td::Ref<vm::Cell>> all;
+  for (auto* chain : {&c.linked, &c.created, &c.destroyed, &c.dormant})
+    all.insert(all.end(), chain->begin(), chain->end());
+  return all;
+}
+
+void reopen(TempIndex& index) {
+  index.db.reset();
+  index.db = WalletIndexDb::open(index.dir + "/index").move_as_ok();
+}
+
+bool same_rows(HeadCase& c, TempIndex& left, TempIndex& right) {
+  if (left.ages() != right.ages()) {
+    return false;
+  }
+  for (auto& account : {c.a, c.b, c.d, c.e, c.f}) {
+    if (left.lts(account) != right.lts(account)) {
+      return false;
+    }
+  }
+  return true;
+}
+}  // namespace
+
+// A fresh index built from the window's blocks holds the rows and age rows
+// an import of every row prepared at the same head would hold, and is
+// published Partial at that head with its block pass done; the ownership
+// derivation then makes it Full.
+TEST(WalletIndexVerify, a_fresh_index_is_built_from_the_windows_blocks) {
+  HeadCase c;
+  held(c);
+  TempIndex built, imported;
+  ASSERT_TRUE(built.db->is_fresh().move_as_ok());
+  auto outcome = build_to_end(built, c.source).move_as_ok();
+  ASSERT_TRUE(outcome.step == VerifyStep::Done);
+  imported.import(master_id(22), every_row(c));
+  ASSERT_TRUE(prepare_quarantined_index(*imported.db, c.source).move_as_ok().step == VerifyStep::Done);
+  ASSERT_TRUE(!built.ages().empty());
+  ASSERT_TRUE(same_rows(c, built, imported));
+  // Rows the window base referenced are not built: the dormant account's.
+  ASSERT_TRUE(built.lts(c.e).empty());
+  ASSERT_TRUE(built.state() == VerificationState::Partial);
+  ASSERT_TRUE(!built.db->build_record().move_as_ok());
+  auto checkpoint = built.db->replay_checkpoint().move_as_ok().value();
+  ASSERT_TRUE(checkpoint.anchor == master_id(1) && checkpoint.committed == master_id(22));
+  auto record = built.db->verification_record().move_as_ok().value();
+  auto expected = imported.db->verification_record().move_as_ok().value();
+  ASSERT_EQ(record.base, expected.base);
+  ASSERT_EQ(record.horizon_seqno, expected.horizon_seqno);
+  ASSERT_EQ(record.horizon_time, expected.horizon_time);
+  ASSERT_TRUE(record.checkpoint == master_id(22) && record.head && record.head.value() == master_id(22));
+  ASSERT_EQ(built.db->get_window_base().move_as_ok(), record.base);
+  ASSERT_TRUE(block_pass_done(*built.db).move_as_ok());
+  ASSERT_TRUE(no_marks(built));
+  ASSERT_TRUE(ownership_to_end(built, c.source).move_as_ok().step == VerifyStep::Done);
+  ASSERT_TRUE(built.state() == VerificationState::Full);
+}
+
+// A restart after the Partial publication and before the derivation is
+// done finds an index that is neither fresh nor being built: the service
+// holds it for ownership at the built head, which then makes it Full.
+TEST(WalletIndexVerify, a_restart_after_the_build_resumes_the_derivation) {
+  using tos::services::next_service_action;
+  using tos::services::ServiceAction;
+  HeadCase c;
+  held(c);
+  auto wallet = address(0x10), owner = address(0x05), master = address(0x90);
+  c.source.states = halves(fixture::shard_state({fixture::token_wallet(wallet, owner, master)}),
+                           fixture::shard_state({fixture::token_master(master, wallet)}));
+  TempIndex index;
+  ASSERT_TRUE(build_to_end(index, c.source).move_as_ok().step == VerifyStep::Done);
+  VerifyLimits small;
+  small.ownership_per_step = 1;
+  ASSERT_TRUE(tos::services::run_ownership_step(*index.db, c.source, small).move_as_ok().step == VerifyStep::Working);
+  ASSERT_TRUE(index.state() == VerificationState::Partial);
+  reopen(index);
+  ASSERT_TRUE(!index.db->is_fresh().move_as_ok());
+  ASSERT_TRUE(!index.db->build_record().move_as_ok());
+  bool prepared = static_cast<bool>(index.db->verification_record().move_as_ok());
+  bool pass_done = block_pass_done(*index.db).move_as_ok();
+  ASSERT_TRUE(next_service_action(index.state(), prepared, pass_done) == ServiceAction::HoldForOwnership);
+  ASSERT_TRUE(ownership_to_end(index, c.source).move_as_ok().step == VerifyStep::Done);
+  ASSERT_TRUE(index.state() == VerificationState::Full);
+  ASSERT_TRUE(index.db->token_wallet_state(wallet).move_as_ok().value().present);
+}
+
+// A build in steps, interrupted by a restart, ends with what one straight
+// build writes; until it is published the index is Quarantined, its record
+// written with that state before any row.
+TEST(WalletIndexVerify, an_interrupted_build_resumes_to_the_same_index) {
+  VerifyLimits small;
+  small.intervals_per_step = 1;
+  HeadCase straight, stepped;
+  held(straight);
+  held(stepped);
+  TempIndex straight_index, stepped_index;
+  ASSERT_TRUE(build_to_end(straight_index, straight.source).move_as_ok().step == VerifyStep::Done);
+  auto first = run_build_step(*stepped_index.db, stepped.source, small).move_as_ok();
+  ASSERT_TRUE(first.step == VerifyStep::Working);
+  ASSERT_TRUE(stepped_index.state() == VerificationState::Quarantined);
+  ASSERT_TRUE(stepped_index.ages().empty());
+  auto record = stepped_index.db->build_record().move_as_ok().value();
+  ASSERT_TRUE(record.head == master_id(22));
+  ASSERT_EQ(record.cursor, record.base + 1);
+  for (int i = 0; i < 3; ++i) {
+    ASSERT_TRUE(run_build_step(*stepped_index.db, stepped.source, small).move_as_ok().step == VerifyStep::Working);
+  }
+  ASSERT_EQ(stepped_index.db->build_record().move_as_ok().value().cursor, record.base + 4);
+  reopen(stepped_index);
+  ASSERT_TRUE(stepped_index.state() == VerificationState::Quarantined);
+  ASSERT_TRUE(build_to_end(stepped_index, stepped.source, small).move_as_ok().step == VerifyStep::Done);
+  ASSERT_TRUE(same_rows(straight, straight_index, stepped_index));
+  ASSERT_TRUE(stepped_index.state() == VerificationState::Partial);
+}
+
+// A build whose head the source no longer holds as recorded (other state
+// roots, or a substituted block) is replaced: the replacement is computed
+// first, and only then are the built rows cleared, in the batch that writes
+// it. When it cannot be computed nothing is cleared.
+TEST(WalletIndexVerify, a_build_on_a_lost_binding_is_replaced_before_anything_is_cleared) {
+  VerifyLimits small;
+  small.intervals_per_step = 1;
+  {
+    HeadCase c;
+    held(c);
+    TempIndex index;
+    for (int i = 0; i < 4; ++i)
+      ASSERT_TRUE(run_build_step(*index.db, c.source, small).move_as_ok().step == VerifyStep::Working);
+    auto rows = index.ages();
+    ASSERT_TRUE(!rows.empty());
+    auto before = index.db->build_record().move_as_ok().value();
+    c.source.states[0].root = fixture::shard_state({fixture::without_code(address(0x33))});
+    // The replacement's window walk fails: the build stays as it was.
+    c.source.errors[18] = "transient read failure";
+    auto failed = run_build_step(*index.db, c.source, small);
+    ASSERT_TRUE(failed.is_error() && !tos::services::is_terminal_verify_error(failed.error()));
+    ASSERT_TRUE(index.ages() == rows);
+    ASSERT_EQ(index.db->build_record().move_as_ok().value().cursor, before.cursor);
+    c.source.errors.clear();
+    auto restarted = run_build_step(*index.db, c.source, small).move_as_ok();
+    ASSERT_TRUE(restarted.step == VerifyStep::Working && contains(restarted.reason, "restarted"));
+    ASSERT_TRUE(index.ages().empty());
+    auto replaced = index.db->build_record().move_as_ok().value();
+    ASSERT_TRUE(replaced.roots != before.roots);
+    ASSERT_EQ(replaced.cursor, replaced.base + 1);
+    ASSERT_TRUE(index.state() == VerificationState::Quarantined);
+    // The rebuilt index is the one a straight build over the new states writes.
+    HeadCase fresh;
+    held(fresh);
+    fresh.source.states = c.source.states;
+    TempIndex straight;
+    ASSERT_TRUE(build_to_end(straight, fresh.source).move_as_ok().step == VerifyStep::Done);
+    ASSERT_TRUE(build_to_end(index, c.source).move_as_ok().step == VerifyStep::Done);
+    ASSERT_TRUE(same_rows(c, straight, index));
+  }
+  {
+    // The head block substituted under the same seqno: never built to.
+    HeadCase c;
+    held(c);
+    TempIndex index;
+    for (int i = 0; i < 2; ++i)
+      ASSERT_TRUE(run_build_step(*index.db, c.source, small).move_as_ok().step == VerifyStep::Working);
+    auto rows = index.ages();
+    c.source.blocks[22].id = master_id(22, 5);
+    auto refused = run_build_step(*index.db, c.source, small);
+    ASSERT_TRUE(refused.is_error() && tos::services::is_terminal_verify_error(refused.error()));
+    ASSERT_TRUE(index.ages() == rows);
+    ASSERT_TRUE(index.db->build_record().move_as_ok().value().head == master_id(22));
+  }
+}
+
+// The head must be a block the source holds and has applied, with its full
+// identity; anything else is terminal before a record is written.
+TEST(WalletIndexVerify, a_build_starts_only_at_an_applied_held_head) {
+  for (int variant = 0; variant < 2; ++variant) {
+    HeadCase c;
+    held(c);
+    if (variant == 0) {
+      c.source.blocks[22].applied = false;
+    } else {
+      c.source.blocks[22].id = master_id(22, 5);
+    }
+    TempIndex index;
+    auto outcome = run_build_step(*index.db, c.source);
+    ASSERT_TRUE(outcome.is_error() && tos::services::is_terminal_verify_error(outcome.error()));
+    ASSERT_TRUE(index.db->is_fresh().move_as_ok());
+  }
+}
+
+// Block 1's identity comes from the head's state; when that state does not
+// record it the build is never published, and the index stays Quarantined
+// with its record until it can be.
+TEST(WalletIndexVerify, a_build_is_published_only_with_block_1_from_the_heads_state) {
+  HeadCase c;
+  held(c);
+  c.source.first_block = {};
+  TempIndex index;
+  auto outcome = build_to_end(index, c.source);
+  ASSERT_TRUE(outcome.is_error() && tos::services::is_terminal_verify_error(outcome.error()));
+  ASSERT_TRUE(index.state() == VerificationState::Quarantined);
+  ASSERT_TRUE(!index.db->replay_checkpoint().move_as_ok());
+  ASSERT_TRUE(!index.db->verification_record().move_as_ok());
+  ASSERT_TRUE(index.db->build_record().move_as_ok().value().cursor == 23u);
+  c.source.first_block = master_id(1, 9);
+  ASSERT_TRUE(build_to_end(index, c.source).move_as_ok().step == VerifyStep::Done);
+  ASSERT_TRUE(index.db->replay_checkpoint().move_as_ok().value().anchor == master_id(1, 9));
+}
+
+// One account with more transactions in one interval than the retention
+// keeps gets only its newest kMaxEventsPerAccount; later intervals trim it
+// as replay does.
+TEST(WalletIndexVerify, a_build_keeps_the_newest_rows_of_an_account_per_interval) {
+  // Left tips end at 20000 * s: at head 22 the base is 15, interval 16
+  // spans logical times [300000, 320000).
+  FixtureSource source(22, 1, 20000);
+  auto big = address(0x70);
+  std::vector<uint64_t> lts;
+  for (uint64_t lt = 300001; lt <= 310005; ++lt)
+    lts.push_back(lt);
+  for (uint64_t lt = 320001; lt <= 320003; ++lt)
+    lts.push_back(lt);
+  source.hold(history(big, lts, 299000));
+  ASSERT_EQ(source.interval_cells[16].size(), 10005u);
+  VerifyLimits small;
+  small.intervals_per_step = 1;
+  TempIndex index;
+  ASSERT_TRUE(run_build_step(*index.db, source, small).move_as_ok().step == VerifyStep::Working);
+  ASSERT_EQ(index.db->build_record().move_as_ok().value().base, 15u);
+  ASSERT_TRUE(run_build_step(*index.db, source, small).move_as_ok().step == VerifyStep::Working);
+  auto after16 = index.lts(big);
+  ASSERT_EQ(after16.size(), tos_wallet_index::kMaxEventsPerAccount);
+  ASSERT_EQ(*after16.begin(), 300006u);
+  ASSERT_EQ(*after16.rbegin(), 310005u);
+  ASSERT_TRUE(build_to_end(index, source, small).move_as_ok().step == VerifyStep::Done);
+  auto kept = index.lts(big);
+  ASSERT_EQ(kept.size(), tos_wallet_index::kMaxEventsPerAccount);
+  ASSERT_EQ(*kept.begin(), 300009u);
+  ASSERT_EQ(*kept.rbegin(), 320003u);
+}
+
+// The build stops as terminal, without advancing, at an interval over the
+// memory bound, a gap that appeared in the window, or a block not linked to
+// the one below it; and an index holding data without a build record is
+// never built over.
+TEST(WalletIndexVerify, a_build_stops_at_a_bound_a_gap_or_an_unlinked_block) {
+  VerifyLimits small;
+  small.intervals_per_step = 1;
+  auto stops_at = [&](HeadCase& c, TempIndex& index, const VerifyLimits& limits, const std::string& reason) {
+    auto cursor = index.db->build_record().move_as_ok().value().cursor;
+    td::Result<tos::services::VerifyOutcome> outcome = td::Status::Error("not run");
+    for (int i = 0; i < 100; ++i) {
+      outcome = run_build_step(*index.db, c.source, limits);
+      if (outcome.is_error() || outcome.ok().step != VerifyStep::Working) {
+        break;
+      }
+      cursor = index.db->build_record().move_as_ok().value().cursor;
+    }
+    CHECK(outcome.is_error() && tos::services::is_terminal_verify_error(outcome.error()));
+    CHECK(contains(outcome.error().message().str(), reason));
+    CHECK(index.db->build_record().move_as_ok().value().cursor == cursor);
+    CHECK(index.state() == VerificationState::Quarantined);
+  };
+  {
+    HeadCase c;
+    held(c);
+    TempIndex index;
+    ASSERT_TRUE(run_build_step(*index.db, c.source, small).move_as_ok().step == VerifyStep::Working);
+    VerifyLimits tight = small;
+    tight.interval_bytes = 100;
+    stops_at(c, index, tight, "MiB to build");
+  }
+  {
+    HeadCase c;
+    held(c);
+    TempIndex index;
+    ASSERT_TRUE(run_build_step(*index.db, c.source, small).move_as_ok().step == VerifyStep::Working);
+    c.source.blocks.erase(18);
+    stops_at(c, index, small, "the window has a gap");
+  }
+  {
+    HeadCase c;
+    held(c);
+    TempIndex index;
+    ASSERT_TRUE(run_build_step(*index.db, c.source, small).move_as_ok().step == VerifyStep::Working);
+    // The block's bytes and its handle agree, on a block that is not the
+    // one the build linked last.
+    c.source.blocks[18].prev = master_id(17, 3);
+    c.source.blocks[18].handle_prev = master_id(17, 3);
+    stops_at(c, index, small, "is not linked");
+  }
+  {
+    HeadCase c;
+    held(c);
+    TempIndex index;
+    index.add(c.linked.front());
+    auto outcome = run_build_step(*index.db, c.source);
+    ASSERT_TRUE(outcome.is_error() && tos::services::is_terminal_verify_error(outcome.error()));
+    ASSERT_TRUE(contains(outcome.error().message().str(), "never built over"));
+    ASSERT_TRUE(!index.db->build_record().move_as_ok());
+  }
 }

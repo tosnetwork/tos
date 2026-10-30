@@ -1227,6 +1227,34 @@ class ChainVerifySource final : public VerifySource {
   }
   // The interval's shard blocks, walked by the production interval walk: a
   // block whose bytes the fixture lost is not held.
+  td::Status for_each_interval_transaction_cell(
+      const VerifyMasterchainBlock& master,
+      const std::function<td::Status(const td::Bits256&, uint64_t, const td::Ref<vm::Cell>&)>& cb,
+      const std::atomic<bool>* cancel) override {
+    std::vector<validator::BlockHandle> blocks;
+    for (auto& id : chain_->order.at(master.id.seqno())) {
+      blocks.push_back(chain_->shards.at(id));
+    }
+    auto chain = chain_;
+    return walk_interval_block_cells(
+        blocks,
+        [chain](const validator::BlockHandle& block) -> td::Result<td::optional<td::Ref<vm::Cell>>> {
+          if (chain->data.count(block->id()) == 0) {
+            return td::optional<td::Ref<vm::Cell>>{};
+          }
+          TRY_RESULT(data, block_from(*chain, block->id()));
+          return td::optional<td::Ref<vm::Cell>>(data->root_cell());
+        },
+        cb, cancel);
+  }
+  td::Result<BlockIdExt> first_block_from_head(const BlockIdExt&) override {
+    if (!first_block) {
+      return td::Status::Error(kVerifyTerminalError, "no block 1 recorded");
+    }
+    return first_block.value();
+  }
+  // Block 1's identity, kept when the source no longer holds it.
+  td::optional<BlockIdExt> first_block;
   td::Status for_each_interval_transaction(
       const VerifyMasterchainBlock& master,
       const std::function<td::Status(const td::Bits256&, uint64_t, const td::Bits256&)>& cb,
