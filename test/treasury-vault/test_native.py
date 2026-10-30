@@ -9,20 +9,61 @@ import hashlib
 import json
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-from wire import (ADMIN_DOMAIN, ADMIN_TTL, APPLY, APPROVE, CANCEL_PAYMENT, COIN,
-                  DELAY, EXPIRE_ADMIN, EXPIRE_PAYMENT, MAX_COINS, MAX_COUNTER,
-                  PAUSE, PAYMENT_TTL, ROOT, SCHEDULE, SUBMIT, TOKEN_TRANSFER,
-                  VETO, WINDOW, asset_record, control, decode_asset,
-                  decode_message, decode_state, envelope, payment, request,
-                  roles, set_asset, set_roles, state_data, unpause)
-from cells import Cell, from_boc, make_dict, read_dict
-from native import (GLOBAL_ID, NOW, Emulator, account_data, active_account,
-                    compile_contract, config, distinct_cells, external,
-                    internal, outgoing, state_init, uninitialized_account)
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "test/auth-extensions"))
+
+from cells import Cell, from_boc, make_dict, read_dict  # noqa: E402
+from native import (  # noqa: E402
+    GLOBAL_ID,
+    NOW,
+    Emulator,
+    account_data,
+    active_account,
+    compile_contract,
+    config,
+    distinct_cells,
+    external,
+    internal,
+    outgoing,
+    state_init,
+    uninitialized_account,
+)
+from wire import (  # noqa: E402
+    APPLY,
+    APPROVE,
+    CANCEL_PAYMENT,
+    COIN,
+    DELAY,
+    EXPIRE_ADMIN,
+    EXPIRE_PAYMENT,
+    MAX_COINS,
+    MAX_COUNTER,
+    PAUSE,
+    PAYMENT_TTL,
+    SCHEDULE,
+    SUBMIT,
+    TOKEN_TRANSFER,
+    VETO,
+    WINDOW,
+    asset_record,
+    control,
+    decode_asset,
+    decode_message,
+    decode_state,
+    envelope,
+    payment,
+    request,
+    roles,
+    set_asset,
+    set_roles,
+    state_data,
+    unpause,
+)
 
 BUSINESS, GUARDIAN, COLD, PAUSER, OTHER, TARGET = [(0, x) for x in range(11, 17)]
 SOURCE_WALLET, TOKEN_ID = (0, 101), 501
@@ -70,19 +111,29 @@ class Vault:
     def req(self, payload=None, *, admin=False, **overrides):
         state = self.state
         return request(
-            overrides.get("vault", self.address), overrides.get("epoch", state["epoch"]),
+            overrides.get("vault", self.address),
+            overrides.get("epoch", state["epoch"]),
             overrides.get("nonce", state["admin_nonce" if admin else "payment_nonce"]),
             overrides.get("deadline", self.now + (DELAY + 3600 if admin else 600)),
             payload if payload is not None else payment(0, COIN, TARGET),
-            network=overrides.get("network", GLOBAL_ID), admin=admin,
+            network=overrides.get("network", GLOBAL_ID),
+            admin=admin,
         )
 
     def ctl(self, op, admin=False):
         state = self.state
         return control(op, state["epoch"], state["admin_nonce" if admin else "payment_nonce"])
 
-    def send(self, body, sender=OTHER, *, expected=0, value=COIN // 2,
-             bounced=False, action_failure=False):
+    def send(
+        self,
+        body,
+        sender=OTHER,
+        *,
+        expected=0,
+        value=COIN // 2,
+        bounced=False,
+        action_failure=False,
+    ):
         before = self.data.hash
         result = self.e.send(self.shard, internal(sender, self.address, body, value, bounced))
         assert result["success"], result
@@ -183,9 +234,13 @@ class TreasuryTests(unittest.TestCase):
         v.send(envelope(SUBMIT, v.req(nonce=7)), BUSINESS, expected=2410)
 
     def test_domain_account_network_epoch_and_expiry(self):
-        cases = [({"vault": OTHER}, 2402), ({"network": GLOBAL_ID + 1}, 2408),
-                 ({"epoch": 7}, 2409), ({"deadline": NOW}, 2411),
-                 ({"deadline": NOW + PAYMENT_TTL + 1}, 2411)]
+        cases = [
+            ({"vault": OTHER}, 2402),
+            ({"network": GLOBAL_ID + 1}, 2408),
+            ({"epoch": 7}, 2409),
+            ({"deadline": NOW}, 2411),
+            ({"deadline": NOW + PAYMENT_TTL + 1}, 2411),
+        ]
         for fields, expected in cases:
             with self.subTest(fields=fields):
                 v = self.vault()
@@ -273,8 +328,9 @@ class TreasuryTests(unittest.TestCase):
         self.assertEqual((msg["target"], msg["value"]), (SOURCE_WALLET, COIN // 100))
         s = msg["body"].slice()
         self.assertEqual((s.uint(32), s.uint(64), s.coins()), (TOKEN_TRANSFER, 0, 99))
-        self.assertEqual((s.addr(), s.addr(), s.uint(1), s.coins(), s.uint(1)),
-                         (TARGET, v.address, 0, 0, 0))
+        self.assertEqual(
+            (s.addr(), s.addr(), s.uint(1), s.coins(), s.uint(1)), (TARGET, v.address, 0, 0, 0)
+        )
         s.end()
         self.assertEqual(v.budget()["cumulative"], 0)
         self.assertEqual(v.budget(TOKEN_ID)["cumulative"], 99)
@@ -367,8 +423,10 @@ class TreasuryTests(unittest.TestCase):
 
     def test_source_wallet_binding_and_aliases(self):
         v = self.vault()
-        for payload in (set_asset(TOKEN_ID, (0, 999), 100, 150, 200),
-                        set_asset(TOKEN_ID + 1, SOURCE_WALLET, 100, 150, 200)):
+        for payload in (
+            set_asset(TOKEN_ID, (0, 999), 100, 150, 200),
+            set_asset(TOKEN_ID + 1, SOURCE_WALLET, 100, 150, 200),
+        ):
             v.send(envelope(SCHEDULE, v.req(payload, admin=True)), COLD, expected=2413)
 
     def test_role_aliases_fail_on_chain(self):
@@ -428,11 +486,14 @@ class TreasuryTests(unittest.TestCase):
 
     def test_funding_and_storage_reserve(self):
         v = self.vault()
-        v.send(envelope(SUBMIT, v.req()), BUSINESS, expected=2421, value=1)
+        # Fund compute while staying below the 0.1 TOS control-message minimum.
+        # One nanotoken skips compute and never reaches the contract's guard.
+        v.send(envelope(SUBMIT, v.req()), BUSINESS, expected=2421, value=COIN // 20)
         # A funded guardian message must not turn the inbound fee contribution
         # into unbudgeted principal available to this payment.
-        v = self.vault(records={0: asset_record(per=1000 * COIN, window=1000 * COIN,
-                                               total=1000 * COIN)})
+        v = self.vault(
+            records={0: asset_record(per=1000 * COIN, window=1000 * COIN, total=1000 * COIN)}
+        )
         req = v.propose(payment(0, 1000 * COIN, TARGET))
         v.send(envelope(APPROVE, req), GUARDIAN, expected=2421)
 
@@ -442,9 +503,16 @@ class TreasuryTests(unittest.TestCase):
         entries = read_dict(config(), 32)
         # Deterministically make an outgoing message cost more than the funded
         # fee contribution. Principal must remain reserved, not pay that fee.
-        entries[25] = Cell().ref(Cell().uint(0xEA, 8).uint(2 * COIN, 64)
-                                .uint(0, 64).uint(0, 64).uint(0, 32)
-                                .uint(21845, 16).uint(21845, 16))
+        entries[25] = Cell().ref(
+            Cell()
+            .uint(0xEA, 8)
+            .uint(2 * COIN, 64)
+            .uint(0, 64)
+            .uint(0, 64)
+            .uint(0, 32)
+            .uint(21845, 16)
+            .uint(21845, 16)
+        )
         v.e.close()
         v.e = Emulator.from_config(make_dict(entries, 32))
         v.send(envelope(APPROVE, req), GUARDIAN, action_failure=True)
@@ -472,8 +540,11 @@ class TreasuryTests(unittest.TestCase):
         self.assertTrue(result["success"], result)
         self.assertFalse(result["details"]["aborted"], result["details"])
         self.assertEqual(account_data(from_boc(result["shard_account"]))[0].slice().coins(), 950)
-        delivered = [m for m in outgoing(from_boc(result["transaction"]))
-                     if decode_message(m)["target"] == recipient_wallet]
+        delivered = [
+            m
+            for m in outgoing(from_boc(result["transaction"]))
+            if decode_message(m)["target"] == recipient_wallet
+        ]
         self.assertEqual(len(delivered), 1)
         recipient = uninitialized_account(recipient_wallet, balance=0)
         result = v.e.send(recipient, delivered[0])
@@ -485,10 +556,15 @@ class TreasuryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     result = unittest.main(verbosity=2, exit=False).result
-    report = dict(source_sha256=hashlib.sha256(SOURCE.read_bytes()).hexdigest(),
-                  tests=result.testsRun, failures=len(result.failures), errors=len(result.errors),
-                  skipped=len(result.skipped), max_observed_gas=max(GAS, default=0),
-                  code_hash=CODE.hash.hex() if CODE is not None else None)
+    report = dict(
+        source_sha256=hashlib.sha256(SOURCE.read_bytes()).hexdigest(),
+        tests=result.testsRun,
+        failures=len(result.failures),
+        errors=len(result.errors),
+        skipped=len(result.skipped),
+        max_observed_gas=max(GAS, default=0),
+        code_hash=CODE.hash.hex() if CODE is not None else None,
+    )
     path = os.environ.get("TREASURY_RESULTS")
     if path:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
