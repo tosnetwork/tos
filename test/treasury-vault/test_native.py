@@ -126,16 +126,21 @@ class Vault:
 
     def send(
         self,
-        body,
+        body=None,
         sender=OTHER,
         *,
         expected=0,
         value=COIN // 2,
         bounced=False,
         action_failure=False,
+        message=None,
     ):
+        """Deliver a synthetic internal message, or `message` exactly as another
+        account emitted it."""
         before = self.data.hash
-        result = self.e.send(self.shard, internal(sender, self.address, body, value, bounced))
+        if message is None:
+            message = internal(sender, self.address, body, value, bounced)
+        result = self.e.send(self.shard, message)
         assert result["success"], result
         details = result["details"]
         self.shard = from_boc(result["shard_account"])

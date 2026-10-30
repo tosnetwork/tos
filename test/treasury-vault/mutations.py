@@ -10,7 +10,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE = ROOT / "crypto/smartcont/treasury-vault-code.fc"
-TEST = Path(__file__).with_name("test_native.py")
+SUITES = {"test_native.py": "TreasuryTests", "test_wallets.py": "WalletTests"}
+# (name, anchor, replacement, targeted test[, suite file]); the suite defaults
+# to the synthetic-sender regressions.
 MUTATIONS = (
     (
         "control_funding",
@@ -84,13 +86,22 @@ MUTATIONS = (
         ";; removed pauser self-replacement veto guard",
         "test_replaced_pauser_cannot_veto_its_replacement",
     ),
+    (
+        "guardian_wallet",
+        "throw_unless(tv::sender, equal_slice_bits(sender, v_guardian));",
+        ";; removed guardian guard",
+        "test_business_wallet_cannot_approve_its_own_proposal",
+        "test_wallets.py",
+    ),
 )
 
 
 def main():
     original = SOURCE.read_text()
     receipts = []
-    for name, old, new, test in MUTATIONS:
+    for name, old, new, test, *suite in MUTATIONS:
+        suite = suite[0] if suite else "test_native.py"
+        script = Path(__file__).with_name(suite)
         if original.count(old) != 1:
             raise RuntimeError(f"{name}: expected one mutation anchor, found {original.count(old)}")
         with tempfile.TemporaryDirectory(prefix=f"treasury-{name}-") as temp:
@@ -98,8 +109,9 @@ def main():
             mutant.write_text(original.replace(old, new, 1))
             env = dict(os.environ, TREASURY_SOURCE=str(mutant))
             env.pop("TREASURY_RESULTS", None)
+            env.pop("TREASURY_WALLET_RESULTS", None)
             result = subprocess.run(
-                [sys.executable, str(TEST), f"TreasuryTests.{test}"],
+                [sys.executable, str(script), f"{SUITES[suite]}.{test}"],
                 env=env,
                 text=True,
                 capture_output=True,
@@ -113,6 +125,7 @@ def main():
             receipts.append(
                 dict(
                     name=name,
+                    suite=suite,
                     test=test,
                     exit_code=result.returncode,
                     source_sha256=hashlib.sha256(mutant.read_bytes()).hexdigest(),

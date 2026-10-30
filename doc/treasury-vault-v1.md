@@ -52,11 +52,14 @@ Provide deterministic request/state builders and getters for configuration, pend
 
 V1's initial registry is empty. The first asset registration uses the same delayed governance path as subsequent ones. Operations must maintain storage reserves on the vault and its authorizing accounts. No production deployment or asset migration is performed by this implementation PR.
 
+The cold administrator leg is not yet executed end to end: the repository tests drive the vault's governance entry points with the cold address as a synthetic sender. Before any funding, an acceptance run must execute the actual cold multisig contract: a below-threshold set of signers produces no governance proposal, a threshold set produces one, and the vault still enforces its own 48-hour delay afterwards. This gate is tracked as issue #378.
+
 ## Acceptance tests
 
-Tests must compile the current source and execute full transactions on the native action-phase emulator. A Python model or successful FunC compilation alone is not execution evidence. Required scenarios:
+Tests must compile the current source and execute full transactions on the native action-phase emulator. A Python model or successful FunC compilation alone is not execution evidence. The business and guardian roles must additionally be exercised through real signing wallets: an Ed25519 key signs an external message, the wallet executes on the emulator, and its actual emitted internal message is delivered to the vault unchanged. Required scenarios:
 
 - business-only, guardian-only, forged sender, wrong request and repeated approval rejection;
+- through real wallets: a signed business proposal and signed guardian approval pay out, the business wallet cannot approve, a guardian approval for other content is refused, an emitted approval cannot be delivered twice, and a message signed with the wrong key is refused by the wallet before it reaches the vault;
 - correct native payout and exact Token outgoing wire/body/destination;
 - per-payment, window and cumulative ceilings, split payments and independent assets;
 - wrong chain/account/domain/epoch/nonce, expiry and malformed/trailing input;

@@ -8,6 +8,7 @@ on:
       - 'crypto/smartcont/stdlib.fc'
       - 'crypto/smartcont/token-wallet.tol'
       - 'crypto/smartcont/token-wallet-fee-profile.tol'
+      - 'crypto/smartcont/wallet-v5-code.fc'
       - 'crypto/smartcont/tol-stdlib/**'
       - 'test/treasury-vault/**'
       - 'test/auth-extensions/cells.py'
@@ -35,6 +36,8 @@ jobs:
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
           cmake --build build --target func fift tol emulator -j"$(nproc)"
+      - name: Install the wallet signing test dependency
+        run: python3 -m pip install cryptography==46.0.4
       - name: Execute native transaction and Token integration regressions
         env:
           FUNC_PATH: ${{ github.workspace }}/build/crypto/func
@@ -43,12 +46,14 @@ jobs:
           EMULATOR_PATH: ${{ github.workspace }}/build/emulator/libemulator.so
           TREASURY_RESULTS: ${{ runner.temp }}/treasury/results.json
           TREASURY_MUTATION_RESULTS: ${{ runner.temp }}/treasury/mutations.json
+          TREASURY_WALLET_RESULTS: ${{ runner.temp }}/treasury/wallets.json
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/treasury"
           git rev-parse HEAD > "$RUNNER_TEMP/treasury/reviewed-head.txt"
           python3 -m py_compile test/treasury-vault/*.py
           python3 test/treasury-vault/test_native.py 2>&1 | tee "$RUNNER_TEMP/treasury/native.log"
+          python3 test/treasury-vault/test_wallets.py 2>&1 | tee "$RUNNER_TEMP/treasury/wallets.log"
           python3 test/treasury-vault/mutations.py 2>&1 | tee "$RUNNER_TEMP/treasury/mutations.log"
           git diff --exit-code
       - name: Preserve bounded execution evidence
