@@ -78,36 +78,38 @@ global slice v_guardian;
 global slice v_cold;
 global slice v_pauser;
 
-slice tv_slice(cell c) inline {
+;; Read-only validators are impure because their exceptions are observable,
+;; including when the caller needs validation but discards the returned value.
+slice tv_slice(cell c) impure inline {
   throw_if(tv::encoding, cell_null?(c));
   var (s, exotic) = tv_raw(c);
   throw_unless(tv::encoding, (exotic == 0) & (tv_level(c) == 0));
   return s;
 }
 
-int tv_checked_counter(int n) inline {
+int tv_checked_counter(int n) impure inline {
   throw_unless(tv::overflow, (n >= 0) & (n < tv::max_counter));
   return n + 1;
 }
 
-int tv_checked_add(int a, int b) inline {
+int tv_checked_add(int a, int b) impure inline {
   throw_unless(tv::overflow, (a >= 0) & (b >= 0) & (b <= tv::max_coins));
   throw_unless(tv::overflow, a <= tv::max_coins - b);
   return a + b;
 }
 
-int tv_checked_sub(int a, int b) inline {
+int tv_checked_sub(int a, int b) impure inline {
   throw_unless(tv::funding, (b >= 0) & (a >= b));
   return a - b;
 }
 
-int tv_checked_time(int a, int b) inline {
+int tv_checked_time(int a, int b) impure inline {
   int result = tv_checked_add(a, b);
   throw_unless(tv::overflow, result <= 4294967295);
   return result;
 }
 
-() tv_require_address(slice a) inline {
+() tv_require_address(slice a) impure inline {
   throw_unless(tv::address, (a.slice_bits() == 267) & (a.slice_refs() == 0));
   throw_unless(tv::address, a.preload_uint(3) == 4);
   (int wc, _) = parse_std_addr(a);
@@ -115,7 +117,7 @@ int tv_checked_time(int a, int b) inline {
   throw_if(tv::address, equal_slice_bits(a, my_address()));
 }
 
-(slice, slice, slice, slice) tv_read_roles(cell roles) inline {
+(slice, slice, slice, slice) tv_read_roles(cell roles) impure inline {
   slice s = tv_slice(roles);
   slice first = tv_slice(s~load_ref());
   slice second = tv_slice(s~load_ref());
@@ -164,7 +166,7 @@ int tv_checked_time(int a, int b) inline {
     .store_dict(v_assets).store_maybe_ref(v_payment).store_maybe_ref(v_admin).end_cell());
 }
 
-(int, cell) tv_request(cell request, int domain, int nonce, int ttl) inline {
+(int, cell) tv_request(cell request, int domain, int nonce, int ttl) impure inline {
   slice s = tv_slice(request);
   throw_unless(tv::domain, s~load_uint(32) == domain);
   throw_unless(tv::network, s~load_int(32) == tv_global_id());
@@ -179,12 +181,12 @@ int tv_checked_time(int a, int b) inline {
   return (deadline, payload);
 }
 
-int tv_deadline(cell request) inline {
+int tv_deadline(cell request) impure inline {
   slice s = tv_slice(request);
   return s.skip_bits(32 + 32 + 267 + 64 + 64).preload_uint(32);
 }
 
-(int, int, slice, int) tv_payment_payload(cell payload) inline {
+(int, int, slice, int) tv_payment_payload(cell payload) impure inline {
   slice s = tv_slice(payload);
   int asset = s~load_uint(256);
   int amount = s~load_coins();
@@ -204,7 +206,7 @@ int tv_deadline(cell request) inline {
 
 ;; Asset: enabled:Bool wallet:MsgAddress per:Coins window:Coins total:Coins
 ;;        window_start:u32 window_spent:Coins total_spent:Coins.
-(int, slice, int, int, int, int, int, int) tv_read_asset(cell record) inline {
+(int, slice, int, int, int, int, int, int) tv_read_asset(cell record) impure inline {
   slice s = tv_slice(record);
   int enabled = s~load_uint(1);
   slice wallet = s~load_msg_addr();
@@ -225,7 +227,7 @@ cell tv_pack_asset(int enabled, slice wallet, int per, int window, int total,
     .store_coins(spent).store_coins(cumulative).end_cell();
 }
 
-(cell, slice) tv_debit(int id, int amount) inline {
+(cell, slice) tv_debit(int id, int amount) impure inline {
   (cell record, int found) = v_assets.udict_get_ref?(256, id);
   throw_unless(tv::asset, found);
   var (enabled, wallet, per, window, total, start, spent, cumulative) = tv_read_asset(record);
@@ -242,7 +244,7 @@ cell tv_pack_asset(int enabled, slice wallet, int per, int window, int total,
   return (tv_pack_asset(enabled, wallet, per, window, total, start, spent, cumulative), wallet);
 }
 
-() tv_validate_asset(int id, int enabled, slice wallet, int per, int window, int total) inline {
+() tv_validate_asset(int id, int enabled, slice wallet, int per, int window, int total) impure inline {
   throw_unless(tv::policy, (window >= per) & (total >= per));
   throw_if(tv::policy, enabled & (per == 0));
   if (id == 0) {
@@ -273,7 +275,7 @@ cell tv_pack_asset(int enabled, slice wallet, int per, int window, int total,
   throw_unless(tv::capacity, visited == v_count);
 }
 
-() tv_validate_change(cell payload) inline {
+() tv_validate_change(cell payload) impure inline {
   slice s = tv_slice(payload);
   int kind = s~load_uint(8);
   if (kind == 1) {
@@ -331,7 +333,7 @@ cell tv_pack_asset(int enabled, slice wallet, int per, int window, int total,
   v_admin = null();
 }
 
-() tv_match_counter(slice body, int nonce) inline {
+() tv_match_counter(slice body, int nonce) impure inline {
   throw_unless(tv::epoch, body~load_uint(64) == v_epoch);
   throw_unless(tv::nonce, body~load_uint(64) == nonce);
   body.end_parse();
