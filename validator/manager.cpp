@@ -3614,6 +3614,7 @@ void ValidatorManagerImpl::update_shards() {
                << launch_config;
     allow_validate_ = false;
   }
+  check_signing_capacity_at_start();
   auto exp_vec = last_masterchain_state_->get_shards();
   auto config = last_masterchain_state_->get_consensus_config();
   consensus::ValidatorSessionOptions opts{config};
@@ -4244,7 +4245,8 @@ td::actor::ActorOwn<IValidatorGroup> ValidatorManagerImpl::create_validator_grou
   // A group exists only once its session's admission is decided, before any of its actors
   // can sign. Until then there is no group; the group update runs again when the answer
   // arrives.
-  auto signing_admission = signing_admission_for(session_id, local_vid, shard, validator_set->get_catchain_seqno());
+  auto signing_admission = signing_admission_for(session_id, local_vid, shard, validator_set->get_catchain_seqno(),
+                                                 signing_session_capacity(shard, config));
   if (signing_admission == nullptr) {
     return {};
   }
@@ -4260,10 +4262,75 @@ td::actor::ActorOwn<IValidatorGroup> ValidatorManagerImpl::create_validator_grou
   });
 }
 
+consensus::signing::SessionCapacity ValidatorManagerImpl::signing_session_capacity(
+    ShardIdFull shard, const NewConsensusConfig &config) const {
+  consensus::signing::SessionCapacity refused;
+  if (last_masterchain_state_.is_null()) {
+    refused.reason = "the catchain lifetime cannot be read: no masterchain state";
+    return refused;
+  }
+  auto holder = last_masterchain_state_->get_config_holder();
+  if (holder.is_error() || holder.ok().is_null()) {
+    refused.reason = PSTRING() << "the catchain lifetime cannot be read: "
+                               << (holder.is_error() ? holder.error().message().str() : std::string("no config"));
+    return refused;
+  }
+  auto lifetime = holder.ok()->get_catchain_lifetime(shard.is_masterchain());
+  if (lifetime.is_error()) {
+    refused.reason = PSTRING() << "the catchain lifetime cannot be read: " << lifetime.error().message();
+    return refused;
+  }
+  return consensus::signing::estimate_session_records(lifetime.ok(), config.noncritical_params.target_rate.count(),
+                                                      config.slots_per_leader_window);
+}
+
+void ValidatorManagerImpl::check_signing_capacity_at_start() {
+  if (signing_capacity_checked_ || last_masterchain_state_.is_null()) {
+    return;
+  }
+  signing_capacity_checked_ = true;
+  std::vector<ShardIdFull> kinds{ShardIdFull{masterchainId}};
+  for (const auto &[workchain, info] : last_masterchain_state_->get_workchain_list()) {
+    static_cast<void>(info);
+    kinds.push_back(ShardIdFull{workchain});
+  }
+  for (const auto &kind : kinds) {
+    auto selected = last_masterchain_state_->get_selected_new_consensus_config(kind.workchain);
+    if (!selected) {
+      continue;
+    }
+    const auto capacity = signing_session_capacity(kind, selected.value().config);
+    switch (capacity.verdict) {
+      case consensus::signing::CapacityVerdict::Refuse:
+        LOG(ERROR) << "signing ledger: the current configuration's sessions of workchain " << kind.workchain
+                   << " will be refused at admission and sign nothing: " << capacity.reason;
+        break;
+      case consensus::signing::CapacityVerdict::Warn:
+        LOG(WARNING) << "signing ledger: the current configuration's sessions of workchain " << kind.workchain
+                     << " are admitted, but " << capacity.reason;
+        break;
+      case consensus::signing::CapacityVerdict::Fits:
+        LOG(INFO) << "signing ledger: the current configuration's sessions of workchain " << kind.workchain
+                  << " are estimated at " << capacity.estimate << " decision records, within the ceiling of "
+                  << consensus::signing::kMaxLogRecords;
+        break;
+    }
+  }
+}
+
 std::shared_ptr<const consensus::signing::Admission> ValidatorManagerImpl::signing_admission_for(
-    ValidatorSessionId session_id, tos::ValidatorId validator, ShardIdFull shard, CatchainSeqno cc) {
+    ValidatorSessionId session_id, tos::ValidatorId validator, ShardIdFull shard, CatchainSeqno cc,
+    const consensus::signing::SessionCapacity &capacity) {
   if (auto it = signing_admissions_.find(session_id); it != signing_admissions_.end()) {
     return it->second;
+  }
+  if (capacity.verdict == consensus::signing::CapacityVerdict::Refuse) {
+    // Refused before anything is recorded: the log would fill before the session ends.
+    LOG(ERROR) << "signing ledger: session " << session_id.to_hex() << " of " << shard.to_str() << " catchain " << cc
+               << " is refused at admission and signs nothing: " << capacity.reason;
+    auto fenced = consensus::signing::Admission::fence(session_id, "refused at admission: " + capacity.reason);
+    signing_admissions_[session_id] = fenced;
+    return fenced;
   }
   ensure_signing_ledger(validator);
   switch (signing_floor_state_) {
@@ -4290,7 +4357,7 @@ std::shared_ptr<const consensus::signing::Admission> ValidatorManagerImpl::signi
                      << "; no session will sign";
           signing_floor_state_ = SigningFloorState::Refused;
         }
-        return signing_admission_for(session_id, validator, shard, cc);
+        return signing_admission_for(session_id, validator, shard, cc, capacity);
       }
       if (last_masterchain_seqno_ < signing_floor_->seqno()) {
         return nullptr;
@@ -4313,6 +4380,10 @@ std::shared_ptr<const consensus::signing::Admission> ValidatorManagerImpl::signi
       break;
   }
   if (signing_admissions_pending_.insert(session_id).second) {
+    if (capacity.verdict == consensus::signing::CapacityVerdict::Warn) {
+      LOG(WARNING) << "signing ledger: session " << session_id.to_hex() << " of " << shard.to_str() << " catchain "
+                   << cc << " is admitted, but " << capacity.reason;
+    }
     fetch_signing_admission(session_id, validator, shard, cc, signing_identity_history(validator)).start().detach();
   }
   return nullptr;

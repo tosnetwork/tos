@@ -1080,6 +1080,25 @@ CatchainValidatorsConfig Config::get_catchain_validators_config() const {
   return unpack_catchain_validators_config(get_config_param(28));
 }
 
+td::Result<CatchainValidatorsConfig> Config::get_catchain_validators_config_strict() const {
+  auto cell = get_config_param(28);
+  if (cell.is_null()) {
+    return td::Status::Error("ConfigParam 28 is missing");
+  }
+  block::gen::CatchainConfig::Record_catchain_config cfg;
+  if (tlb::unpack_cell(cell, cfg)) {
+    return CatchainValidatorsConfig{cfg.mc_catchain_lifetime, cfg.shard_catchain_lifetime,
+                                    cfg.shard_validators_lifetime, cfg.shard_validators_num};
+  }
+  block::gen::CatchainConfig::Record_catchain_config_new cfg2;
+  if (tlb::unpack_cell(std::move(cell), cfg2)) {
+    return CatchainValidatorsConfig{cfg2.mc_catchain_lifetime, cfg2.shard_catchain_lifetime,
+                                    cfg2.shard_validators_lifetime, cfg2.shard_validators_num,
+                                    cfg2.shuffle_mc_validators};
+  }
+  return td::Status::Error("ConfigParam 28 does not parse");
+}
+
 td::Status Config::validate_pq_launch_resource_config() const {
   auto limits_cell = get_config_param(16);
   if (limits_cell.is_null()) {

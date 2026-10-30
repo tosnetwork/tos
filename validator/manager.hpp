@@ -340,9 +340,20 @@ class ValidatorManagerImpl : public ValidatorManager {
   std::optional<BlockIdExt> signing_floor_;
   // The admission for `session_id`, or null when it is not decided yet; requesting it then
   // and rebuilding groups when it arrives.
-  std::shared_ptr<const consensus::signing::Admission> signing_admission_for(ValidatorSessionId session_id,
-                                                                             tos::ValidatorId validator,
-                                                                             ShardIdFull shard, CatchainSeqno cc);
+  // `capacity` is the session's normal-progress estimate against the log ceiling: a session
+  // it refuses is fenced, one it warns about is admitted with a WARNING.
+  std::shared_ptr<const consensus::signing::Admission> signing_admission_for(
+      ValidatorSessionId session_id, tos::ValidatorId validator, ShardIdFull shard, CatchainSeqno cc,
+      const consensus::signing::SessionCapacity &capacity);
+  // The normal-progress estimate of a session of `shard` under `config`, with the catchain
+  // lifetime of the current masterchain state; refused when the lifetime cannot be read.
+  consensus::signing::SessionCapacity signing_session_capacity(ShardIdFull shard,
+                                                               const NewConsensusConfig &config) const;
+  // Logs, once per process, the estimate of the current configuration for the masterchain
+  // and every workchain: an ERROR for one its sessions would be refused at, a WARNING above
+  // half the ceiling. Diagnostic only; admission enforces the refusal.
+  void check_signing_capacity_at_start();
+  bool signing_capacity_checked_ = false;
   td::actor::Task<> fetch_signing_floor();
   td::actor::Task<> fetch_signing_admission(ValidatorSessionId session_id, tos::ValidatorId validator,
                                             ShardIdFull shard, CatchainSeqno cc,

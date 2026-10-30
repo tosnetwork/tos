@@ -37,6 +37,16 @@ target_include_directories(test-signing-ledger PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(test-signing-ledger PRIVATE validator tdactor tdutils)
 add_test(NAME signing-ledger COMMAND test-signing-ledger)
 set_tests_properties(signing-ledger PROPERTIES TIMEOUT 120)
+
+# The own-decision log at its ceiling: memory per record, the restart check's scaling, a
+# full-size restart and every retained session at once.
+add_executable(test-decision-log-scale test-decision-log-scale.cpp)
+target_include_directories(test-decision-log-scale PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(test-decision-log-scale PRIVATE validator tdactor tdutils)
+foreach(mode memory reconcile-scaling full-restart retained)
+    add_test(NAME decision-log-scale-${mode} COMMAND test-decision-log-scale ${mode})
+    set_tests_properties(decision-log-scale-${mode} PROPERTIES TIMEOUT 300)
+endforeach()
 # A measurement, run by hand: the decision log's write latency against the journal write
 # it replaces, with several sessions at once. Not a test.
 add_executable(bench-decision-log EXCLUDE_FROM_ALL bench-decision-log.cpp)

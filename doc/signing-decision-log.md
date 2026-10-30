@@ -191,6 +191,57 @@ its first start; the local network installer and the operator ceremony's
 validator. A validator that joins after genesis never runs it, and goes
 through the unknown-history fence once.
 
+## Log size and its ceiling
+
+Each session's log holds at most **2^20 records (64 MiB)**. A record is 64 bytes,
+and a log file grows only by the records actually written.
+
+- **At the ceiling the session fails closed.** The log refuses every new decision,
+  logs an ERROR ("is full at ... records; this session signs nothing more"), and
+  the session signs no vote and produces no candidate for the rest of its life.
+  A decision already recorded is still answered.
+- **Warnings before that.** A WARNING with the session id and the record count is
+  logged when a log reaches 50 % of the ceiling, and again at 75 %, each once per
+  process ("signing stops at 1048576"). A log reloaded above either mark warns at
+  startup.
+- **Refusal at admission.** Before a session is admitted, the validator manager
+  computes its *normal-progress estimate*:
+
+  `3 * ceil(lifetime_ms / target_rate_ms) + ceil(slots / slots_per_leader_window)`
+
+  This uses the catchain lifetime from ConfigParam 28 for the session's shard kind
+  and the session's Simplex `target_rate` and `slots_per_leader_window`. Per slot
+  the log admits at most a notarize, a finalize and a skip, and one record per
+  leader window.
+  - If the estimate exceeds the ceiling, the session is refused at admission: it is
+    fenced and signs nothing, and an ERROR names the session, the estimate, the
+    ceiling and the parameters.
+  - A zero target rate, a zero leader window, an overflow, or a ConfigParam 28 that
+    is missing or does not parse is refused the same way.
+  - Above half of the ceiling the session is admitted, with a WARNING.
+  - The same estimate is logged once at startup for the current configuration of
+    the masterchain and of every workchain. That check is diagnostic; admission
+    enforces the refusal.
+- **An estimate, not a bound.** A session lives until the next validator group
+  replaces it. If the chain stalls, it can outlive its lifetime and keep adding
+  skip records. Then only the ceiling and its warnings apply.
+
+What the configurations come to, at the default 400 ms target rate and 4 slots
+per leader window:
+
+| Configuration | Lifetime | Estimate | Admission |
+|---|---|---|---|
+| production | 250 s | 2,032 records | admitted |
+| development (tostester default) | 100,000 s | 812,500 records | admitted, WARNING |
+| anything above about 129,000 s | | > 1,048,576 | refused |
+
+Memory and disk are measured by `test-decision-log-scale` (modes `memory`,
+`full-restart`, `retained`); the numbers are recorded under
+[Evidence](#evidence). Every listed session (at most 1,024) keeps its index and
+its admission's copy of the decisions in memory until it is pruned. Each holds
+only the records it actually has. The startup check between the journal and the
+log is linear in their sizes.
+
 ## Restores, snapshots and copies
 
 The trusted node-data recovery in [node-data-sync](node-data-sync.md) preserves
@@ -282,6 +333,32 @@ Gates for making it mandatory, run on a local chain:
   present in every sample, with complete measurements and unchanged process start
   times. Missing, interrupted or restarted processes fail the comparison before
   resource averages are computed.
+
+Measured for the 2^20-record ceiling (`test-decision-log-scale`, Release build,
+x86-64):
+
+- **Memory per record.** The in-memory index takes 111 to 175 bytes per record:
+  - 119 B with a notarize and a finalize per slot;
+  - 175 B with skips only;
+  - 111 B with leader windows only;
+  - 118 B for the mix a running chain records.
+
+  An admission's copy of the decisions adds 48 B per record. The restart check's
+  lookups add another 167 B per record, but only while the check runs.
+- **A full log.** Reloading a 2^20-record (64 MiB) log took 0.86 s. Checking it
+  against a journal of its 932,067 votes took 0.40 s. Peak resident memory rose by
+  139 MB after the reload and by 210 MB during the check.
+- **Every retained session at once.** 1,024 listed sessions of production size
+  (2,032 records each) took 133 MB on disk. They reloaded in 1.53 s and held 317 MB
+  of heap (152 B per record).
+- **The cases that follow:**
+  - a production session holds about 0.3 MB in memory;
+  - a development-lifetime session (812,500 records) holds about 135 MB;
+  - a session stalled at the ceiling holds about 175 to 235 MB, and its log is
+    64 MiB.
+- **Scaling.** Four times the input took 3.8 times as long for the restart check
+  (2^15 to 2^17 decisions). With either old quadratic loop restored, the ratio was
+  23 to 48, and the full-size restart exceeded its time limit.
 
 ## Release note (for the release that makes the log mandatory)
 

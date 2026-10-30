@@ -28,6 +28,7 @@
 #include "td/actor/actor.h"
 #include "td/actor/coro_utils.h"
 #include "td/utils/logging.h"
+#include "td/utils/misc.h"
 #include "tos/tos-shard.h"
 #include "validator/consensus/signing-ledger.h"
 
@@ -297,6 +298,47 @@ void test_log_format(const std::string& dir) {
   std::printf("log format: ok\n");
 }
 
+// ===== The normal-progress estimate, without files =====
+
+void test_capacity_estimate() {
+  // Production: 250 s at 400 ms is 625 slots and 157 windows of 4.
+  auto production = estimate_session_records(250, 400, 4);
+  require(production.verdict == CapacityVerdict::Fits && production.estimate == 3 * 625 + 157,
+          "the production lifetime fits");
+  // Development: 100,000 s is 250,000 slots, 812,500 records: above half of the ceiling.
+  auto development = estimate_session_records(100'000, 400, 4);
+  require(development.verdict == CapacityVerdict::Warn && development.estimate == 812'500,
+          "the development lifetime is admitted with a warning");
+  auto too_long = estimate_session_records(200'000, 400, 4);
+  require(too_long.verdict == CapacityVerdict::Refuse && too_long.estimate == 1'625'000 &&
+              too_long.reason.find("exceeds") != std::string::npos,
+          "a lifetime above the ceiling is refused");
+  // Rounded up: 4 s at 1,000 ms is 4 slots and 1 window, 13 records.
+  require(estimate_session_records(4, 1000, 4, 26).verdict == CapacityVerdict::Fits, "13 of 26 fits");
+  require(estimate_session_records(4, 1000, 4, 25).verdict == CapacityVerdict::Warn, "13 of 25 warns");
+  require(estimate_session_records(4, 1000, 4, 13).verdict == CapacityVerdict::Warn, "13 of 13 is admitted");
+  require(estimate_session_records(4, 1000, 4, 12).verdict == CapacityVerdict::Refuse, "13 of 12 is refused");
+  require(estimate_session_records(4, 1500, 4, 100).estimate == 3 * 3 + 1, "partial slots round up");
+  require(estimate_session_records(0, 400, 4).verdict == CapacityVerdict::Fits, "no lifetime records nothing");
+  // Zero, negative and overflowing inputs are refused, never estimated.
+  auto zero_rate = estimate_session_records(250, 0, 4);
+  require(zero_rate.verdict == CapacityVerdict::Refuse && zero_rate.reason.find("target rate") != std::string::npos,
+          "a zero target rate is refused");
+  require(estimate_session_records(250, -400, 4).verdict == CapacityVerdict::Refuse,
+          "a negative target rate is refused");
+  auto zero_window = estimate_session_records(250, 400, 0);
+  require(zero_window.verdict == CapacityVerdict::Refuse && zero_window.reason.find("no slots") != std::string::npos,
+          "a zero leader window is refused");
+  auto overflow = estimate_session_records(std::numeric_limits<std::uint64_t>::max(), 400, 4);
+  require(overflow.verdict == CapacityVerdict::Refuse && overflow.reason.find("overflows") != std::string::npos,
+          "a lifetime whose milliseconds overflow is refused");
+  auto overflow_records = estimate_session_records(std::numeric_limits<std::uint64_t>::max() / 1000, 1, 1);
+  require(overflow_records.verdict == CapacityVerdict::Refuse &&
+              overflow_records.reason.find("overflows") != std::string::npos,
+          "an estimate that overflows is refused");
+  std::printf("capacity estimate: ok\n");
+}
+
 void test_header_format() {
   Header header;
   header.validator = fill(0x11);
@@ -362,6 +404,14 @@ class FaultyOps : public FileOps {
   }
 };
 
+// Real writes without data syncs, for tests that record many decisions.
+class UnsyncedOps : public FileOps {
+ public:
+  int fdatasync(int) override {
+    return 0;
+  }
+};
+
 // ===== The ledger and the logs, through their actors =====
 
 using GatePromise = decltype(td::actor::StartedTask<>::make_bridge().second);
@@ -422,6 +472,80 @@ class Driver : public td::actor::Actor {
     co_await test_untrusted_becomes_pending();
     co_await test_genesis_ledger();
     co_await test_persistent_creation_failure();
+    co_await test_long_session();
+    co_await test_ceiling_and_warnings();
+    co_return td::Unit{};
+  }
+
+  // A long session: 20,000 new decisions are all recorded. The ceiling was 16,384, after
+  // which the session signed nothing more. Data syncs are skipped to keep it fast.
+  td::actor::Task<> test_long_session() {
+    const auto dir = scratch() + "/signing-ledger";
+    require(create_ledger(dir, validator_).is_ok(), "create a ledger");
+    auto ledger = td::actor::create_actor<SigningLedger>("long", dir, std::make_shared<UnsyncedOps>());
+    auto admission = co_await admit(ledger.get(), fill(0x0A));
+    constexpr std::uint32_t kSlots = 10'000;
+    for (std::uint32_t slot = 0; slot < kSlots; ++slot) {
+      const unsigned char candidate = static_cast<unsigned char>(slot % 251 + 1);
+      require((co_await reserve(admission, notar(slot, candidate))).result == ReserveResult::Reserved,
+              PSTRING() << "notarize of slot " << slot << " is recorded");
+      require((co_await reserve(admission, final_vote(slot, candidate))).result == ReserveResult::Reserved,
+              PSTRING() << "finalize of slot " << slot << " is recorded");
+    }
+    require(!admission->signing_stopped(), "a long session keeps signing");
+    require(co_await td::actor::ask(admission->log, &SessionDecisionLog::durable_records) == 2 * kSlots,
+            "every decision of the long session is durable");
+    std::printf("long session: ok\n");
+    co_return td::Unit{};
+  }
+
+  // The ceiling, lowered to 64 for the test: a warning at 32 and at 48 records, each once;
+  // the 65th decision is refused and the session stops; a restart loads the full log.
+  td::actor::Task<> test_ceiling_and_warnings() {
+    constexpr std::size_t kCeiling = 64;
+    const auto dir = scratch() + "/signing-ledger";
+    require(create_ledger(dir, validator_).is_ok(), "create a ledger");
+    const auto session = fill(0x0B);
+    {
+      auto ledger = td::actor::create_actor<SigningLedger>("ceiling", dir, std::make_shared<UnsyncedOps>(), nullptr,
+                                                           nullptr, std::nullopt, kCeiling);
+      auto admission = co_await admit(ledger.get(), session);
+      auto warnings = [&]() { return td::actor::ask(admission->log, &SessionDecisionLog::fill_warnings); };
+      for (std::uint32_t slot = 0; slot < kCeiling; ++slot) {
+        require((co_await reserve(admission, skip(slot))).result == ReserveResult::Reserved,
+                PSTRING() << "record " << slot << " below the ceiling");
+        const auto recorded = slot + 1;
+        const int expected = recorded < kCeiling / 2 ? 0 : recorded < kCeiling / 4 * 3 ? 1 : 2;
+        require(co_await warnings() == expected, PSTRING() << "the warnings after " << recorded << " records");
+      }
+      require(!admission->signing_stopped(), "a log at its ceiling has not stopped yet");
+      require((co_await reserve(admission, skip(0))).result == ReserveResult::AlreadyDecided,
+              "a decision already recorded is still answered at the ceiling");
+      require((co_await reserve(admission, skip(kCeiling))).result == ReserveResult::Failed,
+              "a new decision above the ceiling is refused");
+      require(admission->signing_stopped(), "a full log stops its session");
+      require((co_await reserve(admission, skip(0))).result == ReserveResult::Failed, "a stopped log answers nothing");
+      require(co_await td::actor::ask(admission->log, &SessionDecisionLog::durable_records) == kCeiling,
+              "the full log holds exactly the ceiling");
+    }
+    {
+      auto ledger = td::actor::create_actor<SigningLedger>("ceiling-restart", dir, std::make_shared<UnsyncedOps>(),
+                                                           nullptr, nullptr, std::nullopt, kCeiling);
+      auto admission = co_await admit(ledger.get(), session);
+      require(!admission->fenced && admission->decisions.size() == kCeiling, "a log at its ceiling reloads");
+      require(co_await td::actor::ask(admission->log, &SessionDecisionLog::fill_warnings) == 2,
+              "a reloaded full log has warned");
+      require((co_await reserve(admission, skip(kCeiling))).result == ReserveResult::Failed,
+              "the reloaded full log refuses a new decision");
+    }
+    {
+      // A ceiling below the log's records refuses to load it: the size check is the ceiling.
+      auto ledger = td::actor::create_actor<SigningLedger>("ceiling-lower", dir, std::make_shared<UnsyncedOps>(),
+                                                           nullptr, nullptr, std::nullopt, kCeiling - 1);
+      auto admission = co_await admit(ledger.get(), session);
+      require(admission->fenced, "a log above the ceiling fences its session");
+    }
+    std::printf("ceiling and warnings: ok\n");
     co_return td::Unit{};
   }
 
@@ -955,6 +1079,7 @@ int main() {
   test_index();
   test_fence_rule();
   test_fence_block_rule();
+  test_capacity_estimate();
   const auto dir = scratch();
   test_log_format(dir);
   test_header_format();

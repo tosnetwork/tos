@@ -190,7 +190,77 @@ std::string parent_of(const std::string& path) {
   return path.substr(0, slash);
 }
 
+std::size_t clamp_records(std::size_t max_records) {
+  return std::clamp<std::size_t>(max_records, 1, kMaxLogRecords);
+}
+
 }  // namespace
+
+std::size_t DecisionHash::operator()(const Decision& decision) const {
+  // The candidate is a hash already; its words are mixed with the kind and the slot.
+  std::uint64_t h = (static_cast<std::uint64_t>(decision.kind) << 32) | decision.slot;
+  h *= 0x9e3779b97f4a7c15ULL;
+  for (int i = 0; i < 4; ++i) {
+    std::uint64_t word = 0;
+    std::memcpy(&word, decision.candidate.data() + 8 * i, 8);
+    h ^= word + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
+  }
+  return static_cast<std::size_t>(h);
+}
+
+// ===== Normal-progress estimate =====
+
+SessionCapacity estimate_session_records(std::uint64_t lifetime_seconds, std::int64_t target_rate_ms,
+                                         std::uint32_t slots_per_leader_window, std::size_t ceiling) {
+  SessionCapacity out;
+  const auto parameters = [&] {
+    return std::string(PSTRING() << "catchain lifetime " << lifetime_seconds << " s, target rate " << target_rate_ms
+                                 << " ms, " << slots_per_leader_window << " slots per leader window");
+  };
+  if (target_rate_ms <= 0) {
+    out.reason = PSTRING() << "the target rate is not positive (" << parameters() << ")";
+    return out;
+  }
+  if (slots_per_leader_window == 0) {
+    out.reason = PSTRING() << "the leader window has no slots (" << parameters() << ")";
+    return out;
+  }
+  const auto rate = static_cast<std::uint64_t>(target_rate_ms);
+  std::uint64_t lifetime_ms = 0;
+  std::uint64_t slots_rounded_up = 0;
+  std::uint64_t vote_records = 0;
+  std::uint64_t estimate = 0;
+  // ceil(a / b) as a / b + (a % b != 0), which cannot overflow.
+  if (__builtin_mul_overflow(lifetime_seconds, std::uint64_t{1000}, &lifetime_ms)) {
+    out.reason = PSTRING() << "the estimate overflows (" << parameters() << ")";
+    return out;
+  }
+  slots_rounded_up = lifetime_ms / rate + (lifetime_ms % rate != 0 ? 1 : 0);
+  const std::uint64_t windows =
+      slots_rounded_up / slots_per_leader_window + (slots_rounded_up % slots_per_leader_window != 0 ? 1 : 0);
+  if (__builtin_mul_overflow(slots_rounded_up, std::uint64_t{3}, &vote_records) ||
+      __builtin_add_overflow(vote_records, windows, &estimate)) {
+    out.reason = PSTRING() << "the estimate overflows (" << parameters() << ")";
+    return out;
+  }
+  out.estimate = estimate;
+  if (estimate > ceiling) {
+    out.reason = PSTRING() << "its normal-progress estimate of " << estimate
+                           << " decision records exceeds the per-session ceiling of " << ceiling << " (" << parameters()
+                           << ")";
+    return out;
+  }
+  if (estimate > ceiling / 2) {
+    out.verdict = CapacityVerdict::Warn;
+    out.reason = PSTRING() << "its normal-progress estimate of " << estimate
+                           << " decision records is above half of the per-session ceiling of " << ceiling << " ("
+                           << parameters() << "); a stall that keeps it alive longer can reach the ceiling, "
+                           << "after which it signs nothing more";
+    return out;
+  }
+  out.verdict = CapacityVerdict::Fits;
+  return out;
+}
 
 std::string to_string(const Decision& decision) {
   switch (decision.kind) {
@@ -402,7 +472,9 @@ std::string encode_record(const Decision& decision, std::int64_t seq, const std:
   return out;
 }
 
-td::Result<LoadedLog> load_log(int fd, const td::Bits256& session) {
+td::Result<LoadedLog> load_log(int fd, const td::Bits256& session, std::size_t max_records) {
+  max_records = clamp_records(max_records);
+  const std::size_t max_bytes = max_records * kRecordBytes;
   struct stat st{};
   if (::fstat(fd, &st) != 0) {
     return td::Status::Error(PSTRING() << "cannot inspect the log: " << errno_text());
@@ -411,8 +483,8 @@ td::Result<LoadedLog> load_log(int fd, const td::Bits256& session) {
     return td::Status::Error("the log is not a regular file");
   }
   // Checked before anything is read or allocated.
-  if (st.st_size < 0 || static_cast<std::uint64_t>(st.st_size) > kMaxLogBytes + kRecordBytes) {
-    return td::Status::Error(PSTRING() << "the log is " << st.st_size << " bytes, above the limit of " << kMaxLogBytes);
+  if (st.st_size < 0 || static_cast<std::uint64_t>(st.st_size) > max_bytes + kRecordBytes) {
+    return td::Status::Error(PSTRING() << "the log is " << st.st_size << " bytes, above the limit of " << max_bytes);
   }
   const auto size = static_cast<std::size_t>(st.st_size);
   std::string bytes(size, '\0');
@@ -431,9 +503,9 @@ td::Result<LoadedLog> load_log(int fd, const td::Bits256& session) {
   loaded.chain = chain_start(session);
   const std::size_t records = size / kRecordBytes;
   loaded.torn_tail = size % kRecordBytes != 0;
-  if (records > kMaxLogRecords) {
+  if (records > max_records) {
     return td::Status::Error(PSTRING() << "the log holds " << records << " records, above the limit of "
-                                       << kMaxLogRecords);
+                                       << max_records);
   }
   DecisionIndex index;
   for (std::size_t i = 0; i < records; ++i) {
@@ -479,8 +551,10 @@ td::Result<LoadedLog> load_log(int fd, const td::Bits256& session) {
 // ===== SessionDecisionLog =====
 
 SessionDecisionLog::SessionDecisionLog(td::Bits256 session, int fd, LoadedLog loaded, std::shared_ptr<FileOps> ops,
-                                       std::shared_ptr<std::atomic<bool>> stopped, WriteGate gate)
+                                       std::shared_ptr<std::atomic<bool>> stopped, WriteGate gate,
+                                       std::size_t max_records)
     : session_(session)
+    , max_records_(clamp_records(max_records))
     , fd_(fd)
     , verified_bytes_(loaded.verified_bytes)
     , chain_(loaded.chain)
@@ -491,6 +565,24 @@ SessionDecisionLog::SessionDecisionLog(td::Bits256 session, int fd, LoadedLog lo
     index_.apply(decision);
     index_.remember_seq(decision, seq);
     next_seq_ = seq + 1;
+  }
+  warn_on_fill();
+}
+
+void SessionDecisionLog::warn_on_fill() {
+  const std::size_t size = index_.size();
+  // Integer thresholds of the ceiling: half and three quarters.
+  const std::size_t half = max_records_ / 2;
+  const std::size_t three_quarters = max_records_ - max_records_ / 4;
+  if (!warned_three_quarters_ && size >= three_quarters) {
+    warned_three_quarters_ = true;
+    warned_half_ = true;
+    LOG(WARNING) << "signing decision log " << session_.to_hex() << " holds " << size
+                 << " records, 75 % of its ceiling; signing stops at " << max_records_;
+  } else if (!warned_half_ && size >= half) {
+    warned_half_ = true;
+    LOG(WARNING) << "signing decision log " << session_.to_hex() << " holds " << size
+                 << " records, 50 % of its ceiling; signing stops at " << max_records_;
   }
 }
 
@@ -516,6 +608,10 @@ td::actor::Task<Reservation> SessionDecisionLog::reserve(Decision decision) {
 
 td::actor::Task<std::size_t> SessionDecisionLog::durable_records() {
   co_return verified_bytes_ / kRecordBytes;
+}
+
+td::actor::Task<int> SessionDecisionLog::fill_warnings() {
+  co_return (warned_half_ ? 1 : 0) + (warned_three_quarters_ ? 1 : 0);
 }
 
 // One request at a time, from its check to its acknowledgement: the next request is not
@@ -547,8 +643,8 @@ td::actor::Task<Reservation> SessionDecisionLog::handle(const Decision& decision
     case Check::New:
       break;
   }
-  if (index_.size() >= kMaxLogRecords) {
-    LOG(ERROR) << "signing decision log " << session_.to_hex() << " is full at " << kMaxLogRecords
+  if (index_.size() >= max_records_) {
+    LOG(ERROR) << "signing decision log " << session_.to_hex() << " is full at " << max_records_
                << " records; this session signs nothing more";
     failed_ = true;
     stopped_->store(true, std::memory_order_release);
@@ -576,6 +672,7 @@ td::actor::Task<Reservation> SessionDecisionLog::handle(const Decision& decision
   index_.remember_seq(decision, next_seq_);
   verified_bytes_ += record.size();
   chain_ = next;
+  warn_on_fill();
   co_return Reservation{ReserveResult::Reserved, next_seq_++};
 }
 
@@ -586,7 +683,7 @@ bool SessionDecisionLog::recover() {
   if (ops_->ftruncate(fd_, static_cast<long>(verified_bytes_)) != 0 || ops_->fsync(fd_) != 0) {
     return false;
   }
-  auto reloaded = load_log(fd_, session_);
+  auto reloaded = load_log(fd_, session_, max_records_);
   if (reloaded.is_error()) {
     LOG(ERROR) << "signing decision log " << session_.to_hex() << " after recovery: " << reloaded.error();
     return false;
@@ -816,13 +913,15 @@ bool fenced_by_history(const std::vector<FenceEntry>& fence, ShardIdFull shard, 
 // ===== SigningLedger =====
 
 SigningLedger::SigningLedger(std::string dir, std::shared_ptr<FileOps> ops, SessionDecisionLog::WriteGate gate,
-                             std::function<double()> clock, std::optional<td::Bits256> validator)
+                             std::function<double()> clock, std::optional<td::Bits256> validator,
+                             std::size_t max_log_records)
     : dir_(std::move(dir))
     , original_dir_(dir_)
     , bound_validator_(validator)
     , ops_(std::move(ops))
     , gate_(std::move(gate))
-    , clock_(std::move(clock)) {
+    , clock_(std::move(clock))
+    , max_log_records_(clamp_records(max_log_records)) {
 }
 
 void SigningLedger::start_up() {
@@ -1135,7 +1234,7 @@ std::shared_ptr<const Admission> SigningLedger::admit_now(const td::Bits256& val
     if (!(bound.ok() == entry->log)) {
       return fail("the decision log is not the one this session recorded into: it was copied, restored or recreated");
     }
-    auto read = load_log(fd, session);
+    auto read = load_log(fd, session, max_log_records_);
     if (read.is_error()) {
       return fail("the decision log is damaged: " + read.error().message().str());
     }
@@ -1156,8 +1255,9 @@ std::shared_ptr<const Admission> SigningLedger::admit_now(const td::Bits256& val
   admission->session = session;
   admission->decisions = loaded.decisions;
   admission->stopped = stopped;
-  auto actor = td::actor::create_actor<SessionDecisionLog>(PSTRING() << "DecisionLog." << session.to_hex().substr(0, 8),
-                                                           session, fd, std::move(loaded), ops_, stopped, gate_);
+  auto actor =
+      td::actor::create_actor<SessionDecisionLog>(PSTRING() << "DecisionLog." << session.to_hex().substr(0, 8), session,
+                                                  fd, std::move(loaded), ops_, stopped, gate_, max_log_records_);
   admission->log = actor.get();
   logs_[session] = std::move(actor);
   admitted_[session] = admission;

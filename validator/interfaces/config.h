@@ -53,6 +53,12 @@ class ConfigHolder : public td::CntObject {
   virtual td::Status validate_pq_launch_resource_config() const {
     return td::Status::Error("launch resource validation is unavailable for this config holder");
   }
+  // The catchain lifetime in seconds (ConfigParam 28) of masterchain or shard sessions. A
+  // holder without it fails closed: no session is admitted to sign from it.
+  virtual td::Result<td::uint32> get_catchain_lifetime(bool masterchain) const {
+    static_cast<void>(masterchain);
+    return td::Status::Error("the catchain lifetime is unavailable for this config holder");
+  }
 };
 
 }  // namespace validator

@@ -74,6 +74,11 @@ struct Decision {
 
 std::string to_string(const Decision& decision);
 
+// For hashed lookups of decisions.
+struct DecisionHash {
+  std::size_t operator()(const Decision& decision) const;
+};
+
 enum class Check { New, Same, Conflict };
 
 // What this node has decided, per slot, and the rules the protocol reports as misbehaviour
@@ -111,11 +116,38 @@ class DecisionIndex {
 // ===== Limits =====
 
 inline constexpr std::size_t kRecordBytes = 64;
-inline constexpr std::size_t kMaxLogRecords = 16384;
+// The ceiling of one session's log: 2^20 records, 64 MiB. A session that reaches it signs
+// nothing more (fail closed). A WARNING is logged when a log reaches half of it and again at
+// three quarters, and a session whose normal-progress estimate exceeds it is refused at
+// admission (see estimate_session_records).
+inline constexpr std::size_t kMaxLogRecords = std::size_t{1} << 20;
 inline constexpr std::size_t kMaxLogBytes = kMaxLogRecords * kRecordBytes;
 inline constexpr std::size_t kMaxHeaderBytes = 64 * 1024;
 inline constexpr std::size_t kMaxEntries = 1024;
 inline constexpr std::size_t kMaxSetAside = 4;
+
+// ===== Normal-progress estimate of a session's records =====
+//
+// Per slot the log admits at most one notarize, one finalize and one skip, and one record
+// per leader window. While the chain makes progress, a session lives about its catchain
+// lifetime and reaches about lifetime / target_rate slots, so it records at most
+//   3 * ceil(lifetime_ms / target_rate_ms) + ceil(slots / slots_per_leader_window).
+// This is an estimate, not a bound: a stall can keep a session alive past its lifetime,
+// and then only the ceiling and its warnings apply.
+
+enum class CapacityVerdict { Fits, Warn, Refuse };
+
+struct SessionCapacity {
+  CapacityVerdict verdict = CapacityVerdict::Refuse;
+  std::uint64_t estimate = 0;
+  // Why it warns or refuses, with the parameters; empty when it fits.
+  std::string reason;
+};
+
+// Refuses a zero target rate, a zero leader window size and any overflow; refuses an
+// estimate above `ceiling`; warns above half of it. All arithmetic is checked.
+SessionCapacity estimate_session_records(std::uint64_t lifetime_seconds, std::int64_t target_rate_ms,
+                                         std::uint32_t slots_per_leader_window, std::size_t ceiling = kMaxLogRecords);
 
 // ===== Durable file operations, replaceable by tests that inject failures =====
 
@@ -165,7 +197,8 @@ struct LoadedLog {
 // Reads and verifies the log open at `fd` for `session`. A partial last record is reported
 // as a torn tail and excluded; a bad record anywhere else, a broken chain, a decision that
 // conflicts with an earlier one, or a log above the limits is an error.
-td::Result<LoadedLog> load_log(int fd, const td::Bits256& session);
+// `max_records` is the ceiling, lowered only by tests.
+td::Result<LoadedLog> load_log(int fd, const td::Bits256& session, std::size_t max_records = kMaxLogRecords);
 
 // The chain value a log for `session` starts from.
 std::array<unsigned char, 16> chain_start(const td::Bits256& session);
@@ -189,14 +222,18 @@ class SessionDecisionLog : public td::actor::Actor {
   // persistence between the two. Null in production.
   using WriteGate = std::function<td::actor::StartedTask<>(const Decision&)>;
 
+  // `max_records` is the ceiling, lowered only by tests; it is clamped to [1, kMaxLogRecords].
   SessionDecisionLog(td::Bits256 session, int fd, LoadedLog loaded, std::shared_ptr<FileOps> ops,
-                     std::shared_ptr<std::atomic<bool>> stopped, WriteGate gate);
+                     std::shared_ptr<std::atomic<bool>> stopped, WriteGate gate,
+                     std::size_t max_records = kMaxLogRecords);
   ~SessionDecisionLog() override;
 
   td::actor::Task<Reservation> reserve(Decision decision);
 
   // For tests and diagnostics: how many records are durable.
   td::actor::Task<std::size_t> durable_records();
+  // For tests and diagnostics: how many of the 50 % and 75 % marks the log has warned at.
+  td::actor::Task<int> fill_warnings();
 
  private:
   using ReservationPromise = decltype(td::actor::StartedTask<Reservation>::make_bridge().second);
@@ -208,8 +245,13 @@ class SessionDecisionLog : public td::actor::Actor {
   td::actor::Task<> drain();
   td::actor::Task<Reservation> handle(const Decision& decision);
   bool recover();
+  // Logs the 50 % and 75 % warnings, each once, when the log has reached them.
+  void warn_on_fill();
 
   td::Bits256 session_;
+  std::size_t max_records_;
+  bool warned_half_ = false;
+  bool warned_three_quarters_ = false;
   int fd_;
   DecisionIndex index_;
   std::int64_t next_seq_ = 0;
@@ -386,9 +428,10 @@ enum class LedgerStatus { Trusted, Absent, Untrusted };
 class SigningLedger : public td::actor::Actor {
  public:
   // `clock` reads unix seconds, for tests of the start time; null reads the system clock.
+  // `max_log_records` is each session log's ceiling, lowered only by tests.
   SigningLedger(std::string dir, std::shared_ptr<FileOps> ops = default_file_ops(),
                 SessionDecisionLog::WriteGate gate = nullptr, std::function<double()> clock = nullptr,
-                std::optional<td::Bits256> validator = std::nullopt);
+                std::optional<td::Bits256> validator = std::nullopt, std::size_t max_log_records = kMaxLogRecords);
 
   void start_up() override;
 
@@ -441,6 +484,7 @@ class SigningLedger : public td::actor::Actor {
   std::shared_ptr<FileOps> ops_;
   SessionDecisionLog::WriteGate gate_;
   std::function<double()> clock_;
+  std::size_t max_log_records_;
   // This actor's start, rounded up: no t0 recorded by this process is earlier.
   std::uint64_t started_at_ = 0;
   LedgerStatus status_ = LedgerStatus::Absent;

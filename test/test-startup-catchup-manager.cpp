@@ -39,6 +39,7 @@
 #include "validator/consensus/db-path.h"
 #include "validator/fabric.h"
 #include "validator/impl/applied-ext-message-cleanup.hpp"
+#include "validator/impl/config.hpp"
 #include "validator/impl/ext-message-pool.hpp"
 #include "validator/impl/shard.hpp"
 #include "validator/manager.hpp"
@@ -103,6 +104,8 @@ struct Snapshot {
   CatchainSeqno cc = 1;
   std::vector<ShardSpec> shards = {};
   td::int32 global_id = 3;
+  // ConfigParam 28's catchain lifetime in seconds; nothing when the holder cannot read it.
+  std::optional<td::uint32> catchain_lifetime = 250;
 };
 
 class StateConfig : public ConfigHolder {
@@ -143,6 +146,12 @@ class StateConfig : public ConfigHolder {
   }
   td::Status validate_pq_launch_resource_config() const override {
     return td::Status::OK();
+  }
+  td::Result<td::uint32> get_catchain_lifetime(bool) const override {
+    if (!snapshot_.catchain_lifetime.has_value()) {
+      return td::Status::Error("ConfigParam 28 cannot be read");
+    }
+    return *snapshot_.catchain_lifetime;
   }
 
  protected:
@@ -468,6 +477,12 @@ class StartupCatchupManagerProbe : public ValidatorManagerImpl {
   }
   void genesis_hint_logged(td::Promise<bool> promise) {
     promise.set_value(bool{signing_genesis_hint_logged_});
+  }
+  // Why the session's admission is fenced; empty when it is admitted or undecided.
+  void admission_reason(ValidatorSessionId session, td::Promise<std::string> promise) {
+    auto it = signing_admissions_.find(session);
+    std::string reason = it == signing_admissions_.end() || !it->second->fenced ? std::string() : it->second->reason;
+    promise.set_value(std::move(reason));
   }
   // Whether the ledger directory exists under this node's database.
   void ledger_exists(td::Promise<bool> promise) {
@@ -817,6 +832,11 @@ class Fixture {
   startup_catchup::SuccessorVerdict verify(BlockIdExt prev, BlockIdExt next) {
     return ask<startup_catchup::SuccessorVerdict>([&](td::Promise<startup_catchup::SuccessorVerdict> p) {
       td::actor::send_closure(manager_, &StartupCatchupManagerProbe::verify, prev, next, std::move(p));
+    });
+  }
+  std::string admission_reason(ValidatorSessionId session) {
+    return ask<std::string>([&](td::Promise<std::string> p) {
+      td::actor::send_closure(manager_, &StartupCatchupManagerProbe::admission_reason, session, std::move(p));
     });
   }
   ValidatorSessionId session_of(Snapshot s) {
@@ -1177,6 +1197,96 @@ TEST(StartupCatchupManager, DecisionLogWithoutALedgerFences) {
   auto expected = f.session_of(f.snapshot(f.current, 1));
   ASSERT_TRUE(f.wait_event("group " + expected.to_hex(), 10.0));
   ASSERT_EQ(1u, f.journal->count("admission fenced " + expected.to_hex()));
+}
+
+// A session whose normal-progress estimate exceeds the decision log's ceiling is refused at
+// admission: its group is built fenced and signs nothing, with the reason. 200,000 s at the
+// default 400 ms target rate is 500,000 slots, about 1.6 million records.
+TEST(StartupCatchupManager, DecisionLogRefusesASessionAboveTheCeiling) {
+  Fixture f([&](const std::string& root) { make_ledger(root, member_id(2, 0), std::nullopt); });
+  f.hold(f.current, 0);
+  auto snapshot = f.snapshot(f.current, 1);
+  snapshot.catchain_lifetime = 200'000;
+  f.set_tip(snapshot, 10, kFresh);
+  ASSERT_TRUE(!f.decide());
+  f.advance(snapshot, 10, kFresh);
+  auto expected = f.session_of(snapshot);
+  ASSERT_TRUE(f.wait_event("group " + expected.to_hex(), 10.0));
+  ASSERT_EQ(1u, f.journal->count("admission fenced " + expected.to_hex()));
+  const auto reason = f.admission_reason(expected);
+  ASSERT_TRUE(reason.find("refused at admission") != std::string::npos);
+  ASSERT_TRUE(reason.find("exceeds the per-session ceiling of 1048576") != std::string::npos);
+}
+
+// The production holder reads ConfigParam 28 strictly: the stored lifetimes of either
+// constructor, and an error, never the defaults, when it is missing or does not parse.
+namespace {
+td::Result<td::uint32> lifetime_from(std::optional<td::Ref<vm::Cell>> param28, bool masterchain) {
+  vm::Dictionary params{32};
+  CHECK(params.set_ref(td::BitArray<32>::zero(), vm::CellBuilder{}.store_zeroes(256).finalize()));
+  if (param28.has_value()) {
+    CHECK(params.set_ref(td::BitArray<32>{28}, *param28));
+  }
+  auto config = block::Config::unpack_config(params.get_root_cell());
+  CHECK(config.is_ok());
+  std::shared_ptr<block::Config> shared = config.move_as_ok();
+  return ConfigHolderQ(shared).get_catchain_lifetime(masterchain);
+}
+}  // namespace
+
+TEST(StartupCatchupManager, CatchainLifetimeIsReadStrictly) {
+  vm::CellBuilder old_form;
+  CHECK(old_form.store_long_bool(0xc1, 8) && old_form.store_long_bool(250, 32) && old_form.store_long_bool(1000, 32) &&
+        old_form.store_long_bool(1000, 32) && old_form.store_long_bool(7, 32));
+  const auto c1 = old_form.finalize();
+  ASSERT_EQ(250u, lifetime_from(c1, true).move_as_ok());
+  ASSERT_EQ(1000u, lifetime_from(c1, false).move_as_ok());
+  vm::CellBuilder new_form;
+  CHECK(new_form.store_long_bool(0xc2, 8) && new_form.store_long_bool(0, 7) && new_form.store_long_bool(1, 1) &&
+        new_form.store_long_bool(100'000, 32) && new_form.store_long_bool(200'000, 32) &&
+        new_form.store_long_bool(1000, 32) && new_form.store_long_bool(7, 32));
+  const auto c2 = new_form.finalize();
+  ASSERT_EQ(100'000u, lifetime_from(c2, true).move_as_ok());
+  ASSERT_EQ(200'000u, lifetime_from(c2, false).move_as_ok());
+  ASSERT_TRUE(lifetime_from(std::nullopt, true).is_error());
+  vm::CellBuilder malformed;
+  CHECK(malformed.store_long_bool(0xc1, 8) && malformed.store_long_bool(250, 32));
+  ASSERT_TRUE(lifetime_from(malformed.finalize(), true).is_error());
+  // A lifetime of zero is outside the schema, so it does not parse either.
+  vm::CellBuilder zero;
+  CHECK(zero.store_long_bool(0xc1, 8) && zero.store_long_bool(0, 32) && zero.store_long_bool(1000, 32) &&
+        zero.store_long_bool(1000, 32) && zero.store_long_bool(7, 32));
+  ASSERT_TRUE(lifetime_from(zero.finalize(), true).is_error());
+}
+
+// A catchain lifetime that cannot be read is refused: the estimate is unknown.
+TEST(StartupCatchupManager, DecisionLogRefusesAnUnreadableLifetime) {
+  Fixture f([&](const std::string& root) { make_ledger(root, member_id(2, 0), std::nullopt); });
+  f.hold(f.current, 0);
+  auto snapshot = f.snapshot(f.current, 1);
+  snapshot.catchain_lifetime = std::nullopt;
+  f.set_tip(snapshot, 10, kFresh);
+  ASSERT_TRUE(!f.decide());
+  f.advance(snapshot, 10, kFresh);
+  auto expected = f.session_of(snapshot);
+  ASSERT_TRUE(f.wait_event("group " + expected.to_hex(), 10.0));
+  ASSERT_EQ(1u, f.journal->count("admission fenced " + expected.to_hex()));
+  ASSERT_TRUE(f.admission_reason(expected).find("the catchain lifetime cannot be read") != std::string::npos);
+}
+
+// Above half of the ceiling the session is admitted, with a warning: the development
+// lifetime of 100,000 s is estimated at 812,500 records.
+TEST(StartupCatchupManager, DecisionLogAdmitsTheDevelopmentLifetime) {
+  Fixture f([&](const std::string& root) { make_ledger(root, member_id(2, 0), std::nullopt); });
+  f.hold(f.current, 0);
+  auto snapshot = f.snapshot(f.current, 1);
+  snapshot.catchain_lifetime = 100'000;
+  f.set_tip(snapshot, 10, kFresh);
+  ASSERT_TRUE(!f.decide());
+  f.advance(snapshot, 10, kFresh);
+  auto expected = f.session_of(snapshot);
+  ASSERT_TRUE(f.wait_event("group " + expected.to_hex(), 10.0));
+  ASSERT_EQ(1u, f.journal->count("admission admitted " + expected.to_hex()));
 }
 
 // A head below the ledger's floor builds no group: it could be a state the floor retired.
