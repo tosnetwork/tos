@@ -24,11 +24,11 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
-#include <malloc.h>
 #include <memory>
 #include <string>
 #include <sys/resource.h>
@@ -36,6 +36,12 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+
+#if defined(TOS_DECISION_LOG_USE_JEMALLOC)
+#include TOS_DECISION_LOG_JEMALLOC_HEADER
+#else
+#include <malloc.h>
+#endif
 
 #include "td/actor/actor.h"
 #include "td/actor/coro_utils.h"
@@ -127,10 +133,27 @@ std::vector<Decision> decisions_of(Profile profile, std::size_t count) {
   return out;
 }
 
-// Every byte the allocator has handed out: arena chunks and mmap-backed large blocks.
+// Allocated heap reported by this executable's allocator, separate from peak RSS and
+// reserved pages. Jemalloc allocations are not visible to glibc's mallinfo2.
 std::size_t heap_in_use() {
+#if defined(TOS_DECISION_LOG_USE_JEMALLOC)
+  // Refresh on every sample. Use process-wide statistics because the retained-session
+  // fixture also allocates on actor threads; their caches can make these approximate.
+  std::uint64_t epoch = 1;
+  if (const int error = mallctl("epoch", nullptr, nullptr, &epoch, sizeof(epoch)); error != 0) {
+    fail(PSTRING() << "cannot refresh jemalloc statistics: " << std::strerror(error));
+  }
+  std::size_t allocated = 0;
+  std::size_t size = sizeof(allocated);
+  if (const int error = mallctl("stats.allocated", &allocated, &size, nullptr, 0); error != 0) {
+    fail(PSTRING() << "cannot read jemalloc's allocated heap: " << std::strerror(error));
+  }
+  require(size == sizeof(allocated), "jemalloc's allocated heap has the expected size");
+  return allocated;
+#else
   const auto info = mallinfo2();
   return info.uordblks + info.hblkhd;
+#endif
 }
 
 long peak_rss_kib() {

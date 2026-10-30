@@ -43,6 +43,13 @@ set_tests_properties(signing-ledger PROPERTIES TIMEOUT 120)
 add_executable(test-decision-log-scale test-decision-log-scale.cpp)
 target_include_directories(test-decision-log-scale PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(test-decision-log-scale PRIVATE validator tdactor tdutils)
+if (JEMALLOC_FOUND)
+    # Match heap accounting to the allocator linked by this executable. Use the exact
+    # header path so its installation prefix cannot shadow other dependency headers.
+    target_link_libraries(test-decision-log-scale PRIVATE ${JEMALLOC_LIBRARIES})
+    target_compile_definitions(test-decision-log-scale PRIVATE TOS_DECISION_LOG_USE_JEMALLOC=1
+        TOS_DECISION_LOG_JEMALLOC_HEADER="${JEMALLOC_INCLUDE_DIR}/jemalloc/jemalloc.h")
+endif()
 foreach(mode memory reconcile-scaling full-restart retained)
     add_test(NAME decision-log-scale-${mode} COMMAND test-decision-log-scale ${mode})
     set_tests_properties(decision-log-scale-${mode} PROPERTIES TIMEOUT 300)
