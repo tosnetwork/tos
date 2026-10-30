@@ -72,6 +72,18 @@ MUTATIONS = (
         ";; removed cold authority immutability",
         "test_cold_authority_is_immutable",
     ),
+    (
+        "veto_self_guardian",
+        "throw_unless(tv::sender, equal_slice_bits(guardian, v_guardian));",
+        ";; removed guardian self-replacement veto guard",
+        "test_replaced_guardian_cannot_veto_its_replacement",
+    ),
+    (
+        "veto_self_pauser",
+        "throw_unless(tv::sender, equal_slice_bits(pauser, v_pauser));",
+        ";; removed pauser self-replacement veto guard",
+        "test_replaced_pauser_cannot_veto_its_replacement",
+    ),
 )
 
 

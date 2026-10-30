@@ -187,6 +187,15 @@ int tv_deadline(cell request) impure inline {
   return s.skip_bits(32 + 32 + 267 + 64 + 64).preload_uint(32);
 }
 
+;; Payload of a request that was fully validated when it was queued.
+cell tv_payload(cell request) impure inline {
+  slice s = tv_slice(request);
+  s~skip_bits(32 + 32 + 267 + 64 + 64 + 32);
+  cell payload = s~load_ref();
+  s.end_parse();
+  return payload;
+}
+
 (int, int, slice, int) tv_payment_payload(cell payload) impure inline {
   slice s = tv_slice(payload);
   int asset = s~load_uint(256);
@@ -470,6 +479,23 @@ cell tv_pack_asset(int enabled, slice wallet, int per, int window, int total,
     if (op == tv::veto) {
       throw_unless(tv::sender, equal_slice_bits(sender, v_guardian)
         | equal_slice_bits(sender, v_pauser) | equal_slice_bits(sender, v_cold));
+      if (~ equal_slice_bits(sender, v_cold)) {
+        slice queued = tv_slice(v_admin);
+        queued~load_uint(32);
+        cell request = queued~load_ref();
+        queued.end_parse();
+        slice change = tv_slice(tv_payload(request));
+        if (change~load_uint(8) == 2) {
+          ;; A hot role may veto any change except the one that retires it, so a
+          ;; compromised guardian or pauser cannot block its own replacement.
+          (_, slice guardian, _, slice pauser) = tv_read_roles(change~load_ref());
+          if (equal_slice_bits(sender, v_guardian)) {
+            throw_unless(tv::sender, equal_slice_bits(guardian, v_guardian));
+          } else {
+            throw_unless(tv::sender, equal_slice_bits(pauser, v_pauser));
+          }
+        }
+      }
     } else {
       slice queued = tv_slice(v_admin);
       queued~load_uint(32);

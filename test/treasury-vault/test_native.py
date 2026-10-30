@@ -481,6 +481,64 @@ class TreasuryTests(unittest.TestCase):
         v.send(envelope(SUBMIT, req), new_business)
         self.assertEqual(len(v.send(envelope(APPROVE, req), new_guardian)), 1)
 
+    def test_replaced_pauser_cannot_veto_its_replacement(self):
+        v = self.vault()
+        v.send(v.ctl(PAUSE, admin=True), PAUSER)
+        replacement = set_roles(roles(BUSINESS, GUARDIAN, COLD, (0, 34)))
+        v.queue(replacement)
+        v.send(v.ctl(VETO, admin=True), PAUSER, expected=2401)
+        self.assertIsNotNone(v.state["admin"])
+        # A retained role keeps its veto over the same change.
+        v.send(v.ctl(VETO, admin=True), GUARDIAN)
+        self.assertIsNone(v.state["admin"])
+        gov = v.queue(replacement)
+        v.send(v.ctl(VETO, admin=True), PAUSER, expected=2401)
+        v.advance(DELAY)
+        v.send(envelope(APPLY, gov))
+        v.send(v.ctl(PAUSE, admin=True), PAUSER, expected=2401)
+        v.send(v.ctl(PAUSE, admin=True), (0, 34), expected=2404)
+
+    def test_replaced_guardian_cannot_veto_its_replacement(self):
+        v = self.vault()
+        replacement = set_roles(roles(BUSINESS, (0, 32), COLD, PAUSER))
+        v.queue(replacement)
+        v.send(v.ctl(VETO, admin=True), GUARDIAN, expected=2401)
+        v.send(v.ctl(VETO, admin=True), PAUSER)
+        gov = v.queue(replacement)
+        v.send(v.ctl(VETO, admin=True), GUARDIAN, expected=2401)
+        v.advance(DELAY)
+        v.send(envelope(APPLY, gov))
+        v.send(envelope(APPROVE, v.req()), GUARDIAN, expected=2401)
+
+    def test_veto_scope_outside_self_replacement(self):
+        v = self.vault()
+        v.queue(set_asset(0))
+        v.send(v.ctl(VETO, admin=True), PAUSER)
+        v.queue(set_asset(0))
+        # An expired pending request stays vetoable.
+        v.advance(DELAY + 3600)
+        v.send(v.ctl(VETO, admin=True), GUARDIAN)
+        v.queue(set_roles(roles(BUSINESS, (0, 32), COLD, (0, 34))))
+        v.send(v.ctl(VETO, admin=True), GUARDIAN, expected=2401)
+        v.send(v.ctl(VETO, admin=True), PAUSER, expected=2401)
+        v.send(v.ctl(VETO, admin=True), COLD)
+        self.assertIsNone(v.state["admin"])
+        self.assertEqual(v.state["admin_nonce"], 3)
+
+    def test_pause_invalidates_pending_replacement_once(self):
+        v = self.vault()
+        replacement = set_roles(roles(BUSINESS, GUARDIAN, COLD, (0, 34)))
+        v.queue(replacement)
+        v.send(v.ctl(PAUSE, admin=True), PAUSER)
+        self.assertIsNone(v.state["admin"])
+        gov = v.queue(replacement)
+        v.send(v.ctl(PAUSE, admin=True), PAUSER, expected=2404)
+        v.send(v.ctl(VETO, admin=True), PAUSER, expected=2401)
+        v.advance(DELAY)
+        v.send(envelope(APPLY, gov))
+        self.assertTrue(v.state["paused"])
+        v.send(v.ctl(PAUSE, admin=True), PAUSER, expected=2401)
+
     def test_registry_and_state_are_bounded(self):
         records = {0: asset_record()}
         records.update({i: asset_record((0, 1000 + i)) for i in range(1, 16)})
