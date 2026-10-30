@@ -1,0 +1,13 @@
+running 1 test
+test native_lifecycle::production_init_block_source_publishes_and_bootstraps_a_third_node ... Error: production create rejected init-block source: Err(native validation failed; inspect private worker.log); worker.log: Error: native recovery or required shard-state read did not complete; last check: native GetState for held zero state (-1,8000000000000000,0):E691E3579DFCC955CBB54F66D7A4F3731FF42E282B112E5041E27139640C4B65:BAF7CA8D63F1D0384074FE630128F48A903A158F2D80E200AECFF34D160B0BEC: native state read failed (651): zerostate not in db
+
+FAILED
+
+failures:
+
+failures:
+    native_lifecycle::production_init_block_source_publishes_and_bootstraps_a_third_node
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 107 filtered out; finished in 199.60s
+
+error: test failed, to rerun pass `-p node-data-sync --lib`

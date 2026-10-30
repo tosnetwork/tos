@@ -176,8 +176,9 @@ class ArchiveSlice : public td::actor::Actor {
  private:
   friend struct ArchivePruneTestAccess;
 
-  void before_query();
-  void load_index();
+  td::Status before_query();
+  void log_reader_error(const td::Status &error);
+  td::Status load_index();
   void do_close();
   template <typename T>
   td::Promise<T> begin_async_query(td::Promise<T> promise);
@@ -231,6 +232,8 @@ class ArchiveSlice : public td::actor::Actor {
   td::DbOpenMode mode_;
   double secondary_catch_up_interval_{1.0};
   td::Timestamp last_catch_up_;
+  // One warning per minute per slice, including repeated failed opens.
+  td::Timestamp next_reader_warning_;
 
   struct PackageInfo {
     PackageInfo(std::shared_ptr<Package> package, td::actor::ActorOwn<PackageWriter> writer, BlockSeqno seqno,

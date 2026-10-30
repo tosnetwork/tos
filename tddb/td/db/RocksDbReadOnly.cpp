@@ -17,6 +17,7 @@
 #pragma GCC diagnostic ignored "-Wimplicit-int-float-conversion"
 #include "rocksdb/db.h"
 #pragma GCC diagnostic pop
+#include "rocksdb/env.h"
 #include "rocksdb/filter_policy.h"
 #include "rocksdb/statistics.h"
 #include "rocksdb/table.h"
@@ -26,6 +27,14 @@
 
 namespace td {
 namespace {
+class NullLogger final : public rocksdb::Logger {
+ public:
+  void Logv(const char *, va_list) override {
+  }
+  void Logv(rocksdb::InfoLogLevel, const char *, va_list) override {
+  }
+};
+
 static Status from_rocksdb(rocksdb::Status status) {
   if (status.ok()) {
     return Status::OK();
@@ -90,14 +99,15 @@ Result<RocksDbReadOnly> RocksDbReadOnly::open(std::string path, RocksDbOptions o
     db_options.wal_recovery_mode = rocksdb::WALRecoveryMode::kTolerateCorruptedTailRecords;
     db_options.use_direct_reads = options.use_direct_reads;
     db_options.manual_wal_flush = true;
-    db_options.create_if_missing = true;
+    db_options.create_if_missing = false;
     db_options.max_background_compactions = 4;
     db_options.max_background_flushes = 2;
     db_options.bytes_per_sync = 1 << 20;
     db_options.writable_file_max_buffer_size = 2 << 14;
-    db_options.keep_log_file_num = 1;
     db_options.statistics = options.statistics;
-    db_options.max_log_file_size = 100 << 20;
+    // The default logger can recreate a removed source directory even when
+    // OpenForReadOnly fails. Readers must never write into the source tree.
+    db_options.info_log = std::make_shared<NullLogger>();
     rocksdb::ColumnFamilyOptions cf_options(db_options);
     std::vector<rocksdb::ColumnFamilyDescriptor> column_families;
     column_families.push_back(rocksdb::ColumnFamilyDescriptor(rocksdb::kDefaultColumnFamilyName, cf_options));

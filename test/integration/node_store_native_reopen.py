@@ -9,16 +9,88 @@ import asyncio
 import hashlib
 import json
 import logging
+import shlex
 import socket
 from dataclasses import replace
 from pathlib import Path
 
+from toslib.client import ToslibClient
 from toslib.toslibjson import ToslibError
 from tostester.install import Install
 from tostester.network import Network, StartOptions, _retryable_startup_lite_error
 from tostester.pq_initial_validator import deterministic_pq_initial_validator_seed
 
 REPO = Path(__file__).resolve().parents[2]
+
+
+async def read_shard_progress(console_command: list[str]) -> int | None:
+    # The native console supports get-stats; the Python FFI console deliberately
+    # accepts only a smaller query set that does not include this request.
+    process = await asyncio.create_subprocess_exec(
+        *console_command,
+        "-c",
+        "get-stats",
+        "-t",
+        "10",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        stdout, stderr = await process.communicate()
+    finally:
+        if process.returncode is None:
+            try:
+                process.kill()
+            except ProcessLookupError:
+                pass
+            await process.wait()
+    if process.returncode != 0:
+        raise RuntimeError(f"native get-stats failed: {stderr.decode(errors='replace')[-2000:]}")
+    values = [
+        fields[1:]
+        for line in stdout.decode().splitlines()
+        if (fields := line.split()) and fields[0] == "shardclientmasterchainseqno"
+    ]
+    if not values:
+        return None
+    if (
+        len(values) != 1
+        or len(values[0]) != 1
+        or not values[0][0].isascii()
+        or not values[0][0].isdigit()
+    ):
+        raise RuntimeError("native get-stats returned malformed shard progress")
+    return int(values[0][0])
+
+
+async def wait_capture_frontier(
+    client: ToslibClient, console_command: list[str], timeout: float = 180
+):
+    # Masterchain progress can precede the first basechain block. Capturing then
+    # leaves a zero-state shard reference that native GetAccountState cannot read
+    # as a block. Wait for this fixture's basechain to appear and advance too.
+    candidate = None
+    async with asyncio.timeout(timeout):
+        while True:
+            try:
+                if candidate is None:
+                    tip = (await client.get_masterchain_info()).last
+                    if tip is not None and tip.seqno >= 5:
+                        shards = (await client.get_shards(tip)).shards
+                        if any(shard.workchain == 0 for shard in shards) and all(
+                            shard.seqno > 0 for shard in shards
+                        ):
+                            candidate = tip
+                if candidate is not None:
+                    # The captured frontier is StateDb's ShardClient record. Latch
+                    # the candidate so a moving masterchain tip cannot starve this wait.
+                    processed = await read_shard_progress(console_command)
+                    if processed is not None and processed >= candidate.seqno:
+                        return candidate
+            except ToslibError as error:
+                if not _retryable_startup_lite_error(error):
+                    raise
+            await asyncio.sleep(0.2)
 
 
 async def run(root: Path, build: Path, reconstruct: Path, validate_generation: Path | None = None):
@@ -75,12 +147,7 @@ async def run(root: Path, build: Path, reconstruct: Path, validate_generation: P
         await source.run(options)
         await asyncio.wait_for(network.wait_mc_block(5), 180)
         client = await source.toslib_client()
-        async with asyncio.timeout(180):
-            while True:
-                before = (await client.get_masterchain_info()).last
-                if before is not None and before.seqno >= 5:
-                    break
-                await asyncio.sleep(0.2)
+        before = await wait_capture_frontier(client, shlex.split(source.engine_console_cmd))
         await source.stop()
         if validate_generation is not None:
             # The harness shares genesis files through symlinks; production capture refuses links.

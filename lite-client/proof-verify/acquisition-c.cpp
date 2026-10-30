@@ -1,13 +1,30 @@
 /* Copyright 2026 TOS Blockchain Teams. SPDX-License-Identifier: LGPL-2.0-or-later */
+#include <algorithm>
+
+#include "auto/tl/lite_api.hpp"
+#include "tl-utils/lite-utils.hpp"
+#include "tos/lite-tl.hpp"
+
 #include "acquisition.h"
 #include "material.h"
+#include "simulation-config.h"
+#include "wallet-transaction.h"
 namespace {
 class CallbackTransport final : public tos::proofverify::LiteTransport {
  public:
-  CallbackTransport(tos_proof_query_callback query, void *context) : query_(query), context_(context) {
+  CallbackTransport(tos_proof_query_callback query, void *context, size_t remaining, bool simulation)
+      : query_(query), context_(context), remaining_(remaining), simulation_(simulation) {
   }
   td::Result<td::BufferSlice> query(td::BufferSlice request) override {
-    const auto capacity = tos::proofverify::kMaxFileBytes - bytes_;
+    auto capacity = remaining_;
+    if (simulation_) {
+      auto parsed = tos::fetch_tl_object<tos::lite_api::Function>(request.clone(), true);
+      if (parsed.is_error())
+        return td::Status::Error("invalid local acquisition query");
+      const auto id = parsed.ok()->get_id();
+      if (id == tos::lite_api::liteServer_getAccountState::ID || id == tos::lite_api::liteServer_getConfigAll::ID)
+        capacity = std::min(capacity, tos::proofverify::detail::kMaxSimulationConfigReplyBytes);
+    }
     if (!capacity)
       return td::Status::Error("proof acquisition byte limit");
     td::BufferSlice response(capacity);
@@ -17,19 +34,20 @@ class CallbackTransport final : public tos::proofverify::LiteTransport {
                               reinterpret_cast<uint8_t *>(response.as_slice().data()), capacity, &used);
     if (status != 0 || !used || used > capacity)
       return td::Status::Error("proof transport refused");
-    bytes_ += used;
+    remaining_ -= used;
     return td::BufferSlice(response.as_slice().substr(0, used));
   }
 
  private:
   tos_proof_query_callback query_;
   void *context_;
-  size_t bytes_{0};
+  size_t remaining_;
+  bool simulation_;
 };
 }  // namespace
-extern "C" int tos_proof_acquire(const char *anchor, size_t anchor_size, const char *request, size_t request_size,
-                                 const char *state, size_t state_size, tos_proof_query_callback query,
-                                 void *query_context, tos_proof_emit_callback emit, void *emit_context) {
+static int acquire_material(const char *anchor, size_t anchor_size, const char *request, size_t request_size,
+                            const char *state, size_t state_size, tos_proof_query_callback query, void *query_context,
+                            tos_proof_emit_callback emit, void *emit_context, tos::proofverify::FetchPurpose purpose) {
   namespace pv = tos::proofverify;
   if (!anchor || !anchor_size || anchor_size > (1u << 20) || !request || !request_size || request_size > (1u << 20) ||
       state_size > (1u << 20) || (state_size && !state) || !query || !emit)
@@ -49,8 +67,20 @@ extern "C" int tos_proof_acquire(const char *anchor, size_t anchor_size, const c
     if ((r.ok().mode == pv::Mode::Live && !prior) || (r.ok().mode == pv::Mode::Historical && prior) ||
         (prior && (prior->anchor.id != a.ok().id || prior->anchor.kind != a.ok().kind)))
       return -1;
-    CallbackTransport transport(query, query_context);
-    auto fetched = pv::fetch_material(transport, a.ok(), r.ok(), prior);
+    const bool simulation = purpose == pv::FetchPurpose::SelfPaySimulation;
+    if (simulation && (r.ok().mode != pv::Mode::Live || !r.ok().account || r.ok().account->workchain != 0 ||
+                       !r.ok().get_methods.empty() || !r.ok().config_params.empty()))
+      return -1;
+    size_t remaining = pv::kMaxFileBytes;
+    if (simulation) {
+      for (auto size : {anchor_size, request_size, state_size, pv::kMaxWalletTransactionBytes}) {
+        if (size > remaining)
+          return -1;
+        remaining -= size;
+      }
+    }
+    CallbackTransport transport(query, query_context, remaining, simulation);
+    auto fetched = pv::fetch_material(transport, a.ok(), r.ok(), prior, purpose);
     if (fetched.is_error())
       return -2;
     const auto &m = fetched.ok();
@@ -78,4 +108,19 @@ extern "C" int tos_proof_acquire(const char *anchor, size_t anchor_size, const c
   } catch (...) {
     return -4;
   }
+}
+
+extern "C" int tos_proof_acquire(const char *anchor, size_t anchor_size, const char *request, size_t request_size,
+                                 const char *state, size_t state_size, tos_proof_query_callback query,
+                                 void *query_context, tos_proof_emit_callback emit, void *emit_context) {
+  return acquire_material(anchor, anchor_size, request, request_size, state, state_size, query, query_context, emit,
+                          emit_context, tos::proofverify::FetchPurpose::Read);
+}
+
+extern "C" int tos_proof_acquire_self_pay_simulation(const char *anchor, size_t anchor_size, const char *request,
+                                                     size_t request_size, const char *state, size_t state_size,
+                                                     tos_proof_query_callback query, void *query_context,
+                                                     tos_proof_emit_callback emit, void *emit_context) {
+  return acquire_material(anchor, anchor_size, request, request_size, state, state_size, query, query_context, emit,
+                          emit_context, tos::proofverify::FetchPurpose::SelfPaySimulation);
 }

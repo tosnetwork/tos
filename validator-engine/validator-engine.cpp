@@ -1703,6 +1703,7 @@ td::Status ValidatorEngine::load_global_config() {
   td::actor::send_closure(exporter_, &tos::PrometheusExporter::set_health_network,
                           tos::health::network_identity(zero_state.root_hash.as_slice()));
   validator_options_ = tos::validator::ValidatorManagerOptions::create(zero_state, init_block);
+  validator_options_.write().set_test_state_serializer_no_delay(test_state_serializer_no_delay_);
   if (state_ttl_ != 0) {
     validator_options_.write().set_state_ttl(state_ttl_);
   }
@@ -6979,6 +6980,13 @@ int main(int argc, char *argv[]) {
       '\0', "disable-state-serializer",
       "disable persistent state serializer (similar to set-state-serializer-enabled 0 in validator console)", [&]() {
         acts.push_back([&x]() { td::actor::send_closure(x, &ValidatorEngine::set_state_serializer_disabled_flag); });
+      });
+  p.add_option(
+      '\0', "test-state-serializer-no-delay",
+      "TEST-ONLY, LOCAL NETWORKS ONLY: omit the randomized persistent-state serialization delay. "
+      "Default off; refused unless the loaded chain has global id 3",
+      [&]() {
+        acts.push_back([&x]() { td::actor::send_closure(x, &ValidatorEngine::set_test_state_serializer_no_delay); });
       });
   p.add_checked_option(
       '\0', "broadcast-speed-catchain",

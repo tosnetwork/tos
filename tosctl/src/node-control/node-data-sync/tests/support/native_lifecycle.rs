@@ -1,4 +1,7 @@
 //! Native lifecycle acceptance driven through production entry points.
+#[path = "receiver_config.rs"]
+mod receiver_config;
+
 use crate::{
     capture,
     cas::Objects,
@@ -206,6 +209,14 @@ impl Fixture {
                 .context("NODE_SYNC_NATIVE_SOURCE required")?,
         )
         .canonicalize()?;
+        Self::build_from_paths(new_node, fixture, source, None)
+    }
+    fn build_from_paths(
+        new_node: bool,
+        fixture: PathBuf,
+        source: PathBuf,
+        catalog: Option<PathBuf>,
+    ) -> Result<Self> {
         let engine = PathBuf::from(
             std::env::var_os("NODE_SYNC_NATIVE_ENGINE")
                 .context("NODE_SYNC_NATIVE_ENGINE required")?,
@@ -244,15 +255,17 @@ impl Fixture {
                     fs::Permissions::from_mode(mode),
                 )?;
             }
-            let genesis = Root::open(&image.join("static"))?;
-            for file in trees::inventory(&genesis)? {
-                trees::copy_file(
-                    &genesis,
-                    &file.path,
-                    &own,
-                    &format!("static/{}", file.path),
-                    file.size,
-                )?;
+            if image.join("static").try_exists()? {
+                let genesis = Root::open(&image.join("static"))?;
+                for file in trees::inventory(&genesis)? {
+                    trees::copy_file(
+                        &genesis,
+                        &file.path,
+                        &own,
+                        &format!("static/{}", file.path),
+                        file.size,
+                    )?;
+                }
             }
         } else {
             let stopped = Frozen::acquire(&image)?;
@@ -269,7 +282,7 @@ impl Fixture {
         parent.write_new("fixture.service", b"private lifecycle fixture")?;
         parent.write_new("publisher.seed", &[42; 32])?;
         let key = ed25519_dalek::SigningKey::from_bytes(&[42; 32]);
-        let source_catalog = fixture.join("catalog");
+        let source_catalog = catalog.unwrap_or_else(|| fixture.join("catalog"));
         let signed = Catalog::open(&source_catalog, key.verifying_key().to_bytes())?
             .latest()?
             .context("native generation")?;
@@ -1140,8 +1153,9 @@ fn production_create_captures_a_source_without_static() -> Result<()> {
     Ok(())
 }
 
-/// A source that joined at an init block holds no zero-state file anywhere. Create proves the
-/// held zero state from the frontier's own state instead of reading it, and publishes.
+/// A focused missing-file control: remove the genesis-synced fixture's zero-state files and
+/// prove the held zero state from its frontier. The separate init-block fixture below
+/// exercises an actual first-start persistent-state download without deleting any files.
 #[test]
 fn production_create_captures_a_source_without_zero_state() -> Result<()> {
     let _serial =
@@ -1198,7 +1212,8 @@ fn production_create_captures_a_source_without_zero_state() -> Result<()> {
 /// own safety anchors this way. The engine refuses at startup a held init block above the
 /// source's StateDb init record, and this genesis-synced fixture's init record stays at the zero
 /// state, so a non-zero held init block cannot be exercised here; the required-ancestor lane
-/// runs the same ancestry proof.
+/// runs the same ancestry proof. The separate init-block fixture exercises the held-init
+/// lane on a source that really joined there.
 #[test]
 fn production_validation_proves_a_required_non_zero_ancestor() -> Result<()> {
     let _serial =
@@ -1251,6 +1266,192 @@ fn production_validation_proves_a_required_non_zero_ancestor() -> Result<()> {
         "validation still writes a zero-state file"
     );
     println!("\nPRODUCTION_VALIDATION_REQUIRED_ANCESTOR_OK");
+    Ok(())
+}
+
+/// Publish from an observer whose first state was downloaded at a real persistent key
+/// block, then bootstrap a different never-started identity from the produced catalog.
+#[test]
+fn production_init_block_source_publishes_and_bootstraps_a_third_node() -> Result<()> {
+    let _serial =
+        SERIAL.lock().map_err(|_| anyhow::anyhow!("native lifecycle fixture poisoned"))?;
+    if !fixture_environment_available() {
+        return Ok(());
+    }
+    let Some(root) = std::env::var_os("NODE_SYNC_NATIVE_INIT_ROOT") else {
+        eprintln!("SKIP init-block lifecycle: NODE_SYNC_NATIVE_INIT_ROOT is required");
+        return Ok(());
+    };
+    let root = PathBuf::from(root).canonicalize()?;
+    let receipt: serde_json::Value =
+        serde_json::from_slice(&Root::open(&root)?.bytes("init-block-receipt.json", 65536)?)?;
+    let anchor = crate::model::FullId::from_config(&receipt["init_block"])?;
+    ensure!(anchor.seqno > 0, "fixture did not join at a nonzero init block");
+    ensure!(
+        receipt["result"] == "NATIVE_INIT_BLOCK_JOIN_OK"
+            && receipt["zero_state_files"] == 0
+            && receipt["static_supplied"] == false,
+        "fixture did not complete a native join without Genesis files"
+    );
+    let source = Fixture::build_from_paths(
+        false,
+        root.join("checked-generation"),
+        root.join("network/node5"),
+        None,
+    )?;
+    let database = &source.request.context.database;
+    let no_zero_state = |database: &std::path::Path| -> Result<()> {
+        if database.join("static").try_exists()? {
+            ensure!(
+                fs::read_dir(database.join("static"))?.next().is_none(),
+                "fixture supplied static Genesis data"
+            );
+        }
+        for file in fs::read_dir(database.join("archive/states"))? {
+            ensure!(
+                !file?.file_name().to_string_lossy().starts_with("zerostate_"),
+                "fixture contains a downloaded zero-state file"
+            );
+        }
+        Ok(())
+    };
+    no_zero_state(database)?;
+    let original_source_keys = tree_listing(&database.join("keyring"))?;
+    let store = node_store::OfflineStore::open_existing(&database.join("state"))?;
+    let (chain, _) = crate::records::export(&store)?;
+    assert_eq!(chain.init()?, anchor, "source did not persist the downloaded init block");
+    assert_eq!(source.signed.manifest.network.init, anchor);
+    assert!(chain.frontier()?.seqno > anchor.seqno, "source never followed the chain");
+    drop(store);
+    let generation;
+    {
+        let _scope = source.scope(|_| Ok(()));
+        source.manager.borrow_mut().start()?;
+        let result = source.create("create-init-block-source");
+        if result.is_err() {
+            // The worker's own refusal names the failing native read; keep it with the error.
+            let log = fs::read_to_string(
+                source.request.context.work_root.join("create-init-block-source/worker.log"),
+            )
+            .unwrap_or_default();
+            anyhow::bail!(
+                "production create rejected init-block source: {result:?}; worker.log: {log}"
+            );
+        }
+        generation = result?;
+        assert_eq!(source.events(), vec!["stop", "start"]);
+        source.manager.borrow_mut().stop()?;
+    }
+    no_zero_state(database)?;
+    assert_eq!(tree_listing(&database.join("keyring"))?, original_source_keys);
+    let checked: crate::engine::ValidationResult = serde_json::from_slice(
+        &Root::open(&source.request.context.work_root)?
+            .bytes("create-init-block-source/checked/validation.json", MANIFEST_LIMIT)?,
+    )?;
+    assert!(checked.ancestors.contains(&anchor), "create did not prove its held init block");
+    assert!(checked.ancestors.contains(&source.signed.manifest.network.zero));
+    // Creation prepares a signed generation. Publish is deliberately a separate
+    // production operation, and the receiver must discover that published latest.
+    let catalog_path = source.request.context.work_root.join("create-catalog");
+    let trusted = ed25519_dalek::SigningKey::from_bytes(&[42; 32]).verifying_key().to_bytes();
+    let prepared = SignedManifest::parse(
+        &Root::open(&source.request.context.work_root)?
+            .bytes("create-init-block-source/generation.json", MANIFEST_LIMIT)?,
+        &trusted,
+    )?;
+    assert_eq!(prepared.verify(&trusted)?, generation);
+    let catalog = Catalog::open(&catalog_path, trusted)?;
+    assert!(catalog.latest()?.is_none(), "creation published before the publish operation");
+    let published = catalog.publish(
+        &prepared,
+        &Objects::open(&catalog_path)?,
+        &source.request.context.references,
+    )?;
+    assert_eq!(published, generation);
+    assert_eq!(catalog.latest()?.context("published latest")?.verify(&trusted)?, generation);
+    let target = Fixture::build_from_paths(
+        true,
+        root.join("checked-generation"),
+        root.join("network/node6"),
+        Some(catalog_path),
+    )?;
+    assert_eq!(target.signed.verify(&trusted)?, generation);
+    let database = &target.request.context.database;
+    assert!(!database.join("state").exists(), "bootstrap target has already run");
+    let target_keys = tree_listing(&database.join("keyring"))?;
+    assert_ne!(target_keys, original_source_keys, "receiver reused the publisher identity");
+    let target_config = fs::read(database.join("config.json"))?;
+    let preservation_checked = Rc::new(std::cell::Cell::new(false));
+    {
+        let database = database.clone();
+        let config = target_config.clone();
+        let keys = target_keys.clone();
+        let checked = Rc::clone(&preservation_checked);
+        let _scope = target.scope(move |point| {
+            if point == "restore-start-installed" {
+                assert_eq!(fs::read(database.join("config.json"))?, config);
+                assert_eq!(tree_listing(&database.join("keyring"))?, keys);
+                checked.set(true);
+            }
+            Ok(())
+        });
+        let journal = operations::restore(&target.request, &target.operation)?;
+        assert_eq!(journal.phase, crate::journal::Phase::CatchingUp);
+        assert_eq!(journal.target_anchor, anchor);
+        assert_eq!(target.events(), vec!["start"]);
+        assert!(target.running());
+        target.manager.borrow_mut().stop()?;
+    }
+    assert!(preservation_checked.get(), "installed preservation check was not reached");
+    assert_eq!(tree_listing(&database.join("keyring"))?, target_keys);
+    // The first native start expands the configured default out_port and empty GC
+    // list, and reformats JSON. Preserve exact bytes before that start above, then
+    // require every configuration value to match after those known expansions and
+    // the engine's map-based ADNL serialization.
+    let mut expected_config: serde_json::Value = serde_json::from_slice(&target_config)?;
+    if expected_config["out_port"] == 0 {
+        expected_config["out_port"] = serde_json::json!(3278);
+    }
+    expected_config
+        .as_object_mut()
+        .context("receiver configuration is not an object")?
+        .entry("gc")
+        .or_insert_with(|| serde_json::json!({"@type": "engine.gc", "ids": []}));
+    let mut running_config: serde_json::Value =
+        serde_json::from_slice(&fs::read(database.join("config.json"))?)?;
+    receiver_config::canonicalize_adnl(&mut expected_config)?;
+    receiver_config::canonicalize_adnl(&mut running_config)?;
+    assert_eq!(running_config, expected_config, "receiver configuration changed after start");
+    no_zero_state(database)?;
+    // Reopen and read the installed receiver through the real worker/engine twice.
+    // A successful service-manager start alone is not evidence that it can use the data.
+    let verify = Root::create(&target.request.context.work_root.join("verify-installed"))?;
+    let image = Root::create(&verify.path.join("image"))?;
+    let frozen = Frozen::acquire(database)?;
+    capture::cold_image(&frozen, &Root::open(database)?, &image)?;
+    drop(frozen);
+    let verified = crate::worker::validate(
+        &target.request.context,
+        &image,
+        &verify,
+        vec![anchor.clone()],
+        false,
+    )?;
+    assert_eq!(verified.validation.frontier, target.signed.manifest.frontier);
+    assert!(verified.ancestors.contains(&anchor));
+    assert!(verified.ancestors.contains(&target.signed.manifest.network.zero));
+    assert_eq!(verified.validation.passes, 2);
+    println!(
+        "\nINIT_BLOCK_PUBLISH_RECEIPT {}",
+        serde_json::json!({
+            "generation": generation,
+            "init_block": anchor,
+            "validation": verified.validation,
+            "zero_state_files": 0,
+            "receiver_preservation_checked_before_start": preservation_checked.get(),
+        })
+    );
+    println!("\nPRODUCTION_INIT_BLOCK_PUBLISH_BOOTSTRAP_OK");
     Ok(())
 }
 

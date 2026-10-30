@@ -2790,6 +2790,9 @@ void ValidatorManagerImpl::init_last_masterchain_state(td::Ref<MasterchainState>
   if (auth_status.is_error()) {
     LOG(FATAL) << "refusing initial masterchain AUTH policy: " << auth_status;
   }
+  if (opts_->get_test_state_serializer_no_delay() && state->get_global_id() != 3) {
+    LOG(FATAL) << "test-state-serializer-no-delay requires on-chain global id 3";
+  }
   last_masterchain_state_ = std::move(state);
   update_shard_overlays();
 }
@@ -2800,6 +2803,9 @@ void ValidatorManagerImpl::started(ValidatorManagerInitResult R) {
   auto auth_status = admit_auth_policy_state(*R.state, last_masterchain_state_);
   if (auth_status.is_error()) {
     LOG(FATAL) << "refusing restored masterchain AUTH policy: " << auth_status;
+  }
+  if (opts_->get_test_state_serializer_no_delay() && R.state->get_global_id() != 3) {
+    LOG(FATAL) << "test-state-serializer-no-delay requires on-chain global id 3";
   }
   last_masterchain_block_handle_ = std::move(R.handle);
   last_masterchain_block_id_ = last_masterchain_block_handle_->id();

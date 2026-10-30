@@ -42,6 +42,25 @@ int tos_proof_verify_embedded(const char *anchor, size_t anchor_size, const char
 int tos_proof_verify_wallet_transaction(int32_t workchain, const uint8_t *account_hash, uint64_t logical_time,
                                         const uint8_t *transaction_hash, const uint8_t *boc, size_t boc_size,
                                         char *result, size_t result_capacity, size_t *result_size);
+/* Local self-pay estimate, not a receipt or signing capability. All pointer
+ * ranges, including length slots, are valid and disjoint from each other and
+ * every borrowed input. Outputs are cleared on failures after output validation.
+ * Requires a persisted same-anchor live state (anchor-only initial state allowed),
+ * one account, no getters/selected params; kinds 1/2/3/5/6 only. Exact signed BOC
+ * stays local. Input aggregate <=64 MiB, each JSON/state/message <=1 MiB;
+ * result capacity <=2 MiB and next-state <=1 MiB. These are candidate resource
+ * bounds, not phone acceptance. Return 0: tagged local estimate, including
+ * unsupported/import_rejected/not_accepted; -1 interface, -2 proof, -3 caller
+ * output capacity, -4 internal, -5 resource, -6 context. Negative returns expose
+ * no next-state. Commit successful next-state before using the estimate; persist
+ * exact outbox BOC before broadcast. No result releases a pending outbox slot.
+ */
+int tos_proof_simulate_self_pay_embedded(const char *anchor, size_t anchor_size, const char *request,
+                                         size_t request_size, const char *state, size_t state_size, int64_t local_now,
+                                         const tos_proof_material *material, size_t material_count,
+                                         const uint8_t *message, size_t message_size, char *result,
+                                         size_t result_capacity, size_t *result_size, char *next_state,
+                                         size_t state_capacity, size_t *next_state_size);
 #ifdef __cplusplus
 }
 #endif

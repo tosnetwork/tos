@@ -1,0 +1,724 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tos:self-pay-simulation:1",
+  "title": "Candidate local self-pay simulation result; not a receipt or signing grant",
+  "type": "object",
+  "properties": {
+    "interface": {
+      "const": "tos-self-pay-simulation/1"
+    },
+    "scope": {
+      "const": "local_estimate"
+    },
+    "status": {
+      "enum": [
+        "unsupported",
+        "import_rejected",
+        "not_accepted",
+        "executed"
+      ]
+    },
+    "target": {
+      "type": "object",
+      "properties": {
+        "workchain": {
+          "const": -1
+        },
+        "shard": {
+          "const": "8000000000000000"
+        },
+        "seqno": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "root_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "file_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "workchain",
+        "shard",
+        "seqno",
+        "root_hash",
+        "file_hash"
+      ],
+      "additionalProperties": false
+    },
+    "account": {
+      "type": "object",
+      "properties": {
+        "address": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^-?(0|[1-9][0-9]*):[0-9a-f]{64}$"
+        },
+        "exists": {
+          "type": "boolean"
+        },
+        "observed_balance": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,36})$",
+          "maxLength": 37,
+          "description": "Native TL-B enforces 120-bit amount range."
+        },
+        "state_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "address",
+        "exists",
+        "observed_balance"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "exists": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "state_hash"
+            ]
+          },
+          "else": {
+            "not": {
+              "required": [
+                "state_hash"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "config_root_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "message_bytes_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "message_root_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "context": {
+      "type": "object",
+      "properties": {
+        "estimated_time": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4294967295
+        },
+        "block_start_lt": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "maxLength": 20,
+          "description": "Native source values enforce uint64 range; this schema checks decimal representation."
+        },
+        "transaction_lt": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "maxLength": 20,
+          "description": "Native source values enforce uint64 range; this schema checks decimal representation."
+        }
+      },
+      "required": [
+        "estimated_time",
+        "block_start_lt",
+        "transaction_lt"
+      ],
+      "additionalProperties": false
+    },
+    "seed": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "reason": {
+      "const": "unsupported_profile"
+    },
+    "vm_exit_code": {
+      "type": "integer",
+      "minimum": -2147483648,
+      "maximum": 2147483647
+    },
+    "transaction": {
+      "type": "object",
+      "properties": {
+        "codec": {
+          "type": "object",
+          "properties": {
+            "interface": {
+              "const": "tos-wallet-transaction/1"
+            },
+            "account": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "pattern": "^-?(0|[1-9][0-9]*):[0-9a-f]{64}$"
+            },
+            "hash": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "lt": {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]{0,19})$",
+              "maxLength": 20,
+              "description": "Native source values enforce uint64 range; this schema checks decimal representation."
+            },
+            "previous_hash": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "previous_lt": {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]{0,19})$",
+              "maxLength": 20,
+              "description": "Native source values enforce uint64 range; this schema checks decimal representation."
+            },
+            "timestamp": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            },
+            "fees": {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]{0,36})$",
+              "maxLength": 37,
+              "description": "Native TL-B enforces 120-bit amount range."
+            },
+            "other_fee_currencies": {
+              "type": "boolean"
+            },
+            "in_msg": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "hash": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$"
+                        },
+                        "body_hash": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$"
+                        },
+                        "kind": {
+                          "const": "external_in"
+                        },
+                        "destination": {
+                          "type": [
+                            "string",
+                            "null"
+                          ],
+                          "pattern": "^-?(0|[1-9][0-9]*):[0-9a-f]{64}$"
+                        }
+                      },
+                      "required": [
+                        "hash",
+                        "body_hash",
+                        "kind",
+                        "destination"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "hash": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$"
+                        },
+                        "body_hash": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$"
+                        },
+                        "kind": {
+                          "const": "external_out"
+                        },
+                        "source": {
+                          "type": [
+                            "string",
+                            "null"
+                          ],
+                          "pattern": "^-?(0|[1-9][0-9]*):[0-9a-f]{64}$"
+                        }
+                      },
+                      "required": [
+                        "hash",
+                        "body_hash",
+                        "kind",
+                        "source"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "hash": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$"
+                        },
+                        "body_hash": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$"
+                        },
+                        "kind": {
+                          "const": "internal"
+                        },
+                        "source": {
+                          "type": [
+                            "string",
+                            "null"
+                          ],
+                          "pattern": "^-?(0|[1-9][0-9]*):[0-9a-f]{64}$"
+                        },
+                        "destination": {
+                          "type": [
+                            "string",
+                            "null"
+                          ],
+                          "pattern": "^-?(0|[1-9][0-9]*):[0-9a-f]{64}$"
+                        },
+                        "value": {
+                          "type": "string",
+                          "pattern": "^(0|[1-9][0-9]{0,36})$",
+                          "maxLength": 37,
+                          "description": "Native TL-B enforces 120-bit amount range."
+                        },
+                        "other_currencies": {
+                          "type": "boolean"
+                        },
+                        "bounced": {
+                          "type": "boolean"
+                        },
+                        "bounce": {
+                          "type": "boolean"
+                        },
+                        "created_lt": {
+                          "type": "string",
+                          "pattern": "^(0|[1-9][0-9]{0,19})$",
+                          "maxLength": 20,
+                          "description": "Native source values enforce uint64 range; this schema checks decimal representation."
+                        },
+                        "created_at": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 4294967295
+                        }
+                      },
+                      "required": [
+                        "hash",
+                        "body_hash",
+                        "kind",
+                        "source",
+                        "destination",
+                        "value",
+                        "other_currencies",
+                        "bounced",
+                        "bounce",
+                        "created_lt",
+                        "created_at"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
+                }
+              ]
+            },
+            "out_msgs": {
+              "type": "array",
+              "maxItems": 256,
+              "items": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "hash": {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{64}$"
+                      },
+                      "body_hash": {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{64}$"
+                      },
+                      "kind": {
+                        "const": "external_in"
+                      },
+                      "destination": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "pattern": "^-?(0|[1-9][0-9]*):[0-9a-f]{64}$"
+                      }
+                    },
+                    "required": [
+                      "hash",
+                      "body_hash",
+                      "kind",
+                      "destination"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "hash": {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{64}$"
+                      },
+                      "body_hash": {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{64}$"
+                      },
+                      "kind": {
+                        "const": "external_out"
+                      },
+                      "source": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "pattern": "^-?(0|[1-9][0-9]*):[0-9a-f]{64}$"
+                      }
+                    },
+                    "required": [
+                      "hash",
+                      "body_hash",
+                      "kind",
+                      "source"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "hash": {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{64}$"
+                      },
+                      "body_hash": {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{64}$"
+                      },
+                      "kind": {
+                        "const": "internal"
+                      },
+                      "source": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "pattern": "^-?(0|[1-9][0-9]*):[0-9a-f]{64}$"
+                      },
+                      "destination": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "pattern": "^-?(0|[1-9][0-9]*):[0-9a-f]{64}$"
+                      },
+                      "value": {
+                        "type": "string",
+                        "pattern": "^(0|[1-9][0-9]{0,36})$",
+                        "maxLength": 37,
+                        "description": "Native TL-B enforces 120-bit amount range."
+                      },
+                      "other_currencies": {
+                        "type": "boolean"
+                      },
+                      "bounced": {
+                        "type": "boolean"
+                      },
+                      "bounce": {
+                        "type": "boolean"
+                      },
+                      "created_lt": {
+                        "type": "string",
+                        "pattern": "^(0|[1-9][0-9]{0,19})$",
+                        "maxLength": 20,
+                        "description": "Native source values enforce uint64 range; this schema checks decimal representation."
+                      },
+                      "created_at": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 4294967295
+                      }
+                    },
+                    "required": [
+                      "hash",
+                      "body_hash",
+                      "kind",
+                      "source",
+                      "destination",
+                      "value",
+                      "other_currencies",
+                      "bounced",
+                      "bounce",
+                      "created_lt",
+                      "created_at"
+                    ],
+                    "additionalProperties": false
+                  }
+                ]
+              }
+            },
+            "type": {
+              "const": "ordinary"
+            },
+            "aborted": {
+              "type": "boolean"
+            },
+            "destroyed": {
+              "type": "boolean"
+            },
+            "compute": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "skipped": {
+                      "const": false
+                    },
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "exit_code": {
+                      "type": "integer",
+                      "minimum": -2147483648,
+                      "maximum": 2147483647
+                    }
+                  },
+                  "required": [
+                    "skipped",
+                    "success",
+                    "exit_code"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "skipped": {
+                      "const": true
+                    },
+                    "reason": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 7
+                    }
+                  },
+                  "required": [
+                    "skipped",
+                    "reason"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            },
+            "action": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "valid": {
+                      "type": "boolean"
+                    },
+                    "no_funds": {
+                      "type": "boolean"
+                    },
+                    "result_code": {
+                      "type": "integer",
+                      "minimum": -2147483648,
+                      "maximum": 2147483647
+                    },
+                    "skipped_actions": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 65535
+                    },
+                    "messages_created": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 65535
+                    }
+                  },
+                  "required": [
+                    "success",
+                    "valid",
+                    "no_funds",
+                    "result_code",
+                    "skipped_actions",
+                    "messages_created"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            }
+          },
+          "required": [
+            "interface",
+            "account",
+            "hash",
+            "lt",
+            "previous_hash",
+            "previous_lt",
+            "timestamp",
+            "fees",
+            "other_fee_currencies",
+            "in_msg",
+            "out_msgs",
+            "type",
+            "aborted",
+            "destroyed",
+            "compute",
+            "action"
+          ],
+          "additionalProperties": false
+        },
+        "expected_balance": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,36})$",
+          "maxLength": 37,
+          "description": "Native TL-B enforces 120-bit amount range."
+        },
+        "expected_state_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "codec",
+        "expected_balance",
+        "expected_state_hash"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "interface",
+    "scope",
+    "status",
+    "target",
+    "account",
+    "config_root_hash",
+    "message_bytes_hash",
+    "message_root_hash"
+  ],
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "unsupported"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "reason"
+        ]
+      },
+      "else": {
+        "not": {
+          "required": [
+            "reason"
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "not_accepted"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "vm_exit_code"
+        ]
+      },
+      "else": {
+        "not": {
+          "required": [
+            "vm_exit_code"
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "executed"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "transaction"
+        ]
+      },
+      "else": {
+        "not": {
+          "required": [
+            "transaction"
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "enum": [
+              "import_rejected",
+              "not_accepted",
+              "executed"
+            ]
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "context",
+          "seed"
+        ]
+      }
+    }
+  ]
+}

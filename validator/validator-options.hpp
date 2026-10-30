@@ -179,6 +179,9 @@ struct ValidatorManagerOptionsImpl : public ValidatorManagerOptions {
   bool get_state_serializer_enabled() const override {
     return state_serializer_enabled_;
   }
+  bool get_test_state_serializer_no_delay() const override {
+    return test_state_serializer_no_delay_;
+  }
   td::Ref<CollatorOptions> get_collator_options() const override {
     return collator_options_;
   }
@@ -332,6 +335,9 @@ struct ValidatorManagerOptionsImpl : public ValidatorManagerOptions {
   void set_state_serializer_enabled(bool value) override {
     state_serializer_enabled_ = value;
   }
+  void set_test_state_serializer_no_delay(bool value) override {
+    test_state_serializer_no_delay_ = value;
+  }
   void set_collator_options(td::Ref<CollatorOptions> value) override {
     collator_options_ = std::move(value);
   }
@@ -428,6 +434,7 @@ struct ValidatorManagerOptionsImpl : public ValidatorManagerOptions {
   bool unsynced_liteserver_ = false;
   td::optional<double> catchain_max_block_delay_, catchain_max_block_delay_slow_;
   bool state_serializer_enabled_ = true;
+  bool test_state_serializer_no_delay_ = false;
   td::Ref<CollatorOptions> collator_options_{true};
   double catchain_broadcast_speed_multipliers_;
   bool permanent_celldb_ = false;

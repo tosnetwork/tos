@@ -275,7 +275,7 @@ void ArchiveSlice::add_handle(BlockHandle handle, td::Promise<td::Unit> promise)
     update_handle(std::move(handle), std::move(promise));
     return;
   }
-  before_query();
+  before_query().ensure();
   CHECK(!key_blocks_only_);
   CHECK(!temp_);
   CHECK(handle->inited_unix_time());
@@ -364,7 +364,7 @@ void ArchiveSlice::update_handle(BlockHandle handle, td::Promise<td::Unit> promi
     promise.set_value(td::Unit());
     return;
   }
-  before_query();
+  before_query().ensure();
   CHECK(!key_blocks_only_);
 
   begin_transaction();
@@ -391,7 +391,7 @@ td::actor::Task<> ArchiveSlice::add_block(BlockHandle handle,
   }
   CHECK(!key_blocks_only_);
   CHECK(!temp_);
-  before_query();
+  before_query().ensure();
   begin_async_query_impl();
   SCOPE_EXIT {
     end_async_query();
@@ -443,7 +443,7 @@ void ArchiveSlice::add_file(BlockHandle handle, FileReference ref_id, td::Buffer
     promise.set_error(td::Status::Error(ErrorCode::error, td::Slice(kArchiveSliceReadOnly)));
     return;
   }
-  before_query();
+  before_query().ensure();
   TRY_RESULT_PROMISE(promise, p, choose_package(handle, true));
   std::string value;
   auto R = kv_->get(ref_id.hash().to_hex(), value);
@@ -491,7 +491,7 @@ void ArchiveSlice::get_handle(BlockIdExt block_id, td::Promise<BlockHandle> prom
     promise.set_error(td::Status::Error(ErrorCode::notready, td::Slice(kPackageGarbageCollected)));
     return;
   }
-  before_query();
+  TRY_STATUS_PROMISE(promise, before_query());
   CHECK(!key_blocks_only_);
   std::string value;
   auto R = kv_->get(get_db_key_block_info(block_id), value);
@@ -517,7 +517,7 @@ void ArchiveSlice::get_temp_handle(BlockIdExt block_id, td::Promise<ConstBlockHa
     promise.set_error(td::Status::Error(ErrorCode::notready, td::Slice(kPackageGarbageCollected)));
     return;
   }
-  before_query();
+  TRY_STATUS_PROMISE(promise, before_query());
   CHECK(!key_blocks_only_);
   std::string value;
   auto R = kv_->get(get_db_key_block_info(block_id), value);
@@ -545,7 +545,7 @@ void ArchiveSlice::get_file_limited(ConstBlockHandle handle, FileReference ref_i
     promise.set_error(td::Status::Error(ErrorCode::notready, td::Slice(kPackageGarbageCollected)));
     return;
   }
-  before_query();
+  TRY_STATUS_PROMISE(promise, before_query());
   std::string value;
   auto R = kv_->get(ref_id.hash().to_hex(), value);
   R.ensure();
@@ -578,7 +578,7 @@ void ArchiveSlice::get_block_common(AccountIdPrefixFull account_id,
     promise.set_error(td::Status::Error(ErrorCode::notready, td::Slice(kPackageGarbageCollected)));
     return;
   }
-  before_query();
+  TRY_STATUS_PROMISE(promise, before_query());
   bool f = false;
   BlockIdExt block_id;
   td::uint32 ls = 0;
@@ -715,7 +715,7 @@ void ArchiveSlice::get_slice(td::uint64 archive_id, td::uint64 offset, td::uint3
     promise.set_error(td::Status::Error(ErrorCode::error, "bad archive id"));
     return;
   }
-  before_query();
+  TRY_STATUS_PROMISE(promise, before_query());
   auto value = static_cast<td::uint32>(archive_id >> 32);
   PackageInfo *p;
   if (shard_separated_) {
@@ -732,24 +732,26 @@ void ArchiveSlice::get_slice(td::uint64 archive_id, td::uint64 offset, td::uint3
 }
 
 void ArchiveSlice::get_max_masterchain_seqno(td::Promise<BlockSeqno> promise) {
+  TRY_STATUS_PROMISE(promise, before_query());
   promise.set_result(max_masterchain_seqno());
 }
 
 void ArchiveSlice::get_min_masterchain_seqno(td::Promise<BlockSeqno> promise) {
+  TRY_STATUS_PROMISE(promise, before_query());
   promise.set_result(min_masterchain_seqno());
 }
 
 void ArchiveSlice::get_archive_id(BlockSeqno masterchain_seqno, ShardIdFull shard_prefix,
                                   td::Promise<td::uint64> promise) {
-  before_query();
+  TRY_STATUS_PROMISE(promise, before_query());
   if (index_status_missing_) {
     promise.set_error(td::Status::Error(ErrorCode::notready, "archive package is not open yet"));
     return;
   }
+  TRY_RESULT_PROMISE(promise, p, choose_package(masterchain_seqno, shard_prefix, false));
   if (!sliced_mode_) {
     promise.set_result(archive_id_);
   } else {
-    TRY_RESULT_PROMISE(promise, p, choose_package(masterchain_seqno, shard_prefix, false));
     if (shard_separated_) {
       promise.set_result(p->idx * (1ull << 32) + archive_id_);
     } else {
@@ -771,42 +773,70 @@ td::uint64 archive_slice_closes() {
   return g_archive_slice_closes.load(std::memory_order_relaxed);
 }
 
-void ArchiveSlice::before_query() {
+td::Status ArchiveSlice::before_query() {
+  if (destroyed_) {
+    return td::Status::Error(ErrorCode::notready, td::Slice(kPackageGarbageCollected));
+  }
   if (status_ == st_closed) {
     LOG(DEBUG) << "Opening archive slice " << db_path_;
-    g_archive_slice_opens.fetch_add(1, std::memory_order_relaxed);
     td::RocksDbOptions db_options;
     db_options.statistics = statistics_.rocksdb_statistics;
     switch (mode_) {
       case td::DbOpenMode::db_primary:
         kv_ = std::make_unique<td::RocksDb>(td::RocksDb::open(db_path_, std::move(db_options)).move_as_ok());
         break;
-      case td::DbOpenMode::db_readonly:
-        kv_ = std::make_unique<td::RocksDbReadOnly>(
-            td::RocksDbReadOnly::open(db_path_, std::move(db_options)).move_as_ok());
+      case td::DbOpenMode::db_readonly: {
+        auto result = td::RocksDbReadOnly::open(db_path_, std::move(db_options));
+        if (result.is_error()) {
+          log_reader_error(result.error());
+          return td::Status::Error(ErrorCode::notready,
+                                   PSTRING() << "archive slice index is not ready: " << result.error().message());
+        }
+        kv_ = std::make_unique<td::RocksDbReadOnly>(result.move_as_ok());
         break;
+      }
       case td::DbOpenMode::db_secondary: {
-        kv_ = std::make_unique<td::RocksDbSecondary>(
-            td::RocksDbSecondary::open(db_path_, std::move(db_options)).move_as_ok());
+        auto result = td::RocksDbSecondary::open(db_path_, std::move(db_options));
+        if (result.is_error()) {
+          log_reader_error(result.error());
+          return td::Status::Error(ErrorCode::notready,
+                                   PSTRING() << "archive slice index is not ready: " << result.error().message());
+        }
+        kv_ = std::make_unique<td::RocksDbSecondary>(result.move_as_ok());
         last_catch_up_ = td::Timestamp::now();
         break;
       }
       default:
         UNREACHABLE();
     }
-    load_index();
+    g_archive_slice_opens.fetch_add(1, std::memory_order_relaxed);
+    status_ = st_open;
+    auto status = load_index();
+    if (status.is_error()) {
+      // A package can disappear after the index was opened. Release every
+      // package already loaded so the next query starts from a clean open.
+      do_close();
+      return status;
+    }
   }
   status_ = st_open;
   if (!archive_lru_.empty()) {
     td::actor::send_closure(archive_lru_, &ArchiveLru::on_query, actor_id(this), p_id_,
                             packages_.size() + ESTIMATED_DB_OPEN_FILES);
   }
-  try_catch_up_with_primary_impl(CatchUpMode::Throttled).ensure();
+  return try_catch_up_with_primary_impl(CatchUpMode::Throttled);
+}
+
+void ArchiveSlice::log_reader_error(const td::Status &error) {
+  if (!next_reader_warning_ || next_reader_warning_.is_in_past()) {
+    LOG(WARNING) << "archive reader for '" << db_path_ << "' is not ready: " << error;
+    next_reader_warning_ = td::Timestamp::in(60.0);
+  }
 }
 
 // Reads the slice layout and its packages from the index. The owning node
 // writes the initial layout of a new index here.
-void ArchiveSlice::load_index() {
+td::Status ArchiveSlice::load_index() {
   std::string value;
   auto R2 = kv_->get("status", value);
   R2.ensure();
@@ -865,12 +895,14 @@ void ArchiveSlice::load_index() {
           shard_prefix = ShardIdFull{masterchainId};
         }
         if (!add_package(seqno, shard_prefix, len, ver)) {
-          break;
+          return td::Status::Error(ErrorCode::notready, "archive package is not open yet");
         }
       }
     } else {
       auto len = td::to_integer<td::uint64>(value);
-      add_package(archive_id_, ShardIdFull{masterchainId}, len, 0);
+      if (!add_package(archive_id_, ShardIdFull{masterchainId}, len, 0)) {
+        return td::Status::Error(ErrorCode::notready, "archive package is not open yet");
+      }
     }
   } else {
     if (mode_ != td::DbOpenMode::db_primary) {
@@ -882,7 +914,7 @@ void ArchiveSlice::load_index() {
         LOG(WARNING) << "archive slice index '" << db_path_ << "' has no layout yet; the slice is not ready";
       }
       index_status_missing_ = true;
-      return;
+      return td::Status::OK();
     }
     if (!temp_ && !key_blocks_only_) {
       sliced_mode_ = true;
@@ -907,10 +939,14 @@ void ArchiveSlice::load_index() {
       }
     }
   }
+  return td::Status::OK();
 }
 
 void ArchiveSlice::open_files() {
-  before_query();
+  auto status = before_query();
+  if (status.is_error()) {
+    return;
+  }
 }
 
 void ArchiveSlice::close_files() {
@@ -924,7 +960,10 @@ void ArchiveSlice::close_files() {
 }
 
 void ArchiveSlice::iterate_block_handles(std::function<void(const BlockHandleInterface &)> f) {
-  before_query();
+  auto status = before_query();
+  if (status.is_error()) {
+    return;
+  }
   td::uint32 range_start = tos_api::db_blockdb_key_value::ID;
   td::uint32 range_end = tos_api::db_blockdb_key_value::ID + 1;
   kv_->for_each_in_range(td::Slice{(char *)&range_start, 4}, td::Slice{(char *)&range_end, 4},
@@ -946,7 +985,7 @@ void ArchiveSlice::get_temp_max_seqnos(td::Promise<std::map<ShardIdFull, BlockSe
     promise.set_error(td::Status::Error("not a temporary package"));
     return;
   }
-  before_query();
+  TRY_STATUS_PROMISE(promise, before_query());
   if (!temp_max_seqnos_ready_) {
     temp_max_seqnos_ready_ = true;
     td::uint32 range_start = tos_api::db_blockdb_key_value::ID;
@@ -1040,10 +1079,13 @@ void ArchiveSlice::end_async_query() {
 }
 
 void ArchiveSlice::try_catch_up_with_primary(CatchUpMode mode, td::Promise<td::Unit> promise) {
+  if (destroyed_) {
+    promise.set_error(td::Status::Error(ErrorCode::notready, td::Slice(kPackageGarbageCollected)));
+    return;
+  }
   td::Status status;
   if (status_ == st_closed) {
-    before_query();
-    status = td::Status::OK();
+    status = before_query();
   } else {
     status = try_catch_up_with_primary_impl(mode);
   }
@@ -1065,13 +1107,22 @@ td::Status ArchiveSlice::try_catch_up_with_primary_impl(CatchUpMode mode) {
 
   CHECK(mode_ == td::DbOpenMode::db_secondary);
 
-  TRY_STATUS(static_cast<td::RocksDbSecondary *>(kv_.get())->try_catch_up_with_primary());
+  auto status = static_cast<td::RocksDbSecondary *>(kv_.get())->try_catch_up_with_primary();
+  if (status.is_error()) {
+    log_reader_error(status);
+    return td::Status::Error(ErrorCode::notready,
+                             PSTRING() << "archive slice index catch-up is not ready: " << status.message());
+  }
 
   if (index_status_missing_) {
     // The slice opened before the primary committed its layout, so nothing of
     // it was loaded; read it as a fresh open would, layout included.
     CHECK(packages_.empty() && id_to_package_.empty());
-    load_index();
+    auto status = load_index();
+    if (status.is_error()) {
+      do_close();
+      return status;
+    }
     last_catch_up_ = td::Timestamp::now();
     return td::Status::OK();
   }
@@ -1307,8 +1358,8 @@ bool ArchiveSlice::add_package(td::uint32 seqno, ShardIdFull shard_prefix, td::u
   }
   auto R = Package::open(path, mode_ != td::DbOpenMode::db_primary, mode_ == td::DbOpenMode::db_primary);
   if (R.is_error()) {
-    if (mode_ == td::DbOpenMode::db_secondary) {
-      LOG(WARNING) << "archive package is not ready yet '" << path << "': " << R.move_as_error();
+    if (mode_ != td::DbOpenMode::db_primary) {
+      log_reader_error(R.error());
     } else {
       LOG(FATAL) << "failed to open/create archive '" << path << "': " << R.move_as_error();
     }
@@ -1362,7 +1413,9 @@ void destroy_db(std::string name, td::uint32 attempt, td::Promise<td::Unit> prom
 
 void ArchiveSlice::destroy(td::Promise<td::Unit> promise) {
   commit_transaction_now();
-  before_query();
+  if (mode_ == td::DbOpenMode::db_primary) {
+    before_query().ensure();
+  }
   destroyed_ = true;
 
   if (mode_ == td::DbOpenMode::db_primary) {
@@ -1388,7 +1441,6 @@ void ArchiveSlice::destroy(td::Promise<td::Unit> promise) {
 }
 
 BlockSeqno ArchiveSlice::max_masterchain_seqno() {
-  before_query();
   auto key = get_db_key_lt_desc(ShardIdFull{masterchainId});
   std::string value;
   auto F = kv_->get(key, value);
@@ -1414,7 +1466,6 @@ BlockSeqno ArchiveSlice::max_masterchain_seqno() {
 }
 
 BlockSeqno ArchiveSlice::min_masterchain_seqno() {
-  before_query();
   auto key = get_db_key_lt_desc(ShardIdFull{masterchainId});
   std::string value;
   auto F = kv_->get(key, value);
@@ -1549,7 +1600,7 @@ void ArchiveSlice::truncate(BlockSeqno masterchain_seqno, ConstBlockHandle handl
     destroy(std::move(promise));
     return;
   }
-  before_query();
+  before_query().ensure();
   if (active_queries_ > 0) {
     LOG(INFO) << "TRUNCATE: wait for queries to finish";
     query_finish_waiters_.push_back(

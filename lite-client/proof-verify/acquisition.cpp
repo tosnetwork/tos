@@ -16,6 +16,20 @@ td::Result<td::BufferSlice> ask(LiteTransport& transport, tos::tl_object_ptr<T> 
 }  // namespace
 td::Result<Material> fetch_material(LiteTransport& transport, const Anchor& anchor, const Request& request,
                                     const std::optional<LiveState>& state) {
+  return fetch_material(transport, anchor, request, state, FetchPurpose::Read);
+}
+
+td::Result<Material> fetch_material(LiteTransport& transport, const Anchor& anchor, const Request& request,
+                                    const std::optional<LiveState>& state, FetchPurpose purpose) {
+  if (purpose != FetchPurpose::Read && purpose != FetchPurpose::SelfPaySimulation) {
+    return td::Status::Error("unsupported proof acquisition purpose");
+  }
+  const bool simulation = purpose == FetchPurpose::SelfPaySimulation;
+  if (simulation && (request.mode != Mode::Live || !state || !request.account || request.account->workchain != 0 ||
+                     !request.get_methods.empty() || !request.config_params.empty() || state->anchor.id != anchor.id ||
+                     state->anchor.kind != anchor.kind)) {
+    return td::Status::Error("self-pay acquisition requires a same-anchor live account request");
+  }
   // Transport responses are untrusted and must be bounded before accumulating a chain.
   class BoundedTransport final : public LiteTransport {
    public:
@@ -94,12 +108,13 @@ td::Result<Material> fetch_material(LiteTransport& transport, const Anchor& anch
                                          request.account->workchain, request.account->addr))));
     auto answer = tos::fetch_tl_object<tos::lite_api::liteServer_accountState>(raw.clone(), true);
     material.account = std::move(raw);
-    if (!request.get_methods.empty()) {
-      const int mode = block::ConfigInfo::needCapabilities | block::ConfigInfo::needPrevBlocks;
+    if (simulation || !request.get_methods.empty()) {
+      const int mode = block::ConfigInfo::needCapabilities | block::ConfigInfo::needPrevBlocks |
+                       (simulation ? block::ConfigInfo::needWorkchainInfo | block::ConfigInfo::needSpecialSmc : 0);
       TRY_RESULT(config, ask(bounded, tos::create_tl_object<tos::lite_api::liteServer_getConfigAll>(
                                           mode, tos::create_tl_lite_block_id(target))));
       material.exec_config = std::move(config);
-      if (answer.is_ok() && !answer.ok()->state_.empty()) {
+      if (!simulation && answer.is_ok() && !answer.ok()->state_.empty()) {
         TRY_RESULT(libraries, required_libraries(answer.ok()->state_.as_slice()));
         if (!libraries.empty()) {
           if (libraries.size() > 16) {
