@@ -84,7 +84,30 @@ class VerifySource {
   virtual td::Result<td::optional<VerifyMasterchainBlock>> masterchain_block(uint32_t seqno) = 0;
   // The accounts in the shard states masterchain block `head` names.
   virtual td::Result<std::unique_ptr<HeadAccounts>> accounts(const BlockIdExt& head) = 0;
+  // The sorted root hashes of those shard states.
+  virtual td::Result<std::vector<td::Bits256>> state_roots(const BlockIdExt& head) = 0;
+  // Every basechain transaction of the shard blocks masterchain block
+  // `master` first referenced, each block's bytes checked against its
+  // identity: (account, lt, transaction cell hash). `cancel` is checked
+  // between blocks.
+  virtual td::Status for_each_interval_transaction(
+      const VerifyMasterchainBlock& master,
+      const std::function<td::Status(const td::Bits256&, uint64_t, const td::Bits256&)>& cb,
+      const std::atomic<bool>* cancel) = 0;
 };
+
+// Walk one interval's shard blocks in order: `read_root` gives a block's
+// checked root, or nothing when the node does not hold its bytes, which is a
+// gap in the window and terminal; `cancel` is checked between blocks.
+template <class Block, class ReadRoot>
+td::Status walk_interval_blocks(const std::vector<Block>& blocks, ReadRoot read_root,
+                                const std::function<td::Status(const td::Bits256&, uint64_t, const td::Bits256&)>& cb,
+                                const std::atomic<bool>* cancel);
+
+// The basechain transactions a block's checked root holds, as replay indexes
+// them (entries replay skips are skipped here too): (account, lt, hash).
+td::Status walk_block_transactions(const td::Ref<vm::Cell>& root,
+                                   const std::function<td::Status(const td::Bits256&, uint64_t, const td::Bits256&)>& cb);
 
 // The production source: the node database through the index reader.
 std::unique_ptr<VerifySource> make_reader_verify_source(IndexReader& reader);
@@ -105,6 +128,16 @@ struct VerifyLimits {
   size_t account_rows_bytes = size_t{64} << 20;
   // Index writes per committed batch.
   size_t batch_writes = 4096;
+  // Block pass work per step: masterchain blocks authenticated, intervals
+  // collected, accounts compared.
+  uint32_t authenticate_per_step = 1024;
+  uint32_t intervals_per_step = 16;
+  uint32_t compare_per_step = 1024;
+  // Rows the block pass may collect before it stops as over capacity.
+  uint64_t collected_rows_max = uint64_t{64} << 20;
+  // Memory one interval's collection may hold before it is committed: its
+  // write batch and the per-account scope decisions.
+  size_t interval_bytes = size_t{64} << 20;
 };
 
 enum class VerifyStep {
@@ -115,6 +148,8 @@ enum class VerifyStep {
   Wait,
   // The snapshot contradicts the chain: the index is now Refused.
   Refused,
+  // Progress was made and more is left: call again.
+  Working,
 };
 
 struct VerifyOutcome {
@@ -136,6 +171,65 @@ td::Result<VerifyOutcome> prepare_quarantined_index(tos_wallet_index::WalletInde
 // block `head`. Requires a Quarantined index with a verification record.
 td::Result<VerifyOutcome> verify_index_at_head(tos_wallet_index::WalletIndexDb& db, VerifySource& source,
                                                const BlockIdExt& head, const VerifyLimits& limits = {});
+
+// One bounded step of the block pass (stage 4a) over the window (B, H] of a
+// Partial index verified at H, while replay is held at H. Phases, each
+// resumable from the pass record and bound to H, H's state roots, B and the
+// schema (a different binding discards the pass and its dependants):
+// 1. authenticate the masterchain chain from H down to B + 1;
+// 2. collect, interval by interval from B + 1 up to H, every transaction of
+//    an account that H's state cannot vouch for (absent from it, or marked
+//    unverified) into 0x35, each interval's identity matched to the chain;
+// 3. compare, account by account: the newest kMaxEventsPerAccount rows above
+//    the account's bound must equal the collected ones in lt, hash and
+//    count; equal clears the account's mark, anything else refuses the
+//    index. A collected account with no imported rows refuses it.
+// Returns Working while work is left, Done when the pass is complete,
+// Refused when the index is refused. Errors follow kVerifyTerminalError.
+td::Result<VerifyOutcome> run_block_pass_step(tos_wallet_index::WalletIndexDb& db, VerifySource& source,
+                                              const VerifyLimits& limits = {},
+                                              const std::atomic<bool>* cancel = nullptr);
+// Whether the block pass of the index is complete under its current binding.
+td::Result<bool> block_pass_done(tos_wallet_index::WalletIndexDb& db);
+
+td::Status terminal_gap(const std::string& block);
+
+template <class Block, class ReadRoot>
+td::Status walk_interval_blocks(const std::vector<Block>& blocks, ReadRoot read_root,
+                                const std::function<td::Status(const td::Bits256&, uint64_t, const td::Bits256&)>& cb,
+                                const std::atomic<bool>* cancel) {
+  for (const auto& block : blocks) {
+    if (cancel != nullptr && cancel->load()) {
+      return td::Status::Error("block pass interrupted");
+    }
+    TRY_RESULT(root, read_root(block));
+    if (!root) {
+      return terminal_gap(block->id().to_str());
+    }
+    TRY_STATUS(walk_block_transactions(root.value(), cb));
+  }
+  return td::Status::OK();
+}
+
+// What the service's replay thread does next with its index. Replay, its
+// drain and its pruning run only for a Quarantined index being replayed to
+// the head (after its rows are placed) and for a Full one: a Partial index
+// holds them at the verified head until the block pass and the ownership
+// derivation are complete, across restarts too. Refused stops the service.
+enum class ServiceAction { Prepare, Replay, BlockPass, HoldForOwnership, Stop };
+inline ServiceAction next_service_action(tos_wallet_index::VerificationState state, bool prepared, bool pass_done) {
+  switch (state) {
+    case tos_wallet_index::VerificationState::Quarantined:
+      return prepared ? ServiceAction::Replay : ServiceAction::Prepare;
+    case tos_wallet_index::VerificationState::Partial:
+      return pass_done ? ServiceAction::HoldForOwnership : ServiceAction::BlockPass;
+    case tos_wallet_index::VerificationState::Full:
+      return ServiceAction::Replay;
+    case tos_wallet_index::VerificationState::Refused:
+      return ServiceAction::Stop;
+  }
+  return ServiceAction::Stop;
+}
 
 // Reason codes stored with an unverified account (0x31).
 enum class UnverifiedReason : uint8_t { Absent = 1, StartsInWindow = 2 };
@@ -201,6 +295,22 @@ class ServingGate {
   bool partial() const {
     return state() == tos_wallet_index::VerificationState::Partial;
   }
+  // Replay is held at the verified head while the block pass and the
+  // ownership derivation run; the index is never ready meanwhile.
+  void hold(std::string phase) {
+    std::lock_guard<std::mutex> guard(phase_mutex_);
+    held_ = true;
+    phase_ = std::move(phase);
+  }
+  void release() {
+    std::lock_guard<std::mutex> guard(phase_mutex_);
+    held_ = false;
+    phase_.clear();
+  }
+  bool held() const {
+    std::lock_guard<std::mutex> guard(phase_mutex_);
+    return held_;
+  }
   // `,"verification":...,"verified_horizon":...,"verification_retry":...`
   // for the /readyz body.
   std::string json_fields() const;
@@ -208,6 +318,9 @@ class ServingGate {
 
  private:
   bool allow_partial_;
+  mutable std::mutex phase_mutex_;
+  bool held_ = false;
+  std::string phase_;
   std::atomic<uint8_t> state_{static_cast<uint8_t>(tos_wallet_index::VerificationState::Quarantined)};
   std::atomic<uint32_t> horizon_seqno_{0};
   std::atomic<uint32_t> horizon_time_{0};

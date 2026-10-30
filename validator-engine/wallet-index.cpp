@@ -987,6 +987,245 @@ td::Result<bool> WalletIndexDb::has_events(const HashKey& account) {
   return found;
 }
 
+namespace {
+// 0x00 0x33 -> block pass record: version(1) schema_be(4) head(block key, 77)
+// base_be(4) phase(1) cursor_be(4) has_expected(1) expected(block key, 77)
+// has_compared(1) compared(32) collected_be(8) roots_be(4) roots(32 each).
+constexpr uint8_t kMetaBlockPassSub = 0x33;
+constexpr uint8_t kBlockPassVersion = 1;
+constexpr size_t kBlockPassFixedLen = 1 + 4 + kIncompleteBlockKeyLen + 4 + 1 + 4 + 1 + kIncompleteBlockKeyLen + 1 + 32 +
+                                      8 + 4;
+// More shard states than any masterchain block names.
+constexpr uint32_t kBlockPassMaxRoots = 4096;
+// 0x00 0x32 + shard_be(8) -> ownership derivation progress of one shard.
+constexpr uint8_t kMetaOwnershipSub = 0x32;
+// 0x35 + account(32) + ~lt_be(8) -> transaction hash(32).
+constexpr uint8_t kCollectedTag = 0x35;
+constexpr size_t kCollectedKeyLen = 1 + 32 + 8;
+
+// The smallest account above `account`, or nothing when it is the largest.
+td::optional<HashKey> account_after(const HashKey& account) {
+  HashKey next = account;
+  for (int i = 31; i >= 0; --i) {
+    auto byte = static_cast<uint8_t>(next.as_slice()[i]);
+    if (byte != 0xff) {
+      next.as_slice()[i] = static_cast<char>(byte + 1);
+      return next;
+    }
+    next.as_slice()[i] = 0;
+  }
+  return td::optional<HashKey>{};
+}
+}  // namespace
+
+td::Result<td::optional<WalletIndexDb::BlockPassRecord>> WalletIndexDb::block_pass_record() {
+  char key[kMetaKeyLen];
+  make_meta_key(kMetaBlockPassSub, key);
+  std::string value;
+  TRY_RESULT(status, db_->get(td::Slice{key, kMetaKeyLen}, value));
+  if (status == td::KeyValue::GetStatus::NotFound) {
+    return td::optional<BlockPassRecord>{};
+  }
+  auto malformed = [] { return td::Status::Error("wc0-index: malformed block pass record"); };
+  if (value.size() < kBlockPassFixedLen || static_cast<uint8_t>(value[0]) != kBlockPassVersion) {
+    return malformed();
+  }
+  const char* p = value.data() + 1;
+  BlockPassRecord record;
+  record.schema = get_u32_be(p);
+  p += 4;
+  if (p[0] != 0) {
+    return malformed();
+  }
+  record.head = parse_block_key(td::Slice{p, kIncompleteBlockKeyLen});
+  p += kIncompleteBlockKeyLen;
+  record.base = get_u32_be(p);
+  auto phase = static_cast<uint8_t>(p[4]);
+  record.cursor = get_u32_be(p + 5);
+  auto has_expected = static_cast<uint8_t>(p[9]);
+  p += 10;
+  if (phase > static_cast<uint8_t>(BlockPassPhase::Done) || has_expected > 1 || p[0] != 0) {
+    return malformed();
+  }
+  record.phase = static_cast<BlockPassPhase>(phase);
+  if (has_expected) {
+    record.expected = parse_block_key(td::Slice{p, kIncompleteBlockKeyLen});
+  }
+  p += kIncompleteBlockKeyLen;
+  auto has_compared = static_cast<uint8_t>(p[0]);
+  if (has_compared > 1) {
+    return malformed();
+  }
+  if (has_compared) {
+    HashKey compared;
+    std::memcpy(compared.data(), p + 1, 32);
+    record.compared = compared;
+  }
+  p += 33;
+  record.collected = get_u64_be(p);
+  auto roots = get_u32_be(p + 8);
+  p += 12;
+  if (roots > kBlockPassMaxRoots || value.size() != kBlockPassFixedLen + size_t{32} * roots) {
+    return malformed();
+  }
+  for (uint32_t i = 0; i < roots; ++i, p += 32) {
+    td::Bits256 root;
+    std::memcpy(root.data(), p, 32);
+    record.roots.push_back(root);
+  }
+  if (!record.head.is_masterchain_ext() || !record.head.is_valid_full() || record.base > record.head.seqno() ||
+      !std::is_sorted(record.roots.begin(), record.roots.end())) {
+    return malformed();
+  }
+  return td::optional<BlockPassRecord>(std::move(record));
+}
+
+td::Status WalletIndexDb::put_block_pass_record(const BlockPassRecord& record) {
+  if (!batch_open_) {
+    return td::Status::Error("wc0-index: the block pass record requires a write batch");
+  }
+  if (record.roots.size() > kBlockPassMaxRoots) {
+    return td::Status::Error("wc0-index: too many shard states in the block pass record");
+  }
+  std::string value(kBlockPassFixedLen + 32 * record.roots.size(), '\0');
+  char* p = value.data();
+  p[0] = static_cast<char>(kBlockPassVersion);
+  put_u32_be(p + 1, record.schema);
+  p += 5;
+  make_block_key(0, record.head, p);
+  p += kIncompleteBlockKeyLen;
+  put_u32_be(p, record.base);
+  p[4] = static_cast<char>(record.phase);
+  put_u32_be(p + 5, record.cursor);
+  p[9] = record.expected ? 1 : 0;
+  p += 10;
+  if (record.expected) {
+    make_block_key(0, record.expected.value(), p);
+  }
+  p += kIncompleteBlockKeyLen;
+  p[0] = record.compared ? 1 : 0;
+  if (record.compared) {
+    std::memcpy(p + 1, record.compared.value().data(), 32);
+  }
+  p += 33;
+  put_u64_be(p, record.collected);
+  put_u32_be(p + 8, static_cast<uint32_t>(record.roots.size()));
+  p += 12;
+  for (const auto& root : record.roots) {
+    std::memcpy(p, root.data(), 32);
+    p += 32;
+  }
+  char key[kMetaKeyLen];
+  make_meta_key(kMetaBlockPassSub, key);
+  return db_->set(td::Slice{key, kMetaKeyLen}, td::Slice{value});
+}
+
+td::Status WalletIndexDb::clear_block_pass_work() {
+  if (!batch_open_) {
+    return td::Status::Error("wc0-index: clearing the block pass requires a write batch");
+  }
+  char key[kMetaKeyLen];
+  make_meta_key(kMetaBlockPassSub, key);
+  TRY_STATUS(db_->erase(td::Slice{key, kMetaKeyLen}));
+  const char ownership_begin[2] = {static_cast<char>(kMetaTag), static_cast<char>(kMetaOwnershipSub)};
+  const char ownership_end[2] = {static_cast<char>(kMetaTag), static_cast<char>(kMetaOwnershipSub + 1)};
+  TRY_STATUS(db_->erase_range(td::Slice{ownership_begin, 2}, td::Slice{ownership_end, 2}));
+  const char collected_begin[1] = {static_cast<char>(kCollectedTag)};
+  const char collected_end[1] = {static_cast<char>(kCollectedTag + 1)};
+  return db_->erase_range(td::Slice{collected_begin, 1}, td::Slice{collected_end, 1});
+}
+
+td::Status WalletIndexDb::put_collected(const HashKey& account, uint64_t lt, const td::Bits256& hash) {
+  if (!batch_open_) {
+    return td::Status::Error("wc0-index: a collected row requires a write batch");
+  }
+  char key[kCollectedKeyLen];
+  key[0] = static_cast<char>(kCollectedTag);
+  std::memcpy(key + 1, account.data(), 32);
+  put_u64_be(key + 1 + 32, ~lt);
+  return db_->set(td::Slice{key, kCollectedKeyLen}, hash.as_slice());
+}
+
+td::Status WalletIndexDb::for_each_collected(const HashKey& account, size_t limit,
+                                             const std::function<td::Status(uint64_t, const td::Bits256&)>& cb) {
+  char prefix[1 + 32];
+  make_owner_prefix(kCollectedTag, account, prefix);
+  // The account's range ends where the next account's begins.
+  std::string end(prefix, sizeof(prefix));
+  auto next = account_after(account);
+  if (next) {
+    std::memcpy(end.data() + 1, next.value().data(), 32);
+  } else {
+    end = std::string(1, static_cast<char>(kCollectedTag + 1));
+  }
+  size_t seen = 0;
+  bool stopped = false;
+  auto walked = db_->for_each_in_range(td::Slice{prefix, sizeof(prefix)}, td::Slice{end},
+                                       [&](td::Slice key, td::Slice value) -> td::Status {
+                                         if (seen >= limit) {
+                                           stopped = true;
+                                           return td::Status::Error("wc0-index: limit reached");
+                                         }
+                                         if (key.size() != kCollectedKeyLen || value.size() != 32) {
+                                           return td::Status::Error("wc0-index: malformed collected row");
+                                         }
+                                         ++seen;
+                                         td::Bits256 hash;
+                                         std::memcpy(hash.data(), value.data(), 32);
+                                         return cb(~get_u64_be(key.data() + 1 + 32), hash);
+                                       });
+  if (stopped) {
+    return td::Status::OK();
+  }
+  return walked;
+}
+
+namespace {
+td::Result<td::optional<HashKey>> next_account_with_tag(td::RocksDb& db, uint8_t tag,
+                                                         const td::optional<HashKey>& after) {
+  std::string begin(1, static_cast<char>(tag));
+  if (after) {
+    auto next = account_after(after.value());
+    if (!next) {
+      return td::optional<HashKey>{};
+    }
+    begin.append(next.value().as_slice().data(), 32);
+  }
+  const char end[1] = {static_cast<char>(tag + 1)};
+  td::optional<HashKey> found;
+  auto status = db.for_each_in_range(td::Slice{begin}, td::Slice{end, 1}, [&](td::Slice key, td::Slice) -> td::Status {
+    if (key.size() < 1 + 32) {
+      return td::Status::Error("wc0-index: malformed account key");
+    }
+    HashKey account;
+    std::memcpy(account.data(), key.data() + 1, 32);
+    found = account;
+    return td::Status::Error("wc0-index: account found");
+  });
+  if (status.is_error() && !found) {
+    return std::move(status);
+  }
+  return found;
+}
+}  // namespace
+
+td::Result<td::optional<HashKey>> WalletIndexDb::next_collected_account(const td::optional<HashKey>& after) {
+  return next_account_with_tag(*db_, kCollectedTag, after);
+}
+
+td::Result<td::optional<HashKey>> WalletIndexDb::next_unverified_account(const td::optional<HashKey>& after) {
+  return next_account_with_tag(*db_, kUnverifiedAccountTag, after);
+}
+
+td::Status WalletIndexDb::erase_unverified_account(const HashKey& account) {
+  if (!batch_open_) {
+    return td::Status::Error("wc0-index: erasing an unverified mark requires a write batch");
+  }
+  char key[kSingleHashKeyLen];
+  make_owner_prefix(kUnverifiedAccountTag, account, key);
+  return db_->erase(td::Slice{key, kSingleHashKeyLen});
+}
+
 td::Status WalletIndexDb::advance_retention(size_t age_rows_added) {
   // The window base, the age rows and the prune together define the retention
   // invariant, so any error propagates and the caller aborts the block rather

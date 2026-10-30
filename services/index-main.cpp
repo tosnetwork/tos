@@ -93,6 +93,8 @@ int main(int argc, char** argv) {
   // has been checked against this node's own chain (services/index-verify.h).
   ServingGate gate(allow_partial);
   bool prepared = false;
+  // The block pass over the verified window has finished (stage 4a).
+  bool pass_done = false;
   {
     using tos_wallet_index::VerificationState;
     auto state = index.ok()->get_verification_state();
@@ -111,15 +113,23 @@ int main(int argc, char** argv) {
       prepared = true;
       gate.set_horizon(stored.horizon_seqno, stored.horizon_time, stored.unverified);
     }
-    if (!gate.serving() && state.ok() != VerificationState::Quarantined) {
-      if (state.ok() == VerificationState::Partial) {
-        LOG(ERROR) << "the index was imported from an untrusted snapshot and is only partly verified against this "
-                      "node; restart with --allow-partial-verification to serve it with unverified answers flagged";
-      } else {
-        LOG(ERROR) << "the index was imported from an untrusted snapshot and was refused by its verification "
-                      "against this node; import another snapshot into a fresh directory";
-      }
+    if (state.ok() == VerificationState::Refused) {
+      LOG(ERROR) << "the index was imported from an untrusted snapshot and was refused by its verification "
+                    "against this node; import another snapshot into a fresh directory";
       return 2;
+    }
+    if (state.ok() == VerificationState::Partial) {
+      auto done = block_pass_done(*index.ok());
+      if (done.is_error()) {
+        LOG(ERROR) << "cannot read the block pass record: " << done.error();
+        return 2;
+      }
+      pass_done = done.ok();
+      gate.hold(pass_done ? "ownership: not derived yet" : "blocks: resuming");
+      LOG(WARNING) << "the index was imported from an untrusted snapshot and is partly verified against this node; "
+                   << (allow_partial ? "serving it with unverified answers flagged"
+                                     : "not serving it until it is fully verified")
+                   << " while its verification continues";
     }
     if (state.ok() == VerificationState::Quarantined) {
       LOG(WARNING) << "the index was imported from an untrusted snapshot: verifying it against this node before "
@@ -167,7 +177,9 @@ int main(int argc, char** argv) {
     rpc.index_only = true;
     rpc.trust_proxy_headers = true;
     rpc.readonly = true;
-    rpc.index_ready = [&] { return gate.serving() && progress.is_ready(td::Time::now()); };
+    // Never ready while replay is held at the verified head, even when that
+    // head is still the source tip.
+    rpc.index_ready = [&] { return gate.serving() && !gate.held() && progress.is_ready(td::Time::now()); };
     rpc.index_progress = [&] { return progress.json(td::Time::now()); };
     rpc.index_readyz_body = [&] {
       auto body = progress.readyz_json(td::Time::now(), stats_snapshot());
@@ -230,7 +242,20 @@ int main(int argc, char** argv) {
         logged = current;
       }
       auto* index_db = tos_wallet_index::wallet_index_db();
-      if (gate.state() == tos_wallet_index::VerificationState::Quarantined && !prepared) {
+      auto action = next_service_action(gate.state(), prepared, pass_done);
+      if (action == ServiceAction::Stop) {
+        stop_with(2);
+        break;
+      }
+      if (action == ServiceAction::HoldForOwnership) {
+        // The ownership derivation at the head is not implemented yet: the
+        // index stays partly verified and replay stays held.
+        gate.hold("ownership: not derived yet");
+        for (int i = 0; i < 10 && !stop_requested.load(); ++i)
+          std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        continue;
+      }
+      if (action == ServiceAction::Prepare) {
         // Nothing is replayed onto an imported index before its rows have
         // their place in the window from this node's own blocks.
         auto outcome = prepare_quarantined_index(*index_db, *verify_source);
@@ -269,6 +294,35 @@ int main(int argc, char** argv) {
         LOG(WARNING) << "imported index prepared: " << done.kept << " rows in the window from masterchain block "
                      << stored.base << ", " << done.dropped << " older rows dropped; replaying to the node's head";
       }
+      if (action == ServiceAction::BlockPass) {
+        // Replay, its drain and its pruning are held at the verified head
+        // while the window's blocks are checked: the pass compares against
+        // exactly the index as verified there.
+        auto outcome = run_block_pass_step(*index_db, *verify_source, VerifyLimits{}, &stop_requested);
+        if (outcome.is_error()) {
+          if (stop_requested.load() || !verification_failed(outcome.error(), "over the window's blocks")) {
+            break;
+          }
+          continue;
+        }
+        gate.retry.succeeded();
+        auto& done = outcome.ok();
+        if (done.step == VerifyStep::Refused) {
+          gate.set(tos_wallet_index::VerificationState::Refused);
+          LOG(ERROR) << "the imported index is refused by the window's blocks: " << done.reason;
+          stop_with(2);
+          break;
+        }
+        if (done.step == VerifyStep::Working) {
+          gate.hold(done.reason);
+          continue;
+        }
+        pass_done = true;
+        gate.hold("ownership: not derived yet");
+        LOG(WARNING) << "the window's blocks match the imported index; ownership is not yet derived, so it stays "
+                        "partly verified and replay stays held";
+        continue;
+      }
       auto status = replay.step();
       if (status.is_error()) {
         progress.ready = false;
@@ -305,15 +359,11 @@ int main(int argc, char** argv) {
         }
         const auto& stored = record.ok().value();
         gate.set_horizon(stored.horizon_seqno, stored.horizon_time, stored.unverified);
+        // Held before it is Partial, so it is never ready in between.
+        gate.hold("blocks: starting");
         gate.set(tos_wallet_index::VerificationState::Partial);
         LOG(WARNING) << "the imported index is partly verified at masterchain block " << head.seqno() << ": "
                      << done.unverified << " accounts need the window's blocks, and ownership is not yet derived";
-        if (!allow_partial) {
-          LOG(ERROR) << "the index is only partly verified; restart with --allow-partial-verification to serve it "
-                        "with unverified answers flagged";
-          stop_with(2);
-          break;
-        }
       }
       if (status.is_error() || replay.idle()) {
         for (int i = 0; i < (status.is_error() ? 50 : 10) && !stop_requested.load(); ++i)

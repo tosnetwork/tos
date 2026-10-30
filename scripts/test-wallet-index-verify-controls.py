@@ -22,6 +22,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "services/index-verify.cpp"
+HEADER = ROOT / "services/index-verify.h"
 TARGET = "test-wallet-index-source"
 
 MUTATIONS = [
@@ -62,6 +63,66 @@ MUTATIONS = [
         ["WalletIndexVerify_the_anchor_is_checked_against_this_nodes_first_block"],
     ),
     (
+        "block-pass-accepts-a-wholly-omitted-account",
+        "    if (imported != collected) {",
+        "    if (!imported.empty() && imported != collected) {",
+        ["WalletIndexVerify_the_block_pass_refuses_what_the_snapshot_left_out_or_changed"],
+    ),
+    (
+        "block-pass-compares-only-a-common-prefix",
+        "    if (imported != collected) {",
+        "    if (!std::equal(imported.begin(), imported.begin() + std::min(imported.size(), collected.size()),\n"
+        "                    collected.begin())) {",
+        ["WalletIndexVerify_the_block_pass_refuses_what_the_snapshot_left_out_or_changed"],
+    ),
+    (
+        "block-pass-without-identity-checks",
+        [
+            (
+                "      if (!record.expected || block.value().id != record.expected.value() || "
+                "!linked_inside(block.value()) ||",
+                "      if (!record.expected || !linked_inside(block.value()) ||",
+            ),
+            (
+                "      if (!linked || !block.value().applied || (seqno == head.seqno() && "
+                "block.value().id != head)) {",
+                "      if (!block.value().applied) {",
+            ),
+        ],
+        None,
+        ["WalletIndexVerify_the_block_pass_stops_at_a_gap_or_a_foreign_block"],
+    ),
+    (
+        "block-pass-skips-a-missing-shard-block",
+        [
+            (
+                HEADER,
+                "    if (!root) {\n      return terminal_gap(block->id().to_str());\n    }",
+                "    if (!root) {\n      continue;\n    }",
+            ),
+        ],
+        None,
+        ["WalletIndexSource_the_block_pass_stops_at_a_shard_block_the_node_does_not_hold"],
+    ),
+    (
+        "block-pass-holds-no-interval-memory-bound",
+        "        if (interval_bytes > limits.interval_bytes) {",
+        "        if (false) {",
+        ["WalletIndexVerify_an_interval_over_the_memory_bound_stops_the_pass"],
+    ),
+    (
+        "partial-index-replays",
+        [
+            (
+                HEADER,
+                "      return pass_done ? ServiceAction::HoldForOwnership : ServiceAction::BlockPass;",
+                "      return pass_done ? ServiceAction::Replay : ServiceAction::BlockPass;",
+            ),
+        ],
+        None,
+        ["WalletIndexVerify_a_partial_index_holds_replay_at_the_head"],
+    ),
+    (
         "every-row-at-the-checkpoint",
         "    TRY_STATUS(db.put_event_age(account, lt, table.seqno(lo)));",
         "    TRY_STATUS(db.put_event_age(account, lt, table.seqno(last)));",
@@ -95,6 +156,18 @@ MUTATIONS = [
 ]
 
 
+def edits(before, after) -> list[tuple[Path, str, str]]:
+    """A mutation's (file, anchor, replacement) edits.
+
+    `before` is one anchor in SOURCE replaced by `after`, or a list of
+    (anchor, replacement) pairs in SOURCE or (file, anchor, replacement)
+    triples.
+    """
+    if not isinstance(before, list):
+        return [(SOURCE, before, after)]
+    return [edit if len(edit) == 3 else (SOURCE, *edit) for edit in before]
+
+
 def build(build_dir: Path, jobs: int, log: Path) -> None:
     with log.open("ab") as out:
         subprocess.run(
@@ -124,12 +197,15 @@ def main() -> int:
     build_dir = args.build_dir.resolve()
     log = build_dir / "wallet-index-verify-controls.log"
     log.write_bytes(b"")
-    original = SOURCE.read_bytes()
-    original_sha = hashlib.sha256(original).hexdigest()
-    text = original.decode()
-    for name, before, _, _ in MUTATIONS:
-        if text.count(before) != 1:
-            raise RuntimeError(f"mutation {name}: anchor is not unique")
+    originals = {path: path.read_bytes() for path in (SOURCE, HEADER)}
+    original_sha = {
+        str(path.relative_to(ROOT)): hashlib.sha256(data).hexdigest()
+        for path, data in originals.items()
+    }
+    for name, before, after, _ in MUTATIONS:
+        for path, anchor, _ in edits(before, after):
+            if originals[path].decode().count(anchor) != 1:
+                raise RuntimeError(f"mutation {name}: anchor is not unique in {path.name}")
     tests = sorted({test for _, _, _, names in MUTATIONS for test in names})
     results = []
     failed = False
@@ -139,9 +215,18 @@ def main() -> int:
         if status != 0:
             print(f"baseline test {test} does not pass:\n{output}", file=sys.stderr)
             return 1
+
+    def restore() -> None:
+        for path, data in originals.items():
+            path.write_bytes(data)
+
     try:
         for name, before, after, names in MUTATIONS:
-            SOURCE.write_text(text.replace(before, after, 1))
+            mutated = {path: data.decode() for path, data in originals.items()}
+            for path, anchor, replacement in edits(before, after):
+                mutated[path] = mutated[path].replace(anchor, replacement, 1)
+            for path, text in mutated.items():
+                path.write_text(text)
             build(build_dir, args.jobs, log)
             for test in names:
                 status, output = run(build_dir, test)
@@ -150,11 +235,12 @@ def main() -> int:
                 if not red:
                     failed = True
                     print(f"mutation {name} left {test} passing:\n{output}", file=sys.stderr)
-            SOURCE.write_bytes(original)
+            restore()
     finally:
-        SOURCE.write_bytes(original)
-    if hashlib.sha256(SOURCE.read_bytes()).hexdigest() != original_sha:
-        raise RuntimeError("verification source was not restored")
+        restore()
+    for path, data in originals.items():
+        if path.read_bytes() != data:
+            raise RuntimeError(f"{path.name} was not restored")
     build(build_dir, args.jobs, log)
     for test in tests:
         status, output = run(build_dir, test)

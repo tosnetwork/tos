@@ -383,6 +383,50 @@ class WalletIndexDb {
   td::Status erase_event(const HashKey& account, uint64_t lt);
   // Whether the account has any event row.
   td::Result<bool> has_events(const HashKey& account);
+
+  // --- Block pass over the verified window (services/index-verify.h) ---
+  // Progress of the pass at meta 0x00 0x33, bound to the head H it checks,
+  // the root hashes of H's basechain shard states, the window base and the
+  // schema: work under any other binding is discarded.
+  enum class BlockPassPhase : uint8_t { Authenticate = 0, Collect = 1, Compare = 2, Done = 3 };
+  struct BlockPassRecord {
+    uint32_t schema = 0;
+    tos::BlockIdExt head;
+    std::vector<td::Bits256> roots;  // sorted
+    uint32_t base = 0;
+    BlockPassPhase phase = BlockPassPhase::Authenticate;
+    // Authenticate: the next masterchain seqno to check, walking down from H.
+    // Collect: the next interval to collect, walking up from base + 1.
+    uint32_t cursor = 0;
+    // Authenticate: the identity the block at `cursor` must have. Collect:
+    // the identity of block cursor - 1 (unset when the window starts at the
+    // chain's first block).
+    td::optional<tos::BlockIdExt> expected;
+    // Compare: the last account compared.
+    td::optional<HashKey> compared;
+    // Rows collected so far.
+    uint64_t collected = 0;
+  };
+  td::Result<td::optional<BlockPassRecord>> block_pass_record();
+  // Joins the current batch.
+  td::Status put_block_pass_record(const BlockPassRecord& record);
+  // Discard every result of the block pass and of the ownership derivation:
+  // the pass record, the collected rows (0x35) and the per-shard ownership
+  // progress (meta 0x00 0x32 + shard). Joins the current batch.
+  td::Status clear_block_pass_work();
+  // A transaction the window's blocks hold for an account the head state
+  // cannot vouch for: 0x35 + account(32) + ~lt(8) -> transaction hash(32).
+  // Joins the current batch.
+  td::Status put_collected(const HashKey& account, uint64_t lt, const td::Bits256& hash);
+  // At most `limit` of the account's collected rows, newest first.
+  td::Status for_each_collected(const HashKey& account, size_t limit,
+                                const std::function<td::Status(uint64_t lt, const td::Bits256& hash)>& cb);
+  // The first account after `after` (from the start when unset) with a
+  // collected row (0x35) or an unverified mark (0x31), or nothing.
+  td::Result<td::optional<HashKey>> next_collected_account(const td::optional<HashKey>& after);
+  td::Result<td::optional<HashKey>> next_unverified_account(const td::optional<HashKey>& after);
+  // Joins the current batch.
+  td::Status erase_unverified_account(const HashKey& account);
   // Prune events outside the window (at most age_rows_added + drain of them),
   // within the current batch. Fails closed: any error -- including a base read
   // error, which must never fall back to 0 -- is returned so the caller aborts

@@ -8,6 +8,7 @@
 #include <mutex>
 #include <set>
 #include <string>
+#include <tuple>
 #include <vector>
 
 #include "services/index-verify.h"
@@ -21,7 +22,9 @@ namespace {
 using tos::BlockIdExt;
 using tos::ShardIdFull;
 using tos::services::HeadAccounts;
+using tos::services::block_pass_done;
 using tos::services::prepare_quarantined_index;
+using tos::services::run_block_pass_step;
 using tos::services::ServingGate;
 using tos::services::verify_index_at_head;
 using tos::services::VerifyLimits;
@@ -120,7 +123,8 @@ class FixtureAccounts final : public HeadAccounts {
 // one's logical time lags the left one's. Otherwise one shard covers
 // everything before `split_at` and its halves continue from its end lt.
 struct FixtureSource final : public VerifySource {
-  explicit FixtureSource(uint32_t tip_in, uint32_t split_at = 1) : tip_seqno(tip_in) {
+  // `scale`: the left shard's tip at block s ends at scale * s.
+  explicit FixtureSource(uint32_t tip_in, uint32_t split_at = 1, uint64_t scale = 1000) : tip_seqno(tip_in) {
     for (uint32_t s = 1; s <= tip_seqno; ++s) {
       VerifyMasterchainBlock block;
       block.id = master_id(s);
@@ -131,10 +135,10 @@ struct FixtureSource final : public VerifySource {
       block.applied = true;
       block.unix_time = s * kBlockSeconds;
       if (s < split_at) {
-        block.tips = {WindowShardTip{ShardIdFull{0, kAll}, 1000ull * s}};
+        block.tips = {WindowShardTip{ShardIdFull{0, kAll}, scale * s}};
       } else {
         uint64_t right = split_at == 1 ? 100ull * s + 50 : 1000ull * (split_at - 1) + 100ull * (s - split_at + 1) + 50;
-        block.tips = {WindowShardTip{ShardIdFull{0, kLeft}, 1000ull * s}, WindowShardTip{ShardIdFull{0, kRight}, right}};
+        block.tips = {WindowShardTip{ShardIdFull{0, kLeft}, scale * s}, WindowShardTip{ShardIdFull{0, kRight}, right}};
       }
       blocks[s] = block;
     }
@@ -159,6 +163,36 @@ struct FixtureSource final : public VerifySource {
     }
     return std::unique_ptr<HeadAccounts>(new FixtureAccounts(heads, walk_failures));
   }
+  td::Result<std::vector<td::Bits256>> state_roots(const BlockIdExt& head) override {
+    if (head != master_id(head.seqno())) {
+      return td::Status::Error("no such head");
+    }
+    return std::vector<td::Bits256>{root};
+  }
+  td::Status for_each_interval_transaction(
+      const VerifyMasterchainBlock& master,
+      const std::function<td::Status(const td::Bits256&, uint64_t, const td::Bits256&)>& cb,
+      const std::atomic<bool>*) override {
+    for (auto& [account, lt, hash] : intervals[master.id.seqno()]) {
+      TRY_STATUS(cb(account, lt, hash));
+    }
+    return td::Status::OK();
+  }
+  // The window's blocks hold these transactions, each in the interval of the
+  // first masterchain block whose tip for its shard ends above it.
+  void hold(const std::vector<td::Ref<vm::Cell>>& cells) {
+    for (auto& cell : cells) {
+      auto link = tos_wallet_index::parse_transaction_link(cell).move_as_ok();
+      for (uint32_t m = 1; m <= tip_seqno; ++m) {
+        if (tos_wallet_index::window_lt_bound(blocks.at(m).tips, link.account).move_as_ok() > link.lt) {
+          intervals[m].emplace_back(link.account, link.lt, link.hash);
+          break;
+        }
+      }
+    }
+  }
+  td::Bits256 root = td::Bits256::zero();
+  std::map<uint32_t, std::vector<std::tuple<td::Bits256, uint64_t, td::Bits256>>> intervals;
   uint32_t tip_seqno;
   // The head state's walk fails this many times before it succeeds.
   std::shared_ptr<int> walk_failures = std::make_shared<int>(0);
@@ -660,6 +694,218 @@ TEST(WalletIndexVerify, retries_back_off_to_a_cap_and_stay_visible) {
   auto cut = VerifyRetry::truncated(wide);
   ASSERT_TRUE(cut.size() <= VerifyRetry::kMaxErrorBytes && cut.size() % 2 == 0 && !cut.empty());
   ASSERT_EQ(VerifyRetry::truncated("short"), std::string("short"));
+}
+
+namespace {
+// Run the block pass step by step until it stops working.
+td::Result<tos::services::VerifyOutcome> pass_to_end(TempIndex& index, FixtureSource& source,
+                                                    const VerifyLimits& limits = {}) {
+  for (int i = 0; i < 1000000; ++i) {
+    TRY_RESULT(outcome, run_block_pass_step(*index.db, source, limits));
+    if (outcome.step != VerifyStep::Working) {
+      return outcome;
+    }
+  }
+  return td::Status::Error("the block pass never finished");
+}
+
+// A HeadCase verified at its head, Partial, its window's blocks holding every
+// transaction of its accounts.
+void verified(HeadCase& c, TempIndex& index) {
+  c.import(index);
+  for (auto* chain : {&c.linked, &c.created, &c.destroyed, &c.dormant})
+    c.source.hold(*chain);
+  CHECK(c.verify(index).move_as_ok().step == VerifyStep::Done);
+}
+
+bool no_marks(TempIndex& index) {
+  return !index.db->next_unverified_account(td::optional<td::Bits256>{}).move_as_ok();
+}
+}  // namespace
+
+// The window's blocks settle what the head state could not: an account
+// created inside the window and one destroyed there both match their rows,
+// and their marks are cleared; the index stays Partial (ownership is next).
+TEST(WalletIndexVerify, the_block_pass_clears_the_accounts_the_blocks_prove) {
+  HeadCase c;
+  TempIndex index;
+  verified(c, index);
+  ASSERT_TRUE(!no_marks(index));
+  auto outcome = pass_to_end(index, c.source).move_as_ok();
+  ASSERT_TRUE(outcome.step == VerifyStep::Done);
+  ASSERT_TRUE(no_marks(index));
+  ASSERT_TRUE(block_pass_done(*index.db).move_as_ok());
+  ASSERT_TRUE(index.state() == VerificationState::Partial);
+}
+
+// What the head state cannot see, the blocks refuse: an account destroyed in
+// the window and left out of the snapshot entirely, a recreated account whose
+// first life was left out, and a changed row of a destroyed account.
+TEST(WalletIndexVerify, the_block_pass_refuses_what_the_snapshot_left_out_or_changed) {
+  {
+    HeadCase c;
+    TempIndex index;
+    auto g = address(0x60);
+    c.source.hold(history(g, {15500, 16500}, 15000));
+    verified(c, index);
+    auto outcome = pass_to_end(index, c.source).move_as_ok();
+    ASSERT_TRUE(outcome.step == VerifyStep::Refused);
+    ASSERT_TRUE(outcome.account && outcome.account.value() == g);
+    ASSERT_TRUE(contains(outcome.reason, "omits the account's history"));
+    ASSERT_TRUE(index.state() == VerificationState::Refused);
+  }
+  {
+    HeadCase c;
+    TempIndex index;
+    auto r = address(0x50);
+    auto first = history(r, {16000, 16500}, 15900);
+    auto second = history(r, {18000, 19000}, 0);
+    c.source.heads[r] = head_of(second);
+    c.source.hold(first);
+    c.source.hold(second);
+    c.import(index);
+    for (auto& row : second)
+      index.add(row);
+    for (auto* chain : {&c.linked, &c.created, &c.destroyed, &c.dormant})
+      c.source.hold(*chain);
+    ASSERT_TRUE(c.verify(index).move_as_ok().step == VerifyStep::Done);
+    auto outcome = pass_to_end(index, c.source).move_as_ok();
+    ASSERT_TRUE(outcome.step == VerifyStep::Refused);
+    ASSERT_TRUE(outcome.account && outcome.account.value() == r);
+    ASSERT_TRUE(contains(outcome.reason, "16500"));
+  }
+  {
+    HeadCase c;
+    TempIndex index;
+    verified(c, index);
+    index.put(c.d, 16000, transaction(c.d, 16000, c.destroyed[0]->get_hash().bits(), 14000, 9));
+    auto outcome = pass_to_end(index, c.source).move_as_ok();
+    ASSERT_TRUE(outcome.step == VerifyStep::Refused);
+    ASSERT_TRUE(outcome.account && outcome.account.value() == c.d);
+  }
+}
+
+// A masterchain block missing from the window, or not the one the verified
+// head names, stops the pass as terminal without advancing it.
+TEST(WalletIndexVerify, the_block_pass_stops_at_a_gap_or_a_foreign_block) {
+  for (int foreign = 0; foreign < 2; ++foreign) {
+    HeadCase c;
+    TempIndex index;
+    verified(c, index);
+    if (foreign) {
+      c.source.blocks[18].id = master_id(18, 6);
+    } else {
+      c.source.blocks.erase(18);
+    }
+    auto outcome = pass_to_end(index, c.source);
+    ASSERT_TRUE(outcome.is_error());
+    ASSERT_TRUE(tos::services::is_terminal_verify_error(outcome.error()));
+    ASSERT_TRUE(!block_pass_done(*index.db).move_as_ok());
+    ASSERT_TRUE(!no_marks(index));
+    ASSERT_TRUE(index.state() == VerificationState::Partial);
+  }
+}
+
+// One block, one interval and one account per step, interrupted between any
+// two steps, ends exactly as one uninterrupted pass. A different binding (the
+// head state's roots) discards the pass and its results and starts again.
+TEST(WalletIndexVerify, the_block_pass_resumes_and_restarts_on_a_new_binding) {
+  VerifyLimits small;
+  small.authenticate_per_step = 1;
+  small.intervals_per_step = 1;
+  small.compare_per_step = 1;
+  HeadCase straight, stepped;
+  TempIndex straight_index, stepped_index;
+  verified(straight, straight_index);
+  verified(stepped, stepped_index);
+  ASSERT_TRUE(pass_to_end(straight_index, straight.source).move_as_ok().step == VerifyStep::Done);
+  int steps = 0;
+  for (; steps < 12; ++steps) {
+    ASSERT_TRUE(run_block_pass_step(*stepped_index.db, stepped.source, small).move_as_ok().step ==
+                VerifyStep::Working);
+  }
+  // The head state's roots change: everything collected so far is dropped.
+  stepped.source.root.as_slice()[0] = 1;
+  auto restarted = run_block_pass_step(*stepped_index.db, stepped.source, small).move_as_ok();
+  ASSERT_TRUE(restarted.step == VerifyStep::Working && contains(restarted.reason, "authenticating from 22"));
+  ASSERT_TRUE(!stepped_index.db->next_collected_account(td::optional<td::Bits256>{}).move_as_ok());
+  ASSERT_TRUE(pass_to_end(stepped_index, stepped.source, small).move_as_ok().step == VerifyStep::Done);
+  ASSERT_TRUE(no_marks(stepped_index) && no_marks(straight_index));
+  for (auto& account : {straight.a, straight.b, straight.d, straight.e})
+    ASSERT_TRUE(stepped_index.lts(account) == straight_index.lts(account));
+}
+
+// The pass bounds every account by the window base the index holds at the
+// head, also when replay moved it after the snapshot's checkpoint; and an
+// account with more in-window transactions than the retention compares its
+// newest kMaxEventsPerAccount on both sides.
+TEST(WalletIndexVerify, the_block_pass_uses_the_base_at_the_head_and_the_retention_cap) {
+  {
+    HeadCase c;
+    TempIndex index;
+    c.import(index);
+    {
+      std::lock_guard<std::mutex> guard(index.db->write_mutex());
+      index.db->commit_replay_checkpoint({master_id(1), master_id(22)}, 14u).ensure();
+    }
+    for (auto* chain : {&c.linked, &c.created, &c.destroyed, &c.dormant})
+      c.source.hold(*chain);
+    ASSERT_TRUE(c.verify(index).move_as_ok().step == VerifyStep::Done);
+    ASSERT_TRUE(pass_to_end(index, c.source).move_as_ok().step == VerifyStep::Done);
+    ASSERT_TRUE(no_marks(index));
+    ASSERT_TRUE(index.lts(c.d) == (std::set<uint64_t>{16000}));
+  }
+  {
+    // Left tips end at 10000 * s: base 13 bounds at 130000, checkpoint 20 at 200000.
+    FixtureSource source(22, 1, 10000);
+    TempIndex index;
+    auto big = address(0x70);
+    std::vector<uint64_t> lts;
+    for (uint64_t lt = 130001; lt <= 140005; ++lt)
+      lts.push_back(lt);
+    auto rows = history(big, lts, 129000);
+    index.import(master_id(20), rows);
+    ASSERT_TRUE(prepare_quarantined_index(*index.db, source).move_as_ok().step == VerifyStep::Done);
+    index.replayed_to(master_id(22));
+    source.hold(rows);
+    ASSERT_TRUE(verify_index_at_head(*index.db, source, master_id(22)).move_as_ok().step == VerifyStep::Done);
+    ASSERT_EQ(index.lts(big).size(), tos_wallet_index::kMaxEventsPerAccount);
+    ASSERT_TRUE(pass_to_end(index, source).move_as_ok().step == VerifyStep::Done);
+    ASSERT_TRUE(no_marks(index));
+  }
+}
+
+// One interval's collection is bounded in memory: an interval needing more
+// than the bound stops the pass as terminal without advancing it.
+TEST(WalletIndexVerify, an_interval_over_the_memory_bound_stops_the_pass) {
+  HeadCase c;
+  TempIndex index;
+  verified(c, index);
+  VerifyLimits tight;
+  tight.interval_bytes = 100;
+  auto outcome = pass_to_end(index, c.source, tight);
+  ASSERT_TRUE(outcome.is_error());
+  ASSERT_TRUE(tos::services::is_terminal_verify_error(outcome.error()));
+  ASSERT_TRUE(contains(outcome.error().message().str(), "MiB to collect"));
+  ASSERT_TRUE(!index.db->next_collected_account(td::optional<td::Bits256>{}).move_as_ok());
+  ASSERT_TRUE(!block_pass_done(*index.db).move_as_ok());
+}
+
+// The service never replays, drains or prunes a partly verified index: it
+// runs the block pass, then holds at the verified head until ownership is
+// derived, also after a restart that finds the pass complete.
+TEST(WalletIndexVerify, a_partial_index_holds_replay_at_the_head) {
+  using tos::services::next_service_action;
+  using tos::services::ServiceAction;
+  for (bool prepared : {false, true}) {
+    ASSERT_TRUE(next_service_action(VerificationState::Partial, prepared, false) == ServiceAction::BlockPass);
+    ASSERT_TRUE(next_service_action(VerificationState::Partial, prepared, true) ==
+                ServiceAction::HoldForOwnership);
+    ASSERT_TRUE(next_service_action(VerificationState::Refused, prepared, true) == ServiceAction::Stop);
+    ASSERT_TRUE(next_service_action(VerificationState::Full, prepared, true) == ServiceAction::Replay);
+  }
+  ASSERT_TRUE(next_service_action(VerificationState::Quarantined, false, false) == ServiceAction::Prepare);
+  ASSERT_TRUE(next_service_action(VerificationState::Quarantined, true, false) == ServiceAction::Replay);
 }
 
 // The serving gate: Full is served, Partial only when the operator allowed

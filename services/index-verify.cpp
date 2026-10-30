@@ -13,6 +13,7 @@
 #include "vm/dict.h"
 
 #include "index-reader.h"
+#include "index-replay.h"
 #include "index-verify.h"
 
 namespace tos::services {
@@ -152,6 +153,58 @@ class ReaderHeadAccounts final : public HeadAccounts {
   std::vector<Shard> shards_;
 };
 
+// A block's checked root, or nothing when the node does not hold its bytes.
+// Reading the bytes may fail and be retried; bytes that do not match the
+// block's identity, or do not decode, are terminal.
+td::Result<td::optional<td::Ref<vm::Cell>>> checked_block_root(IndexReader& reader,
+                                                               const validator::ConstBlockHandle& handle) {
+  const auto& id = handle->id();
+  TRY_RESULT(reply, reader.submit_block(handle, IndexReader::Context{}));
+  auto raw = reader.take(*reply);
+  if (raw.is_error()) {
+    if (raw.error().code() == ErrorCode::notready) {
+      return td::optional<td::Ref<vm::Cell>>{};
+    }
+    return raw.move_as_error();
+  }
+  td::Ref<validator::BlockData> data;
+  if (raw.ok().too_large) {
+    // Larger than the prefetch lane reads: read and decoded in one request.
+    auto read = reader.read_block(handle);
+    if (read.is_error()) {
+      if (read.error().code() == ErrorCode::notready) {
+        return td::optional<td::Ref<vm::Cell>>{};
+      }
+      return read.move_as_error();
+    }
+    data = read.move_as_ok();
+    if (data.is_null()) {
+      return terminal(PSTRING() << "block " << id.to_str() << " has no data");
+    }
+    td::Bits256 file_hash;
+    td::sha256(data->data().as_slice(), file_hash.as_slice());
+    if (file_hash != id.file_hash) {
+      return terminal(PSTRING() << "the bytes of block " << id.to_str() << " do not match its file hash");
+    }
+  } else {
+    td::Bits256 file_hash;
+    td::sha256(raw.ok().data.as_slice(), file_hash.as_slice());
+    if (file_hash != id.file_hash) {
+      return terminal(PSTRING() << "the bytes of block " << id.to_str() << " do not match its file hash");
+    }
+    auto decoded = decode_block(id, std::move(raw.ok_ref().data));
+    if (decoded.is_error()) {
+      return terminal(PSTRING() << "block " << id.to_str() << " does not decode: " << decoded.error().message());
+    }
+    data = decoded.move_as_ok();
+  }
+  auto checked = IndexReader::checked_root(handle, data);
+  if (checked.is_error()) {
+    return terminal(PSTRING() << "block " << id.to_str() << ": " << checked.error().message());
+  }
+  return td::optional<td::Ref<vm::Cell>>(checked.move_as_ok());
+}
+
 class ReaderVerifySource final : public VerifySource {
  public:
   explicit ReaderVerifySource(IndexReader& reader) : reader_(reader) {
@@ -184,52 +237,11 @@ class ReaderVerifySource final : public VerifySource {
       }
       block.handle_prev = handle->one_prev(true);
     }
-    // Reading the bytes may fail and be retried; bytes that do not match the
-    // block's identity, or do not decode, are terminal.
-    TRY_RESULT(reply, reader_.submit_block(handle, IndexReader::Context{}));
-    auto raw = reader_.take(*reply);
-    if (raw.is_error()) {
-      if (raw.error().code() == ErrorCode::notready) {
-        return td::optional<VerifyMasterchainBlock>{};
-      }
-      return raw.move_as_error();
+    TRY_RESULT(read, checked_block_root(reader_, handle));
+    if (!read) {
+      return td::optional<VerifyMasterchainBlock>{};
     }
-    td::Ref<validator::BlockData> data;
-    if (raw.ok().too_large) {
-      // Larger than the prefetch lane reads: read and decoded in one request.
-      auto read = reader_.read_block(handle);
-      if (read.is_error()) {
-        if (read.error().code() == ErrorCode::notready) {
-          return td::optional<VerifyMasterchainBlock>{};
-        }
-        return read.move_as_error();
-      }
-      data = read.move_as_ok();
-      if (data.is_null()) {
-        return terminal(PSTRING() << "masterchain block " << seqno << " has no data");
-      }
-      td::Bits256 file_hash;
-      td::sha256(data->data().as_slice(), file_hash.as_slice());
-      if (file_hash != block.id.file_hash) {
-        return terminal(PSTRING() << "the bytes of masterchain block " << seqno << " do not match its file hash");
-      }
-    } else {
-      td::Bits256 file_hash;
-      td::sha256(raw.ok().data.as_slice(), file_hash.as_slice());
-      if (file_hash != block.id.file_hash) {
-        return terminal(PSTRING() << "the bytes of masterchain block " << seqno << " do not match its file hash");
-      }
-      auto decoded = decode_block(block.id, std::move(raw.ok_ref().data));
-      if (decoded.is_error()) {
-        return terminal(PSTRING() << "masterchain block " << seqno << " does not decode: " << decoded.error().message());
-      }
-      data = decoded.move_as_ok();
-    }
-    auto checked = IndexReader::checked_root(handle, data);
-    if (checked.is_error()) {
-      return terminal(PSTRING() << "masterchain block " << seqno << ": " << checked.error().message());
-    }
-    auto root = checked.move_as_ok();
+    auto root = std::move(read.value());
     if (seqno > 1) {
       // The previous block as the checked bytes name it, not as the handle
       // says: the walk compares the two.
@@ -265,6 +277,40 @@ class ReaderVerifySource final : public VerifySource {
       return terminal("the verified head names no basechain shard");
     }
     return std::unique_ptr<HeadAccounts>(new ReaderHeadAccounts(std::move(shards)));
+  }
+  td::Result<std::vector<td::Bits256>> state_roots(const BlockIdExt& head) override {
+    TRY_RESULT(master, reader_.masterchain(head.seqno()));
+    if (master->id() != head) {
+      return terminal("the node's masterchain block differs from the verified head");
+    }
+    TRY_RESULT(heads, reader_.shard_heads(master));
+    std::vector<td::Bits256> roots;
+    for (auto& id : heads) {
+      TRY_RESULT(handle, reader_.handle(id));
+      TRY_RESULT(root, reader_.state(handle));
+      roots.push_back(root->get_hash().bits());
+    }
+    std::sort(roots.begin(), roots.end());
+    return roots;
+  }
+  td::Status for_each_interval_transaction(
+      const VerifyMasterchainBlock& master,
+      const std::function<td::Status(const td::Bits256&, uint64_t, const td::Bits256&)>& cb,
+      const std::atomic<bool>* cancel) override {
+    auto seqno = master.id.seqno();
+    TRY_RESULT(handle, reader_.masterchain(seqno));
+    if (handle->id() != master.id) {
+      return terminal(PSTRING() << "the node's masterchain block " << seqno << " changed during the block pass");
+    }
+    TRY_RESULT(heads, reader_.shard_heads(handle));
+    auto walked = replay_interval(std::move(heads), seqno, [this](BlockIdExt id) { return reader_.handle(id); });
+    if (walked.is_error()) {
+      return terminal(PSTRING() << "the shard blocks of masterchain block " << seqno
+                                << " cannot be walked: " << walked.error().message());
+    }
+    return walk_interval_blocks(
+        walked.ok(), [this](const validator::BlockHandle& block) { return checked_block_root(reader_, block); }, cb,
+        cancel);
   }
 
  private:
@@ -737,6 +783,325 @@ td::Result<VerifyOutcome> verify_index_at_head(WalletIndexDb& db, VerifySource& 
   return outcome;
 }
 
+td::Status terminal_gap(const std::string& block) {
+  return terminal("the window has a gap: the node does not hold shard block " + block);
+}
+
+td::Status walk_block_transactions(
+    const td::Ref<vm::Cell>& root,
+    const std::function<td::Status(const td::Bits256&, uint64_t, const td::Bits256&)>& cb) {
+  block::gen::Block::Record blk;
+  block::gen::BlockExtra::Record extra;
+  if (!(tlb::unpack_cell(root, blk) && tlb::unpack_cell(blk.extra, extra))) {
+    return terminal("a window block does not decode");
+  }
+  vm::AugmentedDictionary accounts{vm::load_cell_slice_ref(extra.account_blocks), 256,
+                                   block::tlb::aug_ShardAccountBlocks};
+  td::Status status;
+  bool complete = accounts.check_for_each_extra(
+      [&](td::Ref<vm::CellSlice> value, td::Ref<vm::CellSlice>, td::ConstBitPtr, int) -> bool {
+        block::gen::AccountBlock::Record account_block;
+        if (!tlb::csr_unpack(value, account_block)) {
+          return true;  // replay skips it too
+        }
+        td::Bits256 account = account_block.account_addr;
+        vm::AugmentedDictionary transactions{vm::DictNonEmpty(), account_block.transactions, 64,
+                                             block::tlb::aug_AccountTransactions};
+        bool walked = transactions.check_for_each_extra(
+            [&](td::Ref<vm::CellSlice> tvalue, td::Ref<vm::CellSlice>, td::ConstBitPtr, int) -> bool {
+              auto cell = tvalue->prefetch_ref();
+              if (cell.is_null()) {
+                return true;
+              }
+              block::gen::Transaction::Record transaction;
+              if (!tlb::unpack_cell(cell, transaction)) {
+                return true;
+              }
+              status = cb(account, static_cast<uint64_t>(transaction.lt), cell->get_hash().bits());
+              return status.is_ok();
+            });
+        return walked && status.is_ok();
+      });
+  TRY_STATUS(std::move(status));
+  if (!complete) {
+    return terminal("cannot walk the transactions of a window block");
+  }
+  return td::Status::OK();
+}
+
+namespace {
+using BlockPassPhase = WalletIndexDb::BlockPassPhase;
+
+// What a block pass must be bound to now, or an error when the index is not
+// at the point where it runs.
+td::Result<WalletIndexDb::BlockPassRecord> current_binding(WalletIndexDb& db, VerifySource& source) {
+  auto state = db.get_verification_state();
+  if (state.is_error()) {
+    return terminal(state.error());
+  }
+  if (state.ok() != VerificationState::Partial) {
+    return terminal("the block pass runs only on a partly verified index");
+  }
+  auto record = db.verification_record();
+  if (record.is_error()) {
+    return terminal(record.error());
+  }
+  if (!record.ok() || !record.ok().value().head) {
+    return terminal("the index was not verified at a head");
+  }
+  WalletIndexDb::BlockPassRecord binding;
+  binding.schema = tos_wallet_index::kWalletIndexSchemaVersion;
+  binding.head = record.ok().value().head.value();
+  TRY_RESULT(checkpoint, db.replay_checkpoint());
+  if (!checkpoint || checkpoint.value().committed != binding.head) {
+    return terminal("replay moved past the verified head before the block pass finished");
+  }
+  TRY_RESULT_ASSIGN(binding.base, db.get_window_base());
+  TRY_RESULT_ASSIGN(binding.roots, source.state_roots(binding.head));
+  return binding;
+}
+
+bool same_binding(const WalletIndexDb::BlockPassRecord& a, const WalletIndexDb::BlockPassRecord& b) {
+  return a.schema == b.schema && a.head == b.head && a.roots == b.roots && a.base == b.base;
+}
+
+VerifyOutcome working(std::string phase) {
+  VerifyOutcome outcome;
+  outcome.step = VerifyStep::Working;
+  outcome.reason = std::move(phase);
+  return outcome;
+}
+
+td::Status write_pass_record(WalletIndexDb& db, const WalletIndexDb::BlockPassRecord& record, bool clear = false) {
+  Batches batch(db, 1);
+  TRY_STATUS(batch.begin());
+  if (clear) {
+    TRY_STATUS(db.clear_block_pass_work());
+  }
+  TRY_STATUS(db.put_block_pass_record(record));
+  return batch.commit();
+}
+}  // namespace
+
+td::Result<bool> block_pass_done(WalletIndexDb& db) {
+  TRY_RESULT(record, db.block_pass_record());
+  return record && record.value().phase == BlockPassPhase::Done;
+}
+
+td::Result<VerifyOutcome> run_block_pass_step(WalletIndexDb& db, VerifySource& source, const VerifyLimits& limits,
+                                              const std::atomic<bool>* cancel) {
+  auto cancelled = [cancel] { return cancel != nullptr && cancel->load(); };
+  TRY_RESULT(binding, current_binding(db, source));
+  auto stored = db.block_pass_record();
+  if (stored.is_error()) {
+    return terminal(stored.error());
+  }
+  const auto& head = binding.head;
+  if (!stored.ok() || !same_binding(stored.ok().value(), binding)) {
+    // A new pass, or one bound to a different head, state or base: nothing
+    // of the old one, or of the ownership derivation, is kept.
+    auto fresh = binding;
+    fresh.phase = BlockPassPhase::Authenticate;
+    fresh.cursor = head.seqno();
+    fresh.expected = head;
+    TRY_STATUS(write_pass_record(db, fresh, true));
+    return working(PSTRING() << "blocks: authenticating from " << head.seqno());
+  }
+  auto record = stored.ok().value();
+  if (record.phase == BlockPassPhase::Done) {
+    VerifyOutcome done;
+    done.step = VerifyStep::Done;
+    return done;
+  }
+  bool has_base = record.base != 0;
+  std::vector<WindowShardTip> base_tips;
+  if (has_base) {
+    TRY_RESULT(block, source.masterchain_block(record.base));
+    if (!block) {
+      return terminal(PSTRING() << "the node no longer holds the window base, masterchain block " << record.base);
+    }
+    base_tips = std::move(block.value().tips);
+  }
+  auto linked_inside = [](const VerifyMasterchainBlock& block) {
+    return (!block.prev && !block.handle_prev && block.id.seqno() == 1) ||
+           (block.prev && block.handle_prev && block.prev.value() == block.handle_prev.value());
+  };
+
+  if (record.phase == BlockPassPhase::Authenticate) {
+    // Down from H to the block above the base, each block the one its
+    // successor's checked bytes name; the base itself must match too.
+    for (uint32_t steps = 0; steps < limits.authenticate_per_step && !cancelled(); ++steps) {
+      auto seqno = record.cursor;
+      if (seqno == record.base) {
+        if (has_base) {
+          TRY_RESULT(block, source.masterchain_block(seqno));
+          if (!block || !record.expected || block.value().id != record.expected.value()) {
+            return terminal(PSTRING() << "the window base, masterchain block " << seqno
+                                      << ", is not linked to the verified head");
+          }
+        } else if (record.expected) {
+          return terminal("the verified head does not reach the chain's first block");
+        }
+        record.phase = record.base == head.seqno() ? BlockPassPhase::Compare : BlockPassPhase::Collect;
+        record.cursor = record.base + 1;
+        // Collection starts above the base, whose identity `expected` holds
+        // (unset when the window starts at the chain's first block).
+        TRY_STATUS(write_pass_record(db, record));
+        return working(PSTRING() << "blocks: collecting from " << record.cursor);
+      }
+      TRY_RESULT(block, source.masterchain_block(seqno));
+      if (!block) {
+        return terminal(PSTRING() << "the window has a gap: the node does not hold masterchain block " << seqno);
+      }
+      if (!record.expected || block.value().id != record.expected.value() || !linked_inside(block.value()) ||
+          !block.value().applied) {
+        return terminal(PSTRING() << "masterchain block " << seqno << " is not linked to the verified head");
+      }
+      record.expected = block.value().prev;
+      record.cursor = seqno - 1;
+    }
+    TRY_STATUS(write_pass_record(db, record));
+    return working(PSTRING() << "blocks: authenticating at " << record.cursor);
+  }
+
+  if (record.phase == BlockPassPhase::Collect) {
+    TRY_RESULT(accounts, source.accounts(head));
+    for (uint32_t steps = 0; steps < limits.intervals_per_step && !cancelled(); ++steps) {
+      auto seqno = record.cursor;
+      TRY_RESULT(block, source.masterchain_block(seqno));
+      if (!block) {
+        return terminal(PSTRING() << "the window has a gap: the node does not hold masterchain block " << seqno);
+      }
+      // The interval's block is the one the authenticated chain names.
+      bool linked = linked_inside(block.value()) &&
+                    ((!record.expected && !block.value().prev) ||
+                     (record.expected && block.value().prev && block.value().prev.value() == record.expected.value()));
+      if (!linked || !block.value().applied || (seqno == head.seqno() && block.value().id != head)) {
+        return terminal(PSTRING() << "masterchain block " << seqno << " is not the authenticated one");
+      }
+      // Which accounts the head state cannot vouch for, decided once each.
+      std::map<td::Bits256, bool> scope;
+      Batches batch(db, std::numeric_limits<size_t>::max());
+      TRY_STATUS(batch.begin());
+      auto collected = record.collected;
+      // A write batch entry (key, value and the batch's own framing), and a
+      // scope decision (its tree node).
+      constexpr size_t kRowBytes = 41 + 32 + 16;
+      constexpr size_t kScopeBytes = 32 + 1 + 64;
+      size_t interval_bytes = 0;
+      auto charge = [&](size_t bytes) -> td::Status {
+        interval_bytes += bytes;
+        if (interval_bytes > limits.interval_bytes) {
+          return terminal(PSTRING() << "masterchain interval " << seqno << " needs more than "
+                                    << (limits.interval_bytes >> 20) << " MiB to collect; it is not verified");
+        }
+        return td::Status::OK();
+      };
+      auto status = source.for_each_interval_transaction(
+          block.value(),
+          [&](const td::Bits256& account, uint64_t lt, const td::Bits256& hash) -> td::Status {
+            auto it = scope.find(account);
+            if (it == scope.end()) {
+              TRY_STATUS(charge(kScopeBytes));
+              TRY_RESULT(marked, db.is_unverified_account(account));
+              bool in_scope = marked;
+              if (!in_scope) {
+                TRY_RESULT(found, accounts->find(account));
+                in_scope = !found;
+              }
+              it = scope.emplace(account, in_scope).first;
+            }
+            if (!it->second) {
+              return td::Status::OK();
+            }
+            TRY_RESULT(bound, base_lt_bound(base_tips, has_base, account));
+            if (lt <= bound) {
+              return td::Status::OK();
+            }
+            if (++collected > limits.collected_rows_max) {
+              return terminal(PSTRING() << "the block pass would collect more than " << limits.collected_rows_max
+                                        << " rows; it is not verified");
+            }
+            TRY_STATUS(charge(kRowBytes));
+            return db.put_collected(account, lt, hash);
+          },
+          cancel);
+      if (status.is_error()) {
+        batch.abort();
+        return std::move(status);
+      }
+      record.collected = collected;
+      record.expected = block.value().id;
+      record.cursor = seqno + 1;
+      if (seqno == head.seqno()) {
+        record.phase = BlockPassPhase::Compare;
+        record.compared = td::optional<td::Bits256>{};
+      }
+      TRY_STATUS(db.put_block_pass_record(record));
+      TRY_STATUS(batch.commit());
+      if (record.phase == BlockPassPhase::Compare) {
+        return working("blocks: comparing");
+      }
+    }
+    return working(PSTRING() << "blocks: collecting at " << record.cursor << " of " << head.seqno());
+  }
+
+  // Compare, account by account in key order, over the collected accounts
+  // and the marked ones.
+  for (uint32_t steps = 0; steps < limits.compare_per_step && !cancelled(); ++steps) {
+    TRY_RESULT(collected_next, db.next_collected_account(record.compared));
+    TRY_RESULT(marked_next, db.next_unverified_account(record.compared));
+    if (!collected_next && !marked_next) {
+      record.phase = BlockPassPhase::Done;
+      TRY_STATUS(write_pass_record(db, record));
+      VerifyOutcome done;
+      done.step = VerifyStep::Done;
+      return done;
+    }
+    td::Bits256 account = !collected_next                 ? marked_next.value()
+                          : !marked_next                  ? collected_next.value()
+                          : collected_next.value() < marked_next.value() ? collected_next.value()
+                                                                         : marked_next.value();
+    TRY_RESULT(bound, base_lt_bound(base_tips, has_base, account));
+    std::vector<std::pair<uint64_t, td::Bits256>> imported, collected;
+    TRY_STATUS(db.for_each_event(account, tos_wallet_index::kMaxEventsPerAccount,
+                                 [&](uint64_t lt, td::Ref<vm::Cell> cell) -> td::Status {
+                                   if (lt > bound) {
+                                     imported.emplace_back(lt, cell->get_hash().bits());
+                                   }
+                                   return td::Status::OK();
+                                 }));
+    TRY_STATUS(db.for_each_collected(account, tos_wallet_index::kMaxEventsPerAccount,
+                                     [&](uint64_t lt, const td::Bits256& hash) -> td::Status {
+                                       collected.emplace_back(lt, hash);
+                                       return td::Status::OK();
+                                     }));
+    if (imported != collected) {
+      std::string why;
+      if (imported.empty()) {
+        why = "the snapshot omits the account's history in the window";
+      } else {
+        size_t i = 0;
+        while (i < imported.size() && i < collected.size() && imported[i] == collected[i]) {
+          ++i;
+        }
+        why = i < collected.size() ? PSTRING() << "the window's blocks hold a transaction at " << collected[i].first
+                                               << " the snapshot does not match"
+                                   : PSTRING() << "the snapshot holds a row at " << imported[i].first
+                                               << " the window's blocks do not";
+      }
+      return refuse(db, PSTRING() << account_text(account) << ": " << why, account);
+    }
+    Batches batch(db, 1);
+    TRY_STATUS(batch.begin());
+    TRY_STATUS(db.erase_unverified_account(account));
+    record.compared = account;
+    TRY_STATUS(db.put_block_pass_record(record));
+    TRY_STATUS(batch.commit());
+  }
+  return working("blocks: comparing");
+}
+
 const char* verification_state_name(VerificationState state) {
   switch (state) {
     case VerificationState::Full:
@@ -828,7 +1193,18 @@ std::string ServingGate::json_fields() const {
             ",\"unix_time\":" + std::to_string(horizon_time_.load()) +
             ",\"unverified_accounts\":" + std::to_string(unverified_.load()) + "}";
   }
-  return body + ",\"verification_retry\":" + retry.json();
+  body += ",\"verification_retry\":" + retry.json() + ",\"verification_phase\":";
+  {
+    std::lock_guard<std::mutex> guard(phase_mutex_);
+    if (held_) {
+      td::StringBuilder sb;
+      sb << td::JsonString(phase_);
+      body += sb.as_cslice().str();
+    } else {
+      body += "null";
+    }
+  }
+  return body;
 }
 
 }  // namespace tos::services

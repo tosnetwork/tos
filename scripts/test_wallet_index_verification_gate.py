@@ -4,10 +4,14 @@
 An index imported from an untrusted snapshot is Quarantined until it has been
 checked against the local node's own head: the service starts, verifies it,
 and meanwhile answers no index query and reports itself not ready. A Partial
-index is served only with --allow-partial-verification; a Refused or
-malformed state is never served, and the service exits before it listens.
-Each state is installed with the real snapshot tool. A Full index is the
-control: the service gets past the gate.
+index keeps running its verification: without --allow-partial-verification
+it answers no query, with it every history answer is flagged, and in both
+cases it is never ready while replay is held for that verification. A Refused
+or malformed state is never served, and the service exits before it listens.
+Each state is installed with the real snapshot tool, over a fixture node
+database that holds no chain, so every verification attempt fails with a
+retryable error that /readyz must show. A Full index is the control: the
+service gets past the gate.
 """
 
 import argparse
@@ -33,10 +37,24 @@ def block(seqno: int) -> bytes:
     )
 
 
-def snapshot(state: bytes | None) -> bytes:
+def verified_at_head() -> bytes:
+    """A verification record (meta 0x00 0x31) of an index checked at block 5."""
+    return (
+        bytes([1])
+        + struct.pack(">I", SCHEMA)
+        + block(5)
+        + struct.pack(">IIIQ", 0, 0, 0, 0)
+        + bytes([0, 1])
+        + block(5)
+    )
+
+
+def snapshot(state: bytes | None, record: bytes | None = None) -> bytes:
     records = [(b"\0\1", struct.pack(">I", SCHEMA)), (b"\0\x20", block(1) + block(5))]
     if state is not None:
         records.append((b"\0\x30", state))
+    if record is not None:
+        records.append((b"\0\x31", record))
     return (
         b"TOSIDX01"
         + struct.pack(">I", SCHEMA)
@@ -62,18 +80,16 @@ def request(port: int, method: str, path: str, body: bytes | None = None) -> tup
         connection.close()
 
 
-def check_quarantined(process: subprocess.Popen, port: int) -> None:
-    """The service listens while it verifies, but serves nothing.
+def check_running(process: subprocess.Popen, port: int, verification: str, answers: bool) -> None:
+    """The service listens while it verifies, never ready, and shows the retries.
 
-    The fixture source holds no chain, so every verification attempt fails
-    with a retryable error: /readyz must stay 503 and show the retries, never
-    report verification as merely in progress.
+    `answers`: whether index queries are answered (flagged) or refused.
     """
     deadline = time.monotonic() + 30
     while True:
         if process.poll() is not None:
             output, _ = process.communicate()
-            raise AssertionError(("quarantined service exited", process.returncode, output))
+            raise AssertionError((verification, "service exited", process.returncode, output))
         try:
             status, body = request(port, "GET", "/readyz")
         except OSError:
@@ -81,14 +97,16 @@ def check_quarantined(process: subprocess.Popen, port: int) -> None:
         if status is not None:
             assert status == 503, (status, body)
             readyz = json.loads(body)
-            assert readyz["verification"] == "quarantined", body
+            assert readyz["verification"] == verification, body
+            if verification == "partial":
+                assert readyz["verification_phase"], body
             retry = readyz["verification_retry"]
             if retry is not None:
                 assert retry["attempts"] >= 1 and retry["last_error"], body
                 assert retry["since"] > 0, body
                 break
         if time.monotonic() > deadline:
-            raise AssertionError(("quarantined service never reported a retried failure", body))
+            raise AssertionError((verification, "never reported a retried failure", body))
         time.sleep(0.2)
     query = json.dumps(
         {
@@ -99,8 +117,12 @@ def check_quarantined(process: subprocess.Popen, port: int) -> None:
         }
     ).encode()
     status, body = request(port, "POST", "/jsonRPC", query)
-    assert NOT_VERIFIED in body, (status, body)
-    assert '"events"' not in body, body
+    if answers:
+        assert NOT_VERIFIED not in body, (status, body)
+        assert '"history_verified":false' in body, (status, body)
+    else:
+        assert NOT_VERIFIED in body, (status, body)
+        assert '"events"' not in body, body
 
 
 def main() -> None:
@@ -111,16 +133,17 @@ def main() -> None:
     args = parser.parse_args()
     service = args.index_binary.resolve(strict=True)
     tool = args.snapshot_binary.resolve(strict=True)
-    # (name, state record, extra service flags, expected outcome)
+    record = verified_at_head()
+    # (name, state record, verification record, extra service flags, expected outcome)
     cases = [
-        ("untrusted-import", None, [], "quarantined"),
-        ("partial", b"\x02", [], "refused"),
-        ("partial-allowed", b"\x02", ["--allow-partial-verification"], "runs"),
-        ("refused", b"\x03", [], "refused"),
-        ("refused-allowed", b"\x03", ["--allow-partial-verification"], "refused"),
-        ("malformed-value", b"\x09", [], "refused"),
-        ("malformed-length", b"\x01\x01", [], "refused"),
-        ("full-control", b"\x00", [], "runs"),
+        ("untrusted-import", None, None, [], "quarantined"),
+        ("partial", b"\x02", record, [], "partial"),
+        ("partial-allowed", b"\x02", record, ["--allow-partial-verification"], "partial-answers"),
+        ("refused", b"\x03", None, [], "refused"),
+        ("refused-allowed", b"\x03", None, ["--allow-partial-verification"], "refused"),
+        ("malformed-value", b"\x09", None, [], "refused"),
+        ("malformed-length", b"\x01\x01", None, [], "refused"),
+        ("full-control", b"\x00", None, [], "runs"),
     ]
     with tempfile.TemporaryDirectory(prefix="wallet-index-gate-") as raw:
         root = Path(raw)
@@ -131,11 +154,11 @@ def main() -> None:
             capture_output=True,
             timeout=60,
         )
-        for name, state, flags, expected in cases:
+        for name, state, verification, flags, expected in cases:
             data = root / name
             data.mkdir()
             file = root / f"{name}.snapshot"
-            file.write_bytes(snapshot(state))
+            file.write_bytes(snapshot(state, verification))
             if state is None:
                 action = ["--action", "import-untrusted"]
             else:
@@ -165,9 +188,14 @@ def main() -> None:
                 # The service's output may hold bytes that are not UTF-8.
                 errors="replace",
             )
-            if expected == "quarantined":
+            if expected in ("quarantined", "partial", "partial-answers"):
                 try:
-                    check_quarantined(process, port)
+                    check_running(
+                        process,
+                        port,
+                        "quarantined" if expected == "quarantined" else "partial",
+                        expected == "partial-answers",
+                    )
                 finally:
                     if process.poll() is None:
                         process.kill()
@@ -183,15 +211,13 @@ def main() -> None:
                 code = None
             if expected == "refused":
                 assert code == 2, (name, code, output)
-                reason = (
-                    REFUSAL if name.startswith(("partial", "refused")) else "verification state"
-                )
+                reason = REFUSAL if name.startswith("refused") else "verification state"
                 assert reason in output, (name, output)
             else:
                 assert REFUSAL not in output and "verification state" not in output, (name, output)
     print(
-        "WALLET_INDEX_VERIFICATION_GATE_OK: unverified indexes are never served and malformed states "
-        "are refused before listening"
+        "WALLET_INDEX_VERIFICATION_GATE_OK: unverified indexes are never served unflagged, never ready, "
+        "and malformed or refused states are refused before listening"
     )
 
 

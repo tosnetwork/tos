@@ -345,16 +345,37 @@ serves anything. While it does, `/readyz` answers 503 with
 
 The result is **partial**, never full: the marked accounts, and token and NFT
 ownership, which is not yet derived from the verified state, are still owed.
-A refused or partial index is not served by default, and the service exits
-(status 2). `--allow-partial-verification` serves a partial index with every
-history answer flagged `"history_verified":false`: an account absent from the
-checked state may have had its history omitted and gain new history later,
-so no answer is vouched for until the window's blocks are checked. A missing
-event is answered with error -32004 carrying `"history_verified":false` in
+The service then holds replay, its token drain and its pruning at that head
+and checks the window's own blocks against the index (`/readyz` reports the
+step in `verification_phase` and stays 503 throughout):
+
+5. **Authenticate** the masterchain blocks from the head down to the window
+   base, each the one its successor's checked bytes name.
+6. **Collect**, interval by interval, every transaction of the accounts the
+   head state cannot vouch for (absent from it, or marked), each shard block's
+   bytes checked against its file and root hash.
+7. **Compare** per account: the newest 10,000 rows above the account's bound
+   must equal the collected ones in logical time, hash and number. Equal
+   clears the mark; a missing, extra or changed row, or an account the blocks
+   hold but the snapshot left out entirely, refuses the snapshot and names the
+   account. A gap in the window or a block that is not the one the head names
+   stops the service (status 1); it is never skipped.
+
+Each step's progress is recorded with the head, its state roots and the window
+base, so a restart resumes it, and a different head, state or base starts it
+again from nothing. While partial the index is not served by default; the
+service keeps verifying. Only a refused index makes it exit (status 2).
+`--allow-partial-verification` serves a partial index with every history
+answer flagged `"history_verified":false`: an account absent from the checked
+state may have had its history omitted and gain new history later, so no
+answer is vouched for until the index is fully verified. A missing event is
+answered with error -32004 carrying `"history_verified":false` in
 `error.data`. Token and NFT answers carry `"ownership_complete":false` in
 `index_state`. `/readyz` reports `verification` and `verified_horizon` (its
 masterchain seqno, generation time and the number of marked accounts). A
 refused index stays refused; import another snapshot into a fresh directory.
+After the block pass replay stays held: the index stays partial, and never
+ready, until ownership is derived at the head as well.
 
 A source or database failure during verification is retried, 5 s after the
 first and doubling to at most 5 minutes; `/readyz` stays 503 and reports

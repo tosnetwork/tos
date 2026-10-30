@@ -3,7 +3,7 @@
 
 Each control removes one guard, rebuilds the service, and requires the gate
 regression to fail; the source is then restored and the regression must pass.
-The guards are the service's startup refusal of a Partial or Refused index,
+The guards are the service's startup refusal of a Refused index,
 and the JSON-RPC refusal of every index query while the index is not
 verified. Sources are restored in `finally` and their hashes are checked.
 """
@@ -19,7 +19,7 @@ CONTROLS = [
     (
         "startup refusal",
         ROOT / "services/index-main.cpp",
-        "    if (!gate.serving() && state.ok() != VerificationState::Quarantined) {",
+        "    if (state.ok() == VerificationState::Refused) {",
         "    if (false) {",
     ),
     (

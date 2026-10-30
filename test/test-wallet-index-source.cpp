@@ -1219,6 +1219,31 @@ class ChainVerifySource final : public VerifySource {
     };
     return std::unique_ptr<HeadAccounts>(new Accounts(heads_));
   }
+  td::Result<std::vector<td::Bits256>> state_roots(const BlockIdExt&) override {
+    return std::vector<td::Bits256>{td::Bits256::zero()};
+  }
+  // The interval's shard blocks, walked by the production interval walk: a
+  // block whose bytes the fixture lost is not held.
+  td::Status for_each_interval_transaction(
+      const VerifyMasterchainBlock& master,
+      const std::function<td::Status(const td::Bits256&, uint64_t, const td::Bits256&)>& cb,
+      const std::atomic<bool>* cancel) override {
+    std::vector<validator::BlockHandle> blocks;
+    for (auto& id : chain_->order.at(master.id.seqno())) {
+      blocks.push_back(chain_->shards.at(id));
+    }
+    auto chain = chain_;
+    return walk_interval_blocks(
+        blocks,
+        [chain](const validator::BlockHandle& block) -> td::Result<td::optional<td::Ref<vm::Cell>>> {
+          if (chain->data.count(block->id()) == 0) {
+            return td::optional<td::Ref<vm::Cell>>{};
+          }
+          TRY_RESULT(data, block_from(*chain, block->id()));
+          return td::optional<td::Ref<vm::Cell>>(data->root_cell());
+        },
+        cb, cancel);
+  }
 
  private:
   std::shared_ptr<FakeChain> chain_;
@@ -1311,8 +1336,64 @@ TEST(WalletIndexSource, an_untrusted_snapshot_is_prepared_replayed_and_verified_
         ASSERT_EQ(verified.unverified, 28u);
         ASSERT_TRUE(db->get_verification_state().move_as_ok() == tos_wallet_index::VerificationState::Partial);
         ASSERT_TRUE(db->is_unverified_account(changed).move_as_ok());
+        // The window's real blocks, walked as production walks them, prove
+        // every marked account.
+        td::Result<VerifyOutcome> pass = td::Status::Error("not run");
+        for (int i = 0; i < 10000; ++i) {
+          pass = run_block_pass_step(*db, source);
+          if (pass.is_error() || pass.ok().step != VerifyStep::Working)
+            break;
+        }
+        ASSERT_TRUE(pass.is_ok() && pass.ok().step == VerifyStep::Done);
+        ASSERT_TRUE(!db->is_unverified_account(changed).move_as_ok());
+        ASSERT_TRUE(!db->next_unverified_account(td::optional<td::Bits256>{}).move_as_ok());
       }
     }
+  }
+}
+
+// A shard block of the window whose bytes the node no longer holds, under a
+// masterchain chain that still links, is a gap: the block pass stops there as
+// terminal and never advances past it.
+TEST(WalletIndexSource, the_block_pass_stops_at_a_shard_block_the_node_does_not_hold) {
+  auto chain = make_chain(24, 2);
+  auto straight_dir = temporary_directory();
+  auto donor_dir = temporary_directory();
+  auto imported_dir = temporary_directory();
+  RemoveOnExit straight_remove{straight_dir}, donor_remove{donor_dir}, imported_remove{imported_dir};
+  {
+    ReplayHarness h(chain, 0, straight_dir);
+    ASSERT_OK(h.run_until_idle());
+  }
+  {
+    ReplayHarness h(chain, 17, donor_dir);
+    ASSERT_OK(h.run_until_idle());
+  }
+  auto snapshot = donor_dir + "/snapshot";
+  tos_wallet_index::WalletIndexSnapshotFile::create(donor_dir + "/index", snapshot).ensure();
+  tos_wallet_index::WalletIndexSnapshotFile::import_untrusted(snapshot, imported_dir + "/index").ensure();
+  for (uint32_t i = 1; i < 10; ++i)
+    chain->masters.erase(i);
+  ChainVerifySource source(chain, newest_rows(straight_dir));
+  {
+    ReplayHarness h(chain, 0, imported_dir);
+    auto* db = tos_wallet_index::wallet_index_db();
+    ASSERT_TRUE(prepare_quarantined_index(*db, source).move_as_ok().step == VerifyStep::Done);
+    ASSERT_OK(h.run_until_idle());
+    auto head = db->replay_checkpoint().move_as_ok().value().committed;
+    ASSERT_TRUE(verify_index_at_head(*db, source, head).move_as_ok().step == VerifyStep::Done);
+    // Interval 20's second shard block loses its bytes after the replay.
+    chain->data.erase(chain->order.at(20).at(1));
+    td::Result<VerifyOutcome> pass = td::Status::Error("not run");
+    for (int i = 0; i < 10000; ++i) {
+      pass = run_block_pass_step(*db, source);
+      if (pass.is_error() || pass.ok().step != VerifyStep::Working)
+        break;
+    }
+    ASSERT_TRUE(pass.is_error());
+    ASSERT_TRUE(is_terminal_verify_error(pass.error()));
+    ASSERT_TRUE(pass.error().message().str().find("gap") != std::string::npos);
+    ASSERT_TRUE(!block_pass_done(*db).move_as_ok());
   }
 }
 
