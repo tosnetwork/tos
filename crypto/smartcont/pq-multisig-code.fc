@@ -1,0 +1,311 @@
+;; Copyright 2026 TOS Blockchain Teams. SPDX-License-Identifier: LGPL-2.0-or-later
+;;
+;; Post-quantum M-of-N multisig account. A quorum of ML-DSA-44 signatures over one request
+;; becomes either a batch of outgoing messages or a change of this account's own membership.
+;; TVM v16+, workchain 0, PQ.fif required. Built for low-volume governance signing, such as
+;; the cold administrator of a treasury vault; it is not a payout engine.
+;;
+;; No external handler or ACCEPT: a relayer delivers the signed request as an internal
+;; message and its value pays compute; the remainder is refunded first, best effort.
+;;
+;; storage: verifiers:(HashmapE 256 ^StoredKey) count:uint8 quorum:uint8 seqno:uint64
+;;   The first three fields are the quorum library's trusted config, persisted exactly as
+;;   pq_quorum::config or a with_* function produced it. get_checked_config re-derives it
+;;   from storage, so a deployment is verified before the first authorization.
+;; submit#504d5353 relayer_query_id:uint64 request:^Request
+;;                 signatures:(HashmapE 256 ^StoredSignature)
+;; Request = kind:uint8 valid_until:uint32 payload:^Cell
+;;   kind 1 execute:   payload = OutList of send_msg actions, 1..16, modes within +1/+2/+128,
+;;                     int_msg_info with src addr_none, no extra currencies, no StateInit.
+;;   kind 2 configure: payload = change:uint8 then
+;;                     1 add stored_key:^Cell | 2 remove key_id:uint256 | 3 quorum:uint8.
+;; Signers sign pq_quorum::signing_hash(domain, this address, seqno, valid_until, payload)
+;; under the library's context; the domain is 0x504d5331 for execute and 0x504d5332 for
+;; configure, so a signature is bound to the network, this account, its purpose, one
+;; sequence number and an expiry. The sequence number is consumed in the same transaction.
+;;
+;; Sends are best effort (+2 forced): a consumed sequence number proves that the quorum
+;; authorized the batch, not that every message was delivered or accepted. Callers confirm
+;; the effect on the target contract. A full replacement of the verifier set is deliberately
+;; not offered: validating a large set does not fit beside a quorum verification in one
+;; transaction, so membership moves one key at a time.
+
+#include "pq-quorum-signatures.fc";
+
+const int op::submit = 0x504d5353;
+const int op::excesses = 0xd53276db;
+const int action::send_msg = 0x0ec3c86d;
+const int domain::execute = 0x504d5331;
+const int domain::configure = 0x504d5332;
+const int kind::execute = 1;
+const int kind::configure = 2;
+const int change::add = 1;
+const int change::remove = 2;
+const int change::quorum = 3;
+
+const int error::wrong_workchain = 0x1c81;
+const int error::bad_submission = 0x1c82;
+const int error::unknown_kind = 0x1c83;
+const int error::invalid_action = 0x1c84;
+const int error::invalid_mode = 0x1c85;
+const int error::invalid_message = 0x1c86;
+const int error::insufficient_value = 0x1c87;
+const int error::unknown_change = 0x1c88;
+const int error::seqno_exhausted = 0x1c89;
+const int error::stored_count = 0x1c8a;
+const int error::fee_range = 0x1c8b;
+
+const int basechain = 0;
+const int max_actions = 16;
+const int max_seqno = 18446744073709551615;
+const int SEND_MODE_IGNORE_ERRORS = 2;
+const int SEND_MODE_CARRY_INBOUND_VALUE = 64;
+;; +1 pay fees separately, +2 ignore errors, +128 carry the remaining balance
+const int SEND_MODES_ALLOWED = 0x83;
+;; Matches tol/extra-flags-constants.h: new bounce format (+1), full bounce body (+2).
+const int MESSAGE_EXTRA_FLAGS_ALLOWED = 3;
+
+;; Funding allowance, measured by test/treasury-vault/test_pq_cold.py at global version 16.
+;; Every quorum is exercised with one send and all three configuration changes at the
+;; exact quote. A large batch's action allowance must not subsidize signature processing.
+;; The signature term covers dictionary walks, stored-key/signature loading and verification.
+const int fee::base_gas = 20000;
+const int fee::gas_per_signature = 12000;
+const int fee::gas_per_action = 8000;
+const int fee::configure_gas = 30000;
+const int fee::max_gas = 9223372036854775807; ;; nonnegative signed 64-bit gas quantity
+const int fee::max_coins = 1329227995784915872903807060280344575; ;; VarUInteger 16
+
+int checked_fee_value(int value, int limit) impure inline {
+  throw_unless(error::fee_range, (limit >= 0) & (limit <= fee::max_coins));
+  throw_unless(error::fee_range, (value >= 0) & (value <= limit));
+  return value;
+}
+
+int checked_add(int a, int b, int limit) impure inline {
+  a = checked_fee_value(a, limit);
+  b = checked_fee_value(b, limit);
+  return checked_fee_value(a + b, limit);
+}
+
+int checked_mul(int a, int b, int limit) impure inline {
+  a = checked_fee_value(a, limit);
+  b = checked_fee_value(b, limit);
+  ;; Each operand is at most 120 bits, so the intermediate fits TVM's signed 257 bits.
+  return checked_fee_value(a * b, limit);
+}
+
+(cell, int, int, int) load_data() inline {
+  slice ds = get_data().begin_parse();
+  cell verifiers = ds~load_dict();
+  int count = ds~load_uint(8);
+  int quorum = ds~load_uint(8);
+  int seqno = ds~load_uint(64);
+  ds.end_parse();
+  return (verifiers, count, quorum, seqno);
+}
+
+() save_data(cell verifiers, int count, int quorum, int seqno) impure inline {
+  set_data(begin_cell()
+      .store_dict(verifiers)
+      .store_uint(count, 8)
+      .store_uint(quorum, 8)
+      .store_uint(seqno, 64)
+      .end_cell());
+}
+
+int required_value(int signatures, int actions, int configure) inline {
+  int gas = checked_add(fee::base_gas,
+      checked_mul(fee::gas_per_signature, signatures, fee::max_gas), fee::max_gas);
+  gas = checked_add(gas,
+      checked_mul(fee::gas_per_action, actions, fee::max_gas), fee::max_gas);
+  if (configure) {
+    gas = checked_add(gas, fee::configure_gas, fee::max_gas);
+  }
+  return checked_add(get_compute_fee(basechain, gas), get_forward_fee(basechain, 0, 0),
+                     fee::max_coins);
+}
+
+;; A relaxed internal message as this account is willing to send it.
+() require_valid_message(cell message) impure inline {
+  slice m = message.begin_parse();
+  throw_if(error::invalid_message, m~load_uint(1)); ;; int_msg_info$0
+  int flags = m~load_uint(3); ;; ihr_disabled bounce bounced
+  throw_if(error::invalid_message, flags & 1);
+  throw_unless(error::invalid_message, m~load_uint(2) == 0); ;; src: addr_none
+  m~load_msg_addr(); ;; dest
+  m~load_coins(); ;; value
+  throw_if(error::invalid_message, m~load_uint(1)); ;; no extra currencies
+  int extra_flags = m~load_coins(); ;; extra_flags since global version 12, not ihr_fee
+  throw_unless(error::invalid_message, (extra_flags & MESSAGE_EXTRA_FLAGS_ALLOWED) == extra_flags);
+  m~load_coins(); ;; fwd_fee
+  m~skip_bits(64 + 32); ;; created_lt created_at
+  throw_if(error::invalid_message, m~load_uint(1)); ;; no StateInit
+  if (m~load_int(1)) {
+    m~load_ref();
+    m.end_parse();
+  }
+}
+
+;; OutList heads are newest first; collecting with cons yields signed execution order.
+(tuple, int) checked_batch(cell actions) impure inline {
+  tuple batch = null();
+  int count = 0;
+  slice node = actions.begin_parse();
+  while (node.slice_refs()) {
+    count += 1;
+    throw_if(error::invalid_action, count > max_actions);
+    cell prev = node~load_ref();
+    throw_unless(error::invalid_action, node~load_uint(32) == action::send_msg);
+    int mode = node~load_uint(8);
+    cell message = node~load_ref();
+    node.end_parse();
+    throw_unless(error::invalid_mode, (mode & SEND_MODES_ALLOWED) == mode);
+    require_valid_message(message);
+    batch = cons([mode, message], batch);
+    node = prev.begin_parse();
+  }
+  node.end_parse(); ;; the empty terminator
+  throw_unless(error::invalid_action, count > 0);
+  return (batch, count);
+}
+
+;; The shape of a membership change, checked before any signature is paid for.
+(int, cell, int) parse_change(cell payload) impure inline {
+  slice s = payload.begin_parse();
+  int change = s~load_uint(8);
+  cell key = null();
+  int value = 0;
+  if (change == change::add) {
+    key = s~load_ref();
+  } elseif (change == change::remove) {
+    value = s~load_uint(256);
+  } elseif (change == change::quorum) {
+    value = s~load_uint(8);
+  } else {
+    throw(error::unknown_change);
+  }
+  s.end_parse();
+  return (change, key, value);
+}
+
+[cell, int, int] apply_change([cell, int, int] config, int change, cell key, int value) impure inline {
+  if (change == change::add) {
+    return pq_quorum::with_added_verifier(config, key);
+  }
+  if (change == change::remove) {
+    return pq_quorum::with_removed_verifier(config, value);
+  }
+  return pq_quorum::with_quorum(config, value);
+}
+
+() recv_internal(int balance, int msg_value, cell in_msg_full, slice in_msg_body) impure {
+  slice in_msg = in_msg_full.begin_parse();
+  if (in_msg~load_uint(4) & 1) {
+    return (); ;; bounced
+  }
+  if (in_msg_body.slice_bits() < 32) {
+    return (); ;; a plain deposit
+  }
+  if (in_msg_body~load_uint(32) != op::submit) {
+    return (); ;; anything else is a deposit as well
+  }
+  slice relayer = in_msg~load_msg_addr();
+  (int relayer_workchain, _) = parse_std_addr(relayer);
+  throw_unless(error::wrong_workchain, relayer_workchain == basechain);
+  (int my_workchain, _) = parse_std_addr(my_address());
+  throw_unless(error::wrong_workchain, my_workchain == basechain);
+
+  int relayer_query_id = in_msg_body~load_uint(64);
+  cell request = in_msg_body~load_ref();
+  cell signatures = in_msg_body~load_dict();
+  in_msg_body.end_parse();
+
+  (cell verifiers, int count, int quorum, int seqno) = load_data();
+  throw_if(error::seqno_exhausted, seqno >= max_seqno);
+
+  ;; Everything that can refuse the request cheaply, before any verification.
+  slice r = request.begin_parse();
+  int kind = r~load_uint(8);
+  int valid_until = r~load_uint(32);
+  cell payload = r~load_ref();
+  r.end_parse();
+  pq_quorum::require_not_expired(valid_until);
+
+  int domain = domain::execute;
+  tuple batch = null();
+  int actions = 0;
+  int change = 0;
+  cell key = null();
+  int value = 0;
+  if (kind == kind::execute) {
+    (batch, actions) = checked_batch(payload);
+  } elseif (kind == kind::configure) {
+    domain = domain::configure;
+    (change, key, value) = parse_change(payload);
+  } else {
+    throw(error::unknown_kind);
+  }
+  throw_unless(error::insufficient_value,
+               msg_value >= required_value(quorum, actions, kind == kind::configure));
+
+  var config = [verifiers, count, quorum];
+  int hash = pq_quorum::signing_hash(domain, my_address(), seqno, valid_until, payload);
+  pq_quorum::require_quorum(config, hash, signatures);
+  if (kind == kind::configure) {
+    ;; Authenticated by the quorum that held before the change.
+    config = apply_change(config, change, key, value);
+  }
+  [verifiers, count, quorum] = config;
+  save_data(verifiers, count, quorum, seqno + 1);
+
+  ;; The relayer's remainder first, best effort; then the signed batch, oldest first.
+  send_raw_message(begin_cell()
+      .store_uint(0x10, 6) ;; non-bounceable
+      .store_slice(relayer)
+      .store_coins(0)
+      .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+      .store_uint(op::excesses, 32)
+      .store_uint(relayer_query_id, 64)
+      .end_cell(), SEND_MODE_CARRY_INBOUND_VALUE | SEND_MODE_IGNORE_ERRORS);
+  while (~ null?(batch)) {
+    [int mode, cell outbound] = batch~list_next();
+    send_raw_message(outbound, mode | SEND_MODE_IGNORE_ERRORS);
+  }
+}
+
+int get_seqno() method_id {
+  (_, _, _, int seqno) = load_data();
+  return seqno;
+}
+
+(int, int) get_quorum() method_id {
+  (_, int count, int quorum, _) = load_data();
+  return (count, quorum);
+}
+
+int get_is_verifier(int key_id) method_id {
+  (cell verifiers, int count, int quorum, _) = load_data();
+  return pq_quorum::verifier?([verifiers, count, quorum], key_id);
+}
+
+;; Conservative funding quote for a request of `kind` carrying `action_count` sends.
+int get_required_value(int kind, int action_count) method_id {
+  (_, _, int quorum, _) = load_data();
+  if (kind == kind::execute) {
+    throw_unless(error::invalid_action, (action_count > 0) & (action_count <= max_actions));
+    return required_value(quorum, action_count, false);
+  }
+  throw_unless(error::unknown_kind, kind == kind::configure);
+  return required_value(quorum, 0, true);
+}
+
+;; Deployment check: re-derives the trusted config from storage, so a set filed under wrong
+;; ids, a duplicate, an out-of-range quorum or a wrong stored count is refused before the
+;; account is funded. Needs only c4, so it runs before an address has been derived.
+int get_checked_config() method_id {
+  (cell verifiers, int count, int quorum, _) = load_data();
+  [_, int checked, _] = pq_quorum::config(verifiers, quorum);
+  throw_unless(error::stored_count, checked == count);
+  return checked;
+}
