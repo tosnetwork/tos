@@ -1,0 +1,61 @@
+name: Treasury vault validation
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+    paths:
+      - 'crypto/smartcont/treasury-vault-code.fc'
+      - 'crypto/smartcont/stdlib.fc'
+      - 'crypto/smartcont/token-wallet.tol'
+      - 'crypto/smartcont/token-wallet-fee-profile.tol'
+      - 'crypto/smartcont/tol-stdlib/**'
+      - 'test/treasury-vault/**'
+      - 'test/auth-extensions/cells.py'
+      - 'test/auth-extensions/native.py'
+      - 'scripts/build-treasury-vault.py'
+      - 'doc/treasury-vault-v1.md'
+      - '.github/workflows/treasury-vault.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: treasury-vault-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  treasury-native:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Build native contract tools
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --target func fift tol emulator -j"$(nproc)"
+      - name: Execute native transaction and Token integration regressions
+        env:
+          FUNC_PATH: ${{ github.workspace }}/build/crypto/func
+          FIFT_PATH: ${{ github.workspace }}/build/crypto/fift
+          TOL_PATH: ${{ github.workspace }}/build/tol/tol
+          EMULATOR_PATH: ${{ github.workspace }}/build/emulator/libemulator.so
+          TREASURY_RESULTS: ${{ runner.temp }}/treasury/results.json
+          TREASURY_MUTATION_RESULTS: ${{ runner.temp }}/treasury/mutations.json
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/treasury"
+          git rev-parse HEAD > "$RUNNER_TEMP/treasury/reviewed-head.txt"
+          python3 -m py_compile test/treasury-vault/*.py
+          python3 test/treasury-vault/test_native.py 2>&1 | tee "$RUNNER_TEMP/treasury/native.log"
+          python3 test/treasury-vault/mutations.py 2>&1 | tee "$RUNNER_TEMP/treasury/mutations.log"
+          git diff --exit-code
+      - name: Preserve bounded execution evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: treasury-vault-native-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/treasury/
+          if-no-files-found: warn
+          retention-days: 14
