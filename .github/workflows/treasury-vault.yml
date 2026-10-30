@@ -12,6 +12,15 @@ on:
       - 'crypto/smartcont/strong-ed25519-key.fc'
       - 'crypto/smartcont/auth-extension.fc'
       - 'crypto/smartcont/wallet-v5-action-list.fc'
+      - 'crypto/smartcont/pq-highload-wallet-code.fc'
+      - 'crypto/smartcont/replay-guard.fc'
+      - 'crypto/smartcont/pq-bytes.fc'
+      - 'crypto/smartcont/pq.fc'
+      - 'crypto/fift/lib/PQ.fif'
+      - 'test/pq-contracts/pqtest.py'
+      - 'test/pq-contracts/signer.cpp'
+      - 'test/pq-contracts/signer-config.h'
+      - 'test/pq-contracts/CMakeLists.txt'
       - 'crypto/smartcont/tol-stdlib/**'
       - 'test/treasury-vault/**'
       - 'test/auth-extensions/cells.py'
@@ -40,6 +49,10 @@ jobs:
           cmake --build build --target func fift tol emulator -j"$(nproc)"
       - name: Install the wallet signing test dependency
         run: python3 -m pip install cryptography==46.0.4
+      - name: Build the TEST ONLY post-quantum signer
+        run: |
+          cmake -S test/pq-contracts -B build-pq-signer -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-pq-signer -j"$(nproc)"
       - name: Execute native transaction and Token integration regressions
         env:
           FUNC_PATH: ${{ github.workspace }}/build/crypto/func
@@ -49,6 +62,8 @@ jobs:
           TREASURY_RESULTS: ${{ runner.temp }}/treasury/results.json
           TREASURY_MUTATION_RESULTS: ${{ runner.temp }}/treasury/mutations.json
           TREASURY_WALLET_RESULTS: ${{ runner.temp }}/treasury/wallets.json
+          TREASURY_PQ_WALLET_RESULTS: ${{ runner.temp }}/treasury/pq-wallets.json
+          PQ_TEST_SIGNER: ${{ github.workspace }}/build-pq-signer/test-pq-contracts-sign
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/treasury"
@@ -56,6 +71,7 @@ jobs:
           python3 -m py_compile test/treasury-vault/*.py
           python3 test/treasury-vault/test_native.py 2>&1 | tee "$RUNNER_TEMP/treasury/native.log"
           python3 test/treasury-vault/test_wallets.py 2>&1 | tee "$RUNNER_TEMP/treasury/wallets.log"
+          python3 test/treasury-vault/test_pq_wallets.py 2>&1 | tee "$RUNNER_TEMP/treasury/pq-wallets.log"
           python3 test/treasury-vault/mutations.py 2>&1 | tee "$RUNNER_TEMP/treasury/mutations.log"
           git diff --exit-code
       - name: Preserve bounded execution evidence

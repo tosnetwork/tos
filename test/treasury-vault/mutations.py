@@ -10,7 +10,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE = ROOT / "crypto/smartcont/treasury-vault-code.fc"
-SUITES = {"test_native.py": "TreasuryTests", "test_wallets.py": "WalletTests"}
+SUITES = {
+    "test_native.py": "TreasuryTests",
+    "test_wallets.py": "WalletTests",
+    "test_pq_wallets.py": "PqWalletTests",
+}
 # (name, anchor, replacement, targeted test[, suite file]); the suite defaults
 # to the synthetic-sender regressions.
 MUTATIONS = (
@@ -109,6 +113,13 @@ MUTATIONS = (
         "throw_unless(tv::window_limit, spent <= window);",
         ";; removed window ceiling",
         "test_token_window_and_total_limits",
+    ),
+    (
+        "guardian_pq_wallet",
+        "throw_unless(tv::sender, equal_slice_bits(sender, v_guardian));",
+        ";; removed guardian guard",
+        "test_pq_business_wallet_cannot_approve_its_own_proposal",
+        "test_pq_wallets.py",
     ),
     (
         "guardian_wallet",
