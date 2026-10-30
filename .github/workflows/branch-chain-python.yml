@@ -218,7 +218,8 @@ jobs:
           import json
 
           expected = {
-              "test-wallet-index", "test-wallet-index-apply", "test-wallet-index-source", "wallet-index-snapshot-cli", "test-candidate-data-cache",
+              "test-wallet-index", "test-wallet-index-apply", "test-wallet-index-source", "wallet-index-snapshot-cli", "wallet-index-verification-gate",
+              "test-candidate-data-cache",
               "test-shard-block-confirmations",
               "test-adnl-ext-input-budget", "test-adnl-ext-output-backpressure", "test-adnl-ext-refusal-close",
               "test-rate-limiter", "test-security-boundaries", "test-full-node-shard-admission", "test-full-node-master-admission",

@@ -341,6 +341,29 @@ TEST(WalletIndexSnapshot, BytesChangingAfterVerificationNeverPublish) {
   ASSERT_TRUE(!f.staging_exists());
 }
 
+// An untrusted import has no digest to check the second scan against: the
+// two scans' hashes must agree, or a same-length change between them would
+// be installed.
+TEST(WalletIndexSnapshot, BytesChangingDuringAnUntrustedImportNeverPublish) {
+  Fixture f;
+  WalletIndexSnapshotFile::create(f.source, f.snapshot).move_as_ok();
+  bool changed = false;
+  auto result = WalletIndexSnapshotFile::import_untrusted(f.snapshot, f.restored, [&] {
+    if (!changed && f.staging_exists()) {
+      auto bytes = td::read_file(f.snapshot).move_as_ok().as_slice().str();
+      bytes[bytes.size() - 9] ^= 1;
+      td::write_file(f.snapshot, bytes).ensure();
+      changed = true;
+    }
+    return false;
+  });
+  ASSERT_TRUE(changed);
+  ASSERT_TRUE(result.is_error());
+  ASSERT_TRUE(result.error().message().str().find("changed between verification and import") != std::string::npos);
+  ASSERT_TRUE(!fs::exists(f.restored));
+  ASSERT_TRUE(!f.staging_exists());
+}
+
 TEST(WalletIndexSnapshot, AConcurrentAppendCannotExceedTheVerifiedSize) {
   Fixture f;
   auto made = WalletIndexSnapshotFile::create(f.source, f.snapshot).move_as_ok();

@@ -407,6 +407,11 @@ td::Result<WalletIndexSnapshotInfo> WalletIndexSnapshotFile::import_staged(const
       return restored.move_as_error();
     }
     TRY_STATUS(commit());
+    // The bytes imported must be the bytes first scanned. A trusted restore
+    // already checked both scans against the digest; an untrusted import has
+    // no digest, so a same-length change between the scans is caught here.
+    if (restored.ok().sha256 != verified.sha256)
+      return td::Status::Error("index snapshot changed between verification and import");
     if (untrusted) {
       TRY_STATUS(begin());
       TRY_STATUS(db.put_verification_state(VerificationState::Quarantined));

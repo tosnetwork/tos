@@ -2262,6 +2262,10 @@ add_test(NAME wallet-index-snapshot-cli
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_wallet_index_snapshot_cli.py
     --binary $<TARGET_FILE:tos-wallet-index-snapshot>)
 set_tests_properties(wallet-index-snapshot-cli PROPERTIES LABELS "security-findings" TIMEOUT 180)
+add_test(NAME wallet-index-verification-gate
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_wallet_index_verification_gate.py
+    --index-binary $<TARGET_FILE:tos-wallet-index> --snapshot-binary $<TARGET_FILE:tos-wallet-index-snapshot>)
+set_tests_properties(wallet-index-verification-gate PROPERTIES LABELS "security-findings" TIMEOUT 300)
 tos_test(test-wallet-index-apply)
 tos_test(test-wallet-index-source)
 # Keep the security fixes exercised before merge, not only by main's full
