@@ -156,3 +156,42 @@ def test_a_service_that_exits_early_never_counts_as_reaching_its_state(tmp_path,
     with pytest.raises(RuntimeError, match="did not stop cleanly"):
         RUNNER.require_reached(stopped, "path-b")
     RUNNER.require_reached(RUNNER.ServiceRun(exit_code=0, reached=True), "path-b")
+
+
+def test_the_import_and_the_reference_are_dumped_over_the_import_s_stored_base(
+    tmp_path, monkeypatch
+):
+    # Verification recorded base 13; replay then moved the stored base to 14.
+    calls = []
+
+    def probe(*args, **kwargs):
+        return RUNNER.subprocess.CompletedProcess(args, 0, "--canonical", "")
+
+    def command(args, receipt):
+        calls.append(args)
+        base = args[args.index("--window-base") + 1] if "--window-base" in args else "14"
+        return f"head=30\nwindow_base={base}\nsha256={'ab' * 32}\n"
+
+    monkeypatch.setattr(RUNNER.subprocess, "run", probe)
+    monkeypatch.setattr(RUNNER.SNAPSHOT_RUNNER, "command", command)
+    own, other = RUNNER.common_window_digests(
+        tmp_path, (tmp_path / "import", tmp_path), (tmp_path / "reference", tmp_path), 30, tmp_path
+    )
+    assert "--window-base" not in calls[0]
+    assert calls[1][calls[1].index("--window-base") + 1] == "14"
+    assert own.window_base == other.window_base == 14
+    assert own.head == other.head == 30
+
+
+def test_a_dump_over_another_window_is_refused(tmp_path, monkeypatch):
+    def probe(*args, **kwargs):
+        return RUNNER.subprocess.CompletedProcess(args, 0, "--canonical", "")
+
+    monkeypatch.setattr(RUNNER.subprocess, "run", probe)
+    monkeypatch.setattr(
+        RUNNER.SNAPSHOT_RUNNER,
+        "command",
+        lambda args, receipt: f"head=29\nwindow_base=14\nsha256={'ab' * 32}\n",
+    )
+    with pytest.raises(RuntimeError, match="another window"):
+        RUNNER.canonical_digest(tmp_path, tmp_path, tmp_path, 30, None, tmp_path / "log")

@@ -208,37 +208,60 @@ def require_reached(run: ServiceRun, label: str) -> None:
         raise RuntimeError(f"{label}: the service did not stop cleanly (exit {run.exit_code})")
 
 
+@dataclass
+class CanonicalDump:
+    sha256: str
+    head: int
+    window_base: int
+
+
 def canonical_digest(
-    build: Path, index: Path, source: Path, head: int, base: int, receipt: Path
-) -> str:
+    build: Path, index: Path, source: Path, head: int, base: int | None, receipt: Path
+) -> CanonicalDump:
     """The canonical digest of a stopped index over (base, head] (stage 4d's dump).
 
-    Both bounds are explicit, so two indexes are compared over the same
-    authenticated window whatever their own checkpoints and bases are.
+    The head is explicit. The base is explicit too, or, when None, the base
+    the index itself has stored, which replay may have moved past the base
+    its verification recorded. The dump prints the head and base it used.
     """
     dump = build / "services/tos-wallet-index-dump"
     probe = subprocess.run([str(dump), "--help"], capture_output=True, text=True, timeout=30)
     if "--canonical" not in probe.stdout + probe.stderr:
         raise Unavailable("the canonical dump (stage 4d) is not in this build")
-    text = SNAPSHOT_RUNNER.command(
-        [
-            str(dump),
-            "--canonical",
-            "--index-dir",
-            str(index),
-            "--source-db",
-            str(source),
-            "--head",
-            str(head),
-            "--window-base",
-            str(base),
-        ],
-        receipt,
-    )
-    matched = re.search(r"(?m)^sha256=([0-9a-f]{64})$", text)
-    if matched is None:
+    command = [
+        str(dump),
+        "--canonical",
+        "--index-dir",
+        str(index),
+        "--source-db",
+        str(source),
+        "--head",
+        str(head),
+    ]
+    if base is not None:
+        command += ["--window-base", str(base)]
+    text = SNAPSHOT_RUNNER.command(command, receipt)
+    fields = dict(re.findall(r"(?m)^(sha256|head|window_base)=(\S+)$", text))
+    if not re.fullmatch("[0-9a-f]{64}", fields.get("sha256", "")):
         raise RuntimeError("the canonical dump printed no digest")
-    return matched.group(1)
+    result = CanonicalDump(
+        fields["sha256"], int(fields.get("head", -1)), int(fields.get("window_base", -1))
+    )
+    if result.head != head or (base is not None and result.window_base != base):
+        raise RuntimeError("the canonical dump used another window than the one asked for")
+    return result
+
+
+def common_window_digests(
+    build: Path, imported: tuple[Path, Path], reference: tuple[Path, Path], head: int, out: Path
+) -> tuple[CanonicalDump, CanonicalDump]:
+    """The import's digest over its own stored window up to `head`, and the
+    reference's over exactly that window."""
+    own = canonical_digest(build, imported[0], imported[1], head, None, out / "dump.log")
+    other = canonical_digest(
+        build, reference[0], reference[1], head, own.window_base, out / "reference-dump.log"
+    )
+    return own, other
 
 
 @dataclass
@@ -343,29 +366,27 @@ def scenario_path_b(context: Context, out: Path) -> JsonObject:
     if context.reference_index is None or context.reference_tip is None:
         raise RuntimeError("path-b needs the reference scenario first")
     head = run.readyz.get("masterchain_seqno")
-    horizon = run.readyz.get("verified_horizon")
-    base = horizon.get("masterchain_seqno") if isinstance(horizon, dict) else None
-    if not isinstance(head, int) or not isinstance(base, int):
-        raise RuntimeError("the verified import reported no head or verified horizon")
+    if not isinstance(head, int):
+        raise RuntimeError("the verified import reported no head")
     if context.reference_tip < head:
         raise RuntimeError("the reference stops before the verified import's head")
-    # Both over the window the import verified: after its horizon, up to its head.
-    digests = {
-        "import": canonical_digest(
-            context.build, data / "index", context.image.joined, head, base, out / "dump.log"
-        ),
-        "reference": canonical_digest(
-            context.build,
-            context.reference_index,
-            context.image.full,
-            head,
-            base,
-            out / "reference-dump.log",
-        ),
-    }
-    if digests["import"] != digests["reference"]:
+    # Over the window the stopped import holds now, after its stored base (not
+    # the base its verification recorded) up to its head, for both indexes.
+    own, other = common_window_digests(
+        context.build,
+        (data / "index", context.image.joined),
+        (context.reference_index, context.image.full),
+        head,
+        out,
+    )
+    if own.sha256 != other.sha256:
         raise AssertionError("the verified import differs from the reference over its window")
-    return {"run": run.__dict__ | {"log": None}, "head": head, "base": base, "digests": digests}
+    return {
+        "run": run.__dict__ | {"log": None},
+        "head": head,
+        "window_base": own.window_base,
+        "digests": {"import": own.sha256, "reference": other.sha256},
+    }
 
 
 def scenario_path_a(context: Context, out: Path) -> JsonObject:
