@@ -201,6 +201,14 @@ enum class TokenVerifyOutcome {
 class WalletIndexSnapshot;
 class WalletIndexSnapshotFile;
 
+// How far the index's content is proven against the chain. An index this
+// node built itself, by replay from masterchain block 1 or from a trusted
+// backup of one, is Full. An index imported from an untrusted snapshot starts
+// Quarantined and must not be served until checked against the local node's
+// own head: Partial while some coverage is still owed, Full once nothing is,
+// Refused when the snapshot contradicts the chain.
+enum class VerificationState : uint8_t { Full = 0, Quarantined = 1, Partial = 2, Refused = 3 };
+
 class WalletIndexDb {
  public:
   // Standalone replay owns its progress. Receipts for the current masterchain
@@ -321,6 +329,10 @@ class WalletIndexDb {
   // Rows first referenced by it or an earlier one are outside the window. 0
   // when unset. put joins the current batch and refuses to move it back.
   td::Result<uint32_t> get_window_base();
+  // The index's verification state (meta 0x00 0x30); Full when unset. put
+  // joins the current batch.
+  td::Result<VerificationState> get_verification_state();
+  td::Status put_verification_state(VerificationState state);
   td::Status put_window_base(uint32_t mc_seqno);
   // Prune events outside the window (at most age_rows_added + drain of them),
   // within the current batch. Fails closed: any error -- including a base read

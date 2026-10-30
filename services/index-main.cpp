@@ -82,6 +82,20 @@ int main(int argc, char** argv) {
     LOG(ERROR) << index.error();
     return 2;
   }
+  {
+    // An index imported from an untrusted snapshot is never served before it
+    // has been checked against this node's own chain.
+    auto state = index.ok()->get_verification_state();
+    if (state.is_error()) {
+      LOG(ERROR) << "cannot read the index verification state: " << state.error();
+      return 2;
+    }
+    if (state.ok() != tos_wallet_index::VerificationState::Full) {
+      LOG(ERROR) << "the index was imported from an untrusted snapshot and is not verified against this node; "
+                    "this build cannot verify it yet, so it refuses to serve it";
+      return 2;
+    }
+  }
   Progress progress;
   progress.ceiling = ceiling;
   ReplayStats stats;

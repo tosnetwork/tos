@@ -125,6 +125,76 @@ TEST(WalletIndexSnapshot, RoundTripPreservesEveryRecordAndCheckpoint) {
   ASSERT_TRUE(db->token_backlog_stats().move_as_ok().unfinished_block);
 }
 
+// An untrusted publisher's snapshot needs no digest, but only the account
+// history, the schema and the checkpoint enter the new index: receipts,
+// unfinished work, token state and every other record are the importing
+// node's own to derive. The index starts quarantined.
+TEST(WalletIndexSnapshot, UntrustedImportKeepsOnlyHistoryAndQuarantines) {
+  Fixture f;
+  {
+    auto db = WalletIndexDb::open(f.source).move_as_ok();
+    db->begin_batch().ensure();
+    // A token row the publisher could forge: never imported.
+    vm::CellBuilder forged;
+    forged.store_long(7, 32);
+    db->put_token(master(3).root_hash, master(4).root_hash, forged.finalize()).ensure();
+    db->commit_batch().ensure();
+  }
+  auto original = rows(f.source);
+  WalletIndexSnapshotFile::create(f.source, f.snapshot).move_as_ok();
+  auto imported = WalletIndexSnapshotFile::import_untrusted(f.snapshot, f.restored).move_as_ok();
+  ASSERT_EQ(imported.checkpoint.committed, master(5));
+  ASSERT_EQ(imported.kept + imported.dropped, original.size());
+  ASSERT_TRUE(imported.dropped > 0);
+  auto kept = rows(f.restored);
+  for (const auto& [key, value] : kept) {
+    bool allowed = key == std::string("\0\1", 2) || key == std::string("\0\x20", 2) ||
+                   key == std::string("\0\x30", 2) || (key.size() == 41 && key[0] == '\x12');
+    ASSERT_TRUE(allowed);
+  }
+  // The history row, schema, checkpoint and the quarantine mark.
+  ASSERT_EQ(kept.size(), imported.kept + 1);
+  ASSERT_TRUE(!f.staging_exists());
+  auto db = WalletIndexDb::open(f.restored).move_as_ok();
+  ASSERT_TRUE(db->get_verification_state().move_as_ok() == VerificationState::Quarantined);
+  auto shard = master(6);
+  shard.id.workchain = 0;
+  ASSERT_TRUE(!db->replay_block_committed(shard).move_as_ok());
+  ASSERT_TRUE(!db->token_backlog_stats().move_as_ok().unfinished_block);
+  ASSERT_TRUE(db->get_event(master(2).root_hash, 123).is_ok());
+  // A trusted restore keeps the source's state: an index this node built is
+  // Full by construction.
+  auto made = WalletIndexSnapshotFile::verify(f.snapshot, digest(td::read_file(f.snapshot).move_as_ok().as_slice()));
+  ASSERT_TRUE(made.is_ok());
+  std::string trusted = f.dir + "/trusted";
+  WalletIndexSnapshotFile::restore(f.snapshot, trusted, made.ok().sha256).move_as_ok();
+  ASSERT_TRUE(WalletIndexDb::open(trusted).move_as_ok()->get_verification_state().move_as_ok() ==
+              VerificationState::Full);
+}
+
+TEST(WalletIndexSnapshot, UntrustedImportStillRefusesMalformedSnapshots) {
+  Fixture f;
+  auto bad = f.dir + "/bad";
+  // No checkpoint.
+  td::write_file(bad, encode({{std::string("\0\1", 2), std::string("\0\0\0\x04", 4)}})).ensure();
+  ASSERT_TRUE(WalletIndexSnapshotFile::import_untrusted(bad, f.restored).is_error());
+  ASSERT_TRUE(!fs::exists(f.restored));
+  ASSERT_TRUE(!f.staging_exists());
+}
+
+TEST(WalletIndexSnapshot, VerificationStateRoundTripsAndDefaultsToFull) {
+  Fixture f;
+  auto db = WalletIndexDb::open(f.source).move_as_ok();
+  ASSERT_TRUE(db->get_verification_state().move_as_ok() == VerificationState::Full);
+  for (auto state : {VerificationState::Quarantined, VerificationState::Partial, VerificationState::Refused,
+                     VerificationState::Full}) {
+    db->begin_batch().ensure();
+    db->put_verification_state(state).ensure();
+    db->commit_batch().ensure();
+    ASSERT_TRUE(db->get_verification_state().move_as_ok() == state);
+  }
+}
+
 TEST(WalletIndexSnapshot, ExportRefusesALiveWriterAndNeverMigratesSchema) {
   Fixture f;
   {

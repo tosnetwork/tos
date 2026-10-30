@@ -95,7 +95,16 @@ td::Status validate_checkpoint(const WalletIndexDb::ReplayCheckpoint& checkpoint
 
 using AcceptRecord = std::function<td::Status(td::Slice, td::Slice)>;
 
-td::Result<WalletIndexSnapshotInfo> scan(td::FileFd& file, const td::Bits256& expected,
+// The records an untrusted import keeps: the schema, the replay checkpoint
+// and account history rows (0x12 + account(32) + ~lt(8)). Everything else is
+// derived again by the importing node, never taken from the publisher.
+bool untrusted_record(td::Slice key) {
+  return key == td::Slice("\0\1", 2) || key == td::Slice("\0\x20", 2) || (key.size() == 41 && key[0] == '\x12');
+}
+
+// `expected` is the trusted digest the file must have, or null for an
+// untrusted import, whose content is checked against the chain instead.
+td::Result<WalletIndexSnapshotInfo> scan(td::FileFd& file, const td::Bits256* expected,
                                          const WalletSnapshotCancel& cancelled, const AcceptRecord& accept = {},
                                          uint64_t expected_size = 0) {
   TRY_RESULT(size, file.get_size());
@@ -166,7 +175,7 @@ td::Result<WalletIndexSnapshotInfo> scan(td::FileFd& file, const td::Bits256& ex
   if (!schema_seen || !checkpoint_seen)
     return td::Status::Error("index snapshot has no schema or replay checkpoint");
   hash.extract(info.sha256.as_slice());
-  if (info.sha256 != expected)
+  if (expected != nullptr && info.sha256 != *expected)
     return td::Status::Error("index snapshot SHA-256 differs from the trusted digest");
   TRY_RESULT(final_size, file.get_size());
   if (final_size != size)
@@ -303,13 +312,27 @@ td::Result<WalletIndexSnapshotInfo> WalletIndexSnapshotFile::verify(const std::s
                                                                     const td::Bits256& expected,
                                                                     const WalletSnapshotCancel& cancelled) {
   TRY_RESULT(file, open_input(snapshot));
-  return scan(file, expected, cancelled);
+  return scan(file, &expected, cancelled);
 }
 
 td::Result<WalletIndexSnapshotInfo> WalletIndexSnapshotFile::restore(const std::string& snapshot,
                                                                      const std::string& index,
                                                                      const td::Bits256& expected,
                                                                      const WalletSnapshotCancel& cancelled) {
+  return import_staged(snapshot, index, &expected, cancelled);
+}
+
+td::Result<WalletIndexSnapshotInfo> WalletIndexSnapshotFile::import_untrusted(const std::string& snapshot,
+                                                                              const std::string& index,
+                                                                              const WalletSnapshotCancel& cancelled) {
+  return import_staged(snapshot, index, nullptr, cancelled);
+}
+
+td::Result<WalletIndexSnapshotInfo> WalletIndexSnapshotFile::import_staged(const std::string& snapshot,
+                                                                           const std::string& index,
+                                                                           const td::Bits256* expected,
+                                                                           const WalletSnapshotCancel& cancelled) {
+  bool untrusted = expected == nullptr;
   TRY_RESULT(target, destination(index));
   TRY_RESULT(file, open_input(snapshot));
   // Verify before creating any DB, then hash the same descriptor's bytes
@@ -349,9 +372,15 @@ td::Result<WalletIndexSnapshotInfo> WalletIndexSnapshotFile::restore(const std::
       return db.db_->commit_write_batch();
     };
     TRY_STATUS(begin());
+    uint64_t kept = 0, dropped = 0;
     auto restored = scan(
         file, expected, cancelled,
         [&](td::Slice key, td::Slice value) {
+          if (untrusted && !untrusted_record(key)) {
+            ++dropped;
+            return td::Status::OK();
+          }
+          ++kept;
           // Commit before a large record: a batch contains at most 1 MiB of
           // ordinary records or one record at the transfer ceiling.
           if (batch_bytes != 0 && key.size() + value.size() > kBatchBytes - batch_bytes) {
@@ -378,6 +407,13 @@ td::Result<WalletIndexSnapshotInfo> WalletIndexSnapshotFile::restore(const std::
       return restored.move_as_error();
     }
     TRY_STATUS(commit());
+    if (untrusted) {
+      TRY_STATUS(begin());
+      TRY_STATUS(db.put_verification_state(VerificationState::Quarantined));
+      TRY_STATUS(commit());
+      verified.kept = kept;
+      verified.dropped = dropped;
+    }
     TRY_RESULT(checkpoint, db.replay_checkpoint());
     if (!checkpoint || checkpoint.value().anchor != verified.checkpoint.anchor ||
         checkpoint.value().committed != verified.checkpoint.committed)

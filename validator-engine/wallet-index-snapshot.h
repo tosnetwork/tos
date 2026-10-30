@@ -20,10 +20,16 @@ struct WalletIndexSnapshotInfo {
   td::Bits256 sha256;
   uint64_t records = 0;
   uint64_t bytes = 0;
+  // Untrusted import only: records kept (account history) and dropped
+  // (everything the importing node derives itself).
+  uint64_t kept = 0;
+  uint64_t dropped = 0;
 };
 
-// A snapshot is a trusted operator's index, not a chain proof. Verification
-// requires that operator's digest, obtained independently of the artifact.
+// A restored snapshot is a trusted operator's index, not a chain proof:
+// verify and restore require that operator's digest, obtained independently
+// of the artifact. An untrusted import instead keeps only what the importing
+// node can check against its own chain.
 // Source ownership is locked during export. Restore writes only a fresh
 // sibling staging directory and publishes with an atomic no-replace rename.
 using WalletSnapshotCancel = std::function<bool()>;
@@ -37,6 +43,18 @@ class WalletIndexSnapshotFile {
   static td::Result<WalletIndexSnapshotInfo> restore(const std::string& snapshot, const std::string& index,
                                                      const td::Bits256& expected,
                                                      const WalletSnapshotCancel& cancelled = {});
+  // Import a snapshot from a publisher that is not trusted. No digest is
+  // needed: only the account history rows, the schema and the replay
+  // checkpoint are kept, everything else is dropped, and the new index is
+  // Quarantined. The index service must check it against the local node's
+  // own head before anything in it is served.
+  static td::Result<WalletIndexSnapshotInfo> import_untrusted(const std::string& snapshot, const std::string& index,
+                                                              const WalletSnapshotCancel& cancelled = {});
+
+ private:
+  static td::Result<WalletIndexSnapshotInfo> import_staged(const std::string& snapshot, const std::string& index,
+                                                           const td::Bits256* expected,
+                                                           const WalletSnapshotCancel& cancelled);
 };
 
 }  // namespace tos_wallet_index

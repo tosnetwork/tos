@@ -18,26 +18,32 @@ void request_stop(int) {
 int main(int argc, char** argv) {
   std::string action, index, snapshot, digest;
   td::OptionParser parser;
-  parser.set_description("Offline wallet-index snapshot: create, verify or restore a trusted operator's index.");
+  parser.set_description(
+      "Offline wallet-index snapshot: create, verify or restore a trusted operator's index, or import an untrusted "
+      "one into quarantine.");
   parser.add_option('h', "help", "show help", [&] {
     std::cout << (PSTRING() << parser);
     std::exit(0);
   });
-  parser.add_option('\0', "action", "create, verify or restore", [&](td::Slice v) { action = v.str(); });
-  parser.add_option('\0', "index-dir", "stopped source index (create) or new destination index (restore)",
+  parser.add_option('\0', "action", "create, verify, restore or import-untrusted",
+                    [&](td::Slice v) { action = v.str(); });
+  parser.add_option('\0', "index-dir",
+                    "stopped source index (create) or new destination index (restore, import-untrusted)",
                     [&](td::Slice v) { index = v.str(); });
   parser.add_option('\0', "snapshot", "snapshot file (new file for create)", [&](td::Slice v) { snapshot = v.str(); });
   parser.add_option('\0', "sha256", "trusted publisher's SHA-256 (required for verify and restore)",
                     [&](td::Slice v) { digest = v.str(); });
   auto parsed = parser.run(argc, argv);
-  if (parsed.is_error() || snapshot.empty() || (action != "create" && action != "verify" && action != "restore") ||
+  bool needs_digest = action == "verify" || action == "restore";
+  if (parsed.is_error() || snapshot.empty() ||
+      (action != "create" && action != "verify" && action != "restore" && action != "import-untrusted") ||
       (action != "verify" && index.empty()) || (action == "verify" && !index.empty()) ||
-      (action == "create" && !digest.empty()) || (action != "create" && digest.size() != 64)) {
+      (!needs_digest && !digest.empty()) || (needs_digest && digest.size() != 64)) {
     std::cerr << "specify --action, --snapshot and the action's --index-dir / --sha256 options\n";
     return 2;
   }
   td::Bits256 expected;
-  if (action != "create") {
+  if (needs_digest) {
     auto decoded = td::hex_decode(digest);
     if (decoded.is_error() || decoded.ok().size() != 32) {
       std::cerr << "--sha256 must contain 64 hexadecimal digits\n";
@@ -51,10 +57,11 @@ int main(int argc, char** argv) {
     return 1;
   }
   using tos_wallet_index::WalletIndexSnapshotFile;
-  auto result = action == "create" ? WalletIndexSnapshotFile::create(index, snapshot, [] { return cancelled.load(); })
-                : action == "verify"
-                    ? WalletIndexSnapshotFile::verify(snapshot, expected, [] { return cancelled.load(); })
-                    : WalletIndexSnapshotFile::restore(snapshot, index, expected, [] { return cancelled.load(); });
+  auto stop = [] { return cancelled.load(); };
+  auto result = action == "create"    ? WalletIndexSnapshotFile::create(index, snapshot, stop)
+                : action == "verify"  ? WalletIndexSnapshotFile::verify(snapshot, expected, stop)
+                : action == "restore" ? WalletIndexSnapshotFile::restore(snapshot, index, expected, stop)
+                                      : WalletIndexSnapshotFile::import_untrusted(snapshot, index, stop);
   if (result.is_error()) {
     std::cerr << result.error().message().str() << '\n';
     return 1;
@@ -63,5 +70,9 @@ int main(int argc, char** argv) {
   std::cout << "sha256=" << td::hex_encode(info.sha256.as_slice()) << " bytes=" << info.bytes
             << " records=" << info.records << "\nanchor=" << info.checkpoint.anchor.to_str()
             << "\ncheckpoint=" << info.checkpoint.committed.to_str() << '\n';
+  if (action == "import-untrusted") {
+    std::cout << "kept=" << info.kept << " dropped=" << info.dropped
+              << "\nverification=quarantined: tos-wallet-index checks it against the local node before it is served\n";
+  }
   return 0;
 }

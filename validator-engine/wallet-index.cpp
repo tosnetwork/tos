@@ -40,6 +40,8 @@ constexpr uint8_t kTokenParkedTag = 0x1A;   // 0x1A + kind(1) + address(32) -> l
 constexpr uint8_t kMetaTag = 0x00;
 constexpr uint8_t kMetaSchemaSub = 0x01;
 constexpr uint8_t kMetaWindowBaseSub = 0x02;
+// 0x00 0x30 -> verification state (1 byte, VerificationState); absent means Full.
+constexpr uint8_t kMetaVerificationSub = 0x30;
 // Token backlog bookkeeping (u64_be each; absent means 0): 0x00 0x03 -> next
 // queue sequence number, 0x00 0x04 -> entries, 0x00 0x05 -> candidates lost.
 // 0x00 0x07 -> candidates that need another shard's state. 0x00 0x06 +
@@ -769,6 +771,27 @@ td::Result<uint32_t> WalletIndexDb::get_window_base() {
     return td::Status::Error("wc0-index: malformed retention window base");
   }
   return get_u32_be(value.data());
+}
+
+td::Result<VerificationState> WalletIndexDb::get_verification_state() {
+  char key[kMetaKeyLen];
+  make_meta_key(kMetaVerificationSub, key);
+  std::string value;
+  TRY_RESULT(status, db_->get(td::Slice{key, kMetaKeyLen}, value));
+  if (status == td::KeyValue::GetStatus::NotFound) {
+    return VerificationState::Full;
+  }
+  if (value.size() != 1 || static_cast<unsigned char>(value[0]) > static_cast<uint8_t>(VerificationState::Refused)) {
+    return td::Status::Error("wc0-index: malformed verification state");
+  }
+  return static_cast<VerificationState>(value[0]);
+}
+
+td::Status WalletIndexDb::put_verification_state(VerificationState state) {
+  char key[kMetaKeyLen];
+  make_meta_key(kMetaVerificationSub, key);
+  const char value = static_cast<char>(state);
+  return db_->set(td::Slice{key, kMetaKeyLen}, td::Slice{&value, 1});
 }
 
 td::Status WalletIndexDb::put_window_base(uint32_t mc_seqno) {
