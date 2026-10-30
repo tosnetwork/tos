@@ -163,6 +163,9 @@ struct ChainOptions {
   // Serialization mode of every block; 0 stores no hashes, so decoding a
   // block's root materializes every cell under it.
   int boc_mode = 31;
+  // Seconds between masterchain blocks' generation times (0: the handles
+  // carry none, and the window base never moves).
+  uint32_t master_seconds = 0;
   // When set, every block is also stored in a package file in this
   // directory and raw reads go through the archive's size-limited read.
   std::string package_dir;
@@ -208,6 +211,8 @@ std::shared_ptr<FakeChain> make_chain(uint32_t masters, uint32_t per_interval, C
     if (n > 1)
       master->set_prev(previous_master);
     master->set_applied();
+    if (options.master_seconds != 0)
+      master->set_unix_time(n * options.master_seconds);
     // A fixture handle is never written; mark it as such.
     master->flushed_upto(master->version());
     chain->masters[n] = master;
@@ -880,6 +885,10 @@ struct RemoveOnExit {
   }
 };
 
+// The fixture chain's masterchain blocks as the verifier reads them (defined
+// below), for the window base records replay writes.
+std::unique_ptr<VerifySource> chain_verify_source(std::shared_ptr<FakeChain> chain);
+
 // A replay loop over the fixture source and the index database in `path`,
 // as one run of the service: destroying it is the process stopping.
 struct ReplayHarness {
@@ -890,7 +899,8 @@ struct ReplayHarness {
     reader = std::make_unique<FakeReader>(core, chain, gate, &stats);
     prefetcher = std::make_unique<Prefetcher>(*reader, Prefetcher::Options{});
     prefetcher->start();
-    replay = std::make_unique<ReplayLoop>(*reader, *prefetcher, progress, stats, ceiling);
+    checked = chain_verify_source(chain);
+    replay = std::make_unique<ReplayLoop>(*reader, *prefetcher, progress, stats, ceiling, *checked);
   }
   ~ReplayHarness() {
     core->shutdown();
@@ -919,6 +929,7 @@ struct ReplayHarness {
   std::unique_ptr<SchedulerThread> scheduler;
   std::unique_ptr<FakeReader> reader;
   std::unique_ptr<Prefetcher> prefetcher;
+  std::unique_ptr<VerifySource> checked;
   std::unique_ptr<ReplayLoop> replay;
 };
 
@@ -1281,6 +1292,10 @@ class ChainVerifySource final : public VerifySource {
   std::map<td::Bits256, tos_wallet_index::AccountHead> heads_;
 };
 
+std::unique_ptr<VerifySource> chain_verify_source(std::shared_ptr<FakeChain> chain) {
+  return std::make_unique<ChainVerifySource>(std::move(chain), std::map<td::Bits256, tos_wallet_index::AccountHead>{});
+}
+
 // Every account's newest row in a stopped index, as the head state would
 // record its last transaction.
 std::map<td::Bits256, tos_wallet_index::AccountHead> newest_rows(const std::string& path) {
@@ -1352,6 +1367,7 @@ TEST(WalletIndexSource, an_untrusted_snapshot_is_prepared_replayed_and_verified_
       ASSERT_EQ(prepared.kept, 14u);
       ASSERT_EQ(prepared.dropped, 20u);
       ASSERT_EQ(db->get_window_base().move_as_ok(), 10u);
+      ASSERT_TRUE(db->window_base_record().move_as_ok().value().block == chain->masters.at(10)->id());
       ASSERT_OK(h.run_until_idle());
       ASSERT_EQ(h.progress.cursor.load(), 24u);
       auto head = db->replay_checkpoint().move_as_ok().value().committed;
@@ -1728,4 +1744,24 @@ TEST(WalletIndexSource, a_completion_after_the_deadline_is_a_timeout) {
     checked = true;
   }
   ASSERT_TRUE(checked);
+}
+
+// Replay moves the window base with time, and each move writes the record of
+// the block it moves to, read from the node's own block, in the checkpoint's
+// batch: history is then served from that window.
+TEST(WalletIndexSource, replay_moves_the_window_base_with_its_blocks_record) {
+  ChainOptions options;
+  // As the fixture source reports them: block n generated at n * 100000.
+  options.master_seconds = 100000;
+  auto chain = make_chain(24, 1, options);
+  auto dir = temporary_directory();
+  RemoveOnExit remove{dir};
+  ReplayHarness h(chain, 0, dir);
+  ASSERT_OK(h.run_until_idle());
+  auto* db = tos_wallet_index::wallet_index_db();
+  // Seven days before block 24's time: the base is block 17.
+  ASSERT_EQ(db->get_window_base().move_as_ok(), 17u);
+  auto record = db->window_base_record().move_as_ok();
+  ASSERT_TRUE(record && record.value().block == chain->masters.at(17)->id());
+  ASSERT_TRUE(db->history_window().is_ok());
 }

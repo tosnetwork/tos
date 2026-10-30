@@ -794,18 +794,300 @@ td::Status WalletIndexDb::put_verification_state(VerificationState state) {
   return db_->set(td::Slice{key, kMetaKeyLen}, td::Slice{&value, 1});
 }
 
-td::Status WalletIndexDb::put_window_base(uint32_t mc_seqno) {
+namespace {
+// 0x00 0x36 -> the window base's block record: version(1) schema_be(4)
+// block(block key, 77) tips_be(4) then per tip shard_be(8) end_lt_be(8)
+// (basechain shards).
+constexpr uint8_t kMetaWindowBaseRecordSub = 0x36;
+constexpr size_t kWindowBaseRecordFixedLen = 1 + 4 + kIncompleteBlockKeyLen + 4;
+
+td::Result<td::optional<WindowBaseRecord>> read_window_base_record(td::KeyValue& kv) {
+  char key[kMetaKeyLen];
+  make_meta_key(kMetaWindowBaseRecordSub, key);
+  std::string value;
+  TRY_RESULT(status, kv.get(td::Slice{key, kMetaKeyLen}, value));
+  if (status == td::KeyValue::GetStatus::NotFound) {
+    return td::optional<WindowBaseRecord>{};
+  }
+  auto malformed = [] { return td::Status::Error("wc0-index: malformed window base record"); };
+  if (value.size() < kWindowBaseRecordFixedLen || value[0] != 1) {
+    return malformed();
+  }
+  const char* p = value.data() + 1;
+  WindowBaseRecord record;
+  record.schema = get_u32_be(p);
+  p += 4;
+  if (p[0] != 0) {
+    return malformed();
+  }
+  record.block = parse_block_key(td::Slice{p, kIncompleteBlockKeyLen});
+  p += kIncompleteBlockKeyLen;
+  auto count = get_u32_be(p);
+  p += 4;
+  if (count > kMaxWindowBaseTips || value.size() != kWindowBaseRecordFixedLen + size_t{16} * count) {
+    return malformed();
+  }
+  for (uint32_t i = 0; i < count; ++i, p += 16) {
+    record.tips.push_back(WindowShardTip{tos::ShardIdFull{tos::basechainId, get_u64_be(p)}, get_u64_be(p + 8)});
+  }
+  TRY_STATUS(check_window_base_record(record));
+  return record;
+}
+
+td::Result<uint32_t> read_window_base(td::KeyValue& kv) {
+  char key[kMetaKeyLen];
+  make_meta_key(kMetaWindowBaseSub, key);
+  std::string value;
+  TRY_RESULT(status, kv.get(td::Slice{key, kMetaKeyLen}, value));
+  if (status == td::KeyValue::GetStatus::NotFound) {
+    return 0u;
+  }
+  if (value.size() != 4) {
+    return td::Status::Error("wc0-index: malformed retention window base");
+  }
+  return get_u32_be(value.data());
+}
+}  // namespace
+
+td::Status check_window_base_record(const WindowBaseRecord& record) {
+  if (record.schema != kWalletIndexSchemaVersion) {
+    return td::Status::Error("wc0-index: window base record of another schema");
+  }
+  if (!record.block.is_masterchain_ext() || !record.block.is_valid_full() || record.block.seqno() == 0) {
+    return td::Status::Error("wc0-index: window base record names no masterchain block");
+  }
+  if (record.tips.empty() || record.tips.size() > kMaxWindowBaseTips) {
+    return td::Status::Error("wc0-index: window base record has no or too many shard tips");
+  }
+  // Each shard covers [lo, hi] of the 64-bit prefix space; sorted, they must
+  // follow each other from 0 to the top with no gap and no overlap.
+  std::vector<std::pair<uint64_t, uint64_t>> ranges;
+  for (const auto& tip : record.tips) {
+    auto shard = tip.shard.shard;
+    if (tip.shard.workchain != tos::basechainId || shard == 0) {
+      return td::Status::Error("wc0-index: window base record names a shard outside the basechain");
+    }
+    uint64_t low_bit = shard & (~shard + 1);
+    ranges.emplace_back(shard - low_bit, shard - 1 + low_bit);
+  }
+  std::sort(ranges.begin(), ranges.end());
+  uint64_t next = 0;
+  for (size_t i = 0; i < ranges.size(); ++i) {
+    if (ranges[i].first != next ||
+        (i + 1 < ranges.size() && ranges[i].second == std::numeric_limits<uint64_t>::max())) {
+      return td::Status::Error("wc0-index: window base record's shards do not cover the basechain exactly once");
+    }
+    next = ranges[i].second + 1;
+  }
+  if (ranges.back().second != std::numeric_limits<uint64_t>::max()) {
+    return td::Status::Error("wc0-index: window base record's shards do not cover the basechain exactly once");
+  }
+  return td::Status::OK();
+}
+
+td::Status WalletIndexDb::put_window_base(uint32_t mc_seqno, const td::optional<WindowBaseRecord>& record) {
   // The base never moves back: a lower one would make pruned history look
   // retained. A read error must not fall back to 0 either.
   TRY_RESULT(stored, get_window_base());
   if (mc_seqno < stored) {
     return td::Status::Error("wc0-index: retention window base cannot move back");
   }
+  char record_key[kMetaKeyLen];
+  make_meta_key(kMetaWindowBaseRecordSub, record_key);
+  if (record) {
+    TRY_STATUS(check_window_base_record(record.value()));
+    if (record.value().block.seqno() != mc_seqno) {
+      return td::Status::Error("wc0-index: window base record is of another block");
+    }
+    const auto& tips = record.value().tips;
+    std::string value(kWindowBaseRecordFixedLen + 16 * tips.size(), '\0');
+    char* p = value.data();
+    p[0] = 1;
+    put_u32_be(p + 1, record.value().schema);
+    make_block_key(0, record.value().block, p + 5);
+    p += 5 + kIncompleteBlockKeyLen;
+    put_u32_be(p, static_cast<uint32_t>(tips.size()));
+    p += 4;
+    for (const auto& tip : tips) {
+      put_u64_be(p, tip.shard.shard);
+      put_u64_be(p + 8, tip.end_lt);
+      p += 16;
+    }
+    TRY_STATUS(db_->set(td::Slice{record_key, kMetaKeyLen}, td::Slice{value}));
+  } else if (mc_seqno == 0) {
+    TRY_STATUS(db_->erase(td::Slice{record_key, kMetaKeyLen}));
+  } else if (mc_seqno != stored) {
+    return td::Status::Error("wc0-index: the window base moves only with its block's record");
+  }
   char key[kMetaKeyLen];
   make_meta_key(kMetaWindowBaseSub, key);
   char v[4];
   put_u32_be(v, mc_seqno);
   return db_->set(td::Slice{key, kMetaKeyLen}, td::Slice{v, sizeof(v)});
+}
+
+td::Result<td::optional<WindowBaseRecord>> WalletIndexDb::window_base_record() {
+  return read_window_base_record(*db_);
+}
+
+td::Result<HistoryWindow> read_history_window(td::KeyValue& kv) {
+  HistoryWindow window;
+  TRY_RESULT_ASSIGN(window.base, read_window_base(kv));
+  if (window.base == 0) {
+    return window;
+  }
+  auto record = read_window_base_record(kv);
+  if (record.is_error() || !record.ok() || record.ok().value().block.seqno() != window.base) {
+    return td::Status::Error(
+        "account history unavailable: the index's window base is not authenticated by its block's record");
+  }
+  window.record = record.move_as_ok();
+  return window;
+}
+
+td::Result<HistoryFilter> read_history_filter(td::KeyValue& kv, const HistoryWindow& window,
+                                              const td::Bits256& account) {
+  HistoryFilter filter;
+  if (window.base != 0) {
+    if (!window.record) {
+      return td::Status::Error("account history unavailable: no window base record");
+    }
+    TRY_RESULT_ASSIGN(filter.bound, window_lt_bound(window.record.value().tips, account));
+  }
+  // Newest first: the kMaxEventsPerAccount-th row above the bound sets the
+  // cutoff; rows at or below the bound come last and end the scan.
+  char begin[1 + 32];
+  begin[0] = static_cast<char>(kEventTag);
+  std::memcpy(begin + 1, account.data(), 32);
+  char end[1 + 32 + 8];
+  std::memcpy(end, begin, sizeof(begin));
+  std::memset(end + 1 + 32, 0xff, 8);
+  size_t counted = 0;
+  bool done = false;
+  auto status = kv.for_each_in_range(td::Slice{begin, sizeof(begin)}, td::Slice{end, sizeof(end)},
+                                     [&](td::Slice key, td::Slice) -> td::Status {
+                                       if (key.size() != kEventKeyLen) {
+                                         return td::Status::OK();
+                                       }
+                                       uint64_t lt = ~get_u64_be(key.data() + 1 + 32);
+                                       if (lt <= filter.bound) {
+                                         done = true;
+                                         return td::Status::Error("wc0-index: below the bound");
+                                       }
+                                       if (++counted == kMaxEventsPerAccount) {
+                                         filter.cutoff = lt;
+                                         done = true;
+                                         return td::Status::Error("wc0-index: cutoff found");
+                                       }
+                                       return td::Status::OK();
+                                     });
+  if (status.is_error() && !done) {
+    return status.move_as_error();
+  }
+  return filter;
+}
+
+td::Result<HistoryWindow> WalletIndexDb::history_window() {
+  return read_history_window(*db_);
+}
+
+td::Result<HistoryFilter> WalletIndexDb::history_filter(const HistoryWindow& window, const HashKey& account) {
+  return read_history_filter(*db_, window, account);
+}
+
+td::Status for_each_canonical_line(td::KeyValue& kv, const HistoryWindow& window,
+                                   const std::function<td::Status(const std::string&)>& cb) {
+  if (window.base != 0 && !window.record) {
+    return td::Status::Error("the window base has no record");
+  }
+  // History: one pass over 0x12, each account newest first.
+  {
+    td::Bits256 current = td::Bits256::zero();
+    bool have = false;
+    uint64_t bound = 0;
+    size_t served = 0;
+    const char begin[1] = {static_cast<char>(kEventTag)};
+    const char end[1] = {static_cast<char>(kEventTag + 1)};
+    TRY_STATUS(
+        kv.for_each_in_range(td::Slice{begin, 1}, td::Slice{end, 1}, [&](td::Slice key, td::Slice value) -> td::Status {
+          if (key.size() != kEventKeyLen) {
+            return td::Status::Error("malformed history key");
+          }
+          td::Bits256 account;
+          account.as_slice().copy_from(key.substr(1, 32));
+          uint64_t lt = ~get_u64_be(key.data() + 1 + 32);
+          if (!have || account != current) {
+            current = account;
+            have = true;
+            served = 0;
+            bound = 0;
+            if (window.base != 0) {
+              TRY_RESULT_ASSIGN(bound, window_lt_bound(window.record.value().tips, account));
+            }
+          }
+          if (lt <= bound || served >= kMaxEventsPerAccount) {
+            return td::Status::OK();
+          }
+          ++served;
+          TRY_RESULT(cell, vm::std_boc_deserialize(value));
+          return cb(PSTRING() << "event " << account.to_hex() << " " << lt << " " << cell->get_hash().to_hex());
+        }));
+  }
+  // Current token entries: those beside a pair record naming them present.
+  {
+    const char begin[1] = {static_cast<char>(kTokenTag)};
+    const char end[1] = {static_cast<char>(kTokenTag + 1)};
+    TRY_STATUS(
+        kv.for_each_in_range(td::Slice{begin, 1}, td::Slice{end, 1}, [&](td::Slice key, td::Slice value) -> td::Status {
+          if (key.size() != kOwnerPairKeyLen) {
+            return td::Status::Error("malformed token key");
+          }
+          td::Bits256 owner, master;
+          owner.as_slice().copy_from(key.substr(1, 32));
+          master.as_slice().copy_from(key.substr(1 + 32, 32));
+          std::string stored;
+          TRY_RESULT(found, kv.get(td::Slice{token_pair_key(kTokenPairTag, owner, master)}, stored));
+          if (found != td::KeyValue::GetStatus::Ok) {
+            return td::Status::OK();
+          }
+          auto record = decode_token_pair_record(stored);
+          if (record.is_error() || !record.ok().present) {
+            return td::Status::OK();
+          }
+          TRY_RESULT(cell, vm::std_boc_deserialize(value));
+          auto cs = vm::load_cell_slice(cell);
+          td::Bits256 wallet;
+          if (cs.size() < 256 + 64 || !cs.fetch_bits_to(wallet.bits(), 256)) {
+            return td::Status::Error("malformed token entry");
+          }
+          return cb(PSTRING() << "token " << owner.to_hex() << " " << master.to_hex() << " " << wallet.to_hex());
+        }));
+  }
+  // NFT entries, all served.
+  {
+    const char begin[1] = {static_cast<char>(kNftTag)};
+    const char end[1] = {static_cast<char>(kNftTag + 1)};
+    TRY_STATUS(
+        kv.for_each_in_range(td::Slice{begin, 1}, td::Slice{end, 1}, [&](td::Slice key, td::Slice value) -> td::Status {
+          if (key.size() != kOwnerPairKeyLen) {
+            return td::Status::Error("malformed nft key");
+          }
+          td::Bits256 owner, item;
+          owner.as_slice().copy_from(key.substr(1, 32));
+          item.as_slice().copy_from(key.substr(1 + 32, 32));
+          TRY_RESULT(cell, vm::std_boc_deserialize(value));
+          auto cs = vm::load_cell_slice(cell);
+          unsigned long long has_collection = 0;
+          td::Bits256 collection = td::Bits256::zero();
+          if (!cs.fetch_ulong_bool(1, has_collection) ||
+              (has_collection && !cs.fetch_bits_to(collection.bits(), 256)) || cs.size() < 64) {
+            return td::Status::Error("malformed nft entry");
+          }
+          return cb(PSTRING() << "nft " << owner.to_hex() << " " << item.to_hex() << " "
+                              << (has_collection ? collection.to_hex() : std::string("-")));
+        }));
+  }
+  return td::Status::OK();
 }
 
 namespace {
@@ -1387,6 +1669,12 @@ td::Status WalletIndexDb::clear_built_index() {
     const char begin[1] = {static_cast<char>(tag)};
     const char end[1] = {static_cast<char>(tag + 1)};
     TRY_STATUS(db_->erase_range(td::Slice{begin, 1}, td::Slice{end, 1}));
+  }
+  // The window base and its record belong to what was built.
+  for (uint8_t sub : {kMetaWindowBaseSub, kMetaWindowBaseRecordSub}) {
+    char key[kMetaKeyLen];
+    make_meta_key(sub, key);
+    TRY_STATUS(db_->erase(td::Slice{key, kMetaKeyLen}));
   }
   return clear_block_pass_work();
 }
@@ -2856,7 +3144,8 @@ td::Status WalletIndexDb::initialize_replay(const tos::BlockIdExt& anchor) {
 }
 
 td::Status WalletIndexDb::commit_replay_checkpoint(const ReplayCheckpoint& checkpoint,
-                                                   td::optional<uint32_t> window_base) {
+                                                   td::optional<uint32_t> window_base,
+                                                   const td::optional<WindowBaseRecord>& base_record) {
   // Caller holds write_mutex. Every interval's receipt is in the same DB as
   // its indexed records; advancing the cursor and clearing receipts is atomic,
   // and so is moving the retention window base with them.
@@ -2866,7 +3155,7 @@ td::Status WalletIndexDb::commit_replay_checkpoint(const ReplayCheckpoint& check
   make_block_key(0, checkpoint.committed, value + kIncompleteBlockKeyLen);
   auto status = db_->set(td::Slice(kReplayCheckpointKey, 2), td::Slice(value, sizeof(value)));
   if (status.is_ok() && window_base) {
-    status = put_window_base(window_base.value());
+    status = put_window_base(window_base.value(), base_record);
   }
   if (status.is_ok())
     status = db_->erase_range(td::Slice("\x30", 1), td::Slice("\x31", 1));

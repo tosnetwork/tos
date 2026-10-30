@@ -158,10 +158,9 @@ def test_a_service_that_exits_early_never_counts_as_reaching_its_state(tmp_path,
     RUNNER.require_reached(RUNNER.ServiceRun(exit_code=0, reached=True), "path-b")
 
 
-def test_the_import_and_the_reference_are_dumped_over_the_import_s_stored_base(
-    tmp_path, monkeypatch
-):
-    # Verification recorded base 13; replay then moved the stored base to 14.
+def fake_dumps(monkeypatch, bases):
+    """Dumps that report each index's own base, or the base of the index
+    named by --window-base-from; records every command."""
     calls = []
 
     def probe(*args, **kwargs):
@@ -169,21 +168,40 @@ def test_the_import_and_the_reference_are_dumped_over_the_import_s_stored_base(
 
     def command(args, receipt):
         calls.append(args)
-        base = args[args.index("--window-base") + 1] if "--window-base" in args else "14"
-        return f"head=30\nwindow_base={base}\nsha256={'ab' * 32}\n"
+        index = args[args.index("--index-dir") + 1]
+        if "--window-base-from" in args:
+            index = args[args.index("--window-base-from") + 1]
+        return f"head=30\nwindow_base={bases[index]}\nsha256={'ab' * 32}\n"
 
     monkeypatch.setattr(RUNNER.subprocess, "run", probe)
     monkeypatch.setattr(RUNNER.SNAPSHOT_RUNNER, "command", command)
-    own, other = RUNNER.common_window_digests(
-        tmp_path, (tmp_path / "import", tmp_path), (tmp_path / "reference", tmp_path), 30, tmp_path
-    )
-    assert "--window-base" not in calls[0]
-    assert calls[1][calls[1].index("--window-base") + 1] == "14"
+    return calls
+
+
+def test_the_reference_is_narrowed_to_the_import_s_stored_base(tmp_path, monkeypatch):
+    # The import's base (14) is above the reference's (12): the reference is
+    # dumped over the import's window.
+    imported, reference = tmp_path / "import", tmp_path / "reference"
+    calls = fake_dumps(monkeypatch, {str(imported): 14, str(reference): 12})
+    own, other = RUNNER.common_window_digests(tmp_path, imported, reference, 30, tmp_path)
+    assert "--window-base-from" not in calls[0] and "--window-base-from" not in calls[1]
+    assert calls[2][calls[2].index("--index-dir") + 1] == str(reference)
+    assert calls[2][calls[2].index("--window-base-from") + 1] == str(imported)
     assert own.window_base == other.window_base == 14
     assert own.head == other.head == 30
+    assert all("--source-db" not in call for call in calls)
 
 
-def test_a_dump_over_another_window_is_refused(tmp_path, monkeypatch):
+def test_an_import_with_a_lower_base_is_narrowed_to_the_reference(tmp_path, monkeypatch):
+    imported, reference = tmp_path / "import", tmp_path / "reference"
+    calls = fake_dumps(monkeypatch, {str(imported): 11, str(reference): 12})
+    own, other = RUNNER.common_window_digests(tmp_path, imported, reference, 30, tmp_path)
+    assert calls[2][calls[2].index("--index-dir") + 1] == str(imported)
+    assert calls[2][calls[2].index("--window-base-from") + 1] == str(reference)
+    assert own.window_base == other.window_base == 12
+
+
+def test_a_dump_at_another_head_is_refused(tmp_path, monkeypatch):
     def probe(*args, **kwargs):
         return RUNNER.subprocess.CompletedProcess(args, 0, "--canonical", "")
 
@@ -194,4 +212,4 @@ def test_a_dump_over_another_window_is_refused(tmp_path, monkeypatch):
         lambda args, receipt: f"head=29\nwindow_base=14\nsha256={'ab' * 32}\n",
     )
     with pytest.raises(RuntimeError, match="another window"):
-        RUNNER.canonical_digest(tmp_path, tmp_path, tmp_path, 30, None, tmp_path / "log")
+        RUNNER.canonical_digest(tmp_path, tmp_path, 30, None, tmp_path / "log")

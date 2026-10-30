@@ -9,11 +9,11 @@ must be unchanged.
 
 Scenarios (each its own receipt, <root>/<scenario>/receipt.json):
 
-- reference: full replay of the full source to its tip, then its canonical
-  digest.
+- reference: full replay of the full source to its tip.
 - path-b: a donor index at checkpoint C on the full source, exported, imported
   untrusted into the joined source, verified until Full; its canonical digest
-  equals the reference's over the verified horizon.
+  equals that of a full replay of the full source to exactly the import's
+  head, over the narrower of the two windows.
 - path-a: an empty index on the joined source, built from the window's blocks,
   Full, the same digest.
 - red controls: the path-b snapshot edited as each names, each refused with
@@ -216,30 +216,22 @@ class CanonicalDump:
 
 
 def canonical_digest(
-    build: Path, index: Path, source: Path, head: int, base: int | None, receipt: Path
+    build: Path, index: Path, head: int, base_from: Path | None, receipt: Path
 ) -> CanonicalDump:
-    """The canonical digest of a stopped index over (base, head] (stage 4d's dump).
+    """The canonical digest of a stopped index at checkpoint `head` (stage 4d's dump).
 
-    The head is explicit. The base is explicit too, or, when None, the base
-    the index itself has stored, which replay may have moved past the base
-    its verification recorded. The dump prints the head and base it used.
+    The window is the index's own stored base (which replay may have moved
+    past the base its verification recorded), or, from `base_from`, another
+    stopped index's base at the same checkpoint, which may only narrow it. The
+    dump prints the head and base it used.
     """
     dump = build / "services/tos-wallet-index-dump"
     probe = subprocess.run([str(dump), "--help"], capture_output=True, text=True, timeout=30)
     if "--canonical" not in probe.stdout + probe.stderr:
         raise Unavailable("the canonical dump (stage 4d) is not in this build")
-    command = [
-        str(dump),
-        "--canonical",
-        "--index-dir",
-        str(index),
-        "--source-db",
-        str(source),
-        "--head",
-        str(head),
-    ]
-    if base is not None:
-        command += ["--window-base", str(base)]
+    command = [str(dump), "--canonical", "--index-dir", str(index), "--head", str(head)]
+    if base_from is not None:
+        command += ["--window-base-from", str(base_from)]
     text = SNAPSHOT_RUNNER.command(command, receipt)
     fields = dict(re.findall(r"(?m)^(sha256|head|window_base)=(\S+)$", text))
     if not re.fullmatch("[0-9a-f]{64}", fields.get("sha256", "")):
@@ -247,20 +239,24 @@ def canonical_digest(
     result = CanonicalDump(
         fields["sha256"], int(fields.get("head", -1)), int(fields.get("window_base", -1))
     )
-    if result.head != head or (base is not None and result.window_base != base):
+    if result.head != head:
         raise RuntimeError("the canonical dump used another window than the one asked for")
     return result
 
 
 def common_window_digests(
-    build: Path, imported: tuple[Path, Path], reference: tuple[Path, Path], head: int, out: Path
+    build: Path, imported: Path, reference: Path, head: int, out: Path
 ) -> tuple[CanonicalDump, CanonicalDump]:
-    """The import's digest over its own stored window up to `head`, and the
-    reference's over exactly that window."""
-    own = canonical_digest(build, imported[0], imported[1], head, None, out / "dump.log")
-    other = canonical_digest(
-        build, reference[0], reference[1], head, own.window_base, out / "reference-dump.log"
-    )
+    """Both indexes' digests at checkpoint `head`, over the narrower of their
+    two stored windows: the index with the lower base takes the other's."""
+    own = canonical_digest(build, imported, head, None, out / "dump.log")
+    other = canonical_digest(build, reference, head, None, out / "reference-own-dump.log")
+    if own.window_base >= other.window_base:
+        other = canonical_digest(build, reference, head, imported, out / "reference-dump.log")
+    else:
+        own = canonical_digest(build, imported, head, reference, out / "narrowed-dump.log")
+    if own.window_base != other.window_base:
+        raise RuntimeError("the canonical dumps used different windows")
     return own, other
 
 
@@ -275,6 +271,8 @@ class Context:
     reference_index: Path | None = None
     reference_tip: int | None = None
     donor_snapshot: Path | None = None
+    # Full replays of the full source to exactly a given head.
+    references_at: dict[int, Path] = field(default_factory=dict)
 
 
 def until_full(status: int, body: JsonObject) -> bool:
@@ -297,6 +295,26 @@ def scenario_reference(context: Context, out: Path) -> JsonObject:
     context.reference_index = data / "index"
     context.reference_tip = tip
     return {"run": run.__dict__ | {"log": None}, "tip": tip}
+
+
+def reference_at(context: Context, head: int) -> Path:
+    """A full replay of the full source to exactly `head`, made once per head:
+    ownership at another head cannot be compared by filtering history."""
+    if head in context.references_at:
+        return context.references_at[head]
+    out = context.root / f"reference-at-{head}"
+    out.mkdir()
+    run = run_service(
+        context.service,
+        context.image.full,
+        out / "data",
+        ["--replay-ceiling", str(head)],
+        lambda status, body: body.get("masterchain_seqno") == head and body.get("settled") is True,
+        out / "service.log",
+    )
+    require_reached(run, f"reference at {head}")
+    context.references_at[head] = out / "data/index"
+    return context.references_at[head]
 
 
 def donor_snapshot(context: Context) -> Path:
@@ -366,14 +384,10 @@ def scenario_path_b(context: Context, out: Path) -> JsonObject:
         raise RuntimeError("the verified import reported no head")
     if context.reference_tip < head:
         raise RuntimeError("the reference stops before the verified import's head")
-    # Over the window the stopped import holds now, after its stored base (not
-    # the base its verification recorded) up to its head, for both indexes.
+    # At the import's head, against a reference replayed to exactly that head,
+    # over the narrower of the two stored windows.
     own, other = common_window_digests(
-        context.build,
-        (data / "index", context.image.joined),
-        (context.reference_index, context.image.full),
-        head,
-        out,
+        context.build, data / "index", reference_at(context, head), head, out
     )
     if own.sha256 != other.sha256:
         raise AssertionError("the verified import differs from the reference over its window")

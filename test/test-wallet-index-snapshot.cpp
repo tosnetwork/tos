@@ -138,6 +138,13 @@ TEST(WalletIndexSnapshot, UntrustedImportKeepsOnlyHistoryAndQuarantines) {
     vm::CellBuilder forged;
     forged.store_long(7, 32);
     db->put_token(master(3).root_hash, master(4).root_hash, forged.finalize()).ensure();
+    // A window base and its block's record the publisher could forge: never
+    // imported; the importing node writes its own from its blocks.
+    tos_wallet_index::WindowBaseRecord base{
+        kWalletIndexSchemaVersion,
+        master(3),
+        {tos_wallet_index::WindowShardTip{tos::ShardIdFull{tos::basechainId, tos::shardIdAll}, 99}}};
+    db->put_window_base(3, base).ensure();
     db->commit_batch().ensure();
   }
   auto original = rows(f.source);
@@ -162,6 +169,8 @@ TEST(WalletIndexSnapshot, UntrustedImportKeepsOnlyHistoryAndQuarantines) {
   ASSERT_TRUE(!db->replay_block_committed(shard).move_as_ok());
   ASSERT_TRUE(!db->token_backlog_stats().move_as_ok().unfinished_block);
   ASSERT_TRUE(db->get_event(master(2).root_hash, 123).is_ok());
+  ASSERT_EQ(db->get_window_base().move_as_ok(), 0u);
+  ASSERT_TRUE(!db->window_base_record().move_as_ok());
   // A trusted restore keeps the source's state: an index this node built is
   // Full by construction.
   auto made = WalletIndexSnapshotFile::verify(f.snapshot, digest(td::read_file(f.snapshot).move_as_ok().as_slice()));

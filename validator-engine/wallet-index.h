@@ -30,7 +30,10 @@
 #include "tos/tos-types.h"
 #include "vm/cells.h"
 
+#include "wallet-index-lineage.h"
+
 namespace td {
+class KeyValue;
 class RocksDb;
 }
 
@@ -209,6 +212,45 @@ class WalletIndexSnapshotFile;
 // Refused when the snapshot contradicts the chain.
 enum class VerificationState : uint8_t { Full = 0, Quarantined = 1, Partial = 2, Refused = 3 };
 
+// The window base's masterchain block as this node holds it: its full
+// identity and the basechain shard tips it records. Stored with the base, so
+// the window's lower bound is read with the base it belongs to.
+struct WindowBaseRecord {
+  uint32_t schema = 0;
+  tos::BlockIdExt block;
+  std::vector<WindowShardTip> tips;
+};
+// At most this many tips in one record (one per basechain shard).
+constexpr size_t kMaxWindowBaseTips = 4096;
+// The schema, a full masterchain identity, 1..kMaxWindowBaseTips tips, each
+// a basechain shard, together covering the basechain exactly once.
+td::Status check_window_base_record(const WindowBaseRecord& record);
+
+// The committed window: its base and, when nonzero, its block's record.
+struct HistoryWindow {
+  uint32_t base = 0;
+  td::optional<WindowBaseRecord> record;
+};
+// One account's served history: rows with bound < lt, and lt >= cutoff (the
+// lt of its kMaxEventsPerAccount-th newest such row; 0 when it has fewer).
+struct HistoryFilter {
+  uint64_t bound = 0;
+  uint64_t cutoff = 0;
+  bool serves(uint64_t lt) const {
+    return lt > bound && lt >= cutoff;
+  }
+};
+td::Result<HistoryWindow> read_history_window(td::KeyValue& kv);
+td::Result<HistoryFilter> read_history_filter(td::KeyValue& kv, const HistoryWindow& window,
+                                              const td::Bits256& account);
+// The canonical view of an index in `window`, as lines in key order: each
+// account's served history rows ("event <account> <lt> <cell hash>", newest
+// first), then the current token entries ("token <owner> <master>
+// <wallet>") and the NFT entries ("nft <owner> <item> <collection|->"), the
+// verdict lts they embed left out.
+td::Status for_each_canonical_line(td::KeyValue& kv, const HistoryWindow& window,
+                                   const std::function<td::Status(const std::string&)>& cb);
+
 class WalletIndexDb {
  public:
   // Standalone replay owns its progress. Receipts for the current masterchain
@@ -222,7 +264,10 @@ class WalletIndexDb {
   td::Result<td::optional<ReplayCheckpoint>> replay_checkpoint();
   td::Status initialize_replay(const tos::BlockIdExt& anchor);
   // Also moves the retention window base (see get_window_base) when given.
-  td::Status commit_replay_checkpoint(const ReplayCheckpoint& checkpoint, td::optional<uint32_t> window_base = {});
+  // `base_record`: the record of the new base's block, required when the
+  // base moves to a nonzero block (see put_window_base).
+  td::Status commit_replay_checkpoint(const ReplayCheckpoint& checkpoint, td::optional<uint32_t> window_base = {},
+                                      const td::optional<WindowBaseRecord>& base_record = {});
   td::Result<bool> replay_block_committed(const tos::BlockIdExt& id);
   td::Status record_replay_block(const tos::BlockIdExt& id);
   // Open (or create) the index DB at `path`. The directory is created if needed.
@@ -333,7 +378,21 @@ class WalletIndexDb {
   // joins the current batch.
   td::Result<VerificationState> get_verification_state();
   td::Status put_verification_state(VerificationState state);
-  td::Status put_window_base(uint32_t mc_seqno);
+  // Move the window base (into the current batch). A nonzero base takes the
+  // record of its masterchain block, read from this node's own checked block,
+  // written with it; without a record the base may only stay where it is (a
+  // record already stored for it is kept) or be 0, which drops any record.
+  td::Status put_window_base(uint32_t mc_seqno, const td::optional<WindowBaseRecord>& record);
+  // The stored record of the base's block (meta 0x00 0x36), checked as
+  // check_window_base_record() does; unset when none is stored.
+  td::Result<td::optional<WindowBaseRecord>> window_base_record();
+  // The window history reads and the canonical view use, from the committed
+  // base and its record. Fails closed when the base is nonzero and has no
+  // valid record for it.
+  td::Result<HistoryWindow> history_window();
+  // The account's served range in `window`: rows with lt above the bound, the
+  // newest kMaxEventsPerAccount of them.
+  td::Result<HistoryFilter> history_filter(const HistoryWindow& window, const HashKey& account);
 
   // --- Verification of an imported index (services/index-verify.h) ---
   // What the verification of a quarantined index has established, at meta
@@ -812,6 +871,24 @@ class WalletIndexSnapshot {
   }
   td::Result<bool> has_token_wallet_record(const HashKey& wallet) {
     return view_->has_token_wallet_record(wallet);
+  }
+  // History reads, all from this one view.
+  td::Result<HistoryWindow> history_window() {
+    return view_->history_window();
+  }
+  td::Result<HistoryFilter> history_filter(const HistoryWindow& window, const HashKey& account) {
+    return view_->history_filter(window, account);
+  }
+  td::Status for_each_event(const HashKey& account, size_t limit,
+                            std::function<td::Status(uint64_t lt, td::Ref<vm::Cell>)> cb) {
+    return view_->for_each_event(account, limit, std::move(cb));
+  }
+  td::Status for_each_event_before(const HashKey& account, uint64_t before_lt, size_t limit,
+                                   std::function<td::Status(uint64_t lt, td::Ref<vm::Cell>)> cb) {
+    return view_->for_each_event_before(account, before_lt, limit, std::move(cb));
+  }
+  td::Result<td::Ref<vm::Cell>> get_event(const HashKey& account, uint64_t lt) {
+    return view_->get_event(account, lt);
   }
 
  private:

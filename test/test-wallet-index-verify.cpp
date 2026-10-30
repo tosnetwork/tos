@@ -891,7 +891,8 @@ TEST(WalletIndexVerify, the_block_pass_uses_the_base_at_the_head_and_the_retenti
     c.import(index);
     {
       std::lock_guard<std::mutex> guard(index.db->write_mutex());
-      index.db->commit_replay_checkpoint({master_id(1), master_id(22)}, 14u).ensure();
+      auto base = tos::services::read_base_record(c.source, 14).move_as_ok();
+      index.db->commit_replay_checkpoint({master_id(1), master_id(22)}, 14u, base).ensure();
     }
     for (auto* chain : {&c.linked, &c.created, &c.destroyed, &c.dormant})
       c.source.hold(*chain);
@@ -1525,6 +1526,9 @@ TEST(WalletIndexVerify, a_fresh_index_is_built_from_the_windows_blocks) {
   ASSERT_EQ(record.horizon_time, expected.horizon_time);
   ASSERT_TRUE(record.checkpoint == master_id(22) && record.head && record.head.value() == master_id(22));
   ASSERT_EQ(built.db->get_window_base().move_as_ok(), record.base);
+  ASSERT_TRUE(record.base > 0);
+  ASSERT_TRUE(built.db->window_base_record().move_as_ok().value().block == master_id(record.base));
+  ASSERT_TRUE(built.db->history_window().is_ok());
   ASSERT_TRUE(block_pass_done(*built.db).move_as_ok());
   ASSERT_TRUE(no_marks(built));
   ASSERT_TRUE(ownership_to_end(built, c.source).move_as_ok().step == VerifyStep::Done);

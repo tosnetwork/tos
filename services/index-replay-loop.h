@@ -15,6 +15,7 @@
 #include "index-progress.h"
 #include "index-reader.h"
 #include "index-replay.h"
+#include "index-verify.h"
 #include "index-window.h"
 
 namespace tos::services {
@@ -29,8 +30,15 @@ class ReplayLoop {
  public:
   // `ceiling`, when nonzero, is the last masterchain block replay goes to.
   // It never makes the index ready: readiness is reaching the source tip.
-  ReplayLoop(IndexReader& reader, Prefetcher& prefetcher, Progress& progress, ReplayStats& stats, uint32_t ceiling)
-      : reader_(reader), prefetcher_(prefetcher), progress_(progress), stats_(stats), ceiling_(ceiling) {
+  // `checked` reads the window base's block for its record.
+  ReplayLoop(IndexReader& reader, Prefetcher& prefetcher, Progress& progress, ReplayStats& stats, uint32_t ceiling,
+             VerifySource& checked)
+      : reader_(reader)
+      , prefetcher_(prefetcher)
+      , progress_(progress)
+      , stats_(stats)
+      , ceiling_(ceiling)
+      , checked_(checked) {
   }
   // Nothing to do until the source moves: replay is at its limit (the tip,
   // or the ceiling below it) and the last drain did no work.
@@ -243,11 +251,28 @@ class ReplayLoop {
                    << ": the source does not hold that masterchain block";
       stalled_base_ = window.base;
     }
+    // The base moves only with its block's record, read from this node's
+    // checked block. A block whose bytes the source does not hold keeps the
+    // base where it is (more history, never less); a block that does not
+    // decode is an error.
+    uint32_t base = window.base;
+    td::optional<tos_wallet_index::WindowBaseRecord> base_record;
+    if (base != stored_base) {
+      TRY_RESULT_ASSIGN(base_record, read_base_record(checked_, base));
+      if (!base_record) {
+        if (base != unrecorded_base_) {
+          LOG(WARNING) << "window base held at " << stored_base
+                       << ": the source does not hold the bytes of masterchain block " << base;
+          unrecorded_base_ = base;
+        }
+        base = stored_base;
+      }
+    }
     {
       StageTimer timer(stats_.commit_us);
       stats_.commits.fetch_add(1, std::memory_order_relaxed);
       std::lock_guard<std::mutex> guard(db->write_mutex());
-      TRY_STATUS(db->commit_replay_checkpoint(committed, window.base));
+      TRY_STATUS(db->commit_replay_checkpoint(committed, base, base_record));
     }
     checkpoint_ = committed;
     progress_.cursor = committed.committed.seqno();
@@ -273,6 +298,9 @@ class ReplayLoop {
   bool at_limit_ = false;
   // The base last reported as stalled, so a stall is logged once.
   uint32_t stalled_base_ = std::numeric_limits<uint32_t>::max();
+  // The last base not moved to for want of its block's bytes, logged once.
+  uint32_t unrecorded_base_ = std::numeric_limits<uint32_t>::max();
+  VerifySource& checked_;
   WalletIndexDb::ReplayCheckpoint checkpoint_;
   std::vector<BlockIdExt> heads_;
 };

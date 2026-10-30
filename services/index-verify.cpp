@@ -680,7 +680,8 @@ td::Result<VerifyOutcome> prepare_quarantined_index(WalletIndexDb& db, VerifySou
     return refuse(db, refusal.value().reason, refusal.value().account);
   }
   TRY_STATUS(std::move(status));
-  TRY_STATUS(db.put_window_base(base));
+  TRY_RESULT(base_record, base_record_at(source, base));
+  TRY_STATUS(db.put_window_base(base, base_record));
   WalletIndexDb::VerificationRecord prepared;
   prepared.schema = tos_wallet_index::kWalletIndexSchemaVersion;
   prepared.checkpoint = checkpoint;
@@ -1287,6 +1288,53 @@ td::Result<VerifyOutcome> run_ownership_step(WalletIndexDb& db, VerifySource& so
   return done;
 }
 
+td::Result<td::optional<tos_wallet_index::WindowBaseRecord>> read_base_record(VerifySource& source, uint32_t seqno) {
+  TRY_RESULT(block, source.masterchain_block(seqno));
+  if (!block) {
+    return td::optional<tos_wallet_index::WindowBaseRecord>{};
+  }
+  tos_wallet_index::WindowBaseRecord record{tos_wallet_index::kWalletIndexSchemaVersion, block.value().id,
+                                            std::move(block.value().tips)};
+  auto checked = tos_wallet_index::check_window_base_record(record);
+  if (checked.is_error() || record.block.seqno() != seqno) {
+    return terminal(PSTRING() << "masterchain block " << seqno << " does not make a window base record: "
+                              << (checked.is_error() ? checked.message().str() : std::string("another block")));
+  }
+  return td::optional<tos_wallet_index::WindowBaseRecord>(std::move(record));
+}
+
+td::Result<td::optional<tos_wallet_index::WindowBaseRecord>> base_record_at(VerifySource& source, uint32_t base) {
+  if (base == 0) {
+    return td::optional<tos_wallet_index::WindowBaseRecord>{};
+  }
+  TRY_RESULT(record, read_base_record(source, base));
+  if (!record) {
+    return terminal(PSTRING() << "the node no longer holds the window base, masterchain block " << base);
+  }
+  return record;
+}
+
+td::Status backfill_window_base_record(WalletIndexDb& db, VerifySource& source) {
+  TRY_RESULT(base, db.get_window_base());
+  if (base == 0) {
+    return td::Status::OK();
+  }
+  auto stored = db.window_base_record();
+  if (stored.is_ok() && stored.ok() && stored.ok().value().block.seqno() == base) {
+    return td::Status::OK();
+  }
+  TRY_RESULT(record, read_base_record(source, base));
+  if (!record) {
+    // Served history fails closed until a base with a record is committed.
+    return td::Status::Error(PSTRING() << "the node does not hold the window base, masterchain block " << base
+                                       << "; history is not served until the base moves");
+  }
+  Batches batch(db, 1);
+  TRY_STATUS(batch.begin());
+  TRY_STATUS(db.put_window_base(base, record));
+  return batch.commit();
+}
+
 td::Result<BlockIdExt> first_block_from_head_state(const BlockIdExt& head, const td::Ref<vm::Cell>& block_root,
                                                    const td::Ref<vm::Cell>& state) {
   block::gen::Block::Record block;
@@ -1478,11 +1526,12 @@ td::Result<VerifyOutcome> run_build_step(WalletIndexDb& db, VerifySource& source
   }
   // Every interval up to H is in: publish the built index as Partial.
   TRY_RESULT(first, source.first_block_from_head(head));
+  TRY_RESULT(base_record, base_record_at(source, record.base));
   Batches batch(db, 1);
   TRY_STATUS(batch.begin());
   TRY_STATUS(db.erase_build_record());
   TRY_STATUS(db.put_replay_checkpoint({first, head}));
-  TRY_STATUS(db.put_window_base(record.base));
+  TRY_STATUS(db.put_window_base(record.base, base_record));
   WalletIndexDb::VerificationRecord verification;
   verification.schema = record.schema;
   verification.checkpoint = head;

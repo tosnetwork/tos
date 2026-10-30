@@ -200,7 +200,13 @@ int main(int argc, char** argv) {
     rpc.readonly = true;
     // Never ready while replay is held at the verified head, even when that
     // head is still the source tip.
-    rpc.index_ready = [&] { return gate.serving() && !gate.held() && progress.is_ready(td::Time::now()); };
+    // Never ready either while history would fail closed: a nonzero window
+    // base without its block's record.
+    rpc.index_ready = [&] {
+      auto* db = tos_wallet_index::wallet_index_db();
+      return gate.serving() && !gate.held() && progress.is_ready(td::Time::now()) && db != nullptr &&
+             db->history_window().is_ok();
+    };
     rpc.index_progress = [&] { return progress.json(td::Time::now()); };
     rpc.index_readyz_body = [&] {
       auto body = progress.readyz_json(td::Time::now(), stats_snapshot());
@@ -246,7 +252,17 @@ int main(int argc, char** argv) {
     // thread ends and so before the source scheduler is torn down.
     Prefetcher prefetcher(reader, Prefetcher::Options{});
     prefetcher.start();
-    ReplayLoop replay(reader, prefetcher, progress, stats, ceiling);
+    ReplayLoop replay(reader, prefetcher, progress, stats, ceiling, *verify_source);
+    {
+      // A nonzero base without its block's record (written before records
+      // existed): its record is read from this node's block before history
+      // is served; until then history reads fail closed and /readyz is not
+      // ready.
+      auto backfilled = backfill_window_base_record(*tos_wallet_index::wallet_index_db(), *verify_source);
+      if (backfilled.is_error()) {
+        LOG(WARNING) << "the window base has no record: " << backfilled.message();
+      }
+    }
     // Periodic operator line: where replay time went in the last interval.
     constexpr double kStatsLogInterval = 60.0;
     auto logged = stats_snapshot();

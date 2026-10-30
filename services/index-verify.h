@@ -323,6 +323,19 @@ void pin_writer_to_head(std::vector<tos_wallet_index::OwnershipHeadState> states
 // A record whose H or H's state roots the source no longer has is replaced,
 // with every built row cleared, in one batch. Returns Working, or Done when
 // the index is published as Partial.
+// The window base record of masterchain block `seqno`, from the source's
+// checked block: nothing when the source does not hold its bytes; terminal
+// when the block does not make a valid record.
+td::Result<td::optional<tos_wallet_index::WindowBaseRecord>> read_base_record(VerifySource& source, uint32_t seqno);
+// As read_base_record, for a base about to be written: nothing for base 0,
+// terminal when the source does not hold it.
+td::Result<td::optional<tos_wallet_index::WindowBaseRecord>> base_record_at(VerifySource& source, uint32_t base);
+// Write the record of an existing nonzero base that has none (an index
+// written before records existed, or restored from such a backup), from the
+// source's checked block. An error when the source does not hold the base:
+// the index's history then fails closed until the base moves.
+td::Status backfill_window_base_record(tos_wallet_index::WalletIndexDb& db, VerifySource& source);
+
 // Block 1's full identity as `head`'s masterchain state records it (its
 // OldMcBlocks), from `head`'s checked block root and the state the node
 // holds for it, which must be the one the block's state update names.

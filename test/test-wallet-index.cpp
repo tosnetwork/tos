@@ -54,6 +54,7 @@
 #include "../validator/db/archive-gc-floor.h"
 #include "../validator/wc0-block-hook.h"
 #include "td/db/RocksDb.h"
+#include "td/db/RocksDbReadOnly.h"
 #include "td/utils/filesystem.h"
 #include "td/utils/port/path.h"
 #include "td/utils/tests.h"
@@ -72,6 +73,18 @@ tos::BlockIdExt make_test_block_id(tos::WorkchainId workchain, tos::ShardId shar
   root_hash.as_slice().copy_from(td::Slice{root_bytes.data(), root_bytes.size()});
   file_hash.as_slice().copy_from(td::Slice{file_bytes.data(), file_bytes.size()});
   return tos::BlockIdExt{workchain, shard, seqno, root_hash, file_hash};
+}
+
+// The record of masterchain block `seqno` as a window base: one basechain
+// shard covering everything, ending at `end_lt`.
+td::optional<tos_wallet_index::WindowBaseRecord> base_record(uint32_t seqno, uint64_t end_lt = 0) {
+  if (seqno == 0) {
+    return {};
+  }
+  return tos_wallet_index::WindowBaseRecord{
+      tos_wallet_index::kWalletIndexSchemaVersion,
+      make_test_block_id(tos::masterchainId, tos::shardIdAll, seqno, static_cast<uint8_t>(seqno | 1), 7),
+      {tos_wallet_index::WindowShardTip{tos::ShardIdFull{tos::basechainId, tos::shardIdAll}, end_lt}}};
 }
 
 std::unique_ptr<tos_wallet_index::WalletIndexDb> open_fresh_db(const std::string &path) {
@@ -484,7 +497,7 @@ TEST(WalletIndex, EventHistoryIsGloballyBoundedByWindow) {
   auto index_block = [&](const std::vector<std::pair<tos_wallet_index::HashKey, uint64_t>> &events, uint32_t mc_ref,
                          uint32_t base) {
     ASSERT_TRUE(db->begin_batch().is_ok());
-    ASSERT_TRUE(db->put_window_base(base).is_ok());
+    ASSERT_TRUE(db->put_window_base(base, base_record(base)).is_ok());
     ASSERT_TRUE(db->commit_batch().is_ok());
     ASSERT_TRUE(db->begin_batch().is_ok());
     size_t age_added = 0;
@@ -548,7 +561,7 @@ TEST(WalletIndex, EventHistoryIsGloballyBoundedByWindow) {
   index_block({}, last + 1, last);
   ASSERT_EQ(count_prefix(0x12), 0u);
   ASSERT_TRUE(db->begin_batch().is_ok());
-  ASSERT_TRUE(db->put_window_base(last - 1).is_error());
+  ASSERT_TRUE(db->put_window_base(last - 1, base_record(last - 1)).is_error());
   db->abort_batch();
 
   td::rmrf(path).ignore();
@@ -579,7 +592,7 @@ TEST(WalletIndex, RetentionMaintenanceFailsClosedOnWindowBaseReadError) {
 
   ASSERT_TRUE(db->begin_batch().is_ok());
   ASSERT_TRUE(db->advance_retention(/*age_rows_added=*/0).is_error());
-  ASSERT_TRUE(db->put_window_base(5).is_error());
+  ASSERT_TRUE(db->put_window_base(5, base_record(5)).is_error());
   db->abort_batch();
   ASSERT_TRUE(db->get_window_base().is_error());
 
@@ -4281,4 +4294,212 @@ TEST(WalletIndexWorker, StandaloneCancellationPreservesPendingCandidates) {
   tos_wallet_index::set_wc0_index_state_fetcher(nullptr);
   reset_index_singletons();
   td::rmrf(path).ignore();
+}
+
+namespace {
+using tos_wallet_index::HistoryWindow;
+using tos_wallet_index::WalletIndexDb;
+using tos_wallet_index::WindowBaseRecord;
+using tos_wallet_index::WindowShardTip;
+
+constexpr uint64_t kLeftHalf = 0x4000000000000000ull, kRightHalf = 0xC000000000000000ull;
+
+WindowBaseRecord record_of(uint32_t seqno, std::vector<WindowShardTip> tips) {
+  return {tos_wallet_index::kWalletIndexSchemaVersion,
+          make_test_block_id(tos::masterchainId, tos::shardIdAll, seqno, static_cast<uint8_t>(seqno | 1), 7),
+          std::move(tips)};
+}
+
+WindowShardTip tip(uint64_t shard, uint64_t end_lt) {
+  return WindowShardTip{tos::ShardIdFull{tos::basechainId, shard}, end_lt};
+}
+
+// The 0x11 value the writer stores: the collection and its verdict's lt.
+td::Ref<vm::Cell> nft_value(bool has_collection, const td::Bits256 &collection, uint64_t lt) {
+  vm::CellBuilder cb;
+  CHECK(cb.store_long_bool(has_collection ? 1 : 0, 1) &&
+        (!has_collection || cb.store_bits_bool(collection.cbits(), 256)) &&
+        cb.store_long_bool(static_cast<long long>(lt), 64));
+  return cb.finalize();
+}
+
+td::Bits256 account_at(unsigned char top) {
+  td::Bits256 out = td::Bits256::zero();
+  out.as_slice()[0] = static_cast<char>(top);
+  return out;
+}
+
+void put_rows(WalletIndexDb &db, const td::Bits256 &account, uint64_t from, uint64_t to) {
+  db.begin_batch().ensure();
+  for (uint64_t lt = from; lt <= to; ++lt) {
+    db.put_event(account, lt, wallet_index_fixture::transaction({account, lt, 0})).ensure();
+  }
+  db.commit_batch().ensure();
+}
+
+// The canonical lines of a stopped index, read as the dump reads them.
+std::vector<std::string> canonical_lines(const std::string &path) {
+  auto kv = td::RocksDbReadOnly::open(path).move_as_ok();
+  auto window = tos_wallet_index::read_history_window(kv).move_as_ok();
+  std::vector<std::string> lines;
+  tos_wallet_index::for_each_canonical_line(kv, window, [&](const std::string &line) {
+    lines.push_back(line);
+    return td::Status::OK();
+  }).ensure();
+  return lines;
+}
+
+void erase_raw(const std::string &path, td::Slice key) {
+  td::RocksDbOptions options;
+  options.no_transactions = true;
+  auto raw = td::RocksDb::open(path, std::move(options)).move_as_ok();
+  raw.erase(key).ensure();
+}
+}  // namespace
+
+// A window base record names a full masterchain block of this schema and
+// tips covering the basechain exactly once, and the base moves only with it.
+TEST(WalletIndex, WindowBaseRecordIsCheckedAndMovesWithTheBase) {
+  using tos_wallet_index::check_window_base_record;
+  ASSERT_TRUE(check_window_base_record(record_of(5, {tip(tos::shardIdAll, 10)})).is_ok());
+  ASSERT_TRUE(check_window_base_record(record_of(5, {tip(kRightHalf, 10), tip(kLeftHalf, 20)})).is_ok());
+  ASSERT_TRUE(check_window_base_record(record_of(5, {})).is_error());
+  ASSERT_TRUE(check_window_base_record(record_of(5, {tip(kLeftHalf, 10)})).is_error());  // incomplete
+  ASSERT_TRUE(check_window_base_record(record_of(5, {tip(tos::shardIdAll, 1), tip(kLeftHalf, 2)})).is_error());
+  ASSERT_TRUE(check_window_base_record(record_of(5, {tip(kLeftHalf, 1), tip(kLeftHalf, 2), tip(kRightHalf, 3)}))
+                  .is_error());  // overlapping
+  {
+    auto other_chain = record_of(5, {tip(tos::shardIdAll, 1)});
+    other_chain.tips[0].shard.workchain = tos::masterchainId;
+    ASSERT_TRUE(check_window_base_record(other_chain).is_error());
+    auto schema = record_of(5, {tip(tos::shardIdAll, 1)});
+    schema.schema += 1;
+    ASSERT_TRUE(check_window_base_record(schema).is_error());
+    auto shard_block = record_of(5, {tip(tos::shardIdAll, 1)});
+    shard_block.block.id.workchain = tos::basechainId;
+    ASSERT_TRUE(check_window_base_record(shard_block).is_error());
+    std::vector<WindowShardTip> many(tos_wallet_index::kMaxWindowBaseTips + 1, tip(tos::shardIdAll, 1));
+    ASSERT_TRUE(check_window_base_record(record_of(5, many)).is_error());
+  }
+  std::string path = "/tmp/test-wallet-index-base-record";
+  auto db = open_fresh_db(path);
+  db->begin_batch().ensure();
+  ASSERT_TRUE(db->put_window_base(5, {}).is_error());                                       // moving without its record
+  ASSERT_TRUE(db->put_window_base(5, record_of(6, {tip(tos::shardIdAll, 1)})).is_error());  // another block
+  ASSERT_TRUE(db->put_window_base(5, record_of(5, {tip(kLeftHalf, 1)})).is_error());        // not a cover
+  db->put_window_base(5, record_of(5, {tip(tos::shardIdAll, 3000)})).ensure();
+  db->commit_batch().ensure();
+  auto stored = db->window_base_record().move_as_ok().value();
+  ASSERT_TRUE(stored.block == record_of(5, {}).block);
+  ASSERT_EQ(stored.tips.size(), 1u);
+  ASSERT_EQ(stored.tips[0].end_lt, 3000u);
+  // Staying where it is keeps the record.
+  db->begin_batch().ensure();
+  db->put_window_base(5, {}).ensure();
+  db->commit_batch().ensure();
+  auto window = db->history_window().move_as_ok();
+  ASSERT_EQ(window.base, 5u);
+  ASSERT_TRUE(window.record && window.record.value().block.seqno() == 5);
+  // An existing nonzero base without a record, or a malformed record, fails closed.
+  db.reset();
+  const char record_key[2] = {0x00, 0x36};
+  erase_raw(path, td::Slice{record_key, 2});
+  db = WalletIndexDb::open(path).move_as_ok();
+  ASSERT_TRUE(!db->window_base_record().move_as_ok());
+  ASSERT_TRUE(db->history_window().is_error());
+  db.reset();
+  {
+    td::RocksDbOptions options;
+    options.no_transactions = true;
+    auto raw = td::RocksDb::open(path, std::move(options)).move_as_ok();
+    raw.set(td::Slice{record_key, 2}, td::Slice("\x01\x00\x00\x00\x04", 5)).ensure();
+  }
+  db = WalletIndexDb::open(path).move_as_ok();
+  ASSERT_TRUE(db->window_base_record().is_error());
+  ASSERT_TRUE(db->history_window().is_error());
+  db.reset();
+  td::rmrf(path).ignore();
+}
+
+// A reader's view sees one window: the base and its record from before a
+// move, or both from after it, never a mix.
+TEST(WalletIndex, AViewSeesOneWindowWhileTheBaseMoves) {
+  std::string path = "/tmp/test-wallet-index-base-view";
+  auto db = open_fresh_db(path);
+  db->begin_batch().ensure();
+  db->put_window_base(5, record_of(5, {tip(tos::shardIdAll, 3000)})).ensure();
+  db->commit_batch().ensure();
+  auto view = tos_wallet_index::WalletIndexSnapshot::of(*db).move_as_ok();
+  db->commit_replay_checkpoint({make_test_block_id(tos::masterchainId, tos::shardIdAll, 1, 1, 1),
+                                make_test_block_id(tos::masterchainId, tos::shardIdAll, 9, 9, 9)},
+                               6u, record_of(6, {tip(kLeftHalf, 3500), tip(kRightHalf, 3600)}))
+      .ensure();
+  auto before = view.history_window().move_as_ok();
+  ASSERT_EQ(before.base, 5u);
+  ASSERT_TRUE(before.record.value().block.seqno() == 5 && before.record.value().tips.size() == 1);
+  auto after = db->history_window().move_as_ok();
+  ASSERT_EQ(after.base, 6u);
+  ASSERT_TRUE(after.record.value().block.seqno() == 6 && after.record.value().tips.size() == 2);
+  // The bound follows the account's shard in each window.
+  auto right = account_at(0x90);
+  ASSERT_EQ(view.history_filter(before, right).move_as_ok().bound, 3000u);
+  ASSERT_EQ(db->history_filter(after, right).move_as_ok().bound, 3600u);
+  db.reset();
+  td::rmrf(path).ignore();
+}
+
+// The served range ends at the window bound and at an account's newest
+// kMaxEventsPerAccount rows; the canonical view is exactly what is served,
+// with ownership verdict lts left out, so lingering rows and verdict times do
+// not change it while a served row, a current token's wallet or an NFT does.
+TEST(WalletIndex, TheCanonicalViewIsTheServedWindow) {
+  std::string lingering = "/tmp/test-wallet-index-canonical-a", pruned = "/tmp/test-wallet-index-canonical-b";
+  auto small = account_at(0x21), big = account_at(0x22), owner = account_at(0x31), master = account_at(0x32),
+       wallet = account_at(0x33), item = account_at(0x34), collection = account_at(0x35);
+  auto fill = [&](const std::string &path, bool backlog, uint64_t verdict_lt, const td::Bits256 &token_wallet) {
+    auto db = open_fresh_db(path);
+    db->initialize_replay(make_test_block_id(tos::masterchainId, tos::shardIdAll, 1, 1, 1)).ensure();
+    // Every lt from 1000 (backlog) or from 3001, the first above the bound.
+    put_rows(*db, small, backlog ? 1000 : 3001, 5000);
+    put_rows(*db, big, backlog ? 10001 : 10006, 20005);
+    db->begin_batch().ensure();
+    db->put_window_base(5, record_of(5, {tip(tos::shardIdAll, 3000)})).ensure();
+    WalletIndexDb::TokenVerdict verdict{true, owner, master, token_value(token_wallet, verdict_lt)};
+    db->apply_token_verdict(token_wallet, verdict, verdict_lt).ensure();
+    // A token row no pair record decided: never current.
+    db->put_token(account_at(0x41), master, token_value(wallet, 1)).ensure();
+    db->put_nft(owner, item, nft_value(true, collection, verdict_lt)).ensure();
+    db->commit_batch().ensure();
+    if (backlog) {
+      // A row the filter must stop at, without counting it.
+      auto filter_small = db->history_filter(db->history_window().move_as_ok(), small).move_as_ok();
+      CHECK(filter_small.bound == 3000 && filter_small.cutoff == 0);
+      auto filter_big = db->history_filter(db->history_window().move_as_ok(), big).move_as_ok();
+      CHECK(filter_big.cutoff == 10006);
+      CHECK(!filter_big.serves(10005) && filter_big.serves(10006) && !filter_small.serves(3000) &&
+            filter_small.serves(3001));
+    }
+  };
+  fill(lingering, true, 100, wallet);
+  fill(pruned, false, 999, wallet);
+  auto a = canonical_lines(lingering);
+  ASSERT_TRUE(a == canonical_lines(pruned));
+  ASSERT_EQ(a.size(), 2000u + 10000u + 1u + 1u);
+  ASSERT_TRUE(a[0].rfind("event " + small.to_hex() + " 5000 ", 0) == 0);
+  ASSERT_TRUE(a.back() == "nft " + owner.to_hex() + " " + item.to_hex() + " " + collection.to_hex());
+  ASSERT_TRUE(a[a.size() - 2] == "token " + owner.to_hex() + " " + master.to_hex() + " " + wallet.to_hex());
+  // A current token naming another wallet is another view.
+  fill(pruned, false, 999, account_at(0x36));
+  ASSERT_TRUE(a != canonical_lines(pruned));
+  // So is a served row that differs.
+  fill(pruned, false, 999, wallet);
+  {
+    auto db = WalletIndexDb::open(pruned).move_as_ok();
+    db->begin_batch().ensure();
+    db->put_event(small, 4000, wallet_index_fixture::transaction({small, 4000, 1})).ensure();
+    db->commit_batch().ensure();
+  }
+  ASSERT_TRUE(a != canonical_lines(pruned));
+  td::rmrf(lingering).ignore();
+  td::rmrf(pruned).ignore();
 }

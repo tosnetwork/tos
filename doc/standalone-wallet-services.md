@@ -75,7 +75,9 @@ method-not-found and are omitted from its `/api-info` listing.
 
 ## Replay, retention and restarts
 
-A fresh index starts at masterchain block 1. It follows the source shard-client
+A fresh index starts at masterchain block 1 when the source holds it, and is
+otherwise built from the retention window's blocks (see *Building a fresh index
+from the window* below). Replay follows the source shard-client
 cursor, which represents applied masterchain and referenced shard data. Every
 interval walks full shard block identities, including split/merge predecessors,
 and processes parents before children. It verifies block root hashes and refuses
@@ -107,10 +109,40 @@ The owning node still treats an index it cannot open as a fatal local fault.
 
 A node that joins the network the default way starts at the newest persistent
 state, so its database never contains masterchain block 1, and validators no
-longer serve the oldest archive packages to a node that asks for them. Such a
-node can serve liteserver reads but cannot be the source of a fresh index. The
-index then logs `source has no masterchain block 1` every few seconds and reports
-`"initialized": false` in `/readyz`; nothing is indexed and nothing is lost.
+longer serve the oldest archive packages to a node that asks for them. A fresh
+index on such a node is built from the window's blocks the node holds, which
+covers the retention window (or less, from the oldest block the node holds, as
+the verified horizon). A full replay from block 1 needs a source prepared as
+below.
+
+#### Building a fresh index from the window
+
+At startup a fresh index is held quarantined: it answers no index query and is
+not ready until the source has applied a masterchain block and shown whether it
+holds block 1. If it does, the index replays from block 1. If not, it is built:
+
+1. The build binds to the source's applied tip `H`, its full identity and its
+   shard state roots, and records the build, quarantined, before any row. A
+   build whose `H` or state roots the source no longer has is replaced: the
+   replacement is computed first, then swapped in with every built row cleared,
+   in one batch.
+2. Interval by interval from the window base up to `H`, each masterchain block
+   linked to the one below it, every basechain transaction's history and age
+   rows are written as replay writes them, rows the base already referenced
+   left out. An account keeps its newest 10,000 rows per interval, then
+   replay's per-account trim applies. One interval holds at most 64 MiB, each
+   row charged its transaction's cells; a larger interval stops the build.
+3. One batch then publishes the replay checkpoint, with block 1's identity read
+   from `H`'s masterchain state (the state `H`'s block names; anything else
+   stops the service), the window base with its block's record, and the
+   verification and block-pass records, as **partial**. Ownership is then
+   derived at `H` as for an untrusted import (below), and the index becomes
+   full.
+
+A restart resumes the build from its last interval, or the ownership
+derivation after the publication; the index is served only once full. A gap in
+the window, a block not linked to the one below it, or an index directory that
+holds data but no build record stops the service with status 1.
 
 To prepare a source for a full replay:
 
@@ -182,7 +214,8 @@ index's durable cursor is refused (`durable index progress is past the replay
 ceiling`): replay cannot go back, so such a run would never settle. To compare two
 replays, stop both once `settled` is true at the same ceiling, then print each
 index with `tos-wallet-index-dump --index-dir <data-dir>/index` (read-only; one
-line per key and the digest of all of them) and compare the output.
+line per key and the digest of all of them) and compare the output. To compare
+indexes that were not replayed the same way, use the canonical dump below.
 
 `index_state.replay` in token and NFT responses carries the same fields except
 `replay_stats`. Token and NFT responses
@@ -202,6 +235,31 @@ masterchain block the source does not hold: there it stalls, logs
 window until the block is held again.
 Schema version 4 keys the age index by that masterchain reference; an index of
 an earlier version is reset on open.
+
+The base is stored with its block's record: the masterchain block's full
+identity and the basechain shard tips it names, read from this node's own
+checked block and written in the same batch as the base, whenever replay, the
+verification of an import or a build moves it. Replay does not move the base to
+a block whose bytes the source does not hold (it logs `window base held at
+<seqno>`); a block that does not decode is an error. History reads (the list,
+every page of it, and single events) are served from one view of the index:
+only rows above the bound the record sets for the account's shard, and only
+each account's newest 10,000 such rows, so rows the pruner has not reached yet
+are never served. A nonzero base without a valid record (an index written
+before records existed) has its record read from the node's block at startup;
+until it has one, history reads fail with `account history unavailable` and
+`/readyz` is not ready. Finding an account's newest 10,000 rows reads up to
+10,001 keys for an account at the cap.
+
+To compare indexes built different ways, `tos-wallet-index-dump --canonical
+--index-dir <data-dir>/index --head <seqno>` prints what the index serves over
+its window: the schema, the checkpoint and the window base with their full
+identities, each account's served history, the current token entries and the
+NFT entries without their verdict lts, then `sha256=` over all of it, and
+`anchor_verified=` outside the digest. `--head` must be the checkpoint's seqno.
+`--window-base-from <other index>` takes the window from another stopped index
+at the same checkpoint and may only narrow it. A nonzero base without its
+record is refused.
 
 ## Migrate or rebuild
 
@@ -295,7 +353,8 @@ It then verifies every subsequent interval through the usual replay path.
    false until the source checkpoint identity is checked, the tail is replayed,
    and a fresh tip observation confirms catch-up. A missing checkpoint pauses
    replay; a different root/file hash or an unapplied checkpoint is refused.
-   A fresh index, or one with no committed block, still requires block 1.
+   A fresh index is built from the window when the source lacks block 1
+   (above); a full replay still requires it.
    Inspect token completeness before switching the public RPC backend.
 
 #### From an untrusted publisher
