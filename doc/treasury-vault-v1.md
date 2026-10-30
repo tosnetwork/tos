@@ -74,7 +74,7 @@ Tests must compile the current source and execute full transactions on the nativ
 - business-only, guardian-only, forged sender, wrong request and repeated approval rejection;
 - through real wallets: a signed business proposal and signed guardian approval pay out, the business wallet cannot approve, a guardian approval for other content is refused, an emitted approval cannot be delivered twice, and a message signed with the wrong key is refused by the wallet before it reaches the vault;
 - the same scenarios through post-quantum wallets, with the VM log showing that an ML-DSA-44 verification actually executed for every accepted request;
-- the cold leg through the post-quantum multisig: below-threshold, non-member and over-count signatures refused before verification, threshold produces exactly one governance message, the vault's delay still applies, veto and pause accepted, no administrator payment path, and a full post-quantum lifecycle;
+- the cold leg through the post-quantum multisig: below-threshold, non-member and over-count signatures refused before verification, threshold produces exactly one governance message, the vault's delay still applies, veto and pause accepted, no administrator payment path, and a full post-quantum lifecycle in which all four roles are real post-quantum accounts, including a pause signed by the pauser wallet and the delayed cold unpause;
 - correct native payout and exact Token outgoing wire/body/destination;
 - per-payment, window and cumulative ceilings, split payments and independent assets;
 - wrong chain/account/domain/epoch/nonce, expiry and malformed/trailing input;

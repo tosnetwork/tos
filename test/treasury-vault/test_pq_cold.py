@@ -48,6 +48,7 @@ from wire import (  # noqa: E402
     envelope,
     roles,
     set_asset,
+    unpause,
 )
 
 MULTISIG_SOURCE = Path(
@@ -587,8 +588,11 @@ class PqColdTests(unittest.TestCase):
         self.assertEqual(v.budget()["cumulative"], 0)
 
     def test_full_post_quantum_lifecycle(self):
+        # All four roles are real post-quantum accounts: two high-volume wallets, the
+        # multisig, and a third wallet as the independent pauser.
         cold, business, guardian = self.cold, self.business, self.guardian
-        role_cell = roles(business.address, guardian.address, cold.address, PAUSER)
+        pauser = PqWallet(13)
+        role_cell = roles(business.address, guardian.address, cold.address, pauser.address)
         v = Vault(records={}, role_cell=role_cell)
         self.addCleanup(v.close)
         req = v.req(set_asset(0), admin=True)
@@ -605,6 +609,21 @@ class PqColdTests(unittest.TestCase):
         msg = decode_message(payout[0])
         self.assertEqual((msg["target"], msg["value"]), (TARGET, COIN))
         self.assertEqual(v.budget()["cumulative"], COIN)
+        # The pauser's signed pause stops payments; only the delayed cold path unpauses.
+        pay = v.req()
+        self.deliver_to(v, business.send(v, envelope(SUBMIT, pay)), source=business.address)
+        self.deliver_to(v, pauser.send(v, v.ctl(PAUSE, admin=True)), source=pauser.address)
+        self.assertTrue(v.state["paused"])
+        self.assertIsNone(v.state["payment"])
+        self.deliver_to(
+            v, guardian.send(v, envelope(APPROVE, pay)), source=guardian.address, expected=2404
+        )
+        resume = v.req(unpause(), admin=True)
+        self.deliver_to(v, cold.send_to_vault(v, envelope(SCHEDULE, resume)))
+        v.send(envelope(APPLY, resume), expected=2418)
+        v.advance(DELAY)
+        v.send(envelope(APPLY, resume))
+        self.assertFalse(v.state["paused"])
 
     def deliver_to(self, vault, messages, source=None, expected=0):
         self.assertEqual(len(messages), 1)
