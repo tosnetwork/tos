@@ -42,7 +42,11 @@
 #include "td/utils/buffer.h"
 #include "td/utils/port/IPAddress.h"
 #include "td/utils/port/ServerSocketFd.h"
+#include "td/utils/filesystem.h"
+#include "td/utils/port/path.h"
 #include "td/utils/tests.h"
+#include "test/wallet-index-chain-fixture.h"
+#include "validator-engine/wallet-index.h"
 #include "tl-utils/lite-utils.hpp"
 
 #include "json-rpc-http-policy.h"
@@ -1569,4 +1573,59 @@ TEST(JsonRpcTransport, standalone_submission_requires_backend_proxy_attribution)
       });
     });
   }
+}
+
+// An index-only server answers no index query while its index is not
+// verified against the node's chain. While it is only partly verified, every
+// history answer is flagged, an account no record marks included (one absent
+// from the verified head may have been omitted and recreated later), and a
+// missing event says the history is not verified in error.data. A fully
+// verified index answers without either flag.
+TEST(JsonRpcTransport, an_unverified_wallet_index_is_refused_and_a_partial_one_flags_its_history) {
+  auto dir = td::mkdtemp(td::get_temporary_dir(), "rpc-wallet-index").move_as_ok();
+  td::Bits256 account = td::Bits256::zero();
+  account.as_slice()[0] = 0x21;
+  {
+    auto db = tos_wallet_index::WalletIndexDb::open(dir + "/index").move_as_ok();
+    db->begin_batch().ensure();
+    db->put_event(account, 5000, wallet_index_fixture::transaction({account, 5000, 0})).ensure();
+    db->commit_batch().ensure();
+    tos_wallet_index::set_wallet_index_db(std::move(db));
+  }
+  const std::string address = "0:" + account.to_hex();
+  const std::string events = "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"getAccountEvents\",\"params\":{\"address\":\"" +
+                             address + "\"}}";
+  const std::string missing = "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"getAccountEvent\",\"params\":{\"address\":\"" +
+                              address + "\",\"event_id\":\"6000:" + std::string(64, 'a') + "\"}}";
+  struct Case {
+    bool serving, partial;
+  };
+  for (auto c : {Case{false, false}, Case{true, true}, Case{true, false}}) {
+    auto options = options_for(false);
+    options.index_only = true;
+    options.index_ready = [] { return true; };
+    options.index_serving = [c] { return c.serving; };
+    options.index_partial = [c] { return c.partial; };
+    with_json_rpc(std::move(options), [&](int port) {
+      Client client(port, 0);
+      ASSERT_TRUE(client.connect());
+      std::string status, body;
+      ASSERT_TRUE(client.send_all(post(events, false)));
+      ASSERT_TRUE(client.read_response(5000, status, body));
+      if (!c.serving) {
+        ASSERT_TRUE(body.find("not verified against this node's chain") != std::string::npos);
+        ASSERT_TRUE(body.find("\"events\"") == std::string::npos);
+        return;
+      }
+      ASSERT_TRUE(body.find("\"events\":[{") != std::string::npos);
+      ASSERT_EQ(body.find("\"history_verified\":false") != std::string::npos, c.partial);
+      ASSERT_TRUE(client.send_all(post(missing, false)));
+      ASSERT_TRUE(client.read_response(5000, status, body));
+      ASSERT_TRUE(body.find("\"code\":-32004") != std::string::npos);
+      ASSERT_EQ(body.find("\"history_verified\":false") != std::string::npos, c.partial);
+      ASSERT_EQ(body.find("not yet verified") != std::string::npos, c.partial);
+    });
+  }
+  tos_wallet_index::set_wallet_index_db(nullptr);
+  td::rmrf(dir).ignore();
 }

@@ -99,7 +99,7 @@ jobs:
           cmake --build build --parallel 4 --target \
             gen_fif create-state toslibjson func fift emulator \
             generate-random-id tos-pq-consensus-key \
-            dht-server validator-engine-console validator-engine tos-rpc tos-wallet-index tos-wallet-index-snapshot test-node-store-fixture \
+            dht-server validator-engine-console validator-engine tos-rpc tos-wallet-index tos-wallet-index-snapshot wallet-index-source-fixture test-node-store-fixture \
             create-hardfork test-tos-collator test-apply-block-readback-latency \
             test-pq-lite-forward-proof test-pending-finality-cache test-c04-real-state-proof \
             tos-proof-verify test-proof-verify proof-verify-fs-shim proof-persisted-fsync-shim tos-proof-embedded test-proof-verify-embedded test-proof-acquisition test-proof-readonly-query test-self-pay-simulation-context test-simulation-config test-simulation-account test-self-pay-simulation test-self-pay-simulation-live test-self-pay-simulation-json test-json-rpc-transport test-json-rpc-explorer \

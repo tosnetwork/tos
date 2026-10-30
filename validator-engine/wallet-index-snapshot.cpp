@@ -120,6 +120,7 @@ td::Result<WalletIndexSnapshotInfo> scan(td::FileFd& file, const td::Bits256* ex
     return td::Status::Error("unsupported index snapshot format or schema");
   WalletIndexSnapshotInfo info;
   bool schema_seen = false, checkpoint_seen = false;
+  td::optional<std::string> state_record, verification_record;
   std::string previous;
   std::array<char, kChunk> scratch{};
   for (;;) {
@@ -134,6 +135,9 @@ td::Result<WalletIndexSnapshotInfo> scan(td::FileFd& file, const td::Bits256* ex
     if (!previous.empty() && key <= previous)
       return td::Status::Error("index snapshot keys are not strictly ordered");
     bool schema = key == std::string("\0\1", 2), checkpoint = key == std::string("\0\x20", 2);
+    // The verification state and record decide whether the anchor is
+    // authenticated; both are small, bounded by the transfer limit.
+    bool provenance = key == std::string("\0\x30", 2) || key == std::string("\0\x31", 2);
     if (schema && value_size != 4)
       return td::Status::Error("invalid index snapshot schema record");
     if (checkpoint && value_size != 162)
@@ -141,7 +145,7 @@ td::Result<WalletIndexSnapshotInfo> scan(td::FileFd& file, const td::Bits256* ex
     if (value_size > remaining)
       return td::Status::Error("truncated index snapshot");
     std::string value;
-    if (accept || schema || checkpoint) {
+    if (accept || schema || checkpoint || provenance) {
       value.resize(value_size);
       TRY_STATUS(read_exact(file, td::MutableSlice(value), hash, cancelled, remaining));
     } else {
@@ -163,6 +167,9 @@ td::Result<WalletIndexSnapshotInfo> scan(td::FileFd& file, const td::Bits256* ex
       info.checkpoint = parsed;
       checkpoint_seen = true;
     }
+    if (provenance) {
+      (key[1] == '\x30' ? state_record : verification_record) = value;
+    }
     if (accept)
       TRY_STATUS(accept(key, value));
     previous = std::move(key);
@@ -174,6 +181,8 @@ td::Result<WalletIndexSnapshotInfo> scan(td::FileFd& file, const td::Bits256* ex
     return td::Status::Error("trailing data in index snapshot");
   if (!schema_seen || !checkpoint_seen)
     return td::Status::Error("index snapshot has no schema or replay checkpoint");
+  info.anchor_verified = WalletIndexDb::anchor_verified(state_record ? &state_record.value() : nullptr,
+                                                       verification_record ? &verification_record.value() : nullptr);
   hash.extract(info.sha256.as_slice());
   if (expected != nullptr && info.sha256 != *expected)
     return td::Status::Error("index snapshot SHA-256 differs from the trusted digest");
@@ -281,6 +290,14 @@ td::Result<WalletIndexSnapshotInfo> WalletIndexSnapshotFile::create(const std::s
   TRY_STATUS(write_hashed(file, td::Slice(header, sizeof(header)), hash, cancelled));
   WalletIndexSnapshotInfo info;
   info.checkpoint = checkpoint.value();
+  {
+    std::string state, record;
+    TRY_RESULT(has_state, db.db_->get(td::Slice("\0\x30", 2), state));
+    TRY_RESULT(has_record, db.db_->get(td::Slice("\0\x31", 2), record));
+    info.anchor_verified =
+        WalletIndexDb::anchor_verified(has_state == td::KeyValue::GetStatus::Ok ? &state : nullptr,
+                                       has_record == td::KeyValue::GetStatus::Ok ? &record : nullptr);
+  }
   TRY_STATUS(db.db_->for_each([&](td::Slice key, td::Slice value) {
     TRY_STATUS(check_lengths(key.size(), value.size()));
     char lengths[8];
@@ -418,6 +435,9 @@ td::Result<WalletIndexSnapshotInfo> WalletIndexSnapshotFile::import_staged(const
       TRY_STATUS(commit());
       verified.kept = kept;
       verified.dropped = dropped;
+      // Whatever the publisher's records claimed, only this node's own
+      // check of its block 1 can authenticate the anchor.
+      verified.anchor_verified = false;
     }
     TRY_RESULT(checkpoint, db.replay_checkpoint());
     if (!checkpoint || checkpoint.value().anchor != verified.checkpoint.anchor ||

@@ -334,6 +334,55 @@ class WalletIndexDb {
   td::Result<VerificationState> get_verification_state();
   td::Status put_verification_state(VerificationState state);
   td::Status put_window_base(uint32_t mc_seqno);
+
+  // --- Verification of an imported index (services/index-verify.h) ---
+  // What the verification of a quarantined index has established, at meta
+  // 0x00 0x31. `checkpoint` and `base` bind the age keys it assigned to the
+  // imported rows: written once, in the batch that sets the window base, so a
+  // restart that finds the record never assigns them again. `head` is set
+  // once the content has been checked against that masterchain block's
+  // state; `unverified` counts the accounts marked as needing the window's
+  // blocks then.
+  struct VerificationRecord {
+    uint32_t schema = 0;
+    tos::BlockIdExt checkpoint;
+    uint32_t base = 0;
+    // The oldest masterchain block the check reached (the verified horizon)
+    // and its generation time; 0 when the window starts at the chain's
+    // first block.
+    uint32_t horizon_seqno = 0;
+    uint32_t horizon_time = 0;
+    td::optional<tos::BlockIdExt> head;
+    uint64_t unverified = 0;
+    // The checkpoint's anchor (masterchain block 1) was checked against the
+    // node's own block 1. Not when the node does not hold that block.
+    bool anchor_verified = false;
+  };
+  static td::Result<VerificationRecord> parse_verification_record(td::Slice value);
+  // Whether the replay anchor of an index holding these meta records (the
+  // verification state 0x00 0x30 and record 0x00 0x31, null when absent) is
+  // authenticated: an index a node built by its own replay (no state, or
+  // Full without a record), or one whose verification checked the anchor.
+  // Anything else, an index imported and not yet prepared included, is not.
+  static bool anchor_verified(const std::string* state, const std::string* record);
+  td::Result<td::optional<VerificationRecord>> verification_record();
+  // Joins the current batch.
+  td::Status put_verification_record(const VerificationRecord& record);
+  // Accounts whose history the head state cannot verify: 0x31 + account(32)
+  // -> reason(1). put and the clear join the current batch.
+  td::Status put_unverified_account(const HashKey& account, uint8_t reason);
+  td::Result<bool> is_unverified_account(const HashKey& account);
+  td::Status clear_unverified_accounts();
+  // Drop every age row (into the current batch): an imported index has none
+  // until verification assigns them from the chain.
+  td::Status clear_event_ages();
+  // Every event row in key order, with its stored value bytes undecoded: a
+  // row that does not decode must be seen, not skipped.
+  td::Status for_each_event_record(std::function<td::Status(const HashKey& account, uint64_t lt, td::Slice value)> cb);
+  // Remove one event row (into the current batch).
+  td::Status erase_event(const HashKey& account, uint64_t lt);
+  // Whether the account has any event row.
+  td::Result<bool> has_events(const HashKey& account);
   // Prune events outside the window (at most age_rows_added + drain of them),
   // within the current batch. Fails closed: any error -- including a base read
   // error, which must never fall back to 0 -- is returned so the caller aborts

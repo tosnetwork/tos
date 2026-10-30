@@ -69,6 +69,7 @@ int main(int argc, char** argv) {
   const auto& info = result.ok();
   std::cout << "sha256=" << td::hex_encode(info.sha256.as_slice()) << " bytes=" << info.bytes
             << " records=" << info.records << "\nanchor=" << info.checkpoint.anchor.to_str()
+            << (info.anchor_verified ? "" : " (unverified)")
             << "\ncheckpoint=" << info.checkpoint.committed.to_str() << '\n';
   if (action == "import-untrusted") {
     std::cout << "kept=" << info.kept << " dropped=" << info.dropped

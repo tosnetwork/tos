@@ -97,7 +97,9 @@ const ErrorKind &error_kind_for_upstream(const td::Status &cause, int fallback_c
 std::string result_body(td::Slice id, td::Slice result_json);
 
 // `{"jsonrpc":"2.0","id":<id>,"error":{"code","message","data":{...}}}`.
-std::string error_body(td::Slice id, const ErrorKind &kind, td::Slice message);
+// `extra_data`, when given, is further members of error.data, already JSON:
+// `"name":value[,...]`.
+std::string error_body(td::Slice id, const ErrorKind &kind, td::Slice message, td::Slice extra_data = {});
 
 // What the request envelope asks for, once it has been validated.
 struct Envelope {

@@ -16,6 +16,7 @@
 #include "index-progress.h"
 #include "index-reader.h"
 #include "index-replay-loop.h"
+#include "index-verify.h"
 
 int main(int argc, char** argv) {
   using namespace tos;
@@ -23,6 +24,7 @@ int main(int argc, char** argv) {
   SET_VERBOSITY_LEVEL(verbosity_WARNING);
   std::string source, data;
   uint32_t ceiling = 0;
+  bool allow_partial = false;
   td::IPAddress listen;
   listen.init_host_port("127.0.0.1:8081").ensure();
   td::OptionParser parser;
@@ -45,6 +47,11 @@ int main(int argc, char** argv) {
                               ceiling = value;
                               return td::Status::OK();
                             });
+  parser.add_option('\0', "allow-partial-verification",
+                    "serve an index imported from an untrusted snapshot once it is partly verified against this "
+                    "node, flagging every answer the node's chain does not yet vouch for (default: serve only a "
+                    "fully verified index)",
+                    [&] { allow_partial = true; });
   auto parsed = parser.run(argc, argv);
   if (parsed.is_error() || source.empty() || data.empty() || !json_rpc::is_loopback_bind_address(listen)) {
     LOG(ERROR) << "specify --source-db and --data-dir and a loopback --listen";
@@ -82,18 +89,41 @@ int main(int argc, char** argv) {
     LOG(ERROR) << index.error();
     return 2;
   }
+  // An index imported from an untrusted snapshot is never served before it
+  // has been checked against this node's own chain (services/index-verify.h).
+  ServingGate gate(allow_partial);
+  bool prepared = false;
   {
-    // An index imported from an untrusted snapshot is never served before it
-    // has been checked against this node's own chain.
+    using tos_wallet_index::VerificationState;
     auto state = index.ok()->get_verification_state();
     if (state.is_error()) {
       LOG(ERROR) << "cannot read the index verification state: " << state.error();
       return 2;
     }
-    if (state.ok() != tos_wallet_index::VerificationState::Full) {
-      LOG(ERROR) << "the index was imported from an untrusted snapshot and is not verified against this node; "
-                    "this build cannot verify it yet, so it refuses to serve it";
+    auto record = index.ok()->verification_record();
+    if (record.is_error()) {
+      LOG(ERROR) << "cannot read the index verification record: " << record.error();
       return 2;
+    }
+    gate.set(state.ok());
+    if (record.ok()) {
+      const auto& stored = record.ok().value();
+      prepared = true;
+      gate.set_horizon(stored.horizon_seqno, stored.horizon_time, stored.unverified);
+    }
+    if (!gate.serving() && state.ok() != VerificationState::Quarantined) {
+      if (state.ok() == VerificationState::Partial) {
+        LOG(ERROR) << "the index was imported from an untrusted snapshot and is only partly verified against this "
+                      "node; restart with --allow-partial-verification to serve it with unverified answers flagged";
+      } else {
+        LOG(ERROR) << "the index was imported from an untrusted snapshot and was refused by its verification "
+                      "against this node; import another snapshot into a fresh directory";
+      }
+      return 2;
+    }
+    if (state.ok() == VerificationState::Quarantined) {
+      LOG(WARNING) << "the index was imported from an untrusted snapshot: verifying it against this node before "
+                      "serving";
     }
   }
   Progress progress;
@@ -137,14 +167,46 @@ int main(int argc, char** argv) {
     rpc.index_only = true;
     rpc.trust_proxy_headers = true;
     rpc.readonly = true;
-    rpc.index_ready = [&] { return progress.is_ready(td::Time::now()); };
+    rpc.index_ready = [&] { return gate.serving() && progress.is_ready(td::Time::now()); };
     rpc.index_progress = [&] { return progress.json(td::Time::now()); };
-    rpc.index_readyz_body = [&] { return progress.readyz_json(td::Time::now(), stats_snapshot()); };
+    rpc.index_readyz_body = [&] {
+      auto body = progress.readyz_json(td::Time::now(), stats_snapshot());
+      body.pop_back();
+      return body + gate.json_fields() + "}";
+    };
+    rpc.index_serving = [&] { return gate.serving(); };
+    rpc.index_partial = [&] { return gate.partial(); };
     server = JsonRpcServer::create({}, std::move(rpc));
     td::actor::send_closure(server, &JsonRpcServer::listen, listen);
   });
   IndexReader reader(db.get(), core, std::chrono::seconds(30), &stats);
+  // Set by the replay thread when verification decides the service stops.
+  std::atomic<int> exit_code{0};
+  auto stop_with = [&](int code) {
+    exit_code = code;
+    request_stop(0);
+  };
   std::thread worker([&] {
+    auto verify_source = make_reader_verify_source(reader);
+    std::string waiting;
+    // A verification step failed. A terminal error stops the service; any
+    // other is retried after a delay that grows to a cap, visible in /readyz
+    // and logged at a bounded rate. Returns false when the service stops.
+    auto verification_failed = [&](const td::Status& error, const char* step) {
+      if (is_terminal_verify_error(error)) {
+        LOG(ERROR) << "cannot verify the imported index " << step << ": " << error.message();
+        stop_with(1);
+        return false;
+      }
+      if (gate.retry.failed(error.message(), td::Time::now(), static_cast<uint32_t>(td::Clocks::system()))) {
+        LOG(WARNING) << "imported index verification paused " << step << " (attempt " << gate.retry.attempts()
+                     << "): " << error.message();
+      }
+      while (!stop_requested.load() && td::Time::now() < gate.retry.next_attempt()) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+      }
+      return !stop_requested.load();
+    };
     // Joined, with every interval it read ahead released, before this
     // thread ends and so before the source scheduler is torn down.
     Prefetcher prefetcher(reader, Prefetcher::Options{});
@@ -167,10 +229,91 @@ int main(int argc, char** argv) {
         LOG(WARNING) << replay_stats_log_line(current, logged);
         logged = current;
       }
+      auto* index_db = tos_wallet_index::wallet_index_db();
+      if (gate.state() == tos_wallet_index::VerificationState::Quarantined && !prepared) {
+        // Nothing is replayed onto an imported index before its rows have
+        // their place in the window from this node's own blocks.
+        auto outcome = prepare_quarantined_index(*index_db, *verify_source);
+        if (outcome.is_error()) {
+          if (!verification_failed(outcome.error(), "while placing its rows in the window")) {
+            break;
+          }
+          continue;
+        }
+        gate.retry.succeeded();
+        auto& done = outcome.ok();
+        if (done.step == VerifyStep::Wait) {
+          if (done.reason != waiting) {
+            LOG(WARNING) << "imported index verification waits: " << done.reason;
+            waiting = done.reason;
+          }
+          for (int i = 0; i < 50 && !stop_requested.load(); ++i)
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+          continue;
+        }
+        if (done.step == VerifyStep::Refused) {
+          gate.set(tos_wallet_index::VerificationState::Refused);
+          LOG(ERROR) << "the imported index is refused: " << done.reason;
+          stop_with(2);
+          break;
+        }
+        auto record = index_db->verification_record();
+        if (record.is_error() || !record.ok()) {
+          LOG(ERROR) << "the imported index has no verification record after its preparation";
+          stop_with(1);
+          break;
+        }
+        const auto& stored = record.ok().value();
+        gate.set_horizon(stored.horizon_seqno, stored.horizon_time, 0);
+        prepared = true;
+        LOG(WARNING) << "imported index prepared: " << done.kept << " rows in the window from masterchain block "
+                     << stored.base << ", " << done.dropped << " older rows dropped; replaying to the node's head";
+      }
       auto status = replay.step();
       if (status.is_error()) {
         progress.ready = false;
         LOG(WARNING) << "replay paused: " << status;
+      }
+      if (status.is_ok() && gate.state() == tos_wallet_index::VerificationState::Quarantined && progress.ready.load()) {
+        auto checkpoint = index_db->replay_checkpoint();
+        if (checkpoint.is_error() || !checkpoint.ok()) {
+          LOG(ERROR) << "cannot read the replay checkpoint to verify the imported index at";
+          stop_with(1);
+          break;
+        }
+        auto head = checkpoint.ok().value().committed;
+        auto outcome = verify_index_at_head(*index_db, *verify_source, head);
+        if (outcome.is_error()) {
+          if (!verification_failed(outcome.error(), "at the node's head")) {
+            break;
+          }
+          continue;
+        }
+        gate.retry.succeeded();
+        auto& done = outcome.ok();
+        if (done.step == VerifyStep::Refused) {
+          gate.set(tos_wallet_index::VerificationState::Refused);
+          LOG(ERROR) << "the imported index is refused at masterchain block " << head.seqno() << ": " << done.reason;
+          stop_with(2);
+          break;
+        }
+        auto record = index_db->verification_record();
+        if (record.is_error() || !record.ok()) {
+          LOG(ERROR) << "the imported index has no verification record after its check";
+          stop_with(1);
+          break;
+        }
+        const auto& stored = record.ok().value();
+        gate.set_horizon(stored.horizon_seqno, stored.horizon_time, stored.unverified);
+        gate.set(tos_wallet_index::VerificationState::Partial);
+        LOG(WARNING) << "the imported index is partly verified at masterchain block " << head.seqno() << ": "
+                     << done.unverified << " accounts need the window's blocks, and ownership is not yet derived";
+        if (!allow_partial) {
+          LOG(ERROR) << "the index is only partly verified; restart with --allow-partial-verification to serve it "
+                        "with unverified answers flagged";
+          stop_with(2);
+          break;
+        }
       }
       if (status.is_error() || replay.idle()) {
         for (int i = 0; i < (status.is_error() ? 50 : 10) && !stop_requested.load(); ++i)
@@ -192,5 +335,8 @@ int main(int argc, char** argv) {
   worker.join();
   tos_wallet_index::release_wc0_index_state();
   tos_wallet_index::set_wallet_index_db(nullptr);
+  if (exit_code.load() != 0) {
+    return exit_code.load();
+  }
   return reader.timed_out() ? 1 : 0;
 }

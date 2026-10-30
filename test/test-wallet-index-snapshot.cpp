@@ -172,6 +172,64 @@ TEST(WalletIndexSnapshot, UntrustedImportKeepsOnlyHistoryAndQuarantines) {
               VerificationState::Full);
 }
 
+// The checkpoint's anchor is authenticated only by an index a node built
+// itself, or by a verification that checked it against the node's own first
+// block. An untrusted import never carries a publisher's claim of either, and
+// re-exporting an imported index, or restoring that export, never turns an
+// unverified anchor into an authenticated one.
+TEST(WalletIndexSnapshot, AnAnchorIsUnverifiedUntilThisNodeChecksIt) {
+  Fixture f;
+  int exports = 0;
+  auto export_of = [&](const std::string& index) {
+    auto file = f.dir + "/export-" + std::to_string(++exports);
+    auto made = WalletIndexSnapshotFile::create(index, file).move_as_ok();
+    auto checked = WalletIndexSnapshotFile::verify(file, made.sha256).move_as_ok();
+    ASSERT_EQ(checked.anchor_verified, made.anchor_verified);
+    return std::make_pair(file, made);
+  };
+  // Built by this node's own replay from block 1.
+  auto [own_file, own] = export_of(f.source);
+  ASSERT_TRUE(own.anchor_verified);
+  // A publisher claims a Full index whose verification checked its anchor.
+  {
+    auto db = WalletIndexDb::open(f.source).move_as_ok();
+    db->begin_batch().ensure();
+    WalletIndexDb::VerificationRecord claimed;
+    claimed.schema = kWalletIndexSchemaVersion;
+    claimed.checkpoint = master(5);
+    claimed.anchor_verified = true;
+    db->put_verification_record(claimed).ensure();
+    db->put_verification_state(VerificationState::Full).ensure();
+    db->commit_batch().ensure();
+  }
+  auto [claimed_file, claimed] = export_of(f.source);
+  ASSERT_TRUE(claimed.anchor_verified);
+  auto imported = WalletIndexSnapshotFile::import_untrusted(claimed_file, f.restored).move_as_ok();
+  ASSERT_TRUE(!imported.anchor_verified);
+  // Re-exported before its verification, and restored from that export.
+  auto [again_file, again] = export_of(f.restored);
+  ASSERT_TRUE(!again.anchor_verified);
+  auto trusted = f.dir + "/trusted";
+  auto restored = WalletIndexSnapshotFile::restore(again_file, trusted, again.sha256).move_as_ok();
+  ASSERT_TRUE(!restored.anchor_verified);
+  auto [third_file, third] = export_of(trusted);
+  ASSERT_TRUE(!third.anchor_verified);
+  // A verification that could not check the anchor keeps it unverified.
+  {
+    auto db = WalletIndexDb::open(trusted).move_as_ok();
+    db->begin_batch().ensure();
+    WalletIndexDb::VerificationRecord unchecked;
+    unchecked.schema = kWalletIndexSchemaVersion;
+    unchecked.checkpoint = master(5);
+    db->put_verification_record(unchecked).ensure();
+    db->put_verification_state(VerificationState::Partial).ensure();
+    db->commit_batch().ensure();
+    ASSERT_TRUE(!db->verification_record().move_as_ok().value().anchor_verified);
+  }
+  auto [partial_file, partial] = export_of(trusted);
+  ASSERT_TRUE(!partial.anchor_verified);
+}
+
 TEST(WalletIndexSnapshot, UntrustedImportStillRefusesMalformedSnapshots) {
   Fixture f;
   auto bad = f.dir + "/bad";

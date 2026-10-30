@@ -17,6 +17,7 @@
 #include "services/index-prefetch.h"
 #include "services/index-reader.h"
 #include "services/index-replay-loop.h"
+#include "services/index-verify.h"
 #include "services/service-common.h"
 #include "td/utils/crypto.h"
 #include "td/utils/filesystem.h"
@@ -1159,6 +1160,160 @@ TEST(WalletIndexSource, a_fresh_index_still_requires_block_one) {
   ASSERT_TRUE(status.message().str().find("source has no masterchain block 1") != std::string::npos);
   ASSERT_TRUE(!h.progress.ready.load());
   ASSERT_TRUE(!tos_wallet_index::wallet_index_db()->replay_checkpoint().move_as_ok());
+}
+
+namespace {
+// The fixture chain as verification reads it. Its masterchain handles carry
+// no generation time, so block s is given s * 100000 here; one basechain
+// shard, whose block q ends at lt 1000 * q. The head state is supplied.
+class ChainVerifySource final : public VerifySource {
+ public:
+  ChainVerifySource(std::shared_ptr<FakeChain> chain, std::map<td::Bits256, tos_wallet_index::AccountHead> heads)
+      : chain_(std::move(chain)), heads_(std::move(heads)) {
+  }
+  td::Result<BlockIdExt> tip() override {
+    return chain_->masters.at(chain_->tip)->id();
+  }
+  td::Result<td::optional<VerifyMasterchainBlock>> masterchain_block(uint32_t seqno) override {
+    auto it = chain_->masters.find(seqno);
+    if (it == chain_->masters.end()) {
+      return td::optional<VerifyMasterchainBlock>{};
+    }
+    VerifyMasterchainBlock block;
+    block.id = it->second->id();
+    if (seqno > 1) {
+      // The fixture's masterchain blocks record no previous block in their
+      // bytes; the handle's is the only one.
+      block.prev = it->second->one_prev(true);
+      block.handle_prev = block.prev;
+    }
+    block.applied = it->second->is_applied();
+    block.unix_time = seqno * 100000;
+    for (auto& head : chain_->heads.at(seqno)) {
+      block.tips.push_back({head.shard_full(), 1000ull * head.seqno()});
+    }
+    return td::optional<VerifyMasterchainBlock>(std::move(block));
+  }
+  td::Result<std::unique_ptr<HeadAccounts>> accounts(const BlockIdExt& head) override {
+    if (head != chain_->masters.at(head.seqno())->id()) {
+      return td::Status::Error("no such head");
+    }
+    struct Accounts final : HeadAccounts {
+      explicit Accounts(const std::map<td::Bits256, tos_wallet_index::AccountHead>& heads) : heads(heads) {
+      }
+      td::Status for_each(
+          const std::function<td::Status(const td::Bits256&, const tos_wallet_index::AccountHead&)>& cb) override {
+        for (auto& [account, head] : heads) {
+          TRY_STATUS(cb(account, head));
+        }
+        return td::Status::OK();
+      }
+      td::Result<td::optional<tos_wallet_index::AccountHead>> find(const td::Bits256& account) override {
+        auto it = heads.find(account);
+        if (it == heads.end()) {
+          return td::optional<tos_wallet_index::AccountHead>{};
+        }
+        return td::optional<tos_wallet_index::AccountHead>(it->second);
+      }
+      std::map<td::Bits256, tos_wallet_index::AccountHead> heads;
+    };
+    return std::unique_ptr<HeadAccounts>(new Accounts(heads_));
+  }
+
+ private:
+  std::shared_ptr<FakeChain> chain_;
+  std::map<td::Bits256, tos_wallet_index::AccountHead> heads_;
+};
+
+// Every account's newest row in a stopped index, as the head state would
+// record its last transaction.
+std::map<td::Bits256, tos_wallet_index::AccountHead> newest_rows(const std::string& path) {
+  std::map<td::Bits256, tos_wallet_index::AccountHead> heads;
+  auto db = tos_wallet_index::WalletIndexDb::open(path + "/index").move_as_ok();
+  db->for_each_event_record([&](const td::Bits256& account, uint64_t lt, td::Slice value) {
+      if (heads.count(account) == 0) {
+        auto cell = vm::std_boc_deserialize(value).move_as_ok();
+        heads[account] = tos_wallet_index::AccountHead{lt, cell->get_hash().bits()};
+      }
+      return td::Status::OK();
+    }).ensure();
+  return heads;
+}
+}  // namespace
+
+// An untrusted snapshot onto a node that joined later: its rows are placed in
+// the window from the node's own blocks, the production replay loop resumes
+// from its checkpoint, and the check at the head leaves it Partial, with the
+// accounts its state cannot vouch for marked; a row changed in the snapshot
+// refuses it.
+TEST(WalletIndexSource, an_untrusted_snapshot_is_prepared_replayed_and_verified_at_the_head) {
+  for (bool tampered : {false, true}) {
+    auto chain = make_chain(24, 2);
+    auto straight_dir = temporary_directory();
+    auto donor_dir = temporary_directory();
+    auto imported_dir = temporary_directory();
+    RemoveOnExit straight_remove{straight_dir}, donor_remove{donor_dir}, imported_remove{imported_dir};
+    {
+      ReplayHarness h(chain, 0, straight_dir);
+      ASSERT_OK(h.run_until_idle());
+    }
+    {
+      ReplayHarness h(chain, 17, donor_dir);
+      ASSERT_OK(h.run_until_idle());
+    }
+    auto snapshot = donor_dir + "/snapshot";
+    tos_wallet_index::WalletIndexSnapshotFile::create(donor_dir + "/index", snapshot).ensure();
+    tos_wallet_index::WalletIndexSnapshotFile::import_untrusted(snapshot, imported_dir + "/index").ensure();
+    // The node holds masterchain blocks from 10, the window base at the
+    // checkpoint (block 10 is the last generated more than seven days before
+    // block 17).
+    for (uint32_t i = 1; i < 10; ++i)
+      chain->masters.erase(i);
+    ChainVerifySource source(chain, newest_rows(straight_dir));
+    // Shard block q holds one transaction, of account q, at lt 1000 q - 10.
+    td::Bits256 changed = td::Bits256::zero();
+    uint32_t changed_seqno = 30;
+    changed.as_slice().copy_from(td::Slice(reinterpret_cast<const char*>(&changed_seqno), sizeof(changed_seqno)));
+    {
+      ReplayHarness h(chain, 0, imported_dir);
+      auto* db = tos_wallet_index::wallet_index_db();
+      ASSERT_TRUE(db->get_verification_state().move_as_ok() == tos_wallet_index::VerificationState::Quarantined);
+      if (tampered) {
+        std::lock_guard<std::mutex> guard(db->write_mutex());
+        // ASSERT_OK evaluates its argument more than once: call each once.
+        auto begun = db->begin_batch();
+        ASSERT_OK(begun);
+        auto put = db->put_event(changed, 1000ull * changed_seqno - 10,
+                                 wallet_index_fixture::transaction({changed, 1000ull * changed_seqno - 10, 5}));
+        ASSERT_OK(put);
+        auto committed = db->commit_batch();
+        ASSERT_OK(committed);
+      }
+      auto prepared = prepare_quarantined_index(*db, source).move_as_ok();
+      ASSERT_TRUE(prepared.step == VerifyStep::Done);
+      // Shard blocks 1..20 were referenced by the base: 14 of the 34 rows
+      // are inside the window.
+      ASSERT_EQ(prepared.kept, 14u);
+      ASSERT_EQ(prepared.dropped, 20u);
+      ASSERT_EQ(db->get_window_base().move_as_ok(), 10u);
+      ASSERT_OK(h.run_until_idle());
+      ASSERT_EQ(h.progress.cursor.load(), 24u);
+      auto head = db->replay_checkpoint().move_as_ok().value().committed;
+      auto verified = verify_index_at_head(*db, source, head).move_as_ok();
+      if (tampered) {
+        ASSERT_TRUE(verified.step == VerifyStep::Refused);
+        ASSERT_TRUE(verified.account && verified.account.value() == changed);
+        ASSERT_TRUE(db->get_verification_state().move_as_ok() == tos_wallet_index::VerificationState::Refused);
+      } else {
+        // Every fixture account is created by its only transaction, so
+        // none of the 28 in the window can be proven complete by the state.
+        ASSERT_TRUE(verified.step == VerifyStep::Done);
+        ASSERT_EQ(verified.unverified, 28u);
+        ASSERT_TRUE(db->get_verification_state().move_as_ok() == tos_wallet_index::VerificationState::Partial);
+        ASSERT_TRUE(db->is_unverified_account(changed).move_as_ok());
+      }
+    }
+  }
 }
 
 namespace {

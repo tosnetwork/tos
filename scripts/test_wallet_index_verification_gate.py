@@ -1,25 +1,30 @@
 #!/usr/bin/env python3
-"""The wallet-index service refuses to serve an index that is not verified.
+"""The wallet-index service never serves an index that is not verified.
 
 An index imported from an untrusted snapshot is Quarantined until it has been
-checked against the local node's own head; a Partial, Refused or malformed
-state must not be served either. Each state is installed with the real
-snapshot tool, and the real service must exit before it listens. A Full
-index is the control: the service gets past the gate and stops later, at the
-deliberately incomplete source database, without the refusal.
+checked against the local node's own head: the service starts, verifies it,
+and meanwhile answers no index query and reports itself not ready. A Partial
+index is served only with --allow-partial-verification; a Refused or
+malformed state is never served, and the service exits before it listens.
+Each state is installed with the real snapshot tool. A Full index is the
+control: the service gets past the gate.
 """
 
 import argparse
 import hashlib
+import http.client
+import json
 import socket
 import struct
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 # The wallet-index schema version the binaries under test write.
 SCHEMA = 4
 REFUSAL = "imported from an untrusted snapshot"
+NOT_VERIFIED = "not verified against this node's chain"
 
 
 def block(seqno: int) -> bytes:
@@ -46,26 +51,87 @@ def free_port() -> int:
         return probe.getsockname()[1]
 
 
+def request(port: int, method: str, path: str, body: bytes | None = None) -> tuple[int, str]:
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+    try:
+        headers = {"Content-Type": "application/json"} if body is not None else {}
+        connection.request(method, path, body=body, headers=headers)
+        response = connection.getresponse()
+        return response.status, response.read().decode(errors="replace")
+    finally:
+        connection.close()
+
+
+def check_quarantined(process: subprocess.Popen, port: int) -> None:
+    """The service listens while it verifies, but serves nothing.
+
+    The fixture source holds no chain, so every verification attempt fails
+    with a retryable error: /readyz must stay 503 and show the retries, never
+    report verification as merely in progress.
+    """
+    deadline = time.monotonic() + 30
+    while True:
+        if process.poll() is not None:
+            output, _ = process.communicate()
+            raise AssertionError(("quarantined service exited", process.returncode, output))
+        try:
+            status, body = request(port, "GET", "/readyz")
+        except OSError:
+            status, body = None, ""
+        if status is not None:
+            assert status == 503, (status, body)
+            readyz = json.loads(body)
+            assert readyz["verification"] == "quarantined", body
+            retry = readyz["verification_retry"]
+            if retry is not None:
+                assert retry["attempts"] >= 1 and retry["last_error"], body
+                assert retry["since"] > 0, body
+                break
+        if time.monotonic() > deadline:
+            raise AssertionError(("quarantined service never reported a retried failure", body))
+        time.sleep(0.2)
+    query = json.dumps(
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "getAccountEvents",
+            "params": {"address": "0:" + "11" * 32},
+        }
+    ).encode()
+    status, body = request(port, "POST", "/jsonRPC", query)
+    assert NOT_VERIFIED in body, (status, body)
+    assert '"events"' not in body, body
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--index-binary", type=Path, required=True)
     parser.add_argument("--snapshot-binary", type=Path, required=True)
+    parser.add_argument("--source-fixture-binary", type=Path, required=True)
     args = parser.parse_args()
     service = args.index_binary.resolve(strict=True)
     tool = args.snapshot_binary.resolve(strict=True)
+    # (name, state record, extra service flags, expected outcome)
     cases = [
-        ("untrusted-import", None, True),
-        ("partial", b"\x02", True),
-        ("refused", b"\x03", True),
-        ("malformed-value", b"\x09", True),
-        ("malformed-length", b"\x01\x01", True),
-        ("full-control", b"\x00", False),
+        ("untrusted-import", None, [], "quarantined"),
+        ("partial", b"\x02", [], "refused"),
+        ("partial-allowed", b"\x02", ["--allow-partial-verification"], "runs"),
+        ("refused", b"\x03", [], "refused"),
+        ("refused-allowed", b"\x03", ["--allow-partial-verification"], "refused"),
+        ("malformed-value", b"\x09", [], "refused"),
+        ("malformed-length", b"\x01\x01", [], "refused"),
+        ("full-control", b"\x00", [], "runs"),
     ]
     with tempfile.TemporaryDirectory(prefix="wallet-index-gate-") as raw:
         root = Path(raw)
         source = root / "source"
-        (source / "celldb").mkdir(parents=True)
-        for name, state, refused in cases:
+        subprocess.run(
+            [str(args.source_fixture_binary.resolve(strict=True)), "--db", str(source)],
+            check=True,
+            capture_output=True,
+            timeout=60,
+        )
+        for name, state, flags, expected in cases:
             data = root / name
             data.mkdir()
             file = root / f"{name}.snapshot"
@@ -91,6 +157,7 @@ def main() -> None:
                     str(data),
                     "--listen",
                     f"127.0.0.1:{port}",
+                    *flags,
                 ],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
@@ -98,26 +165,33 @@ def main() -> None:
                 # The service's output may hold bytes that are not UTF-8.
                 errors="replace",
             )
+            if expected == "quarantined":
+                try:
+                    check_quarantined(process, port)
+                finally:
+                    if process.poll() is None:
+                        process.kill()
+                        process.communicate()
+                continue
             try:
                 output, _ = process.communicate(timeout=20)
                 code = process.returncode
             except subprocess.TimeoutExpired:
-                # Still running: it got past the gate (only the Full control may).
+                # Still running: it got past the gate.
                 process.kill()
                 output, _ = process.communicate()
                 code = None
-            if refused:
+            if expected == "refused":
                 assert code == 2, (name, code, output)
-                expected = (
-                    REFUSAL
-                    if name in ("untrusted-import", "partial", "refused")
-                    else "verification state"
+                reason = (
+                    REFUSAL if name.startswith(("partial", "refused")) else "verification state"
                 )
-                assert expected in output, (name, output)
+                assert reason in output, (name, output)
             else:
                 assert REFUSAL not in output and "verification state" not in output, (name, output)
     print(
-        "WALLET_INDEX_VERIFICATION_GATE_OK: unverified and malformed states refused before listening"
+        "WALLET_INDEX_VERIFICATION_GATE_OK: unverified indexes are never served and malformed states "
+        "are refused before listening"
     )
 
 

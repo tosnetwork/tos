@@ -808,6 +808,185 @@ td::Status WalletIndexDb::put_window_base(uint32_t mc_seqno) {
   return db_->set(td::Slice{key, kMetaKeyLen}, td::Slice{v, sizeof(v)});
 }
 
+namespace {
+// 0x00 0x31 -> verification record: version(1) schema_be(4) checkpoint(block
+// key, 77) base_be(4) horizon_seqno_be(4) horizon_time_be(4) unverified_be(8)
+// anchor_verified(1) has_head(1) [head(block key, 77)].
+constexpr uint8_t kMetaVerificationRecordSub = 0x31;
+constexpr uint8_t kVerificationRecordVersion = 1;
+constexpr size_t kVerificationRecordFixedLen = 1 + 4 + kIncompleteBlockKeyLen + 4 + 4 + 4 + 8 + 1 + 1;
+// 0x31 + account(32) -> reason(1). Outside the replay receipt range
+// [0x30, 0x31) that every checkpoint commit erases.
+constexpr uint8_t kUnverifiedAccountTag = 0x31;
+}  // namespace
+
+td::Result<td::optional<WalletIndexDb::VerificationRecord>> WalletIndexDb::verification_record() {
+  char key[kMetaKeyLen];
+  make_meta_key(kMetaVerificationRecordSub, key);
+  std::string value;
+  TRY_RESULT(status, db_->get(td::Slice{key, kMetaKeyLen}, value));
+  if (status == td::KeyValue::GetStatus::NotFound) {
+    return td::optional<VerificationRecord>{};
+  }
+  TRY_RESULT(record, parse_verification_record(value));
+  return td::optional<VerificationRecord>(std::move(record));
+}
+
+bool WalletIndexDb::anchor_verified(const std::string* state, const std::string* record) {
+  if (record != nullptr) {
+    auto parsed = parse_verification_record(*record);
+    return parsed.is_ok() && parsed.ok().anchor_verified;
+  }
+  return state == nullptr ||
+         (state->size() == 1 && static_cast<uint8_t>((*state)[0]) == static_cast<uint8_t>(VerificationState::Full));
+}
+
+td::Result<WalletIndexDb::VerificationRecord> WalletIndexDb::parse_verification_record(td::Slice value) {
+  if (value.size() < kVerificationRecordFixedLen || static_cast<uint8_t>(value[0]) != kVerificationRecordVersion) {
+    return td::Status::Error("wc0-index: malformed verification record");
+  }
+  const char* p = value.data() + 1;
+  VerificationRecord record;
+  record.schema = get_u32_be(p);
+  p += 4;
+  if (p[0] != 0) {
+    return td::Status::Error("wc0-index: malformed verification record");
+  }
+  record.checkpoint = parse_block_key(td::Slice{p, kIncompleteBlockKeyLen});
+  p += kIncompleteBlockKeyLen;
+  record.base = get_u32_be(p);
+  record.horizon_seqno = get_u32_be(p + 4);
+  record.horizon_time = get_u32_be(p + 8);
+  record.unverified = get_u64_be(p + 12);
+  auto anchor = static_cast<uint8_t>(p[20]);
+  auto has_head = static_cast<uint8_t>(p[21]);
+  p += 22;
+  size_t rest = value.size() - kVerificationRecordFixedLen;
+  if (anchor > 1 || has_head > 1 || rest != (has_head ? kIncompleteBlockKeyLen : 0) || (has_head && p[0] != 0)) {
+    return td::Status::Error("wc0-index: malformed verification record");
+  }
+  record.anchor_verified = anchor == 1;
+  if (has_head) {
+    record.head = parse_block_key(td::Slice{p, kIncompleteBlockKeyLen});
+  }
+  if (!record.checkpoint.is_masterchain_ext() || !record.checkpoint.is_valid_full() ||
+      record.base > record.checkpoint.seqno() || record.horizon_seqno > record.checkpoint.seqno() ||
+      (record.head && (!record.head.value().is_masterchain_ext() || !record.head.value().is_valid_full() ||
+                       record.head.value().seqno() < record.checkpoint.seqno()))) {
+    return td::Status::Error("wc0-index: malformed verification record");
+  }
+  return record;
+}
+
+td::Status WalletIndexDb::put_verification_record(const VerificationRecord& record) {
+  if (!batch_open_) {
+    return td::Status::Error("wc0-index: the verification record requires a write batch");
+  }
+  std::string value(kVerificationRecordFixedLen + (record.head ? kIncompleteBlockKeyLen : 0), '\0');
+  char* p = value.data();
+  p[0] = static_cast<char>(kVerificationRecordVersion);
+  put_u32_be(p + 1, record.schema);
+  p += 5;
+  make_block_key(0, record.checkpoint, p);
+  p += kIncompleteBlockKeyLen;
+  put_u32_be(p, record.base);
+  put_u32_be(p + 4, record.horizon_seqno);
+  put_u32_be(p + 8, record.horizon_time);
+  put_u64_be(p + 12, record.unverified);
+  p[20] = record.anchor_verified ? 1 : 0;
+  p[21] = record.head ? 1 : 0;
+  if (record.head) {
+    make_block_key(0, record.head.value(), p + 22);
+  }
+  char key[kMetaKeyLen];
+  make_meta_key(kMetaVerificationRecordSub, key);
+  return db_->set(td::Slice{key, kMetaKeyLen}, td::Slice{value});
+}
+
+td::Status WalletIndexDb::put_unverified_account(const HashKey& account, uint8_t reason) {
+  if (!batch_open_) {
+    return td::Status::Error("wc0-index: an unverified account mark requires a write batch");
+  }
+  char key[kSingleHashKeyLen];
+  make_owner_prefix(kUnverifiedAccountTag, account, key);
+  const char value = static_cast<char>(reason);
+  return db_->set(td::Slice{key, kSingleHashKeyLen}, td::Slice{&value, 1});
+}
+
+td::Result<bool> WalletIndexDb::is_unverified_account(const HashKey& account) {
+  char key[kSingleHashKeyLen];
+  make_owner_prefix(kUnverifiedAccountTag, account, key);
+  std::string value;
+  TRY_RESULT(status, db_->get(td::Slice{key, kSingleHashKeyLen}, value));
+  return status == td::KeyValue::GetStatus::Ok;
+}
+
+td::Status WalletIndexDb::clear_unverified_accounts() {
+  if (!batch_open_) {
+    return td::Status::Error("wc0-index: clearing unverified accounts requires a write batch");
+  }
+  const char begin[1] = {static_cast<char>(kUnverifiedAccountTag)};
+  const char end[1] = {static_cast<char>(kUnverifiedAccountTag + 1)};
+  return db_->erase_range(td::Slice{begin, 1}, td::Slice{end, 1});
+}
+
+td::Status WalletIndexDb::clear_event_ages() {
+  if (!batch_open_) {
+    return td::Status::Error("wc0-index: clearing age rows requires a write batch");
+  }
+  const char begin[1] = {static_cast<char>(kEventAgeTag)};
+  const char end[1] = {static_cast<char>(kEventAgeTag + 1)};
+  return db_->erase_range(td::Slice{begin, 1}, td::Slice{end, 1});
+}
+
+td::Status WalletIndexDb::for_each_event_record(
+    std::function<td::Status(const HashKey& account, uint64_t lt, td::Slice value)> cb) {
+  const char begin[1] = {static_cast<char>(kEventTag)};
+  const char end[1] = {static_cast<char>(kEventTag + 1)};
+  return db_->for_each_in_range(td::Slice{begin, 1}, td::Slice{end, 1},
+                                [&](td::Slice key, td::Slice value) -> td::Status {
+                                  if (key.size() != kEventKeyLen) {
+                                    return td::Status::Error("wc0-index: malformed event key");
+                                  }
+                                  HashKey account;
+                                  std::memcpy(account.data(), key.data() + 1, 32);
+                                  return cb(account, ~get_u64_be(key.data() + 1 + 32), value);
+                                });
+}
+
+td::Status WalletIndexDb::erase_event(const HashKey& account, uint64_t lt) {
+  if (!batch_open_) {
+    return td::Status::Error("wc0-index: erasing an event requires a write batch");
+  }
+  char key[kEventKeyLen];
+  make_event_key(account, ~lt, key);
+  return db_->erase(td::Slice{key, kEventKeyLen});
+}
+
+td::Result<bool> WalletIndexDb::has_events(const HashKey& account) {
+  char begin[1 + 32];
+  make_owner_prefix(kEventTag, account, begin);
+  // The account's range ends where the next account's begins; an account of
+  // all 0xff bytes ends at the next tag.
+  char end[1 + 32];
+  std::memcpy(end, begin, sizeof(end));
+  size_t i = sizeof(end);
+  while (i > 1 && static_cast<uint8_t>(end[i - 1]) == 0xff) {
+    end[--i] = 0;
+  }
+  end[i - 1] = static_cast<char>(static_cast<uint8_t>(end[i - 1]) + 1);
+  bool found = false;
+  auto status = db_->for_each_in_range(td::Slice{begin, sizeof(begin)}, td::Slice{end, sizeof(end)},
+                                       [&](td::Slice, td::Slice) -> td::Status {
+                                         found = true;
+                                         return td::Status::Error("wc0-index: event found");
+                                       });
+  if (status.is_error() && !found) {
+    return status.move_as_error();
+  }
+  return found;
+}
+
 td::Status WalletIndexDb::advance_retention(size_t age_rows_added) {
   // The window base, the age rows and the prune together define the retention
   // invariant, so any error propagates and the caller aborts the block rather

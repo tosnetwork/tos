@@ -298,6 +298,71 @@ It then verifies every subsequent interval through the usual replay path.
    A fresh index, or one with no committed block, still requires block 1.
    Inspect token completeness before switching the public RPC backend.
 
+#### From an untrusted publisher
+
+A snapshot whose publisher you do not trust is imported without a digest and
+checked against the recipient node's own chain instead:
+
+```sh
+build/services/tos-wallet-index-snapshot --action import-untrusted \
+  --snapshot /srv/snapshots/wallet-index.snapshot \
+  --index-dir /srv/tos-wallet-index-new/index
+```
+
+The import keeps only the schema, the replay checkpoint and the account
+history rows; every ownership, queue and progress record is dropped, and the
+index is left **quarantined**. `tos-wallet-index` then verifies it before it
+serves anything. While it does, `/readyz` answers 503 with
+`"verification":"quarantined"` and every index query is refused.
+
+1. **Checkpoint.** The checkpoint must be a masterchain block the node holds and
+   has applied, with the same root and file hash. A different identity is
+   refused; a checkpoint below the node's oldest block is refused as a snapshot
+   older than this node's history; one the node has not reached yet waits.
+   The checkpoint's anchor (masterchain block 1) is checked against the node's
+   own block 1 when the node holds it, and a different one is refused. A node
+   that joined later cannot check it: the anchor is then untrusted metadata,
+   and every snapshot receipt prints it as `anchor=<id> (unverified)`, as it
+   does for any imported index not yet verified, a re-export or a restore of
+   one included.
+2. **Window.** The service walks the node's masterchain blocks down from the
+   checkpoint, each readable and linked to the one above it (the previous block
+   its checked bytes name, which the node's handle must record too), to the retention
+   window's base, or to the first block the node does not hold. That block is
+   the **verified horizon**. Each history row is given the masterchain block
+   that first referenced it, from those blocks' shard tips; rows the horizon
+   already referenced are dropped, and a row no block up to the checkpoint
+   references refuses the snapshot. The walk keeps at most 256 MiB of shard
+   tips; a longer window is not verified.
+3. **Replay** from the checkpoint to the node's tip, as for any restored index.
+4. **Head check.** Every account's rows above its window bound are checked
+   against the tip's state: the newest row is the account's last transaction
+   and each row is hash-linked to the one before it, down to the window. A
+   changed, omitted, injected or mislabelled row, or in-window history left
+   out entirely, refuses the snapshot and names the account. An account created
+   inside the window, or absent from the tip's state, cannot be proven complete
+   from the state and is marked for a pass over the window's blocks.
+
+The result is **partial**, never full: the marked accounts, and token and NFT
+ownership, which is not yet derived from the verified state, are still owed.
+A refused or partial index is not served by default, and the service exits
+(status 2). `--allow-partial-verification` serves a partial index with every
+history answer flagged `"history_verified":false`: an account absent from the
+checked state may have had its history omitted and gain new history later,
+so no answer is vouched for until the window's blocks are checked. A missing
+event is answered with error -32004 carrying `"history_verified":false` in
+`error.data`. Token and NFT answers carry `"ownership_complete":false` in
+`index_state`. `/readyz` reports `verification` and `verified_horizon` (its
+masterchain seqno, generation time and the number of marked accounts). A
+refused index stays refused; import another snapshot into a fresh directory.
+
+A source or database failure during verification is retried, 5 s after the
+first and doubling to at most 5 minutes; `/readyz` stays 503 and reports
+`verification_retry` with the attempts, since when they fail (Unix time) and
+the last error, and the log repeats the same failure at most every 5 minutes.
+A failure retrying cannot clear (a capacity bound, malformed data, or the
+node's own blocks not linking) stops the service with status 1.
+
 The cost is proportional to **snapshot bytes plus the blocks since its
 checkpoint**, rather than replaying every block since genesis. Regularly publish
 recent snapshots to bound historical replay by their maximum age. Snapshot

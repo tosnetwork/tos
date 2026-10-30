@@ -24,6 +24,9 @@ struct WalletIndexSnapshotInfo {
   // (everything the importing node derives itself).
   uint64_t kept = 0;
   uint64_t dropped = 0;
+  // Whether the checkpoint's anchor is authenticated (see
+  // WalletIndexDb::anchor_verified); never for an untrusted import.
+  bool anchor_verified = false;
 };
 
 // A restored snapshot is a trusted operator's index, not a chain proof:

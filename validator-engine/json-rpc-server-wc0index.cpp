@@ -252,6 +252,15 @@ td::Result<AccountEventId> parse_event_id(td::Slice value) {
 
 }  // namespace
 
+// Whether history answers are not vouched for by the node's chain: in a
+// partly verified index none is. An account the head state could not vouch
+// for, or one absent from it and omitted from the snapshot, may gain new
+// history later, so no per-account record can clear the flag before the
+// window's blocks have been checked.
+static bool history_unverified(const JsonRpcServer::Options &options) {
+  return options.index_partial && options.index_partial();
+}
+
 // Token lists come from candidates verified as blocks apply; some may still
 // be waiting, and some may have been given up. Say so alongside the list, so
 // an empty or short answer is not read as the whole truth.
@@ -262,6 +271,11 @@ static td::Result<std::string> token_index_state_json(tos_wallet_index::WalletIn
   if (options.index_ready && !options.index_ready())
     stats.unfinished_block = true;
   auto result = tos_wallet_index::format_token_index_state(stats);
+  if (options.index_partial && options.index_partial()) {
+    // Ownership is not yet derived from the verified head state.
+    result.pop_back();
+    result += ",\"ownership_complete\":false}";
+  }
   if (options.index_progress) {
     result.pop_back();
     result += ",\"replay\":" + options.index_progress() + "}";
@@ -421,6 +435,9 @@ void JsonRpcServer::handle_getAccountEvents(td::JsonObject &params, std::string 
   } else {
     sb << "null";
   }
+  if (history_unverified(opts_)) {
+    sb << ",\"history_verified\":false";
+  }
   sb << "}";
   promise.set_value(make_json_ok(sb.as_cslice().str(), req_id));
 }
@@ -453,10 +470,25 @@ void JsonRpcServer::handle_getAccountEvent(td::JsonObject &params, std::string r
   auto id = parsed_id.move_as_ok();
   auto event_r = db->get_event(addr.addr, id.lt);
   if (event_r.is_error() || event_r.ok()->get_hash(0).as_slice() != id.hash.as_slice()) {
+    if (history_unverified(opts_)) {
+      // Absent from a history that is not verified is not proof of absence.
+      promise.set_value(make_raw_json_response(
+          json_rpc::error_body(req_id, json_rpc::error_kind_for_code(-32004),
+                               "Account event not found; this index's history is not yet verified against the "
+                               "node's chain",
+                               "\"history_verified\":false"),
+          opts_.cors_origin));
+      return;
+    }
     promise.set_value(make_json_rpc_error(-32004, "Account event not found", req_id));
     return;
   }
-  promise.set_value(make_json_ok(format_account_event(id.lt, event_r.move_as_ok()), req_id));
+  auto event = format_account_event(id.lt, event_r.move_as_ok());
+  if (history_unverified(opts_) && !event.empty() && event.back() == '}') {
+    event.pop_back();
+    event += ",\"history_verified\":false}";
+  }
+  promise.set_value(make_json_ok(event, req_id));
 }
 
 void JsonRpcServer::handle_getAccountNfts(td::JsonObject &params, std::string req_id, td::Promise<HttpReturn> promise) {
