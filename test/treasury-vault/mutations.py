@@ -66,6 +66,12 @@ MUTATIONS = (
         "send_raw_message(outgoing, 3);",
         "test_action_failure_rolls_back_accounting",
     ),
+    (
+        "cold_authority",
+        "throw_unless(tv::authority, equal_slice_bits(cold, v_cold));",
+        ";; removed cold authority immutability",
+        "test_cold_authority_is_immutable",
+    ),
 )
 
 

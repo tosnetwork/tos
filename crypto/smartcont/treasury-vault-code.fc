@@ -59,6 +59,7 @@ const int tv::overflow = 2420;
 const int tv::funding = 2421;
 const int tv::capacity = 2422;
 const int tv::encoding = 2423;
+const int tv::authority = 2424;
 
 int tv_global_id() asm "GLOBALID";
 int tv_level(cell c) asm "CLEVEL";
@@ -288,8 +289,11 @@ cell tv_pack_asset(int enabled, slice wallet, int per, int window, int total,
     s.end_parse();
     tv_validate_asset(id, enabled, wallet, per, window, total);
   } elseif (kind == 2) {
-    tv_read_roles(s~load_ref());
+    (_, _, slice cold, _) = tv_read_roles(s~load_ref());
     s.end_parse();
+    ;; The cold authority is fixed for the vault's lifetime; it rotates its own
+    ;; keys inside its multisig account, never through this contract.
+    throw_unless(tv::authority, equal_slice_bits(cold, v_cold));
   } elseif (kind == 3) {
     s.end_parse();
   } else {

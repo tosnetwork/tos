@@ -394,7 +394,7 @@ class TreasuryTests(unittest.TestCase):
 
     def test_role_change_invalidates_live_payment(self):
         v = self.vault()
-        changed = roles((0, 31), (0, 32), (0, 33), (0, 34))
+        changed = roles((0, 31), (0, 32), COLD, (0, 34))
         gov = v.queue(set_roles(changed))
         v.advance(DELAY - 1)
         old = v.propose()
@@ -434,6 +434,20 @@ class TreasuryTests(unittest.TestCase):
         bad = Cell().ref(Cell().addr(BUSINESS).addr(BUSINESS)).ref(Cell().addr(COLD).addr(PAUSER))
         v.send(envelope(SCHEDULE, v.req(set_roles(bad), admin=True)), COLD, expected=2403)
 
+    def test_cold_authority_is_immutable(self):
+        v = self.vault()
+        for changed in (
+            roles((0, 31), (0, 32), (0, 33), (0, 34)),
+            roles(BUSINESS, GUARDIAN, (0, 33), PAUSER),
+        ):
+            with self.subTest(roles=changed.hash.hex()):
+                req = v.req(set_roles(changed), admin=True)
+                v.send(envelope(SCHEDULE, req), COLD, expected=2424)
+        self.assertIsNone(v.state["admin"])
+        v.govern(set_roles(roles((0, 31), (0, 32), COLD, (0, 34))))
+        self.assertEqual(v.state["epoch"], 1)
+        v.send(v.ctl(PAUSE, admin=True), COLD)
+
     def test_pause_invalidates_both_pending_requests(self):
         v = self.vault()
         pay = v.propose()
@@ -450,12 +464,15 @@ class TreasuryTests(unittest.TestCase):
     def test_recovery_and_unpause_require_separate_delays(self):
         v = self.vault()
         v.send(v.ctl(PAUSE, admin=True), GUARDIAN)
-        new_business, new_guardian, new_cold, new_pauser = [(0, x) for x in range(31, 35)]
-        v.govern(set_roles(roles(new_business, new_guardian, new_cold, new_pauser)))
+        new_business, new_guardian, new_pauser = [(0, x) for x in range(31, 34)]
+        v.govern(set_roles(roles(new_business, new_guardian, COLD, new_pauser)))
         self.assertTrue(v.state["paused"])
         req = v.req(unpause(), admin=True)
-        v.send(envelope(SCHEDULE, req), COLD, expected=2401)
-        v.send(envelope(SCHEDULE, req), new_cold)
+        for retired in (GUARDIAN, PAUSER):
+            v.send(v.ctl(PAUSE, admin=True), retired, expected=2401)
+        v.send(envelope(SCHEDULE, req), COLD)
+        for retired in (GUARDIAN, PAUSER):
+            v.send(v.ctl(VETO, admin=True), retired, expected=2401)
         v.send(envelope(APPLY, req), expected=2418)
         v.advance(DELAY)
         v.send(envelope(APPLY, req))
