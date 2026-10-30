@@ -75,6 +75,7 @@ Tests must compile the current source and execute full transactions on the nativ
 - per-payment, window and cumulative ceilings, split payments and independent assets;
 - wrong chain/account/domain/epoch/nonce, expiry and malformed/trailing input;
 - no Token amount bypass via a small native gas attachment;
+- Token-side rejections in their own right: window and cumulative ceilings, disabled or unregistered Token IDs, a paused vault, a guardian message that does not fund the attachment plus the control fee, and raw payloads the developer codec would refuse (zero or oversized Token attachment, native payment with an attachment, zero amount) so the contract's own guards are the ones that fire;
 - management cannot execute early, hot roles cannot schedule it, veto and expiry work;
 - role changes invalidate old approvals; budget changes never reset cumulative spending;
 - the cold administrator cannot schedule its own replacement, even through a valid delayed request;

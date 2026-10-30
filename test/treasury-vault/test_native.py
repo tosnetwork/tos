@@ -352,6 +352,69 @@ class TreasuryTests(unittest.TestCase):
         self.assertEqual(v.data.hash, before)
         self.assertEqual(v.budget(TOKEN_ID)["cumulative"], 99)
 
+    def test_token_window_and_total_limits(self):
+        v = self.vault()
+        v.pay(payment(TOKEN_ID, 99, TARGET, COIN // 100))
+        req = v.propose(payment(TOKEN_ID, 60, TARGET, COIN // 100))
+        v.send(envelope(APPROVE, req), GUARDIAN, expected=2416)
+        v.send(v.ctl(CANCEL_PAYMENT), GUARDIAN)
+        v.advance(WINDOW)
+        v.pay(payment(TOKEN_ID, 99, TARGET, COIN // 100))
+        v.advance(WINDOW)
+        req = v.propose(payment(TOKEN_ID, 3, TARGET, COIN // 100))
+        v.send(envelope(APPROVE, req), GUARDIAN, expected=2417)
+        self.assertEqual(v.budget(TOKEN_ID)["cumulative"], 198)
+        self.assertEqual(v.budget()["cumulative"], 0)
+
+    def test_disabled_or_unregistered_token_cannot_pay(self):
+        disabled = asset_record(SOURCE_WALLET, 100, 150, 200, enabled=False)
+        for records in ({0: asset_record(), TOKEN_ID: disabled}, {0: asset_record()}):
+            v = self.vault(records=records)
+            req = v.propose(payment(TOKEN_ID, 1, TARGET, COIN // 100))
+            v.send(envelope(APPROVE, req), GUARDIAN, expected=2413)
+
+    def test_raw_payload_attachment_and_amount_guards(self):
+        # Build payloads the developer codec refuses, so the contract's own
+        # checks are the ones that reject them.
+        def raw(asset, amount, attachment):
+            return Cell().uint(asset, 256).coins(amount).addr(TARGET).coins(attachment)
+
+        cases = [
+            (raw(TOKEN_ID, 50, 0), 2421),
+            (raw(TOKEN_ID, 50, COIN + 1), 2421),
+            (raw(0, COIN, COIN // 100), 2421),
+            (raw(TOKEN_ID, 0, COIN // 100), 2414),
+            (raw(0, 0, 0), 2414),
+        ]
+        for payload, expected in cases:
+            with self.subTest(payload=payload.hash.hex()[:16], expected=expected):
+                v = self.vault()
+                v.send(envelope(SUBMIT, v.req(payload)), BUSINESS, expected=expected)
+                self.assertIsNone(v.state["payment"])
+
+    def test_token_attachment_must_be_funded_by_the_guardian(self):
+        v = self.vault()
+        req = v.propose(payment(TOKEN_ID, 50, TARGET, COIN // 2))
+        # 0.5 TOS cannot cover a 0.5 TOS attachment plus the 0.1 TOS control fee.
+        v.send(envelope(APPROVE, req), GUARDIAN, expected=2421, value=COIN // 2)
+        self.assertEqual(v.budget(TOKEN_ID)["cumulative"], 0)
+        self.assertEqual(v.state["payment"].hash, req.hash)
+        result = v.send(envelope(APPROVE, req), GUARDIAN, value=COIN)
+        self.assertEqual(decode_message(result[0])["value"], COIN // 2)
+        self.assertEqual(v.budget(TOKEN_ID)["cumulative"], 50)
+
+    def test_paused_vault_refuses_token_payments(self):
+        v = self.vault()
+        req = v.propose(payment(TOKEN_ID, 50, TARGET, COIN // 100))
+        v.send(v.ctl(PAUSE, admin=True), PAUSER)
+        v.send(envelope(APPROVE, req), GUARDIAN, expected=2404)
+        v.send(
+            envelope(SUBMIT, v.req(payment(TOKEN_ID, 1, TARGET, COIN // 100))),
+            BUSINESS,
+            expected=2404,
+        )
+        self.assertEqual(v.budget(TOKEN_ID)["cumulative"], 0)
+
     def test_disabled_or_unregistered_asset_cannot_pay(self):
         for records, asset in [({0: asset_record(enabled=False)}, 0), ({}, 0)]:
             v = self.vault(records=records)

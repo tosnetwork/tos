@@ -87,6 +87,30 @@ MUTATIONS = (
         "test_replaced_pauser_cannot_veto_its_replacement",
     ),
     (
+        "token_attachment_required",
+        "throw_unless(tv::funding, attachment > 0);",
+        ";; removed Token attachment requirement",
+        "test_raw_payload_attachment_and_amount_guards",
+    ),
+    (
+        "native_attachment_forbidden",
+        "throw_unless(tv::funding, attachment == 0);",
+        ";; removed native attachment prohibition",
+        "test_raw_payload_attachment_and_amount_guards",
+    ),
+    (
+        "attachment_funding",
+        "throw_unless(tv::funding, msg_value >= tv_checked_add(attachment, tv::control_value));",
+        ";; removed guardian attachment funding guard",
+        "test_token_attachment_must_be_funded_by_the_guardian",
+    ),
+    (
+        "window_limit_token",
+        "throw_unless(tv::window_limit, spent <= window);",
+        ";; removed window ceiling",
+        "test_token_window_and_total_limits",
+    ),
+    (
         "guardian_wallet",
         "throw_unless(tv::sender, equal_slice_bits(sender, v_guardian));",
         ";; removed guardian guard",
