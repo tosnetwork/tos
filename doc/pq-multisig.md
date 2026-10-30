@@ -30,7 +30,7 @@ Signers sign `pq_quorum::signing_hash(domain, account, seqno, valid_until, paylo
 - **Execute.** `payload` is an OutList of `send_msg` actions: 1 to 16 sends, modes within +1/+2/+128, each message an `int_msg_info` with source `addr_none`, no extra currencies, no StateInit, extra flags within 3. Sends run in signed order with +2 forced.
 - **Configure.** `payload` is `change:uint8` followed by `1 add stored_key:^Cell`, `2 remove key_id:uint256` or `3 quorum:uint8`. Changes are applied through the library's `with_added_verifier`, `with_removed_verifier` and `with_quorum`, so every invariant (at most 64 members, `0 < quorum <= min(count, 12)`, IDs matching keys, no duplicates, no set smaller than its quorum) is the library's. A change is authenticated by the quorum that held before it and takes effect immediately. A full replacement of the set is deliberately not offered: validating a large set does not fit beside a quorum verification in one transaction, so membership moves one key at a time.
 
-Unknown kinds, unknown changes, malformed or trailing data, an expired request, an exhausted sequence number and a request without enough relayed value are refused before any signature is verified, and a refused request leaves storage unchanged.
+An unknown kind or change, a malformed or trailing envelope, request, action list or change header, an expired request, an exhausted sequence number and a request without enough relayed value are refused before any signature is verified. The content of an added key is validated by the library after the quorum has been verified. Any refusal, before or after verification, aborts the transaction: storage is unchanged and nothing is sent.
 
 ## Funding
 

@@ -171,10 +171,12 @@ class PqMultisig:
         assert exit_code == 0, exit_code
         return values[0]
 
-    def signing_hash(self, kind, payload, valid_until, *, seqno=None, target=None, domain=None):
+    def signing_hash(
+        self, kind, payload, valid_until, *, seqno=None, target=None, domain=None, global_id=None
+    ):
         return (
             Cell()
-            .sint(GLOBAL_ID, 32)
+            .sint(GLOBAL_ID if global_id is None else global_id, 32)
             .uint(DOMAIN[kind] if domain is None else domain, 32)
             .addr(self.address if target is None else target)
             .uint(self.seqno if seqno is None else seqno, 64)
@@ -340,6 +342,7 @@ class PqColdTests(unittest.TestCase):
         cold.send_to_vault(v, body, expected=ERR["invalid_signature"], seqno=1)
         cold.send_to_vault(v, body, expected=ERR["invalid_signature"], target=self.business.address)
         cold.send_to_vault(v, body, expected=ERR["invalid_signature"], domain=DOMAIN[CONFIGURE])
+        cold.send_to_vault(v, body, expected=ERR["invalid_signature"], global_id=GLOBAL_ID + 1)
         payload = out_list([(1, relaxed(v.address, COIN // 2, body))])
         accepted = cold.submission(EXECUTE, payload, v.now + 600, [(21, 21), (22, 22)])
         self.deliver(cold.submit(v, EXECUTE, payload, body=accepted))
@@ -351,7 +354,29 @@ class PqColdTests(unittest.TestCase):
         v, cold = self.v, self.cold
         body = envelope(SCHEDULE, self.admin(set_asset(0)))
         message = relaxed(v.address, COIN // 2, body)
+        # The same message with this account named as its source instead of addr_none.
+        sourced = (
+            Cell()
+            .uint(0, 1)
+            .uint(1, 1)
+            .uint(0, 1)
+            .uint(0, 1)
+            .addr(cold.address)
+            .addr(v.address)
+            .coins(COIN // 2)
+            .uint(0, 1)
+            .coins(0)
+            .coins(0)
+            .uint(0, 64)
+            .uint(0, 32)
+            .uint(0, 1)
+            .uint(1, 1)
+            .ref(body)
+        )
+        set_code = Cell().ref(Cell()).uint(0xAD4DE08E, 32).uint(0, 8).ref(message)
         cases = [
+            (EXECUTE, out_list([(1, sourced)]), ERR["invalid_message"]),
+            (EXECUTE, set_code, ERR["invalid_action"]),
             (EXECUTE, out_list([(1, message)] * 17), ERR["invalid_action"]),
             (EXECUTE, out_list([]), ERR["invalid_action"]),
             (EXECUTE, out_list([(32, message)]), ERR["invalid_mode"]),
@@ -417,6 +442,31 @@ class PqColdTests(unittest.TestCase):
             verifications=0,
         )
         self.assertEqual(cold.seqno, 0)
+
+    def test_a_failed_send_is_skipped_but_a_refused_request_leaves_nothing(self):
+        v, cold = self.v, self.cold
+        body = envelope(SCHEDULE, self.admin(set_asset(0)))
+        # The first send asks for more than the account holds. Sends run with +2, so it is
+        # skipped, the sequence number is consumed and the rest of the batch still goes out.
+        payload = out_list(
+            [(1, relaxed(v.address, 1000 * COIN, body)), (1, relaxed(v.address, COIN // 2, body))]
+        )
+        messages = cold.submit(v, EXECUTE, payload, value=cold.quote(EXECUTE, 2))
+        self.assertEqual([decode_message(m)["value"] for m in messages], [COIN // 2])
+        self.assertEqual(cold.seqno, 1)
+        self.deliver(messages)
+        self.assertIsNotNone(v.state["admin"])
+        # A request refused in the compute phase aborts the whole transaction: no sequence
+        # number is consumed and nothing leaves the account, not even the relayer refund.
+        before = cold.data.hash
+        cold.send_to_vault(
+            v,
+            envelope(SCHEDULE, self.admin(set_asset(0))),
+            [(21, 21), (23, 22)],
+            expected=ERR["invalid_signature"],
+        )
+        self.assertEqual(cold.seqno, 1)
+        self.assertEqual(cold.data.hash, before)
 
     def test_funding_quote_is_exact_and_covers_measured_gas(self):
         v, cold = self.v, self.cold
