@@ -46,6 +46,17 @@ Payment payload fields are asset ID, asset units, canonical recipient and a boun
 
 Only one proposal may be pending. Its deadline is bounded and must leave time after the delay. Applying a change is permissionless after the delay but requires the exact queued request. Cancellation/veto consumes its nonce. Asset changes preserve existing accounting and cannot replace the source wallet. Role changes enforce pairwise separation and must keep the current cold administrator. Unpause is its own delayed change. No generic upgrade, recovery sweep or bypass is provided. Recovery consists of delayed replacement of the hot roles; loss of the final cold authority permanently impairs recovery, so operators must rehearse the cold multisig procedure. Any path that could move the cold authority would be equivalent to replacing the vault's code, and one deceived cold signature would then be unrecoverable; with a fixed cold address the honest quorum retains ultimate authority after any single bad signature.
 
+## Deviations from the original requirements
+
+The following points differ from the original requirement draft on purpose and are accepted for V1. They are design revisions, not omissions.
+
+| Item | Original draft | V1 | Note |
+|---|---|---|---|
+| Periodic budget | UTC calendar day | Fixed 24-hour window counted from its first debit | Not a sliding 24-hour limit; adjacent windows can permit a burst across their boundary. |
+| Token transfer gas | Debited from the vault's native budget | Supplied by the guardian with the approval message | The vault reserves its pre-message principal; the guardian's own operating balance and signing costs are not protected by vault budgets and need their own limits. |
+| Registered assets | 32 | 16 | Smaller V1 scope; the bound is enforced on chain. |
+| Pending payments | 1 | 1 | Unchanged; the vault is not a high-throughput withdrawal system. |
+
 ## Integration and deployment
 
 Provide deterministic request/state builders and getters for configuration, pending requests and budgets. Derive a fresh address from the new StateInit; do not suggest existing deployed wallets are upgraded by a source-code change. Verify the deployed code hash, all role addresses, chain ID, empty initial registry and counters before funding. Register supported assets through the cold delay, rehearse a small payment and a pause/recovery drill, then migrate bounded balances.

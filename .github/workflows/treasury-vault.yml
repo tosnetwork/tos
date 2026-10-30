@@ -13,7 +13,6 @@ on:
       - 'test/treasury-vault/**'
       - 'test/auth-extensions/cells.py'
       - 'test/auth-extensions/native.py'
-      - 'scripts/build-treasury-vault.py'
       - 'doc/treasury-vault-v1.md'
       - '.github/workflows/treasury-vault.yml'
 
