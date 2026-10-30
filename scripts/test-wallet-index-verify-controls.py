@@ -52,8 +52,16 @@ MUTATIONS = [
     ),
     (
         "handle-prev-trusted-over-the-bytes",
-        "(block.prev && block.handle_prev && block.prev.value() == block.handle_prev.value());",
-        "(true);",
+        [
+            # The preparation's walk and the block pass's walk each check it.
+            (
+                SOURCE,
+                "(block.prev && block.handle_prev && block.prev.value() == block.handle_prev.value());",
+                "(true);",
+                2,
+            ),
+        ],
+        None,
         ["WalletIndexVerify_a_lookup_error_or_an_unlinked_block_stops_the_walk_without_a_record"],
     ),
     (
@@ -156,16 +164,25 @@ MUTATIONS = [
 ]
 
 
-def edits(before, after) -> list[tuple[Path, str, str]]:
-    """A mutation's (file, anchor, replacement) edits.
+def edits(before, after) -> list[tuple[Path, str, str, int]]:
+    """A mutation's (file, anchor, replacement, occurrences) edits.
 
     `before` is one anchor in SOURCE replaced by `after`, or a list of
-    (anchor, replacement) pairs in SOURCE or (file, anchor, replacement)
-    triples.
+    (anchor, replacement) pairs in SOURCE, (file, anchor, replacement)
+    triples, or (file, anchor, replacement, occurrences) for a rule written
+    in more than one place, where every copy must be mutated.
     """
     if not isinstance(before, list):
-        return [(SOURCE, before, after)]
-    return [edit if len(edit) == 3 else (SOURCE, *edit) for edit in before]
+        return [(SOURCE, before, after, 1)]
+    out = []
+    for edit in before:
+        if len(edit) == 2:
+            out.append((SOURCE, edit[0], edit[1], 1))
+        elif len(edit) == 3:
+            out.append((*edit, 1))
+        else:
+            out.append(tuple(edit))
+    return out
 
 
 def build(build_dir: Path, jobs: int, log: Path) -> None:
@@ -203,9 +220,11 @@ def main() -> int:
         for path, data in originals.items()
     }
     for name, before, after, _ in MUTATIONS:
-        for path, anchor, _ in edits(before, after):
-            if originals[path].decode().count(anchor) != 1:
-                raise RuntimeError(f"mutation {name}: anchor is not unique in {path.name}")
+        for path, anchor, _, occurrences in edits(before, after):
+            if originals[path].decode().count(anchor) != occurrences:
+                raise RuntimeError(
+                    f"mutation {name}: anchor does not occur {occurrences} time(s) in {path.name}"
+                )
     tests = sorted({test for _, _, _, names in MUTATIONS for test in names})
     results = []
     failed = False
@@ -223,8 +242,8 @@ def main() -> int:
     try:
         for name, before, after, names in MUTATIONS:
             mutated = {path: data.decode() for path, data in originals.items()}
-            for path, anchor, replacement in edits(before, after):
-                mutated[path] = mutated[path].replace(anchor, replacement, 1)
+            for path, anchor, replacement, occurrences in edits(before, after):
+                mutated[path] = mutated[path].replace(anchor, replacement, occurrences)
             for path, text in mutated.items():
                 path.write_text(text)
             build(build_dir, args.jobs, log)
