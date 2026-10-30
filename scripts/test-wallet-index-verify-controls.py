@@ -23,6 +23,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "services/index-verify.cpp"
 HEADER = ROOT / "services/index-verify.h"
+WRITER = ROOT / "validator-engine/wallet-index-writer.cpp"
 TARGET = "test-wallet-index-source"
 
 MUTATIONS = [
@@ -131,6 +132,68 @@ MUTATIONS = [
         ["WalletIndexVerify_a_partial_index_holds_replay_at_the_head"],
     ),
     (
+        "ownership-derivation-skips-accounts-with-code",
+        [
+            (
+                WRITER,
+                "      case AccountAtHead::WithCode:\n        TRY_STATUS(derive_account(db, heads, index, key, step));",
+                "      case AccountAtHead::WithCode:\n        // skipped",
+            ),
+        ],
+        None,
+        ["WalletIndexVerify_ownership_is_derived_at_the_head_across_shards"],
+    ),
+    (
+        "undecodable-account-skipped",
+        [
+            (
+                WRITER,
+                "        TRY_STATUS(park_at_head(db, TokenKind::Fungible, key, heads.head(index).end_lt));\n"
+                "        TRY_STATUS(park_at_head(db, TokenKind::Nft, key, heads.head(index).end_lt));\n"
+                "        step.parked += 2;",
+                "        // skipped",
+            ),
+        ],
+        None,
+        ["WalletIndexVerify_an_undecodable_account_is_parked_at_its_shard_state"],
+    ),
+    (
+        "recorded-accounts-not-reconciled",
+        [(WRITER, "    if (at_head == AccountAtHead::WithCode) {", "    if (true) {")],
+        None,
+        ["WalletIndexVerify_recorded_ownership_of_accounts_gone_from_the_head_is_removed"],
+    ),
+    (
+        "full-despite-parked-candidates",
+        "  if (stats.entries != 0 || pending != 0 || stats.parked != 0) {",
+        "  if (stats.entries != 0 || pending != 0) {",
+        ["WalletIndexVerify_the_index_is_full_only_when_no_ownership_work_is_owed"],
+    ),
+    (
+        "fetcher-answers-another-state",
+        "        done(tos_wallet_index::Wc0NewestState{state.block_id, state.end_lt, state.root});",
+        "        done(tos_wallet_index::Wc0NewestState{state.block_id, state.end_lt + 1, state.root});",
+        ["WalletIndexVerify_the_pinned_fetcher_answers_with_the_head_states"],
+    ),
+    (
+        "pin-keeps-the-cached-state",
+        "  tos_wallet_index::release_wc0_index_state();\n  tos_wallet_index::set_wc0_index_state_fetcher(make_head_state_fetcher(std::move(states)));",
+        "  tos_wallet_index::set_wc0_index_state_fetcher(make_head_state_fetcher(std::move(states)));",
+        ["WalletIndexVerify_pinning_to_the_head_drops_an_older_cached_state"],
+    ),
+    (
+        "ownership-drain-holds-accounts-without-code",
+        [
+            (
+                WRITER,
+                "    if (g_ownership_work) {\n      state->treat_no_code_as_inactive();\n    }",
+                "",
+            )
+        ],
+        None,
+        ["WalletIndexVerify_the_ownership_drain_decides_a_parked_account_without_code"],
+    ),
+    (
         "every-row-at-the-checkpoint",
         "    TRY_STATUS(db.put_event_age(account, lt, table.seqno(lo)));",
         "    TRY_STATUS(db.put_event_age(account, lt, table.seqno(last)));",
@@ -214,7 +277,7 @@ def main() -> int:
     build_dir = args.build_dir.resolve()
     log = build_dir / "wallet-index-verify-controls.log"
     log.write_bytes(b"")
-    originals = {path: path.read_bytes() for path in (SOURCE, HEADER)}
+    originals = {path: path.read_bytes() for path in (SOURCE, HEADER, WRITER)}
     original_sha = {
         str(path.relative_to(ROOT)): hashlib.sha256(data).hexdigest()
         for path, data in originals.items()

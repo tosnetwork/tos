@@ -1217,6 +1217,73 @@ td::Result<td::optional<HashKey>> WalletIndexDb::next_unverified_account(const t
   return next_account_with_tag(*db_, kUnverifiedAccountTag, after);
 }
 
+td::Result<td::optional<HashKey>> WalletIndexDb::next_ownership_account(TokenKind kind,
+                                                                        const td::optional<HashKey>& after) {
+  return next_account_with_tag(*db_, kind == TokenKind::Fungible ? kTokenWalletTag : kNftOwnerTag, after);
+}
+
+namespace {
+// 0x00 0x32 + shard_be(8) -> version(1) started(1) complete(1) kind(1) next(32).
+constexpr size_t kOwnershipProgressLen = 4 + 32;
+std::string ownership_progress_key(uint64_t shard) {
+  char key[2 + 8];
+  key[0] = static_cast<char>(kMetaTag);
+  key[1] = static_cast<char>(kMetaOwnershipSub);
+  put_u64_be(key + 2, shard);
+  return std::string(key, sizeof(key));
+}
+}  // namespace
+
+td::Result<td::optional<WalletIndexDb::OwnershipProgress>> WalletIndexDb::ownership_progress(uint64_t shard) {
+  std::string value;
+  TRY_RESULT(status, db_->get(td::Slice{ownership_progress_key(shard)}, value));
+  if (status == td::KeyValue::GetStatus::NotFound) {
+    return td::optional<OwnershipProgress>{};
+  }
+  if (value.size() != kOwnershipProgressLen || value[0] != 1 || static_cast<uint8_t>(value[1]) > 1 ||
+      static_cast<uint8_t>(value[2]) > 1 || static_cast<uint8_t>(value[3]) > static_cast<uint8_t>(TokenKind::Nft)) {
+    return td::Status::Error("wc0-index: malformed ownership progress");
+  }
+  OwnershipProgress progress;
+  progress.started = value[1] == 1;
+  progress.complete = value[2] == 1;
+  progress.kind = static_cast<TokenKind>(value[3]);
+  std::memcpy(progress.next.data(), value.data() + 4, 32);
+  return td::optional<OwnershipProgress>(progress);
+}
+
+td::Status WalletIndexDb::put_ownership_progress(uint64_t shard, const OwnershipProgress& progress) {
+  if (!batch_open_) {
+    return td::Status::Error("wc0-index: ownership progress requires a write batch");
+  }
+  char value[kOwnershipProgressLen];
+  value[0] = 1;
+  value[1] = progress.started ? 1 : 0;
+  value[2] = progress.complete ? 1 : 0;
+  value[3] = static_cast<char>(progress.kind);
+  std::memcpy(value + 4, progress.next.data(), 32);
+  return db_->set(td::Slice{ownership_progress_key(shard)}, td::Slice{value, sizeof(value)});
+}
+
+td::Result<std::pair<uint64_t, uint64_t>> WalletIndexDb::reset_superseded_token_losses() {
+  if (!batch_open_) {
+    return td::Status::Error("wc0-index: resetting token losses requires a write batch");
+  }
+  TRY_RESULT(lost, get_meta_u64(kMetaTokenLostSub));
+  TRY_RESULT(unverifiable, get_meta_u64(kMetaTokenUnverifiableSub));
+  TRY_STATUS(put_meta_u64(kMetaTokenLostSub, 0));
+  TRY_STATUS(put_meta_u64(kMetaTokenUnverifiableSub, 0));
+  return std::make_pair(lost, unverifiable);
+}
+
+td::Status WalletIndexDb::add_lost_token_candidates_for_testing(uint64_t lost) {
+  if (!batch_open_) {
+    return td::Status::Error("wc0-index: counting lost candidates requires a write batch");
+  }
+  TRY_RESULT(stored, get_meta_u64(kMetaTokenLostSub));
+  return put_meta_u64(kMetaTokenLostSub, stored + lost);
+}
+
 td::Status WalletIndexDb::erase_unverified_account(const HashKey& account) {
   if (!batch_open_) {
     return td::Status::Error("wc0-index: erasing an unverified mark requires a write batch");

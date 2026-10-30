@@ -13,6 +13,7 @@
 #include "td/utils/optional.h"
 #include "tos/tos-types.h"
 #include "validator-engine/wallet-index-lineage.h"
+#include "validator-engine/wallet-index-writer.h"
 #include "validator-engine/wallet-index.h"
 
 namespace tos::services {
@@ -86,6 +87,8 @@ class VerifySource {
   virtual td::Result<std::unique_ptr<HeadAccounts>> accounts(const BlockIdExt& head) = 0;
   // The sorted root hashes of those shard states.
   virtual td::Result<std::vector<td::Bits256>> state_roots(const BlockIdExt& head) = 0;
+  // Those shard states themselves, each with its block and end lt.
+  virtual td::Result<std::vector<tos_wallet_index::OwnershipHeadState>> head_states(const BlockIdExt& head) = 0;
   // Every basechain transaction of the shard blocks masterchain block
   // `master` first referenced, each block's bytes checked against its
   // identity: (account, lt, transaction cell hash). `cancel` is checked
@@ -134,6 +137,8 @@ struct VerifyLimits {
   uint32_t authenticate_per_step = 1024;
   uint32_t intervals_per_step = 16;
   uint32_t compare_per_step = 1024;
+  // Accounts, or recorded accounts, the ownership derivation examines per step.
+  size_t ownership_per_step = 1024;
   // Rows the block pass may collect before it stops as over capacity.
   uint64_t collected_rows_max = uint64_t{64} << 20;
   // Memory one interval's collection may hold before it is committed: its
@@ -163,6 +168,9 @@ struct VerifyOutcome {
   uint64_t dropped = 0;
   // For the head check: accounts marked unverified.
   uint64_t unverified = 0;
+  // For the ownership step: the derivation is done and token work is still
+  // owed; the service drains it with H's states (drain_wc0_ownership).
+  bool drain = false;
 };
 
 // Step 1 above. Requires a Quarantined index without a verification record.
@@ -231,6 +239,34 @@ inline ServiceAction next_service_action(tos_wallet_index::VerificationState sta
   }
   return ServiceAction::Stop;
 }
+
+// One bounded step of the ownership derivation (stage 4b) at the verified
+// head H of a Partial index whose block pass is Done, replay still held:
+// 1. every account of each H shard state, in key order, through
+//    derive_ownership_range;
+// 2. the recorded token wallets, then NFT owners, of accounts not active with
+//    code at H, through reconcile_ownership_records;
+// 3. the token work owed (queued candidates, unfinished blocks, parked
+//    candidates): `drain` is set, and the service drains it against H's
+//    states only;
+// 4. when none is owed and nothing is degraded, the index becomes Full in
+//    one batch, the candidate losses H superseded being cleared.
+// Progress is per shard under the block pass's binding; H's state roots
+// must still be the bound ones. Returns Working (with `drain` when token work
+// is owed), Done when Full. Errors follow kVerifyTerminalError.
+td::Result<VerifyOutcome> run_ownership_step(tos_wallet_index::WalletIndexDb& db, VerifySource& source,
+                                             const VerifyLimits& limits = {},
+                                             const std::atomic<bool>* cancel = nullptr);
+
+// A state fetcher for the writer pinned to H's shard states: every token
+// retry reads H, never a newer state. Install it (after
+// release_wc0_index_state(), which drops the writer's cached state) for the
+// drain of step 3.
+tos_wallet_index::Wc0IndexStateFetcher make_head_state_fetcher(
+    std::vector<tos_wallet_index::OwnershipHeadState> states);
+// Pin the writer to H's states: drop the state it cached, then install the
+// pinned fetcher. The service does this before draining the token work.
+void pin_writer_to_head(std::vector<tos_wallet_index::OwnershipHeadState> states);
 
 // Reason codes stored with an unverified account (0x31).
 enum class UnverifiedReason : uint8_t { Absent = 1, StartsInWindow = 2 };

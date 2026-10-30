@@ -1222,6 +1222,9 @@ class ChainVerifySource final : public VerifySource {
   td::Result<std::vector<td::Bits256>> state_roots(const BlockIdExt&) override {
     return std::vector<td::Bits256>{td::Bits256::zero()};
   }
+  td::Result<std::vector<tos_wallet_index::OwnershipHeadState>> head_states(const BlockIdExt&) override {
+    return td::Status::Error(kVerifyTerminalError, "the fixture chain keeps no shard states");
+  }
   // The interval's shard blocks, walked by the production interval walk: a
   // block whose bytes the fixture lost is not held.
   td::Status for_each_interval_transaction(

@@ -374,8 +374,26 @@ answered with error -32004 carrying `"history_verified":false` in
 `index_state`. `/readyz` reports `verification` and `verified_horizon` (its
 masterchain seqno, generation time and the number of marked accounts). A
 refused index stays refused; import another snapshot into a fresh directory.
-After the block pass replay stays held: the index stays partial, and never
-ready, until ownership is derived at the head as well.
+After the block pass replay stays held while ownership is derived at the head:
+
+8. **Derive** the token and NFT ownership of every account with code in the
+   head's states, with the same getters replay runs, a master or collection
+   in another shard read at the same head. Verdicts carry the end lt of the
+   account's shard state. An account without code is skipped. An account
+   whose state does not decode, or a check that reaches no verdict, is
+   parked, never skipped.
+9. **Reconcile** every recorded token wallet and NFT owner whose account is
+   absent from the head, or holds no code there: its record is removed.
+10. **Drain** the token work still owed (queued and parked candidates, and
+    unfinished blocks) against the head's states only, never a newer one,
+    and without recovering any block's history.
+
+Only when none is owed, nothing is marked unverified, and the index records
+no gap or unfinished block, does it become **full**, in one batch. Candidate
+losses the derivation superseded are cleared then, and their counts are
+logged. A parked candidate that never resolves keeps the index partial and
+held, which `/readyz` reports. A full index is served without flags and
+replay resumes from the head.
 
 A source or database failure during verification is retried, 5 s after the
 first and doubling to at most 5 minutes; `/readyz` stays 503 and reports

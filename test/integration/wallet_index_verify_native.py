@@ -278,10 +278,6 @@ class Context:
 
 
 def until_full(status: int, body: JsonObject) -> bool:
-    if body.get("verification") == "partial" and body.get("verification_phase") == (
-        "ownership: not derived yet"
-    ):
-        raise Unavailable("the ownership derivation (stage 4b) is not in this build")
     return status == 200 and body.get("verification") == "full" and body.get("caught_up") is True
 
 

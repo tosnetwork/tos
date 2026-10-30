@@ -125,7 +125,7 @@ int main(int argc, char** argv) {
         return 2;
       }
       pass_done = done.ok();
-      gate.hold(pass_done ? "ownership: not derived yet" : "blocks: resuming");
+      gate.hold(pass_done ? "ownership: resuming" : "blocks: resuming");
       LOG(WARNING) << "the index was imported from an untrusted snapshot and is partly verified against this node; "
                    << (allow_partial ? "serving it with unverified answers flagged"
                                      : "not serving it until it is fully verified")
@@ -201,6 +201,8 @@ int main(int argc, char** argv) {
   std::thread worker([&] {
     auto verify_source = make_reader_verify_source(reader);
     std::string waiting;
+    // The writer's state fetcher is pinned to the verified head's states.
+    bool pinned_to_head = false;
     // A verification step failed. A terminal error stops the service; any
     // other is retried after a delay that grows to a cap, visible in /readyz
     // and logged at a bounded rate. Returns false when the service stops.
@@ -248,11 +250,53 @@ int main(int argc, char** argv) {
         break;
       }
       if (action == ServiceAction::HoldForOwnership) {
-        // The ownership derivation at the head is not implemented yet: the
-        // index stays partly verified and replay stays held.
-        gate.hold("ownership: not derived yet");
-        for (int i = 0; i < 10 && !stop_requested.load(); ++i)
-          std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        // Ownership derived at the verified head, replay still held.
+        auto outcome = run_ownership_step(*index_db, *verify_source, VerifyLimits{}, &stop_requested);
+        if (outcome.is_error()) {
+          if (stop_requested.load() || !verification_failed(outcome.error(), "deriving ownership at the head")) {
+            break;
+          }
+          continue;
+        }
+        gate.retry.succeeded();
+        auto& done = outcome.ok();
+        if (done.step == VerifyStep::Working) {
+          gate.hold(done.reason);
+          if (done.drain) {
+            if (!pinned_to_head) {
+              // Every retry of the token work reads the verified head's
+              // states, and no state the writer cached before.
+              auto checkpoint = index_db->replay_checkpoint();
+              if (checkpoint.is_error() || !checkpoint.ok()) {
+                LOG(ERROR) << "cannot read the verified head to pin its states";
+                stop_with(1);
+                break;
+              }
+              auto states = verify_source->head_states(checkpoint.ok().value().committed);
+              if (states.is_error()) {
+                if (!verification_failed(states.error(), "pinning the head's states")) {
+                  break;
+                }
+                continue;
+              }
+              pin_writer_to_head(states.move_as_ok());
+              pinned_to_head = true;
+            }
+            if (!tos_wallet_index::drain_wc0_ownership(&stop_requested)) {
+              for (int i = 0; i < 10 && !stop_requested.load(); ++i)
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
+          }
+          continue;
+        }
+        // Full: replay resumes, its token work against its own newest states.
+        tos_wallet_index::release_wc0_index_state();
+        tos_wallet_index::set_wc0_index_state_fetcher(
+            [&](const td::Bits256& address, auto done_fetch) { done_fetch(replay.newest(address)); });
+        pinned_to_head = false;
+        gate.set(tos_wallet_index::VerificationState::Full);
+        gate.release();
+        LOG(WARNING) << "the imported index is " << done.reason;
         continue;
       }
       if (action == ServiceAction::Prepare) {
@@ -318,9 +362,9 @@ int main(int argc, char** argv) {
           continue;
         }
         pass_done = true;
-        gate.hold("ownership: not derived yet");
-        LOG(WARNING) << "the window's blocks match the imported index; ownership is not yet derived, so it stays "
-                        "partly verified and replay stays held";
+        gate.hold("ownership: starting");
+        LOG(WARNING) << "the window's blocks match the imported index; deriving ownership at the head, replay "
+                        "held";
         continue;
       }
       auto status = replay.step();

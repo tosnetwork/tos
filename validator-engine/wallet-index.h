@@ -427,6 +427,29 @@ class WalletIndexDb {
   td::Result<td::optional<HashKey>> next_unverified_account(const td::optional<HashKey>& after);
   // Joins the current batch.
   td::Status erase_unverified_account(const HashKey& account);
+
+  // --- Ownership derivation at a verified head (services/index-verify.h) ---
+  // The first account after `after` (from the start when unset) with a token
+  // wallet record (0x17) or an NFT owner record (0x13), whatever it records.
+  td::Result<td::optional<HashKey>> next_ownership_account(TokenKind kind, const td::optional<HashKey>& after);
+  // Per-shard progress of the derivation, meta 0x00 0x32 + shard_be(8):
+  // the next account to derive and whether the shard is complete. Shard 0
+  // (no basechain shard) holds the reconciliation of recorded accounts:
+  // `kind` is the record kind it is at. put joins the current batch.
+  struct OwnershipProgress {
+    td::Bits256 next = td::Bits256::zero();
+    bool started = false;
+    bool complete = false;
+    TokenKind kind = TokenKind::Fungible;
+  };
+  td::Result<td::optional<OwnershipProgress>> ownership_progress(uint64_t shard);
+  td::Status put_ownership_progress(uint64_t shard, const OwnershipProgress& progress);
+  // Clear the candidate losses a derivation at the head superseded (every
+  // account with code there was derived again), returning their previous
+  // counts (lost, unverifiable). Joins the current batch.
+  td::Result<std::pair<uint64_t, uint64_t>> reset_superseded_token_losses();
+  // Tests only: count `lost` candidates given up (joins the current batch).
+  td::Status add_lost_token_candidates_for_testing(uint64_t lost);
   // Prune events outside the window (at most age_rows_added + drain of them),
   // within the current batch. Fails closed: any error -- including a base read
   // error, which must never fall back to 0 -- is returned so the caller aborts

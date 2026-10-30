@@ -87,12 +87,12 @@ def test_each_edit_changes_what_its_control_names():
     assert RECORDS.checkpoint(anchor).anchor != block(1)
 
 
-def test_a_partial_index_held_for_ownership_is_reported_as_unbuilt():
-    body = {"verification": "partial", "verification_phase": "ownership: not derived yet"}
-    with pytest.raises(RUNNER.Unavailable, match="stage 4b"):
-        RUNNER.until_full(503, body)
+def test_only_a_full_caught_up_index_ends_the_wait():
     assert RUNNER.until_full(200, {"verification": "full", "caught_up": True})
-    assert not RUNNER.until_full(503, {"verification": "partial", "verification_phase": "blocks"})
+    assert not RUNNER.until_full(
+        503, {"verification": "partial", "verification_phase": "ownership"}
+    )
+    assert not RUNNER.until_full(200, {"verification": "full", "caught_up": False})
 
 
 def test_every_planned_scenario_is_present_and_none_is_skipped():

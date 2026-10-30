@@ -292,6 +292,27 @@ class ReaderVerifySource final : public VerifySource {
     std::sort(roots.begin(), roots.end());
     return roots;
   }
+  td::Result<std::vector<tos_wallet_index::OwnershipHeadState>> head_states(const BlockIdExt& head) override {
+    TRY_RESULT(master, reader_.masterchain(head.seqno()));
+    if (master->id() != head) {
+      return terminal("the node's masterchain block differs from the verified head");
+    }
+    TRY_RESULT(heads, reader_.shard_heads(master));
+    std::vector<tos_wallet_index::OwnershipHeadState> states;
+    for (auto& id : heads) {
+      TRY_RESULT(handle, reader_.handle(id));
+      TRY_RESULT(root, reader_.state(handle));
+      block::gen::ShardStateUnsplit::Record state;
+      if (!tlb::unpack_cell(root, state)) {
+        return terminal("cannot decode a head shard state");
+      }
+      states.push_back({id, id.shard_full(), state.gen_lt, root});
+    }
+    if (states.empty()) {
+      return terminal("the verified head names no basechain shard");
+    }
+    return states;
+  }
   td::Status for_each_interval_transaction(
       const VerifyMasterchainBlock& master,
       const std::function<td::Status(const td::Bits256&, uint64_t, const td::Bits256&)>& cb,
@@ -1099,6 +1120,134 @@ td::Result<VerifyOutcome> run_block_pass_step(WalletIndexDb& db, VerifySource& s
     TRY_STATUS(batch.commit());
   }
   return working("blocks: comparing");
+}
+
+namespace {
+// Shard 0 holds the reconciliation's progress: no basechain shard has id 0.
+constexpr uint64_t kReconcileProgress = 0;
+}  // namespace
+
+td::Result<VerifyOutcome> run_ownership_step(WalletIndexDb& db, VerifySource& source, const VerifyLimits& limits,
+                                             const std::atomic<bool>* cancel) {
+  TRY_RESULT(binding, current_binding(db, source));
+  auto pass = db.block_pass_record();
+  if (pass.is_error()) {
+    return terminal(pass.error());
+  }
+  if (!pass.ok() || !same_binding(pass.ok().value(), binding) || pass.ok().value().phase != BlockPassPhase::Done) {
+    return terminal("the ownership derivation runs only after the block pass is complete");
+  }
+  TRY_RESULT(states, source.head_states(binding.head));
+  std::vector<td::Bits256> roots;
+  for (const auto& state : states) {
+    roots.push_back(state.root->get_hash().bits());
+  }
+  std::sort(roots.begin(), roots.end());
+  if (roots != binding.roots) {
+    return terminal("the verified head's shard states are not the bound ones");
+  }
+  std::sort(states.begin(), states.end(), [](const auto& a, const auto& b) { return a.shard < b.shard; });
+
+  // 1. Every account of each shard state.
+  for (size_t index = 0; index < states.size(); ++index) {
+    auto shard = states[index].shard.shard;
+    TRY_RESULT(stored, db.ownership_progress(shard));
+    auto progress = stored ? stored.value() : WalletIndexDb::OwnershipProgress{};
+    if (progress.complete) {
+      continue;
+    }
+    Batches batch(db, 1);
+    TRY_STATUS(batch.begin());
+    auto from = progress.started ? progress.next : td::Bits256::zero();
+    TRY_RESULT(step,
+               tos_wallet_index::derive_ownership_range(db, states, index, from, limits.ownership_per_step, cancel));
+    progress.started = true;
+    progress.complete = !step.next;
+    if (step.next) {
+      progress.next = step.next.value();
+    }
+    TRY_STATUS(db.put_ownership_progress(shard, progress));
+    TRY_STATUS(batch.commit());
+    return working(PSTRING() << "ownership: shard " << states[index].shard.to_str() << " at "
+                             << (step.next ? step.next.value().to_hex() : std::string("its end")));
+  }
+
+  // 2. The recorded accounts the derivation did not visit.
+  TRY_RESULT(stored, db.ownership_progress(kReconcileProgress));
+  auto progress = stored ? stored.value() : WalletIndexDb::OwnershipProgress{};
+  if (!progress.complete) {
+    Batches batch(db, 1);
+    TRY_STATUS(batch.begin());
+    auto after = progress.started ? td::optional<td::Bits256>(progress.next) : td::optional<td::Bits256>{};
+    TRY_RESULT(step, tos_wallet_index::reconcile_ownership_records(db, states, progress.kind, after,
+                                                                   limits.ownership_per_step, cancel));
+    if (step.next) {
+      progress.started = true;
+      progress.next = step.next.value();
+    } else if (progress.kind == tos_wallet_index::TokenKind::Fungible) {
+      progress = WalletIndexDb::OwnershipProgress{};
+      progress.kind = tos_wallet_index::TokenKind::Nft;
+    } else {
+      progress.complete = true;
+    }
+    TRY_STATUS(db.put_ownership_progress(kReconcileProgress, progress));
+    TRY_STATUS(batch.commit());
+    return working("ownership: reconciling recorded accounts");
+  }
+
+  // 3. The token work still owed, drained against H's states only.
+  TRY_RESULT(stats, db.token_backlog_stats());
+  if (stats.needs_rebuild) {
+    return terminal("the index records that a block may have gone unindexed; it needs a rebuild");
+  }
+  if (stats.unfinished_block) {
+    return terminal("the index holds a block marked unfinished; its history was not recovered before the block pass");
+  }
+  TRY_RESULT(pending, db.pending_block_count());
+  if (stats.entries != 0 || pending != 0 || stats.parked != 0) {
+    auto owed = working(PSTRING() << "ownership: obligations " << stats.entries << " queued, " << pending
+                                  << " unfinished blocks, " << stats.parked << " parked");
+    owed.drain = true;
+    return owed;
+  }
+  TRY_RESULT(unverified, db.next_unverified_account(td::optional<td::Bits256>{}));
+  if (unverified) {
+    return terminal("an account is still marked unverified after the block pass");
+  }
+
+  // 4. Full.
+  Batches batch(db, 1);
+  TRY_STATUS(batch.begin());
+  TRY_RESULT(superseded, db.reset_superseded_token_losses());
+  TRY_STATUS(db.put_verification_state(VerificationState::Full));
+  TRY_STATUS(batch.commit());
+  VerifyOutcome done;
+  done.step = VerifyStep::Done;
+  done.reason = PSTRING() << "fully verified; candidate losses superseded by the derivation at the head: "
+                          << superseded.first << " lost, " << superseded.second << " unverifiable";
+  return done;
+}
+
+tos_wallet_index::Wc0IndexStateFetcher make_head_state_fetcher(
+    std::vector<tos_wallet_index::OwnershipHeadState> states) {
+  return [states = std::move(states)](const td::Bits256& address,
+                                      std::function<void(td::Result<tos_wallet_index::Wc0NewestState>)> done) {
+    for (const auto& state : states) {
+      if (tos_wallet_index::wallet_index_state_contains(state.shard, address)) {
+        done(tos_wallet_index::Wc0NewestState{state.block_id, state.end_lt, state.root});
+        return;
+      }
+    }
+    // Never another state: a retry that finds none waits.
+    done(td::Status::Error("no head shard state holds the account"));
+  };
+}
+
+void pin_writer_to_head(std::vector<tos_wallet_index::OwnershipHeadState> states) {
+  // A state the writer cached before (from replay, older than H) would
+  // otherwise answer a pending block without the fetcher being asked.
+  tos_wallet_index::release_wc0_index_state();
+  tos_wallet_index::set_wc0_index_state_fetcher(make_head_state_fetcher(std::move(states)));
 }
 
 const char* verification_state_name(VerificationState state) {

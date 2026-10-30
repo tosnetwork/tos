@@ -13,6 +13,8 @@
 #include "vm/cells.h"
 #include "vm/vm.h"
 
+#include "wallet-index.h"
+
 namespace tos_wallet_index {
 
 constexpr long long kWalletIndexGetMethodGasLimit = 1'000'000;
@@ -97,6 +99,46 @@ Wc0IndexResult wc0_index_block(td::Ref<vm::Cell> block_root, td::Ref<vm::Cell> s
 bool drain_wc0_index(const std::atomic<bool>* cancelled = nullptr);
 // Release cached lazy source cells before destroying the source scheduler.
 void release_wc0_index_state();
+
+// --- Ownership derived at a verified head (services/index-verify.h) ---
+// One basechain shard state of the verified head H: every shard of H is
+// given, so a master or collection in another shard is read at the same
+// head. `end_lt` is the state's own end lt, the time its verdicts carry.
+struct OwnershipHeadState {
+  tos::BlockIdExt block_id;
+  tos::ShardIdFull shard;
+  uint64_t end_lt = 0;
+  td::Ref<vm::Cell> root;
+};
+struct OwnershipStep {
+  size_t examined = 0;
+  size_t verdicts = 0;
+  size_t parked = 0;
+  // The next account to examine; unset when the range is exhausted.
+  td::optional<td::Bits256> next;
+};
+// Derive, into the open batch, the token and NFT verdicts of the accounts of
+// `states[index]` from `from` on, at most `limit` of them: both verifiers run
+// on every account with code (no prefilter); an account without code is
+// skipped; an account whose state does not decode, or a verification that
+// reaches no verdict, is parked, never skipped. A negative verdict is
+// written only where a record exists to correct. Fails when parking is
+// full: nothing may be advanced past without its obligation.
+td::Result<OwnershipStep> derive_ownership_range(WalletIndexDb& db, const std::vector<OwnershipHeadState>& states,
+                                                 size_t index, const td::Bits256& from, size_t limit,
+                                                 const std::atomic<bool>* cancelled);
+// Reconcile, into the open batch, the recorded ownership (token wallet
+// records for Fungible, NFT owner records for Nft) of accounts after
+// `after` that are not active with code at H, at most `limit` of them: the
+// derivation never visits them, so a record left by a missed deletion is
+// removed here. One whose state does not decode is parked.
+td::Result<OwnershipStep> reconcile_ownership_records(WalletIndexDb& db, const std::vector<OwnershipHeadState>& states,
+                                                      TokenKind kind, const td::optional<td::Bits256>& after,
+                                                      size_t limit, const std::atomic<bool>* cancelled);
+// One drain of the token work only: queued candidates, unfinished blocks and
+// parked retries, never the recovery of marked blocks (which writes
+// history). Returns whether anything moved.
+bool drain_wc0_ownership(const std::atomic<bool>* cancelled = nullptr);
 
 // Blocks waiting to be indexed at most. Each holds its block and state cells.
 constexpr size_t kWc0IndexQueueCapacity = 256;

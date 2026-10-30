@@ -263,14 +263,22 @@ inline Contract nft_collection(const td::Bits256 &address, const td::Bits256 &it
   return Contract{address, code.finalize(), vm::CellBuilder{}.store_long(5, 8).finalize()};
 }
 
-// The post-apply state of the whole basechain holding `contracts`.
-inline td::Ref<vm::Cell> shard_state(const std::vector<Contract> &contracts) {
+// The post-apply state of the whole basechain holding `contracts`, and
+// `raw` accounts given as their Account cells (for one that does not decode).
+inline td::Ref<vm::Cell> shard_state(const std::vector<Contract> &contracts,
+                                     const std::vector<std::pair<td::Bits256, td::Ref<vm::Cell>>> &raw = {}) {
   vm::AugmentedDictionary accounts{256, block::tlb::aug_ShardAccounts};
-  for (const auto &contract : contracts) {
+  auto add = [&](const td::Bits256 &address, td::Ref<vm::Cell> account_cell) {
     vm::CellBuilder cb;
-    require(cb.store_ref_bool(account(contract)) && cb.store_zeroes_bool(256 + 64) &&
-                accounts.set_builder(contract.address.bits(), 256, cb, vm::Dictionary::SetMode::Add),
+    require(cb.store_ref_bool(std::move(account_cell)) && cb.store_zeroes_bool(256 + 64) &&
+                accounts.set_builder(address.bits(), 256, cb, vm::Dictionary::SetMode::Add),
             "shard account");
+  };
+  for (const auto &contract : contracts) {
+    add(contract.address, account(contract));
+  }
+  for (const auto &[address, account_cell] : raw) {
+    add(address, account_cell);
   }
   vm::CellBuilder accounts_cb;
   require(std::move(accounts).append_dict_to_bool(accounts_cb), "accounts root");

@@ -2,6 +2,8 @@
 // Verification of an imported wallet index against the local node's chain:
 // the window walk, the age keys it assigns, and the check at the head, over a
 // fixture source and a real index database.
+#include <algorithm>
+#include <chrono>
 #include <functional>
 #include <map>
 #include <memory>
@@ -12,11 +14,16 @@
 #include <vector>
 
 #include "services/index-verify.h"
+#include "td/utils/crypto.h"
 #include "td/utils/filesystem.h"
 #include "td/utils/port/path.h"
 #include "td/utils/tests.h"
+#include "validator-engine/wallet-index-writer.h"
 #include "validator-engine/wallet-index.h"
+#include "vm/boc.h"
 #include "vm/cells/CellBuilder.h"
+
+#include "wallet-index-chain-fixture.h"
 
 namespace {
 using tos::BlockIdExt;
@@ -167,7 +174,21 @@ struct FixtureSource final : public VerifySource {
     if (head != master_id(head.seqno())) {
       return td::Status::Error("no such head");
     }
-    return std::vector<td::Bits256>{root};
+    if (states.empty()) {
+      return std::vector<td::Bits256>{root};
+    }
+    std::vector<td::Bits256> roots;
+    for (auto& state : states) {
+      roots.push_back(state.root->get_hash().bits());
+    }
+    std::sort(roots.begin(), roots.end());
+    return roots;
+  }
+  td::Result<std::vector<tos_wallet_index::OwnershipHeadState>> head_states(const BlockIdExt& head) override {
+    if (head != master_id(head.seqno()) || states.empty()) {
+      return td::Status::Error("no head states");
+    }
+    return states;
   }
   td::Status for_each_interval_transaction(
       const VerifyMasterchainBlock& master,
@@ -193,6 +214,8 @@ struct FixtureSource final : public VerifySource {
   }
   td::Bits256 root = td::Bits256::zero();
   std::map<uint32_t, std::vector<std::tuple<td::Bits256, uint64_t, td::Bits256>>> intervals;
+  // H's basechain shard states, for the ownership derivation.
+  std::vector<tos_wallet_index::OwnershipHeadState> states;
   uint32_t tip_seqno;
   // The head state's walk fails this many times before it succeeds.
   std::shared_ptr<int> walk_failures = std::make_shared<int>(0);
@@ -902,6 +925,479 @@ TEST(WalletIndexVerify, a_partial_index_holds_replay_at_the_head) {
   }
   ASSERT_TRUE(next_service_action(VerificationState::Quarantined, false, false) == ServiceAction::Prepare);
   ASSERT_TRUE(next_service_action(VerificationState::Quarantined, true, false) == ServiceAction::Replay);
+}
+
+namespace {
+using tos_wallet_index::OwnershipHeadState;
+namespace fixture = wallet_index_fixture;
+
+// A token value as the index stores it: the wallet and the verdict's lt.
+td::Ref<vm::Cell> token_value(const td::Bits256& wallet, uint64_t lt) {
+  vm::CellBuilder cb;
+  CHECK(cb.store_bits_bool(wallet.cbits(), 256) && cb.store_long_bool(static_cast<long long>(lt), 64));
+  return cb.finalize();
+}
+
+void record_token(WalletIndexDb& db, const td::Bits256& wallet, const td::Bits256& owner, const td::Bits256& master,
+                  uint64_t lt) {
+  std::lock_guard<std::mutex> guard(db.write_mutex());
+  db.begin_batch().ensure();
+  CHECK(tos_wallet_index::record_token_wallet_check(db, wallet, tos_wallet_index::TokenWalletCheck::Verified, owner,
+                                                    master, token_value(wallet, lt),
+                                                    lt) == tos_wallet_index::TokenVerifyOutcome::Done);
+  db.commit_batch().ensure();
+}
+
+void record_nft(WalletIndexDb& db, const td::Bits256& item, const td::Bits256& owner, uint64_t lt) {
+  std::lock_guard<std::mutex> guard(db.write_mutex());
+  db.begin_batch().ensure();
+  db.apply_nft_verdict(item, WalletIndexDb::NftVerdict{true, owner, token_value(item, lt)}, lt).ensure();
+  db.commit_batch().ensure();
+}
+
+// An account whose getters cannot run: active, with code but no data, as
+// valid TL-B (the state's balance still evaluates) that neither the writer's
+// loader nor the derivation can run a getter on.
+td::Ref<vm::Cell> undecodable_account(const td::Bits256& address) {
+  vm::CellBuilder cb;
+  CHECK(cb.store_long_bool(1, 1) && cb.store_long_bool(4, 3) && cb.store_long_bool(0, 8) &&
+        cb.store_bits_bool(address.cbits(), 256) && cb.store_long_bool(0, 3) && cb.store_long_bool(0, 3) &&
+        cb.store_long_bool(0, 3) && cb.store_long_bool(0, 32) && cb.store_long_bool(0, 1) &&
+        cb.store_long_bool(0, 64) && cb.store_long_bool(0, 4) && cb.store_long_bool(0, 1) &&
+        cb.store_long_bool(1, 1)                                 // account_active
+        && cb.store_long_bool(0, 1) && cb.store_long_bool(0, 1)  // fixed_prefix_length, special
+        && cb.store_long_bool(1, 1) && cb.store_ref_bool(vm::CellBuilder{}.store_long(0x30, 8).finalize())  // code
+        && cb.store_long_bool(0, 1)                                                                         // no data
+        && cb.store_long_bool(0, 1));                                                                       // library
+  return cb.finalize();
+}
+
+BlockIdExt shard_block(uint64_t shard, uint32_t seqno) {
+  td::Bits256 root = td::Bits256::zero(), file = td::Bits256::zero();
+  root.as_slice()[0] = static_cast<char>(seqno);
+  root.as_slice()[1] = static_cast<char>(shard >> 56);
+  file.as_slice()[0] = 1;
+  return BlockIdExt{0, shard, seqno, root, file};
+}
+
+// Two halves of the basechain at the head: the left one ends at 6000, the
+// right one at 6100.
+std::vector<OwnershipHeadState> halves(td::Ref<vm::Cell> left, td::Ref<vm::Cell> right) {
+  return {OwnershipHeadState{shard_block(kLeft, 40), ShardIdFull{0, kLeft}, 6000, std::move(left)},
+          OwnershipHeadState{shard_block(kRight, 41), ShardIdFull{0, kRight}, 6100, std::move(right)}};
+}
+
+tos_wallet_index::OwnershipStep derive_all(WalletIndexDb& db, const std::vector<OwnershipHeadState>& states,
+                                           size_t limit = 1000) {
+  tos_wallet_index::OwnershipStep total;
+  for (size_t index = 0; index < states.size(); ++index) {
+    auto from = td::Bits256::zero();
+    for (;;) {
+      std::lock_guard<std::mutex> guard(db.write_mutex());
+      db.begin_batch().ensure();
+      auto step = tos_wallet_index::derive_ownership_range(db, states, index, from, limit, nullptr).move_as_ok();
+      db.commit_batch().ensure();
+      total.examined += step.examined;
+      total.verdicts += step.verdicts;
+      total.parked += step.parked;
+      if (!step.next) {
+        break;
+      }
+      from = step.next.value();
+    }
+  }
+  return total;
+}
+
+void reconcile_all(WalletIndexDb& db, const std::vector<OwnershipHeadState>& states) {
+  for (auto kind : {tos_wallet_index::TokenKind::Fungible, tos_wallet_index::TokenKind::Nft}) {
+    td::optional<td::Bits256> after;
+    for (;;) {
+      std::lock_guard<std::mutex> guard(db.write_mutex());
+      db.begin_batch().ensure();
+      auto step = tos_wallet_index::reconcile_ownership_records(db, states, kind, after, 1, nullptr).move_as_ok();
+      db.commit_batch().ensure();
+      if (!step.next) {
+        break;
+      }
+      after = step.next;
+    }
+  }
+}
+}  // namespace
+
+// Ownership is derived from the head's states: a token wallet whose master
+// is in the other shard, and an NFT whose collection is, verify at their
+// shard state's end lt; a verdict replay left below that lt is replaced, one
+// above it is kept; a contract that is no token wallet leaves no record.
+TEST(WalletIndexVerify, ownership_is_derived_at_the_head_across_shards) {
+  TempIndex index;
+  auto owner = address(0x05), stale_owner = address(0x06);
+  auto wallet = address(0x10), other_wallet = address(0x11), item = address(0x12);
+  auto master = address(0x90), collection = address(0x91);
+  auto states =
+      halves(fixture::shard_state({fixture::token_wallet(wallet, owner, master),
+                                   fixture::token_wallet(other_wallet, owner, master),
+                                   fixture::nft_item(item, collection, owner)}),
+             fixture::shard_state({fixture::token_master(master, wallet), fixture::nft_collection(collection, item)}));
+  record_token(*index.db, wallet, stale_owner, master, 100);
+  record_token(*index.db, other_wallet, owner, master, 9000);
+  auto total = derive_all(*index.db, states);
+  ASSERT_EQ(total.examined, 5u);
+  ASSERT_EQ(total.parked, 0u);
+  auto derived = index.db->token_wallet_state(wallet).move_as_ok();
+  ASSERT_TRUE(derived && derived.value().present && derived.value().owner == owner && derived.value().lt == 6000);
+  // The master resolves the owner to `wallet`, not to `other_wallet`: that
+  // one is rejected at 6000, but its record from 9000 is newer and stays.
+  auto kept = index.db->token_wallet_state(other_wallet).move_as_ok();
+  ASSERT_TRUE(kept && kept.value().present && kept.value().lt == 9000);
+  td::Bits256 nft_owner;
+  ASSERT_TRUE(index.db->get_nft_owner(item, nft_owner).move_as_ok() && nft_owner == owner);
+  ASSERT_TRUE(!index.db->has_token_wallet_record(master).move_as_ok());
+  ASSERT_TRUE(!index.db->has_token_wallet_record(collection).move_as_ok());
+}
+
+// A recorded token wallet or NFT whose account is gone from the head, or
+// holds no code there, is removed by the reconciliation: the derivation
+// never visits it.
+TEST(WalletIndexVerify, recorded_ownership_of_accounts_gone_from_the_head_is_removed) {
+  TempIndex index;
+  auto owner = address(0x05), gone = address(0x14), codeless = address(0x15), item = address(0x16);
+  auto states = halves(fixture::shard_state({fixture::without_code(codeless)}), fixture::shard_state({}));
+  record_token(*index.db, gone, owner, address(0x90), 100);
+  record_token(*index.db, codeless, owner, address(0x90), 100);
+  record_nft(*index.db, item, owner, 100);
+  ASSERT_EQ(derive_all(*index.db, states).verdicts, 0u);
+  reconcile_all(*index.db, states);
+  for (auto& account : {gone, codeless}) {
+    auto state = index.db->token_wallet_state(account).move_as_ok();
+    ASSERT_TRUE(state && !state.value().present);
+  }
+  td::Bits256 nft_owner;
+  ASSERT_TRUE(!index.db->get_nft_owner(item, nft_owner).move_as_ok());
+}
+
+// An account whose state does not decode is never skipped: both of its
+// verifications are parked, at its shard state's end lt (not the
+// masterchain head's), and the range goes on after it.
+TEST(WalletIndexVerify, an_undecodable_account_is_parked_at_its_shard_state) {
+  TempIndex index;
+  auto broken = address(0x20), wallet = address(0x21), owner = address(0x05), master = address(0x90);
+  auto states = halves(
+      fixture::shard_state({fixture::token_wallet(wallet, owner, master)}, {{broken, undecodable_account(broken)}}),
+      fixture::shard_state({fixture::token_master(master, wallet)}));
+  auto total = derive_all(*index.db, states, 1);
+  ASSERT_EQ(total.parked, 2u);
+  ASSERT_TRUE(index.db->token_wallet_state(wallet).move_as_ok().value().present);
+  ASSERT_EQ(index.db->token_backlog_stats().move_as_ok().parked, 2u);
+  // Reading the parked candidates takes a token pass, as the writer's retry does.
+  bool wrapped = false;
+  std::vector<tos_wallet_index::ScheduledTokenCandidate> parked;
+  {
+    std::lock_guard<std::mutex> guard(index.db->write_mutex());
+    index.db->begin_batch().ensure();
+    index.db->begin_token_pass().ensure();
+    parked = index.db->next_parked_token_candidates(10, wrapped).move_as_ok();
+    index.db->abort_batch();
+  }
+  ASSERT_EQ(parked.size(), 2u);
+  for (auto& entry : parked) {
+    ASSERT_TRUE(entry.candidate.address == broken);
+    ASSERT_EQ(entry.lt, 6000u);
+  }
+}
+
+// The writer's retries during the hold read the head's states only.
+TEST(WalletIndexVerify, the_pinned_fetcher_answers_with_the_head_states) {
+  auto states = halves(fixture::shard_state({}), fixture::shard_state({}));
+  auto fetcher = tos::services::make_head_state_fetcher(states);
+  for (auto [account, end_lt] :
+       {std::pair<td::Bits256, uint64_t>{address(0x10), 6000}, std::pair<td::Bits256, uint64_t>{address(0x90), 6100}}) {
+    td::optional<tos_wallet_index::Wc0NewestState> answer;
+    fetcher(account, [&](td::Result<tos_wallet_index::Wc0NewestState> result) { answer = result.move_as_ok(); });
+    ASSERT_TRUE(answer && answer.value().end_lt == end_lt);
+    ASSERT_TRUE(answer.value().state_root->get_hash() == states[end_lt == 6000 ? 0 : 1].root->get_hash());
+  }
+}
+
+namespace {
+// A HeadCase through its block pass, its head states set.
+void passed(HeadCase& c, TempIndex& index, std::vector<OwnershipHeadState> states) {
+  c.source.states = std::move(states);
+  verified(c, index);
+  CHECK(pass_to_end(index, c.source).move_as_ok().step == VerifyStep::Done);
+}
+
+td::Result<tos::services::VerifyOutcome> ownership_to_end(TempIndex& index, FixtureSource& source,
+                                                          const VerifyLimits& limits = {}, int max_steps = 100000) {
+  td::optional<tos::services::VerifyOutcome> last;
+  for (int i = 0; i < max_steps; ++i) {
+    TRY_RESULT(outcome, tos::services::run_ownership_step(*index.db, source, limits));
+    if (outcome.step != VerifyStep::Working || outcome.drain) {
+      return outcome;
+    }
+    last = std::move(outcome);
+  }
+  // Stopped after `max_steps` working steps: the last one.
+  if (!last) {
+    return td::Status::Error("no ownership step ran");
+  }
+  return last.value();
+}
+}  // namespace
+
+// The index becomes Full only when the derivation and the reconciliation
+// are done and no token work is owed; a parked candidate keeps it Partial,
+// held, with the drain owed.
+TEST(WalletIndexVerify, the_index_is_full_only_when_no_ownership_work_is_owed) {
+  {
+    HeadCase c;
+    TempIndex index;
+    auto wallet = address(0x10), owner = address(0x05), master = address(0x90);
+    passed(c, index,
+           halves(fixture::shard_state({fixture::token_wallet(wallet, owner, master)}),
+                  fixture::shard_state({fixture::token_master(master, wallet)})));
+    auto outcome = ownership_to_end(index, c.source).move_as_ok();
+    ASSERT_TRUE(outcome.step == VerifyStep::Done);
+    ASSERT_TRUE(index.state() == VerificationState::Full);
+    ASSERT_TRUE(index.db->token_wallet_state(wallet).move_as_ok().value().present);
+  }
+  {
+    HeadCase c;
+    TempIndex index;
+    auto broken = address(0x20);
+    passed(c, index,
+           halves(fixture::shard_state({}, {{broken, undecodable_account(broken)}}), fixture::shard_state({})));
+    auto outcome = ownership_to_end(index, c.source).move_as_ok();
+    ASSERT_TRUE(outcome.step == VerifyStep::Working && outcome.drain);
+    ASSERT_TRUE(contains(outcome.reason, "2 parked"));
+    ASSERT_TRUE(index.state() == VerificationState::Partial);
+    // Draining cannot decide an account that does not decode: still owed.
+    auto again = tos::services::run_ownership_step(*index.db, c.source).move_as_ok();
+    ASSERT_TRUE(again.drain && index.state() == VerificationState::Partial);
+  }
+  {
+    // The head's states changed from the bound ones: never Full.
+    HeadCase c;
+    TempIndex index;
+    passed(c, index, halves(fixture::shard_state({}), fixture::shard_state({})));
+    c.source.states[0].root = fixture::shard_state({fixture::without_code(address(0x33))});
+    auto outcome = tos::services::run_ownership_step(*index.db, c.source);
+    ASSERT_TRUE(outcome.is_error() && tos::services::is_terminal_verify_error(outcome.error()));
+    ASSERT_TRUE(index.state() == VerificationState::Partial);
+  }
+}
+
+namespace {
+// The index of `index`, installed as the process's wallet index for the
+// writer's drain, and given back when the scope ends.
+struct Installed {
+  explicit Installed(TempIndex& index) : index_(index) {
+    tos_wallet_index::set_wallet_index_db(std::move(index.db));
+    tos_wallet_index::set_wc0_index_parked_retry_pause_for_testing(std::chrono::milliseconds(0));
+  }
+  ~Installed() {
+    tos_wallet_index::set_wc0_index_state_fetcher(nullptr);
+    tos_wallet_index::release_wc0_index_state();
+    tos_wallet_index::set_wallet_index_db(nullptr);
+    index_.db = WalletIndexDb::open(index_.dir + "/index").move_as_ok();
+  }
+  WalletIndexDb& db() {
+    return *tos_wallet_index::wallet_index_db();
+  }
+  TempIndex& index_;
+};
+
+std::vector<OwnershipHeadState> whole(td::Ref<vm::Cell> root, uint64_t end_lt = 6000) {
+  return {OwnershipHeadState{shard_block(kAll, 40), ShardIdFull{0, kAll}, end_lt, std::move(root)}};
+}
+}  // namespace
+
+// A candidate already parked for an account that is active without code at
+// the head is decided by the ownership drain (nothing to run, so no token
+// wallet), not held forever as indeterminate.
+TEST(WalletIndexVerify, the_ownership_drain_decides_a_parked_account_without_code) {
+  TempIndex index;
+  auto codeless = address(0x15);
+  Installed installed(index);
+  auto& db = installed.db();
+  {
+    std::lock_guard<std::mutex> guard(db.write_mutex());
+    db.begin_batch().ensure();
+    db.begin_token_pass().ensure();
+    tos_wallet_index::ScheduledTokenCandidate scheduled{
+        tos_wallet_index::TokenCandidate{tos_wallet_index::TokenKind::Fungible, codeless},
+        tos_wallet_index::kMaxTokenCandidateAttempts, 6000};
+    ASSERT_TRUE(db.park_token_candidate(scheduled).move_as_ok());
+    db.save_token_counters().ensure();
+    db.commit_batch().ensure();
+  }
+  ASSERT_EQ(db.token_backlog_stats().move_as_ok().parked, 1u);
+  tos::services::pin_writer_to_head(whole(fixture::shard_state({fixture::without_code(codeless)})));
+  for (int i = 0; i < 100 && db.token_backlog_stats().move_as_ok().parked != 0; ++i) {
+    tos_wallet_index::drain_wc0_ownership(nullptr);
+  }
+  ASSERT_EQ(db.token_backlog_stats().move_as_ok().parked, 0u);
+}
+
+// The pin drops the state the writer cached from replay: a pending block,
+// which takes a cached state new enough for it before asking the fetcher,
+// is verified at the head, not at that older state.
+TEST(WalletIndexVerify, pinning_to_the_head_drops_an_older_cached_state) {
+  TempIndex index;
+  auto wallet = address(0x10), master = address(0x30), old_owner = address(0x05), owner = address(0x06);
+  Installed installed(index);
+  auto& db = installed.db();
+  auto old_state =
+      fixture::shard_state({fixture::token_wallet(wallet, old_owner, master), fixture::token_master(master, wallet)});
+  // Replay indexed a block with its state: the writer now caches that state.
+  auto replayed = fixture::block(5, 5000, 1000, {});
+  auto boc = vm::std_boc_serialize(replayed, 31).move_as_ok();
+  td::Bits256 file_hash;
+  td::sha256(boc.as_slice(), file_hash.as_slice());
+  BlockIdExt replayed_id{0, kAll, 5, replayed->get_hash().bits(), file_hash};
+  ASSERT_TRUE(tos_wallet_index::wc0_index_block(replayed, old_state, replayed_id, true, 5) ==
+              tos_wallet_index::Wc0IndexResult::Done);
+  {
+    std::lock_guard<std::mutex> guard(db.write_mutex());
+    db.begin_batch().ensure();
+    WalletIndexDb::PendingBlock pending;
+    pending.end_lt = 1000;
+    pending.remaining.push_back(tos_wallet_index::ScheduledTokenCandidate{
+        tos_wallet_index::TokenCandidate{tos_wallet_index::TokenKind::Fungible, wallet}, 0, 1000});
+    db.put_pending_block(shard_block(kAll, 3), pending).ensure();
+    db.commit_batch().ensure();
+  }
+  tos::services::pin_writer_to_head(whole(
+      fixture::shard_state({fixture::token_wallet(wallet, owner, master), fixture::token_master(master, wallet)})));
+  for (int i = 0; i < 100 && db.pending_block_count().move_as_ok() != 0; ++i) {
+    tos_wallet_index::drain_wc0_ownership(nullptr);
+  }
+  ASSERT_EQ(db.pending_block_count().move_as_ok(), 0u);
+  auto state = db.token_wallet_state(wallet).move_as_ok();
+  ASSERT_TRUE(state && state.value().present && state.value().owner == owner && state.value().lt == 6000);
+}
+
+// The derivation interrupted after any committed step, and the index
+// reopened, ends with the same verdicts as an uninterrupted one.
+TEST(WalletIndexVerify, an_interrupted_derivation_resumes_from_its_progress) {
+  auto owner = address(0x05), master = address(0x90);
+  auto states = halves(
+      fixture::shard_state({fixture::token_wallet(address(0x10), owner, master),
+                            fixture::token_wallet(address(0x11), owner, master), fixture::without_code(address(0x12))}),
+      fixture::shard_state({fixture::token_master(master, address(0x11))}));
+  HeadCase straight_case, stepped_case;
+  TempIndex straight, stepped;
+  passed(straight_case, straight, states);
+  passed(stepped_case, stepped, states);
+  ASSERT_TRUE(ownership_to_end(straight, straight_case.source).move_as_ok().step == VerifyStep::Done);
+  VerifyLimits one;
+  one.ownership_per_step = 1;
+  ASSERT_TRUE(ownership_to_end(stepped, stepped_case.source, one, 3).move_as_ok().step == VerifyStep::Working);
+  stepped.db.reset();
+  stepped.db = WalletIndexDb::open(stepped.dir + "/index").move_as_ok();
+  ASSERT_TRUE(ownership_to_end(stepped, stepped_case.source, one).move_as_ok().step == VerifyStep::Done);
+  for (auto& account : {address(0x10), address(0x11), address(0x12)}) {
+    auto a = straight.db->token_wallet_state(account).move_as_ok();
+    auto b = stepped.db->token_wallet_state(account).move_as_ok();
+    ASSERT_EQ(static_cast<bool>(a), static_cast<bool>(b));
+    if (a) {
+      ASSERT_TRUE(a.value().present == b.value().present && a.value().owner == b.value().owner &&
+                  a.value().lt == b.value().lt);
+    }
+  }
+}
+
+// Each obligation withholds Full on its own: queued and pending token work
+// keep the index held with the drain owed; an unfinished block or a needed
+// rebuild stop it as terminal; candidate losses the derivation superseded do
+// not, and are cleared when it becomes Full.
+TEST(WalletIndexVerify, every_obligation_withholds_full_on_its_own) {
+  auto states = [] { return halves(fixture::shard_state({}), fixture::shard_state({})); };
+  auto in_batch = [](TempIndex& index, const std::function<void(WalletIndexDb&)>& write) {
+    std::lock_guard<std::mutex> guard(index.db->write_mutex());
+    index.db->begin_batch().ensure();
+    write(*index.db);
+    index.db->commit_batch().ensure();
+  };
+  {
+    HeadCase c;
+    TempIndex index;
+    passed(c, index, states());
+    in_batch(index, [](WalletIndexDb& db) {
+      db.schedule_token_candidates(
+            {tos_wallet_index::TokenCandidate{tos_wallet_index::TokenKind::Fungible, address(0x41)}},
+            ShardIdFull{0, kLeft}, 0, 1000)
+          .ensure();
+      db.save_token_counters().ensure();
+    });
+    ASSERT_EQ(index.db->token_backlog_stats().move_as_ok().entries, 1u);
+    auto outcome = ownership_to_end(index, c.source).move_as_ok();
+    ASSERT_TRUE(outcome.drain && contains(outcome.reason, "1 queued"));
+    ASSERT_TRUE(index.state() == VerificationState::Partial);
+  }
+  {
+    HeadCase c;
+    TempIndex index;
+    passed(c, index, states());
+    in_batch(index, [](WalletIndexDb& db) {
+      WalletIndexDb::PendingBlock pending;
+      pending.end_lt = 1000;
+      pending.remaining.push_back(tos_wallet_index::ScheduledTokenCandidate{
+          tos_wallet_index::TokenCandidate{tos_wallet_index::TokenKind::Nft, address(0x42)}, 0, 1000});
+      db.put_pending_block(shard_block(kLeft, 3), pending).ensure();
+    });
+    auto outcome = ownership_to_end(index, c.source).move_as_ok();
+    ASSERT_TRUE(outcome.drain && contains(outcome.reason, "1 unfinished blocks"));
+    ASSERT_TRUE(index.state() == VerificationState::Partial);
+  }
+  for (bool rebuild : {false, true}) {
+    HeadCase c;
+    TempIndex index;
+    passed(c, index, states());
+    if (rebuild) {
+      index.db->mark_needs_rebuild().ensure();
+    } else {
+      index.db->put_incomplete_block(shard_block(kLeft, 4), 4).ensure();
+    }
+    auto outcome = ownership_to_end(index, c.source);
+    ASSERT_TRUE(outcome.is_error() && tos::services::is_terminal_verify_error(outcome.error()));
+    ASSERT_TRUE(index.state() == VerificationState::Partial);
+  }
+  {
+    HeadCase c;
+    TempIndex index;
+    passed(c, index, states());
+    in_batch(index, [](WalletIndexDb& db) { db.add_lost_token_candidates_for_testing(3).ensure(); });
+    auto outcome = ownership_to_end(index, c.source).move_as_ok();
+    ASSERT_TRUE(outcome.step == VerifyStep::Done && contains(outcome.reason, "3 lost"));
+    ASSERT_TRUE(index.state() == VerificationState::Full);
+    ASSERT_EQ(index.db->token_backlog_stats().move_as_ok().lost, 0u);
+  }
+}
+
+// The drain of the hold does token work only: a block marked for recovery,
+// whose recovery would write history, is left as it is.
+TEST(WalletIndexVerify, the_ownership_drain_never_writes_history) {
+  TempIndex index;
+  tos_wallet_index::set_wallet_index_db(std::move(index.db));
+  auto* db = tos_wallet_index::wallet_index_db();
+  auto marked = shard_block(kLeft, 7);
+  db->put_incomplete_block(marked, 7).ensure();
+  auto rows_before = 0;
+  db->for_each_key_with_prefix(td::Slice("\x12", 1), 1u << 20, [&](td::Slice) {
+      ++rows_before;
+      return td::Status::OK();
+    }).ensure();
+  tos_wallet_index::drain_wc0_ownership(nullptr);
+  ASSERT_TRUE(db->has_incomplete_block(marked).move_as_ok());
+  auto rows_after = 0;
+  db->for_each_key_with_prefix(td::Slice("\x12", 1), 1u << 20, [&](td::Slice) {
+      ++rows_after;
+      return td::Status::OK();
+    }).ensure();
+  ASSERT_EQ(rows_before, rows_after);
+  tos_wallet_index::set_wallet_index_db(nullptr);
 }
 
 // The serving gate: Full is served, Partial only when the operator allowed
