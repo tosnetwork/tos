@@ -312,7 +312,16 @@ int main(int argc, char** argv) {
           gate.hold(done.reason);
           continue;
         }
+        auto published = index_db->verification_record();
+        if (published.is_error() || !published.ok()) {
+          LOG(ERROR) << "the built index has no verification record after its publication";
+          stop_with(1);
+          break;
+        }
+        const auto& stored = published.ok().value();
+        gate.set_horizon(stored.horizon_seqno, stored.horizon_time, stored.unverified);
         building = false;
+        prepared = true;
         pass_done = true;
         gate.hold("ownership: starting");
         gate.set(tos_wallet_index::VerificationState::Partial);

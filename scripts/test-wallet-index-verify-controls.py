@@ -12,8 +12,9 @@ entirely, and the marking of accounts the head state cannot vouch for; and
 for the build of a fresh index from the window's blocks: the per-account
 retention and trim, the drop of rows the base referenced, the binding to the
 head and its replacement, the refusal of a used index, the Quarantined
-state before any row, the interval bound, the link to the interval below,
-and the applied, held head. The
+state before any row, the interval bound and each row's charge by its
+transaction's cells, the link to the interval below, the applied, held head,
+and block 1 read only from the state the head's block names. The
 named tests must fail with the mutation and pass again once the source is
 restored. The source is restored in `finally` and its hash is checked.
 """
@@ -48,8 +49,8 @@ MUTATIONS = [
     (
         "build-keeps-rows-the-base-referenced",
         "          if (lt <= bound) {\n            return td::Status::OK();\n          }\n"
-        "          // A transaction's cells",
-        "          // A transaction's cells",
+        "          TRY_RESULT(row_bytes, build_row_bytes(cell));",
+        "          TRY_RESULT(row_bytes, build_row_bytes(cell));",
         ["WalletIndexVerify_a_fresh_index_is_built_from_the_windows_blocks"],
     ),
     (
@@ -78,9 +79,21 @@ MUTATIONS = [
         ["WalletIndexVerify_an_interrupted_build_resumes_to_the_same_index"],
     ),
     (
+        "build-row-charged-a-fixed-size",
+        "          TRY_RESULT(row_bytes, build_row_bytes(cell));\n          interval_bytes += row_bytes;",
+        "          interval_bytes += 4096;",
+        ["WalletIndexVerify_a_build_charges_each_row_its_transactions_cells"],
+    ),
+    (
+        "block-1-from-an-unbound-state",
+        "  if (state.is_null() || td::Bits256{state->get_hash().bits()} != new_state_hash) {",
+        "  if (state.is_null()) {",
+        ["WalletIndexVerify_block_1_comes_from_the_state_the_heads_block_names"],
+    ),
+    (
         "build-interval-unbounded",
-        "          interval_bytes += kBuildRowBytes;\n          if (interval_bytes > limits.interval_bytes) {",
-        "          interval_bytes += kBuildRowBytes;\n          if (false) {",
+        "          interval_bytes += row_bytes;\n          if (interval_bytes > limits.interval_bytes) {",
+        "          interval_bytes += row_bytes;\n          if (false) {",
         ["WalletIndexVerify_a_build_stops_at_a_bound_a_gap_or_an_unlinked_block"],
     ),
     (

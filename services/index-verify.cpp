@@ -341,33 +341,8 @@ class ReaderVerifySource final : public VerifySource {
     if (!read) {
       return terminal("the node does not hold the bytes of the head the index is built to");
     }
-    block::gen::Block::Record block;
-    if (!tlb::unpack_cell(read.value(), block)) {
-      return terminal("the head's block does not decode");
-    }
-    vm::CellSlice update{vm::NoVm(), block.state_update};
-    if (!(update.is_special() && update.prefetch_long(8) == 4 && update.size_ext() == 0x20228)) {
-      return terminal("the head's block has no valid state update");
-    }
-    td::Bits256 new_state_hash = update.prefetch_ref(1)->get_hash(0).bits();
     TRY_RESULT(state, reader_.state(handle));
-    td::Bits256 state_hash = td::Bits256::zero();
-    if (state.not_null()) {
-      state_hash = state->get_hash().bits();
-    }
-    if (state.is_null() || state_hash != new_state_hash) {
-      return terminal("the head's masterchain state is not the one its block names");
-    }
-    auto config = block::ConfigInfo::extract_config(state, head, block::ConfigInfo::needPrevBlocks);
-    if (config.is_error()) {
-      return terminal(PSTRING() << "the head's masterchain state does not decode: " << config.error().message());
-    }
-    BlockIdExt first;
-    if (!config.ok()->get_old_mc_block_id(1, first) || !first.is_masterchain_ext() || first.seqno() != 1 ||
-        !first.is_valid_full()) {
-      return terminal("the head's masterchain state does not record masterchain block 1");
-    }
-    return first;
+    return first_block_from_head_state(head, read.value(), state);
   }
   td::Status for_each_interval_transaction_cell(
       const VerifyMasterchainBlock& master,
@@ -1312,6 +1287,46 @@ td::Result<VerifyOutcome> run_ownership_step(WalletIndexDb& db, VerifySource& so
   return done;
 }
 
+td::Result<BlockIdExt> first_block_from_head_state(const BlockIdExt& head, const td::Ref<vm::Cell>& block_root,
+                                                   const td::Ref<vm::Cell>& state) {
+  block::gen::Block::Record block;
+  if (block_root.is_null() || !tlb::unpack_cell(block_root, block)) {
+    return terminal("the head's block does not decode");
+  }
+  vm::CellSlice update{vm::NoVm(), block.state_update};
+  if (!(update.is_special() && update.prefetch_long(8) == 4 && update.size_ext() == 0x20228)) {
+    return terminal("the head's block has no valid state update");
+  }
+  td::Bits256 new_state_hash = update.prefetch_ref(1)->get_hash(0).bits();
+  if (state.is_null() || td::Bits256{state->get_hash().bits()} != new_state_hash) {
+    return terminal("the head's masterchain state is not the one its block names");
+  }
+  auto config = block::ConfigInfo::extract_config(state, head, block::ConfigInfo::needPrevBlocks);
+  if (config.is_error()) {
+    return terminal(PSTRING() << "the head's masterchain state does not decode: " << config.error().message());
+  }
+  BlockIdExt first;
+  if (!config.ok()->get_old_mc_block_id(1, first) || !first.is_masterchain_ext() || first.seqno() != 1 ||
+      !first.is_valid_full()) {
+    return terminal("the head's masterchain state does not record masterchain block 1");
+  }
+  return first;
+}
+
+td::Result<size_t> build_row_bytes(const td::Ref<vm::Cell>& transaction) {
+  // A cell held in memory, serialized into its row and copied into the
+  // batch: a conservative bound per cell beyond its data.
+  constexpr size_t kBuildCellBytes = 256;
+  // The row's and the age row's keys and batch entries.
+  constexpr size_t kBuildRowBytes = 4096;
+  vm::CellStorageStat stat;
+  auto used = stat.compute_used_storage(transaction);
+  if (used.is_error()) {
+    return terminal(PSTRING() << "a transaction's cells cannot be measured: " << used.error().message());
+  }
+  return kBuildRowBytes + static_cast<size_t>(stat.bits / 8) + static_cast<size_t>(stat.cells) * kBuildCellBytes;
+}
+
 namespace {
 // A fresh build record: H = the source's tip, the window below it, H's roots.
 td::Result<WalletIndexDb::BuildRecord> new_build_record(VerifySource& source, const VerifyLimits& limits) {
@@ -1428,10 +1443,8 @@ td::Result<VerifyOutcome> run_build_step(WalletIndexDb& db, VerifySource& source
           if (lt <= bound) {
             return td::Status::OK();
           }
-          // A transaction's cells held until the batch, its row, its age row
-          // and its batch entries: a conservative bound per row.
-          constexpr size_t kBuildRowBytes = 4096;
-          interval_bytes += kBuildRowBytes;
+          TRY_RESULT(row_bytes, build_row_bytes(cell));
+          interval_bytes += row_bytes;
           if (interval_bytes > limits.interval_bytes) {
             return terminal(PSTRING() << "masterchain interval " << seqno << " needs more than "
                                       << (limits.interval_bytes >> 20) << " MiB to build; it is not built");

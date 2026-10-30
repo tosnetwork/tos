@@ -13,6 +13,8 @@
 #include <tuple>
 #include <vector>
 
+#include "block/block-auto.h"
+#include "block/block-parse.h"
 #include "services/index-verify.h"
 #include "td/utils/crypto.h"
 #include "td/utils/filesystem.h"
@@ -69,11 +71,14 @@ BlockIdExt master_id(uint32_t seqno, unsigned char salt = 0) {
 }
 
 td::Ref<vm::Cell> transaction(const td::Bits256& account, uint64_t lt, const td::Bits256& prev_hash, uint64_t prev_lt,
-                              unsigned body = 0) {
+                              unsigned body = 0, const td::Ref<vm::Cell>& attached = {}) {
   vm::CellBuilder cb;
   CHECK(cb.store_long_bool(7, 4) && cb.store_bits_bool(account.cbits(), 256) && cb.store_long_bool(lt, 64) &&
         cb.store_bits_bool(prev_hash.cbits(), 256) && cb.store_long_bool(prev_lt, 64) &&
         cb.store_long_bool(static_cast<long long>(lt / 10), 32) && cb.store_long_bool(body, 8));
+  if (attached.not_null()) {
+    CHECK(cb.store_ref_bool(attached));
+  }
   return cb.finalize();
 }
 
@@ -1768,4 +1773,164 @@ TEST(WalletIndexVerify, a_build_stops_at_a_bound_a_gap_or_an_unlinked_block) {
     ASSERT_TRUE(contains(outcome.error().message().str(), "never built over"));
     ASSERT_TRUE(!index.db->build_record().move_as_ok());
   }
+}
+
+namespace {
+// A chain of `cells` full cells, distinct per `seed`.
+td::Ref<vm::Cell> payload(uint64_t seed, int cells) {
+  td::Ref<vm::Cell> next;
+  for (int i = 0; i < cells; ++i) {
+    vm::CellBuilder cb;
+    CHECK(cb.store_long_bool(static_cast<long long>(seed), 64) && cb.store_long_bool(i, 32) &&
+          cb.store_zeroes_bool(1023 - 96));
+    if (next.not_null()) {
+      CHECK(cb.store_ref_bool(next));
+    }
+    next = cb.finalize();
+  }
+  return next;
+}
+}  // namespace
+
+// A row is charged its transaction's cells, not a fixed size: ten
+// transactions of forty cells each exceed a bound ten small ones fit in.
+TEST(WalletIndexVerify, a_build_charges_each_row_its_transactions_cells) {
+  VerifyLimits limits;
+  limits.intervals_per_step = 1;
+  limits.interval_bytes = size_t{64} << 10;
+  auto account = address(0x10);
+  for (bool heavy : {false, true}) {
+    FixtureSource source(22);
+    std::vector<td::Ref<vm::Cell>> rows;
+    td::Bits256 prev = address(0xEE);
+    uint64_t prev_lt = 14000;
+    // At head 22 the base is 15: interval 16 holds logical times [15000, 16000).
+    for (uint64_t lt = 15001; lt <= 15010; ++lt) {
+      rows.push_back(transaction(account, lt, prev, prev_lt, 0, heavy ? payload(lt, 40) : td::Ref<vm::Cell>{}));
+      prev = rows.back()->get_hash().bits();
+      prev_lt = lt;
+    }
+    source.hold(rows);
+    ASSERT_EQ(source.interval_cells[16].size(), 10u);
+    TempIndex index;
+    ASSERT_TRUE(run_build_step(*index.db, source, limits).move_as_ok().step == VerifyStep::Working);
+    auto outcome = run_build_step(*index.db, source, limits);
+    if (heavy) {
+      ASSERT_TRUE(outcome.is_error() && tos::services::is_terminal_verify_error(outcome.error()));
+      ASSERT_TRUE(contains(outcome.error().message().str(), "to build; it is not built"));
+      ASSERT_TRUE(index.lts(account).empty());
+    } else {
+      ASSERT_TRUE(outcome.move_as_ok().step == VerifyStep::Working);
+      ASSERT_EQ(index.lts(account).size(), 10u);
+    }
+  }
+}
+
+namespace {
+using tos::services::first_block_from_head_state;
+
+// A masterchain state of block `seqno` as the chain stores it, recording `first` as
+// masterchain block 1 in its OldMcBlocks (only the zerostate when unset), unpacked by
+// the production configuration reader.
+td::Ref<vm::Cell> masterchain_state(const td::optional<BlockIdExt>& first, uint32_t seqno = 22) {
+  vm::Dictionary params{32};
+  CHECK(params.set_ref(td::BitArray<32>::zero(), vm::CellBuilder{}.store_zeroes(256).finalize()));
+  vm::CellBuilder r1;
+  CHECK(r1.store_long_bool(0, 16)                                                            // flags
+        && r1.store_long_bool(0, 32) && r1.store_long_bool(0, 32)                            // validator_info
+        && r1.store_long_bool(0, 1)                                                          //   nx_cc_updated
+        && r1.store_long_bool(0, 1) && r1.store_long_bool(0, 1) && r1.store_zeroes_bool(64)  // prev_blocks: empty
+        && r1.store_long_bool(0, 1)                                                          // after_key_block
+        && r1.store_long_bool(0, 1));                                                        // last_key_block
+  vm::CellBuilder extra;
+  CHECK(extra.store_long_bool(0xcc26, 16) && extra.store_long_bool(0, 1)  // shard_hashes: empty
+        && extra.store_zeroes_bool(256) && extra.store_ref_bool(params.get_root_cell()) &&
+        extra.store_ref_bool(r1.finalize()) && extra.store_zeroes_bool(4 + 1));  // global_balance
+  vm::CellBuilder rest;
+  CHECK(rest.store_zeroes_bool(64 + 64 + 5 + 5 + 1 + 1));
+  vm::CellBuilder root;
+  CHECK(root.store_long_bool(0x9023afe2, 32) && root.store_long_bool(3, 32)  // shard_state, global_id
+        && root.store_long_bool(0, 2) && root.store_long_bool(0, 6) && root.store_long_bool(tos::masterchainId, 32) &&
+        root.store_long_bool(0, 64)                   // shard_id
+        && root.store_long_bool(seqno, 32)            // seq_no
+        && root.store_zeroes_bool(32 + 32 + 64 + 32)  // vert_seq_no ... min_ref_mc_seqno
+        && root.store_ref_bool(vm::CellBuilder{}.finalize()) && root.store_long_bool(0, 1) &&
+        root.store_ref_bool(vm::CellBuilder{}.finalize()) && root.store_ref_bool(rest.finalize()) &&
+        root.store_long_bool(1, 1) && root.store_ref_bool(extra.finalize()));
+  td::Ref<vm::Cell> cell = root.finalize();
+  block::gen::ShardStateUnsplit::Record state;
+  CHECK(tlb::unpack_cell(cell, state));
+  block::gen::McStateExtra::Record mc;
+  CHECK(tlb::unpack_cell(state.custom->prefetch_ref(), mc));
+  vm::AugmentedDictionary prev{mc.r1.prev_blocks, 32, block::tlb::aug_OldMcBlocksInfo};
+  // Every masterchain state records the zerostate, as a key block.
+  std::vector<std::tuple<uint32_t, bool, BlockIdExt>> entries = {{0u, true, master_id(0, 1)}};
+  if (first) {
+    entries.emplace_back(1u, false, first.value());
+  }
+  for (auto& [seqno, key, id] : entries) {
+    vm::CellBuilder entry;
+    CHECK(entry.store_bool_bool(key) && entry.store_long_bool(1000 * seqno, 64) && entry.store_long_bool(seqno, 32) &&
+          entry.store_bits_bool(id.root_hash.cbits(), 256) && entry.store_bits_bool(id.file_hash.cbits(), 256));
+    CHECK(prev.set(td::BitArray<32>{static_cast<long long>(seqno)}.cbits(), 32, entry.as_cellslice_ref()));
+  }
+  mc.r1.prev_blocks = prev.get_root();
+  td::Ref<vm::Cell> mc_cell;
+  CHECK(tlb::pack_cell(mc_cell, mc));
+  state.custom = vm::CellBuilder{}.store_long(1, 1).store_ref(mc_cell).as_cellslice_ref();
+  CHECK(tlb::pack_cell(cell, state));
+  return cell;
+}
+
+// A masterchain block whose state update names `state` as its new state;
+// `ordinary`: a plain cell where the update belongs.
+td::Ref<vm::Cell> head_block(const td::Ref<vm::Cell>& state, bool ordinary = false) {
+  auto empty = vm::CellBuilder{}.finalize();
+  td::Ref<vm::Cell> update =
+      ordinary ? vm::CellBuilder{}.store_long(4, 8).finalize()
+               : vm::CellBuilder::create_merkle_update(vm::CellBuilder::create_pruned_branch(empty, 1),
+                                                       vm::CellBuilder::create_pruned_branch(state, 1));
+  vm::CellBuilder cb;
+  CHECK(cb.store_long_bool(0x11ef55aa, 32) && cb.store_long_bool(3, 32) && cb.store_ref_bool(empty) &&
+        cb.store_ref_bool(empty) && cb.store_ref_bool(update) && cb.store_ref_bool(empty));
+  return cb.finalize();
+}
+
+bool terminal_with(const td::Result<BlockIdExt>& result, const std::string& reason) {
+  return result.is_error() && tos::services::is_terminal_verify_error(result.error()) &&
+         contains(result.error().message().str(), reason);
+}
+}  // namespace
+
+// Block 1's identity is read from the masterchain state the head's block
+// names, never from another state: one substituted under the head, also one
+// that differs only in block 1's root or file hash, is refused, as is a
+// state without block 1 or a block without a state update.
+TEST(WalletIndexVerify, block_1_comes_from_the_state_the_heads_block_names) {
+  auto head = master_id(22);
+  auto first = master_id(1, 4);
+  auto state = masterchain_state(first);
+  auto block = head_block(state);
+  auto found = first_block_from_head_state(head, block, state);
+  ASSERT_TRUE(found.is_ok());
+  ASSERT_TRUE(found.ok() == first);
+  auto other_root = master_id(1, 7);
+  auto other_file = first;
+  other_file.file_hash.as_slice()[5] = 9;
+  for (auto& substitute : {other_root, other_file}) {
+    auto other = masterchain_state(substitute);
+    ASSERT_TRUE(terminal_with(first_block_from_head_state(head, block, other), "not the one its block names"));
+    // Bound to its own block, the same state is read as it records.
+    ASSERT_TRUE(first_block_from_head_state(head, head_block(other), other).move_as_ok() == substitute);
+  }
+  auto without = masterchain_state({});
+  ASSERT_TRUE(
+      terminal_with(first_block_from_head_state(head, head_block(without), without), "does not record masterchain"));
+  ASSERT_TRUE(
+      terminal_with(first_block_from_head_state(head, head_block(state, true), state), "no valid state update"));
+  ASSERT_TRUE(terminal_with(first_block_from_head_state(head, block, td::Ref<vm::Cell>{}), "not the one its block"));
+  ASSERT_TRUE(terminal_with(first_block_from_head_state(head, state, state), "does not decode"));
+  // A state of another block, named by the head's block, is not the head's.
+  auto elsewhere = masterchain_state(first, 21);
+  ASSERT_TRUE(terminal_with(first_block_from_head_state(head, head_block(elsewhere), elsewhere), "does not decode"));
 }

@@ -323,6 +323,18 @@ void pin_writer_to_head(std::vector<tos_wallet_index::OwnershipHeadState> states
 // A record whose H or H's state roots the source no longer has is replaced,
 // with every built row cleared, in one batch. Returns Working, or Done when
 // the index is published as Partial.
+// Block 1's full identity as `head`'s masterchain state records it (its
+// OldMcBlocks), from `head`'s checked block root and the state the node
+// holds for it, which must be the one the block's state update names.
+// Terminal when any of it does not check.
+td::Result<BlockIdExt> first_block_from_head_state(const BlockIdExt& head, const td::Ref<vm::Cell>& block_root,
+                                                   const td::Ref<vm::Cell>& state);
+
+// The memory one built row is charged while its interval is collected: the
+// transaction's cells (data and per-cell overhead), and the row, its age
+// row and their batch entries.
+td::Result<size_t> build_row_bytes(const td::Ref<vm::Cell>& transaction);
+
 td::Result<VerifyOutcome> run_build_step(tos_wallet_index::WalletIndexDb& db, VerifySource& source,
                                          const VerifyLimits& limits = {}, const std::atomic<bool>* cancel = nullptr);
 
