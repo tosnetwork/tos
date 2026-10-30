@@ -23,8 +23,7 @@ using tos_wallet_index::VerificationState;
 using tos_wallet_index::WalletIndexDb;
 using tos_wallet_index::WindowShardTip;
 
-td::Result<uint64_t> base_lt_bound(const std::vector<WindowShardTip>& tips, bool has_base,
-                                   const td::Bits256& account) {
+td::Result<uint64_t> base_lt_bound(const std::vector<WindowShardTip>& tips, bool has_base, const td::Bits256& account) {
   if (!has_base) {
     return uint64_t{0};
   }
@@ -473,8 +472,8 @@ td::Result<VerifyOutcome> prepare_quarantined_index(WalletIndexDb& db, VerifySou
                                 << checkpoint.seqno());
   }
   if (top.value().id != checkpoint) {
-    return refuse(db, PSTRING() << "the snapshot checkpoint is not this node's masterchain block "
-                                << checkpoint.seqno());
+    return refuse(db,
+                  PSTRING() << "the snapshot checkpoint is not this node's masterchain block " << checkpoint.seqno());
   }
   if (!top.value().applied) {
     return terminal("the node holds the snapshot checkpoint but has not applied it");
@@ -1058,8 +1057,8 @@ td::Result<VerifyOutcome> run_block_pass_step(WalletIndexDb& db, VerifySource& s
       done.step = VerifyStep::Done;
       return done;
     }
-    td::Bits256 account = !collected_next                 ? marked_next.value()
-                          : !marked_next                  ? collected_next.value()
+    td::Bits256 account = !collected_next                                ? marked_next.value()
+                          : !marked_next                                 ? collected_next.value()
                           : collected_next.value() < marked_next.value() ? collected_next.value()
                                                                          : marked_next.value();
     TRY_RESULT(bound, base_lt_bound(base_tips, has_base, account));
@@ -1085,10 +1084,10 @@ td::Result<VerifyOutcome> run_block_pass_step(WalletIndexDb& db, VerifySource& s
         while (i < imported.size() && i < collected.size() && imported[i] == collected[i]) {
           ++i;
         }
-        why = i < collected.size() ? PSTRING() << "the window's blocks hold a transaction at " << collected[i].first
-                                               << " the snapshot does not match"
-                                   : PSTRING() << "the snapshot holds a row at " << imported[i].first
-                                               << " the window's blocks do not";
+        why = i < collected.size()
+                  ? PSTRING() << "the window's blocks hold a transaction at " << collected[i].first
+                              << " the snapshot does not match"
+                  : PSTRING() << "the snapshot holds a row at " << imported[i].first << " the window's blocks do not";
       }
       return refuse(db, PSTRING() << account_text(account) << ": " << why, account);
     }
@@ -1185,7 +1184,8 @@ std::string VerifyRetry::json() const {
 }
 
 std::string ServingGate::json_fields() const {
-  std::string body = std::string(",\"verification\":\"") + verification_state_name(state()) + "\",\"verified_horizon\":";
+  std::string body =
+      std::string(",\"verification\":\"") + verification_state_name(state()) + "\",\"verified_horizon\":";
   if (!horizon_known_.load()) {
     body += "null";
   } else {

@@ -51,13 +51,13 @@ int main(int argc, char** argv) {
     options.write().set_disable_rocksdb_stats(true);
     db = td::actor::create_actor<validator::RootDb>("source-fixture", td::actor::ActorId<validator::ValidatorManager>{},
                                                     path, options, td::DbOpenMode::db_primary);
-    td::actor::send_closure(db, &validator::RootDb::get_shard_client_state,
-                            td::PromiseCreator::lambda([&](td::Result<BlockIdExt> state) { answered(state.is_error()); }));
     td::actor::send_closure(
-        db, &validator::RootDb::get_cell_db_reader,
-        td::PromiseCreator::lambda([&](td::Result<std::shared_ptr<vm::CellDbReader>> reader) {
-          answered(reader.is_ok() && reader.ok() != nullptr);
-        }));
+        db, &validator::RootDb::get_shard_client_state,
+        td::PromiseCreator::lambda([&](td::Result<BlockIdExt> state) { answered(state.is_error()); }));
+    td::actor::send_closure(db, &validator::RootDb::get_cell_db_reader,
+                            td::PromiseCreator::lambda([&](td::Result<std::shared_ptr<vm::CellDbReader>> reader) {
+                              answered(reader.is_ok() && reader.ok() != nullptr);
+                            }));
     td::actor::send_closure(
         db, &validator::RootDb::get_block_by_seqno, AccountIdPrefixFull(masterchainId, shardIdAll), 1,
         td::PromiseCreator::lambda([&](td::Result<validator::ConstBlockHandle> block) { answered(block.is_error()); }));

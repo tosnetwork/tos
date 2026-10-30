@@ -21,8 +21,8 @@
 namespace {
 using tos::BlockIdExt;
 using tos::ShardIdFull;
-using tos::services::HeadAccounts;
 using tos::services::block_pass_done;
+using tos::services::HeadAccounts;
 using tos::services::prepare_quarantined_index;
 using tos::services::run_block_pass_step;
 using tos::services::ServingGate;
@@ -302,7 +302,7 @@ TEST(WalletIndexVerify, rows_get_the_block_that_first_referenced_them_per_shard)
   ASSERT_EQ(outcome.kept, 8u);
   ASSERT_EQ(outcome.dropped, 3u);
   std::map<std::pair<td::Bits256, uint64_t>, uint32_t> expected = {
-      {{left, 13001}, 14}, {{left, 16999}, 17}, {{left, 17000}, 18},  {{left, 19999}, 20},
+      {{left, 13001}, 14}, {{left, 16999}, 17}, {{left, 17000}, 18}, {{left, 19999}, 20},
       {{right, 1351}, 14}, {{right, 1450}, 15}, {{right, 1451}, 15}, {{right, 2049}, 20}};
   ASSERT_TRUE(index.ages() == expected);
   ASSERT_TRUE(index.lts(left) == (std::set<uint64_t>{13001, 16999, 17000, 19999}));
@@ -586,7 +586,7 @@ TEST(WalletIndexVerify, an_honest_import_is_partial_with_the_unprovable_accounts
 // whose last transaction is before the window, a row served under another
 // logical time, and in-window history left out entirely.
 TEST(WalletIndexVerify, rows_that_contradict_the_head_state_refuse_the_import) {
-  auto refused = [](const std::function<void(HeadCase&, TempIndex&)>& tamper, td::Bits256 HeadCase::*who,
+  auto refused = [](const std::function<void(HeadCase&, TempIndex&)>& tamper, td::Bits256 HeadCase::* who,
                     const std::string& why) {
     HeadCase c;
     TempIndex index;
@@ -599,22 +599,21 @@ TEST(WalletIndexVerify, rows_that_contradict_the_head_state_refuse_the_import) {
     ASSERT_TRUE(index.state() == VerificationState::Refused);
   };
   // Tampered: a row's body changed under the same logical time.
-  refused([](HeadCase& c, TempIndex& index) { index.put(c.a, 15000, transaction(c.a, 15000, td::Bits256::zero(), 13500, 1)); },
+  refused([](HeadCase& c,
+             TempIndex& index) { index.put(c.a, 15000, transaction(c.a, 15000, td::Bits256::zero(), 13500, 1)); },
           &HeadCase::a, "not hash-linked");
   // Omitted: a middle row deleted.
   refused([](HeadCase& c, TempIndex& index) { index.erase(c.a, 15000); }, &HeadCase::a, "not hash-linked");
   // Injected: a row for an account last active before the window.
-  refused([](HeadCase& c, TempIndex& index) { index.add(transaction(c.e, 17000, c.dormant.back()->get_hash().bits(), 9000)); },
+  refused([](HeadCase& c,
+             TempIndex& index) { index.add(transaction(c.e, 17000, c.dormant.back()->get_hash().bits(), 9000)); },
           &HeadCase::e, "newer than the account's last transaction");
   // A row stored under a logical time its transaction does not have.
   refused([](HeadCase& c, TempIndex& index) { index.put(c.a, 15001, c.linked[2]); }, &HeadCase::a,
           "holds the transaction at");
   // Missing: an account active in the window with no rows at all.
-  refused(
-      [](HeadCase& c, TempIndex&) {
-        c.source.heads[c.f] = head_of(history(c.f, {18000}, 17000));
-      },
-      &HeadCase::f, "in-window history is missing");
+  refused([](HeadCase& c, TempIndex&) { c.source.heads[c.f] = head_of(history(c.f, {18000}, 17000)); }, &HeadCase::f,
+          "in-window history is missing");
 }
 
 // A recreated account whose first incarnation's rows were left out still
@@ -682,8 +681,7 @@ TEST(WalletIndexVerify, retries_back_off_to_a_cap_and_stay_visible) {
   ASSERT_TRUE(!retry.failed("another failure", 1035, 1700000035));
   ASSERT_TRUE(retry.failed("another failure", 1315, 1700000315));
   ASSERT_EQ(retry.attempts(), 5u);
-  ASSERT_TRUE(contains(retry.json(),
-                       "{\"attempts\":5,\"since\":1700000000,\"last_error\":\"another failure\"}"));
+  ASSERT_TRUE(contains(retry.json(), "{\"attempts\":5,\"since\":1700000000,\"last_error\":\"another failure\"}"));
   retry.succeeded();
   ASSERT_EQ(retry.attempts(), 0u);
   ASSERT_EQ(retry.json(), std::string("null"));
@@ -699,7 +697,7 @@ TEST(WalletIndexVerify, retries_back_off_to_a_cap_and_stay_visible) {
 namespace {
 // Run the block pass step by step until it stops working.
 td::Result<tos::services::VerifyOutcome> pass_to_end(TempIndex& index, FixtureSource& source,
-                                                    const VerifyLimits& limits = {}) {
+                                                     const VerifyLimits& limits = {}) {
   for (int i = 0; i < 1000000; ++i) {
     TRY_RESULT(outcome, run_block_pass_step(*index.db, source, limits));
     if (outcome.step != VerifyStep::Working) {
@@ -821,8 +819,7 @@ TEST(WalletIndexVerify, the_block_pass_resumes_and_restarts_on_a_new_binding) {
   ASSERT_TRUE(pass_to_end(straight_index, straight.source).move_as_ok().step == VerifyStep::Done);
   int steps = 0;
   for (; steps < 12; ++steps) {
-    ASSERT_TRUE(run_block_pass_step(*stepped_index.db, stepped.source, small).move_as_ok().step ==
-                VerifyStep::Working);
+    ASSERT_TRUE(run_block_pass_step(*stepped_index.db, stepped.source, small).move_as_ok().step == VerifyStep::Working);
   }
   // The head state's roots change: everything collected so far is dropped.
   stepped.source.root.as_slice()[0] = 1;
@@ -899,8 +896,7 @@ TEST(WalletIndexVerify, a_partial_index_holds_replay_at_the_head) {
   using tos::services::ServiceAction;
   for (bool prepared : {false, true}) {
     ASSERT_TRUE(next_service_action(VerificationState::Partial, prepared, false) == ServiceAction::BlockPass);
-    ASSERT_TRUE(next_service_action(VerificationState::Partial, prepared, true) ==
-                ServiceAction::HoldForOwnership);
+    ASSERT_TRUE(next_service_action(VerificationState::Partial, prepared, true) == ServiceAction::HoldForOwnership);
     ASSERT_TRUE(next_service_action(VerificationState::Refused, prepared, true) == ServiceAction::Stop);
     ASSERT_TRUE(next_service_action(VerificationState::Full, prepared, true) == ServiceAction::Replay);
   }

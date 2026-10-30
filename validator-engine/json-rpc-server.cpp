@@ -1093,8 +1093,7 @@ void JsonRpcServer::dispatch_method_impl(const std::string &method, td::JsonObje
   }
   // An index not verified against this node's chain answers nothing.
   if (opts_.index_only && opts_.index_serving && !opts_.index_serving()) {
-    promise.set_value(
-        make_json_rpc_error(-32603, "wallet index is not verified against this node's chain", req_id));
+    promise.set_value(make_json_rpc_error(-32603, "wallet index is not verified against this node's chain", req_id));
     return;
   }
   if (is_write_method(method) && !opts_.submission_query_sender) {

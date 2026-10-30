@@ -182,7 +182,7 @@ td::Result<WalletIndexSnapshotInfo> scan(td::FileFd& file, const td::Bits256* ex
   if (!schema_seen || !checkpoint_seen)
     return td::Status::Error("index snapshot has no schema or replay checkpoint");
   info.anchor_verified = WalletIndexDb::anchor_verified(state_record ? &state_record.value() : nullptr,
-                                                       verification_record ? &verification_record.value() : nullptr);
+                                                        verification_record ? &verification_record.value() : nullptr);
   hash.extract(info.sha256.as_slice());
   if (expected != nullptr && info.sha256 != *expected)
     return td::Status::Error("index snapshot SHA-256 differs from the trusted digest");

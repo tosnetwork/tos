@@ -993,8 +993,8 @@ namespace {
 // has_compared(1) compared(32) collected_be(8) roots_be(4) roots(32 each).
 constexpr uint8_t kMetaBlockPassSub = 0x33;
 constexpr uint8_t kBlockPassVersion = 1;
-constexpr size_t kBlockPassFixedLen = 1 + 4 + kIncompleteBlockKeyLen + 4 + 1 + 4 + 1 + kIncompleteBlockKeyLen + 1 + 32 +
-                                      8 + 4;
+constexpr size_t kBlockPassFixedLen =
+    1 + 4 + kIncompleteBlockKeyLen + 4 + 1 + 4 + 1 + kIncompleteBlockKeyLen + 1 + 32 + 8 + 4;
 // More shard states than any masterchain block names.
 constexpr uint32_t kBlockPassMaxRoots = 4096;
 // 0x00 0x32 + shard_be(8) -> ownership derivation progress of one shard.
@@ -1182,7 +1182,7 @@ td::Status WalletIndexDb::for_each_collected(const HashKey& account, size_t limi
 
 namespace {
 td::Result<td::optional<HashKey>> next_account_with_tag(td::RocksDb& db, uint8_t tag,
-                                                         const td::optional<HashKey>& after) {
+                                                        const td::optional<HashKey>& after) {
   std::string begin(1, static_cast<char>(tag));
   if (after) {
     auto next = account_after(after.value());

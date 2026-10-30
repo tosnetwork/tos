@@ -106,8 +106,9 @@ td::Status walk_interval_blocks(const std::vector<Block>& blocks, ReadRoot read_
 
 // The basechain transactions a block's checked root holds, as replay indexes
 // them (entries replay skips are skipped here too): (account, lt, hash).
-td::Status walk_block_transactions(const td::Ref<vm::Cell>& root,
-                                   const std::function<td::Status(const td::Bits256&, uint64_t, const td::Bits256&)>& cb);
+td::Status walk_block_transactions(
+    const td::Ref<vm::Cell>& root,
+    const std::function<td::Status(const td::Bits256&, uint64_t, const td::Bits256&)>& cb);
 
 // The production source: the node database through the index reader.
 std::unique_ptr<VerifySource> make_reader_verify_source(IndexReader& reader);

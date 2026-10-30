@@ -40,14 +40,14 @@
 #include "td/actor/actor.h"
 #include "td/utils/base64.h"
 #include "td/utils/buffer.h"
+#include "td/utils/filesystem.h"
 #include "td/utils/port/IPAddress.h"
 #include "td/utils/port/ServerSocketFd.h"
-#include "td/utils/filesystem.h"
 #include "td/utils/port/path.h"
 #include "td/utils/tests.h"
 #include "test/wallet-index-chain-fixture.h"
-#include "validator-engine/wallet-index.h"
 #include "tl-utils/lite-utils.hpp"
+#include "validator-engine/wallet-index.h"
 
 #include "json-rpc-http-policy.h"
 #include "json-rpc-server-internal.h"
@@ -1593,10 +1593,11 @@ TEST(JsonRpcTransport, an_unverified_wallet_index_is_refused_and_a_partial_one_f
     tos_wallet_index::set_wallet_index_db(std::move(db));
   }
   const std::string address = "0:" + account.to_hex();
-  const std::string events = "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"getAccountEvents\",\"params\":{\"address\":\"" +
-                             address + "\"}}";
-  const std::string missing = "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"getAccountEvent\",\"params\":{\"address\":\"" +
-                              address + "\",\"event_id\":\"6000:" + std::string(64, 'a') + "\"}}";
+  const std::string events =
+      "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"getAccountEvents\",\"params\":{\"address\":\"" + address + "\"}}";
+  const std::string missing =
+      "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"getAccountEvent\",\"params\":{\"address\":\"" + address +
+      "\",\"event_id\":\"6000:" + std::string(64, 'a') + "\"}}";
   struct Case {
     bool serving, partial;
   };
