@@ -59,13 +59,13 @@ The following points differ from the original requirement draft on purpose and a
 
 ## Integration and deployment
 
-**Post-quantum deployment requirement.** The vault contains no signature check and no public key; it authenticates roles by the sender address of an internal message and compares requests by cell hash. Its resistance to a quantum adversary is therefore exactly that of the four role accounts. A production deployment must use post-quantum authenticated accounts for all four roles, and the cold administrator must be a post-quantum multisig account: the cold address is immutable, so a classical multisig in that role could only be replaced by redeploying the vault and migrating its assets. Post-quantum accounts require TVM global version 16 or later. A deployable post-quantum multisig account contract is a prerequisite of the cold acceptance gate (issue #378).
+**Post-quantum deployment requirement.** The vault contains no signature check and no public key; it authenticates roles by the sender address of an internal message and compares requests by cell hash. Its resistance to a quantum adversary is therefore exactly that of the four role accounts. A production deployment must use post-quantum authenticated accounts for all four roles, and the cold administrator must be a post-quantum multisig account: the cold address is immutable, so a classical multisig in that role could only be replaced by redeploying the vault and migrating its assets. Post-quantum accounts require TVM global version 16 or later. The post-quantum multisig account for the cold role is `crypto/smartcont/pq-multisig-code.fc` (`doc/pq-multisig.md`); its cold leg against the vault is executed by `test/treasury-vault/test_pq_cold.py` (issue #378).
 
 Provide deterministic request/state builders and getters for configuration, pending requests and budgets. Derive a fresh address from the new StateInit; do not suggest existing deployed wallets are upgraded by a source-code change. Verify the deployed code hash, all role addresses, chain ID, empty initial registry and counters before funding. Register supported assets through the cold delay, rehearse a small payment and a pause/recovery drill, then migrate bounded balances.
 
 V1's initial registry is empty. The first asset registration uses the same delayed governance path as subsequent ones. Operations must maintain storage reserves on the vault and its authorizing accounts. No production deployment or asset migration is performed by this implementation PR.
 
-The cold administrator leg is not yet executed end to end: the repository tests drive the vault's governance entry points with the cold address as a synthetic sender. Before any funding, an acceptance run must execute the actual cold multisig contract: a below-threshold set of signers produces no governance proposal, a threshold set produces one, and the vault still enforces its own 48-hour delay afterwards. This gate is tracked as issue #378.
+The cold administrator leg is executed end to end by `test/treasury-vault/test_pq_cold.py` with the post-quantum multisig account: a below-threshold set of signers produces no governance proposal, a threshold set produces exactly one, the vault still enforces its own 48-hour delay afterwards, a multisig veto and pause are accepted, and the multisig has no payment path. Before any funding, the same scenarios must be re-run against the exact production candidate (code hashes, member set and quorum) and the result recorded; issue #378 tracks that acceptance.
 
 ## Acceptance tests
 
@@ -74,6 +74,7 @@ Tests must compile the current source and execute full transactions on the nativ
 - business-only, guardian-only, forged sender, wrong request and repeated approval rejection;
 - through real wallets: a signed business proposal and signed guardian approval pay out, the business wallet cannot approve, a guardian approval for other content is refused, an emitted approval cannot be delivered twice, and a message signed with the wrong key is refused by the wallet before it reaches the vault;
 - the same scenarios through post-quantum wallets, with the VM log showing that an ML-DSA-44 verification actually executed for every accepted request;
+- the cold leg through the post-quantum multisig: below-threshold, non-member and over-count signatures refused before verification, threshold produces exactly one governance message, the vault's delay still applies, veto and pause accepted, no administrator payment path, and a full post-quantum lifecycle;
 - correct native payout and exact Token outgoing wire/body/destination;
 - per-payment, window and cumulative ceilings, split payments and independent assets;
 - wrong chain/account/domain/epoch/nonce, expiry and malformed/trailing input;

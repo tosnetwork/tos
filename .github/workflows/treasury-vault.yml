@@ -12,6 +12,8 @@ on:
       - 'crypto/smartcont/strong-ed25519-key.fc'
       - 'crypto/smartcont/auth-extension.fc'
       - 'crypto/smartcont/wallet-v5-action-list.fc'
+      - 'crypto/smartcont/pq-multisig-code.fc'
+      - 'crypto/smartcont/pq-quorum-signatures.fc'
       - 'crypto/smartcont/pq-highload-wallet-code.fc'
       - 'crypto/smartcont/replay-guard.fc'
       - 'crypto/smartcont/pq-bytes.fc'
@@ -26,6 +28,7 @@ on:
       - 'test/auth-extensions/cells.py'
       - 'test/auth-extensions/native.py'
       - 'doc/treasury-vault-v1.md'
+      - 'doc/pq-multisig.md'
       - '.github/workflows/treasury-vault.yml'
 
 permissions:
@@ -63,6 +66,7 @@ jobs:
           TREASURY_MUTATION_RESULTS: ${{ runner.temp }}/treasury/mutations.json
           TREASURY_WALLET_RESULTS: ${{ runner.temp }}/treasury/wallets.json
           TREASURY_PQ_WALLET_RESULTS: ${{ runner.temp }}/treasury/pq-wallets.json
+          TREASURY_PQ_COLD_RESULTS: ${{ runner.temp }}/treasury/pq-cold.json
           PQ_TEST_SIGNER: ${{ github.workspace }}/build-pq-signer/test-pq-contracts-sign
         run: |
           set -euo pipefail
@@ -72,6 +76,7 @@ jobs:
           python3 test/treasury-vault/test_native.py 2>&1 | tee "$RUNNER_TEMP/treasury/native.log"
           python3 test/treasury-vault/test_wallets.py 2>&1 | tee "$RUNNER_TEMP/treasury/wallets.log"
           python3 test/treasury-vault/test_pq_wallets.py 2>&1 | tee "$RUNNER_TEMP/treasury/pq-wallets.log"
+          python3 test/treasury-vault/test_pq_cold.py 2>&1 | tee "$RUNNER_TEMP/treasury/pq-cold.log"
           python3 test/treasury-vault/mutations.py 2>&1 | tee "$RUNNER_TEMP/treasury/mutations.log"
           git diff --exit-code
       - name: Preserve bounded execution evidence
