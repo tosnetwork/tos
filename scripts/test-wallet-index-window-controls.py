@@ -4,8 +4,8 @@
 Each mutation removes one rule: the history filter's bound or its per-account
 cutoff, the RPC's fail-closed answer and its filter on single events, the
 base record written with every base move (by replay with an advancing nonzero
-base, by the verification of an import and by a build), the record's shard
-cover check, the refusal of a nonzero base without its record, and the
+base, by the verification of an import and by a build), the retried backfill of a
+missing record, the record's shard cover check, the refusal of a nonzero base without its record, and the
 canonical dump's bound, its normalization of token and NFT verdict lts, its
 head check and its refusal to widen the window. The named tests must fail
 with the mutation and pass again once the source is restored. Sources are
@@ -45,6 +45,10 @@ PREPARED = (
 BUILT = (
     "test-wallet-index-source",
     "WalletIndexVerify_a_fresh_index_is_built_from_the_windows_blocks",
+)
+BACKFILLED = (
+    "test-wallet-index-source",
+    "WalletIndexVerify_a_missing_base_record_is_backfilled_after_the_source_recovers",
 )
 DUMP_CLI = ("dump-cli", None)
 
@@ -102,6 +106,13 @@ MUTATIONS = [
         "  TRY_STATUS(db.put_window_base(record.base, base_record));",
         "  TRY_STATUS(db.put_window_base(record.base, {}));",
         [BUILT],
+    ),
+    (
+        "backfill-gives-up-after-a-failure",
+        VERIFY,
+        "  delay_ = delay_ == 0 ? kFirstDelaySeconds",
+        "  owed_ = false;\n  delay_ = delay_ == 0 ? kFirstDelaySeconds",
+        [BACKFILLED],
     ),
     (
         "record-cover-unchecked",

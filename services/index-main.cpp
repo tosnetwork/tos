@@ -253,16 +253,12 @@ int main(int argc, char** argv) {
     Prefetcher prefetcher(reader, Prefetcher::Options{});
     prefetcher.start();
     ReplayLoop replay(reader, prefetcher, progress, stats, ceiling, *verify_source);
-    {
-      // A nonzero base without its block's record (written before records
-      // existed): its record is read from this node's block before history
-      // is served; until then history reads fail closed and /readyz is not
-      // ready.
-      auto backfilled = backfill_window_base_record(*tos_wallet_index::wallet_index_db(), *verify_source);
-      if (backfilled.is_error()) {
-        LOG(WARNING) << "the window base has no record: " << backfilled.message();
-      }
-    }
+    // A nonzero base without its block's record (written before records
+    // existed) gets its record from this node's block, retried with a backoff
+    // while replay goes on; until then history reads fail closed and /readyz
+    // is not ready.
+    WindowBaseBackfill backfill;
+    std::string backfill_error;
     // Periodic operator line: where replay time went in the last interval.
     constexpr double kStatsLogInterval = 60.0;
     auto logged = stats_snapshot();
@@ -271,6 +267,13 @@ int main(int argc, char** argv) {
         [&](const td::Bits256& address, auto done) { done(replay.newest(address)); });
     while (!stop_requested.load()) {
       auto now = td::Time::now();
+      if (backfill.owed()) {
+        auto backfilled = backfill.step(*tos_wallet_index::wallet_index_db(), *verify_source, now);
+        if (backfilled.is_error() && backfilled.message().str() != backfill_error) {
+          backfill_error = backfilled.message().str();
+          LOG(WARNING) << "the window base has no record yet: " << backfill_error;
+        }
+      }
       if (now - fds_sampled_at >= 1.0) {
         stats.open_fds = count_open_fds();
         fds_sampled_at = now;

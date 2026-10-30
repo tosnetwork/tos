@@ -16,6 +16,7 @@
 #include "block/block-auto.h"
 #include "block/block-parse.h"
 #include "services/index-verify.h"
+#include "td/db/RocksDb.h"
 #include "td/utils/crypto.h"
 #include "td/utils/filesystem.h"
 #include "td/utils/port/path.h"
@@ -1937,4 +1938,42 @@ TEST(WalletIndexVerify, block_1_comes_from_the_state_the_heads_block_names) {
   // A state of another block, named by the head's block, is not the head's.
   auto elsewhere = masterchain_state(first, 21);
   ASSERT_TRUE(terminal_with(first_block_from_head_state(head, head_block(elsewhere), elsewhere), "does not decode"));
+}
+
+// A nonzero base whose record is missing gets it from the node's block once
+// the source can be read again, with the base unchanged: each failed attempt
+// delays the next one, and history stays fail closed until then.
+TEST(WalletIndexVerify, a_missing_base_record_is_backfilled_after_the_source_recovers) {
+  FixtureSource source(22);
+  TempIndex index;
+  {
+    std::lock_guard<std::mutex> guard(index.db->write_mutex());
+    auto base = tos::services::read_base_record(source, 14).move_as_ok();
+    index.db->commit_replay_checkpoint({master_id(1), master_id(22)}, 14u, base).ensure();
+  }
+  // As an index written before records existed leaves it.
+  index.db.reset();
+  {
+    td::RocksDbOptions options;
+    options.no_transactions = true;
+    auto raw = td::RocksDb::open(index.dir + "/index", std::move(options)).move_as_ok();
+    const char record_key[2] = {0x00, 0x36};
+    raw.erase(td::Slice{record_key, 2}).ensure();
+  }
+  index.db = WalletIndexDb::open(index.dir + "/index").move_as_ok();
+  ASSERT_TRUE(index.db->history_window().is_error());
+  tos::services::WindowBaseBackfill backfill;
+  source.errors[14] = "transient read failure";
+  ASSERT_TRUE(backfill.step(*index.db, source, 0).is_error());
+  ASSERT_TRUE(backfill.step(*index.db, source, 5).is_error());
+  ASSERT_TRUE(backfill.owed());
+  source.errors.clear();
+  // The second failure delayed the next attempt by 10 s.
+  ASSERT_TRUE(backfill.step(*index.db, source, 14).is_ok());
+  ASSERT_TRUE(backfill.owed() && index.db->history_window().is_error());
+  ASSERT_TRUE(backfill.step(*index.db, source, 15).is_ok());
+  ASSERT_TRUE(!backfill.owed());
+  auto window = index.db->history_window().move_as_ok();
+  ASSERT_EQ(window.base, 14u);
+  ASSERT_TRUE(window.record.value().block == master_id(14));
 }

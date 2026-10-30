@@ -13,7 +13,7 @@ Scenarios (each its own receipt, <root>/<scenario>/receipt.json):
 - path-b: a donor index at checkpoint C on the full source, exported, imported
   untrusted into the joined source, verified until Full; its canonical digest
   equals that of a full replay of the full source to exactly the import's
-  head, over the narrower of the two windows.
+  head, over the import's whole stored window.
 - path-a: an empty index on the joined source, built from the window's blocks,
   Full, the same digest.
 - red controls: the path-b snapshot edited as each names, each refused with
@@ -247,14 +247,17 @@ def canonical_digest(
 def common_window_digests(
     build: Path, imported: Path, reference: Path, head: int, out: Path
 ) -> tuple[CanonicalDump, CanonicalDump]:
-    """Both indexes' digests at checkpoint `head`, over the narrower of their
-    two stored windows: the index with the lower base takes the other's."""
+    """Both indexes' digests at checkpoint `head` over the import's whole
+    stored window. The import's window is never narrowed: a reference that
+    does not cover it (a higher base) fails the comparison."""
     own = canonical_digest(build, imported, head, None, out / "dump.log")
-    other = canonical_digest(build, reference, head, None, out / "reference-own-dump.log")
-    if own.window_base >= other.window_base:
-        other = canonical_digest(build, reference, head, imported, out / "reference-dump.log")
-    else:
-        own = canonical_digest(build, imported, head, reference, out / "narrowed-dump.log")
+    covered = canonical_digest(build, reference, head, None, out / "reference-own-dump.log")
+    if covered.window_base > own.window_base:
+        raise RuntimeError(
+            f"the reference's window (base {covered.window_base}) does not cover the import's "
+            f"(base {own.window_base})"
+        )
+    other = canonical_digest(build, reference, head, imported, out / "reference-dump.log")
     if own.window_base != other.window_base:
         raise RuntimeError("the canonical dumps used different windows")
     return own, other
@@ -385,7 +388,7 @@ def scenario_path_b(context: Context, out: Path) -> JsonObject:
     if context.reference_tip < head:
         raise RuntimeError("the reference stops before the verified import's head")
     # At the import's head, against a reference replayed to exactly that head,
-    # over the narrower of the two stored windows.
+    # over the import's whole stored window.
     own, other = common_window_digests(
         context.build, data / "index", reference_at(context, head), head, out
     )

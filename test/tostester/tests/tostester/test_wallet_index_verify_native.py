@@ -192,13 +192,14 @@ def test_the_reference_is_narrowed_to_the_import_s_stored_base(tmp_path, monkeyp
     assert all("--source-db" not in call for call in calls)
 
 
-def test_an_import_with_a_lower_base_is_narrowed_to_the_reference(tmp_path, monkeypatch):
+def test_a_reference_that_does_not_cover_the_import_s_window_is_refused(tmp_path, monkeypatch):
+    # The import serves history from base 11; a reference from base 12 cannot
+    # vouch for it, and the import's window is never narrowed to hide it.
     imported, reference = tmp_path / "import", tmp_path / "reference"
     calls = fake_dumps(monkeypatch, {str(imported): 11, str(reference): 12})
-    own, other = RUNNER.common_window_digests(tmp_path, imported, reference, 30, tmp_path)
-    assert calls[2][calls[2].index("--index-dir") + 1] == str(imported)
-    assert calls[2][calls[2].index("--window-base-from") + 1] == str(reference)
-    assert own.window_base == other.window_base == 12
+    with pytest.raises(RuntimeError, match="does not cover the import"):
+        RUNNER.common_window_digests(tmp_path, imported, reference, 30, tmp_path)
+    assert all("--window-base-from" not in call for call in calls)
 
 
 def test_a_dump_at_another_head_is_refused(tmp_path, monkeypatch):

@@ -336,6 +336,26 @@ td::Result<td::optional<tos_wallet_index::WindowBaseRecord>> base_record_at(Veri
 // the index's history then fails closed until the base moves.
 td::Status backfill_window_base_record(tos_wallet_index::WalletIndexDb& db, VerifySource& source);
 
+// The backfill above, retried until it succeeds: the first attempt is due at
+// once, each failure delays the next one (5 s, doubling to at most 300 s)
+// while history stays fail closed and replay goes on. `now` is monotonic
+// seconds. Once the base has a record nothing is owed any more.
+class WindowBaseBackfill {
+ public:
+  static constexpr double kFirstDelaySeconds = 5;
+  static constexpr double kMaxDelaySeconds = 300;
+  bool owed() const {
+    return owed_;
+  }
+  // One attempt if one is owed and due; returns the attempt's error, if any.
+  td::Status step(tos_wallet_index::WalletIndexDb& db, VerifySource& source, double now);
+
+ private:
+  bool owed_ = true;
+  double next_attempt_ = 0;
+  double delay_ = 0;
+};
+
 // Block 1's full identity as `head`'s masterchain state records it (its
 // OldMcBlocks), from `head`'s checked block root and the state the node
 // holds for it, which must be the one the block's state update names.

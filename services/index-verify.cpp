@@ -1335,6 +1335,20 @@ td::Status backfill_window_base_record(WalletIndexDb& db, VerifySource& source) 
   return batch.commit();
 }
 
+td::Status WindowBaseBackfill::step(WalletIndexDb& db, VerifySource& source, double now) {
+  if (!owed_ || now < next_attempt_) {
+    return td::Status::OK();
+  }
+  auto status = backfill_window_base_record(db, source);
+  if (status.is_ok()) {
+    owed_ = false;
+    return status;
+  }
+  delay_ = delay_ == 0 ? kFirstDelaySeconds : std::min(delay_ * 2, kMaxDelaySeconds);
+  next_attempt_ = now + delay_;
+  return status;
+}
+
 td::Result<BlockIdExt> first_block_from_head_state(const BlockIdExt& head, const td::Ref<vm::Cell>& block_root,
                                                    const td::Ref<vm::Cell>& state) {
   block::gen::Block::Record block;
