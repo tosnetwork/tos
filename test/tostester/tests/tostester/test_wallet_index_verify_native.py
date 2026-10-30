@@ -115,3 +115,44 @@ def test_every_planned_scenario_is_present_and_none_is_skipped():
     for name in ("path-a", "injected", "stale", "forged-ownership"):
         with pytest.raises(RUNNER.Unavailable):
             RUNNER.SCENARIOS[name](None, None)
+
+
+class ExitedAtOnce:
+    """A service process that exits before it ever answers /readyz."""
+
+    pid = 0
+    returncode = 3
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def poll(self):
+        return self.returncode
+
+    def terminate(self):
+        pass
+
+    def wait(self, timeout=None):
+        return self.returncode
+
+    def kill(self):
+        pass
+
+
+def test_a_service_that_exits_early_never_counts_as_reaching_its_state(tmp_path, monkeypatch):
+    monkeypatch.setattr(RUNNER.subprocess, "Popen", ExitedAtOnce)
+    run = RUNNER.run_service(
+        Path("/bin/true"),
+        tmp_path,
+        tmp_path / "data",
+        [],
+        lambda status, body: True,
+        tmp_path / "log",
+    )
+    assert not run.reached and run.exit_code == 3
+    with pytest.raises(RuntimeError, match="before the expected state"):
+        RUNNER.require_reached(run, "reference")
+    stopped = RUNNER.ServiceRun(exit_code=1, reached=True)
+    with pytest.raises(RuntimeError, match="did not stop cleanly"):
+        RUNNER.require_reached(stopped, "path-b")
+    RUNNER.require_reached(RUNNER.ServiceRun(exit_code=0, reached=True), "path-b")

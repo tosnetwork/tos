@@ -95,6 +95,8 @@ class ServiceRun:
     """One run of tos-wallet-index, observed through /readyz until `until`."""
 
     exit_code: int | None = None
+    # Whether `until` held before the service exited or was stopped.
+    reached: bool = False
     readyz: JsonObject = field(default_factory=dict)
     ever_ready: bool = False
     phases: list[tuple[float, object, object]] = field(default_factory=list)
@@ -173,6 +175,7 @@ def run_service(
                         )
                         last_phase = phase
                     if until(status, body):
+                        run.reached = True
                         break
                 time.sleep(0.5)
             else:
@@ -197,14 +200,39 @@ def tool(build: Path, *args: str, receipt: Path) -> str:
     )
 
 
-def canonical_digest(build: Path, index: Path, source: Path, receipt: Path) -> str:
-    """The canonical digest of a stopped index (stage 4d's dump mode)."""
+def require_reached(run: ServiceRun, label: str) -> None:
+    """A positive scenario's service reached its state and stopped cleanly."""
+    if not run.reached:
+        raise RuntimeError(f"{label}: the service exited {run.exit_code} before the expected state")
+    if run.exit_code != 0:
+        raise RuntimeError(f"{label}: the service did not stop cleanly (exit {run.exit_code})")
+
+
+def canonical_digest(
+    build: Path, index: Path, source: Path, head: int, base: int, receipt: Path
+) -> str:
+    """The canonical digest of a stopped index over (base, head] (stage 4d's dump).
+
+    Both bounds are explicit, so two indexes are compared over the same
+    authenticated window whatever their own checkpoints and bases are.
+    """
     dump = build / "services/tos-wallet-index-dump"
     probe = subprocess.run([str(dump), "--help"], capture_output=True, text=True, timeout=30)
     if "--canonical" not in probe.stdout + probe.stderr:
         raise Unavailable("the canonical dump (stage 4d) is not in this build")
     text = SNAPSHOT_RUNNER.command(
-        [str(dump), "--canonical", "--index-dir", str(index), "--source-db", str(source)],
+        [
+            str(dump),
+            "--canonical",
+            "--index-dir",
+            str(index),
+            "--source-db",
+            str(source),
+            "--head",
+            str(head),
+            "--window-base",
+            str(base),
+        ],
         receipt,
     )
     matched = re.search(r"(?m)^sha256=([0-9a-f]{64})$", text)
@@ -220,7 +248,9 @@ class Context:
     image: Image
     checkpoint: int
     service: Path
-    reference_digest: str | None = None
+    # The reference index (full replay of the full source) and its tip.
+    reference_index: Path | None = None
+    reference_tip: int | None = None
     donor_snapshot: Path | None = None
 
 
@@ -241,9 +271,13 @@ def scenario_reference(context: Context, out: Path) -> JsonObject:
     run = run_service(
         context.service, context.image.full, data, [], until_caught_up, out / "service.log"
     )
-    digest = canonical_digest(context.build, data / "index", context.image.full, out / "dump.log")
-    context.reference_digest = digest
-    return {"run": run.__dict__ | {"log": None}, "canonical_sha256": digest}
+    require_reached(run, "reference")
+    tip = run.readyz.get("masterchain_seqno")
+    if not isinstance(tip, int):
+        raise RuntimeError("the reference reported no masterchain seqno")
+    context.reference_index = data / "index"
+    context.reference_tip = tip
+    return {"run": run.__dict__ | {"log": None}, "tip": tip}
 
 
 def donor_snapshot(context: Context) -> Path:
@@ -262,8 +296,7 @@ def donor_snapshot(context: Context) -> Path:
         ),
         out / "service.log",
     )
-    if run.exit_code not in (0, None):
-        raise RuntimeError(f"the donor run exited {run.exit_code}")
+    require_reached(run, "donor")
     snapshot = out / "checkpoint.snapshot"
     tool(
         context.build,
@@ -306,14 +339,33 @@ def scenario_path_b(context: Context, out: Path) -> JsonObject:
     run = run_service(
         context.service, context.image.joined, data, [], until_full, out / "service.log"
     )
-    digest = canonical_digest(context.build, data / "index", context.image.joined, out / "dump.log")
-    if context.reference_digest is None:
+    require_reached(run, "path-b")
+    if context.reference_index is None or context.reference_tip is None:
         raise RuntimeError("path-b needs the reference scenario first")
-    # Over the verified horizon the joined source's index must equal the
-    # reference; the canonical dump restricts both to the window.
-    if digest != context.reference_digest:
-        raise AssertionError("the verified import differs from the reference over the window")
-    return {"run": run.__dict__ | {"log": None}, "canonical_sha256": digest}
+    head = run.readyz.get("masterchain_seqno")
+    horizon = run.readyz.get("verified_horizon")
+    base = horizon.get("masterchain_seqno") if isinstance(horizon, dict) else None
+    if not isinstance(head, int) or not isinstance(base, int):
+        raise RuntimeError("the verified import reported no head or verified horizon")
+    if context.reference_tip < head:
+        raise RuntimeError("the reference stops before the verified import's head")
+    # Both over the window the import verified: after its horizon, up to its head.
+    digests = {
+        "import": canonical_digest(
+            context.build, data / "index", context.image.joined, head, base, out / "dump.log"
+        ),
+        "reference": canonical_digest(
+            context.build,
+            context.reference_index,
+            context.image.full,
+            head,
+            base,
+            out / "reference-dump.log",
+        ),
+    }
+    if digests["import"] != digests["reference"]:
+        raise AssertionError("the verified import differs from the reference over its window")
+    return {"run": run.__dict__ | {"log": None}, "head": head, "base": base, "digests": digests}
 
 
 def scenario_path_a(context: Context, out: Path) -> JsonObject:
