@@ -53,6 +53,7 @@ const int error::insufficient_value = 0x1c87;
 const int error::unknown_change = 0x1c88;
 const int error::seqno_exhausted = 0x1c89;
 const int error::stored_count = 0x1c8a;
+const int error::fee_range = 0x1c8b;
 
 const int basechain = 0;
 const int max_actions = 16;
@@ -64,15 +65,35 @@ const int SEND_MODES_ALLOWED = 0x83;
 ;; Matches tol/extra-flags-constants.h: new bounce format (+1), full bounce body (+2).
 const int MESSAGE_EXTRA_FLAGS_ALLOWED = 3;
 
-;; Funding quote. Measured on the C++ executor at global version 16 by
-;; test/treasury-vault/test_pq_cold.py, which asserts that every accepted request stays
-;; under its quote: 2-of-3 with one send about 28,200 gas, 12-of-64 with sixteen sends about
-;; 159,800, a 2-of-3 key addition about 41,000. A verification itself is charged within the
-;; transaction's signature allowance; the per-signature term covers the set lookups.
+;; Funding allowance, measured by test/treasury-vault/test_pq_cold.py at global version 16.
+;; Every quorum is exercised with one send and all three configuration changes at the
+;; exact quote. A large batch's action allowance must not subsidize signature processing.
+;; The signature term covers dictionary walks, stored-key/signature loading and verification.
 const int fee::base_gas = 20000;
-const int fee::gas_per_signature = 4000;
+const int fee::gas_per_signature = 12000;
 const int fee::gas_per_action = 8000;
 const int fee::configure_gas = 30000;
+const int fee::max_gas = 9223372036854775807; ;; nonnegative signed 64-bit gas quantity
+const int fee::max_coins = 1329227995784915872903807060280344575; ;; VarUInteger 16
+
+int checked_fee_value(int value, int limit) impure inline {
+  throw_unless(error::fee_range, (limit >= 0) & (limit <= fee::max_coins));
+  throw_unless(error::fee_range, (value >= 0) & (value <= limit));
+  return value;
+}
+
+int checked_add(int a, int b, int limit) impure inline {
+  a = checked_fee_value(a, limit);
+  b = checked_fee_value(b, limit);
+  return checked_fee_value(a + b, limit);
+}
+
+int checked_mul(int a, int b, int limit) impure inline {
+  a = checked_fee_value(a, limit);
+  b = checked_fee_value(b, limit);
+  ;; Each operand is at most 120 bits, so the intermediate fits TVM's signed 257 bits.
+  return checked_fee_value(a * b, limit);
+}
 
 (cell, int, int, int) load_data() inline {
   slice ds = get_data().begin_parse();
@@ -94,11 +115,15 @@ const int fee::configure_gas = 30000;
 }
 
 int required_value(int signatures, int actions, int configure) inline {
-  int gas = fee::base_gas + fee::gas_per_signature * signatures + fee::gas_per_action * actions;
+  int gas = checked_add(fee::base_gas,
+      checked_mul(fee::gas_per_signature, signatures, fee::max_gas), fee::max_gas);
+  gas = checked_add(gas,
+      checked_mul(fee::gas_per_action, actions, fee::max_gas), fee::max_gas);
   if (configure) {
-    gas += fee::configure_gas;
+    gas = checked_add(gas, fee::configure_gas, fee::max_gas);
   }
-  return get_compute_fee(basechain, gas) + get_forward_fee(basechain, 0, 0);
+  return checked_add(get_compute_fee(basechain, gas), get_forward_fee(basechain, 0, 0),
+                     fee::max_coins);
 }
 
 ;; A relaxed internal message as this account is willing to send it.

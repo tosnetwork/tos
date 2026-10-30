@@ -74,6 +74,7 @@ ERR = {
     "unknown_change": 0x1C88,
     "seqno_exhausted": 0x1C89,
     "stored_count": 0x1C8A,
+    "fee_range": 0x1C8B,
     "key_id_mismatch": 0x1B09,
 }
 RELAYER = (0, 78)
@@ -135,7 +136,7 @@ def action_count(payload):
 
 
 # Mirrors the contract's funding quote; the test asserts measured gas stays under it.
-FEE = dict(base=20_000, signature=4_000, action=8_000, configure=30_000)
+FEE = dict(base=20_000, signature=12_000, action=8_000, configure=30_000)
 
 
 def allowed_gas(quorum, kind, payload):
@@ -499,6 +500,98 @@ class PqColdTests(unittest.TestCase):
         payload = out_list([(1, relaxed(v.address, COIN // 2, body))] * 16)
         messages = cold.submit(v, EXECUTE, payload, value=cold.quote(EXECUTE, 16))
         self.assertEqual(len(messages), 16)
+
+    def test_each_quorum_funds_one_governance_send_at_exact_quote(self):
+        # A large batch's action allowance must not hide an underpriced signature term.
+        for quorum in range(1, 13):
+            with self.subTest(quorum=quorum):
+                cold = PqMultisig(range(100, 164), quorum=quorum)
+                self.assertEqual(cold.get("get_checked_config"), (0, [64]))
+                with_vault = Vault(
+                    role_cell=roles(
+                        self.business.address, self.guardian.address, cold.address, PAUSER
+                    )
+                )
+                self.addCleanup(with_vault.close)
+                req = with_vault.req(set_asset(0), admin=True)
+                body = envelope(SCHEDULE, req)
+                quote = cold.quote(EXECUTE, 1)
+                cold.send_to_vault(
+                    with_vault,
+                    body,
+                    value=quote - 1,
+                    expected=ERR["insufficient_value"],
+                    verifications=0,
+                )
+                messages = cold.send_to_vault(with_vault, body, value=quote)
+                self.assertEqual(cold.seqno, 1)
+                self.assertEqual(len(messages), 1)
+                self.assertEqual(decode_message(messages[0])["value"], COIN // 2)
+                with_vault.send(message=messages[0])
+                self.assertIsNotNone(with_vault.state["admin"])
+
+    def test_each_quorum_funds_all_configuration_changes_at_exact_quote(self):
+        added_key = pqtest.public_key(163)
+        removed_id = pqtest.key_id(added_key)
+        for quorum in range(1, 13):
+            changes = (
+                (ADD, 63, Cell().uint(ADD, 8).ref(pqtest.stored(added_key)), [64, quorum]),
+                (REMOVE, 64, Cell().uint(REMOVE, 8).uint(removed_id, 256), [63, quorum]),
+                (
+                    QUORUM,
+                    64,
+                    Cell().uint(QUORUM, 8).uint(1 if quorum == 12 else quorum + 1, 8),
+                    [64, 1 if quorum == 12 else quorum + 1],
+                ),
+            )
+            for change, count, payload, expected_config in changes:
+                with self.subTest(quorum=quorum, change=change):
+                    cold = PqMultisig(range(100, 100 + count), quorum=quorum)
+                    self.assertEqual(cold.get("get_checked_config"), (0, [count]))
+                    quote = cold.quote(CONFIGURE)
+                    cold.submit(
+                        self.v,
+                        CONFIGURE,
+                        payload,
+                        value=quote - 1,
+                        expected=ERR["insufficient_value"],
+                        verifications=0,
+                    )
+                    self.assertEqual(cold.submit(self.v, CONFIGURE, payload, value=quote), [])
+                    self.assertEqual(cold.seqno, 1)
+                    self.assertEqual(cold.get("get_quorum"), (0, expected_config))
+                    self.assertEqual(cold.get("get_checked_config"), (0, [expected_config[0]]))
+                    if change != QUORUM:
+                        self.assertEqual(
+                            cold.get("get_is_verifier", removed_id),
+                            (0, [-1 if change == ADD else 0]),
+                        )
+
+    def test_checked_fee_arithmetic_boundaries(self):
+        # Expose the production helpers only in a temporary native test build. No test
+        # methods enter the deployed ABI, and mutation runs include their altered source.
+        harness = Path(self.tmp.name) / "fee-arithmetic.fc"
+        harness.write_text(
+            f'#include "{os.path.relpath(MULTISIG_SOURCE.resolve(), harness.parent.resolve())}";\n'
+            "int test_add(int a, int b, int limit) method_id { return checked_add(a, b, limit); }\n"
+            "int test_mul(int a, int b, int limit) method_id { return checked_mul(a, b, limit); }\n"
+        )
+        code = pqtest.compile_source(harness, harness.with_suffix(".boc"))
+
+        def call(method, a, b, limit):
+            return pqtest.get_method(code, self.cold.data, self.cold.address, method, (a, b, limit))
+
+        for limit in ((1 << 63) - 1, (1 << 120) - 1):
+            for method in ("test_add", "test_mul"):
+                with self.subTest(limit=limit, method=method):
+                    self.assertEqual(call(method, 0, 0, limit), (0, [0]))
+                    boundary = (limit - 1, 1) if method == "test_add" else (limit, 1)
+                    self.assertEqual(call(method, *boundary, limit), (0, [limit]))
+                    overflow = (limit, 1) if method == "test_add" else (limit, 2)
+                    for a, b in (overflow, (-1, 1), (1, -1), (limit + 1, 0), (0, limit + 1)):
+                        self.assertEqual(call(method, a, b, limit)[0], ERR["fee_range"])
+                    for invalid_limit in (-1, 1 << 120):
+                        self.assertEqual(call(method, 0, 0, invalid_limit)[0], ERR["fee_range"])
 
     def test_seqno_exhaustion_fails_closed(self):
         cold = PqMultisig(data=multisig_data(SIGNERS, 2, seqno=(1 << 64) - 1))
