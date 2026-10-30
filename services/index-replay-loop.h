@@ -2,6 +2,7 @@
 #pragma once
 
 #include <algorithm>
+#include <limits>
 #include <memory>
 #include <vector>
 
@@ -221,25 +222,32 @@ class ReplayLoop {
     // (never so for an applied block of a real source) leaves it where it is.
     TRY_RESULT(stored_base, db->get_window_base());
     uint32_t newest_time = master->inited_unix_time() ? master->unix_time() : 0;
-    TRY_RESULT(base, advance_window_base(stored_base, next, newest_time, tos_wallet_index::kEventRetentionSeconds,
-                                         [this](uint32_t seqno) -> td::Result<td::optional<uint32_t>> {
-                                           auto handle = reader_.masterchain(seqno);
-                                           if (handle.is_error()) {
-                                             if (handle.error().code() == ErrorCode::notready) {
-                                               return td::optional<uint32_t>{};
+    TRY_RESULT(window, advance_window_base(stored_base, next, newest_time, tos_wallet_index::kEventRetentionSeconds,
+                                           [this](uint32_t seqno) -> td::Result<td::optional<uint32_t>> {
+                                             auto handle = reader_.masterchain(seqno);
+                                             if (handle.is_error()) {
+                                               if (handle.error().code() == ErrorCode::notready) {
+                                                 return td::optional<uint32_t>{};
+                                               }
+                                               return handle.move_as_error();
                                              }
-                                             return handle.move_as_error();
-                                           }
-                                           if (!handle.ok()->inited_unix_time()) {
-                                             return td::Status::Error("masterchain handle has no generation time");
-                                           }
-                                           return td::optional<uint32_t>{handle.ok()->unix_time()};
-                                         }));
+                                             if (!handle.ok()->inited_unix_time()) {
+                                               return td::Status::Error("masterchain handle has no generation time");
+                                             }
+                                             return td::optional<uint32_t>{handle.ok()->unix_time()};
+                                           }));
+    if (window.stalled && window.base != stalled_base_) {
+      // Reported once per position: the index keeps more history than the
+      // window until the source holds the next masterchain block again.
+      LOG(WARNING) << "window base stalled at " << window.base + 1
+                   << ": the source does not hold that masterchain block";
+      stalled_base_ = window.base;
+    }
     {
       StageTimer timer(stats_.commit_us);
       stats_.commits.fetch_add(1, std::memory_order_relaxed);
       std::lock_guard<std::mutex> guard(db->write_mutex());
-      TRY_STATUS(db->commit_replay_checkpoint(committed, base));
+      TRY_STATUS(db->commit_replay_checkpoint(committed, window.base));
     }
     checkpoint_ = committed;
     progress_.cursor = committed.committed.seqno();
@@ -263,6 +271,8 @@ class ReplayLoop {
   bool initialized_ = false;
   bool background_progress_ = false;
   bool at_limit_ = false;
+  // The base last reported as stalled, so a stall is logged once.
+  uint32_t stalled_base_ = std::numeric_limits<uint32_t>::max();
   WalletIndexDb::ReplayCheckpoint checkpoint_;
   std::vector<BlockIdExt> heads_;
 };

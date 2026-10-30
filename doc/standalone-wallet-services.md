@@ -196,8 +196,10 @@ more than seven days before the newest replayed one. Events whose shard block
 that base or an earlier masterchain block referenced are pruned. In each shard
 that is every transaction at or below the end lt of the shard tip the base
 names, so an importer can check a history window against the chain. The base
-moves only forward, with the replay checkpoint. On a source that joined after
-the base, it sits just below the first masterchain block the source holds.
+moves only forward, with the replay checkpoint. It never jumps over a
+masterchain block the source does not hold: there it stalls, logs
+`window base stalled at <seqno>`, and the index keeps more history than the
+window until the block is held again.
 Schema version 4 keys the age index by that masterchain reference; an index of
 an earlier version is reset on open.
 

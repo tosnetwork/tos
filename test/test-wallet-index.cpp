@@ -607,22 +607,36 @@ TEST(WalletIndex, WindowBaseIsTheLastBlockGeneratedBeforeTheRetention) {
   // the last generated before it.
   auto base = advance_window_base(0, 100, 2000, 300, chain_from(1));
   ASSERT_TRUE(base.is_ok());
-  ASSERT_EQ(base.ok(), 69u);
+  ASSERT_EQ(base.ok().base, 69u);
+  ASSERT_TRUE(!base.ok().stalled);
   // It does not move back and does not move while still inside the window.
-  ASSERT_EQ(advance_window_base(80, 100, 2000, 300, chain_from(1)).move_as_ok(), 80u);
-  ASSERT_EQ(advance_window_base(69, 100, 2000, 300, chain_from(1)).move_as_ok(), 69u);
+  ASSERT_EQ(advance_window_base(80, 100, 2000, 300, chain_from(1)).move_as_ok().base, 80u);
+  ASSERT_EQ(advance_window_base(69, 100, 2000, 300, chain_from(1)).move_as_ok().base, 69u);
   // A young chain has no base yet.
-  ASSERT_EQ(advance_window_base(0, 10, 200, 300, chain_from(1)).move_as_ok(), 0u);
+  ASSERT_EQ(advance_window_base(0, 10, 200, 300, chain_from(1)).move_as_ok().base, 0u);
 }
 
-TEST(WalletIndex, WindowBaseOfASourceThatJoinedLaterStartsAtItsFirstBlock) {
-  // The source holds blocks from 50 on. The real base 69 is held: found.
-  std::vector<uint32_t> probes;
-  ASSERT_EQ(advance_window_base(0, 100, 2000, 300, chain_from(50, &probes)).move_as_ok(), 69u);
-  ASSERT_TRUE(probes.size() < 64);
-  // The source holds blocks from 90 on, all inside the window: the base is
-  // just below its first block.
-  ASSERT_EQ(advance_window_base(0, 100, 2000, 300, chain_from(90)).move_as_ok(), 89u);
+// Which blocks a source holds is not known to be a contiguous suffix, so a
+// missing block stops the base; it never jumps over the gap, which could
+// prune history that is still inside the window.
+TEST(WalletIndex, WindowBaseStallsAtABlockTheSourceDoesNotHold) {
+  auto stalled = advance_window_base(0, 100, 2000, 300, chain_from(50)).move_as_ok();
+  ASSERT_EQ(stalled.base, 0u);
+  ASSERT_TRUE(stalled.stalled);
+  // A base already placed at the source's first block moves normally.
+  auto placed = advance_window_base(49, 100, 2000, 300, chain_from(50)).move_as_ok();
+  ASSERT_EQ(placed.base, 69u);
+  ASSERT_TRUE(!placed.stalled);
+  // A gap inside the held range stops it at the gap.
+  tos::services::MasterchainTime gap = [](uint32_t seqno) -> td::Result<td::optional<uint32_t>> {
+    if (seqno == 60) {
+      return td::optional<uint32_t>{};
+    }
+    return td::optional<uint32_t>{1000 + 10 * seqno};
+  };
+  auto at_gap = advance_window_base(40, 100, 2000, 300, gap).move_as_ok();
+  ASSERT_EQ(at_gap.base, 59u);
+  ASSERT_TRUE(at_gap.stalled);
 }
 
 TEST(WalletIndex, WindowBaseLookupFailureIsNotAbsence) {

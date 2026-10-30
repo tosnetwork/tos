@@ -19,51 +19,43 @@ constexpr uint32_t kWindowBaseStepsPerInterval = 4096;
 // error and must not be read as "not held".
 using MasterchainTime = std::function<td::Result<td::optional<uint32_t>>(uint32_t seqno)>;
 
+// The window base after one step, and whether it stopped at a masterchain
+// block the source does not hold.
+struct WindowBaseStep {
+  uint32_t base = 0;
+  bool stalled = false;
+};
+
 // Move the retention window base after replaying masterchain block `newest`
 // generated at `newest_time`: the base becomes the last masterchain block
 // generated more than `retention` seconds earlier. It never moves back and
 // stays below `newest`.
 //
-// A source that joined later than the base holds no block from before its
-// first one. Then everything it holds is inside the window, so the base is
-// set just below the first block it holds, found by binary search; the
-// blocks it holds are a suffix of the chain ending at `newest`.
-inline td::Result<uint32_t> advance_window_base(uint32_t base, uint32_t newest, uint32_t newest_time,
-                                                uint32_t retention, const MasterchainTime& time_of) {
+// A block the source does not hold stops the base where it is (`stalled`):
+// it never jumps over a gap, because which blocks a source holds is not
+// known to be a contiguous suffix. A stalled base only keeps more history
+// than the window, never less. An index imported onto a source that joined
+// later starts with its base at the first block of the source's contiguous
+// history, so a fresh gap below it is never needed.
+inline td::Result<WindowBaseStep> advance_window_base(uint32_t base, uint32_t newest, uint32_t newest_time,
+                                                      uint32_t retention, const MasterchainTime& time_of) {
+  WindowBaseStep step{base, false};
   if (newest_time <= retention) {
-    return base;
+    return step;
   }
   uint32_t cutoff = newest_time - retention;
-  for (uint32_t steps = 0; base + 1 < newest && steps < kWindowBaseStepsPerInterval; ++steps) {
-    TRY_RESULT(time, time_of(base + 1));
+  for (uint32_t steps = 0; step.base + 1 < newest && steps < kWindowBaseStepsPerInterval; ++steps) {
+    TRY_RESULT(time, time_of(step.base + 1));
     if (!time) {
-      // Lowest held block in (base + 1, newest]; newest is held.
-      uint32_t lo = base + 2, hi = newest;
-      while (lo < hi) {
-        uint32_t mid = lo + (hi - lo) / 2;
-        TRY_RESULT(held, time_of(mid));
-        if (held) {
-          hi = mid;
-        } else {
-          lo = mid + 1;
-        }
-      }
-      TRY_RESULT(first, time_of(lo));
-      if (!first) {
-        return td::Status::Error("the source does not hold the newest replayed masterchain block");
-      }
-      if (first.value() >= cutoff) {
-        return lo - 1;
-      }
-      base = lo - 1;
-      continue;
+      step.stalled = true;
+      break;
     }
     if (time.value() >= cutoff) {
       break;
     }
-    ++base;
+    ++step.base;
   }
-  return base;
+  return step;
 }
 
 }  // namespace tos::services
