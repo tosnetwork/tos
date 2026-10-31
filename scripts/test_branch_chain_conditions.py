@@ -1,5 +1,6 @@
 """The archive exception must not permit runtime gates to become conditional."""
 
+import ast
 import importlib.util
 import re
 import tempfile
@@ -49,6 +50,7 @@ class BranchConditionTests(unittest.TestCase):
             "Retain public explorer RPC response receipts",
             "Retain public self-pay proofs",
             "Retain native init-block publisher evidence",
+            "Retain native wallet-index verification evidence",
         ):
             archive = re.search(
                 rf"(?ms)^      - name: {re.escape(name)}\n.*?(?=^      - |\Z)",
@@ -119,6 +121,67 @@ class BranchConditionTests(unittest.TestCase):
         for command in controls:
             with self.subTest(command=command), self.assertRaises(RuntimeError):
                 self.guard.validate_node_store_proof(self.workflow.replace(command, "REMOVED"))
+
+    def test_wallet_index_native_acceptance_cannot_be_omitted_or_narrowed(self):
+        self.guard.validate_wallet_index_acceptance(self.workflow)
+        for marker in (
+            "python3 scripts/test-wallet-index-review-controls.py",
+            "grep -Fx 'WALLET_INDEX_REVIEW_CONTROLS_OK'",
+            "uv run python test/integration/wallet_index_verify_native.py",
+            "grep -Fx 'NATIVE_WALLET_INDEX_VERIFY_OK'",
+        ):
+            lines = [line for line in self.workflow.splitlines() if marker in line]
+            self.assertEqual(len(lines), 1)
+            for replacement in ("", "          # " + lines[0].lstrip()):
+                with self.subTest(marker=marker, replacement=replacement), self.assertRaises(RuntimeError):
+                    self.guard.validate_wallet_index_acceptance(self.workflow.replace(lines[0], replacement, 1))
+        command = next(line for line in self.workflow.splitlines() if "uv run python test/integration/wallet_index_verify_native.py" in line)
+        for replacement in (
+            command.replace(" | tee", " --scenarios | tee"),
+            command.replace(" | tee", " --scenarios reference path-b | tee"),
+            command.replace('"$(git rev-parse HEAD)"', '"${{ github.event.pull_request.head.sha }}"'),
+        ):
+            with self.subTest(replacement=replacement), self.assertRaises(RuntimeError):
+                self.guard.validate_wallet_index_acceptance(self.workflow.replace(command, replacement, 1))
+
+    def test_wallet_index_acceptance_requires_pipeline_failures_and_bounded_receipts(self):
+        for before, after in (
+            ("set -euo pipefail", "set -eu"),
+            ("shell: bash", "shell: sh"),
+            ("build/node-sync-init-block/wallet-index-fixtures.json", "build/node-sync-init-block/network/"),
+            ("build/node-sync-init-block/wallet-traffic/*.boc", "build/node-sync-init-block/**"),
+            ("build/wallet-index-verify-native/*/receipt.json", "build/wallet-index-verify-native/**"),
+            ("build/wallet-index-review-controls/*.log", "build/wallet-index-review-controls/"),
+            ("retention-days: 14", "retention-days: 1"),
+        ):
+            with self.subTest(before=before), self.assertRaises(RuntimeError):
+                self.guard.validate_wallet_index_acceptance(self.workflow.replace(before, after))
+
+    def test_wallet_index_fixture_cannot_be_omitted_from_the_shared_image(self):
+        with self.assertRaisesRegex(RuntimeError, "init-block lifecycle command"):
+            self.guard.validate_init_block_lifecycle(self.workflow.replace(" --wallet-index-fixtures", ""))
+
+    def test_wallet_index_default_must_include_each_required_scenario(self):
+        root = Path(__file__).resolve().parents[1]
+        source = (root / "test/integration/wallet_index_verify_native.py").read_text()
+        self.guard.validate_wallet_index_scenarios(source)
+        for name in self.guard.WALLET_INDEX_SCENARIOS:
+            class RemoveScenario(ast.NodeTransformer):
+                def visit_Constant(self, node):
+                    if node.value == name:
+                        return ast.copy_location(ast.Constant(value="removed-scenario"), node)
+                    return node
+
+            changed = ast.unparse(RemoveScenario().visit(ast.parse(source)))
+            with self.subTest(name=name), self.assertRaisesRegex(RuntimeError, "scenarios differ"):
+                self.guard.validate_wallet_index_scenarios(changed)
+        for default in ("[]", "['reference']"):
+            with self.subTest(default=default), self.assertRaisesRegex(RuntimeError, "entire scenario registry"):
+                self.guard.validate_wallet_index_scenarios(source.replace("default=list(SCENARIOS)", f"default={default}"))
+        with self.assertRaisesRegex(RuntimeError, "include every red control"):
+            self.guard.validate_wallet_index_scenarios(
+                source.replace("**{control.name: scenario_red(control) for control in RED_CONTROLS},", "")
+            )
 
     def test_triggers_are_every_pull_request_and_pushes_to_main(self):
         self.guard.validate_triggers(self.workflow)

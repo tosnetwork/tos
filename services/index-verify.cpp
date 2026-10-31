@@ -333,6 +333,12 @@ class ReaderVerifySource final : public VerifySource {
         cancel);
   }
   td::Result<BlockIdExt> first_block_from_head(const BlockIdExt& head) override {
+    return read_ancestor(head, 1, true);
+  }
+  td::Result<BlockIdExt> ancestor_from_head(const BlockIdExt& head, uint32_t seqno) override {
+    return read_ancestor(head, seqno, false);
+  }
+  td::Result<BlockIdExt> read_ancestor(const BlockIdExt& head, uint32_t seqno, bool first) {
     TRY_RESULT(handle, reader_.masterchain(head.seqno()));
     if (handle->id() != head || !handle->is_applied()) {
       return terminal("the node's masterchain block differs from the head the index is built to");
@@ -342,7 +348,8 @@ class ReaderVerifySource final : public VerifySource {
       return terminal("the node does not hold the bytes of the head the index is built to");
     }
     TRY_RESULT(state, reader_.state(handle));
-    return first_block_from_head_state(head, read.value(), state);
+    return first ? first_block_from_head_state(head, read.value(), state)
+                 : ancestor_from_head_state(head, read.value(), state, seqno);
   }
   td::Status for_each_interval_transaction_cell(
       const VerifyMasterchainBlock& master,
@@ -1314,6 +1321,55 @@ td::Result<td::optional<tos_wallet_index::WindowBaseRecord>> base_record_at(Veri
   return record;
 }
 
+td::Result<td::optional<tos_wallet_index::WindowBaseRecord>> find_retained_window_base(
+    VerifySource& source, const BlockIdExt& authenticated_head, uint32_t replay_seqno, uint32_t old_base,
+    uint32_t replay_time, const std::atomic<bool>* cancel) {
+  using tos_wallet_index::WindowBaseRecord;
+  constexpr uint32_t retention = tos_wallet_index::kEventRetentionSeconds;
+  if (!authenticated_head.is_masterchain_ext() || !authenticated_head.is_valid_full() ||
+      replay_seqno > authenticated_head.seqno() || old_base >= replay_seqno) {
+    return terminal("invalid retained-window search bounds");
+  }
+  if (replay_time <= retention || replay_seqno - old_base <= 1) {
+    return td::optional<WindowBaseRecord>{};
+  }
+  const uint32_t cutoff = replay_time - retention;
+  uint64_t low = uint64_t{old_base} + 1, high = uint64_t{replay_seqno} - 1;
+  td::optional<WindowBaseRecord> candidate;
+  // Every iteration halves a uint32 sequence-number range. A hole only
+  // narrows the search toward newer data: no contiguous archive is assumed.
+  while (low <= high) {
+    if (cancel != nullptr && cancel->load()) {
+      return td::Status::Error("retained-window search interrupted");
+    }
+    auto seqno = static_cast<uint32_t>(low + (high - low) / 2);
+    TRY_RESULT(block, source.masterchain_block(seqno));
+    if (!block) {
+      low = uint64_t{seqno} + 1;
+      continue;
+    }
+    const auto& held = block.value();
+    if (held.id.seqno() != seqno || !held.applied || !linked_inside(held)) {
+      return terminal("a retained-window candidate is not the requested applied masterchain block");
+    }
+    if (held.unix_time >= cutoff) {
+      high = uint64_t{seqno} - 1;
+      continue;
+    }
+    WindowBaseRecord record{tos_wallet_index::kWalletIndexSchemaVersion, held.id, held.tips};
+    TRY_STATUS(tos_wallet_index::check_window_base_record(record));
+    candidate = std::move(record);
+    low = uint64_t{seqno} + 1;
+  }
+  if (candidate) {
+    TRY_RESULT(ancestor, source.ancestor_from_head(authenticated_head, candidate.value().block.seqno()));
+    if (ancestor != candidate.value().block) {
+      return terminal("the retained-window candidate is not an ancestor of the authenticated head");
+    }
+  }
+  return candidate;
+}
+
 td::Status backfill_window_base_record(WalletIndexDb& db, VerifySource& source) {
   TRY_RESULT(base, db.get_window_base());
   if (base == 0) {
@@ -1349,8 +1405,12 @@ td::Status WindowBaseBackfill::step(WalletIndexDb& db, VerifySource& source, dou
   return status;
 }
 
-td::Result<BlockIdExt> first_block_from_head_state(const BlockIdExt& head, const td::Ref<vm::Cell>& block_root,
-                                                   const td::Ref<vm::Cell>& state) {
+namespace {
+td::Result<BlockIdExt> block_id_from_head_state(const BlockIdExt& head, const td::Ref<vm::Cell>& block_root,
+                                                const td::Ref<vm::Cell>& state, uint32_t seqno, bool allow_first_head) {
+  if (seqno == 0 || seqno > head.seqno() || (seqno == head.seqno() && !(allow_first_head && seqno == 1))) {
+    return terminal("the requested masterchain block is not an ancestor of the head");
+  }
   block::gen::Block::Record block;
   if (block_root.is_null() || !tlb::unpack_cell(block_root, block)) {
     return terminal("the head's block does not decode");
@@ -1368,11 +1428,22 @@ td::Result<BlockIdExt> first_block_from_head_state(const BlockIdExt& head, const
     return terminal(PSTRING() << "the head's masterchain state does not decode: " << config.error().message());
   }
   BlockIdExt first;
-  if (!config.ok()->get_old_mc_block_id(1, first) || !first.is_masterchain_ext() || first.seqno() != 1 ||
+  if (!config.ok()->get_old_mc_block_id(seqno, first) || !first.is_masterchain_ext() || first.seqno() != seqno ||
       !first.is_valid_full()) {
-    return terminal("the head's masterchain state does not record masterchain block 1");
+    return terminal(PSTRING() << "the head's masterchain state does not record masterchain block " << seqno);
   }
   return first;
+}
+}  // namespace
+
+td::Result<BlockIdExt> first_block_from_head_state(const BlockIdExt& head, const td::Ref<vm::Cell>& block_root,
+                                                   const td::Ref<vm::Cell>& state) {
+  return block_id_from_head_state(head, block_root, state, 1, true);
+}
+
+td::Result<BlockIdExt> ancestor_from_head_state(const BlockIdExt& head, const td::Ref<vm::Cell>& block_root,
+                                                const td::Ref<vm::Cell>& state, uint32_t seqno) {
+  return block_id_from_head_state(head, block_root, state, seqno, false);
 }
 
 td::Result<size_t> build_row_bytes(const td::Ref<vm::Cell>& transaction) {

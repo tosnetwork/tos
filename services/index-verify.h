@@ -106,6 +106,14 @@ class VerifySource {
   // records it (its prev_blocks), the state first bound to the new state hash
   // `head`'s checked block names. Terminal when either cannot be checked.
   virtual td::Result<BlockIdExt> first_block_from_head(const BlockIdExt& head) = 0;
+  // A particular ancestor authenticated by the state the checked head names.
+  // Sources that only support the build anchor must fail closed for others.
+  virtual td::Result<BlockIdExt> ancestor_from_head(const BlockIdExt& head, uint32_t seqno) {
+    if (seqno == 1) {
+      return first_block_from_head(head);
+    }
+    return td::Status::Error("the source cannot authenticate this masterchain ancestor");
+  }
 };
 
 // Walk one interval's shard blocks in order: `read_root` gives a block's
@@ -330,6 +338,15 @@ td::Result<td::optional<tos_wallet_index::WindowBaseRecord>> read_base_record(Ve
 // As read_base_record, for a base about to be written: nothing for base 0,
 // terminal when the source does not hold it.
 td::Result<td::optional<tos_wallet_index::WindowBaseRecord>> base_record_at(VerifySource& source, uint32_t base);
+// A fully verified index may retain a window base below the recipient's
+// available archive after a trusted restore. At most 32 probes find a held,
+// applied block strictly older than the replay-time retention cutoff, below
+// replay_seqno and above old_base. Its full identity is authenticated in the
+// latest observed head's state before returning its exact shard-tip record.
+// Missing probes may retain extra history; they never authorize pruning.
+td::Result<td::optional<tos_wallet_index::WindowBaseRecord>> find_retained_window_base(
+    VerifySource& source, const BlockIdExt& authenticated_head, uint32_t replay_seqno, uint32_t old_base,
+    uint32_t replay_time, const std::atomic<bool>* cancel = nullptr);
 // Write the record of an existing nonzero base that has none (an index
 // written before records existed, or restored from such a backup), from the
 // source's checked block. An error when the source does not hold the base:
@@ -362,6 +379,8 @@ class WindowBaseBackfill {
 // Terminal when any of it does not check.
 td::Result<BlockIdExt> first_block_from_head_state(const BlockIdExt& head, const td::Ref<vm::Cell>& block_root,
                                                    const td::Ref<vm::Cell>& state);
+td::Result<BlockIdExt> ancestor_from_head_state(const BlockIdExt& head, const td::Ref<vm::Cell>& block_root,
+                                                const td::Ref<vm::Cell>& state, uint32_t seqno);
 
 // The memory one built row is charged while its interval is collected: the
 // transaction's cells (data and per-cell overhead), and the row, its age

@@ -139,10 +139,12 @@ class StateAccounts {
     if (state_init.code.is_null() || state_init.code->size_refs() < 1) {
       return no_code_inactive_ ? LoadResult::Inactive : LoadResult::Indeterminate;
     }
-    if (state_init.data.is_null() || state_init.data->size_refs() < 1) {
+    if (state_init.data.is_null()) {
       return LoadResult::Indeterminate;
     }
     out.code = state_init.code->prefetch_ref();
+    // StateInit.data is optional. The VM initializes an absent c4 to an
+    // empty cell; it is a runnable state, not missing source data.
     out.data = state_init.data->prefetch_ref();
     return LoadResult::Active;
   }
@@ -256,48 +258,57 @@ TokenVerification token_get_failure(WalletIndexGetMethodStatus status) {
 
 TokenVerification verify_token_wallet(StateAccounts& state, const td::Bits256& wallet, td::Bits256& owner_out,
                                       td::Bits256& master_out, WalletIndexVerificationBudget& budget) {
-  tos::SmartContract::State wstate;
-  auto wallet_load = state.load(wallet, wstate);
-  if (wallet_load != StateAccounts::LoadResult::Active) {
-    return token_load_failure(wallet_load);
+  try {
+    tos::SmartContract::State wstate;
+    auto wallet_load = state.load(wallet, wstate);
+    if (wallet_load != StateAccounts::LoadResult::Active) {
+      return token_load_failure(wallet_load);
+    }
+    auto result = run_get(wstate, wallet, "get_wallet_data", {}, budget);
+    auto stack = std::move(result.stack);
+    if (result.status != WalletIndexGetMethodStatus::Success) {
+      return token_get_failure(result.status);
+    }
+    if (stack->depth() < 4) {
+      return TokenVerification::Rejected;
+    }
+    // get_wallet_data -> (int balance, slice owner, slice master, cell wallet_code)
+    auto& s = stack.write();
+    s.pop_cell();  // wallet_code
+    auto master_csr = s.pop_cellslice();
+    auto owner_csr = s.pop_cellslice();
+    s.pop_int();  // balance
+    td::Bits256 owner, master;
+    if (!extract_wc0_address(std::move(owner_csr), owner) || !extract_wc0_address(std::move(master_csr), master)) {
+      return TokenVerification::Rejected;
+    }
+    tos::SmartContract::State mstate;
+    auto master_load = state.load(master, mstate);
+    if (master_load != StateAccounts::LoadResult::Active) {
+      return token_load_failure(master_load);  // fail-closed: unverifiable claim is not indexed
+    }
+    auto resolved_result = run_get(mstate, master, "get_wallet_address", {make_addr_slice(owner)}, budget);
+    auto resolved_stack = std::move(resolved_result.stack);
+    if (resolved_result.status != WalletIndexGetMethodStatus::Success) {
+      return token_get_failure(resolved_result.status);
+    }
+    if (resolved_stack->depth() < 1) {
+      return TokenVerification::Rejected;
+    }
+    td::Bits256 resolved;
+    if (!extract_wc0_address(resolved_stack.write().pop_cellslice(), resolved) || resolved != wallet) {
+      return TokenVerification::Rejected;
+    }
+    owner_out = owner;
+    master_out = master;
+    return TokenVerification::Verified;
+  } catch (vm::VmError& err) {
+    // A malformed getter result is a negative verdict, not work to retry.
+    return err.get_errno() == static_cast<int>(vm::Excno::virt_err) ? TokenVerification::Indeterminate
+                                                                    : TokenVerification::Rejected;
+  } catch (vm::VmVirtError&) {
+    return TokenVerification::Indeterminate;
   }
-  auto result = run_get(wstate, wallet, "get_wallet_data", {}, budget);
-  auto stack = std::move(result.stack);
-  if (result.status != WalletIndexGetMethodStatus::Success) {
-    return token_get_failure(result.status);
-  }
-  if (stack->depth() < 4) {
-    return TokenVerification::Rejected;
-  }
-  // get_wallet_data -> (int balance, slice owner, slice master, cell wallet_code)
-  auto& s = stack.write();
-  s.pop();  // wallet_code
-  auto master_csr = s.pop_cellslice();
-  auto owner_csr = s.pop_cellslice();
-  td::Bits256 owner, master;
-  if (!extract_wc0_address(std::move(owner_csr), owner) || !extract_wc0_address(std::move(master_csr), master)) {
-    return TokenVerification::Rejected;
-  }
-  tos::SmartContract::State mstate;
-  auto master_load = state.load(master, mstate);
-  if (master_load != StateAccounts::LoadResult::Active) {
-    return token_load_failure(master_load);  // fail-closed: unverifiable claim is not indexed
-  }
-  auto resolved_result = run_get(mstate, master, "get_wallet_address", {make_addr_slice(owner)}, budget);
-  auto resolved_stack = std::move(resolved_result.stack);
-  if (resolved_result.status != WalletIndexGetMethodStatus::Success) {
-    return token_get_failure(resolved_result.status);
-  }
-  if (resolved_stack->depth() < 1) {
-    return TokenVerification::Rejected;
-  }
-  td::Bits256 resolved;
-  if (!extract_wc0_address(resolved_stack.write().pop_cellslice(), resolved) || resolved != wallet) {
-    return TokenVerification::Rejected;
-  }
-  owner_out = owner;
-  master_out = master;
-  return TokenVerification::Verified;
 }
 
 // Verify `item` via get_nft_data against the post-apply state. For collection
@@ -309,29 +320,29 @@ enum class NftVerification { Verified, Absent, Indeterminate, OtherShard };
 NftVerification verify_nft_item(StateAccounts& state, const td::Bits256& item, td::Bits256& owner_out,
                                 bool& has_collection, td::Bits256& collection_out,
                                 WalletIndexVerificationBudget& budget) {
-  tos::SmartContract::State istate;
-  auto item_status = state.load(item, istate);
-  if (item_status == StateAccounts::LoadResult::Inactive) {
-    return NftVerification::Absent;
-  }
-  if (item_status == StateAccounts::LoadResult::OtherShard) {
-    return NftVerification::OtherShard;
-  }
-  if (item_status != StateAccounts::LoadResult::Active) {
-    return NftVerification::Indeterminate;
-  }
-  auto item_result = run_get(istate, item, "get_nft_data", {}, budget);
-  if (item_result.status == WalletIndexGetMethodStatus::Indeterminate) {
-    return NftVerification::Indeterminate;
-  }
-  auto stack = std::move(item_result.stack);
-  if (item_result.status != WalletIndexGetMethodStatus::Success || stack->depth() < 5) {
-    return NftVerification::Absent;
-  }
   try {
+    tos::SmartContract::State istate;
+    auto item_status = state.load(item, istate);
+    if (item_status == StateAccounts::LoadResult::Inactive) {
+      return NftVerification::Absent;
+    }
+    if (item_status == StateAccounts::LoadResult::OtherShard) {
+      return NftVerification::OtherShard;
+    }
+    if (item_status != StateAccounts::LoadResult::Active) {
+      return NftVerification::Indeterminate;
+    }
+    auto item_result = run_get(istate, item, "get_nft_data", {}, budget);
+    if (item_result.status == WalletIndexGetMethodStatus::Indeterminate) {
+      return NftVerification::Indeterminate;
+    }
+    auto stack = std::move(item_result.stack);
+    if (item_result.status != WalletIndexGetMethodStatus::Success || stack->depth() < 5) {
+      return NftVerification::Absent;
+    }
     // get_nft_data -> (int init?, int index, slice collection, slice owner, cell content)
     auto& s = stack.write();
-    s.pop();  // content
+    s.pop_cell();  // content
     auto owner_csr = s.pop_cellslice();
     auto coll_csr = s.pop_cellslice();
     auto index = s.pop_int();
@@ -2119,8 +2130,9 @@ AccountAtHead classify_account_unguarded(const td::Ref<vm::CellSlice>& value) {
   if (state_init.code.is_null() || state_init.code->size_refs() < 1) {
     return AccountAtHead::NoCode;
   }
-  return state_init.data.not_null() && state_init.data->size_refs() >= 1 ? AccountAtHead::WithCode
-                                                                         : AccountAtHead::Undecodable;
+  // An absent optional data cell is initialized by the VM; only an
+  // undecoded field prevents the getter from running.
+  return state_init.data.not_null() ? AccountAtHead::WithCode : AccountAtHead::Undecodable;
 }
 
 // A state that throws while it is read does not decode either.

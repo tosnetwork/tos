@@ -7,6 +7,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <limits>
 #include <map>
 #include <mutex>
 #include <random>
@@ -176,6 +177,9 @@ struct ChainOptions {
 // block of interval n-1.
 struct FakeChain {
   std::map<uint32_t, validator::BlockHandle> masters;
+  // Identities authenticated by the head state, independent of which
+  // historical block handles or bytes the fixture still retains.
+  std::map<uint32_t, BlockIdExt> master_history;
   std::map<uint32_t, std::vector<BlockIdExt>> heads;
   std::map<uint32_t, std::vector<BlockIdExt>> order;
   std::map<BlockIdExt, validator::BlockHandle> shards;
@@ -216,6 +220,7 @@ std::shared_ptr<FakeChain> make_chain(uint32_t masters, uint32_t per_interval, C
     // A fixture handle is never written; mark it as such.
     master->flushed_upto(master->version());
     chain->masters[n] = master;
+    chain->master_history[n] = mid;
     previous_master = mid;
     for (uint32_t j = 0; j < per_interval; ++j) {
       ++shard_seqno;
@@ -1186,6 +1191,13 @@ class ChainVerifySource final : public VerifySource {
     return chain_->masters.at(chain_->tip)->id();
   }
   td::Result<td::optional<VerifyMasterchainBlock>> masterchain_block(uint32_t seqno) override {
+    probes.push_back(seqno);
+    if (auto error = errors.find(seqno); error != errors.end()) {
+      return td::Status::Error(error->second);
+    }
+    if (auto override = overrides.find(seqno); override != overrides.end()) {
+      return td::optional<VerifyMasterchainBlock>(override->second);
+    }
     auto it = chain_->masters.find(seqno);
     if (it == chain_->masters.end()) {
       return td::optional<VerifyMasterchainBlock>{};
@@ -1199,7 +1211,7 @@ class ChainVerifySource final : public VerifySource {
       block.handle_prev = block.prev;
     }
     block.applied = it->second->is_applied();
-    block.unix_time = seqno * 100000;
+    block.unix_time = it->second->inited_unix_time() ? it->second->unix_time() : seqno * 100000;
     for (auto& head : chain_->heads.at(seqno)) {
       block.tips.push_back({head.shard_full(), 1000ull * head.seqno()});
     }
@@ -1264,8 +1276,24 @@ class ChainVerifySource final : public VerifySource {
     }
     return first_block.value();
   }
+  td::Result<BlockIdExt> ancestor_from_head(const BlockIdExt& head, uint32_t seqno) override {
+    ancestor_queries.emplace_back(head, seqno);
+    auto bound = chain_->master_history.find(head.seqno());
+    auto ancestor = chain_->master_history.find(seqno);
+    if (bound == chain_->master_history.end() || bound->second != head || seqno >= head.seqno() ||
+        ancestor == chain_->master_history.end()) {
+      return td::Status::Error(kVerifyTerminalError, "no authenticated fixture ancestor");
+    }
+    auto override = ancestor_overrides.find(seqno);
+    return override == ancestor_overrides.end() ? ancestor->second : override->second;
+  }
   // Block 1's identity, kept when the source no longer holds it.
   td::optional<BlockIdExt> first_block;
+  std::map<uint32_t, VerifyMasterchainBlock> overrides;
+  std::map<uint32_t, std::string> errors;
+  std::map<uint32_t, BlockIdExt> ancestor_overrides;
+  std::vector<uint32_t> probes;
+  std::vector<std::pair<BlockIdExt, uint32_t>> ancestor_queries;
   td::Status for_each_interval_transaction(
       const VerifyMasterchainBlock& master,
       const std::function<td::Status(const td::Bits256&, uint64_t, const td::Bits256&)>& cb,
@@ -1764,4 +1792,200 @@ TEST(WalletIndexSource, replay_moves_the_window_base_with_its_blocks_record) {
   auto record = db->window_base_record().move_as_ok();
   ASSERT_TRUE(record && record.value().block == chain->masters.at(17)->id());
   ASSERT_TRUE(db->history_window().is_ok());
+}
+
+namespace {
+std::shared_ptr<FakeChain> retention_chain() {
+  ChainOptions options;
+  options.master_seconds = 100000;
+  return make_chain(30, 1, options);
+}
+
+// A real trusted export and restore at C=17/B=10. The recipient joined at
+// C, so no handle below C can move the donor's base one block at a time.
+struct TrustedRetentionCase {
+  TrustedRetentionCase()
+      : chain(retention_chain())
+      , donor(temporary_directory())
+      , restored(temporary_directory())
+      , donor_remove{donor}
+      , restored_remove{restored} {
+    {
+      ReplayHarness h(chain, 17, donor);
+      ASSERT_OK(h.run_until_idle());
+      ASSERT_EQ(tos_wallet_index::wallet_index_db()->get_window_base().move_as_ok(), 10u);
+    }
+    auto snapshot = donor + "/snapshot";
+    auto made = tos_wallet_index::WalletIndexSnapshotFile::create(donor + "/index", snapshot).move_as_ok();
+    tos_wallet_index::WalletIndexSnapshotFile::restore(snapshot, restored + "/index", made.sha256).ensure();
+    for (uint32_t seqno = 1; seqno < 17; ++seqno) {
+      chain->masters.erase(seqno);
+    }
+  }
+  std::shared_ptr<FakeChain> chain;
+  std::string donor, restored;
+  RemoveOnExit donor_remove, restored_remove;
+};
+
+td::Bits256 chain_account(uint32_t shard_seqno) {
+  td::Bits256 account = td::Bits256::zero();
+  account.as_slice().copy_from(td::Slice(reinterpret_cast<const char*>(&shard_seqno), sizeof(shard_seqno)));
+  return account;
+}
+}  // namespace
+
+// Retention resumes without historical blocks before the trusted
+// checkpoint. Young retained blocks cannot justify a jump; once they have
+// expired the checkpoint and exact base record move together and old rows
+// are pruned. Authentication uses the observed head, not a replay state
+// the recipient might already have pruned.
+TEST(WalletIndexSource, a_trusted_restore_resumes_retention_after_the_source_bootstrap_gap) {
+  TrustedRetentionCase c;
+  {
+    ReplayHarness h(c.chain, 23, c.restored);
+    ASSERT_OK(h.run_until_idle());
+    auto* db = tos_wallet_index::wallet_index_db();
+    ASSERT_EQ(db->get_window_base().move_as_ok(), 10u);
+    ASSERT_TRUE(db->has_events(chain_account(17)).move_as_ok());
+    auto* source = static_cast<ChainVerifySource*>(h.checked.get());
+    ASSERT_TRUE(source->ancestor_queries.empty());
+  }
+  {
+    ReplayHarness h(c.chain, 0, c.restored);
+    ASSERT_OK(h.run_until_idle());
+    auto* db = tos_wallet_index::wallet_index_db();
+    ASSERT_EQ(db->replay_checkpoint().move_as_ok().value().committed, master_id(30));
+    ASSERT_EQ(db->get_window_base().move_as_ok(), 23u);
+    auto record = db->window_base_record().move_as_ok();
+    ASSERT_TRUE(record && record.value().block == master_id(23));
+    ASSERT_TRUE(db->history_window().is_ok());
+    ASSERT_TRUE(!db->has_events(chain_account(17)).move_as_ok());
+    ASSERT_TRUE(db->has_events(chain_account(24)).move_as_ok());
+    ASSERT_TRUE(h.progress.is_ready(td::Time::now()));
+    auto* source = static_cast<ChainVerifySource*>(h.checked.get());
+    ASSERT_TRUE(!source->ancestor_queries.empty());
+    for (const auto& [head, ancestor] : source->ancestor_queries) {
+      ASSERT_EQ(head, master_id(30));
+      ASSERT_TRUE(ancestor >= 17 && ancestor < head.seqno());
+    }
+  }
+}
+
+TEST(WalletIndexSource, a_retained_base_must_be_strictly_older_than_the_retention_cutoff) {
+  TrustedRetentionCase c;
+  ChainVerifySource source(c.chain, {});
+  auto exact = 1700000u + tos_wallet_index::kEventRetentionSeconds;
+  auto young = find_retained_window_base(source, master_id(30), 30, 10, exact).move_as_ok();
+  ASSERT_TRUE(!young);
+  ASSERT_TRUE(source.ancestor_queries.empty());
+  auto expired = find_retained_window_base(source, master_id(30), 30, 10, exact + 1).move_as_ok();
+  ASSERT_TRUE(expired && expired.value().block == master_id(17));
+  ASSERT_EQ(source.ancestor_queries.size(), 1u);
+}
+
+// The authenticated shortcut only repairs a fully verified index. A
+// quarantined or partial import must keep the window its verification is
+// checking, even when a newer retained block would be safe for Full.
+TEST(WalletIndexSource, only_a_full_index_can_rebase_retention_across_a_source_gap) {
+  using tos_wallet_index::VerificationState;
+  for (auto state : {VerificationState::Quarantined, VerificationState::Partial, VerificationState::Full}) {
+    TrustedRetentionCase c;
+    {
+      auto db = tos_wallet_index::WalletIndexDb::open(c.restored + "/index").move_as_ok();
+      db->begin_batch().ensure();
+      db->put_verification_state(state).ensure();
+      db->commit_batch().ensure();
+    }
+    ReplayHarness h(c.chain, 0, c.restored);
+    ASSERT_OK(h.run_until_idle());
+    auto* db = tos_wallet_index::wallet_index_db();
+    ASSERT_EQ(db->get_window_base().move_as_ok(), state == VerificationState::Full ? 23u : 10u);
+    ASSERT_TRUE(db->get_verification_state().move_as_ok() == state);
+    auto* source = static_cast<ChainVerifySource*>(h.checked.get());
+    ASSERT_EQ(source->ancestor_queries.empty(), state != VerificationState::Full);
+  }
+}
+
+// Malformed records, unapplied blocks and an identity not authenticated by
+// the head must never become a pruning base. Exercise the actual replay
+// commit boundary, including failure after its shard rows were written.
+TEST(WalletIndexSource, an_invalid_retained_candidate_never_commits_a_new_window_base) {
+  for (unsigned fault = 0; fault < 6; ++fault) {
+    TrustedRetentionCase c;
+    ReplayHarness h(c.chain, 0, c.restored);
+    auto* source = static_cast<ChainVerifySource*>(h.checked.get());
+    auto candidate = source->masterchain_block(17).move_as_ok().value();
+    std::string expected;
+    switch (fault) {
+      case 0:
+        candidate.applied = false;
+        expected = "requested applied masterchain block";
+        break;
+      case 1:
+        candidate.handle_prev = master_id(15);
+        expected = "requested applied masterchain block";
+        break;
+      case 2:
+        candidate.tips.clear();
+        expected = "no or too many shard tips";
+        break;
+      case 3:
+        candidate.id.root_hash.as_slice()[0] ^= 1;
+        expected = "not an ancestor";
+        break;
+      case 4: {
+        auto foreign = candidate.id;
+        foreign.file_hash.as_slice()[0] ^= 1;
+        source->ancestor_overrides[17] = foreign;
+        expected = "not an ancestor";
+        break;
+      }
+      case 5:
+        source->errors[17] = "retained fixture read failure";
+        expected = "retained fixture read failure";
+        break;
+    }
+    source->overrides[17] = candidate;
+    auto failed = h.run_until_idle();
+    ASSERT_TRUE(failed.is_error() && failed.message().str().find(expected) != std::string::npos);
+    auto* db = tos_wallet_index::wallet_index_db();
+    ASSERT_EQ(db->get_window_base().move_as_ok(), 10u);
+    ASSERT_EQ(db->window_base_record().move_as_ok().value().block, master_id(10));
+    ASSERT_TRUE(db->replay_checkpoint().move_as_ok().value().committed.seqno() < 24);
+  }
+}
+
+// A missing probe cannot stand in for a block. Sparse retention may leave
+// extra history, but the chosen bound still names a held, expired ancestor
+// and never jumps to a young block on the other side of a hole.
+TEST(WalletIndexSource, sparse_retention_only_rebases_to_a_held_expired_ancestor) {
+  TrustedRetentionCase c;
+  for (uint32_t seqno : {18u, 21u, 23u}) {
+    c.chain->masters.erase(seqno);
+  }
+  ChainVerifySource source(c.chain, {});
+  auto record = find_retained_window_base(source, master_id(30), 30, 10, 3000000).move_as_ok();
+  ASSERT_TRUE(record && record.value().block == master_id(22));
+  ASSERT_TRUE(source.probes.size() <= 32);
+  ASSERT_TRUE(c.chain->masters.count(record.value().block.seqno()) == 1);
+  ASSERT_TRUE(record.value().block.seqno() * 100000 < 3000000 - tos_wallet_index::kEventRetentionSeconds);
+  c.chain->masters.erase(22);
+  source.probes.clear();
+  record = find_retained_window_base(source, master_id(30), 30, 10, 3000000).move_as_ok();
+  ASSERT_TRUE(record && record.value().block == master_id(20));
+  ASSERT_TRUE(source.probes.size() <= 32);
+}
+
+TEST(WalletIndexSource, retained_base_search_is_bounded_and_cancellable) {
+  ChainVerifySource source(std::make_shared<FakeChain>(), {});
+  const uint32_t last = std::numeric_limits<int32_t>::max();
+  ASSERT_TRUE(master_id(last).is_valid_full());
+  auto missing = find_retained_window_base(source, master_id(last), last, 0, last).move_as_ok();
+  ASSERT_TRUE(!missing);
+  ASSERT_TRUE(!source.probes.empty() && source.probes.size() <= 32);
+  source.probes.clear();
+  std::atomic<bool> cancelled{true};
+  auto interrupted = find_retained_window_base(source, master_id(last), last, 0, last, &cancelled);
+  ASSERT_TRUE(interrupted.is_error() && interrupted.error().message().str().find("interrupted") != std::string::npos);
+  ASSERT_TRUE(source.probes.empty());
 }

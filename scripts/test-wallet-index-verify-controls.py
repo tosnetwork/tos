@@ -88,7 +88,10 @@ MUTATIONS = [
         "block-1-from-an-unbound-state",
         "  if (state.is_null() || td::Bits256{state->get_hash().bits()} != new_state_hash) {",
         "  if (state.is_null()) {",
-        ["WalletIndexVerify_block_1_comes_from_the_state_the_heads_block_names"],
+        [
+            "WalletIndexVerify_block_1_comes_from_the_state_the_heads_block_names",
+            "WalletIndexVerify_a_retained_ancestor_comes_from_the_requested_entry_in_the_bound_head_state",
+        ],
     ),
     (
         "build-interval-unbounded",

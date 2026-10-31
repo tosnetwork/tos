@@ -982,21 +982,64 @@ void record_nft(WalletIndexDb& db, const td::Bits256& item, const td::Bits256& o
   db.commit_batch().ensure();
 }
 
-// An account whose getters cannot run: active, with code but no data, as
-// valid TL-B (the state's balance still evaluates) that neither the writer's
-// loader nor the derivation can run a getter on.
-td::Ref<vm::Cell> undecodable_account(const td::Bits256& address) {
+// An active account with a valid absent StateInit.data field. Its getters
+// still run: the VM initializes c4 to an empty cell.
+td::Ref<vm::Cell> account_without_data(const fixture::Contract& contract) {
   vm::CellBuilder cb;
   CHECK(cb.store_long_bool(1, 1) && cb.store_long_bool(4, 3) && cb.store_long_bool(0, 8) &&
-        cb.store_bits_bool(address.cbits(), 256) && cb.store_long_bool(0, 3) && cb.store_long_bool(0, 3) &&
+        cb.store_bits_bool(contract.address.cbits(), 256) && cb.store_long_bool(0, 3) && cb.store_long_bool(0, 3) &&
         cb.store_long_bool(0, 3) && cb.store_long_bool(0, 32) && cb.store_long_bool(0, 1) &&
         cb.store_long_bool(0, 64) && cb.store_long_bool(0, 4) && cb.store_long_bool(0, 1) &&
-        cb.store_long_bool(1, 1)                                 // account_active
-        && cb.store_long_bool(0, 1) && cb.store_long_bool(0, 1)  // fixed_prefix_length, special
-        && cb.store_long_bool(1, 1) && cb.store_ref_bool(vm::CellBuilder{}.store_long(0x30, 8).finalize())  // code
-        && cb.store_long_bool(0, 1)                                                                         // no data
-        && cb.store_long_bool(0, 1));                                                                       // library
-  return cb.finalize();
+        cb.store_long_bool(1, 1)                                         // account_active
+        && cb.store_long_bool(0, 1) && cb.store_long_bool(0, 1)          // fixed_prefix_length, special
+        && cb.store_long_bool(1, 1) && cb.store_ref_bool(contract.code)  // code
+        && cb.store_long_bool(0, 1)                                      // no data
+        && cb.store_long_bool(0, 1));                                    // library
+  auto cell = cb.finalize();
+  block::gen::Account::Record_account parsed;
+  CHECK(tlb::unpack_cell(cell, parsed));
+  return cell;
+}
+
+// A genuinely malformed account, with trailing bits after the complete
+// Account value. The balance augmentation can be read, but exact decoding
+// must refuse it rather than mistake it for a valid absent data field.
+td::Ref<vm::Cell> undecodable_account(const td::Bits256& address) {
+  fixture::Contract contract{address, vm::CellBuilder{}.store_long(0x30, 8).finalize(), vm::CellBuilder{}.finalize()};
+  vm::CellBuilder cb;
+  CHECK(cb.append_cellslice_bool(vm::load_cell_slice(fixture::account(contract))) && cb.store_long_bool(1, 1));
+  auto cell = cb.finalize();
+  block::gen::Account::Record_account parsed;
+  CHECK(!tlb::unpack_cell(cell, parsed));
+  return cell;
+}
+
+// Return four get_wallet_data values with exactly one wrong stack type.
+// The method executes successfully, so only the verifier's ABI check can
+// reject it. `field`: balance, owner, master, wallet code, in that order.
+fixture::Contract malformed_wallet(const td::Bits256& wallet, const td::Bits256& owner, const td::Bits256& master,
+                                   unsigned field) {
+  vm::CellBuilder code;
+  CHECK(code.store_long_bool(0x30, 8));  // DROP method id
+  for (unsigned i = 0; i < 4; ++i) {
+    if ((i == 0 && field != i) || (i != 0 && field == i)) {
+      CHECK(code.store_long_bool(0x70, 8));  // PUSHINT 0
+    } else if (i == 1 || i == 2) {
+      CHECK(code.store_long_bool(0x89, 8) &&
+            code.store_ref_bool(fixture::address_cell(i == 1 ? owner : master)));  // PUSHREFSLICE
+    } else {
+      CHECK(code.store_long_bool(0x88, 8) && code.store_ref_bool(vm::CellBuilder{}.finalize()));  // PUSHREF
+    }
+  }
+  return fixture::Contract{wallet, code.finalize(), vm::CellBuilder{}.finalize()};
+}
+
+// A resolver that executes successfully but returns an integer instead of
+// the required address slice. Without a parameter, its getter fails before
+// this return, so the sweep of the resolver itself proves nothing about it.
+fixture::Contract malformed_resolver(const td::Bits256& address) {
+  return fixture::Contract{address, vm::CellBuilder{}.store_long(0x303070, 24).finalize(),
+                           vm::CellBuilder{}.finalize()};  // DROP method id, DROP argument, PUSHINT 0
 }
 
 BlockIdExt shard_block(uint64_t shard, uint32_t seqno) {
@@ -1173,6 +1216,79 @@ td::Result<tos::services::VerifyOutcome> ownership_to_end(TempIndex& index, Fixt
 }
 }  // namespace
 
+// Every get_wallet_data field has its specified type. A successful getter
+// with malformed output is rejected, clears stale ownership, and cannot
+// crash the sweep or leave work parked forever.
+TEST(WalletIndexVerify, malformed_wallet_getters_do_not_block_full_ownership) {
+  for (unsigned field : {1u, 2u, 3u, 0u}) {
+    HeadCase c;
+    TempIndex index;
+    auto wallet = address(0x10), owner = address(0x05), master = address(0x90);
+    passed(c, index,
+           halves(fixture::shard_state({malformed_wallet(wallet, owner, master, field)}),
+                  fixture::shard_state({fixture::token_master(master, wallet)})));
+    record_token(*index.db, wallet, owner, master, 100);
+    auto outcome = ownership_to_end(index, c.source).move_as_ok();
+    ASSERT_TRUE(outcome.step == VerifyStep::Done && index.state() == VerificationState::Full);
+    auto verdict = index.db->token_wallet_state(wallet).move_as_ok();
+    ASSERT_TRUE(verdict && !verdict.value().present && verdict.value().lt == 6000);
+    ASSERT_EQ(index.db->token_backlog_stats().move_as_ok().parked, 0u);
+  }
+}
+
+// A wallet or item can have a well-typed getter while its master or
+// collection returns a non-address value. That resolver is a failed
+// ownership claim, not an exception or a permanent retry.
+TEST(WalletIndexVerify, malformed_resolver_getters_do_not_block_full_ownership) {
+  HeadCase c;
+  TempIndex index;
+  auto wallet = address(0x10), item = address(0x11), owner = address(0x05);
+  auto master = address(0x90), collection = address(0x91);
+  passed(c, index,
+         halves(fixture::shard_state(
+                    {fixture::token_wallet(wallet, owner, master), fixture::nft_item(item, collection, owner)}),
+                fixture::shard_state({malformed_resolver(master), malformed_resolver(collection)})));
+  record_token(*index.db, wallet, owner, master, 100);
+  record_nft(*index.db, item, owner, 100);
+  auto outcome = ownership_to_end(index, c.source).move_as_ok();
+  ASSERT_TRUE(outcome.step == VerifyStep::Done && index.state() == VerificationState::Full);
+  auto verdict = index.db->token_wallet_state(wallet).move_as_ok();
+  ASSERT_TRUE(verdict && !verdict.value().present && verdict.value().lt == 6000);
+  td::Bits256 nft_owner;
+  ASSERT_TRUE(!index.db->get_nft_owner(item, nft_owner).move_as_ok());
+  ASSERT_EQ(index.db->token_backlog_stats().move_as_ok().parked, 0u);
+}
+
+// Valid absent data must run the getters, including the cross-shard master
+// and collection. Positive ownership and stale-row removal prove the
+// accounts were examined rather than skipped to make the index Full.
+TEST(WalletIndexVerify, absent_account_data_does_not_block_full_ownership) {
+  HeadCase c;
+  TempIndex index;
+  auto wallet = address(0x10), item = address(0x11), plain = address(0x12), owner = address(0x05);
+  auto master = address(0x90), collection = address(0x91);
+  fixture::Contract ordinary{plain, vm::CellBuilder{}.store_long(0x30, 8).finalize(), {}};
+  passed(c, index,
+         halves(fixture::shard_state({}, {{wallet, account_without_data(fixture::token_wallet(wallet, owner, master))},
+                                          {item, account_without_data(fixture::nft_item(item, collection, owner))},
+                                          {plain, account_without_data(ordinary)}}),
+                fixture::shard_state({},
+                                     {{master, account_without_data(fixture::token_master(master, wallet))},
+                                      {collection, account_without_data(fixture::nft_collection(collection, item))}})));
+  record_token(*index.db, plain, owner, master, 100);
+  record_nft(*index.db, plain, owner, 100);
+  auto outcome = ownership_to_end(index, c.source).move_as_ok();
+  ASSERT_TRUE(outcome.step == VerifyStep::Done && index.state() == VerificationState::Full);
+  auto verified_wallet = index.db->token_wallet_state(wallet).move_as_ok();
+  ASSERT_TRUE(verified_wallet && verified_wallet.value().present && verified_wallet.value().owner == owner);
+  auto rejected = index.db->token_wallet_state(plain).move_as_ok();
+  ASSERT_TRUE(rejected && !rejected.value().present);
+  td::Bits256 nft_owner;
+  ASSERT_TRUE(index.db->get_nft_owner(item, nft_owner).move_as_ok() && nft_owner == owner);
+  ASSERT_TRUE(!index.db->get_nft_owner(plain, nft_owner).move_as_ok());
+  ASSERT_EQ(index.db->token_backlog_stats().move_as_ok().parked, 0u);
+}
+
 // The index becomes Full only when the derivation and the reconciliation
 // are done and no token work is owed; a parked candidate keeps it Partial,
 // held, with the drain owed.
@@ -1238,7 +1354,85 @@ struct Installed {
 std::vector<OwnershipHeadState> whole(td::Ref<vm::Cell> root, uint64_t end_lt = 6000) {
   return {OwnershipHeadState{shard_block(kAll, 40), ShardIdFull{0, kAll}, end_lt, std::move(root)}};
 }
+
+void park_ownership_candidates(WalletIndexDb& db, const std::vector<tos_wallet_index::TokenCandidate>& candidates) {
+  std::lock_guard<std::mutex> guard(db.write_mutex());
+  db.begin_batch().ensure();
+  db.begin_token_pass().ensure();
+  for (const auto& candidate : candidates) {
+    tos_wallet_index::ScheduledTokenCandidate scheduled{candidate, tos_wallet_index::kMaxTokenCandidateAttempts, 6000};
+    ASSERT_TRUE(db.park_token_candidate(scheduled).move_as_ok());
+  }
+  db.save_token_counters().ensure();
+  db.commit_batch().ensure();
+  ASSERT_EQ(db.token_backlog_stats().move_as_ok().parked, candidates.size());
+}
+
+void drain_parked_ownership(WalletIndexDb& db) {
+  for (int i = 0; i < 100 && db.token_backlog_stats().move_as_ok().parked != 0; ++i) {
+    tos_wallet_index::drain_wc0_ownership(nullptr);
+  }
+  ASSERT_EQ(db.token_backlog_stats().move_as_ok().parked, 0u);
+}
 }  // namespace
+
+// Retrying the same head must reach the same negative ABI verdict as the
+// initial sweep, including a malformed master or collection resolver.
+TEST(WalletIndexVerify, the_ownership_drain_rejects_malformed_getters) {
+  TempIndex index;
+  auto wallet = address(0x10), resolved_wallet = address(0x11), item = address(0x12), owner = address(0x05);
+  auto master = address(0x90), bad_master = address(0x91), collection = address(0x92);
+  Installed installed(index);
+  auto& db = installed.db();
+  record_token(db, wallet, owner, master, 100);
+  record_token(db, resolved_wallet, owner, bad_master, 100);
+  record_nft(db, item, owner, 100);
+  using tos_wallet_index::TokenKind;
+  park_ownership_candidates(
+      db, {{TokenKind::Fungible, wallet}, {TokenKind::Fungible, resolved_wallet}, {TokenKind::Nft, item}});
+  tos::services::pin_writer_to_head(whole(fixture::shard_state(
+      {malformed_wallet(wallet, owner, master, 2), fixture::token_wallet(resolved_wallet, owner, bad_master),
+       fixture::nft_item(item, collection, owner), fixture::token_master(master, wallet),
+       malformed_resolver(bad_master), malformed_resolver(collection)})));
+  drain_parked_ownership(db);
+  for (const auto& account : {wallet, resolved_wallet}) {
+    auto verdict = db.token_wallet_state(account).move_as_ok();
+    ASSERT_TRUE(verdict && !verdict.value().present && verdict.value().lt == 6000);
+  }
+  td::Bits256 nft_owner;
+  ASSERT_TRUE(!db.get_nft_owner(item, nft_owner).move_as_ok());
+}
+
+// Candidates parked by an earlier run for valid absent data can drain at
+// the pinned head. Check positive and negative verdicts, not just counters.
+TEST(WalletIndexVerify, the_ownership_drain_runs_accounts_with_absent_data) {
+  TempIndex index;
+  auto wallet = address(0x10), item = address(0x11), plain = address(0x12), owner = address(0x05);
+  auto master = address(0x90), collection = address(0x91);
+  fixture::Contract ordinary{plain, vm::CellBuilder{}.store_long(0x30, 8).finalize(), {}};
+  Installed installed(index);
+  auto& db = installed.db();
+  record_token(db, plain, owner, master, 100);
+  record_nft(db, plain, owner, 100);
+  using tos_wallet_index::TokenKind;
+  park_ownership_candidates(
+      db,
+      {{TokenKind::Fungible, wallet}, {TokenKind::Nft, item}, {TokenKind::Fungible, plain}, {TokenKind::Nft, plain}});
+  tos::services::pin_writer_to_head(
+      whole(fixture::shard_state({}, {{wallet, account_without_data(fixture::token_wallet(wallet, owner, master))},
+                                      {item, account_without_data(fixture::nft_item(item, collection, owner))},
+                                      {plain, account_without_data(ordinary)},
+                                      {master, account_without_data(fixture::token_master(master, wallet))},
+                                      {collection, account_without_data(fixture::nft_collection(collection, item))}})));
+  drain_parked_ownership(db);
+  auto verified_wallet = db.token_wallet_state(wallet).move_as_ok();
+  ASSERT_TRUE(verified_wallet && verified_wallet.value().present && verified_wallet.value().owner == owner);
+  auto rejected = db.token_wallet_state(plain).move_as_ok();
+  ASSERT_TRUE(rejected && !rejected.value().present);
+  td::Bits256 nft_owner;
+  ASSERT_TRUE(db.get_nft_owner(item, nft_owner).move_as_ok() && nft_owner == owner);
+  ASSERT_TRUE(!db.get_nft_owner(plain, nft_owner).move_as_ok());
+}
 
 // A candidate already parked for an account that is active without code at
 // the head is decided by the ownership drain (nothing to run, so no token
@@ -1832,12 +2026,14 @@ TEST(WalletIndexVerify, a_build_charges_each_row_its_transactions_cells) {
 }
 
 namespace {
+using tos::services::ancestor_from_head_state;
 using tos::services::first_block_from_head_state;
 
 // A masterchain state of block `seqno` as the chain stores it, recording `first` as
-// masterchain block 1 in its OldMcBlocks (only the zerostate when unset), unpacked by
-// the production configuration reader.
-td::Ref<vm::Cell> masterchain_state(const td::optional<BlockIdExt>& first, uint32_t seqno = 22) {
+// masterchain block 1 and any supplied ancestors in its OldMcBlocks, unpacked by
+// the production configuration reader. The zerostate is always recorded.
+td::Ref<vm::Cell> masterchain_state(const td::optional<BlockIdExt>& first, uint32_t seqno = 22,
+                                    const std::vector<BlockIdExt>& ancestors = {}) {
   vm::Dictionary params{32};
   CHECK(params.set_ref(td::BitArray<32>::zero(), vm::CellBuilder{}.store_zeroes(256).finalize()));
   vm::CellBuilder r1;
@@ -1872,6 +2068,9 @@ td::Ref<vm::Cell> masterchain_state(const td::optional<BlockIdExt>& first, uint3
   std::vector<std::tuple<uint32_t, bool, BlockIdExt>> entries = {{0u, true, master_id(0, 1)}};
   if (first) {
     entries.emplace_back(1u, false, first.value());
+  }
+  for (const auto& ancestor : ancestors) {
+    entries.emplace_back(ancestor.seqno(), false, ancestor);
   }
   for (auto& [seqno, key, id] : entries) {
     vm::CellBuilder entry;
@@ -1938,6 +2137,43 @@ TEST(WalletIndexVerify, block_1_comes_from_the_state_the_heads_block_names) {
   // A state of another block, named by the head's block, is not the head's.
   auto elsewhere = masterchain_state(first, 21);
   ASSERT_TRUE(terminal_with(first_block_from_head_state(head, head_block(elsewhere), elsewhere), "does not decode"));
+  // At the chain's first block, the authenticated head itself is the anchor.
+  auto first_state = masterchain_state({}, 1);
+  ASSERT_EQ(first_block_from_head_state(first, head_block(first_state), first_state).move_as_ok(), first);
+}
+
+// Retention may resume at any held ancestor. Its complete identity must come
+// from the requested entry in the head's bound state, including when block 1
+// is absent, and neither the head itself nor an unrecorded height is proof.
+TEST(WalletIndexVerify, a_retained_ancestor_comes_from_the_requested_entry_in_the_bound_head_state) {
+  auto head = master_id(22);
+  auto first = master_id(1, 4);
+  auto ancestor = master_id(17, 8);
+  auto predecessor = master_id(21, 9);
+  auto state = masterchain_state(first, 22, {ancestor, predecessor});
+  auto block = head_block(state);
+  ASSERT_EQ(ancestor_from_head_state(head, block, state, 17).move_as_ok(), ancestor);
+  ASSERT_EQ(ancestor_from_head_state(head, block, state, 21).move_as_ok(), predecessor);
+  ASSERT_EQ(ancestor_from_head_state(head, block, state, 1).move_as_ok(), first);
+  ASSERT_TRUE(terminal_with(ancestor_from_head_state(head, block, state, 16), "does not record masterchain block 16"));
+  for (uint32_t seqno : {0u, 22u, 23u}) {
+    ASSERT_TRUE(terminal_with(ancestor_from_head_state(head, block, state, seqno), "not an ancestor"));
+  }
+  auto without_first = masterchain_state({}, 22, {ancestor});
+  ASSERT_EQ(ancestor_from_head_state(head, head_block(without_first), without_first, 17).move_as_ok(), ancestor);
+  auto without_ancestor = masterchain_state(first);
+  ASSERT_TRUE(terminal_with(ancestor_from_head_state(head, head_block(without_ancestor), without_ancestor, 17),
+                            "does not record masterchain block 17"));
+  auto other_root = master_id(17, 5);
+  auto other_file = ancestor;
+  other_file.file_hash.as_slice()[5] ^= 1;
+  for (const auto& substitute : {other_root, other_file}) {
+    auto other = masterchain_state(first, 22, {substitute, predecessor});
+    ASSERT_TRUE(terminal_with(ancestor_from_head_state(head, block, other, 17), "not the one its block names"));
+    ASSERT_EQ(ancestor_from_head_state(head, head_block(other), other, 17).move_as_ok(), substitute);
+  }
+  auto elsewhere = masterchain_state(first, 21, {ancestor});
+  ASSERT_TRUE(terminal_with(ancestor_from_head_state(head, head_block(elsewhere), elsewhere, 17), "does not decode"));
 }
 
 // A nonzero base whose record is missing gets it from the node's block once

@@ -84,6 +84,12 @@ jobs:
           python3 scripts/test-linux-build-triggers.py
           python3 scripts/test_container_platforms.py
 
+      - name: Check native wallet-index acceptance coverage
+        run: |
+          python3 scripts/check-branch-chain-python-ci.py
+          python3 scripts/test_branch_chain_conditions.py
+          python3 scripts/test_wallet_index_review_controls.py
+
       - name: Configure the minimal native fixture build
         run: >-
           cmake -S . -B build -G Ninja
@@ -232,6 +238,14 @@ jobs:
           print(f"all {len(expected)} security regressions are registered")
           PY
           ctest --test-dir build -L security-findings --no-tests=error --output-on-failure
+
+      - name: Remove and restore wallet-index ownership and retention guards
+        timeout-minutes: 20
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/test-wallet-index-review-controls.py --build-dir build --jobs 4 --output-dir build/wallet-index-review-controls | tee build/wallet-index-review-controls.log
+          grep -Fx 'WALLET_INDEX_REVIEW_CONTROLS_OK' build/wallet-index-review-controls.log
 
       - name: Check read-only proof relay and real HTTP ingress
         run: ctest --test-dir build --output-on-failure --no-tests=error -R '^(wallet-transaction|proof-verify-embedded|proof-acquisition-c|proof-material-acquisition|self-pay-simulation-acquisition|self-pay-simulation-persisted|self-pay-simulation-persisted-sync-fault|proof-readonly-query|self-pay-simulation-context|simulation-config|simulation-account|self-pay-simulation|self-pay-simulation-live|self-pay-simulation-embedded|self-pay-simulation-json|self-pay-simulation-inputs|self-pay-simulation-input-controls|test-json-rpc-transport|test-json-rpc-explorer)$'
@@ -410,7 +424,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          uv run python test/integration/node_sync_init_block.py --root build/node-sync-init-block --build build --capture build/operator-rust-target/debug/examples/capture_and_validate | tee build/node-sync-init-block.log
+          uv run python test/integration/node_sync_init_block.py --root build/node-sync-init-block --build build --capture build/operator-rust-target/debug/examples/capture_and_validate --wallet-index-fixtures | tee build/node-sync-init-block.log
           grep -Fx 'NATIVE_SERIALIZER_NONLOCAL_REFUSAL_OK' build/node-sync-init-block.log
           grep -Fx 'NATIVE_INIT_BLOCK_JOIN_OK' build/node-sync-init-block.log
 
@@ -484,6 +498,31 @@ jobs:
             build/init-block-pre-anchor-control/pre-anchor-proof-control.json
             build/init-block-pre-anchor-control/pre-anchor-proof-red.txt
             build/init-block-pre-anchor-control/pre-anchor-proof-green.txt
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Verify every native wallet-index import and build scenario
+        timeout-minutes: 30
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run python test/integration/wallet_index_verify_native.py --init-root build/node-sync-init-block --build build --root build/wallet-index-verify-native --source-commit "$(git rev-parse HEAD)" | tee build/wallet-index-verify-native.log
+          grep -Fx 'NATIVE_WALLET_INDEX_VERIFY_OK' build/wallet-index-verify-native.log
+
+      - name: Retain native wallet-index verification evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: native-wallet-index-verification-${{ github.sha }}
+          path: |
+            build/node-sync-init-block/wallet-index-fixtures.json
+            build/node-sync-init-block/wallet-traffic/*.boc
+            build/wallet-index-verify-native/receipt.json
+            build/wallet-index-verify-native/*/receipt.json
+            build/wallet-index-verify-native.log
+            build/wallet-index-review-controls/receipt.json
+            build/wallet-index-review-controls/*.log
+            build/wallet-index-review-controls.log
           if-no-files-found: warn
           retention-days: 14
 

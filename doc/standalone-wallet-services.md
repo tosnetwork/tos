@@ -83,7 +83,7 @@ interval walks full shard block identities, including split/merge predecessors,
 and processes parents before children. It verifies block root hashes and refuses
 a different chain anchor or a discontinuous masterchain sequence.
 
-For a fresh replay, keep the complete block archive from block 1 on the source,
+For a full replay from block 1, keep the complete block archive on the source,
 including through bootstrap, recovery and a full rebuild. A restored index
 snapshot instead needs its committed checkpoint and every following block, as
 described below. The default seven-day archive retention
@@ -224,15 +224,29 @@ unfinished candidates still make `index_state.complete` false independently of
 block catch-up. Ownership discovery covers accounts nominated by transactions;
 custom genesis token/NFT contracts that never transact are outside that coverage.
 Event retention is bounded per account (10,000 events) and by a window of
-masterchain blocks. The window base is the last masterchain block generated
-more than seven days before the newest replayed one. Events whose shard block
-that base or an earlier masterchain block referenced are pruned. In each shard
+masterchain blocks. The window base advances toward the last masterchain block
+generated more than seven days before the newest replayed one. Events whose
+shard block that base or an earlier masterchain block referenced are pruned. In each shard
 that is every transaction at or below the end lt of the shard tip the base
 names, so an importer can check a history window against the chain. The base
-moves only forward, with the replay checkpoint. It never jumps over a
-masterchain block the source does not hold: there it stalls, logs
-`window base stalled at <seqno>`, and the index keeps more history than the
-window until the block is held again.
+moves only forward, with the replay checkpoint. The ordinary time scan stops
+at a masterchain block the source does not hold and logs
+`window base stalled at <seqno>`.
+
+A **full** index can resume retention across that gap, including after a
+trusted restore whose base precedes the recipient's retained archive. A bounded
+search makes at most 32 additional checked-block probes per replayed interval
+for a held, applied block strictly older than the seven-day cutoff and below
+the new checkpoint. Its full identity must also be an ancestor recorded in
+the latest observed applied head's masterchain state, with that state bound
+to the head's checked block. Only then are the new base, its exact shard-tip
+record and the checkpoint committed together; the log reports
+`window base resumes at authenticated retained block <seqno>`. Until a held
+block is old enough, the imported history is retained. Missing probes may
+retain extra history, and unavailable or mismatching proof never authorizes
+pruning. Quarantined and partial indexes do not use this fallback: their
+window stays bound to the verification in progress.
+
 Schema version 4 keys the age index by that masterchain reference; an index of
 an earlier version is reset on open.
 
@@ -317,6 +331,12 @@ It then verifies every subsequent interval through the usual replay path.
    does not supply missing earlier history. Use a newer matching snapshot or
    restore the missing archive if necessary. Keep archive retention longer than
    the maximum snapshot age, transfer time, replay time and planned outage.
+
+   The recipient need not retain the trusted snapshot's older window base to
+   resume replay. It keeps that history until an expired retained block can
+   authenticate a newer base, as described under *Replay, retention and
+   restarts*. Joining at a later persistent state therefore does not itself
+   discard history that is still inside the retention window.
 
 3. Transfer the file, obtain the trusted digest, and verify it. Verification is
    read-only and does not open an index database:
@@ -438,9 +458,14 @@ After the block pass replay stays held while ownership is derived at the head:
 8. **Derive** the token and NFT ownership of every account with code in the
    head's states, with the same getters replay runs, a master or collection
    in another shard read at the same head. Verdicts carry the end lt of the
-   account's shard state. An account without code is skipped. An account
-   whose state does not decode, or a check that reaches no verdict, is
-   parked, never skipped.
+   account's shard state. An account without code is skipped. A valid active
+   account whose optional data cell is absent still runs its getters with
+   the VM's normal empty-data semantics; absence alone does not park it.
+   Invalid getter return types produce a definitive negative ownership
+   verdict, including invalid master or collection resolver results, rather
+   than aborting the service. An account whose state does not decode, or a
+   check that reaches no verdict, is parked, never skipped. Virtualization
+   failures remain indeterminate and are retried.
 9. **Reconcile** every recorded token wallet and NFT owner whose account is
    absent from the head, or holds no code there: its record is removed.
 10. **Drain** the token work still owed (queued and parked candidates, and
@@ -461,12 +486,17 @@ the last error, and the log repeats the same failure at most every 5 minutes.
 A failure retrying cannot clear (a capacity bound, malformed data, or the
 node's own blocks not linking) stops the service with status 1.
 
-The cost is proportional to **snapshot bytes plus the blocks since its
-checkpoint**, rather than replaying every block since genesis. Regularly publish
-recent snapshots to bound historical replay by their maximum age. Snapshot
-transfer/import time still depends on the index size and host I/O, and the
-tail can catch up only when replay throughput exceeds ongoing chain growth.
-This procedure makes no fixed wall-clock or production-throughput promise.
+A trusted restore transfers the snapshot bytes and replays the blocks since
+its checkpoint. An **untrusted import** also checks the retained window's
+masterchain and shard blocks, compares the history that the head state cannot
+prove, and scans the head's account states to derive ownership through its
+getters. A recent checkpoint shortens tail replay but does not remove this
+window and ownership work. Regularly publish recent snapshots to bound the
+tail by their maximum age. Transfer/import time depends on the index size
+and host I/O; verification additionally depends on window traffic, account
+population and getter work. The tail can catch up only when replay throughput
+exceeds ongoing chain growth. This procedure makes no fixed wall-clock or
+production-throughput promise.
 
 Before publication, errors and SIGTERM remove staging and leave the destination
 absent. SIGKILL/power loss can leave a private `.wallet-index-import-*` sibling

@@ -112,9 +112,70 @@ def test_every_planned_scenario_is_present_and_none_is_skipped():
         "recreated-omitted",
     }
     assert set(RUNNER.SCENARIOS) == planned
-    for name in ("path-a", "injected", "stale", "forged-ownership"):
-        with pytest.raises(RUNNER.Unavailable):
-            RUNNER.SCENARIOS[name](None, None)
+
+
+def test_injected_row_preserves_transaction_header_and_refs_except_its_account():
+    from pytosiq_core import Cell, begin_cell
+
+    original, dormant = bytes([1]) * 32, bytes([9]) * 32
+    value = (
+        begin_cell()
+        .store_uint(7, 4)
+        .store_bytes(original)
+        .store_uint(300, 64)
+        .store_bytes(bytes([7]) * 32)
+        .store_uint(200, 64)
+        .store_uint(1234, 32)
+        .store_ref(Cell.empty())
+        .end_cell()
+    )
+    edited = snapshot()
+    before = dict(edited.records)
+    receipt = RUNNER.edit_injected(edited, dormant, value.to_boc())
+    key = RECORDS.event_key(dormant, 300)
+    assert dict(edited.records) == before | {key: edited.get(key)}
+    injected = Cell.one_from_boc(edited.get(key))
+    cs = injected.begin_parse()
+    assert cs.load_uint(4) == 7 and cs.load_bytes(32) == dormant
+    assert cs.load_uint(64) == 300 and cs.load_bytes(32) == bytes([7]) * 32
+    assert cs.load_uint(64) == 200 and cs.load_uint(32) == 1234
+    assert injected.refs[0].hash == value.refs[0].hash
+    assert injected.hash != value.hash and receipt["lt"] == 300
+
+
+def test_lifecycle_edits_remove_the_named_incarnation_only():
+    account, unrelated = bytes([1]) * 32, bytes([2]) * 32
+    destroyed = snapshot()
+    receipt = RUNNER.edit_destroyed(destroyed, account)
+    assert receipt["removed_lts"] == [30, 20, 10]
+    assert destroyed.events(account) == []
+    assert [lt for _, lt, _ in destroyed.events(unrelated)] == [40]
+    recreated = snapshot()
+    receipt = RUNNER.edit_recreated(recreated, account, 20, 30)
+    assert receipt["removed_lts"] == [20, 10]
+    assert [lt for _, lt, _ in recreated.events(account)] == [30]
+    assert [lt for _, lt, _ in recreated.events(unrelated)] == [40]
+    with pytest.raises(RuntimeError, match="both incarnations"):
+        RUNNER.edit_recreated(snapshot(), account, 30, 40)
+    with pytest.raises(RuntimeError, match="no history"):
+        RUNNER.edit_destroyed(snapshot(), bytes([3]) * 32)
+
+
+def test_forged_ownership_has_valid_values_and_no_history_edits():
+    from pytosiq_core import Cell
+
+    edited = snapshot()
+    history = edited.events()
+    owner, wallet = bytes([6]) * 32, bytes([1]) * 32
+    keys = RUNNER.edit_forged_ownership(edited, owner, wallet, 30)
+    assert {key[0] for key in keys} == {0x10, 0x11, 0x13, 0x17, 0x18}
+    assert len(keys) == 5 and edited.events() == history
+    token_key = next(key for key in keys if key[0] == 0x10)
+    token = Cell.one_from_boc(edited.get(token_key)).begin_parse()
+    assert token.load_bytes(32) == wallet and token.load_uint(64) == 30
+    nft_key = next(key for key in keys if key[0] == 0x11)
+    nft = Cell.one_from_boc(edited.get(nft_key)).begin_parse()
+    assert nft.load_uint(1) == 0 and nft.load_uint(64) == 30
 
 
 class ExitedAtOnce:

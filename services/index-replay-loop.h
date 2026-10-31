@@ -92,6 +92,7 @@ class ReplayLoop {
       return td::Status::Error("source has no applied masterchain block");
     progress_.tip = tip.seqno();
     progress_.tip_known = true;
+    observed_head_ = tip;
     if (checkpoint_.committed != tip)
       progress_.ready = false;
     TRY_RESULT(top, reader_.handle(tip));
@@ -246,7 +247,8 @@ class ReplayLoop {
                                            }));
     if (window.stalled && window.base != stalled_base_) {
       // Reported once per position: the index keeps more history than the
-      // window until the source holds the next masterchain block again.
+      // window until the missing block returns or a retained expired base
+      // can be authenticated below.
       LOG(WARNING) << "window base stalled at " << window.base + 1
                    << ": the source does not hold that masterchain block";
       stalled_base_ = window.base;
@@ -257,7 +259,19 @@ class ReplayLoop {
     // decode is an error.
     uint32_t base = window.base;
     td::optional<tos_wallet_index::WindowBaseRecord> base_record;
-    if (base != stored_base) {
+    if (window.stalled) {
+      TRY_RESULT(verification, db->get_verification_state());
+      if (verification == tos_wallet_index::VerificationState::Full) {
+        TRY_RESULT(retained,
+                   find_retained_window_base(checked_, observed_head_, next, base, newest_time, &stop_requested));
+        if (retained) {
+          base_record = std::move(retained);
+          base = base_record.value().block.seqno();
+          LOG(WARNING) << "window base resumes at authenticated retained block " << base;
+        }
+      }
+    }
+    if (base != stored_base && !base_record) {
       TRY_RESULT_ASSIGN(base_record, read_base_record(checked_, base));
       if (!base_record) {
         if (base != unrecorded_base_) {
@@ -302,6 +316,7 @@ class ReplayLoop {
   uint32_t unrecorded_base_ = std::numeric_limits<uint32_t>::max();
   VerifySource& checked_;
   WalletIndexDb::ReplayCheckpoint checkpoint_;
+  BlockIdExt observed_head_;
   std::vector<BlockIdExt> heads_;
 };
 

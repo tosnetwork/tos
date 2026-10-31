@@ -32,11 +32,11 @@ struct WindowBaseStep {
 // stays below `newest`.
 //
 // A block the source does not hold stops the base where it is (`stalled`):
-// it never jumps over a gap, because which blocks a source holds is not
-// known to be a contiguous suffix. A stalled base only keeps more history
-// than the window, never less. An index imported onto a source that joined
-// later starts with its base at the first block of the source's contiguous
-// history, so a fresh gap below it is never needed.
+// this time-only scan cannot authenticate a jump over a gap. A stalled base
+// keeps more history, never less. Full replay can separately resume at an
+// expired retained block authenticated against the applied head's ancestor
+// dictionary; this covers trusted snapshots whose donor base predates the
+// receiving source's retained history.
 inline td::Result<WindowBaseStep> advance_window_base(uint32_t base, uint32_t newest, uint32_t newest_time,
                                                       uint32_t retention, const MasterchainTime& time_of) {
   WindowBaseStep step{base, false};

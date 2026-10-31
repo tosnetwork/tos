@@ -26,6 +26,7 @@ passed.
 """
 
 import argparse
+import hashlib
 import http.client
 import importlib.util
 import json
@@ -36,6 +37,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 HERE = Path(__file__).resolve().parent
 # A decoded JSON object: /readyz bodies and receipts.
@@ -69,12 +71,13 @@ class Image:
     full: Path
     joined: Path
     init_seqno: int
+    fixtures: dict[str, Any] = field(default_factory=dict)
 
 
 def discover_image(init_root: Path) -> Image:
     """The full and the joined source of a stopped init-block image."""
     receipt = json.loads((init_root / "init-block-receipt.json").read_text())
-    if receipt.get("result") != "NATIVE_INIT_BLOCK_JOIN_OK":
+    if receipt.get("result") not in ("NATIVE_INIT_BLOCK_JOIN_OK", "NATIVE_WALLET_INDEX_IMAGE_OK"):
         raise RuntimeError("the init-block image did not complete")
     network = init_root / "network"
     joined = network / receipt["source"]
@@ -87,7 +90,11 @@ def discover_image(init_root: Path) -> Image:
     )
     if not stores:
         raise RuntimeError("the init-block image has no full source")
-    return Image(stores[0], joined, int(receipt["init_block"]["seqno"]))
+    fixtures_file = init_root / "wallet-index-fixtures.json"
+    fixtures = json.loads(fixtures_file.read_text()) if fixtures_file.exists() else {}
+    if fixtures and fixtures.get("result") != "NATIVE_WALLET_INDEX_FIXTURES_OK":
+        raise RuntimeError("the wallet lifecycle fixtures did not complete")
+    return Image(stores[0], joined, int(receipt["init_block"]["seqno"]), fixtures)
 
 
 @dataclass
@@ -352,9 +359,14 @@ def donor_snapshot(context: Context) -> Path:
     return snapshot
 
 
-def import_edited(context: Context, out: Path, edit: Callable[[object], None] | None) -> Path:
+def import_edited(
+    context: Context,
+    out: Path,
+    edit: Callable[[object], None] | None,
+    original: Path | None = None,
+) -> Path:
     """Import the donor snapshot, edited by `edit`, untrusted into a new index."""
-    snapshot = RECORDS.parse(donor_snapshot(context).read_bytes())
+    snapshot = RECORDS.parse((original or donor_snapshot(context)).read_bytes())
     if edit is not None:
         edit(snapshot)
     file = out / "edited.snapshot"
@@ -403,7 +415,25 @@ def scenario_path_b(context: Context, out: Path) -> JsonObject:
 
 
 def scenario_path_a(context: Context, out: Path) -> JsonObject:
-    raise Unavailable("the bulk window builder (stage 4c) is not in this build")
+    data = out / "data"
+    run = run_service(
+        context.service, context.image.joined, data, [], until_full, out / "service.log"
+    )
+    require_reached(run, "path-a")
+    head = run.readyz.get("masterchain_seqno")
+    if not isinstance(head, int):
+        raise RuntimeError("the bulk-built index reported no head")
+    own, other = common_window_digests(
+        context.build, data / "index", reference_at(context, head), head, out
+    )
+    if own.sha256 != other.sha256:
+        raise AssertionError("the bulk-built index differs from the full replay over its window")
+    return {
+        "run": run.__dict__ | {"log": None},
+        "head": head,
+        "window_base": own.window_base,
+        "digests": {"built": own.sha256, "reference": other.sha256},
+    }
 
 
 def first_account_with(snapshot, count: int) -> bytes:
@@ -417,19 +447,23 @@ def first_account_with(snapshot, count: int) -> bytes:
     raise RuntimeError(f"the snapshot has no account with {count} history rows")
 
 
-def edit_tampered(snapshot) -> None:
-    account, lt, value = snapshot.events(first_account_with(snapshot, 1))[0]
+def edit_tampered(snapshot, account: bytes | None = None) -> None:
+    account, lt, value = snapshot.events(account or first_account_with(snapshot, 1))[0]
     snapshot.put(RECORDS.event_key(account, lt), RECORDS.tamper_value(value))
 
 
-def edit_omitted(snapshot) -> None:
-    rows = snapshot.events(first_account_with(snapshot, 3))
+def edit_omitted(snapshot, account: bytes | None = None) -> None:
+    rows = snapshot.events(account or first_account_with(snapshot, 3))
+    if len(rows) < 3:
+        raise RuntimeError("omitted control needs three real history rows")
     account, lt, _ = rows[1]
     snapshot.delete(RECORDS.event_key(account, lt))
 
 
-def edit_truncated(snapshot) -> None:
-    rows = snapshot.events(first_account_with(snapshot, 2))
+def edit_truncated(snapshot, account: bytes | None = None) -> None:
+    rows = snapshot.events(account or first_account_with(snapshot, 2))
+    if len(rows) < 2:
+        raise RuntimeError("truncated control needs two real history rows")
     account, lt, _ = rows[-1]
     snapshot.delete(RECORDS.event_key(account, lt))
 
@@ -446,6 +480,238 @@ def edit_wrong_anchor(snapshot) -> None:
     RECORDS.set_checkpoint(
         snapshot, RECORDS.Checkpoint(RECORDS.flip_root_hash(point.anchor), point.committed)
     )
+
+
+def fixture_account(context: Context, name: str) -> tuple[bytes, dict[str, Any]]:
+    fixtures = context.image.fixtures
+    if fixtures.get("result") != "NATIVE_WALLET_INDEX_FIXTURES_OK":
+        raise RuntimeError("rebuild the native image with --wallet-index-fixtures")
+    item = fixtures["accounts"][name]
+    workchain, account = item["address"].split(":")
+    value = bytes.fromhex(account)
+    if workchain != "0" or len(value) != 32:
+        raise RuntimeError(f"{name}: fixture account is not a basechain address")
+    return value, item
+
+
+def edit_injected(snapshot, dormant: bytes, template: bytes) -> JsonObject:
+    """Keep a real transaction's layout, LT and references, but claim another account."""
+    from pytosiq_core import Cell, begin_cell
+
+    original = Cell.one_from_boc(template)
+    fields = original.begin_parse()
+    if fields.load_uint(4) != 7:
+        raise RuntimeError("the injection template is not a transaction")
+    original_account = fields.load_bytes(32)
+    lt = fields.copy().load_uint(64)
+    if original_account == dormant or snapshot.get(RECORDS.event_key(dormant, lt)) is not None:
+        raise RuntimeError("the injection must add a new row under another account")
+    injected = begin_cell().store_uint(7, 4).store_bytes(dormant).store_slice(fields).end_cell()
+    snapshot.put(RECORDS.event_key(dormant, lt), injected.to_boc())
+    return {
+        "account": dormant.hex(),
+        "lt": lt,
+        "template_account": original_account.hex(),
+        "template_hash": original.hash.hex(),
+        "injected_hash": injected.hash.hex(),
+    }
+
+
+def edit_destroyed(snapshot, account: bytes) -> JsonObject:
+    rows = snapshot.events(account)
+    if not rows:
+        raise RuntimeError("the destroyed account has no history to omit")
+    for _, lt, _ in rows:
+        snapshot.delete(RECORDS.event_key(account, lt))
+    return {"account": account.hex(), "removed_lts": [lt for _, lt, _ in rows]}
+
+
+def edit_recreated(snapshot, account: bytes, destroy_lt: int, new_first_lt: int) -> JsonObject:
+    rows = snapshot.events(account)
+    removed = [lt for _, lt, _ in rows if lt <= destroy_lt]
+    retained = [lt for _, lt, _ in rows if lt >= new_first_lt]
+    if not removed or not retained or len(removed) + len(retained) != len(rows):
+        raise RuntimeError("the recreated fixture must contain both incarnations without overlap")
+    for lt in removed:
+        snapshot.delete(RECORDS.event_key(account, lt))
+    return {"account": account.hex(), "removed_lts": removed, "retained_lts": retained}
+
+
+def edit_forged_ownership(snapshot, owner: bytes, wallet: bytes, lt: int) -> list[bytes]:
+    from pytosiq_core import begin_cell
+
+    master = hashlib.sha256(b"wallet-index-local-fixture-false-master").digest()
+    records = {
+        b"\x10" + owner + master: begin_cell()
+        .store_bytes(wallet)
+        .store_uint(lt, 64)
+        .end_cell()
+        .to_boc(),
+        b"\x11" + owner + wallet: begin_cell()
+        .store_uint(0, 1)
+        .store_uint(lt, 64)
+        .end_cell()
+        .to_boc(),
+        b"\x13" + wallet: b"\x01" + owner + lt.to_bytes(8, "big"),
+        b"\x17" + wallet: b"\x01" + owner + master + lt.to_bytes(8, "big"),
+        b"\x18" + owner + master: b"\x01" + wallet + lt.to_bytes(8, "big"),
+    }
+    for key, value in records.items():
+        snapshot.put(key, value)
+    return list(records)
+
+
+def refused_run(
+    context: Context, out: Path, data: Path, reason: str, *, on_full=False
+) -> JsonObject:
+    source = context.image.full if on_full else context.image.joined
+    service = run_service(
+        context.service,
+        source,
+        data,
+        ["--allow-partial-verification"],
+        lambda status, body: False,
+        out / "service.log",
+    )
+    if service.exit_code != 2:
+        raise AssertionError(f"{out.name}: exit {service.exit_code}, expected 2")
+    if service.ever_ready:
+        raise AssertionError(f"{out.name}: the refused index was served as ready")
+    matched = re.search(reason, service.log)
+    if matched is None:
+        raise AssertionError(f"{out.name}: refusal reason /{reason}/ not logged")
+    return {
+        "run": service.__dict__ | {"log": None},
+        "reason": reason,
+        "matched_reason": matched.group(),
+        "snapshot_sha256": SNAPSHOT_RUNNER.sha256(out / "edited.snapshot"),
+    }
+
+
+def scenario_injected(context: Context, out: Path) -> JsonObject:
+    dormant, fixture = fixture_account(context, "dormant")
+    history, _ = fixture_account(context, "history")
+    edit_receipt: JsonObject = {}
+
+    def edit(snapshot):
+        rows = snapshot.events(history)
+        if not rows or rows[0][1] <= fixture["last_lt"]:
+            raise RuntimeError("injection template is not newer than the dormant account")
+        edit_receipt.update(edit_injected(snapshot, dormant, rows[0][2]))
+
+    data = import_edited(context, out, edit)
+    return {
+        **refused_run(context, out, data, "rows are newer than the account's last transaction"),
+        "edit": edit_receipt,
+        "dormant_state": fixture,
+    }
+
+
+def scenario_stale(context: Context, out: Path) -> JsonObject:
+    fixture_account(context, "dormant")
+    checkpoint = int(context.image.fixtures["stale_checkpoint"])
+    if not 0 < checkpoint < context.image.init_seqno:
+        raise RuntimeError("the stale checkpoint is not older than the joined init block")
+    snapshot = out / "stale.snapshot"
+    tool(
+        context.build,
+        "--action",
+        "create",
+        "--index-dir",
+        str(reference_at(context, checkpoint)),
+        "--snapshot",
+        str(snapshot),
+        receipt=out / "create.log",
+    )
+    data = import_edited(context, out, None, original=snapshot)
+    return {
+        **refused_run(context, out, data, "snapshot older than this node's history"),
+        "stale_checkpoint": checkpoint,
+        "init_seqno": context.image.init_seqno,
+    }
+
+
+def scenario_destroyed(context: Context, out: Path) -> JsonObject:
+    account, fixture = fixture_account(context, "destroyed")
+    edit_receipt: JsonObject = {}
+
+    def edit(snapshot):
+        edit_receipt.update(edit_destroyed(snapshot, account))
+
+    data = import_edited(context, out, edit)
+    return {
+        **refused_run(context, out, data, "the snapshot omits the account's history in the window"),
+        "edit": edit_receipt,
+        "lifecycle": fixture,
+    }
+
+
+def scenario_recreated(context: Context, out: Path) -> JsonObject:
+    account, fixture = fixture_account(context, "recreated")
+    edit_receipt: JsonObject = {}
+
+    def edit(snapshot):
+        edit_receipt.update(
+            edit_recreated(snapshot, account, fixture["destroy_lt"], fixture["new_first_lt"])
+        )
+
+    data = import_edited(context, out, edit)
+    return {
+        **refused_run(
+            context,
+            out,
+            data,
+            "the window's blocks hold a transaction at [0-9]+ the snapshot does not match",
+        ),
+        "edit": edit_receipt,
+        "lifecycle": fixture,
+    }
+
+
+def scenario_forged_ownership(context: Context, out: Path) -> JsonObject:
+    owner, _ = fixture_account(context, "dormant")
+    wallet, fixture = fixture_account(context, "history")
+    keys: list[bytes] = []
+
+    def edit(snapshot):
+        keys.extend(edit_forged_ownership(snapshot, owner, wallet, fixture["last_lt"]))
+
+    data = import_edited(context, out, edit)
+    before = out / "quarantined.snapshot"
+    tool(
+        context.build,
+        "--action",
+        "create",
+        "--index-dir",
+        str(data / "index"),
+        "--snapshot",
+        str(before),
+        receipt=out / "quarantined-create.log",
+    )
+    quarantined = RECORDS.parse(before.read_bytes())
+    if len(keys) != 5 or any(quarantined.get(key) is not None for key in keys):
+        raise AssertionError("untrusted import retained publisher ownership claims")
+    run = run_service(
+        context.service, context.image.joined, data, [], until_full, out / "service.log"
+    )
+    require_reached(run, "forged-ownership")
+    head = run.readyz.get("masterchain_seqno")
+    if not isinstance(head, int):
+        raise RuntimeError("the rederived index reported no head")
+    own, other = common_window_digests(
+        context.build, data / "index", reference_at(context, head), head, out
+    )
+    if own.sha256 != other.sha256:
+        raise AssertionError("publisher ownership claims survived authoritative derivation")
+    return {
+        "run": run.__dict__ | {"log": None},
+        "head": head,
+        "window_base": own.window_base,
+        "forged_keys": [key.hex() for key in keys],
+        "claims_after_import": 0,
+        "snapshot_sha256": SNAPSHOT_RUNNER.sha256(out / "edited.snapshot"),
+        "digests": {"rederived": own.sha256, "reference": other.sha256},
+    }
 
 
 @dataclass
@@ -474,30 +740,20 @@ RED_CONTROLS = [
 
 def scenario_red(control: RedControl) -> Callable[[Context, Path], JsonObject]:
     def run(context: Context, out: Path) -> JsonObject:
-        data = import_edited(context, out, control.edit)
-        source = context.image.full if control.on_full else context.image.joined
-        service = run_service(
-            context.service,
-            source,
-            data,
-            ["--allow-partial-verification"],
-            lambda status, body: False,
-            out / "service.log",
-        )
-        if service.exit_code != 2:
-            raise AssertionError(f"{control.name}: exit {service.exit_code}, expected 2")
-        if service.ever_ready:
-            raise AssertionError(f"{control.name}: the refused index was served as ready")
-        if re.search(control.reason, service.log) is None:
-            raise AssertionError(f"{control.name}: refusal reason /{control.reason}/ not logged")
-        return {"run": service.__dict__ | {"log": None}, "reason": control.reason}
+        def edit(snapshot: object) -> None:
+            if control.name in ("tampered", "omitted", "truncated"):
+                account, _ = fixture_account(context, "history")
+                history_edits = {
+                    "tampered": edit_tampered,
+                    "omitted": edit_omitted,
+                    "truncated": edit_truncated,
+                }
+                history_edits[control.name](snapshot, account)
+            else:
+                control.edit(snapshot)
 
-    return run
-
-
-def scenario_unbuilt(reason: str) -> Callable[[Context, Path], JsonObject]:
-    def run(context: Context, out: Path) -> JsonObject:
-        raise Unavailable(reason)
+        data = import_edited(context, out, edit)
+        return refused_run(context, out, data, control.reason, on_full=control.on_full)
 
     return run
 
@@ -507,11 +763,11 @@ SCENARIOS: dict[str, Callable[[Context, Path], JsonObject]] = {
     "path-b": scenario_path_b,
     "path-a": scenario_path_a,
     **{control.name: scenario_red(control) for control in RED_CONTROLS},
-    "injected": scenario_unbuilt("needs an account in the image last active before the window"),
-    "stale": scenario_unbuilt("needs a snapshot older than the joined source's first block"),
-    "forged-ownership": scenario_unbuilt("needs the canonical dump (stage 4d)"),
-    "destroyed-omitted": scenario_unbuilt("needs fixture traffic destroying an account"),
-    "recreated-omitted": scenario_unbuilt("needs fixture traffic recreating an account"),
+    "injected": scenario_injected,
+    "stale": scenario_stale,
+    "forged-ownership": scenario_forged_ownership,
+    "destroyed-omitted": scenario_destroyed,
+    "recreated-omitted": scenario_recreated,
 }
 
 
@@ -526,6 +782,8 @@ def main() -> int:
     if not re.fullmatch("[0-9a-f]{40}", args.source_commit):
         raise ValueError("source commit must be a full Git ID")
     unknown = [name for name in args.scenarios if name not in SCENARIOS]
+    if not args.scenarios or len(set(args.scenarios)) != len(args.scenarios):
+        raise ValueError("at least one distinct scenario is required")
     if unknown:
         raise ValueError(f"unknown scenarios: {unknown}")
     image = discover_image(args.init_root.resolve(strict=True))
@@ -537,13 +795,21 @@ def main() -> int:
     build = args.build.resolve(strict=True)
     service = (build / "services/tos-wallet-index").resolve(strict=True)
     before = {str(p): SNAPSHOT_RUNNER.source_inventory(p) for p in (image.full, image.joined)}
-    context = Context(build, root, image, image.init_seqno + CHECKPOINT_ABOVE_INIT, service)
+    checkpoint = int(
+        image.fixtures.get("checkpoint", {}).get("seqno", image.init_seqno + CHECKPOINT_ABOVE_INIT)
+    )
+    context = Context(build, root, image, checkpoint, service)
     results: dict[str, object] = {
         "source_commit": args.source_commit,
         "service_sha256": SNAPSHOT_RUNNER.sha256(service),
         "image": {"full": str(image.full), "joined": str(image.joined)},
         "init_seqno": image.init_seqno,
         "checkpoint": context.checkpoint,
+        "fixtures": image.fixtures,
+        "binary_sha256": {
+            name: SNAPSHOT_RUNNER.sha256(build / "services" / name)
+            for name in ("tos-wallet-index", "tos-wallet-index-snapshot", "tos-wallet-index-dump")
+        },
     }
     scenarios: dict[str, JsonObject] = {}
     results["scenarios"] = scenarios
@@ -559,7 +825,14 @@ def main() -> int:
             except Unavailable as missing:
                 receipt = {"result": "UNAVAILABLE", "reason": str(missing)}
                 failed.append(name)
-            except (AssertionError, RuntimeError, TimeoutError, OSError) as error:
+            except (
+                AssertionError,
+                RuntimeError,
+                TimeoutError,
+                OSError,
+                ValueError,
+                KeyError,
+            ) as error:
                 receipt = {"result": "FAILED", "reason": str(error)}
                 failed.append(name)
             (out / "receipt.json").write_text(json.dumps(receipt, indent=2, default=str) + "\n")
