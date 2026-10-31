@@ -81,6 +81,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
+      - name: Install repository-pinned Rust for the native bridge
+        run: scripts/install-rust-toolchain.sh
       - name: Build production native integration tools
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
