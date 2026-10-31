@@ -89,7 +89,8 @@ jobs:
           cmake --build build --target func fift emulator validator-engine dht-server lite-client tos-proof-verify -j"$(nproc)"
           mkdir -p "$RUNNER_TEMP/relayer-native"
           git rev-parse HEAD > "$RUNNER_TEMP/relayer-native/commit.txt"
-          tar -czf "$RUNNER_TEMP/relayer-native/binaries.tar.gz" build/crypto/func build/crypto/fift build/emulator/libemulator.so build/validator-engine/validator-engine build/dht-server/dht-server build/lite-client/lite-client build/lite-client/tos-proof-verify
+          test -x build/lite-client/proof-verify/tos-proof-verify
+          tar -czf "$RUNNER_TEMP/relayer-native/binaries.tar.gz" build/crypto/func build/crypto/fift build/emulator/libemulator.so build/validator-engine/validator-engine build/dht-server/dht-server build/lite-client/lite-client build/lite-client/proof-verify/tos-proof-verify
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: relayer-live-native-tools
