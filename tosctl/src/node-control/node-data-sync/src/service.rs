@@ -578,7 +578,8 @@ pub(crate) fn refuse_writers(root: &Path) -> Result<()> {
         if name == own || !name.bytes().all(|b| b.is_ascii_digit()) {
             continue;
         }
-        let descriptors = match fs::read_dir(entry.path().join("fd")) {
+        let descriptor_directory = entry.path().join("fd");
+        let descriptors = match fs::read_dir(&descriptor_directory) {
             Ok(value) => value,
             Err(e)
                 if matches!(
@@ -588,22 +589,48 @@ pub(crate) fn refuse_writers(root: &Path) -> Result<()> {
             {
                 continue;
             }
-            Err(e) => return Err(e.into()),
+            Err(e) => {
+                return Err(e).with_context(|| {
+                    format!(
+                        "cannot list process {name} descriptors at {}",
+                        descriptor_directory.display()
+                    )
+                });
+            }
         };
         for descriptor in descriptors {
             let descriptor = match descriptor {
                 Ok(v) => v,
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
-                Err(e) => return Err(e.into()),
+                Err(e) => {
+                    return Err(e).with_context(|| {
+                        format!(
+                            "cannot enumerate process {name} descriptors at {}",
+                            descriptor_directory.display()
+                        )
+                    });
+                }
             };
             let target = match fs::read_link(descriptor.path()) {
                 Ok(v) => v,
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
-                Err(e) => return Err(e.into()),
+                Err(e) => {
+                    return Err(e).with_context(|| {
+                        format!(
+                            "cannot inspect process {name} descriptor {}; writer detection requires proc descriptor access (CAP_SYS_PTRACE may be required)",
+                            descriptor.path().display()
+                        )
+                    });
+                }
             };
             if target.starts_with(root) {
-                let info =
-                    fs::read_to_string(entry.path().join("fdinfo").join(descriptor.file_name()))?;
+                let info_path = entry.path().join("fdinfo").join(descriptor.file_name());
+                let info = fs::read_to_string(&info_path).with_context(|| {
+                    format!(
+                        "cannot inspect process {name} descriptor flags at {}; writer detection requires proc descriptor access (CAP_SYS_PTRACE may be required)",
+                        info_path.display()
+                    )
+                })?;
                 let flags = info
                     .lines()
                     .find_map(|s| s.strip_prefix("flags:\t"))
@@ -729,6 +756,89 @@ fn canonical_option(option: &str) -> Result<(&'static str, bool)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[ignore = "requires CAP_SYS_PTRACE for nondumpable child inspection"]
+    fn refuse_writers_checks_child_descriptor_access_modes() -> Result<()> {
+        use std::{
+            io::{Read, Write},
+            os::{fd::OwnedFd, unix::net::UnixStream},
+        };
+
+        const ROOT: &str = "NODE_SYNC_WRITER_TEST_ROOT";
+        const ACCESS: &str = "NODE_SYNC_WRITER_TEST_ACCESS";
+        if let Some(root) = std::env::var_os(ROOT) {
+            let access = std::env::var(ACCESS)?;
+            ensure!(matches!(access.as_str(), "read" | "write"), "invalid child access mode");
+            let file = fs::OpenOptions::new()
+                .read(true)
+                .write(access == "write")
+                .open(Path::new(&root).join("data"))?;
+            // SAFETY: PR_SET_DUMPABLE takes an integer and no pointer arguments.
+            let result = unsafe { libc::prctl(libc::PR_SET_DUMPABLE, 0, 0, 0, 0) };
+            ensure!(
+                result == 0,
+                "cannot make descriptor child nondumpable: {}",
+                std::io::Error::last_os_error()
+            );
+            let mut ready = [0; 12];
+            ready[..8].copy_from_slice(b"FD_READY");
+            ready[8..].copy_from_slice(&file.as_raw_fd().to_le_bytes());
+            std::io::stderr().write_all(&ready)?;
+            std::io::stderr().flush()?;
+            std::io::stdin().read_exact(&mut [0])?;
+            return Ok(());
+        }
+
+        let temporary = tempfile::tempdir()?;
+        let root = temporary.path().canonicalize()?;
+        let data = root.join("data");
+        fs::write(&data, b"descriptor fixture")?;
+        for access in ["read", "write"] {
+            let (mut channel, child_channel) = UnixStream::pair()?;
+            channel.set_read_timeout(Some(Duration::from_secs(10)))?;
+            let mut child = OwnedChild(
+                Command::new(std::env::current_exe()?)
+                    .args([
+                        "--ignored",
+                        "--exact",
+                        "service::tests::refuse_writers_checks_child_descriptor_access_modes",
+                        "--nocapture",
+                    ])
+                    .env(ROOT, &root)
+                    .env(ACCESS, access)
+                    .stdin(Stdio::from(OwnedFd::from(child_channel.try_clone()?)))
+                    .stderr(Stdio::from(OwnedFd::from(child_channel)))
+                    .stdout(Stdio::null())
+                    .spawn()?,
+            );
+            let mut ready = [0; 12];
+            channel.read_exact(&mut ready).context("descriptor child readiness handshake")?;
+            assert_eq!(&ready[..8], b"FD_READY", "descriptor child did not signal readiness");
+            let fd = i32::from_le_bytes(ready[8..].try_into()?);
+            let descriptor = PathBuf::from(format!("/proc/{}/fd/{fd}", child.0.id()));
+            assert_eq!(
+                fs::read_link(&descriptor).with_context(|| format!(
+                    "cannot inspect nondumpable child descriptor {}; CAP_SYS_PTRACE is required",
+                    descriptor.display()
+                ))?,
+                data,
+                "child did not hold the fixture descriptor"
+            );
+            if access == "read" {
+                refuse_writers(&root)?;
+            } else {
+                let error = refuse_writers(&root).expect_err("writable child descriptor accepted");
+                assert_eq!(error.to_string(), "another process has a writable database descriptor");
+            }
+            child.0.kill()?;
+            child.0.wait()?;
+            refuse_writers(&root)?;
+        }
+        println!("\nCHILD_DESCRIPTOR_WRITER_CONTROL_OK");
+        Ok(())
+    }
+
     #[test]
     fn configured_running_and_expected_modes_are_one_invariant() {
         for configured in [false, true] {
