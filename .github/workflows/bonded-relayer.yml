@@ -21,39 +21,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  formatter-repair:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-      - name: Produce the pinned formatter patch without changing branch contents
-        run: |
-          python3 -m pip install ruff==0.15.2
-          mkdir -p "$RUNNER_TEMP/relayer-style"
-          tar -czf "$RUNNER_TEMP/relayer-style/original.tar.gz" \
-            tools/bonded-relayer test/bonded-relayer pyproject.toml uv.lock
-          python3 -m ruff --version
-          python3 -m ruff check --fix \
-            tools/bonded-relayer/relay_core.py \
-            test/bonded-relayer/mutations.py \
-            test/bonded-relayer/test_engine.py \
-            test/bonded-relayer/test_native.py
-          python3 -m ruff format \
-            tools/bonded-relayer/relay_core.py \
-            test/bonded-relayer/mutations.py \
-            test/bonded-relayer/test_engine.py \
-            test/bonded-relayer/test_native.py
-          git diff --binary > "$RUNNER_TEMP/relayer-style/format.patch"
-          tar -czf "$RUNNER_TEMP/relayer-style/formatted.tar.gz" \
-            tools/bonded-relayer test/bonded-relayer pyproject.toml uv.lock
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: bonded-relayer-formatter-repair
-          path: ${{ runner.temp }}/relayer-style/
-          retention-days: 7
-
   relayer-engine-and-fees:
     runs-on: ubuntu-24.04
     timeout-minutes: 30

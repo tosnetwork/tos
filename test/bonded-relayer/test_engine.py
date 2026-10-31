@@ -1,4 +1,5 @@
 """Durability/binding tests with a deliberately fake transport, NOT chain evidence."""
+
 import base64
 import dataclasses
 import hashlib
@@ -12,7 +13,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools/bonded-relayer"))
 from relay_core import (  # noqa: E402
-    MAX_BODY, Engine, Evidence, Journal, Prepared, Refused, Release, Request,
+    MAX_BODY,
+    Engine,
+    Evidence,
+    Journal,
+    Prepared,
+    Refused,
+    Release,
+    Request,
 )
 
 
@@ -26,16 +34,26 @@ def release():
 
 def request(profile=None, n=11, **kw):
     body = f"TEST-ONLY-body-{n}".encode()
-    values = dict(release=(profile or release()).scope, intent=h(n),
-                  body_b64=base64.b64encode(body).decode(), body_sha256=hashlib.sha256(body).hexdigest(),
-                  nullifiers=(h(n + 1), h(n + 2)), quote_hash=h(5), fee_note_body=h(6),
-                  fee_slot=2, fee_note_index=7, valid_until=1200, funding_cap=100)
+    values = dict(
+        release=(profile or release()).scope,
+        intent=h(n),
+        body_b64=base64.b64encode(body).decode(),
+        body_sha256=hashlib.sha256(body).hexdigest(),
+        nullifiers=(h(n + 1), h(n + 2)),
+        quote_hash=h(5),
+        fee_note_body=h(6),
+        fee_slot=2,
+        fee_note_index=7,
+        valid_until=1200,
+        funding_cap=100,
+    )
     values.update(kw)
     return Request(**values)
 
 
 class FakeAdapter:
     """No real signature/proof/network. Isolates the journal's safety properties."""
+
     def __init__(self):
         self.prepares, self.writes = 0, []
         self.cost = 10
@@ -53,8 +71,11 @@ class FakeAdapter:
 
     def prepare(self, profile, req, slot, issued, funding):
         self.prepares += 1
-        return Prepared(f"TEST-ONLY-message:{req.identity}:{funding}".encode(), h(1000 + slot),
-                        f"TEST-ONLY-acceptance:{slot}:{issued}:{req.identity}".encode())
+        return Prepared(
+            f"TEST-ONLY-message:{req.identity}:{funding}".encode(),
+            h(1000 + slot),
+            f"TEST-ONLY-acceptance:{slot}:{issued}:{req.identity}".encode(),
+        )
 
     def validate_prepared(self, profile, req, slot, issued, funding, prepared):
         if self.reject_prepared or not prepared.message.endswith(f":{funding}".encode()):
@@ -72,8 +93,14 @@ class FakeAdapter:
     def evidence(self, profile, req, prepared):
         if self.outcome is None:
             return None
-        return Evidence(profile.scope, req.identity, h(999) if self.wrong_evidence else prepared.message_hash,
-                        self.outcome, h(21), h(22))
+        return Evidence(
+            profile.scope,
+            req.identity,
+            h(999) if self.wrong_evidence else prepared.message_hash,
+            self.outcome,
+            h(21),
+            h(22),
+        )
 
 
 class EngineTests(unittest.TestCase):
@@ -172,8 +199,11 @@ class EngineTests(unittest.TestCase):
         self.engine.reconcile(req.identity)
         row = self.journal.get(req.identity)
         with self.assertRaises(Refused):
-            self.journal.finish(Evidence(release().scope, req.identity, row["message_hash"],
-                                         "rejected", h(21), h(22)))
+            self.journal.finish(
+                Evidence(
+                    release().scope, req.identity, row["message_hash"], "rejected", h(21), h(22)
+                )
+            )
 
     def test_expired_and_future_requests(self):
         for deadline in (1000, 999, 1301):
@@ -204,7 +234,9 @@ class EngineTests(unittest.TestCase):
         self.engine.submit(request())
         with self.assertRaises(Refused):
             self.engine.submit(request(n=20))
-        next_slot = self.journal.db.execute("SELECT value FROM metadata WHERE key='next_slot'").fetchone()[0]
+        next_slot = self.journal.db.execute(
+            "SELECT value FROM metadata WHERE key='next_slot'"
+        ).fetchone()[0]
         self.assertEqual(next_slot, "2")
 
     def test_two_connections_cannot_claim_the_same_broadcast(self):
@@ -231,7 +263,9 @@ class EngineTests(unittest.TestCase):
         row, _ = self.journal.reserve(req, 10, 1000)
         prepared = self.adapter.prepare(release(), req, row["slot"], row["issued"], row["funding"])
         self.journal.store_prepared(req.identity, prepared)
-        self.journal.db.execute("UPDATE jobs SET request=? WHERE id=?", (request(n=20).wire, req.identity))
+        self.journal.db.execute(
+            "UPDATE jobs SET request=? WHERE id=?", (request(n=20).wire, req.identity)
+        )
         with self.assertRaises(Refused):
             self.engine.dispatch(req.identity)
         self.assertFalse(self.adapter.writes)
@@ -248,10 +282,18 @@ class EngineTests(unittest.TestCase):
             Request.parse(json.dumps(obj).encode())
 
     def test_boolean_float_negative_and_noncanonical_fields(self):
-        for fields in ({"funding_cap": True}, {"fee_slot": 2.0}, {"fee_slot": -1},
-                       {"fee_slot": 3}, {"fee_note_index": 1 << 64}, {"intent": "F" * 64},
-                       {"intent": "f" * 64}, {"nullifiers": (h(1), h(1))},
-                       {"body_sha256": h(1)}, {"body_b64": "YQ="}):
+        for fields in (
+            {"funding_cap": True},
+            {"fee_slot": 2.0},
+            {"fee_slot": -1},
+            {"fee_slot": 3},
+            {"fee_note_index": 1 << 64},
+            {"intent": "F" * 64},
+            {"intent": "f" * 64},
+            {"nullifiers": (h(1), h(1))},
+            {"body_sha256": h(1)},
+            {"body_b64": "YQ="},
+        ):
             with self.subTest(fields=fields), self.assertRaises(Refused):
                 request(**fields)
 

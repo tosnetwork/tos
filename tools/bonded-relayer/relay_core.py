@@ -5,6 +5,7 @@ validate native state/proofs and finality; a JSON-RPC success is not evidence.
 No test-only signer, manual unpinned CLI fallback or automatic unknown retry is
 provided. See README.md for the deliberately open production integration gates.
 """
+
 from __future__ import annotations
 
 import base64
@@ -59,13 +60,15 @@ def unique_object(items):
 
 
 def encode(obj: dict) -> bytes:
-    return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=True,
-                      allow_nan=False).encode("ascii")
+    return json.dumps(
+        obj, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False
+    ).encode("ascii")
 
 
 @dataclasses.dataclass(frozen=True)
 class Release:
     """Operator-pinned identity, not supplied by an HTTP requester or directory."""
+
     global_id: int
     genesis_root: str
     genesis_file: str
@@ -139,15 +142,24 @@ class Request:
         if type(wire) is not bytes or len(wire) > 2 * MAX_BODY:
             raise Refused("request too large")
         try:
-            obj = json.loads(wire, object_pairs_hook=unique_object,
-                             parse_constant=lambda _: (_ for _ in ()).throw(Refused("nonfinite JSON")))
+            obj = json.loads(
+                wire,
+                object_pairs_hook=unique_object,
+                parse_constant=lambda _: (_ for _ in ()).throw(Refused("nonfinite JSON")),
+            )
             if type(obj) is not dict or set(obj) != {f.name for f in dataclasses.fields(cls)}:
                 raise Refused("unknown or missing request members")
             if type(obj["nullifiers"]) is not list:
                 raise Refused("nullifier array required")
             obj["nullifiers"] = tuple(obj["nullifiers"])
             return cls(**obj)
-        except (UnicodeError, json.JSONDecodeError, TypeError, RecursionError, OverflowError) as exc:
+        except (
+            UnicodeError,
+            json.JSONDecodeError,
+            TypeError,
+            RecursionError,
+            OverflowError,
+        ) as exc:
             raise Refused("invalid request") from exc
 
     @property
@@ -162,6 +174,7 @@ class Request:
 @dataclasses.dataclass(frozen=True)
 class Prepared:
     """Exact signed bytes, independently checked by Adapter.validate_prepared."""
+
     message: bytes
     message_hash: str  # TVM representation hash, NOT sha256(serialized BOC).
     acceptance: bytes
@@ -202,19 +215,36 @@ class Adapter(Protocol):
     evidence returns None unless destination execution or terminal refusal has
     cryptographically verified finality for this exact message and pool intent.
     """
+
     def preflight(self, release: Release, request: Request) -> int: ...
-    def prepare(self, release: Release, request: Request, slot: int, issued_at: int,
-                funding: int) -> Prepared: ...
-    def validate_prepared(self, release: Release, request: Request, slot: int,
-                          issued_at: int, funding: int, prepared: Prepared) -> None: ...
+    def prepare(
+        self, release: Release, request: Request, slot: int, issued_at: int, funding: int
+    ) -> Prepared: ...
+    def validate_prepared(
+        self,
+        release: Release,
+        request: Request,
+        slot: int,
+        issued_at: int,
+        funding: int,
+        prepared: Prepared,
+    ) -> None: ...
     def recheck(self, release: Release, request: Request, prepared: Prepared) -> None: ...
     def broadcast(self, exact_message: bytes) -> None: ...
-    def evidence(self, release: Release, request: Request, prepared: Prepared) -> Evidence | None: ...
+    def evidence(
+        self, release: Release, request: Request, prepared: Prepared
+    ) -> Evidence | None: ...
 
 
 class Journal:
-    def __init__(self, path: Path, release: Release, *, max_pending: int = 64,
-                 max_reserved: int = 100 * 10**9):
+    def __init__(
+        self,
+        path: Path,
+        release: Release,
+        *,
+        max_pending: int = 64,
+        max_reserved: int = 100 * 10**9,
+    ):
         self.max_pending = integer(max_pending, 1, 10000)
         self.max_reserved = integer(max_reserved, 1, (1 << 63) - 1)
         self.release = release
@@ -247,7 +277,9 @@ class Journal:
         try:
             with self.transaction():
                 self.db.execute("INSERT OR IGNORE INTO metadata VALUES ('schema','1')")
-                self.db.execute("INSERT OR IGNORE INTO metadata VALUES ('release',?)", (release.scope,))
+                self.db.execute(
+                    "INSERT OR IGNORE INTO metadata VALUES ('release',?)", (release.scope,)
+                )
                 self.db.execute("INSERT OR IGNORE INTO metadata VALUES ('next_slot','1')")
                 meta = dict(self.db.execute("SELECT key,value FROM metadata"))
                 if meta["schema"] != "1" or meta["release"] != release.scope:
@@ -283,17 +315,24 @@ class Journal:
                 return old, False
             count, total = self.db.execute(
                 "SELECT COUNT(*),COALESCE(SUM(funding),0) FROM jobs "
-                "WHERE state IN ('reserved','prepared','unknown','broadcast')").fetchone()
+                "WHERE state IN ('reserved','prepared','unknown','broadcast')"
+            ).fetchone()
             if count >= self.max_pending or total + funding > self.max_reserved:
                 raise Refused("pending queue or aggregate funding cap reached")
-            slot = int(self.db.execute("SELECT value FROM metadata WHERE key='next_slot'").fetchone()[0])
+            slot = int(
+                self.db.execute("SELECT value FROM metadata WHERE key='next_slot'").fetchone()[0]
+            )
             integer(slot, 1, (1 << 63) - 2)
             self.db.execute("UPDATE metadata SET value=? WHERE key='next_slot'", (str(slot + 1),))
-            self.db.execute("INSERT INTO jobs(id,request,slot,issued,funding,state) VALUES(?,?,?,?,?,'reserved')",
-                            (request.identity, request.wire, slot, issued, funding))
+            self.db.execute(
+                "INSERT INTO jobs(id,request,slot,issued,funding,state) VALUES(?,?,?,?,?,'reserved')",
+                (request.identity, request.wire, slot, issued, funding),
+            )
             try:
-                self.db.executemany("INSERT INTO input_locks VALUES (?,?)",
-                                    [(n, request.identity) for n in request.nullifiers])
+                self.db.executemany(
+                    "INSERT INTO input_locks VALUES (?,?)",
+                    [(n, request.identity) for n in request.nullifiers],
+                )
             except sqlite3.IntegrityError as exc:
                 raise Refused("an input is already reserved or spent in this journal") from exc
             return self.get(request.identity), True
@@ -303,23 +342,34 @@ class Journal:
             changed = self.db.execute(
                 "UPDATE jobs SET state='prepared',message=?,message_hash=?,acceptance=? "
                 "WHERE id=? AND state='reserved'",
-                (value.message, value.message_hash, value.acceptance, identity)).rowcount
+                (value.message, value.message_hash, value.acceptance, identity),
+            ).rowcount
             if changed != 1:
                 raise Refused("preparation may be committed only once")
 
     def claim_broadcast(self, identity: str) -> bool:
         with self.transaction():
-            return self.db.execute("UPDATE jobs SET state='unknown' WHERE id=? AND state='prepared'",
-                                   (identity,)).rowcount == 1
+            return (
+                self.db.execute(
+                    "UPDATE jobs SET state='unknown' WHERE id=? AND state='prepared'", (identity,)
+                ).rowcount
+                == 1
+            )
 
     def broadcast_returned(self, identity: str):
         with self.transaction():
-            self.db.execute("UPDATE jobs SET state='broadcast' WHERE id=? AND state='unknown'", (identity,))
+            self.db.execute(
+                "UPDATE jobs SET state='broadcast' WHERE id=? AND state='unknown'", (identity,)
+            )
 
     def finish(self, evidence: Evidence):
         with self.transaction():
             row = self.get(evidence.request)
-            if row is None or row["message_hash"] != evidence.message_hash or evidence.release != self.release.scope:
+            if (
+                row is None
+                or row["message_hash"] != evidence.message_hash
+                or evidence.release != self.release.scope
+            ):
                 raise Refused("unrelated evidence")
             if row["state"] in TERMINAL:
                 if row["state"] != evidence.outcome:
@@ -327,8 +377,10 @@ class Journal:
                 return
             if row["state"] not in ("unknown", "broadcast"):
                 raise Refused("no broadcast attempt exists")
-            self.db.execute("UPDATE jobs SET state=?,evidence=? WHERE id=?",
-                            (evidence.outcome, encode(dataclasses.asdict(evidence)), evidence.request))
+            self.db.execute(
+                "UPDATE jobs SET state=?,evidence=? WHERE id=?",
+                (evidence.outcome, encode(dataclasses.asdict(evidence)), evidence.request),
+            )
             if evidence.outcome == "rejected":
                 self.db.execute("DELETE FROM input_locks WHERE job=?", (evidence.request,))
             # Keep executed-nullifier tombstones. They are not queue/funding reservations.
@@ -362,8 +414,12 @@ class Engine:
         row, created = self.journal.reserve(request, funding, now)
         if not created:
             return row["state"]
-        prepared = self.adapter.prepare(self.release, request, row["slot"], row["issued"], row["funding"])
-        self.adapter.validate_prepared(self.release, request, row["slot"], row["issued"], row["funding"], prepared)
+        prepared = self.adapter.prepare(
+            self.release, request, row["slot"], row["issued"], row["funding"]
+        )
+        self.adapter.validate_prepared(
+            self.release, request, row["slot"], row["issued"], row["funding"], prepared
+        )
         self.journal.store_prepared(request.identity, prepared)
         return self.dispatch(request.identity)
 
@@ -376,7 +432,9 @@ class Engine:
         request = self._request(row)
         prepared = self._prepared(row)
         # Revalidate persisted bytes too: a restart may not trust a stale adapter result.
-        self.adapter.validate_prepared(self.release, request, row["slot"], row["issued"], row["funding"], prepared)
+        self.adapter.validate_prepared(
+            self.release, request, row["slot"], row["issued"], row["funding"], prepared
+        )
         if not self.journal.claim_broadcast(identity):
             return self.journal.get(identity)["state"]
         # Persist UNKNOWN before the first possible network write. Any exception,

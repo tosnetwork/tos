@@ -4,6 +4,7 @@ Synthetic internal senders exercise the actor's authorization boundary; they are
 not a claim that a synthetic address can sign a production wallet transaction.
 Missing native dependencies are errors, never green skips.
 """
+
 import os
 import subprocess
 import sys
@@ -17,7 +18,14 @@ sys.path.insert(0, str(ROOT / "test/pq-contracts"))
 import pqtest  # noqa: E402
 from cells import Cell, from_boc  # noqa: E402
 from native import (  # noqa: E402
-    GLOBAL_ID, NOW, Emulator, account_data, active_account, internal, outgoing, state_init,
+    GLOBAL_ID,
+    NOW,
+    Emulator,
+    account_data,
+    active_account,
+    internal,
+    outgoing,
+    state_init,
 )
 
 COIN = 10**9
@@ -30,8 +38,17 @@ SOURCE = Path(os.environ.get("RELAYER_SOURCE", ROOT / "crypto/smartcont/relayer-
 
 
 def initial(config, phase=0, principal=0):
-    return (Cell().uint(phase, 3).coins(principal).uint(0, 32).uint(0, 32)
-            .uint(0, 32).uint(0, 256).uint(0, 256).ref(config))
+    return (
+        Cell()
+        .uint(phase, 3)
+        .coins(principal)
+        .uint(0, 32)
+        .uint(0, 32)
+        .uint(0, 32)
+        .uint(0, 256)
+        .uint(0, 256)
+        .ref(config)
+    )
 
 
 def header(op):
@@ -40,19 +57,43 @@ def header(op):
 
 def state(data):
     s = data.slice()
-    return {"phase": s.uint(3), "principal": s.coins(), "activated": s.uint(32),
-            "requested": s.uint(32), "after": s.uint(32), "metadata": s.uint(256),
-            "evidence": s.uint(256)}
+    return {
+        "phase": s.uint(3),
+        "principal": s.coins(),
+        "activated": s.uint(32),
+        "requested": s.uint(32),
+        "after": s.uint(32),
+        "metadata": s.uint(256),
+        "evidence": s.uint(256),
+    }
 
 
 class Bond:
-    def __init__(self, key=17, salt=1, network=GLOBAL_ID, phase=0, principal=0, balance=COIN,
-                 delay=DELAY, minimum=10 * COIN, reserve=COIN):
+    def __init__(
+        self,
+        key=17,
+        salt=1,
+        network=GLOBAL_ID,
+        phase=0,
+        principal=0,
+        balance=COIN,
+        delay=DELAY,
+        minimum=10 * COIN,
+        reserve=COIN,
+    ):
         self.key = key
         identity = Cell().uint(0x111, 256).uint(0x222, 256).uint(0, 256)
         policy = Cell().coins(minimum).coins(reserve).uint(delay, 32)
-        self.config = (Cell().sint(network, 32).uint(salt, 256).addr(OWNER).addr(WORKER)
-                       .ref(pqtest.stored(pqtest.public_key(key))).ref(identity).ref(policy))
+        self.config = (
+            Cell()
+            .sint(network, 32)
+            .uint(salt, 256)
+            .addr(OWNER)
+            .addr(WORKER)
+            .ref(pqtest.stored(pqtest.public_key(key)))
+            .ref(identity)
+            .ref(policy)
+        )
         data = initial(self.config, phase, principal)
         self.address = (0, int.from_bytes(state_init(CODE, data).hash, "big"))
         self.shard = active_account(self.address, CODE, data, balance=balance)
@@ -74,8 +115,15 @@ class Bond:
         self.e.lib.transaction_emulator_set_unixtime(self.e.ptr, self.now)
 
     def digest(self, tag, payload=0, network=GLOBAL_ID, address=None):
-        return (Cell().uint(tag, 32).sint(network, 32).addr(address or self.address)
-                .uint(int.from_bytes(self.config.hash, "big"), 256).uint(payload, 256).hash)
+        return (
+            Cell()
+            .uint(tag, 32)
+            .sint(network, 32)
+            .addr(address or self.address)
+            .uint(int.from_bytes(self.config.hash, "big"), 256)
+            .uint(payload, 256)
+            .hash
+        )
 
     def signature(self, digest, key=None, context=CONTEXT):
         return pqtest.stored(pqtest.sign(self.key if key is None else key, digest, context))
@@ -87,12 +135,22 @@ class Bond:
     def acceptance(self, slot=1, intent=123, issued=None, until=None, body_hash=234):
         issued = self.now if issued is None else issued
         until = issued + 300 if until is None else until
-        return (Cell().uint(slot, 64).uint(issued, 32).uint(until, 32).uint(intent, 256)
-                .ref(Cell().uint(body_hash, 256).uint(345, 256).uint(456, 256)))
+        return (
+            Cell()
+            .uint(slot, 64)
+            .uint(issued, 32)
+            .uint(until, 32)
+            .uint(intent, 256)
+            .ref(Cell().uint(body_hash, 256).uint(345, 256).uint(456, 256))
+        )
 
     def proof(self, a, b, key_a=None, key_b=None, context=CONTEXT):
-        sig_a = self.signature(self.digest(0x42524143, int.from_bytes(a.hash, "big")), key_a, context)
-        sig_b = self.signature(self.digest(0x42524143, int.from_bytes(b.hash, "big")), key_b, context)
+        sig_a = self.signature(
+            self.digest(0x42524143, int.from_bytes(a.hash, "big")), key_a, context
+        )
+        sig_b = self.signature(
+            self.digest(0x42524143, int.from_bytes(b.hash, "big")), key_b, context
+        )
         return header(SLASH).ref(a).ref(sig_a).ref(b).ref(sig_b)
 
     def send(self, body, sender=OWNER, value=3 * COIN, expected=0, bounced=False):
@@ -219,15 +277,21 @@ class BondTests(unittest.TestCase):
     def test_different_slots_are_not_equivocation(self):
         b = self.bond()
         b.activate()
-        b.send(b.proof(b.acceptance(), b.acceptance(slot=2, intent=124)),
-               sender=REPORTER, expected=2407)
+        b.send(
+            b.proof(b.acceptance(), b.acceptance(slot=2, intent=124)),
+            sender=REPORTER,
+            expected=2407,
+        )
 
     def test_invalid_evidence_signature_and_context(self):
         b = self.bond()
         b.activate()
         a, c = b.acceptance(), b.acceptance(intent=124)
-        for body in (b.proof(a, c, key_a=18), b.proof(a, c, key_b=18),
-                     b.proof(a, c, context=b"not-the-acceptance-domain")):
+        for body in (
+            b.proof(a, c, key_a=18),
+            b.proof(a, c, key_b=18),
+            b.proof(a, c, context=b"not-the-acceptance-domain"),
+        ):
             b.send(body, sender=REPORTER, expected=2406)
 
     def test_other_bond_evidence_cannot_be_replayed(self):
@@ -252,8 +316,11 @@ class BondTests(unittest.TestCase):
         b = self.bond()
         b.activate()
         for issued in (b.now + 1, b.now - 1):
-            b.send(b.proof(b.acceptance(issued=issued), b.acceptance(issued=issued, intent=124)),
-                   sender=REPORTER, expected=2407)
+            b.send(
+                b.proof(b.acceptance(issued=issued), b.acceptance(issued=issued, intent=124)),
+                sender=REPORTER,
+                expected=2407,
+            )
         proof = b.proof(b.acceptance(), b.acceptance(intent=124))
         b.advance(86401)
         b.send(proof, sender=REPORTER, expected=2407)
@@ -283,7 +350,9 @@ class BondTests(unittest.TestCase):
     def test_live_backing_not_nominal_record_controls_eligibility(self):
         b = self.bond()
         b.activate()
-        code, values = pqtest.get_method(CODE, b.data, b.address, "get_relayer_bond", balance=2 * COIN)
+        code, values = pqtest.get_method(
+            CODE, b.data, b.address, "get_relayer_bond", balance=2 * COIN
+        )
         self.assertEqual(code, 0)
         self.assertEqual(values[1], 10 * COIN)
         self.assertEqual(values[2], COIN)
