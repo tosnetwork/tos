@@ -1,0 +1,38 @@
+name: Relayer delivery integration
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/relayer-delivery.yml'
+    types: [opened, reopened, synchronize, ready_for_review]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: relayer-delivery-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  integration-inputs:
+    name: Integration source inputs (not acceptance evidence)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Retain only tracked public source and identity
+        run: |
+          mkdir -p "$RUNNER_TEMP/relayer-delivery-inputs"
+          git rev-parse HEAD > "$RUNNER_TEMP/relayer-delivery-inputs/commit.txt"
+          git ls-tree -r HEAD > "$RUNNER_TEMP/relayer-delivery-inputs/tree.txt"
+          git archive --format=tar HEAD -- AGENTS.md doc scripts tools tosctl test .github crypto/smartcont sdk/js/packages pyproject.toml uv.lock | gzip -1 > "$RUNNER_TEMP/relayer-delivery-inputs/source.tar.gz"
+          sha256sum "$RUNNER_TEMP/relayer-delivery-inputs/source.tar.gz"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: relayer-delivery-source-inputs
+          path: ${{ runner.temp }}/relayer-delivery-inputs/
+          retention-days: 7
+          if-no-files-found: error
