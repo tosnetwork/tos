@@ -21,6 +21,20 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  relayer-engine-and-fees:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Durable relay engine regression tests
+        run: python3 -m unittest discover -s test/bonded-relayer -p test_engine.py -v
+      - name: Real private-fee encryption and ownership checks
+        run: |
+          scripts/install-rust-toolchain.sh
+          cargo test --locked --manifest-path tools/shielded-pool-wallet/Cargo.toml
+
   bonded-relayer:
     runs-on: ubuntu-24.04
     timeout-minutes: 40
@@ -34,7 +48,7 @@ jobs:
           cmake --build build --target func fift emulator -j"$(nproc)"
           cmake -S test/pq-contracts -B build/br-signer -G Ninja -DCMAKE_BUILD_TYPE=Release
           cmake --build build/br-signer -j"$(nproc)"
-      - name: Run the bonded-relayer acceptance suite
+      - name: Run the bonded-relayer acceptance suite and guard mutations
         env:
           FUNC_PATH: ${{ github.workspace }}/build/crypto/func
           FIFT_PATH: ${{ github.workspace }}/build/crypto/fift
@@ -43,6 +57,7 @@ jobs:
         run: |
           python3 -m pip install cryptography==46.0.4
           python3 -m unittest discover -s test/bonded-relayer -p 'test_*.py' -v
+          python3 test/bonded-relayer/mutations.py
       - name: Retain native debugging inputs
         if: always()
         run: |
@@ -50,7 +65,8 @@ jobs:
           tar -czf "$RUNNER_TEMP/bonded-relayer/native-inputs.tar.gz" \
             build/crypto/func build/crypto/fift build/emulator/libemulator.so \
             build/br-signer/test-pq-contracts-sign \
-            crypto/smartcont crypto/fift/lib test/auth-extensions test/pq-contracts
+            crypto/smartcont crypto/fift/lib test/auth-extensions test/pq-contracts \
+            tosctl/src/executor/real_boc/default_config.boc
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:

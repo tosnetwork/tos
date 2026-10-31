@@ -125,7 +125,7 @@ int br_receipt(cell receipt, int activated, int requested) impure inline_ref {
   throw_unless(br::bad_evidence, (r.slice_bits() == 384) & (r.slice_refs() == 1));
   int slot = r~load_uint(64);
   int issued = r~load_uint(32);
-  int until = r~load_uint(32);
+  int valid_until = r~load_uint(32);
   throw_unless(br::bad_evidence, r~load_uint(256) != 0);
   slice terms = r~load_ref().pq::parse_ordinary(); r.end_parse();
   throw_unless(br::bad_evidence,
@@ -133,7 +133,7 @@ int br_receipt(cell receipt, int activated, int requested) impure inline_ref {
   throw_unless(br::bad_evidence, (terms~load_uint(256) != 0)
     & (terms~load_uint(256) != 0) & (terms~load_uint(256) != 0));
   throw_unless(br::bad_evidence, (slot > 0) & (issued >= activated)
-    & (issued <= now()) & (until > issued) & (until <= issued + br::receipt_lifetime)
+    & (issued <= now()) & (valid_until > issued) & (valid_until <= issued + br::receipt_lifetime)
     & (now() <= issued + br::evidence_window));
   if (requested != 0) {
     throw_unless(br::bad_evidence, issued <= requested);

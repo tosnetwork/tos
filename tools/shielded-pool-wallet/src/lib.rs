@@ -18,6 +18,7 @@ pub mod descriptor;
 pub mod error;
 pub mod import;
 pub mod keys;
+pub mod relayer_fee;
 pub mod scan;
 
 /// Section 9.4: exactly 28 ASCII bytes, and it never varies.
