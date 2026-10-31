@@ -252,6 +252,7 @@ impl KnownCodeHashes {
         by_hash.insert(DisputeContract::code()?.repr_hash(), "dispute");
         by_hash.insert(ServiceActorContract::code()?.repr_hash(), "service_actor");
         by_hash.insert(CapabilityRegistryContract::code()?.repr_hash(), "capability_registry");
+        by_hash.insert(contracts::relayer_bond::RelayerBond::code()?.repr_hash(), "relayer_bond");
         by_hash.insert(UInt256::from_slice(&hex::decode(DNS_ITEM_CODE_HASH)?), "dns_domain");
         let nominator_pool_code = read_single_root_boc(hex::decode(NOMINATOR_POOL_CODE)?)?;
         by_hash.insert(nominator_pool_code.repr_hash(), "contract.pool.nominator");
@@ -1137,6 +1138,59 @@ async fn decode_and_store(
                 last_seqno: seqno,
                 updated_at: now,
                 dto_json: serde_json::to_string(&ServiceActorRecordDto::from(&data))?,
+            })
+        }
+        "relayer_bond" => {
+            // Discovery is deliberately untrusted. Parse the exact code/data
+            // identity, but do not turn this indexed observation into a fresh
+            // proof or signing authority; clients re-read through their verifier.
+            let addr = address.parse::<MsgAddressInt>()?;
+            let info = chain_provider.get_address_info(&addr).await?;
+            let code = read_single_root_boc(
+                info.code.ok_or_else(|| anyhow::anyhow!("bond code missing"))?,
+            )?;
+            anyhow::ensure!(
+                code.repr_hash() == contracts::relayer_bond::RelayerBond::code()?.repr_hash(),
+                "bond code changed during discovery"
+            );
+            let data = read_single_root_boc(
+                info.data.ok_or_else(|| anyhow::anyhow!("bond data missing"))?,
+            )?;
+            let bond = contracts::relayer_bond::RelayerBond::decode(&addr, &data)?;
+            let dto = crate::http::agent_query_api::RelayerDto {
+                address: address.to_owned(),
+                owner: bond.init.owner.to_string(),
+                worker: bond.init.worker.to_string(),
+                endpoint: bond.init.endpoint.clone(),
+                status: bond.status().to_owned(),
+                principal: bond.principal.to_string(),
+                observed_backing: bond.backed(u128::from(info.balance)).to_string(),
+                code_hash: code.repr_hash().to_hex_string(),
+                config_hash: bond.config.repr_hash().to_hex_string(),
+                policy_hash: contracts::relayer_bond::RelayerBond::policy(&bond.init)?
+                    .repr_hash()
+                    .to_hex_string(),
+                worker_key_hash: hex::encode(
+                    contracts::relayer_bond::RelayerBond::worker_key_hash(&bond.init.worker_key)?,
+                ),
+                global_id: bond.init.global_id,
+                genesis_root: hex::encode(bond.init.genesis_root),
+                genesis_file: hex::encode(bond.init.genesis_file),
+                metadata_hash: hex::encode(bond.metadata_hash),
+                exit_after: bond.exit_after,
+                observed_at: now,
+                requires_live_verification: true,
+            };
+            store.upsert(&IndexedRecord {
+                address: address.to_owned(),
+                kind: kind.to_owned(),
+                creator: Some(bond.init.owner.to_string()),
+                counterparty: Some(bond.init.worker.to_string()),
+                status: Some(bond.status().to_owned()),
+                deadline: Some(u64::from(bond.exit_after)),
+                last_seqno: seqno,
+                updated_at: now,
+                dto_json: serde_json::to_string(&dto)?,
             })
         }
         "capability_registry" => {

@@ -44,7 +44,10 @@ jobs:
       # CAP_SYS_ADMIN is unprivileged: namespace creation succeeds but the uid
       # map write is refused. CAP_SYS_ADMIN exempts the container from that
       # restriction, as root is exempt on an operator host.
-      options: --security-opt seccomp=unconfined --security-opt apparmor=unconfined --cap-add SYS_ADMIN
+      # Stopped-tree checks inspect /proc descriptors of other service users.
+      # SYS_PTRACE also permits inspection of nondumpable test children; without
+      # it, parallel unprivileged identity tests can make cleanup fail with EACCES.
+      options: --security-opt seccomp=unconfined --security-opt apparmor=unconfined --cap-add SYS_ADMIN --cap-add SYS_PTRACE
       image: ghcr.io/${{ github.repository }}-builder:ubuntu-24.04
       credentials:
         username: ${{ github.repository_owner }}
@@ -183,6 +186,8 @@ jobs:
           cargo test --manifest-path tosctl/src/Cargo.toml --locked -p node-store --features native --test native_fixture -- --nocapture | tee build/node-store-native-tests.log
           grep -F 'test result: ok. 1 passed; 0 failed; 0 ignored' build/node-store-native-tests.log
           cargo build --manifest-path tosctl/src/Cargo.toml --locked -p node-store --features native --example reconstruct_fixture
+          cargo test --manifest-path tosctl/src/Cargo.toml --locked -p node-data-sync --features native --lib service::tests::refuse_writers_checks_child_descriptor_access_modes -- --ignored --exact --nocapture | tee build/node-sync-writer-control.log
+          grep -Fx 'CHILD_DESCRIPTOR_WRITER_CONTROL_OK' build/node-sync-writer-control.log
           cargo test --manifest-path tosctl/src/Cargo.toml --locked -p node-data-sync --features native --tests
           cargo test --manifest-path tosctl/src/Cargo.toml --locked -p commands --features node-data-sync-native --lib commands::nodectl::node_cmd::status_tests::standalone_status_keeps_rpc_only_contract_without_control_or_references -- --exact --nocapture | tee build/node-status-compatibility.log
           grep -F 'test result: ok. 1 passed; 0 failed; 0 ignored' build/node-status-compatibility.log
@@ -479,6 +484,7 @@ jobs:
             build/node-sync-init-block/init-block-receipt.json
             build/node-sync-init-block/checked-generation/checked/validation.json
             build/node-sync-init-block.log
+            build/node-sync-writer-control.log
             build/node-sync-native-lifecycle.log
             build/init-block-pre-anchor-control/pre-anchor-proof-control.json
             build/init-block-pre-anchor-control/pre-anchor-proof-red.txt

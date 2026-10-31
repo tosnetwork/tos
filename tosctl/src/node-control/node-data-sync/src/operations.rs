@@ -1529,9 +1529,12 @@ mod tests {
         };
         fs::rename(&request.context.database, root.path.join("saved-original"))?;
         Root::create(&request.context.database)?;
-        assert!(
-            cleanup_stage(&request, &operation, &stop).is_err(),
-            "cleanup ignored changed installed root"
+        let error = cleanup_stage(&request, &operation, &stop)
+            .expect_err("cleanup ignored changed installed root");
+        assert_eq!(
+            error.to_string(),
+            "installed root changed before staging cleanup",
+            "wrong installed-root refusal"
         );
         assert!(stage.path.exists(), "cleanup removed stage after installed-root replacement");
         fs::remove_dir(&request.context.database)?;
@@ -1539,7 +1542,16 @@ mod tests {
         let unrelated = Root::create(&operation.path.join("unrelated"))?;
         unrelated.write_new("keep", b"not owned")?;
         std::os::unix::fs::symlink(&unrelated.path, stage.path.join("trap"))?;
-        assert!(cleanup_stage(&request, &operation, &stop).is_err(), "cleanup followed a symlink");
+        let error =
+            cleanup_stage(&request, &operation, &stop).expect_err("cleanup followed a symlink");
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "refusing unsafe cleanup child: {}",
+                std::io::Error::from_raw_os_error(libc::ELOOP)
+            ),
+            "wrong symlink refusal"
+        );
         assert_eq!(unrelated.bytes("keep", 100)?, b"not owned");
         fs::remove_file(stage.path.join("trap"))?;
         cleanup_stage(&request, &operation, &stop)?;

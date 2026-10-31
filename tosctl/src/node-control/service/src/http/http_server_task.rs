@@ -339,6 +339,8 @@ pub(crate) fn routes(enable_swagger: bool, state: AppState) -> axum::Router {
 
 fn explorer_public_routes() -> axum::Router<AppState> {
     axum::Router::new()
+        .route("/relayers", axum::routing::get(agent_query_api::list_relayers))
+        .route("/relayers/{address}", axum::routing::get(agent_query_api::get_relayer))
         .route("/explorer/status", axum::routing::get(explorer_query_api::status))
         .route("/explorer/staking", axum::routing::get(explorer_query_api::staking))
         .route(
@@ -1143,6 +1145,8 @@ impl utoipa::Modify for BearerAuthAddon {
         ,agent_query_api::get_service_request
         ,agent_query_api::list_registry
         ,agent_query_api::get_registry
+        ,agent_query_api::list_relayers
+        ,agent_query_api::get_relayer
         ,explorer_query_api::status
         ,explorer_query_api::staking
         ,explorer_query_api::nominator_positions
@@ -1193,6 +1197,8 @@ impl utoipa::Modify for BearerAuthAddon {
         agent_query_api::ServiceActorListResponse,
         agent_query_api::ServiceRequestLifecycleDto,
         agent_query_api::ServiceRequestLifecycleResponse,
+        agent_query_api::RelayerDto,
+        agent_query_api::RelayerListResponse,
         agent_query_api::RegistryDto,
         agent_query_api::RegistryResponse,
         agent_query_api::RegistryListResponse,

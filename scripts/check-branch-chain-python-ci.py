@@ -205,12 +205,27 @@ def validate_triggers(text: str) -> None:
 
 
 def validate_node_store_proof(text: str) -> None:
+    job = re.search(r"(?ms)^  python-and-pq-chain:\n(?P<body>.*?)(?=^  [\w-]+:\s*$|\Z)", text)
+    require(job is not None, "native StateDb proof job is absent")
+    container = re.search(
+        r"(?ms)^    container:\n(?P<body>.*?)(?=^    [\w-]+:|\Z)", job.group("body")
+    )
+    require(container is not None, "native StateDb proof container is absent")
+    options = re.findall(r"(?m)^      options: ([^#\n]+)(?:#.*)?$", container.group("body"))
+    require(
+        len(options) == 1
+        and re.search(r"(?:^|\s)--cap-add SYS_PTRACE(?:\s|$)", options[0]) is not None
+        and re.search(r"(?:^|\s)--cap-drop(?:=|\s+)(?:SYS_PTRACE|ALL)(?:\s|$)", options[0]) is None,
+        "native StateDb proof container must grant SYS_PTRACE for cross-user writer inspection",
+    )
     required = (
         'export NODE_STORE_NATIVE_DIR="$GITHUB_WORKSPACE/build/third-party/rocksdb"',
         'export NODE_STORE_FIXTURE="$GITHUB_WORKSPACE/build/test-node-store-fixture"',
         "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p node-store --features native --test native_fixture -- --nocapture | tee build/node-store-native-tests.log",
         "grep -F 'test result: ok. 1 passed; 0 failed; 0 ignored' build/node-store-native-tests.log",
         "cargo build --manifest-path tosctl/src/Cargo.toml --locked -p node-store --features native --example reconstruct_fixture",
+        "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p node-data-sync --features native --lib service::tests::refuse_writers_checks_child_descriptor_access_modes -- --ignored --exact --nocapture | tee build/node-sync-writer-control.log",
+        "grep -Fx 'CHILD_DESCRIPTOR_WRITER_CONTROL_OK' build/node-sync-writer-control.log",
         "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p node-data-sync --features native --tests",
         "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p commands --features node-data-sync-native --lib commands::nodectl::node_cmd::status_tests::standalone_status_keeps_rpc_only_contract_without_control_or_references -- --exact --nocapture | tee build/node-status-compatibility.log",
         "grep -F 'test result: ok. 1 passed; 0 failed; 0 ignored' build/node-status-compatibility.log",
