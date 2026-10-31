@@ -1,0 +1,265 @@
+;; Copyright (C) 2026 TOS Network. SPDX-License-Identifier: GPL-3.0-only
+;; BR1 candidate. See doc/bonded-relayer-v1.md. No deployment approval implied.
+;; One immutable worker per actor; replacement uses a new actor and salt.
+;; All operations are funded internal messages. Never ACCEPT and never SETCODE.
+#include "pq-bytes.fc";
+#include "pq.fc";
+
+const int br::activate = 0x42520001;
+const int br::stake = 0x42520002;
+const int br::retire = 0x42520003;
+const int br::withdraw = 0x42520004;
+const int br::metadata = 0x42520005;
+const int br::slash = 0x42520006;
+const int br::unfunded = 0;
+const int br::active = 1;
+const int br::exiting = 2;
+const int br::closed = 3;
+const int br::slashed = 4;
+const int br::receipt_lifetime = 300;
+const int br::evidence_window = 86400;
+const int br::normal_gas = 90000;
+const int br::evidence_gas = 180000;
+const int br::bad_message = 2400;
+const int br::not_owner = 2401;
+const int br::bad_state = 2402;
+const int br::underfunded = 2403;
+const int br::bad_policy = 2404;
+const int br::bad_identity = 2405;
+const int br::bad_signature = 2406;
+const int br::bad_evidence = 2407;
+const int br::too_early = 2408;
+const int br::insolvent = 2409;
+const int br::bad_network = 2410;
+
+cell br_my_code() asm "MYCODE";
+
+() br_address(slice address) impure inline {
+  throw_unless(br::bad_identity,
+    (address.slice_bits() == 267) & (address.slice_refs() == 0));
+  throw_unless(br::bad_identity, address~load_uint(3) == 4);
+  throw_unless(br::bad_identity, address~load_int(8) == 0);
+}
+
+;; Root: phase:uint3 principal:Coins activated:uint32 exit_requested:uint32
+;; exit_after:uint32 metadata_hash:uint256 evidence_hash:uint256 ^config.
+(cell, int, int, int, int, int, int, int) br_load() inline {
+  slice s = get_data().pq::parse_ordinary();
+  int phase = s~load_uint(3);
+  int principal = s~load_coins();
+  int activated = s~load_uint(32);
+  int requested = s~load_uint(32);
+  int after = s~load_uint(32);
+  int metadata = s~load_uint(256);
+  int evidence = s~load_uint(256);
+  cell config = s~load_ref(); s.end_parse();
+  throw_unless(br::bad_state, phase <= br::slashed);
+  return (config, phase, principal, activated, requested, after, metadata, evidence);
+}
+
+cell br_data(cell config, int phase, int principal, int activated,
+             int requested, int after, int metadata, int evidence) inline {
+  return begin_cell().store_uint(phase, 3).store_coins(principal)
+    .store_uint(activated, 32).store_uint(requested, 32).store_uint(after, 32)
+    .store_uint(metadata, 256).store_uint(evidence, 256).store_ref(config).end_cell();
+}
+
+;; config: global_id:int32 salt:uint256 owner:MsgAddressInt worker:MsgAddressInt
+;;         ^stored_mldsa_key ^identity ^policy
+;; identity: genesis_root:uint256 genesis_file:uint256 native_agent_id:uint256
+;; policy: min_bond:Coins reserve:Coins exit_delay:uint32
+(slice, slice, cell, int, int, int) br_config(cell config) impure inline_ref {
+  slice s = config.pq::parse_ordinary();
+  throw_unless(br::bad_network, s~load_int(32) == pq::global_id());
+  throw_unless(br::bad_identity, s~load_uint(256) != 0);
+  slice owner = s~load_msg_addr(); br_address(owner);
+  slice worker = s~load_msg_addr(); br_address(worker);
+  cell key = s~load_ref();
+  slice identity = s~load_ref().pq::parse_ordinary();
+  slice policy = s~load_ref().pq::parse_ordinary(); s.end_parse();
+  throw_unless(br::bad_identity,
+    (identity.slice_bits() == 768) & (identity.slice_refs() == 0));
+  throw_unless(br::bad_identity, identity~load_uint(256) != 0);
+  throw_unless(br::bad_identity, identity~load_uint(256) != 0);
+  slice k = key.pq::parse_ordinary();
+  throw_unless(br::bad_identity, (k.slice_bits() == 32) & (k.slice_refs() == 1));
+  throw_unless(br::bad_identity, k.preload_uint(32) == 1312);
+  int minimum = policy~load_coins();
+  int reserve = policy~load_coins();
+  int delay = policy~load_uint(32); policy.end_parse();
+  throw_unless(br::bad_policy, (minimum > 0) & (reserve > 0)
+    & (delay >= br::receipt_lifetime + br::evidence_window) & (delay <= 2592000));
+
+  ;; Every initial state other than the canonical empty one has another address.
+  ;; Never trust a permissionless deployer's pre-filled principal/phase.
+  cell initial = br_data(config, 0, 0, 0, 0, 0, 0, 0);
+  cell init = begin_cell().store_uint(6, 5)
+    .store_ref(br_my_code()).store_ref(initial).end_cell();
+  slice own = my_address(); br_address(own);
+  (_, int hash) = parse_std_addr(own);
+  throw_unless(br::bad_identity, hash == cell_hash(init));
+  return (owner, worker, key, minimum, reserve, delay);
+}
+
+int br_signing_hash(cell config, int tag, int payload) inline {
+  return cell_hash(begin_cell().store_uint(tag, 32)
+    .store_int(pq::global_id(), 32).store_slice(my_address())
+    .store_uint(cell_hash(config), 256).store_uint(payload, 256).end_cell());
+}
+
+() br_verify(cell key, cell signature, int digest) impure inline_ref {
+  slice s = signature.pq::parse_ordinary();
+  throw_unless(br::bad_message, (s.slice_bits() == 32) & (s.slice_refs() == 1));
+  throw_unless(br::bad_message, s.preload_uint(32) == 2420);
+  cell bytes = begin_cell().store_uint(digest, 256).end_cell();
+  cell context = begin_cell().store_slice("TOS-BONDED-RELAYER-v1").end_cell();
+  throw_unless(br::bad_signature,
+    pq_check_mldsa44(bytes, context, s.preload_ref(), key.begin_parse().preload_ref()));
+}
+
+;; A quote is NOT an acceptance. The worker assigns each acceptance slot once.
+;; receipt: slot:uint64 issued:uint32 valid_until:uint32 intent:uint256
+;;          ^[body_hash:uint256 quote_hash:uint256 fee_note_body:uint256]
+int br_receipt(cell receipt, int activated, int requested) impure inline_ref {
+  slice r = receipt.pq::parse_ordinary();
+  throw_unless(br::bad_evidence, (r.slice_bits() == 384) & (r.slice_refs() == 1));
+  int slot = r~load_uint(64);
+  int issued = r~load_uint(32);
+  int until = r~load_uint(32);
+  throw_unless(br::bad_evidence, r~load_uint(256) != 0);
+  slice terms = r~load_ref().pq::parse_ordinary(); r.end_parse();
+  throw_unless(br::bad_evidence,
+    (terms.slice_bits() == 768) & (terms.slice_refs() == 0));
+  throw_unless(br::bad_evidence, (terms~load_uint(256) != 0)
+    & (terms~load_uint(256) != 0) & (terms~load_uint(256) != 0));
+  throw_unless(br::bad_evidence, (slot > 0) & (issued >= activated)
+    & (issued <= now()) & (until > issued) & (until <= issued + br::receipt_lifetime)
+    & (now() <= issued + br::evidence_window));
+  if (requested != 0) {
+    throw_unless(br::bad_evidence, issued <= requested);
+  }
+  return slot;
+}
+
+() br_backed(int principal, int reserve, int gas) impure inline {
+  [int balance, _] = get_balance();
+  throw_unless(br::insolvent,
+    balance - get_compute_fee(0, gas) >= principal + reserve);
+}
+
+() recv_internal(int msg_value, cell full_message, slice body) impure {
+  slice h = full_message.begin_parse();
+  if (h~load_uint(4) & 1) { return (); }
+  slice sender = h~load_msg_addr();
+  if (body.slice_empty?()) { return (); } ;; donation, never recorded as principal
+  int op = body~load_uint(32);
+  body~load_uint(64); ;; transport-only query ID
+  throw_unless(br::bad_message, (op >= br::activate) & (op <= br::slash));
+  int amount = 0;
+  if ((op == br::activate) | (op == br::stake)) { amount = body~load_coins(); }
+  int gas = op == br::slash ? br::evidence_gas : br::normal_gas;
+  throw_unless(br::underfunded, msg_value >= amount + get_compute_fee(0, gas));
+  set_gas_limit(gas);
+
+  (cell config, int phase, int principal, int activated, int requested,
+   int after, int metadata, int evidence) = br_load();
+  (slice owner, slice worker, cell key, int minimum, int reserve, int delay) = br_config(config);
+  if (op != br::slash) {
+    throw_unless(br::not_owner, equal_slice_bits(sender, owner));
+  }
+
+  if (op == br::activate) {
+    cell signature = body~load_ref(); body.end_parse();
+    throw_unless(br::bad_state, phase == br::unfunded);
+    throw_unless(br::bad_policy, amount >= minimum);
+    br_verify(key, signature, br_signing_hash(config, 0x42524150, 0)); ;; BRAP
+    activated = now();
+    throw_unless(br::bad_state, (activated > 0) & (activated + delay <= 4294967295));
+    br_backed(amount, reserve, gas);
+    set_data(br_data(config, br::active, amount, activated, 0, 0, metadata, 0));
+    return ();
+  }
+  if (op == br::stake) {
+    body.end_parse();
+    throw_unless(br::bad_state, phase == br::active);
+    throw_unless(br::bad_policy, (amount > 0) & (principal + amount < (1 << 120)));
+    principal += amount;
+    br_backed(principal, reserve, gas);
+    set_data(br_data(config, phase, principal, activated, requested, after, metadata, evidence));
+    return ();
+  }
+  if (op == br::metadata) {
+    metadata = body~load_uint(256); body.end_parse();
+    throw_unless(br::bad_state, phase == br::active);
+    br_backed(principal, reserve, gas);
+    set_data(br_data(config, phase, principal, activated, requested, after, metadata, evidence));
+    return ();
+  }
+  if (op == br::retire) {
+    body.end_parse();
+    throw_unless(br::bad_state, phase == br::active);
+    requested = now(); after = requested + delay;
+    throw_unless(br::bad_state, after <= 4294967295);
+    ;; Retirement remains possible if rent has reduced the backing.
+    set_data(br_data(config, br::exiting, principal, activated, requested, after, metadata, 0));
+    return ();
+  }
+  if (op == br::withdraw) {
+    body.end_parse();
+    throw_unless(br::bad_state, phase == br::exiting);
+    throw_unless(br::too_early, now() >= after);
+    [int balance, _] = get_balance();
+    throw_unless(br::insolvent, balance - get_compute_fee(0, gas)
+      > reserve + get_forward_fee(0, 512, 1));
+    raw_reserve(reserve, 0);
+    set_data(br_data(config, br::closed, 0, activated, requested, after, metadata, 0));
+    ;; Non-bounceable return; +16 rolls the transition back on action failure.
+    ;; Never +2: consuming the withdrawal without emitting its value is forbidden.
+    send_raw_message(begin_cell().store_uint(0x10, 6).store_slice(owner)
+      .store_coins(0).store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1).end_cell(), 144);
+    return ();
+  }
+  if (op == br::slash) {
+    cell a = body~load_ref(); cell sig_a = body~load_ref();
+    cell b = body~load_ref(); cell sig_b = body~load_ref(); body.end_parse();
+    throw_unless(br::bad_state, (phase == br::active) | (phase == br::exiting));
+    if (phase == br::exiting) { throw_unless(br::bad_evidence, now() < after); }
+    int slot_a = br_receipt(a, activated, requested);
+    int slot_b = br_receipt(b, activated, requested);
+    throw_unless(br::bad_evidence,
+      (slot_a == slot_b) & (cell_hash(a) != cell_hash(b)));
+    br_verify(key, sig_a, br_signing_hash(config, 0x42524143, cell_hash(a))); ;; BRAC
+    br_verify(key, sig_b, br_signing_hash(config, 0x42524143, cell_hash(b)));
+    evidence = cell_hash(begin_cell().store_ref(a).store_ref(b).end_cell());
+    ;; Permanent forfeiture. Neither owner nor reporter gets a withdrawal path.
+    ;; Actual collateral may be below its nominal record after storage rent.
+    set_data(br_data(config, br::slashed, principal, activated, requested, after, metadata, evidence));
+    return ();
+  }
+  throw(br::bad_message);
+}
+
+(int, int, int, int, int, int, int, int, int) get_relayer_bond() method_id {
+  (cell config, int phase, int principal, int activated, int requested,
+   int after, int metadata, int evidence) = br_load();
+  (_, _, _, int minimum, int reserve, _) = br_config(config);
+  [int balance, _] = get_balance();
+  int backed = min(principal, max(0, balance - reserve));
+  int eligible = (phase == br::active) & (backed >= minimum);
+  return (phase, principal, backed, eligible, activated, requested, after, metadata, evidence);
+}
+
+cell get_relayer_config() method_id {
+  (cell config, _, _, _, _, _, _, _) = br_load();
+  br_config(config);
+  return config;
+}
+
+int get_relayer_required_value(int op, int amount) method_id {
+  throw_unless(br::bad_message, (op >= br::activate) & (op <= br::slash));
+  throw_unless(br::bad_policy, (amount >= 0) & (amount < (1 << 120)));
+  if ((op != br::activate) & (op != br::stake)) {
+    throw_unless(br::bad_policy, amount == 0);
+  }
+  return amount + get_compute_fee(0, op == br::slash ? br::evidence_gas : br::normal_gas);
+}

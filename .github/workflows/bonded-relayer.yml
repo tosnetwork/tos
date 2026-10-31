@@ -1,0 +1,59 @@
+name: Bonded relayer validation
+
+on:
+  pull_request:
+    paths:
+      - 'crypto/smartcont/relayer-bond-code.fc'
+      - 'crypto/smartcont/pq*.fc'
+      - 'tools/bonded-relayer/**'
+      - 'tools/shielded-pool-wallet/**'
+      - 'test/bonded-relayer/**'
+      - 'doc/bonded-relayer-v1.md'
+      - '.github/workflows/bonded-relayer.yml'
+    types: [opened, reopened, synchronize, ready_for_review]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bonded-relayer-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bonded-relayer:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Build native contract tools and isolated TEST ONLY signer
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --target func fift emulator -j"$(nproc)"
+          cmake -S test/pq-contracts -B build/br-signer -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/br-signer -j"$(nproc)"
+      - name: Run the bonded-relayer acceptance suite
+        env:
+          FUNC_PATH: ${{ github.workspace }}/build/crypto/func
+          FIFT_PATH: ${{ github.workspace }}/build/crypto/fift
+          EMULATOR_PATH: ${{ github.workspace }}/build/emulator/libemulator.so
+          PQ_TEST_SIGNER: ${{ github.workspace }}/build/br-signer/test-pq-contracts-sign
+        run: |
+          python3 -m pip install cryptography==46.0.4
+          python3 -m unittest discover -s test/bonded-relayer -p 'test_*.py' -v
+      - name: Retain native debugging inputs
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/bonded-relayer"
+          tar -czf "$RUNNER_TEMP/bonded-relayer/native-inputs.tar.gz" \
+            build/crypto/func build/crypto/fift build/emulator/libemulator.so \
+            build/br-signer/test-pq-contracts-sign \
+            crypto/smartcont crypto/fift/lib test/auth-extensions test/pq-contracts
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: bonded-relayer-native-inputs
+          path: ${{ runner.temp }}/bonded-relayer/
+          retention-days: 7
