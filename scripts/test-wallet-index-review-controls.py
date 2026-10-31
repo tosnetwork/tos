@@ -87,17 +87,20 @@ MUTATIONS = (
     ),
     (
         "first-block-anchor-refuses-its-own-head",
-        ((VERIFY, "block_id_from_head_state(head, block_root, state, 1, true)",
-          "block_id_from_head_state(head, block_root, state, 1, false)"),),
+        (
+            (
+                VERIFY,
+                "block_id_from_head_state(head, block_root, state, 1, true)",
+                "block_id_from_head_state(head, block_root, state, 1, false)",
+            ),
+        ),
         ("WalletIndexVerify_block_1_comes_from_the_state_the_heads_block_names",),
     ),
 )
 
 EXPECTED_RED = {
-    "WalletIndexVerify_malformed_wallet_getters_do_not_block_full_ownership":
-        r"(?:terminate called after throwing an instance of ['\"]vm::VmError['\"]|uncaught exception of type vm::VmError)",
-    "WalletIndexVerify_malformed_resolver_getters_do_not_block_full_ownership":
-        r"(?:terminate called after throwing an instance of ['\"]vm::VmError['\"]|uncaught exception of type vm::VmError)",
+    "WalletIndexVerify_malformed_wallet_getters_do_not_block_full_ownership": r"(?:terminate called after throwing an instance of ['\"]vm::VmError['\"]|uncaught exception of type vm::VmError)",
+    "WalletIndexVerify_malformed_resolver_getters_do_not_block_full_ownership": r"(?:terminate called after throwing an instance of ['\"]vm::VmError['\"]|uncaught exception of type vm::VmError)",
     "WalletIndexVerify_the_ownership_drain_rejects_malformed_getters": re.escape(
         "Expectation failed: db.token_backlog_stats().move_as_ok().parked is not equal to 0u"
     ),
@@ -113,10 +116,8 @@ EXPECTED_RED = {
     "WalletIndexSource_only_a_full_index_can_rebase_retention_across_a_source_gap": re.escape(
         "Expectation failed: db->get_window_base().move_as_ok() is not equal to state == VerificationState::Full ? 23u : 10u"
     ),
-    "WalletIndexVerify_a_retained_ancestor_comes_from_the_requested_entry_in_the_bound_head_state":
-        "the head's masterchain state does not record masterchain block 17",
-    "WalletIndexVerify_block_1_comes_from_the_state_the_heads_block_names":
-        "the requested masterchain block is not an ancestor of the head",
+    "WalletIndexVerify_a_retained_ancestor_comes_from_the_requested_entry_in_the_bound_head_state": "the head's masterchain state does not record masterchain block 17",
+    "WalletIndexVerify_block_1_comes_from_the_state_the_heads_block_names": "the requested masterchain block is not an ancestor of the head",
 }
 
 
@@ -124,7 +125,9 @@ def native_test_marker(test: str) -> bytes:
     return f"Running test Test_{test}...".encode()
 
 
-def require_test_result(test: str, status: int, executed: bool, output: str, expect_red: bool) -> str | None:
+def require_test_result(
+    test: str, status: int, executed: bool, output: str, expect_red: bool
+) -> str | None:
     if not executed:
         raise RuntimeError(f"{test} never started; exit {status}")
     if not expect_red:
@@ -133,11 +136,15 @@ def require_test_result(test: str, status: int, executed: bool, output: str, exp
         return None
     # With backtraces enabled the native signal handler prints SIGABRT and
     # exits 1. Without that handler, waitpid reports the abort signal itself.
-    aborted = status == -signal.SIGABRT or (status == 1 and re.search(r"\bSignal: 6(?:\s|$)", output))
+    aborted = status == -signal.SIGABRT or (
+        status == 1 and re.search(r"\bSignal: 6(?:\s|$)", output)
+    )
     pattern = EXPECTED_RED.get(test)
     match = re.search(pattern, output) if pattern is not None else None
     if not aborted or match is None:
-        raise RuntimeError(f"{test} did not abort at its expected semantic failure; exit {status}, pattern {pattern!r}")
+        raise RuntimeError(
+            f"{test} did not abort at its expected semantic failure; exit {status}, pattern {pattern!r}"
+        )
     return match.group(0)
 
 
@@ -174,7 +181,9 @@ class SourceEdits:
     def write(path: Path, data: bytes) -> None:
         temporary = None
         try:
-            with tempfile.NamedTemporaryFile(dir=path.parent, prefix=f".{path.name}.", delete=False) as stream:
+            with tempfile.NamedTemporaryFile(
+                dir=path.parent, prefix=f".{path.name}.", delete=False
+            ) as stream:
                 temporary = Path(stream.name)
                 os.fchmod(stream.fileno(), path.stat().st_mode & 0o777)
                 stream.write(data)
@@ -218,14 +227,18 @@ class SourceEdits:
             raise RuntimeError("; ".join(failures))
 
 
-def run_logged(command: list[str], log: Path, timeout: float, marker: bytes = b"") -> tuple[int, bool]:
+def run_logged(
+    command: list[str], log: Path, timeout: float, marker: bytes = b""
+) -> tuple[int, bool]:
     """Drain output with a bounded tail and kill the command group on timeout."""
     tail = bytearray()
     marker_tail = b""
     observed = not marker
     completed = False
     deadline = time.monotonic() + timeout
-    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True)
+    process = subprocess.Popen(
+        command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True
+    )
     assert process.stdout is not None
     try:
         with selectors.DefaultSelector() as events:
@@ -233,7 +246,9 @@ def run_logged(command: list[str], log: Path, timeout: float, marker: bytes = b"
             while True:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
-                    raise RuntimeError(f"command timed out; this is not a sensitivity result: {command}")
+                    raise RuntimeError(
+                        f"command timed out; this is not a sensitivity result: {command}"
+                    )
                 if not events.select(min(remaining, 0.25)):
                     continue
                 chunk = os.read(process.stdout.fileno(), 65536)
@@ -242,7 +257,7 @@ def run_logged(command: list[str], log: Path, timeout: float, marker: bytes = b"
                 if marker and not observed:
                     combined = marker_tail + chunk
                     observed = marker in combined
-                    marker_tail = combined[-len(marker):]
+                    marker_tail = combined[-len(marker) :]
                 tail.extend(chunk)
                 if len(tail) > LOG_BYTES:
                     del tail[:-LOG_BYTES]
@@ -284,12 +299,18 @@ def main() -> int:
     signal.signal(signal.SIGTERM, interrupted)
     sources = SourceEdits((WRITER, REPLAY, VERIFY, ROOT / "services/index-verify.h"))
     tests = sorted({test for _, _, names in MUTATIONS for test in names})
-    prepared = [(name, mutation_text(sources.originals, edits), names) for name, edits, names in MUTATIONS]
+    prepared = [
+        (name, mutation_text(sources.originals, edits), names) for name, edits, names in MUTATIONS
+    ]
     command = ["cmake", "--build", str(build), "--target", TARGET, "-j", str(args.jobs)]
-    source_commit = subprocess.check_output(["git", "-C", str(ROOT), "rev-parse", "HEAD"], text=True).strip()
+    source_commit = subprocess.check_output(
+        ["git", "-C", str(ROOT), "rev-parse", "HEAD"], text=True
+    ).strip()
     receipt = {
         "source_commit": source_commit,
-        "source_sha256": {str(path.relative_to(ROOT)): sha256(data) for path, data in sources.originals.items()},
+        "source_sha256": {
+            str(path.relative_to(ROOT)): sha256(data) for path, data in sources.originals.items()
+        },
         "test_source_sha256": {
             name: sha256((ROOT / name).read_bytes())
             for name in ("test/test-wallet-index-source.cpp", "test/test-wallet-index-verify.cpp")
@@ -310,7 +331,9 @@ def main() -> int:
     def compile_source(label: str) -> None:
         status, _ = run_logged(command, output / f"{label}-build.log", 600)
         if status != 0:
-            raise RuntimeError(f"{label}: native build failed ({status}); this is not a sensitivity result")
+            raise RuntimeError(
+                f"{label}: native build failed ({status}); this is not a sensitivity result"
+            )
 
     def test_source(label: str, names, expect_red: bool) -> None:
         for index, test in enumerate(names):
@@ -321,12 +344,20 @@ def main() -> int:
                 120,
                 native_test_marker(test),
             )
-            result = {"mutation": label, "test": test, "exit_status": status, "executed": executed, "accepted": False}
+            result = {
+                "mutation": label,
+                "test": test,
+                "exit_status": status,
+                "executed": executed,
+                "accepted": False,
+            }
             if expect_red:
                 result["expected_failure"] = EXPECTED_RED[test]
             receipt["results"].append(result)
             save()
-            result["failure_match"] = require_test_result(test, status, executed, log.read_text(errors="replace"), expect_red)
+            result["failure_match"] = require_test_result(
+                test, status, executed, log.read_text(errors="replace"), expect_red
+            )
             result["accepted"] = True
             save()
 

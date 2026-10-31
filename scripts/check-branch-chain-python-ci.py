@@ -255,8 +255,18 @@ def validate_init_block_lifecycle(text: str) -> None:
 
 
 WALLET_INDEX_SCENARIOS = {
-    "reference", "path-a", "path-b", "tampered", "omitted", "truncated", "injected",
-    "wrong-checkpoint", "wrong-anchor", "stale", "forged-ownership", "destroyed-omitted",
+    "reference",
+    "path-a",
+    "path-b",
+    "tampered",
+    "omitted",
+    "truncated",
+    "injected",
+    "wrong-checkpoint",
+    "wrong-anchor",
+    "stale",
+    "forged-ownership",
+    "destroyed-omitted",
     "recreated-omitted",
 }
 
@@ -266,30 +276,63 @@ def validate_wallet_index_scenarios(source: str) -> None:
     registrations = []
     defaults = []
     for node in tree.body:
-        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.target.id == "SCENARIOS":
-            require(isinstance(node.value, ast.Dict), "native wallet-index scenarios are not a registry")
-            registrations.extend(
-                key.value for key in node.value.keys if isinstance(key, ast.Constant) and isinstance(key.value, str)
+        if (
+            isinstance(node, ast.AnnAssign)
+            and isinstance(node.target, ast.Name)
+            and node.target.id == "SCENARIOS"
+        ):
+            require(
+                isinstance(node.value, ast.Dict), "native wallet-index scenarios are not a registry"
             )
-            expansions = [ast.dump(value) for key, value in zip(node.value.keys, node.value.values) if key is None]
-            expected = ast.dump(ast.parse("{control.name: scenario_red(control) for control in RED_CONTROLS}", mode="eval").body)
-            require(expansions == [expected], "native wallet-index registry must include every red control")
-        if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == "RED_CONTROLS" for target in node.targets):
+            registrations.extend(
+                key.value
+                for key in node.value.keys
+                if isinstance(key, ast.Constant) and isinstance(key.value, str)
+            )
+            expansions = [
+                ast.dump(value)
+                for key, value in zip(node.value.keys, node.value.values)
+                if key is None
+            ]
+            expected = ast.dump(
+                ast.parse(
+                    "{control.name: scenario_red(control) for control in RED_CONTROLS}", mode="eval"
+                ).body
+            )
+            require(
+                expansions == [expected],
+                "native wallet-index registry must include every red control",
+            )
+        if isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == "RED_CONTROLS" for target in node.targets
+        ):
             require(isinstance(node.value, ast.List), "native red controls are not a list")
             for control in node.value.elts:
-                require(isinstance(control, ast.Call) and isinstance(control.func, ast.Name)
-                        and control.func.id == "RedControl" and control.args
-                        and isinstance(control.args[0], ast.Constant), "native red control is unnamed")
+                require(
+                    isinstance(control, ast.Call)
+                    and isinstance(control.func, ast.Name)
+                    and control.func.id == "RedControl"
+                    and control.args
+                    and isinstance(control.args[0], ast.Constant),
+                    "native red control is unnamed",
+                )
                 registrations.append(control.args[0].value)
     for node in ast.walk(tree):
-        if isinstance(node, ast.Call) and node.args and isinstance(node.args[0], ast.Constant) and node.args[0].value == "--scenarios":
+        if (
+            isinstance(node, ast.Call)
+            and node.args
+            and isinstance(node.args[0], ast.Constant)
+            and node.args[0].value == "--scenarios"
+        ):
             defaults.extend(keyword.value for keyword in node.keywords if keyword.arg == "default")
     require(
-        len(registrations) == len(WALLET_INDEX_SCENARIOS) and set(registrations) == WALLET_INDEX_SCENARIOS,
+        len(registrations) == len(WALLET_INDEX_SCENARIOS)
+        and set(registrations) == WALLET_INDEX_SCENARIOS,
         f"native wallet-index scenarios differ: {sorted(set(registrations) ^ WALLET_INDEX_SCENARIOS)}",
     )
     require(
-        len(defaults) == 1 and ast.dump(defaults[0]) == ast.dump(ast.parse("list(SCENARIOS)", mode="eval").body),
+        len(defaults) == 1
+        and ast.dump(defaults[0]) == ast.dump(ast.parse("list(SCENARIOS)", mode="eval").body),
         "native wallet-index default must run the entire scenario registry",
     )
 
@@ -306,29 +349,42 @@ def validate_wallet_index_acceptance(text: str) -> None:
         ),
     }
     for name, commands in required.items():
-        step = re.search(rf"(?ms)^      - name: {re.escape(name)}\n(?P<body>.*?)(?=^      - |\Z)", text)
+        step = re.search(
+            rf"(?ms)^      - name: {re.escape(name)}\n(?P<body>.*?)(?=^      - |\Z)", text
+        )
         require(step is not None, f"native wallet-index acceptance step is absent: {name}")
         body = step.group("body")
-        require("        shell: bash\n" in body and "          set -euo pipefail\n" in body,
-                "native wallet-index acceptance must propagate pipeline failures")
+        require(
+            "        shell: bash\n" in body and "          set -euo pipefail\n" in body,
+            "native wallet-index acceptance must propagate pipeline failures",
+        )
         for command in commands:
-            require(re.search(rf"(?m)^ +{re.escape(command)}$", body) is not None,
-                    f"native wallet-index acceptance command is absent: {command}")
+            require(
+                re.search(rf"(?m)^ +{re.escape(command)}$", body) is not None,
+                f"native wallet-index acceptance command is absent: {command}",
+            )
     require(
         text.index("      - name: Verify every native wallet-index import and build scenario")
-        > text.index("      - name: Refuse init-block publication on the pre-anchor-proof validation path"),
+        > text.index(
+            "      - name: Refuse init-block publication on the pre-anchor-proof validation path"
+        ),
         "native wallet-index acceptance must reuse the image after its existing consumers",
     )
     archive = re.search(
-        r"(?ms)^      - name: Retain native wallet-index verification evidence\n(?P<body>.*?)(?=^      - |\Z)", text
+        r"(?ms)^      - name: Retain native wallet-index verification evidence\n(?P<body>.*?)(?=^      - |\Z)",
+        text,
     )
     require(archive is not None, "native wallet-index evidence archive is absent")
     body = archive.group("body")
-    require("          retention-days: 14\n" in body, "native wallet-index evidence must be retained for 14 days")
+    require(
+        "          retention-days: 14\n" in body,
+        "native wallet-index evidence must be retained for 14 days",
+    )
     paths = re.search(r"(?m)^          path: \|\n(?P<paths>(?:            .+\n)+)", body)
     require(paths is not None, "native wallet-index evidence paths are absent")
     require(
-        paths.group("paths").split() == [
+        paths.group("paths").split()
+        == [
             "build/node-sync-init-block/wallet-index-fixtures.json",
             "build/node-sync-init-block/wallet-traffic/*.boc",
             "build/wallet-index-verify-native/receipt.json",
@@ -650,7 +706,9 @@ def main() -> int:
     validate_node_data_sync_callers(root)
     validate_node_data_sync_modes(root)
     validate_wallet_index_acceptance(text)
-    validate_wallet_index_scenarios((root / "test/integration/wallet_index_verify_native.py").read_text())
+    validate_wallet_index_scenarios(
+        (root / "test/integration/wallet_index_verify_native.py").read_text()
+    )
     validate_triggers(text)
     # This workflow's purpose is to run on every pull request and push to main.
     # Refuse runtime conditions: a job- or step-level `if:` is

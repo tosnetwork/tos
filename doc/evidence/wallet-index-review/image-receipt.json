@@ -1,0 +1,25 @@
+{
+  "result": "NATIVE_WALLET_INDEX_IMAGE_OK",
+  "genesis_time": 1793327103,
+  "init_block": {
+    "@type": "tosNode.blockIdExt",
+    "workchain": -1,
+    "shard": -9223372036854775808,
+    "seqno": 399,
+    "root_hash": "TXpsgDjBgpLu6QXmX0bNzv9w8Dq6KrUU04/FcUKv+t0=",
+    "file_hash": "Y53RwHAk+5gsCYXeEuMF9rWS2W75mWKZZYSRAZxnPC8="
+  },
+  "frontier": {
+    "@type": "tos.blockIdExt",
+    "workchain": -1,
+    "shard": -9223372036854775808,
+    "seqno": 467,
+    "root_hash": "KyBfcQMalHIkaCnUrZ2BmJnQ+uR3QUY8hUgc3ztUuiE=",
+    "file_hash": "FK1usKB1/uIORReUgTeRKKLPDvff3v967rAVklI7uoM="
+  },
+  "source": "node5",
+  "target": "node6",
+  "zero_state_files": 0,
+  "static_supplied": false,
+  "wallet_index_fixtures": true
+}

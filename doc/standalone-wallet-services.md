@@ -598,3 +598,13 @@ current bounded candidate drain without losing its persisted work. The existing 
 backlog and per-block verification gas budgets remain in effect. Disk usage for
 indexed owners follows the account population; event retention is bounded as
 before. Monitor process memory, source archive retention, cursor lag and disk space.
+
+## Review and native acceptance evidence
+
+The [ownership, retained-history and native acceptance evidence](evidence/wallet-index-review/README.md)
+records the repaired getter-decoding and optional-data cases, trusted-restore
+retention recovery, and all thirteen native acceptance outcomes. It includes the
+six additional scenarios, exact tested source commits, real lifecycle
+transaction BOCs, canonical comparisons, reason-specific failures and compiled
+red/green controls. The short disposable-network runs do not replace the
+testnet-replica capacity measurement or the required third-party review.

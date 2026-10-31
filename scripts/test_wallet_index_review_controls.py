@@ -42,7 +42,10 @@ class ReviewControlTests(unittest.TestCase):
                 self.assertTrue(tests)
                 self.assertTrue(all(data != originals[path] for path, data in changed.items()))
                 first_path, anchor, _ = edits[0]
-                for data in (originals[first_path].replace(anchor.encode(), b""), originals[first_path] + anchor.encode()):
+                for data in (
+                    originals[first_path].replace(anchor.encode(), b""),
+                    originals[first_path] + anchor.encode(),
+                ):
                     with self.assertRaisesRegex(RuntimeError, "anchor must occur once"):
                         CONTROL.mutation_text(originals | {first_path: data}, edits)
 
@@ -95,8 +98,14 @@ class ReviewControlTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             log = Path(directory) / "test.log"
             status, executed = CONTROL.run_logged(
-                [sys.executable, "-c", "import sys; print('RUN_NAMED_TEST', flush=True); sys.stdout.write('x' * 1000000); sys.exit(3)"],
-                log, 10, b"RUN_NAMED_TEST",
+                [
+                    sys.executable,
+                    "-c",
+                    "import sys; print('RUN_NAMED_TEST', flush=True); sys.stdout.write('x' * 1000000); sys.exit(3)",
+                ],
+                log,
+                10,
+                b"RUN_NAMED_TEST",
             )
             self.assertEqual(status, 3)
             self.assertTrue(executed)
@@ -106,7 +115,9 @@ class ReviewControlTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             status, executed = CONTROL.run_logged(
                 [sys.executable, "-c", "raise SystemExit(3)"],
-                Path(directory) / "test.log", 10, b"RUN_NAMED_TEST",
+                Path(directory) / "test.log",
+                10,
+                b"RUN_NAMED_TEST",
             )
             self.assertEqual(status, 3)
             self.assertFalse(executed)
@@ -119,14 +130,18 @@ class ReviewControlTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             status, executed = CONTROL.run_logged(
                 [sys.executable, "-c", f"print({line!r})"],
-                Path(directory) / "test.log", 10, CONTROL.native_test_marker(name),
+                Path(directory) / "test.log",
+                10,
+                CONTROL.native_test_marker(name),
             )
             self.assertEqual(status, 0)
             self.assertTrue(executed, "the real native test started but the marker did not match")
 
     def test_a_started_test_needs_its_specific_failure_and_abort(self):
         name = "WalletIndexVerify_the_ownership_drain_rejects_malformed_getters"
-        failure = "Expectation failed: db.token_backlog_stats().move_as_ok().parked is not equal to 0u"
+        failure = (
+            "Expectation failed: db.token_backlog_stats().move_as_ok().parked is not equal to 0u"
+        )
         expected = f"Running test {name}...\n{failure}\n"
         CONTROL.require_test_result(name, -signal.SIGABRT, True, expected, True)
         CONTROL.require_test_result(name, 1, True, expected + "Signal: 6\n", True)
@@ -150,8 +165,14 @@ class ReviewControlTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaisesRegex(RuntimeError, "not a sensitivity result"):
                 CONTROL.run_logged(
-                    [sys.executable, "-c", "import time; print('RUN_NAMED_TEST', flush=True); time.sleep(60)"],
-                    Path(directory) / "test.log", 0.2, b"RUN_NAMED_TEST",
+                    [
+                        sys.executable,
+                        "-c",
+                        "import time; print('RUN_NAMED_TEST', flush=True); time.sleep(60)",
+                    ],
+                    Path(directory) / "test.log",
+                    0.2,
+                    b"RUN_NAMED_TEST",
                 )
 
     def test_timeout_ends_a_stdout_child_after_its_parent_has_exited(self):
@@ -159,8 +180,13 @@ class ReviewControlTests(unittest.TestCase):
             log = Path(directory) / "test.log"
             with self.assertRaisesRegex(RuntimeError, "not a sensitivity result"):
                 CONTROL.run_logged(
-                    [sys.executable, "-c", "import subprocess, sys; child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)']); print(child.pid, flush=True)"],
-                    log, 0.4,
+                    [
+                        sys.executable,
+                        "-c",
+                        "import subprocess, sys; child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)']); print(child.pid, flush=True)",
+                    ],
+                    log,
+                    0.4,
                 )
             child = int(log.read_text().strip())
 

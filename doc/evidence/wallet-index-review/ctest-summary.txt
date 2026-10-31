@@ -1,0 +1,28 @@
+Final seven relevant CTests at the published source commit, exit 0. Full native output is excluded as bulk log data.
+
+# /tmp/pr373-toolchain/final-seven-gates-f7535841.log
+# Original bytes: 1072; SHA-256: 8739ce6afc695670e1a76e99eeb4ef2b79f002df07b205045657e5ab5605d605
+Internal ctest changing into directory: /tmp/pr373-native-build
+Test project /tmp/pr373-native-build
+    Start 209: test-json-rpc-transport
+1/7 Test #209: test-json-rpc-transport ..........   Passed   15.58 sec
+    Start 240: test-wallet-index
+2/7 Test #240: test-wallet-index ................   Passed   26.91 sec
+    Start 241: wallet-index-snapshot-cli
+3/7 Test #241: wallet-index-snapshot-cli ........   Passed    0.14 sec
+    Start 242: wallet-index-verification-gate
+4/7 Test #242: wallet-index-verification-gate ...   Passed   21.30 sec
+    Start 243: wallet-index-dump-cli
+5/7 Test #243: wallet-index-dump-cli ............   Passed    0.35 sec
+    Start 244: test-wallet-index-apply
+6/7 Test #244: test-wallet-index-apply ..........   Passed    0.24 sec
+    Start 245: test-wallet-index-source
+7/7 Test #245: test-wallet-index-source .........   Passed   33.18 sec
+
+100% tests passed, 0 tests failed out of 7
+
+Label Time Summary:
+network-safety       =  15.58 sec*proc (1 test)
+security-findings    =  82.12 sec*proc (6 tests)
+
+Total Test time (real) =  97.72 sec
