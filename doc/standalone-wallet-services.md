@@ -608,3 +608,7 @@ six additional scenarios, exact tested source commits, real lifecycle
 transaction BOCs, canonical comparisons, reason-specific failures and compiled
 red/green controls. The short disposable-network runs do not replace the
 testnet-replica capacity measurement or the required third-party review.
+
+Use the [replica capacity measurement runbook](wallet-index-replica-capacity.md)
+for the separate Path A and Path B measurements, including fresh-node preparation,
+complete verification, resource accounting and explicit unavailable outcomes.
