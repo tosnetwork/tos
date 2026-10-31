@@ -28,11 +28,69 @@ jobs:
           mkdir -p "$RUNNER_TEMP/relayer-delivery-inputs"
           git rev-parse HEAD > "$RUNNER_TEMP/relayer-delivery-inputs/commit.txt"
           git ls-tree -r HEAD > "$RUNNER_TEMP/relayer-delivery-inputs/tree.txt"
-          git archive --format=tar HEAD -- AGENTS.md doc scripts tools tosctl test .github crypto/smartcont sdk/js/packages pyproject.toml uv.lock | gzip -1 > "$RUNNER_TEMP/relayer-delivery-inputs/source.tar.gz"
+          git archive --format=tar HEAD | gzip -1 > "$RUNNER_TEMP/relayer-delivery-inputs/source.tar.gz"
           sha256sum "$RUNNER_TEMP/relayer-delivery-inputs/source.tar.gz"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: relayer-delivery-source-inputs
+          name: relayer-delivery-full-source
           path: ${{ runner.temp }}/relayer-delivery-inputs/
+          retention-days: 7
+          if-no-files-found: error
+
+  offline-tooling:
+    name: Pinned offline build tools (not acceptance evidence)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Obtain repository-pinned toolchain and locked dependency sources
+        run: |
+          scripts/install-rust-toolchain.sh
+          mkdir -p "$RUNNER_TEMP/offline-rust" "$RUNNER_TEMP/offline-vendor" "$RUNNER_TEMP/offline-python"
+          rustc --version > "$RUNNER_TEMP/offline-rust/version.txt"
+          tar --exclude='share/doc' --exclude='lib/rustlib/src' -czf "$RUNNER_TEMP/offline-rust/toolchain.tar.gz" -C "$(rustc --print sysroot)" .
+          cargo vendor --locked --versioned-dirs --manifest-path tosctl/src/Cargo.toml --sync tools/shielded-pool-wallet/Cargo.toml --sync tools/shielded-pool-circuit/crosscheck/Cargo.toml "$RUNNER_TEMP/vendor" > "$RUNNER_TEMP/offline-vendor/config.toml"
+          tar -czf "$RUNNER_TEMP/offline-vendor/vendor.tar.gz" -C "$RUNNER_TEMP" vendor
+          python3 -m pip download --only-binary=:all: --dest "$RUNNER_TEMP/offline-python" ruff==0.15.2
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: relayer-offline-rust-toolchain
+          path: ${{ runner.temp }}/offline-rust/
+          retention-days: 7
+          if-no-files-found: error
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: relayer-offline-vendor
+          path: ${{ runner.temp }}/offline-vendor/
+          retention-days: 7
+          if-no-files-found: error
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: relayer-offline-python
+          path: ${{ runner.temp }}/offline-python/
+          retention-days: 7
+          if-no-files-found: error
+
+  native-tools:
+    name: Real proof verifier and localnet binaries (not acceptance evidence)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Build production native integration tools
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --target func fift emulator validator-engine dht-server lite-client tos-proof-verify -j"$(nproc)"
+          mkdir -p "$RUNNER_TEMP/relayer-native"
+          git rev-parse HEAD > "$RUNNER_TEMP/relayer-native/commit.txt"
+          tar -czf "$RUNNER_TEMP/relayer-native/binaries.tar.gz" build/crypto/func build/crypto/fift build/emulator/libemulator.so build/validator-engine/validator-engine build/dht-server/dht-server build/lite-client/lite-client build/lite-client/tos-proof-verify
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: relayer-live-native-tools
+          path: ${{ runner.temp }}/relayer-native/
           retention-days: 7
           if-no-files-found: error
