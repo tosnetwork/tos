@@ -1,0 +1,104 @@
+{
+  "schema": "tos.br1.engineering-evidence.v1",
+  "base_commit": "771a0bfd411407dec7480967d8c548f449596a51",
+  "base_tree": "a904ff08eeb05cb48b69237406edf0974aae4157",
+  "execution": "local Linux native host, not GitHub Actions",
+  "host": {
+    "os": "Linux",
+    "kernel": "6.18.57",
+    "arch": "x86_64",
+    "python": "3.13.5",
+    "ruff": "0.15.2",
+    "rust": "1.97.1"
+  },
+  "production_accepted": false,
+  "native_funded_network_executed": false,
+  "independent_review": "not performed in this iteration; required before merge",
+  "third_party_review": "open",
+  "main_merged": false,
+  "foundation_pr_merged": false,
+  "activation_changed": false,
+  "lane": "B1",
+  "source_sha256": {
+    "tools/bonded-relayer/relay_wire.py": "771f83b25d0ca694b5e65c3c001008c0d4393f916385c939f30ccc2b66772c87",
+    "test/bonded-relayer/delivery_controls.py": "573513fddb9ce4cc20711121185e632e74161959333f9020b4b111c5adcc3f91",
+    "tools/bonded-relayer/relay_http.py": "9a758957c9c3b096d2abbbdef0a7b6af6455f337690b4d6ff70aa45cfe73cd31",
+    "tools/bonded-relayer/relay_service.py": "244a000d5eb362be81097752dae505c195d813e3592b2221b2babf58e3471c47",
+    "tools/bonded-relayer/relay_client.py": "3ad0caa74b1f16d5650f143cee67b5f38802fd29d23069711016aacc1d8ae689",
+    "test/bonded-relayer/_service_fixture.py": "9833c414f040cab80b5dca2c8d5b63064e36de33e0d644e2086b267e5a72ed36",
+    "test/bonded-relayer/test_relay_service.py": "ba3e85a07e4acabed287345348e9cbd1006584f546d3c9f99845ed19ec7cb334",
+    "doc/br1-service-api.md": "ae851d727a29bfff34b38b7d80ecca2188cdb7ffcaa878d7b1b0fb16dfc47040",
+    ".github/workflows/br1-service.yml": "cf62b9b45fb4310cedb980a0f4a5e83663357d924e9d04cb242b8f7597bfe023",
+    "tools/bonded-relayer/relay_core.py": "834d82b3529e1709700c7dc42476628ab01ecde2d5da3059768721155b2ab72b"
+  },
+  "checks": [
+    {
+      "command": "python3 -m unittest discover -s test/bonded-relayer -p test_relay_service.py -v",
+      "tests": 28,
+      "exit": 0,
+      "scope": "real HTTP, client and SQLite; deliberately fake quote/proof authority"
+    },
+    {
+      "command": "ruff check/format --check (see br1-service.yml)",
+      "exit": 0
+    }
+  ],
+  "service_controls": {
+    "schema": "tos.br1.delivery.controls.v1",
+    "lane": "service",
+    "baseline_tests": 28,
+    "control_runner_sha256": "573513fddb9ce4cc20711121185e632e74161959333f9020b4b111c5adcc3f91",
+    "source_sha256": {
+      "tools/bonded-relayer/relay_service.py": "244a000d5eb362be81097752dae505c195d813e3592b2221b2babf58e3471c47",
+      "tools/bonded-relayer/relay_http.py": "9a758957c9c3b096d2abbbdef0a7b6af6455f337690b4d6ff70aa45cfe73cd31",
+      "tools/bonded-relayer/relay_client.py": "3ad0caa74b1f16d5650f143cee67b5f38802fd29d23069711016aacc1d8ae689",
+      "tools/bonded-relayer/relay_core.py": "834d82b3529e1709700c7dc42476628ab01ecde2d5da3059768721155b2ab72b",
+      "tools/bonded-relayer/relay_wire.py": "771f83b25d0ca694b5e65c3c001008c0d4393f916385c939f30ccc2b66772c87",
+      "test/bonded-relayer/_service_fixture.py": "9833c414f040cab80b5dca2c8d5b63064e36de33e0d644e2086b267e5a72ed36",
+      "test/bonded-relayer/test_relay_service.py": "ba3e85a07e4acabed287345348e9cbd1006584f546d3c9f99845ed19ec7cb334"
+    },
+    "baseline_passed": true,
+    "restored_passed": true,
+    "sources_unchanged": true,
+    "controls": [
+      {
+        "path": "tools/bonded-relayer/relay_service.py",
+        "guard": "not hmac.compare_digest(expected, terms[\"status_hash\"])",
+        "test": "test_relay_service.ServiceTests.test_capability_and_quote_mismatch_refuse_before_proof_work",
+        "mutant_exit": 1,
+        "intended_assertion_failed": true,
+        "failure_excerpt": "FAIL: test_capability_and_quote_mismatch_refuse_before_proof_work (test_relay_service.ServiceTests.test_capability_and_quote_mismatch_refuse_before_proof_work)\nAssertionError: 202 != 422"
+      },
+      {
+        "path": "tools/bonded-relayer/relay_service.py",
+        "guard": "request.funding_cap > terms[\"funding_cap\"]",
+        "test": "test_relay_service.ServiceTests.test_capability_and_quote_mismatch_refuse_before_proof_work",
+        "mutant_exit": 1,
+        "intended_assertion_failed": true,
+        "failure_excerpt": "FAIL: test_capability_and_quote_mismatch_refuse_before_proof_work (test_relay_service.ServiceTests.test_capability_and_quote_mismatch_refuse_before_proof_work)\nAssertionError: 1 != 0"
+      },
+      {
+        "path": "tools/bonded-relayer/relay_http.py",
+        "guard": "if length > maximum:",
+        "test": "test_relay_service.HTTPBoundTests.test_content_length_bound_is_not_an_unrelated_parse_failure",
+        "mutant_exit": 1,
+        "intended_assertion_failed": true,
+        "failure_excerpt": "FAIL: test_content_length_bound_is_not_an_unrelated_parse_failure (test_relay_service.HTTPBoundTests.test_content_length_bound_is_not_an_unrelated_parse_failure)\nAssertionError: HTTPRefused not raised"
+      },
+      {
+        "path": "tools/bonded-relayer/relay_client.py",
+        "guard": "encode(authenticated) != encode(quote.terms)",
+        "test": "test_relay_service.HTTPTests.test_modified_quote_object_is_reverified_before_submission",
+        "mutant_exit": 1,
+        "intended_assertion_failed": true,
+        "failure_excerpt": "FAIL: test_modified_quote_object_is_reverified_before_submission (test_relay_service.HTTPTests.test_modified_quote_object_is_reverified_before_submission)\nAssertionError: \"not authenticated\" does not match \"submission result unavailable; reconcile this request identity\""
+      }
+    ],
+    "production_accepted": false
+  },
+  "remaining": [
+    "Production native authority and funded Bond lifecycle CLI",
+    "Complete user Shield builder, native acceptance verification and fresh discovery verification",
+    "Privacy transport, load/fault measurements, independent and third-party review"
+  ]
+}
