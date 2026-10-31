@@ -1,0 +1,172 @@
+{
+  "schema": "tos.br1.engineering-evidence.v1",
+  "base_commit": "771a0bfd411407dec7480967d8c548f449596a51",
+  "base_tree": "a904ff08eeb05cb48b69237406edf0974aae4157",
+  "execution": "local Linux native host, not GitHub Actions",
+  "host": {
+    "os": "Linux",
+    "kernel": "6.18.57",
+    "arch": "x86_64",
+    "python": "3.13.5",
+    "ruff": "0.15.2",
+    "rust": "1.97.1"
+  },
+  "production_accepted": false,
+  "native_funded_network_executed": false,
+  "independent_review": "not performed in this iteration; required before merge",
+  "third_party_review": "open",
+  "main_merged": false,
+  "foundation_pr_merged": false,
+  "activation_changed": false,
+  "lane": "C1",
+  "source_sha256": {
+    "tools/bonded-relayer/relay_wire.py": "771f83b25d0ca694b5e65c3c001008c0d4393f916385c939f30ccc2b66772c87",
+    "test/bonded-relayer/delivery_controls.py": "573513fddb9ce4cc20711121185e632e74161959333f9020b4b111c5adcc3f91",
+    "tools/bonded-relayer/native_process.py": "47cf008d9925b3ab1997046f497e18cb6934f95c78affef3654813e6d6012c1b",
+    "tools/bonded-relayer/native_adapter.py": "a3d77733a4d39cc626df6346fe35654e2409c864ce1bf4249a430b04392d0dde",
+    "tools/shielded-pool-wallet/src/lib.rs": "531c69e9685477cffcf2520e486133a6d85f62f30e255d8e20658c73b1086d1e",
+    "tools/shielded-pool-wallet/src/relayer_quote.rs": "c0d944d961a28cf99e7a7da4efe80dc6035c84b2bdc1bc8b725adb3cb07a2184",
+    "tools/shielded-pool-wallet/tests/relayer_quote.rs": "3614634263e5d8eaae0291e421598c5940bfd21313da55c2e3b81a232fb9b52f",
+    "test/bonded-relayer/test_native_boundary.py": "4a3addfc2c4aaef25d1c0425fb110e19e8f3fc2dc999bbf064de2ec8b0af5dd5",
+    "doc/br1-native-boundary.md": "d0380fd971507ad566f56fe3ec2ac8f692419b0d36c9b52eec055a116592bd1f",
+    ".github/workflows/br1-adapter.yml": "329082cc4bdab0bf4011c693427f906dbd701a58df84b7740a3ba8c94552d226",
+    "tools/bonded-relayer/relay_http.py": "9a758957c9c3b096d2abbbdef0a7b6af6455f337690b4d6ff70aa45cfe73cd31",
+    "tools/bonded-relayer/relay_service.py": "244a000d5eb362be81097752dae505c195d813e3592b2221b2babf58e3471c47",
+    "tools/bonded-relayer/relay_client.py": "3ad0caa74b1f16d5650f143cee67b5f38802fd29d23069711016aacc1d8ae689",
+    "test/bonded-relayer/_service_fixture.py": "9833c414f040cab80b5dca2c8d5b63064e36de33e0d644e2086b267e5a72ed36",
+    "test/bonded-relayer/test_relay_service.py": "ba3e85a07e4acabed287345348e9cbd1006584f546d3c9f99845ed19ec7cb334",
+    "doc/br1-service-api.md": "ae851d727a29bfff34b38b7d80ecca2188cdb7ffcaa878d7b1b0fb16dfc47040",
+    ".github/workflows/br1-service.yml": "cf62b9b45fb4310cedb980a0f4a5e83663357d924e9d04cb242b8f7597bfe023",
+    "tools/bonded-relayer/br1.py": "f2c2639f8f6b09cbfc5b91cdfa8bd9e4a81934614cde7b5c759500cfc6d063b1",
+    "test/bonded-relayer/two_operator_harness.py": "678852f3f87351550ceb916911a464e898e75dff3a0403cd5560929de17ef603",
+    "test/bonded-relayer/test_two_operator.py": "eb6e11dbbf184d759dbfce141c6c571f0081f81194c54b29fb00e8ddff08a4b3",
+    "test/bonded-relayer/test_br1_cli.py": "a6d863785e26d9bee97e1f2b3701984902b570eca52583d43602a456736a0791",
+    "test/bonded-relayer/run_delivery_fixture.py": "d44c4417b1617a14b39050355f31049b6c1a66bd0dbd6633fb12a5fe70693dfd",
+    "test/bonded-relayer/test_delivery_fixture_runner.py": "c33ff9d666915f5200a7fff670f6d1cb3c065f5839cbfd8dcce1f479436bdcfe",
+    "doc/br1-localnet-framework.md": "58ec54f5b792d870899ed687bb29c17147240ecdc58140a5233fc7b063957ce0",
+    ".github/workflows/br1-composed.yml": "1be8c055acc3510e2e5dc82d4a6cb7dcea0f2119c2820b04ac08e7c8473f053b",
+    "tools/bonded-relayer/relay_core.py": "834d82b3529e1709700c7dc42476628ab01ecde2d5da3059768721155b2ab72b"
+  },
+  "checks": [
+    {
+      "command": "FUNC_PATH=... FIFT_PATH=... EMULATOR_PATH=... PQ_TEST_SIGNER=... python3 -m unittest discover -s test/bonded-relayer -p 'test_*.py' -v",
+      "tests": 140,
+      "exit": 0,
+      "scope": "41 original engine/journal + 23 original native/wire + 29 A1 + 28 B1 + 9 two-process + 8 CLI + 2 runner-boundary"
+    },
+    {
+      "command": "python3 test/bonded-relayer/run_delivery_fixture.py --out <new-receipt>",
+      "tests": 9,
+      "exit": 0,
+      "scope": "two actual OS processes, HTTP and durable SQLite with fake chain/signing authority"
+    },
+    {
+      "command": "python3 test/bonded-relayer/run_delivery_fixture.py --require-native --out <new-receipt>",
+      "exit": 2,
+      "receipt_created": false,
+      "diagnostic": "BR1_NATIVE_ACCEPTANCE_UNAVAILABLE: native provider and funded scenario driver are not delivered by C1"
+    },
+    {
+      "command": "ruff check/format --check (see br1-composed.yml)",
+      "exit": 0
+    }
+  ],
+  "framework_controls": {
+    "schema": "tos.br1.delivery.controls.v1",
+    "lane": "composed",
+    "baseline_tests": 2,
+    "control_runner_sha256": "573513fddb9ce4cc20711121185e632e74161959333f9020b4b111c5adcc3f91",
+    "source_sha256": {
+      "tools/bonded-relayer/native_adapter.py": "a3d77733a4d39cc626df6346fe35654e2409c864ce1bf4249a430b04392d0dde",
+      "tools/bonded-relayer/native_process.py": "47cf008d9925b3ab1997046f497e18cb6934f95c78affef3654813e6d6012c1b",
+      "tools/bonded-relayer/relay_core.py": "834d82b3529e1709700c7dc42476628ab01ecde2d5da3059768721155b2ab72b",
+      "tools/bonded-relayer/relay_wire.py": "771f83b25d0ca694b5e65c3c001008c0d4393f916385c939f30ccc2b66772c87",
+      "test/bonded-relayer/test_native_boundary.py": "4a3addfc2c4aaef25d1c0425fb110e19e8f3fc2dc999bbf064de2ec8b0af5dd5",
+      "tools/bonded-relayer/relay_service.py": "244a000d5eb362be81097752dae505c195d813e3592b2221b2babf58e3471c47",
+      "tools/bonded-relayer/relay_http.py": "9a758957c9c3b096d2abbbdef0a7b6af6455f337690b4d6ff70aa45cfe73cd31",
+      "tools/bonded-relayer/relay_client.py": "3ad0caa74b1f16d5650f143cee67b5f38802fd29d23069711016aacc1d8ae689",
+      "test/bonded-relayer/_service_fixture.py": "9833c414f040cab80b5dca2c8d5b63064e36de33e0d644e2086b267e5a72ed36",
+      "test/bonded-relayer/test_relay_service.py": "ba3e85a07e4acabed287345348e9cbd1006584f546d3c9f99845ed19ec7cb334",
+      "tools/bonded-relayer/br1.py": "f2c2639f8f6b09cbfc5b91cdfa8bd9e4a81934614cde7b5c759500cfc6d063b1",
+      "test/bonded-relayer/two_operator_harness.py": "678852f3f87351550ceb916911a464e898e75dff3a0403cd5560929de17ef603",
+      "test/bonded-relayer/test_two_operator.py": "eb6e11dbbf184d759dbfce141c6c571f0081f81194c54b29fb00e8ddff08a4b3",
+      "test/bonded-relayer/run_delivery_fixture.py": "d44c4417b1617a14b39050355f31049b6c1a66bd0dbd6633fb12a5fe70693dfd",
+      "test/bonded-relayer/test_delivery_fixture_runner.py": "c33ff9d666915f5200a7fff670f6d1cb3c065f5839cbfd8dcce1f479436bdcfe"
+    },
+    "baseline_passed": true,
+    "restored_passed": true,
+    "sources_unchanged": true,
+    "controls": [
+      {
+        "path": "test/bonded-relayer/run_delivery_fixture.py",
+        "guard": "if args.require_native:",
+        "test": "test_delivery_fixture_runner.DeliveryRunnerTests.test_native_requirement_refuses_before_running_fixture_or_writing_receipt",
+        "mutant_exit": 1,
+        "intended_assertion_failed": true,
+        "failure_excerpt": "FAIL: test_native_requirement_refuses_before_running_fixture_or_writing_receipt (test_delivery_fixture_runner.DeliveryRunnerTests.test_native_requirement_refuses_before_running_fixture_or_writing_receipt)\nAssertionError: fixture execution is forbidden at this boundary"
+      },
+      {
+        "path": "test/bonded-relayer/run_delivery_fixture.py",
+        "guard": "if actual != SCENARIOS:",
+        "test": "test_delivery_fixture_runner.DeliveryRunnerTests.test_missing_or_extra_scenario_cannot_be_reported_as_complete",
+        "mutant_exit": 1,
+        "intended_assertion_failed": true,
+        "failure_excerpt": "FAIL: test_missing_or_extra_scenario_cannot_be_reported_as_complete (test_delivery_fixture_runner.DeliveryRunnerTests.test_missing_or_extra_scenario_cannot_be_reported_as_complete) (names={'test_lost_http_acknowledgement_is_recoverable_by_identity', 'test_unrelated_receipt_cannot_finalize_a_request', 'test_concurrent_duplicate_requests_have_one_broadcast', 'test_foreign_quote_is_rejected_before_either_operator_signs', 'test_two_distinct_processes_receive_independent_quotes_and_fees', 'test_destination_refusal_has_no_fee_credit_or_false_success', 'test_crash_after_preparation_resumes_exact_persisted_message', 'test_crash_after_ambiguous_write_never_resigns_or_resubmits'})\nAssertionError: fixture execution is forbidden at this boundary\nFAIL: test_missing_or_extra_scenario_cannot_be_reported_as_complete (test_delivery_fixture_runner.DeliveryRunnerTests.test_missing_or_extra_scenario_cannot_be_reported_as_complete) (names={'test_lost_http_acknowledgement_is_recoverable_by_identity', 'test_unrelated_receipt_cannot_finalize_a_request', 'test_unregistered_case', 'test_concurrent_duplicate_requests_have_one_broadcast', 'test_foreign_quote_is_rejected_before_either_operator_signs', 'test_two_distinct_processes_receive_independent_quotes_and_fees', 'test_bad_proof_with_fee_shaped_output_never_prepares', 'test_destination_refusal_has_no_fee_credit_or_false_success', 'test_crash_after_preparation_resumes_exact_persisted_message', 'test_crash_after_ambiguous_write_never_resigns_or_resubmits'})\nAssertionError: fixture execution is forbidden at this boundary"
+      }
+    ],
+    "production_accepted": false
+  },
+  "process_fixture": {
+    "schema": "tos.br1.delivery.fixture.v1",
+    "scope": "process_http_sqlite_fixture",
+    "native_chain_executed": false,
+    "funded_operators": false,
+    "production_accepted": false,
+    "fixture_passed": true,
+    "cases": [
+      "test_bad_proof_with_fee_shaped_output_never_prepares",
+      "test_concurrent_duplicate_requests_have_one_broadcast",
+      "test_crash_after_ambiguous_write_never_resigns_or_resubmits",
+      "test_crash_after_preparation_resumes_exact_persisted_message",
+      "test_destination_refusal_has_no_fee_credit_or_false_success",
+      "test_foreign_quote_is_rejected_before_either_operator_signs",
+      "test_lost_http_acknowledgement_is_recoverable_by_identity",
+      "test_two_distinct_processes_receive_independent_quotes_and_fees",
+      "test_unrelated_receipt_cannot_finalize_a_request"
+    ],
+    "tests_run": 9,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "elapsed_seconds": 14.605,
+    "sources_unchanged": true,
+    "source_sha256": {
+      "tools/bonded-relayer/relay_core.py": "834d82b3529e1709700c7dc42476628ab01ecde2d5da3059768721155b2ab72b",
+      "tools/bonded-relayer/relay_wire.py": "771f83b25d0ca694b5e65c3c001008c0d4393f916385c939f30ccc2b66772c87",
+      "tools/bonded-relayer/native_process.py": "47cf008d9925b3ab1997046f497e18cb6934f95c78affef3654813e6d6012c1b",
+      "tools/bonded-relayer/native_adapter.py": "a3d77733a4d39cc626df6346fe35654e2409c864ce1bf4249a430b04392d0dde",
+      "tools/bonded-relayer/relay_http.py": "9a758957c9c3b096d2abbbdef0a7b6af6455f337690b4d6ff70aa45cfe73cd31",
+      "tools/bonded-relayer/relay_service.py": "244a000d5eb362be81097752dae505c195d813e3592b2221b2babf58e3471c47",
+      "tools/bonded-relayer/relay_client.py": "3ad0caa74b1f16d5650f143cee67b5f38802fd29d23069711016aacc1d8ae689",
+      "tools/bonded-relayer/br1.py": "f2c2639f8f6b09cbfc5b91cdfa8bd9e4a81934614cde7b5c759500cfc6d063b1",
+      "test/bonded-relayer/two_operator_harness.py": "678852f3f87351550ceb916911a464e898e75dff3a0403cd5560929de17ef603",
+      "test/bonded-relayer/test_two_operator.py": "eb6e11dbbf184d759dbfce141c6c571f0081f81194c54b29fb00e8ddff08a4b3",
+      "test/bonded-relayer/test_native_boundary.py": "4a3addfc2c4aaef25d1c0425fb110e19e8f3fc2dc999bbf064de2ec8b0af5dd5",
+      "test/bonded-relayer/run_delivery_fixture.py": "d44c4417b1617a14b39050355f31049b6c1a66bd0dbd6633fb12a5fe70693dfd"
+    }
+  },
+  "native_tool_artifact": {
+    "repository": "tosnetwork/tos",
+    "run_id": 41201765146,
+    "artifact_id": 13042629618,
+    "sha256": "3b49cd983faf2ed788b42fe2581dac590409a253c8ab6ee062995ca6be10bfa2",
+    "expires_at": "2026-11-07T12:45:53Z",
+    "scope": "baseline compiled func/fift/emulator and isolated TEST ONLY signer, used only by original contract tests; no chain provider"
+  },
+  "remaining": [
+    "Native four-validator/two-funded-operator driver",
+    "Actual successful pool execution and cryptographically authenticated fee import",
+    "Restart/failover, forced action failure and cross-executor evidence on that native network",
+    "No fixture result may satisfy the production activation gate"
+  ]
+}
