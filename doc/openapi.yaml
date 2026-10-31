@@ -4113,12 +4113,14 @@ components:
               bounced: {type: boolean}
               comment: {type: string}
         raw_transaction: {type: string}
+        history_verified: {const: false, description: 'Present only on a partly verified index: the account''s history is not yet checked against the node''s chain.'}
     AccountEvents:
       type: object
       properties:
         '@type': {const: wallet.accountEvents}
         events: {type: array, items: {'$ref': '#/components/schemas/AccountEvent'}}
         next_from: {type: [string, 'null'], description: 'before_lt for the next page; null on the last.'}
+        history_verified: {const: false, description: 'Present only on a partly verified index: the account''s history, or the absence of any, is not yet checked against the node''s chain.'}
     MasterchainInfo:
       type: object
       properties:

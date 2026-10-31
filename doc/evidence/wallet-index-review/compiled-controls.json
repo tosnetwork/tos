@@ -1,0 +1,794 @@
+{
+  "schema": 1,
+  "evidence_kind": "compiled_mutation_controls",
+  "source_commit": "cf905789bd5a6a06184329060fd220bb8179c28a",
+  "result": "WALLET_INDEX_REVIEW_CONTROLS_OK",
+  "derived_only_from_existing_artifacts": true,
+  "invocation": {
+    "cwd": "/workspace/scratch/8cd346c61c4c/tos-pr373",
+    "exact_shell_command": "source /tmp/pr373-toolchain/env.sh && python3 scripts/test-wallet-index-review-controls.py --build-dir /tmp/pr373-native-build --jobs 4 --output-dir /tmp/pr373-review-controls-cf905789 > /tmp/pr373-review-controls-cf905789.log 2>&1",
+    "exit_status": 0
+  },
+  "original_receipt_path": "/tmp/pr373-review-controls-cf905789/receipt.json",
+  "original_receipt_sha256": "018abba40e19806f24045a7336e7c3ccfd591e373d32413cd44a2db11c2adc77",
+  "source_sha256": {
+    "validator-engine/wallet-index-writer.cpp": "ca9e5cacbec01b76bb9e684ed05fe92a583b1191013a8047642e21f358768e46",
+    "services/index-replay-loop.h": "89d6de777389155910ebe1dd359b4c31dfa8651d6cd7e7e83e6f680d2f5926a7",
+    "services/index-verify.cpp": "a52336ff1430626339bbac73f223c977c3156170f9a0f3d717e503630f999df3",
+    "services/index-verify.h": "f73a7e95498fc9314d9b5347480278907de439a109945dc036144e2ee4be2372"
+  },
+  "restored_source_sha256": {
+    "validator-engine/wallet-index-writer.cpp": "ca9e5cacbec01b76bb9e684ed05fe92a583b1191013a8047642e21f358768e46",
+    "services/index-replay-loop.h": "89d6de777389155910ebe1dd359b4c31dfa8651d6cd7e7e83e6f680d2f5926a7",
+    "services/index-verify.cpp": "a52336ff1430626339bbac73f223c977c3156170f9a0f3d717e503630f999df3",
+    "services/index-verify.h": "f73a7e95498fc9314d9b5347480278907de439a109945dc036144e2ee4be2372"
+  },
+  "test_source_sha256": {
+    "test/test-wallet-index-source.cpp": "743f5b0fdcd6f44dc0c15e6722311b24a75a524a457f796ee26d54ba90cb1eee",
+    "test/test-wallet-index-verify.cpp": "cb595018f9d1ef36e0accc23b0c84464189ca45422935179786535bd76c08b3f"
+  },
+  "sources_restored": true,
+  "tests_unchanged": true,
+  "mutant_sha256": {
+    "malformed-getter-result-escapes": {
+      "validator-engine/wallet-index-writer.cpp": "f1bc5650a1b4334b6c07132f3f9505de819223d97e52f001363138ef193a8cb7"
+    },
+    "absent-account-data-is-parked": {
+      "validator-engine/wallet-index-writer.cpp": "a5f6ec7a5defa1e01eebe9e5e18c46a7b0a474ca24cbd44e4c2f55b256a73e01"
+    },
+    "trusted-restore-retention-stays-stalled": {
+      "services/index-replay-loop.h": "bcb329e7315154bae857d7896402095e3db98f2a5a5094dd49c54591c8f878bf"
+    },
+    "retained-ancestor-looks-up-block-one": {
+      "services/index-verify.cpp": "03a6a1555d03ae1f3c3535dcb13757c8e11af222a1967a5b7c252a530506aeef"
+    },
+    "first-block-anchor-refuses-its-own-head": {
+      "services/index-verify.cpp": "000dbba33a0a23a168908e746d63e65a3d918a1774312e8ff911678a9f48c10c"
+    }
+  },
+  "counts": {
+    "baseline": 9,
+    "malformed-getter-result-escapes": 3,
+    "absent-account-data-is-parked": 2,
+    "trusted-restore-retention-stays-stalled": 2,
+    "retained-ancestor-looks-up-block-one": 1,
+    "first-block-anchor-refuses-its-own-head": 1,
+    "restored": 9
+  },
+  "outcomes": [
+    {
+      "mutation": "baseline",
+      "test": "WalletIndexSource_a_trusted_restore_resumes_retention_after_the_source_bootstrap_gap",
+      "exit_status": 0,
+      "executed": true,
+      "accepted": true,
+      "failure_match": null,
+      "log_path": "/tmp/pr373-review-controls-cf905789/baseline-0.log",
+      "log_sha256": "a83fc18d42e55e2e35595167bc0e3e8a42c6a83e739d22f302fb35a3e6bf3d30",
+      "log_bytes": 761,
+      "excerpt_source_lines": [
+        1,
+        6,
+        7
+      ]
+    },
+    {
+      "mutation": "baseline",
+      "test": "WalletIndexSource_only_a_full_index_can_rebase_retention_across_a_source_gap",
+      "exit_status": 0,
+      "executed": true,
+      "accepted": true,
+      "failure_match": null,
+      "log_path": "/tmp/pr373-review-controls-cf905789/baseline-1.log",
+      "log_sha256": "8462b77751e6f49c243a61263f91e7b02e6d20a269b723b80c7608f08078a697",
+      "log_bytes": 1277,
+      "excerpt_source_lines": [
+        1,
+        9,
+        10
+      ]
+    },
+    {
+      "mutation": "baseline",
+      "test": "WalletIndexVerify_a_retained_ancestor_comes_from_the_requested_entry_in_the_bound_head_state",
+      "exit_status": 0,
+      "executed": true,
+      "accepted": true,
+      "failure_match": null,
+      "log_path": "/tmp/pr373-review-controls-cf905789/baseline-2.log",
+      "log_sha256": "9b5058f051668fb02993e9e057d3ab3ca0a410c5ae8758a1842da0be2c5f2ede",
+      "log_bytes": 148,
+      "excerpt_source_lines": [
+        1,
+        2,
+        3
+      ]
+    },
+    {
+      "mutation": "baseline",
+      "test": "WalletIndexVerify_absent_account_data_does_not_block_full_ownership",
+      "exit_status": 0,
+      "executed": true,
+      "accepted": true,
+      "failure_match": null,
+      "log_path": "/tmp/pr373-review-controls-cf905789/baseline-3.log",
+      "log_sha256": "ac3fed6fc352c85c8ee03d7e5042978c259c8b3cb4a84bbc2e88a05c91e9dd84",
+      "log_bytes": 10835,
+      "excerpt_source_lines": [
+        1,
+        159,
+        160
+      ]
+    },
+    {
+      "mutation": "baseline",
+      "test": "WalletIndexVerify_block_1_comes_from_the_state_the_heads_block_names",
+      "exit_status": 0,
+      "executed": true,
+      "accepted": true,
+      "failure_match": null,
+      "log_path": "/tmp/pr373-review-controls-cf905789/baseline-4.log",
+      "log_sha256": "dcc47bbf278c0bf04a7377c231aa1b8536ce27889c881826259b0bc1d469bef4",
+      "log_bytes": 123,
+      "excerpt_source_lines": [
+        1,
+        2,
+        3
+      ]
+    },
+    {
+      "mutation": "baseline",
+      "test": "WalletIndexVerify_malformed_resolver_getters_do_not_block_full_ownership",
+      "exit_status": 0,
+      "executed": true,
+      "accepted": true,
+      "failure_match": null,
+      "log_path": "/tmp/pr373-review-controls-cf905789/baseline-5.log",
+      "log_sha256": "b4e5e83bce2112c93861ebeccf413ab110c8f5bc405cfcdb8a05949f2a024dbb",
+      "log_bytes": 9157,
+      "excerpt_source_lines": [
+        1,
+        135,
+        136
+      ]
+    },
+    {
+      "mutation": "baseline",
+      "test": "WalletIndexVerify_malformed_wallet_getters_do_not_block_full_ownership",
+      "exit_status": 0,
+      "executed": true,
+      "accepted": true,
+      "failure_match": null,
+      "log_path": "/tmp/pr373-review-controls-cf905789/baseline-6.log",
+      "log_sha256": "3cd66d8b33df11ea9b9c169c28bc7215258655e3fe9ed220558089ad2a9dcdbf",
+      "log_bytes": 15028,
+      "excerpt_source_lines": [
+        1,
+        226,
+        227
+      ]
+    },
+    {
+      "mutation": "baseline",
+      "test": "WalletIndexVerify_the_ownership_drain_rejects_malformed_getters",
+      "exit_status": 0,
+      "executed": true,
+      "accepted": true,
+      "failure_match": null,
+      "log_path": "/tmp/pr373-review-controls-cf905789/baseline-7.log",
+      "log_sha256": "1449b3f8ace668ba4dd13d2338333e72ca7af6dddfdd696c1423136e9cd7d00a",
+      "log_bytes": 5212,
+      "excerpt_source_lines": [
+        1,
+        75,
+        76
+      ]
+    },
+    {
+      "mutation": "baseline",
+      "test": "WalletIndexVerify_the_ownership_drain_runs_accounts_with_absent_data",
+      "exit_status": 0,
+      "executed": true,
+      "accepted": true,
+      "failure_match": null,
+      "log_path": "/tmp/pr373-review-controls-cf905789/baseline-8.log",
+      "log_sha256": "b98ce05ef460371d901a11a9261c6e12db5b4ecd71277e956d53e2f64395193b",
+      "log_bytes": 5848,
+      "excerpt_source_lines": [
+        1,
+        83,
+        84
+      ]
+    },
+    {
+      "mutation": "malformed-getter-result-escapes",
+      "test": "WalletIndexVerify_malformed_wallet_getters_do_not_block_full_ownership",
+      "exit_status": 1,
+      "executed": true,
+      "accepted": true,
+      "expected_failure": "(?:terminate called after throwing an instance of ['\\\"]vm::VmError['\\\"]|uncaught exception of type vm::VmError)",
+      "failure_match": "terminate called after throwing an instance of 'vm::VmError'",
+      "log_path": "/tmp/pr373-review-controls-cf905789/malformed-getter-result-escapes-0.log",
+      "log_sha256": "f69596a8cd3c1275ac208d33339fa301887f62dcfaabc69fc0d1ecc1e28c2379",
+      "log_bytes": 4509,
+      "excerpt_source_lines": [
+        1,
+        19,
+        20
+      ]
+    },
+    {
+      "mutation": "malformed-getter-result-escapes",
+      "test": "WalletIndexVerify_malformed_resolver_getters_do_not_block_full_ownership",
+      "exit_status": 1,
+      "executed": true,
+      "accepted": true,
+      "expected_failure": "(?:terminate called after throwing an instance of ['\\\"]vm::VmError['\\\"]|uncaught exception of type vm::VmError)",
+      "failure_match": "terminate called after throwing an instance of 'vm::VmError'",
+      "log_path": "/tmp/pr373-review-controls-cf905789/malformed-getter-result-escapes-1.log",
+      "log_sha256": "499bb76f1ee83ca57fd60105098cc49d984d38d27013e2b7d39742fd158fc39c",
+      "log_bytes": 5439,
+      "excerpt_source_lines": [
+        1,
+        31,
+        32
+      ]
+    },
+    {
+      "mutation": "malformed-getter-result-escapes",
+      "test": "WalletIndexVerify_the_ownership_drain_rejects_malformed_getters",
+      "exit_status": 1,
+      "executed": true,
+      "accepted": true,
+      "expected_failure": "Expectation\\ failed:\\ db\\.token_backlog_stats\\(\\)\\.move_as_ok\\(\\)\\.parked\\ is\\ not\\ equal\\ to\\ 0u",
+      "failure_match": "Expectation failed: db.token_backlog_stats().move_as_ok().parked is not equal to 0u",
+      "log_path": "/tmp/pr373-review-controls-cf905789/malformed-getter-result-escapes-2.log",
+      "log_sha256": "ebd7684dd4ba1d2116979f51b0264e488ea5fe9b12d37238852536eb72a51e53",
+      "log_bytes": 308151,
+      "excerpt_source_lines": [
+        1,
+        4431,
+        4432
+      ]
+    },
+    {
+      "mutation": "absent-account-data-is-parked",
+      "test": "WalletIndexVerify_absent_account_data_does_not_block_full_ownership",
+      "exit_status": 1,
+      "executed": true,
+      "accepted": true,
+      "expected_failure": "Expectation\\ failed:\\ outcome\\.step\\ ==\\ VerifyStep::Done\\ \\&\\&\\ index\\.state\\(\\)\\ ==\\ VerificationState::Full",
+      "failure_match": "Expectation failed: outcome.step == VerifyStep::Done && index.state() == VerificationState::Full",
+      "log_path": "/tmp/pr373-review-controls-cf905789/absent-account-data-is-parked-0.log",
+      "log_sha256": "a246cccd4e97b7d368d7919e9cceb192614b7b7fe145b312cc3b14270fcae169",
+      "log_bytes": 2942,
+      "excerpt_source_lines": [
+        1,
+        3,
+        4
+      ]
+    },
+    {
+      "mutation": "absent-account-data-is-parked",
+      "test": "WalletIndexVerify_the_ownership_drain_runs_accounts_with_absent_data",
+      "exit_status": 1,
+      "executed": true,
+      "accepted": true,
+      "expected_failure": "Expectation\\ failed:\\ db\\.token_backlog_stats\\(\\)\\.move_as_ok\\(\\)\\.parked\\ is\\ not\\ equal\\ to\\ 0u",
+      "failure_match": "Expectation failed: db.token_backlog_stats().move_as_ok().parked is not equal to 0u",
+      "log_path": "/tmp/pr373-review-controls-cf905789/absent-account-data-is-parked-1.log",
+      "log_sha256": "5644e3e5cc15083c9e849812b1c2b12e048b30be5dd2507e790cb8c06b9ce65b",
+      "log_bytes": 18373,
+      "excerpt_source_lines": [
+        1,
+        103,
+        104
+      ]
+    },
+    {
+      "mutation": "trusted-restore-retention-stays-stalled",
+      "test": "WalletIndexSource_a_trusted_restore_resumes_retention_after_the_source_bootstrap_gap",
+      "exit_status": 1,
+      "executed": true,
+      "accepted": true,
+      "expected_failure": "Expectation\\ failed:\\ db\\->get_window_base\\(\\)\\.move_as_ok\\(\\)\\ is\\ not\\ equal\\ to\\ 23u",
+      "failure_match": "Expectation failed: db->get_window_base().move_as_ok() is not equal to 23u",
+      "log_path": "/tmp/pr373-review-controls-cf905789/trusted-restore-retention-stays-stalled-0.log",
+      "log_sha256": "86b025564577ab486e437cf7325364eaa0a2a6ba3d4614eaa6e81aa29ed0e5f9",
+      "log_bytes": 3251,
+      "excerpt_source_lines": [
+        1,
+        5,
+        6
+      ]
+    },
+    {
+      "mutation": "trusted-restore-retention-stays-stalled",
+      "test": "WalletIndexSource_only_a_full_index_can_rebase_retention_across_a_source_gap",
+      "exit_status": 1,
+      "executed": true,
+      "accepted": true,
+      "expected_failure": "Expectation\\ failed:\\ db\\->get_window_base\\(\\)\\.move_as_ok\\(\\)\\ is\\ not\\ equal\\ to\\ state\\ ==\\ VerificationState::Full\\ \\?\\ 23u\\ :\\ 10u",
+      "failure_match": "Expectation failed: db->get_window_base().move_as_ok() is not equal to state == VerificationState::Full ? 23u : 10u",
+      "log_path": "/tmp/pr373-review-controls-cf905789/trusted-restore-retention-stays-stalled-1.log",
+      "log_sha256": "8426775fb21a568dadee9dd4fc310f5b70bab48dc345d92612a9dacef265c122",
+      "log_bytes": 3808,
+      "excerpt_source_lines": [
+        1,
+        8,
+        9
+      ]
+    },
+    {
+      "mutation": "retained-ancestor-looks-up-block-one",
+      "test": "WalletIndexVerify_a_retained_ancestor_comes_from_the_requested_entry_in_the_bound_head_state",
+      "exit_status": 1,
+      "executed": true,
+      "accepted": true,
+      "expected_failure": "the head's masterchain state does not record masterchain block 17",
+      "failure_match": "the head's masterchain state does not record masterchain block 17",
+      "log_path": "/tmp/pr373-review-controls-cf905789/retained-ancestor-looks-up-block-one-0.log",
+      "log_sha256": "1dfc8aebed790cc70faccacb2f82b958ebe91554d7614c27b95089d807211245",
+      "log_bytes": 2763,
+      "excerpt_source_lines": [
+        1,
+        2,
+        3
+      ]
+    },
+    {
+      "mutation": "first-block-anchor-refuses-its-own-head",
+      "test": "WalletIndexVerify_block_1_comes_from_the_state_the_heads_block_names",
+      "exit_status": 1,
+      "executed": true,
+      "accepted": true,
+      "expected_failure": "the requested masterchain block is not an ancestor of the head",
+      "failure_match": "the requested masterchain block is not an ancestor of the head",
+      "log_path": "/tmp/pr373-review-controls-cf905789/first-block-anchor-refuses-its-own-head-0.log",
+      "log_sha256": "8298571584783d592edbd42d50fe6b906aeeb96d47109b2a84e1e9c4411502e0",
+      "log_bytes": 2736,
+      "excerpt_source_lines": [
+        1,
+        2,
+        3
+      ]
+    },
+    {
+      "mutation": "restored",
+      "test": "WalletIndexSource_a_trusted_restore_resumes_retention_after_the_source_bootstrap_gap",
+      "exit_status": 0,
+      "executed": true,
+      "accepted": true,
+      "failure_match": null,
+      "log_path": "/tmp/pr373-review-controls-cf905789/restored-0.log",
+      "log_sha256": "110c131026f7eb38508393aaff0a0440ba2d829498aa143b1cc5781ae22b3b50",
+      "log_bytes": 761,
+      "excerpt_source_lines": [
+        1,
+        6,
+        7
+      ]
+    },
+    {
+      "mutation": "restored",
+      "test": "WalletIndexSource_only_a_full_index_can_rebase_retention_across_a_source_gap",
+      "exit_status": 0,
+      "executed": true,
+      "accepted": true,
+      "failure_match": null,
+      "log_path": "/tmp/pr373-review-controls-cf905789/restored-1.log",
+      "log_sha256": "d73fb499f1febbdeb0973fac620e5d276be846609ca4a466d8ef83ae01a02d7b",
+      "log_bytes": 1277,
+      "excerpt_source_lines": [
+        1,
+        9,
+        10
+      ]
+    },
+    {
+      "mutation": "restored",
+      "test": "WalletIndexVerify_a_retained_ancestor_comes_from_the_requested_entry_in_the_bound_head_state",
+      "exit_status": 0,
+      "executed": true,
+      "accepted": true,
+      "failure_match": null,
+      "log_path": "/tmp/pr373-review-controls-cf905789/restored-2.log",
+      "log_sha256": "a67309d6b18a0c115a125591ef92649f3f4bd008f77723f7d160bad75eee5944",
+      "log_bytes": 147,
+      "excerpt_source_lines": [
+        1,
+        2,
+        3
+      ]
+    },
+    {
+      "mutation": "restored",
+      "test": "WalletIndexVerify_absent_account_data_does_not_block_full_ownership",
+      "exit_status": 0,
+      "executed": true,
+      "accepted": true,
+      "failure_match": null,
+      "log_path": "/tmp/pr373-review-controls-cf905789/restored-3.log",
+      "log_sha256": "668ffefd71536f446977d157ea02a367900750684548a001428080a1b584a745",
+      "log_bytes": 10835,
+      "excerpt_source_lines": [
+        1,
+        159,
+        160
+      ]
+    },
+    {
+      "mutation": "restored",
+      "test": "WalletIndexVerify_block_1_comes_from_the_state_the_heads_block_names",
+      "exit_status": 0,
+      "executed": true,
+      "accepted": true,
+      "failure_match": null,
+      "log_path": "/tmp/pr373-review-controls-cf905789/restored-4.log",
+      "log_sha256": "57ed40dac1d2f69cd607e61844f0b6cba1bffd6353a1a825335396eeb43d331b",
+      "log_bytes": 124,
+      "excerpt_source_lines": [
+        1,
+        2,
+        3
+      ]
+    },
+    {
+      "mutation": "restored",
+      "test": "WalletIndexVerify_malformed_resolver_getters_do_not_block_full_ownership",
+      "exit_status": 0,
+      "executed": true,
+      "accepted": true,
+      "failure_match": null,
+      "log_path": "/tmp/pr373-review-controls-cf905789/restored-5.log",
+      "log_sha256": "013c404faa18d13b029d49e4b7b419a78f2139fb7ad19143947a72556a8da11a",
+      "log_bytes": 9157,
+      "excerpt_source_lines": [
+        1,
+        135,
+        136
+      ]
+    },
+    {
+      "mutation": "restored",
+      "test": "WalletIndexVerify_malformed_wallet_getters_do_not_block_full_ownership",
+      "exit_status": 0,
+      "executed": true,
+      "accepted": true,
+      "failure_match": null,
+      "log_path": "/tmp/pr373-review-controls-cf905789/restored-6.log",
+      "log_sha256": "f4b248cfc44b352aa6717cd23c4af1d5949c38f182cd9cd5806128ac442f86f9",
+      "log_bytes": 15029,
+      "excerpt_source_lines": [
+        1,
+        226,
+        227
+      ]
+    },
+    {
+      "mutation": "restored",
+      "test": "WalletIndexVerify_the_ownership_drain_rejects_malformed_getters",
+      "exit_status": 0,
+      "executed": true,
+      "accepted": true,
+      "failure_match": null,
+      "log_path": "/tmp/pr373-review-controls-cf905789/restored-7.log",
+      "log_sha256": "3c3707f8c3517995e25f3c749c7ac53bb255e996bcd107e5cef59f092e7f8e0f",
+      "log_bytes": 5212,
+      "excerpt_source_lines": [
+        1,
+        75,
+        76
+      ]
+    },
+    {
+      "mutation": "restored",
+      "test": "WalletIndexVerify_the_ownership_drain_runs_accounts_with_absent_data",
+      "exit_status": 0,
+      "executed": true,
+      "accepted": true,
+      "failure_match": null,
+      "log_path": "/tmp/pr373-review-controls-cf905789/restored-8.log",
+      "log_sha256": "15b40845e88fe9d8233e7e0e2f91fb936d9a7b384033fb539e6d417948993b2d",
+      "log_bytes": 5848,
+      "excerpt_source_lines": [
+        1,
+        83,
+        84
+      ]
+    }
+  ],
+  "original_artifacts": [
+    {
+      "path": "/tmp/pr373-review-controls-cf905789/receipt.json",
+      "kind": "original_receipt",
+      "bytes": 10650,
+      "sha256": "018abba40e19806f24045a7336e7c3ccfd591e373d32413cd44a2db11c2adc77"
+    },
+    {
+      "path": "/tmp/pr373-review-controls-cf905789.log",
+      "kind": "runner_transcript",
+      "bytes": 10682,
+      "sha256": "c98fd5a32984f9171e7b207defa680bfa94dbc6f8848daba3309083eaeeb3d16"
+    },
+    {
+      "path": "/tmp/pr373-review-controls-cf905789/absent-account-data-is-parked-0.log",
+      "kind": "native_test_log",
+      "bytes": 2942,
+      "sha256": "a246cccd4e97b7d368d7919e9cceb192614b7b7fe145b312cc3b14270fcae169"
+    },
+    {
+      "path": "/tmp/pr373-review-controls-cf905789/absent-account-data-is-parked-1.log",
+      "kind": "native_test_log",
+      "bytes": 18373,
+      "sha256": "5644e3e5cc15083c9e849812b1c2b12e048b30be5dd2507e790cb8c06b9ce65b"
+    },
+    {
+      "path": "/tmp/pr373-review-controls-cf905789/absent-account-data-is-parked-build.log",
+      "kind": "native_build_log",
+      "bytes": 336,
+      "sha256": "d9254d6e47e1d67180d9340fa959615d4f07617987fd45c08b4ced8cc50f18c8"
+    },
+    {
+      "path": "/tmp/pr373-review-controls-cf905789/baseline-0.log",
+      "kind": "native_test_log",
+      "bytes": 761,
+      "sha256": "a83fc18d42e55e2e35595167bc0e3e8a42c6a83e739d22f302fb35a3e6bf3d30"
+    },
+    {
+      "path": "/tmp/pr373-review-controls-cf905789/baseline-1.log",
+      "kind": "native_test_log",
+      "bytes": 1277,
+      "sha256": "8462b77751e6f49c243a61263f91e7b02e6d20a269b723b80c7608f08078a697"
+    },
+    {
+      "path": "/tmp/pr373-review-controls-cf905789/baseline-2.log",
+      "kind": "native_test_log",
+      "bytes": 148,
+      "sha256": "9b5058f051668fb02993e9e057d3ab3ca0a410c5ae8758a1842da0be2c5f2ede"
+    },
+    {
+      "path": "/tmp/pr373-review-controls-cf905789/baseline-3.log",
+      "kind": "native_test_log",
+      "bytes": 10835,
+      "sha256": "ac3fed6fc352c85c8ee03d7e5042978c259c8b3cb4a84bbc2e88a05c91e9dd84"
+    },
+    {
+      "path": "/tmp/pr373-review-controls-cf905789/baseline-4.log",
+      "kind": "native_test_log",
+      "bytes": 123,
+      "sha256": "dcc47bbf278c0bf04a7377c231aa1b8536ce27889c881826259b0bc1d469bef4"
+    },
+    {
+      "path": "/tmp/pr373-review-controls-cf905789/baseline-5.log",
+      "kind": "native_test_log",
+      "bytes": 9157,
+      "sha256": "b4e5e83bce2112c93861ebeccf413ab110c8f5bc405cfcdb8a05949f2a024dbb"
+    },
+    {
+      "path": "/tmp/pr373-review-controls-cf905789/baseline-6.log",
+      "kind": "native_test_log",
+      "bytes": 15028,
+      "sha256": "3cd66d8b33df11ea9b9c169c28bc7215258655e3fe9ed220558089ad2a9dcdbf"
+    },
+    {
+      "path": "/tmp/pr373-review-controls-cf905789/baseline-7.log",
+      "kind": "native_test_log",
+      "bytes": 5212,
+      "sha256": "1449b3f8ace668ba4dd13d2338333e72ca7af6dddfdd696c1423136e9cd7d00a"
+    },
+    {
+      "path": "/tmp/pr373-review-controls-cf905789/baseline-8.log",
+      "kind": "native_test_log",
+      "bytes": 5848,
+      "sha256": "b98ce05ef460371d901a11a9261c6e12db5b4ecd71277e956d53e2f64395193b"
+    },
+    {
+      "path": "/tmp/pr373-review-controls-cf905789/baseline-build.log",
+      "kind": "native_build_log",
+      "bytes": 5135,
+      "sha256": "af5d08a3d08bdee279ff19ff0b1d24ac74f39167210569dd79fa2778865222f6"
+    },
+    {
+      "path": "/tmp/pr373-review-controls-cf905789/first-block-anchor-refuses-its-own-head-0.log",
+      "kind": "native_test_log",
+      "bytes": 2736,
+      "sha256": "8298571584783d592edbd42d50fe6b906aeeb96d47109b2a84e1e9c4411502e0"
+    },
+    {
+      "path": "/tmp/pr373-review-controls-cf905789/first-block-anchor-refuses-its-own-head-build.log",
+      "kind": "native_build_log",
+      "bytes": 239,
+      "sha256": "4cbc4ba3cf550aaa9d9bbbc0c6498e006ad5e3586288d0d14a9a00dd75b1b889"
+    },
+    {
+      "path": "/tmp/pr373-review-controls-cf905789/malformed-getter-result-escapes-0.log",
+      "kind": "native_test_log",
+      "bytes": 4509,
+      "sha256": "f69596a8cd3c1275ac208d33339fa301887f62dcfaabc69fc0d1ecc1e28c2379"
+    },
+    {
+      "path": "/tmp/pr373-review-controls-cf905789/malformed-getter-result-escapes-1.log",
+      "kind": "native_test_log",
+      "bytes": 5439,
+      "sha256": "499bb76f1ee83ca57fd60105098cc49d984d38d27013e2b7d39742fd158fc39c"
+    },
+    {
+      "path": "/tmp/pr373-review-controls-cf905789/malformed-getter-result-escapes-2.log",
+      "kind": "native_test_log",
+      "bytes": 308151,
+      "sha256": "ebd7684dd4ba1d2116979f51b0264e488ea5fe9b12d37238852536eb72a51e53"
+    },
+    {
+      "path": "/tmp/pr373-review-controls-cf905789/malformed-getter-result-escapes-build.log",
+      "kind": "native_build_log",
+      "bytes": 5330,
+      "sha256": "57433e7a3286ca0c3b5452aeed4fb1fdef41c7525cdfeca8ff30d046fa3846f2"
+    },
+    {
+      "path": "/tmp/pr373-review-controls-cf905789/restored-0.log",
+      "kind": "native_test_log",
+      "bytes": 761,
+      "sha256": "110c131026f7eb38508393aaff0a0440ba2d829498aa143b1cc5781ae22b3b50"
+    },
+    {
+      "path": "/tmp/pr373-review-controls-cf905789/restored-1.log",
+      "kind": "native_test_log",
+      "bytes": 1277,
+      "sha256": "d73fb499f1febbdeb0973fac620e5d276be846609ca4a466d8ef83ae01a02d7b"
+    },
+    {
+      "path": "/tmp/pr373-review-controls-cf905789/restored-2.log",
+      "kind": "native_test_log",
+      "bytes": 147,
+      "sha256": "a67309d6b18a0c115a125591ef92649f3f4bd008f77723f7d160bad75eee5944"
+    },
+    {
+      "path": "/tmp/pr373-review-controls-cf905789/restored-3.log",
+      "kind": "native_test_log",
+      "bytes": 10835,
+      "sha256": "668ffefd71536f446977d157ea02a367900750684548a001428080a1b584a745"
+    },
+    {
+      "path": "/tmp/pr373-review-controls-cf905789/restored-4.log",
+      "kind": "native_test_log",
+      "bytes": 124,
+      "sha256": "57ed40dac1d2f69cd607e61844f0b6cba1bffd6353a1a825335396eeb43d331b"
+    },
+    {
+      "path": "/tmp/pr373-review-controls-cf905789/restored-5.log",
+      "kind": "native_test_log",
+      "bytes": 9157,
+      "sha256": "013c404faa18d13b029d49e4b7b419a78f2139fb7ad19143947a72556a8da11a"
+    },
+    {
+      "path": "/tmp/pr373-review-controls-cf905789/restored-6.log",
+      "kind": "native_test_log",
+      "bytes": 15029,
+      "sha256": "f4b248cfc44b352aa6717cd23c4af1d5949c38f182cd9cd5806128ac442f86f9"
+    },
+    {
+      "path": "/tmp/pr373-review-controls-cf905789/restored-7.log",
+      "kind": "native_test_log",
+      "bytes": 5212,
+      "sha256": "3c3707f8c3517995e25f3c749c7ac53bb255e996bcd107e5cef59f092e7f8e0f"
+    },
+    {
+      "path": "/tmp/pr373-review-controls-cf905789/restored-8.log",
+      "kind": "native_test_log",
+      "bytes": 5848,
+      "sha256": "15b40845e88fe9d8233e7e0e2f91fb936d9a7b384033fb539e6d417948993b2d"
+    },
+    {
+      "path": "/tmp/pr373-review-controls-cf905789/restored-build.log",
+      "kind": "native_build_log",
+      "bytes": 5231,
+      "sha256": "3cae79be3885dc4f0f33e083765ea2a6b6d08286773cf1e58d244a48441927fd"
+    },
+    {
+      "path": "/tmp/pr373-review-controls-cf905789/retained-ancestor-looks-up-block-one-0.log",
+      "kind": "native_test_log",
+      "bytes": 2763,
+      "sha256": "1dfc8aebed790cc70faccacb2f82b958ebe91554d7614c27b95089d807211245"
+    },
+    {
+      "path": "/tmp/pr373-review-controls-cf905789/retained-ancestor-looks-up-block-one-build.log",
+      "kind": "native_build_log",
+      "bytes": 341,
+      "sha256": "e8ad6c5a452b2c15043faa2a41cc1985e446e33d888463e08fdd2034cfba88c0"
+    },
+    {
+      "path": "/tmp/pr373-review-controls-cf905789/trusted-restore-retention-stays-stalled-0.log",
+      "kind": "native_test_log",
+      "bytes": 3251,
+      "sha256": "86b025564577ab486e437cf7325364eaa0a2a6ba3d4614eaa6e81aa29ed0e5f9"
+    },
+    {
+      "path": "/tmp/pr373-review-controls-cf905789/trusted-restore-retention-stays-stalled-1.log",
+      "kind": "native_test_log",
+      "bytes": 3808,
+      "sha256": "8426775fb21a568dadee9dd4fc310f5b70bab48dc345d92612a9dacef265c122"
+    },
+    {
+      "path": "/tmp/pr373-review-controls-cf905789/trusted-restore-retention-stays-stalled-build.log",
+      "kind": "native_build_log",
+      "bytes": 438,
+      "sha256": "8e7a8070079f3030656f7118de7003af3d05e85cd0329e767c2691d63a8a16c1"
+    }
+  ],
+  "log_limit_bytes": 524288,
+  "largest_original_log_bytes": 308151,
+  "comparison": {
+    "commit": "f7535841bd860eaacd1e0f268a3571a235bf24b0",
+    "scope": "Four production inputs, two native test source files, mutation runner and its helper tests; this is source-byte equivalence, not a rerun at the comparison commit. Checkout matches are historical at the stated comparison commit; later formatting-only changes are recorded in format-equivalence.json.",
+    "all_byte_identical": true,
+    "files": [
+      {
+        "path": "validator-engine/wallet-index-writer.cpp",
+        "source_sha256": "ca9e5cacbec01b76bb9e684ed05fe92a583b1191013a8047642e21f358768e46",
+        "comparison_sha256": "ca9e5cacbec01b76bb9e684ed05fe92a583b1191013a8047642e21f358768e46",
+        "byte_identical": true,
+        "matched_checkout_at_comparison_commit": true
+      },
+      {
+        "path": "services/index-replay-loop.h",
+        "source_sha256": "89d6de777389155910ebe1dd359b4c31dfa8651d6cd7e7e83e6f680d2f5926a7",
+        "comparison_sha256": "89d6de777389155910ebe1dd359b4c31dfa8651d6cd7e7e83e6f680d2f5926a7",
+        "byte_identical": true,
+        "matched_checkout_at_comparison_commit": true
+      },
+      {
+        "path": "services/index-verify.cpp",
+        "source_sha256": "a52336ff1430626339bbac73f223c977c3156170f9a0f3d717e503630f999df3",
+        "comparison_sha256": "a52336ff1430626339bbac73f223c977c3156170f9a0f3d717e503630f999df3",
+        "byte_identical": true,
+        "matched_checkout_at_comparison_commit": true
+      },
+      {
+        "path": "services/index-verify.h",
+        "source_sha256": "f73a7e95498fc9314d9b5347480278907de439a109945dc036144e2ee4be2372",
+        "comparison_sha256": "f73a7e95498fc9314d9b5347480278907de439a109945dc036144e2ee4be2372",
+        "byte_identical": true,
+        "matched_checkout_at_comparison_commit": true
+      },
+      {
+        "path": "test/test-wallet-index-source.cpp",
+        "source_sha256": "743f5b0fdcd6f44dc0c15e6722311b24a75a524a457f796ee26d54ba90cb1eee",
+        "comparison_sha256": "743f5b0fdcd6f44dc0c15e6722311b24a75a524a457f796ee26d54ba90cb1eee",
+        "byte_identical": true,
+        "matched_checkout_at_comparison_commit": true
+      },
+      {
+        "path": "test/test-wallet-index-verify.cpp",
+        "source_sha256": "cb595018f9d1ef36e0accc23b0c84464189ca45422935179786535bd76c08b3f",
+        "comparison_sha256": "cb595018f9d1ef36e0accc23b0c84464189ca45422935179786535bd76c08b3f",
+        "byte_identical": true,
+        "matched_checkout_at_comparison_commit": true
+      },
+      {
+        "path": "scripts/test-wallet-index-review-controls.py",
+        "source_sha256": "f1a59cdcfe4dde45cb58c940b484f52396498515ebcf5e4c71a283ef2e149757",
+        "comparison_sha256": "f1a59cdcfe4dde45cb58c940b484f52396498515ebcf5e4c71a283ef2e149757",
+        "byte_identical": true,
+        "matched_checkout_at_comparison_commit": true
+      },
+      {
+        "path": "scripts/test_wallet_index_review_controls.py",
+        "source_sha256": "9e7ee79998f50fb51a75f38a8255df4b66f1d8e13b6a7b159108d19e494d42fd",
+        "comparison_sha256": "9e7ee79998f50fb51a75f38a8255df4b66f1d8e13b6a7b159108d19e494d42fd",
+        "byte_identical": true,
+        "matched_checkout_at_comparison_commit": true
+      }
+    ]
+  },
+  "excerpts": {
+    "path": "/tmp/pr373-control-excerpts.txt",
+    "bytes": 8953,
+    "sha256": "fc3e71dda015527ec2f417c54049972f9d86dddebbddb98168e51f78ae13f392",
+    "normalization": "ANSI SGR color sequences removed; selected source log lines otherwise verbatim",
+    "retained_path": "compiled-control-excerpts.txt",
+    "retained_bytes": 8952,
+    "retained_sha256": "85e955383c301fc0816a0ed2d6048f5f34e69169d0c350ed674d4ec7adeb9b81",
+    "retained_normalization": "The original excerpt file is retained with surplus EOF blank lines removed for repository hygiene; no diagnostic text changed."
+  }
+}

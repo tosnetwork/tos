@@ -77,6 +77,10 @@ set(VALIDATOR_ENGINE_JSON_RPC_SOURCE
   json-rpc-server-wc0index.cpp
   wallet-index.h
   wallet-index.cpp
+  wallet-index-lineage.h
+  wallet-index-lineage.cpp
+  wallet-index-snapshot.h
+  wallet-index-snapshot.cpp
   wallet-index-writer.h
   wallet-index-writer.cpp
 )

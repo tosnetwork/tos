@@ -1,0 +1,170 @@
+{
+  "base_commit": "f7535841bd860eaacd1e0f268a3571a235bf24b0",
+  "reason": "GitHub Actions Lint/hygiene job124415140834 required Ruff formatting of four changed scripts; lint checks themselves passed.",
+  "ruff_version": "ruff 0.15.2",
+  "command": [
+    ".venv/bin/ruff",
+    "format",
+    "scripts/check-branch-chain-python-ci.py",
+    "scripts/test-wallet-index-review-controls.py",
+    "scripts/test_branch_chain_conditions.py",
+    "scripts/test_wallet_index_review_controls.py"
+  ],
+  "files": [
+    {
+      "path": "scripts/check-branch-chain-python-ci.py",
+      "before_sha256": "df6e19957b742c4f91de914764022449c3760a249a637c4314b4bec05bd5ae35",
+      "after_sha256": "bc2300d41d73cde48a1b700b59e69d298d4cdbb09842fffb01bfd530923deaba",
+      "ast_identical": true
+    },
+    {
+      "path": "scripts/test-wallet-index-review-controls.py",
+      "before_sha256": "f1a59cdcfe4dde45cb58c940b484f52396498515ebcf5e4c71a283ef2e149757",
+      "after_sha256": "c432c93b06ac74ec4ed7c62af2b650da9f1d000f4c742851914909661adc50df",
+      "ast_identical": true
+    },
+    {
+      "path": "scripts/test_branch_chain_conditions.py",
+      "before_sha256": "5a19c1a1e8ec53b299fbb12ddf93974b87913c0accfe09f9d0704733a8a5141d",
+      "after_sha256": "aa21abf0d43eda1fd15eedf023b4e48cbab48db1878c11713ef9fdc223995c91",
+      "ast_identical": true
+    },
+    {
+      "path": "scripts/test_wallet_index_review_controls.py",
+      "before_sha256": "9e7ee79998f50fb51a75f38a8255df4b66f1d8e13b6a7b159108d19e494d42fd",
+      "after_sha256": "a6d584fe48eae2fc7cd33afdcc9f3c750d0dd854d807aab8672e4f7d82704088",
+      "ast_identical": true
+    }
+  ],
+  "merged_python_validation": {
+    "main_commit": "084e4315899cc3a5bf64cc434ee327e1db487173",
+    "preformat_merged_tree": "ea27be0c2b879f591a5f391927248a2b114bce61",
+    "base_commit": "a91c3bcac1e266e6c8a65693bc020a890cbde0e4",
+    "formatted_overlay": [
+      "scripts/check-branch-chain-python-ci.py",
+      "scripts/test-wallet-index-review-controls.py",
+      "scripts/test_branch_chain_conditions.py",
+      "scripts/test_wallet_index_review_controls.py"
+    ],
+    "file_count": 34,
+    "package_context_files": 2206,
+    "commands": [
+      {
+        "argv": [
+          "/workspace/scratch/8cd346c61c4c/tos-pr373/.venv/bin/ruff",
+          "check",
+          "scripts/check-branch-chain-python-ci.py",
+          "scripts/test-wallet-index-lineage-controls.py",
+          "scripts/test-wallet-index-review-controls.py",
+          "scripts/test-wallet-index-verification-gate-controls.py",
+          "scripts/test-wallet-index-verify-controls.py",
+          "scripts/test-wallet-index-window-controls.py",
+          "scripts/test_branch_chain_conditions.py",
+          "scripts/test_docker_validator_role.py",
+          "scripts/test_wallet_index_dump_cli.py",
+          "scripts/test_wallet_index_review_controls.py",
+          "scripts/test_wallet_index_snapshot_cli.py",
+          "scripts/test_wallet_index_verification_gate.py",
+          "test/integration/node_sync_init_block.py",
+          "test/integration/signing_fence_drills.py",
+          "test/integration/signing_log_soak.py",
+          "test/integration/signing_unknown_history_drill.py",
+          "test/integration/wallet_index_snapshot_native.py",
+          "test/integration/wallet_index_snapshot_records.py",
+          "test/integration/wallet_index_verify_native.py",
+          "test/pq-mldsa44/consensus_key_tool_test.py",
+          "test/tostester/src/tostester/network.py",
+          "test/tostester/src/tostester/wallet_index_verify_fixtures.py",
+          "test/tostester/tests/tostester/test_genesis_ceremony.py",
+          "test/tostester/tests/tostester/test_signing_fence_drills_exit.py",
+          "test/tostester/tests/tostester/test_signing_log_soak.py",
+          "test/tostester/tests/tostester/test_wallet_index_snapshot_records.py",
+          "test/tostester/tests/tostester/test_wallet_index_verify_fixtures.py",
+          "test/tostester/tests/tostester/test_wallet_index_verify_native.py",
+          "test/treasury-vault/mutations.py",
+          "test/treasury-vault/test_native.py",
+          "test/treasury-vault/test_pq_cold.py",
+          "test/treasury-vault/test_pq_wallets.py",
+          "test/treasury-vault/test_wallets.py",
+          "test/treasury-vault/wire.py"
+        ],
+        "exit_code": 0,
+        "stdout": "All checks passed!\n",
+        "stderr": ""
+      },
+      {
+        "argv": [
+          "/workspace/scratch/8cd346c61c4c/tos-pr373/.venv/bin/ruff",
+          "format",
+          "--check",
+          "scripts/check-branch-chain-python-ci.py",
+          "scripts/test-wallet-index-lineage-controls.py",
+          "scripts/test-wallet-index-review-controls.py",
+          "scripts/test-wallet-index-verification-gate-controls.py",
+          "scripts/test-wallet-index-verify-controls.py",
+          "scripts/test-wallet-index-window-controls.py",
+          "scripts/test_branch_chain_conditions.py",
+          "scripts/test_docker_validator_role.py",
+          "scripts/test_wallet_index_dump_cli.py",
+          "scripts/test_wallet_index_review_controls.py",
+          "scripts/test_wallet_index_snapshot_cli.py",
+          "scripts/test_wallet_index_verification_gate.py",
+          "test/integration/node_sync_init_block.py",
+          "test/integration/signing_fence_drills.py",
+          "test/integration/signing_log_soak.py",
+          "test/integration/signing_unknown_history_drill.py",
+          "test/integration/wallet_index_snapshot_native.py",
+          "test/integration/wallet_index_snapshot_records.py",
+          "test/integration/wallet_index_verify_native.py",
+          "test/pq-mldsa44/consensus_key_tool_test.py",
+          "test/tostester/src/tostester/network.py",
+          "test/tostester/src/tostester/wallet_index_verify_fixtures.py",
+          "test/tostester/tests/tostester/test_genesis_ceremony.py",
+          "test/tostester/tests/tostester/test_signing_fence_drills_exit.py",
+          "test/tostester/tests/tostester/test_signing_log_soak.py",
+          "test/tostester/tests/tostester/test_wallet_index_snapshot_records.py",
+          "test/tostester/tests/tostester/test_wallet_index_verify_fixtures.py",
+          "test/tostester/tests/tostester/test_wallet_index_verify_native.py",
+          "test/treasury-vault/mutations.py",
+          "test/treasury-vault/test_native.py",
+          "test/treasury-vault/test_pq_cold.py",
+          "test/treasury-vault/test_pq_wallets.py",
+          "test/treasury-vault/test_wallets.py",
+          "test/treasury-vault/wire.py"
+        ],
+        "exit_code": 0,
+        "stdout": "33 files already formatted\n",
+        "stderr": ""
+      }
+    ],
+    "scope": "Prospective merged Python contents/configs, all tracked source directories for Ruff namespace detection, and the four AST-equivalent formatting edits. Lint only, not an integrated native build.",
+    "format_reported_checked_files": 33,
+    "repository_exclusions_unchanged": true
+  },
+  "postformat_helper_validation": [
+    {
+      "command": [
+        ".venv/bin/python",
+        "scripts/test_wallet_index_review_controls.py"
+      ],
+      "exit_code": 0,
+      "tests_passed": 12
+    },
+    {
+      "command": [
+        ".venv/bin/python",
+        "scripts/test_branch_chain_conditions.py"
+      ],
+      "exit_code": 0,
+      "tests_passed": 15
+    },
+    {
+      "command": [
+        ".venv/bin/python",
+        "scripts/check-branch-chain-python-ci.py"
+      ],
+      "exit_code": 0,
+      "success_token": "BRANCH_CHAIN_PYTHON_CI_OK"
+    }
+  ]
+}

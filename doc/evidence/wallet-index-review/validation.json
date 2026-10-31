@@ -1,0 +1,520 @@
+{
+  "schema": 1,
+  "source_commit": "f7535841bd860eaacd1e0f268a3571a235bf24b0",
+  "compiled_controls_source_commit": "cf905789bd5a6a06184329060fd220bb8179c28a",
+  "host": {
+    "os": "Ubuntu 24.04.3 LTS",
+    "architecture": "x86_64",
+    "cpu_quota": "8 CPUs",
+    "memory_limit_bytes": 8589934592,
+    "build_type": "Release",
+    "clang": "21.1.8",
+    "cmake": "3.28.3",
+    "ninja": "1.11.1",
+    "python": "3.14.8",
+    "jemalloc": true,
+    "is_repository_builder_image_ci": false
+  },
+  "runtime_build": {
+    "label": "published-f7535841",
+    "command": [
+      "cmake",
+      "--build",
+      "/tmp/pr373-native-build",
+      "--parallel",
+      "6",
+      "--target",
+      "validator-engine",
+      "tos-rpc",
+      "tos-wallet-index",
+      "tos-wallet-index-snapshot",
+      "tos-wallet-index-dump",
+      "wallet-index-source-fixture",
+      "gen_fif",
+      "create-state",
+      "fift",
+      "func",
+      "toslibjson",
+      "generate-random-id",
+      "tos-pq-consensus-key",
+      "dht-server",
+      "validator-engine-console"
+    ],
+    "started": 1793413517.7855268,
+    "source_start": {
+      "head": "f7535841bd860eaacd1e0f268a3571a235bf24b0",
+      "working_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "changed_or_untracked_files": []
+    },
+    "ended": 1793413524.3186805,
+    "exit_code": 0,
+    "source_end": {
+      "head": "f7535841bd860eaacd1e0f268a3571a235bf24b0",
+      "working_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "changed_or_untracked_files": []
+    }
+  },
+  "native_commands": [
+    {
+      "cwd": "/workspace/scratch/8cd346c61c4c/tos-pr373",
+      "command": "source /tmp/pr373-toolchain/env.sh && .venv/bin/python -u test/integration/node_sync_init_block.py --root /tmp/pr373-native-image-f7535841 --build /tmp/pr373-native-build --wallet-index-only --base-port 48400 > /tmp/pr373-native-image-f7535841.log 2>&1",
+      "exit_code": 0
+    },
+    {
+      "cwd": "/workspace/scratch/8cd346c61c4c/tos-pr373",
+      "command": "source /tmp/pr373-toolchain/env.sh && .venv/bin/python -u test/integration/wallet_index_verify_native.py --init-root /tmp/pr373-native-image-f7535841 --build /tmp/pr373-native-build --root /tmp/pr373-native-verify-f7535841 --source-commit f7535841bd860eaacd1e0f268a3571a235bf24b0 > /tmp/pr373-native-verify-f7535841.log 2>&1",
+      "exit_code": 0
+    }
+  ],
+  "ctest": {
+    "label": "final-seven-gates-f7535841",
+    "command": [
+      "ctest",
+      "--test-dir",
+      "/tmp/pr373-native-build",
+      "--output-on-failure",
+      "--no-tests=error",
+      "--timeout",
+      "600",
+      "-R",
+      "^(test-wallet-index|test-wallet-index-source|test-wallet-index-apply|test-json-rpc-transport|wallet-index-snapshot-cli|wallet-index-verification-gate|wallet-index-dump-cli)$"
+    ],
+    "started": 1793413977.3633544,
+    "source_start": {
+      "head": "f7535841bd860eaacd1e0f268a3571a235bf24b0",
+      "working_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "ended": 1793414075.137418,
+    "exit_code": 0,
+    "source_end": {
+      "head": "f7535841bd860eaacd1e0f268a3571a235bf24b0",
+      "working_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  },
+  "ctest_native_case_counts_in_gate_order": [
+    34,
+    146,
+    3,
+    75
+  ],
+  "ctest_full_output": {
+    "path": "/tmp/pr373-toolchain/final-seven-gates-f7535841-native.log",
+    "bytes": 4372740,
+    "sha256": "4982d586d3c217285f56d6b56908fcdb7c30cdd2074e07567b6126e765ade2e7",
+    "retention": "temporary; concise command output is committed as ctest-summary.txt"
+  },
+  "python": {
+    "source_commit": "f7535841bd860eaacd1e0f268a3571a235bf24b0",
+    "head_after": "f7535841bd860eaacd1e0f268a3571a235bf24b0",
+    "execution_note": "Uses the authorized localhost-enabled execution profile. The preceding default sandbox attempt failed in socket.socket with EPERM (20 passed, one environment error); no source changed before rerun.",
+    "commands": [
+      {
+        "label": "native-helpers",
+        "command": [
+          "/workspace/scratch/8cd346c61c4c/tos-pr373/.venv/bin/python",
+          "-m",
+          "pytest",
+          "-q",
+          "test/tostester/tests/tostester/test_wallet_index_verify_native.py",
+          "test/tostester/tests/tostester/test_wallet_index_snapshot_records.py",
+          "test/tostester/tests/tostester/test_wallet_index_verify_fixtures.py"
+        ],
+        "exit_code": 0,
+        "seconds": 1.453,
+        "log": "/tmp/pr373-final-native-helpers-f7535841.log",
+        "sha256": "91ea9d3240107aafa0d3c07ede619efda3d47d41adcceacfd165a832dad288b2",
+        "bytes": 99
+      },
+      {
+        "label": "control-helpers",
+        "command": [
+          "/workspace/scratch/8cd346c61c4c/tos-pr373/.venv/bin/python",
+          "scripts/test_wallet_index_review_controls.py"
+        ],
+        "exit_code": 0,
+        "seconds": 0.765,
+        "log": "/tmp/pr373-final-control-helpers-f7535841.log",
+        "sha256": "8cc2b0a18607248904d0a98405dc54136f1d0b8ea1ce8e98cb3d62f2dd6d81ae",
+        "bytes": 111
+      },
+      {
+        "label": "ci-guard-helpers",
+        "command": [
+          "/workspace/scratch/8cd346c61c4c/tos-pr373/.venv/bin/python",
+          "scripts/test_branch_chain_conditions.py"
+        ],
+        "exit_code": 0,
+        "seconds": 0.804,
+        "log": "/tmp/pr373-final-ci-guard-helpers-f7535841.log",
+        "sha256": "fc11df4fd9d9dd2e197d8af826d23f4138ffaed267c09c7302d24f9e984b9ffc",
+        "bytes": 208
+      },
+      {
+        "label": "ci-guard",
+        "command": [
+          "/workspace/scratch/8cd346c61c4c/tos-pr373/.venv/bin/python",
+          "scripts/check-branch-chain-python-ci.py"
+        ],
+        "exit_code": 0,
+        "seconds": 0.102,
+        "log": "/tmp/pr373-final-ci-guard-f7535841.log",
+        "sha256": "6a234231f71ff68f73a9cbce8c39a5d24950939e51c583252453333bd0f1efe4",
+        "bytes": 799
+      }
+    ]
+  },
+  "merge_compatibility": {
+    "command": [
+      "git",
+      "merge-tree",
+      "--write-tree",
+      "f7535841bd860eaacd1e0f268a3571a235bf24b0",
+      "084e4315899cc3a5bf64cc434ee327e1db487173"
+    ],
+    "source": "f7535841bd860eaacd1e0f268a3571a235bf24b0",
+    "main": "084e4315899cc3a5bf64cc434ee327e1db487173",
+    "exit_code": 0,
+    "tree": "ea27be0c2b879f591a5f391927248a2b114bce61",
+    "scope": "Conflict-free merge simulation only; no merge or integrated-main local build performed."
+  },
+  "artifact_limits": {
+    "fixture_max_transactions": 32,
+    "fixture_max_boc_bytes": 65536,
+    "actual_fixture_transactions": 12,
+    "actual_fixture_boc_bytes": 5941,
+    "control_max_log_bytes": 524288,
+    "configured_ci_retention_days": 14
+  },
+  "evidence_limits": [
+    "Local bulk logs and databases are temporary; committed receipts, minimal outputs and BOCs are the durable evidence. Original hashes alone are not independent proof.",
+    "CI artifact retention is configured for 14 days for the separate CI execution; local files are not claimed to have been uploaded to that run.",
+    "absent_at records a master_tip observation after raw_get_account_state reports absence, not that proof response block ID.",
+    "Transaction BOCs permit hash, lifecycle, signature and StateInit inspection, but are not standalone ledger inclusion proofs.",
+    "ever_ready is sampled HTTP readiness; short negative-run RSS measurements can sample before startup and are not capacity evidence.",
+    "Native fixtures use ordinary wallets with an empty genuine token/NFT ownership population; positive token/NFT derivation is covered by compiled regressions."
+  ],
+  "raw_artifacts": [
+    {
+      "path": "/tmp/pr373-native-verify-f7535841/reference/service.log",
+      "bytes": 1638,
+      "sha256": "b2e896dcd9f39ac40a2d4fbe7b319eaf83532ef134f5b52882b132668e458277",
+      "retained_in": "native-service-output.txt"
+    },
+    {
+      "path": "/tmp/pr373-native-verify-f7535841/path-b/service.log",
+      "bytes": 1416,
+      "sha256": "9d1aa11b5637af9801bfe361e77690477c3a5b0573ce6da62d0e756c4bfa2205",
+      "retained_in": "native-service-output.txt"
+    },
+    {
+      "path": "/tmp/pr373-native-verify-f7535841/path-a/service.log",
+      "bytes": 1201,
+      "sha256": "081724307d9f7f8fad31ad88b4c6a585eff75090d1cd0ab31c4dfec1edcc7351",
+      "retained_in": "native-service-output.txt"
+    },
+    {
+      "path": "/tmp/pr373-native-verify-f7535841/tampered/service.log",
+      "bytes": 1101,
+      "sha256": "f7108813ddfb34fd0335cba3d701e8714ef9eb2cb2e261bcaaf601cfc1958f34",
+      "retained_in": "native-service-output.txt"
+    },
+    {
+      "path": "/tmp/pr373-native-verify-f7535841/omitted/service.log",
+      "bytes": 1077,
+      "sha256": "9b8ac674da053561f548d893f3ae80bd54b28d98ba038776dfd3682f03cf25db",
+      "retained_in": "native-service-output.txt"
+    },
+    {
+      "path": "/tmp/pr373-native-verify-f7535841/truncated/service.log",
+      "bytes": 1091,
+      "sha256": "d6cd94627993a4b497d3afa4c31f6b7420b9f97a7c7b22ea15fb49f75eb44b3c",
+      "retained_in": "native-service-output.txt"
+    },
+    {
+      "path": "/tmp/pr373-native-verify-f7535841/wrong-checkpoint/service.log",
+      "bytes": 826,
+      "sha256": "7576a10a7df19c84fb70db55942dcc9451b8d0c2d2a2bb0a3bbcde2edf0fe109",
+      "retained_in": "native-service-output.txt"
+    },
+    {
+      "path": "/tmp/pr373-native-verify-f7535841/wrong-anchor/service.log",
+      "bytes": 812,
+      "sha256": "8340880ab08c3388180eb22c4db0972ec4224c37b882e80a47c007c13b4fe236",
+      "retained_in": "native-service-output.txt"
+    },
+    {
+      "path": "/tmp/pr373-native-verify-f7535841/injected/service.log",
+      "bytes": 1103,
+      "sha256": "f0f7b6434cdbcc992a297ff8be56721ddee63904a485860cd6b105fccac64820",
+      "retained_in": "native-service-output.txt"
+    },
+    {
+      "path": "/tmp/pr373-native-verify-f7535841/stale/service.log",
+      "bytes": 843,
+      "sha256": "36f6b00857c447007199e198a567bfe2b98683fc7b8a86afc04c69c506c8f2d7",
+      "retained_in": "native-service-output.txt"
+    },
+    {
+      "path": "/tmp/pr373-native-verify-f7535841/forged-ownership/service.log",
+      "bytes": 1416,
+      "sha256": "819a6da798873bb698cd54913231f351463e910757eb99a995b2b834c38f13aa",
+      "retained_in": "native-service-output.txt"
+    },
+    {
+      "path": "/tmp/pr373-native-verify-f7535841/destroyed-omitted/service.log",
+      "bytes": 1310,
+      "sha256": "53e013d3cbaee2f7c52800e308befe2ed7c786cf165e636bb6f5e10c41bf437d",
+      "retained_in": "native-service-output.txt"
+    },
+    {
+      "path": "/tmp/pr373-native-verify-f7535841/recreated-omitted/service.log",
+      "bytes": 1335,
+      "sha256": "7b4e9414a9b247788a0e4ff5d92042ec2a763c95513a03d871be22bfe9b34d7f",
+      "retained_in": "native-service-output.txt"
+    },
+    {
+      "path": "/tmp/pr373-native-verify-f7535841/path-a/dump.log",
+      "bytes": 2227,
+      "sha256": "73baafc8cb3b2006e03057ec7a99cf6475ecc732bcc88e5582edba6a3a25bcc9",
+      "retained_in": "canonical-views.txt"
+    },
+    {
+      "path": "/tmp/pr373-native-verify-f7535841/path-a/reference-dump.log",
+      "bytes": 2234,
+      "sha256": "8e854a23c530f3c8f4d3ca246d11b8c089a079942dde218ec43841c7d4f8568a",
+      "retained_in": "canonical-views.txt"
+    },
+    {
+      "path": "/tmp/pr373-native-verify-f7535841/path-a/reference-own-dump.log",
+      "bytes": 2225,
+      "sha256": "6b02b5da53bc26e2e0983a2f5df536a14ca38f4862450609fbb9404c2dc31af0",
+      "retained_in": "canonical-views.txt"
+    },
+    {
+      "path": "/tmp/pr373-native-verify-f7535841/path-b/dump.log",
+      "bytes": 2226,
+      "sha256": "788cd710b697c22c5e31e5cf090cb5c2a1b8711ee2e82bc0dae51f04bbc5e19a",
+      "retained_in": "canonical-views.txt"
+    },
+    {
+      "path": "/tmp/pr373-native-verify-f7535841/path-b/reference-dump.log",
+      "bytes": 2234,
+      "sha256": "8e854a23c530f3c8f4d3ca246d11b8c089a079942dde218ec43841c7d4f8568a",
+      "retained_in": "canonical-views.txt"
+    },
+    {
+      "path": "/tmp/pr373-native-verify-f7535841/path-b/reference-own-dump.log",
+      "bytes": 2225,
+      "sha256": "6b02b5da53bc26e2e0983a2f5df536a14ca38f4862450609fbb9404c2dc31af0",
+      "retained_in": "canonical-views.txt"
+    },
+    {
+      "path": "/tmp/pr373-native-verify-f7535841/forged-ownership/dump.log",
+      "bytes": 2226,
+      "sha256": "788cd710b697c22c5e31e5cf090cb5c2a1b8711ee2e82bc0dae51f04bbc5e19a",
+      "retained_in": "canonical-views.txt"
+    },
+    {
+      "path": "/tmp/pr373-native-verify-f7535841/forged-ownership/reference-dump.log",
+      "bytes": 2234,
+      "sha256": "8e854a23c530f3c8f4d3ca246d11b8c089a079942dde218ec43841c7d4f8568a",
+      "retained_in": "canonical-views.txt"
+    },
+    {
+      "path": "/tmp/pr373-native-verify-f7535841/forged-ownership/reference-own-dump.log",
+      "bytes": 2225,
+      "sha256": "6b02b5da53bc26e2e0983a2f5df536a14ca38f4862450609fbb9404c2dc31af0",
+      "retained_in": "canonical-views.txt"
+    },
+    {
+      "path": "/tmp/pr373-native-helper-red.log",
+      "bytes": 2825,
+      "sha256": "b2c29fcbd2b6488f6b3dd6cf7f30d93815fcab850ab88404246b303a1f072ad8",
+      "retained_in": "helper-sensitivity.txt"
+    },
+    {
+      "path": "/tmp/pr373-native-absence-red.log",
+      "bytes": 1295,
+      "sha256": "4c2adab2660c1321e410424c6e187cf14dce4c776d542c2f34aab941ada7dbb0",
+      "retained_in": "helper-sensitivity.txt"
+    },
+    {
+      "path": "/tmp/pr373-native-absence-fields-red.log",
+      "bytes": 1374,
+      "sha256": "0e80104f33e0a7fc88fe363c290aaa550e826510d9eec5d431f4d63e57f39f5e",
+      "retained_in": "helper-sensitivity.txt"
+    },
+    {
+      "path": "/tmp/pr373-control-restore-red.log",
+      "bytes": 1830,
+      "sha256": "6cfa36078de4726842d6e2a87eeae8334382ff72a605b1f6af1f014bbe52739d",
+      "retained_in": "helper-sensitivity.txt"
+    },
+    {
+      "path": "/tmp/pr373-control-child-red.log",
+      "bytes": 775,
+      "sha256": "82347d15f64d91605fdef273509afaeb64ccec921a29f8b62b1f2462fda37125",
+      "retained_in": "helper-sensitivity.txt"
+    },
+    {
+      "path": "/tmp/pr373-control-semantic-red.log",
+      "bytes": 3997,
+      "sha256": "bd0f3833b3bd47045df44aab3a6ff85f290747e01ff089b41831e733b6b7c149",
+      "retained_in": "helper-sensitivity.txt"
+    },
+    {
+      "path": "/tmp/pr373-control-marker-red.log",
+      "bytes": 834,
+      "sha256": "bbbc0d7d55d0e929df5fee1565c23685e63c0ba23da60f3d7d3334748f0a8441",
+      "retained_in": "helper-sensitivity.txt"
+    },
+    {
+      "path": "/tmp/pr373-final-native-helpers-f7535841.log",
+      "bytes": 99,
+      "sha256": "91ea9d3240107aafa0d3c07ede619efda3d47d41adcceacfd165a832dad288b2",
+      "retained_in": "helper-sensitivity.txt"
+    },
+    {
+      "path": "/tmp/pr373-final-control-helpers-f7535841.log",
+      "bytes": 111,
+      "sha256": "8cc2b0a18607248904d0a98405dc54136f1d0b8ea1ce8e98cb3d62f2dd6d81ae",
+      "retained_in": "helper-sensitivity.txt"
+    },
+    {
+      "path": "/tmp/pr373-final-ci-guard-helpers-f7535841.log",
+      "bytes": 208,
+      "sha256": "fc11df4fd9d9dd2e197d8af826d23f4138ffaed267c09c7302d24f9e984b9ffc",
+      "retained_in": "helper-sensitivity.txt"
+    },
+    {
+      "path": "/tmp/pr373-final-ci-guard-f7535841.log",
+      "bytes": 799,
+      "sha256": "6a234231f71ff68f73a9cbce8c39a5d24950939e51c583252453333bd0f1efe4",
+      "retained_in": "helper-sensitivity.txt"
+    },
+    {
+      "path": "/tmp/pr373-toolchain/final-seven-gates-f7535841.log",
+      "bytes": 1072,
+      "sha256": "8739ce6afc695670e1a76e99eeb4ef2b79f002df07b205045657e5ab5605d605",
+      "retained_in": "ctest-summary.txt"
+    },
+    {
+      "path": "/tmp/pr373-native-image-f7535841/wallet-traffic/dormant-deploy.boc",
+      "bytes": 530,
+      "sha256": "174897dced25c472a1f95c56ce2276841f0b010b8ac4d8e3623ac96b9f971c78",
+      "retained_in": "wallet-traffic/dormant-deploy.boc.base64",
+      "encoding": "base64"
+    },
+    {
+      "path": "/tmp/pr373-native-image-f7535841/wallet-traffic/history-deploy.boc",
+      "bytes": 530,
+      "sha256": "891aa6522a85eb90d85751a55736f86051f283e6eeb112323cc25db3e324ef0b",
+      "retained_in": "wallet-traffic/history-deploy.boc.base64",
+      "encoding": "base64"
+    },
+    {
+      "path": "/tmp/pr373-native-image-f7535841/wallet-traffic/history-fund.boc",
+      "bytes": 413,
+      "sha256": "22dab08314a1ef21e682cbae40c46c93a2846cb5f99afe91084d130f54e943a4",
+      "retained_in": "wallet-traffic/history-fund.boc.base64",
+      "encoding": "base64"
+    },
+    {
+      "path": "/tmp/pr373-native-image-f7535841/wallet-traffic/history-fund-again.boc",
+      "bytes": 413,
+      "sha256": "a79262b6002c0fbab6e3f9fdb07b398b7e95ec01a353844557496da43c545cac",
+      "retained_in": "wallet-traffic/history-fund-again.boc.base64",
+      "encoding": "base64"
+    },
+    {
+      "path": "/tmp/pr373-native-image-f7535841/wallet-traffic/destroyed-deploy.boc",
+      "bytes": 530,
+      "sha256": "467db0e6346bcf4cf764629a72f75d9c84d0b6eec3740391f49a547988e028cc",
+      "retained_in": "wallet-traffic/destroyed-deploy.boc.base64",
+      "encoding": "base64"
+    },
+    {
+      "path": "/tmp/pr373-native-image-f7535841/wallet-traffic/destroyed-fund.boc",
+      "bytes": 413,
+      "sha256": "ef6004727beba727921a79dd8e93cf920b17a65a896f69136cdc2075aaa452d0",
+      "retained_in": "wallet-traffic/destroyed-fund.boc.base64",
+      "encoding": "base64"
+    },
+    {
+      "path": "/tmp/pr373-native-image-f7535841/wallet-traffic/destroyed-destroy.boc",
+      "bytes": 613,
+      "sha256": "ab0c2004eb22996faca1ff67c74ae0900d7da02382e9dbebc2d5ee82223cfe03",
+      "retained_in": "wallet-traffic/destroyed-destroy.boc.base64",
+      "encoding": "base64"
+    },
+    {
+      "path": "/tmp/pr373-native-image-f7535841/wallet-traffic/recreated-deploy.boc",
+      "bytes": 530,
+      "sha256": "191f9b988be79c9882d711edf6589493b3fe43fef4841bb0c79d7f1876cdeb93",
+      "retained_in": "wallet-traffic/recreated-deploy.boc.base64",
+      "encoding": "base64"
+    },
+    {
+      "path": "/tmp/pr373-native-image-f7535841/wallet-traffic/recreated-fund.boc",
+      "bytes": 413,
+      "sha256": "20b6af99004d43597627f9f2778a2930ba5c533df544b3fd972d65acfb3e13ea",
+      "retained_in": "wallet-traffic/recreated-fund.boc.base64",
+      "encoding": "base64"
+    },
+    {
+      "path": "/tmp/pr373-native-image-f7535841/wallet-traffic/recreated-destroy.boc",
+      "bytes": 613,
+      "sha256": "5b1b89dff982102384936eda38486f259ffa5b3dac040d456b58d34ed886b604",
+      "retained_in": "wallet-traffic/recreated-destroy.boc.base64",
+      "encoding": "base64"
+    },
+    {
+      "path": "/tmp/pr373-native-image-f7535841/wallet-traffic/recreated-redeploy.boc",
+      "bytes": 530,
+      "sha256": "8b554901455c970f42f33429d91052539214e3c3d00bec33557729eaa1db9a7d",
+      "retained_in": "wallet-traffic/recreated-redeploy.boc.base64",
+      "encoding": "base64"
+    },
+    {
+      "path": "/tmp/pr373-native-image-f7535841/wallet-traffic/recreated-fund-again.boc",
+      "bytes": 413,
+      "sha256": "ad6eabdd9494fcc21939a4b48e656d903f37e4458e6dc269eb0a43cc32c4eb42",
+      "retained_in": "wallet-traffic/recreated-fund-again.boc.base64",
+      "encoding": "base64"
+    },
+    {
+      "path": "/tmp/pr373-native-image-f7535841.log",
+      "bytes": 8908055,
+      "sha256": "9be16ed72f6438adf5448e8b0de50de3f8f40cd1c68d3274423ac10bcb12201c",
+      "retained_in": "native-completion.txt",
+      "retention_scope": "completion marker only; bulk producer/transcript output is temporary"
+    },
+    {
+      "path": "/tmp/pr373-native-verify-f7535841.log",
+      "bytes": 28468,
+      "sha256": "f3a31125f671a9f952c0d105f9c15129af5dd85a5398460beb825bfa4178d3b2",
+      "retained_in": "native-completion.txt",
+      "retention_scope": "completion marker only; bulk producer/transcript output is temporary"
+    }
+  ],
+  "evidence_publication_normalization": [
+    {
+      "path": "compiled-control-excerpts.txt",
+      "before_sha256": "fc3e71dda015527ec2f417c54049972f9d86dddebbddb98168e51f78ae13f392",
+      "after_sha256": "85e955383c301fc0816a0ed2d6048f5f34e69169d0c350ed674d4ec7adeb9b81",
+      "change": "Trailing whitespace and surplus EOF blank lines normalized; helper header discloses this normalization."
+    },
+    {
+      "path": "helper-sensitivity.txt",
+      "before_sha256": "8229e34e5974e374187e9ec9e3d5f748b10efc319594cbd6b12220fb2d5b3813",
+      "after_sha256": "2f5b461c24fa4454f6aefc58bf24ad9224de22155f6be7020c8c0494bb5861b7",
+      "change": "Trailing whitespace and surplus EOF blank lines normalized; helper header discloses this normalization."
+    },
+    {
+      "path": "independent-review.md",
+      "before_sha256": "1dcb58aac3bcb505edee204a4c9dc172834b600b412202539cb32e368131443f",
+      "after_sha256": "b000eda65ee8383f97aa288cbe3ed782059759b76d48ed01387db5d14a32cc0b",
+      "change": "Trailing whitespace and surplus EOF blank lines normalized; helper header discloses this normalization."
+    }
+  ]
+}

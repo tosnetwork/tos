@@ -252,6 +252,15 @@ td::Result<AccountEventId> parse_event_id(td::Slice value) {
 
 }  // namespace
 
+// Whether history answers are not vouched for by the node's chain: in a
+// partly verified index none is. An account the head state could not vouch
+// for, or one absent from it and omitted from the snapshot, may gain new
+// history later, so no per-account record can clear the flag before the
+// window's blocks have been checked.
+static bool history_unverified(const JsonRpcServer::Options &options) {
+  return options.index_partial && options.index_partial();
+}
+
 // Token lists come from candidates verified as blocks apply; some may still
 // be waiting, and some may have been given up. Say so alongside the list, so
 // an empty or short answer is not read as the whole truth.
@@ -262,6 +271,11 @@ static td::Result<std::string> token_index_state_json(tos_wallet_index::WalletIn
   if (options.index_ready && !options.index_ready())
     stats.unfinished_block = true;
   auto result = tos_wallet_index::format_token_index_state(stats);
+  if (options.index_partial && options.index_partial()) {
+    // Ownership is not yet derived from the verified head state.
+    result.pop_back();
+    result += ",\"ownership_complete\":false}";
+  }
   if (options.index_progress) {
     result.pop_back();
     result += ",\"replay\":" + options.index_progress() + "}";
@@ -365,6 +379,25 @@ void JsonRpcServer::handle_getAccountEvents(td::JsonObject &params, std::string 
     promise.set_value(make_json_rpc_error(code, std::move(message), req_id));
     return;
   }
+  // The window, the account's served range and the rows all come from one
+  // view of the index: a base committed meanwhile cannot mix in.
+  auto view_r = tos_wallet_index::WalletIndexSnapshot::of(*db);
+  if (view_r.is_error()) {
+    promise.set_value(make_json_rpc_error(-32603, view_r.error().message().str(), req_id));
+    return;
+  }
+  auto view = view_r.move_as_ok();
+  tos_wallet_index::HistoryFilter filter;
+  if (is_indexed_workchain(addr)) {
+    auto window = view.history_window();
+    auto served = window.is_ok() ? view.history_filter(window.ok(), addr.addr)
+                                 : td::Result<tos_wallet_index::HistoryFilter>(window.move_as_error());
+    if (served.is_error()) {
+      promise.set_value(make_json_rpc_error(-32603, served.error().message().str(), req_id));
+      return;
+    }
+    filter = served.move_as_ok();
+  }
   td::StringBuilder sb;
   sb << "{\"@type\":\"wallet.accountEvents\",";
   if (opts_.index_progress) {
@@ -375,9 +408,16 @@ void JsonRpcServer::handle_getAccountEvents(td::JsonObject &params, std::string 
   size_t seen = 0;
   uint64_t last_lt = 0;
   bool budget_hit = false;
+  bool history_end = false;
   if (is_indexed_workchain(addr)) {
     // Read one extra entry to determine whether the continuation cursor exists.
     auto append = [&](uint64_t lt, td::Ref<vm::Cell> cell) -> td::Status {
+      if (!filter.serves(lt)) {
+        // Rows come newest first: this one and every later one are outside
+        // the window or past the per-account retention, never served.
+        history_end = true;
+        return td::Status::Error("wc0-index: end of the served history");
+      }
       ++seen;
       if (seen > limit) {
         // One row past the page: its existence only signals a continuation
@@ -408,9 +448,9 @@ void JsonRpcServer::handle_getAccountEvents(td::JsonObject &params, std::string 
       sb << row;
       return td::Status::OK();
     };
-    auto status = has_before_lt ? db->for_each_event_before(addr.addr, before_lt, limit + 1, append)
-                                : db->for_each_event(addr.addr, limit + 1, append);
-    if (status.is_error() && !budget_hit) {
+    auto status = has_before_lt ? view.for_each_event_before(addr.addr, before_lt, limit + 1, append)
+                                : view.for_each_event(addr.addr, limit + 1, append);
+    if (status.is_error() && !budget_hit && !history_end) {
       promise.set_value(make_json_rpc_error(-32603, status.message().str(), req_id));
       return;
     }
@@ -420,6 +460,9 @@ void JsonRpcServer::handle_getAccountEvents(td::JsonObject &params, std::string 
     sb << "\"" << last_lt << "\"";
   } else {
     sb << "null";
+  }
+  if (history_unverified(opts_)) {
+    sb << ",\"history_verified\":false";
   }
   sb << "}";
   promise.set_value(make_json_ok(sb.as_cslice().str(), req_id));
@@ -451,12 +494,41 @@ void JsonRpcServer::handle_getAccountEvent(td::JsonObject &params, std::string r
     return;
   }
   auto id = parsed_id.move_as_ok();
-  auto event_r = db->get_event(addr.addr, id.lt);
-  if (event_r.is_error() || event_r.ok()->get_hash(0).as_slice() != id.hash.as_slice()) {
+  auto view_r = tos_wallet_index::WalletIndexSnapshot::of(*db);
+  if (view_r.is_error()) {
+    promise.set_value(make_json_rpc_error(-32603, view_r.error().message().str(), req_id));
+    return;
+  }
+  auto view = view_r.move_as_ok();
+  auto window = view.history_window();
+  auto filter = window.is_ok() ? view.history_filter(window.ok(), addr.addr)
+                               : td::Result<tos_wallet_index::HistoryFilter>(window.move_as_error());
+  if (filter.is_error()) {
+    promise.set_value(make_json_rpc_error(-32603, filter.error().message().str(), req_id));
+    return;
+  }
+  auto event_r = view.get_event(addr.addr, id.lt);
+  // A row outside the window or past the per-account retention is not served.
+  if (event_r.is_error() || event_r.ok()->get_hash(0).as_slice() != id.hash.as_slice() || !filter.ok().serves(id.lt)) {
+    if (history_unverified(opts_)) {
+      // Absent from a history that is not verified is not proof of absence.
+      promise.set_value(make_raw_json_response(
+          json_rpc::error_body(req_id, json_rpc::error_kind_for_code(-32004),
+                               "Account event not found; this index's history is not yet verified against the "
+                               "node's chain",
+                               "\"history_verified\":false"),
+          opts_.cors_origin));
+      return;
+    }
     promise.set_value(make_json_rpc_error(-32004, "Account event not found", req_id));
     return;
   }
-  promise.set_value(make_json_ok(format_account_event(id.lt, event_r.move_as_ok()), req_id));
+  auto event = format_account_event(id.lt, event_r.move_as_ok());
+  if (history_unverified(opts_) && !event.empty() && event.back() == '}') {
+    event.pop_back();
+    event += ",\"history_verified\":false}";
+  }
+  promise.set_value(make_json_ok(event, req_id));
 }
 
 void JsonRpcServer::handle_getAccountNfts(td::JsonObject &params, std::string req_id, td::Promise<HttpReturn> promise) {
