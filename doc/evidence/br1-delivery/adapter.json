@@ -1,0 +1,150 @@
+{
+  "schema": "tos.br1.engineering-evidence.v1",
+  "base_commit": "771a0bfd411407dec7480967d8c548f449596a51",
+  "base_tree": "a904ff08eeb05cb48b69237406edf0974aae4157",
+  "execution": "local Linux native host, not GitHub Actions",
+  "host": {
+    "os": "Linux",
+    "kernel": "6.18.57",
+    "arch": "x86_64",
+    "python": "3.13.5",
+    "ruff": "0.15.2",
+    "rust": "1.97.1"
+  },
+  "production_accepted": false,
+  "native_funded_network_executed": false,
+  "independent_review": "not performed in this iteration; required before merge",
+  "third_party_review": "open",
+  "main_merged": false,
+  "foundation_pr_merged": false,
+  "activation_changed": false,
+  "lane": "A1",
+  "source_sha256": {
+    "tools/bonded-relayer/relay_wire.py": "771f83b25d0ca694b5e65c3c001008c0d4393f916385c939f30ccc2b66772c87",
+    "test/bonded-relayer/delivery_controls.py": "573513fddb9ce4cc20711121185e632e74161959333f9020b4b111c5adcc3f91",
+    "tools/bonded-relayer/native_process.py": "47cf008d9925b3ab1997046f497e18cb6934f95c78affef3654813e6d6012c1b",
+    "tools/bonded-relayer/native_adapter.py": "a3d77733a4d39cc626df6346fe35654e2409c864ce1bf4249a430b04392d0dde",
+    "tools/shielded-pool-wallet/src/lib.rs": "531c69e9685477cffcf2520e486133a6d85f62f30e255d8e20658c73b1086d1e",
+    "tools/shielded-pool-wallet/src/relayer_quote.rs": "c0d944d961a28cf99e7a7da4efe80dc6035c84b2bdc1bc8b725adb3cb07a2184",
+    "tools/shielded-pool-wallet/tests/relayer_quote.rs": "3614634263e5d8eaae0291e421598c5940bfd21313da55c2e3b81a232fb9b52f",
+    "test/bonded-relayer/test_native_boundary.py": "4a3addfc2c4aaef25d1c0425fb110e19e8f3fc2dc999bbf064de2ec8b0af5dd5",
+    "doc/br1-native-boundary.md": "d0380fd971507ad566f56fe3ec2ac8f692419b0d36c9b52eec055a116592bd1f",
+    ".github/workflows/br1-adapter.yml": "329082cc4bdab0bf4011c693427f906dbd701a58df84b7740a3ba8c94552d226",
+    "tools/bonded-relayer/relay_core.py": "834d82b3529e1709700c7dc42476628ab01ecde2d5da3059768721155b2ab72b"
+  },
+  "checks": [
+    {
+      "command": "python3 -m unittest discover -s test/bonded-relayer -p test_native_boundary.py -v",
+      "tests": 29,
+      "exit": 0,
+      "scope": "real bounded native process transport; protocol-only chain/signing fixture"
+    },
+    {
+      "command": "cargo test --locked --manifest-path tools/shielded-pool-wallet/Cargo.toml",
+      "tests": 27,
+      "exit": 0,
+      "scope": "12 existing wallet, 10 private-fee and 5 new real ML-DSA quote tests"
+    },
+    {
+      "command": "ruff check/format --check (see br1-adapter.yml), rustfmt --check (same workflow)",
+      "exit": 0
+    }
+  ],
+  "adapter_controls": {
+    "schema": "tos.br1.delivery.controls.v1",
+    "lane": "adapter",
+    "baseline_tests": 29,
+    "control_runner_sha256": "573513fddb9ce4cc20711121185e632e74161959333f9020b4b111c5adcc3f91",
+    "source_sha256": {
+      "tools/bonded-relayer/native_adapter.py": "a3d77733a4d39cc626df6346fe35654e2409c864ce1bf4249a430b04392d0dde",
+      "tools/bonded-relayer/native_process.py": "47cf008d9925b3ab1997046f497e18cb6934f95c78affef3654813e6d6012c1b",
+      "tools/bonded-relayer/relay_core.py": "834d82b3529e1709700c7dc42476628ab01ecde2d5da3059768721155b2ab72b",
+      "tools/bonded-relayer/relay_wire.py": "771f83b25d0ca694b5e65c3c001008c0d4393f916385c939f30ccc2b66772c87",
+      "test/bonded-relayer/test_native_boundary.py": "4a3addfc2c4aaef25d1c0425fb110e19e8f3fc2dc999bbf064de2ec8b0af5dd5"
+    },
+    "baseline_passed": true,
+    "restored_passed": true,
+    "sources_unchanged": true,
+    "controls": [
+      {
+        "path": "tools/bonded-relayer/native_process.py",
+        "guard": "reply[\"request_sha256\"] != hashlib.sha256(wire).hexdigest()",
+        "test": "test_native_boundary.ProtocolTests.test_unrelated_and_schema_drift_replies_refuse",
+        "mutant_exit": 1,
+        "intended_assertion_failed": true,
+        "failure_excerpt": "FAIL: test_unrelated_and_schema_drift_replies_refuse (test_native_boundary.ProtocolTests.test_unrelated_and_schema_drift_replies_refuse) (key='request_sha256')\nAssertionError: Unavailable not raised"
+      },
+      {
+        "path": "tools/bonded-relayer/native_adapter.py",
+        "guard": "hashlib.sha256(key).hexdigest() != self.release.worker_key_hash",
+        "test": "test_native_boundary.AdapterTests.test_wrong_worker_quote_refuses_before_native_verification",
+        "mutant_exit": 1,
+        "intended_assertion_failed": true,
+        "failure_excerpt": "FAIL: test_wrong_worker_quote_refuses_before_native_verification (test_native_boundary.AdapterTests.test_wrong_worker_quote_refuses_before_native_verification)\nAssertionError: Refused not raised"
+      },
+      {
+        "path": "tools/bonded-relayer/native_adapter.py",
+        "guard": "self._permits.pop(key, None)",
+        "test": "test_native_boundary.AdapterTests.test_exact_permit_is_consumed_even_after_ambiguous_write",
+        "mutant_exit": 1,
+        "intended_assertion_failed": true,
+        "failure_excerpt": "FAIL: test_exact_permit_is_consumed_even_after_ambiguous_write (test_native_boundary.AdapterTests.test_exact_permit_is_consumed_even_after_ambiguous_write)\nAssertionError: \"no current\" does not match \"fixture ambiguous write\""
+      },
+      {
+        "path": "tools/bonded-relayer/native_adapter.py",
+        "guard": "\"amount\": str(terms[\"amount\"])",
+        "test": "test_native_boundary.AdapterTests.test_fee_credit_substitutions_refuse",
+        "mutant_exit": 1,
+        "intended_assertion_failed": true,
+        "failure_excerpt": "FAIL: test_fee_credit_substitutions_refuse (test_native_boundary.AdapterTests.test_fee_credit_substitutions_refuse) (field='amount')\nAssertionError: Unavailable not raised"
+      }
+    ],
+    "production_accepted": false
+  },
+  "quote_controls": {
+    "schema": "tos.br1.delivery.controls.v1",
+    "lane": "rust",
+    "baseline_tests": 5,
+    "control_runner_sha256": "573513fddb9ce4cc20711121185e632e74161959333f9020b4b111c5adcc3f91",
+    "source_sha256": {
+      "tools/shielded-pool-wallet/src/relayer_quote.rs": "c0d944d961a28cf99e7a7da4efe80dc6035c84b2bdc1bc8b725adb3cb07a2184",
+      "tools/shielded-pool-wallet/tests/relayer_quote.rs": "3614634263e5d8eaae0291e421598c5940bfd21313da55c2e3b81a232fb9b52f"
+    },
+    "baseline_passed": true,
+    "restored_passed": true,
+    "sources_unchanged": true,
+    "controls": [
+      {
+        "path": "tools/shielded-pool-wallet/src/relayer_quote.rs",
+        "guard": "if !key.verify(terms, signature, CONTEXT)",
+        "test": "wrong_worker_and_modified_signature_refuse",
+        "mutant_exit": 101,
+        "intended_assertion_failed": true,
+        "failure_excerpt": "test wrong_worker_and_modified_signature_refuse ... FAILED\nassertion `left == right` failed\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.09s"
+      },
+      {
+        "path": "tools/shielded-pool-wallet/src/relayer_quote.rs",
+        "guard": "terms.is_empty() || terms.len() > MAX_TERMS_BYTES",
+        "test": "byte_bound_is_checked_on_both_sides",
+        "mutant_exit": 101,
+        "intended_assertion_failed": true,
+        "failure_excerpt": "test byte_bound_is_checked_on_both_sides ... FAILED\nassertion `left == right` failed\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.06s"
+      },
+      {
+        "path": "tools/shielded-pool-wallet/src/relayer_quote.rs",
+        "guard": "b\"TOS-BR1-QUOTE-v1\"",
+        "test": "real_worker_signature_authenticates_exact_terms",
+        "mutant_exit": 101,
+        "intended_assertion_failed": true,
+        "failure_excerpt": "test real_worker_signature_authenticates_exact_terms ... FAILED\nassertion failed: public.verify(TERMS, &signature, b\"TOS-BR1-QUOTE-v1\")\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.05s"
+      }
+    ],
+    "production_accepted": false
+  },
+  "remaining": [
+    "Native chain/custody/finality provider implementing the private protocol",
+    "Authenticated state acquisition, complete Shield simulation and durable funding-wallet sequence leases",
+    "Funded internal messages, actual acceptance encoding and destination finality/fee import",
+    "Approved code/policy and external review"
+  ]
+}
