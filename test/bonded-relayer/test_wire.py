@@ -1,4 +1,5 @@
 """Additional native wire-format guards; uses the real shared TVM fixture."""
+
 import unittest
 
 import test_native as native_suite
