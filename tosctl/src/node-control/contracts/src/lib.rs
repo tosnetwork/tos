@@ -44,6 +44,7 @@ pub mod proof_attestation;
 pub mod proven_getters;
 pub mod proven_transactions;
 pub mod provider;
+pub mod relayer_bond;
 pub mod service_actor;
 pub mod smart_contract;
 pub mod stack_utils;
@@ -112,7 +113,7 @@ pub use prediction_market::{
     PredictionMarketAccountV1, PredictionMarketAccountingV1, PredictionMarketContractV1,
     PredictionMarketInitV1, PredictionMarketPhaseV1, PredictionMarketStateV1,
     PredictionMarketStatusV1, PredictionOraclePolicyV1, PredictionOrderActionV1,
-    PredictionOrderOutcomeV1, PredictionOrderStateV1, PredictionOrderV1,
+    PredictionOrderStateV1, PredictionOrderV1,
     PredictionResolutionContextsV1, PredictionResolutionOutcomeV1,
 };
 pub use proof_attestation::{ProofAttestationContract, ProofAttestationData, ProofAttestationInit};

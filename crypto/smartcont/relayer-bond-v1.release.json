@@ -1,0 +1,14 @@
+{
+  "activation_approved": false,
+  "boc_bytes": 1970,
+  "boc_sha256": "d5dd2b6ee4e3fa49a6c70a6739b7046e4168b51f493aeb4acc2e86798ecccd34",
+  "code_hash": "785ed15deca07a3354e1474c652562e78bd89957a79cae9bb9b45874f6d298ae",
+  "schema": "tos.relayer-bond.code.v1",
+  "source_sha256": {
+    "crypto/fift/lib/PQ.fif": "5c3abb22919dc11600d9b084f647a216c4453e6deaf937d8b10961aca4f64f39",
+    "crypto/smartcont/pq-bytes.fc": "4ba7d80363b073325406dea3f64a5b0626a4f58b9af99508551131777f10ecef",
+    "crypto/smartcont/pq.fc": "a0c96e263fcebd66f68bdd71a6cd5266678b588d2b851568729464980640f12d",
+    "crypto/smartcont/relayer-bond-code.fc": "046819a2edeedc5691c2d5c68ec27ee499ad889d4dc74238fdd51037d0ab2b25",
+    "crypto/smartcont/stdlib.fc": "77d121550d99c533cffe10d5f479c04777e6e7c34b712421473cfe6a24615717"
+  }
+}

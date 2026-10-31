@@ -859,6 +859,91 @@ pub async fn get_registry(
     Ok(axum::Json(RegistryResponse { ok: true, result }))
 }
 
+/// Untrusted indexed candidates. Amounts are decimal strings to avoid lossy
+/// JSON numeric conversions. No record asserts current collateral eligibility.
+#[derive(Clone, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+pub struct RelayerDto {
+    pub address: String,
+    pub owner: String,
+    pub worker: String,
+    pub endpoint: String,
+    pub status: String,
+    pub principal: String,
+    pub observed_backing: String,
+    pub code_hash: String,
+    pub config_hash: String,
+    pub policy_hash: String,
+    pub worker_key_hash: String,
+    pub global_id: i32,
+    pub genesis_root: String,
+    pub genesis_file: String,
+    pub metadata_hash: String,
+    pub exit_after: u32,
+    pub observed_at: u64,
+    pub requires_live_verification: bool,
+}
+
+#[derive(serde::Serialize, utoipa::ToSchema)]
+pub struct RelayerListResponse {
+    pub ok: bool,
+    pub total: usize,
+    pub offset: usize,
+    pub limit: usize,
+    pub result: Vec<RelayerDto>,
+}
+
+#[utoipa::path(get, path = "/relayers", params(IndexedListQuery), responses(
+    (status = 200, body = RelayerListResponse), (status = 400, body = ApiErrorResponse),
+    (status = 503, body = ApiErrorResponse)
+))]
+pub async fn list_relayers(
+    State(state): State<AppState>,
+    Query(query): Query<IndexedListQuery>,
+) -> Result<axum::Json<RelayerListResponse>, AppError> {
+    validate_indexed_query(&query)?;
+    let (offset, limit) = indexed_page(&query)?;
+    let limit = limit.min(100);
+    let (rows, total) = state
+        .indexer()?
+        .list("relayer_bond", &indexed_list_filters(&query), offset, limit)
+        .map_err(|e| AppError::internal(format!("{e:#}")))?;
+    let result = rows
+        .into_iter()
+        .filter_map(|r| {
+            indexed_dto::<RelayerDto>(&r.dto_json, &r.address, false).map(|mut dto| {
+                dto.requires_live_verification = true;
+                dto.observed_at = r.updated_at;
+                dto
+            })
+        })
+        .collect();
+    Ok(axum::Json(RelayerListResponse { ok: true, total, offset, limit, result }))
+}
+
+#[utoipa::path(get, path = "/relayers/{address}", params(("address" = String, Path, description = "Canonical bond account")), responses(
+    (status = 200, body = RelayerDto), (status = 404, body = ApiErrorResponse),
+    (status = 503, body = ApiErrorResponse)
+))]
+pub async fn get_relayer(
+    State(state): State<AppState>,
+    Path(raw): Path<String>,
+) -> Result<axum::Json<RelayerDto>, AppError> {
+    let address = parse_address(&raw)?;
+    let rec = state
+        .indexer()?
+        .get(&address.to_string())
+        .map_err(|e| AppError::internal(format!("{e:#}")))?
+        .filter(|r| r.kind == "relayer_bond")
+        .ok_or_else(|| AppError::not_found("relayer bond not indexed"))?;
+    let mut dto =
+        indexed_dto::<RelayerDto>(&rec.dto_json, &rec.address, false).ok_or_else(|| {
+            AppError::invalid_contract_state("relayer candidate could not be decoded")
+        })?;
+    dto.requires_live_verification = true;
+    dto.observed_at = rec.updated_at;
+    Ok(axum::Json(dto))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1595,5 +1680,111 @@ mod tests {
             routes(false, state).oneshot(get("/explorer/staking".to_owned())).await.unwrap();
         assert_eq!(response.status(), 503);
         assert_eq!(json_body(response).await["error"]["kind"], "indexer_disabled");
+    }
+
+    async fn relayer_test_state() -> AppState {
+        let mut cfg = (*test_app_config()).clone();
+        cfg.http.auth = Some(Default::default());
+        let provider: Arc<dyn ChainProvider> = Arc::new(FakeChainProvider(FakeBehavior::Hang));
+        let mut state = test_state_with_provider(Arc::new(cfg), provider).await;
+        state.unauthenticated_serving_allowed = false;
+        state
+    }
+
+    #[tokio::test]
+    async fn relayer_discovery_is_public_bounded_and_never_an_eligibility_receipt() {
+        let state = relayer_test_state().await;
+        let address = filler_address().to_string();
+        let dto = RelayerDto {
+            address: address.clone(),
+            owner: address.clone(),
+            worker: address.clone(),
+            endpoint: "https://relay.example".into(),
+            status: "active".into(),
+            principal: "1329227995784915872903807060280344575".into(),
+            observed_backing: "10000000000".into(),
+            code_hash: "11".repeat(32),
+            config_hash: "22".repeat(32),
+            policy_hash: "33".repeat(32),
+            worker_key_hash: "44".repeat(32),
+            global_id: 42,
+            genesis_root: "55".repeat(32),
+            genesis_file: "66".repeat(32),
+            metadata_hash: "00".repeat(32),
+            exit_after: 0,
+            observed_at: u64::MAX,
+            requires_live_verification: false,
+        };
+        state
+            .indexer_store
+            .as_ref()
+            .unwrap()
+            .upsert(&crate::indexer::IndexedRecord {
+                address: address.clone(),
+                kind: "relayer_bond".into(),
+                creator: None,
+                counterparty: None,
+                status: Some("active".into()),
+                deadline: None,
+                last_seqno: 1,
+                updated_at: 123,
+                dto_json: serde_json::to_string(&dto).unwrap(),
+            })
+            .unwrap();
+        let app = routes(false, state);
+        let response = app.clone().oneshot(get("/relayers?limit=1000")).await.unwrap();
+        assert_eq!(response.status(), 200, "public discovery must not require operator JWT");
+        let json = json_body(response).await;
+        assert_eq!(json["limit"], 100);
+        assert_eq!(json["total"], 1);
+        assert_eq!(json["result"][0]["requires_live_verification"], true);
+        assert_eq!(json["result"][0]["observed_at"], 123);
+        assert_eq!(json["result"][0]["principal"], dto.principal);
+        let response = app.clone().oneshot(get(format!("/relayers/{address}"))).await.unwrap();
+        assert_eq!(response.status(), 200);
+        assert_eq!(json_body(response).await["requires_live_verification"], true);
+        let response = app.oneshot(get("/relayers?offset=100001")).await.unwrap();
+        assert_eq!(response.status(), 400);
+    }
+
+    #[tokio::test]
+    async fn relayer_discovery_disabled_and_malformed_fail_without_chain_access() {
+        let mut state = relayer_test_state().await;
+        state.indexer_store = None;
+        let app = routes(false, state);
+        let response = app.clone().oneshot(get("/relayers")).await.unwrap();
+        assert_eq!(response.status(), 503);
+        assert_eq!(json_body(response).await["error"]["kind"], "indexer_disabled");
+        let response = app.oneshot(get("/relayers/not-an-address")).await.unwrap();
+        assert_eq!(response.status(), 400);
+    }
+
+    #[tokio::test]
+    async fn relayer_directory_does_not_expose_non_bond_records() {
+        let state = relayer_test_state().await;
+        let address = filler_address().to_string();
+        state
+            .indexer_store
+            .as_ref()
+            .unwrap()
+            .upsert(&crate::indexer::IndexedRecord {
+                address: address.clone(),
+                kind: "capability_registry".into(),
+                creator: None,
+                counterparty: None,
+                status: None,
+                deadline: None,
+                last_seqno: 1,
+                updated_at: 1,
+                dto_json: "{}".into(),
+            })
+            .unwrap();
+        let app = routes(false, state);
+        assert_eq!(
+            app.clone().oneshot(get(format!("/relayers/{address}"))).await.unwrap().status(),
+            404
+        );
+        let json = json_body(app.oneshot(get("/relayers")).await.unwrap()).await;
+        assert_eq!(json["total"], 0);
     }
 }

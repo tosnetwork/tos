@@ -31,7 +31,9 @@ FR = 524358751751261904794477405081859658376905525005276378226036586999385811845
 HASH = re.compile(r"[0-9a-f]{64}\Z")
 ADDRESS = re.compile(r"0:[0-9a-f]{64}\Z")
 LIVE = ("reserved", "prepared", "unknown", "broadcast")
-TERMINAL = ("executed", "rejected")
+TERMINAL = ("executed", "rejected", "cancelled")
+EVIDENCE_WINDOW = 86400
+MAX_QUOTE = 32 * 1024
 
 
 class Refused(ValueError):
@@ -48,6 +50,14 @@ def integer(value: int, low: int, high: int) -> int:
     if type(value) is not int or not low <= value <= high:
         raise Refused("integer out of range")
     return value
+
+
+def checked_add(a: int, b: int, maximum: int) -> int:
+    integer(a, 0, maximum)
+    integer(b, 0, maximum)
+    if a > maximum - b:
+        raise Refused("bounded addition overflow")
+    return a + b
 
 
 def unique_object(items):
@@ -194,11 +204,16 @@ class Evidence:
     outcome: str
     finalized_block: str
     proof_digest: str
+    fee_credit: dict | None = None
 
     def __post_init__(self):
         for name in ("release", "request", "message_hash", "finalized_block", "proof_digest"):
             digest(getattr(self, name))
-        if self.outcome not in TERMINAL:
+        if self.fee_credit is not None and (
+            type(self.fee_credit) is not dict or len(encode(self.fee_credit)) > 8192
+        ):
+            raise Refused("fee credit shape/size")
+        if self.outcome not in ("executed", "rejected"):
             raise Refused("not terminal evidence")
 
 
@@ -244,12 +259,23 @@ class Journal:
         *,
         max_pending: int = 64,
         max_reserved: int = 100 * 10**9,
+        max_history: int = 4096,
+        max_quotes: int = 1024,
+        max_disk_bytes: int = 512 * 1024 * 1024,
+        require_quotes: bool = False,
     ):
+        self.max_history = integer(max_history, 1, 100000)
+        self.max_quotes = integer(max_quotes, 1, 10000)
+        self.max_disk_bytes = integer(max_disk_bytes, 16 * 1024 * 1024, 4 * 1024**3)
+        if type(require_quotes) is not bool:
+            raise Refused("invalid quote policy")
+        self.require_quotes = require_quotes
         self.max_pending = integer(max_pending, 1, 10000)
         self.max_reserved = integer(max_reserved, 1, (1 << 63) - 1)
         self.release = release
         self.lock = threading.RLock()
-        path = Path(path)
+        path = Path(path).absolute()
+        self.path = path
         path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         if path.parent.stat().st_mode & 0o077:
             raise Refused("journal directory must be private (0700)")
@@ -260,17 +286,33 @@ class Journal:
             st = path.lstat()
             if not stat.S_ISREG(st.st_mode) or st.st_nlink != 1 or st.st_mode & 0o077:
                 raise Refused("journal must be a private, nonlinked regular file")
+        # Refuse linked sidecars before SQLite is allowed to open them.
+        for suffix in ("-wal", "-shm", "-journal"):
+            sidecar = Path(str(path) + suffix)
+            if sidecar.exists() or sidecar.is_symlink():
+                st = sidecar.lstat()
+                if not stat.S_ISREG(st.st_mode) or st.st_nlink != 1 or st.st_mode & 0o077:
+                    raise Refused("unsafe SQLite sidecar")
         self.db = sqlite3.connect(path, isolation_level=None, check_same_thread=False, timeout=10)
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.execute("PRAGMA synchronous=FULL")
         self.db.execute("PRAGMA foreign_keys=ON")
+        self.db.execute("PRAGMA wal_autocheckpoint=128")
+        self.db.execute("PRAGMA journal_size_limit=1048576")
+        page_size = self.db.execute("PRAGMA page_size").fetchone()[0]
+        self.db.execute(f"PRAGMA max_page_count={self.max_disk_bytes // 2 // page_size}")
         self.db.executescript("""
             CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS jobs (
                 id TEXT PRIMARY KEY, request BLOB NOT NULL, slot INTEGER UNIQUE NOT NULL,
                 issued INTEGER NOT NULL, funding INTEGER NOT NULL, state TEXT NOT NULL,
                 message BLOB, message_hash TEXT, acceptance BLOB, evidence BLOB);
+            CREATE TABLE IF NOT EXISTS quotes (
+                id TEXT PRIMARY KEY, note_index INTEGER UNIQUE NOT NULL,
+                created INTEGER NOT NULL, expires INTEGER NOT NULL,
+                terms BLOB, signed BLOB, state TEXT NOT NULL,
+                job TEXT UNIQUE REFERENCES jobs(id));
             CREATE TABLE IF NOT EXISTS input_locks (
                 nullifier TEXT PRIMARY KEY, job TEXT NOT NULL REFERENCES jobs(id));
         """)
@@ -281,8 +323,11 @@ class Journal:
                     "INSERT OR IGNORE INTO metadata VALUES ('release',?)", (release.scope,)
                 )
                 self.db.execute("INSERT OR IGNORE INTO metadata VALUES ('next_slot','1')")
+                self.db.execute("INSERT OR IGNORE INTO metadata VALUES ('next_note_index','0')")
+                # Additive schema migration: no counters, receipts or locks are reset.
+                self.db.execute("UPDATE metadata SET value='2' WHERE key='schema' AND value='1'")
                 meta = dict(self.db.execute("SELECT key,value FROM metadata"))
-                if meta["schema"] != "1" or meta["release"] != release.scope:
+                if meta["schema"] != "2" or meta["release"] != release.scope:
                     raise Refused("journal belongs to another schema/network/worker/release")
         except BaseException:
             self.db.close()
@@ -296,7 +341,8 @@ class Journal:
                 yield
                 self.db.execute("COMMIT")
             except BaseException:
-                self.db.execute("ROLLBACK")
+                if self.db.in_transaction:
+                    self.db.execute("ROLLBACK")
                 raise
 
     def close(self):
@@ -317,13 +363,22 @@ class Journal:
                 "SELECT COUNT(*),COALESCE(SUM(funding),0) FROM jobs "
                 "WHERE state IN ('reserved','prepared','unknown','broadcast')"
             ).fetchone()
-            if count >= self.max_pending or total + funding > self.max_reserved:
+            if (
+                count >= self.max_pending
+                or checked_add(total, funding, (1 << 63) - 1) > self.max_reserved
+            ):
                 raise Refused("pending queue or aggregate funding cap reached")
+            self._admission_budget()
+            if self.require_quotes:
+                self._match_quote(request, issued)
             slot = int(
                 self.db.execute("SELECT value FROM metadata WHERE key='next_slot'").fetchone()[0]
             )
             integer(slot, 1, (1 << 63) - 2)
-            self.db.execute("UPDATE metadata SET value=? WHERE key='next_slot'", (str(slot + 1),))
+            self.db.execute(
+                "UPDATE metadata SET value=? WHERE key='next_slot'",
+                (str(checked_add(slot, 1, (1 << 63) - 1)),),
+            )
             self.db.execute(
                 "INSERT INTO jobs(id,request,slot,issued,funding,state) VALUES(?,?,?,?,?,'reserved')",
                 (request.identity, request.wire, slot, issued, funding),
@@ -335,6 +390,13 @@ class Journal:
                 )
             except sqlite3.IntegrityError as exc:
                 raise Refused("an input is already reserved or spent in this journal") from exc
+            if self.require_quotes:
+                changed = self.db.execute(
+                    "UPDATE quotes SET state='claimed',job=? WHERE id=? AND state='ready'",
+                    (request.identity, request.quote_hash),
+                ).rowcount
+                if changed != 1:
+                    raise Refused("quote already claimed")
             return self.get(request.identity), True
 
     def store_prepared(self, identity: str, value: Prepared):
@@ -371,6 +433,23 @@ class Journal:
                 or evidence.release != self.release.scope
             ):
                 raise Refused("unrelated evidence")
+            if self.require_quotes and evidence.outcome == "executed":
+                request = Request.parse(bytes(row["request"]))
+                fee = evidence.fee_credit
+                if type(fee) is not dict or fee.get("schema") != "tos.relayer.fee-credit.v1":
+                    raise Refused("executed production receipt lacks verified fee credit")
+                if (
+                    fee.get("note_body") != request.fee_note_body
+                    or fee.get("note_key_index") != request.fee_note_index
+                    or fee.get("slot") != request.fee_slot
+                    or fee.get("checkpoint_root") != evidence.finalized_block
+                ):
+                    raise Refused("fee credit identity mismatch")
+                integer(fee.get("leaf_index"), 0, (1 << 32) - 1)
+                digest(fee.get("transaction"))
+                quote = json.loads(self.quote(request.quote_hash), object_pairs_hook=unique_object)
+                if fee.get("amount") != str(quote["terms"]["amount"]):
+                    raise Refused("fee credit amount mismatch")
             if row["state"] in TERMINAL:
                 if row["state"] != evidence.outcome:
                     raise Refused("conflicting terminal evidence")
@@ -384,6 +463,166 @@ class Journal:
             if evidence.outcome == "rejected":
                 self.db.execute("DELETE FROM input_locks WHERE job=?", (evidence.request,))
             # Keep executed-nullifier tombstones. They are not queue/funding reservations.
+
+    def _admission_budget(self):
+        # Never discard identity/slot/nullifier tombstones to make room. A full
+        # worker is drained and retired; a fresh worker gets a fresh journal.
+        count = self.db.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]
+        if count >= self.max_history:
+            raise Refused("worker history quota reached; drain and retire this worker")
+        used = sum(
+            candidate.stat().st_size
+            for candidate in (
+                self.path,
+                Path(str(self.path) + "-wal"),
+                Path(str(self.path) + "-shm"),
+            )
+            if candidate.exists()
+        )
+        # Keep space for every admitted job to commit its largest possible
+        # prepared object and terminal evidence even when admission is stopped.
+        headroom = (self.max_pending + 2) * (MAX_PREPARED + MAX_BODY * 2 + MAX_ACCEPTANCE)
+        if used + headroom >= self.max_disk_bytes:
+            raise Refused("journal disk admission quota reached")
+
+    def allocate_quote(self, now: int, lifetime: int = MAX_LIFETIME) -> tuple[str, int]:
+        integer(now, 1, (1 << 32) - 1)
+        integer(lifetime, 1, MAX_LIFETIME)
+        expires = checked_add(now, lifetime, (1 << 32) - 1)
+        with self.transaction():
+            self._admission_budget()
+            self.db.execute("DELETE FROM quotes WHERE expires < ? AND job IS NULL", (now,))
+            count = self.db.execute("SELECT COUNT(*) FROM quotes WHERE job IS NULL").fetchone()[0]
+            if count >= self.max_quotes:
+                raise Refused("quote queue quota reached")
+            index = int(
+                self.db.execute(
+                    "SELECT value FROM metadata WHERE key='next_note_index'"
+                ).fetchone()[0]
+            )
+            integer(index, 0, (1 << 63) - 2)
+            quote_id = hashlib.sha256(os.urandom(32)).hexdigest()
+            self.db.execute(
+                "UPDATE metadata SET value=? WHERE key='next_note_index'",
+                (str(checked_add(index, 1, (1 << 63) - 1)),),
+            )
+            self.db.execute(
+                "INSERT INTO quotes(id,note_index,created,expires,state) "
+                "VALUES(?,?,?,?,'allocated')",
+                (quote_id, index, now, expires),
+            )
+            return quote_id, index
+
+    def publish_quote(self, allocation: str, terms: dict, signed: bytes) -> str:
+        # The local adapter signs these exact terms. Allocation is consumed even
+        # if signing crashes; a receiving key index is never recycled.
+        digest(allocation)
+        if type(signed) is not bytes or not 0 < len(signed) <= MAX_QUOTE:
+            raise Refused("invalid signed quote size")
+        wire = encode(terms)
+        if len(wire) > MAX_QUOTE:
+            raise Refused("quote too large")
+        identity = hashlib.sha256(b"TOS-BR1-QUOTE\0" + wire).hexdigest()
+        with self.transaction():
+            row = self.db.execute("SELECT * FROM quotes WHERE id=?", (allocation,)).fetchone()
+            if row is None or row["state"] != "allocated":
+                raise Refused("no unused quote allocation")
+            if (
+                terms.get("release") != self.release.scope
+                or terms.get("nonce") != allocation
+                or terms.get("note_index") != row["note_index"]
+                or terms.get("issued_at") != row["created"]
+                or terms.get("valid_until") != row["expires"]
+            ):
+                raise Refused("quote does not match its durable allocation")
+            integer(terms.get("slot"), 0, 2)
+            integer(terms.get("amount"), 1, (1 << 63) - 1)
+            integer(terms.get("funding_cap"), 1, self.max_reserved)
+            self.db.execute(
+                "UPDATE quotes SET id=?,terms=?,signed=?,state='ready' WHERE id=?",
+                (identity, wire, signed, allocation),
+            )
+        return identity
+
+    def quote(self, identity: str) -> bytes:
+        digest(identity)
+        with self.lock:
+            row = self.db.execute("SELECT signed FROM quotes WHERE id=?", (identity,)).fetchone()
+            if row is None or row["signed"] is None:
+                raise Refused("unknown quote")
+            return bytes(row["signed"])
+
+    def _match_quote(self, request: Request, now: int):
+        row = self.db.execute("SELECT * FROM quotes WHERE id=?", (request.quote_hash,)).fetchone()
+        if row is None or row["state"] != "ready" or row["expires"] <= now:
+            raise Refused("quote unavailable or expired")
+        terms = json.loads(row["terms"], object_pairs_hook=unique_object)
+        if (
+            request.fee_slot != terms["slot"]
+            or request.fee_note_index != terms["note_index"]
+            or request.valid_until > terms["valid_until"]
+            or request.funding_cap > terms["funding_cap"]
+        ):
+            raise Refused("request changed the accepted quote")
+
+    def cancel_unprepared(self, identity: str, now: int):
+        # A RESERVED record has never passed store_prepared/claim_broadcast.
+        # Neither the journal nor the pure signing adapter may write it to the
+        # network. Keep its ID and slot forever; unknown/prepared attempts are
+        # deliberately not recoverable through this administrative operation.
+        integer(now, 1, (1 << 32) - 1)
+        with self.transaction():
+            row = self.get(identity)
+            if row is None or row["state"] != "reserved" or row["message"] is not None:
+                raise Refused("only an unprepared reservation can be cancelled")
+            request = Request.parse(bytes(row["request"]))
+            if request.identity != identity or request.valid_until >= now:
+                raise Refused("reservation has not expired or is corrupted")
+            self.db.execute("UPDATE jobs SET state='cancelled' WHERE id=?", (identity,))
+            self.db.execute("DELETE FROM input_locks WHERE job=?", (identity,))
+
+    def compact(self, now: int) -> int:
+        integer(now, 1, (1 << 32) - 1)
+        with self.transaction():
+            rows = self.db.execute(
+                "SELECT id,issued,request FROM jobs "
+                "WHERE state IN ('executed','rejected','cancelled') "
+                "AND message IS NOT NULL"
+            ).fetchall()
+            count = 0
+            for row in rows:
+                request = Request.parse(bytes(row["request"]))
+                if now <= max(request.valid_until, row["issued"] + EVIDENCE_WINDOW):
+                    continue
+                # Requests retain the exact intent and input tombstones; signed
+                # bearer messages and signatures may now be dropped. They are
+                # neither live work nor admissible conflict evidence any longer.
+                self.db.execute(
+                    "UPDATE jobs SET message=NULL,acceptance=NULL WHERE id=?", (row["id"],)
+                )
+                self.db.execute("DELETE FROM quotes WHERE job=?", (row["id"],))
+                count += 1
+        with self.lock:
+            self.db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        return count
+
+    def pending(self, limit: int = 64) -> list[str]:
+        integer(limit, 1, 10000)
+        with self.lock:
+            return [
+                row[0]
+                for row in self.db.execute(
+                    "SELECT id FROM jobs WHERE state IN ('reserved','prepared','unknown','broadcast') "
+                    "ORDER BY slot LIMIT ?",
+                    (limit,),
+                )
+            ]
+
+    def metrics(self) -> dict:
+        with self.lock:
+            counts = dict(self.db.execute("SELECT state,COUNT(*) FROM jobs GROUP BY state"))
+            count = self.db.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]
+            return {"jobs": count, "history_limit": self.max_history, "states": counts}
 
 
 class Engine:

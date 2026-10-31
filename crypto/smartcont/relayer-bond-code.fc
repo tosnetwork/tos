@@ -65,7 +65,7 @@ cell br_data(cell config, int phase, int principal, int activated,
 }
 
 ;; config: global_id:int32 salt:uint256 owner:MsgAddressInt worker:MsgAddressInt
-;;         ^stored_mldsa_key ^identity ^policy
+;;         ^stored_mldsa_key ^identity ^policy ^endpoint
 ;; identity: genesis_root:uint256 genesis_file:uint256 native_agent_id:uint256
 ;; policy: min_bond:Coins reserve:Coins exit_delay:uint32
 (slice, slice, cell, int, int, int) br_config(cell config) impure inline_ref {
@@ -76,7 +76,13 @@ cell br_data(cell config, int phase, int principal, int activated,
   slice worker = s~load_msg_addr(); br_address(worker);
   cell key = s~load_ref();
   slice identity = s~load_ref().pq::parse_ordinary();
-  slice policy = s~load_ref().pq::parse_ordinary(); s.end_parse();
+  slice policy = s~load_ref().pq::parse_ordinary();
+  slice endpoint = s~load_ref().pq::parse_ordinary(); s.end_parse();
+  throw_unless(br::bad_identity, endpoint~load_uint(8) == 1);
+  int endpoint_length = endpoint~load_uint(16);
+  throw_unless(br::bad_identity, (endpoint_length > 0) & (endpoint_length <= 256));
+  cell endpoint_bytes = endpoint~load_ref(); endpoint.end_parse();
+  pq::check_chain_bytes(endpoint_bytes, endpoint_length);
   throw_unless(br::bad_identity,
     (identity.slice_bits() == 768) & (identity.slice_refs() == 0));
   throw_unless(br::bad_identity, identity~load_uint(256) != 0);
@@ -262,4 +268,14 @@ int get_relayer_required_value(int op, int amount) method_id {
     throw_unless(br::bad_policy, amount == 0);
   }
   return amount + get_compute_fee(0, op == br::slash ? br::evidence_gas : br::normal_gas);
+}
+
+;; Authenticated getter consumers use the full chain configuration, including
+;; proved absence of optional parameters, instead of inventing missing defaults.
+;; CONFIGROOT is supplied by the verifier's authenticated execution context.
+cell br_chain_config() asm "CONFIGROOT";
+cell get_relayer_chain_config() method_id {
+  (cell config, _, _, _, _, _, _, _) = br_load();
+  br_config(config);
+  return br_chain_config();
 }

@@ -93,6 +93,7 @@ class Bond:
             .ref(pqtest.stored(pqtest.public_key(key)))
             .ref(identity)
             .ref(policy)
+            .ref(Cell().uint(1, 8).uint(21, 16).ref(pqtest.chain(b"https://relay.example")))
         )
         data = initial(self.config, phase, principal)
         self.address = (0, int.from_bytes(state_init(CODE, data).hash, "big"))
