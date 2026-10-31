@@ -2,7 +2,9 @@
 
 import ast
 import importlib.util
+import os
 import re
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -20,6 +22,120 @@ class BranchConditionTests(unittest.TestCase):
 
     def test_always_archive_is_accepted(self):
         self.guard.validate_unconditional_steps(self.workflow)
+
+    def test_checkout_trust_is_immediate_scoped_and_fail_closed(self):
+        self.guard.validate_checkout_trust(self.workflow)
+        step = re.search(
+            r"(?ms)^      - name: Trust the checkout for container steps\n.*?(?=^      - |\Z)",
+            self.workflow,
+        ).group(0)
+        mutants = {
+            "omitted": self.workflow.replace(step, "", 1),
+            "too late": self.workflow.replace(step, "", 1) + step,
+        }
+        for before, after in (
+            ('safe.directory "$GITHUB_WORKSPACE"', "safe.directory '*'"),
+            ('safe.directory "$GITHUB_WORKSPACE"', 'safe.directory "$GITHUB_WORKSPACE/*"'),
+            ("git config --global", 'HOME="$RUNNER_TEMP" git config --global'),
+            ("git config --global", "git config --system"),
+            ('"$GITHUB_WORKSPACE"', '"$GITHUB_WORKSPACE" || true'),
+            ("git rev-parse HEAD", "# git rev-parse HEAD"),
+            ("set -euo pipefail", "set +e"),
+        ):
+            mutants[after] = self.workflow.replace(step, step.replace(before, after), 1)
+        for name, workflow in mutants.items():
+            with self.subTest(name=name), self.assertRaisesRegex(RuntimeError, "checkout trust"):
+                self.guard.validate_checkout_trust(workflow)
+
+    def test_checkout_temporary_home_does_not_trust_later_container_steps(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            checkout_home, runtime_home = root / "checkout-home", root / "runtime-home"
+            checkout_home.mkdir()
+            runtime_home.mkdir()
+            workspace, unrelated = root / "workspace checkout", root / "unrelated"
+            runtime_env = {
+                key: value for key, value in os.environ.items() if not key.startswith("GIT_")
+            }
+            runtime_env.update(
+                HOME=str(runtime_home),
+                XDG_CONFIG_HOME=str(root / "xdg"),
+                GIT_CONFIG_NOSYSTEM="1",
+                GITHUB_WORKSPACE=str(workspace),
+                LC_ALL="C",
+            )
+
+            def git(*args, env=runtime_env):
+                return subprocess.run(
+                    ["git", *map(str, args)],
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+
+            for repo in (workspace, unrelated):
+                git("init", "--quiet", repo).check_returncode()
+                git(
+                    "-C",
+                    repo,
+                    "-c",
+                    "user.name=CI regression",
+                    "-c",
+                    "user.email=ci-regression@example.invalid",
+                    "-c",
+                    "commit.gpgsign=false",
+                    "-c",
+                    f"core.hooksPath={os.devnull}",
+                    "commit",
+                    "--quiet",
+                    "--allow-empty",
+                    "-m",
+                    repo.name,
+                ).check_returncode()
+            expected_head = git("-C", workspace, "rev-parse", "HEAD")
+            expected_head.check_returncode()
+            runtime_env["GIT_TEST_ASSUME_DIFFERENT_OWNER"] = "1"
+            checkout_env = dict(runtime_env, HOME=str(checkout_home))
+            git(
+                "config", "--global", "--add", "safe.directory", workspace, env=checkout_env
+            ).check_returncode()
+            during_checkout = git("-C", workspace, "rev-parse", "HEAD", env=checkout_env)
+            during_checkout.check_returncode()
+            self.assertEqual(during_checkout.stdout, expected_head.stdout)
+            checkout_config = (checkout_home / ".gitconfig").read_bytes()
+
+            before = git("-C", workspace, "rev-parse", "HEAD")
+            self.assertEqual(before.returncode, 128)
+            self.assertIn("detected dubious ownership", before.stderr)
+            self.assertFalse((runtime_home / ".gitconfig").exists())
+            step = re.search(
+                r"(?ms)^      - name: Trust the checkout for container steps\n"
+                r".*?^        run: \|\n(?P<commands>(?:          [^\n]*\n)+)",
+                self.workflow,
+            )
+            self.assertIsNotNone(step, "container checkout trust step is absent")
+            script = "\n".join(line[10:] for line in step.group("commands").splitlines())
+            bootstrap = subprocess.run(
+                ["bash", "--noprofile", "--norc", "-c", script],
+                cwd=workspace,
+                env=runtime_env,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            self.assertEqual(bootstrap.returncode, 0, bootstrap.stderr)
+            self.assertEqual(bootstrap.stdout, expected_head.stdout)
+            later_step = git("-C", workspace, "rev-parse", "HEAD")
+            later_step.check_returncode()
+            self.assertEqual(later_step.stdout, expected_head.stdout)
+            outside = git("-C", unrelated, "rev-parse", "HEAD")
+            self.assertEqual(outside.returncode, 128)
+            self.assertIn("detected dubious ownership", outside.stderr)
+            trusted = git("config", "--global", "--get-all", "safe.directory")
+            trusted.check_returncode()
+            self.assertEqual(trusted.stdout.splitlines(), [str(workspace)])
+            self.assertEqual((checkout_home / ".gitconfig").read_bytes(), checkout_config)
 
     def test_archive_exception_cannot_skip_runtime_or_run_other_code(self):
         mutants = [

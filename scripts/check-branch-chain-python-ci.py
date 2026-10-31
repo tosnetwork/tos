@@ -136,6 +136,33 @@ def require(condition: bool, message: str) -> None:
         raise RuntimeError(f"BRANCH_CHAIN_PYTHON_CI_FAILURE: {message}")
 
 
+def validate_checkout_trust(text: str) -> None:
+    steps = list(
+        re.finditer(r"(?ms)^      - name: (?P<name>[^\n]+)\n(?P<body>.*?)(?=^      - |\Z)", text)
+    )
+    require(
+        [step.group("name") for step in steps[:2]]
+        == ["Check out repository", "Trust the checkout for container steps"],
+        "container checkout trust must run immediately after checkout",
+    )
+    body = [
+        line
+        for line in steps[1].group("body").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+    require(
+        body
+        == [
+            "        shell: bash",
+            "        run: |",
+            "          set -euo pipefail",
+            '          git config --global --add safe.directory "$GITHUB_WORKSPACE"',
+            "          git rev-parse HEAD",
+        ],
+        "container checkout trust must use the runtime HOME, trust only the workspace and verify HEAD",
+    )
+
+
 def validate_unconditional_steps(text: str) -> None:
     # Always-on evidence upload cannot skip a test. All jobs and runtime gates
     # retain the unconditional coverage rule, including any other upload step.
@@ -702,6 +729,7 @@ def main() -> int:
     root = Path(__file__).resolve().parents[1]
     workflow = root / ".github/workflows/branch-chain-python.yml"
     text = workflow.read_text(encoding="utf-8")
+    validate_checkout_trust(text)
     validate_node_store_proof(text)
     validate_node_data_sync_callers(root)
     validate_node_data_sync_modes(root)

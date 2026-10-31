@@ -53,6 +53,15 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
+      - name: Trust the checkout for container steps
+        # Checkout writes its trust entry under a temporary HOME. Later
+        # container steps need the exact workspace in their own Git config.
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git rev-parse HEAD
+
       - name: Confirm user and network namespaces are available
         # Fails in seconds instead of after the build when the container cannot
         # create the namespaces that native generation validation requires.
