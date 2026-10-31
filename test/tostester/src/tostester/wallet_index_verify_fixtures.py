@@ -88,6 +88,18 @@ def blueprint(name: str) -> WalletV1Blueprint:
     return WalletV1Blueprint(private_key=nacl.signing.SigningKey(seed))
 
 
+def account_is_absent(state: toslib_api.Raw_fullAccountState) -> bool:
+    # The native client leaves balance=-1 for a proof-validated absent root.
+    # Zero is a valid balance of an existing account and does not prove absence.
+    return (
+        state.balance == -1
+        and not state.code
+        and not state.data
+        and not state.frozen_hash
+        and not state.extra_currencies
+    )
+
+
 @dataclass
 class WalletFixtures:
     client: ToslibClient
@@ -209,12 +221,7 @@ class WalletFixtures:
         async with asyncio.timeout(120):
             while True:
                 state = await self.client.raw_get_account_state(target.address)
-                if (
-                    not state.code
-                    and not state.data
-                    and not state.frozen_hash
-                    and state.balance == 0
-                ):
+                if account_is_absent(state):
                     receipt["absent_at"] = (await master_tip(self.client)).to_dict()
                     return receipt
                 await asyncio.sleep(0.2)
@@ -281,7 +288,7 @@ class WalletFixtures:
         ):
             raise RuntimeError("the dormant account changed after its pre-window transaction")
         destroyed = await self.client.raw_get_account_state(blueprint("destroyed").address)
-        if destroyed.code or destroyed.data or destroyed.balance:
+        if not account_is_absent(destroyed):
             raise RuntimeError("the destroyed account exists at the donor checkpoint")
         receipt = {
             "result": "NATIVE_WALLET_INDEX_FIXTURES_OK",
