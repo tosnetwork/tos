@@ -29,7 +29,9 @@ jobs:
         with:
           persist-credentials: false
       - name: Durable relay engine regression tests
-        run: python3 -m unittest discover -s test/bonded-relayer -p test_engine.py -v
+        run: |
+          python3 -m unittest discover -s test/bonded-relayer -p test_engine.py -v
+          python3 -m unittest discover -s test/bonded-relayer -p test_journal_limits.py -v
       - name: Real private-fee encryption and ownership checks
         run: |
           scripts/install-rust-toolchain.sh

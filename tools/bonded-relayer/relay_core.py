@@ -34,6 +34,7 @@ LIVE = ("reserved", "prepared", "unknown", "broadcast")
 TERMINAL = ("executed", "rejected", "cancelled")
 EVIDENCE_WINDOW = 86400
 MAX_QUOTE = 32 * 1024
+MAX_EVIDENCE = 16 * 1024
 
 
 class Refused(ValueError):
@@ -368,7 +369,7 @@ class Journal:
                 or checked_add(total, funding, (1 << 63) - 1) > self.max_reserved
             ):
                 raise Refused("pending queue or aggregate funding cap reached")
-            self._admission_budget()
+            self._admission_budget(request_bytes=len(request.wire))
             if self.require_quotes:
                 self._match_quote(request, issued)
             slot = int(
@@ -425,6 +426,9 @@ class Journal:
             )
 
     def finish(self, evidence: Evidence):
+        encoded_evidence = encode(dataclasses.asdict(evidence))
+        if len(encoded_evidence) > MAX_EVIDENCE:
+            raise Refused("terminal evidence exceeds storage bound")
         with self.transaction():
             row = self.get(evidence.request)
             if (
@@ -458,18 +462,89 @@ class Journal:
                 raise Refused("no broadcast attempt exists")
             self.db.execute(
                 "UPDATE jobs SET state=?,evidence=? WHERE id=?",
-                (evidence.outcome, encode(dataclasses.asdict(evidence)), evidence.request),
+                (evidence.outcome, encoded_evidence, evidence.request),
             )
             if evidence.outcome == "rejected":
                 self.db.execute("DELETE FROM input_locks WHERE job=?", (evidence.request,))
             # Keep executed-nullifier tombstones. They are not queue/funding reservations.
 
-    def _admission_budget(self):
+    def _admission_budget(
+        self, *, request_bytes: int = 0, new_quote: bool = False, deleted_quotes: int = 0
+    ):
         # Never discard identity/slot/nullifier tombstones to make room. A full
         # worker is drained and retired; a fresh worker gets a fresh journal.
-        count = self.db.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]
-        if count >= self.max_history:
-            raise Refused("worker history quota reached; drain and retire this worker")
+        if request_bytes or new_quote:
+            count = self.db.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]
+            if count >= self.max_history:
+                raise Refused("worker history quota reached; drain and retire this worker")
+        page_size = self.db.execute("PRAGMA page_size").fetchone()[0]
+        pages = self.db.execute("PRAGMA page_count").fetchone()[0]
+        free_pages = self.db.execute("PRAGMA freelist_count").fetchone()[0]
+        page_limit = min(
+            self.db.execute("PRAGMA max_page_count").fetchone()[0],
+            self.max_disk_bytes // 2 // page_size,
+        )
+
+        def row_pages(size):
+            # Allow overflow-page headers and B-tree/index changes as well as
+            # payload bytes, including journals with smaller SQLite pages.
+            slack = max(16, (128 * 1024 + page_size - 1) // page_size)
+            return (size + page_size - 65) // (page_size - 64) + slack
+
+        main_growth = wal_pages = scratch = 0
+        # State changes can rewrite the entire row while a reader pins the WAL.
+        # Retain the final compaction write even after a job becomes terminal.
+        writes = {"reserved": 5, "prepared": 4, "unknown": 3, "broadcast": 2}
+        for row in self.db.execute(
+            "SELECT state,length(request),COALESCE(length(message),0),"
+            "COALESCE(length(acceptance),0),COALESCE(length(evidence),0) FROM jobs "
+            "WHERE state IN ('reserved','prepared','unknown','broadcast') OR message IS NOT NULL"
+        ):
+            state, request_size, message_size, acceptance_size, evidence_size = row
+            if state in LIVE:
+                message_size, acceptance_size, evidence_size = (
+                    MAX_PREPARED,
+                    MAX_ACCEPTANCE,
+                    MAX_EVIDENCE,
+                )
+                growth = MAX_EVIDENCE
+                if state == "reserved":
+                    growth += MAX_PREPARED + MAX_ACCEPTANCE
+                main_growth += row_pages(growth)
+            size = request_size + message_size + acceptance_size + evidence_size + 1024
+            full_row = row_pages(size)
+            scratch = max(scratch, full_row)
+            wal_pages += writes.get(state, 1) * full_row
+        if request_bytes:
+            full_row = row_pages(
+                request_bytes + MAX_PREPARED + MAX_ACCEPTANCE + MAX_EVIDENCE + 1024
+            )
+            main_growth += full_row
+            scratch = max(scratch, full_row)
+            wal_pages += row_pages(request_bytes + 1024) + 5 * full_row
+
+        quote_writes = {"allocated": 3, "ready": 2, "claimed": 1}
+        for state, count in self.db.execute("SELECT state,COUNT(*) FROM quotes GROUP BY state"):
+            full_row = row_pages(2 * MAX_QUOTE + 1024)
+            if state == "allocated":
+                # Both the terms and the signed envelope may reach MAX_QUOTE.
+                main_growth += count * full_row
+            scratch = max(scratch, full_row)
+            wal_pages += count * quote_writes[state] * full_row
+        if new_quote:
+            full_row = row_pages(2 * MAX_QUOTE + 1024)
+            main_growth += full_row
+            scratch = max(scratch, full_row)
+            wal_pages += row_pages(1024) + 3 * full_row
+        # Expiry cleanup is in this transaction. Its dirty pages may still be
+        # cached, so a filesystem stat alone does not account for their WAL cost.
+        wal_pages += deleted_quotes * row_pages(2 * MAX_QUOTE + 1024)
+
+        # SQLite serializes writers. One largest-row scratch allocation covers
+        # an UPDATE's new record before the previous overflow pages are freed.
+        required_pages = main_growth + scratch
+        if pages > page_limit or required_pages > page_limit - pages + free_pages:
+            raise Refused("journal SQLite main database admission quota reached")
         used = sum(
             candidate.stat().st_size
             for candidate in (
@@ -479,10 +554,14 @@ class Journal:
             )
             if candidate.exists()
         )
-        # Keep space for every admitted job to commit its largest possible
-        # prepared object and terminal evidence even when admission is stopped.
-        headroom = (self.max_pending + 2) * (MAX_PREPARED + MAX_BODY * 2 + MAX_ACCEPTANCE)
-        if used + headroom >= self.max_disk_bytes:
+        # Free-list pages are reusable without extending the database file.
+        # Existing WAL-only pages may still extend it at the next checkpoint.
+        main_bytes = max(0, required_pages - free_pages) * page_size
+        main_bytes += max(0, pages * page_size - self.path.stat().st_size)
+        # Do not assume autocheckpoint succeeds: a reader can retain every frame.
+        wal_bytes = 32 + wal_pages * (page_size + 24)
+        shm_bytes = ((wal_pages + 4095) // 4096) * 32768
+        if used + main_bytes + wal_bytes + shm_bytes >= self.max_disk_bytes:
             raise Refused("journal disk admission quota reached")
 
     def allocate_quote(self, now: int, lifetime: int = MAX_LIFETIME) -> tuple[str, int]:
@@ -490,8 +569,10 @@ class Journal:
         integer(lifetime, 1, MAX_LIFETIME)
         expires = checked_add(now, lifetime, (1 << 32) - 1)
         with self.transaction():
-            self._admission_budget()
-            self.db.execute("DELETE FROM quotes WHERE expires < ? AND job IS NULL", (now,))
+            deleted = self.db.execute(
+                "DELETE FROM quotes WHERE expires < ? AND job IS NULL", (now,)
+            ).rowcount
+            self._admission_budget(new_quote=True, deleted_quotes=deleted)
             count = self.db.execute("SELECT COUNT(*) FROM quotes WHERE job IS NULL").fetchone()[0]
             if count >= self.max_quotes:
                 raise Refused("quote queue quota reached")

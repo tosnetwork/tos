@@ -2,6 +2,7 @@
 
 import base64
 import concurrent.futures
+import hashlib
 import json
 import sys
 import tempfile
@@ -10,8 +11,30 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools/bonded-relayer"))
-from relay_core import Engine, Journal, Refused, encode  # noqa: E402
-from test_engine import FakeAdapter, release, request  # noqa: E402
+from relay_core import (  # noqa: E402
+    MAX_ACCEPTANCE,
+    MAX_BODY,
+    MAX_PREPARED,
+    MAX_QUOTE,
+    Engine,
+    Evidence,
+    Journal,
+    Prepared,
+    Refused,
+    encode,
+)
+from test_engine import FakeAdapter, h, release, request  # noqa: E402
+
+
+class MaximumPreparedAdapter(FakeAdapter):
+    def prepare(self, profile, req, slot, issued, funding):
+        self.prepares += 1
+        suffix = f":{funding}".encode()
+        return Prepared(
+            b"M" * (MAX_PREPARED - len(suffix)) + suffix,
+            h(1000 + slot),
+            b"A" * MAX_ACCEPTANCE,
+        )
 
 
 class JournalLimitsTests(unittest.TestCase):
@@ -39,8 +62,8 @@ class JournalLimitsTests(unittest.TestCase):
             funding_cap=100,
             descriptor=base64.b64encode(b"test-only").decode(),
         )
-        # Signature plumbing is isolated here; cryptographic authentication is
-        # exercised by the native adapter, not substituted by this fake signature.
+        # Cryptographic authentication remains a production-adapter requirement;
+        # this journal test uses a fake signature.
         signed = encode(dict(terms=terms, signature="TEST ONLY"))
         identity = journal.publish_quote(allocation, terms, signed)
         return identity, terms
@@ -119,6 +142,8 @@ class JournalLimitsTests(unittest.TestCase):
         engine.reconcile(req.identity)
         with self.assertRaisesRegex(Refused, "history quota"):
             engine.submit(request(n=20))
+        with self.assertRaisesRegex(Refused, "history quota"):
+            j.allocate_quote(1000)
         self.assertEqual(engine.submit(req), "executed")
         self.assertEqual(len(a.writes), 1)
 
@@ -178,6 +203,158 @@ class JournalLimitsTests(unittest.TestCase):
         other.db.execute("ROLLBACK")
         j.compact(100000)
         self.assertEqual(j.reserve(request(), 10, 1000)[0]["slot"], 1)
+
+    @staticmethod
+    def maximum_request(n=100):
+        body = b"B" * MAX_BODY
+        return request(
+            n=n,
+            body_b64=base64.b64encode(body).decode(),
+            body_sha256=hashlib.sha256(body).hexdigest(),
+        )
+
+    def test_sqlite_page_ceiling_refuses_before_signing(self):
+        j = self.journal(max_pending=1, max_disk_bytes=16 * 1024 * 1024)
+        j.db.execute("PRAGMA max_page_count=256")
+        a = MaximumPreparedAdapter()
+        engine = Engine(j, a, clock=lambda: 1000)
+        try:
+            engine.submit(self.maximum_request())
+        except Exception as exc:
+            self.assertIsInstance(exc, Refused)
+            self.assertIn("SQLite main database admission quota", str(exc))
+        else:
+            self.fail("admitted a job without main-database completion headroom")
+        self.assertEqual((a.prepares, len(a.writes)), (0, 0))
+        self.assertEqual(j.metrics()["jobs"], 0)
+        self.assertEqual(j.db.execute("SELECT COUNT(*) FROM input_locks").fetchone()[0], 0)
+        self.assertEqual(
+            j.db.execute("SELECT value FROM metadata WHERE key='next_slot'").fetchone()[0], "1"
+        )
+
+    def test_storage_pressure_refuses_new_work_before_signing(self):
+        j = self.journal(max_pending=1, max_disk_bytes=16 * 1024 * 1024)
+        a = MaximumPreparedAdapter()
+        a.outcome = "executed"
+        engine = Engine(j, a, clock=lambda: 1000)
+        completed = 0
+        for n in range(100, 160, 3):
+            req = self.maximum_request(n)
+            before = a.prepares
+            try:
+                engine.submit(req)
+            except Exception as exc:
+                self.assertIsInstance(exc, Refused)
+                self.assertIn("admission quota", str(exc))
+                self.assertEqual(a.prepares, before)
+                self.assertIsNone(j.get(req.identity))
+                break
+            self.assertEqual(engine.reconcile(req.identity), "executed")
+            completed += 1
+            # No receipt is old enough to remove; just checkpoint committed pages.
+            self.assertEqual(j.compact(1000), 0)
+        else:
+            self.fail("finite storage did not stop admission")
+        self.assertGreater(completed, 0)
+        self.assertEqual(len(a.writes), completed)
+        self.assertFalse(j.pending())
+        self.assertEqual(j.metrics()["states"], {"executed": completed})
+
+    def test_freelist_reuse_preserves_admitted_completion(self):
+        j = self.journal(max_pending=1, max_disk_bytes=16 * 1024 * 1024)
+        j.db.execute("CREATE TABLE padding(data BLOB)")
+        j.db.execute("INSERT INTO padding VALUES (zeroblob(7000000))")
+        j.db.execute("DROP TABLE padding")
+        j.db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        self.assertGreater(j.db.execute("PRAGMA freelist_count").fetchone()[0], 1000)
+        a = MaximumPreparedAdapter()
+        a.outcome = "executed"
+        engine = Engine(j, a, clock=lambda: 1000)
+        req = self.maximum_request()
+        self.assertEqual(engine.submit(req), "broadcast")
+        self.assertEqual(engine.reconcile(req.identity), "executed")
+        self.assertEqual((a.prepares, len(a.writes)), (1, 1))
+
+    def test_default_storage_budget_accepts_maximum_job(self):
+        j = self.journal()
+        a = MaximumPreparedAdapter()
+        a.outcome = "executed"
+        engine = Engine(j, a, clock=lambda: 1000)
+        req = self.maximum_request()
+        self.assertEqual(engine.submit(req), "broadcast")
+        self.assertEqual(engine.reconcile(req.identity), "executed")
+
+    def test_allocated_quotes_and_job_can_finish_with_pinned_wal(self):
+        j = self.journal(max_pending=1, max_quotes=256, max_disk_bytes=16 * 1024 * 1024)
+        req = self.maximum_request()
+        row, _ = j.reserve(req, 10, 1000)
+        reader = self.journal(max_pending=1, max_quotes=256, max_disk_bytes=16 * 1024 * 1024)
+        reader.db.execute("BEGIN")
+        reader.db.execute("SELECT * FROM jobs").fetchone()
+        allocated = []
+        try:
+            for _ in range(257):
+                try:
+                    allocated.append(j.allocate_quote(1000))
+                except Refused:
+                    break
+            else:
+                self.fail("quote admission was not bounded")
+            self.assertTrue(allocated)
+            for allocation, index in allocated:
+                terms = dict(
+                    release=release().scope,
+                    nonce=allocation,
+                    note_index=index,
+                    issued_at=1000,
+                    valid_until=1300,
+                    slot=2,
+                    amount=10,
+                    funding_cap=100,
+                    padding="",
+                )
+                terms["padding"] = "x" * (MAX_QUOTE - len(encode(terms)))
+                self.assertEqual(len(encode(terms)), MAX_QUOTE)
+                try:
+                    identity = j.publish_quote(allocation, terms, b"Q" * MAX_QUOTE)
+                except Exception as exc:
+                    self.fail(f"admitted quote could not publish its bounded bytes: {exc}")
+                self.assertEqual(j.quote(identity), b"Q" * MAX_QUOTE)
+            a = MaximumPreparedAdapter()
+            prepared = a.prepare(release(), req, row["slot"], row["issued"], row["funding"])
+            j.store_prepared(req.identity, prepared)
+            engine = Engine(j, a, clock=lambda: 1000)
+            self.assertEqual(engine.dispatch(req.identity), "broadcast")
+            a.outcome = "executed"
+            self.assertEqual(engine.reconcile(req.identity), "executed")
+            self.assertLess(
+                sum(p.stat().st_size for p in Path(self.tmp.name).iterdir()), j.max_disk_bytes
+            )
+        finally:
+            reader.db.execute("ROLLBACK")
+
+    def test_mutated_evidence_cannot_exceed_reserved_storage(self):
+        j = self.journal()
+        a = FakeAdapter()
+        engine = Engine(j, a, clock=lambda: 1000)
+        req = request()
+        engine.submit(req)
+        credit = {"padding": "small"}
+        evidence = Evidence(
+            release().scope,
+            req.identity,
+            j.get(req.identity)["message_hash"],
+            "executed",
+            h(21),
+            h(22),
+            credit,
+        )
+        credit["padding"] = "x" * (16 * 1024)
+        with self.assertRaisesRegex(Refused, "terminal evidence exceeds storage bound"):
+            j.finish(evidence)
+        self.assertEqual(j.get(req.identity)["state"], "broadcast")
+        a.outcome = "executed"
+        self.assertEqual(engine.reconcile(req.identity), "executed")
 
     def test_linked_sidecar_is_never_opened(self):
         target = Path(self.tmp.name) / "target"
