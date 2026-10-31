@@ -1,0 +1,142 @@
+Compiled wallet-index mutation controls: actual native log excerpts
+Source commit: cf905789bd5a6a06184329060fd220bb8179c28a
+Original receipt: /tmp/pr373-review-controls-cf905789/receipt.json
+Original receipt SHA-256: 018abba40e19806f24045a7336e7c3ccfd591e373d32413cd44a2db11c2adc77
+Each L<number> refers to that line of the named original log.
+Only ANSI SGR color sequences are removed; selected log text is otherwise verbatim.
+Headings and line-number labels are editorial; complete original paths, sizes and SHA-256 values are in the JSON index.
+
+CASE: WalletIndexSource_a_trusted_restore_resumes_retention_after_the_source_bootstrap_gap
+MUTATION: trusted-restore-retention-stays-stalled
+BASELINE: /tmp/pr373-review-controls-cf905789/baseline-0.log (exit 0)
+L1: Running test Test_WalletIndexSource_a_trusted_restore_resumes_retention_after_the_source_bootstrap_gap...
+L6: PASS in 303.6ms
+L7: 1 test(s) passed
+RED: /tmp/pr373-review-controls-cf905789/trusted-restore-retention-stays-stalled-0.log (exit 1)
+L1: Running test Test_WalletIndexSource_a_trusted_restore_resumes_retention_after_the_source_bootstrap_gap...
+L5: [ 0][t 0][2026-10-31 02:13:40.886031479][test-wallet-index-source.cpp:1858]	Expectation failed: db->get_window_base().move_as_ok() is not equal to 23u (10 != 23)
+L6: [pid 1247] [time 1793412820] Signal: 6
+RESTORED: /tmp/pr373-review-controls-cf905789/restored-0.log (exit 0)
+L1: Running test Test_WalletIndexSource_a_trusted_restore_resumes_retention_after_the_source_bootstrap_gap...
+L6: PASS in 274.2ms
+L7: 1 test(s) passed
+
+CASE: WalletIndexSource_only_a_full_index_can_rebase_retention_across_a_source_gap
+MUTATION: trusted-restore-retention-stays-stalled
+BASELINE: /tmp/pr373-review-controls-cf905789/baseline-1.log (exit 0)
+L1: Running test Test_WalletIndexSource_only_a_full_index_can_rebase_retention_across_a_source_gap...
+L9: PASS in 719.9ms
+L10: 1 test(s) passed
+RED: /tmp/pr373-review-controls-cf905789/trusted-restore-retention-stays-stalled-1.log (exit 1)
+L1: Running test Test_WalletIndexSource_only_a_full_index_can_rebase_retention_across_a_source_gap...
+L8: [ 0][t 0][2026-10-31 02:13:41.640239481][test-wallet-index-source.cpp:1902]	Expectation failed: db->get_window_base().move_as_ok() is not equal to state == VerificationState::Full ? 23u : 10u (10 != 23)
+L9: [pid 1344] [time 1793412821] Signal: 6
+RESTORED: /tmp/pr373-review-controls-cf905789/restored-1.log (exit 0)
+L1: Running test Test_WalletIndexSource_only_a_full_index_can_rebase_retention_across_a_source_gap...
+L9: PASS in 722.0ms
+L10: 1 test(s) passed
+
+CASE: WalletIndexVerify_a_retained_ancestor_comes_from_the_requested_entry_in_the_bound_head_state
+MUTATION: retained-ancestor-looks-up-block-one
+BASELINE: /tmp/pr373-review-controls-cf905789/baseline-2.log (exit 0)
+L1: Running test Test_WalletIndexVerify_a_retained_ancestor_comes_from_the_requested_entry_in_the_bound_head_state...
+L2: PASS in 1017.9us
+L3: 1 test(s) passed
+RED: /tmp/pr373-review-controls-cf905789/retained-ancestor-looks-up-block-one-0.log (exit 1)
+L1: Running test Test_WalletIndexVerify_a_retained_ancestor_comes_from_the_requested_entry_in_the_bound_head_state...
+L2: [ 0][t 0][2026-10-31 02:14:15.548392928][Status.h:643][&status_.is_ok()]	[Error : 4801 : the head's masterchain state does not record masterchain block 17]
+L3: [pid 1653] [time 1793412855] Signal: 6
+RESTORED: /tmp/pr373-review-controls-cf905789/restored-2.log (exit 0)
+L1: Running test Test_WalletIndexVerify_a_retained_ancestor_comes_from_the_requested_entry_in_the_bound_head_state...
+L2: PASS in 713.6us
+L3: 1 test(s) passed
+
+CASE: WalletIndexVerify_absent_account_data_does_not_block_full_ownership
+MUTATION: absent-account-data-is-parked
+BASELINE: /tmp/pr373-review-controls-cf905789/baseline-3.log (exit 0)
+L1: Running test Test_WalletIndexVerify_absent_account_data_does_not_block_full_ownership...
+L159: PASS in 29.4ms
+L160: 1 test(s) passed
+RED: /tmp/pr373-review-controls-cf905789/absent-account-data-is-parked-0.log (exit 1)
+L1: Running test Test_WalletIndexVerify_absent_account_data_does_not_block_full_ownership...
+L3: [ 0][t 0][2026-10-31 02:12:58.096445951][test-wallet-index-verify.cpp:1281]	Expectation failed: outcome.step == VerifyStep::Done && index.state() == VerificationState::Full!
+L4: [pid 1152] [time 1793412778] Signal: 6
+RESTORED: /tmp/pr373-review-controls-cf905789/restored-3.log (exit 0)
+L1: Running test Test_WalletIndexVerify_absent_account_data_does_not_block_full_ownership...
+L159: PASS in 44.6ms
+L160: 1 test(s) passed
+
+CASE: WalletIndexVerify_block_1_comes_from_the_state_the_heads_block_names
+MUTATION: first-block-anchor-refuses-its-own-head
+BASELINE: /tmp/pr373-review-controls-cf905789/baseline-4.log (exit 0)
+L1: Running test Test_WalletIndexVerify_block_1_comes_from_the_state_the_heads_block_names...
+L2: PASS in 735.3us
+L3: 1 test(s) passed
+RED: /tmp/pr373-review-controls-cf905789/first-block-anchor-refuses-its-own-head-0.log (exit 1)
+L1: Running test Test_WalletIndexVerify_block_1_comes_from_the_state_the_heads_block_names...
+L2: [ 0][t 0][2026-10-31 02:14:44.536842904][Status.h:643][&status_.is_ok()]	[Error : 4801 : the requested masterchain block is not an ancestor of the head]
+L3: [pid 1696] [time 1793412884] Signal: 6
+RESTORED: /tmp/pr373-review-controls-cf905789/restored-4.log (exit 0)
+L1: Running test Test_WalletIndexVerify_block_1_comes_from_the_state_the_heads_block_names...
+L2: PASS in 1196.2us
+L3: 1 test(s) passed
+
+CASE: WalletIndexVerify_malformed_resolver_getters_do_not_block_full_ownership
+MUTATION: malformed-getter-result-escapes
+BASELINE: /tmp/pr373-review-controls-cf905789/baseline-5.log (exit 0)
+L1: Running test Test_WalletIndexVerify_malformed_resolver_getters_do_not_block_full_ownership...
+L135: PASS in 29.7ms
+L136: 1 test(s) passed
+RED: /tmp/pr373-review-controls-cf905789/malformed-getter-result-escapes-1.log (exit 1)
+L1: Running test Test_WalletIndexVerify_malformed_resolver_getters_do_not_block_full_ownership...
+L31: terminate called after throwing an instance of 'vm::VmError'
+L32: [pid 1059] [time 1793412761] Signal: 6
+RESTORED: /tmp/pr373-review-controls-cf905789/restored-5.log (exit 0)
+L1: Running test Test_WalletIndexVerify_malformed_resolver_getters_do_not_block_full_ownership...
+L135: PASS in 30.8ms
+L136: 1 test(s) passed
+
+CASE: WalletIndexVerify_malformed_wallet_getters_do_not_block_full_ownership
+MUTATION: malformed-getter-result-escapes
+BASELINE: /tmp/pr373-review-controls-cf905789/baseline-6.log (exit 0)
+L1: Running test Test_WalletIndexVerify_malformed_wallet_getters_do_not_block_full_ownership...
+L226: PASS in 91.3ms
+L227: 1 test(s) passed
+RED: /tmp/pr373-review-controls-cf905789/malformed-getter-result-escapes-0.log (exit 1)
+L1: Running test Test_WalletIndexVerify_malformed_wallet_getters_do_not_block_full_ownership...
+L19: terminate called after throwing an instance of 'vm::VmError'
+L20: [pid 1035] [time 1793412761] Signal: 6
+RESTORED: /tmp/pr373-review-controls-cf905789/restored-6.log (exit 0)
+L1: Running test Test_WalletIndexVerify_malformed_wallet_getters_do_not_block_full_ownership...
+L226: PASS in 124.6ms
+L227: 1 test(s) passed
+
+CASE: WalletIndexVerify_the_ownership_drain_rejects_malformed_getters
+MUTATION: malformed-getter-result-escapes
+BASELINE: /tmp/pr373-review-controls-cf905789/baseline-7.log (exit 0)
+L1: Running test Test_WalletIndexVerify_the_ownership_drain_rejects_malformed_getters...
+L75: PASS in 29.4ms
+L76: 1 test(s) passed
+RED: /tmp/pr373-review-controls-cf905789/malformed-getter-result-escapes-2.log (exit 1)
+L1: Running test Test_WalletIndexVerify_the_ownership_drain_rejects_malformed_getters...
+L4431: [ 0][t 0][2026-10-31 02:12:41.859115753][test-wallet-index-verify.cpp:1375]	Expectation failed: db.token_backlog_stats().move_as_ok().parked is not equal to 0u (2 != 0)
+L4432: [pid 1083] [time 1793412761] Signal: 6
+RESTORED: /tmp/pr373-review-controls-cf905789/restored-7.log (exit 0)
+L1: Running test Test_WalletIndexVerify_the_ownership_drain_rejects_malformed_getters...
+L75: PASS in 33.8ms
+L76: 1 test(s) passed
+
+CASE: WalletIndexVerify_the_ownership_drain_runs_accounts_with_absent_data
+MUTATION: absent-account-data-is-parked
+BASELINE: /tmp/pr373-review-controls-cf905789/baseline-8.log (exit 0)
+L1: Running test Test_WalletIndexVerify_the_ownership_drain_runs_accounts_with_absent_data...
+L83: PASS in 30.3ms
+L84: 1 test(s) passed
+RED: /tmp/pr373-review-controls-cf905789/absent-account-data-is-parked-1.log (exit 1)
+L1: Running test Test_WalletIndexVerify_the_ownership_drain_runs_accounts_with_absent_data...
+L103: [ 0][t 0][2026-10-31 02:12:58.205140871][test-wallet-index-verify.cpp:1375]	Expectation failed: db.token_backlog_stats().move_as_ok().parked is not equal to 0u (4 != 0)
+L104: [pid 1176] [time 1793412778] Signal: 6
+RESTORED: /tmp/pr373-review-controls-cf905789/restored-8.log (exit 0)
+L1: Running test Test_WalletIndexVerify_the_ownership_drain_runs_accounts_with_absent_data...
+L83: PASS in 27.2ms
+L84: 1 test(s) passed

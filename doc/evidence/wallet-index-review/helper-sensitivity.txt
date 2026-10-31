@@ -1,0 +1,244 @@
+Targeted sensitivity output followed by restored helper/CI-guard results. Native edit-helper negatives were run before their implementations; absence negatives restore the old zero sentinel or remove the code-empty guard. Control negatives remove restoration after a conflict, process-group cleanup, semantic failure validation, or the actual native test-start marker. ANSI color escapes are removed and trailing whitespace is trimmed for repository hygiene. Exact final helper commands are in validation.json.
+
+# /tmp/pr373-native-helper-red.log
+# Original bytes: 2825; SHA-256: b2c29fcbd2b6488f6b3dd6cf7f30d93815fcab850ab88404246b303a1f072ad8
+FFF                                                                      [100%]
+=================================== FAILURES ===================================
+_ test_injected_row_keeps_a_decodable_transaction_and_changes_only_its_account _
+
+    def test_injected_row_keeps_a_decodable_transaction_and_changes_only_its_account():
+        from pytosiq_core import Cell, begin_cell
+
+        original, dormant = bytes([1]) * 32, bytes([9]) * 32
+        value = (
+            begin_cell()
+            .store_uint(7, 4)
+            .store_bytes(original)
+            .store_uint(300, 64)
+            .store_bytes(bytes([7]) * 32)
+            .store_uint(200, 64)
+            .store_uint(1234, 32)
+            .store_ref(Cell.empty())
+            .end_cell()
+        )
+        edited = snapshot()
+        before = dict(edited.records)
+>       receipt = RUNNER.edit_injected(edited, dormant, value.to_boc())
+                  ^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: module 'wallet_index_verify_native' has no attribute 'edit_injected'. Did you mean: 'edit_truncated'?
+
+test/tostester/tests/tostester/test_wallet_index_verify_native.py:134: AttributeError
+____________ test_lifecycle_edits_remove_the_named_incarnation_only ____________
+
+    def test_lifecycle_edits_remove_the_named_incarnation_only():
+        account, unrelated = bytes([1]) * 32, bytes([2]) * 32
+        destroyed = snapshot()
+>       receipt = RUNNER.edit_destroyed(destroyed, account)
+                  ^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: module 'wallet_index_verify_native' has no attribute 'edit_destroyed'
+
+test/tostester/tests/tostester/test_wallet_index_verify_native.py:149: AttributeError
+_________ test_forged_ownership_has_valid_values_and_no_history_edits __________
+
+    def test_forged_ownership_has_valid_values_and_no_history_edits():
+        from pytosiq_core import Cell
+
+        edited = snapshot()
+        history = edited.events()
+        owner, wallet = bytes([6]) * 32, bytes([1]) * 32
+>       keys = RUNNER.edit_forged_ownership(edited, owner, wallet, 30)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: module 'wallet_index_verify_native' has no attribute 'edit_forged_ownership'
+
+test/tostester/tests/tostester/test_wallet_index_verify_native.py:170: AttributeError
+=========================== short test summary info ============================
+FAILED test/tostester/tests/tostester/test_wallet_index_verify_native.py::test_injected_row_keeps_a_decodable_transaction_and_changes_only_its_account
+FAILED test/tostester/tests/tostester/test_wallet_index_verify_native.py::test_lifecycle_edits_remove_the_named_incarnation_only
+FAILED test/tostester/tests/tostester/test_wallet_index_verify_native.py::test_forged_ownership_has_valid_values_and_no_history_edits
+3 failed, 9 deselected in 0.64s
+
+# /tmp/pr373-native-absence-red.log
+# Original bytes: 1295; SHA-256: 4c2adab2660c1321e410424c6e187cf14dce4c776d542c2f34aab941ada7dbb0
+F.                                                                       [100%]
+=================================== FAILURES ===================================
+________ test_native_account_absence_uses_the_negative_balance_sentinel ________
+
+    def test_native_account_absence_uses_the_negative_balance_sentinel():
+        # RawAccountState leaves balance=-1 when the authenticated account root is
+        # absent. An existing zero-balance uninitialized account is different.
+>       assert account_is_absent(toslib_api.Raw_fullAccountState(balance=-1))
+E       AssertionError: assert False
+E        +  where False = account_is_absent(<tosapi.toslib_api.Raw_fullAccountState object at 0x7f7ec3b0a7b0>)
+E        +    where <tosapi.toslib_api.Raw_fullAccountState object at 0x7f7ec3b0a7b0> = <class 'tosapi.toslib_api.Raw_fullAccountState'>(balance=-1)
+E        +      where <class 'tosapi.toslib_api.Raw_fullAccountState'> = toslib_api.Raw_fullAccountState
+
+test/tostester/tests/tostester/test_wallet_index_verify_fixtures.py:10: AssertionError
+=========================== short test summary info ============================
+FAILED test/tostester/tests/tostester/test_wallet_index_verify_fixtures.py::test_native_account_absence_uses_the_negative_balance_sentinel
+1 failed, 1 passed in 0.16s
+
+# /tmp/pr373-native-absence-fields-red.log
+# Original bytes: 1374; SHA-256: 0e80104f33e0a7fc88fe363c290aaa550e826510d9eec5d431f4d63e57f39f5e
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_______ test_account_absence_never_accepts_active_frozen_or_funded_state _______
+
+    def test_account_absence_never_accepts_active_frozen_or_funded_state():
+        for state in (
+            toslib_api.Raw_fullAccountState(balance=1),
+            toslib_api.Raw_fullAccountState(balance=-1, code=b"code"),
+            toslib_api.Raw_fullAccountState(balance=-1, data=b"data"),
+            toslib_api.Raw_fullAccountState(balance=-1, frozen_hash=bytes([1]) * 32),
+            toslib_api.Raw_fullAccountState(
+                balance=-1, extra_currencies=[toslib_api.ExtraCurrency(id=1, amount=1)]
+            ),
+            toslib_api.Raw_fullAccountState(balance=-2),
+        ):
+>           assert not account_is_absent(state)
+E           assert not True
+E            +  where True = account_is_absent(<tosapi.toslib_api.Raw_fullAccountState object at 0x7f60b97a5a90>)
+
+test/tostester/tests/tostester/test_wallet_index_verify_fixtures.py:25: AssertionError
+=========================== short test summary info ============================
+FAILED test/tostester/tests/tostester/test_wallet_index_verify_fixtures.py::test_account_absence_never_accepts_active_frozen_or_funded_state
+1 failed, 1 deselected in 0.16s
+
+# /tmp/pr373-control-restore-red.log
+# Original bytes: 1830; SHA-256: 6cfa36078de4726842d6e2a87eeae8334382ff72a605b1f6af1f014bbe52739d
+test_a_conflict_does_not_leave_other_sources_mutated (control_tests.ReviewControlTests.test_a_conflict_does_not_leave_other_sources_mutated) ...
+  test_a_conflict_does_not_leave_other_sources_mutated (control_tests.ReviewControlTests.test_a_conflict_does_not_leave_other_sources_mutated) (reverse=False) ... FAIL
+  test_a_conflict_does_not_leave_other_sources_mutated (control_tests.ReviewControlTests.test_a_conflict_does_not_leave_other_sources_mutated) (reverse=True) ... FAIL
+
+======================================================================
+FAIL: test_a_conflict_does_not_leave_other_sources_mutated (control_tests.ReviewControlTests.test_a_conflict_does_not_leave_other_sources_mutated) (reverse=False)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/scratch/8cd346c61c4c/tos-pr373/scripts/test_wallet_index_review_controls.py", line 91, in test_a_conflict_does_not_leave_other_sources_mutated
+    self.assertEqual(owned.read_bytes(), b"owned original")
+AssertionError: b'owned mutation' != b'owned original'
+
+======================================================================
+FAIL: test_a_conflict_does_not_leave_other_sources_mutated (control_tests.ReviewControlTests.test_a_conflict_does_not_leave_other_sources_mutated) (reverse=True)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/scratch/8cd346c61c4c/tos-pr373/scripts/test_wallet_index_review_controls.py", line 91, in test_a_conflict_does_not_leave_other_sources_mutated
+    self.assertEqual(owned.read_bytes(), b"owned original")
+AssertionError: b'owned mutation' != b'owned original'
+
+----------------------------------------------------------------------
+Ran 1 test in 0.006s
+
+FAILED (failures=2)
+
+# /tmp/pr373-control-child-red.log
+# Original bytes: 775; SHA-256: 82347d15f64d91605fdef273509afaeb64ccec921a29f8b62b1f2462fda37125
+F
+======================================================================
+FAIL: test_timeout_ends_a_stdout_child_after_its_parent_has_exited (__main__.ReviewControlTests.test_timeout_ends_a_stdout_child_after_its_parent_has_exited)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/scratch/8cd346c61c4c/tos-pr373/scripts/test_wallet_index_review_controls.py", line 142, in test_timeout_ends_a_stdout_child_after_its_parent_has_exited
+    self.assertFalse(running(), "the command's child survived its timeout")
+AssertionError: True is not false : the command's child survived its timeout
+
+----------------------------------------------------------------------
+Ran 1 test in 1.407s
+
+FAILED (failures=1)
+
+# /tmp/pr373-control-semantic-red.log
+# Original bytes: 3997; SHA-256: bd0f3833b3bd47045df44aab3a6ff85f290747e01ff089b41831e733b6b7c149
+FFFFF
+======================================================================
+FAIL: test_a_started_test_needs_its_specific_failure_and_abort (__main__.ReviewControlTests.test_a_started_test_needs_its_specific_failure_and_abort) (status=-6, diagnostic='Expectation failed: fixture_setup!', executed=True)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/scratch/8cd346c61c4c/tos-pr373/scripts/test_wallet_index_review_controls.py", line 129, in test_a_started_test_needs_its_specific_failure_and_abort
+    with self.assertRaises(RuntimeError):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: RuntimeError not raised
+
+======================================================================
+FAIL: test_a_started_test_needs_its_specific_failure_and_abort (__main__.ReviewControlTests.test_a_started_test_needs_its_specific_failure_and_abort) (status=1, diagnostic='Expectation failed: fixture_setup!\nSignal: 6\n', executed=True)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/scratch/8cd346c61c4c/tos-pr373/scripts/test_wallet_index_review_controls.py", line 129, in test_a_started_test_needs_its_specific_failure_and_abort
+    with self.assertRaises(RuntimeError):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: RuntimeError not raised
+
+======================================================================
+FAIL: test_a_started_test_needs_its_specific_failure_and_abort (__main__.ReviewControlTests.test_a_started_test_needs_its_specific_failure_and_abort) (status=-9, diagnostic='Running test WalletIndexVerify_the_ownership_drain_rejects_malformed_getters...\nExpectation failed: db.token_backlog_stats().move_as_ok().parked is not equal to 0u\n', executed=True)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/scratch/8cd346c61c4c/tos-pr373/scripts/test_wallet_index_review_controls.py", line 129, in test_a_started_test_needs_its_specific_failure_and_abort
+    with self.assertRaises(RuntimeError):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: RuntimeError not raised
+
+======================================================================
+FAIL: test_a_started_test_needs_its_specific_failure_and_abort (__main__.ReviewControlTests.test_a_started_test_needs_its_specific_failure_and_abort) (status=-11, diagnostic='Running test WalletIndexVerify_the_ownership_drain_rejects_malformed_getters...\nExpectation failed: db.token_backlog_stats().move_as_ok().parked is not equal to 0u\n', executed=True)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/scratch/8cd346c61c4c/tos-pr373/scripts/test_wallet_index_review_controls.py", line 129, in test_a_started_test_needs_its_specific_failure_and_abort
+    with self.assertRaises(RuntimeError):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: RuntimeError not raised
+
+======================================================================
+FAIL: test_a_started_test_needs_its_specific_failure_and_abort (__main__.ReviewControlTests.test_a_started_test_needs_its_specific_failure_and_abort) (status=1, diagnostic='Running test WalletIndexVerify_the_ownership_drain_rejects_malformed_getters...\nExpectation failed: db.token_backlog_stats().move_as_ok().parked is not equal to 0u\n', executed=True)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/scratch/8cd346c61c4c/tos-pr373/scripts/test_wallet_index_review_controls.py", line 129, in test_a_started_test_needs_its_specific_failure_and_abort
+    with self.assertRaises(RuntimeError):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: RuntimeError not raised
+
+----------------------------------------------------------------------
+Ran 1 test in 0.002s
+
+FAILED (failures=5)
+
+# /tmp/pr373-control-marker-red.log
+# Original bytes: 834; SHA-256: bbbc0d7d55d0e929df5fee1565c23685e63c0ba23da60f3d7d3334748f0a8441
+F
+======================================================================
+FAIL: test_the_execution_marker_matches_the_native_test_registration_prefix (__main__.ReviewControlTests.test_the_execution_marker_matches_the_native_test_registration_prefix)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/scratch/8cd346c61c4c/tos-pr373/scripts/test_wallet_index_review_controls.py", line 125, in test_the_execution_marker_matches_the_native_test_registration_prefix
+    self.assertTrue(executed, "the real native test started but the marker did not match")
+AssertionError: False is not true : the real native test started but the marker did not match
+
+----------------------------------------------------------------------
+Ran 1 test in 0.030s
+
+FAILED (failures=1)
+
+# /tmp/pr373-final-native-helpers-f7535841.log
+# Original bytes: 99; SHA-256: 91ea9d3240107aafa0d3c07ede619efda3d47d41adcceacfd165a832dad288b2
+.....................                                                    [100%]
+21 passed in 0.19s
+
+# /tmp/pr373-final-control-helpers-f7535841.log
+# Original bytes: 111; SHA-256: 8cc2b0a18607248904d0a98405dc54136f1d0b8ea1ce8e98cb3d62f2dd6d81ae
+............
+----------------------------------------------------------------------
+Ran 12 tests in 0.675s
+
+OK
+
+# /tmp/pr373-final-ci-guard-helpers-f7535841.log
+# Original bytes: 208; SHA-256: fc11df4fd9d9dd2e197d8af826d23f4138ffaed267c09c7302d24f9e984b9ffc
+...............
+----------------------------------------------------------------------
+Ran 15 tests in 0.676s
+
+OK
+Retained 2 node logs, 8 bytes
+Retained 3 node logs, 10 bytes
+Retained 40 node logs, 800 bytes
+
+# /tmp/pr373-final-ci-guard-f7535841.log
+# Original bytes: 799; SHA-256: 6a234231f71ff68f73a9cbce8c39a5d24950939e51c583252453333bd0f1efe4
+BRANCH_CHAIN_PYTHON_CI_OK: every pull request and push to main runs full pytest, boots the four-validator PQ chain, checks PQ key-block proof context, the pending-finality manager actor and real PQ predecessor/BlockProof component, the anchored proof verifier, its CLI and the C09 Config34 path, N5 FinalCert-journal, AcceptBlock, same-FinalCert, five recovery CTests, cold CheckProof and seq2 continuation, the C05 parent-state retry CTest selector and its two named four-node fault controls, the skip-timeout-across-backlog actor modes and four-node finalization hold, five named restart-origin controls, the six refusal, deadline, retirement and acceptance CTests, and the E04 Python negative-window tests; the Rust job compiles every test target and runs the E04 exact wallet confirmation group
