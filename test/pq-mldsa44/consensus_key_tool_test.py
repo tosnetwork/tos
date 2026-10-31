@@ -1186,6 +1186,20 @@ def check_genesis_ceremony(tool: Path, work: Path, shim: Path | None) -> None:
         raise Failure(f"a node with consensus sessions was given a complete ledger: {refused!r}")
     if (ran / "consensus" / "signing-ledger").exists():
         raise Failure("a refused ceremony left a signing ledger")
+    # Rebinding retains a separate ledger even when the original directory is absent.
+    rebound = private_dir(work, "db-genesis-rebound")
+    retained = rebound / "consensus" / ("signing-ledger." + VALIDATOR_HEX)
+    retained.mkdir(parents=True)
+    (retained / "ledger").write_bytes(header)
+    refused = ceremony(rebound, *good)
+    if refused.returncode != 1 or b"retained identity signing ledger" not in refused.stderr:
+        raise Failure(
+            f"a node with retained signing history was given a complete ledger: {refused!r}"
+        )
+    if (rebound / "consensus" / "signing-ledger").exists() or (
+        retained / "ledger"
+    ).read_bytes() != header:
+        raise Failure("a refused ceremony changed the retained signing history")
     # A consensus directory that cannot be listed is not proof that no session is there:
     # write and search permission only, with a session inside.
     hidden = private_dir(work, "db-genesis-unreadable")

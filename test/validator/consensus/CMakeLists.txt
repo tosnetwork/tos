@@ -37,6 +37,23 @@ target_include_directories(test-signing-ledger PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(test-signing-ledger PRIVATE validator tdactor tdutils)
 add_test(NAME signing-ledger COMMAND test-signing-ledger)
 set_tests_properties(signing-ledger PROPERTIES TIMEOUT 120)
+
+# The own-decision log at its ceiling: memory per record, the restart check's scaling, a
+# full-size restart and every retained session at once.
+add_executable(test-decision-log-scale test-decision-log-scale.cpp)
+target_include_directories(test-decision-log-scale PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(test-decision-log-scale PRIVATE validator tdactor tdutils)
+if (JEMALLOC_FOUND)
+    # Match heap accounting to the allocator linked by this executable. Use the exact
+    # header path so its installation prefix cannot shadow other dependency headers.
+    target_link_libraries(test-decision-log-scale PRIVATE ${JEMALLOC_LIBRARIES})
+    target_compile_definitions(test-decision-log-scale PRIVATE TOS_DECISION_LOG_USE_JEMALLOC=1
+        TOS_DECISION_LOG_JEMALLOC_HEADER="${JEMALLOC_INCLUDE_DIR}/jemalloc/jemalloc.h")
+endif()
+foreach(mode memory reconcile-scaling full-restart retained)
+    add_test(NAME decision-log-scale-${mode} COMMAND test-decision-log-scale ${mode})
+    set_tests_properties(decision-log-scale-${mode} PROPERTIES TIMEOUT 300)
+endforeach()
 # A measurement, run by hand: the decision log's write latency against the journal write
 # it replaces, with several sessions at once. Not a test.
 add_executable(bench-decision-log EXCLUDE_FROM_ALL bench-decision-log.cpp)
@@ -66,10 +83,15 @@ target_link_libraries(test-decision-log-restart PRIVATE
 )
 foreach(mode journal-loss journal-loss-without-log intact-restart log-rollback window-journal-rollback
              window-log-rollback window-log-rollback-without-journal-record log-rollback-leader
-             stop-during-window-reservation)
+             stop-during-window-reservation production-default)
     add_test(NAME decision-log-restart-${mode} COMMAND test-decision-log-restart ${mode})
     set_tests_properties(decision-log-restart-${mode} PROPERTIES TIMEOUT 60)
 endforeach()
+
+# A drill tool, not a test: prints a session journal's vote records with the SHA-256 of each
+# signature, so a drill can tell replayed signatures from new ones by their bytes.
+add_executable(dump-consensus-journal dump-consensus-journal.cpp)
+target_link_libraries(dump-consensus-journal PRIVATE validator tl_api tl-utils tddb tdutils)
 
 # The live sign->verify round through PeerValidator::check_signature.
 add_executable(test-consensus-verify test-consensus-verify.cpp)

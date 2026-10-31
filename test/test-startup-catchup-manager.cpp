@@ -39,6 +39,7 @@
 #include "validator/consensus/db-path.h"
 #include "validator/fabric.h"
 #include "validator/impl/applied-ext-message-cleanup.hpp"
+#include "validator/impl/config.hpp"
 #include "validator/impl/ext-message-pool.hpp"
 #include "validator/impl/shard.hpp"
 #include "validator/manager.hpp"
@@ -103,6 +104,8 @@ struct Snapshot {
   CatchainSeqno cc = 1;
   std::vector<ShardSpec> shards = {};
   td::int32 global_id = 3;
+  // ConfigParam 28's catchain lifetime in seconds; nothing when the holder cannot read it.
+  std::optional<td::uint32> catchain_lifetime = 250;
 };
 
 class StateConfig : public ConfigHolder {
@@ -143,6 +146,12 @@ class StateConfig : public ConfigHolder {
   }
   td::Status validate_pq_launch_resource_config() const override {
     return td::Status::OK();
+  }
+  td::Result<td::uint32> get_catchain_lifetime(bool) const override {
+    if (!snapshot_.catchain_lifetime.has_value()) {
+      return td::Status::Error("ConfigParam 28 cannot be read");
+    }
+    return *snapshot_.catchain_lifetime;
   }
 
  protected:
@@ -391,22 +400,17 @@ class StartupCatchupManagerProbe : public ValidatorManagerImpl {
  public:
   StartupCatchupManagerProbe(std::string root, std::shared_ptr<Journal> journal,
                              td::actor::ActorId<keyring::Keyring> keys, td::actor::ActorId<adnl::Adnl> adnl,
-                             td::actor::ActorId<rldp2::Rldp> rldp, bool decision_log = false,
-                             BlockIdExt zero_state = BlockIdExt{})
-      : ValidatorManagerImpl(options(decision_log, zero_state), std::move(root), keys, adnl, rldp, {}, {})
+                             td::actor::ActorId<rldp2::Rldp> rldp, BlockIdExt zero_state = BlockIdExt{})
+      : ValidatorManagerImpl(options(zero_state), std::move(root), keys, adnl, rldp, {}, {})
       , journal_(std::move(journal)) {
   }
-  static td::Ref<ValidatorManagerOptions> options(bool decision_log, BlockIdExt zero_state) {
-    auto opts = ValidatorManagerOptions::create(zero_state, zero_state);
-    opts.write().set_signing_decision_log_enabled(decision_log);
-    return opts;
+  // The options as the engine builds them: nothing about the own-decision log, which every
+  // validator keeps.
+  static td::Ref<ValidatorManagerOptions> options(BlockIdExt zero_state) {
+    return ValidatorManagerOptions::create(zero_state, zero_state);
   }
   void start_up() override {
     db_ = create_db_actor(actor_id(this), db_root_, opts_);
-    if (opts_->get_signing_decision_log_enabled()) {
-      signing_ledger_ = td::actor::create_actor<consensus::signing::SigningLedger>(
-          "probe signing ledger", consensus::signing::ledger_dir(db_root_));
-    }
     callback_ = std::make_unique<ProbeCallback>(journal_);
     ext_message_pool_ = td::actor::create_actor<ExtMessagePool>("catchup ext messages", opts_, actor_id(this));
     allow_validate_ = true;
@@ -441,8 +445,48 @@ class StartupCatchupManagerProbe : public ValidatorManagerImpl {
                                });
   }
 
+  // Custody as the engine installs it, through the manager's own entry.
   void hold(std::shared_ptr<const pq::ValidatorPQKeyStore> store, ValidatorId id, td::uint32 expire_at) {
-    pq_custody_.install(id, std::move(store), 0, expire_at).ensure();
+    add_pq_consensus_key(id, std::move(store), 0, expire_at,
+                         td::PromiseCreator::lambda([](td::Result<td::Unit> r) { r.ensure(); }));
+  }
+  // Every key of `id` removed, as a rebind or a rotation away does.
+  void release(ValidatorId id, td::Promise<td::Unit> promise) {
+    pq_custody_.remove(id);
+    signing_custody_changed(id);
+    promise.set_value(td::Unit());
+  }
+  // The wall clock custody is measured from, `offset` seconds ahead of the real one.
+  void set_custody_clock_offset(double offset, td::Promise<td::Unit> promise) {
+    custody_clock_offset_ = offset;
+    promise.set_value(td::Unit());
+  }
+  double signing_custody_clock() const override {
+    return td::Clocks::system() + custody_clock_offset_;
+  }
+  // The identity's record: {t0, the seqno of its fence block or -1}, or nothing.
+  void identity_record(ValidatorId id, td::Promise<std::optional<std::pair<td::uint64, td::int64>>> promise) {
+    auto it = signing_identities_.find(id);
+    if (it == signing_identities_.end()) {
+      promise.set_value(std::nullopt);
+      return;
+    }
+    promise.set_value(std::make_pair(it->second.t0, it->second.fence_block.has_value()
+                                                        ? static_cast<td::int64>(it->second.fence_block->block.seqno())
+                                                        : td::int64{-1}));
+  }
+  void genesis_hint_logged(td::Promise<bool> promise) {
+    promise.set_value(bool{signing_genesis_hint_logged_});
+  }
+  // Why the session's admission is fenced; empty when it is admitted or undecided.
+  void admission_reason(ValidatorSessionId session, td::Promise<std::string> promise) {
+    auto it = signing_admissions_.find(session);
+    std::string reason = it == signing_admissions_.end() || !it->second->fenced ? std::string() : it->second->reason;
+    promise.set_value(std::move(reason));
+  }
+  // Whether the ledger directory exists under this node's database.
+  void ledger_exists(td::Promise<bool> promise) {
+    promise.set_value(td::stat(consensus::signing::ledger_dir(db_root_) + "/ledger").is_ok());
   }
   // An Ed25519 operator key only: no post-quantum consensus custody.
   void hold_operator_key() {
@@ -465,6 +509,20 @@ class StartupCatchupManagerProbe : public ValidatorManagerImpl {
     set_tip(std::move(snapshot), height, age);
     new_masterchain_block();
     promise.set_value(td::Unit());
+  }
+  // Keep both applications in the same manager turn, before the ledger read can reply.
+  // This makes the startup race deterministic instead of depending on actor scheduling.
+  void hold_with_early_blocks(std::shared_ptr<const pq::ValidatorPQKeyStore> store, ValidatorId id, Snapshot snapshot,
+                              double age, td::Promise<bool> promise) {
+    hold(std::move(store), id, 0);
+    set_tip(snapshot, 10, 5.0);
+    decide_startup_catchup();
+    set_tip(snapshot, 10, age);
+    new_masterchain_block();
+    set_tip(std::move(snapshot), 11, age);
+    new_masterchain_block();
+    promise.set_value(!startup_catchup_.active() && !signing_identities_.at(id).history_ready &&
+                      !signing_identity_history(id).fence_block.has_value());
   }
   void decide(td::Promise<bool> promise) {
     decide_startup_catchup();
@@ -522,7 +580,7 @@ class StartupCatchupManagerProbe : public ValidatorManagerImpl {
     consensus::ValidatorSessionOptions opts{config};
     promise.set_value(block::derive_validator_session_identity(
                           block::ValidatorSessionIdentityInput{
-                              .global_id = 3,
+                              .global_id = snapshot.global_id,
                               .validator_options_hash = block::validator_session_options_hash(config),
                               .simplex_config_cell_hash = selected.value().cell_hash,
                               .shard = ShardIdFull{masterchainId},
@@ -543,7 +601,7 @@ class StartupCatchupManagerProbe : public ValidatorManagerImpl {
     consensus::ValidatorSessionOptions opts{config};
     promise.set_value(block::derive_validator_session_identity(
                           block::ValidatorSessionIdentityInput{
-                              .global_id = 3,
+                              .global_id = snapshot.global_id,
                               .validator_options_hash = block::validator_session_options_hash(config),
                               .simplex_config_cell_hash = selected.value().cell_hash,
                               .shard = shard,
@@ -554,12 +612,6 @@ class StartupCatchupManagerProbe : public ValidatorManagerImpl {
                               .new_catchain_ids = opts.new_catchain_ids,
                           })
                           .session_id);
-  }
-  // The start's network check for the own-decision log, on the current state: empty when
-  // the node may start, otherwise the refusal.
-  void network_check(td::Promise<std::string> promise) {
-    auto checked = signing_decision_log_network_check(*last_masterchain_state_);
-    promise.set_value(checked.is_ok() ? std::string() : checked.message().str());
   }
   // A new last key block, as applying a key block records it.
   void key_block(BlockSeqno seqno, td::Promise<td::Unit> promise) {
@@ -596,7 +648,7 @@ class StartupCatchupManagerProbe : public ValidatorManagerImpl {
   td::actor::ActorOwn<IValidatorGroup> construct_group(
       bool observer, ValidatorSessionId session, ShardIdFull,
       const std::function<td::actor::ActorOwn<IValidatorGroup>()>&) override {
-    if (!observer && opts_->get_signing_decision_log_enabled()) {
+    if (!observer) {
       // What the group would be built with: its session's admission, decided before it.
       auto it = signing_admissions_.find(session);
       journal_->add(it == signing_admissions_.end() ? "admission none " + session.to_hex()
@@ -617,6 +669,7 @@ class StartupCatchupManagerProbe : public ValidatorManagerImpl {
 
  private:
   std::shared_ptr<Journal> journal_;
+  double custody_clock_offset_ = 0;
 };
 
 namespace {
@@ -626,9 +679,9 @@ class Fixture {
   Epoch old{1}, current{2}, next{3}, outsider{4, 1};
   std::shared_ptr<Journal> journal = std::make_shared<Journal>();
 
-  // With `decision_log`, the manager keeps an own-decision log under its database root;
+  // The manager keeps an own-decision log under its database root, as every validator does;
   // `before_start` runs on that root before the manager exists.
-  explicit Fixture(bool decision_log = false, const std::function<void(const std::string&)>& before_start = nullptr,
+  explicit Fixture(const std::function<void(const std::string&)>& before_start = nullptr,
                    BlockIdExt zero_state = BlockIdExt{})
       : root_(td::mkdtemp("/tmp", "startup-catchup-manager").move_as_ok()), scheduler_({1}) {
     if (before_start) {
@@ -646,8 +699,8 @@ class Fixture {
                                   adnl::AdnlAddressList{}, static_cast<td::uint8>(0));
         }
       }
-      manager_ = td::actor::create_actor<StartupCatchupManagerProbe>(
-          "catchup manager", root_, journal, keys_.get(), adnl_.get(), rldp_.get(), decision_log, zero_state);
+      manager_ = td::actor::create_actor<StartupCatchupManagerProbe>("catchup manager", root_, journal, keys_.get(),
+                                                                     adnl_.get(), rldp_.get(), zero_state);
     });
   }
   ~Fixture() {
@@ -703,6 +756,12 @@ class Fixture {
     scheduler_.run_in_context([&] {
       td::actor::send_closure(manager_, &StartupCatchupManagerProbe::hold, epoch.custody[i],
                               epoch.members[i].validator_id, 0u);
+    });
+  }
+  bool hold_with_early_blocks(const Epoch& epoch, size_t i, Snapshot snapshot, double age) {
+    return ask<bool>([&](td::Promise<bool> promise) {
+      td::actor::send_closure(manager_, &StartupCatchupManagerProbe::hold_with_early_blocks, epoch.custody[i],
+                              epoch.members[i].validator_id, std::move(snapshot), age, std::move(promise));
     });
   }
   void hold_expiring(const Epoch& epoch, int index, size_t i, td::uint32 expire_at) {
@@ -775,6 +834,11 @@ class Fixture {
       td::actor::send_closure(manager_, &StartupCatchupManagerProbe::verify, prev, next, std::move(p));
     });
   }
+  std::string admission_reason(ValidatorSessionId session) {
+    return ask<std::string>([&](td::Promise<std::string> p) {
+      td::actor::send_closure(manager_, &StartupCatchupManagerProbe::admission_reason, session, std::move(p));
+    });
+  }
   ValidatorSessionId session_of(Snapshot s) {
     return ask<ValidatorSessionId>([&](td::Promise<ValidatorSessionId> p) {
       td::actor::send_closure(manager_, &StartupCatchupManagerProbe::session_of, std::move(s), std::move(p));
@@ -786,9 +850,32 @@ class Fixture {
                               std::move(p));
     });
   }
-  std::string network_check() {
-    return ask<std::string>([&](td::Promise<std::string> p) {
-      td::actor::send_closure(manager_, &StartupCatchupManagerProbe::network_check, std::move(p));
+  void release(const Epoch& epoch, size_t i) {
+    ask<td::Unit>([&](td::Promise<td::Unit> p) {
+      td::actor::send_closure(manager_, &StartupCatchupManagerProbe::release, epoch.members[i].validator_id,
+                              std::move(p));
+    });
+  }
+  void custody_clock_offset(double offset) {
+    ask<td::Unit>([&](td::Promise<td::Unit> p) {
+      td::actor::send_closure(manager_, &StartupCatchupManagerProbe::set_custody_clock_offset, offset, std::move(p));
+    });
+  }
+  std::optional<std::pair<td::uint64, td::int64>> identity_record(const Epoch& epoch, size_t i) {
+    return ask<std::optional<std::pair<td::uint64, td::int64>>>(
+        [&](td::Promise<std::optional<std::pair<td::uint64, td::int64>>> p) {
+          td::actor::send_closure(manager_, &StartupCatchupManagerProbe::identity_record, epoch.members[i].validator_id,
+                                  std::move(p));
+        });
+  }
+  bool genesis_hint_logged() {
+    return ask<bool>([&](td::Promise<bool> p) {
+      td::actor::send_closure(manager_, &StartupCatchupManagerProbe::genesis_hint_logged, std::move(p));
+    });
+  }
+  bool ledger_exists() {
+    return ask<bool>([&](td::Promise<bool> p) {
+      td::actor::send_closure(manager_, &StartupCatchupManagerProbe::ledger_exists, std::move(p));
     });
   }
   void key_block(BlockSeqno seqno) {
@@ -889,7 +976,15 @@ TEST(StartupCatchupManager, T12_FactoryRefusesWhileFenced) {
     ASSERT_EQ(0u, f.journal->validator_groups.size());
   }
   f.end(ExitReason::Fresh);
-  ASSERT_TRUE(f.build_directly());
+  // A group is built once its session's admission is decided; the first call requests it.
+  bool built = false;
+  for (int attempt = 0; attempt < 100 && !built; ++attempt) {
+    built = f.build_directly();
+    if (!built) {
+      f.run_for(0.05);
+    }
+  }
+  ASSERT_TRUE(built);
 }
 
 // T13. The old signing key has expired and only the new set's key is held: the node
@@ -1081,7 +1176,7 @@ ValidatorId member_id(int index, size_t i) {
 // A group is built only once its session's admission is decided: never before, and the
 // group update runs again by itself when the answer arrives.
 TEST(StartupCatchupManager, DecisionLogAdmitsBeforeTheGroup) {
-  Fixture f(true, [&](const std::string& root) { make_ledger(root, member_id(2, 0), std::nullopt); });
+  Fixture f([&](const std::string& root) { make_ledger(root, member_id(2, 0), std::nullopt); });
   f.hold(f.current, 0);
   f.set_tip(f.snapshot(f.current, 1), 10, kFresh);
   ASSERT_TRUE(!f.decide());
@@ -1094,7 +1189,7 @@ TEST(StartupCatchupManager, DecisionLogAdmitsBeforeTheGroup) {
 
 // Without a ledger nothing is admitted: the group is built, fenced, and signs nothing.
 TEST(StartupCatchupManager, DecisionLogWithoutALedgerFences) {
-  Fixture f(true);
+  Fixture f;
   f.hold(f.current, 0);
   f.set_tip(f.snapshot(f.current, 1), 10, kFresh);
   ASSERT_TRUE(!f.decide());
@@ -1104,10 +1199,100 @@ TEST(StartupCatchupManager, DecisionLogWithoutALedgerFences) {
   ASSERT_EQ(1u, f.journal->count("admission fenced " + expected.to_hex()));
 }
 
+// A session whose normal-progress estimate exceeds the decision log's ceiling is refused at
+// admission: its group is built fenced and signs nothing, with the reason. 200,000 s at the
+// default 400 ms target rate is 500,000 slots, about 1.6 million records.
+TEST(StartupCatchupManager, DecisionLogRefusesASessionAboveTheCeiling) {
+  Fixture f([&](const std::string& root) { make_ledger(root, member_id(2, 0), std::nullopt); });
+  f.hold(f.current, 0);
+  auto snapshot = f.snapshot(f.current, 1);
+  snapshot.catchain_lifetime = 200'000;
+  f.set_tip(snapshot, 10, kFresh);
+  ASSERT_TRUE(!f.decide());
+  f.advance(snapshot, 10, kFresh);
+  auto expected = f.session_of(snapshot);
+  ASSERT_TRUE(f.wait_event("group " + expected.to_hex(), 10.0));
+  ASSERT_EQ(1u, f.journal->count("admission fenced " + expected.to_hex()));
+  const auto reason = f.admission_reason(expected);
+  ASSERT_TRUE(reason.find("refused at admission") != std::string::npos);
+  ASSERT_TRUE(reason.find("exceeds the per-session ceiling of 1048576") != std::string::npos);
+}
+
+// The production holder reads ConfigParam 28 strictly: the stored lifetimes of either
+// constructor, and an error, never the defaults, when it is missing or does not parse.
+namespace {
+td::Result<td::uint32> lifetime_from(std::optional<td::Ref<vm::Cell>> param28, bool masterchain) {
+  vm::Dictionary params{32};
+  CHECK(params.set_ref(td::BitArray<32>::zero(), vm::CellBuilder{}.store_zeroes(256).finalize()));
+  if (param28.has_value()) {
+    CHECK(params.set_ref(td::BitArray<32>{28}, *param28));
+  }
+  auto config = block::Config::unpack_config(params.get_root_cell());
+  CHECK(config.is_ok());
+  std::shared_ptr<block::Config> shared = config.move_as_ok();
+  return ConfigHolderQ(shared).get_catchain_lifetime(masterchain);
+}
+}  // namespace
+
+TEST(StartupCatchupManager, CatchainLifetimeIsReadStrictly) {
+  vm::CellBuilder old_form;
+  CHECK(old_form.store_long_bool(0xc1, 8) && old_form.store_long_bool(250, 32) && old_form.store_long_bool(1000, 32) &&
+        old_form.store_long_bool(1000, 32) && old_form.store_long_bool(7, 32));
+  const auto c1 = old_form.finalize();
+  ASSERT_EQ(250u, lifetime_from(c1, true).move_as_ok());
+  ASSERT_EQ(1000u, lifetime_from(c1, false).move_as_ok());
+  vm::CellBuilder new_form;
+  CHECK(new_form.store_long_bool(0xc2, 8) && new_form.store_long_bool(0, 7) && new_form.store_long_bool(1, 1) &&
+        new_form.store_long_bool(100'000, 32) && new_form.store_long_bool(200'000, 32) &&
+        new_form.store_long_bool(1000, 32) && new_form.store_long_bool(7, 32));
+  const auto c2 = new_form.finalize();
+  ASSERT_EQ(100'000u, lifetime_from(c2, true).move_as_ok());
+  ASSERT_EQ(200'000u, lifetime_from(c2, false).move_as_ok());
+  ASSERT_TRUE(lifetime_from(std::nullopt, true).is_error());
+  vm::CellBuilder malformed;
+  CHECK(malformed.store_long_bool(0xc1, 8) && malformed.store_long_bool(250, 32));
+  ASSERT_TRUE(lifetime_from(malformed.finalize(), true).is_error());
+  // A lifetime of zero is outside the schema, so it does not parse either.
+  vm::CellBuilder zero;
+  CHECK(zero.store_long_bool(0xc1, 8) && zero.store_long_bool(0, 32) && zero.store_long_bool(1000, 32) &&
+        zero.store_long_bool(1000, 32) && zero.store_long_bool(7, 32));
+  ASSERT_TRUE(lifetime_from(zero.finalize(), true).is_error());
+}
+
+// A catchain lifetime that cannot be read is refused: the estimate is unknown.
+TEST(StartupCatchupManager, DecisionLogRefusesAnUnreadableLifetime) {
+  Fixture f([&](const std::string& root) { make_ledger(root, member_id(2, 0), std::nullopt); });
+  f.hold(f.current, 0);
+  auto snapshot = f.snapshot(f.current, 1);
+  snapshot.catchain_lifetime = std::nullopt;
+  f.set_tip(snapshot, 10, kFresh);
+  ASSERT_TRUE(!f.decide());
+  f.advance(snapshot, 10, kFresh);
+  auto expected = f.session_of(snapshot);
+  ASSERT_TRUE(f.wait_event("group " + expected.to_hex(), 10.0));
+  ASSERT_EQ(1u, f.journal->count("admission fenced " + expected.to_hex()));
+  ASSERT_TRUE(f.admission_reason(expected).find("the catchain lifetime cannot be read") != std::string::npos);
+}
+
+// Above half of the ceiling the session is admitted, with a warning: the development
+// lifetime of 100,000 s is estimated at 812,500 records.
+TEST(StartupCatchupManager, DecisionLogAdmitsTheDevelopmentLifetime) {
+  Fixture f([&](const std::string& root) { make_ledger(root, member_id(2, 0), std::nullopt); });
+  f.hold(f.current, 0);
+  auto snapshot = f.snapshot(f.current, 1);
+  snapshot.catchain_lifetime = 100'000;
+  f.set_tip(snapshot, 10, kFresh);
+  ASSERT_TRUE(!f.decide());
+  f.advance(snapshot, 10, kFresh);
+  auto expected = f.session_of(snapshot);
+  ASSERT_TRUE(f.wait_event("group " + expected.to_hex(), 10.0));
+  ASSERT_EQ(1u, f.journal->count("admission admitted " + expected.to_hex()));
+}
+
 // A head below the ledger's floor builds no group: it could be a state the floor retired.
 TEST(StartupCatchupManager, DecisionLogWaitsForTheFloor) {
   const BlockIdExt floor{masterchainId, shardIdAll, 100, hash("floor-root"), hash("floor-file")};
-  Fixture f(true, [&](const std::string& root) { make_ledger(root, member_id(2, 0), floor); });
+  Fixture f([&](const std::string& root) { make_ledger(root, member_id(2, 0), floor); });
   f.hold(f.current, 0);
   f.set_tip(f.snapshot(f.current, 1), 10, kFresh);
   ASSERT_TRUE(!f.decide());
@@ -1120,7 +1305,7 @@ TEST(StartupCatchupManager, DecisionLogWaitsForTheFloor) {
 // A chain without the floor's block at the floor's height admits nothing in this process.
 TEST(StartupCatchupManager, DecisionLogRefusesAChainWithoutTheFloor) {
   const BlockIdExt floor{masterchainId, shardIdAll, 5, hash("floor-root"), hash("floor-file")};
-  Fixture f(true, [&](const std::string& root) { make_ledger(root, member_id(2, 0), floor); });
+  Fixture f([&](const std::string& root) { make_ledger(root, member_id(2, 0), floor); });
   f.hold(f.current, 0);
   f.set_tip(f.snapshot(f.current, 1), 10, kFresh);
   ASSERT_TRUE(!f.decide());
@@ -1137,7 +1322,7 @@ TEST(StartupCatchupManager, DecisionLogRefusesAChainWithoutTheFloor) {
 TEST(StartupCatchupManager, DecisionLogFencesUnknownHistory) {
   // A block generated in the future of this process's start, by more than the margin.
   constexpr double kAfterTheMargin = -(consensus::signing::kHistoryMarginSeconds + 5.0);
-  Fixture f(true);
+  Fixture f;
   f.hold(f.current, 0);
   f.set_tip(f.snapshot(f.current, 1), 10, kFresh);
   ASSERT_TRUE(!f.decide());
@@ -1178,7 +1363,6 @@ const BlockIdExt kZeroState{masterchainId, shardIdAll, 0, hash("zerostate-root")
 // application stores them. Returns how the first session was admitted.
 std::string genesis_start(const BlockIdExt& floor) {
   Fixture f(
-      true,
       [&](const std::string& root) {
         CHECK(consensus::signing::create_ledger(ledger_of(root), member_id(2, 0).value,
                                                 consensus::signing::default_file_ops(), floor)
@@ -1291,7 +1475,7 @@ void settle_fence_at(Fixture& f, const Snapshot& before, const Snapshot& at_m) {
 // session with that counter comes back. It is fenced, through the parent's entry.
 TEST(StartupCatchupManager, UnknownHistoryTentativeLineageDisappearsAndReturns) {
   {
-    Fixture old(true, signing_node());
+    Fixture old(signing_node());
     old.hold(old.current, 0);
     auto soon = with_shards(old.snapshot(old.current, 1), {{kBase, 5, Fsm::fsm_split, kSoon}});
     old.set_tip(soon, 10, kFresh);
@@ -1299,7 +1483,7 @@ TEST(StartupCatchupManager, UnknownHistoryTentativeLineageDisappearsAndReturns) 
     old.advance(soon, 10, kFresh);
     ASSERT_EQ(std::string("admitted"), admission_of(old, old.session_for(soon, kLeft, 6)));
   }
-  Fixture f(true);
+  Fixture f;
   auto at_m = with_shards(f.snapshot(f.current, 1), {{kBase, 5, Fsm::fsm_split, kLater}});
   settle_fence_at(f, f.snapshot(f.current, 1), at_m);
   auto returning = f.session_for(at_m, kLeft, 6);
@@ -1319,7 +1503,7 @@ TEST(StartupCatchupManager, UnknownHistoryTentativeLineageDisappearsAndReturns) 
 // session at max + 2 is fenced. Max + 3 signs.
 TEST(StartupCatchupManager, UnknownHistoryMergedParentTentative) {
   {
-    Fixture old(true, signing_node());
+    Fixture old(signing_node());
     old.hold(old.current, 0);
     auto soon = with_shards(old.snapshot(old.current, 1),
                             {{kLeft, 5, Fsm::fsm_merge, kSoon}, {kRight, 7, Fsm::fsm_merge, kSoon}});
@@ -1328,7 +1512,7 @@ TEST(StartupCatchupManager, UnknownHistoryMergedParentTentative) {
     old.advance(soon, 10, kFresh);
     ASSERT_EQ(std::string("admitted"), admission_of(old, old.session_for(soon, kBase, 9)));
   }
-  Fixture f(true);
+  Fixture f;
   auto at_m =
       with_shards(f.snapshot(f.current, 1), {{kLeft, 5, Fsm::fsm_merge, kLater}, {kRight, 7, Fsm::fsm_merge, kLater}});
   settle_fence_at(f, f.snapshot(f.current, 1), at_m);
@@ -1348,7 +1532,7 @@ TEST(StartupCatchupManager, UnknownHistoryMergedParentTentative) {
 // process is not derived at M; after M it becomes current and is fenced.
 TEST(StartupCatchupManager, UnknownHistoryRetainedTentativeGroup) {
   {
-    Fixture old(true, signing_node());
+    Fixture old(signing_node());
     old.hold(old.current, 0);
     auto soon = with_shards(old.snapshot(old.current, 1), {{kBase, 5, Fsm::fsm_split, kSoon}});
     old.set_tip(soon, 10, kFresh);
@@ -1361,7 +1545,7 @@ TEST(StartupCatchupManager, UnknownHistoryRetainedTentativeGroup) {
     old.run_for(0.5);
     ASSERT_EQ(0u, old.journal->count("close " + tentative.to_hex()));  // kept, not derived
   }
-  Fixture f(true);
+  Fixture f;
   auto at_m = with_shards(f.snapshot(f.current, 1), {{kBase, 5}});
   settle_fence_at(f, f.snapshot(f.current, 1), at_m);
   auto split = with_shards(f.snapshot(f.current, 1), {{kLeft, 6}, {kRight, 6}});
@@ -1377,7 +1561,7 @@ TEST(StartupCatchupManager, UnknownHistoryRetainedTentativeGroup) {
 // A key block after M changes every session id; the fence compares the lineage and the
 // counter, so a session at a fenced counter stays fenced under its new id.
 TEST(StartupCatchupManager, UnknownHistoryKeyBlockChangesTheId) {
-  Fixture f(true);
+  Fixture f;
   settle_fence_at(f, f.snapshot(f.current, 1), f.snapshot(f.current, 2));
   auto next = f.snapshot(f.current, 3);
   auto before_key_block = f.session_for(next, ShardIdFull{masterchainId, shardIdAll}, 3);
@@ -1391,56 +1575,233 @@ TEST(StartupCatchupManager, UnknownHistoryKeyBlockChangesTheId) {
   ASSERT_EQ(std::string("admitted"), admission_of(f, f.session_for(later, ShardIdFull{masterchainId, shardIdAll}, 5)));
 }
 
-// ===== The engine option is for local networks only =====
+// ===== Every network, with the options the engine builds =====
 
 namespace {
 
-// Starts a node at a state of `global_id`, with the own-decision log on or off and a
-// complete ledger, and returns the start's refusal ("" when it may start) and how the
-// first session was admitted.
-std::pair<std::string, std::string> start_on_network(bool decision_log, td::int32 global_id) {
-  Fixture f(decision_log, decision_log ? signing_node() : nullptr);
+// Starts a node at a state of `global_id` with the options as the engine builds them, with
+// or without a complete ledger, and returns how its first session was admitted.
+std::string first_admission_on(td::int32 global_id, bool with_ledger, bool* ledger_after = nullptr) {
+  Fixture f(with_ledger ? signing_node() : nullptr);
   f.hold(f.current, 0);
   auto state = f.snapshot(f.current, 1);
   state.global_id = global_id;
   f.set_tip(state, 10, kFresh);
-  auto refusal = f.network_check();
   CHECK(!f.decide());
   f.advance(state, 10, kFresh);
-  f.run_for(1.0);
-  std::string admission = f.journal->count("admission admitted ") > 0 ? "admitted"
-                          : f.journal->count("admission fenced ") > 0 ? "fenced"
-                          : f.journal->count("group ") > 0            ? "no log"
-                                                                      : "none";
-  return {refusal, admission};
+  auto admission = admission_of(f, f.session_of(state));
+  if (ledger_after != nullptr) {
+    *ledger_after = f.ledger_exists();
+  }
+  return admission;
 }
 
 }  // namespace
 
-TEST(StartupCatchupManager, DecisionLogRefusesTheTestnet) {
-  auto [refusal, admission] = start_on_network(true, 2);
-  ASSERT_TRUE(refusal.find("global id is 2") != std::string::npos);
-  ASSERT_TRUE(refusal.find("local network") != std::string::npos);
-  ASSERT_EQ(std::string("fenced"), admission);
-}
-
-TEST(StartupCatchupManager, DecisionLogRefusesMainnet) {
-  auto [refusal, admission] = start_on_network(true, 1);
-  ASSERT_TRUE(refusal.find("global id is 1") != std::string::npos);
-  ASSERT_EQ(std::string("fenced"), admission);
-}
-
-TEST(StartupCatchupManager, DecisionLogAcceptsALocalNetwork) {
-  auto [refusal, admission] = start_on_network(true, 3);
-  ASSERT_EQ(std::string(), refusal);
-  ASSERT_EQ(std::string("admitted"), admission);
-}
-
-// Without the option, no network is refused and groups are built without the log.
-TEST(StartupCatchupManager, WithoutTheDecisionLogNothingChanges) {
+// The production default: no flag, no network check. A validator records its decisions on
+// mainnet, the public testnet and a local network alike.
+TEST(StartupCatchupManager, EveryNetworkUsesTheLog) {
   for (td::int32 global_id : {1, 2, 3}) {
-    auto [refusal, admission] = start_on_network(false, global_id);
-    ASSERT_EQ(std::string(), refusal);
-    ASSERT_EQ(std::string("no log"), admission);
+    ASSERT_EQ(std::string("admitted"), first_admission_on(global_id, true));
   }
+}
+
+// On the public testnet, a validator without a ledger is fenced, not signing without a
+// record, and its first admission leaves a ledger on disk.
+TEST(StartupCatchupManager, WithoutALedgerTheTestnetFencesAndCreatesOne) {
+  bool ledger = false;
+  ASSERT_EQ(std::string("fenced"), first_admission_on(2, false, &ledger));
+  ASSERT_TRUE(ledger);
+}
+
+// ===== The fence block, per identity, from custody =====
+
+// A validator-elect whose node has run since before the fence margin: the fence block is
+// the first qualifying block this process applied after custody, recorded before the first
+// admission, so the first session three counters above it signs. Before the fix the ledger
+// waited for a block after the first admission and fenced the incoming set's first sessions.
+TEST(StartupCatchupManager, FenceBlockRecordedBeforeFirstAdmission) {
+  Fixture f;
+  auto before = f.snapshot(f.current, 1);
+  ASSERT_TRUE(f.hold_with_early_blocks(f.next, 0, before, kAfterTheMarginOfStart));
+  f.run_for(0.5);
+  ASSERT_TRUE(!f.ledger_exists());  // recorded in memory, before any ledger
+  auto record = f.identity_record(f.next, 0);
+  ASSERT_TRUE(record.has_value());
+  ASSERT_EQ(10, record->second);
+  // The incoming set at counter 3 = cc(M) + 2 is fenced; at 4 it signs.
+  auto at_margin = f.snapshot(f.next, 3);
+  f.advance(at_margin, 12, kAfterTheMarginOfStart);
+  ASSERT_EQ(std::string("fenced"), admission_of(f, f.session_of(at_margin)));
+  auto elected = f.snapshot(f.next, 4);
+  f.advance(elected, 13, kAfterTheMarginOfStart);
+  ASSERT_EQ(std::string("admitted"), admission_of(f, f.session_of(elected)));
+}
+
+// Custody taken late: the process starts at T and applies blocks from T + 91 on, but the key
+// is bound at T + 600. The first admission is pending, and only a block generated at
+// T + 600 + 91 or later establishes the ledger.
+TEST(StartupCatchupManager, LateCustody) {
+  constexpr double kLate = 600.0;
+  constexpr double kAfterCustody = -(kLate + consensus::signing::kHistoryMarginSeconds + 5.0);
+  Fixture f;
+  auto first = f.snapshot(f.current, 1);
+  f.set_tip(first, 10, kFresh);
+  ASSERT_TRUE(!f.decide());
+  f.advance(first, 10, kAfterTheMarginOfStart);  // before custody: never the fence block
+  f.custody_clock_offset(kLate);
+  f.hold(f.current, 0);
+  f.advance(first, 11, kAfterTheMarginOfStart);  // after custody, before custody + 91
+  ASSERT_EQ(std::string("fenced"), admission_of(f, f.session_of(first)));
+  auto record = f.identity_record(f.current, 0);
+  ASSERT_TRUE(record.has_value());
+  ASSERT_EQ(-1, record->second);
+  f.advance(f.snapshot(f.current, 2), 12, kAfterCustody);
+  f.run_for(0.5);
+  record = f.identity_record(f.current, 0);
+  ASSERT_TRUE(record.has_value());
+  ASSERT_EQ(12, record->second);
+  auto within = f.snapshot(f.current, 4);
+  f.advance(within, 13, kAfterCustody);
+  ASSERT_EQ(std::string("fenced"), admission_of(f, f.session_of(within)));
+  auto above = f.snapshot(f.current, 5);
+  f.advance(above, 14, kAfterCustody);
+  ASSERT_EQ(std::string("admitted"), admission_of(f, f.session_of(above)));
+}
+
+TEST(StartupCatchupManager, PendingRestartWithEarlierClockEventuallySigns) {
+  const auto stored_t0 = consensus::signing::custody_time(td::Clocks::system()) + 30;
+  Fixture f([&](const std::string& root) {
+    make_ledger(root, member_id(2, 0), std::nullopt);
+    consensus::signing::Header header;
+    header.validator = member_id(2, 0).value;
+    header.dir = consensus::signing::binding_of(ledger_of(root)).move_as_ok();
+    header.history = consensus::signing::History::Pending;
+    header.t0 = stored_t0;
+    consensus::signing::default_file_ops()
+        ->replace_file(ledger_of(root), "ledger", consensus::signing::encode_header(header))
+        .ensure();
+  });
+  auto first = f.snapshot(f.current, 1);
+  ASSERT_TRUE(f.hold_with_early_blocks(f.current, 0, first, kAfterTheMarginOfStart));
+  ASSERT_EQ(std::string("fenced"), admission_of(f, f.session_of(first)));
+  auto record = f.identity_record(f.current, 0);
+  ASSERT_TRUE(record.has_value());
+  ASSERT_TRUE(record->first >= stored_t0);
+  ASSERT_EQ(-1, record->second);
+  f.advance(first, 12, -(consensus::signing::kHistoryMarginSeconds + 40.0));
+  f.run_for(0.5);
+  record = f.identity_record(f.current, 0);
+  ASSERT_TRUE(record.has_value());
+  ASSERT_EQ(12, record->second);
+  auto above = f.snapshot(f.current, 4);
+  f.advance(above, 13, -(consensus::signing::kHistoryMarginSeconds + 40.0));
+  ASSERT_EQ(std::string("admitted"), admission_of(f, f.session_of(above)));
+}
+
+TEST(StartupCatchupManager, ReboundIdentityWithExistingLedgerEventuallySigns) {
+  // The database was bound to an earlier staking identity. Its ledger stays intact.
+  Fixture f([&](const std::string& root) { make_ledger(root, member_id(1, 0), std::nullopt); });
+  f.hold(f.current, 0);
+  auto first = f.snapshot(f.current, 1);
+  f.set_tip(first, 10, kFresh);
+  ASSERT_TRUE(!f.decide());
+  f.advance(first, 10, kFresh);
+  ASSERT_EQ(std::string("fenced"), admission_of(f, f.session_of(first)));
+  f.advance(first, 11, kAfterTheMarginOfStart);
+  auto above = f.snapshot(f.current, 4);
+  f.advance(above, 12, kAfterTheMarginOfStart);
+  ASSERT_EQ(std::string("admitted"), admission_of(f, f.session_of(above)));
+}
+
+// A rebind: identity A's record is dropped with its custody, and identity B waits from its
+// own custody time; A's fence block is never used for B.
+TEST(StartupCatchupManager, Rebind) {
+  Fixture f;
+  f.hold(f.next, 0);
+  auto state = f.snapshot(f.current, 1);
+  f.set_tip(state, 10, kFresh);
+  ASSERT_TRUE(!f.decide());
+  f.advance(state, 10, kAfterTheMarginOfStart);
+  auto a = f.identity_record(f.next, 0);
+  ASSERT_TRUE(a.has_value() && a->second == 10);
+  f.release(f.next, 0);
+  ASSERT_TRUE(!f.identity_record(f.next, 0).has_value());
+  f.custody_clock_offset(300.0);
+  f.hold(f.next, 1);
+  auto b = f.identity_record(f.next, 1);
+  ASSERT_TRUE(b.has_value() && b->second == -1);
+  f.advance(state, 11, kAfterTheMarginOfStart);  // after B's custody, before B's t0 + 91
+  b = f.identity_record(f.next, 1);
+  ASSERT_TRUE(b.has_value() && b->second == -1);
+  f.advance(state, 12, -(300.0 + consensus::signing::kHistoryMarginSeconds + 5.0));
+  b = f.identity_record(f.next, 1);
+  ASSERT_TRUE(b.has_value() && b->second == 12);
+  // Re-added later, A is new: its old fence block is gone.
+  f.hold(f.next, 0);
+  a = f.identity_record(f.next, 0);
+  ASSERT_TRUE(a.has_value() && a->second == -1);
+}
+
+// Two identities held at once keep independent records.
+TEST(StartupCatchupManager, TwoIdentities) {
+  Fixture f;
+  f.hold(f.next, 0);
+  f.custody_clock_offset(300.0);
+  f.hold(f.next, 1);
+  auto state = f.snapshot(f.current, 1);
+  f.set_tip(state, 10, kFresh);
+  ASSERT_TRUE(!f.decide());
+  f.advance(state, 10, kAfterTheMarginOfStart);
+  auto a = f.identity_record(f.next, 0);
+  auto b = f.identity_record(f.next, 1);
+  ASSERT_TRUE(a.has_value() && a->second == 10);
+  ASSERT_TRUE(b.has_value() && b->second == -1);
+  ASSERT_TRUE(b->first >= a->first + 299);
+  f.advance(state, 11, -(300.0 + consensus::signing::kHistoryMarginSeconds + 5.0));
+  a = f.identity_record(f.next, 0);
+  b = f.identity_record(f.next, 1);
+  ASSERT_TRUE(a.has_value() && a->second == 10);
+  ASSERT_TRUE(b.has_value() && b->second == 11);
+}
+
+// At the zerostate, a validator whose history is unknown logs the genesis-ceremony hint once;
+// it still signs nothing.
+TEST(StartupCatchupManager, GenesisWithoutALedgerLogsTheCeremonyHint) {
+  Fixture f;
+  f.hold(f.current, 0);
+  auto state = f.snapshot(f.current, 1);
+  f.set_tip(state, 0, kFresh);
+  ASSERT_TRUE(!f.decide());
+  f.advance(state, 0, kFresh);
+  ASSERT_EQ(std::string("fenced"), admission_of(f, f.session_of(state)));
+  ASSERT_TRUE(f.genesis_hint_logged());
+}
+
+// Past the zerostate a pending node is an ordinary unknown history: no genesis hint.
+TEST(StartupCatchupManager, PastGenesisNoCeremonyHint) {
+  Fixture f;
+  f.hold(f.current, 0);
+  auto state = f.snapshot(f.current, 1);
+  f.set_tip(state, 10, kFresh);
+  ASSERT_TRUE(!f.decide());
+  f.advance(state, 10, kFresh);
+  ASSERT_EQ(std::string("fenced"), admission_of(f, f.session_of(state)));
+  ASSERT_TRUE(!f.genesis_hint_logged());
+}
+
+// A split child not yet in the configuration reads its parent's counter through the
+// production derivation (the ancestor branch), so the parent's entry at M fences the child's
+// sessions up to parent + 2.
+TEST(StartupCatchupManager, SplitChildReadsTheParentCounter) {
+  Epoch epoch{2};
+  Snapshot snapshot{epoch.set(1), epoch.set(1), epoch.set(2), 1};
+  snapshot.shards = {{kBase, 5}};
+  State state(BlockIdExt{masterchainId, shardIdAll, 1, hash("split-root"), hash("split-file")}, snapshot);
+  ASSERT_EQ(5u, state.get_shard_cc_seqno(kLeft));
+  ASSERT_EQ(5u, state.get_shard_cc_seqno(kRight));
+  const std::vector<consensus::signing::FenceEntry> fence = {
+      {masterchainId, shardIdAll, 1}, {basechainId, shardIdAll, state.get_shard_cc_seqno(kBase)}};
+  ASSERT_TRUE(consensus::signing::fenced_by_history(fence, kLeft, 7));
+  ASSERT_TRUE(!consensus::signing::fenced_by_history(fence, kLeft, 8));
 }

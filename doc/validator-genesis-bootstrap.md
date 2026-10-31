@@ -228,12 +228,15 @@ recovery. Observing only ConfigParam 34 or `funds_created` is insufficient.
 
 ## Signing ledger at genesis
 
-When the own-decision log is enabled, a validator without a signing ledger
-treats its signing history as unknown. It signs nothing until a fence block and
-three catchain rotations have passed. A genesis validator whose identity was
-created for this zerostate and has never signed can start with a complete
-ledger instead. Run the following on the stopped node, before its first start,
-with the zerostate root and file hashes from the global configuration:
+**Required for every genesis validator.** Every validator keeps the
+own-decision log. A validator without a signing ledger treats its signing
+history as unknown and signs nothing until a fence block and three catchain
+rotations have passed. At genesis no block can come while every validator
+waits, so a chain whose genesis validators skip this step never starts; each
+of them logs `no signing ledger at genesis` once. A genesis validator's
+identity was created for this zerostate and has never signed, so it starts
+with a complete ledger. Run the following on the stopped node, before its first
+start, with the zerostate root and file hashes from the global configuration:
 
 ```bash
 build/crypto/pq/tos-pq-consensus-key init-signing-ledger --genesis-ceremony \
@@ -242,8 +245,9 @@ build/crypto/pq/tos-pq-consensus-key init-signing-ledger --genesis-ceremony \
 
 The node checks the ledger's zerostate against its configured zerostate at
 start, and a mismatch admits nothing. Never run the ceremony for a key that has
-signed before. See [signing-decision-log](signing-decision-log.md); the log is
-off by default and not yet deployable.
+signed before. The operator ceremony runs it through `install-node.sh activate
+--genesis-ceremony`; the test harness and the local network installer run it
+for every genesis validator. See [signing-decision-log](signing-decision-log.md).
 
 ## Related documents
 

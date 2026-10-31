@@ -891,6 +891,9 @@ td::actor::ActorOwn<IValidatorGroup> IValidatorGroup::create_bridge(
   // consensus key never doubles as a transport identity.
   CHECK(!descr->is_pq() || !descr->addr.is_zero());
   auto local_adnl_id = adnl::AdnlNodeIdShort{block::validator_adnl_identity(*descr)};
+  // A validator group signs only under an admission from the signing ledger; one built
+  // without it signs nothing, never "without a record".
+  signing_admission = consensus::signing::admission_for_validator_group(std::move(signing_admission), session_id);
   consensus::BridgeCreationParams params{
       .name = name_with_seqno,
       .is_create_session_called = create_session,

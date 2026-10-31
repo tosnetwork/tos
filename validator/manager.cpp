@@ -2693,10 +2693,6 @@ void ValidatorManagerImpl::start_up() {
   stats::install_callback(std::make_unique<StatsCallback>(actor_id(this)));
 
   db_ = create_db_actor(actor_id(this), db_root_, opts_);
-  if (opts_->get_signing_decision_log_enabled()) {
-    signing_ledger_ = td::actor::create_actor<consensus::signing::SigningLedger>(
-        "SigningLedger", consensus::signing::ledger_dir(db_root_));
-  }
   actor_stats_ = td::actor::create_actor<td::actor::ActorStats>("actor_stats");
   lite_server_cache_ = create_liteserver_cache_actor(actor_id(this), db_root_);
   token_manager_ = td::actor::create_actor<TokenManager>("tokenmanager");
@@ -2794,9 +2790,6 @@ void ValidatorManagerImpl::init_last_masterchain_state(td::Ref<MasterchainState>
   if (auth_status.is_error()) {
     LOG(FATAL) << "refusing initial masterchain AUTH policy: " << auth_status;
   }
-  if (auto local_only = signing_decision_log_network_check(*state); local_only.is_error()) {
-    LOG(FATAL) << "refusing to start: " << local_only;
-  }
   if (opts_->get_test_state_serializer_no_delay() && state->get_global_id() != 3) {
     LOG(FATAL) << "test-state-serializer-no-delay requires on-chain global id 3";
   }
@@ -2810,9 +2803,6 @@ void ValidatorManagerImpl::started(ValidatorManagerInitResult R) {
   auto auth_status = admit_auth_policy_state(*R.state, last_masterchain_state_);
   if (auth_status.is_error()) {
     LOG(FATAL) << "refusing restored masterchain AUTH policy: " << auth_status;
-  }
-  if (auto local_only = signing_decision_log_network_check(*R.state); local_only.is_error()) {
-    LOG(FATAL) << "refusing to start: " << local_only;
   }
   if (opts_->get_test_state_serializer_no_delay() && R.state->get_global_id() != 3) {
     LOG(FATAL) << "test-state-serializer-no-delay requires on-chain global id 3";
@@ -3607,9 +3597,10 @@ void ValidatorManagerImpl::update_shard_overlays() {
 }
 
 void ValidatorManagerImpl::update_shards() {
-  // An admission the ledger decides before this offer is a fence while its history is
-  // pending, never an admission, so the order of the two only ever errs towards fencing.
-  offer_signing_fence_block();
+  // An admission the ledger decides before this block is recorded is a fence while its
+  // history is pending, never an admission, so the order of the two only ever errs towards
+  // fencing.
+  record_signing_fence_blocks();
   if ((last_masterchain_state_->rotated_all_shards() || last_masterchain_seqno_ == 0) &&
       opts_->get_last_fork_masterchain_seqno() <= last_masterchain_seqno_) {
     allow_validate_ = true;
@@ -3623,6 +3614,7 @@ void ValidatorManagerImpl::update_shards() {
                << launch_config;
     allow_validate_ = false;
   }
+  check_signing_capacity_at_start();
   auto exp_vec = last_masterchain_state_->get_shards();
   auto config = last_masterchain_state_->get_consensus_config();
   consensus::ValidatorSessionOptions opts{config};
@@ -4250,15 +4242,13 @@ td::actor::ActorOwn<IValidatorGroup> ValidatorManagerImpl::create_validator_grou
     return {};
   }
 
-  // With the own-decision log, a group exists only once its session's admission is decided,
-  // before any of its actors can sign. Until then there is no group; the group update runs
-  // again when the answer arrives.
-  std::shared_ptr<const consensus::signing::Admission> signing_admission;
-  if (opts_->get_signing_decision_log_enabled()) {
-    signing_admission = signing_admission_for(session_id, local_vid, shard, validator_set->get_catchain_seqno());
-    if (signing_admission == nullptr) {
-      return {};
-    }
+  // A group exists only once its session's admission is decided, before any of its actors
+  // can sign. Until then there is no group; the group update runs again when the answer
+  // arrives.
+  auto signing_admission = signing_admission_for(session_id, local_vid, shard, validator_set->get_catchain_seqno(),
+                                                 signing_session_capacity(shard, config));
+  if (signing_admission == nullptr) {
+    return {};
   }
 
   auto current_relays = get_twostep_relay_snapshot();
@@ -4272,19 +4262,77 @@ td::actor::ActorOwn<IValidatorGroup> ValidatorManagerImpl::create_validator_grou
   });
 }
 
+consensus::signing::SessionCapacity ValidatorManagerImpl::signing_session_capacity(
+    ShardIdFull shard, const NewConsensusConfig &config) const {
+  consensus::signing::SessionCapacity refused;
+  if (last_masterchain_state_.is_null()) {
+    refused.reason = "the catchain lifetime cannot be read: no masterchain state";
+    return refused;
+  }
+  auto holder = last_masterchain_state_->get_config_holder();
+  if (holder.is_error() || holder.ok().is_null()) {
+    refused.reason = PSTRING() << "the catchain lifetime cannot be read: "
+                               << (holder.is_error() ? holder.error().message().str() : std::string("no config"));
+    return refused;
+  }
+  auto lifetime = holder.ok()->get_catchain_lifetime(shard.is_masterchain());
+  if (lifetime.is_error()) {
+    refused.reason = PSTRING() << "the catchain lifetime cannot be read: " << lifetime.error().message();
+    return refused;
+  }
+  return consensus::signing::estimate_session_records(lifetime.ok(), config.noncritical_params.target_rate.count(),
+                                                      config.slots_per_leader_window);
+}
+
+void ValidatorManagerImpl::check_signing_capacity_at_start() {
+  if (signing_capacity_checked_ || last_masterchain_state_.is_null()) {
+    return;
+  }
+  signing_capacity_checked_ = true;
+  std::vector<ShardIdFull> kinds{ShardIdFull{masterchainId}};
+  for (const auto &[workchain, info] : last_masterchain_state_->get_workchain_list()) {
+    static_cast<void>(info);
+    kinds.push_back(ShardIdFull{workchain});
+  }
+  for (const auto &kind : kinds) {
+    auto selected = last_masterchain_state_->get_selected_new_consensus_config(kind.workchain);
+    if (!selected) {
+      continue;
+    }
+    const auto capacity = signing_session_capacity(kind, selected.value().config);
+    switch (capacity.verdict) {
+      case consensus::signing::CapacityVerdict::Refuse:
+        LOG(ERROR) << "signing ledger: the current configuration's sessions of workchain " << kind.workchain
+                   << " will be refused at admission and sign nothing: " << capacity.reason;
+        break;
+      case consensus::signing::CapacityVerdict::Warn:
+        LOG(WARNING) << "signing ledger: the current configuration's sessions of workchain " << kind.workchain
+                     << " are admitted, but " << capacity.reason;
+        break;
+      case consensus::signing::CapacityVerdict::Fits:
+        LOG(INFO) << "signing ledger: the current configuration's sessions of workchain " << kind.workchain
+                  << " are estimated at " << capacity.estimate << " decision records, within the ceiling of "
+                  << consensus::signing::kMaxLogRecords;
+        break;
+    }
+  }
+}
+
 std::shared_ptr<const consensus::signing::Admission> ValidatorManagerImpl::signing_admission_for(
-    ValidatorSessionId session_id, tos::ValidatorId validator, ShardIdFull shard, CatchainSeqno cc) {
+    ValidatorSessionId session_id, tos::ValidatorId validator, ShardIdFull shard, CatchainSeqno cc,
+    const consensus::signing::SessionCapacity &capacity) {
   if (auto it = signing_admissions_.find(session_id); it != signing_admissions_.end()) {
     return it->second;
   }
-  // The start refuses such a network; this keeps any later path from signing on one too.
-  if (last_masterchain_state_.not_null()) {
-    if (auto local_only = signing_decision_log_network_check(*last_masterchain_state_); local_only.is_error()) {
-      auto fenced = consensus::signing::Admission::fence(session_id, local_only.message().str());
-      signing_admissions_[session_id] = fenced;
-      return fenced;
-    }
+  if (capacity.verdict == consensus::signing::CapacityVerdict::Refuse) {
+    // Refused before anything is recorded: the log would fill before the session ends.
+    LOG(ERROR) << "signing ledger: session " << session_id.to_hex() << " of " << shard.to_str() << " catchain " << cc
+               << " is refused at admission and signs nothing: " << capacity.reason;
+    auto fenced = consensus::signing::Admission::fence(session_id, "refused at admission: " + capacity.reason);
+    signing_admissions_[session_id] = fenced;
+    return fenced;
   }
+  ensure_signing_ledger(validator);
   switch (signing_floor_state_) {
     case SigningFloorState::Unknown:
       signing_floor_state_ = SigningFloorState::Requested;
@@ -4309,7 +4357,7 @@ std::shared_ptr<const consensus::signing::Admission> ValidatorManagerImpl::signi
                      << "; no session will sign";
           signing_floor_state_ = SigningFloorState::Refused;
         }
-        return signing_admission_for(session_id, validator, shard, cc);
+        return signing_admission_for(session_id, validator, shard, cc, capacity);
       }
       if (last_masterchain_seqno_ < signing_floor_->seqno()) {
         return nullptr;
@@ -4332,46 +4380,143 @@ std::shared_ptr<const consensus::signing::Admission> ValidatorManagerImpl::signi
       break;
   }
   if (signing_admissions_pending_.insert(session_id).second) {
-    fetch_signing_admission(session_id, validator, shard, cc).start().detach();
+    if (capacity.verdict == consensus::signing::CapacityVerdict::Warn) {
+      LOG(WARNING) << "signing ledger: session " << session_id.to_hex() << " of " << shard.to_str() << " catchain "
+                   << cc << " is admitted, but " << capacity.reason;
+    }
+    fetch_signing_admission(session_id, validator, shard, cc, signing_identity_history(validator)).start().detach();
   }
   return nullptr;
 }
 
-td::Status ValidatorManagerImpl::signing_decision_log_network_check(const MasterchainState &state) const {
-  if (!opts_->get_signing_decision_log_enabled()) {
-    return td::Status::OK();
+void ValidatorManagerImpl::ensure_signing_ledger(tos::ValidatorId validator_id) {
+  if (signing_ledger_.empty()) {
+    signing_ledger_ = td::actor::create_actor<consensus::signing::SigningLedger>(
+        "SigningLedger", consensus::signing::ledger_dir(db_root_), consensus::signing::default_file_ops(), nullptr,
+        nullptr, validator_id.value);
   }
-  return consensus::signing::refuse_off_local_network(state.get_global_id());
 }
 
-void ValidatorManagerImpl::offer_signing_fence_block() {
-  if (signing_ledger_.empty() || signing_history_settled_ || last_masterchain_state_.is_null() ||
-      !last_masterchain_block_handle_) {
+double ValidatorManagerImpl::signing_custody_clock() const {
+  return td::Clocks::system();
+}
+
+void ValidatorManagerImpl::signing_custody_changed(tos::ValidatorId validator_id) {
+  if (pq_custody_.held_keys(validator_id).empty()) {
+    if (signing_identities_.erase(validator_id) != 0) {
+      LOG(INFO) << "signing ledger: validator " << validator_id.value.to_hex()
+                << " is no longer held; its unknown-history record is dropped";
+    }
+    return;
+  }
+  ensure_signing_ledger(validator_id);
+  // Added, rebound or re-added: what this process applied before now says nothing about
+  // when the identity's earlier signer stopped.
+  const auto t0 = consensus::signing::custody_time(signing_custody_clock());
+  signing_identities_[validator_id] = SigningIdentity{.t0 = t0, .fence_block = std::nullopt};
+  fetch_signing_history_start(validator_id, t0).start().detach();
+  LOG(INFO) << "signing ledger: custody of validator " << validator_id.value.to_hex() << " from " << t0
+            << "; its fence block, if it needs one, is generated at or after "
+            << t0 + consensus::signing::kHistoryMarginSeconds;
+}
+
+td::actor::Task<> ValidatorManagerImpl::fetch_signing_history_start(tos::ValidatorId validator_id, td::uint64 custody) {
+  auto start = co_await td::actor::ask(signing_ledger_.get(), &consensus::signing::SigningLedger::history_start,
+                                       validator_id.value, custody)
+                   .wrap();
+  auto it = signing_identities_.find(validator_id);
+  if (it == signing_identities_.end() || it->second.t0 != custody || it->second.history_ready) {
+    co_return td::Unit{};
+  }
+  if (start.is_error()) {
+    LOG(ERROR) << "signing ledger: cannot read the custody lower bound: " << start.error();
+    co_return td::Unit{};
+  }
+  it->second.t0 = start.move_as_ok();
+  it->second.history_ready = true;
+  // Retain the first block applied during the read, but never offer it until the
+  // persisted lower bound is known. If it is too early, the next applied block is
+  // tried. Do not rescan a tip that might have been applied before this custody.
+  if (it->second.fence_block) {
+    if (consensus::signing::fence_block_refusal(*it->second.fence_block, it->second.t0)) {
+      it->second.fence_block.reset();
+    } else {
+      offer_signing_fence_block(validator_id, it->second);
+    }
+  }
+  co_return td::Unit{};
+}
+
+consensus::signing::IdentityHistory ValidatorManagerImpl::signing_identity_history(tos::ValidatorId validator_id) {
+  auto it = signing_identities_.find(validator_id);
+  if (it == signing_identities_.end()) {
+    // Custody this manager was not told of: measured from now, which only fences more.
+    it = signing_identities_
+             .emplace(validator_id, SigningIdentity{.t0 = consensus::signing::custody_time(signing_custody_clock()),
+                                                    .fence_block = std::nullopt})
+             .first;
+    fetch_signing_history_start(validator_id, it->second.t0).start().detach();
+  }
+  return consensus::signing::IdentityHistory{
+      .t0 = it->second.t0, .fence_block = it->second.history_ready ? it->second.fence_block : std::nullopt};
+}
+
+void ValidatorManagerImpl::record_signing_fence_blocks() {
+  if (last_masterchain_state_.is_null() || !last_masterchain_block_handle_) {
+    return;
+  }
+  bool any_open = false;
+  for (const auto &[_, identity] : signing_identities_) {
+    any_open = any_open || !identity.fence_block.has_value();
+  }
+  if (!any_open) {
     return;
   }
   // The catchain counter of every shard lineage at this block, as the session derivation
-  // reads it; a failure to derive one is passed on as the sentinel, which the ledger refuses.
-  std::vector<consensus::signing::FenceEntry> lineages;
+  // reads it; a failure to derive one is kept as the sentinel, which no fence accepts.
+  consensus::signing::FenceBlock block{
+      .block = last_masterchain_block_id_, .gen_utime = last_masterchain_block_handle_->unix_time(), .lineages = {}};
   const ShardIdFull masterchain{masterchainId, shardIdAll};
-  lineages.push_back(
+  block.lineages.push_back(
       {masterchain.workchain, masterchain.shard, last_masterchain_state_->get_shard_cc_seqno(masterchain)});
   for (const auto &shard : last_masterchain_state_->get_shards()) {
     const auto id = shard->shard();
-    lineages.push_back({id.workchain, id.shard, last_masterchain_state_->get_shard_cc_seqno(id)});
+    block.lineages.push_back({id.workchain, id.shard, last_masterchain_state_->get_shard_cc_seqno(id)});
   }
-  [](ValidatorManagerImpl *self, BlockIdExt block, td::uint32 gen_utime,
-     std::vector<consensus::signing::FenceEntry> lineages) -> td::actor::Task<> {
-    auto settled =
-        co_await td::actor::ask(self->signing_ledger_.get(), &consensus::signing::SigningLedger::offer_fence_block,
-                                block, gen_utime, std::move(lineages))
-            .wrap();
-    if (settled.is_ok() && settled.ok()) {
-      self->signing_history_settled_ = true;
+  for (auto &[validator_id, identity] : signing_identities_) {
+    if (identity.fence_block.has_value()) {
+      continue;
     }
-    co_return td::Unit{};
-  }(this, last_masterchain_block_id_, last_masterchain_block_handle_->unix_time(), std::move(lineages))
-                                                                  .start()
-                                                                  .detach();
+    if (auto refused = consensus::signing::fence_block_refusal(block, identity.t0)) {
+      if (block.gen_utime >= identity.t0 + consensus::signing::kHistoryMarginSeconds) {
+        LOG(WARNING) << "signing ledger: block " << block.block.to_str() << " cannot be the fence block of validator "
+                     << validator_id.value.to_hex() << ": " << *refused;
+      }
+      continue;
+    }
+    identity.fence_block = block;
+    if (identity.history_ready) {
+      offer_signing_fence_block(validator_id, identity);
+    }
+  }
+}
+
+void ValidatorManagerImpl::offer_signing_fence_block(tos::ValidatorId validator_id, const SigningIdentity &identity) {
+  CHECK(identity.history_ready && identity.fence_block.has_value());
+  const auto &block = *identity.fence_block;
+  LOG(INFO) << "signing ledger: fence block of validator " << validator_id.value.to_hex() << " is "
+            << block.block.to_str() << " (custody from " << identity.t0 << ")";
+  if (signing_ledger_.empty()) {
+    return;
+  }
+  // Settles a pending ledger of this identity now; one created later is established from
+  // the same record at its first admission.
+  td::actor::send_closure(signing_ledger_, &consensus::signing::SigningLedger::offer_fence_block, validator_id.value,
+                          identity.t0, block, [](td::Result<bool> settled) {
+                            if (settled.is_error()) {
+                              LOG(ERROR) << "signing ledger: the fence block could not be offered: " << settled.error();
+                            }
+                          });
 }
 
 td::actor::Task<> ValidatorManagerImpl::fetch_signing_floor() {
@@ -4407,10 +4552,12 @@ void ValidatorManagerImpl::checked_signing_floor(td::Result<ConstBlockHandle> ha
 
 td::actor::Task<> ValidatorManagerImpl::fetch_signing_admission(ValidatorSessionId session_id,
                                                                 tos::ValidatorId validator, ShardIdFull shard,
-                                                                CatchainSeqno cc) {
-  auto admission = co_await td::actor::ask(signing_ledger_.get(), &consensus::signing::SigningLedger::admit,
-                                           validator.value, session_id, shard, static_cast<td::uint32>(cc))
-                       .wrap();
+                                                                CatchainSeqno cc,
+                                                                consensus::signing::IdentityHistory history) {
+  auto admission =
+      co_await td::actor::ask(signing_ledger_.get(), &consensus::signing::SigningLedger::admit, validator.value,
+                              session_id, shard, static_cast<td::uint32>(cc), std::move(history))
+          .wrap();
   signing_admissions_pending_.erase(session_id);
   if (admission.is_error()) {
     LOG(ERROR) << "signing ledger: no admission for session " << session_id.to_hex() << ": " << admission.error();
@@ -4423,6 +4570,14 @@ td::actor::Task<> ValidatorManagerImpl::fetch_signing_admission(ValidatorSession
   const auto &decided = signing_admissions_[session_id];
   LOG(WARNING) << "signing ledger: session " << session_id.to_hex() << " of " << shard.to_str() << " catchain " << cc
                << ": " << (decided->fenced ? "fenced (" + decided->reason + ")" : std::string("admitted"));
+  if (decided->history_unknown && last_masterchain_seqno_ == 0 && !signing_genesis_hint_logged_) {
+    // Behaviour is unchanged: a fresh database cannot prove the key never signed. But at the
+    // zerostate a pending node waits for blocks that cannot come without a quorum.
+    signing_genesis_hint_logged_ = true;
+    LOG(ERROR) << "signing ledger: no signing ledger at genesis: run `tos-pq-consensus-key init-signing-ledger "
+                  "--genesis-ceremony DB_ROOT VALIDATOR_ID ZEROSTATE_ROOT_HASH ZEROSTATE_FILE_HASH` on the stopped "
+                  "node; a pending node at genesis waits for blocks that cannot come without a quorum";
+  }
   rebuild_groups_after_signing_answer();
   co_return td::Unit{};
 }
@@ -4988,6 +5143,7 @@ void ValidatorManagerImpl::del_pq_consensus_key(tos::ValidatorId validator_id, t
     return;
   }
   pq_custody_.remove_key(validator_id, key_id);
+  signing_custody_changed(validator_id);
   promise.set_value(td::Unit());
 }
 

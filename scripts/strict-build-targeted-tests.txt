@@ -24,3 +24,8 @@ json-rpc-import-fee
 test-out-msg-queue-limits
 test-validate-query-rules
 boc-compression
+# Run the scale checks with the same jemalloc configuration as the native node build.
+decision-log-scale-memory
+decision-log-scale-reconcile-scaling
+decision-log-scale-full-restart
+decision-log-scale-retained

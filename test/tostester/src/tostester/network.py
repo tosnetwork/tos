@@ -568,6 +568,9 @@ class FullNode(Network.Node):
 
         self._is_initial_validator = False
         self._pq_initial_validator: PqInitialValidator | None = None
+        # Every genesis PQ validator gets a complete signing ledger before its first start
+        # (the genesis ceremony); a drill of the chain without it turns this off.
+        self._genesis_ceremony = True
 
         self._client: ToslibClient | None = None
         self._engine_console: EngineConsoleClient | None = None
@@ -626,6 +629,41 @@ class FullNode(Network.Node):
             ),
         )
 
+    def without_genesis_ceremony(self):
+        """Start this genesis validator without a signing ledger: its history is unknown."""
+        self._genesis_ceremony = False
+
+    def run_genesis_ceremony(self) -> None:
+        """Create this genesis validator's signing ledger as one that has never signed.
+
+        Runs `tos-pq-consensus-key init-signing-ledger --genesis-ceremony` on the stopped
+        node, once, before its first start. A validator without a signing ledger signs
+        nothing until a fence block, which a new chain whose validators all wait never
+        produces. A ledger already there (a drill made it, or the node has run) is kept.
+        """
+        held = self._pq_initial_validator
+        if held is None or not self._is_initial_validator:
+            raise RuntimeError("the genesis ceremony is for a genesis PQ validator")
+        if (self._directory / "consensus" / "signing-ledger" / "ledger").exists():
+            return
+        zerostate = self._get_or_generate_zerostate()
+        result = subprocess.run(
+            [
+                str(self._network.install.pq_consensus_key_exe),
+                "init-signing-ledger",
+                "--genesis-ceremony",
+                str(self._directory),
+                held.validator_id.hex(),
+                zerostate.masterchain.root_hash.hex(),
+                zerostate.masterchain.file_hash.hex(),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"genesis ceremony failed: {result.stderr.strip()}")
+
     @property
     def is_initial_validator(self):
         return self._is_initial_validator
@@ -656,6 +694,12 @@ class FullNode(Network.Node):
             for state in (zerostate.masterchain, zerostate.shardchain):
                 (static_dir / state.file_hash.hex().upper()).symlink_to(state.file)
             self._static_populated = True
+            if (
+                self._genesis_ceremony
+                and self._is_initial_validator
+                and self._pq_initial_validator is not None
+            ):
+                self.run_genesis_ceremony()
 
         options, install = _get_install_and_options(
             options,

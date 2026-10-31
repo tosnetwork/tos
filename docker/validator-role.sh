@@ -232,7 +232,6 @@ LONG_OPTIONS_WITHOUT_ARGUMENT="
   enable-validator-consensus-cleanup
   disable-validator-consensus-cleanup
   test-consensus-cleanup-crash-before-erase
-  signing-decision-log
   not-all-shards
   enable-precompiled-smc
   disable-rocksdb-stats

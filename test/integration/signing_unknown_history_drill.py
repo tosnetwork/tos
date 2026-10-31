@@ -11,8 +11,9 @@ no current one), the target is stopped, its consensus/ directory is moved aside 
 sees it deleted; the drill keeps it as evidence), and the target is restarted at once,
 within the same masterchain session.
 
-  --mode log      the build under test: the target runs with --signing-decision-log and,
-                  before its first start, a ledger from the genesis ceremony. Expected:
+  --mode log      the build under test, where every validator keeps the own-decision log;
+                  each genesis validator starts with a ledger from the genesis ceremony
+                  (the harness runs it; the drill records the target's). Expected:
                   after the restart, every session at or below cc(M) + 2 of its lineage
                   is fenced and the target signs in none of them; from cc(M) + 3 it signs
                   again. M is the fence block the target logs.
@@ -68,7 +69,7 @@ from pathlib import Path
 from typing import Any
 
 from tostester.install import Install
-from tostester.network import FullNode, Network, StartOptions
+from tostester.network import FullNode, Network
 
 TARGET = 3
 MC = "(-1,8000000000000000)"
@@ -82,7 +83,8 @@ INDEX = re.compile(
     r"of (?P<shard>\(\S+\)) catchain (?P<cc>\d+): local validator index (?P<idx>\d+)"
 )
 FENCE = re.compile(
-    r"signing ledger: unknown history fenced at (?P<block>\S+) over (?P<n>\d+) lineages.*counters:(?P<counters>.*)$"
+    r"signing ledger: unknown history fenced at (?P<block>\S+)(?: \([^)]*\))? over (?P<n>\d+) lineages"
+    r".*counters:(?P<counters>.*)$"
 )
 COUNTER = re.compile(r"(\(\S+\))=(\d+)")
 CREATED = re.compile(r"Created validator group (?P<shard>\(\S+\))\.(?P<cc>\d+):")
@@ -443,7 +445,6 @@ async def main() -> int:
             "root_hash": zerostate.masterchain.root_hash.hex(),
             "file_hash": zerostate.masterchain.file_hash.hex(),
         }
-        target_args: list[str] = []
         if args.mode in ("log", "producer-control"):
             ceremony = subprocess.run(
                 [
@@ -465,14 +466,11 @@ async def main() -> int:
             }
             if ceremony.returncode != 0:
                 raise SystemExit(f"DRILL_FAILED genesis ceremony: {ceremony.stderr}")
-            target_args = ["--signing-decision-log"]
 
         async with asyncio.TaskGroup() as group:
             group.create_task(dht.run())
-            for index, node in enumerate(nodes):
-                group.create_task(
-                    node.run(StartOptions(args=target_args if index == TARGET else ()))
-                )
+            for node in nodes:
+                group.create_task(node.run())
         log.info("nodes started")
 
         # The target must have signed (its index in a masterchain certificate) and the
@@ -492,7 +490,7 @@ async def main() -> int:
         moved = target.directory / f"consensus.removed-{int(stopped_at)}"
         (target.directory / "consensus").rename(moved)
         summary["consensus_moved_to"] = moved.name
-        await target.run(StartOptions(args=target_args))
+        await target.run()
         restarted_at = time.time()
         summary["stopped_at"] = stopped_at
         summary["restarted_at"] = restarted_at

@@ -1094,6 +1094,21 @@ class RealEngineTest(unittest.TestCase):
             with self.subTest(option=name):
                 self.assertEqual(table.get(name), (letter, bool(takes)))
 
+    def test_the_own_decision_log_has_no_switch(self) -> None:
+        # Every validator keeps the own-decision log; the engine offers no option that
+        # turns it on or off, so an old command line naming one is refused, not ignored.
+        engine = find_built("validator-engine/validator-engine", "TOS_VALIDATOR_ENGINE")
+        if engine is None:
+            self.skipTest("no built validator-engine; set TOS_VALIDATOR_ENGINE to run this test")
+        shown = subprocess.run([str(engine), "-h"], capture_output=True, text=True, timeout=60)
+        self.assertNotIn("signing-decision-log", shown.stdout + shown.stderr)
+        refused = subprocess.run(
+            [str(engine), "--signing-decision-log"], capture_output=True, text=True, timeout=60
+        )
+        self.assertIn(
+            "Option signing-decision-log was unrecognized", refused.stdout + refused.stderr
+        )
+
     def test_helper_agrees_with_the_engine_on_a_corpus(self) -> None:
         # For each command-line tail, the real engine shows which database it
         # opens (it creates the directory before anything else) and which

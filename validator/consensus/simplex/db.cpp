@@ -8,6 +8,7 @@
 
 #include "bus.h"
 #include "finalized-slot-dedup.h"
+#include "journal-reconcile.h"
 
 namespace tos::validator::consensus::simplex {
 
@@ -459,35 +460,36 @@ class DbImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo<B
       }
       // Every vote the journal holds must be a decision the log holds. One the log lacks
       // means the log lost it (an older or replaced log beside a surviving journal) or the
-      // journal is not this log's: the session is fenced, never repaired by dropping either.
+      // journal is not its own: the session is fenced, never repaired by dropping either.
+      std::vector<signing::Decision> journal;
+      std::vector<bool> signed_entry;
+      journal.reserve(our_votes.size());
+      signed_entry.reserve(our_votes.size());
       for (const auto& v : our_votes) {
-        const auto decision = decision_of(v.vote);
-        const bool recorded = std::any_of(admission->decisions.begin(), admission->decisions.end(),
-                                          [&](const auto& entry) { return entry.second == decision; });
-        if (!recorded) {
-          bus.vote_journal_failure = PSTRING() << "the journal holds " << v.vote
-                                               << ", which the decision log does not; the log lost it or the "
-                                                  "journal is not its own";
-          LOG(ERROR) << "Simplex db: " << bus.vote_journal_failure;
-          // Nothing in this session may sign: no vote, and no candidate either.
-          admission->stopped->store(true, std::memory_order_release);
-          return;
-        }
+        journal.push_back(decision_of(v.vote));
+        signed_entry.push_back(!v.signature.empty());
+      }
+      if (const auto missing = first_unlogged(journal, admission->decisions)) {
+        bus.vote_journal_failure = PSTRING() << "the journal holds " << our_votes[*missing].vote
+                                             << ", which the decision log does not; the log lost it or the "
+                                                "journal is not its own";
+        LOG(ERROR) << "Simplex db: " << bus.vote_journal_failure;
+        // Nothing in this session may sign: no vote, and no candidate either.
+        admission->stopped->store(true, std::memory_order_release);
+        return;
       }
       // What to restore: every vote decision in the log, with the bytes the journal kept for
-      // it, or none. A decision whose bytes are gone is signed again: the same decision,
-      // which peers treat as the same vote.
+      // it (its first signed entry in journal order), or none. A decision whose bytes are
+      // gone is signed again: the same decision, which peers treat as the same vote.
+      const auto first_signed = first_signed_index(journal, signed_entry);
       for (const auto& [seq, decision] : admission->decisions) {
         auto vote = vote_of(decision);
         if (!vote.has_value()) {
           continue;
         }
         td::BufferSlice signature;
-        for (auto& v : our_votes) {
-          if (!v.signature.empty() && decision_of(v.vote) == decision) {
-            signature = std::move(v.signature);
-            break;
-          }
+        if (auto found = first_signed.find(decision); found != first_signed.end()) {
+          signature = std::move(our_votes[found->second].signature);
         }
         // Known as cast, so the same vote is not requested afresh; a vote the journal also
         // held is already in the set, which is what a false answer means here.

@@ -31,6 +31,9 @@
 // Without a trusted ledger the node's earlier signing is unknown: a pending ledger replaces
 // it, every session is fenced until the fence block, and afterwards only sessions above the
 // fence sign (see "Unknown signing history" below).
+//
+// Every validator records its decisions here, on every network; there is no option to turn
+// it off. An observer, which holds no consensus key, has none.
 
 #include <array>
 #include <atomic>
@@ -71,6 +74,11 @@ struct Decision {
 
 std::string to_string(const Decision& decision);
 
+// For hashed lookups of decisions.
+struct DecisionHash {
+  std::size_t operator()(const Decision& decision) const;
+};
+
 enum class Check { New, Same, Conflict };
 
 // What this node has decided, per slot, and the rules the protocol reports as misbehaviour
@@ -108,11 +116,38 @@ class DecisionIndex {
 // ===== Limits =====
 
 inline constexpr std::size_t kRecordBytes = 64;
-inline constexpr std::size_t kMaxLogRecords = 16384;
+// The ceiling of one session's log: 2^20 records, 64 MiB. A session that reaches it signs
+// nothing more (fail closed). A WARNING is logged when a log reaches half of it and again at
+// three quarters, and a session whose normal-progress estimate exceeds it is refused at
+// admission (see estimate_session_records).
+inline constexpr std::size_t kMaxLogRecords = std::size_t{1} << 20;
 inline constexpr std::size_t kMaxLogBytes = kMaxLogRecords * kRecordBytes;
 inline constexpr std::size_t kMaxHeaderBytes = 64 * 1024;
 inline constexpr std::size_t kMaxEntries = 1024;
 inline constexpr std::size_t kMaxSetAside = 4;
+
+// ===== Normal-progress estimate of a session's records =====
+//
+// Per slot the log admits at most one notarize, one finalize and one skip, and one record
+// per leader window. While the chain makes progress, a session lives about its catchain
+// lifetime and reaches about lifetime / target_rate slots, so it records at most
+//   3 * ceil(lifetime_ms / target_rate_ms) + ceil(slots / slots_per_leader_window).
+// This is an estimate, not a bound: a stall can keep a session alive past its lifetime,
+// and then only the ceiling and its warnings apply.
+
+enum class CapacityVerdict { Fits, Warn, Refuse };
+
+struct SessionCapacity {
+  CapacityVerdict verdict = CapacityVerdict::Refuse;
+  std::uint64_t estimate = 0;
+  // Why it warns or refuses, with the parameters; empty when it fits.
+  std::string reason;
+};
+
+// Refuses a zero target rate, a zero leader window size and any overflow; refuses an
+// estimate above `ceiling`; warns above half of it. All arithmetic is checked.
+SessionCapacity estimate_session_records(std::uint64_t lifetime_seconds, std::int64_t target_rate_ms,
+                                         std::uint32_t slots_per_leader_window, std::size_t ceiling = kMaxLogRecords);
 
 // ===== Durable file operations, replaceable by tests that inject failures =====
 
@@ -162,7 +197,8 @@ struct LoadedLog {
 // Reads and verifies the log open at `fd` for `session`. A partial last record is reported
 // as a torn tail and excluded; a bad record anywhere else, a broken chain, a decision that
 // conflicts with an earlier one, or a log above the limits is an error.
-td::Result<LoadedLog> load_log(int fd, const td::Bits256& session);
+// `max_records` is the ceiling, lowered only by tests.
+td::Result<LoadedLog> load_log(int fd, const td::Bits256& session, std::size_t max_records = kMaxLogRecords);
 
 // The chain value a log for `session` starts from.
 std::array<unsigned char, 16> chain_start(const td::Bits256& session);
@@ -186,14 +222,18 @@ class SessionDecisionLog : public td::actor::Actor {
   // persistence between the two. Null in production.
   using WriteGate = std::function<td::actor::StartedTask<>(const Decision&)>;
 
+  // `max_records` is the ceiling, lowered only by tests; it is clamped to [1, kMaxLogRecords].
   SessionDecisionLog(td::Bits256 session, int fd, LoadedLog loaded, std::shared_ptr<FileOps> ops,
-                     std::shared_ptr<std::atomic<bool>> stopped, WriteGate gate);
+                     std::shared_ptr<std::atomic<bool>> stopped, WriteGate gate,
+                     std::size_t max_records = kMaxLogRecords);
   ~SessionDecisionLog() override;
 
   td::actor::Task<Reservation> reserve(Decision decision);
 
   // For tests and diagnostics: how many records are durable.
   td::actor::Task<std::size_t> durable_records();
+  // For tests and diagnostics: how many of the 50 % and 75 % marks the log has warned at.
+  td::actor::Task<int> fill_warnings();
 
  private:
   using ReservationPromise = decltype(td::actor::StartedTask<Reservation>::make_bridge().second);
@@ -205,8 +245,13 @@ class SessionDecisionLog : public td::actor::Actor {
   td::actor::Task<> drain();
   td::actor::Task<Reservation> handle(const Decision& decision);
   bool recover();
+  // Logs the 50 % and 75 % warnings, each once, when the log has reached them.
+  void warn_on_fill();
 
   td::Bits256 session_;
+  std::size_t max_records_;
+  bool warned_half_ = false;
+  bool warned_three_quarters_ = false;
   int fd_;
   DecisionIndex index_;
   std::int64_t next_seq_ = 0;
@@ -231,6 +276,10 @@ struct Admission {
   // Set when the session's log can no longer record anything; nothing is signed after.
   std::shared_ptr<std::atomic<bool>> stopped;
 
+  // Set on a fence whose cause is that this node's earlier signing is unknown (a pending
+  // history), for the operator hint a node at genesis logs.
+  bool history_unknown = false;
+
   bool signing_stopped() const {
     return fenced || (stopped && stopped->load(std::memory_order_acquire));
   }
@@ -238,6 +287,12 @@ struct Admission {
 
   static std::shared_ptr<const Admission> fence(td::Bits256 session, std::string reason);
 };
+
+// The admission a validator group signs under: `admission`, or a fence when none was given.
+// A validator group is never built without one, so a missing admission is a fault on the
+// building side and must not mean "sign without a record".
+std::shared_ptr<const Admission> admission_for_validator_group(std::shared_ptr<const Admission> admission,
+                                                               td::Bits256 session);
 
 // ===== The header and the ledger =====
 
@@ -249,18 +304,47 @@ struct HeaderEntry {
 // ===== Unknown signing history =====
 //
 // A ledger created where none could be trusted (none was there, or the one there was
-// copied, replaced or damaged) cannot know what the node signed before this process
-// started. It starts pending, with the process's start time t0, and fences every session.
-// The first masterchain block applied with gen_utime >= t0 + kHistoryMarginSeconds is the
-// fence block M: under the clock assumptions (hosts within 30 s of true time, block times
-// at most 30 s ahead of an honest validator's clock) M was produced after the earlier
-// signer stopped. The ledger then records, for every shard lineage at M, its catchain
-// counter, and from then on fences every session whose lineage is related to an entry
-// with a counter at most two above it: the largest counter any session built before M,
-// current or tentative, can carry. A session of a lineage no entry relates to, a
-// workchain absent at M included, stays fenced.
+// copied, replaced or damaged) cannot know what the identity signed before this process
+// held its key. It starts pending and fences every session until the fence block M.
+//
+// t0 is per identity: the wall-clock time, rounded up to a second, at which this process
+// took custody of the identity's consensus key and its binding to the validator id (the
+// later of the two). Custody that is added, rebound or re-added later resets it; the
+// identity's earlier signer stopped before this process held the key (the no-second-signer
+// assumption), so nothing it signed can be in a session built after M.
+//
+// M is the first masterchain block this process applies after t0 was set with
+// gen_utime >= t0 + kHistoryMarginSeconds and a catchain counter for every shard lineage
+// (at most kMaxFenceEntries of them). The process records M per identity whether or not a
+// ledger exists yet, so a validator-elect whose node has run long enough is admitted in its
+// first session; the pending ledger created at its first admission is established from it
+// directly.
+//
+// Why 91 s. Assume (i) this host's clock is within 30 s of true time, (ii) every honest
+// validator's clock is within 30 s of true time, (iii) an honest validator refuses a block
+// whose gen_utime is more than 30 s ahead of its clock, and (iv) more than two thirds of
+// the weight is honest. The process read t0 at true time T0 >= t0 - 30 (i). M was accepted
+// by an honest quorum, so gen_utime(M) <= true production time + 60 (ii, iii), and M was
+// produced at true time >= gen_utime(M) - 60 >= t0 + 31 > T0. The extra second absorbs the
+// rounding of t0 (up) and of gen_utime (whole seconds). If an assumption fails, M may
+// predate the earlier signer's last signature; time sync is a requirement of the log.
+//
+// The ledger then records, for every shard lineage at M, its catchain counter, and from
+// then on fences every session whose lineage is related to an entry with a counter at most
+// kFenceCounterMargin above it. A session of a lineage no entry relates to, a workchain
+// absent at M included, stays fenced: no session of such a workchain is proven to be built
+// after M, so a validator restarts (taking a new t0 and M) after a workchain is added.
 
 inline constexpr std::uint32_t kHistoryMarginSeconds = 91;
+// The largest counter a session built before M can carry, above the counter its lineage has
+// at M:
+//   masterchain: the current session is the configuration's cc_seqno; the tentative next
+//     set's session is +1;
+//   a split child not yet in the configuration reads its parent's counter (the ancestor
+//     branch of get_shard_cc_seqno); its tentative next is +1;
+//   a merge: the merged shard's counter is max(a, b) + 1, and its tentative next max + 2.
+// So every session buildable before M on a lineage related to an entry carries at most
+// entry + 2.
 inline constexpr std::uint32_t kFenceCounterMargin = 2;
 inline constexpr std::size_t kMaxFenceEntries = 256;
 // What get_shard_cc_seqno answers when it cannot derive a counter.
@@ -290,12 +374,28 @@ struct FenceEntry {
 // rather than wrapping.
 bool fenced_by_history(const std::vector<FenceEntry>& fence, ShardIdFull shard, std::uint32_t cc);
 
-// The global id of a local network. The own-decision log is experimental and runs only
-// there until it is cleared for deployment.
-inline constexpr std::int32_t kLocalNetworkGlobalId = 3;
+// A masterchain block offered as the fence block M: its id, its generation time and the
+// catchain counter of every shard lineage at it, the masterchain included.
+struct FenceBlock {
+  BlockIdExt block;
+  std::uint32_t gen_utime = 0;
+  std::vector<FenceEntry> lineages;
+};
 
-// OK on a local network; otherwise the reason a node with the log enabled must not run.
-td::Status refuse_off_local_network(std::int32_t global_id);
+// Why `block` cannot be the fence block of a history waiting from `t0`; nullopt when it can.
+// It can when it was generated at t0 + kHistoryMarginSeconds or later and gives a counter
+// for each of between one and kMaxFenceEntries lineages.
+std::optional<std::string> fence_block_refusal(const FenceBlock& block, std::uint64_t t0);
+
+// A custody time as t0 is kept: unix seconds, rounded up. A later t0 only ever fences more.
+std::uint64_t custody_time(double unix_seconds);
+
+// What this process knows of one validator identity's history: when it took custody of the
+// identity (t0), and the fence block it has applied since, if any.
+struct IdentityHistory {
+  std::uint64_t t0 = 0;
+  std::optional<FenceBlock> fence_block;
+};
 
 struct Header {
   td::Bits256 validator = td::Bits256::zero();
@@ -312,6 +412,9 @@ std::string encode_header(const Header& header);
 td::Result<Header> decode_header(td::Slice bytes);
 
 std::string ledger_dir(const std::string& db_root);
+// Retained ledgers for deliberate identity rebindings, in addition to the original one.
+// They are never deleted automatically; refuse another identity once this bound is reached.
+inline constexpr std::size_t kMaxIdentityLedgers = 4;
 
 // Creates a complete ledger for `validator` in an empty `dir`: one that asserts the node
 // has never signed. Only what knows that, the genesis ceremony or a test, may call this.
@@ -325,23 +428,32 @@ enum class LedgerStatus { Trusted, Absent, Untrusted };
 class SigningLedger : public td::actor::Actor {
  public:
   // `clock` reads unix seconds, for tests of the start time; null reads the system clock.
+  // `max_log_records` is each session log's ceiling, lowered only by tests.
   SigningLedger(std::string dir, std::shared_ptr<FileOps> ops = default_file_ops(),
-                SessionDecisionLog::WriteGate gate = nullptr, std::function<double()> clock = nullptr);
+                SessionDecisionLog::WriteGate gate = nullptr, std::function<double()> clock = nullptr,
+                std::optional<td::Bits256> validator = std::nullopt, std::size_t max_log_records = kMaxLogRecords);
 
   void start_up() override;
 
   // The admission for `session` of `shard` with catchain counter `cc`, signed by
-  // `validator`. Repeated calls for one admitted session in one process return the same
-  // log. Where no ledger could be trusted, the first call creates a pending one.
+  // `validator`, whose history in this process is `history`. Repeated calls for one
+  // admitted session in one process return the same log. Where no ledger could be trusted,
+  // the first call creates a pending one, waiting from the later of `history.t0` and this
+  // actor's start, and established at once from `history.fence_block` when that qualifies.
+  // A pending ledger of this validator is established the same way.
   td::actor::Task<std::shared_ptr<const Admission>> admit(td::Bits256 validator, td::Bits256 session, ShardIdFull shard,
-                                                          std::uint32_t cc);
+                                                          std::uint32_t cc, IdentityHistory history);
 
-  // Offers the masterchain block `block`, generated at `gen_utime`, with the catchain
-  // counter of every shard lineage at it, as the fence block of a pending history. Answers
-  // whether the history is settled (complete or established) afterwards.
-  td::actor::Task<bool> offer_fence_block(BlockIdExt block, std::uint32_t gen_utime, std::vector<FenceEntry> lineages);
+  // Offers `block` as the fence block of `validator`'s pending history, for an identity whose
+  // custody in this process began at `t0`. The block must qualify against the later of `t0`
+  // and the t0 the ledger stored. Answers whether the history is settled (complete or
+  // established) afterwards; a ledger of another validator, or none, answers false.
+  td::actor::Task<bool> offer_fence_block(td::Bits256 validator, std::uint64_t t0, FenceBlock block);
 
   td::actor::Task<History> history();
+  // The earliest custody time a fence may use, including a pending ledger from a previous
+  // process and this actor's start. Read before the manager chooses its first fence block.
+  td::actor::Task<std::uint64_t> history_start(td::Bits256 validator, std::uint64_t custody);
 
   // Forgets sessions that can no longer be recreated, and raises the floor to `floor`, in
   // one header write; their logs are deleted only after it.
@@ -353,19 +465,27 @@ class SigningLedger : public td::actor::Actor {
   td::actor::Task<std::string> untrusted_reason();
 
  private:
+  void load_header();
+  td::Status check_identity_capacity() const;
   td::Status write_header();
   std::string log_path(const td::Bits256& session) const;
   std::shared_ptr<const Admission> admit_now(const td::Bits256& validator, const td::Bits256& session,
-                                             ShardIdFull shard, std::uint32_t cc);
-  // Replaces an absent or untrusted ledger with a pending one for `validator`.
-  td::Status start_unknown_history(const td::Bits256& validator);
+                                             ShardIdFull shard, std::uint32_t cc, const IdentityHistory& history);
+  // Replaces an absent or untrusted ledger with a pending one for `validator`, waiting from
+  // the later of `history.t0` and this actor's start.
+  td::Status start_unknown_history(const td::Bits256& validator, const IdentityHistory& history);
+  // Establishes the pending history at `block`, which the caller has checked qualifies; one
+  // header write, undone in memory when it fails.
+  td::Status establish(const FenceBlock& block);
 
   std::string dir_;
+  std::string original_dir_;
+  std::optional<td::Bits256> bound_validator_;
   std::shared_ptr<FileOps> ops_;
   SessionDecisionLog::WriteGate gate_;
   std::function<double()> clock_;
-  // This process's start, rounded up: the earliest a pending history created now may say
-  // the earlier signer stopped.
+  std::size_t max_log_records_;
+  // This actor's start, rounded up: no t0 recorded by this process is earlier.
   std::uint64_t started_at_ = 0;
   LedgerStatus status_ = LedgerStatus::Absent;
   std::string untrusted_reason_;

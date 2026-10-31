@@ -204,11 +204,6 @@ struct ValidatorManagerOptions : public td::CntObject {
   // validator-engine --disable-validator-consensus-cleanup turns it off; records keep
   // accumulating and are reclaimed once it is enabled again.
   virtual bool get_validator_consensus_cleanup_enabled() const = 0;
-  // Whether validator groups record their decisions in the own-decision log
-  // (validator/consensus/signing-ledger.h) and sign only what it admits. Off by default:
-  // without the rule for a node whose signing history is unknown, a node with no ledger
-  // would sign nothing, so nothing turns this on in production yet.
-  virtual bool get_signing_decision_log_enabled() const = 0;
   // TEST-ONLY FAULT INJECTION (crash boundary), default false. When armed, the
   // manager exits abruptly after the worker has confirmed the consensus directory removed
   // but before the durable cleanup record is erased -- reproducing, through the real
@@ -266,7 +261,6 @@ struct ValidatorManagerOptions : public td::CntObject {
   virtual void set_archive_preload_period(double value) = 0;
   virtual void set_disable_rocksdb_stats(bool value) = 0;
   virtual void set_validator_consensus_cleanup_enabled(bool value) = 0;
-  virtual void set_signing_decision_log_enabled(bool value) = 0;
   virtual void set_test_crash_cleanup_before_erase(bool value) = 0;
   virtual void set_nonfinal_ls_queries_enabled(bool value) = 0;
   virtual void set_celldb_cache_size(td::uint64 value) = 0;

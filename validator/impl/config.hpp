@@ -78,6 +78,14 @@ class ConfigHolderQ : public ConfigHolder {
   td::Status validate_pq_launch_resource_config() const override {
     return config_->validate_pq_launch_resource_config();
   }
+  td::Result<td::uint32> get_catchain_lifetime(bool masterchain) const override {
+    if (!config_) {
+      return td::Status::Error("no configuration");
+    }
+    // Strict: a missing or malformed ConfigParam 28 is an error, never the defaults.
+    TRY_RESULT(catchain, config_->get_catchain_validators_config_strict());
+    return masterchain ? catchain.mc_cc_lifetime : catchain.shard_cc_lifetime;
+  }
 };
 
 }  // namespace validator

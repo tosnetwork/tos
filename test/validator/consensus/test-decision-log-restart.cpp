@@ -46,6 +46,11 @@
 //                           (the node leads window 0) the log stops while the leader's window
 //                           reservation is held between its check and its write: the
 //                           reservation is granted afterwards, and still nothing is signed.
+//   production-default      journal-loss as a validator on any network runs it: there is no
+//                           option to disable the log, and the group's admission goes through
+//                           the production guard that fences a group built without one. On a
+//                           build where the log is an option, off by default, the node signs
+//                           notarize(B).
 
 #include <algorithm>
 #include <atomic>
@@ -132,6 +137,7 @@ enum class Mode {
   WindowLogRollbackWithoutJournalRecord,
   LogRollbackLeader,
   StopDuringWindowReservation,
+  ProductionDefault,
 };
 
 // Holds the leader window's reservation after its check and before its write, until the
@@ -165,6 +171,7 @@ void release_window_gate() {
   }
 }
 
+// Only the red control runs without the log: no production path can turn it off.
 bool uses_log(Mode mode) {
   return mode != Mode::JournalLossWithoutLog;
 }
@@ -613,9 +620,9 @@ class Driver : public td::actor::Actor {
       }
       ledger_ = td::actor::create_actor<signing::SigningLedger>(PSTRING() << "ledger" << current_life.load(),
                                                                 ledger_dir_, signing::default_file_ops(), gate);
-      admission =
-          co_await td::actor::ask(ledger_.get(), &signing::SigningLedger::admit,
-                                  validators_.at(target_).validator_id.value, SESSION, SHARD, std::uint32_t{CC_SEQNO});
+      admission = co_await td::actor::ask(ledger_.get(), &signing::SigningLedger::admit,
+                                          validators_.at(target_).validator_id.value, SESSION, SHARD,
+                                          std::uint32_t{CC_SEQNO}, signing::IdentityHistory{});
       admission_ = admission;
       emit(PSTRING() << "DLR_ADMISSION life=" << current_life.load() << " fenced=" << admission->fenced
                      << " decisions=" << admission->decisions.size()
@@ -659,7 +666,11 @@ class Driver : public td::actor::Actor {
     bus->cc_seqno = CC_SEQNO;
     bus->validator_set_hash = 0;
     bus->db = std::make_unique<MemoryDb>();
-    bus->signing_admission = admission;
+    // As a validator group is built in production: through the guard that turns a missing
+    // admission into a fence. The red control alone bypasses it, standing in for a build
+    // without the log.
+    bus->signing_admission =
+        mode_ == Mode::JournalLossWithoutLog ? admission : signing::admission_for_validator_group(admission, SESSION);
     auto [stopped, stop_promise] = td::actor::StartedTask<>::make_bridge();
     bus->stop_promise = std::move(stop_promise);
     stopped_.emplace(std::move(stopped));
@@ -693,6 +704,7 @@ class Driver : public td::actor::Actor {
     switch (mode_) {
       case Mode::JournalLoss:
       case Mode::JournalLossWithoutLog:
+      case Mode::ProductionDefault:
         co_return co_await run_journal_loss();
       case Mode::IntactRestart:
         co_return co_await run_intact_restart();
@@ -744,7 +756,7 @@ class Driver : public td::actor::Actor {
     }
     require(signed_count(2, notar_text(a)) == 1, "notarize(A), whose bytes were lost, was signed again once");
     co_await stop_node();
-    pass("DLR_OK journal-loss");
+    pass(mode_ == Mode::ProductionDefault ? "DLR_OK production-default" : "DLR_OK journal-loss");
   }
 
   td::actor::Task<> run_intact_restart() {
@@ -865,6 +877,7 @@ int main(int argc, char** argv) {
       {"window-log-rollback-without-journal-record", Mode::WindowLogRollbackWithoutJournalRecord},
       {"log-rollback-leader", Mode::LogRollbackLeader},
       {"stop-during-window-reservation", Mode::StopDuringWindowReservation},
+      {"production-default", Mode::ProductionDefault},
   };
   std::optional<Mode> mode;
   for (const auto& [name, value] : modes) {
