@@ -13,6 +13,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from contextlib import ExitStack
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -115,10 +116,16 @@ def reconcile(args, config, request):
 def expiry(args, config, request):
     """One prepare; compare old/new recheck after SDK V3's 120-second TTL."""
     release = dataclasses.asdict(config["release"])
-    program = PinnedProgram(
-        Path(config["backend"]), config["backend_sha256"], Path(config["state_dir"]), timeout=30
-    )
-    try:
+    with ExitStack() as cleanup:
+        program = PinnedProgram(
+            Path(config["backend"]), config["backend_sha256"], Path(config["state_dir"]), timeout=30
+        )
+        cleanup.callback(program.close)
+        # Validate both executable pins before any reservation or signing.
+        baseline = PinnedProgram(
+            args.baseline, args.baseline_sha256, Path(config["state_dir"]), timeout=30
+        )
+        cleanup.callback(baseline.close)
         rpc = NativeRPC(program)
 
         class StopBeforeRPC(NativeAdapter):
@@ -170,15 +177,9 @@ def expiry(args, config, request):
             raise RuntimeError("candidate expired too: cannot isolate wallet TTL")
         rpc.call("validate_prepared", historical)
         payload = {"release": release, "request": request, "prepared": prepared}
-        baseline = PinnedProgram(
-            args.baseline, args.baseline_sha256, Path(config["state_dir"]), timeout=30
-        )
-        try:
-            value = NativeRPC(baseline).call("recheck", payload)
-            if len(value["permit"]) != 64:
-                raise RuntimeError("baseline did not reach permit issuance")
-        finally:
-            baseline.close()
+        value = NativeRPC(baseline).call("recheck", payload)
+        if len(value["permit"]) != 64:
+            raise RuntimeError("baseline did not reach permit issuance")
         try:
             rpc.call("recheck", payload)
         except Refused:
@@ -199,8 +200,6 @@ def expiry(args, config, request):
                 "scope": "Retain this native lease and drain worker; never reset custody.",
             },
         )
-    finally:
-        program.close()
 
 
 def main():

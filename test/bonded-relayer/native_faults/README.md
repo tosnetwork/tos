@@ -79,7 +79,7 @@ systemctl --user stop br1-operator-c
   --baseline-sha256 "$REVIEWED_OLD_PROVIDER_SHA256" --out "$PRIVATE/expiry"
 ```
 
-This uses the real Engine, NativeAdapter, SQLite journals, preflight and signer.
+Both ELF pins are validated before reservation or signing. This uses the real Engine, NativeAdapter, SQLite journals, preflight and signer.
 Only the test adapter's recheck is interrupted: it raises after Engine durably
 claims UNKNOWN and before any RPC write. The runner keeps the original bytes,
 waits 122 seconds beyond persistence for the SDK wallet's 120-second TTL, then
@@ -118,3 +118,19 @@ capture `wire-durable`, and output `durable-submit`, all beneath
 public indexes contain only hashes and outcomes. A repeat must use `reconcile`
 and a fresh output directory. These controls cover these named boundaries;
 full C2, refusal/liveness cases and public activation remain separate gates.
+
+The fresh D TTL command retained for this PR was:
+
+```sh
+/usr/bin/python3 test/bonded-relayer/native_faults/control.py \
+  --mode expiry --config /tos/build/br1-localnet/operator-d/service.json \
+  --request /tos/build/br1-localnet/e2e-durable-expiry-d/durable-expiry-d-request.json \
+  --baseline /tos/build/br1-localnet/bin/br1-provider-r3 \
+  --baseline-sha256 767541af088ad03140ffe358c5a69b8af2627fd77293232be3ad19a58122d00e \
+  --out /tos/build/br1-localnet/durable-expiry-d
+```
+
+D used the pinned #388 ELF and remained stopped/drained after its signed,
+never-sent case. Its old/new TTL comparison passed. Historical candidate
+files eventually expire; a new acceptance run needs fresh quoted client input,
+not a replay of an old submit or a database reset.
