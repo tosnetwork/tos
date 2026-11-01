@@ -222,6 +222,29 @@ fn shard_block_with_the_account_present_and_its_cell_pruned_is_accepted() -> Res
     verify(&r, &answer)
 }
 
+/// A state proof that also visits the account cell leaves it unpruned (level 0); the body is
+/// then compared with that cell's own hash, and the answer is accepted the same way.
+#[test]
+fn shard_block_with_the_account_present_and_its_cell_unpruned_is_accepted() -> Result<()> {
+    let r = read(basechain()?, true)?;
+    let usage = UsageTree::with_root(r.state.clone());
+    ShardStateUnsplit::construct_from_cell(usage.root_cell())?
+        .read_accounts()?
+        .account(&Address::from(UInt256::from(r.address)))?
+        .context("present account")?
+        .read_account()?;
+    let full_path = MerkleProof::create_by_usage_tree(&r.state, &usage)?.serialize()?;
+    let proof = write_boc_multi(vec![header_proof(&r.block)?, full_path.clone()])?;
+    let state: ShardStateUnsplit = MerkleProof::construct_from_cell(full_path)?.virtualize()?;
+    let entry = state
+        .read_accounts()?
+        .account(&Address::from(UInt256::from(r.address)))?
+        .context("present account")?;
+    assert!(!entry.account_cell().is_pruned(), "this proof keeps the account cell");
+    assert_eq!(entry.account_cell().level(), 0, "an unpruned account cell has level 0");
+    verify(&r, &with_parts(&r, proof, body(&r.state, r.address)?))
+}
+
 #[test]
 fn a_state_with_no_accounts_proves_absence() -> Result<()> {
     let shard = basechain()?;
@@ -624,15 +647,18 @@ fn flipped(bytes: &[u8], needle: &[u8]) -> Result<Vec<Vec<u8>>> {
         .collect())
 }
 
-/// Refused by a proof check, not by the transport or the bag-of-cells framing: the change hit
-/// authenticated content.
-fn refused_by_proof(result: Result<()>) {
-    let text = match result {
+/// Refused by a proof check, not by the transport or the bag-of-cells framing: the changed
+/// answer still decodes as TL, so the refusal comes from the verifier, and the verifier does
+/// not refuse it for its framing.
+fn refused_by_proof(c: &Captured, tampered: &[u8]) -> Result<()> {
+    let answer = decode(tampered).context("a tampered answer must still decode as TL")?;
+    let text = match verify_account_read(&c.held, &c.block, &c.account, &answer) {
         Ok(()) => panic!("a changed authenticated byte was accepted"),
         Err(error) => format!("{error:#}"),
     };
     eprintln!("tamper refused: {text}");
     assert!(!text.contains("bag of cells"), "refused by framing, not by a proof check: {text}");
+    Ok(())
 }
 
 #[test]
@@ -682,7 +708,7 @@ fn a_captured_answer_with_its_recorded_state_hash_changed_is_refused() -> Result
             MerkleProof::construct_from_cell(read_boc(&proof)?.roots[0].clone())?.virtualize()?;
         let recorded = header.read_state_update()?.new_hash;
         for tampered in flipped(&c.bytes, recorded.as_slice())? {
-            refused_by_proof(verify_captured(&c, &tampered));
+            refused_by_proof(&c, &tampered)?;
         }
     }
     Ok(())
@@ -699,7 +725,7 @@ fn a_captured_answer_with_its_pruned_account_hash_changed_is_refused() -> Result
         .account(&Address::from(c.account.id.clone()))?
         .context("the configuration contract is present")?;
     for tampered in flipped(&c.bytes, entry.account_cell().hash(0).as_slice())? {
-        refused_by_proof(verify_captured(&c, &tampered));
+        refused_by_proof(&c, &tampered)?;
     }
     Ok(())
 }
