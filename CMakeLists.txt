@@ -1960,6 +1960,9 @@ set_tests_properties(branch-chain-python-ci-source PROPERTIES LABELS "source-gua
 add_test(NAME branch-chain-python-ci-source-conditions
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_branch_chain_conditions.py)
 set_tests_properties(branch-chain-python-ci-source-conditions PROPERTIES LABELS "source-guard")
+add_test(NAME wallet-index-replica-capacity
+  COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_wallet_index_replica_capacity.py)
+set_tests_properties(wallet-index-replica-capacity PROPERTIES LABELS "source-guard")
 add_test(NAME n6-diagnostic-observations
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-n6-diagnostic-observations.py)
 set_tests_properties(n6-diagnostic-observations PROPERTIES LABELS "source-guard")
