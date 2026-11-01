@@ -112,16 +112,14 @@ private-transfer funding estimate is conservatively fixed at 0.25 local TOS and
 must fit both request and operator caps. It is not a production pricing model.
 No consensus, contract bytecode or chain configuration is changed by this provider.
 
-The non-author review records two non-blocking hardening follow-ups for this
-local scope:
+The two local hardening follow-ups are addressed by the current implementation:
 
-* **BR1-LOCAL-F01 (CK-6, PS-1):** current recheck validates the Shield deadline
-  and funding sequence, but not the signed wallet's shorter 120-second expiry.
-  A long pause after prepare can therefore obtain a permit for an expired wallet
-  message. Add that current-time check in recheck while preserving permissive
-  historical validation; unavailable outcomes must remain unknown.
-* **BR1-LOCAL-F02 (CK-7, CK-13):** the helper is hashed and subsequently executed
-  by pathname, rather than from a sealed snapshot. Its full path and ancestors
-  must remain under trusted administrative control. The acceptance installation
-  is private; seal the helper or enforce protected ancestors before expanding
-  that custody scope.
+* **BR1-LOCAL-F01 (CK-6, PS-1):** recheck requires the signed wallet expiry to
+  exceed the full five-second permit interval; broadcast checks expiry again
+  before consuming the permit or writing to RPC. Historical signature validation
+  remains independent of wall-clock time.
+* **BR1-LOCAL-F02 (CK-7, CK-13):** the helper is opened once with no-follow flags,
+  checked and hashed through that descriptor, copied into a bounded sealed memfd,
+  and executed through its inherited descriptor. The snapshot stays open for
+  the lifetime of the proof provider. Path replacement cannot change the executed
+  release. Dynamic libraries remain part of the trusted host environment.

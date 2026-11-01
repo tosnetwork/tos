@@ -11,32 +11,19 @@ use std::str::FromStr;
 
 pub struct Chain {
     verifier: ProvenGetterProvider,
+    _helper: crate::pinned_helper::PinnedHelper,
 }
 impl Chain {
     pub fn verifier(&self) -> &ProvenGetterProvider {
         &self.verifier
     }
     pub fn new(config: &Config) -> Result<Self> {
-        // Operator-provisioned helper lives inside the same private custody
-        // boundary. The digest pins the release, independently of RPC answers.
-        use std::os::unix::fs::MetadataExt;
-        let path = &config.proof_verifier.executable;
-        let m = std::fs::symlink_metadata(path)?;
-        ensure!(
-            path.is_absolute()
-                && path.canonicalize()? == *path
-                && m.is_file()
-                && m.nlink() == 1
-                && m.mode() & 0o022 == 0,
-            "unsafe proof verifier"
-        );
-        let uid = unsafe { libc::geteuid() };
-        ensure!(m.uid() == 0 || m.uid() == uid, "proof verifier ownership");
-        ensure!(m.len() > 0 && m.len() <= 128 * 1024 * 1024, "proof verifier byte bound");
-        ensure!(
-            crate::protocol::hash(&std::fs::read(path)?) == config.proof_verifier_sha256,
-            "proof verifier release pin"
-        );
+        let helper = crate::pinned_helper::PinnedHelper::new(
+            &config.proof_verifier.executable,
+            &config.proof_verifier_sha256,
+        )?;
+        let mut verifier_config = config.proof_verifier.clone();
+        verifier_config.executable = helper.path();
         let anchor_bytes = crate::private_io::read(&config.proof_verifier.anchor_file, 64 * 1024)?;
         let anchor = crate::protocol::parse(&anchor_bytes)?;
         ensure!(
@@ -45,7 +32,7 @@ impl Chain {
                 && anchor["file_hash"] == config.release.genesis_file,
             "release proof anchor mismatch"
         );
-        Ok(Self { verifier: ProvenGetterProvider::new(&config.proof_verifier)? })
+        Ok(Self { verifier: ProvenGetterProvider::new(&verifier_config)?, _helper: helper })
     }
     pub async fn bond(&self, config: &Config) -> Result<(ProvenAccountState, BondState)> {
         let address = MsgAddressInt::from_str(&config.release.bond)?;

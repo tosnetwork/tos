@@ -120,6 +120,7 @@ pub async fn dispatch(operation: &str, payload: &Value) -> Result<Value> {
             ensure!(sequence == lease.sequence, "funding sequence no longer current");
             let message = lease.message.ok_or_else(|| anyhow::anyhow!("unsigned lease"))?;
             let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs();
+            crate::prepared::require_live_wallet(&message, now, 5)?;
             let mut random = [0; 32];
             rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut random);
             let permit = hex::encode(random);
@@ -139,6 +140,7 @@ pub async fn dispatch(operation: &str, payload: &Value) -> Result<Value> {
             let permit = protocol::digest(&payload["permit"])?;
             let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs();
             let mut store = crate::store::Store::open(&directory.join("leases.db"), &scope)?;
+            crate::prepared::require_live_wallet(&bytes, now, 0)?;
             store.consume(permit, &bytes, now)?;
             let url = config.rpc_url.clone();
             let encoded = encoded.to_owned();
