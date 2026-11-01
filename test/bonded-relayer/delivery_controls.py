@@ -56,6 +56,12 @@ CASES = {
     "service": (
         (
             S,
+            "allow_reuse_address = True",
+            "allow_reuse_address = False",
+            "test_relay_service.ServiceTests.test_server_restarts_after_active_close_without_sharing_listener",
+        ),
+        (
+            S,
             'not hmac.compare_digest(expected, terms["status_hash"])',
             "False",
             "test_relay_service.ServiceTests.test_capability_and_quote_mismatch_refuse_before_proof_work",
@@ -221,7 +227,7 @@ def main(argv=None):
         names = snapshot(root, args.lane)
         hashes = {name: hashlib.sha256((ROOT / name).read_bytes()).hexdigest() for name in names}
         code, log = run(root, args.lane, None)
-        expected_tests = {"adapter": 29, "service": 28, "composed": 2, "rust": 5}[args.lane]
+        expected_tests = {"adapter": 29, "service": 29, "composed": 2, "rust": 5}[args.lane]
         observed = re.search(
             r"running (\d+) tests" if args.lane == "rust" else r"Ran (\d+) tests", log
         )
