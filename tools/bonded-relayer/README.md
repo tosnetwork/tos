@@ -106,6 +106,13 @@ and native binaries; it does not exercise a funded multi-operator relay network.
 
 ## Still required for activation
 
+The [native local provider](provider/README.md) supplies real Bond/account proofs,
+quote/descriptor generation, complete private-transfer simulation, funded V3
+messages and positive destination finality/commission import for global id 3.
+Its live local acceptance also exercises two operators, restart and spending
+imported commissions. The requirements below still apply to production scope
+and the complete C2 failure matrix.
+
 A reviewed concrete production chain/signing/finality adapter; authenticated quote
 and receiving-descriptor generation; full Shield proof validation and finalized
 fee-note credit; deployment/lifecycle commands and a client relay workflow;

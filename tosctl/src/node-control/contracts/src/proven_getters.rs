@@ -306,8 +306,36 @@ impl ProvenGetterProvider {
         params: &[u32],
         policy: &ReadPolicy,
     ) -> anyhow::Result<ProvenAccountState> {
+        Ok(self.read_account_request(address, params, &[], policy).await?.0)
+    }
+
+    /// Authenticate raw account state and the native verifier's execution
+    /// context together. Consumers must bind a complete configuration BOC to
+    /// `config_root_hash` before using it for a local transaction estimate.
+    /// The estimate is not destination execution or permission to broadcast.
+    pub async fn read_account_for_execution(
+        &self,
+        address: &MsgAddressInt,
+        call: GetMethodCall,
+        policy: &ReadPolicy,
+    ) -> anyhow::Result<(ProvenAccountState, serde_json::Value)> {
+        let (account, context) = self.read_account_request(address, &[], &[call], policy).await?;
+        anyhow::ensure!(context.is_object(), "verified execution context absent");
+        let root =
+            context["config_root_hash"].as_str().context("execution configuration root absent")?;
+        ensure_digest(root, "execution configuration root")?;
+        Ok((account, context))
+    }
+
+    async fn read_account_request(
+        &self,
+        address: &MsgAddressInt,
+        params: &[u32],
+        calls: &[GetMethodCall],
+        policy: &ReadPolicy,
+    ) -> anyhow::Result<(ProvenAccountState, serde_json::Value)> {
         let address = canonical_address(address)?;
-        let request = Request::build(&address, &[], policy, &self.config)?.with_config(params)?;
+        let request = Request::build(&address, calls, policy, &self.config)?.with_config(params)?;
         let output = self.invoke(&request.bytes, policy).await?;
         let evidence = check_verified(&output, &request, &self.anchor, (self.clock)())?;
         let wire: VerifiedOutput = serde_json::from_slice(&output)?;
@@ -345,14 +373,17 @@ impl ProvenGetterProvider {
             .try_into()
             .map_err(|_| anyhow::anyhow!("last transaction hash width"))?;
         let anchor_id = sha2::Sha256::digest(serde_json::to_vec(&self.anchor)?).into();
-        Ok(ProvenAccountState {
-            evidence,
-            root,
-            account,
-            config_params,
-            last_transaction_hash,
-            anchor_id,
-        })
+        Ok((
+            ProvenAccountState {
+                evidence,
+                root,
+                account,
+                config_params,
+                last_transaction_hash,
+                anchor_id,
+            },
+            wire.execution_context,
+        ))
     }
 
     async fn invoke(&self, request: &[u8], policy: &ReadPolicy) -> anyhow::Result<Vec<u8>> {

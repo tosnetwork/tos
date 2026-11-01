@@ -66,6 +66,12 @@ persistent state. There is no native/mock selector or manual broadcaster fallbac
 
 ## C2: actual funded acceptance remains open
 
+The [native local provider](../tools/bonded-relayer/provider/README.md) now
+implements the real private-transfer path. Its acceptance run covers two funded
+operators, restart, finalized commission import and spending actual commission
+notes. This does not replace the remaining matrix below or turn C1 fixtures into
+live-chain evidence.
+
 The next driver must launch four real validators and two independently funded
 operators using the deployed Bond code/policy and a genuine Shield pool. It must
 retain native proof material, native execution outcomes, full network/release
