@@ -205,8 +205,17 @@ answer must equal it. The active workchains come from a Merkle proof of the
 configuration whose root equals the state hash the frontier block records. A
 proof of any other state, even one with the same global id and height, is
 refused. Each listed shard state is then read once through the engine to force a
-native load; those account-state answers are not proof-checked, and nothing is
-derived from them.
+native load, with `liteServer.getAccountStatePrunned` at the shard prefix followed
+by zeros. Nothing is derived from those answers, but each is authenticated as the
+reference lite client checks an account state: it names exactly the listed block,
+carries no shard proof, and its proof is a header proof of that block's root hash
+(with the block's own shard and height) followed by a proof of the state that
+header records (with the held global id, the shard and the height). That state
+proof must reach the account's position: a pruned branch on the path is refused,
+never read as an absent account. A present account's pruned body must be the one
+the state records, and an absent account has no body. Every proof is bounded like
+the others. The zero state of an active workchain without shards cannot be read
+this way: the engine has no block for it and refuses, as before.
 
 Managed service commands use a conservative subset of native options, with a
 separate token for each option and value. Attached or clustered short options,
