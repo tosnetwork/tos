@@ -12,7 +12,8 @@
     "tools/bonded-relayer/provider/src/provider.rs": "09380c895d5eb88b2895b7d99a0948ed744c4519d8bc9b14450de4ecf27efb95",
     "tools/bonded-relayer/provider/src/main.rs": "b61404978ae1ff82bab947f5829fce55e538defc28c8d4fbdd8492ec14644f41",
     "tools/bonded-relayer/relay_service.py": "f6b14c239900009ed39f460a3e61a8b53e49530a33056362a1a596a2778865aa",
-    "test/bonded-relayer/test_relay_service.py": "152358b2b86a1fcb1bfaeebc26c328d1fb6e0f0b8b9f268df00e2acc36b46414"
+    "test/bonded-relayer/test_relay_service.py": "f05b26e90618cce077be653b6331394139707e8b981d6f20352c92c416ad3031",
+    "test/bonded-relayer/delivery_controls.py": "f478baa5b7f7d1c52bb948fdf3be19eba1cd5f8560863b6afb380ede8e7a797c"
   },
   "cases": [
     {
@@ -48,7 +49,8 @@
     "python_tests": 141,
     "guard_mutations": 4,
     "source_guard_suites": 66,
-    "immediate_two_operator_restart_ready_seconds": 0.208
+    "immediate_two_operator_restart_ready_seconds": 0.208,
+    "service_guard_mutations": 5
   },
   "receipts": [
     {
@@ -90,6 +92,11 @@
       "path": "/tos/build/br1-local-faults/source-guards-native.log",
       "bytes": 501,
       "sha256": "0c85c2181788255ce445d11ce4dd8e20780bf8ff3f35176e9f17b00392a4fcf0"
+    },
+    {
+      "path": "/tos/build/br1-local-faults/delivery-controls.json",
+      "bytes": 3548,
+      "sha256": "56c295e32075c3d74c9b24a0d2d88cb16d28968723307bf7c2f94b6fbd9b1978"
     }
   ],
   "harness_sources": [
