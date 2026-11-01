@@ -100,6 +100,10 @@ class RocksDb : public KeyValue {
   static Status destroy(Slice path);
   RocksDb clone() const;
   static Result<RocksDb> open(std::string path, RocksDbOptions options = {});
+  // Table-cache eviction target for offline bulk readers/importers; other
+  // files and iterators can keep additional descriptors open. -1 retains the
+  // normal open() default, otherwise the target must be at least 20.
+  static Result<RocksDb> open_with_file_limit(std::string path, RocksDbOptions options, int max_open_files);
 
   Result<GetStatus> get(Slice key, std::string &value) override;
   Result<std::vector<RocksDb::GetStatus>> get_multi(td::Span<Slice> keys, std::vector<std::string> *values) override;

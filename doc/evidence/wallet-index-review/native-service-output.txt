@@ -1,0 +1,138 @@
+Complete service output for the thirteen native scenarios. ANSI color escapes removed; all other log text retained. These are disposable local accounts and loopback listeners. Exit statuses and observed readiness are in native-receipt.json.
+
+# /tmp/pr373-native-verify-f7535841/reference/service.log
+# Original bytes: 1638; SHA-256: b2e896dcd9f39ac40a2d4fbe7b319eaf83532ef134f5b52882b132668e458277
+[ 2][t 0][2026-10-31 02:30:30.201126786][wallet-index.cpp:1767]	wc0-index: on-disk schema version 0 is not 4; resetting the index (standalone replay restarts from its anchor)
+[ 2][t 2][2026-10-31 02:30:30.219062755][json-rpc-server.cpp:296][!json-rpc]	JSON-RPC server listening on [127.0.0.1:45411]
+[ 1][t 0][2026-10-31 02:30:30.219313844][TcpListener.cpp:40][!TcpListener[port:45411]]	127.0.0.1 45411
+[ 2][t 4][2026-10-31 02:30:30.229941447][celldb.cpp:376][!celldbin]	Using V1 DynamicBagOfCells with options V1{}
+[ 2][t 4][2026-10-31 02:30:30.230073444][celldb.cpp:390][!celldbin]	Set CellDb block cache size to 128MB
+[ 2][t 0][2026-10-31 02:30:30.726126806][wallet-index-writer.cpp:1311]	wc0-index: no usable post-apply state for block seqno=8; deferring 2 token candidates (events still indexed)
+[ 2][t 0][2026-10-31 02:30:32.510772571][wallet-index-writer.cpp:1311]	wc0-index: no usable post-apply state for block seqno=432; deferring 2 token candidates (events still indexed)
+[ 2][t 0][2026-10-31 02:30:32.552913830][wallet-index-writer.cpp:1311]	wc0-index: no usable post-apply state for block seqno=442; deferring 2 token candidates (events still indexed)
+[ 2][t 0][2026-10-31 02:30:32.605283315][wallet-index-writer.cpp:1311]	wc0-index: no usable post-apply state for block seqno=452; deferring 2 token candidates (events still indexed)
+[ 2][t 0][2026-10-31 02:30:32.660828975][wallet-index-writer.cpp:1311]	wc0-index: no usable post-apply state for block seqno=462; deferring 2 token candidates (events still indexed)
+
+# /tmp/pr373-native-verify-f7535841/path-b/service.log
+# Original bytes: 1416; SHA-256: 9d1aa11b5637af9801bfe361e77690477c3a5b0573ce6da62d0e756c4bfa2205
+[ 2][t 0][2026-10-31 02:30:37.192087517][index-main.cpp:156]	the index was imported from an untrusted snapshot: verifying it against this node before serving
+[ 2][t 4][2026-10-31 02:30:37.197421298][celldb.cpp:376][!celldbin]	Using V1 DynamicBagOfCells with options V1{}
+[ 2][t 4][2026-10-31 02:30:37.197498555][celldb.cpp:390][!celldbin]	Set CellDb block cache size to 128MB
+[ 2][t 2][2026-10-31 02:30:37.199159000][json-rpc-server.cpp:296][!json-rpc]	JSON-RPC server listening on [127.0.0.1:50553]
+[ 1][t 0][2026-10-31 02:30:37.199254655][TcpListener.cpp:40][!TcpListener[port:50553]]	127.0.0.1 50553
+[ 2][t 0][2026-10-31 02:30:37.291794866][index-main.cpp:441]	imported index prepared: 11 rows in the window from masterchain block 400, 1 older rows dropped; replaying to the node's head
+[ 2][t 0][2026-10-31 02:30:37.328525154][index-main.cpp:512]	the imported index is partly verified at masterchain block 467: 3 accounts need the window's blocks, and ownership is not yet derived
+[ 2][t 0][2026-10-31 02:30:38.606295002][index-main.cpp:469]	the window's blocks match the imported index; deriving ownership at the head, replay held
+[ 2][t 0][2026-10-31 02:30:38.614802074][index-main.cpp:402]	the imported index is fully verified; candidate losses superseded by the derivation at the head: 0 lost, 0 unverifiable
+
+# /tmp/pr373-native-verify-f7535841/path-a/service.log
+# Original bytes: 1201; SHA-256: 081724307d9f7f8fad31ad88b4c6a585eff75090d1cd0ab31c4dfec1edcc7351
+[ 2][t 0][2026-10-31 02:30:41.495342320][wallet-index.cpp:1767]	wc0-index: on-disk schema version 0 is not 4; resetting the index (standalone replay restarts from its anchor)
+[ 2][t 2][2026-10-31 02:30:41.498841874][json-rpc-server.cpp:296][!json-rpc]	JSON-RPC server listening on [127.0.0.1:44925]
+[ 1][t 0][2026-10-31 02:30:41.498962933][TcpListener.cpp:40][!TcpListener[port:44925]]	127.0.0.1 44925
+[ 2][t 4][2026-10-31 02:30:41.499095163][celldb.cpp:376][!celldbin]	Using V1 DynamicBagOfCells with options V1{}
+[ 2][t 4][2026-10-31 02:30:41.499138327][celldb.cpp:390][!celldbin]	Set CellDb block cache size to 128MB
+[ 2][t 0][2026-10-31 02:30:41.529930923][index-main.cpp:316]	the source does not hold masterchain block 1: building the index from the window's blocks
+[ 2][t 0][2026-10-31 02:30:41.755836602][index-main.cpp:347]	the index was built from masterchain block 401 to 467; deriving ownership at that head, replay held
+[ 2][t 0][2026-10-31 02:30:41.769211642][index-main.cpp:402]	the imported index is fully verified; candidate losses superseded by the derivation at the head: 0 lost, 0 unverifiable
+
+# /tmp/pr373-native-verify-f7535841/tampered/service.log
+# Original bytes: 1101; SHA-256: f7108813ddfb34fd0335cba3d701e8714ef9eb2cb2e261bcaaf601cfc1958f34
+[ 2][t 0][2026-10-31 02:30:42.126537776][index-main.cpp:156]	the index was imported from an untrusted snapshot: verifying it against this node before serving
+[ 2][t 2][2026-10-31 02:30:42.129107432][json-rpc-server.cpp:296][!json-rpc]	JSON-RPC server listening on [127.0.0.1:52955]
+[ 1][t 0][2026-10-31 02:30:42.129187171][TcpListener.cpp:40][!TcpListener[port:52955]]	127.0.0.1 52955
+[ 2][t 5][2026-10-31 02:30:42.129438965][celldb.cpp:376][!celldbin]	Using V1 DynamicBagOfCells with options V1{}
+[ 2][t 5][2026-10-31 02:30:42.129528162][celldb.cpp:390][!celldbin]	Set CellDb block cache size to 128MB
+[ 2][t 0][2026-10-31 02:30:42.208373625][index-main.cpp:441]	imported index prepared: 11 rows in the window from masterchain block 400, 1 older rows dropped; replaying to the node's head
+[ 1][t 0][2026-10-31 02:30:42.227237800][index-main.cpp:497]	the imported index is refused at masterchain block 467: 0:4ECF755CD033DFCB7D33F6C7E41C3CD7747F524F4F185E359899103C810E014A: newest row is not the account's last transaction
+
+# /tmp/pr373-native-verify-f7535841/omitted/service.log
+# Original bytes: 1077; SHA-256: 9b8ac674da053561f548d893f3ae80bd54b28d98ba038776dfd3682f03cf25db
+[ 2][t 0][2026-10-31 02:30:42.655762945][index-main.cpp:156]	the index was imported from an untrusted snapshot: verifying it against this node before serving
+[ 2][t 2][2026-10-31 02:30:42.658344488][json-rpc-server.cpp:296][!json-rpc]	JSON-RPC server listening on [127.0.0.1:52473]
+[ 1][t 0][2026-10-31 02:30:42.658561744][TcpListener.cpp:40][!TcpListener[port:52473]]	127.0.0.1 52473
+[ 2][t 3][2026-10-31 02:30:42.658826977][celldb.cpp:376][!celldbin]	Using V1 DynamicBagOfCells with options V1{}
+[ 2][t 3][2026-10-31 02:30:42.658887045][celldb.cpp:390][!celldbin]	Set CellDb block cache size to 128MB
+[ 2][t 0][2026-10-31 02:30:42.730701399][index-main.cpp:441]	imported index prepared: 10 rows in the window from masterchain block 400, 1 older rows dropped; replaying to the node's head
+[ 1][t 0][2026-10-31 02:30:42.762574815][index-main.cpp:497]	the imported index is refused at masterchain block 467: 0:4ECF755CD033DFCB7D33F6C7E41C3CD7747F524F4F185E359899103C810E014A: rows are not hash-linked
+
+# /tmp/pr373-native-verify-f7535841/truncated/service.log
+# Original bytes: 1091; SHA-256: d6cd94627993a4b497d3afa4c31f6b7420b9f97a7c7b22ea15fb49f75eb44b3c
+[ 2][t 0][2026-10-31 02:30:43.202558584][index-main.cpp:156]	the index was imported from an untrusted snapshot: verifying it against this node before serving
+[ 2][t 2][2026-10-31 02:30:43.205718249][json-rpc-server.cpp:296][!json-rpc]	JSON-RPC server listening on [127.0.0.1:39143]
+[ 1][t 0][2026-10-31 02:30:43.205797626][TcpListener.cpp:40][!TcpListener[port:39143]]	127.0.0.1 39143
+[ 2][t 5][2026-10-31 02:30:43.205944392][celldb.cpp:376][!celldbin]	Using V1 DynamicBagOfCells with options V1{}
+[ 2][t 5][2026-10-31 02:30:43.206004570][celldb.cpp:390][!celldbin]	Set CellDb block cache size to 128MB
+[ 2][t 0][2026-10-31 02:30:43.265339828][index-main.cpp:441]	imported index prepared: 10 rows in the window from masterchain block 400, 1 older rows dropped; replaying to the node's head
+[ 1][t 0][2026-10-31 02:30:43.297674578][index-main.cpp:497]	the imported index is refused at masterchain block 467: 0:4ECF755CD033DFCB7D33F6C7E41C3CD7747F524F4F185E359899103C810E014A: history is truncated inside the window
+
+# /tmp/pr373-native-verify-f7535841/wrong-checkpoint/service.log
+# Original bytes: 826; SHA-256: 7576a10a7df19c84fb70db55942dcc9451b8d0c2d2a2bb0a3bbcde2edf0fe109
+[ 2][t 0][2026-10-31 02:30:43.732277841][index-main.cpp:156]	the index was imported from an untrusted snapshot: verifying it against this node before serving
+[ 2][t 2][2026-10-31 02:30:43.734690230][json-rpc-server.cpp:296][!json-rpc]	JSON-RPC server listening on [127.0.0.1:54685]
+[ 1][t 0][2026-10-31 02:30:43.734758837][TcpListener.cpp:40][!TcpListener[port:54685]]	127.0.0.1 54685
+[ 2][t 4][2026-10-31 02:30:43.735227794][celldb.cpp:376][!celldbin]	Using V1 DynamicBagOfCells with options V1{}
+[ 2][t 4][2026-10-31 02:30:43.735272026][celldb.cpp:390][!celldbin]	Set CellDb block cache size to 128MB
+[ 1][t 0][2026-10-31 02:30:43.762656425][index-main.cpp:428]	the imported index is refused: the snapshot checkpoint is not this node's masterchain block 464
+
+# /tmp/pr373-native-verify-f7535841/wrong-anchor/service.log
+# Original bytes: 812; SHA-256: 8340880ab08c3388180eb22c4db0972ec4224c37b882e80a47c007c13b4fe236
+[ 2][t 0][2026-10-31 02:30:44.259728017][index-main.cpp:156]	the index was imported from an untrusted snapshot: verifying it against this node before serving
+[ 2][t 1][2026-10-31 02:30:44.261604682][celldb.cpp:376][!celldbin]	Using V1 DynamicBagOfCells with options V1{}
+[ 2][t 1][2026-10-31 02:30:44.261659408][celldb.cpp:390][!celldbin]	Set CellDb block cache size to 128MB
+[ 2][t 2][2026-10-31 02:30:44.261951065][json-rpc-server.cpp:296][!json-rpc]	JSON-RPC server listening on [127.0.0.1:44367]
+[ 1][t 0][2026-10-31 02:30:44.262057570][TcpListener.cpp:40][!TcpListener[port:44367]]	127.0.0.1 44367
+[ 1][t 0][2026-10-31 02:30:44.318559826][index-main.cpp:428]	the imported index is refused: the snapshot anchor is not this node's first block
+
+# /tmp/pr373-native-verify-f7535841/injected/service.log
+# Original bytes: 1103; SHA-256: f0f7b6434cdbcc992a297ff8be56721ddee63904a485860cd6b105fccac64820
+[ 2][t 0][2026-10-31 02:30:44.821824643][index-main.cpp:156]	the index was imported from an untrusted snapshot: verifying it against this node before serving
+[ 2][t 2][2026-10-31 02:30:44.824835833][json-rpc-server.cpp:296][!json-rpc]	JSON-RPC server listening on [127.0.0.1:45817]
+[ 1][t 0][2026-10-31 02:30:44.824938658][TcpListener.cpp:40][!TcpListener[port:45817]]	127.0.0.1 45817
+[ 2][t 5][2026-10-31 02:30:44.825046107][celldb.cpp:376][!celldbin]	Using V1 DynamicBagOfCells with options V1{}
+[ 2][t 5][2026-10-31 02:30:44.825096374][celldb.cpp:390][!celldbin]	Set CellDb block cache size to 128MB
+[ 2][t 0][2026-10-31 02:30:44.889124702][index-main.cpp:441]	imported index prepared: 12 rows in the window from masterchain block 400, 1 older rows dropped; replaying to the node's head
+[ 1][t 0][2026-10-31 02:30:44.908033785][index-main.cpp:497]	the imported index is refused at masterchain block 467: 0:F2418C2BD537CAFA2F883C1143F7EEBEE2CF65D3935BC4E9DF373830238C9AF5: rows are newer than the account's last transaction
+
+# /tmp/pr373-native-verify-f7535841/stale/service.log
+# Original bytes: 843; SHA-256: 36f6b00857c447007199e198a567bfe2b98683fc7b8a86afc04c69c506c8f2d7
+[ 2][t 0][2026-10-31 02:30:46.009082323][index-main.cpp:156]	the index was imported from an untrusted snapshot: verifying it against this node before serving
+[ 2][t 2][2026-10-31 02:30:46.011117712][json-rpc-server.cpp:296][!json-rpc]	JSON-RPC server listening on [127.0.0.1:48343]
+[ 1][t 0][2026-10-31 02:30:46.011214735][TcpListener.cpp:40][!TcpListener[port:48343]]	127.0.0.1 48343
+[ 2][t 5][2026-10-31 02:30:46.011461596][celldb.cpp:376][!celldbin]	Using V1 DynamicBagOfCells with options V1{}
+[ 2][t 5][2026-10-31 02:30:46.011726192][celldb.cpp:390][!celldbin]	Set CellDb block cache size to 128MB
+[ 1][t 0][2026-10-31 02:30:46.036827425][index-main.cpp:428]	the imported index is refused: snapshot older than this node's history: the node does not hold its checkpoint 10
+
+# /tmp/pr373-native-verify-f7535841/forged-ownership/service.log
+# Original bytes: 1416; SHA-256: 819a6da798873bb698cd54913231f351463e910757eb99a995b2b834c38f13aa
+[ 2][t 0][2026-10-31 02:30:46.556131416][index-main.cpp:156]	the index was imported from an untrusted snapshot: verifying it against this node before serving
+[ 2][t 2][2026-10-31 02:30:46.557925665][json-rpc-server.cpp:296][!json-rpc]	JSON-RPC server listening on [127.0.0.1:55915]
+[ 1][t 0][2026-10-31 02:30:46.557993956][TcpListener.cpp:40][!TcpListener[port:55915]]	127.0.0.1 55915
+[ 2][t 4][2026-10-31 02:30:46.558238899][celldb.cpp:376][!celldbin]	Using V1 DynamicBagOfCells with options V1{}
+[ 2][t 4][2026-10-31 02:30:46.558291674][celldb.cpp:390][!celldbin]	Set CellDb block cache size to 128MB
+[ 2][t 0][2026-10-31 02:30:46.612603820][index-main.cpp:441]	imported index prepared: 11 rows in the window from masterchain block 400, 1 older rows dropped; replaying to the node's head
+[ 2][t 0][2026-10-31 02:30:46.631715091][index-main.cpp:512]	the imported index is partly verified at masterchain block 467: 3 accounts need the window's blocks, and ownership is not yet derived
+[ 2][t 0][2026-10-31 02:30:47.792549190][index-main.cpp:469]	the window's blocks match the imported index; deriving ownership at the head, replay held
+[ 2][t 0][2026-10-31 02:30:47.800360117][index-main.cpp:402]	the imported index is fully verified; candidate losses superseded by the derivation at the head: 0 lost, 0 unverifiable
+
+# /tmp/pr373-native-verify-f7535841/destroyed-omitted/service.log
+# Original bytes: 1310; SHA-256: 53e013d3cbaee2f7c52800e308befe2ed7c786cf165e636bb6f5e10c41bf437d
+[ 2][t 0][2026-10-31 02:30:48.265209111][index-main.cpp:156]	the index was imported from an untrusted snapshot: verifying it against this node before serving
+[ 2][t 2][2026-10-31 02:30:48.268667062][json-rpc-server.cpp:296][!json-rpc]	JSON-RPC server listening on [127.0.0.1:59141]
+[ 1][t 0][2026-10-31 02:30:48.268816899][TcpListener.cpp:40][!TcpListener[port:59141]]	127.0.0.1 59141
+[ 2][t 3][2026-10-31 02:30:48.269025599][celldb.cpp:376][!celldbin]	Using V1 DynamicBagOfCells with options V1{}
+[ 2][t 3][2026-10-31 02:30:48.269584621][celldb.cpp:390][!celldbin]	Set CellDb block cache size to 128MB
+[ 2][t 0][2026-10-31 02:30:48.321699905][index-main.cpp:441]	imported index prepared: 8 rows in the window from masterchain block 400, 1 older rows dropped; replaying to the node's head
+[ 2][t 0][2026-10-31 02:30:48.341184217][index-main.cpp:512]	the imported index is partly verified at masterchain block 467: 2 accounts need the window's blocks, and ownership is not yet derived
+[ 1][t 0][2026-10-31 02:30:49.522763243][index-main.cpp:459]	the imported index is refused by the window's blocks: 0:67BAEF1F57F5E7045F19A838D6CB0FEF0BFED7B8320F798E15BD47F2EEF6A5A2: the snapshot omits the account's history in the window
+
+# /tmp/pr373-native-verify-f7535841/recreated-omitted/service.log
+# Original bytes: 1335; SHA-256: 7b4e9414a9b247788a0e4ff5d92042ec2a763c95513a03d871be22bfe9b34d7f
+[ 2][t 0][2026-10-31 02:30:49.788351171][index-main.cpp:156]	the index was imported from an untrusted snapshot: verifying it against this node before serving
+[ 2][t 5][2026-10-31 02:30:49.790328446][celldb.cpp:376][!celldbin]	Using V1 DynamicBagOfCells with options V1{}
+[ 2][t 5][2026-10-31 02:30:49.790441696][celldb.cpp:390][!celldbin]	Set CellDb block cache size to 128MB
+[ 2][t 2][2026-10-31 02:30:49.790459335][json-rpc-server.cpp:296][!json-rpc]	JSON-RPC server listening on [127.0.0.1:36345]
+[ 1][t 0][2026-10-31 02:30:49.790560286][TcpListener.cpp:40][!TcpListener[port:36345]]	127.0.0.1 36345
+[ 2][t 0][2026-10-31 02:30:49.873829476][index-main.cpp:441]	imported index prepared: 8 rows in the window from masterchain block 400, 1 older rows dropped; replaying to the node's head
+[ 2][t 0][2026-10-31 02:30:49.896996015][index-main.cpp:512]	the imported index is partly verified at masterchain block 467: 3 accounts need the window's blocks, and ownership is not yet derived
+[ 1][t 0][2026-10-31 02:30:51.153330992][index-main.cpp:459]	the imported index is refused by the window's blocks: 0:0F819C38B6A4834C42DB5981A7DAEA71914844A176FF3A47C629077DD7E2B442: the window's blocks hold a transaction at 460000001 the snapshot does not match

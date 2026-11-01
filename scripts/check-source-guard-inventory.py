@@ -72,6 +72,7 @@ REQUIRED_SOURCE_GUARDS = frozenset(
         "validator-id-key-hash-source",
         "validator-session-assembly-source",
         "varuint-codec-contract",
+        "wallet-index-replica-capacity",
         "wallet-quantum-review-sources",
         "wallet-quantum-review-sources-self-test",
         "workflow-supply-chain-self-test",

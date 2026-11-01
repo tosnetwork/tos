@@ -92,6 +92,12 @@ class StateAccounts {
   bool ok() const {
     return dict_ != nullptr;
   }
+  // An active account without code has no getter to run: in the ownership
+  // work at a verified head it is a definite "nothing here", like an
+  // uninitialized one, so no candidate can hold that work forever.
+  void treat_no_code_as_inactive() {
+    no_code_inactive_ = true;
+  }
   // Where to look up accounts outside this shard; null for none.
   void set_other_shards(std::function<StateAccounts*(const td::Bits256&)> other) {
     other_shard_ = std::move(other);
@@ -130,11 +136,15 @@ class StateAccounts {
     if (!(store.state.write().advance(1) && tlb::csr_unpack(std::move(store.state), state_init))) {
       return LoadResult::Indeterminate;
     }
-    if (state_init.code.is_null() || state_init.data.is_null() || state_init.code->size_refs() < 1 ||
-        state_init.data->size_refs() < 1) {
+    if (state_init.code.is_null() || state_init.code->size_refs() < 1) {
+      return no_code_inactive_ ? LoadResult::Inactive : LoadResult::Indeterminate;
+    }
+    if (state_init.data.is_null()) {
       return LoadResult::Indeterminate;
     }
     out.code = state_init.code->prefetch_ref();
+    // StateInit.data is optional. The VM initializes an absent c4 to an
+    // empty cell; it is a runnable state, not missing source data.
     out.data = state_init.data->prefetch_ref();
     return LoadResult::Active;
   }
@@ -143,7 +153,13 @@ class StateAccounts {
   tos::ShardIdFull shard_;
   std::unique_ptr<vm::AugmentedDictionary> dict_;
   std::function<StateAccounts*(const td::Bits256&)> other_shard_;
+  bool no_code_inactive_ = false;
 };
+
+// Set while the ownership drain at a verified head runs on this thread: the
+// states it verifies against treat an active account without code as
+// inactive (StateAccounts::treat_no_code_as_inactive).
+thread_local bool g_ownership_work = false;
 
 struct GetMethodResult {
   WalletIndexGetMethodStatus status;
@@ -242,48 +258,57 @@ TokenVerification token_get_failure(WalletIndexGetMethodStatus status) {
 
 TokenVerification verify_token_wallet(StateAccounts& state, const td::Bits256& wallet, td::Bits256& owner_out,
                                       td::Bits256& master_out, WalletIndexVerificationBudget& budget) {
-  tos::SmartContract::State wstate;
-  auto wallet_load = state.load(wallet, wstate);
-  if (wallet_load != StateAccounts::LoadResult::Active) {
-    return token_load_failure(wallet_load);
+  try {
+    tos::SmartContract::State wstate;
+    auto wallet_load = state.load(wallet, wstate);
+    if (wallet_load != StateAccounts::LoadResult::Active) {
+      return token_load_failure(wallet_load);
+    }
+    auto result = run_get(wstate, wallet, "get_wallet_data", {}, budget);
+    auto stack = std::move(result.stack);
+    if (result.status != WalletIndexGetMethodStatus::Success) {
+      return token_get_failure(result.status);
+    }
+    if (stack->depth() < 4) {
+      return TokenVerification::Rejected;
+    }
+    // get_wallet_data -> (int balance, slice owner, slice master, cell wallet_code)
+    auto& s = stack.write();
+    s.pop_cell();  // wallet_code
+    auto master_csr = s.pop_cellslice();
+    auto owner_csr = s.pop_cellslice();
+    s.pop_int();  // balance
+    td::Bits256 owner, master;
+    if (!extract_wc0_address(std::move(owner_csr), owner) || !extract_wc0_address(std::move(master_csr), master)) {
+      return TokenVerification::Rejected;
+    }
+    tos::SmartContract::State mstate;
+    auto master_load = state.load(master, mstate);
+    if (master_load != StateAccounts::LoadResult::Active) {
+      return token_load_failure(master_load);  // fail-closed: unverifiable claim is not indexed
+    }
+    auto resolved_result = run_get(mstate, master, "get_wallet_address", {make_addr_slice(owner)}, budget);
+    auto resolved_stack = std::move(resolved_result.stack);
+    if (resolved_result.status != WalletIndexGetMethodStatus::Success) {
+      return token_get_failure(resolved_result.status);
+    }
+    if (resolved_stack->depth() < 1) {
+      return TokenVerification::Rejected;
+    }
+    td::Bits256 resolved;
+    if (!extract_wc0_address(resolved_stack.write().pop_cellslice(), resolved) || resolved != wallet) {
+      return TokenVerification::Rejected;
+    }
+    owner_out = owner;
+    master_out = master;
+    return TokenVerification::Verified;
+  } catch (vm::VmError& err) {
+    // A malformed getter result is a negative verdict, not work to retry.
+    return err.get_errno() == static_cast<int>(vm::Excno::virt_err) ? TokenVerification::Indeterminate
+                                                                    : TokenVerification::Rejected;
+  } catch (vm::VmVirtError&) {
+    return TokenVerification::Indeterminate;
   }
-  auto result = run_get(wstate, wallet, "get_wallet_data", {}, budget);
-  auto stack = std::move(result.stack);
-  if (result.status != WalletIndexGetMethodStatus::Success) {
-    return token_get_failure(result.status);
-  }
-  if (stack->depth() < 4) {
-    return TokenVerification::Rejected;
-  }
-  // get_wallet_data -> (int balance, slice owner, slice master, cell wallet_code)
-  auto& s = stack.write();
-  s.pop();  // wallet_code
-  auto master_csr = s.pop_cellslice();
-  auto owner_csr = s.pop_cellslice();
-  td::Bits256 owner, master;
-  if (!extract_wc0_address(std::move(owner_csr), owner) || !extract_wc0_address(std::move(master_csr), master)) {
-    return TokenVerification::Rejected;
-  }
-  tos::SmartContract::State mstate;
-  auto master_load = state.load(master, mstate);
-  if (master_load != StateAccounts::LoadResult::Active) {
-    return token_load_failure(master_load);  // fail-closed: unverifiable claim is not indexed
-  }
-  auto resolved_result = run_get(mstate, master, "get_wallet_address", {make_addr_slice(owner)}, budget);
-  auto resolved_stack = std::move(resolved_result.stack);
-  if (resolved_result.status != WalletIndexGetMethodStatus::Success) {
-    return token_get_failure(resolved_result.status);
-  }
-  if (resolved_stack->depth() < 1) {
-    return TokenVerification::Rejected;
-  }
-  td::Bits256 resolved;
-  if (!extract_wc0_address(resolved_stack.write().pop_cellslice(), resolved) || resolved != wallet) {
-    return TokenVerification::Rejected;
-  }
-  owner_out = owner;
-  master_out = master;
-  return TokenVerification::Verified;
 }
 
 // Verify `item` via get_nft_data against the post-apply state. For collection
@@ -295,29 +320,29 @@ enum class NftVerification { Verified, Absent, Indeterminate, OtherShard };
 NftVerification verify_nft_item(StateAccounts& state, const td::Bits256& item, td::Bits256& owner_out,
                                 bool& has_collection, td::Bits256& collection_out,
                                 WalletIndexVerificationBudget& budget) {
-  tos::SmartContract::State istate;
-  auto item_status = state.load(item, istate);
-  if (item_status == StateAccounts::LoadResult::Inactive) {
-    return NftVerification::Absent;
-  }
-  if (item_status == StateAccounts::LoadResult::OtherShard) {
-    return NftVerification::OtherShard;
-  }
-  if (item_status != StateAccounts::LoadResult::Active) {
-    return NftVerification::Indeterminate;
-  }
-  auto item_result = run_get(istate, item, "get_nft_data", {}, budget);
-  if (item_result.status == WalletIndexGetMethodStatus::Indeterminate) {
-    return NftVerification::Indeterminate;
-  }
-  auto stack = std::move(item_result.stack);
-  if (item_result.status != WalletIndexGetMethodStatus::Success || stack->depth() < 5) {
-    return NftVerification::Absent;
-  }
   try {
+    tos::SmartContract::State istate;
+    auto item_status = state.load(item, istate);
+    if (item_status == StateAccounts::LoadResult::Inactive) {
+      return NftVerification::Absent;
+    }
+    if (item_status == StateAccounts::LoadResult::OtherShard) {
+      return NftVerification::OtherShard;
+    }
+    if (item_status != StateAccounts::LoadResult::Active) {
+      return NftVerification::Indeterminate;
+    }
+    auto item_result = run_get(istate, item, "get_nft_data", {}, budget);
+    if (item_result.status == WalletIndexGetMethodStatus::Indeterminate) {
+      return NftVerification::Indeterminate;
+    }
+    auto stack = std::move(item_result.stack);
+    if (item_result.status != WalletIndexGetMethodStatus::Success || stack->depth() < 5) {
+      return NftVerification::Absent;
+    }
     // get_nft_data -> (int init?, int index, slice collection, slice owner, cell content)
     auto& s = stack.write();
-    s.pop();  // content
+    s.pop_cell();  // content
     auto owner_csr = s.pop_cellslice();
     auto coll_csr = s.pop_cellslice();
     auto index = s.pop_int();
@@ -512,7 +537,7 @@ TokenVerifyOutcome index_nft_candidate(WalletIndexDb* db, StateAccounts& state, 
 // collect token-verification candidates. Returns false if the block envelope
 // does not parse; fills `end_lt` from the block info.
 bool index_block_walk(WalletIndexDb* db, td::Ref<vm::Cell> block_root, std::set<td::Bits256>& tokens,
-                      std::set<td::Bits256>& nfts, unsigned long long& end_lt, uint32_t& gen_utime,
+                      std::set<td::Bits256>& nfts, unsigned long long& end_lt, uint32_t mc_ref_seqno,
                       size_t& age_rows_added, bool& write_error) {
   block::gen::Block::Record blk;
   block::gen::BlockInfo::Record info;
@@ -521,10 +546,9 @@ bool index_block_walk(WalletIndexDb* db, td::Ref<vm::Cell> block_root, std::set<
     return false;
   }
   end_lt = info.end_lt;
-  gen_utime = info.gen_utime;
   vm::AugmentedDictionary acc_dict{vm::load_cell_slice_ref(extra.account_blocks), 256,
                                    block::tlb::aug_ShardAccountBlocks};
-  acc_dict.check_for_each_extra([db, &tokens, &nfts, gen_utime, &age_rows_added, &write_error](
+  acc_dict.check_for_each_extra([db, &tokens, &nfts, mc_ref_seqno, &age_rows_added, &write_error](
                                     td::Ref<vm::CellSlice> value, td::Ref<vm::CellSlice> /*extra*/,
                                     td::ConstBitPtr /*key*/, int /*n*/) -> bool {
     block::gen::AccountBlock::Record acc_blk;
@@ -542,7 +566,7 @@ bool index_block_walk(WalletIndexDb* db, td::Ref<vm::Cell> block_root, std::set<
       nfts.insert(account);
     }
     size_t events_added = 0;
-    trans_dict.check_for_each_extra([db, &account, &tokens, &nfts, &events_added, gen_utime, &age_rows_added,
+    trans_dict.check_for_each_extra([db, &account, &tokens, &nfts, &events_added, mc_ref_seqno, &age_rows_added,
                                      &write_error](td::Ref<vm::CellSlice> tvalue, td::Ref<vm::CellSlice> /*textra*/,
                                                    td::ConstBitPtr /*tkey*/, int /*tn*/) -> bool {
       auto tx_cell = tvalue->prefetch_ref();
@@ -561,7 +585,7 @@ bool index_block_walk(WalletIndexDb* db, td::Ref<vm::Cell> block_root, std::set<
         // can reach it. Committing the event without its age row would leave an
         // orphan the pruner can never find, so a failed age write fails the whole
         // block (aborted below) rather than persisting a half-pair.
-        auto age_status = db->put_event_age(account, static_cast<uint64_t>(trans.lt), gen_utime);
+        auto age_status = db->put_event_age(account, static_cast<uint64_t>(trans.lt), mc_ref_seqno);
         if (age_status.is_error()) {
           LOG(WARNING) << "wc0-index: put_event_age failed: " << age_status.message();
           write_error = true;
@@ -954,6 +978,9 @@ class PassStates {
     if (!state->ok()) {
       return nullptr;
     }
+    if (g_ownership_work) {
+      state->treat_no_code_as_inactive();
+    }
     state->set_other_shards([this](const td::Bits256& other) {
       uint64_t ignored = 0;
       return state_for(other, ignored);
@@ -1161,7 +1188,7 @@ bool retry_parked_locked(WalletIndexDb* db) {
 }  // namespace
 
 Wc0IndexResult wc0_index_block(td::Ref<vm::Cell> block_root, td::Ref<vm::Cell> state_root, tos::BlockIdExt block_id,
-                               bool replay) {
+                               bool replay, uint32_t mc_ref_seqno) {
   auto* db = wallet_index_db();
   // A block whose data could not be obtained keeps the recovery mark the
   // queue gave it, so startup recovery retries it.
@@ -1249,7 +1276,10 @@ Wc0IndexResult wc0_index_block(td::Ref<vm::Cell> block_root, td::Ref<vm::Cell> s
   bool ok = false;
   std::set<td::Bits256> token_candidates, nft_candidates;
   unsigned long long end_lt = 0;
-  uint32_t gen_utime = 0;
+  // Retention keys each event by the masterchain block that first referenced
+  // its shard block. Replay knows it exactly; the legacy queue path has only
+  // the block's own master reference, which is never later.
+  uint32_t age_seqno = mc_ref_seqno != 0 ? mc_ref_seqno : header_mc_seqno;
   size_t age_rows_added = 0;
   bool write_error = false;
   td::optional<TokenCandidate> unhandled;
@@ -1258,7 +1288,7 @@ Wc0IndexResult wc0_index_block(td::Ref<vm::Cell> block_root, td::Ref<vm::Cell> s
   auto state_for_context = state_root;
   bool state_usable = false;
   try {
-    ok = index_block_walk(db, block_root, token_candidates, nft_candidates, end_lt, gen_utime, age_rows_added,
+    ok = index_block_walk(db, block_root, token_candidates, nft_candidates, end_lt, age_seqno, age_rows_added,
                           write_error);
     // Runs even when this block nominated nothing: deferred candidates from
     // earlier blocks drain here.
@@ -1327,12 +1357,12 @@ Wc0IndexResult wc0_index_block(td::Ref<vm::Cell> block_root, td::Ref<vm::Cell> s
     return Wc0IndexResult::NotDone;
   }
   {
-    // Advance the retention watermark and prune expired events inside this
-    // block's batch. Fails closed: on any error -- a failed or would-be-regressed
-    // watermark, or a failed prune -- abort the block and keep the
+    // Prune events outside the retention window inside this block's batch.
+    // Fails closed: on any error -- an unreadable window base or a failed
+    // prune -- abort the block and keep the
     // incomplete-block marker so a later pass retries, rather than commit event
     // rows with a broken retention state.
-    auto retention_status = db->advance_retention(gen_utime, age_rows_added);
+    auto retention_status = db->advance_retention(age_rows_added);
     if (retention_status.is_error()) {
       LOG(WARNING) << "wc0-index: retention maintenance failed for block seqno=" << seqno
                    << ", aborting this pass (marker retained for retry): " << retention_status.message();
@@ -1663,7 +1693,9 @@ bool recover_one_marked_block(bool& at_cap) {
 // in turn, verify the persisted candidates of
 // one unfinished block in turn, and retry parked candidates. Returns whether
 // anything moved.
-bool index_idle_step() {
+// One step of the idle work; `recover`: also recover one marked block
+// (which writes its history).
+bool idle_work_step(bool recover) {
   if (drain_is_cancelled())
     return false;
   auto* db = wallet_index_db();
@@ -1672,7 +1704,7 @@ bool index_idle_step() {
   }
   bool progress = false;
   bool at_cap = false;
-  if (recover_one_marked_block(at_cap)) {
+  if (recover && recover_one_marked_block(at_cap)) {
     progress = true;
   }
   auto stats = db->token_backlog_stats();
@@ -1712,6 +1744,10 @@ bool index_idle_step() {
     }
   }
   return progress;
+}
+
+bool index_idle_step() {
+  return idle_work_step(true);
 }
 
 // Index a block, first recovering blocks of earlier runs; at the bound of
@@ -2047,6 +2083,301 @@ void set_wc0_index_marking_fault_for_testing(bool fail) {
 
 void release_wc0_index_state() {
   forget_context();
+}
+
+bool drain_wc0_ownership(const std::atomic<bool>* cancelled) {
+  auto previous = drain_cancelled;
+  drain_cancelled = cancelled;
+  g_ownership_work = true;
+  SCOPE_EXIT {
+    drain_cancelled = previous;
+    g_ownership_work = false;
+  };
+  return idle_work_step(false);
+}
+
+namespace {
+// What an account of H's state holds, for the derivation: unlike
+// StateAccounts::load, an active account without code is not indeterminate
+// but has nothing to run, like an uninitialized or frozen one.
+enum class AccountAtHead { Absent, NoCode, WithCode, Undecodable };
+
+AccountAtHead classify_account_unguarded(const td::Ref<vm::CellSlice>& value) {
+  if (value.is_null()) {
+    return AccountAtHead::Absent;
+  }
+  block::gen::ShardAccount::Record shard_acc;
+  if (!tlb::csr_unpack(value, shard_acc)) {
+    return AccountAtHead::Undecodable;
+  }
+  vm::CellSlice account_cs = vm::load_cell_slice(shard_acc.account);
+  if (account_cs.size() >= 1 && account_cs.prefetch_ulong(1) == 0) {
+    return AccountAtHead::Absent;  // account_none
+  }
+  block::gen::Account::Record_account acc;
+  block::gen::AccountStorage::Record store;
+  if (!(tlb::unpack_cell(shard_acc.account, acc) && tlb::csr_unpack(std::move(acc.storage), store)) ||
+      store.state.is_null() || store.state->size() < 1) {
+    return AccountAtHead::Undecodable;
+  }
+  if (store.state->prefetch_ulong(1) != 1) {
+    return AccountAtHead::NoCode;  // uninitialized or frozen
+  }
+  block::gen::StateInit::Record state_init;
+  if (!(store.state.write().advance(1) && tlb::csr_unpack(std::move(store.state), state_init))) {
+    return AccountAtHead::Undecodable;
+  }
+  if (state_init.code.is_null() || state_init.code->size_refs() < 1) {
+    return AccountAtHead::NoCode;
+  }
+  // An absent optional data cell is initialized by the VM; only an
+  // undecoded field prevents the getter from running.
+  return state_init.data.not_null() ? AccountAtHead::WithCode : AccountAtHead::Undecodable;
+}
+
+// A state that throws while it is read does not decode either.
+AccountAtHead classify_account(const td::Ref<vm::CellSlice>& value) {
+  try {
+    return classify_account_unguarded(value);
+  } catch (vm::VmError&) {
+    return AccountAtHead::Undecodable;
+  } catch (vm::VmVirtError&) {
+    return AccountAtHead::Undecodable;
+  }
+}
+
+// H's states, each with the others for accounts outside it.
+class HeadStates {
+ public:
+  explicit HeadStates(const std::vector<OwnershipHeadState>& states) : heads_(states) {
+    for (const auto& head : heads_) {
+      auto state = std::make_unique<StateAccounts>(head.root, head.shard);
+      state->treat_no_code_as_inactive();
+      block::gen::ShardStateUnsplit::Record unsplit;
+      td::Ref<vm::CellSlice> accounts;
+      if (state->ok() && tlb::unpack_cell(head.root, unsplit)) {
+        accounts = vm::load_cell_slice_ref(unsplit.accounts);
+      }
+      states_.push_back(std::move(state));
+      dicts_.push_back(accounts.is_null()
+                           ? nullptr
+                           : std::make_unique<vm::AugmentedDictionary>(accounts, 256, block::tlb::aug_ShardAccounts));
+    }
+    for (auto& state : states_) {
+      state->set_other_shards([this](const td::Bits256& address) { return state_of(address); });
+    }
+  }
+  td::Status check() const {
+    for (size_t i = 0; i < states_.size(); ++i) {
+      if (!states_[i]->ok() || dicts_[i] == nullptr) {
+        return td::Status::Error("a head shard state does not decode");
+      }
+    }
+    return td::Status::OK();
+  }
+  StateAccounts* state_of(const td::Bits256& address) {
+    auto index = index_of(address);
+    return index ? states_[index.value()].get() : nullptr;
+  }
+  td::optional<size_t> index_of(const td::Bits256& address) const {
+    for (size_t i = 0; i < heads_.size(); ++i) {
+      if (wallet_index_state_contains(heads_[i].shard, address)) {
+        return i;
+      }
+    }
+    return {};
+  }
+  const OwnershipHeadState& head(size_t index) const {
+    return heads_[index];
+  }
+  vm::AugmentedDictionary& dict(size_t index) {
+    return *dicts_[index];
+  }
+  StateAccounts& state(size_t index) {
+    return *states_[index];
+  }
+
+ private:
+  std::vector<OwnershipHeadState> heads_;
+  std::vector<std::unique_ptr<StateAccounts>> states_;
+  std::vector<std::unique_ptr<vm::AugmentedDictionary>> dicts_;
+};
+
+// Park one candidate at the head's state: it is retried there, with the
+// existing attempt limits, and keeps the index from being fully verified.
+td::Status park_at_head(WalletIndexDb& db, TokenKind kind, const td::Bits256& address, uint64_t end_lt) {
+  ScheduledTokenCandidate scheduled{TokenCandidate{kind, address}, kMaxTokenCandidateAttempts, end_lt};
+  TRY_RESULT(parked, db.park_token_candidate(scheduled));
+  if (!parked) {
+    return td::Status::Error("token parking is full: the derivation at the head cannot go on yet");
+  }
+  return td::Status::OK();
+}
+
+// Both verdicts of one account with code at the head, into the open batch.
+td::Status derive_account(WalletIndexDb& db, HeadStates& heads, size_t index, const td::Bits256& address,
+                          OwnershipStep& step) {
+  auto& state = heads.state(index);
+  auto end_lt = heads.head(index).end_lt;
+  WalletIndexVerificationBudget budget;
+  budget.begin_candidate(2);
+  td::Bits256 owner = td::Bits256::zero(), master = td::Bits256::zero();
+  auto token = verify_token_wallet(state, address, owner, master, budget);
+  if (token == TokenVerification::Indeterminate || token == TokenVerification::OtherShard) {
+    TRY_STATUS(park_at_head(db, TokenKind::Fungible, address, end_lt));
+    ++step.parked;
+  } else {
+    TRY_RESULT(recorded, db.has_token_wallet_record(address));
+    if (token == TokenVerification::Verified || recorded) {
+      auto check = token == TokenVerification::Verified ? TokenWalletCheck::Verified : TokenWalletCheck::Rejected;
+      td::Ref<vm::Cell> value;
+      if (check == TokenWalletCheck::Verified) {
+        value = make_token_value(address, end_lt);
+      }
+      if (record_token_wallet_check(db, address, check, owner, master, std::move(value), end_lt) !=
+          TokenVerifyOutcome::Done) {
+        return td::Status::Error("recording a token verdict at the head failed");
+      }
+      ++step.verdicts;
+    }
+  }
+  td::Bits256 nft_owner = td::Bits256::zero(), collection = td::Bits256::zero();
+  bool has_collection = false;
+  auto nft = verify_nft_item(state, address, nft_owner, has_collection, collection, budget);
+  if (nft == NftVerification::Indeterminate || nft == NftVerification::OtherShard) {
+    TRY_STATUS(park_at_head(db, TokenKind::Nft, address, end_lt));
+    ++step.parked;
+    return td::Status::OK();
+  }
+  td::Bits256 previous;
+  TRY_RESULT(had_owner, db.get_nft_owner(address, previous));
+  if (nft == NftVerification::Verified || had_owner) {
+    WalletIndexDb::NftVerdict verdict{nft == NftVerification::Verified, nft_owner, {}};
+    if (verdict.owned) {
+      verdict.value = make_nft_value(has_collection, collection, end_lt);
+    }
+    TRY_STATUS(db.apply_nft_verdict(address, verdict, end_lt));
+    ++step.verdicts;
+  }
+  return td::Status::OK();
+}
+
+bool cancelled_now(const std::atomic<bool>* cancelled) {
+  return cancelled != nullptr && cancelled->load();
+}
+}  // namespace
+
+td::Result<OwnershipStep> derive_ownership_range(WalletIndexDb& db, const std::vector<OwnershipHeadState>& states,
+                                                 size_t index, const td::Bits256& from, size_t limit,
+                                                 const std::atomic<bool>* cancelled) {
+  if (index >= states.size()) {
+    return td::Status::Error("no such head shard state");
+  }
+  HeadStates heads(states);
+  TRY_STATUS(heads.check());
+  // Parking counts against the token counters of this batch's pass.
+  TRY_STATUS(db.begin_token_pass());
+  OwnershipStep step;
+  td::Bits256 key = from;
+  bool allow_eq = true;
+  while (step.examined < limit) {
+    if (cancelled_now(cancelled)) {
+      return td::Status::Error("ownership derivation interrupted");
+    }
+    auto value = heads.dict(index).lookup_nearest_key(key.bits(), 256, true, allow_eq);
+    allow_eq = false;
+    if (value.is_null()) {
+      step.next = td::optional<td::Bits256>{};
+      TRY_STATUS(db.save_token_counters());
+      return step;
+    }
+    ++step.examined;
+    // The augmented dictionary hands back the value with its extra.
+    auto account = heads.dict(index).extract_value(value);
+    switch (classify_account(account)) {
+      case AccountAtHead::WithCode:
+        TRY_STATUS(derive_account(db, heads, index, key, step));
+        break;
+      case AccountAtHead::Undecodable:
+        TRY_STATUS(park_at_head(db, TokenKind::Fungible, key, heads.head(index).end_lt));
+        TRY_STATUS(park_at_head(db, TokenKind::Nft, key, heads.head(index).end_lt));
+        step.parked += 2;
+        break;
+      case AccountAtHead::NoCode:
+      case AccountAtHead::Absent:
+        // Any record of it is corrected by the reconciliation.
+        break;
+    }
+  }
+  // `key` was the last examined: the next range starts at the first account
+  // after it, if any.
+  td::Bits256 probe = key;
+  auto after = heads.dict(index).lookup_nearest_key(probe.bits(), 256, true, false);
+  step.next = after.is_null() ? td::optional<td::Bits256>{} : td::optional<td::Bits256>(probe);
+  TRY_STATUS(db.save_token_counters());
+  return step;
+}
+
+td::Result<OwnershipStep> reconcile_ownership_records(WalletIndexDb& db, const std::vector<OwnershipHeadState>& states,
+                                                      TokenKind kind, const td::optional<td::Bits256>& after,
+                                                      size_t limit, const std::atomic<bool>* cancelled) {
+  HeadStates heads(states);
+  TRY_STATUS(heads.check());
+  // Parking counts against the token counters of this batch's pass.
+  TRY_STATUS(db.begin_token_pass());
+  OwnershipStep step;
+  auto cursor = after;
+  while (step.examined < limit) {
+    if (cancelled_now(cancelled)) {
+      return td::Status::Error("ownership reconciliation interrupted");
+    }
+    TRY_RESULT(next, db.next_ownership_account(kind, cursor));
+    if (!next) {
+      step.next = td::optional<td::Bits256>{};
+      TRY_STATUS(db.save_token_counters());
+      return step;
+    }
+    auto address = next.value();
+    cursor = address;
+    ++step.examined;
+    auto index = heads.index_of(address);
+    if (!index) {
+      return td::Status::Error("no head shard state holds a recorded account");
+    }
+    auto at_head = classify_account(heads.dict(index.value()).lookup(address.bits(), 256));
+    auto end_lt = heads.head(index.value()).end_lt;
+    if (at_head == AccountAtHead::WithCode) {
+      continue;  // derived from the head already
+    }
+    if (at_head == AccountAtHead::Undecodable) {
+      TRY_STATUS(park_at_head(db, kind, address, end_lt));
+      ++step.parked;
+      continue;
+    }
+    // Absent, uninitialized, frozen or without code at the head: it holds
+    // no token wallet and no NFT, whatever was recorded.
+    if (kind == TokenKind::Fungible) {
+      TRY_RESULT(recorded, db.token_wallet_state(address));
+      if (recorded && recorded.value().present) {
+        if (record_token_wallet_check(db, address, TokenWalletCheck::Rejected, td::Bits256::zero(), td::Bits256::zero(),
+                                      {}, end_lt) != TokenVerifyOutcome::Done) {
+          return td::Status::Error("removing a token record at the head failed");
+        }
+        ++step.verdicts;
+      }
+    } else {
+      td::Bits256 previous;
+      TRY_RESULT(had_owner, db.get_nft_owner(address, previous));
+      if (had_owner) {
+        WalletIndexDb::NftVerdict verdict{false, td::Bits256::zero(), {}};
+        TRY_STATUS(db.apply_nft_verdict(address, verdict, end_lt));
+        ++step.verdicts;
+      }
+    }
+  }
+  step.next = cursor;
+  TRY_STATUS(db.save_token_counters());
+  return step;
 }
 
 bool drain_wc0_index(const std::atomic<bool>* cancelled) {

@@ -1091,6 +1091,11 @@ void JsonRpcServer::dispatch_method_impl(const std::string &method, td::JsonObje
     promise.set_value(make_json_rpc_error(-32601, PSTRING() << "Method not found: " << method, req_id));
     return;
   }
+  // An index not verified against this node's chain answers nothing.
+  if (opts_.index_only && opts_.index_serving && !opts_.index_serving()) {
+    promise.set_value(make_json_rpc_error(-32603, "wallet index is not verified against this node's chain", req_id));
+    return;
+  }
   if (is_write_method(method) && !opts_.submission_query_sender) {
     if (opts_.lite_query_sender) {
       promise.set_value(make_json_rpc_error(json_rpc::kWriteDisabled, "No attributed submission backend", req_id));

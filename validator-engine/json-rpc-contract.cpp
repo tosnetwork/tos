@@ -102,11 +102,15 @@ std::string result_body(td::Slice id, td::Slice result_json) {
   return sb.as_cslice().str();
 }
 
-std::string error_body(td::Slice id, const ErrorKind &kind, td::Slice message) {
+std::string error_body(td::Slice id, const ErrorKind &kind, td::Slice message, td::Slice extra_data) {
   td::StringBuilder sb;
   sb << "{\"jsonrpc\":\"2.0\",\"id\":" << (id.empty() ? td::Slice("null") : id) << ",\"error\":{\"code\":" << kind.code
      << ",\"message\":" << td::JsonString(message) << ",\"data\":{\"schema_version\":1,\"reason\":\"" << kind.reason
-     << "\",\"retryable\":" << (kind.retryable ? "true" : "false") << "}}}";
+     << "\",\"retryable\":" << (kind.retryable ? "true" : "false");
+  if (!extra_data.empty()) {
+    sb << "," << extra_data;
+  }
+  sb << "}}}";
   return sb.as_cslice().str();
 }
 

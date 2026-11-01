@@ -24,6 +24,7 @@ from tosapi import tos_api, toslib_api
 from tostester.install import Install
 from tostester.network import FullNode, Network, StartOptions, _retryable_startup_lite_error
 from tostester.pq_initial_validator import deterministic_pq_initial_validator_seed
+from tostester.wallet_index_verify_fixtures import WalletFixtures
 
 from toslib import ToslibClient, ToslibError
 
@@ -105,16 +106,29 @@ def assert_no_zero_state(database: Path) -> None:
         raise RuntimeError("init-block source downloaded a zero-state file")
 
 
-async def run(root: Path, build: Path, capture: Path, base_port: int) -> None:
+async def run(
+    root: Path,
+    build: Path,
+    capture: Path | None,
+    base_port: int,
+    *,
+    wallet_index_fixtures: bool = False,
+    wallet_index_only: bool = False,
+) -> None:
     if root.exists():
         raise RuntimeError("fixture root already exists; refusing to overwrite")
     root.mkdir(mode=0o700, parents=True)
     install = Install(build, REPO)
     install.toslibjson.client_set_verbosity_level(0)
-    await check_nonlocal_refusal(install, root, base_port + 100)
+    if not wallet_index_only:
+        await check_nonlocal_refusal(install, root, base_port + 100)
     async with Network(install, root / "network", base_port=base_port) as network:
         genesis_time = previous_bucket_genesis(int(time.time()))
-        activation_time = int(time.time()) + 90
+        # Traffic must commit before the first key block. Give the wallet image
+        # enough runway even on a busy native CI worker.
+        activation_time = int(time.time()) + (
+            180 if wallet_index_fixtures or wallet_index_only else 90
+        )
         network.config.genesis_time = genesis_time
         network.config.genesis_wallet_seed = bytes([0x63]) * 32
         network.config.auth_network_tag = hashlib.sha256(b"native-init-block-publisher").digest()
@@ -180,6 +194,13 @@ async def run(root: Path, build: Path, capture: Path, base_port: int) -> None:
         if next_since != activation_time or next_set.load_uint(16) != 4:
             raise RuntimeError("Genesis did not preload the requested next PQ set")
         client = await validators[0].toslib_client()
+        fixtures = None
+        if wallet_index_fixtures or wallet_index_only:
+            await tip(client, 5)
+            fixtures = WalletFixtures(
+                client, network.zerostate.main_wallet(client), root / "wallet-traffic"
+            )
+            await fixtures.before_init()
         async with asyncio.timeout(240):
             while True:
                 last = await tip(client, 5)
@@ -231,6 +252,9 @@ async def run(root: Path, build: Path, capture: Path, base_port: int) -> None:
         try:
             await joined_client.init()
             joined_tip = await tip(joined_client, anchor.seqno + 4, timeout=240)
+            if fixtures is not None:
+                checkpoint = await fixtures.after_init(anchor.seqno)
+                joined_tip = await tip(joined_client, checkpoint.seqno + 3, timeout=240)
             # The join retains the anchor's proof link, not its old block file.
             # Compare the followed frontier to a live validator; the native worker
             # separately proves both held anchors from that frontier's state.
@@ -255,25 +279,30 @@ async def run(root: Path, build: Path, capture: Path, base_port: int) -> None:
         (target.directory / "config.global.json").write_bytes(
             (source.directory / "config.global.json").read_bytes()
         )
-        process = await asyncio.create_subprocess_exec(
-            capture,
-            source.directory,
-            root / "checked-generation",
-            install.validator_engine_exe,
-            source.directory / "config.global.json",
-            *[f"http://{address}" for address in references],
-        )
-        try:
-            async with asyncio.timeout(240):
-                if await process.wait() != 0:
-                    raise RuntimeError("native capture/validation refused the joined source")
-        finally:
-            if process.returncode is None:
-                process.kill()
-                await process.wait()
+        if not wallet_index_only:
+            if capture is None:
+                raise ValueError("--capture is required unless --wallet-index-only is selected")
+            process = await asyncio.create_subprocess_exec(
+                capture,
+                source.directory,
+                root / "checked-generation",
+                install.validator_engine_exe,
+                source.directory / "config.global.json",
+                *[f"http://{address}" for address in references],
+            )
+            try:
+                async with asyncio.timeout(240):
+                    if await process.wait() != 0:
+                        raise RuntimeError("native capture/validation refused the joined source")
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
         assert_no_zero_state(source.directory)
         receipt = {
-            "result": "NATIVE_INIT_BLOCK_JOIN_OK",
+            "result": (
+                "NATIVE_WALLET_INDEX_IMAGE_OK" if wallet_index_only else "NATIVE_INIT_BLOCK_JOIN_OK"
+            ),
             "genesis_time": genesis_time,
             "init_block": init.to_dict(),
             "frontier": joined_tip.to_dict(),
@@ -281,25 +310,41 @@ async def run(root: Path, build: Path, capture: Path, base_port: int) -> None:
             "target": target.directory.name,
             "zero_state_files": 0,
             "static_supplied": False,
+            "wallet_index_fixtures": fixtures is not None,
         }
         (root / "init-block-receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")
         print(json.dumps(receipt), flush=True)
-        print("NATIVE_INIT_BLOCK_JOIN_OK", flush=True)
+        print(receipt["result"], flush=True)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", required=True, type=Path)
     parser.add_argument("--build", type=Path, default=REPO / "build")
-    parser.add_argument("--capture", required=True, type=Path)
+    parser.add_argument("--capture", type=Path)
     parser.add_argument("--base-port", type=int, default=42000)
+    parser.add_argument("--wallet-index-fixtures", action="store_true")
+    parser.add_argument(
+        "--wallet-index-only",
+        action="store_true",
+        help="build the real joined chain and wallet traffic without the unrelated capture checks",
+    )
     args = parser.parse_args()
+    if not args.wallet_index_only and args.capture is None:
+        parser.error("--capture is required unless --wallet-index-only is selected")
     # Public-network refusal controls deliberately terminate the engine at startup.
     # Core files are not useful evidence and must not multiply fixture disk usage.
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
     logging.basicConfig(level=logging.INFO)
     asyncio.run(
-        run(args.root.resolve(), args.build.resolve(), args.capture.resolve(), args.base_port)
+        run(
+            args.root.resolve(),
+            args.build.resolve(),
+            args.capture.resolve() if args.capture else None,
+            args.base_port,
+            wallet_index_fixtures=args.wallet_index_fixtures,
+            wallet_index_only=args.wallet_index_only,
+        )
     )
 
 
