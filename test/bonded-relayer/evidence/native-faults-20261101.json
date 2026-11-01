@@ -14,9 +14,9 @@
     "tools/bonded-relayer/relay_service.py": "f6b14c239900009ed39f460a3e61a8b53e49530a33056362a1a596a2778865aa",
     "test/bonded-relayer/test_relay_service.py": "f05b26e90618cce077be653b6331394139707e8b981d6f20352c92c416ad3031",
     "test/bonded-relayer/delivery_controls.py": "f478baa5b7f7d1c52bb948fdf3be19eba1cd5f8560863b6afb380ede8e7a797c",
-    "test/bonded-relayer/native_faults/control.py": "772dcb70919815a81b2b66f4efebccb290faf19356d7c368244b959ff535f482",
+    "test/bonded-relayer/native_faults/control.py": "2b3d3e082cd654fba055c550143d3b8d2d0ec31d667874ba9d3835ee40705a77",
     "test/bonded-relayer/native_faults/proxy.py": "22a282ef3e20a003224c29aa700a65d39b31fa6d1c3688eabc72dc57e1261032",
-    "test/bonded-relayer/native_faults/README.md": "68af54f264461c5d56d2a7c2ea24025a00edaf3ef87eda219832ae0316e75abc"
+    "test/bonded-relayer/native_faults/README.md": "fce52c07e230759a7676f16ed9cfee43a420cf20002c4530ec5459e906c44548"
   },
   "cases": [
     {
@@ -172,6 +172,24 @@
         "bytes": 249,
         "sha256": "302bf1ddda7478996a4b7b1072cbdffd2593dff2671e12df61d2993c5fb60d99",
         "result": "PASS"
+      },
+      {
+        "path": "/tos/build/br1-localnet/wire-durable-crash/00004.fault.json",
+        "bytes": 291,
+        "sha256": "62375755a5bae8c40753245b166bd7e3821679011ea167e703538e6976b53fbb",
+        "result": "one accepted send; reply dropped; named unit killed"
+      },
+      {
+        "path": "/tos/build/br1-local-faults/BAD-BASELINE.json",
+        "bytes": 129,
+        "sha256": "ba8de2838c8c5736d8e7043fc61e852556061895d57f6f51a575d4367eb36a29",
+        "result": "PASS-WRONG-PIN-REFUSED-BEFORE-RESERVATION-OR-SIGNATURE"
+      },
+      {
+        "path": "/tos/build/br1-localnet/durable-final-readonly/VERDICT.json",
+        "bytes": 588,
+        "sha256": "dcb281e34acea8d9a4a34210b1cbb7fa289144b9626bf0aecb94cdc5eb8c1dd4",
+        "result": "PASS-EXACT-ORIGINAL-EXECUTION-WITHOUT-RESEND"
       }
     ],
     "scope": "Lost-reply and D expiry use the #388 ELF. C crash also validates the same gate/control against experimental nonacceptance-provider code; it does not expand #388 provider acceptance."
