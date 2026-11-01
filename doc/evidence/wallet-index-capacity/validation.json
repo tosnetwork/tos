@@ -1,0 +1,353 @@
+{
+  "schema": "tos.wallet-index.replica-capacity-tool-validation.v1",
+  "scope": "Tool validation only. The real EPOCH-6 replica capacity acceptance has NOT run. Both synthetic native smokes explicitly leave time acceptance unavailable.",
+  "base_commit": "06284afdab9c5c305485bc8f6f6f69cc98b995db",
+  "source_sha256": {
+    "CMakeLists.txt": "f0e174ecdd6904b1fac73f20d4cf3135912cf838db5121224957ad8ae24e6f23",
+    "scripts/check-source-guard-inventory.py": "2fd1c7eedfb694e32a519da101ae99e44016823ec05a21fabb26392b94ad6e40",
+    "scripts/wallet-index-replica-capacity.py": "0ae34ce1f73cd216d2dac0e40799a4a8bc57c3a0626176d2bb3f49a0e1614cd5",
+    "scripts/test_wallet_index_replica_capacity.py": "c7986e9501d4fc5dae22c2e5a1d1968e62881ddbad2647bda1b73f5c318f58a1",
+    "doc/wallet-index-replica-capacity.md": "9ffb6d873358c3052dab942393b448cbc4736dae85db1b566b2deebd9b877bef",
+    "doc/standalone-wallet-services.md": "049ebf2b7b74287fc9add64cb5a642037869f20b5177db1fe94df4779b66dd72"
+  },
+  "unit_tests": {
+    "cases": 12,
+    "python_versions": [
+      "3.12.14",
+      "3.14"
+    ],
+    "result": "pass",
+    "ctest": "wallet-index-replica-capacity",
+    "ctest_registered_guards": 66
+  },
+  "lint": {
+    "ruff_version": "0.15.2",
+    "check": "pass",
+    "format_check": "pass",
+    "files": [
+      "scripts/check-source-guard-inventory.py",
+      "scripts/wallet-index-replica-capacity.py",
+      "scripts/test_wallet_index_replica_capacity.py"
+    ]
+  },
+  "sensitivity": {
+    "controls": [
+      {
+        "name": "full_readiness",
+        "test": "test_requires_full_and_settled_at_exact_frozen_tip",
+        "mutation": {
+          "before": "    if status == 200 and body.get(\"verification\") != \"full\":\n        raise RuntimeError(\"index became ready without Full verification\")\n",
+          "after": ""
+        },
+        "mutant_sha256": "a3cfe2194fad00379e5fe7ff90dbc46eae5568f6fee4c58268395bdeea18459d",
+        "compile": "pass",
+        "exit_code": 1,
+        "named_assertion_failure": true,
+        "command": [
+          "python3",
+          "-B",
+          "scripts/test_wallet_index_replica_capacity.py",
+          "CapacityHarnessTests.test_requires_full_and_settled_at_exact_frozen_tip"
+        ],
+        "failure_excerpt": [
+          "FAIL: test_requires_full_and_settled_at_exact_frozen_tip (__main__.CapacityHarnessTests.test_requires_full_and_settled_at_exact_frozen_tip)",
+          "AssertionError: RuntimeError not raised",
+          "Ran 1 test in 0.000s",
+          "FAILED (failures=1)"
+        ]
+      },
+      {
+        "name": "exact_target_hash",
+        "test": "test_canonical_digest_binds_full_target_hash",
+        "mutation": {
+          "before": "    if fields.get(\"checkpoint\", \"\").split()[-1:] != [target_id]:\n        # Native block IDs conventionally use upper-case hashes.\n        actual = fields.get(\"checkpoint\", \"\").split()[-1:]\n        if not actual or actual[0].lower() != target_id.lower():\n            raise RuntimeError(\"canonical output is bound to a different target block\")\n",
+          "after": ""
+        },
+        "mutant_sha256": "d7b5bc1d4b69cfcbba2af0f369c4be948f7b9a711e685227dcba2cb2d9148cee",
+        "compile": "pass",
+        "exit_code": 1,
+        "named_assertion_failure": true,
+        "command": [
+          "python3",
+          "-B",
+          "scripts/test_wallet_index_replica_capacity.py",
+          "CapacityHarnessTests.test_canonical_digest_binds_full_target_hash"
+        ],
+        "failure_excerpt": [
+          "FAIL: test_canonical_digest_binds_full_target_hash (__main__.CapacityHarnessTests.test_canonical_digest_binds_full_target_hash)",
+          "AssertionError: RuntimeError not raised",
+          "Ran 1 test in 0.002s",
+          "FAILED (failures=1)"
+        ]
+      },
+      {
+        "name": "missing_preparation",
+        "test": "test_missing_preparation_never_passes_time_target",
+        "mutation": {
+          "before": "measured = None if preparation_seconds is None else index_seconds + preparation_seconds",
+          "after": "measured = index_seconds + (preparation_seconds or 0)"
+        },
+        "mutant_sha256": "59052e777fed3204ffad70dec86cc288ca55bffe9fcfa5e17484c48a082a8c0b",
+        "compile": "pass",
+        "exit_code": 1,
+        "named_assertion_failure": true,
+        "command": [
+          "python3",
+          "-B",
+          "scripts/test_wallet_index_replica_capacity.py",
+          "CapacityHarnessTests.test_missing_preparation_never_passes_time_target"
+        ],
+        "failure_excerpt": [
+          "FAIL: test_missing_preparation_never_passes_time_target (__main__.CapacityHarnessTests.test_missing_preparation_never_passes_time_target)",
+          "AssertionError: 'pass' != 'unavailable'",
+          "Ran 1 test in 0.000s",
+          "FAILED (failures=1)"
+        ]
+      },
+      {
+        "name": "sigterm_cleanup",
+        "test": "test_cli_sigterm_stops_native_child_and_records_interruption",
+        "mutation": {
+          "before": "    signal.signal(signal.SIGTERM, stop_requested)\n",
+          "after": ""
+        },
+        "mutant_sha256": "9ad1f57fb3824f23341106b05b9e0ea2965e301def5ceead45b5ac4299a28e5e",
+        "compile": "pass",
+        "exit_code": 1,
+        "named_assertion_failure": true,
+        "command": [
+          "python3",
+          "-B",
+          "scripts/test_wallet_index_replica_capacity.py",
+          "CapacityHarnessTests.test_cli_sigterm_stops_native_child_and_records_interruption"
+        ],
+        "failure_excerpt": [
+          "FAIL: test_cli_sigterm_stops_native_child_and_records_interruption (__main__.CapacityHarnessTests.test_cli_sigterm_stops_native_child_and_records_interruption)",
+          "AssertionError: ProcessLookupError not raised : native child survived parent SIGTERM",
+          "Ran 1 test in 0.155s",
+          "FAILED (failures=1)"
+        ]
+      }
+    ],
+    "restored_tests": 12,
+    "restored_exit_code": 0,
+    "candidate_source_unchanged": true,
+    "registration": {
+      "control": "missing CTest registration must fail source-guard inventory",
+      "red_exit_code": 1,
+      "red_excerpt": "SOURCE_GUARD_INVENTORY_FAILURE: registered source-guard set changed; missing=['wallet-index-replica-capacity'] unexpected=[]",
+      "restored_exit_code": 0,
+      "restored_excerpt": "SOURCE_GUARD_INVENTORY_OK: all 66 required configure-only guards are registered",
+      "registry_restored": true
+    }
+  },
+  "native_fixture_smokes": [
+    {
+      "mode": "path-a",
+      "dataset_kind": "fixture-smoke",
+      "exit_code": 2,
+      "result": "measured",
+      "target_block_id": "(-1,8000000000000000,467):2B205F71031A9472246829D4AD9D819899D0FAE47741463C85481CDF3B54BA21:14AD6EB0A075FEE20E45179481379128A2CF0EF7DFDEFF7AEEB01592523BBA83",
+      "native_build_source_commit": "f7535841bd860eaacd1e0f268a3571a235bf24b0",
+      "binaries_sha256": {
+        "tos-wallet-index": "535806c89827275e27891a63845d7045712b7314240f29a8b8414d5f9101e1aa",
+        "tos-wallet-index-snapshot": "623e84e99421300f38d807761320227217c1d6e58d1124cb55e70fcf90cdb387",
+        "tos-wallet-index-dump": "bd5e76c17808429adcff0fe537c5a6b95450ed1ebc96c4f09d89ce63db9c50e4"
+      },
+      "readyz": {
+        "masterchain_seqno": 467,
+        "source_seqno": 467,
+        "caught_up": true,
+        "settled": true,
+        "verification": "full",
+        "verified_horizon": {
+          "masterchain_seqno": 400,
+          "unix_time": 1793413721,
+          "unverified_accounts": 0
+        }
+      },
+      "canonical": {
+        "checkpoint": "(-1,8000000000000000,1):463B94C90B4F788ED2BFE6BD5A18DC1ADEF6425C7EEA8C1996B36C8BAE0F30AD:26B046D0CFF489B5D017D7BE11D4DBADB1A3EAC93ECB35A873572072C13AB9A2 (-1,8000000000000000,467):2B205F71031A9472246829D4AD9D819899D0FAE47741463C85481CDF3B54BA21:14AD6EB0A075FEE20E45179481379128A2CF0EF7DFDEFF7AEEB01592523BBA83",
+        "head": "467",
+        "window_base": "400",
+        "sha256": "c3d2a2e50f02f38cdde8592a0e6b811e84d6e9edcc98502b83a654226775cc94",
+        "anchor_verified": "yes"
+      },
+      "reference_comparison": {
+        "status": "equal",
+        "canonical": {
+          "checkpoint": "(-1,8000000000000000,1):463B94C90B4F788ED2BFE6BD5A18DC1ADEF6425C7EEA8C1996B36C8BAE0F30AD:26B046D0CFF489B5D017D7BE11D4DBADB1A3EAC93ECB35A873572072C13AB9A2 (-1,8000000000000000,467):2B205F71031A9472246829D4AD9D819899D0FAE47741463C85481CDF3B54BA21:14AD6EB0A075FEE20E45179481379128A2CF0EF7DFDEFF7AEEB01592523BBA83",
+          "head": "467",
+          "window_base": "400",
+          "sha256": "c3d2a2e50f02f38cdde8592a0e6b811e84d6e9edcc98502b83a654226775cc94",
+          "anchor_verified": "unrecorded"
+        }
+      },
+      "source_metadata_unchanged": true,
+      "source_inventory": {
+        "files": 78,
+        "bytes": 3959352,
+        "allocated_bytes": 483778560,
+        "metadata_sha256": "b1bab8a4440ec9acf8c0a75cf84e70140e958265180f3c7147290e4690420cd0"
+      },
+      "time_target": {
+        "limit": 21600,
+        "measured": 0.5044500820004032,
+        "status": "unavailable",
+        "basis": "measured input/hardware envelope only; not a universal SLA",
+        "reason": "fixture smoke is not capacity evidence"
+      },
+      "phases": [
+        [
+          0.5044318450018181,
+          "full",
+          null
+        ]
+      ],
+      "stages": {
+        "service": {
+          "exit_code": 0,
+          "elapsed_seconds": 0.5548032740043709,
+          "ready_after_seconds": 0.5044500820004032,
+          "peak_rss_kib": 33476,
+          "peak_sampled_anon_kib": 16280,
+          "peak_sampled_data_bytes": 78065664
+        },
+        "canonical": {
+          "exit_code": 0,
+          "elapsed_seconds": 0.5009656550028012,
+          "ready_after_seconds": null,
+          "peak_rss_kib": 16656,
+          "peak_sampled_anon_kib": 32,
+          "peak_sampled_data_bytes": 81920
+        },
+        "reference": {
+          "exit_code": 0,
+          "elapsed_seconds": 0.5010221199991065,
+          "ready_after_seconds": null,
+          "peak_rss_kib": 16656,
+          "peak_sampled_anon_kib": 24,
+          "peak_sampled_data_bytes": 81920
+        }
+      },
+      "path_a_marker_observed": true,
+      "snapshot_sha256": null
+    },
+    {
+      "mode": "path-b",
+      "dataset_kind": "fixture-smoke",
+      "exit_code": 2,
+      "result": "measured",
+      "target_block_id": "(-1,8000000000000000,467):2B205F71031A9472246829D4AD9D819899D0FAE47741463C85481CDF3B54BA21:14AD6EB0A075FEE20E45179481379128A2CF0EF7DFDEFF7AEEB01592523BBA83",
+      "native_build_source_commit": "f7535841bd860eaacd1e0f268a3571a235bf24b0",
+      "binaries_sha256": {
+        "tos-wallet-index": "535806c89827275e27891a63845d7045712b7314240f29a8b8414d5f9101e1aa",
+        "tos-wallet-index-snapshot": "623e84e99421300f38d807761320227217c1d6e58d1124cb55e70fcf90cdb387",
+        "tos-wallet-index-dump": "bd5e76c17808429adcff0fe537c5a6b95450ed1ebc96c4f09d89ce63db9c50e4"
+      },
+      "readyz": {
+        "masterchain_seqno": 467,
+        "source_seqno": 467,
+        "caught_up": true,
+        "settled": true,
+        "verification": "full",
+        "verified_horizon": {
+          "masterchain_seqno": 400,
+          "unix_time": 1793413721,
+          "unverified_accounts": 3
+        }
+      },
+      "canonical": {
+        "checkpoint": "(-1,8000000000000000,1):463B94C90B4F788ED2BFE6BD5A18DC1ADEF6425C7EEA8C1996B36C8BAE0F30AD:26B046D0CFF489B5D017D7BE11D4DBADB1A3EAC93ECB35A873572072C13AB9A2 (-1,8000000000000000,467):2B205F71031A9472246829D4AD9D819899D0FAE47741463C85481CDF3B54BA21:14AD6EB0A075FEE20E45179481379128A2CF0EF7DFDEFF7AEEB01592523BBA83",
+        "head": "467",
+        "window_base": "400",
+        "sha256": "c3d2a2e50f02f38cdde8592a0e6b811e84d6e9edcc98502b83a654226775cc94",
+        "anchor_verified": "no"
+      },
+      "reference_comparison": {
+        "status": "equal",
+        "canonical": {
+          "checkpoint": "(-1,8000000000000000,1):463B94C90B4F788ED2BFE6BD5A18DC1ADEF6425C7EEA8C1996B36C8BAE0F30AD:26B046D0CFF489B5D017D7BE11D4DBADB1A3EAC93ECB35A873572072C13AB9A2 (-1,8000000000000000,467):2B205F71031A9472246829D4AD9D819899D0FAE47741463C85481CDF3B54BA21:14AD6EB0A075FEE20E45179481379128A2CF0EF7DFDEFF7AEEB01592523BBA83",
+          "head": "467",
+          "window_base": "400",
+          "sha256": "c3d2a2e50f02f38cdde8592a0e6b811e84d6e9edcc98502b83a654226775cc94",
+          "anchor_verified": "unrecorded"
+        }
+      },
+      "source_metadata_unchanged": true,
+      "source_inventory": {
+        "files": 78,
+        "bytes": 3959352,
+        "allocated_bytes": 483778560,
+        "metadata_sha256": "b1bab8a4440ec9acf8c0a75cf84e70140e958265180f3c7147290e4690420cd0"
+      },
+      "time_target": {
+        "limit": 7200,
+        "measured": 2.0192131670046365,
+        "status": "unavailable",
+        "basis": "measured input/hardware envelope only; not a universal SLA",
+        "reason": "fixture smoke is not capacity evidence"
+      },
+      "phases": [
+        [
+          0.5136978819937212,
+          "partial",
+          "blocks: starting"
+        ],
+        [
+          1.5179496589989867,
+          "full",
+          null
+        ]
+      ],
+      "stages": {
+        "import": {
+          "exit_code": 0,
+          "elapsed_seconds": 0.5012064750044374,
+          "ready_after_seconds": null,
+          "peak_rss_kib": 16664,
+          "peak_sampled_anon_kib": 32,
+          "peak_sampled_data_bytes": 0
+        },
+        "service": {
+          "exit_code": 0,
+          "elapsed_seconds": 1.5683429860000615,
+          "ready_after_seconds": 1.518006692000199,
+          "peak_rss_kib": 34688,
+          "peak_sampled_anon_kib": 16564,
+          "peak_sampled_data_bytes": 65536
+        },
+        "canonical": {
+          "exit_code": 0,
+          "elapsed_seconds": 0.5010160660021938,
+          "ready_after_seconds": null,
+          "peak_rss_kib": 16664,
+          "peak_sampled_anon_kib": 28,
+          "peak_sampled_data_bytes": 98304
+        },
+        "reference": {
+          "exit_code": 0,
+          "elapsed_seconds": 0.5010837880035979,
+          "ready_after_seconds": null,
+          "peak_rss_kib": 16664,
+          "peak_sampled_anon_kib": 32,
+          "peak_sampled_data_bytes": 98304
+        }
+      },
+      "path_a_marker_observed": null,
+      "snapshot_sha256": "e3520bb1bd408c26c32184652901ab9b4af43b2808564e794f1bfde54d5d259d"
+    }
+  ],
+  "non_author_review": {
+    "result": "no remaining actionable P1/P2 in the harness scope",
+    "areas": [
+      "AP-2/3/7",
+      "PS-5",
+      "TE-1/2/4/6/9/10",
+      "BC-2/6",
+      "DC-1/2/4",
+      "RH-3/4"
+    ],
+    "limits": "Independent agent review of the harness; not third-party review of the underlying production change and not real-testnet capacity acceptance."
+  }
+}

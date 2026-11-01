@@ -665,8 +665,10 @@ target_link_libraries(test-storage PRIVATE storage tos_db memprof tl_api tl-util
 add_executable(test-rocksdb test/test-rocksdb.cpp)
 target_link_libraries(test-rocksdb PRIVATE memprof tddb tdutils)
 
-add_executable(test-wallet-index test/test-td-main.cpp test/test-wallet-index.cpp validator-engine/wallet-index.cpp
-  validator-engine/wallet-index-writer.cpp validator/wc0-block-hook.cpp services/index-progress.cpp)
+add_executable(test-wallet-index test/test-td-main.cpp test/test-wallet-index.cpp test/test-wallet-index-snapshot.cpp
+  test/test-wallet-index-lineage.cpp validator-engine/wallet-index.cpp validator-engine/wallet-index-lineage.cpp
+  validator-engine/wallet-index-writer.cpp validator-engine/wallet-index-snapshot.cpp
+  validator/wc0-block-hook.cpp services/index-progress.cpp)
 target_link_libraries(test-wallet-index PRIVATE smc-envelope tos_crypto tddb memprof tdutils)
 
 add_executable(test-tddb test/test-td-main.cpp ${TDDB_TEST_SOURCE})
@@ -1018,11 +1020,20 @@ target_link_libraries(test-wallet-index-apply PRIVATE validator-disk validator-c
 
 # The standalone wallet index's source pipeline and replay loop over a fixture source.
 add_executable(test-wallet-index-source test/test-td-main.cpp test/test-wallet-index-source.cpp
-  services/index-source.cpp services/index-reader.cpp services/index-prefetch.cpp services/index-progress.cpp)
+  test/test-wallet-index-verify.cpp
+  services/index-source.cpp services/index-reader.cpp services/index-prefetch.cpp services/index-progress.cpp
+  services/index-verify.cpp)
 target_include_directories(test-wallet-index-source PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
                            ${CMAKE_CURRENT_SOURCE_DIR}/crypto ${CMAKE_CURRENT_SOURCE_DIR}/test)
 target_link_libraries(test-wallet-index-source PRIVATE tos-service-common validator-disk validator-common validator-db
                       tos_validator smc-envelope tos_db tos_crypto tddb tdutils tdactor adnl overlay tl_api dht)
+
+# An empty, initialized node database for the wallet-index serving-gate test.
+add_executable(wallet-index-source-fixture test/wallet-index-source-fixture.cpp)
+target_include_directories(wallet-index-source-fixture PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(wallet-index-source-fixture PRIVATE validator-disk validator-common validator-db tos_validator
+                      tos_db tos_crypto tddb tdutils tdactor adnl overlay tl_api dht)
 
 add_executable(test-control-getter-transport test/validator/control-getter-transport-test.cpp)
 target_include_directories(test-control-getter-transport PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/crypto ${CMAKE_CURRENT_BINARY_DIR}/crypto)
@@ -1949,6 +1960,9 @@ set_tests_properties(branch-chain-python-ci-source PROPERTIES LABELS "source-gua
 add_test(NAME branch-chain-python-ci-source-conditions
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_branch_chain_conditions.py)
 set_tests_properties(branch-chain-python-ci-source-conditions PROPERTIES LABELS "source-guard")
+add_test(NAME wallet-index-replica-capacity
+  COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_wallet_index_replica_capacity.py)
+set_tests_properties(wallet-index-replica-capacity PROPERTIES LABELS "source-guard")
 add_test(NAME n6-diagnostic-observations
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-n6-diagnostic-observations.py)
 set_tests_properties(n6-diagnostic-observations PROPERTIES LABELS "source-guard")
@@ -2256,6 +2270,19 @@ tos_test(test-rldp2-decoder-heap)
 tos_test(test-consensus-config-admission)
 tos_test(test-weak-ptr-registry)
 tos_test(test-wallet-index)
+add_test(NAME wallet-index-snapshot-cli
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_wallet_index_snapshot_cli.py
+    --binary $<TARGET_FILE:tos-wallet-index-snapshot>)
+set_tests_properties(wallet-index-snapshot-cli PROPERTIES LABELS "security-findings" TIMEOUT 180)
+add_test(NAME wallet-index-verification-gate
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_wallet_index_verification_gate.py
+    --index-binary $<TARGET_FILE:tos-wallet-index> --snapshot-binary $<TARGET_FILE:tos-wallet-index-snapshot>
+    --source-fixture-binary $<TARGET_FILE:wallet-index-source-fixture>)
+set_tests_properties(wallet-index-verification-gate PROPERTIES LABELS "security-findings" TIMEOUT 300)
+add_test(NAME wallet-index-dump-cli
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_wallet_index_dump_cli.py
+    --dump-binary $<TARGET_FILE:tos-wallet-index-dump> --snapshot-binary $<TARGET_FILE:tos-wallet-index-snapshot>)
+set_tests_properties(wallet-index-dump-cli PROPERTIES LABELS "security-findings" TIMEOUT 120)
 tos_test(test-wallet-index-apply)
 tos_test(test-wallet-index-source)
 # Keep the security fixes exercised before merge, not only by main's full

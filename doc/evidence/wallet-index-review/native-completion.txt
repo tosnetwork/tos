@@ -1,0 +1,11 @@
+/tmp/pr373-native-image-f7535841.log
+Original SHA-256: 9be16ed72f6438adf5448e8b0de50de3f8f40cd1c68d3274423ac10bcb12201c
+Original bytes: 8908055
+L87665: NATIVE_WALLET_INDEX_IMAGE_OK
+Exit status: 0
+
+/tmp/pr373-native-verify-f7535841.log
+Original SHA-256: f3a31125f671a9f952c0d105f9c15129af5dd85a5398460beb825bfa4178d3b2
+Original bytes: 28468
+L857: NATIVE_WALLET_INDEX_VERIFY_OK
+Exit status: 0

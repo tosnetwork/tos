@@ -26,6 +26,7 @@
 #include <dirent.h>
 #include <functional>
 #include <limits>
+#include <map>
 #include <netinet/in.h>
 #include <poll.h>
 #include <string>
@@ -38,12 +39,17 @@
 #include "http/http-inbound-connection.h"
 #include "services/service-common.h"
 #include "td/actor/actor.h"
+#include "td/db/RocksDb.h"
 #include "td/utils/base64.h"
 #include "td/utils/buffer.h"
+#include "td/utils/filesystem.h"
 #include "td/utils/port/IPAddress.h"
 #include "td/utils/port/ServerSocketFd.h"
+#include "td/utils/port/path.h"
 #include "td/utils/tests.h"
+#include "test/wallet-index-chain-fixture.h"
 #include "tl-utils/lite-utils.hpp"
+#include "validator-engine/wallet-index.h"
 
 #include "json-rpc-http-policy.h"
 #include "json-rpc-server-internal.h"
@@ -1569,4 +1575,176 @@ TEST(JsonRpcTransport, standalone_submission_requires_backend_proxy_attribution)
       });
     });
   }
+}
+
+// An index-only server answers no index query while its index is not
+// verified against the node's chain. While it is only partly verified, every
+// history answer is flagged, an account no record marks included (one absent
+// from the verified head may have been omitted and recreated later), and a
+// missing event says the history is not verified in error.data. A fully
+// verified index answers without either flag.
+TEST(JsonRpcTransport, an_unverified_wallet_index_is_refused_and_a_partial_one_flags_its_history) {
+  auto dir = td::mkdtemp(td::get_temporary_dir(), "rpc-wallet-index").move_as_ok();
+  td::Bits256 account = td::Bits256::zero();
+  account.as_slice()[0] = 0x21;
+  {
+    auto db = tos_wallet_index::WalletIndexDb::open(dir + "/index").move_as_ok();
+    db->begin_batch().ensure();
+    db->put_event(account, 5000, wallet_index_fixture::transaction({account, 5000, 0})).ensure();
+    db->commit_batch().ensure();
+    tos_wallet_index::set_wallet_index_db(std::move(db));
+  }
+  const std::string address = "0:" + account.to_hex();
+  const std::string events =
+      "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"getAccountEvents\",\"params\":{\"address\":\"" + address + "\"}}";
+  const std::string missing =
+      "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"getAccountEvent\",\"params\":{\"address\":\"" + address +
+      "\",\"event_id\":\"6000:" + std::string(64, 'a') + "\"}}";
+  struct Case {
+    bool serving, partial;
+  };
+  for (auto c : {Case{false, false}, Case{true, true}, Case{true, false}}) {
+    auto options = options_for(false);
+    options.index_only = true;
+    options.index_ready = [] { return true; };
+    options.index_serving = [c] { return c.serving; };
+    options.index_partial = [c] { return c.partial; };
+    with_json_rpc(std::move(options), [&](int port) {
+      Client client(port, 0);
+      ASSERT_TRUE(client.connect());
+      std::string status, body;
+      ASSERT_TRUE(client.send_all(post(events, false)));
+      ASSERT_TRUE(client.read_response(5000, status, body));
+      if (!c.serving) {
+        ASSERT_TRUE(body.find("not verified against this node's chain") != std::string::npos);
+        ASSERT_TRUE(body.find("\"events\"") == std::string::npos);
+        return;
+      }
+      ASSERT_TRUE(body.find("\"events\":[{") != std::string::npos);
+      ASSERT_EQ(body.find("\"history_verified\":false") != std::string::npos, c.partial);
+      ASSERT_TRUE(client.send_all(post(missing, false)));
+      ASSERT_TRUE(client.read_response(5000, status, body));
+      ASSERT_TRUE(body.find("\"code\":-32004") != std::string::npos);
+      ASSERT_EQ(body.find("\"history_verified\":false") != std::string::npos, c.partial);
+      ASSERT_EQ(body.find("not yet verified") != std::string::npos, c.partial);
+    });
+  }
+  tos_wallet_index::set_wallet_index_db(nullptr);
+  td::rmrf(dir).ignore();
+}
+
+namespace {
+// One page of an account's history from an index-only server.
+std::string history_page(int port, const std::string &params) {
+  Client client(port, 0);
+  CHECK(client.connect());
+  CHECK(client.send_all(
+      post("{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"getAccountEvents\",\"params\":{" + params + "}}", false)));
+  std::string status, body;
+  CHECK(client.read_response(5000, status, body));
+  return body;
+}
+
+std::string single_event(int port, const std::string &address, uint64_t lt, const td::Ref<vm::Cell> &cell) {
+  Client client(port, 0);
+  CHECK(client.connect());
+  CHECK(client.send_all(post("{\"jsonrpc\":\"2.0\",\"id\":8,\"method\":\"getAccountEvent\",\"params\":{\"address\":\"" +
+                                 address + "\",\"event_id\":\"" + std::to_string(lt) + ":" + cell->get_hash().to_hex() +
+                                 "\"}}",
+                             false)));
+  std::string status, body;
+  CHECK(client.read_response(5000, status, body));
+  return body;
+}
+}  // namespace
+
+// History reads serve exactly the window: rows at or below the bound the
+// window base's record sets for the account are not served, nor rows past an
+// account's newest kMaxEventsPerAccount, on any page or as a single event;
+// and a nonzero base without its block's record fails closed.
+TEST(JsonRpcTransport, wallet_index_history_reads_serve_only_the_window) {
+  auto dir = td::mkdtemp(td::get_temporary_dir(), "rpc-wallet-index-window").move_as_ok();
+  td::Bits256 small = td::Bits256::zero(), big = td::Bits256::zero();
+  small.as_slice()[0] = 0x21;
+  big.as_slice()[0] = 0x22;
+  std::map<uint64_t, td::Ref<vm::Cell>> small_rows, big_rows;
+  {
+    auto db = tos_wallet_index::WalletIndexDb::open(dir + "/index").move_as_ok();
+    db->begin_batch().ensure();
+    for (uint64_t lt : {1000, 2000, 3000, 4000, 5000}) {
+      small_rows[lt] = wallet_index_fixture::transaction({small, lt, 0});
+      db->put_event(small, lt, small_rows[lt]).ensure();
+    }
+    // More rows than the retention keeps (a trim backlog): 10,005 above the bound.
+    for (uint64_t lt = 10001; lt <= 20005; ++lt) {
+      big_rows[lt] = wallet_index_fixture::transaction({big, lt, 0});
+      db->put_event(big, lt, big_rows[lt]).ensure();
+    }
+    td::Bits256 root = td::Bits256::zero(), file = td::Bits256::zero();
+    root.as_slice()[0] = 5;
+    file.as_slice()[0] = 6;
+    // Base: masterchain block 5, one basechain shard ending at lt 3000.
+    tos_wallet_index::WindowBaseRecord record{
+        tos_wallet_index::kWalletIndexSchemaVersion,
+        tos::BlockIdExt{tos::masterchainId, tos::shardIdAll, 5, root, file},
+        {tos_wallet_index::WindowShardTip{tos::ShardIdFull{tos::basechainId, tos::shardIdAll}, 3000}}};
+    db->put_window_base(5, record).ensure();
+    db->commit_batch().ensure();
+    tos_wallet_index::set_wallet_index_db(std::move(db));
+  }
+  auto options = [] {
+    auto o = options_for(false);
+    o.index_only = true;
+    o.index_ready = [] { return true; };
+    o.index_serving = [] { return true; };
+    o.index_partial = [] { return false; };
+    return o;
+  };
+  const std::string small_address = "0:" + small.to_hex(), big_address = "0:" + big.to_hex();
+  with_json_rpc(options(), [&](int port) {
+    auto body = history_page(port, "\"address\":\"" + small_address + "\"");
+    ASSERT_EQ(count_of(body, "\"@type\":\"wallet.accountEvent\""), 2u);
+    ASSERT_TRUE(body.find("\"lt\":\"5000\"") != std::string::npos && body.find("\"lt\":\"4000\"") != std::string::npos);
+    ASSERT_TRUE(body.find("\"lt\":\"3000\"") == std::string::npos);
+    ASSERT_TRUE(body.find("\"next_from\":null") != std::string::npos);
+    // A page that would reach the bound stops there, with no cursor past it.
+    body = history_page(port, "\"address\":\"" + small_address + "\",\"limit\":1");
+    ASSERT_TRUE(body.find("\"next_from\":\"5000\"") != std::string::npos);
+    body = history_page(port, "\"address\":\"" + small_address + "\",\"limit\":1,\"before_lt\":\"5000\"");
+    ASSERT_EQ(count_of(body, "\"@type\":\"wallet.accountEvent\""), 1u);
+    ASSERT_TRUE(body.find("\"next_from\":null") != std::string::npos);
+    body = history_page(port, "\"address\":\"" + small_address + "\",\"before_lt\":\"4000\"");
+    ASSERT_EQ(count_of(body, "\"@type\":\"wallet.accountEvent\""), 0u);
+    ASSERT_TRUE(single_event(port, small_address, 3000, small_rows[3000]).find("\"code\":-32004") != std::string::npos);
+    ASSERT_TRUE(single_event(port, small_address, 4000, small_rows[4000]).find("\"lt\":\"4000\"") != std::string::npos);
+    // The newest 10,000 of the big account end at lt 10006, across pages.
+    body = history_page(port, "\"address\":\"" + big_address + "\",\"limit\":3,\"before_lt\":\"10010\"");
+    ASSERT_EQ(count_of(body, "\"@type\":\"wallet.accountEvent\""), 3u);
+    ASSERT_TRUE(body.find("\"next_from\":\"10007\"") != std::string::npos);
+    body = history_page(port, "\"address\":\"" + big_address + "\",\"limit\":3,\"before_lt\":\"10007\"");
+    ASSERT_EQ(count_of(body, "\"@type\":\"wallet.accountEvent\""), 1u);
+    ASSERT_TRUE(body.find("\"lt\":\"10006\"") != std::string::npos);
+    ASSERT_TRUE(body.find("\"next_from\":null") != std::string::npos);
+    ASSERT_TRUE(single_event(port, big_address, 10005, big_rows[10005]).find("\"code\":-32004") != std::string::npos);
+    ASSERT_TRUE(single_event(port, big_address, 10006, big_rows[10006]).find("\"lt\":\"10006\"") != std::string::npos);
+  });
+  // The base without its record: history fails closed, on both reads.
+  tos_wallet_index::set_wallet_index_db(nullptr);
+  {
+    td::RocksDbOptions raw_options;
+    raw_options.no_transactions = true;
+    auto raw = td::RocksDb::open(dir + "/index", std::move(raw_options)).move_as_ok();
+    const char record_key[2] = {0x00, 0x36};
+    raw.erase(td::Slice{record_key, 2}).ensure();
+  }
+  tos_wallet_index::set_wallet_index_db(tos_wallet_index::WalletIndexDb::open(dir + "/index").move_as_ok());
+  with_json_rpc(options(), [&](int port) {
+    auto body = history_page(port, "\"address\":\"" + small_address + "\"");
+    ASSERT_TRUE(body.find("not authenticated") != std::string::npos);
+    ASSERT_TRUE(body.find("\"events\"") == std::string::npos);
+    ASSERT_TRUE(single_event(port, small_address, 4000, small_rows[4000]).find("not authenticated") !=
+                std::string::npos);
+  });
+  tos_wallet_index::set_wallet_index_db(nullptr);
+  td::rmrf(dir).ignore();
 }
