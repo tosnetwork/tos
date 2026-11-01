@@ -46,29 +46,6 @@ fn production_request_serializers_match_cpp_and_have_complete_coverage() {
             checked.insert(stringify!($adapter).to_string());
         }};
     }
-    macro_rules! timed {
-        ($adapter:ty, $name:literal, $q:ident = $factory:expr, $now:ident, $request:expr) => {{
-            let $q = $factory;
-            let mut stable = false;
-            for _ in 0..3 {
-                let $now = UnixTime::now() as i32;
-                let request = $request;
-                let encoded = <$adapter>::serialize(&request).expect("time-based request");
-                if UnixTime::now() as i32 == $now {
-                    assert_eq!(
-                        serialize_boxed(&encoded).expect("encoded request"),
-                        fixtures[$name],
-                        "CLI_REQUEST_BYTES {}",
-                        $name
-                    );
-                    stable = true;
-                    break;
-                }
-            }
-            assert!(stable, "CLI_REQUEST_CLOCK_BOUNDARY {}", $name);
-            checked.insert(stringify!($adapter).to_string());
-        }};
-    }
     case!(
         GetElectorStateRqRs,
         "engine.validator.getElectorState",
@@ -129,18 +106,17 @@ fn production_request_serializers_match_cpp_and_have_complete_coverage() {
         AddValidatorPermKeyRq {
             key_hash: q.key_hash.as_slice().to_vec(),
             election_date: q.election_date,
-            expire_at: q.election_date.checked_add(q.ttl).expect("expiry")
+            expire_at: q.ttl
         }
     );
-    timed!(
+    case!(
         AddValidatorTempKeyRqRs,
         "engine.validator.addValidatorTempKey",
         q = make_tos_api_engine_validator_addvalidatortempkey(16),
-        now,
         AddValidatorTempKeyRq {
             perm_key_hash: q.permanent_key_hash.as_slice().to_vec(),
             key_hash: q.key_hash.as_slice().to_vec(),
-            expire_at: now.checked_add(q.ttl).expect("expiry")
+            expire_at: q.ttl
         }
     );
     case!(
@@ -149,15 +125,14 @@ fn production_request_serializers_match_cpp_and_have_complete_coverage() {
         q = make_tos_api_engine_validator_addadnlid(16),
         AddAdnlAddressRq { key_hash: q.key_hash.as_slice().to_vec(), category: q.category }
     );
-    timed!(
+    case!(
         AddValidatorAdnlAddrRqRs,
         "engine.validator.addValidatorAdnlAddress",
         q = make_tos_api_engine_validator_addvalidatoradnladdress(16),
-        now,
         AddValidatorAdnlAddrRq {
             perm_key_hash: q.permanent_key_hash.as_slice().to_vec(),
             key_hash: q.key_hash.as_slice().to_vec(),
-            expire_at: now.checked_add(q.ttl).expect("expiry")
+            expire_at: q.ttl
         }
     );
     case!(

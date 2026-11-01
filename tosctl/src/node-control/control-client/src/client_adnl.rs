@@ -16,7 +16,7 @@ use crate::client_api::{
 use crate::{operator_reads::*, operator_requests::*};
 use adnl::client::{AdnlClient, AdnlClientConfig, AdnlClientConfigJson};
 use anyhow::Context;
-use chain_block::{BlockIdExt, UInt256, UnixTime};
+use chain_block::{BlockIdExt, UInt256};
 use std::time::Instant;
 use tl_api::{
     AnyBoxedSerialize, TLObject, serialize_boxed,
@@ -233,7 +233,8 @@ impl ToFromTL for AddValidatorPermKeyRqRs {
     fn serialize(rq: &Self::Rq) -> anyhow::Result<TLObject> {
         let key_hash = UInt256::from_raw(rq.key_hash.clone(), 256);
         let election_date = rq.election_date;
-        let ttl = rq.expire_at - election_date;
+        // The wire field is named ttl, but the engine stores an absolute Unix expiry.
+        let ttl = rq.expire_at;
 
         let ret =
             tos::rpc::engine::validator::AddValidatorPermanentKey { key_hash, election_date, ttl };
@@ -254,8 +255,7 @@ impl ToFromTL for AddValidatorTempKeyRqRs {
     fn serialize(rq: &Self::Rq) -> anyhow::Result<TLObject> {
         let perm_key_hash = UInt256::from_raw(rq.perm_key_hash.clone(), 256);
         let key_hash = UInt256::from_raw(rq.key_hash.clone(), 256);
-        let expire_at = rq.expire_at;
-        let ttl = expire_at - UnixTime::now() as i32;
+        let ttl = rq.expire_at;
 
         let ret = tos::rpc::engine::validator::AddValidatorTempKey {
             permanent_key_hash: perm_key_hash,
@@ -303,8 +303,7 @@ impl ToFromTL for AddValidatorAdnlAddrRqRs {
     fn serialize(rq: &Self::Rq) -> anyhow::Result<TLObject> {
         let perm_key_hash = UInt256::from_raw(rq.perm_key_hash.clone(), 256);
         let key_hash = UInt256::from_raw(rq.key_hash.clone(), 256);
-        let expire_at = rq.expire_at;
-        let ttl = expire_at - UnixTime::now() as i32;
+        let ttl = rq.expire_at;
 
         let ret = tos::rpc::engine::validator::AddValidatorAdnlAddress {
             permanent_key_hash: perm_key_hash,
