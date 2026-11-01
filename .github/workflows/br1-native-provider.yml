@@ -45,8 +45,13 @@ jobs:
       - name: Exercise the real sealed wallet verifier without operator custody
         run: |
           cargo build --manifest-path tools/bonded-relayer/provider/Cargo.toml --release --locked -j2
+          # Cargo outputs may share an inode with target/release/deps. Install
+          # a private copy, preserving the runtime's single-link requirement.
+          install -m 0500 tools/bonded-relayer/provider/target/release/br1-native-provider "$RUNNER_TEMP/br1-native-provider"
+          cmp tools/bonded-relayer/provider/target/release/br1-native-provider "$RUNNER_TEMP/br1-native-provider"
+          test "$(stat -c %h "$RUNNER_TEMP/br1-native-provider")" = 1
           python3 test/bonded-relayer/native_client_smoke.py \
-            --provider "$PWD/tools/bonded-relayer/provider/target/release/br1-native-provider" \
+            --provider "$RUNNER_TEMP/br1-native-provider" \
             --fixture /tmp/br1-public-fixture.json
       - name: Require runtime failures after removing native privacy guards
         run: python3 test/bonded-relayer/native_tor_controls.py --release
