@@ -7,7 +7,7 @@ use anyhow::{Context, Result, ensure};
 use base64::Engine;
 use chain_block::{
     Block, BlockIdExt, ConfigParams, Deserializable, MerkleProof, Serializable, ShardHashes,
-    ShardStateUnsplit, UInt256, read_single_root_boc,
+    ShardStateUnsplit, UInt256, read_boc, read_single_root_boc,
 };
 use std::collections::BTreeSet;
 use tl_api::{AnyBoxedSerialize, BoxedSerialize, TLObject, tos};
@@ -164,20 +164,25 @@ async fn check_inner(
             workchain: block.shard().workchain_id(),
             id: address.into(),
         };
-        let what = format!("GetAccountState in shard state {block}");
+        let what = format!("GetAccountStatePrunned in shard state {block}");
         let read: tos::lite_server::AccountState = downcast(
             &what,
             query(
                 client,
                 &what,
-                &tos::rpc::lite_server::GetAccountState { id: block.clone(), account },
+                &tos::rpc::lite_server::GetAccountStatePrunned {
+                    id: block.clone(),
+                    account: account.clone(),
+                },
             )
             .await?,
         )?;
-        // This read only forces the engine to load the shard state. Its proofs are not
-        // checked and nothing is derived from the answer: the coverage entry comes from
-        // `blocks`, which is bound to the frontier above.
-        ensure!(read.shardblk() == &block, "native account read used a different shard state");
+        // The read makes the engine load the shard state; that is still its only use, and
+        // the coverage entry comes from `blocks`, which is bound to the frontier above. The
+        // answer is authenticated against the block's own root hash all the same, so no
+        // later use of its content can trust an unproven answer.
+        verify_account_read(held, &block, &account, &read)
+            .with_context(|| format!("native {what}"))?;
         coverage.push(block.shard().to_string());
     }
     let mut ancestors = BTreeSet::new();
@@ -273,11 +278,91 @@ pub fn anchor_read_refusal(anchor: &FullId, error: anyhow::Error) -> anyhow::Err
 }
 
 fn bounded_proof(what: &str, bytes: &[u8]) -> Result<MerkleProof> {
+    let [proof] = bounded_proofs::<1>(what, bytes)?;
+    Ok(proof)
+}
+
+/// A bag of exactly `N` Merkle proofs within the byte limit, in their serialized order.
+fn bounded_proofs<const N: usize>(what: &str, bytes: &[u8]) -> Result<[MerkleProof; N]> {
     ensure!(!bytes.is_empty(), "{what} is empty");
     ensure!(bytes.len() as u64 <= MANIFEST_LIMIT, "{what} exceeds the byte limit");
-    read_single_root_boc(bytes)
-        .and_then(MerkleProof::construct_from_cell)
-        .with_context(|| format!("{what} is not a Merkle proof"))
+    let roots = read_boc(bytes).with_context(|| format!("{what} is not a bag of cells"))?.roots;
+    ensure!(roots.len() == N, "{what} has {} roots, expected {N}", roots.len());
+    let mut proofs = Vec::with_capacity(N);
+    for root in roots {
+        proofs.push(
+            MerkleProof::construct_from_cell(root)
+                .with_context(|| format!("{what} is not a Merkle proof"))?,
+        );
+    }
+    proofs.try_into().map_err(|_| anyhow::anyhow!("{what} root count changed while reading"))
+}
+
+/// Verify a native `getAccountStatePrunned` answer for `account` in the monitored `block`,
+/// as the reference lite client checks an account state: the answer is for exactly this
+/// block, carries no masterchain shard proof (the request names the block itself), and its
+/// proof is a header proof of the block's own root hash followed by a proof of the state
+/// that header records, which shows the account's entry or its absence. A present account's
+/// pruned body must be the one the state records. Nothing else is read from the answer.
+pub fn verify_account_read(
+    held: &Network,
+    block: &BlockIdExt,
+    account: &tos::lite_server::accountid::AccountId,
+    response: &tos::lite_server::AccountState,
+) -> Result<()> {
+    ensure!(
+        account.workchain == block.shard().workchain_id(),
+        "account read names another workchain than its shard block"
+    );
+    let address = chain_block::AccountId::from(account.id.clone());
+    ensure!(
+        block.shard().contains_account(&address)?,
+        "account read names an address outside its shard block"
+    );
+    ensure!(response.id() == block, "account read answered for another block");
+    ensure!(response.shardblk() == block, "native account read used a different shard state");
+    ensure!(response.shard_proof().is_empty(), "account read carries an unexpected shard proof");
+    let [header, state_proof] = bounded_proofs::<2>("account proof", response.proof())?;
+    ensure!(&header.hash == block.root_hash(), "account header proof belongs to another block");
+    let header: Block = header.virtualize().context("account header proof has no block header")?;
+    let info = header.read_info().context("account header proof has no block info")?;
+    ensure!(
+        info.shard() == block.shard() && info.seq_no() == block.seq_no(),
+        "account header proof has other coordinates than its block"
+    );
+    let recorded_state =
+        header.read_state_update().context("account header proof has no state update")?.new_hash;
+    ensure!(
+        state_proof.hash == recorded_state,
+        "account state proof is not a proof of the state its block records"
+    );
+    let state: ShardStateUnsplit =
+        state_proof.virtualize().context("account state proof has no state header")?;
+    ensure!(
+        state.global_id() == held.global_id
+            && state.shard() == block.shard()
+            && state.seq_no() == block.seq_no(),
+        "account state proof state has another network, shard or height"
+    );
+    // A pruned branch on the dictionary path is an error here, never an absent account.
+    let entry = state
+        .read_accounts()
+        .and_then(|accounts| accounts.account(&address))
+        .context("account state proof does not reach the account's position")?;
+    let body = response.state();
+    match entry {
+        Some(entry) => {
+            ensure!(!body.is_empty(), "account read omits an account the state holds");
+            let body = bounded_proof("account body", body)?;
+            let cell = entry.account_cell();
+            let recorded = cell.hash(usize::from(cell.level().max(1) - 1));
+            ensure!(body.hash == recorded, "account body differs from the account the state holds");
+        }
+        None => {
+            ensure!(body.is_empty(), "account read has a body for an account the state lacks");
+        }
+    }
+    Ok(())
 }
 
 /// Verify a native answer proving that `anchor` is an earlier masterchain block of the
@@ -467,3 +552,7 @@ mod tests;
 #[cfg(test)]
 #[path = "../tests/support/frontier_inventory.rs"]
 mod inventory_tests;
+
+#[cfg(test)]
+#[path = "../tests/support/account_read.rs"]
+mod account_read_tests;
