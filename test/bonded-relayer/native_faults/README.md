@@ -166,3 +166,38 @@ gate additionally kills it after that write is accepted; `--mode submit`
 reconciles original bytes with exactly one send/fee import. Native and Python
 tombstones from the refused job are retained. This is isolated local acceptance,
 not public activation approval or full C2 coverage.
+
+## Public failure receipts, retention and access
+
+`../evidence/native-nonacceptance-failures-20261101.json` retains bounded,
+redacted **actual runtime failure sections** for all nine guard mutations, their
+exact replacement anchors, command, exit codes and restored22 summary. It is
+retained in normal Git history with no scheduled expiry; hashes alone are not
+the public evidence. No private-host access is needed to inspect these failures
+or reproduce the assertions from source.
+
+```sh
+/usr/bin/python3 test/bonded-relayer/native_faults/nonacceptance_mutations.py \
+  --scratch /tos/worktrees/tos/br1-nonacceptance-controls-20261101 \
+  --out /tos/build/br1-nonacceptance-repro-20261101 \
+  --target-dir /tos/build/br1-native-provider/cargo
+```
+
+All three paths must be absolute. Scratch and output must not already exist.
+The runner creates its own detached worktree at the receipt's exact frozen core
+commit, mutates only that new copy, checks
+for runtime test failures (compiler errors do not count), restores each source
+in finally, and checks the complete22 inventory. It never accepts an existing
+checkout as scratch and never force-removes dirty work. On toserver use the
+thermal guard around this command and keep new worktrees under `/tos/worktrees`.
+Other review hosts can choose equivalent private scratch/cache directories.
+
+Full logs and private chain-case material under `/tos/build/br1-terminal-
+nonacceptance` and `/tos/build/br1-localnet` are retained at least until
+**2027-02-01 UTC**. Authorized operators retrieve them through the existing
+authenticated SSH access to toserver; this PR grants no new/public credentials
+or permissions. Seeds, status tokens, SQL blobs and unredacted live payloads are
+not published. Historical block states and expired signing windows cannot be
+regenerated after chain progress; compiler-log paths and timings also vary.
+The public excerpts are the minimal necessary failure receipts; fresh assertion
+semantics are reproducible with the committed runner above.
