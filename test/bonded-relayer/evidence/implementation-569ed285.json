@@ -1,0 +1,24 @@
+{
+  "reviewed_code_commit": "569ed285098403733cc09169d88a3e2c9ced36ac",
+  "base_commit": "084e4315899cc3a5bf64cc434ee327e1db487173",
+  "python": "3.13.5",
+  "machine": "x86_64",
+  "native_code_hash": "6f670a71b618566b559eb3821c9cf5ed631f8c68c12c8667ab66de48f25621fe",
+  "local_native_tests_passed": 23,
+  "local_engine_tests_passed": 21,
+  "native_mutants_killed_by_assertion": 6,
+  "source_sha256": {
+    "crypto/smartcont/relayer-bond-code.fc": "6a16d5de4ae7b69047c84e1a09e3172b0246f6ebf4b5abbad68bf3cc41bd28a7",
+    "tools/bonded-relayer/relay_core.py": "e51a275fc384b408e014188392b76a705af62b0c7c360b8be84c0d068cf381e1",
+    "test/bonded-relayer/test_native.py": "15cc3d6029ca1d8be7604c2fa341a3811fcb28469e96b56a4ecd686a8ffbf991",
+    "test/bonded-relayer/test_wire.py": "3a01d072ba7851ae696e7e5171cfa660cbe71b2cf7109ccba6a541e17344b876",
+    "test/bonded-relayer/test_engine.py": "6ba5545652a6a8f83b1e151c989fb869a0159075f8491d107424e913b66dd084",
+    "test/bonded-relayer/mutations.py": "ce4a5553aa99e8f9b277a808c9e7d3c2234f348202651655e366ada3beccd0ec",
+    "tools/shielded-pool-wallet/src/relayer_fee.rs": "6c8da73aee9c43fc9afb9cb6fbe87287b8b50047b0786873faae1b7929e2fd49",
+    "tools/shielded-pool-wallet/tests/relayer_fee.rs": "1eda2c2622e6d90f80779c8623c4dd3608b935c979749582d4042fbf6df720e0"
+  },
+  "ci_engine_and_fees_job": 124456143068,
+  "ci_rust_fee_tests_passed": 10,
+  "ci_rust_existing_regressions_passed": 12,
+  "production_activation_approved": false
+}

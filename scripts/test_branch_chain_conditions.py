@@ -230,6 +230,8 @@ class BranchConditionTests(unittest.TestCase):
             "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p node-store",
             "grep -F 'test result: ok. 1 passed; 0 failed; 0 ignored'",
             "cargo build --manifest-path tosctl/src/Cargo.toml --locked -p node-store",
+            "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p node-data-sync --features native --lib service::tests::refuse_writers_checks_child_descriptor_access_modes",
+            "grep -Fx 'CHILD_DESCRIPTOR_WRITER_CONTROL_OK' build/node-sync-writer-control.log",
             "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p commands --features node-data-sync-native --lib commands::nodectl::node_cmd::status_tests::standalone_status_keeps_rpc_only_contract_without_control_or_references",
             "grep -F 'test result: ok. 1 passed; 0 failed; 0 ignored' build/node-status-compatibility.log",
             "run: uv run python test/integration/node_store_native_reopen.py",
@@ -237,6 +239,41 @@ class BranchConditionTests(unittest.TestCase):
         for command in controls:
             with self.subTest(command=command), self.assertRaises(RuntimeError):
                 self.guard.validate_node_store_proof(self.workflow.replace(command, "REMOVED"))
+
+    def test_writer_inspection_capability_must_belong_to_the_native_container(self):
+        self.guard.validate_node_store_proof(self.workflow)
+        options = next(
+            line for line in self.workflow.splitlines() if line.startswith("      options:")
+        )
+        without = self.workflow.replace(" --cap-add SYS_PTRACE", "", 1)
+        mutants = {
+            "missing capability": without,
+            "dropped capability": self.workflow.replace(
+                "--cap-add SYS_PTRACE", "--cap-drop SYS_PTRACE", 1
+            ),
+            "capability overridden": self.workflow.replace(options, options + " --cap-drop ALL", 1),
+            "comment only": without.replace(
+                options.replace(" --cap-add SYS_PTRACE", ""),
+                options.replace(" --cap-add SYS_PTRACE", "") + " # --cap-add SYS_PTRACE",
+                1,
+            ),
+            "commented options": self.workflow.replace(options, "      # " + options.lstrip(), 1),
+            "missing options": self.workflow.replace(options + "\n", "", 1),
+            "other job": without.replace(
+                "  rust-workspace-tests-compile:\n",
+                "  rust-workspace-tests-compile:\n    container:\n" + options + "\n",
+                1,
+            ),
+            "step text only": without.replace(
+                "    steps:\n", "    steps:\n      - run: echo --cap-add SYS_PTRACE\n", 1
+            ),
+        }
+        for name, workflow in mutants.items():
+            with (
+                self.subTest(name=name),
+                self.assertRaisesRegex(RuntimeError, "container must grant SYS_PTRACE"),
+            ):
+                self.guard.validate_node_store_proof(workflow)
 
     def test_wallet_index_native_acceptance_cannot_be_omitted_or_narrowed(self):
         self.guard.validate_wallet_index_acceptance(self.workflow)

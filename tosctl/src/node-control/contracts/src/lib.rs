@@ -44,6 +44,7 @@ pub mod proof_attestation;
 pub mod proven_getters;
 pub mod proven_transactions;
 pub mod provider;
+pub mod relayer_bond;
 pub mod service_actor;
 pub mod smart_contract;
 pub mod stack_utils;

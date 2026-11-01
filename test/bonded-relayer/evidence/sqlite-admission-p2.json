@@ -1,0 +1,157 @@
+{
+  "schema": "tos.relayer.sqlite-admission-p2.v1",
+  "parent_commit": "afccf85f9a0bd76dfa79bec6f91f54f151918a41",
+  "base_commit": "084e4315899cc3a5bf64cc434ee327e1db487173",
+  "scope": "SQLite admission and status-documentation correction; no production adapter, deployment or activation claim",
+  "environment": {
+    "python": "3.12.14",
+    "sqlite": "3.53.1",
+    "system": "Linux",
+    "architecture": "x86_64"
+  },
+  "source_sha256": {
+    "tools/bonded-relayer/relay_core.py": "834d82b3529e1709700c7dc42476628ab01ecde2d5da3059768721155b2ab72b",
+    "test/bonded-relayer/test_journal_limits.py": "84b4b4003c0fb2247889d937c3acb04cd688a2eb8e8f0b2a5751b4367072aba7",
+    ".github/workflows/bonded-relayer.yml": "82a055da73c07f7a28d01e53afe53f338feb62724fa19bef540e06ff261402fd",
+    "doc/bonded-relayer-implementation-status.md": "cd64cd52090e47d0ef83cdf9c178526e1d16df0444cf1d5eadc3cd7e86b3f7fa",
+    "tools/bonded-relayer/README.md": "1d0198e3d1fdb83e49c24029b1b8fd777ca4f9d925fd1ace553f1e011cbbc7c8"
+  },
+  "corrected": {
+    "commands": [
+      "python3 -m unittest discover -s test/bonded-relayer -p test_engine.py -v",
+      "python3 -m unittest discover -s test/bonded-relayer -p test_journal_limits.py -v"
+    ],
+    "engine_tests": 21,
+    "journal_tests": 20,
+    "total_tests": 41,
+    "failures": 0,
+    "errors": 0,
+    "exit_code": 0
+  },
+  "old_core_control": {
+    "recipe": "In an isolated copy of the corrected tree, replace only tools/bonded-relayer/relay_core.py with the same path from parent_commit; keep the corrected tests and run both corrected.commands.",
+    "core_sha256": "ed1e82384a4aeb2acb1dddf213e75550a3ab7c272014702a165be0913d042c3b",
+    "syntax_exit_code": 0,
+    "total_tests": 41,
+    "exit_code": 1,
+    "failed_assertions": [
+      "test_journal_limits.JournalLimitsTests.test_allocated_quotes_and_job_can_finish_with_pinned_wal",
+      "test_journal_limits.JournalLimitsTests.test_mutated_evidence_cannot_exceed_reserved_storage",
+      "test_journal_limits.JournalLimitsTests.test_sqlite_page_ceiling_refuses_before_signing",
+      "test_journal_limits.JournalLimitsTests.test_storage_pressure_refuses_new_work_before_signing"
+    ],
+    "errors": [],
+    "failure_excerpts": [
+      "AssertionError: admitted quote could not publish its bounded bytes: database or disk is full",
+      "AssertionError: Refused not raised",
+      "AssertionError: OperationalError('database or disk is full') is not an instance of <class 'relay_core.Refused'>",
+      "AssertionError: OperationalError('database or disk is full') is not an instance of <class 'relay_core.Refused'>"
+    ]
+  },
+  "sensitivity_controls": [
+    {
+      "name": "main_guard_removed",
+      "recipe": "Apply each exact replacement once to an isolated copy of the corrected source; leave the tests unchanged.",
+      "source": "tools/bonded-relayer/relay_core.py",
+      "replace_once": [
+        {
+          "old": "        if pages > page_limit or required_pages > page_limit - pages + free_pages:\n",
+          "new": "        if False:\n"
+        }
+      ],
+      "mutant_source_sha256": "0dd604bcc55edcc957373f55a7c649f41fdf4a497c8ee7dc10227ae7b78ae61c",
+      "syntax_exit_code": 0,
+      "command": "PYTHONPATH=test/bonded-relayer python3 -m unittest test_journal_limits.JournalLimitsTests.test_sqlite_page_ceiling_refuses_before_signing -v",
+      "tests_run": 1,
+      "failed_assertion": "test_journal_limits.JournalLimitsTests.test_sqlite_page_ceiling_refuses_before_signing",
+      "errors": [],
+      "exit_code": 1,
+      "failure_excerpt": "AssertionError: OperationalError('database or disk is full') is not an instance of <class 'relay_core.Refused'>"
+    },
+    {
+      "name": "quote_reservations_removed",
+      "recipe": "Apply each exact replacement once to an isolated copy of the corrected source; leave the tests unchanged.",
+      "source": "tools/bonded-relayer/relay_core.py",
+      "replace_once": [
+        {
+          "old": "        for state, count in self.db.execute(\"SELECT state,COUNT(*) FROM quotes GROUP BY state\"):\n",
+          "new": "        for state, count in self.db.execute(\"SELECT state,COUNT(*) FROM quotes WHERE 0 GROUP BY state\"):\n"
+        }
+      ],
+      "mutant_source_sha256": "9715c62a207bd1b9dd6e7b061b5d253ed6de92ff0f42d0db4daa11b1b459b385",
+      "syntax_exit_code": 0,
+      "command": "PYTHONPATH=test/bonded-relayer python3 -m unittest test_journal_limits.JournalLimitsTests.test_allocated_quotes_and_job_can_finish_with_pinned_wal -v",
+      "tests_run": 1,
+      "failed_assertion": "test_journal_limits.JournalLimitsTests.test_allocated_quotes_and_job_can_finish_with_pinned_wal",
+      "errors": [],
+      "exit_code": 1,
+      "failure_excerpt": "AssertionError: admitted quote could not publish its bounded bytes: database or disk is full"
+    },
+    {
+      "name": "physical_guard_removed",
+      "recipe": "Apply each exact replacement once to an isolated copy of the corrected source; leave the tests unchanged.",
+      "source": "tools/bonded-relayer/relay_core.py",
+      "replace_once": [
+        {
+          "old": "        if used + main_bytes + wal_bytes + shm_bytes >= self.max_disk_bytes:\n",
+          "new": "        if False:\n"
+        }
+      ],
+      "mutant_source_sha256": "7f40649c4b7aa88a5b8a9bcffd0d25da3e41a38605af3d2cdd364792c82843c6",
+      "syntax_exit_code": 0,
+      "command": "PYTHONPATH=test/bonded-relayer python3 -m unittest test_journal_limits.JournalLimitsTests.test_disk_quota_refuses_admission_but_preserves_existing_work -v",
+      "tests_run": 1,
+      "failed_assertion": "test_journal_limits.JournalLimitsTests.test_disk_quota_refuses_admission_but_preserves_existing_work",
+      "errors": [],
+      "exit_code": 1,
+      "failure_excerpt": "AssertionError: Refused not raised"
+    },
+    {
+      "name": "evidence_guard_removed",
+      "recipe": "Apply each exact replacement once to an isolated copy of the corrected source; leave the tests unchanged.",
+      "source": "tools/bonded-relayer/relay_core.py",
+      "replace_once": [
+        {
+          "old": "        if len(encoded_evidence) > MAX_EVIDENCE:\n",
+          "new": "        if False:\n"
+        }
+      ],
+      "mutant_source_sha256": "f250c0cfb6be81437f2ef37ae5233211fe46f7ab209f446eea7c96736a395458",
+      "syntax_exit_code": 0,
+      "command": "PYTHONPATH=test/bonded-relayer python3 -m unittest test_journal_limits.JournalLimitsTests.test_mutated_evidence_cannot_exceed_reserved_storage -v",
+      "tests_run": 1,
+      "failed_assertion": "test_journal_limits.JournalLimitsTests.test_mutated_evidence_cannot_exceed_reserved_storage",
+      "errors": [],
+      "exit_code": 1,
+      "failure_excerpt": "AssertionError: Refused not raised"
+    }
+  ],
+  "restored": {
+    "total_tests": 41,
+    "failures": 0,
+    "errors": 0,
+    "exit_code": 0
+  },
+  "independent_review": {
+    "source_review": "No remaining blocker within the two P2 corrections; production strategic gates remain open.",
+    "nondefault_sqlite_pages": [
+      {
+        "page_size": 512,
+        "configured_disk_bytes": 67108864,
+        "completed_jobs": 10,
+        "combined_file_bytes": 42301576,
+        "next_admission": "refused before signing",
+        "pending_jobs": 0
+      },
+      {
+        "page_size": 65536,
+        "configured_disk_bytes": 67108864,
+        "completed_jobs": 7,
+        "combined_file_bytes": 37926216,
+        "next_admission": "refused before signing",
+        "pending_jobs": 0
+      }
+    ]
+  },
+  "ci_scope": "These are local source-hashed results. The relayer-engine-and-fees workflow now runs both suites. New-head GitHub CI is reported separately in the pull request; prior-head CI is not substituted."
+}
