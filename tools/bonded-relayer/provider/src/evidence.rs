@@ -11,7 +11,9 @@ use crate::{
 };
 use anyhow::{ensure, Result};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
-use chain_block::{Cell, Deserializable, Message, MsgAddressInt, SliceData, Transaction};
+use chain_block::{
+    Cell, Deserializable, Message, MsgAddressInt, SliceData, Transaction, TransactionDescr,
+};
 use node_contracts::proven_getters::{ProvenAccountState, ReadPolicy};
 use serde_json::{json, Value};
 use std::{path::Path, str::FromStr};
@@ -71,7 +73,34 @@ fn inbound(transaction: &Transaction) -> Result<(Cell, Message)> {
         transaction.in_msg_cell().ok_or_else(|| anyhow::anyhow!("transaction inbound absent"))?;
     Ok((cell.clone(), Message::construct_from_cell(cell)?))
 }
+fn atomic_abort(transaction: &Transaction) -> Result<bool> {
+    let TransactionDescr::Ordinary(description) = transaction.read_description()? else {
+        anyhow::bail!("ordinary pool transaction required")
+    };
+    ensure!(!description.destroyed, "destroyed pool needs separate evidence");
+    Ok(description.aborted)
+}
+fn owned_inbound(message: &Message, funding: &MsgAddressInt, pool: &MsgAddressInt) -> bool {
+    message.int_header().is_some_and(|header| {
+        !header.bounced
+            && header.src == chain_block::MsgAddressIntOrNone::Some(funding.clone())
+            && header.dst == *pool
+    })
+}
+fn target_leaf(transaction: &Transaction, next: u64, slot: u8) -> Result<Option<u64>> {
+    if atomic_abort(transaction)? {
+        return Ok(None);
+    }
+    simulation::successful(transaction)?;
+    let start = next.checked_sub(3).ok_or_else(|| anyhow::anyhow!("fee leaf underflow"))?;
+    Ok(Some(
+        start.checked_add(u64::from(slot)).ok_or_else(|| anyhow::anyhow!("fee leaf overflow"))?,
+    ))
+}
 fn append_count(transaction: &Transaction) -> Result<u64> {
+    if atomic_abort(transaction)? {
+        return Ok(0);
+    }
     simulation::successful(transaction)?;
     let (_, message) = inbound(transaction)?;
     counter_delta(&message)
@@ -119,9 +148,11 @@ pub async fn run(
     let chain = Chain::new(config)?;
     if let Some(cached) = store.refusal(&id)? {
         let cached = protocol::parse(&cached)?;
-        if cached["schema"] != "tos.br1.native-nonacceptance.v1"
-            || cached["evidence"]["proof_digest"]
-                != protocol::hash(&protocol::canonical(&cached["witness"])?)
+        if !matches!(
+            cached["schema"].as_str(),
+            Some("tos.br1.native-nonacceptance.v1" | "tos.br1.native-refusal.v1")
+        ) || cached["evidence"]["proof_digest"]
+            != protocol::hash(&protocol::canonical(&cached["witness"])?)
         {
             return Ok(Value::Null);
         }
@@ -136,7 +167,7 @@ pub async fn run(
             .and_then(|lease| lease.message)
             .ok_or_else(|| anyhow::anyhow!("nonacceptance unsigned lease"))?;
         let retained = json!({"schema":"tos.br1.native-nonacceptance.v1","evidence":receipt,"witness":witness});
-        store.retire_nonaccepted(&id, &message, &protocol::canonical(&retained)?)?;
+        store.retire_refused(&id, &message, &protocol::canonical(&retained)?)?;
         return Ok(receipt);
     }
     let pool = chain
@@ -166,23 +197,14 @@ pub async fn run(
         let matches = message.body().is_some_and(|b| {
             b.clone().into_cell().is_ok_and(|body| body.repr_hash() == candidate.body.repr_hash())
         });
-        if matches {
-            simulation::successful(transaction)?;
-            let header =
-                message.int_header().ok_or_else(|| anyhow::anyhow!("Shield inbound header"))?;
-            ensure!(
-                !header.bounced
-                    && header.src
-                        == chain_block::MsgAddressIntOrNone::Some(MsgAddressInt::from_str(
-                            &config.funding_wallet
-                        )?)
-                    && header.dst == MsgAddressInt::from_str(&config.release.pool)?,
-                "Shield source/destination"
-            );
-            let start = next.checked_sub(3).ok_or_else(|| anyhow::anyhow!("fee leaf underflow"))?;
-            let leaf = start
-                .checked_add(u64::from(candidate.request.fee_slot))
-                .ok_or_else(|| anyhow::anyhow!("fee leaf overflow"))?;
+        if matches
+            && owned_inbound(
+                &message,
+                &MsgAddressInt::from_str(&config.funding_wallet)?,
+                &MsgAddressInt::from_str(&config.release.pool)?,
+            )
+        {
+            let leaf = target_leaf(transaction, next, candidate.request.fee_slot)?;
             target = Some((cell.repr_hash().to_hex_string(), leaf, transaction));
             break;
         }
@@ -220,6 +242,26 @@ pub async fn run(
     if !source_proven {
         return Ok(Value::Null);
     }
+    let Some(leaf) = leaf else {
+        // The descriptor alone is not a refusal witness: exact prepared wallet
+        // execution and its actual outbound-to-inbound link were proven above.
+        let proof = pool.evidence();
+        let witness = json!({"kind":"pool_atomic_abort_linked_to_prepared","release":config.release.scope()?,
+            "request":id,"source_external":payload["prepared"]["message_hash"],
+            "pool_state":proof.account.state_hash,"wallet_state":wallet.evidence().account.state_hash,
+            "pool_transaction":transaction_hash,"destination_inbound":destination_in.to_hex_string(),
+            "checkpoint_root":proof.checkpoint.root_hash,"checkpoint_file":proof.checkpoint.file_hash,"checkpoint_seqno":proof.checkpoint.seqno});
+        let digest = protocol::hash(&protocol::canonical(&witness)?);
+        let receipt = json!({"kind":"terminal_refusal","scope":config.release.scope()?,"request":id,"message_hash":payload["prepared"]["message_hash"],"pool":config.release.pool,"intent":candidate.request.intent,"body_sha256":candidate.request.body_sha256,"checkpoint":{"seqno":proof.checkpoint.seqno,"root_hash":proof.checkpoint.root_hash,"file_hash":proof.checkpoint.file_hash,"utime":proof.block_gen_utime},"proof_digest":digest,"transaction":transaction_hash,"fee_credit":null});
+        let retained =
+            json!({"schema":"tos.br1.native-refusal.v1","evidence":receipt,"witness":witness});
+        let message = store
+            .lookup(&id)?
+            .and_then(|lease| lease.message)
+            .ok_or_else(|| anyhow::anyhow!("refusal unsigned lease"))?;
+        store.retire_refused(&id, &message, &protocol::canonical(&retained)?)?;
+        return Ok(receipt);
+    };
     let plaintext = shielded_pool_wallet::delivery::open(
         identity.recipient(),
         &candidate.fee_payload,
@@ -271,6 +313,102 @@ mod tests {
         let header = message.int_header_mut().ok_or_else(|| anyhow::anyhow!("internal header"))?;
         header.bounced = bounced;
         Ok(message)
+    }
+    fn described(aborted: bool, destroyed: bool) -> Result<Transaction> {
+        let mut transaction = Transaction::default();
+        transaction.write_description(&TransactionDescr::Ordinary(
+            chain_block::TransactionDescrOrdinary { aborted, destroyed, ..Default::default() },
+        ))?;
+        Ok(transaction)
+    }
+    #[test]
+    fn native_cpp_gas_and_action_abort_fixtures_never_mint_a_fee() -> Result<()> {
+        let manifest: Value = serde_json::from_str(include_str!(
+            "../../../../test/bonded-relayer/fixtures/native-refusal/manifest.json"
+        ))?;
+        assert_eq!(
+            manifest["source_sha256"],
+            protocol::hash(include_bytes!(
+                "../../../../test/bonded-relayer/fixtures/native-refusal/phases.fc"
+            ))
+        );
+        let cases: [(&str, &[u8], bool); 4] = [
+            (
+                "gas-positive",
+                include_bytes!(
+                    "../../../../test/bonded-relayer/fixtures/native-refusal/gas-positive.boc"
+                ),
+                false,
+            ),
+            (
+                "gas-exhausted",
+                include_bytes!(
+                    "../../../../test/bonded-relayer/fixtures/native-refusal/gas-exhausted.boc"
+                ),
+                true,
+            ),
+            (
+                "action-positive",
+                include_bytes!(
+                    "../../../../test/bonded-relayer/fixtures/native-refusal/action-positive.boc"
+                ),
+                false,
+            ),
+            (
+                "action-no-funds",
+                include_bytes!(
+                    "../../../../test/bonded-relayer/fixtures/native-refusal/action-no-funds.boc"
+                ),
+                true,
+            ),
+        ];
+        let metadata =
+            manifest["cases"].as_array().ok_or_else(|| anyhow::anyhow!("fixture cases"))?;
+        for (name, bytes, aborted) in cases {
+            let expected = metadata
+                .iter()
+                .find(|case| case["name"] == name)
+                .ok_or_else(|| anyhow::anyhow!("fixture missing"))?;
+            assert_eq!(expected["sha256"], protocol::hash(bytes));
+            let transaction =
+                Transaction::construct_from_cell(chain_block::read_single_root_boc(bytes)?)?;
+            assert_eq!(atomic_abort(&transaction)?, aborted);
+            if aborted {
+                assert!(simulation::successful(&transaction).is_err());
+                assert_eq!(target_leaf(&transaction, 0, 2)?, None);
+                assert_eq!(append_count(&transaction)?, 0);
+            } else {
+                simulation::successful(&transaction)?;
+            }
+        }
+        Ok(())
+    }
+    #[test]
+    fn atomic_abort_never_mints_fee_and_destroyed_or_nonaborted_failures_stay_unknown() -> Result<()>
+    {
+        let aborted = described(true, false)?;
+        assert_eq!(append_count(&aborted)?, 0);
+        assert_eq!(target_leaf(&aborted, 0, 2)?, None);
+        assert!(target_leaf(&described(false, false)?, 3, 2).is_err());
+        let error = target_leaf(&described(true, true)?, 3, 2)
+            .err()
+            .ok_or_else(|| anyhow::anyhow!("destroyed pool accepted"))?;
+        assert!(error.to_string().contains("destroyed pool needs separate evidence"));
+        Ok(())
+    }
+    #[test]
+    fn matching_body_from_another_sender_is_not_this_workers_attempt() -> Result<()> {
+        let funding = MsgAddressInt::from_str(&format!("0:{}", "01".repeat(32)))?;
+        let other = MsgAddressInt::from_str(&format!("0:{}", "02".repeat(32)))?;
+        let pool = MsgAddressInt::from_str(&format!("0:{}", "03".repeat(32)))?;
+        let message = tos_sandbox::MessageBuilder::internal(&funding, &pool, 1).build();
+        assert!(owned_inbound(&message, &funding, &pool));
+        assert!(!owned_inbound(&message, &other, &pool));
+        assert!(!owned_inbound(&message, &funding, &other));
+        let mut bounced = message;
+        bounced.int_header_mut().ok_or_else(|| anyhow::anyhow!("internal header"))?.bounced = true;
+        assert!(!owned_inbound(&bounced, &funding, &pool));
+        Ok(())
     }
     #[test]
     fn bounced_deposit_prefix_cannot_move_fee_leaf_cursor() -> Result<()> {

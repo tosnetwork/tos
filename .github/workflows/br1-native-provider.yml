@@ -5,6 +5,8 @@ on:
     paths:
       - '.github/workflows/br1-native-provider.yml'
       - 'tools/bonded-relayer/provider/**'
+      - 'test/bonded-relayer/fixtures/native-refusal/**'
+      - 'test/bonded-relayer/native_faults/generate_phase_fixtures.py'
       - 'tools/shielded-pool-wallet/**'
       - 'tools/shielded-pool-circuit/**'
       - 'tosctl/src/node-control/contracts/**'

@@ -25,6 +25,7 @@ from relay_core import Refused, digest, encode, integer, unique_object
 OPERATIONS = frozenset(
     {
         "capabilities",
+        "pool_head",
         "preflight",
         "prepare",
         "validate_prepared",
