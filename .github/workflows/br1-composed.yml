@@ -1,0 +1,78 @@
+name: BR1 C1 two-operator process framework
+
+# These gates also run on stacked pull requests; no main-only base filter.
+on:
+  pull_request:
+    paths:
+      - 'tools/bonded-relayer/**'
+      - 'test/bonded-relayer/**'
+      - 'doc/br1-localnet-framework.md'
+      - 'doc/evidence/br1-delivery/**'
+      - '.github/workflows/br1-composed.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: br1-composed-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  composed:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.14'
+      - name: Check the exact Python sources with pinned Ruff
+        run: |
+          python -m pip install ruff==0.15.2
+          ruff check --isolated --select E4,E7,E9,F,I --ignore E741 --line-length 100 --target-version py312 tools/bonded-relayer/br1.py \
+            test/bonded-relayer/two_operator_harness.py \
+            test/bonded-relayer/test_two_operator.py \
+            test/bonded-relayer/test_br1_cli.py \
+            test/bonded-relayer/run_delivery_fixture.py \
+            test/bonded-relayer/test_delivery_fixture_runner.py
+          ruff format --check --isolated --line-length 100 --target-version py312 tools/bonded-relayer/br1.py \
+            test/bonded-relayer/two_operator_harness.py \
+            test/bonded-relayer/test_two_operator.py \
+            test/bonded-relayer/test_br1_cli.py \
+            test/bonded-relayer/run_delivery_fixture.py \
+            test/bonded-relayer/test_delivery_fixture_runner.py
+      - name: Check private localnet configuration and fail-closed startup
+        run: python -m unittest discover -s test/bonded-relayer -p test_br1_cli.py -v
+      - name: Verify the fixture inventory and native-acceptance refusal
+        run: python -m unittest discover -s test/bonded-relayer -p test_delivery_fixture_runner.py -v
+      - name: Run every two-process HTTP and SQLite scenario
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/br1-composed-receipts
+          python test/bonded-relayer/run_delivery_fixture.py --out build/br1-composed-receipts/process-fixture.json | tee build/br1-process-fixture.log
+          grep -Fx 'BR1_PROCESS_FIXTURE_OK_NOT_NATIVE_ACCEPTANCE' build/br1-process-fixture.log
+      - name: Remove the native-refusal and exact-registry guards
+        run: python test/bonded-relayer/delivery_controls.py --lane composed --out build/br1-composed-receipts/framework-controls.json
+      - name: Refuse substitution of fixture results for native acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +e
+          python test/bonded-relayer/run_delivery_fixture.py --require-native --out build/br1-native-acceptance.json > build/br1-native-refusal.log 2>&1
+          result=$?
+          set -e
+          test "$result" -eq 2
+          test ! -e build/br1-native-acceptance.json
+          grep -F 'BR1_NATIVE_ACCEPTANCE_UNAVAILABLE:' build/br1-native-refusal.log
+      - name: Retain bounded source-bound control receipts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: br1-composed-${{ github.sha }}
+          path: build/br1-composed-receipts/
+          if-no-files-found: warn
+          retention-days: 14
