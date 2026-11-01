@@ -1,0 +1,49 @@
+name: BR1 Tor privacy transport
+
+on:
+  pull_request:
+    paths:
+      - 'tools/bonded-relayer/**'
+      - 'test/bonded-relayer/**'
+      - 'doc/br1-tor-transport.md'
+      - '.github/workflows/br1-tor.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: br1-tor-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  transport:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.14'
+      - name: Install Tor and the pinned Python checker
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tor
+          python -m pip install ruff==0.15.2
+          tor --version
+      - name: Check transport and tests
+        run: |
+          ruff check --isolated --select E4,E7,E9,F,I --ignore E741 --line-length 100 --target-version py312 \
+            tools/bonded-relayer/tor_transport.py test/bonded-relayer/test_tor*.py \
+            test/bonded-relayer/tor_controls.py test/bonded-relayer/native_client_smoke.py \
+            test/bonded-relayer/native_tor_controls.py
+          ruff format --check --isolated --line-length 100 --target-version py312 \
+            tools/bonded-relayer/tor_transport.py test/bonded-relayer/test_tor*.py \
+            test/bonded-relayer/tor_controls.py test/bonded-relayer/native_client_smoke.py \
+            test/bonded-relayer/native_tor_controls.py
+      - name: Exercise SOCKS, HTTP, native caller binding and fault boundaries
+        run: python -m unittest discover -s test/bonded-relayer -p 'test_tor*.py' -v
+      - name: Require runtime failures after removing privacy guards
+        run: python test/bonded-relayer/tor_controls.py

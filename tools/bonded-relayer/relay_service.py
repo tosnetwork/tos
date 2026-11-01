@@ -30,6 +30,7 @@ from relay_core import (
 )
 from relay_http import HTTPRefused, receive, respond
 from relay_wire import BODY_LIMIT, check_terms, exact, parse, status_hash
+from tor_transport import OnionEndpoint
 
 
 class Service:
@@ -215,15 +216,19 @@ class Service:
 class _Handler(socketserver.BaseRequestHandler):
     def handle(self):
         try:
-            line, headers, wire = receive(self.request, BODY_LIMIT, time.monotonic() + 5)
+            line, headers, wire = receive(
+                self.request, BODY_LIMIT, time.monotonic() + self.server.read_timeout
+            )
             parts = line.split(" ")
             if len(parts) != 3 or parts[2] != "HTTP/1.1" or not headers.get("host"):
                 raise HTTPRefused("invalid request line or host")
+            if self.server.onion is not None and headers["host"] != self.server.onion.authority:
+                raise HTTPRefused("onion Host binding mismatch")
             status, result = self.server.service.handle(parts[0], parts[1], wire)
         except (OSError, Refused):
             status, result = 400, {"error": "invalid_http_request"}
         try:
-            respond(self.request, status, result, time.monotonic() + 2)
+            respond(self.request, status, result, time.monotonic() + self.server.write_timeout)
         except OSError:
             pass
 
@@ -233,7 +238,10 @@ class RelayServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
     daemon_threads = False
     request_queue_size = 8
 
-    def __init__(self, service: Service, address: tuple[str, int]):
+    def __init__(self, service: Service, address: tuple[str, int], *, onion_endpoint=None):
+        self.onion = OnionEndpoint.parse(onion_endpoint) if onion_endpoint is not None else None
+        self.read_timeout = 30 if self.onion is not None else 5
+        self.write_timeout = 10 if self.onion is not None else 2
         if address[0] != "127.0.0.1":
             raise Refused("BR1 service must bind IPv4 loopback behind a reviewed transport")
         integer(address[1], 0, 65535)

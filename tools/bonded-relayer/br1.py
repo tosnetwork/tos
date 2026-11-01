@@ -18,6 +18,7 @@ from native_adapter import NativeAdapter
 from native_process import NativeRPC, PinnedProgram, Unavailable, object_from_bytes
 from relay_core import Engine, Journal, Refused, Release, integer
 from relay_service import RelayServer, Service
+from tor_transport import OnionEndpoint
 
 CONFIG_LIMIT = 16384
 
@@ -46,7 +47,7 @@ def configuration(path: Path) -> dict:
     finally:
         os.close(fd)
     if (
-        set(data)
+        (set(data) - {"onion_endpoint"})
         != {
             "schema",
             "mode",
@@ -80,6 +81,8 @@ def configuration(path: Path) -> dict:
     st = state.stat()
     if not stat.S_ISDIR(st.st_mode) or st.st_uid != os.geteuid() or st.st_mode & 0o077:
         raise Refused("state directory must be owned and private")
+    if "onion_endpoint" in data:
+        OnionEndpoint.parse(data["onion_endpoint"])
     integer(data["port"], 1024, 65535)
     integer(data["fee"], 1, (1 << 63) - 1)
     integer(data["max_reserved"], 1, (1 << 63) - 1)
@@ -104,6 +107,8 @@ def run(config: dict, *, check_only: bool = False) -> int:
         )
         stack.callback(journal.close)
         adapter = NativeAdapter(journal, NativeRPC(program))
+        if "onion_endpoint" in config:
+            adapter.verify_endpoint(config["onion_endpoint"])
         service = Service(
             Engine(journal, adapter),
             fee=config["fee"],
@@ -121,7 +126,9 @@ def run(config: dict, *, check_only: bool = False) -> int:
                 )
             )
             return 0
-        server = RelayServer(service, ("127.0.0.1", config["port"]))
+        server = RelayServer(
+            service, ("127.0.0.1", config["port"]), onion_endpoint=config.get("onion_endpoint")
+        )
         stack.callback(server.server_close)
         server.timeout = 0.2
         stop = threading.Event()

@@ -107,7 +107,7 @@ terminal-refusal/liveness path.
 
 The full C2 matrix remains open: forced gas/action failure, every crash/write
 boundary, adversarial failover and refusal recovery, Bond retirement/slashing,
-privacy transport, production custody and economic/security review. The ordinary
+public privacy-transport acceptance, production custody and economic/security review. The ordinary
 private-transfer funding estimate is conservatively fixed at 0.25 local TOS and
 must fit both request and operator caps. It is not a production pricing model.
 No consensus, contract bytecode or chain configuration is changed by this provider.
@@ -115,13 +115,23 @@ No consensus, contract bytecode or chain configuration is changed by this provid
 The non-author review records two non-blocking hardening follow-ups for this
 local scope:
 
-* **BR1-LOCAL-F01 (CK-6, PS-1):** current recheck validates the Shield deadline
-  and funding sequence, but not the signed wallet's shorter 120-second expiry.
-  A long pause after prepare can therefore obtain a permit for an expired wallet
-  message. Add that current-time check in recheck while preserving permissive
-  historical validation; unavailable outcomes must remain unknown.
+* **BR1-LOCAL-F01 (CK-6, PS-1):** recheck and broadcast now check the signed wallet's
+  shorter expiry with a five-second send budget. Historical validation remains
+  permissive; expired or unavailable outcomes remain unknown until reconciled.
 * **BR1-LOCAL-F02 (CK-7, CK-13):** the helper is hashed and subsequently executed
   by pathname, rather than from a sealed snapshot. Its full path and ancestors
   must remain under trusted administrative control. The acceptance installation
   is private; seal the helper or enforce protected ancestors before expanding
   that custody scope.
+
+
+## Public wallet verification and onion endpoint binding
+
+`client_identity` and `client_quote` are bounded, offline stdio operations taking
+wallet-pinned release data and a public Bond StateInit. They run before loading
+custody or provider configuration, reconstruct the canonical Bond identity and
+verify the pinned worker's quote signature. They do not prove live eligibility.
+`verify_endpoint` is an operator-only operation: it reads the live proven Bond
+and compares the configured service origin with its immutable endpoint before
+Python opens an onion-profile listener. See the
+[transport runbook](../../../doc/br1-tor-transport.md) for the full trust boundary.

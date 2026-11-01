@@ -284,3 +284,40 @@ pub fn validate(
         json!({"scope":config.release.scope()?,"request":id,"slot":payload["slot"],"issued_at":payload["issued_at"],"funding":payload["funding"],"message_hash":prepared["message_hash"],"message_sha256":protocol::hash(&bytes),"acceptance_sha256":protocol::hash(&acceptance)}),
     )
 }
+
+/// Check only at send admission, never when authenticating historical evidence.
+pub fn check_send_expiry(bytes: &[u8], now: u64) -> Result<()> {
+    let message = Message::construct_from_cell(crate::candidate::ordinary_boc(bytes)?)?;
+    let mut body = message.body().ok_or_else(|| anyhow::anyhow!("funding body absent"))?.clone();
+    body.get_next_bytes(64)?;
+    body.get_next_i32()?;
+    body.get_next_u32()?;
+    let expiry = u64::from(body.get_next_u32()?);
+    ensure!(
+        now.checked_add(5).is_some_and(|end| end < expiry),
+        "funding wallet expires before send budget"
+    );
+    Ok(())
+}
+
+#[cfg(test)]
+mod expiry_tests {
+    use super::*;
+    use chain_block::{BuilderData, ExternalInboundMessageHeader, IBitstring, Serializable};
+    #[test]
+    fn send_budget_refuses_expired_and_near_expiry_wallets() -> Result<()> {
+        let mut body = BuilderData::new();
+        body.append_raw(&[0; 64], 512)?.append_i32(3)?.append_u32(3)?.append_u32(1120)?;
+        let mut message = Message::with_ext_in_header(ExternalInboundMessageHeader::default());
+        message.set_body(chain_block::SliceData::load_cell(body.into_cell()?)?);
+        let bytes = write_boc(&message.serialize()?)?;
+        check_send_expiry(&bytes, 1114)?;
+        for now in [1115, 1120, 1200, u64::MAX] {
+            let error = check_send_expiry(&bytes, now)
+                .err()
+                .ok_or_else(|| anyhow::anyhow!("expiry guard missing"))?;
+            assert!(error.to_string().contains("funding wallet expires before send budget"));
+        }
+        Ok(())
+    }
+}

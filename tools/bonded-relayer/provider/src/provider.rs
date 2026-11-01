@@ -5,6 +5,9 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde_json::{json, Value};
 
 pub async fn dispatch(operation: &str, payload: &Value) -> Result<Value> {
+    if matches!(operation, "client_identity" | "client_quote") {
+        return crate::client::dispatch(operation, payload);
+    }
     let directory = std::env::current_dir()?;
     let _lock = crate::private_io::lock(&directory)?;
     let config = Config::load(&directory, payload)?;
@@ -20,6 +23,15 @@ pub async fn dispatch(operation: &str, payload: &Value) -> Result<Value> {
     );
     let scope = config.release.scope()?;
     match operation {
+        "verify_endpoint" => {
+            protocol::fields(payload, &["release", "endpoint"])?;
+            let (_, bond) = Chain::new(&config)?.bond(&config).await?;
+            ensure!(
+                payload["endpoint"].as_str() == Some(bond.init.endpoint.as_str()),
+                "live Bond endpoint mismatch"
+            );
+            Ok(json!({"scope":scope,"endpoint":bond.init.endpoint}))
+        }
         "capabilities" => {
             protocol::fields(payload, &["release"])?;
             let chain = Chain::new(&config)?;
@@ -120,6 +132,7 @@ pub async fn dispatch(operation: &str, payload: &Value) -> Result<Value> {
             ensure!(sequence == lease.sequence, "funding sequence no longer current");
             let message = lease.message.ok_or_else(|| anyhow::anyhow!("unsigned lease"))?;
             let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs();
+            crate::prepared::check_send_expiry(&message, now)?;
             let mut random = [0; 32];
             rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut random);
             let permit = hex::encode(random);
@@ -139,6 +152,7 @@ pub async fn dispatch(operation: &str, payload: &Value) -> Result<Value> {
             let permit = protocol::digest(&payload["permit"])?;
             let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs();
             let mut store = crate::store::Store::open(&directory.join("leases.db"), &scope)?;
+            crate::prepared::check_send_expiry(&bytes, now)?;
             store.consume(permit, &bytes, now)?;
             let url = config.rpc_url.clone();
             let encoded = encoded.to_owned();

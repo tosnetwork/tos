@@ -1,0 +1,11 @@
+# Use a dedicated daemon account, separate from BR1 custody.
+DataDirectory /var/lib/tor/br1-service
+SocksPort 0
+ControlPort 0
+SafeLogging 1
+Log warn stderr
+HiddenServiceDir /var/lib/tor/br1-service/onion
+HiddenServiceVersion 3
+HiddenServicePort 80 127.0.0.1:18888
+HiddenServiceMaxStreams 4
+HiddenServiceMaxStreamsCloseCircuit 1

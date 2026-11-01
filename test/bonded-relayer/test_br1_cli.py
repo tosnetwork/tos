@@ -46,6 +46,32 @@ class ConfigTests(unittest.TestCase):
         self.path.write_bytes(encode(self.config))
         self.path.chmod(0o600)
 
+    def test_onion_configuration_is_explicit_and_canonical(self):
+        endpoint = "http://pg6mmjiyjmcrsslvykfwnntlaru7p5svn6y2ymmju6nubxndf4pscryd.onion"
+        self.config["onion_endpoint"] = endpoint
+        self.write()
+        self.assertEqual(br1.configuration(self.path)["onion_endpoint"], endpoint)
+        for bad in ("https://example.invalid", endpoint + "/", None):
+            self.config["onion_endpoint"] = bad
+            self.write()
+            with self.assertRaisesRegex(Refused, "canonical HTTP v3 onion"):
+                br1.configuration(self.path)
+
+    def test_onion_bond_mismatch_cannot_open_listener(self):
+        endpoint = "http://pg6mmjiyjmcrsslvykfwnntlaru7p5svn6y2ymmju6nubxndf4pscryd.onion"
+        self.config["onion_endpoint"] = endpoint
+        self.write()
+        with (
+            patch.object(br1, "PinnedProgram"),
+            patch.object(br1, "NativeAdapter") as adapter,
+            patch.object(br1, "RelayServer") as server,
+        ):
+            adapter.return_value.verify_endpoint.side_effect = Refused("Bond endpoint mismatch")
+            with redirect_stderr(io.StringIO()):
+                self.assertEqual(br1.main(["--config", str(self.path)]), 2)
+            adapter.return_value.verify_endpoint.assert_called_once_with(endpoint)
+            server.assert_not_called()
+
     def test_complete_private_configuration_parses(self):
         data = br1.configuration(self.path)
         self.assertEqual(data["release"], profile(3))
