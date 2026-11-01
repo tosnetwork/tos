@@ -574,9 +574,9 @@ const MANIFEST: &str = include_str!("../data/account_read/manifest.json");
 
 fn fixture_bytes(name: &str) -> &'static [u8] {
     match name {
-        "masterchain-caller" => include_bytes!("../data/account_read/masterchain-caller.tl"),
-        "masterchain-config" => include_bytes!("../data/account_read/masterchain-config.tl"),
-        "basechain-caller" => include_bytes!("../data/account_read/basechain-caller.tl"),
+        "masterchain-caller" => include_bytes!("../data/account_read/masterchain-caller.bin"),
+        "masterchain-config" => include_bytes!("../data/account_read/masterchain-config.bin"),
+        "basechain-caller" => include_bytes!("../data/account_read/basechain-caller.bin"),
         _ => &[],
     }
 }

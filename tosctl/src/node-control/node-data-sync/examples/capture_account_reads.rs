@@ -4,8 +4,9 @@
 //! `liteServer.getAccountStatePrunned` for each exactly as native validation does (the shard
 //! prefix without its tag, followed by zeros), and once more for the configuration contract,
 //! an account that exists. Whether each account is present is recorded, not assumed. Every
-//! answer is verified before it is written, as the TL bytes of the boxed answer, next to a
-//! manifest naming its block and account.
+//! answer is verified before it is written, as the TL bytes of the boxed answer in a `.bin`
+//! file (a `.tl` file under tosctl is a schema), next to a manifest naming its block and
+//! account.
 use anyhow::{Context, Result, ensure};
 use base64::Engine;
 use chain_block::{
@@ -148,7 +149,7 @@ async fn capture(
         verify_account_read(&held, &block, &account, &answer)
             .with_context(|| format!("captured {name} answer"))?;
         let bytes = tl_api::serialize_boxed(&answer)?;
-        std::fs::write(output.join(format!("{name}.tl")), &bytes)?;
+        std::fs::write(output.join(format!("{name}.bin")), &bytes)?;
         manifest.push(serde_json::json!({
             "name": name,
             "workchain": block.shard().workchain_id(),
