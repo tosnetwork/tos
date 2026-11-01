@@ -76,7 +76,12 @@ class ServiceTests(ServiceFixture):
         self.assertFalse(worker.is_alive())
         self.assertIn(b"200", response.split(b"\r\n", 1)[0])
         server.server_close()
-        replacement = RelayServer(self.service, address)
+        try:
+            replacement = RelayServer(self.service, address)
+        except OSError as error:
+            if error.errno == errno.EADDRINUSE:
+                self.fail("active-close restart must not fail with EADDRINUSE")
+            raise
         replacement.server_close()
 
     def test_disabled_is_default_and_is_not_production_approval(self):
