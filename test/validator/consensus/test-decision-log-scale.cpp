@@ -11,9 +11,9 @@
 //                     finalize per slot, skips only, leader windows only, and the mix a
 //                     running chain records). Reported, and bounded.
 //   reconcile-scaling the startup check between a session's journal and its log, timed at
-//                     2^17 and 2^19 decisions: the time must grow linearly (a ratio below 8
-//                     for 4 times the input, where a quadratic check gives about 16). Both
-//                     sizes overflow the cache, so the ratio measures growth, not cache misses.
+//                     2^15 and 2^17 decisions against a hashed reference check of the same
+//                     input: its cost relative to the reference must stay flat (a growth
+//                     below 2 for 4 times the input, where a quadratic check gives about 4).
 //   full-restart      a log of exactly 2^20 records (the ceiling) is reloaded through a real
 //                     signing ledger and checked against a journal holding every one of its
 //                     votes. The wall time of each step and the peak resident memory are
@@ -234,7 +234,55 @@ int run_memory() {
 
 // The startup check as Simplex's database runs it: every journal vote must be logged, then
 // every logged vote decision gets the bytes of its first signed journal entry.
-double time_reconcile(std::size_t count) {
+void reconcile_once(const std::vector<Decision>& journal, const std::vector<std::pair<std::int64_t, Decision>>& logged,
+                    const std::vector<bool>& signed_entry) {
+  require(!simplex::first_unlogged(journal, logged).has_value(), "every journal vote is logged");
+  const auto first = simplex::first_signed_index(journal, signed_entry);
+  std::size_t restored = 0;
+  for (const auto& [seq, decision] : logged) {
+    if (auto found = first.find(decision); found != first.end()) {
+      restored += found->second == static_cast<std::size_t>(seq) ? 1 : 0;
+    }
+  }
+  require(restored == logged.size(), "every logged vote finds its own journal entry");
+}
+
+// The same work done by a hashed check written here, linear by construction: one set of the
+// logged decisions, one lookup per journal vote, one map of first entries, one lookup per
+// logged vote. It allocates and touches memory as the check under test does, so a machine
+// whose memory costs grow faster than the input slows both alike.
+void reference_once(const std::vector<Decision>& journal, const std::vector<std::pair<std::int64_t, Decision>>& logged,
+                    const std::vector<bool>& signed_entry) {
+  std::unordered_set<Decision, DecisionHash> recorded;
+  recorded.reserve(logged.size());
+  for (const auto& entry : logged) {
+    recorded.insert(entry.second);
+  }
+  for (const auto& decision : journal) {
+    require(recorded.contains(decision), "every journal vote is in the reference set");
+  }
+  std::unordered_map<Decision, std::size_t, DecisionHash> first;
+  for (std::size_t i = 0; i < journal.size() && i < signed_entry.size(); ++i) {
+    if (signed_entry[i]) {
+      first.try_emplace(journal[i], i);
+    }
+  }
+  std::size_t restored = 0;
+  for (const auto& [seq, decision] : logged) {
+    if (auto found = first.find(decision); found != first.end()) {
+      restored += found->second == static_cast<std::size_t>(seq) ? 1 : 0;
+    }
+  }
+  require(restored == logged.size(), "every logged vote finds its reference entry");
+}
+
+struct ReconcileTiming {
+  double check = 0;
+  double reference = 0;
+};
+
+// The best of several rounds of each, interleaved so both see the same machine state.
+ReconcileTiming time_reconcile(std::size_t count) {
   const auto decisions = decisions_of(Profile::NotarizeFinalize, count);
   std::vector<std::pair<std::int64_t, Decision>> logged;
   logged.reserve(count);
@@ -242,19 +290,14 @@ double time_reconcile(std::size_t count) {
     logged.emplace_back(static_cast<std::int64_t>(i), decisions[i]);
   }
   const std::vector<bool> signed_entry(count, true);
-  double best = 1e9;
-  for (int round = 0; round < 3; ++round) {
-    const auto start = std::chrono::steady_clock::now();
-    require(!simplex::first_unlogged(decisions, logged).has_value(), "every journal vote is logged");
-    const auto first = simplex::first_signed_index(decisions, signed_entry);
-    std::size_t restored = 0;
-    for (const auto& [seq, decision] : logged) {
-      if (auto found = first.find(decision); found != first.end()) {
-        restored += found->second == static_cast<std::size_t>(seq) ? 1 : 0;
-      }
-    }
-    require(restored == count, "every logged vote finds its own journal entry");
-    best = std::min(best, seconds_since(start));
+  ReconcileTiming best{1e9, 1e9};
+  for (int round = 0; round < 5; ++round) {
+    const auto check_start = std::chrono::steady_clock::now();
+    reconcile_once(decisions, logged, signed_entry);
+    best.check = std::min(best.check, seconds_since(check_start));
+    const auto reference_start = std::chrono::steady_clock::now();
+    reference_once(decisions, logged, signed_entry);
+    best.reference = std::min(best.reference, seconds_since(reference_start));
   }
   return best;
 }
@@ -283,14 +326,21 @@ int run_reconcile_scaling() {
     const auto first = simplex::first_signed_index(entries, {false, true, true, false});
     require(first.size() == 1 && first.at(decisions[0]) == 1, "the first signed entry is chosen");
   }
-  // Both sizes are past the last-level cache. A small size that fits in cache makes every
-  // lookup cheaper than at the large size, which inflates a linear check's ratio toward the
-  // limit on a shared machine.
-  const double small = time_reconcile(std::size_t{1} << 17);
-  const double large = time_reconcile(std::size_t{1} << 19);
-  const double ratio = large / std::max(small, 1e-6);
-  std::printf("reconcile 2^17: %.4f s, 2^19: %.4f s, ratio %.2f (linear 4, quadratic 16)\n", small, large, ratio);
-  require(ratio < 8.0, PSTRING() << "the startup check grows faster than linearly: ratio " << ratio);
+  // Wall time alone grows faster than the input on a machine whose cache, page faults or
+  // allocator cost more per element at the larger size, so the check is timed against the
+  // reference at each size and only the growth of that quotient is bounded.
+  const auto small = time_reconcile(std::size_t{1} << 15);
+  const auto large = time_reconcile(std::size_t{1} << 17);
+  const double small_quotient = small.check / std::max(small.reference, 1e-9);
+  const double large_quotient = large.check / std::max(large.reference, 1e-9);
+  const double growth = large_quotient / std::max(small_quotient, 1e-9);
+  // stderr: a failure exits without flushing stdout, and the numbers are the evidence.
+  std::fprintf(stderr,
+               "reconcile 2^15: %.4f s (reference %.4f s), 2^17: %.4f s (reference %.4f s), growth against the "
+               "reference %.2f (linear 1, quadratic 4)\n",
+               small.check, small.reference, large.check, large.reference, growth);
+  require(growth < 2.0,
+          PSTRING() << "the startup check grows faster than linearly: growth against the reference " << growth);
   std::printf("DECISION_LOG_SCALE_OK reconcile-scaling\n");
   return 0;
 }
