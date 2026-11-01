@@ -43,6 +43,9 @@ required-features = ["native"]
 name = "capture_and_validate"
 required-features = ["native"]
 
+[[example]]
+name = "capture_account_reads"
+
 [[bin]]
 name = "node-data-sync-worker"
 path = "src/bin/node-data-sync-worker.rs"

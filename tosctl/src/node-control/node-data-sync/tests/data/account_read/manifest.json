@@ -1,0 +1,41 @@
+{
+  "global_id": 3,
+  "reads": [
+    {
+      "account": "0000000000000000000000000000000000000000000000000000000000000000",
+      "bytes": 1464,
+      "file_hash": "99dd021177444c49813d24a8c0e4966c73024dc23f72b104c8ce07dac8f8fad4",
+      "name": "masterchain-caller",
+      "present": true,
+      "root_hash": "1f912207704d438944a903d41fd1ed2edfefbdb1d5b975d4986221c5f1090de7",
+      "seqno": 23,
+      "sha256": "552f176cce15df5d1d74f64e3ba5bde5e10a31575fe3b4dfeeb21d43502e0a56",
+      "shard": "8000000000000000",
+      "workchain": -1
+    },
+    {
+      "account": "5555555555555555555555555555555555555555555555555555555555555555",
+      "bytes": 1300,
+      "file_hash": "99dd021177444c49813d24a8c0e4966c73024dc23f72b104c8ce07dac8f8fad4",
+      "name": "masterchain-config",
+      "present": true,
+      "root_hash": "1f912207704d438944a903d41fd1ed2edfefbdb1d5b975d4986221c5f1090de7",
+      "seqno": 23,
+      "sha256": "70ccb01690f89df781937cac20c524b4b2fc0027a92db8a62414477fe7d44d61",
+      "shard": "8000000000000000",
+      "workchain": -1
+    },
+    {
+      "account": "0000000000000000000000000000000000000000000000000000000000000000",
+      "bytes": 940,
+      "file_hash": "ad7c9224fe1c75e409692c6e9db05277431ce2f4a368fe6aa80f6fc723843ee8",
+      "name": "basechain-caller",
+      "present": false,
+      "root_hash": "8cd1951e0e1e99a3d7f9a5ba6877ddd06ca88bfe15cae47d563fca3f993823f2",
+      "seqno": 22,
+      "sha256": "72c7b052286adc2e47cc0e9368696c610c19cba08987f4690f1845f5249028c8",
+      "shard": "8000000000000000",
+      "workchain": 0
+    }
+  ]
+}
