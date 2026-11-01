@@ -272,3 +272,16 @@ The retained run collected18 transactions in2 RPC pages. A single-page export
 was incomplete; this was pagination, not node pruning. Missing history refuses
 and must never be treated as an empty pool. The runner bounds4096 transactions,
 64MiB total,512KiB per transaction and2MiB per RPC response.
+
+
+Destination guard sensitivity is reproducible with `destination_mutations.py`
+using the same new `--scratch`, private `--out` and `--target-dir` arguments as
+`nonacceptance_mutations.py`. Its frozen core and eight exact anchors are in
+`../evidence/native-destination-failures-20261101.json`; bounded actual runtime
+failures are separately retained in `native-destination-runtime-failures-20261101.json`.
+All eight failed at runtime (exit101); restoring the core passed25 tests. These
+public receipts have no scheduled expiry. Full raw logs and private chain material
+remain under the indexed `/tos/build` directories until at least2027-02-01 UTC,
+retrievable through existing authorized toserver SSH access. No new credentials
+or public access are granted; live payloads, status tokens, SQL blobs and seeds
+remain private. Native gas/action fixture BOCs are synthetic and safe to publish.

@@ -1,0 +1,78 @@
+{
+  "schema": "tos.br1.destination-runtime-failures.v1",
+  "recipe_sha256": "c10512ee08f56b2c7e92476f672d1a6d3d27b7a77be134776bd4e711341cb995",
+  "core_commit": "4b663c4d843755cc514709eb6691f79966ac41dd",
+  "retention": "Normal Git history, no scheduled expiry. Bounded actual runtime failures, not reconstructed summaries.",
+  "failures": [
+    {
+      "guard": "destroyed_pool",
+      "exit_code": 101,
+      "runtime_failure": "running 5 tests\ntest evidence::tests::matching_body_from_another_sender_is_not_this_workers_attempt ... ok\ntest evidence::tests::bounced_deposit_prefix_cannot_move_fee_leaf_cursor ... ok\ntest evidence::tests::recovery_prefix_alone_is_not_proof_of_a_minted_leaf ... ok\ntest evidence::tests::atomic_abort_never_mints_fee_and_destroyed_or_nonaborted_failures_stay_unknown ... FAILED\ntest evidence::tests::native_cpp_gas_and_action_abort_fixtures_never_mint_a_fee ... ok\n\nfailures:\n\n---- evidence::tests::atomic_abort_never_mints_fee_and_destroyed_or_nonaborted_failures_stay_unknown stdout ----\nError: destroyed pool accepted\n\n\nfailures:\n    evidence::tests::atomic_abort_never_mints_fee_and_destroyed_or_nonaborted_failures_stay_unknown\n\ntest result: FAILED. 4 passed; 1 failed; 0 ignored; 0 measured; 20 filtered out; finished in 0.00s",
+      "raw_path": "/tos/build/br1-destination-repro-20261101/destroyed_pool.log",
+      "raw_sha256": "c068b2da49b7e2e4e42d463a12edc973b7160ec03f252943cc4f8046922adaa6",
+      "raw_bytes": 8475
+    },
+    {
+      "guard": "abort_descriptor",
+      "exit_code": 101,
+      "runtime_failure": "running 5 tests\ntest evidence::tests::atomic_abort_never_mints_fee_and_destroyed_or_nonaborted_failures_stay_unknown ... FAILED\ntest evidence::tests::bounced_deposit_prefix_cannot_move_fee_leaf_cursor ... ok\ntest evidence::tests::recovery_prefix_alone_is_not_proof_of_a_minted_leaf ... ok\ntest evidence::tests::matching_body_from_another_sender_is_not_this_workers_attempt ... ok\ntest evidence::tests::native_cpp_gas_and_action_abort_fixtures_never_mint_a_fee ... FAILED\n\nfailures:\n\n---- evidence::tests::atomic_abort_never_mints_fee_and_destroyed_or_nonaborted_failures_stay_unknown stdout ----\nError: transaction aborted/destroyed\n\n---- evidence::tests::native_cpp_gas_and_action_abort_fixtures_never_mint_a_fee stdout ----\n\nthread 'evidence::tests::native_cpp_gas_and_action_abort_fixtures_never_mint_a_fee' (3371707) panicked at src/evidence.rs:375:13:\nassertion `left == right` failed\n  left: false\n right: true\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n\n\nfailures:\n    evidence::tests::atomic_abort_never_mints_fee_and_destroyed_or_nonaborted_failures_stay_unknown\n    evidence::tests::native_cpp_gas_and_action_abort_fixtures_never_mint_a_fee\n\ntest result: FAILED. 3 passed; 2 failed; 0 ignored; 0 measured; 20 filtered out; finished in 0.00s",
+      "raw_path": "/tos/build/br1-destination-repro-20261101/abort_descriptor.log",
+      "raw_sha256": "a3784697a279495e129297d048c97a0c79d5323fa7be3ee3d3c0eec1f3b4c0b3",
+      "raw_bytes": 6796
+    },
+    {
+      "guard": "fee_abort",
+      "exit_code": 101,
+      "runtime_failure": "running 5 tests\ntest evidence::tests::bounced_deposit_prefix_cannot_move_fee_leaf_cursor ... ok\ntest evidence::tests::matching_body_from_another_sender_is_not_this_workers_attempt ... ok\ntest evidence::tests::atomic_abort_never_mints_fee_and_destroyed_or_nonaborted_failures_stay_unknown ... FAILED\ntest evidence::tests::recovery_prefix_alone_is_not_proof_of_a_minted_leaf ... ok\ntest evidence::tests::native_cpp_gas_and_action_abort_fixtures_never_mint_a_fee ... FAILED\n\nfailures:\n\n---- evidence::tests::atomic_abort_never_mints_fee_and_destroyed_or_nonaborted_failures_stay_unknown stdout ----\nError: transaction aborted/destroyed\n\n---- evidence::tests::native_cpp_gas_and_action_abort_fixtures_never_mint_a_fee stdout ----\nError: transaction aborted/destroyed\n\n\nfailures:\n    evidence::tests::atomic_abort_never_mints_fee_and_destroyed_or_nonaborted_failures_stay_unknown\n    evidence::tests::native_cpp_gas_and_action_abort_fixtures_never_mint_a_fee\n\ntest result: FAILED. 3 passed; 2 failed; 0 ignored; 0 measured; 20 filtered out; finished in 0.00s",
+      "raw_path": "/tos/build/br1-destination-repro-20261101/fee_abort.log",
+      "raw_sha256": "1d78050fe2b35599a89967265c7a604951ec5f8e0a088a8689710d93511c5e65",
+      "raw_bytes": 6509
+    },
+    {
+      "guard": "cursor_abort",
+      "exit_code": 101,
+      "runtime_failure": "running 5 tests\ntest evidence::tests::bounced_deposit_prefix_cannot_move_fee_leaf_cursor ... ok\ntest evidence::tests::matching_body_from_another_sender_is_not_this_workers_attempt ... ok\ntest evidence::tests::atomic_abort_never_mints_fee_and_destroyed_or_nonaborted_failures_stay_unknown ... FAILED\ntest evidence::tests::recovery_prefix_alone_is_not_proof_of_a_minted_leaf ... ok\ntest evidence::tests::native_cpp_gas_and_action_abort_fixtures_never_mint_a_fee ... FAILED\n\nfailures:\n\n---- evidence::tests::atomic_abort_never_mints_fee_and_destroyed_or_nonaborted_failures_stay_unknown stdout ----\nError: transaction aborted/destroyed\n\n---- evidence::tests::native_cpp_gas_and_action_abort_fixtures_never_mint_a_fee stdout ----\nError: transaction aborted/destroyed\n\n\nfailures:\n    evidence::tests::atomic_abort_never_mints_fee_and_destroyed_or_nonaborted_failures_stay_unknown\n    evidence::tests::native_cpp_gas_and_action_abort_fixtures_never_mint_a_fee\n\ntest result: FAILED. 3 passed; 2 failed; 0 ignored; 0 measured; 20 filtered out; finished in 0.00s",
+      "raw_path": "/tos/build/br1-destination-repro-20261101/cursor_abort.log",
+      "raw_sha256": "8573557971e7ed7b213fbc223b446f9c7081b7e1d827fb10ea969cf34cb3bf66",
+      "raw_bytes": 6509
+    },
+    {
+      "guard": "source_owner",
+      "exit_code": 101,
+      "runtime_failure": "running 5 tests\ntest evidence::tests::bounced_deposit_prefix_cannot_move_fee_leaf_cursor ... ok\ntest evidence::tests::recovery_prefix_alone_is_not_proof_of_a_minted_leaf ... ok\ntest evidence::tests::matching_body_from_another_sender_is_not_this_workers_attempt ... FAILED\ntest evidence::tests::atomic_abort_never_mints_fee_and_destroyed_or_nonaborted_failures_stay_unknown ... ok\ntest evidence::tests::native_cpp_gas_and_action_abort_fixtures_never_mint_a_fee ... ok\n\nfailures:\n\n---- evidence::tests::matching_body_from_another_sender_is_not_this_workers_attempt stdout ----\n\nthread 'evidence::tests::matching_body_from_another_sender_is_not_this_workers_attempt' (3380445) panicked at src/evidence.rs:406:9:\nassertion failed: !owned_inbound(&message, &other, &pool)\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n\n\nfailures:\n    evidence::tests::matching_body_from_another_sender_is_not_this_workers_attempt\n\ntest result: FAILED. 4 passed; 1 failed; 0 ignored; 0 measured; 20 filtered out; finished in 0.00s",
+      "raw_path": "/tos/build/br1-destination-repro-20261101/source_owner.log",
+      "raw_sha256": "3b7637a5e12218e9a1e77de091f940c1ff4b252d51c07d5b246c63fbb9b44972",
+      "raw_bytes": 6495
+    },
+    {
+      "guard": "destination_owner",
+      "exit_code": 101,
+      "runtime_failure": "running 5 tests\ntest evidence::tests::bounced_deposit_prefix_cannot_move_fee_leaf_cursor ... ok\ntest evidence::tests::recovery_prefix_alone_is_not_proof_of_a_minted_leaf ... ok\ntest evidence::tests::matching_body_from_another_sender_is_not_this_workers_attempt ... FAILED\ntest evidence::tests::atomic_abort_never_mints_fee_and_destroyed_or_nonaborted_failures_stay_unknown ... ok\ntest evidence::tests::native_cpp_gas_and_action_abort_fixtures_never_mint_a_fee ... ok\n\nfailures:\n\n---- evidence::tests::matching_body_from_another_sender_is_not_this_workers_attempt stdout ----\n\nthread 'evidence::tests::matching_body_from_another_sender_is_not_this_workers_attempt' (3383278) panicked at src/evidence.rs:407:9:\nassertion failed: !owned_inbound(&message, &funding, &other)\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n\n\nfailures:\n    evidence::tests::matching_body_from_another_sender_is_not_this_workers_attempt\n\ntest result: FAILED. 4 passed; 1 failed; 0 ignored; 0 measured; 20 filtered out; finished in 0.00s",
+      "raw_path": "/tos/build/br1-destination-repro-20261101/destination_owner.log",
+      "raw_sha256": "73e50c63627d6a0c4b351de39eaad43c74697649572d4504372d2e84494298dc",
+      "raw_bytes": 6498
+    },
+    {
+      "guard": "bounced_owner",
+      "exit_code": 101,
+      "runtime_failure": "running 5 tests\ntest evidence::tests::matching_body_from_another_sender_is_not_this_workers_attempt ... FAILED\ntest evidence::tests::recovery_prefix_alone_is_not_proof_of_a_minted_leaf ... ok\ntest evidence::tests::bounced_deposit_prefix_cannot_move_fee_leaf_cursor ... ok\ntest evidence::tests::atomic_abort_never_mints_fee_and_destroyed_or_nonaborted_failures_stay_unknown ... ok\ntest evidence::tests::native_cpp_gas_and_action_abort_fixtures_never_mint_a_fee ... ok\n\nfailures:\n\n---- evidence::tests::matching_body_from_another_sender_is_not_this_workers_attempt stdout ----\n\nthread 'evidence::tests::matching_body_from_another_sender_is_not_this_workers_attempt' (3386098) panicked at src/evidence.rs:410:9:\nassertion failed: !owned_inbound(&bounced, &funding, &pool)\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n\n\nfailures:\n    evidence::tests::matching_body_from_another_sender_is_not_this_workers_attempt\n\ntest result: FAILED. 4 passed; 1 failed; 0 ignored; 0 measured; 20 filtered out; finished in 0.00s",
+      "raw_path": "/tos/build/br1-destination-repro-20261101/bounced_owner.log",
+      "raw_sha256": "f299a8c818798d1d2e1dcc188518dfdc14145d7a3d32a2c4499a3b29a437215d",
+      "raw_bytes": 6497
+    },
+    {
+      "guard": "successful_fee",
+      "exit_code": 101,
+      "runtime_failure": "running 5 tests\ntest evidence::tests::bounced_deposit_prefix_cannot_move_fee_leaf_cursor ... ok\ntest evidence::tests::atomic_abort_never_mints_fee_and_destroyed_or_nonaborted_failures_stay_unknown ... FAILED\ntest evidence::tests::matching_body_from_another_sender_is_not_this_workers_attempt ... ok\ntest evidence::tests::recovery_prefix_alone_is_not_proof_of_a_minted_leaf ... ok\ntest evidence::tests::native_cpp_gas_and_action_abort_fixtures_never_mint_a_fee ... ok\n\nfailures:\n\n---- evidence::tests::atomic_abort_never_mints_fee_and_destroyed_or_nonaborted_failures_stay_unknown stdout ----\n\nthread 'evidence::tests::atomic_abort_never_mints_fee_and_destroyed_or_nonaborted_failures_stay_unknown' (3389253) panicked at src/evidence.rs:391:9:\nassertion failed: target_leaf(&described(false, false)?, 3, 2).is_err()\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n\n\nfailures:\n    evidence::tests::atomic_abort_never_mints_fee_and_destroyed_or_nonaborted_failures_stay_unknown\n\ntest result: FAILED. 4 passed; 1 failed; 0 ignored; 0 measured; 20 filtered out; finished in 0.00s",
+      "raw_path": "/tos/build/br1-destination-repro-20261101/successful_fee.log",
+      "raw_sha256": "b5b86babf3c1bc6dce31204ef4a6241baac76a8932d3acc1b2a4fa03f1e7cd7a",
+      "raw_bytes": 6560
+    }
+  ],
+  "restored": {
+    "summary": "25 passed; 0 failed",
+    "raw_path": "/tos/build/br1-destination-repro-20261101/restored-green.log",
+    "raw_sha256": "e97eeed16c0b6f1176ef3c59ab4a66c26fc2e43354f05a522e89206cb145c3bd",
+    "raw_bytes": 7545
+  }
+}

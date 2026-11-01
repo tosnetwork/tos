@@ -1,0 +1,236 @@
+{
+  "schema": "tos.br1.native-destination-local-acceptance.v1",
+  "implementation_core_commit": "4b663c4d843755cc514709eb6691f79966ac41dd",
+  "base_commit": "ee52942c92087ad0812d908da46626623b449c52",
+  "scope": {
+    "global_id": 3,
+    "global_version": 16,
+    "public_activated": false
+  },
+  "upstream": {
+    "commit": "857b8a57a178e6ae0fe7fa86e7d81c5233de8560",
+    "comparison": "BR1 provider and these fault tools are absent upstream; inherited engine and VM unchanged."
+  },
+  "sources": [
+    {
+      "path": ".github/workflows/br1-native-provider.yml",
+      "sha256": "299e49b2ebc7ae686142f46cae5c97fc5868646fe9ea8f12a42377554abaa866",
+      "bytes": 1635
+    },
+    {
+      "path": "test/bonded-relayer/fixtures/native-refusal/action-no-funds.boc",
+      "sha256": "b99d41ba201a731f1794a81786c4613411bc85e7e8d23a1f5c48f38532502ee0",
+      "bytes": 430
+    },
+    {
+      "path": "test/bonded-relayer/fixtures/native-refusal/action-positive.boc",
+      "sha256": "e23358ee928637db8613faec560ca863304def09540ffc13cfa64781085305fa",
+      "bytes": 430
+    },
+    {
+      "path": "test/bonded-relayer/fixtures/native-refusal/gas-exhausted.boc",
+      "sha256": "7d73b4ce9b1351ed8b7f8e8c5d0f9475af3784d20f7978390a7362cec4a7ac71",
+      "bytes": 388
+    },
+    {
+      "path": "test/bonded-relayer/fixtures/native-refusal/gas-positive.boc",
+      "sha256": "76f41176ed949d01ec5f812fc9a49bd5bb7a1dc6dda587ca51952e679b33bf0f",
+      "bytes": 430
+    },
+    {
+      "path": "test/bonded-relayer/fixtures/native-refusal/manifest.json",
+      "sha256": "ce0088369563fdf053b86fcbc9bb835180dddbd8458b135e87daa4932b726059",
+      "bytes": 2378
+    },
+    {
+      "path": "test/bonded-relayer/fixtures/native-refusal/phases.fc",
+      "sha256": "9e39eab29fab7d420e5454b674aede9f0d0680967574a3bea3fdd93b2220c50d",
+      "bytes": 489
+    },
+    {
+      "path": "test/bonded-relayer/native_faults/README.md",
+      "sha256": "9bcbb253b99f206c339e0724df6dfce49a406e92cb53f98a9a2774e97dc6bfd4",
+      "bytes": 15779
+    },
+    {
+      "path": "test/bonded-relayer/native_faults/control.py",
+      "sha256": "1456f053e8a7c9eab6550eb73d751fea0974aa0ba87e48eb60673b47c3ad722c",
+      "bytes": 15666
+    },
+    {
+      "path": "test/bonded-relayer/native_faults/faucet_send.py",
+      "sha256": "eb2f2695a7defb0599193612c545d21230f0442b516f9097ad3012bf4d62820c",
+      "bytes": 4386
+    },
+    {
+      "path": "test/bonded-relayer/native_faults/generate_phase_fixtures.py",
+      "sha256": "48cc2089d9c81eaddc2ef91ed0e6cd180b4cc5aa2b5a352537dc74a2af085800",
+      "bytes": 4696
+    },
+    {
+      "path": "test/bonded-relayer/native_faults/history.py",
+      "sha256": "8e76ba22c4456f79b6b1a14476614447221838c991c24e60ee448b68deeb0132",
+      "bytes": 6253
+    },
+    {
+      "path": "test/bonded-relayer/native_faults/pool_head.py",
+      "sha256": "32b628411d675fd5449636103307f5b10ffaed0ef093f03e85fe1bc707c77384",
+      "bytes": 1347
+    },
+    {
+      "path": "test/bonded-relayer/native_faults/proxy.py",
+      "sha256": "b342fae9b1fa34120a47573c39c23bc11f5bf19a56fc11ed72cac96922ad24f1",
+      "bytes": 5762
+    },
+    {
+      "path": "test/bonded-relayer/native_faults/race_proxy.py",
+      "sha256": "752f06935ef1002800e26b4070c0afb26322b1ef8c5440b0392ff511d7efbc72",
+      "bytes": 6304
+    },
+    {
+      "path": "tools/bonded-relayer/native_process.py",
+      "sha256": "42d8056befd220520772370cbdefd048e526cee79b6eadbb97f587bb96e4f54c",
+      "bytes": 10985
+    },
+    {
+      "path": "tools/bonded-relayer/provider/README.md",
+      "sha256": "88a150a005f5c39358bd575c0328b369e53f0d817af99c91011a39cdd36eca5e",
+      "bytes": 10519
+    },
+    {
+      "path": "tools/bonded-relayer/provider/src/evidence.rs",
+      "sha256": "682eeb94e81c76ee312c563768d2e1166c11081f9fd00732f3d1210795d7402f",
+      "bytes": 19048
+    },
+    {
+      "path": "tools/bonded-relayer/provider/src/provider.rs",
+      "sha256": "63dd0a624e3c3e2bd669f7179cf4070dd3a0b7aa547be1bac1a8abcd24175781",
+      "bytes": 10575
+    },
+    {
+      "path": "tools/bonded-relayer/provider/src/store.rs",
+      "sha256": "806e53166383f3af4de1d902387d4fad2f15eea7c9da0449064372f648682440",
+      "bytes": 20653
+    },
+    {
+      "path": "test/bonded-relayer/native_faults/destination_mutations.py",
+      "sha256": "016a1b8923a93ed0de62cbbcd994735ecb26cf556848d009e929122a2c1b2682",
+      "bytes": 3855
+    }
+  ],
+  "results": {
+    "real_chain": "Competing spend succeeds; own and newer foreign replay abort with exit152. Native source/outbound/inbound proof selects own attempt. Only winner changes commitments38->41/nullifiers25->27; liability2000000000,reserved0. SIGKILL/restart recovers refusal; no fee import, input locks released; cached replay twice with RPC unavailable.",
+    "native_phase_fixtures": "Four real C++ emulator controls at GlobalVersion16/id3: positive compute/action executions; gas-14 and action37 abort with prior state intact. These are synthetic, not forced on-chain gas/action cases.",
+    "complete_history": "18 authenticated predecessor-linked transactions, two RPC pages. Earlier single-page replay failed completeness. Pagination fixed; no node-pruning claim.",
+    "python": "141 tests passed with umask077, native emulator and signer prerequisites supplied. Earlier incomplete environment runs are not acceptance.",
+    "native": "25 tests passed; clippy all-targets -D warnings, fmt, ruff passed.",
+    "source_guards": "64 host +2 runtime suites passed on exact feature checkout. Runtime uses pinned engineSHA8ca8b37e and Ubuntu24 imageSHA8211dd79.",
+    "mutations": "8 guards removed individually, all runtime RED exit101; restored25 GREEN. Scratch restored and removed without force."
+  },
+  "runtime_elf_roles": [
+    {
+      "role": "actual chain refusal path and durable audit",
+      "path": "/tos/build/br1-localnet/bin/br1-provider-destination-r1",
+      "sha256": "47e25ec8ffb76f1431db36f00debca59caa872a862a695d42914668ad095b886"
+    },
+    {
+      "role": "read-only proven head export; same destination refusal core, adds diagnostic pool_head",
+      "path": "/tos/build/br1-localnet/bin/br1-provider-destination-head-r2",
+      "sha256": "fda4368f0bf3318606dd8bd8a54ba21f89e891ed549a0fed7b135735373021ac"
+    }
+  ],
+  "raw_artifacts": [
+    {
+      "path": "/tos/build/br1-localnet/e2e-race/NATIVE-VERDICT.json",
+      "sha256": "71042fc1a5e56aeeb1a9607e64500b6e4bd37af63636c3206fc1c173fc269bf0",
+      "bytes": 2242
+    },
+    {
+      "path": "/tos/build/br1-localnet/e2e-race/CHAIN-VERDICT.json",
+      "sha256": "15fa9db0532fc9831b70db399f7005c03c7061d2a4d0a1cf9c3e6cabcafcbe81",
+      "bytes": 1689
+    },
+    {
+      "path": "/tos/build/br1-localnet/destination-durable-refusal/VERDICT.json",
+      "sha256": "354e217d98d3a91146883a25dfbacd9ea3db1be6a6d30d8d83f4ce68deaa46e2",
+      "bytes": 1273
+    },
+    {
+      "path": "/tos/build/br1-localnet/paginated-race-history/MANIFEST.json",
+      "sha256": "a0387ce8f353c03e07339b5b8b93031a62519d8a1644c49b6a39fcffc68be0f8",
+      "bytes": 5143
+    },
+    {
+      "path": "/tos/build/br1-terminal-destination/compare-native.log",
+      "sha256": "a0fe1d018a756988394f6dde1e989d852bbdbcf5e83d507fd8f1c3a665123eaa",
+      "bytes": 71
+    },
+    {
+      "path": "/tos/build/br1-terminal-destination/inspect-race-paginated.log",
+      "sha256": "005b7e266c5874a578e55ab5fb3114b723e52f680a25592ad012798639e96c6b",
+      "bytes": 91
+    },
+    {
+      "path": "/tos/build/br1-terminal-destination/inspect-race.log",
+      "sha256": "d10be4f6f2ba87cfc6330349f4906dd4adfc91045fe189e631299ceaad6f43b4",
+      "bytes": 606
+    },
+    {
+      "path": "/tos/build/br1-terminal-destination/python-complete.log",
+      "sha256": "04f32ea4d4579506d686ab7b0a9cbb65f6c34c483044c7dbf230c6f7d73c4502",
+      "bytes": 241
+    },
+    {
+      "path": "/tos/build/br1-terminal-destination/phase-tests.log",
+      "sha256": "eab9e34892a769f8c58c6f0e2c50ae11a93a80f92e87ba3dd67684b0f8a25581",
+      "bytes": 7660
+    },
+    {
+      "path": "/tos/build/br1-terminal-destination/phase-fixtures.log",
+      "sha256": "0ff962784f6b33861b2d7314b147ef372ff2f7ec316833bd5bbfaa7548d14e89",
+      "bytes": 58
+    },
+    {
+      "path": "/tos/build/br1-terminal-destination/source-guards-host.log",
+      "sha256": "3b34a8f9cbfd75a1a68ba2c9f05fb155f64bf15cd92bb68665d6ae03126d88b1",
+      "bytes": 8791
+    },
+    {
+      "path": "/tos/build/br1-terminal-destination/source-guards-runtime.log",
+      "sha256": "28a530f31a180b21c444f03ad6d50b90d172ea80175de686442ed3f9bb50f570",
+      "bytes": 517
+    },
+    {
+      "path": "/tos/build/br1-terminal-destination/final-checks.log",
+      "sha256": "97440f4cadbdc17bb99ba8da6f8c19284f24c6212cb9089e11d6dc46dd906f20",
+      "bytes": 38828
+    },
+    {
+      "path": "/tos/build/br1-destination-repro-20261101/VERDICT.json",
+      "sha256": "82490a8d6131839f6fbd4b1a85c8fe6ec44c20770f1aed0d172b7a3df739a69e",
+      "bytes": 887
+    }
+  ],
+  "retention": {
+    "private_until": "2027-02-01 UTC or later",
+    "access": "Existing authorized SSH access to toserver; no new/public credentials granted. Private keys, live candidate bodies, tokens and SQL blobs excluded from Git.",
+    "public": "Frozen synthetic fixtures, mutation runner and bounded actual failure excerpts retained in normal Git history without scheduled expiry."
+  },
+  "commands": {
+    "python": "umask 077; FUNC_PATH=$FUNC FIFT_PATH=$FIFT EMULATOR_PATH=$EMULATOR PQ_TEST_SIGNER=$SIGNER /usr/bin/python3 -m unittest discover -s test/bonded-relayer -p test_*.py",
+    "mutations": "/usr/bin/python3 test/bonded-relayer/native_faults/destination_mutations.py --scratch $NEW_SCRATCH --out $NEW_PRIVATE_OUT --target-dir $CARGO_TARGET_DIR",
+    "chain_fault": "See native_faults/README.md: competing spend and destination abort; fresh audited candidate/setup required, never retry an unknown send.",
+    "history": "$CLIENT_PYTHON test/bonded-relayer/native_faults/history.py --config $CONFIG --backend $PINNED_ELF --backend-sha256 $PIN --native-python /usr/bin/python3 --out $NEW_PRIVATE_OUT"
+  },
+  "remaining": "Public enablement, full C2, on-chain forced gas/action failures, every crash/write cut, adversarial failover, Bond retirement/slashing and economic/security/transport/custody gates are not claimed.",
+  "public_failure_receipts": [
+    "native-destination-failures-20261101.json",
+    "native-destination-runtime-failures-20261101.json"
+  ],
+  "source_guard_runtime": {
+    "image": "tos-local-ci-runner:24-a299f1b0d966-7cb42340f6a1-rust1.97.1",
+    "image_sha256": "8211dd792271f2450c5b478ee4bb2756901a11983272957b51ec24c3093c6e2d",
+    "engine_sha256": "8ca8b37ecdaedfc8355415c7206c90192f28c5b88ea145be6eebd0ee5145a70c",
+    "command": "ctest --test-dir $BUILD -L source-guard -E ^(docker-validator-role|snapshot-import-offline)$ --output-on-failure -j2; then same CTest selection with -R in pinned Ubuntu24 container and pinned TOS_VALIDATOR_ENGINE. See retained source-guards-host.log and source-guards-runtime.log."
+  }
+}
