@@ -5,6 +5,10 @@ edition = "2021"
 publish = false
 license = "GPL-3.0-only"
 
+[features]
+default = []
+public-testnet-pilot = []
+
 [dependencies]
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
