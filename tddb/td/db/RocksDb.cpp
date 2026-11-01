@@ -156,7 +156,15 @@ RocksDb RocksDb::clone() const {
 }
 
 Result<RocksDb> RocksDb::open(std::string path, RocksDbOptions options) {
+  return open_with_file_limit(std::move(path), std::move(options), -1);
+}
+
+Result<RocksDb> RocksDb::open_with_file_limit(std::string path, RocksDbOptions options, int max_open_files) {
   rocksdb::Options db_options;
+  if (max_open_files != -1 && max_open_files < 20) {
+    return Status::Error("max_open_files must be -1 or at least 20");
+  }
+  db_options.max_open_files = max_open_files;
   db_options.merge_operator = options.merge_operator;
   db_options.compaction_filter = options.compaction_filter;
 

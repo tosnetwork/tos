@@ -1,0 +1,830 @@
+{
+  "source_commit": "f7535841bd860eaacd1e0f268a3571a235bf24b0",
+  "service_sha256": "535806c89827275e27891a63845d7045712b7314240f29a8b8414d5f9101e1aa",
+  "image": {
+    "full": "/tmp/pr373-native-image-f7535841/network/node1",
+    "joined": "/tmp/pr373-native-image-f7535841/network/node5"
+  },
+  "init_seqno": 399,
+  "checkpoint": 464,
+  "fixtures": {
+    "result": "NATIVE_WALLET_INDEX_FIXTURES_OK",
+    "schema": 1,
+    "init_seqno": 399,
+    "stale_checkpoint": 10,
+    "checkpoint": {
+      "@type": "tos.blockIdExt",
+      "workchain": -1,
+      "shard": -9223372036854775808,
+      "seqno": 464,
+      "root_hash": "pPOYeZDHp8pHvAWfdOGNDqrn8yYhn2Oc263Dp7KmatY=",
+      "file_hash": "kVBYQdlBAOHJzZomkEXdi2G34tWSUnmKFEbzcfO6lJM="
+    },
+    "accounts": {
+      "dormant": {
+        "address": "0:f2418c2bd537cafa2f883c1143f7eebee2cf65d3935bc4e9df373830238c9af5",
+        "last_lt": 9000001,
+        "last_hash": "5122addc10f80d175a040c91b3c5367c777505d511f5e0e8ba395dc25fa0ab8f"
+      },
+      "history": {
+        "address": "0:4ecf755cd033dfcb7d33f6c7e41c3cd7747f524f4f185e359899103c810e014a",
+        "first_lt": 434000001,
+        "last_lt": 441000001
+      },
+      "destroyed": {
+        "address": "0:67baef1f57f5e7045f19a838d6cb0fef0bfed7b8320f798e15bd47f2eef6a5a2",
+        "first_lt": 444000001,
+        "last_lt": 450000001,
+        "destroy_lt": 450000001,
+        "destroy_hash": "67b8e6bc6daee1c48d05170dbb5d2d502329a757358a6be63fb5a75641e1656f",
+        "absent_at": {
+          "@type": "tos.blockIdExt",
+          "workchain": -1,
+          "shard": -9223372036854775808,
+          "seqno": 443,
+          "root_hash": "kX+t+7Tuhzf10Vnz2TvPBIJ8vdvqQXaMF4exKFswRfU=",
+          "file_hash": "LHzvEOF/QFSQfuBHzDGJxCj5fPH+Bb4c4LWMnrBLGDU="
+        }
+      },
+      "recreated": {
+        "address": "0:0f819c38b6a4834c42db5981a7daea71914844a176ff3a47c629077dd7e2b442",
+        "first_lt": 454000001,
+        "last_lt": 468000001,
+        "destroy_lt": 460000001,
+        "destroy_hash": "cc7820c06c6abd8c782fcd6b5b4ebfb47db82753cdb140dfa61d2343ae7292f9",
+        "absent_at": {
+          "@type": "tos.blockIdExt",
+          "workchain": -1,
+          "shard": -9223372036854775808,
+          "seqno": 453,
+          "root_hash": "HxbiKyuvJbBIK3rK95V5SKowhAxgG5cgXSm7aPZQ9hE=",
+          "file_hash": "N89HIaJcxFLYs+V4kpDUaUtijoJq0RRxPK+EzmJGXjw="
+        },
+        "new_first_lt": 464000001
+      }
+    },
+    "transactions": [
+      {
+        "operation": "dormant-deploy",
+        "account": "0:f2418c2bd537cafa2f883c1143f7eebee2cf65d3935bc4e9df373830238c9af5",
+        "lt": 9000001,
+        "hash": "5122addc10f80d175a040c91b3c5367c777505d511f5e0e8ba395dc25fa0ab8f",
+        "boc_sha256": "174897dced25c472a1f95c56ce2276841f0b010b8ac4d8e3623ac96b9f971c78",
+        "boc": "dormant-deploy.boc",
+        "prev_lt": 0,
+        "orig_status": "nonexist",
+        "end_status": "active",
+        "compute_exit": 0,
+        "action_result": 0,
+        "destroyed": false
+      },
+      {
+        "operation": "history-deploy",
+        "account": "0:4ecf755cd033dfcb7d33f6c7e41c3cd7747f524f4f185e359899103c810e014a",
+        "lt": 434000001,
+        "hash": "6d5e7295f2bbf02a740825d9a8063739d7378735fe393c5eea2f3f6f0b2def2a",
+        "boc_sha256": "891aa6522a85eb90d85751a55736f86051f283e6eeb112323cc25db3e324ef0b",
+        "boc": "history-deploy.boc",
+        "prev_lt": 0,
+        "orig_status": "nonexist",
+        "end_status": "active",
+        "compute_exit": 0,
+        "action_result": 0,
+        "destroyed": false
+      },
+      {
+        "operation": "history-fund",
+        "account": "0:4ecf755cd033dfcb7d33f6c7e41c3cd7747f524f4f185e359899103c810e014a",
+        "lt": 437000001,
+        "hash": "e308e46a0ef0fadfa7ddd433c1e30af2f6a14da2350d00d01456de2664065453",
+        "boc_sha256": "22dab08314a1ef21e682cbae40c46c93a2846cb5f99afe91084d130f54e943a4",
+        "boc": "history-fund.boc",
+        "prev_lt": 434000001,
+        "orig_status": "active",
+        "end_status": "active",
+        "compute_exit": 0,
+        "action_result": 0,
+        "destroyed": false
+      },
+      {
+        "operation": "history-fund-again",
+        "account": "0:4ecf755cd033dfcb7d33f6c7e41c3cd7747f524f4f185e359899103c810e014a",
+        "lt": 441000001,
+        "hash": "4409f4c6bac995cc47f29e4e64bea9d8f4ad49dec06decf147d9f000a846ada1",
+        "boc_sha256": "a79262b6002c0fbab6e3f9fdb07b398b7e95ec01a353844557496da43c545cac",
+        "boc": "history-fund-again.boc",
+        "prev_lt": 437000001,
+        "orig_status": "active",
+        "end_status": "active",
+        "compute_exit": 0,
+        "action_result": 0,
+        "destroyed": false
+      },
+      {
+        "operation": "destroyed-deploy",
+        "account": "0:67baef1f57f5e7045f19a838d6cb0fef0bfed7b8320f798e15bd47f2eef6a5a2",
+        "lt": 444000001,
+        "hash": "1f3659c43d838546c461863626fbf64d5864ce4396ae524a3dd8ce1c5c90d59b",
+        "boc_sha256": "467db0e6346bcf4cf764629a72f75d9c84d0b6eec3740391f49a547988e028cc",
+        "boc": "destroyed-deploy.boc",
+        "prev_lt": 0,
+        "orig_status": "nonexist",
+        "end_status": "active",
+        "compute_exit": 0,
+        "action_result": 0,
+        "destroyed": false
+      },
+      {
+        "operation": "destroyed-fund",
+        "account": "0:67baef1f57f5e7045f19a838d6cb0fef0bfed7b8320f798e15bd47f2eef6a5a2",
+        "lt": 448000001,
+        "hash": "9dcd95a041b360b515bc9427d9d7d13e89b1e70171c7f2ab4560be64afd59fcb",
+        "boc_sha256": "ef6004727beba727921a79dd8e93cf920b17a65a896f69136cdc2075aaa452d0",
+        "boc": "destroyed-fund.boc",
+        "prev_lt": 444000001,
+        "orig_status": "active",
+        "end_status": "active",
+        "compute_exit": 0,
+        "action_result": 0,
+        "destroyed": false
+      },
+      {
+        "operation": "destroyed-destroy",
+        "account": "0:67baef1f57f5e7045f19a838d6cb0fef0bfed7b8320f798e15bd47f2eef6a5a2",
+        "lt": 450000001,
+        "hash": "67b8e6bc6daee1c48d05170dbb5d2d502329a757358a6be63fb5a75641e1656f",
+        "boc_sha256": "ab0c2004eb22996faca1ff67c74ae0900d7da02382e9dbebc2d5ee82223cfe03",
+        "boc": "destroyed-destroy.boc",
+        "prev_lt": 448000001,
+        "orig_status": "active",
+        "end_status": "nonexist",
+        "compute_exit": 0,
+        "action_result": 0,
+        "destroyed": true,
+        "shard_block": {
+          "@type": "tos.blockIdExt",
+          "workchain": 0,
+          "shard": -9223372036854775808,
+          "seqno": 448,
+          "root_hash": "SwxajyO8SZdTyjvXS32L6NbqTQH6/Jwh0G8IxSmBlWY=",
+          "file_hash": "fwwFYfRLCXAdPe8ouRSo3Y8hykuVVcDd2kW65FTMxcA="
+        },
+        "absent_at": {
+          "@type": "tos.blockIdExt",
+          "workchain": -1,
+          "shard": -9223372036854775808,
+          "seqno": 443,
+          "root_hash": "kX+t+7Tuhzf10Vnz2TvPBIJ8vdvqQXaMF4exKFswRfU=",
+          "file_hash": "LHzvEOF/QFSQfuBHzDGJxCj5fPH+Bb4c4LWMnrBLGDU="
+        }
+      },
+      {
+        "operation": "recreated-deploy",
+        "account": "0:0f819c38b6a4834c42db5981a7daea71914844a176ff3a47c629077dd7e2b442",
+        "lt": 454000001,
+        "hash": "6cfc45710b7b9305f8cc52374bb8a8195a0eab5ea4c14d8a652444578adf937b",
+        "boc_sha256": "191f9b988be79c9882d711edf6589493b3fe43fef4841bb0c79d7f1876cdeb93",
+        "boc": "recreated-deploy.boc",
+        "prev_lt": 0,
+        "orig_status": "nonexist",
+        "end_status": "active",
+        "compute_exit": 0,
+        "action_result": 0,
+        "destroyed": false
+      },
+      {
+        "operation": "recreated-fund",
+        "account": "0:0f819c38b6a4834c42db5981a7daea71914844a176ff3a47c629077dd7e2b442",
+        "lt": 458000001,
+        "hash": "46c86c4b9c92d4cc171bc28d95a9fb5dc466795dc4dae6e0db20a0f2eb8030f0",
+        "boc_sha256": "20b6af99004d43597627f9f2778a2930ba5c533df544b3fd972d65acfb3e13ea",
+        "boc": "recreated-fund.boc",
+        "prev_lt": 454000001,
+        "orig_status": "active",
+        "end_status": "active",
+        "compute_exit": 0,
+        "action_result": 0,
+        "destroyed": false
+      },
+      {
+        "operation": "recreated-destroy",
+        "account": "0:0f819c38b6a4834c42db5981a7daea71914844a176ff3a47c629077dd7e2b442",
+        "lt": 460000001,
+        "hash": "cc7820c06c6abd8c782fcd6b5b4ebfb47db82753cdb140dfa61d2343ae7292f9",
+        "boc_sha256": "5b1b89dff982102384936eda38486f259ffa5b3dac040d456b58d34ed886b604",
+        "boc": "recreated-destroy.boc",
+        "prev_lt": 458000001,
+        "orig_status": "active",
+        "end_status": "nonexist",
+        "compute_exit": 0,
+        "action_result": 0,
+        "destroyed": true,
+        "shard_block": {
+          "@type": "tos.blockIdExt",
+          "workchain": 0,
+          "shard": -9223372036854775808,
+          "seqno": 458,
+          "root_hash": "0M7A7VopDD6I7pmR1KsvFJAYGyoGoBp/R9EhZFVSwFs=",
+          "file_hash": "Dpg4L0QnkZtCe8V1Cgivmjt66yTCBOTSAIgjzjL5XAw="
+        },
+        "absent_at": {
+          "@type": "tos.blockIdExt",
+          "workchain": -1,
+          "shard": -9223372036854775808,
+          "seqno": 453,
+          "root_hash": "HxbiKyuvJbBIK3rK95V5SKowhAxgG5cgXSm7aPZQ9hE=",
+          "file_hash": "N89HIaJcxFLYs+V4kpDUaUtijoJq0RRxPK+EzmJGXjw="
+        }
+      },
+      {
+        "operation": "recreated-redeploy",
+        "account": "0:0f819c38b6a4834c42db5981a7daea71914844a176ff3a47c629077dd7e2b442",
+        "lt": 464000001,
+        "hash": "85a448543e40787b37a540f59651d6d2091fb30028d5d9c35316f6cbc8aef461",
+        "boc_sha256": "8b554901455c970f42f33429d91052539214e3c3d00bec33557729eaa1db9a7d",
+        "boc": "recreated-redeploy.boc",
+        "prev_lt": 0,
+        "orig_status": "nonexist",
+        "end_status": "active",
+        "compute_exit": 0,
+        "action_result": 0,
+        "destroyed": false
+      },
+      {
+        "operation": "recreated-fund-again",
+        "account": "0:0f819c38b6a4834c42db5981a7daea71914844a176ff3a47c629077dd7e2b442",
+        "lt": 468000001,
+        "hash": "78f9a73f041a16896cb16cb8a148dc66a644f846b995b572f0b80ac6388c759f",
+        "boc_sha256": "ad6eabdd9494fcc21939a4b48e656d903f37e4458e6dc269eb0a43cc32c4eb42",
+        "boc": "recreated-fund-again.boc",
+        "prev_lt": 464000001,
+        "orig_status": "active",
+        "end_status": "active",
+        "compute_exit": 0,
+        "action_result": 0,
+        "destroyed": false
+      }
+    ]
+  },
+  "binary_sha256": {
+    "tos-wallet-index": "535806c89827275e27891a63845d7045712b7314240f29a8b8414d5f9101e1aa",
+    "tos-wallet-index-snapshot": "623e84e99421300f38d807761320227217c1d6e58d1124cb55e70fcf90cdb387",
+    "tos-wallet-index-dump": "bd5e76c17808429adcff0fe537c5a6b95450ed1ebc96c4f09d89ce63db9c50e4"
+  },
+  "scenarios": {
+    "reference": {
+      "result": "OK",
+      "run": {
+        "exit_code": 0,
+        "reached": true,
+        "readyz": {
+          "masterchain_seqno": 467,
+          "source_seqno": 467,
+          "caught_up": true,
+          "replay_ceiling": null,
+          "settled": true,
+          "initialized": true,
+          "replay_stats": {
+            "uptime_s": 2,
+            "mc_blocks": 467,
+            "shard_blocks": 472,
+            "source_requests": 2835,
+            "source_wait_ms": 690,
+            "prefetch_wait_ms": 11,
+            "source_completed": 2835,
+            "source_service_ms": 1148,
+            "source_outstanding_high_water": 8,
+            "prefetch_bytes_high_water": 12633932,
+            "catch_ups": 3,
+            "catch_up_ms": 84,
+            "walk_ms": 1108,
+            "commits": 467,
+            "commit_ms": 491,
+            "drains": 467,
+            "drain_ms": 156,
+            "archive_slice_opens": 3,
+            "archive_slice_closes": 0,
+            "open_fds": 36
+          },
+          "verification": "full",
+          "verified_horizon": null,
+          "verification_retry": null,
+          "verification_phase": null
+        },
+        "ever_ready": true,
+        "phases": [
+          [
+            0.534,
+            "full",
+            null
+          ]
+        ],
+        "seconds": 3.11,
+        "peak_rss_kib": 41188,
+        "log": null
+      },
+      "tip": 467
+    },
+    "path-b": {
+      "result": "OK",
+      "run": {
+        "exit_code": 0,
+        "reached": true,
+        "readyz": {
+          "masterchain_seqno": 467,
+          "source_seqno": 467,
+          "caught_up": true,
+          "replay_ceiling": null,
+          "settled": true,
+          "initialized": true,
+          "replay_stats": {
+            "uptime_s": 1,
+            "mc_blocks": 3,
+            "shard_blocks": 2,
+            "source_requests": 873,
+            "source_wait_ms": 256,
+            "prefetch_wait_ms": 2,
+            "source_completed": 873,
+            "source_service_ms": 234,
+            "source_outstanding_high_water": 2,
+            "prefetch_bytes_high_water": 4202496,
+            "catch_ups": 2,
+            "catch_up_ms": 31,
+            "walk_ms": 3,
+            "commits": 3,
+            "commit_ms": 4,
+            "drains": 4,
+            "drain_ms": 0,
+            "archive_slice_opens": 2,
+            "archive_slice_closes": 0,
+            "open_fds": 27
+          },
+          "verification": "full",
+          "verified_horizon": {
+            "masterchain_seqno": 400,
+            "unix_time": 1793413721,
+            "unverified_accounts": 3
+          },
+          "verification_retry": null,
+          "verification_phase": null
+        },
+        "ever_ready": true,
+        "phases": [
+          [
+            0.565,
+            "partial",
+            "blocks: starting"
+          ],
+          [
+            1.569,
+            "full",
+            null
+          ]
+        ],
+        "seconds": 1.683,
+        "peak_rss_kib": 35500,
+        "log": null
+      },
+      "head": 467,
+      "window_base": 400,
+      "digests": {
+        "import": "c3d2a2e50f02f38cdde8592a0e6b811e84d6e9edcc98502b83a654226775cc94",
+        "reference": "c3d2a2e50f02f38cdde8592a0e6b811e84d6e9edcc98502b83a654226775cc94"
+      }
+    },
+    "path-a": {
+      "result": "OK",
+      "run": {
+        "exit_code": 0,
+        "reached": true,
+        "readyz": {
+          "masterchain_seqno": 467,
+          "source_seqno": 467,
+          "caught_up": true,
+          "replay_ceiling": null,
+          "settled": true,
+          "initialized": true,
+          "replay_stats": {
+            "uptime_s": 0,
+            "mc_blocks": 0,
+            "shard_blocks": 0,
+            "source_requests": 702,
+            "source_wait_ms": 191,
+            "prefetch_wait_ms": 0,
+            "source_completed": 702,
+            "source_service_ms": 167,
+            "source_outstanding_high_water": 2,
+            "prefetch_bytes_high_water": 0,
+            "catch_ups": 1,
+            "catch_up_ms": 16,
+            "walk_ms": 0,
+            "commits": 0,
+            "commit_ms": 0,
+            "drains": 1,
+            "drain_ms": 0,
+            "archive_slice_opens": 2,
+            "archive_slice_closes": 0,
+            "open_fds": 12
+          },
+          "verification": "full",
+          "verified_horizon": {
+            "masterchain_seqno": 400,
+            "unix_time": 1793413721,
+            "unverified_accounts": 0
+          },
+          "verification_retry": null,
+          "verification_phase": null
+        },
+        "ever_ready": true,
+        "phases": [
+          [
+            0.503,
+            "full",
+            null
+          ]
+        ],
+        "seconds": 0.535,
+        "peak_rss_kib": 34488,
+        "log": null
+      },
+      "head": 467,
+      "window_base": 400,
+      "digests": {
+        "built": "c3d2a2e50f02f38cdde8592a0e6b811e84d6e9edcc98502b83a654226775cc94",
+        "reference": "c3d2a2e50f02f38cdde8592a0e6b811e84d6e9edcc98502b83a654226775cc94"
+      }
+    },
+    "tampered": {
+      "result": "OK",
+      "run": {
+        "exit_code": 2,
+        "reached": false,
+        "readyz": {},
+        "ever_ready": false,
+        "phases": [],
+        "seconds": 0.501,
+        "peak_rss_kib": 12,
+        "log": null
+      },
+      "reason": "not hash-linked|not the account's last transaction|does not decode",
+      "matched_reason": "not the account's last transaction",
+      "snapshot_sha256": "d216ef5f2138a952a5b471c4dab0ef19d7c00e9778dacb570c455d56e639d9bd"
+    },
+    "omitted": {
+      "result": "OK",
+      "run": {
+        "exit_code": 2,
+        "reached": false,
+        "readyz": {},
+        "ever_ready": false,
+        "phases": [],
+        "seconds": 0.501,
+        "peak_rss_kib": 12,
+        "log": null
+      },
+      "reason": "not hash-linked",
+      "matched_reason": "not hash-linked",
+      "snapshot_sha256": "277fea26c94fad675618eb29ea57eb1fcc7c2f04d846dca0a7f7ea0ce1ff51f4"
+    },
+    "truncated": {
+      "result": "OK",
+      "run": {
+        "exit_code": 2,
+        "reached": false,
+        "readyz": {},
+        "ever_ready": false,
+        "phases": [],
+        "seconds": 0.502,
+        "peak_rss_kib": 80,
+        "log": null
+      },
+      "reason": "truncated inside the window|not hash-linked",
+      "matched_reason": "truncated inside the window",
+      "snapshot_sha256": "557a88c643f25d540d5e0a549a4bcf8f4a5cb5235bda40597bf3466097e69b3b"
+    },
+    "wrong-checkpoint": {
+      "result": "OK",
+      "run": {
+        "exit_code": 2,
+        "reached": false,
+        "readyz": {},
+        "ever_ready": false,
+        "phases": [],
+        "seconds": 0.501,
+        "peak_rss_kib": 64,
+        "log": null
+      },
+      "reason": "not this node's masterchain block",
+      "matched_reason": "not this node's masterchain block",
+      "snapshot_sha256": "ac4ad3e65e8f8f4e79f5717a238a048b80c343cbc9cd32615f8797919e70a603"
+    },
+    "wrong-anchor": {
+      "result": "OK",
+      "run": {
+        "exit_code": 2,
+        "reached": false,
+        "readyz": {},
+        "ever_ready": false,
+        "phases": [],
+        "seconds": 0.502,
+        "peak_rss_kib": 48,
+        "log": null
+      },
+      "reason": "anchor is not this node's first block",
+      "matched_reason": "anchor is not this node's first block",
+      "snapshot_sha256": "447964e43ba5712f8baaac51e1dd9cfca1104366c7d4168bea6ed96abac835ba"
+    },
+    "injected": {
+      "result": "OK",
+      "run": {
+        "exit_code": 2,
+        "reached": false,
+        "readyz": {},
+        "ever_ready": false,
+        "phases": [],
+        "seconds": 0.501,
+        "peak_rss_kib": 40,
+        "log": null
+      },
+      "reason": "rows are newer than the account's last transaction",
+      "matched_reason": "rows are newer than the account's last transaction",
+      "snapshot_sha256": "f38dc321369c50cfc31f714243305e2d75306834545a62fd852017b2ac1ef580",
+      "edit": {
+        "account": "f2418c2bd537cafa2f883c1143f7eebee2cf65d3935bc4e9df373830238c9af5",
+        "lt": 441000001,
+        "template_account": "4ecf755cd033dfcb7d33f6c7e41c3cd7747f524f4f185e359899103c810e014a",
+        "template_hash": "4409f4c6bac995cc47f29e4e64bea9d8f4ad49dec06decf147d9f000a846ada1",
+        "injected_hash": "3124d2428688c84f6d3d60a9fb1dfade242d9443e34173be009544f109c95cae"
+      },
+      "dormant_state": {
+        "address": "0:f2418c2bd537cafa2f883c1143f7eebee2cf65d3935bc4e9df373830238c9af5",
+        "last_lt": 9000001,
+        "last_hash": "5122addc10f80d175a040c91b3c5367c777505d511f5e0e8ba395dc25fa0ab8f"
+      }
+    },
+    "stale": {
+      "result": "OK",
+      "run": {
+        "exit_code": 2,
+        "reached": false,
+        "readyz": {},
+        "ever_ready": false,
+        "phases": [],
+        "seconds": 0.501,
+        "peak_rss_kib": 80,
+        "log": null
+      },
+      "reason": "snapshot older than this node's history",
+      "matched_reason": "snapshot older than this node's history",
+      "snapshot_sha256": "0ac23400d220c13bfcfc37b9ec8b855a908b62e8a8f4c55320e7ac937cc6dc3e",
+      "stale_checkpoint": 10,
+      "init_seqno": 399
+    },
+    "forged-ownership": {
+      "result": "OK",
+      "run": {
+        "exit_code": 0,
+        "reached": true,
+        "readyz": {
+          "masterchain_seqno": 467,
+          "source_seqno": 467,
+          "caught_up": true,
+          "replay_ceiling": null,
+          "settled": true,
+          "initialized": true,
+          "replay_stats": {
+            "uptime_s": 1,
+            "mc_blocks": 3,
+            "shard_blocks": 2,
+            "source_requests": 873,
+            "source_wait_ms": 151,
+            "prefetch_wait_ms": 0,
+            "source_completed": 873,
+            "source_service_ms": 132,
+            "source_outstanding_high_water": 2,
+            "prefetch_bytes_high_water": 4208600,
+            "catch_ups": 2,
+            "catch_up_ms": 17,
+            "walk_ms": 2,
+            "commits": 3,
+            "commit_ms": 3,
+            "drains": 4,
+            "drain_ms": 0,
+            "archive_slice_opens": 2,
+            "archive_slice_closes": 0,
+            "open_fds": 27
+          },
+          "verification": "full",
+          "verified_horizon": {
+            "masterchain_seqno": 400,
+            "unix_time": 1793413721,
+            "unverified_accounts": 3
+          },
+          "verification_retry": null,
+          "verification_phase": null
+        },
+        "ever_ready": true,
+        "phases": [
+          [
+            0.503,
+            "partial",
+            "blocks: starting"
+          ],
+          [
+            1.506,
+            "full",
+            null
+          ]
+        ],
+        "seconds": 1.621,
+        "peak_rss_kib": 34892,
+        "log": null
+      },
+      "head": 467,
+      "window_base": 400,
+      "forged_keys": [
+        "10f2418c2bd537cafa2f883c1143f7eebee2cf65d3935bc4e9df373830238c9af5d152e15ee289ba76ed6d1cbf255cbfc11f70d6edb957bfa72f1ed27e725a04ce",
+        "11f2418c2bd537cafa2f883c1143f7eebee2cf65d3935bc4e9df373830238c9af54ecf755cd033dfcb7d33f6c7e41c3cd7747f524f4f185e359899103c810e014a",
+        "134ecf755cd033dfcb7d33f6c7e41c3cd7747f524f4f185e359899103c810e014a",
+        "174ecf755cd033dfcb7d33f6c7e41c3cd7747f524f4f185e359899103c810e014a",
+        "18f2418c2bd537cafa2f883c1143f7eebee2cf65d3935bc4e9df373830238c9af5d152e15ee289ba76ed6d1cbf255cbfc11f70d6edb957bfa72f1ed27e725a04ce"
+      ],
+      "claims_after_import": 0,
+      "snapshot_sha256": "59223b0b73f9607f8a2cc29a2bb29fa5fa1daf251182b8196426e7865f91323d",
+      "digests": {
+        "rederived": "c3d2a2e50f02f38cdde8592a0e6b811e84d6e9edcc98502b83a654226775cc94",
+        "reference": "c3d2a2e50f02f38cdde8592a0e6b811e84d6e9edcc98502b83a654226775cc94"
+      }
+    },
+    "destroyed-omitted": {
+      "result": "OK",
+      "run": {
+        "exit_code": 2,
+        "reached": false,
+        "readyz": {
+          "masterchain_seqno": 467,
+          "source_seqno": 467,
+          "caught_up": true,
+          "replay_ceiling": null,
+          "settled": true,
+          "initialized": true,
+          "replay_stats": {
+            "uptime_s": 0,
+            "mc_blocks": 3,
+            "shard_blocks": 2,
+            "source_requests": 164,
+            "source_wait_ms": 54,
+            "prefetch_wait_ms": 0,
+            "source_completed": 164,
+            "source_service_ms": 51,
+            "source_outstanding_high_water": 2,
+            "prefetch_bytes_high_water": 4208600,
+            "catch_ups": 1,
+            "catch_up_ms": 8,
+            "walk_ms": 2,
+            "commits": 3,
+            "commit_ms": 2,
+            "drains": 3,
+            "drain_ms": 0,
+            "archive_slice_opens": 2,
+            "archive_slice_closes": 0,
+            "open_fds": 13
+          },
+          "verification": "partial",
+          "verified_horizon": {
+            "masterchain_seqno": 400,
+            "unix_time": 1793413721,
+            "unverified_accounts": 2
+          },
+          "verification_retry": null,
+          "verification_phase": "blocks: starting"
+        },
+        "ever_ready": false,
+        "phases": [
+          [
+            0.502,
+            "partial",
+            "blocks: starting"
+          ]
+        ],
+        "seconds": 1.504,
+        "peak_rss_kib": 33524,
+        "log": null
+      },
+      "reason": "the snapshot omits the account's history in the window",
+      "matched_reason": "the snapshot omits the account's history in the window",
+      "snapshot_sha256": "acb9d9fea9842995e61d1d0d594cf069c1802106dfb7aea86cad9f0d467a7b26",
+      "edit": {
+        "account": "67baef1f57f5e7045f19a838d6cb0fef0bfed7b8320f798e15bd47f2eef6a5a2",
+        "removed_lts": [
+          450000001,
+          448000001,
+          444000001
+        ]
+      },
+      "lifecycle": {
+        "address": "0:67baef1f57f5e7045f19a838d6cb0fef0bfed7b8320f798e15bd47f2eef6a5a2",
+        "first_lt": 444000001,
+        "last_lt": 450000001,
+        "destroy_lt": 450000001,
+        "destroy_hash": "67b8e6bc6daee1c48d05170dbb5d2d502329a757358a6be63fb5a75641e1656f",
+        "absent_at": {
+          "@type": "tos.blockIdExt",
+          "workchain": -1,
+          "shard": -9223372036854775808,
+          "seqno": 443,
+          "root_hash": "kX+t+7Tuhzf10Vnz2TvPBIJ8vdvqQXaMF4exKFswRfU=",
+          "file_hash": "LHzvEOF/QFSQfuBHzDGJxCj5fPH+Bb4c4LWMnrBLGDU="
+        }
+      }
+    },
+    "recreated-omitted": {
+      "result": "OK",
+      "run": {
+        "exit_code": 2,
+        "reached": false,
+        "readyz": {
+          "masterchain_seqno": 467,
+          "source_seqno": 467,
+          "caught_up": true,
+          "replay_ceiling": null,
+          "settled": true,
+          "initialized": true,
+          "replay_stats": {
+            "uptime_s": 0,
+            "mc_blocks": 3,
+            "shard_blocks": 2,
+            "source_requests": 164,
+            "source_wait_ms": 87,
+            "prefetch_wait_ms": 0,
+            "source_completed": 164,
+            "source_service_ms": 84,
+            "source_outstanding_high_water": 3,
+            "prefetch_bytes_high_water": 4208600,
+            "catch_ups": 1,
+            "catch_up_ms": 11,
+            "walk_ms": 3,
+            "commits": 3,
+            "commit_ms": 2,
+            "drains": 3,
+            "drain_ms": 0,
+            "archive_slice_opens": 2,
+            "archive_slice_closes": 0,
+            "open_fds": 13
+          },
+          "verification": "partial",
+          "verified_horizon": {
+            "masterchain_seqno": 400,
+            "unix_time": 1793413721,
+            "unverified_accounts": 3
+          },
+          "verification_retry": null,
+          "verification_phase": "blocks: starting"
+        },
+        "ever_ready": false,
+        "phases": [
+          [
+            0.504,
+            "partial",
+            "blocks: starting"
+          ]
+        ],
+        "seconds": 1.506,
+        "peak_rss_kib": 33172,
+        "log": null
+      },
+      "reason": "the window's blocks hold a transaction at [0-9]+ the snapshot does not match",
+      "matched_reason": "the window's blocks hold a transaction at 460000001 the snapshot does not match",
+      "snapshot_sha256": "635bec8d68c1aef495ac76e889a6bdd688fd2ae740f8d29e28c75ca5fc70de12",
+      "edit": {
+        "account": "0f819c38b6a4834c42db5981a7daea71914844a176ff3a47c629077dd7e2b442",
+        "removed_lts": [
+          460000001,
+          458000001,
+          454000001
+        ],
+        "retained_lts": [
+          468000001,
+          464000001
+        ]
+      },
+      "lifecycle": {
+        "address": "0:0f819c38b6a4834c42db5981a7daea71914844a176ff3a47c629077dd7e2b442",
+        "first_lt": 454000001,
+        "last_lt": 468000001,
+        "destroy_lt": 460000001,
+        "destroy_hash": "cc7820c06c6abd8c782fcd6b5b4ebfb47db82753cdb140dfa61d2343ae7292f9",
+        "absent_at": {
+          "@type": "tos.blockIdExt",
+          "workchain": -1,
+          "shard": -9223372036854775808,
+          "seqno": 453,
+          "root_hash": "HxbiKyuvJbBIK3rK95V5SKowhAxgG5cgXSm7aPZQ9hE=",
+          "file_hash": "N89HIaJcxFLYs+V4kpDUaUtijoJq0RRxPK+EzmJGXjw="
+        },
+        "new_first_lt": 464000001
+      }
+    }
+  },
+  "sources_unchanged": true
+}

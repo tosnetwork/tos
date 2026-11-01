@@ -47,12 +47,14 @@
 #include <vector>
 
 #include "../services/index-progress.h"
+#include "../services/index-window.h"
 #include "../validator-engine/wallet-index-queue.h"
 #include "../validator-engine/wallet-index-writer.h"
 #include "../validator-engine/wallet-index.h"
 #include "../validator/db/archive-gc-floor.h"
 #include "../validator/wc0-block-hook.h"
 #include "td/db/RocksDb.h"
+#include "td/db/RocksDbReadOnly.h"
 #include "td/utils/filesystem.h"
 #include "td/utils/port/path.h"
 #include "td/utils/tests.h"
@@ -71,6 +73,18 @@ tos::BlockIdExt make_test_block_id(tos::WorkchainId workchain, tos::ShardId shar
   root_hash.as_slice().copy_from(td::Slice{root_bytes.data(), root_bytes.size()});
   file_hash.as_slice().copy_from(td::Slice{file_bytes.data(), file_bytes.size()});
   return tos::BlockIdExt{workchain, shard, seqno, root_hash, file_hash};
+}
+
+// The record of masterchain block `seqno` as a window base: one basechain
+// shard covering everything, ending at `end_lt`.
+td::optional<tos_wallet_index::WindowBaseRecord> base_record(uint32_t seqno, uint64_t end_lt = 0) {
+  if (seqno == 0) {
+    return {};
+  }
+  return tos_wallet_index::WindowBaseRecord{
+      tos_wallet_index::kWalletIndexSchemaVersion,
+      make_test_block_id(tos::masterchainId, tos::shardIdAll, seqno, static_cast<uint8_t>(seqno | 1), 7),
+      {tos_wallet_index::WindowShardTip{tos::ShardIdFull{tos::basechainId, tos::shardIdAll}, end_lt}}};
 }
 
 std::unique_ptr<tos_wallet_index::WalletIndexDb> open_fresh_db(const std::string &path) {
@@ -448,22 +462,16 @@ TEST(WalletIndex, EventHistoryIsBoundedPerAccount) {
   ASSERT_EQ(other_rows, 1u);
 }
 
-// The per-account cap above bounds one account's history but not the number of
-// accounts: a fresh account with a single transaction never trips its own trim
-// and would be kept forever, so the index grew with distinct-account count.
-// The companion age index (0x14) + per-block time prune drops whole dormant
-// accounts once they fall out of the retention window, so the total is bounded
-// by the window, not by how many accounts were ever seen. Disabling either the
-// age writes or the prune below makes the "bounded" assertions fail.
-TEST(WalletIndex, EventHistoryIsGloballyBoundedByAge) {
+// Global retention by position in the chain: event rows first referenced by
+// the window base or an earlier masterchain block are pruned, reaching whole
+// dormant accounts, so the total is bounded by the window, not by how many
+// accounts were ever seen. Disabling either the age writes or the prune below
+// makes the "bounded" assertions fail.
+TEST(WalletIndex, EventHistoryIsGloballyBoundedByWindow) {
   auto path = std::string("test-wallet-index-db-age");
   auto db = open_fresh_db(path);
 
-  constexpr uint32_t kDay = 24 * 60 * 60;
-  constexpr uint32_t kBase = 1700000000;
-  const uint32_t retention = tos_wallet_index::kEventRetentionSeconds;
-  const uint32_t window_blocks = retention / kDay;  // 7 for a 7-day window
-  ASSERT_TRUE(retention % kDay == 0);
+  constexpr uint32_t kWindowBlocks = 7;
 
   auto make_account = [](uint32_t n) {
     tos_wallet_index::HashKey a = td::Bits256::zero();
@@ -477,109 +485,101 @@ TEST(WalletIndex, EventHistoryIsGloballyBoundedByAge) {
     size_t n = 0;
     char prefix[1] = {static_cast<char>(tag)};
     db->for_each_key_with_prefix(td::Slice{prefix, 1}, size_t{1} << 30, [&](td::Slice) {
-      n++;
-      return td::Status::OK();
-    }).ensure();
+        n++;
+        return td::Status::OK();
+      }).ensure();
     return n;
   };
-  // Mirror wc0_index_block's DB-level sequence: write (event, age) pairs, then
-  // advance the non-decreasing watermark and prune with a budget proportional
-  // to the rows just added (this is what keeps the bound from being outrun).
-  auto index_block = [&](const std::vector<std::pair<tos_wallet_index::HashKey, uint64_t>>& events,
-                         uint32_t gen_utime) {
+  // Mirror replay: a masterchain interval moves the window base with its
+  // checkpoint, then each block writes (event, age) pairs and prunes with a
+  // budget proportional to the rows just added (which keeps the bound from
+  // being outrun).
+  auto index_block = [&](const std::vector<std::pair<tos_wallet_index::HashKey, uint64_t>> &events, uint32_t mc_ref,
+                         uint32_t base) {
+    ASSERT_TRUE(db->begin_batch().is_ok());
+    ASSERT_TRUE(db->put_window_base(base, base_record(base)).is_ok());
+    ASSERT_TRUE(db->commit_batch().is_ok());
     ASSERT_TRUE(db->begin_batch().is_ok());
     size_t age_added = 0;
-    for (const auto& [account, lt] : events) {
+    for (const auto &[account, lt] : events) {
       vm::CellBuilder builder;
       builder.store_long(static_cast<long long>(lt), 64);
       ASSERT_TRUE(db->put_event(account, lt, builder.finalize()).is_ok());
-      ASSERT_TRUE(db->put_event_age(account, lt, gen_utime).is_ok());
+      ASSERT_TRUE(db->put_event_age(account, lt, mc_ref).is_ok());
       age_added++;
     }
-    // Drive the real consolidated retention path (watermark max + prune),
-    // exactly as wc0_index_block does.
-    ASSERT_TRUE(db->advance_retention(gen_utime, age_added).is_ok());
+    ASSERT_TRUE(db->advance_retention(age_added).is_ok());
     ASSERT_TRUE(db->commit_batch().is_ok());
   };
+  auto base_for = [&](uint32_t mc_ref) { return mc_ref > kWindowBlocks ? mc_ref - kWindowBlocks : 0; };
 
-  // One brand-new account per block, one event each, one block per day. Without
-  // the age prune this climbs to `total_blocks`; with it, it must hold at the
-  // window size.
-  const uint32_t total_blocks = window_blocks + 25;
-  for (uint32_t b = 0; b < total_blocks; b++) {
-    uint32_t gen_utime = kBase + b * kDay;
-    index_block({{make_account(b), 1}}, gen_utime);
-
-    // Every event has exactly one companion age row -- no orphans in either
-    // direction.
+  // One brand-new account per masterchain interval, one event each. Without
+  // the prune this climbs to `total`; with it, it holds at the window size.
+  const uint32_t total = kWindowBlocks + 25;
+  for (uint32_t mc = 1; mc <= total; mc++) {
+    index_block({{make_account(mc), 1}}, mc, base_for(mc));
     ASSERT_EQ(count_prefix(0x12), count_prefix(0x14));
-
-    if (b >= window_blocks) {
-      // Retained accounts are exactly those whose gen_utime >= cutoff =
-      // (kBase + b*kDay) - retention = kBase + (b - window_blocks)*kDay. The
-      // exclusive upper bound keeps the account exactly at the cutoff, so blocks
-      // [b - window_blocks .. b] survive: window_blocks + 1 rows, regardless of
-      // how many total blocks have been processed. The pre-fix index would be at
-      // b + 1 here and rising every block.
-      ASSERT_EQ(count_prefix(0x12), static_cast<size_t>(window_blocks + 1));
-      // The account exactly at the cutoff is retained; the one just older is gone.
-      ASSERT_TRUE(db->get_event(make_account(b - window_blocks), 1).is_ok());
-      ASSERT_TRUE(db->get_event(make_account(b - window_blocks - 1), 1).is_error());
+    if (mc > kWindowBlocks) {
+      // Rows referenced after the base survive: (base, mc], kWindowBlocks of
+      // them. The pruning of the current block's own predecessor rows is seen
+      // committed, so the block at the base is gone and the one after it kept.
+      ASSERT_EQ(count_prefix(0x12), static_cast<size_t>(kWindowBlocks));
+      ASSERT_TRUE(db->get_event(make_account(base_for(mc) + 1), 1).is_ok());
+      ASSERT_TRUE(db->get_event(make_account(base_for(mc)), 1).is_error());
     }
   }
 
-  // Burst: one block introduces far more fresh accounts than a single prune's
-  // drain, at a timestamp that is already outside the window relative to a later
-  // block. A fixed per-block budget could never catch up; the proportional
-  // budget + drain does, over a bounded number of later blocks.
+  // Burst: one block introduces far more fresh accounts than a single
+  // prune's drain. The proportional budget plus drain reclaims it over a
+  // bounded number of later blocks once it leaves the window.
   const size_t burst = tos_wallet_index::kEventPruneDrainPerBlock + 500;
-  uint32_t burst_time = kBase + total_blocks * kDay;
+  uint32_t burst_mc = total + 1;
   {
     std::vector<std::pair<tos_wallet_index::HashKey, uint64_t>> events;
     for (size_t i = 0; i < burst; i++) {
       events.emplace_back(make_account(1000000 + static_cast<uint32_t>(i)), 1);
     }
-    index_block(events, burst_time);
+    index_block(events, burst_mc, base_for(burst_mc));
   }
-  // Now advance well past the window with empty blocks (age_added == 0, so each
-  // prune still gets a full drain budget) and confirm the burst fully drains --
-  // the backlog shrinks by at least the drain each block and reaches the steady
-  // window size, it does not plateau above it.
   size_t drained_after = 0;
   for (uint32_t k = 1; k <= 20; k++) {
-    index_block({}, burst_time + retention + k * kDay);
+    uint32_t mc = burst_mc + kWindowBlocks + k;
+    index_block({}, mc, mc);
     if (count_prefix(0x12) == 0) {
       drained_after = k;
       break;
     }
   }
-  ASSERT_TRUE(drained_after != 0);          // the burst was fully reclaimed
+  ASSERT_TRUE(drained_after != 0);
   ASSERT_TRUE(drained_after <= burst / tos_wallet_index::kEventPruneDrainPerBlock + 2);
-  ASSERT_EQ(count_prefix(0x12), count_prefix(0x14));  // still paired at zero
+  ASSERT_EQ(count_prefix(0x12), count_prefix(0x14));
 
-  // A late block carrying an old gen_utime must not regress the cutoff: its
-  // event is (correctly) already expired, so after its own prune nothing from
-  // before the true watermark reappears, and the count stays at zero.
-  index_block({{make_account(2000000), 1}}, kBase);  // far in the past
-  ASSERT_TRUE(count_prefix(0x12) <= 1);
+  // A late row referenced at or before the base is outside the window and
+  // is reclaimed by the next prune; the base itself never moves back.
+  uint32_t last = burst_mc + kWindowBlocks + 20;
+  index_block({{make_account(2000000), 1}}, 1, last);
+  index_block({}, last + 1, last);
+  ASSERT_EQ(count_prefix(0x12), 0u);
+  ASSERT_TRUE(db->begin_batch().is_ok());
+  ASSERT_TRUE(db->put_window_base(last - 1, base_record(last - 1)).is_error());
+  db->abort_batch();
 
   td::rmrf(path).ignore();
 }
 
-TEST(WalletIndex, RetentionMaintenanceFailsClosedOnWatermarkReadError) {
-  // The retention watermark must be non-decreasing; a read failure must never
-  // fall back to 0 and let a block write a lower watermark. advance_retention
-  // returns the error (so the writer aborts the block) and leaves the stored
-  // watermark untouched -- it does not overwrite it with a regressed value.
+TEST(WalletIndex, RetentionMaintenanceFailsClosedOnWindowBaseReadError) {
+  // The window base never moves back; a read failure must never fall back to
+  // 0. advance_retention returns the error (so the writer aborts the block)
+  // and leaves the stored base untouched.
   auto path = std::string("test-wallet-index-db-wm-failclosed");
   td::rmrf(path).ignore();
-  const std::string wm_key = {static_cast<char>(0x00), static_cast<char>(0x02)};
+  const std::string base_key = {static_cast<char>(0x00), static_cast<char>(0x02)};
   {
     auto raw_r = td::RocksDb::open(path);
     ASSERT_TRUE(raw_r.is_ok());
     auto raw = raw_r.move_as_ok();
-    char bad[3] = {0x01, 0x02, 0x03};  // not 4 bytes -> get_event_watermark errors
-    raw.set(td::Slice{wm_key}, td::Slice{bad, 3}).ensure();
+    char bad[3] = {0x01, 0x02, 0x03};  // not 4 bytes -> get_window_base errors
+    raw.set(td::Slice{base_key}, td::Slice{bad, 3}).ensure();
     // The current schema, so the database is kept as it is.
     const char version_key[2] = {0x00, 0x01};
     const char current[4] = {0, 0, 0, static_cast<char>(tos_wallet_index::kWalletIndexSchemaVersion)};
@@ -591,16 +591,72 @@ TEST(WalletIndex, RetentionMaintenanceFailsClosedOnWatermarkReadError) {
   auto db = db_r.move_as_ok();
 
   ASSERT_TRUE(db->begin_batch().is_ok());
-  auto status = db->advance_retention(/*gen_utime=*/1000, /*age_rows_added=*/0);
-  ASSERT_TRUE(status.is_error());  // fails closed on the malformed watermark
+  ASSERT_TRUE(db->advance_retention(/*age_rows_added=*/0).is_error());
+  ASSERT_TRUE(db->put_window_base(5, base_record(5)).is_error());
   db->abort_batch();
-
-  // The malformed watermark was not overwritten with a 0-fallback value: a fresh
-  // read still errors on the same malformed bytes.
-  auto again = db->get_event_watermark();
-  ASSERT_TRUE(again.is_error());
+  ASSERT_TRUE(db->get_window_base().is_error());
 
   td::rmrf(path).ignore();
+}
+
+namespace {
+using tos::services::advance_window_base;
+// Masterchain block n generated at 1000 + 10 n; blocks below `first` not held.
+tos::services::MasterchainTime chain_from(uint32_t first, std::vector<uint32_t> *probes = nullptr) {
+  return [first, probes](uint32_t seqno) -> td::Result<td::optional<uint32_t>> {
+    if (probes != nullptr) {
+      probes->push_back(seqno);
+    }
+    if (seqno < first) {
+      return td::optional<uint32_t>{};
+    }
+    return td::optional<uint32_t>{1000 + 10 * seqno};
+  };
+}
+}  // namespace
+
+TEST(WalletIndex, WindowBaseIsTheLastBlockGeneratedBeforeTheRetention) {
+  // newest 100 at 2000, retention 300: the cutoff is 1700, block 69 (1690) is
+  // the last generated before it.
+  auto base = advance_window_base(0, 100, 2000, 300, chain_from(1));
+  ASSERT_TRUE(base.is_ok());
+  ASSERT_EQ(base.ok().base, 69u);
+  ASSERT_TRUE(!base.ok().stalled);
+  // It does not move back and does not move while still inside the window.
+  ASSERT_EQ(advance_window_base(80, 100, 2000, 300, chain_from(1)).move_as_ok().base, 80u);
+  ASSERT_EQ(advance_window_base(69, 100, 2000, 300, chain_from(1)).move_as_ok().base, 69u);
+  // A young chain has no base yet.
+  ASSERT_EQ(advance_window_base(0, 10, 200, 300, chain_from(1)).move_as_ok().base, 0u);
+}
+
+// Which blocks a source holds is not known to be a contiguous suffix, so a
+// missing block stops the base; it never jumps over the gap, which could
+// prune history that is still inside the window.
+TEST(WalletIndex, WindowBaseStallsAtABlockTheSourceDoesNotHold) {
+  auto stalled = advance_window_base(0, 100, 2000, 300, chain_from(50)).move_as_ok();
+  ASSERT_EQ(stalled.base, 0u);
+  ASSERT_TRUE(stalled.stalled);
+  // A base already placed at the source's first block moves normally.
+  auto placed = advance_window_base(49, 100, 2000, 300, chain_from(50)).move_as_ok();
+  ASSERT_EQ(placed.base, 69u);
+  ASSERT_TRUE(!placed.stalled);
+  // A gap inside the held range stops it at the gap.
+  tos::services::MasterchainTime gap = [](uint32_t seqno) -> td::Result<td::optional<uint32_t>> {
+    if (seqno == 60) {
+      return td::optional<uint32_t>{};
+    }
+    return td::optional<uint32_t>{1000 + 10 * seqno};
+  };
+  auto at_gap = advance_window_base(40, 100, 2000, 300, gap).move_as_ok();
+  ASSERT_EQ(at_gap.base, 59u);
+  ASSERT_TRUE(at_gap.stalled);
+}
+
+TEST(WalletIndex, WindowBaseLookupFailureIsNotAbsence) {
+  tos::services::MasterchainTime failing = [](uint32_t) -> td::Result<td::optional<uint32_t>> {
+    return td::Status::Error("source read failed");
+  };
+  ASSERT_TRUE(advance_window_base(0, 100, 2000, 300, failing).is_error());
 }
 
 namespace {
@@ -4238,4 +4294,212 @@ TEST(WalletIndexWorker, StandaloneCancellationPreservesPendingCandidates) {
   tos_wallet_index::set_wc0_index_state_fetcher(nullptr);
   reset_index_singletons();
   td::rmrf(path).ignore();
+}
+
+namespace {
+using tos_wallet_index::HistoryWindow;
+using tos_wallet_index::WalletIndexDb;
+using tos_wallet_index::WindowBaseRecord;
+using tos_wallet_index::WindowShardTip;
+
+constexpr uint64_t kLeftHalf = 0x4000000000000000ull, kRightHalf = 0xC000000000000000ull;
+
+WindowBaseRecord record_of(uint32_t seqno, std::vector<WindowShardTip> tips) {
+  return {tos_wallet_index::kWalletIndexSchemaVersion,
+          make_test_block_id(tos::masterchainId, tos::shardIdAll, seqno, static_cast<uint8_t>(seqno | 1), 7),
+          std::move(tips)};
+}
+
+WindowShardTip tip(uint64_t shard, uint64_t end_lt) {
+  return WindowShardTip{tos::ShardIdFull{tos::basechainId, shard}, end_lt};
+}
+
+// The 0x11 value the writer stores: the collection and its verdict's lt.
+td::Ref<vm::Cell> nft_value(bool has_collection, const td::Bits256 &collection, uint64_t lt) {
+  vm::CellBuilder cb;
+  CHECK(cb.store_long_bool(has_collection ? 1 : 0, 1) &&
+        (!has_collection || cb.store_bits_bool(collection.cbits(), 256)) &&
+        cb.store_long_bool(static_cast<long long>(lt), 64));
+  return cb.finalize();
+}
+
+td::Bits256 account_at(unsigned char top) {
+  td::Bits256 out = td::Bits256::zero();
+  out.as_slice()[0] = static_cast<char>(top);
+  return out;
+}
+
+void put_rows(WalletIndexDb &db, const td::Bits256 &account, uint64_t from, uint64_t to) {
+  db.begin_batch().ensure();
+  for (uint64_t lt = from; lt <= to; ++lt) {
+    db.put_event(account, lt, wallet_index_fixture::transaction({account, lt, 0})).ensure();
+  }
+  db.commit_batch().ensure();
+}
+
+// The canonical lines of a stopped index, read as the dump reads them.
+std::vector<std::string> canonical_lines(const std::string &path) {
+  auto kv = td::RocksDbReadOnly::open(path).move_as_ok();
+  auto window = tos_wallet_index::read_history_window(kv).move_as_ok();
+  std::vector<std::string> lines;
+  tos_wallet_index::for_each_canonical_line(kv, window, [&](const std::string &line) {
+    lines.push_back(line);
+    return td::Status::OK();
+  }).ensure();
+  return lines;
+}
+
+void erase_raw(const std::string &path, td::Slice key) {
+  td::RocksDbOptions options;
+  options.no_transactions = true;
+  auto raw = td::RocksDb::open(path, std::move(options)).move_as_ok();
+  raw.erase(key).ensure();
+}
+}  // namespace
+
+// A window base record names a full masterchain block of this schema and
+// tips covering the basechain exactly once, and the base moves only with it.
+TEST(WalletIndex, WindowBaseRecordIsCheckedAndMovesWithTheBase) {
+  using tos_wallet_index::check_window_base_record;
+  ASSERT_TRUE(check_window_base_record(record_of(5, {tip(tos::shardIdAll, 10)})).is_ok());
+  ASSERT_TRUE(check_window_base_record(record_of(5, {tip(kRightHalf, 10), tip(kLeftHalf, 20)})).is_ok());
+  ASSERT_TRUE(check_window_base_record(record_of(5, {})).is_error());
+  ASSERT_TRUE(check_window_base_record(record_of(5, {tip(kLeftHalf, 10)})).is_error());  // incomplete
+  ASSERT_TRUE(check_window_base_record(record_of(5, {tip(tos::shardIdAll, 1), tip(kLeftHalf, 2)})).is_error());
+  ASSERT_TRUE(check_window_base_record(record_of(5, {tip(kLeftHalf, 1), tip(kLeftHalf, 2), tip(kRightHalf, 3)}))
+                  .is_error());  // overlapping
+  {
+    auto other_chain = record_of(5, {tip(tos::shardIdAll, 1)});
+    other_chain.tips[0].shard.workchain = tos::masterchainId;
+    ASSERT_TRUE(check_window_base_record(other_chain).is_error());
+    auto schema = record_of(5, {tip(tos::shardIdAll, 1)});
+    schema.schema += 1;
+    ASSERT_TRUE(check_window_base_record(schema).is_error());
+    auto shard_block = record_of(5, {tip(tos::shardIdAll, 1)});
+    shard_block.block.id.workchain = tos::basechainId;
+    ASSERT_TRUE(check_window_base_record(shard_block).is_error());
+    std::vector<WindowShardTip> many(tos_wallet_index::kMaxWindowBaseTips + 1, tip(tos::shardIdAll, 1));
+    ASSERT_TRUE(check_window_base_record(record_of(5, many)).is_error());
+  }
+  std::string path = "/tmp/test-wallet-index-base-record";
+  auto db = open_fresh_db(path);
+  db->begin_batch().ensure();
+  ASSERT_TRUE(db->put_window_base(5, {}).is_error());                                       // moving without its record
+  ASSERT_TRUE(db->put_window_base(5, record_of(6, {tip(tos::shardIdAll, 1)})).is_error());  // another block
+  ASSERT_TRUE(db->put_window_base(5, record_of(5, {tip(kLeftHalf, 1)})).is_error());        // not a cover
+  db->put_window_base(5, record_of(5, {tip(tos::shardIdAll, 3000)})).ensure();
+  db->commit_batch().ensure();
+  auto stored = db->window_base_record().move_as_ok().value();
+  ASSERT_TRUE(stored.block == record_of(5, {}).block);
+  ASSERT_EQ(stored.tips.size(), 1u);
+  ASSERT_EQ(stored.tips[0].end_lt, 3000u);
+  // Staying where it is keeps the record.
+  db->begin_batch().ensure();
+  db->put_window_base(5, {}).ensure();
+  db->commit_batch().ensure();
+  auto window = db->history_window().move_as_ok();
+  ASSERT_EQ(window.base, 5u);
+  ASSERT_TRUE(window.record && window.record.value().block.seqno() == 5);
+  // An existing nonzero base without a record, or a malformed record, fails closed.
+  db.reset();
+  const char record_key[2] = {0x00, 0x36};
+  erase_raw(path, td::Slice{record_key, 2});
+  db = WalletIndexDb::open(path).move_as_ok();
+  ASSERT_TRUE(!db->window_base_record().move_as_ok());
+  ASSERT_TRUE(db->history_window().is_error());
+  db.reset();
+  {
+    td::RocksDbOptions options;
+    options.no_transactions = true;
+    auto raw = td::RocksDb::open(path, std::move(options)).move_as_ok();
+    raw.set(td::Slice{record_key, 2}, td::Slice("\x01\x00\x00\x00\x04", 5)).ensure();
+  }
+  db = WalletIndexDb::open(path).move_as_ok();
+  ASSERT_TRUE(db->window_base_record().is_error());
+  ASSERT_TRUE(db->history_window().is_error());
+  db.reset();
+  td::rmrf(path).ignore();
+}
+
+// A reader's view sees one window: the base and its record from before a
+// move, or both from after it, never a mix.
+TEST(WalletIndex, AViewSeesOneWindowWhileTheBaseMoves) {
+  std::string path = "/tmp/test-wallet-index-base-view";
+  auto db = open_fresh_db(path);
+  db->begin_batch().ensure();
+  db->put_window_base(5, record_of(5, {tip(tos::shardIdAll, 3000)})).ensure();
+  db->commit_batch().ensure();
+  auto view = tos_wallet_index::WalletIndexSnapshot::of(*db).move_as_ok();
+  db->commit_replay_checkpoint({make_test_block_id(tos::masterchainId, tos::shardIdAll, 1, 1, 1),
+                                make_test_block_id(tos::masterchainId, tos::shardIdAll, 9, 9, 9)},
+                               6u, record_of(6, {tip(kLeftHalf, 3500), tip(kRightHalf, 3600)}))
+      .ensure();
+  auto before = view.history_window().move_as_ok();
+  ASSERT_EQ(before.base, 5u);
+  ASSERT_TRUE(before.record.value().block.seqno() == 5 && before.record.value().tips.size() == 1);
+  auto after = db->history_window().move_as_ok();
+  ASSERT_EQ(after.base, 6u);
+  ASSERT_TRUE(after.record.value().block.seqno() == 6 && after.record.value().tips.size() == 2);
+  // The bound follows the account's shard in each window.
+  auto right = account_at(0x90);
+  ASSERT_EQ(view.history_filter(before, right).move_as_ok().bound, 3000u);
+  ASSERT_EQ(db->history_filter(after, right).move_as_ok().bound, 3600u);
+  db.reset();
+  td::rmrf(path).ignore();
+}
+
+// The served range ends at the window bound and at an account's newest
+// kMaxEventsPerAccount rows; the canonical view is exactly what is served,
+// with ownership verdict lts left out, so lingering rows and verdict times do
+// not change it while a served row, a current token's wallet or an NFT does.
+TEST(WalletIndex, TheCanonicalViewIsTheServedWindow) {
+  std::string lingering = "/tmp/test-wallet-index-canonical-a", pruned = "/tmp/test-wallet-index-canonical-b";
+  auto small = account_at(0x21), big = account_at(0x22), owner = account_at(0x31), master = account_at(0x32),
+       wallet = account_at(0x33), item = account_at(0x34), collection = account_at(0x35);
+  auto fill = [&](const std::string &path, bool backlog, uint64_t verdict_lt, const td::Bits256 &token_wallet) {
+    auto db = open_fresh_db(path);
+    db->initialize_replay(make_test_block_id(tos::masterchainId, tos::shardIdAll, 1, 1, 1)).ensure();
+    // Every lt from 1000 (backlog) or from 3001, the first above the bound.
+    put_rows(*db, small, backlog ? 1000 : 3001, 5000);
+    put_rows(*db, big, backlog ? 10001 : 10006, 20005);
+    db->begin_batch().ensure();
+    db->put_window_base(5, record_of(5, {tip(tos::shardIdAll, 3000)})).ensure();
+    WalletIndexDb::TokenVerdict verdict{true, owner, master, token_value(token_wallet, verdict_lt)};
+    db->apply_token_verdict(token_wallet, verdict, verdict_lt).ensure();
+    // A token row no pair record decided: never current.
+    db->put_token(account_at(0x41), master, token_value(wallet, 1)).ensure();
+    db->put_nft(owner, item, nft_value(true, collection, verdict_lt)).ensure();
+    db->commit_batch().ensure();
+    if (backlog) {
+      // A row the filter must stop at, without counting it.
+      auto filter_small = db->history_filter(db->history_window().move_as_ok(), small).move_as_ok();
+      CHECK(filter_small.bound == 3000 && filter_small.cutoff == 0);
+      auto filter_big = db->history_filter(db->history_window().move_as_ok(), big).move_as_ok();
+      CHECK(filter_big.cutoff == 10006);
+      CHECK(!filter_big.serves(10005) && filter_big.serves(10006) && !filter_small.serves(3000) &&
+            filter_small.serves(3001));
+    }
+  };
+  fill(lingering, true, 100, wallet);
+  fill(pruned, false, 999, wallet);
+  auto a = canonical_lines(lingering);
+  ASSERT_TRUE(a == canonical_lines(pruned));
+  ASSERT_EQ(a.size(), 2000u + 10000u + 1u + 1u);
+  ASSERT_TRUE(a[0].rfind("event " + small.to_hex() + " 5000 ", 0) == 0);
+  ASSERT_TRUE(a.back() == "nft " + owner.to_hex() + " " + item.to_hex() + " " + collection.to_hex());
+  ASSERT_TRUE(a[a.size() - 2] == "token " + owner.to_hex() + " " + master.to_hex() + " " + wallet.to_hex());
+  // A current token naming another wallet is another view.
+  fill(pruned, false, 999, account_at(0x36));
+  ASSERT_TRUE(a != canonical_lines(pruned));
+  // So is a served row that differs.
+  fill(pruned, false, 999, wallet);
+  {
+    auto db = WalletIndexDb::open(pruned).move_as_ok();
+    db->begin_batch().ensure();
+    db->put_event(small, 4000, wallet_index_fixture::transaction({small, 4000, 1})).ensure();
+    db->commit_batch().ensure();
+  }
+  ASSERT_TRUE(a != canonical_lines(pruned));
+  td::rmrf(lingering).ignore();
+  td::rmrf(pruned).ignore();
 }
