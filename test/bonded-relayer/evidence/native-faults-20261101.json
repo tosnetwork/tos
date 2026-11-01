@@ -13,7 +13,10 @@
     "tools/bonded-relayer/provider/src/main.rs": "b61404978ae1ff82bab947f5829fce55e538defc28c8d4fbdd8492ec14644f41",
     "tools/bonded-relayer/relay_service.py": "f6b14c239900009ed39f460a3e61a8b53e49530a33056362a1a596a2778865aa",
     "test/bonded-relayer/test_relay_service.py": "f05b26e90618cce077be653b6331394139707e8b981d6f20352c92c416ad3031",
-    "test/bonded-relayer/delivery_controls.py": "f478baa5b7f7d1c52bb948fdf3be19eba1cd5f8560863b6afb380ede8e7a797c"
+    "test/bonded-relayer/delivery_controls.py": "f478baa5b7f7d1c52bb948fdf3be19eba1cd5f8560863b6afb380ede8e7a797c",
+    "test/bonded-relayer/native_faults/control.py": "772dcb70919815a81b2b66f4efebccb290faf19356d7c368244b959ff535f482",
+    "test/bonded-relayer/native_faults/proxy.py": "22a282ef3e20a003224c29aa700a65d39b31fa6d1c3688eabc72dc57e1261032",
+    "test/bonded-relayer/native_faults/README.md": "68af54f264461c5d56d2a7c2ea24025a00edaf3ef87eda219832ae0316e75abc"
   },
   "cases": [
     {
@@ -140,5 +143,37 @@
   "limitations": [
     "Initial passive capture counter restarted at zero and overwrote the first lost-reply capture; that run is superseded by e2e-fault-r2. The retained crash capture and rerun have distinct monotonically numbered files.",
     "The TTL test signs once but never broadcasts; operator B retains native sequence 6 as a deliberate unresolved lease. Keep original keys/journals and drain B until proven nonacceptance recovery is implemented. No automatic reset/resign."
-  ]
+  ],
+  "durable_runners": {
+    "control": "test/bonded-relayer/native_faults/control.py",
+    "proxy": "test/bonded-relayer/native_faults/proxy.py",
+    "commands": "test/bonded-relayer/native_faults/README.md",
+    "real_replays": [
+      {
+        "path": "/tos/build/br1-localnet/durable-submit/VERDICT.json",
+        "bytes": 588,
+        "sha256": "26d4ca4dddc16ba083b85d2557fd9905977dbf68d4f23c5c5cf7835833023933",
+        "result": "PASS-EXACT-ORIGINAL-EXECUTION-WITHOUT-RESEND"
+      },
+      {
+        "path": "/tos/build/br1-localnet/durable-expiry-d/VERDICT.json",
+        "bytes": 371,
+        "sha256": "0c7f9cb84ef1ec3330a8f23f11611491f4869fc1384d0ede43f2952859bf6d7a",
+        "result": "PASS-OLD-ACCEPTS-NEW-REFUSES-EXPIRED-WALLET"
+      },
+      {
+        "path": "/tos/build/br1-localnet/durable-crash/VERDICT.json",
+        "bytes": 588,
+        "sha256": "1882fdf0ab6ee49a830d573016b5f1dcf3a2b32cd5c425fdf949f2c8b2830b8d",
+        "result": "PASS-EXACT-ORIGINAL-EXECUTION-WITHOUT-RESEND"
+      },
+      {
+        "path": "/tos/build/br1-local-faults/DURABLE-SENSITIVITY.json",
+        "bytes": 249,
+        "sha256": "302bf1ddda7478996a4b7b1072cbdffd2593dff2671e12df61d2993c5fb60d99",
+        "result": "PASS"
+      }
+    ],
+    "scope": "Lost-reply and D expiry use the #388 ELF. C crash also validates the same gate/control against experimental nonacceptance-provider code; it does not expand #388 provider acceptance."
+  }
 }
