@@ -6,6 +6,7 @@ mod config;
 mod evidence;
 mod funding;
 mod identity;
+mod nonacceptance;
 mod pinned_helper;
 mod prepared;
 mod private_io;

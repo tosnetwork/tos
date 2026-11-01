@@ -102,8 +102,28 @@ Finality acquisition is limited to 16 predecessor transactions per account and
 top-ups have known leaf increments. Intervening bounces or unsupported mutations
 refuse rather than guessing a leaf index. No terminal refusal is inferred from
 expiry, an RPC error, a spent nullifier or source-wallet observation alone;
-unavailable evidence remains unknown. This increment does not yet supply every
-terminal-refusal/liveness path.
+unavailable evidence remains unknown.
+
+One terminal nonacceptance path is implemented for newly prepared messages.
+Prepare retains the proven funding-wallet transaction head and logical time
+before signing. After the signed wallet deadline, a native proven wallet state
+must have the same sequence, head hash and logical time, and its **wallet shard
+block time** must be at least the signed expiry. A newer masterchain timestamp
+alone cannot close an older shard's acceptance window. The pinned V3 code
+rejects expiry at or before its execution time. An unchanged head through that
+window proves this exact external message was never accepted and cannot later
+execute. Expiry or an RPC/source-wallet assertion by itself is insufficient.
+
+The refusal receipt and its full public witness are retained atomically with
+retiring the native lease and invalidating old permits. Old bytes, quote claims,
+slots and replay tombstones remain. The existing terminal-refusal protocol then
+releases the Python job's input locks without importing a fee. Retained receipts
+are bounded to 16 KiB each and at most the 32 retained leases; they can be replayed
+historically after later wallet activity, including while RPC is unavailable.
+Legacy records without the pre-signing head, unsupported cache formats, changed
+heads/sequences and shard states before expiry remain unknown. Never manufacture
+a baseline from today's wallet state or reset custody to release a reservation.
+This does not implement every destination failure or liveness path.
 
 The full C2 matrix remains open: forced gas/action failure, every crash/write
 boundary, adversarial failover and refusal recovery, Bond retirement/slashing,

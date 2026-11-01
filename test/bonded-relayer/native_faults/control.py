@@ -8,8 +8,11 @@ import base64
 import dataclasses
 import hashlib
 import json
+import os
+import socket
 import sqlite3
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -202,10 +205,105 @@ def expiry(args, config, request):
         )
 
 
+def refusal(args, config, request):
+    """Audit the proven refusal, retained witness and released reservations."""
+    identity = Request.parse(encode(request)).identity
+    with sqlite3.connect(f"file:{config['journal']}?mode=ro", uri=True) as database:
+        database.row_factory = sqlite3.Row
+        job = database.execute("SELECT * FROM jobs WHERE id=?", (identity,)).fetchone()
+        locks = database.execute(
+            "SELECT count(*) FROM input_locks WHERE job=?", (identity,)
+        ).fetchone()[0]
+    if job is None or job["state"] != "rejected" or locks != 0:
+        raise RuntimeError("original job has not proven refusal and released input locks")
+    directory = Path(config["state_dir"])
+    with sqlite3.connect(f"file:{directory / 'leases.db'}?mode=ro", uri=True) as database:
+        sequence, live, sent, record = database.execute(
+            "SELECT sequence,live,sent,record FROM leases WHERE request=?", (identity,)
+        ).fetchone()
+        retained = json.loads(
+            database.execute(
+                "SELECT receipt FROM refusals WHERE request=?", (identity,)
+            ).fetchone()[0]
+        )
+        permits = database.execute(
+            "SELECT count(*) FROM permits WHERE request=? AND used=0", (identity,)
+        ).fetchone()[0]
+        credits = database.execute(
+            "SELECT count(*) FROM fee_notes WHERE note_body=?", (request["fee_note_body"],)
+        ).fetchone()[0]
+    record = json.loads(record)
+    witness, evidence = retained["witness"], retained["evidence"]
+    if retained["schema"] != "tos.br1.native-nonacceptance.v1":
+        raise RuntimeError("unsupported refusal witness")
+    if hashlib.sha256(encode(witness)).hexdigest() != evidence["proof_digest"]:
+        raise RuntimeError("retained witness digest")
+    if not (
+        witness["wallet_shard_time"] >= witness["wallet_expiry"]
+        and witness["wallet_head"] == record["funding_head_hash"]
+        and witness["pre_signing_lt"] == record["funding_head_lt"]
+        and witness["wallet_sequence"] == sequence
+        and witness["request"] == identity
+        and witness["source_external"] == job["message_hash"]
+        and live == sent == permits == credits == 0
+    ):
+        raise RuntimeError("before-RPC refusal did not retain exact bindings and release safely")
+    with ExitStack() as cleanup:
+        if args.cache_without_rpc:
+            # Stop the unit explicitly before this opt-in configuration fault.
+            with socket.socket() as probe:
+                if probe.connect_ex(("127.0.0.1", config["port"])) == 0:
+                    raise RuntimeError("stop the HTTP worker before the RPC-unavailable control")
+            provider = directory / "provider.json"
+            original = provider.read_bytes()
+            write_new(args.out / "provider-original.json", json.loads(original))
+
+            def replace(raw):
+                with tempfile.NamedTemporaryFile(dir=directory, delete=False) as stream:
+                    stream.write(raw)
+                    temporary = stream.name
+                os.replace(temporary, provider)
+
+            cleanup.callback(replace, original)
+            changed = json.loads(original)
+            changed["rpc_url"] = "http://127.0.0.1:1/jsonRPC"
+            replace(encode(changed))
+        program = PinnedProgram(
+            Path(config["backend"]), config["backend_sha256"], directory, timeout=30
+        )
+        cleanup.callback(program.close)
+        rpc = NativeRPC(program)
+        payload = {
+            "release": dataclasses.asdict(config["release"]),
+            "request": request,
+            "prepared": NativeAdapter._prepared(Engine._prepared(job)),
+        }
+        for _ in range(2):
+            if rpc.call("evidence", payload) != evidence:
+                raise RuntimeError("cached refusal changed after later wallet activity")
+    write_new(
+        args.out / "VERDICT.json",
+        {
+            "result": "PASS-PROVEN-NONACCEPTANCE-AND-CACHED-REFUSAL",
+            "request_id": identity,
+            "native_sequence": sequence,
+            "native_lease_retired": True,
+            "python_input_locks_released": True,
+            "fee_imports_for_refused_request": credits,
+            "unused_old_permits": permits,
+            "cached_refusal_replays": 2,
+            "rpc_unavailable": args.cache_without_rpc,
+            "witness": witness,
+        },
+    )
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--mode", choices=("submit", "reconcile", "expiry", "expiry-resume"), required=True
+        "--mode",
+        choices=("submit", "reconcile", "expiry", "expiry-resume", "refusal"),
+        required=True,
     )
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--request", type=Path, required=True)
@@ -214,11 +312,12 @@ def main():
     parser.add_argument("--capture", type=Path)
     parser.add_argument("--baseline", type=Path)
     parser.add_argument("--baseline-sha256")
+    parser.add_argument("--cache-without-rpc", action="store_true")
     args = parser.parse_args()
     if args.mode.startswith("expiry"):
         if not all((args.baseline, args.baseline_sha256)):
             parser.error("expiry requires a pinned baseline")
-    elif not all((args.token, args.capture)):
+    elif args.mode != "refusal" and not all((args.token, args.capture)):
         parser.error("submit/reconcile require private token file and capture directory")
     args.out.mkdir(mode=0o700, parents=False, exist_ok=True)
     if args.out.stat().st_mode & 0o077:
@@ -229,6 +328,8 @@ def main():
         parser.error("fault controls require isolated global id 3")
     if args.mode.startswith("expiry"):
         expiry(args, config, request)
+    elif args.mode == "refusal":
+        refusal(args, config, request)
     else:
         reconcile(args, config, request)
     print("BR1_NATIVE_FAULT_CONTROL_PASS", args.mode)

@@ -120,7 +120,7 @@ pub async fn prepare(
         .await?;
     let bytes = write_boc(&message)?;
     let record = protocol::canonical(
-        &json!({"quote":payload["quote"],"slot":slot,"issued_at":issued,"funding":funding,"sequence":sequence,"acceptance_b64":STANDARD.encode(&acceptance)}),
+        &json!({"quote":payload["quote"],"slot":slot,"issued_at":issued,"funding":funding,"sequence":sequence,"funding_head_hash":hex::encode(wallet_state.last_transaction_hash()),"funding_head_lt":wallet_state.evidence().account.last_trans_lt,"acceptance_b64":STANDARD.encode(&acceptance)}),
     )?;
     store.persist_prepared(&candidate.identity, &bytes, &record)?;
     Ok(
@@ -287,13 +287,16 @@ pub fn validate(
 
 /// Called only on the immutable, previously validated signed wallet message.
 /// Historical validation deliberately does not depend on wall-clock time.
-pub fn require_live_wallet(bytes: &[u8], now: u64, remaining: u64) -> Result<()> {
+pub fn wallet_expiry(bytes: &[u8]) -> Result<u32> {
     let message = Message::construct_from_cell(crate::candidate::ordinary_boc(bytes)?)?;
     let mut body = message.body().ok_or_else(|| anyhow::anyhow!("funding body absent"))?.clone();
     body.get_next_bytes(64)?;
     body.get_next_i32()?;
     body.get_next_u32()?;
-    require_wallet_deadline(body.get_next_u32()?, now, remaining)
+    body.get_next_u32()
+}
+pub fn require_live_wallet(bytes: &[u8], now: u64, remaining: u64) -> Result<()> {
+    require_wallet_deadline(wallet_expiry(bytes)?, now, remaining)
 }
 
 fn require_wallet_deadline(expiry: u32, now: u64, remaining: u64) -> Result<()> {

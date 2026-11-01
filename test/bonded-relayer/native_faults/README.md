@@ -134,3 +134,35 @@ D used the pinned #388 ELF and remained stopped/drained after its signed,
 never-sent case. Its old/new TTL comparison passed. Historical candidate
 files eventually expire; a new acceptance run needs fresh quoted client input,
 not a replay of an old submit or a database reset.
+
+## Proven nonacceptance after the before-RPC interruption
+
+The provider's newer recovery implementation retains the pre-signing funding
+head and requires a native proof of the unchanged wallet shard at or after
+expiry. After `expiry` succeeds, restart that disposable worker and wait for its
+original UNKNOWN job to become rejected; never submit a replacement to provoke
+this transition. The native refusal receipt retains its witness and digest.
+The audit below is read-only for journals and signatures. `--cache-without-rpc`
+requires the HTTP worker stopped, saves a private provider-config backup,
+temporarily makes RPC unavailable, queries the retained proof twice, and restores
+the configuration in a finally block. The helper never edits journal rows.
+
+```sh
+systemctl --user stop br1-operator-c
+/usr/bin/python3 test/bonded-relayer/native_faults/control.py \
+  --mode refusal --cache-without-rpc \
+  --config /tos/build/br1-localnet/operator-c/service.json \
+  --request /tos/build/br1-localnet/e2e-strict-expiry/strict-expiry-request.json \
+  --out /tos/build/br1-localnet/strict-durable-refusal
+systemctl --user start br1-operator-c
+```
+
+The original case verifies retired native lease, consumed old permits, released
+Python input locks, zero fee imports for the refused candidate, unchanged
+sequence/head/logical-time bindings, and `wallet_shard_time >= wallet_expiry`.
+A subsequent fresh quoted transaction spends the same still-unspent input notes
+through that worker, using the safely released funding sequence. The committed
+gate additionally kills it after that write is accepted; `--mode submit`
+reconciles original bytes with exactly one send/fee import. Native and Python
+tombstones from the refused job are retained. This is isolated local acceptance,
+not public activation approval or full C2 coverage.
