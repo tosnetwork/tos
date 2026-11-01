@@ -1,6 +1,7 @@
 """Real HTTP and SQLite tests with the explicit TEST-ONLY authority fixture."""
 
 import dataclasses
+import errno
 import json
 import socket
 import sys
@@ -55,6 +56,29 @@ class ServiceFixture(unittest.TestCase):
 
 
 class ServiceTests(ServiceFixture):
+    def test_server_restarts_after_active_close_without_sharing_listener(self):
+        server = RelayServer(self.service, ("127.0.0.1", 0))
+        address = server.server_address
+        self.addCleanup(server.server_close)
+        with socket.socket() as competitor:
+            competitor.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            with self.assertRaises(OSError) as refused:
+                competitor.bind(address)
+            self.assertEqual(refused.exception.errno, errno.EADDRINUSE)
+        worker = threading.Thread(target=server.handle_request)
+        worker.start()
+        with socket.create_connection(address, timeout=3) as client:
+            client.sendall(b"GET /v1/health HTTP/1.1\r\nHost: local\r\n\r\n")
+            response = bytearray()
+            while chunk := client.recv(4096):
+                response.extend(chunk)
+        worker.join(timeout=3)
+        self.assertFalse(worker.is_alive())
+        self.assertIn(b"200", response.split(b"\r\n", 1)[0])
+        server.server_close()
+        replacement = RelayServer(self.service, address)
+        replacement.server_close()
+
     def test_disabled_is_default_and_is_not_production_approval(self):
         service = Service(self.engine, fee=7, funding_cap=100)
         self.assertEqual(service.handle("POST", "/v1/quote", b"{}")[0], 503)
