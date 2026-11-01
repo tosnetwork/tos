@@ -11,8 +11,9 @@
 //                     finalize per slot, skips only, leader windows only, and the mix a
 //                     running chain records). Reported, and bounded.
 //   reconcile-scaling the startup check between a session's journal and its log, timed at
-//                     2^15 and 2^17 decisions: the time must grow linearly (a ratio below 8
-//                     for 4 times the input, where a quadratic check gives about 16).
+//                     2^17 and 2^19 decisions: the time must grow linearly (a ratio below 8
+//                     for 4 times the input, where a quadratic check gives about 16). Both
+//                     sizes overflow the cache, so the ratio measures growth, not cache misses.
 //   full-restart      a log of exactly 2^20 records (the ceiling) is reloaded through a real
 //                     signing ledger and checked against a journal holding every one of its
 //                     votes. The wall time of each step and the peak resident memory are
@@ -282,10 +283,13 @@ int run_reconcile_scaling() {
     const auto first = simplex::first_signed_index(entries, {false, true, true, false});
     require(first.size() == 1 && first.at(decisions[0]) == 1, "the first signed entry is chosen");
   }
-  const double small = time_reconcile(std::size_t{1} << 15);
-  const double large = time_reconcile(std::size_t{1} << 17);
+  // Both sizes are past the last-level cache. A small size that fits in cache makes every
+  // lookup cheaper than at the large size, which inflates a linear check's ratio toward the
+  // limit on a shared machine.
+  const double small = time_reconcile(std::size_t{1} << 17);
+  const double large = time_reconcile(std::size_t{1} << 19);
   const double ratio = large / std::max(small, 1e-6);
-  std::printf("reconcile 2^15: %.4f s, 2^17: %.4f s, ratio %.2f (linear 4, quadratic 16)\n", small, large, ratio);
+  std::printf("reconcile 2^17: %.4f s, 2^19: %.4f s, ratio %.2f (linear 4, quadratic 16)\n", small, large, ratio);
   require(ratio < 8.0, PSTRING() << "the startup check grows faster than linearly: ratio " << ratio);
   std::printf("DECISION_LOG_SCALE_OK reconcile-scaling\n");
   return 0;
