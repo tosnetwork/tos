@@ -2,10 +2,12 @@
 #pragma once
 
 #include <algorithm>
+#include <limits>
 #include <memory>
 #include <vector>
 
 #include "block/block-auto.h"
+#include "common/errorcode.h"
 #include "validator-engine/wallet-index-writer.h"
 #include "validator-engine/wallet-index.h"
 
@@ -13,6 +15,8 @@
 #include "index-progress.h"
 #include "index-reader.h"
 #include "index-replay.h"
+#include "index-verify.h"
+#include "index-window.h"
 
 namespace tos::services {
 using tos_wallet_index::WalletIndexDb;
@@ -26,8 +30,15 @@ class ReplayLoop {
  public:
   // `ceiling`, when nonzero, is the last masterchain block replay goes to.
   // It never makes the index ready: readiness is reaching the source tip.
-  ReplayLoop(IndexReader& reader, Prefetcher& prefetcher, Progress& progress, ReplayStats& stats, uint32_t ceiling)
-      : reader_(reader), prefetcher_(prefetcher), progress_(progress), stats_(stats), ceiling_(ceiling) {
+  // `checked` reads the window base's block for its record.
+  ReplayLoop(IndexReader& reader, Prefetcher& prefetcher, Progress& progress, ReplayStats& stats, uint32_t ceiling,
+             VerifySource& checked)
+      : reader_(reader)
+      , prefetcher_(prefetcher)
+      , progress_(progress)
+      , stats_(stats)
+      , ceiling_(ceiling)
+      , checked_(checked) {
   }
   // Nothing to do until the source moves: replay is at its limit (the tip,
   // or the ceiling below it) and the last drain did no work.
@@ -81,6 +92,7 @@ class ReplayLoop {
       return td::Status::Error("source has no applied masterchain block");
     progress_.tip = tip.seqno();
     progress_.tip_known = true;
+    observed_head_ = tip;
     if (checkpoint_.committed != tip)
       progress_.ready = false;
     TRY_RESULT(top, reader_.handle(tip));
@@ -88,22 +100,29 @@ class ReplayLoop {
     heads_ = std::move(heads);
     auto db = tos_wallet_index::wallet_index_db();
     if (!initialized_) {
-      auto first = reader_.masterchain(1);
-      if (first.is_error()) {
-        return td::Status::Error(PSTRING() << "source has no masterchain block 1 (" << first.error().message()
-                                           << "); a node that joined at a persistent state cannot serve a full "
-                                              "replay: prepare the source as described in "
-                                              "doc/standalone-wallet-services.md, \"Preparing the source node\"");
-      }
-      auto anchor = first.move_as_ok();
-      TRY_STATUS(db->initialize_replay(anchor->id()));
       TRY_RESULT(stored, db->replay_checkpoint());
-      CHECK(stored);
-      checkpoint_ = stored.value();
-      if (checkpoint_.committed.seqno()) {
-        TRY_RESULT(committed, reader_.masterchain(checkpoint_.committed.seqno()));
-        if (committed->id() != checkpoint_.committed)
+      if (stored && stored.value().committed.seqno() != 0) {
+        // A matching full block identity binds the restored checkpoint to
+        // this source chain. Historical block 1 is needed only by a fresh
+        // replay; a source retaining this checkpoint and its successors can
+        // resume a trusted index snapshot without retaining the whole chain.
+        auto resumed = stored.value();
+        TRY_RESULT(committed, reader_.masterchain(resumed.committed.seqno()));
+        if (committed->id() != resumed.committed || !committed->is_applied())
           return td::Status::Error("source differs from committed replay chain");
+        checkpoint_ = resumed;
+      } else {
+        auto first = reader_.masterchain(1);
+        if (first.is_error()) {
+          return td::Status::Error(PSTRING() << "source has no masterchain block 1 (" << first.error().message()
+                                             << "); a fresh replay needs the complete archive or a verified "
+                                                "index snapshot: see doc/standalone-wallet-services.md");
+        }
+        auto anchor = first.move_as_ok();
+        TRY_STATUS(db->initialize_replay(anchor->id()));
+        TRY_RESULT(initialized, db->replay_checkpoint());
+        CHECK(initialized);
+        checkpoint_ = initialized.value();
       }
       initialized_ = true;
       progress_.cursor = checkpoint_.committed.seqno();
@@ -196,7 +215,7 @@ class ReplayLoop {
       Wc0IndexResult result;
       {
         StageTimer timer(stats_.walk_us);
-        result = tos_wallet_index::wc0_index_block(std::move(block), {}, handle->id(), true);
+        result = tos_wallet_index::wc0_index_block(std::move(block), {}, handle->id(), true, next);
       }
       if (result != Wc0IndexResult::Done) {
         if (drain() && result == Wc0IndexResult::AtPendingCap)
@@ -207,11 +226,67 @@ class ReplayLoop {
     }
     auto committed = checkpoint_;
     committed.committed = master->id();
+    // The retention window base moves with the checkpoint, so the window and
+    // the replayed position always agree. A handle without a generation time
+    // (never so for an applied block of a real source) leaves it where it is.
+    TRY_RESULT(stored_base, db->get_window_base());
+    uint32_t newest_time = master->inited_unix_time() ? master->unix_time() : 0;
+    TRY_RESULT(window, advance_window_base(stored_base, next, newest_time, tos_wallet_index::kEventRetentionSeconds,
+                                           [this](uint32_t seqno) -> td::Result<td::optional<uint32_t>> {
+                                             auto handle = reader_.masterchain(seqno);
+                                             if (handle.is_error()) {
+                                               if (handle.error().code() == ErrorCode::notready) {
+                                                 return td::optional<uint32_t>{};
+                                               }
+                                               return handle.move_as_error();
+                                             }
+                                             if (!handle.ok()->inited_unix_time()) {
+                                               return td::Status::Error("masterchain handle has no generation time");
+                                             }
+                                             return td::optional<uint32_t>{handle.ok()->unix_time()};
+                                           }));
+    if (window.stalled && window.base != stalled_base_) {
+      // Reported once per position: the index keeps more history than the
+      // window until the missing block returns or a retained expired base
+      // can be authenticated below.
+      LOG(WARNING) << "window base stalled at " << window.base + 1
+                   << ": the source does not hold that masterchain block";
+      stalled_base_ = window.base;
+    }
+    // The base moves only with its block's record, read from this node's
+    // checked block. A block whose bytes the source does not hold keeps the
+    // base where it is (more history, never less); a block that does not
+    // decode is an error.
+    uint32_t base = window.base;
+    td::optional<tos_wallet_index::WindowBaseRecord> base_record;
+    if (window.stalled) {
+      TRY_RESULT(verification, db->get_verification_state());
+      if (verification == tos_wallet_index::VerificationState::Full) {
+        TRY_RESULT(retained,
+                   find_retained_window_base(checked_, observed_head_, next, base, newest_time, &stop_requested));
+        if (retained) {
+          base_record = std::move(retained);
+          base = base_record.value().block.seqno();
+          LOG(WARNING) << "window base resumes at authenticated retained block " << base;
+        }
+      }
+    }
+    if (base != stored_base && !base_record) {
+      TRY_RESULT_ASSIGN(base_record, read_base_record(checked_, base));
+      if (!base_record) {
+        if (base != unrecorded_base_) {
+          LOG(WARNING) << "window base held at " << stored_base
+                       << ": the source does not hold the bytes of masterchain block " << base;
+          unrecorded_base_ = base;
+        }
+        base = stored_base;
+      }
+    }
     {
       StageTimer timer(stats_.commit_us);
       stats_.commits.fetch_add(1, std::memory_order_relaxed);
       std::lock_guard<std::mutex> guard(db->write_mutex());
-      TRY_STATUS(db->commit_replay_checkpoint(committed));
+      TRY_STATUS(db->commit_replay_checkpoint(committed, base, base_record));
     }
     checkpoint_ = committed;
     progress_.cursor = committed.committed.seqno();
@@ -235,7 +310,13 @@ class ReplayLoop {
   bool initialized_ = false;
   bool background_progress_ = false;
   bool at_limit_ = false;
+  // The base last reported as stalled, so a stall is logged once.
+  uint32_t stalled_base_ = std::numeric_limits<uint32_t>::max();
+  // The last base not moved to for want of its block's bytes, logged once.
+  uint32_t unrecorded_base_ = std::numeric_limits<uint32_t>::max();
+  VerifySource& checked_;
   WalletIndexDb::ReplayCheckpoint checkpoint_;
+  BlockIdExt observed_head_;
   std::vector<BlockIdExt> heads_;
 };
 

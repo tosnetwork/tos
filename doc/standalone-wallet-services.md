@@ -3,7 +3,7 @@
 Build the services from the same checkout as the node:
 
 ```sh
-cmake --build build --target tos-rpc tos-wallet-index validator-engine
+cmake --build build --target tos-rpc tos-wallet-index tos-wallet-index-snapshot validator-engine
 ```
 
 The deployment has three independent processes. A validator or a non-validating
@@ -75,14 +75,18 @@ method-not-found and are omitted from its `/api-info` listing.
 
 ## Replay, retention and restarts
 
-A fresh index starts at masterchain block 1. It follows the source shard-client
+A fresh index starts at masterchain block 1 when the source holds it, and is
+otherwise built from the retention window's blocks (see *Building a fresh index
+from the window* below). Replay follows the source shard-client
 cursor, which represents applied masterchain and referenced shard data. Every
 interval walks full shard block identities, including split/merge predecessors,
 and processes parents before children. It verifies block root hashes and refuses
 a different chain anchor or a discontinuous masterchain sequence.
 
-Keep the complete block archive from block 1 on the source, including through
-bootstrap, recovery and a full rebuild. The default seven-day archive retention
+For a full replay from block 1, keep the complete block archive on the source,
+including through bootstrap, recovery and a full rebuild. A restored index
+snapshot instead needs its committed checkpoint and every following block, as
+described below. The default seven-day archive retention
 is insufficient for rebuilding an older chain: configure `--archive-ttl` to cover
 the chain's full age and the planned rebuild/outage period, and monitor available
 disk space. An index process cannot hold back another process's archive pruning.
@@ -105,10 +109,40 @@ The owning node still treats an index it cannot open as a fatal local fault.
 
 A node that joins the network the default way starts at the newest persistent
 state, so its database never contains masterchain block 1, and validators no
-longer serve the oldest archive packages to a node that asks for them. Such a
-node can serve liteserver reads but cannot be the source of a fresh index. The
-index then logs `source has no masterchain block 1` every few seconds and reports
-`"initialized": false` in `/readyz`; nothing is indexed and nothing is lost.
+longer serve the oldest archive packages to a node that asks for them. A fresh
+index on such a node is built from the window's blocks the node holds, which
+covers the retention window (or less, from the oldest block the node holds, as
+the verified horizon). A full replay from block 1 needs a source prepared as
+below.
+
+#### Building a fresh index from the window
+
+At startup a fresh index is held quarantined: it answers no index query and is
+not ready until the source has applied a masterchain block and shown whether it
+holds block 1. If it does, the index replays from block 1. If not, it is built:
+
+1. The build binds to the source's applied tip `H`, its full identity and its
+   shard state roots, and records the build, quarantined, before any row. A
+   build whose `H` or state roots the source no longer has is replaced: the
+   replacement is computed first, then swapped in with every built row cleared,
+   in one batch.
+2. Interval by interval from the window base up to `H`, each masterchain block
+   linked to the one below it, every basechain transaction's history and age
+   rows are written as replay writes them, rows the base already referenced
+   left out. An account keeps its newest 10,000 rows per interval, then
+   replay's per-account trim applies. One interval holds at most 64 MiB, each
+   row charged its transaction's cells; a larger interval stops the build.
+3. One batch then publishes the replay checkpoint, with block 1's identity read
+   from `H`'s masterchain state (the state `H`'s block names; anything else
+   stops the service), the window base with its block's record, and the
+   verification and block-pass records, as **partial**. Ownership is then
+   derived at `H` as for an untrusted import (below), and the index becomes
+   full.
+
+A restart resumes the build from its last interval, or the ownership
+derivation after the publication; the index is served only once full. A gap in
+the window, a block not linked to the one below it, or an index directory that
+holds data but no build record stops the service with status 1.
 
 To prepare a source for a full replay:
 
@@ -129,7 +163,8 @@ To prepare a source for a full replay:
    block 1 has been applied. Check progress with `GET /readyz` (below).
 
 An existing node that joined at a persistent state cannot be converted in place:
-its database starts after block 1. Prepare a second node as above.
+its database starts after block 1. Prepare a second node as above, or restore a
+trusted index snapshot whose checkpoint is retained by that node.
 
 Index entries and a per-block replay receipt commit in one WAL-synced batch.
 After all blocks in an interval are committed, another atomic batch advances the
@@ -179,7 +214,8 @@ index's durable cursor is refused (`durable index progress is past the replay
 ceiling`): replay cannot go back, so such a run would never settle. To compare two
 replays, stop both once `settled` is true at the same ceiling, then print each
 index with `tos-wallet-index-dump --index-dir <data-dir>/index` (read-only; one
-line per key and the digest of all of them) and compare the output.
+line per key and the digest of all of them) and compare the output. To compare
+indexes that were not replayed the same way, use the canonical dump below.
 
 `index_state.replay` in token and NFT responses carries the same fields except
 `replay_stats`. Token and NFT responses
@@ -187,7 +223,57 @@ retain `index_state` and add `index_state.replay`. Pending, parked, lost or
 unfinished candidates still make `index_state.complete` false independently of
 block catch-up. Ownership discovery covers accounts nominated by transactions;
 custom genesis token/NFT contracts that never transact are outside that coverage.
-Event retention remains bounded by the existing index's age and per-account limits.
+Event retention is bounded per account (10,000 events) and by a window of
+masterchain blocks. The window base advances toward the last masterchain block
+generated more than seven days before the newest replayed one. Events whose
+shard block that base or an earlier masterchain block referenced are pruned. In each shard
+that is every transaction at or below the end lt of the shard tip the base
+names, so an importer can check a history window against the chain. The base
+moves only forward, with the replay checkpoint. The ordinary time scan stops
+at a masterchain block the source does not hold and logs
+`window base stalled at <seqno>`.
+
+A **full** index can resume retention across that gap, including after a
+trusted restore whose base precedes the recipient's retained archive. A bounded
+search makes at most 32 additional checked-block probes per replayed interval
+for a held, applied block strictly older than the seven-day cutoff and below
+the new checkpoint. Its full identity must also be an ancestor recorded in
+the latest observed applied head's masterchain state, with that state bound
+to the head's checked block. Only then are the new base, its exact shard-tip
+record and the checkpoint committed together; the log reports
+`window base resumes at authenticated retained block <seqno>`. Until a held
+block is old enough, the imported history is retained. Missing probes may
+retain extra history, and unavailable or mismatching proof never authorizes
+pruning. Quarantined and partial indexes do not use this fallback: their
+window stays bound to the verification in progress.
+
+Schema version 4 keys the age index by that masterchain reference; an index of
+an earlier version is reset on open.
+
+The base is stored with its block's record: the masterchain block's full
+identity and the basechain shard tips it names, read from this node's own
+checked block and written in the same batch as the base, whenever replay, the
+verification of an import or a build moves it. Replay does not move the base to
+a block whose bytes the source does not hold (it logs `window base held at
+<seqno>`); a block that does not decode is an error. History reads (the list,
+every page of it, and single events) are served from one view of the index:
+only rows above the bound the record sets for the account's shard, and only
+each account's newest 10,000 such rows, so rows the pruner has not reached yet
+are never served. A nonzero base without a valid record (an index written
+before records existed) has its record read from the node's block at startup;
+until it has one, history reads fail with `account history unavailable` and
+`/readyz` is not ready. Finding an account's newest 10,000 rows reads up to
+10,001 keys for an account at the cap.
+
+To compare indexes built different ways, `tos-wallet-index-dump --canonical
+--index-dir <data-dir>/index --head <seqno>` prints what the index serves over
+its window: the schema, the checkpoint and the window base with their full
+identities, each account's served history, the current token entries and the
+NFT entries without their verdict lts, then `sha256=` over all of it, and
+`anchor_verified=` outside the digest. `--head` must be the checkpoint's seqno.
+`--window-base-from <other index>` takes the window from another stopped index
+at the same checkpoint and may only narrow it. A nonzero base without its
+record is refused.
 
 ## Migrate or rebuild
 
@@ -201,7 +287,250 @@ Event retention remains bounded by the existing index's age and per-account limi
 
 For a rebuild, stop the index service and select a new data directory. The source
 node and public RPC can keep running. Do not delete or overwrite the node database.
-The new index replays history; it does not merely erase the old warning.
+The new index replays history; it does not merely erase the old warning. For a
+recent trusted index checkpoint, the snapshot procedure below replaces the full
+historical replay with transfer and replay of the remaining tail.
+
+### Bootstrap or recover from an index snapshot
+
+`tos-wallet-index-snapshot` transfers the standalone index's logical records,
+including its schema, full masterchain anchor/checkpoint identities, replay
+receipts, pending work and completeness flags. It copies no node database,
+validator key, signing history or secondary-reader files. Use the same software
+release on donor and recipient; a different index schema is refused without
+resetting or migrating the donor.
+
+This is a **trusted index publisher** procedure. Obtain the SHA-256 digest from
+an authenticated operator channel independently of the file. The digest binds
+the exact bytes you approved; it does not prove that the publisher indexed
+historical ownership/events correctly. The resumed service separately checks
+that the complete checkpoint block identity is applied on its source chain.
+It then verifies every subsequent interval through the usual replay path.
+
+1. On a healthy donor, wait for `/readyz` to report `caught_up: true` and inspect
+   token completeness. Stop the index service cleanly. The node can keep running.
+   Export while the index is stopped:
+
+   ```sh
+   build/services/tos-wallet-index-snapshot --action create \
+     --index-dir /srv/tos-wallet-index/index \
+     --snapshot /srv/snapshots/wallet-index.snapshot
+   ```
+
+   The output file must not exist; its parent directory must exist. Export takes
+   the RocksDB owner lock and fails if the index service is still running. It
+   reports `sha256`, byte/record counts, and the full `anchor` and `checkpoint`.
+   Publish that receipt with the file and retain the donor/source release ID.
+   Restart the donor after export. Export does not clear known incompleteness;
+   a donor needing a rebuild is unsuitable as a recovery source.
+
+2. Prepare a source node on the recipient that retains the reported checkpoint
+   **and every masterchain/shard block after it**. A node joined at a persistent
+   state is sufficient only if that state is at or before the checkpoint and
+   the checkpoint is actually applied/available locally. A later init block
+   does not supply missing earlier history. Use a newer matching snapshot or
+   restore the missing archive if necessary. Keep archive retention longer than
+   the maximum snapshot age, transfer time, replay time and planned outage.
+
+   The recipient need not retain the trusted snapshot's older window base to
+   resume replay. It keeps that history until an expired retained block can
+   authenticate a newer base, as described under *Replay, retention and
+   restarts*. Joining at a later persistent state therefore does not itself
+   discard history that is still inside the retention window.
+
+3. Transfer the file, obtain the trusted digest, and verify it. Verification is
+   read-only and does not open an index database:
+
+   ```sh
+   build/services/tos-wallet-index-snapshot --action verify \
+     --snapshot /srv/snapshots/wallet-index.snapshot \
+     --sha256 TRUSTED_SHA256_HEX
+   ```
+
+4. Create a new service data directory, keeping any previous index for rollback,
+   and restore into its **absent** `index` subdirectory:
+
+   ```sh
+   mkdir /srv/tos-wallet-index-new
+   build/services/tos-wallet-index-snapshot --action restore \
+     --snapshot /srv/snapshots/wallet-index.snapshot \
+     --sha256 TRUSTED_SHA256_HEX \
+     --index-dir /srv/tos-wallet-index-new/index
+   ```
+
+   The parent must have at least three times the snapshot size plus 128 MiB
+   free, in addition to the already stored input, for staging and compaction.
+   This is a conservative admission check, not a reservation against other
+   processes; disk errors still fail the import. Existing files, directories
+   and symlinks at the destination are never replaced. Restore verifies the
+   file before opening a database, hashes its bytes again while importing
+   through the same descriptor, syncs the completed database, then publishes
+   it with one atomic no-replace rename on Linux/macOS. It performs no network
+   lookup and does not claim that the index is ready.
+
+5. Start `tos-wallet-index` with the new `--data-dir` and the prepared source.
+   The first `/readyz` reports the imported durable cursor. Readiness stays
+   false until the source checkpoint identity is checked, the tail is replayed,
+   and a fresh tip observation confirms catch-up. A missing checkpoint pauses
+   replay; a different root/file hash or an unapplied checkpoint is refused.
+   A fresh index is built from the window when the source lacks block 1
+   (above); a full replay still requires it.
+   Inspect token completeness before switching the public RPC backend.
+
+#### From an untrusted publisher
+
+A snapshot whose publisher you do not trust is imported without a digest and
+checked against the recipient node's own chain instead:
+
+```sh
+build/services/tos-wallet-index-snapshot --action import-untrusted \
+  --snapshot /srv/snapshots/wallet-index.snapshot \
+  --index-dir /srv/tos-wallet-index-new/index
+```
+
+The import keeps only the schema, the replay checkpoint and the account
+history rows; every ownership, queue and progress record is dropped, and the
+index is left **quarantined**. `tos-wallet-index` then verifies it before it
+serves anything. While it does, `/readyz` answers 503 with
+`"verification":"quarantined"` and every index query is refused.
+
+1. **Checkpoint.** The checkpoint must be a masterchain block the node holds and
+   has applied, with the same root and file hash. A different identity is
+   refused; a checkpoint below the node's oldest block is refused as a snapshot
+   older than this node's history; one the node has not reached yet waits.
+   The checkpoint's anchor (masterchain block 1) is checked against the node's
+   own block 1 when the node holds it, and a different one is refused. A node
+   that joined later cannot check it: the anchor is then untrusted metadata,
+   and every snapshot receipt prints it as `anchor=<id> (unverified)`, as it
+   does for any imported index not yet verified, a re-export or a restore of
+   one included.
+2. **Window.** The service walks the node's masterchain blocks down from the
+   checkpoint, each readable and linked to the one above it (the previous block
+   its checked bytes name, which the node's handle must record too), to the retention
+   window's base, or to the first block the node does not hold. That block is
+   the **verified horizon**. Each history row is given the masterchain block
+   that first referenced it, from those blocks' shard tips; rows the horizon
+   already referenced are dropped, and a row no block up to the checkpoint
+   references refuses the snapshot. The walk keeps at most 256 MiB of shard
+   tips; a longer window is not verified.
+3. **Replay** from the checkpoint to the node's tip, as for any restored index.
+4. **Head check.** Every account's rows above its window bound are checked
+   against the tip's state: the newest row is the account's last transaction
+   and each row is hash-linked to the one before it, down to the window. A
+   changed, omitted, injected or mislabelled row, or in-window history left
+   out entirely, refuses the snapshot and names the account. An account created
+   inside the window, or absent from the tip's state, cannot be proven complete
+   from the state and is marked for a pass over the window's blocks.
+
+The result is **partial**, never full: the marked accounts, and token and NFT
+ownership, which is not yet derived from the verified state, are still owed.
+The service then holds replay, its token drain and its pruning at that head
+and checks the window's own blocks against the index (`/readyz` reports the
+step in `verification_phase` and stays 503 throughout):
+
+5. **Authenticate** the masterchain blocks from the head down to the window
+   base, each the one its successor's checked bytes name.
+6. **Collect**, interval by interval, every transaction of the accounts the
+   head state cannot vouch for (absent from it, or marked), each shard block's
+   bytes checked against its file and root hash.
+7. **Compare** per account: the newest 10,000 rows above the account's bound
+   must equal the collected ones in logical time, hash and number. Equal
+   clears the mark; a missing, extra or changed row, or an account the blocks
+   hold but the snapshot left out entirely, refuses the snapshot and names the
+   account. A gap in the window or a block that is not the one the head names
+   stops the service (status 1); it is never skipped.
+
+Each step's progress is recorded with the head, its state roots and the window
+base, so a restart resumes it, and a different head, state or base starts it
+again from nothing. While partial the index is not served by default; the
+service keeps verifying. Only a refused index makes it exit (status 2).
+`--allow-partial-verification` serves a partial index with every history
+answer flagged `"history_verified":false`: an account absent from the checked
+state may have had its history omitted and gain new history later, so no
+answer is vouched for until the index is fully verified. A missing event is
+answered with error -32004 carrying `"history_verified":false` in
+`error.data`. Token and NFT answers carry `"ownership_complete":false` in
+`index_state`. `/readyz` reports `verification` and `verified_horizon` (its
+masterchain seqno, generation time and the number of marked accounts). A
+refused index stays refused; import another snapshot into a fresh directory.
+After the block pass replay stays held while ownership is derived at the head:
+
+8. **Derive** the token and NFT ownership of every account with code in the
+   head's states, with the same getters replay runs, a master or collection
+   in another shard read at the same head. Verdicts carry the end lt of the
+   account's shard state. An account without code is skipped. A valid active
+   account whose optional data cell is absent still runs its getters with
+   the VM's normal empty-data semantics; absence alone does not park it.
+   Invalid getter return types produce a definitive negative ownership
+   verdict, including invalid master or collection resolver results, rather
+   than aborting the service. An account whose state does not decode, or a
+   check that reaches no verdict, is parked, never skipped. Virtualization
+   failures remain indeterminate and are retried.
+9. **Reconcile** every recorded token wallet and NFT owner whose account is
+   absent from the head, or holds no code there: its record is removed.
+10. **Drain** the token work still owed (queued and parked candidates, and
+    unfinished blocks) against the head's states only, never a newer one,
+    and without recovering any block's history.
+
+Only when none is owed, nothing is marked unverified, and the index records
+no gap or unfinished block, does it become **full**, in one batch. Candidate
+losses the derivation superseded are cleared then, and their counts are
+logged. A parked candidate that never resolves keeps the index partial and
+held, which `/readyz` reports. A full index is served without flags and
+replay resumes from the head.
+
+A source or database failure during verification is retried, 5 s after the
+first and doubling to at most 5 minutes; `/readyz` stays 503 and reports
+`verification_retry` with the attempts, since when they fail (Unix time) and
+the last error, and the log repeats the same failure at most every 5 minutes.
+A failure retrying cannot clear (a capacity bound, malformed data, or the
+node's own blocks not linking) stops the service with status 1.
+
+A trusted restore transfers the snapshot bytes and replays the blocks since
+its checkpoint. An **untrusted import** also checks the retained window's
+masterchain and shard blocks, compares the history that the head state cannot
+prove, and scans the head's account states to derive ownership through its
+getters. A recent checkpoint shortens tail replay but does not remove this
+window and ownership work. Regularly publish recent snapshots to bound the
+tail by their maximum age. Transfer/import time depends on the index size
+and host I/O; verification additionally depends on window traffic, account
+population and getter work. The tail can catch up only when replay throughput
+exceeds ongoing chain growth. This procedure makes no fixed wall-clock or
+production-throughput promise.
+
+Before publication, errors and SIGTERM remove staging and leave the destination
+absent. SIGKILL/power loss can leave a private `.wallet-index-import-*` sibling
+directory or temporary export file; it is never selected automatically. Remove
+that orphan after confirming no import/export is running and retry with the
+original trusted file. After publication, a failure to sync the parent is
+reported explicitly as **installed/published, durability unconfirmed**; inspect
+and verify that destination before retrying. A second restore always refuses
+an existing destination.
+
+#### Transfer format and resource bounds
+
+The format is `TOSIDX01`, a four-byte big-endian index schema version, then
+strictly increasing unique records, each with big-endian four-byte key/value
+lengths followed by the bytes. An all-zero length pair terminates the stream;
+truncation, trailing bytes, duplicate/out-of-order keys and absent or malformed
+schema/checkpoint metadata are refused. SHA-256 covers the entire file.
+
+The transfer envelope permits keys through 1 KiB (current index keys are at most
+81 bytes) and individual values through 64 MiB. This is an explicit transfer
+limit, not a new consensus or database-record limit: for scale, a million
+34-byte pending-candidate entries plus their header fit under it. Export and
+import both refuse a larger record; the full-replay recovery path remains
+available. Verification uses a 64 KiB chunk buffer plus bounded metadata.
+Import holds one value at a time and a write batch of at most 1 MiB of ordinary
+records or one maximum-size record; RocksDB may copy that batch and has a
+16 MiB write-buffer setting with no block cache. The table-cache eviction target
+is 128 open files; iterators and non-table files can hold additional descriptors,
+so it is not a hard process FD ceiling. Consequently the 64 MiB value
+limit is not a 64 MiB RSS claim. Record count never accumulates in memory, and
+each scan is limited to the file size captured before it starts. Cancellation
+is checked at most every 64 KiB of file I/O and before publication; a current
+RocksDB write/flush must return before cancellation can finish. All database
+handles, batches and file descriptors are scoped to the offline command.
 
 ## Limits and failure handling
 
@@ -269,3 +598,13 @@ current bounded candidate drain without losing its persisted work. The existing 
 backlog and per-block verification gas budgets remain in effect. Disk usage for
 indexed owners follows the account population; event retention is bounded as
 before. Monitor process memory, source archive retention, cursor lag and disk space.
+
+## Review and native acceptance evidence
+
+The [ownership, retained-history and native acceptance evidence](evidence/wallet-index-review/README.md)
+records the repaired getter-decoding and optional-data cases, trusted-restore
+retention recovery, and all thirteen native acceptance outcomes. It includes the
+six additional scenarios, exact tested source commits, real lifecycle
+transaction BOCs, canonical comparisons, reason-specific failures and compiled
+red/green controls. The short disposable-network runs do not replace the
+testnet-replica capacity measurement or the required third-party review.

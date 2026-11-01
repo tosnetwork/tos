@@ -30,7 +30,10 @@
 #include "tos/tos-types.h"
 #include "vm/cells.h"
 
+#include "wallet-index-lineage.h"
+
 namespace td {
+class KeyValue;
 class RocksDb;
 }
 
@@ -50,11 +53,12 @@ constexpr size_t kEventTrimDrainPerPass = 256;
 
 // Global age-based retention. The per-account cap above bounds one account's
 // history but not the number of accounts, so one-transaction accounts would
-// accumulate forever. Events whose block gen_utime is older than this window
-// are dropped regardless of account, so total index size is bounded by the
-// retention window rather than by the count of distinct accounts ever seen.
-// Aligned to the archive TTL. Declared here so the retention test can assert
-// the exact bound.
+// accumulate forever. Events first referenced by a masterchain block at or
+// before the window base (the last one generated this long before the newest
+// replayed) are dropped regardless of account, so total index size is bounded
+// by the retention window rather than by the count of distinct accounts ever
+// seen. Aligned to the archive TTL. Declared here so the retention test can
+// assert the exact bound.
 constexpr uint32_t kEventRetentionSeconds = 7 * 24 * 60 * 60;  // 7 days
 // Extra expired age rows a per-block prune may drop beyond the number added in
 // the block. As with kEventTrimDrainPerPass, a prune pass always removes at
@@ -66,7 +70,7 @@ constexpr size_t kEventPruneDrainPerBlock = 256;
 // none) is reset on open: emptied whole and started again, fresh and
 // forward-only, from the blocks applied from then on. Nothing written under
 // another layout is imported or served.
-constexpr uint32_t kWalletIndexSchemaVersion = 3;
+constexpr uint32_t kWalletIndexSchemaVersion = 4;
 
 // Bound the TVM verification work a single block can demand: token candidates
 // verified per block, the block's own and deferred ones together. Candidates
@@ -198,6 +202,54 @@ enum class TokenVerifyOutcome {
 };
 
 class WalletIndexSnapshot;
+class WalletIndexSnapshotFile;
+
+// How far the index's content is proven against the chain. An index this
+// node built itself, by replay from masterchain block 1 or from a trusted
+// backup of one, is Full. An index imported from an untrusted snapshot starts
+// Quarantined and must not be served until checked against the local node's
+// own head: Partial while some coverage is still owed, Full once nothing is,
+// Refused when the snapshot contradicts the chain.
+enum class VerificationState : uint8_t { Full = 0, Quarantined = 1, Partial = 2, Refused = 3 };
+
+// The window base's masterchain block as this node holds it: its full
+// identity and the basechain shard tips it records. Stored with the base, so
+// the window's lower bound is read with the base it belongs to.
+struct WindowBaseRecord {
+  uint32_t schema = 0;
+  tos::BlockIdExt block;
+  std::vector<WindowShardTip> tips;
+};
+// At most this many tips in one record (one per basechain shard).
+constexpr size_t kMaxWindowBaseTips = 4096;
+// The schema, a full masterchain identity, 1..kMaxWindowBaseTips tips, each
+// a basechain shard, together covering the basechain exactly once.
+td::Status check_window_base_record(const WindowBaseRecord& record);
+
+// The committed window: its base and, when nonzero, its block's record.
+struct HistoryWindow {
+  uint32_t base = 0;
+  td::optional<WindowBaseRecord> record;
+};
+// One account's served history: rows with bound < lt, and lt >= cutoff (the
+// lt of its kMaxEventsPerAccount-th newest such row; 0 when it has fewer).
+struct HistoryFilter {
+  uint64_t bound = 0;
+  uint64_t cutoff = 0;
+  bool serves(uint64_t lt) const {
+    return lt > bound && lt >= cutoff;
+  }
+};
+td::Result<HistoryWindow> read_history_window(td::KeyValue& kv);
+td::Result<HistoryFilter> read_history_filter(td::KeyValue& kv, const HistoryWindow& window,
+                                              const td::Bits256& account);
+// The canonical view of an index in `window`, as lines in key order: each
+// account's served history rows ("event <account> <lt> <cell hash>", newest
+// first), then the current token entries ("token <owner> <master>
+// <wallet>") and the NFT entries ("nft <owner> <item> <collection|->"), the
+// verdict lts they embed left out.
+td::Status for_each_canonical_line(td::KeyValue& kv, const HistoryWindow& window,
+                                   const std::function<td::Status(const std::string&)>& cb);
 
 class WalletIndexDb {
  public:
@@ -208,9 +260,14 @@ class WalletIndexDb {
     tos::BlockIdExt anchor;
     tos::BlockIdExt committed;
   };
+  static td::Result<ReplayCheckpoint> parse_replay_checkpoint(td::Slice value);
   td::Result<td::optional<ReplayCheckpoint>> replay_checkpoint();
   td::Status initialize_replay(const tos::BlockIdExt& anchor);
-  td::Status commit_replay_checkpoint(const ReplayCheckpoint& checkpoint);
+  // Also moves the retention window base (see get_window_base) when given.
+  // `base_record`: the record of the new base's block, required when the
+  // base moves to a nonzero block (see put_window_base).
+  td::Status commit_replay_checkpoint(const ReplayCheckpoint& checkpoint, td::optional<uint32_t> window_base = {},
+                                      const td::optional<WindowBaseRecord>& base_record = {});
   td::Result<bool> replay_block_committed(const tos::BlockIdExt& id);
   td::Status record_replay_block(const tos::BlockIdExt& id);
   // Open (or create) the index DB at `path`. The directory is created if needed.
@@ -296,31 +353,197 @@ class WalletIndexDb {
   // `added_this_block` rows so the bound cannot be outrun. Bounded work per call.
   td::Status trim_events(const HashKey& account, size_t added_this_block);
 
-  // --- Event age index: 0x14 + gen_utime_be(4) + account(32) + lt_be(8) -> sentinel ---
-  // Written alongside every put_event so the index can be pruned by block time,
-  // reaching entire dormant accounts that the per-account trim_events never
-  // revisits. Keyed by gen_utime first (a shard-agnostic global time scale;
-  // account+lt break ties) so a time range scan finds the oldest events. Stores
+  // --- Event age index: 0x14 + mc_ref_seqno_be(4) + account(32) + lt_be(8) -> sentinel ---
+  // Written alongside every put_event so the index can be pruned by position
+  // in the chain, reaching entire dormant accounts that the per-account
+  // trim_events never revisits. Keyed by the seqno of the masterchain block
+  // that first referenced the event's shard block, so the retained window is
+  // exactly the transactions the window base did not yet reference: per shard
+  // that is every transaction above the end lt of the base's tip, which an
+  // importer can check against the chain (see wallet-index-lineage.h). Stores
   // plain lt (not ~lt) so the pruner can reconstruct the 0x12 event key.
   // Joins the current write batch.
-  td::Status put_event_age(const HashKey& account, uint64_t lt, uint32_t gen_utime);
-  // Delete event rows (and their age companions) whose block gen_utime is
-  // strictly older than `cutoff_gen_utime`, at most `budget` of them, so work
-  // per block is bounded and any backlog drains over successive blocks. Events
-  // exactly at the cutoff are retained. Deletes join the current batch.
-  td::Status prune_events_by_age(uint32_t cutoff_gen_utime, size_t budget);
-  // Non-decreasing chain-time watermark (max block gen_utime indexed); read
-  // returns 0 when unset, put joins the current batch. The writer advances it to
-  // max(current, block gen_utime) so a late or recovery block cannot regress the
-  // prune cutoff and silently retain expired rows.
-  td::Result<uint32_t> get_event_watermark();
-  td::Status put_event_watermark(uint32_t gen_utime);
-  // Advance the watermark to max(current, gen_utime) and prune events older than
-  // the resulting cutoff (at most age_rows_added + drain of them), within the
-  // current batch. Fails closed: any error -- including a watermark read error,
-  // which must never fall back to 0 and regress the watermark -- is returned so
-  // the caller aborts the block instead of committing a broken retention state.
-  td::Status advance_retention(uint32_t gen_utime, size_t age_rows_added);
+  td::Status put_event_age(const HashKey& account, uint64_t lt, uint32_t mc_ref_seqno);
+  // Delete event rows (and their age companions) first referenced below
+  // `cutoff_mc_seqno`, at most `budget` of them, so work per block is bounded
+  // and any backlog drains over successive blocks. Deletes join the current
+  // batch.
+  td::Status prune_events_by_age(uint32_t cutoff_mc_seqno, size_t budget);
+  // The retention window base: the seqno of the last masterchain block
+  // generated more than kEventRetentionSeconds before the newest one replayed.
+  // Rows first referenced by it or an earlier one are outside the window. 0
+  // when unset. put joins the current batch and refuses to move it back.
+  td::Result<uint32_t> get_window_base();
+  // The index's verification state (meta 0x00 0x30); Full when unset. put
+  // joins the current batch.
+  td::Result<VerificationState> get_verification_state();
+  td::Status put_verification_state(VerificationState state);
+  // Move the window base (into the current batch). A nonzero base takes the
+  // record of its masterchain block, read from this node's own checked block,
+  // written with it; without a record the base may only stay where it is (a
+  // record already stored for it is kept) or be 0, which drops any record.
+  td::Status put_window_base(uint32_t mc_seqno, const td::optional<WindowBaseRecord>& record);
+  // The stored record of the base's block (meta 0x00 0x36), checked as
+  // check_window_base_record() does; unset when none is stored.
+  td::Result<td::optional<WindowBaseRecord>> window_base_record();
+  // The window history reads and the canonical view use, from the committed
+  // base and its record. Fails closed when the base is nonzero and has no
+  // valid record for it.
+  td::Result<HistoryWindow> history_window();
+  // The account's served range in `window`: rows with lt above the bound, the
+  // newest kMaxEventsPerAccount of them.
+  td::Result<HistoryFilter> history_filter(const HistoryWindow& window, const HashKey& account);
+
+  // --- Verification of an imported index (services/index-verify.h) ---
+  // What the verification of a quarantined index has established, at meta
+  // 0x00 0x31. `checkpoint` and `base` bind the age keys it assigned to the
+  // imported rows: written once, in the batch that sets the window base, so a
+  // restart that finds the record never assigns them again. `head` is set
+  // once the content has been checked against that masterchain block's
+  // state; `unverified` counts the accounts marked as needing the window's
+  // blocks then.
+  struct VerificationRecord {
+    uint32_t schema = 0;
+    tos::BlockIdExt checkpoint;
+    uint32_t base = 0;
+    // The oldest masterchain block the check reached (the verified horizon)
+    // and its generation time; 0 when the window starts at the chain's
+    // first block.
+    uint32_t horizon_seqno = 0;
+    uint32_t horizon_time = 0;
+    td::optional<tos::BlockIdExt> head;
+    uint64_t unverified = 0;
+    // The checkpoint's anchor (masterchain block 1) was checked against the
+    // node's own block 1. Not when the node does not hold that block.
+    bool anchor_verified = false;
+  };
+  static td::Result<VerificationRecord> parse_verification_record(td::Slice value);
+  // Whether the replay anchor of an index holding these meta records (the
+  // verification state 0x00 0x30 and record 0x00 0x31, null when absent) is
+  // authenticated: an index a node built by its own replay (no state, or
+  // Full without a record), or one whose verification checked the anchor.
+  // Anything else, an index imported and not yet prepared included, is not.
+  static bool anchor_verified(const std::string* state, const std::string* record);
+  td::Result<td::optional<VerificationRecord>> verification_record();
+  // Joins the current batch.
+  td::Status put_verification_record(const VerificationRecord& record);
+  // Accounts whose history the head state cannot verify: 0x31 + account(32)
+  // -> reason(1). put and the clear join the current batch.
+  td::Status put_unverified_account(const HashKey& account, uint8_t reason);
+  td::Result<bool> is_unverified_account(const HashKey& account);
+  td::Status clear_unverified_accounts();
+  // Drop every age row (into the current batch): an imported index has none
+  // until verification assigns them from the chain.
+  td::Status clear_event_ages();
+  // Every event row in key order, with its stored value bytes undecoded: a
+  // row that does not decode must be seen, not skipped.
+  td::Status for_each_event_record(std::function<td::Status(const HashKey& account, uint64_t lt, td::Slice value)> cb);
+  // Remove one event row (into the current batch).
+  td::Status erase_event(const HashKey& account, uint64_t lt);
+  // Whether the account has any event row.
+  td::Result<bool> has_events(const HashKey& account);
+
+  // --- Block pass over the verified window (services/index-verify.h) ---
+  // Progress of the pass at meta 0x00 0x33, bound to the head H it checks,
+  // the root hashes of H's basechain shard states, the window base and the
+  // schema: work under any other binding is discarded.
+  enum class BlockPassPhase : uint8_t { Authenticate = 0, Collect = 1, Compare = 2, Done = 3 };
+  struct BlockPassRecord {
+    uint32_t schema = 0;
+    tos::BlockIdExt head;
+    std::vector<td::Bits256> roots;  // sorted
+    uint32_t base = 0;
+    BlockPassPhase phase = BlockPassPhase::Authenticate;
+    // Authenticate: the next masterchain seqno to check, walking down from H.
+    // Collect: the next interval to collect, walking up from base + 1.
+    uint32_t cursor = 0;
+    // Authenticate: the identity the block at `cursor` must have. Collect:
+    // the identity of block cursor - 1 (unset when the window starts at the
+    // chain's first block).
+    td::optional<tos::BlockIdExt> expected;
+    // Compare: the last account compared.
+    td::optional<HashKey> compared;
+    // Rows collected so far.
+    uint64_t collected = 0;
+  };
+  td::Result<td::optional<BlockPassRecord>> block_pass_record();
+  // Joins the current batch.
+  td::Status put_block_pass_record(const BlockPassRecord& record);
+  // Discard every result of the block pass and of the ownership derivation:
+  // the pass record, the collected rows (0x35) and the per-shard ownership
+  // progress (meta 0x00 0x32 + shard). Joins the current batch.
+  td::Status clear_block_pass_work();
+  // A transaction the window's blocks hold for an account the head state
+  // cannot vouch for: 0x35 + account(32) + ~lt(8) -> transaction hash(32).
+  // Joins the current batch.
+  td::Status put_collected(const HashKey& account, uint64_t lt, const td::Bits256& hash);
+  // At most `limit` of the account's collected rows, newest first.
+  td::Status for_each_collected(const HashKey& account, size_t limit,
+                                const std::function<td::Status(uint64_t lt, const td::Bits256& hash)>& cb);
+  // The first account after `after` (from the start when unset) with a
+  // collected row (0x35) or an unverified mark (0x31), or nothing.
+  td::Result<td::optional<HashKey>> next_collected_account(const td::optional<HashKey>& after);
+  td::Result<td::optional<HashKey>> next_unverified_account(const td::optional<HashKey>& after);
+  // Joins the current batch.
+  td::Status erase_unverified_account(const HashKey& account);
+
+  // --- Ownership derivation at a verified head (services/index-verify.h) ---
+  // The first account after `after` (from the start when unset) with a token
+  // wallet record (0x17) or an NFT owner record (0x13), whatever it records.
+  td::Result<td::optional<HashKey>> next_ownership_account(TokenKind kind, const td::optional<HashKey>& after);
+  // Per-shard progress of the derivation, meta 0x00 0x32 + shard_be(8):
+  // the next account to derive and whether the shard is complete. Shard 0
+  // (no basechain shard) holds the reconciliation of recorded accounts:
+  // `kind` is the record kind it is at. put joins the current batch.
+  struct OwnershipProgress {
+    td::Bits256 next = td::Bits256::zero();
+    bool started = false;
+    bool complete = false;
+    TokenKind kind = TokenKind::Fungible;
+  };
+  td::Result<td::optional<OwnershipProgress>> ownership_progress(uint64_t shard);
+  td::Status put_ownership_progress(uint64_t shard, const OwnershipProgress& progress);
+  // Clear the candidate losses a derivation at the head superseded (every
+  // account with code there was derived again), returning their previous
+  // counts (lost, unverifiable). Joins the current batch.
+  td::Result<std::pair<uint64_t, uint64_t>> reset_superseded_token_losses();
+  // --- Bulk window builder (services/index-verify.h) ---
+  // Progress of building an index from the window's blocks, meta 0x00 0x34,
+  // bound to the head H it builds to, H's sorted state roots, the window
+  // base and the schema. Present from the first batch of a build, before
+  // any row, until the batch that publishes the built index.
+  struct BuildRecord {
+    uint32_t schema = 0;
+    tos::BlockIdExt head;
+    std::vector<td::Bits256> roots;
+    uint32_t base = 0;
+    uint32_t horizon_seqno = 0;
+    uint32_t horizon_time = 0;
+    // The next interval to build, and the identity of the one before it
+    // (unset when the window starts at the chain's first block).
+    uint32_t cursor = 0;
+    td::optional<tos::BlockIdExt> expected;
+  };
+  td::Result<td::optional<BuildRecord>> build_record();
+  // put and erase join the current batch.
+  td::Status put_build_record(const BuildRecord& record);
+  td::Status erase_build_record();
+  // Drop every row a build or a verification wrote (0x12, 0x14, 0x31, 0x35)
+  // and the block pass and ownership progress; joins the current batch.
+  td::Status clear_built_index();
+  // The replay checkpoint, into the current batch (commit_replay_checkpoint
+  // commits a batch of its own).
+  td::Status put_replay_checkpoint(const ReplayCheckpoint& checkpoint);
+  // An index nothing was ever written to: no checkpoint and no record but
+  // the schema.
+  td::Result<bool> is_fresh();
+  // Tests only: count `lost` candidates given up (joins the current batch).
+  td::Status add_lost_token_candidates_for_testing(uint64_t lost);
+  // Prune events outside the window (at most age_rows_added + drain of them),
+  // within the current batch. Fails closed: any error -- including a base read
+  // error, which must never fall back to 0 -- is returned so the caller aborts
+  // the block instead of committing a broken retention state.
+  td::Status advance_retention(size_t age_rows_added);
   td::Status for_each_key_with_prefix(td::Slice prefix, size_t limit,
                                       std::function<td::Status(td::Slice)> cb);
   // Walk at most `limit` events for `account`, newest first.
@@ -533,6 +756,7 @@ class WalletIndexDb {
   void abort_batch();
 
  private:
+  friend class WalletIndexSnapshotFile;
   friend class WalletIndexSnapshot;
   explicit WalletIndexDb(std::unique_ptr<td::RocksDb> db);
   // A second WalletIndexDb over a RocksDB snapshot. Private: its write methods
@@ -647,6 +871,24 @@ class WalletIndexSnapshot {
   }
   td::Result<bool> has_token_wallet_record(const HashKey& wallet) {
     return view_->has_token_wallet_record(wallet);
+  }
+  // History reads, all from this one view.
+  td::Result<HistoryWindow> history_window() {
+    return view_->history_window();
+  }
+  td::Result<HistoryFilter> history_filter(const HistoryWindow& window, const HashKey& account) {
+    return view_->history_filter(window, account);
+  }
+  td::Status for_each_event(const HashKey& account, size_t limit,
+                            std::function<td::Status(uint64_t lt, td::Ref<vm::Cell>)> cb) {
+    return view_->for_each_event(account, limit, std::move(cb));
+  }
+  td::Status for_each_event_before(const HashKey& account, uint64_t before_lt, size_t limit,
+                                   std::function<td::Status(uint64_t lt, td::Ref<vm::Cell>)> cb) {
+    return view_->for_each_event_before(account, before_lt, limit, std::move(cb));
+  }
+  td::Result<td::Ref<vm::Cell>> get_event(const HashKey& account, uint64_t lt) {
+    return view_->get_event(account, lt);
   }
 
  private:
