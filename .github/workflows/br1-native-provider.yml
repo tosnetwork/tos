@@ -1,0 +1,42 @@
+name: BR1 native provider validation
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/br1-native-provider.yml'
+      - 'tools/bonded-relayer/provider/**'
+      - 'tools/shielded-pool-wallet/**'
+      - 'tools/shielded-pool-circuit/**'
+      - 'tosctl/src/node-control/contracts/**'
+      - 'tosctl/src/node-control/common/**'
+      - 'tosctl/src/block/**'
+      - 'tosctl/src/executor/**'
+      - 'tosctl/src/vm/**'
+    types: [opened, reopened, synchronize, ready_for_review]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: br1-native-provider-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native-provider:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Install native TLS build dependencies and repository toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libssl-dev
+          scripts/install-rust-toolchain.sh
+      - name: Check provider format, regression tests and lints
+        run: |
+          cargo fmt --manifest-path tools/bonded-relayer/provider/Cargo.toml --check
+          cargo test --manifest-path tools/bonded-relayer/provider/Cargo.toml --release --locked -j2
+          cargo clippy --manifest-path tools/bonded-relayer/provider/Cargo.toml --release --locked --all-targets --no-deps -j2 -- -D warnings

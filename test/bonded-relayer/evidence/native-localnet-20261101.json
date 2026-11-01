@@ -1,0 +1,95 @@
+{
+  "artifact_index": [
+    {
+      "path": "/tos/build/br1-localnet/e2e/VERDICT.json",
+      "result": "PASS-TWO-NATIVE-HTTP-RELAYS",
+      "sha256": "04b6aa9ec5ca42a5bf161d1bdae19649c1fab0cb0d89cafe1d552fe5d401c8c7"
+    },
+    {
+      "path": "/tos/build/br1-localnet/e2e-r2/VERDICT.json",
+      "result": "PASS-RESTART-AND-IMPORTED-FEE-RESPEND",
+      "sha256": "8a05995222ed561e30f7ca223dea8ef3f99f953bcbd6805b79c3fae45ed98e8c"
+    },
+    {
+      "path": "/tos/build/br1-localnet/e2e-r3/VERDICT.json",
+      "result": "PASS-FINAL-NATIVE-SOURCE-WITH-RPC-CAPTURE",
+      "sha256": "05156a6f545343841b871aaba909d26ad2c0ac2dc762524a4adb14aa10ec3e1d"
+    },
+    {
+      "path": "/tos/build/br1-localnet/e2e-r3/CONTROLS.json",
+      "result": "PASS-NATIVE-BOUNDARIES-AND-EXACT-WRITE-ONCE",
+      "sha256": "372db3372ab6aea82a02586312be6f5ccd7286202cdc7286d0c143c1e1ccd844"
+    },
+    {
+      "path": "/tos/build/br1-mutations/VERDICT.json",
+      "result": "PASS-ALL-15-TESTS-SENSITIVE-TO-GUARD-REMOVAL",
+      "sha256": "3beed1c3fd64aa3e4b8413e8837647d05ce95fa592ab2a9d04e3f3741784ca05"
+    }
+  ],
+  "base_commit": "b514d684d1005e5fcf443fc04b71e3abaa637cdd",
+  "checked_utc": "2026-11-01T16:05:48.373223+00:00",
+  "privacy": "index only; seeds, status capabilities, plaintext note material, SQL journals and raw transaction/wire corpus are not copied to Git",
+  "raw_retention_root": "/tos/build/br1-localnet",
+  "remaining": [
+    "full C2 forced gas/action failures and crash/write-boundary matrix",
+    "terminal-refusal availability and adversarial failover",
+    "Bond retirement/slashing and public discovery/privacy transport",
+    "production custody, economics and independent security review"
+  ],
+  "result": "PASS-LOCAL-PRIVATE-TRANSFER-PATH",
+  "runtime": {
+    "native_provider_sha256": "767541af088ad03140ffe358c5a69b8af2627fd77293232be3ad19a58122d00e",
+    "proof_verifier_sha256": "98600da98c209817b4f15414188e243e07cc48183fbc978285009c91d9befbe9",
+    "proof_verifier_source_commit": "not asserted; existing verifier executable reused with its exact digest pinned",
+    "validator_engine_commit": "1e381fd8f816289f76f3e2cff8a5bc16308a407b",
+    "validator_engine_sha256": "63fdd3338b35d83377082889ebb9dcfcd462b10b3b9659d2efe7ebe9354b75da"
+  },
+  "schema": "tos.br1.localnet.evidence-index.v1",
+  "scope": {
+    "full_c2_matrix_accepted": false,
+    "funded_operators": 2,
+    "global_id": 3,
+    "global_version": 16,
+    "observers": 2,
+    "production_accepted": false,
+    "validators": 4
+  },
+  "source_sha256": {
+    "tools/bonded-relayer/provider/Cargo.lock": "d9ee648b09eb1d4095153d73ade208756d716a857f29ec843155ded4c82503f3",
+    "tools/bonded-relayer/provider/Cargo.toml": "d87e51db98a42309453f76c25d3f98fa2bf2733fe2562a9e18ba51b48cc08371",
+    "tools/bonded-relayer/provider/src/bootstrap.rs": "984ae8715c06c886fb16d7b7f66ea082dfb3528b00a3b101e79bbb741cfb6ff1",
+    "tools/bonded-relayer/provider/src/candidate.rs": "228e76523a06d725daf5db1dfb550fd5904b88607bf3f3650419e1088f2ed4bc",
+    "tools/bonded-relayer/provider/src/chain.rs": "2c45072e508c8ac64bcc301914d88cffa58c62131564a6eb1f70e9e272d23c8b",
+    "tools/bonded-relayer/provider/src/config.rs": "f09e29612152551dfc6a174170a0d11b4f3d4685992e5dc2432950c667cdaf20",
+    "tools/bonded-relayer/provider/src/evidence.rs": "a24f058c60a7065a51b9b586169ad4faa67765371f4e7c438eb811ea8a1421a5",
+    "tools/bonded-relayer/provider/src/funding.rs": "331065a70addf6da793f7390bbd981a6f62a01c20203441e06897511e5071ec8",
+    "tools/bonded-relayer/provider/src/identity.rs": "48dddc0e1ee8214aab2ef0b3b8362ccde87d2bbed43b49d840879c7b7d18a10a",
+    "tools/bonded-relayer/provider/src/main.rs": "ec50bc1356ecd9d14700f5c60e96e21912e601c63d88c5c6e1da0bfdffe9ca16",
+    "tools/bonded-relayer/provider/src/prepared.rs": "8a5b3f530f8af4170ee3c8fcc71799b61e04d395dbc77304496bfb72e78b911c",
+    "tools/bonded-relayer/provider/src/private_io.rs": "a30206c1edeec38656cb9f986a073b4537fa46e6dea8a8328bfc0bf51c4bdc78",
+    "tools/bonded-relayer/provider/src/protocol.rs": "0e957a704ec9f45f8c99a9cdcd2a3c007e283a1cd2d765172432c3d56466ad42",
+    "tools/bonded-relayer/provider/src/provider.rs": "901979438852cd4b2f4bb5b8aba0a2581862c6ff2f324ae329d1b63cdfd20682",
+    "tools/bonded-relayer/provider/src/provision.rs": "719cd0d9a20b3551b76a3afb818a653955429bcad66becca3b06f9c331d3837a",
+    "tools/bonded-relayer/provider/src/quotes.rs": "6ca80cff84f21087bf4b5566c7fe0c021a7fac110665c9f03a8a763130265524",
+    "tools/bonded-relayer/provider/src/simulation.rs": "5362f9cd2d3be40e5c7e6220ecc3f1fe2cf0dd310341a9ac1e1b4c440160c9f9",
+    "tools/bonded-relayer/provider/src/store.rs": "bed656e543277d6223cc88c4cc8da1c70a4f63f48eabacd29acf60257e956dad",
+    "tools/bonded-relayer/provider/src/transport.rs": "de3493a584690d3c297bc52a4f7ced41e6af4216695a73608de596d99af1846b",
+    "tosctl/src/node-control/contracts/src/proven_getters.rs": "6b25e989e94c6bc4d6fa5d5d75e374d4998c32049c8da5109c188ce87738f463"
+  },
+  "upstream": {
+    "commit": "857b8a57a178e6ae0fe7fa86e7d81c5233de8560",
+    "comparison": "native BR1 provider and Rust proven-getter consumer absent upstream; no inherited consensus/VM/contract code changed"
+  },
+  "verified": [
+    "two independently funded native operators through real HTTP",
+    "ML-DSA quotes and acceptances; network-bound V3 funding signatures",
+    "full native Shield compute/action estimate on proven state and authenticated full configuration",
+    "wallet-to-pool finalized transaction linkage and encrypted fee imports",
+    "original keys and journals retained across operator restart",
+    "two actual imported commission notes spent through the other operator",
+    "altered acceptance and wrong release rejected",
+    "consumed send permit rejected; repeated HTTP request stays executed",
+    "captured final-source transaction bytes match the original signed BOC; exactly one sendBoc",
+    "all 15 provider tests fail under guard-removal mutations and pass after restoration"
+  ]
+}

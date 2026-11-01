@@ -1,5 +1,10 @@
 # BR1 implementation status and author self-check
 
+**Historical PR #379 inventory and self-check.** Later A1/B1/C1 work and the
+[native local provider](../tools/bonded-relayer/provider/README.md) extend this
+baseline. The table and receipts below describe the original increment, not the
+current set of local capabilities; full C2 and production activation remain open.
+
 Integrated source baseline: `afccf85f9a0bd76dfa79bec6f91f54f151918a41`.
 Base: `084e4315899cc3a5bf64cc434ee327e1db487173`.
 PR: https://github.com/tosnetwork/tos/pull/379

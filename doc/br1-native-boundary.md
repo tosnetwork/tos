@@ -13,8 +13,11 @@ identity binding, byte ceilings, deadlines and child cleanup. The wallet crate's
 The tests distinguish real process/SQLite/cryptographic execution from fabricated
 chain answers.
 
-**There is no native chain/signer/finality provider implementing this protocol in
-A1.** An executable that merely echoes these JSON fields is not that provider.
+**A1 itself did not supply a native chain/signer/finality provider.** The later
+[isolated local provider](../tools/bonded-relayer/provider/README.md) supplies
+real chain reads, signing, simulation and positive destination finality for its
+explicit local scope; the complete C2 and production gates remain open.
+An executable that merely echoes these JSON fields is not that provider.
 Neither `tos-proof-verify` nor a manual wallet broadcaster implements this new
 protocol automatically. Service startup must fail when a required capability is
 missing. A provider that claims a capability without doing the verification
