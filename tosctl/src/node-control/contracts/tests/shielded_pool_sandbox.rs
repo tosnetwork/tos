@@ -887,10 +887,7 @@ fn the_wallet_codec_agrees_with_the_contract() {
     assert_eq!(state.nullifier_next_index.to_string(), pool.get("nullifier_next_index"));
     assert_eq!(state.native_liability.to_string(), pool.get("native_liability"));
     assert_eq!(state.reserve_floor.to_string(), pool.get("reserve_floor"));
-    assert_eq!(
-        state.reserved_recovery_leaves.to_string(),
-        pool.get("reserved_recovery_leaves")
-    );
+    assert_eq!(state.reserved_recovery_leaves.to_string(), pool.get("reserved_recovery_leaves"));
     assert_eq!(
         state.config.denominations,
         DENOMINATIONS.iter().map(|d| u128::from(*d)).collect::<Vec<_>>(),

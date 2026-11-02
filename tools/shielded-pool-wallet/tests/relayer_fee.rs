@@ -29,12 +29,9 @@ fn fixture(kind: Kind, slot: u8) -> (PoolInstance, FeeTerms, Plaintext) {
 }
 
 fn seal(wallet: &PoolInstance, p: &Plaintext) -> (Vec<u8>, Fr) {
-    let encrypted = delivery::seal(
-        &wallet.mlkem_encapsulation_key().unwrap(),
-        wallet.execution_domain(),
-        p,
-    )
-    .unwrap();
+    let encrypted =
+        delivery::seal(&wallet.mlkem_encapsulation_key().unwrap(), wallet.execution_domain(), p)
+            .unwrap();
     let owner = notes::owner_commitment(p.owner_nf_key_hash, p.pq_auth_key_hash, p.note_secret);
     let body =
         notes::note_body_commitment(owner, Fr::from(p.amount), wire::output_data_hash(&encrypted));

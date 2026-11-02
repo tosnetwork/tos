@@ -150,7 +150,10 @@ pub fn read_byte_chain(cell: &Cell, expected: usize) -> anyhow::Result<Vec<u8>> 
                 return Ok(out);
             }
             1 => {
-                anyhow::ensure!(here == CHUNK_BYTES, "a byte chain cell with a successor is not full");
+                anyhow::ensure!(
+                    here == CHUNK_BYTES,
+                    "a byte chain cell with a successor is not full"
+                );
                 current = reference(&mut slice)?;
             }
             _ => anyhow::bail!("a byte chain cell has more than one reference"),
@@ -441,10 +444,17 @@ impl PoolState {
 #[derive(Clone, Debug)]
 pub enum PoolTransaction {
     Deposit(DepositBody),
-    Transact { body: Box<TransactBody>, payout: Option<PayoutMessage> },
+    Transact {
+        body: Box<TransactBody>,
+        payout: Option<PayoutMessage>,
+    },
     /// An authenticated recovery bounce the pool accepted. Whether it minted a
     /// note depends on the charge at the time; the replay decides that.
-    Bounce { original_body_hash: [u8; 32], sender: MsgAddressInt, value: u128 },
+    Bounce {
+        original_body_hash: [u8; 32],
+        sender: MsgAddressInt,
+        value: u128,
+    },
     /// A transaction that left the pool's state as it found it, and why.
     NoStateChange(&'static str),
 }
