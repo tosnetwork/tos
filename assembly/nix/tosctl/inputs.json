@@ -9,7 +9,8 @@
     "third-party/mldsa-native",
     "third-party/falcon-reference",
     "third-party/slhdsa-c",
-    "third-party/lms-reference"
+    "third-party/lms-reference",
+    "test/validator/elector-control-fixture.rs"
   ],
   "exclude": [
     "tosctl/src/ci",
@@ -54,6 +55,16 @@
       "file": "tosctl/src/wallet-pq-signer/src/kdf.rs",
       "target": "test/rescue-fee-gate/fee-kdf-vectors.json",
       "reason": "cfg(test) tests module of wallet-pq-signer; its tests are not run by the package"
+    },
+    {
+      "file": "tosctl/src/node-control/control-client/src/cli_wire_parity.rs",
+      "target": "test/tl-cli/values.rs",
+      "reason": "#[path] module of control-client's cfg(test) wire-parity tests; its tests are not run by the package"
+    },
+    {
+      "file": "tosctl/src/node-control/contracts/tests/fixtures/current_network.rs",
+      "target": "crypto/smartcont/gen-zerostate.fif",
+      "reason": "reached only from service's cfg(test) canonical-scan tests; its tests are not run by the package"
     }
   ]
 }

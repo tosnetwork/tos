@@ -18,6 +18,7 @@ on:
       - 'third-party/falcon-reference/**'
       - 'third-party/slhdsa-c/**'
       - 'third-party/lms-reference/**'
+      - 'test/validator/elector-control-fixture.rs'
       - '.github/workflows/tosctl-nixos.yml'
       - '!tosctl/src/ci/**'
       - '!tosctl/src/docs/**'

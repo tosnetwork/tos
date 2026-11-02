@@ -26,7 +26,10 @@ ROOT = Path(sys.argv[1] if len(sys.argv) > 1 else Path(__file__).resolve().paren
 INPUTS = ROOT / "assembly/nix/tosctl/inputs.json"
 WORKFLOW = ROOT / ".github/workflows/tosctl-nixos.yml"
 WORKSPACE = ROOT / "tosctl/src"
-INCLUDE = re.compile(r"include_(?:str|bytes)!\s*\(")
+# include!, include_str! and include_bytes! all read a file at compile time; a #[path]
+# attribute makes a module's source another file.
+INCLUDE = re.compile(r"\binclude(?:_str|_bytes)?!\s*\(")
+PATH_ATTRIBUTE = re.compile(r'#\[\s*path\s*=\s*"((?:[^"\\]|\\.)*)"\s*\]')
 LITERAL = re.compile(r'\s*"((?:[^"\\]|\\.)*)"\s*\)')
 MANIFEST = re.compile(
     r'\s*concat!\s*\(\s*env!\s*\(\s*"CARGO_MANIFEST_DIR"\s*\)\s*,\s*"((?:[^"\\]|\\.)*)"\s*\)\s*\)'
@@ -168,6 +171,10 @@ def sources(package, tested):
 
 def includes(path):
     text = path.read_text()
+    for match in PATH_ATTRIBUTE.finditer(text):
+        line = text.count("\n", 0, match.start()) + 1
+        if not text[: match.start()].rsplit("\n", 1)[-1].lstrip().startswith("//"):
+            yield line, (path.parent / match.group(1)).resolve()
     for match in INCLUDE.finditer(text):
         line = text.count("\n", 0, match.start()) + 1
         if text[: match.start()].rsplit("\n", 1)[-1].lstrip().startswith("//"):
@@ -184,7 +191,7 @@ def includes(path):
 
 
 def inside_cfg_test_block(path, line):
-    """True when `line` lies inside a `#[cfg(test)]` item opened by `mod NAME {`."""
+    """True when `line` lies inside an item marked `#[cfg(test)]` and opened by `mod NAME {`."""
     lines = path.read_text().splitlines()
     for index, text in enumerate(lines):
         if text.strip() != "#[cfg(test)]" or index + 1 >= len(lines):
@@ -201,31 +208,69 @@ def inside_cfg_test_block(path, line):
     return False
 
 
-def reached_only_by_cfg_test_module(path, package):
-    """True when the file is a module included only as `#[cfg(test)] #[path = ...] mod`."""
-    references = []
-    for source in package["directory"].rglob("*.rs"):
-        lines = source.read_text().splitlines()
-        for index, text in enumerate(lines):
-            match = re.fullmatch(r'\s*#\[path\s*=\s*"([^"]+)"\]\s*', text)
-            if match and (source.parent / match.group(1)).resolve() == path.resolve():
+def module_file(declaring, name):
+    """The file a `mod NAME;` in `declaring` loads, per the Rust module path rules."""
+    base = declaring.parent
+    if declaring.name not in ("lib.rs", "main.rs", "mod.rs"):
+        base = base / declaring.stem
+    for candidate in (base / f"{name}.rs", base / name / "mod.rs"):
+        if candidate.is_file():
+            return candidate.resolve()
+    return None
+
+
+class References:
+    """Every place that makes another file compile: `mod NAME;`, `#[path = ...] mod` and
+    include!/include_str!/include_bytes!. A line is test-only when it lies in a
+    #[cfg(test)] module, or when every reference to its file is itself test-only."""
+
+    def __init__(self, files):
+        self.by_target = {}
+        for source in files:
+            lines = source.read_text().splitlines()
+            for index, text in enumerate(lines):
                 previous = lines[index - 1].strip() if index else ""
-                references.append(previous == "#[cfg(test)]")
-    return bool(references) and all(references)
+                declared = re.fullmatch(r"\s*(?:pub(?:\(crate\))?\s+)?mod\s+(\w+)\s*;\s*", text)
+                if declared and not previous.startswith("#[path"):
+                    target = module_file(source, declared.group(1))
+                    if target:
+                        self.add(target, source, index + 1, previous == "#[cfg(test)]")
+            for line, *target in includes(source):
+                if target and target[0]:
+                    before = lines[line - 2].strip() if line >= 2 else ""
+                    self.add(target[0], source, line, before == "#[cfg(test)]")
 
+    def add(self, target, source, line, marked):
+        self.by_target.setdefault(target.resolve(), []).append((source.resolve(), line, marked))
 
-def test_only(source, line, package):
-    return inside_cfg_test_block(source, line) or reached_only_by_cfg_test_module(source, package)
+    def test_only_line(self, source, line, seen=frozenset()):
+        return inside_cfg_test_block(source, line) or self.test_only_file(source, seen)
+
+    def test_only_file(self, path, seen=frozenset()):
+        path = path.resolve()
+        if path in seen:
+            return False
+        references = self.by_target.get(path, [])
+        return bool(references) and all(
+            marked or self.test_only_line(source, line, seen | {path})
+            for source, line, marked in references
+        )
 
 
 def check_includes(inputs):
     found = packages()
     built, tested = closure(found, inputs["tested_packages"])
     allowed = {(a["file"], a["target"]): a for a in inputs.get("test_only_includes", [])}
-    used, failures, count = set(), [], 0
+    used, failures, count, pending, scanned = set(), [], 0, [], {}
     for name in sorted(built):
         package = found[name]
-        for source in sources(package, name in tested):
+        queue, visited = list(sources(package, name in tested)), set()
+        while queue:
+            source = queue.pop(0).resolve()
+            if source in visited or not source.is_file():
+                continue
+            visited.add(source)
+            scanned.setdefault(package["directory"], set()).add(source)
             for line, *target in includes(source):
                 count += 1
                 where = f"{source.relative_to(ROOT)}:{line}"
@@ -237,15 +282,21 @@ def check_includes(inputs):
                 else:
                     resolved = target[0]
                 require(resolved.is_relative_to(ROOT), f"{where}: include outside the repository")
+                if resolved.suffix == ".rs":
+                    queue.append(resolved)
                 if covered(resolved, inputs):
                     continue
                 key = (source.relative_to(ROOT).as_posix(), resolved.relative_to(ROOT).as_posix())
                 if key in allowed and name not in tested:
                     used.add(key)
-                    if not test_only(source, line, package):
-                        failures.append(f"{where}: allow-listed include is not test-only code")
+                    pending.append((source, line, where, package["directory"]))
                     continue
                 failures.append(f"{where}: {key[1]} is not in the package source")
+    # Resolved over every Rust file of the crate plus the files the scan followed into.
+    for source, line, where, directory in pending:
+        files = set(p.resolve() for p in directory.rglob("*.rs")) | scanned.get(directory, set())
+        if not References(files).test_only_line(source, line):
+            failures.append(f"{where}: allow-listed include is not test-only code")
     stale = sorted(set(allowed) - used)
     require(not stale, f"test_only_includes entries no longer needed: {stale}")
     require(not failures, "uncovered embedded files:\n  " + "\n  ".join(failures))
