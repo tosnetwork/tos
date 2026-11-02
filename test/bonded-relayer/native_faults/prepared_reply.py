@@ -127,10 +127,12 @@ def main():
             or fault.get("exit") != 86
             or fault.get("python_state") != "reserved"
             or fault.get("message", False) is not None
+            or not isinstance(fault.get("reply_sha256"), str)
+            or not re.fullmatch(r"[0-9a-f]{64}", fault["reply_sha256"])
         ):
             raise RuntimeError("matching completed crash evidence required")
         # reconcile() does not submit unless mode is literally 'submit'.
-        reconcile(args, config, request)
+        reconcile(args, config, request, prepared_sha256=fault["reply_sha256"])
         print("BR1_PREPARED_REPLY_RECOVERY_PASS")
 
 

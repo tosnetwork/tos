@@ -41,7 +41,10 @@ Then run:
 
 Verify mode requires matching completed crash evidence. It only queries status
 and reads the journals/capture. It never submits, signs or broadcasts. Success
-requires finalized execution, exactly one captured send of the persisted
+requires the canonical native reply hash (message, representation hash and
+acceptance) reconstructed from the persisted journal to match the reply hash
+recorded at the crash cut, before writing a successful verdict. It also requires
+finalized execution, exactly one captured send of the persisted
 original message, and exactly one native fee-note import. Independently collect
 the authenticated history with `history.py` and replay it with the ordinary
 client; compare all planned pool getters and require zero recovery reservations.
@@ -58,12 +61,19 @@ case is separately retained at `attempt-2/`, including authenticated pool histor
 and replayed final getters. This is not public-network pilot approval.
 
 An active-operator invocation refused before creating its requested output.
-Receipt controls under `/tos/build/br1-recovery-harness/receipt-controls/` verify
+Receipt controls under `/tos/build/br1-recovery-harness/receipt-controls-r2/` verify
 the actual completed case: baseline and restoration pass; changing the crash
 receipt's request identity refuses before reconciliation; removing that exact
 guard falsely accepts the changed receipt. Source hashes and exit codes are
 recorded in `REPORT.json`. The changed-receipt refusal is the regression check;
 successful reconciliation alone is not evidence that this guard works.
+
+Review found the initial driver recorded but did not compare the lost-reply
+digest (Checklist: TE-8, existed / not applied). A second actual-case negative
+changes only that digest: verification must refuse without writing `VERDICT.json`.
+Removing the digest comparison falsely accepts; restoration requires the complete
+message/hash/acceptance tuple to match the crash cut. The final review receipt
+identifies the source hashes and retained controls for this correction.
 
 Upstream comparison: this BR1 Python/native boundary and local acceptance tool
 are absent upstream at ton master
