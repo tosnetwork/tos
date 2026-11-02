@@ -1057,7 +1057,9 @@ dependencies = [
  "service",
  "sha2",
  "sha3",
+ "shielded-pool-ceremony",
  "shielded-pool-circuit",
+ "shielded-pool-prover",
  "shielded-pool-wallet",
  "tempfile",
  "tl_api",
@@ -4744,6 +4746,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "shielded-pool-ceremony"
+version = "0.1.0"
+dependencies = [
+ "ark-bls12-381",
+ "ark-ec",
+ "ark-ff",
+ "ark-groth16",
+ "ark-poly",
+ "ark-r1cs-std",
+ "ark-relations",
+ "ark-serialize",
+ "ark-snark",
+ "ark-std",
+ "blst",
+ "hex",
+ "rand 0.8.5",
+ "rand_chacha 0.3.1",
+ "serde",
+ "serde_json",
+ "sha2",
+ "shielded-pool-circuit",
+ "zeroize",
+]
+
+[[package]]
 name = "shielded-pool-circuit"
 version = "0.1.0"
 dependencies = [
@@ -4763,6 +4790,20 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+]
+
+[[package]]
+name = "shielded-pool-prover"
+version = "0.1.0"
+dependencies = [
+ "ark-bls12-381",
+ "ark-ff",
+ "ark-groth16",
+ "ark-snark",
+ "rand 0.8.5",
+ "rand_chacha 0.3.1",
+ "shielded-pool-ceremony",
+ "shielded-pool-circuit",
 ]
 
 [[package]]
@@ -6605,18 +6646,18 @@ dependencies = [
 
 [[package]]
 name = "zeroize"
-version = "1.8.2"
+version = "1.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b97154e67e32c85465826e8bcc1c59429aaaf107c1e4a9e53c8d8ccd5eff88d0"
+checksum = "e13c156562582aa81c60cb29407084cdb54c4164760106ab78e6c5b0858cf64e"
 dependencies = [
  "zeroize_derive",
 ]
 
 [[package]]
 name = "zeroize_derive"
-version = "1.4.3"
+version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "85a5b4158499876c763cb03bc4e49185d3cccbabb15b33c627f7884f43db852e"
+checksum = "3c50655cbb0fe3fc43170059e702f1ce5e19b84cec58dc87b037a09935c2f328"
 dependencies = [
  "proc-macro2",
  "quote",

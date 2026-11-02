@@ -22,6 +22,7 @@
 
 mod chain;
 mod profile;
+mod spend;
 mod store;
 
 use anyhow::Context;
@@ -101,6 +102,10 @@ pub enum ShieldAction {
     Address(AddressCmd),
     /// Deposit from an ordinary wallet into a new shielded note
     Deposit(DepositCmd),
+    /// Withdraw a denomination from the pool to an ordinary address
+    Withdraw(spend::WithdrawCmd),
+    /// Send to another shielded descriptor
+    Send(spend::SendCmd),
 }
 
 impl ShieldCmd {
@@ -112,6 +117,8 @@ impl ShieldCmd {
             ShieldAction::Balance(cmd) => cmd.run(config_path).await,
             ShieldAction::Address(cmd) => cmd.run(config_path).await,
             ShieldAction::Deposit(cmd) => cmd.run(config_path).await,
+            ShieldAction::Withdraw(cmd) => cmd.run(config_path).await,
+            ShieldAction::Send(cmd) => cmd.run(config_path).await,
         }
     }
 }
@@ -601,96 +608,135 @@ impl SyncCmd {
         let mut opened = open_instance(config_path, &self.name, &vault).await?;
         let pool = opened.pointer.profile.address()?;
         let head = self.read.head(&config, &rpc, &pool).await?;
-        let relation = opened.check_head(&head)?;
-
-        // An unverified prefix is never promoted by an authenticated suffix:
-        // when the verifier is available the history is rebuilt from the start.
-        let base = match (&opened.state.cursor, head.verified, relation) {
-            (Some(_), _, HeadRelation::Migrate)
-            | (Some(Cursor { verified: false, .. }), true, _) => {
-                eprintln!(
-                    "{} the stored state was built on an RPC endpoint's word; rebuilding it from \
-                     the pool's first transaction through the proof verifier",
-                    "note:".bold()
-                );
-                None
-            }
-            (Some(cursor), _, _) => Some(cursor.clone()),
-            (None, _, _) => None,
-        };
-        let (ledger, mut recovered, cursor) = match &base {
-            Some(cursor) => (
-                restore_ledger(&opened.state.ledger)?,
-                restore_recovered(&opened.state)?,
-                Some((cursor.lt, cursor.hash)),
-            ),
-            None => (Ledger::genesis(), Recovered::default(), None),
-        };
-        let replayed_before = base.as_ref().map_or(0, |cursor| cursor.transactions_replayed);
-
-        let history = chain::fetch_history(&rpc, &pool, &head, cursor).await?;
-        let steps = u64::try_from(history.steps.len()).context("history length")?;
-        let mut replay = chain::replay(ledger, &history, &head)?;
-
-        let outputs = replay.ledger.take_outputs();
-        let found = scan::recover_indexed(&opened.instance, &outputs)
-            .map_err(|error| anyhow::anyhow!("scan: {error}"))?;
-        let new_notes = found.notes.len();
-        recovered.merge(found);
-        recovered
-            .reconcile_spent(&opened.instance, replay.ledger.published_nullifiers())
-            .map_err(|error| anyhow::anyhow!("reconcile: {error}"))?;
-
-        let verified = head.verified && base.as_ref().is_none_or(|cursor| cursor.verified);
-        let (seqno, root_hash, file_hash) = match &head.checkpoint {
-            Some(checkpoint) => {
-                (checkpoint.seqno, checkpoint.root_hash.clone(), checkpoint.file_hash.clone())
-            }
-            None => (0, String::new(), String::new()),
-        };
-        let state = &mut opened.state;
-        state.cursor = Some(Cursor {
-            lt: head.last_lt,
-            hash: head.last_hash,
-            verified,
-            checkpoint_seqno: seqno,
-            checkpoint_root_hash: root_hash,
-            checkpoint_file_hash: file_hash,
-            block_gen_utime: head.block_gen_utime,
-            transactions_replayed: replayed_before.saturating_add(steps),
-        });
-        state.ledger = persist_ledger(&replay.ledger);
-        state.pool_config = pool_config_of(&head);
-        // A rebuild starts the diagnostics afresh; a continuation keeps the
-        // retained ones and appends what this sync observed.
-        let previous =
-            if base.is_some() { std::mem::take(&mut state.diagnostics) } else { Vec::new() };
-        persist_recovered(state, &recovered, previous);
-        if relation == HeadRelation::Migrate {
-            state.chain = head.chain.clone();
-        }
-        opened.save_state_and_pointer()?;
-
+        let report = sync_instance(&mut opened, &head, &rpc).await?;
         println!(
             "{} {} at masterchain {} ({}): {} transactions replayed ({} applied, {} without state \
              change), {} new notes, {} notes in all",
             "OK".green().bold(),
-            if verified {
+            if report.verified {
                 "verified".green().to_string()
             } else {
                 "UNVERIFIED".yellow().bold().to_string()
             },
-            seqno,
+            report.checkpoint_seqno,
             utc(head.block_gen_utime),
-            steps,
-            replay.applied,
-            replay.skipped,
-            new_notes,
-            recovered.notes.len(),
+            report.steps,
+            report.applied,
+            report.skipped,
+            report.new_notes,
+            report.recovered.notes.len(),
         );
-        print_balance(&recovered, verified);
+        let ledger = restore_ledger(&opened.state.ledger)?;
+        let pending = spend::pending_spends(
+            &opened.journal,
+            &ledger,
+            Some(head.shard_gen_utime),
+            report.verified,
+        );
+        print_balance(&report.recovered, &spend::held_leaves(&pending), report.verified);
+        spend::print_pending_spends(&pending);
         Ok(())
     }
+}
+
+/// What one sync did.
+struct SyncReport {
+    verified: bool,
+    checkpoint_seqno: u32,
+    steps: u64,
+    applied: u64,
+    skipped: u64,
+    new_notes: usize,
+    recovered: Recovered,
+}
+
+/// Replays the pool's history from where the stored state stopped (or from
+/// the start, when the stored state cannot be continued), scans it for this
+/// instance's notes and writes the state. `head` has already been checked
+/// against the instance.
+async fn sync_instance(
+    opened: &mut Opened,
+    head: &Head,
+    rpc: &ClientJsonRpc,
+) -> anyhow::Result<SyncReport> {
+    let pool = opened.pointer.profile.address()?;
+    let relation = opened.check_head(head)?;
+
+    // An unverified prefix is never promoted by an authenticated suffix:
+    // when the verifier is available the history is rebuilt from the start.
+    let base = match (&opened.state.cursor, head.verified, relation) {
+        (Some(_), _, HeadRelation::Migrate) | (Some(Cursor { verified: false, .. }), true, _) => {
+            eprintln!(
+                "{} the stored state was built on an RPC endpoint's word; rebuilding it from \
+                     the pool's first transaction through the proof verifier",
+                "note:".bold()
+            );
+            None
+        }
+        (Some(cursor), _, _) => Some(cursor.clone()),
+        (None, _, _) => None,
+    };
+    let (ledger, mut recovered, cursor) = match &base {
+        Some(cursor) => (
+            restore_ledger(&opened.state.ledger)?,
+            restore_recovered(&opened.state)?,
+            Some((cursor.lt, cursor.hash)),
+        ),
+        None => (Ledger::genesis(), Recovered::default(), None),
+    };
+    let replayed_before = base.as_ref().map_or(0, |cursor| cursor.transactions_replayed);
+
+    let history = chain::fetch_history(rpc, &pool, head, cursor).await?;
+    let steps = u64::try_from(history.steps.len()).context("history length")?;
+    let mut replay = chain::replay(ledger, &history, head)?;
+
+    let outputs = replay.ledger.take_outputs();
+    let found = scan::recover_indexed(&opened.instance, &outputs)
+        .map_err(|error| anyhow::anyhow!("scan: {error}"))?;
+    let new_notes = found.notes.len();
+    recovered.merge(found);
+    recovered
+        .reconcile_spent(&opened.instance, replay.ledger.published_nullifiers())
+        .map_err(|error| anyhow::anyhow!("reconcile: {error}"))?;
+
+    let verified = head.verified && base.as_ref().is_none_or(|cursor| cursor.verified);
+    let (seqno, root_hash, file_hash) = match &head.checkpoint {
+        Some(checkpoint) => {
+            (checkpoint.seqno, checkpoint.root_hash.clone(), checkpoint.file_hash.clone())
+        }
+        None => (0, String::new(), String::new()),
+    };
+    let state = &mut opened.state;
+    state.cursor = Some(Cursor {
+        lt: head.last_lt,
+        hash: head.last_hash,
+        verified,
+        checkpoint_seqno: seqno,
+        checkpoint_root_hash: root_hash,
+        checkpoint_file_hash: file_hash,
+        block_gen_utime: head.block_gen_utime,
+        shard_gen_utime: head.shard_gen_utime,
+        transactions_replayed: replayed_before.saturating_add(steps),
+    });
+    state.ledger = persist_ledger(&replay.ledger);
+    state.pool_config = pool_config_of(head);
+    // A rebuild starts the diagnostics afresh; a continuation keeps the
+    // retained ones and appends what this sync observed.
+    let previous = if base.is_some() { std::mem::take(&mut state.diagnostics) } else { Vec::new() };
+    persist_recovered(state, &recovered, previous);
+    if relation == HeadRelation::Migrate {
+        state.chain = head.chain.clone();
+    }
+    opened.save_state_and_pointer()?;
+    Ok(SyncReport {
+        verified,
+        checkpoint_seqno: seqno,
+        steps,
+        applied: replay.applied,
+        skipped: replay.skipped,
+        new_notes,
+        recovered,
+    })
 }
 
 #[derive(clap::Args, Clone)]
@@ -731,7 +777,14 @@ impl BalanceCmd {
             None => println!("Synced: never; run `tosctl shield sync --name {}`", self.name),
         }
         let verified = opened.state.cursor.as_ref().is_some_and(|cursor| cursor.verified);
-        print_balance(&recovered, verified);
+        let ledger = restore_ledger(&opened.state.ledger)?;
+        let pending = spend::pending_spends(
+            &opened.journal,
+            &ledger,
+            opened.state.cursor.as_ref().map(|cursor| cursor.shard_gen_utime),
+            verified,
+        );
+        print_balance(&recovered, &spend::held_leaves(&pending), verified);
         println!(
             "Indices: next {}, {} reused; diagnostics: {}",
             store::next_issuable_index(&opened.state, &opened.journal)?,
@@ -739,6 +792,7 @@ impl BalanceCmd {
             opened.state.diagnostics.len()
         );
         print_pending(&opened.journal, &opened.state.notes, verified);
+        spend::print_pending_spends(&pending);
         if self.notes {
             let leaves = recovered.leaves.iter().copied().chain(std::iter::repeat(None));
             let mut seen = BTreeSet::new();
@@ -1096,12 +1150,30 @@ fn kind_of(code: u8) -> anyhow::Result<Kind> {
     }
 }
 
-fn print_balance(recovered: &Recovered, verified: bool) {
+/// The balance, with the notes a pending spend holds shown apart: they are
+/// this wallet's until the chain says otherwise, but no other spend may take
+/// them.
+fn print_balance(recovered: &Recovered, held: &BTreeSet<u64>, verified: bool) {
     let spendable = recovered.spendable_notes().count();
+    let (held_amount, held_count) = recovered
+        .notes
+        .iter()
+        .zip(recovered.leaves.iter())
+        .filter(|(note, leaf)| {
+            note.spendable && !note.spent && leaf.is_some_and(|leaf| held.contains(&leaf))
+        })
+        .fold((0u128, 0usize), |(amount, count), (note, _)| {
+            (amount.saturating_add(note.amount), count.saturating_add(1))
+        });
     println!(
-        "Balance: {} TOS in {} spendable notes{}{}",
-        tos(recovered.balance()).bold(),
-        spendable,
+        "Balance: {} TOS in {} spendable notes{}{}{}",
+        tos(recovered.balance().saturating_sub(held_amount)).bold(),
+        spendable.saturating_sub(held_count),
+        if held_count > 0 {
+            format!(" ({} TOS in {held_count} notes held by a pending spend)", tos(held_amount))
+        } else {
+            String::new()
+        },
         if recovered.duplicates() > 0 {
             format!(" ({} duplicate bodies not counted)", recovered.duplicates())
         } else {
@@ -1198,6 +1270,7 @@ fn persist_ledger(ledger: &Ledger) -> PersistedLedger {
     PersistedLedger {
         leaves: snapshot.leaves.iter().map(fr_to_be).collect(),
         nullifiers: snapshot.nullifiers.iter().map(fr_to_be).collect(),
+        intents: snapshot.intents.iter().map(fr_to_be).collect(),
         nullifier_tree: snapshot
             .nullifier_tree
             .iter()
@@ -1235,6 +1308,7 @@ fn restore_ledger(persisted: &PersistedLedger) -> anyhow::Result<Ledger> {
     let snapshot = Snapshot {
         leaves: persisted.leaves.iter().map(fr).collect::<anyhow::Result<_>>()?,
         nullifiers: persisted.nullifiers.iter().map(fr).collect::<anyhow::Result<_>>()?,
+        intents: persisted.intents.iter().map(fr).collect::<anyhow::Result<_>>()?,
         nullifier_tree: persisted
             .nullifier_tree
             .iter()
@@ -1303,6 +1377,7 @@ fn persist_recovered(
             note_secret: fr_to_be(&note.note_secret),
             owner_commitment: fr_to_be(&note.owner_commitment),
             note_body: fr_to_be(&note.note_body),
+            output_data_hash: fr_to_be(&note.output_data_hash),
             spendable: note.spendable,
             spent: note.spent,
             leaf,
@@ -1332,6 +1407,7 @@ fn restore_recovered(state: &PersistedState) -> anyhow::Result<Recovered> {
             note_secret: fr(&note.note_secret)?,
             owner_commitment: fr(&note.owner_commitment)?,
             note_body: fr(&note.note_body)?,
+            output_data_hash: fr(&note.output_data_hash)?,
             spendable: note.spendable,
             spent: note.spent,
         });
@@ -1402,6 +1478,7 @@ mod tests {
             note_secret: [0; 32],
             owner_commitment: [owner; 32],
             note_body: [0; 32],
+            output_data_hash: [0; 32],
             spendable: true,
             spent: false,
             leaf: Some(index),
@@ -1710,6 +1787,7 @@ mod tests {
             note_secret: Fr::from(1u64),
             owner_commitment: Fr::from(2u64),
             note_body: Fr::from(3u64),
+            output_data_hash: Fr::from(4u64),
             spendable: true,
             spent: false,
         };

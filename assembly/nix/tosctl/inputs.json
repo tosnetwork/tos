@@ -13,6 +13,8 @@
     "test/validator/elector-control-fixture.rs",
     "tools/shielded-pool-wallet",
     "tools/shielded-pool-circuit",
+    "tools/shielded-pool-prover",
+    "tools/shielded-pool-ceremony",
     "crypto/poseidon2/manifest.bin"
   ],
   "exclude": [

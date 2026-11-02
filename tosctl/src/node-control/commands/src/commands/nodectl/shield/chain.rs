@@ -207,6 +207,12 @@ impl Head {
         shielded_pool::compute_fee(&self.gas, shielded_pool::DEPOSIT_GAS_CEILING)
     }
 
+    /// What a transact message carries: exactly the compute fee of the
+    /// contract's gas ceiling at the live prices, which is what it requires.
+    pub fn transact_fee(&self) -> anyhow::Result<u128> {
+        shielded_pool::compute_fee(&self.gas, shielded_pool::TRANSACT_GAS_CEILING)
+    }
+
     pub fn has_history(&self) -> bool {
         self.last_lt > 0 && self.last_hash != [0; 32]
     }
@@ -404,6 +410,7 @@ fn decode(transaction: &Transaction, lt: u64, hash: [u8; 32]) -> anyhow::Result<
             output_data: body.output_data,
         }),
         PoolTransaction::Transact { body, payout } => Some(Event::Transact(Box::new(Transact {
+            intent_digest: fr(&body.intent_digest, "intent digest")?,
             nullifiers: [
                 fr(&body.nullifiers[0], "nullifier")?,
                 fr(&body.nullifiers[1], "nullifier")?,

@@ -21,6 +21,8 @@ on:
       - 'test/validator/elector-control-fixture.rs'
       - 'tools/shielded-pool-wallet/**'
       - 'tools/shielded-pool-circuit/**'
+      - 'tools/shielded-pool-prover/**'
+      - 'tools/shielded-pool-ceremony/**'
       - 'crypto/poseidon2/manifest.bin'
       - '.github/workflows/tosctl-nixos.yml'
       - '!tosctl/src/ci/**'
@@ -41,6 +43,8 @@ on:
       - '!third-party/lms-reference/**/*.md'
       - '!tools/shielded-pool-wallet/**/*.md'
       - '!tools/shielded-pool-circuit/**/*.md'
+      - '!tools/shielded-pool-prover/**/*.md'
+      - '!tools/shielded-pool-ceremony/**/*.md'
   push:
     branches: [main]
     paths: *inputs

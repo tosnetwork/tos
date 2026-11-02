@@ -535,7 +535,11 @@ pub struct Cursor {
     pub checkpoint_seqno: u32,
     pub checkpoint_root_hash: String,
     pub checkpoint_file_hash: String,
+    /// Time of the masterchain block the head was read at.
     pub block_gen_utime: u32,
+    /// Time of the shard block holding the pool's state: the contract's own
+    /// clock, the only one a spend's deadline is judged against.
+    pub shard_gen_utime: u32,
     pub transactions_replayed: u64,
 }
 
@@ -567,6 +571,8 @@ pub struct PersistedNullifierLeaf {
 pub struct PersistedLedger {
     pub leaves: Vec<Word>,
     pub nullifiers: Vec<Word>,
+    /// The intent digest of every accepted transact, in order.
+    pub intents: Vec<Word>,
     pub nullifier_tree: Vec<PersistedNullifierLeaf>,
     pub nullifier_next_index: u64,
     pub native_liability: Coins,
@@ -584,6 +590,9 @@ pub struct PersistedNote {
     pub note_secret: Word,
     pub owner_commitment: Word,
     pub note_body: Word,
+    /// The hash the chain computed over the sealed payload; a spend witness
+    /// needs it.
+    pub output_data_hash: Word,
     pub spendable: bool,
     pub spent: bool,
     pub leaf: Option<u64>,
@@ -652,6 +661,42 @@ pub enum JournalRecord {
     /// The broadcast returned an error; whether the message reached the
     /// network is not known.
     DepositUnknown { message_hash: Word, error: String },
+    /// The indices one spend will seal and sign with, reserved before any of
+    /// them is used for anything.
+    IndicesReserved { indices: Vec<u64>, purpose: String },
+    /// A spend is assembled and about to be proven. Its input notes are held
+    /// from any other spend until a verified sync shows the intent accepted,
+    /// shows an input spent by something else, or shows the contract's clock
+    /// past the deadline.
+    SpendPlanned {
+        intent_digest: Word,
+        nullifiers: [Word; 2],
+        input_leaves: Vec<u64>,
+        indices: Vec<u64>,
+        amount: Coins,
+        /// The payout address of a withdrawal, or the hash of the descriptor
+        /// a transfer pays.
+        recipient: String,
+        withdrawal: bool,
+        valid_until: u32,
+        anchor_kind: u8,
+        anchor_id: u32,
+    },
+    /// The exact external message of a spend, built and about to be
+    /// broadcast. It is never rebuilt.
+    SpendSigned {
+        intent_digest: Word,
+        body_hash: Word,
+        message_hash: Word,
+        payer: String,
+        value: Coins,
+        boc: Vec<u8>,
+    },
+    /// The endpoint accepted the exact spend message.
+    SpendBroadcast { message_hash: Word },
+    /// The broadcast of a spend returned an error; whether the message
+    /// reached the network is not known.
+    SpendUnknown { message_hash: Word, error: String },
 }
 
 /// The next index this client may issue: past everything the state knows,
@@ -663,10 +708,12 @@ pub fn next_issuable_index(
 ) -> anyhow::Result<u64> {
     let journal_next = journal
         .iter()
-        .filter_map(|record| match record {
-            JournalRecord::IndexReserved { index, .. } => Some(*index),
-            JournalRecord::DepositPrepared { index, .. } => Some(*index),
-            _ => None,
+        .flat_map(|record| match record {
+            JournalRecord::IndexReserved { index, .. }
+            | JournalRecord::DepositPrepared { index, .. } => vec![*index],
+            JournalRecord::IndicesReserved { indices, .. }
+            | JournalRecord::SpendPlanned { indices, .. } => indices.clone(),
+            _ => Vec::new(),
         })
         .map(|index| index.checked_add(1))
         .try_fold(0u64, |best, next| next.map(|next| best.max(next)))
@@ -720,6 +767,7 @@ mod tests {
             ledger: PersistedLedger {
                 leaves: vec![[9; 32]],
                 nullifiers: Vec::new(),
+                intents: Vec::new(),
                 nullifier_tree: vec![PersistedNullifierLeaf {
                     index: 0,
                     value: [0; 32],
