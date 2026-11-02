@@ -216,8 +216,12 @@ class Service:
 class _Handler(socketserver.BaseRequestHandler):
     def handle(self):
         try:
+            accepted = time.monotonic()
             line, headers, wire = receive(
-                self.request, BODY_LIMIT, time.monotonic() + self.server.read_timeout
+                self.request,
+                BODY_LIMIT,
+                accepted + self.server.read_timeout,
+                header_deadline=accepted + self.server.header_timeout,
             )
             parts = line.split(" ")
             if len(parts) != 3 or parts[2] != "HTTP/1.1" or not headers.get("host"):
@@ -241,6 +245,11 @@ class RelayServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
 
     def __init__(self, service: Service, address: tuple[str, int], *, onion_endpoint=None):
         self.onion = OnionEndpoint.parse(onion_endpoint) if onion_endpoint is not None else None
+        # Every onion peer arrives from the local Tor daemon and four handlers serve all of
+        # them, so a stalled client must lose its slot quickly: headers within 10 s of
+        # accept, the whole request (up to a 528 KiB submit body over Tor) within 30 s.
+        # The direct loopback profile keeps one 5 s deadline.
+        self.header_timeout = 10 if self.onion is not None else 5
         self.read_timeout = 30 if self.onion is not None else 5
         self.write_timeout = 10 if self.onion is not None else 2
         if address[0] != "127.0.0.1":

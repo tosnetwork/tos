@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools/bonded-relayer"))
 from _service_fixture import candidate  # noqa: E402
 from native_process import NativeRPC  # noqa: E402
-from relay_client import Client, ClientError, SubmissionUnknown  # noqa: E402
+from relay_client import Client, ClientError, RelayerRefused, SubmissionUnknown  # noqa: E402
 from relay_core import Refused  # noqa: E402
 from relay_http import receive, respond  # noqa: E402
 from relay_service import RelayServer  # noqa: E402
@@ -49,6 +49,9 @@ class SocksPeer(socketserver.ThreadingTCPServer):
         self.auth = b"\x01\x00"
         self.reply = b"\x05\x00\x00\x01\x00\x00\x00\x00\x00\x00"
         self.drop_submit = self.redirect = False
+        # Bytes to answer with instead of forwarding, for requests whose path starts with
+        # `canned_path`.
+        self.canned, self.canned_path = None, ""
         super().__init__(("127.0.0.1", 0), SocksHandler)
 
     def handle_error(self, request, client_address):
@@ -84,6 +87,11 @@ class SocksHandler(socketserver.BaseRequestHandler):
                 return
             start, headers, body = receive(self.request, 512 * 1024, time.monotonic() + 3)
             self.server.paths.append(start.split(" ")[1])
+            if self.server.canned is not None and start.split(" ")[1].startswith(
+                self.server.canned_path
+            ):
+                self.request.sendall(self.server.canned)
+                return
             if self.server.redirect:
                 self.request.sendall(
                     b"HTTP/1.1 302 Found\r\nLocation: https://example.invalid\r\nContent-Length: 0\r\n\r\n"
@@ -297,6 +305,41 @@ class OnionHTTPTests(ServiceFixture):
         self.assertEqual(len(self.socks.targets), 1)
         self.assertEqual(self.authority.prepares, 0)
 
+    def _answer_with(self, status_line: bytes, path: str = ""):
+        body = b'{"error":"busy"}'
+        self.socks.canned = (
+            status_line + b"\r\nContent-Type: application/json\r\n"
+            b"Content-Length: " + str(len(body)).encode() + b"\r\n\r\n" + body
+        )
+        self.socks.canned_path = path
+
+    def test_relayer_refusal_is_reported_as_refused_not_unavailable(self):
+        for status in (429, 503):
+            with self.subTest(status=status):
+                self._answer_with(f"HTTP/1.1 {status} Refused".encode())
+                with self.assertRaises(RelayerRefused) as raised:
+                    self.client.quote(token=self.token)
+                self.assertEqual(raised.exception.status, status)
+                with self.assertRaises(RelayerRefused):
+                    self.client.status("11" * 32, self.token)
+
+    def test_malformed_status_line_stays_unavailable(self):
+        for line in (b"HTTP/1.1 4x9 Odd", b"HTTP/1.0 429 Old", b"HTTP/1.1 999 High"):
+            with self.subTest(line=line):
+                self._answer_with(line)
+                with self.assertRaises(ClientError) as raised:
+                    self.client.quote(token=self.token)
+                self.assertNotIsInstance(raised.exception, RelayerRefused)
+                self.assertEqual(str(raised.exception), "relayer response unavailable")
+
+    def test_refused_submit_still_reports_unknown_with_the_refusal_as_cause(self):
+        quote, req = self.request()
+        self._answer_with(b"HTTP/1.1 503 Service Unavailable", "/v1/submit")
+        with self.assertRaises(SubmissionUnknown) as raised:
+            self.client.submit(req, quote)
+        self.assertEqual(raised.exception.request_id, req.identity)
+        self.assertIsInstance(raised.exception.__cause__, RelayerRefused)
+
     def test_lost_submit_reply_reconciles_original_without_resigning(self):
         quote, req = self.request()
         self.socks.drop_submit = True
@@ -321,8 +364,79 @@ class OnionHTTPTests(ServiceFixture):
         self.assertEqual(start, "HTTP/1.1 400 Bad Request")
         self.assertEqual(output.getvalue(), "")
         self.assertEqual(self.journal.db.execute("SELECT COUNT(*) FROM quotes").fetchone()[0], 0)
+        self.assertEqual(self.server.header_timeout, 10)
         self.assertEqual(self.server.read_timeout, 30)
         self.assertEqual(self.server.write_timeout, 10)
+
+    # Header and request deadlines, shrunk so the tests run quickly: headers by 0.4 s after
+    # accept, the whole request by 1.2 s. "Released" means the handler answered and freed
+    # its slot.
+    def _shrink_deadlines(self):
+        self.server.header_timeout, self.server.read_timeout = 0.4, 1.2
+
+    def _status_request(self, body: bytes) -> bytes:
+        host = OnionEndpoint.parse(ORIGIN).authority
+        return (
+            f"POST /v1/status HTTP/1.1\r\nHost: {host}\r\n"
+            f"Content-Type: application/json\r\nContent-Length: {len(body)}\r\n\r\n"
+        ).encode("ascii")
+
+    def _answer(self, sock) -> dict:
+        _, _, body = receive(sock, 4096, time.monotonic() + 3)
+        return json.loads(body)
+
+    def test_body_after_the_header_deadline_is_read_within_the_request_deadline(self):
+        self._shrink_deadlines()
+        body = json.dumps({"request_id": "00" * 32, "status_token": "11" * 32}).encode()
+        with socket.create_connection(self.server.server_address) as sock:
+            sock.sendall(self._status_request(body))
+            time.sleep(0.6)
+            sock.sendall(body)
+            answer = self._answer(sock)
+        self.assertNotEqual(answer.get("error"), "invalid_http_request", answer)
+
+    def test_trickled_headers_do_not_extend_the_header_deadline(self):
+        self._shrink_deadlines()
+        head = self._status_request(b"{}")
+        with socket.create_connection(self.server.server_address) as sock:
+            started = time.monotonic()
+            try:
+                for byte in head[:-1]:
+                    sock.sendall(bytes([byte]))
+                    time.sleep(0.02)
+            except OSError:
+                pass
+            answer = self._answer(sock)
+            elapsed = time.monotonic() - started
+        self.assertEqual(answer, {"error": "invalid_http_request"})
+        self.assertLess(elapsed, self.server.read_timeout, "header deadline was extended")
+
+    def test_stalled_body_releases_its_handler_at_the_request_deadline(self):
+        self._shrink_deadlines()
+        with socket.create_connection(self.server.server_address) as sock:
+            started = time.monotonic()
+            sock.sendall(self._status_request(b"{" + b" " * 63))
+            answer = self._answer(sock)
+            elapsed = time.monotonic() - started
+        self.assertEqual(answer, {"error": "invalid_http_request"})
+        self.assertGreaterEqual(elapsed, self.server.header_timeout)
+        self.assertLess(elapsed, self.server.read_timeout + 1)
+
+    def test_handlers_held_by_stalled_headers_are_reusable_after_the_header_deadline(self):
+        self._shrink_deadlines()
+        stalled = [socket.create_connection(self.server.server_address) for _ in range(4)]
+        try:
+            deadline = time.monotonic() + 2
+            while self.server._connections._value and time.monotonic() < deadline:
+                time.sleep(0.01)
+            self.assertEqual(self.server._connections._value, 0, "four handlers not occupied")
+            time.sleep(self.server.header_timeout + 0.3)
+            # Still well inside the request deadline: only the header deadline frees them.
+            quote = self.client.quote(token=self.token)
+            self.assertTrue(quote.identity)
+        finally:
+            for sock in stalled:
+                sock.close()
 
     def test_onion_connection_cap_still_refuses_fifth_connection(self):
         sockets = [socket.create_connection(self.server.server_address) for _ in range(4)]

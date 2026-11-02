@@ -44,13 +44,22 @@ fn identity(payload: &Value) -> Result<(Release, BondInit)> {
     Ok((release, bond.init))
 }
 
+/// The identity a wallet checks against its own pins. The worker key hash is derived from
+/// the authenticated Bond, not echoed from the request, so the wallet's comparison stays an
+/// independent check even if a pin check here regressed.
+fn identity_reply(release: &Release, init: &BondInit) -> Result<Value> {
+    Ok(json!({
+        "scope": release.scope()?,
+        "endpoint": init.endpoint,
+        "worker_key_hash": protocol::hash(&init.worker_key),
+    }))
+}
+
 pub fn dispatch(operation: &str, payload: &Value) -> Result<Value> {
     if operation == "client_identity" {
         protocol::fields(payload, &["release", "bond_init_b64"])?;
         let (release, init) = identity(payload)?;
-        return Ok(
-            json!({"scope":release.scope()?,"endpoint":init.endpoint,"worker_key_hash":release.worker_key_hash}),
-        );
+        return identity_reply(&release, &init);
     }
     ensure!(operation == "client_quote", "unsupported public operation");
     protocol::fields(payload, &["release", "bond_init_b64", "envelope"])?;
@@ -60,19 +69,12 @@ pub fn dispatch(operation: &str, payload: &Value) -> Result<Value> {
     ensure!(envelope["schema"] == "tos.br1.quote.v1", "quote envelope schema");
     let terms = protocol::canonical(&envelope["terms"])?;
     ensure!(envelope["terms"]["release"] == release.scope()?, "wallet quote release pin");
-    let public = crate::identity::decode(
+    crate::identity::verify_quote_signature(
+        &init.worker_key,
+        &terms,
         envelope["public_key_b64"].as_str().ok_or_else(|| anyhow::anyhow!("quote key"))?,
-        1312,
-    )?;
-    ensure!(public == init.worker_key, "wallet quote worker pin");
-    let signature = crate::identity::decode(
         envelope["signature_b64"].as_str().ok_or_else(|| anyhow::anyhow!("quote signature"))?,
-        2420,
     )?;
-    let public: [u8; 1312] = public.try_into().map_err(|_| anyhow::anyhow!("key width"))?;
-    let signature: [u8; 2420] =
-        signature.try_into().map_err(|_| anyhow::anyhow!("signature width"))?;
-    shielded_pool_wallet::relayer_quote::verify_terms(&public, &terms, &signature)?;
     // The wallet transport checks the complete terms schema, time, capability,
     // fee slot and request binding after authenticating these exact terms.
     Ok(json!({"terms":envelope["terms"]}))
@@ -143,6 +145,18 @@ mod tests {
         let mut wrong = payload.clone();
         wrong["release"]["global_id"] = json!(4);
         assert!(dispatch("client_identity", &wrong).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn identity_reply_derives_the_worker_hash_from_the_bond() -> Result<()> {
+        let (payload, _) = fixture()?;
+        let (mut release, init) = identity(&payload)?;
+        let derived = protocol::hash(&init.worker_key);
+        assert_eq!(dispatch("client_identity", &payload)?["worker_key_hash"], json!(derived));
+        // A pin that disagrees with the Bond must not be echoed back as the Bond's identity.
+        release.worker_key_hash = "66".repeat(32);
+        assert_eq!(identity_reply(&release, &init)?["worker_key_hash"], json!(derived));
         Ok(())
     }
 

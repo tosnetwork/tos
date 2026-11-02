@@ -36,6 +36,15 @@ class ClientError(Refused):
     pass
 
 
+class RelayerRefused(ClientError):
+    """The relayer answered with a well-formed HTTP status other than 200/202. Distinct from
+    an unavailable transport; a submit still reports it as SubmissionUnknown."""
+
+    def __init__(self, status: int):
+        super().__init__(f"relayer refused the request (HTTP {status})")
+        self.status = status
+
+
 class SubmissionUnknown(ClientError):
     def __init__(self, identity: str):
         super().__init__("submission result unavailable; reconcile this request identity")
@@ -157,9 +166,21 @@ class Client:
             connection.sendall(head + wire)
             line, _, body = receive(connection, RESPONSE_LIMIT, deadline)
             parts = line.split(" ", 2)
-            if len(parts) != 3 or parts[0] != "HTTP/1.1" or parts[1] not in ("200", "202"):
-                raise ClientError("relayer refused or returned an unsupported response")
+            if (
+                len(parts) != 3
+                or parts[0] != "HTTP/1.1"
+                or len(parts[1]) != 3
+                or not parts[1].isascii()
+                or not parts[1].isdigit()
+                or parts[1][0] not in "12345"
+            ):
+                # A malformed status line is not an answer from the relayer.
+                raise ClientError("relayer returned a malformed status line")
+            if parts[1] not in ("200", "202"):
+                raise RelayerRefused(int(parts[1]))
             return parse(body, RESPONSE_LIMIT)
+        except RelayerRefused:
+            raise
         except (OSError, ValueError, Refused) as error:
             raise ClientError("relayer response unavailable") from error
         finally:
@@ -276,8 +297,6 @@ class Client:
         if value["message_hash"] is not None:
             digest(value["message_hash"])
         if value["acceptance_b64"] is not None:
-            import base64
-
             text = value["acceptance_b64"]
             if type(text) is not str or len(text) > 4 * ((MAX_ACCEPTANCE + 2) // 3):
                 raise ClientError("acceptance outside bound")

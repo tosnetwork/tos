@@ -20,6 +20,10 @@ class TorDaemonTests(unittest.TestCase):
     def test_real_daemon_validates_profiles_isolates_socks_and_refuses_without_network(self):
         tor = shutil.which("tor")
         self.assertIsNotNone(tor, "install Tor; this integration gate must not skip")
+        # The service profile enables proof-of-work defenses; --verify-config alone does not
+        # show that this build can run them.
+        modules = subprocess.run([tor, "--list-modules"], capture_output=True, timeout=15)
+        self.assertIn(b"pow: yes", modules.stdout, "Tor build lacks the pow module")
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             with socket.socket() as probe:

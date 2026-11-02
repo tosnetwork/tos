@@ -7,5 +7,12 @@ Log warn stderr
 HiddenServiceDir /var/lib/tor/br1-service/onion
 HiddenServiceVersion 3
 HiddenServicePort 80 127.0.0.1:18888
-HiddenServiceMaxStreams 4
+# One stream per rendezvous circuit (a circuit that opens a second one is closed), so a
+# single circuit can hold at most one of the service's four handlers.
+HiddenServiceMaxStreams 1
 HiddenServiceMaxStreamsCloseCircuit 1
+# Make introduction circuits cost something under load. This requires a Tor built with the
+# pow module (`tor --list-modules` reports "pow: yes"). It raises the price of new circuits;
+# it does not by itself react to handlers held by slow, low-rate clients.
+HiddenServiceEnableIntroDoSDefense 1
+HiddenServicePoWDefensesEnabled 1

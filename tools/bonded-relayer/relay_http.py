@@ -24,7 +24,12 @@ def remaining(sock: socket.socket, deadline: float):
     sock.settimeout(seconds)
 
 
-def receive(sock: socket.socket, maximum: int, deadline: float) -> tuple[str, dict, bytes]:
+def receive(
+    sock: socket.socket, maximum: int, deadline: float, header_deadline: float | None = None
+) -> tuple[str, dict, bytes]:
+    """Read one request or response. With `header_deadline`, the request line and headers
+    must be complete by it (trickled bytes do not extend it) and the body by `deadline`."""
+    header_deadline = deadline if header_deadline is None else min(header_deadline, deadline)
     data = bytearray()
     while True:
         split = data.find(b"\r\n\r\n")
@@ -34,7 +39,7 @@ def receive(sock: socket.socket, maximum: int, deadline: float) -> tuple[str, di
             break
         if len(data) >= HEADER_LIMIT + 4:
             raise HTTPRefused("HTTP headers too large")
-        remaining(sock, deadline)
+        remaining(sock, header_deadline)
         chunk = sock.recv(min(4096, HEADER_LIMIT + 4 - len(data)))
         if not chunk:
             raise HTTPRefused("incomplete HTTP headers")

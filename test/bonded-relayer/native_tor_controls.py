@@ -21,9 +21,9 @@ CASES = (
         "client::tests::public_identity_binds_all_wallet_pins_without_custody",
     ),
     (
-        "client.rs",
-        "shielded_pool_wallet::relayer_quote::verify_terms(&public, &terms, &signature)?;",
-        "let _ = (&public, &terms, &signature);",
+        "identity.rs",
+        "relayer_quote::verify_terms(&public, terms, &signature)?;",
+        "let _ = (&public, terms, &signature);",
         "client::tests::public_quote_authenticates_exact_terms_and_pinned_worker",
     ),
     (

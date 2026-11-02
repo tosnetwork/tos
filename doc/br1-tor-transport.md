@@ -112,20 +112,34 @@ new quote; an ambiguous submit must reconcile the original attempt first.
 The onion listener requires an exact HTTP Host matching the authenticated endpoint.
 It still buffers at most 528,384 body bytes per connection before dispatch, with
 8 KiB headers, four active handlers, backlog eight and the existing global token
-bucket (burst 16, replenishment four/second). Onion request reads have one 30-second
-deadline and responses ten seconds; the local profile remains five/two seconds.
-There is no unbounded gateway queue and the existing worker busy lock refuses
-concurrent expensive operations. Tor allows at most four streams per circuit in
-the example; the application's global limit remains necessary across circuits.
-These controls bound work; they do not prevent denial of service or ensure fairness.
+bucket (burst 16, replenishment four/second). An onion request's line and headers
+must arrive within 10 seconds of accept (trickled bytes do not extend this), the
+whole request within 30 seconds, and the response within ten seconds; the local
+profile keeps five/two seconds. There is no unbounded gateway queue and the
+existing worker busy lock refuses concurrent expensive operations.
+
+Every onion peer reaches the service from the local Tor daemon, so the service
+cannot tell clients apart. The example profile therefore allows one stream per
+rendezvous circuit (`HiddenServiceMaxStreams 1`, closing a circuit that opens
+another) and enables Tor's introduction DoS defense and proof-of-work
+(`HiddenServicePoWDefensesEnabled`; the Tor build must report `pow: yes` in
+`tor --list-modules`). These raise the cost of opening circuits. They do not
+by themselves react when slow, low-rate clients hold the four handlers: Tor's
+rendezvous queue is not the application's occupancy. Residual: k separate
+circuits can still hold k handlers, for up to 10 seconds each with stalled
+headers or 30 seconds with a slow body. Availability of an anonymous service
+under deliberate exhaustion remains an onion deployment gate. For a closed
+pilot, Tor restricted client authorization is stronger, at the cost of public
+reachability. These controls bound work; they do not ensure fairness.
 
 The quote default is now 300 seconds, within the existing maximum, to leave room
 for transport/proof work before the provider's 125-second preparation requirement.
 This is a bounded default, not a latency guarantee. Obtain a new quote explicitly
 if proof construction consumes the budget. The signed funding wallet keeps its
-120-second lifetime. Recheck and final broadcast admission reject a wallet with
-five seconds or less remaining; historical verification remains usable after
-expiry. No Tor hop is inserted between the native five-second permit and local
+120-second lifetime. Recheck requires the wallet expiry to exceed the full
+five-second permit interval, and final broadcast checks the expiry again before
+consuming the permit or writing to RPC; historical verification remains usable
+after expiry. No Tor hop is inserted between the native five-second permit and local
 RPC submission. A refused/expired send is not proof of terminal rejection.
 
 ## Privacy coverage and deployment gates
