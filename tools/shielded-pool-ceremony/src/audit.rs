@@ -48,9 +48,18 @@ impl StartingKey {
     /// Parse, verify and transform the committed slice, then set up the
     /// circuit over it. Minutes, on purpose.
     pub fn rebuild() -> Result<Self> {
+        Self::rebuild_from(&committed::artifacts_directory())
+    }
+
+    /// The same, from a phase-1 slice directory named at run time: an
+    /// installed program has no checkout to find the committed slice in, so
+    /// its packaging names the directory. The slice is parsed, verified and
+    /// transformed exactly as the committed one is; a wrong slice fails the
+    /// audit against the record's digests, whatever directory it came from.
+    pub fn rebuild_from(phase1: &std::path::Path) -> Result<Self> {
         let mut seed = [0u8; 32];
         OperatingSystem.fill(&mut seed)?;
-        let (key, provenance) = committed::starting_key(&committed::artifacts_directory(), seed)?;
+        let (key, provenance) = committed::starting_key(phase1, seed)?;
         let digest = key_digest(&key)?;
         Ok(Self { key, provenance, digest })
     }

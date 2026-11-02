@@ -77,6 +77,14 @@ pub fn audit_ceremony(directory: &Directory) -> Result<Audited> {
     Ok(audit(directory, &start)?)
 }
 
+/// The same audit with the phase-1 slice read from `phase1` instead of the
+/// checkout this program was built from, for an installed program whose
+/// packaging names both directories.
+pub fn audit_ceremony_from(phase1: &std::path::Path, directory: &Directory) -> Result<Audited> {
+    let start = StartingKey::rebuild_from(phase1)?;
+    Ok(audit(directory, &start)?)
+}
+
 fn draw_seed(
     mut fill: impl FnMut(&mut [u8]) -> std::result::Result<(), String>,
 ) -> Result<[u8; 32]> {

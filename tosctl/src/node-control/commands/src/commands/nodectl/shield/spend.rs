@@ -37,7 +37,6 @@ use contracts::shielded_pool::{
 use contracts::wallet::send_fees;
 use contracts::{DefaultChainProvider, Wallet};
 use sha2::{Digest, Sha256};
-use shielded_pool_ceremony::record::Directory;
 use shielded_pool_circuit::field::{Fr, fr_to_be};
 use shielded_pool_circuit::groth16::CanonicalProof;
 use shielded_pool_circuit::imt;
@@ -127,10 +126,8 @@ pub struct SendCmd {
 /// for its proving key, and how the pool is read.
 #[derive(clap::Args, Clone)]
 pub struct Proving {
-    /// The finished phase-2 ceremony directory the proving key is read from.
-    /// Its whole transcript is audited on every spend
-    #[arg(long)]
-    pub(super) ceremony_dir: PathBuf,
+    #[command(flatten)]
+    pub(super) material: super::audit::Material,
     /// Do not ask for confirmation
     #[arg(short = 'y', long)]
     pub(super) yes: bool,
@@ -244,12 +241,12 @@ pub(super) fn ceremony_vk_pin() -> anyhow::Result<(&'static str, [u8; 32])> {
 }
 
 /// The prover for this pool: the pool must verify against the finished
-/// ceremony key, and the key in the given directory must be that key,
+/// ceremony key, and the key in the named material must be that key,
 /// audited in full, every time.
 pub(super) fn audited_prover(
     opened: &Opened,
     head: &Head,
-    ceremony_dir: &Path,
+    material: &super::audit::Resolved,
 ) -> anyhow::Result<PublicClient> {
     let (pin_hex, pin) = ceremony_vk_pin()?;
     anyhow::ensure!(
@@ -258,14 +255,7 @@ pub(super) fn audited_prover(
          spends are made only against the ceremony key",
         hex::encode(head.state.config.groth16_vk_hash)
     );
-    eprintln!(
-        "{} auditing the ceremony transcript in {} (every spend pays for this)",
-        "note:".bold(),
-        ceremony_dir.display()
-    );
-    let directory = Directory::at(ceremony_dir);
-    let audited = shielded_pool_prover::audit_ceremony(&directory)
-        .map_err(|error| anyhow::anyhow!("ceremony audit: {error}"))?;
+    let (directory, audited) = super::audit::audit_material(material)?;
     let client = PublicClient::load(
         &directory,
         &audited,
@@ -334,6 +324,7 @@ async fn run(
     config_path: &Path,
 ) -> anyhow::Result<()> {
     eprintln!("{}", EXPERIMENTAL.yellow());
+    let material = proving.material.resolve()?;
     let (config, vault, rpc) = load_config_vault_rpc_client(config_path).await?;
     let mut opened = open_instance(config_path, name, &vault).await?;
     let network = opened.network()?;
@@ -347,7 +338,7 @@ async fn run(
     let pool = opened.pointer.profile.address()?;
     let head = proving.read.head(&config, &rpc, &pool).await?;
     require_current_verified_head(&opened, &head, name)?;
-    let client = audited_prover(&opened, &head, &proving.ceremony_dir)?;
+    let client = audited_prover(&opened, &head, &material)?;
 
     // What this wallet may spend: its notes at known leaves, less those a
     // pending spend holds. One spend at a time.
