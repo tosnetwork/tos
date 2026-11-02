@@ -42,3 +42,8 @@ tempfile = "3"
 unwrap_used = "deny"
 expect_used = "deny"
 panic = "deny"
+
+[[test]]
+name = "storage_crash_matrix"
+path = "tests/storage_crash_matrix.rs"
+harness = false
