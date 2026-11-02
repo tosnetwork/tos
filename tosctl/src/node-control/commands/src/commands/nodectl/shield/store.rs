@@ -384,9 +384,20 @@ impl Store {
                         anyhow::bail!(
                             "the {what} was written in format {version} by an earlier pre-release \
                              client; this client reads format {STATE_FORMAT_VERSION} only and \
-                             carries nothing across formats. Remove the instance directory ({}) \
-                             and run `tosctl shield init` again: the mnemonic recovers every note",
-                            self.dir.display()
+                             carries nothing across formats. To start over: remove the instance \
+                             directory ({}) and the pointer file that names it (under {}, the \
+                             file whose `directory` is {:?}), then run `tosctl shield init` again \
+                             with the same mnemonic. The chain gives back every note; the old \
+                             journal's receipts are not carried over, and a spend that was still \
+                             pending is forgotten (the pool refuses a second spend of the same \
+                             note, so at worst its fee is lost)",
+                            self.dir.display(),
+                            self.dir
+                                .parent()
+                                .map_or_else(|| "..".into(), |root| root.display().to_string()),
+                            self.dir.file_name().map_or_else(String::new, |name| name
+                                .to_string_lossy()
+                                .into_owned())
                         );
                     }
                 }
@@ -876,6 +887,9 @@ mod tests {
         let error = store.load_state().expect_err("refused").to_string();
         assert!(error.contains("written in format 1"), "{error}");
         assert!(error.contains("tosctl shield init"), "{error}");
+        assert!(error.contains(&format!("directory ({})", store.directory().display())), "{error}");
+        assert!(error.contains(&format!("under {}", root.path().display())), "{error}");
+        assert!(error.contains(&format!("{:?}", keys().directory_name())), "{error}");
 
         let frame = store.seal(KIND_JOURNAL, 1, 0, b"a record of the first format").expect("seal");
         let mut bytes = (frame.len() as u32).to_be_bytes().to_vec();
@@ -891,6 +905,28 @@ mod tests {
             .expect("write");
         let error = store.load_state().expect_err("refused").to_string();
         assert!(error.contains("does not open"), "{error}");
+
+        // The stated way out works: with the directory and the pointer that
+        // names it gone, the name is free for `init` and the directory is
+        // empty for the store it will open.
+        let pointer_path = pointer_path(root.path(), "w").expect("a pointer path");
+        Pointer {
+            schema: POINTER_SCHEMA.to_owned(),
+            profile: state(&binding()).profile,
+            binding: binding(),
+            chain: state(&binding()).chain,
+            directory: keys().directory_name(),
+        }
+        .save(&pointer_path)
+        .expect("the pointer");
+        let dir = store.directory().to_path_buf();
+        drop(store);
+        std::fs::remove_dir_all(&dir).expect("remove the instance directory");
+        std::fs::remove_file(&pointer_path).expect("remove the pointer");
+        assert!(!pointer_path.exists(), "the name is free again");
+        let store = Store::open(root.path(), &keys(), binding()).expect("open afresh");
+        assert!(store.load_state().expect("an empty directory").is_none());
+        assert!(store.read_journal().expect("an empty journal").is_empty());
     }
 
     #[test]

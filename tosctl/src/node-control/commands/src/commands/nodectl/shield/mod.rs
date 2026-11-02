@@ -449,7 +449,10 @@ async fn open_instance(
         "the pointer for {name:?} names another instance directory"
     );
     let store = Store::open(&root, &keys, pointer.binding.clone())?;
-    let state = store.load_state()?.with_context(|| format!("instance {name:?} has no state"))?;
+    let state = store
+        .load_state()
+        .with_context(|| format!("instance {name:?} (pointer {})", pointer_path.display()))?
+        .with_context(|| format!("instance {name:?} has no state"))?;
     anyhow::ensure!(
         state.instance_id == *keys.instance_id(),
         "the state belongs to another instance"

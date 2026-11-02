@@ -2201,12 +2201,14 @@ mod tests {
 
         // A journal that cannot be written: nothing is reserved, so nothing
         // can be signed (the type has no other constructor).
-        let dir = opened.store.directory().to_path_buf();
-        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o500)).expect("chmod");
+        // (A directory where the journal file goes fails the append whoever
+        // runs the test; a permission bit would not stop root.)
+        let journal_path = opened.store.directory().join("journal");
+        std::fs::create_dir(&journal_path).expect("a directory in the journal's place");
         let first = prepare(0x71);
         let planned = planned_for(fr_to_be(&first.intent_digest()), first.nullifiers());
         let refused = reserve_spend(&mut opened, first, planned).is_err();
-        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).expect("chmod");
+        std::fs::remove_dir(&journal_path).expect("the journal's place is free again");
         assert!(refused, "a reservation that could not be written");
         assert!(opened.journal.is_empty());
         assert!(reader.read_journal().expect("read").is_empty());
