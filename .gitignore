@@ -70,3 +70,8 @@ crypto/smartcont/artifacts/
 # Carrying a second copy was a hedge against a host disappearing, and storing
 # the default's bytes is a better hedge than a second remote host; a fetch
 # answers the contingency in twenty-five minutes.
+
+# Nix build outputs (assembly/nix/tosctl): result links and CI evidence.
+/result
+/result-*
+/nixos-evidence/

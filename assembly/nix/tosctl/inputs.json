@@ -1,0 +1,70 @@
+{
+  "comment": "The only list of repository inputs for the tosctl Nix package. package.nix builds its fileset from this file; check-inputs.py requires the CI workflow trigger paths to match it and every embedded file of the packaged and tested crates to be covered by it.",
+  "source": [
+    "tosctl/src",
+    "tl/generate/scheme",
+    "crypto/pq",
+    "crypto/smartcont/prediction-market-v1.boc.base64",
+    "crypto/smartcont/relayer-bond-v1.boc.base64",
+    "third-party/mldsa-native",
+    "third-party/falcon-reference",
+    "third-party/slhdsa-c",
+    "third-party/lms-reference",
+    "test/validator/elector-control-fixture.rs"
+  ],
+  "exclude": [
+    "tosctl/src/ci",
+    "tosctl/src/docs",
+    "tosctl/src/Dockerfile",
+    "tosctl/src/Dockerfile.dockerignore",
+    "tosctl/src/Dockerfile.nodectl",
+    "tosctl/src/Dockerfile.nodectl.dockerignore",
+    "tosctl/src/Makefile",
+    "tosctl/src/tosctl-config.json"
+  ],
+  "exclude_suffixes": [
+    ".md"
+  ],
+  "tested_packages": [
+    "tosctl",
+    "commands"
+  ],
+  "nix_files": [
+    "flake.nix",
+    "flake.lock",
+    "rust-toolchain.toml",
+    "assembly/nix/tosctl/**"
+  ],
+  "test_only_includes": [
+    {
+      "file": "tosctl/src/block/src/tests/test_storage_fees.rs",
+      "target": "crypto/block/storage-fee-vectors.tsv",
+      "reason": "cfg(test) module of chain_block (config_params.rs); its tests are not run by the package"
+    },
+    {
+      "file": "tosctl/src/node-control/control-client/src/cli_wire_parity.rs",
+      "target": "test/tl-cli/fixtures.tsv",
+      "reason": "cfg(test) module of control-client (client_adnl.rs); its tests are not run by the package"
+    },
+    {
+      "file": "tosctl/src/node-control/node-data-sync/src/service.rs",
+      "target": "validator-engine/validator-engine.cpp",
+      "reason": "cfg(test) tests module of node-data-sync; its tests are not run by the package"
+    },
+    {
+      "file": "tosctl/src/wallet-pq-signer/src/kdf.rs",
+      "target": "test/rescue-fee-gate/fee-kdf-vectors.json",
+      "reason": "cfg(test) tests module of wallet-pq-signer; its tests are not run by the package"
+    },
+    {
+      "file": "tosctl/src/node-control/control-client/src/cli_wire_parity.rs",
+      "target": "test/tl-cli/values.rs",
+      "reason": "#[path] module of control-client's cfg(test) wire-parity tests; its tests are not run by the package"
+    },
+    {
+      "file": "tosctl/src/node-control/contracts/tests/fixtures/current_network.rs",
+      "target": "crypto/smartcont/gen-zerostate.fif",
+      "reason": "reached only from service's cfg(test) canonical-scan tests; its tests are not run by the package"
+    }
+  ]
+}

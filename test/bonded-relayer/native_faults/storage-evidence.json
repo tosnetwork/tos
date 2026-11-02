@@ -1,0 +1,84 @@
+{
+  "source_sha256": "806e53166383f3af4de1d902387d4fad2f15eea7c9da0449064372f648682440",
+  "rows": [
+    {
+      "name": "baseline",
+      "case": null,
+      "exit": 0,
+      "expected": null,
+      "sha256": "000e6ccf872868e693226daf3e13eca0caf13f356ff445ec41a6c9e506e72808",
+      "bytes": 2339
+    },
+    {
+      "name": "prepared-durability",
+      "case": "prepared.after_commit",
+      "exit": 1,
+      "expected": "message durability",
+      "sha256": "899971f4065532b3b0ca0c074b2c9335b32ef7671719c15b93f243dfdd8253b5",
+      "bytes": 26
+    },
+    {
+      "name": "consume-atomicity",
+      "case": "consume.before_lease_sent",
+      "exit": 1,
+      "expected": "permit/send-claim atomicity",
+      "sha256": "6caa7b870f9e07e7e65b7342df02b77904ac0098f2b8f67c59541f189ac85e34",
+      "bytes": 35
+    },
+    {
+      "name": "refusal-atomicity",
+      "case": "refusal.before_permits_retired",
+      "exit": 1,
+      "expected": "retirement/permit atomicity",
+      "sha256": "f5a294ea021e9a34d609c4e58e10191d11c323eb4709a6c6118bc61b473a1a12",
+      "bytes": 35
+    },
+    {
+      "name": "fee-durability",
+      "case": "fee.after_commit",
+      "exit": 1,
+      "expected": "fee credit durability",
+      "sha256": "7fd8abb27963801c6be87903be30bde487e9d803840ae4f02ddf5d1cf17fd93d",
+      "bytes": 29
+    },
+    {
+      "name": "concurrent-double-claim",
+      "case": "concurrent_consumers",
+      "exit": 1,
+      "expected": "two processes did not have exactly one send claimant",
+      "sha256": "7996b24f5929d6dd1d1c13a3d437ee6c0cf4e6d29aaa051955c47d4ea6afe15b",
+      "bytes": 60
+    },
+    {
+      "name": "unexpected-loser-error",
+      "case": "concurrent_consumers",
+      "exit": 1,
+      "expected": "losing claimant did not reach the permit guard",
+      "sha256": "0641a3e87063699dba94dd8697249ccb1e7cf3b4c3ebad11190163773aed8c8f",
+      "bytes": 152
+    },
+    {
+      "name": "restored",
+      "case": null,
+      "exit": 0,
+      "expected": null,
+      "sha256": "000e6ccf872868e693226daf3e13eca0caf13f356ff445ec41a6c9e506e72808",
+      "bytes": 2339
+    }
+  ],
+  "result": "PASS",
+  "raw_location": "/tos/build/e6-relayer-fault-matrix/storage-controls-r3",
+  "retained_until_utc": "2027-02-01",
+  "access": "Existing authorized toserver SSH account",
+  "scope": "Production Store/SQLite process-crash and synchronized two-process consumption; synthetic bytes, no signing/network/chain/physical-power-loss claim.",
+  "unit_control_target_routing": {
+    "failed_head": "9513008357e9f82d1f952e5a3c7690939b66a722",
+    "failed_ci": "https://github.com/tosnetwork/tos/actions/runs/41387915636",
+    "failure": "Standalone storage_crash_matrix received a unit-test name plus --exact and refused its unsupported arguments.",
+    "fix": "Select --bin br1-native-provider for exact unit-test guard controls; all three baseline/mutated/restored checks then ran successfully.",
+    "raw": "/tos/build/e6-relayer-fault-matrix/ci-native-controls-fixed.log",
+    "sha256": "76f3bbd18d3133bd5976dbcddbd7e61748ca4a0c7febc4255f5fbd71b6a39738",
+    "bytes": 852,
+    "exit": 0
+  }
+}

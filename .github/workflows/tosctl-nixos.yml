@@ -1,0 +1,103 @@
+name: tosctl NixOS installation
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths: &inputs
+      # Generated from assembly/nix/tosctl/inputs.json; check-inputs.py requires them equal.
+      - 'flake.nix'
+      - 'flake.lock'
+      - 'rust-toolchain.toml'
+      - 'assembly/nix/tosctl/**'
+      - 'tosctl/src/**'
+      - 'tl/generate/scheme/**'
+      - 'crypto/pq/**'
+      - 'crypto/smartcont/prediction-market-v1.boc.base64'
+      - 'crypto/smartcont/relayer-bond-v1.boc.base64'
+      - 'third-party/mldsa-native/**'
+      - 'third-party/falcon-reference/**'
+      - 'third-party/slhdsa-c/**'
+      - 'third-party/lms-reference/**'
+      - 'test/validator/elector-control-fixture.rs'
+      - '.github/workflows/tosctl-nixos.yml'
+      - '!tosctl/src/ci/**'
+      - '!tosctl/src/docs/**'
+      - '!tosctl/src/Dockerfile'
+      - '!tosctl/src/Dockerfile.dockerignore'
+      - '!tosctl/src/Dockerfile.nodectl'
+      - '!tosctl/src/Dockerfile.nodectl.dockerignore'
+      - '!tosctl/src/Makefile'
+      - '!tosctl/src/tosctl-config.json'
+      - '!tosctl/src/**/*.md'
+      - '!tl/generate/scheme/**/*.md'
+      - '!crypto/pq/**/*.md'
+      - '!third-party/mldsa-native/**/*.md'
+      - '!third-party/falcon-reference/**/*.md'
+      - '!third-party/slhdsa-c/**/*.md'
+      - '!third-party/lms-reference/**/*.md'
+  push:
+    branches: [main]
+    paths: *inputs
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tosctl-nixos-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  nixos-vm:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: cachix/install-nix-action@448cde739abec1eaf0646249e3d25bb8d9bc7702 # v31.11.2
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = false
+            max-jobs = 2
+            cores = 2
+      - name: Check pinned definitions and virtualization support
+        run: |
+          test -r /dev/kvm && test -w /dev/kvm
+          python3 assembly/nix/tosctl/check-inputs.py
+          nix flake check --no-build --no-update-lock-file
+          git diff --exit-code -- flake.lock
+          df -h . /nix
+      - name: Build the installed CLI and boot a real NixOS VM
+        run: |
+          set -o pipefail
+          mkdir -p nixos-evidence
+          nix build --no-update-lock-file -L .#checks.x86_64-linux.tosctl-vm \
+            --out-link result-vm 2>&1 | tee nixos-evidence/build.log
+          nix build --no-update-lock-file .#tosctl
+          # Unit tests ran in the sandbox build; keep their counts as evidence. The stored build
+          # log has them even when the package came from an earlier build.
+          nix log --no-update-lock-file .#tosctl | grep -E 'test result:' | tee nixos-evidence/tests.txt
+          ! grep -q 'FAILED' nixos-evidence/tests.txt
+          grep -qE 'test result: ok\. [1-9][0-9]* passed' nixos-evidence/tests.txt
+          # Only the package fileset was imported, never the whole repository.
+          python3 assembly/nix/tosctl/check-store.py \
+            "$(nix eval --raw --no-update-lock-file .#packages.x86_64-linux.tosctl.src)" \
+            "$(nix eval --raw --no-update-lock-file .#checks.x86_64-linux.tosctl-vm.drvPath)" \
+            | tee nixos-evidence/store.txt
+          python3 assembly/nix/tosctl/check-store.py --red-control | tee -a nixos-evidence/store.txt
+          {
+            git rev-parse HEAD
+            nix --version
+            ./result/bin/tosctl --version
+            sha256sum result/bin/tosctl flake.lock
+            nix path-info -Sh ./result
+          } > nixos-evidence/receipt.txt
+          cp -rL result-vm nixos-evidence/vm
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: tosctl-nixos-evidence
+          path: nixos-evidence/
+          retention-days: 14
+          if-no-files-found: warn
