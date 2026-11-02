@@ -333,8 +333,8 @@ pub(super) async fn run(
     let candidates = spendable_candidates(&recovered, &held_leaves(&pending));
     anyhow::ensure!(!candidates.is_empty(), "this instance has no spendable note");
 
-    // The relayer funds the message from its own wallet, with the amount it
-    // quoted as its funding cap; that amount must cover the pool's fee.
+    // The relayer funds the message from its own wallet, up to the cap it
+    // quoted; that cap must cover the pool's fee for the message to run.
     let transact_fee = head.transact_fee()?;
 
     let session = open_session(&mut opened, options, &profile, &endpoint, &scope)?;
@@ -552,8 +552,9 @@ pub(super) async fn run(
         fee_slot: FEE_SLOT,
         fee_note_index: quote.terms.note_index,
         valid_until,
-        // The relayer funds the exact amount it quoted and refuses a request
-        // whose cap is below it; the cap is the quoted one, no lower.
+        // The quoted cap is the most the relayer may fund the message with;
+        // it funds what it chooses under that cap and refuses a request whose
+        // cap is below its funding, so the cap is the quoted one, no lower.
         funding_cap: quote.terms.funding_cap,
     };
     // The request as the relayer will check it, checked here first.
@@ -720,9 +721,9 @@ fn summary_text(
         "\n{}\n  Kind:        Transfer, relayed\n  To:          descriptor index {}\n  Amount:      \
          {} TOS\n  Relayer fee: {} TOS (a note to the relayer's descriptor index {}, slot \
          {FEE_SLOT}, from the notes)\n  Inputs:      {}\n  Change:      {} TOS (back to this \
-         instance)\n  Anchor:      {}\n  Relayer:     Bond {} via {}\n  Funding:     {} TOS from \
-         the relayer's wallet, as quoted (the pool's transact fee is {} TOS)\n  Quote:       {}, \
-         window ends {}\n",
+         instance)\n  Anchor:      {}\n  Relayer:     Bond {} via {}\n  Funding:     up to {} TOS \
+         from the relayer's wallet, the quoted maximum (the pool's transact fee is {} TOS)\n  \
+         Quote:       {}, window ends {}\n",
         "Spend summary:".cyan().bold(),
         recipient.note_key_index,
         tos(plan.outputs[0].amount()),
