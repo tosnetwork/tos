@@ -121,6 +121,13 @@ class ProcessTests(unittest.TestCase):
         self.program = PinnedProgram(self.binary, self.sha, self.work, timeout=1)
         self.addCleanup(self.program.close)
 
+    def test_recovery_operation_reaches_the_sealed_process(self):
+        try:
+            recovered = self.program.exchange("recover_prepared", b"public-recovery-test")
+        except Refused as error:
+            self.fail(f"recovery operation did not reach the sealed process: {error}")
+        self.assertEqual(recovered, b"public-recovery-test")
+
     def test_real_native_roundtrip_and_sealed_snapshot(self):
         self.assertEqual(self.program.exchange("preflight", b"public-test"), b"public-test")
         with self.assertRaises(PermissionError):

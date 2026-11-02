@@ -374,3 +374,59 @@ mod deadline_tests {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod recovery_tests {
+    use super::*;
+    use std::{fs::OpenOptions, io::Write, os::unix::fs::OpenOptionsExt};
+
+    #[test]
+    fn recovery_distinguishes_missing_lease_from_interrupted_unsigned_lease() -> Result<()> {
+        let temporary = tempfile::tempdir()?;
+        let input = temporary.path().join("template.json");
+        let directory = temporary.path().join("custody");
+        let pool = format!("0:{}", "22".repeat(32));
+        let domain = shielded_pool_circuit::wire::execution_domain(3, &[0x22; 32]);
+        let template = json!({"schema":"tos.br1.provision.v1","global_id":3,
+            "genesis_root":"11".repeat(32),"genesis_file":"12".repeat(32),
+            "pool":pool,"pool_code_hash":"33".repeat(32),"pool_config_hash":"44".repeat(32),
+            "execution_domain":hex::encode(shielded_pool_wallet::keys::fr_be32(domain)),
+            "endpoint":"http://127.0.0.1:34911","fee":1,"funding_cap":250000000,
+            "rpc_url":"http://127.0.0.1:34811/jsonRPC",
+            "proof_verifier":{"executable":temporary.path().join("unused-helper"),
+            "anchor_file":temporary.path().join("unused-anchor"),
+            "liteserver_config":temporary.path().join("unused-lite"),
+            "live_state_file":temporary.path().join("unused-live"),"live_max_age_seconds":60},
+            "proof_verifier_sha256":"55".repeat(32)});
+        OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&input)?
+            .write_all(&protocol::canonical(&template)?)?;
+        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
+        runtime.block_on(crate::provision::run(&input, &directory))?;
+        let value =
+            protocol::parse(&crate::private_io::read(&directory.join("provider.json"), 65536)?)?;
+        let config = Config::load(&directory, &json!({"release":value["release"]}))?;
+        let identity =
+            Identity::load(&directory, &config.execution_domain, &config.release.worker_key_hash)?;
+        // No candidate, signing or RPC should be reached for either lookup outcome.
+        let payload =
+            json!({"release":value["release"],"request":{},"slot":1,"issued_at":100,"funding":10});
+        assert!(recover(&config, &identity, &directory, &payload)?.is_null());
+        let mut raw = b"TOS-BR1-REQUEST\0".to_vec();
+        raw.extend(protocol::canonical(&payload["request"])?);
+        let id = protocol::hash(&raw);
+        let mut store = Store::open(&directory.join("leases.db"), &config.release.scope()?)?;
+        assert!(store.lookup(&id)?.is_none(), "recovery must not reserve a new lease");
+        store.reserve(&id, "test-only-binding", 0)?;
+        let recovered = recover(&config, &identity, &directory, &payload);
+        assert!(recovered.is_err(), "unsigned native lease must not authorize cancellation");
+        let error = recovered.err().ok_or_else(|| anyhow::anyhow!("fixture refusal missing"))?;
+        assert!(error.to_string().contains("interrupted signing requires manual reconciliation"));
+        let lease = store.lookup(&id)?.ok_or_else(|| anyhow::anyhow!("fixture lease missing"))?;
+        assert!(lease.message.is_none());
+        Ok(())
+    }
+}
