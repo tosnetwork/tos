@@ -26,15 +26,16 @@ pkgs.testers.runNixOSTest {
     machine.fail(operator("command -v tosctl"))
     machine.succeed(operator("nix-env --install ${tosctl}"))
     machine.succeed(operator("test $(readlink -f $(command -v tosctl)) = ${tosctl}/bin/tosctl"))
-    machine.succeed(operator(smoke))
+    print(machine.succeed(operator(smoke)))
 
     # The same acceptance runner must fail if the package is not installed.
     machine.succeed(operator("nix-env --uninstall tosctl"))
-    status, output = machine.execute(operator(smoke))
+    # The driver returns stdout; Python reports the expected refusal on stderr.
+    status, output = machine.execute(operator(smoke + " 2>&1"))
     assert status != 0 and "tosctl is not installed" in output, output
     print("PASS: package-removal sensitivity control")
     machine.succeed(operator("nix-env --install ${tosctl}"))
-    machine.succeed(operator(smoke))
+    print(machine.succeed(operator(smoke)))
     machine.shutdown()
   '';
 }
