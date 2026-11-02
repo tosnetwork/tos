@@ -2,19 +2,16 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
 use ark_ff::AdditiveGroup;
-use shielded_pool_ceremony::{
-    audit::{audit, Audited, StartingKey},
-    record::Directory,
-};
+use shielded_pool_ceremony::{audit::Audited, record::Directory};
 use shielded_pool_circuit::{
     circuit::TransactionWitness, field::Fr, public_inputs::PublicInputs, scenario,
 };
-use shielded_pool_circuit_crosscheck::public_client::PublicClient;
+use shielded_pool_prover::{audit_ceremony, PublicClient};
 use std::{path::PathBuf, sync::OnceLock};
 
 const VK: &str = "49696f52f361817869f68c3ba68d0d5a854737a4133ae4616255ac4a3846778c";
 fn root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 fn finished() -> Directory {
     Directory::at(root().join("artifacts/phase2-ceremony-2/ceremony"))
@@ -28,12 +25,9 @@ struct Audits {
 }
 fn audits() -> &'static Audits {
     static AUDITS: OnceLock<Audits> = OnceLock::new();
-    AUDITS.get_or_init(|| {
-        let start = StartingKey::rebuild().expect("committed slice");
-        Audits {
-            finished: audit(&finished(), &start).expect("finished ceremony 2"),
-            unfinished: audit(&unfinished(), &start).expect("participant prefix"),
-        }
+    AUDITS.get_or_init(|| Audits {
+        finished: audit_ceremony(&finished()).expect("finished ceremony 2"),
+        unfinished: audit_ceremony(&unfinished()).expect("participant prefix"),
     })
 }
 fn client() -> PublicClient {
@@ -76,7 +70,8 @@ fn only_a_finished_unchanged_key_matching_the_reviewed_vk_is_loaded() {
             .map(|e| e.to_string()),
         "changed after audit",
     );
-    let _ = client();
+    let client = client();
+    assert_eq!(client.verifying_key_bytes().expect("vk bytes"), audits().finished.verifying_key());
 }
 #[test]
 fn repeated_proofs_of_the_same_witness_have_fresh_full_width_randomness() {
@@ -146,6 +141,6 @@ fn every_validity_boundary_and_private_entropy_constraint_reaches_a_real_proof()
     let error = client.prove(public, wrong, 1_799_999_900).err().expect("bad conservation");
     assert!(matches!(
         error.to_string().as_str(),
-        "fixture: private proof construction failed" | "fixture: constructed proof does not verify"
+        "refused: private proof construction failed" | "refused: constructed proof does not verify"
     ));
 }

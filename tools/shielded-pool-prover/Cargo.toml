@@ -1,0 +1,21 @@
+[package]
+name = "shielded-pool-prover"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Production proving for the shielded pool: loads the audited ceremony key, pins its verifying key to the reviewed deployment and produces self-verified Groth16 proofs with OS randomness. Holds no wallet secrets, no transport and no development keys."
+
+[dependencies]
+shielded-pool-circuit = { path = "../shielded-pool-circuit" }
+shielded-pool-ceremony = { path = "../shielded-pool-ceremony" }
+ark-bls12-381 = "=0.5.0"
+ark-ff = "=0.5.0"
+ark-groth16 = "=0.5.0"
+ark-snark = "=0.5.1"
+rand = "=0.8.5"
+rand_chacha = "=0.3.1"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"

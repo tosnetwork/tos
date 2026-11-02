@@ -285,7 +285,7 @@ fn main() -> Result<()> {
     };
     let result =
         acceptance::run_in_pool(&encoded, pool, global_id, funding, |public, witness, time| {
-            client.prove(public, witness, time)
+            client.prove(public, witness, time).map_err(Into::into)
         })?;
     if result.exit != 0 || result.address != address {
         return Err(format!(

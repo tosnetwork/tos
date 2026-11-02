@@ -20,6 +20,7 @@ ark-snark = "=0.5.1"
 rand = "=0.8.5"
 rand_chacha = "=0.3.1"
 shielded-pool-ceremony = { path = "../../shielded-pool-ceremony" }
+shielded-pool-prover = { path = "../../shielded-pool-prover" }
 # Test-only ML-DSA-44 signer. The chain ships a verifier only, so an
 # end-to-end transaction needs a signer to produce signatures over a digest
 # the contract itself computes. Pinned exactly; never used outside tests.

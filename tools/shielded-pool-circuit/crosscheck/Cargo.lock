@@ -1827,6 +1827,7 @@ dependencies = [
  "shielded-pool-ceremony",
  "shielded-pool-circuit",
  "shielded-pool-genesis",
+ "shielded-pool-prover",
  "shielded-pool-wallet",
  "tempfile",
  "tos_sandbox",
@@ -1843,6 +1844,20 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "shielded-pool-ceremony",
+ "shielded-pool-circuit",
+]
+
+[[package]]
+name = "shielded-pool-prover"
+version = "0.1.0"
+dependencies = [
+ "ark-bls12-381",
+ "ark-ff",
+ "ark-groth16",
+ "ark-snark",
+ "rand",
+ "rand_chacha",
  "shielded-pool-ceremony",
  "shielded-pool-circuit",
 ]
