@@ -61,7 +61,7 @@ case is separately retained at `attempt-2/`, including authenticated pool histor
 and replayed final getters. This is not public-network pilot approval.
 
 An active-operator invocation refused before creating its requested output.
-Receipt controls under `/tos/build/br1-recovery-harness/receipt-controls-r2/` verify
+Receipt controls under `/tos/build/br1-recovery-harness/receipt-controls-r4/` verify
 the actual completed case: baseline and restoration pass; changing the crash
 receipt's request identity refuses before reconciliation; removing that exact
 guard falsely accepts the changed receipt. Source hashes and exit codes are
@@ -78,3 +78,30 @@ identifies the source hashes and retained controls for this correction.
 Upstream comparison: this BR1 Python/native boundary and local acceptance tool
 are absent upstream at ton master
 `857b8a57a178e6ae0fe7fa86e7d81c5233de8560`. No inherited consensus code changes.
+
+
+## Committed result index and repeatable controls
+
+`prepared-reply-evidence.json` is the bounded sanitized index: exact runner/source
+hashes, merged runtime commit/native artifact identity, commands, eight per-case
+exit statuses, and SHA256/size for25retained raw artifacts. No private payloads,
+tokens, seeds, database snapshots or binaries are committed. Its newest live
+case uses the immutable merged397 native pilot build on the isolated id3 chain;
+public id2 was not deployed. A fresh ordinary client proof/request was used.
+
+The committed control runner repeats both identity/digest negative checks against
+an already executed request, including exact guard removal and restoration:
+
+```sh
+/usr/bin/python3 test/bonded-relayer/native_faults/prepared_reply_controls.py \
+  --config /absolute/private/service.json --request /absolute/private/request.json \
+  --token /absolute/private/token --capture /absolute/private/passive-rpc-capture \
+  --case /absolute/private/completed-case --out /absolute/private/new-control-run
+```
+
+It only invokes verify mode. A normal changed binding must exit1 at its named
+refusal without a VERDICT. Removing that guard makes the same negative oracle
+falsely accept (driver exit0); the index labels this explicitly rather than
+counting it as secure acceptance. Baseline and restored original receipts pass.
+The initial external-only result reference was insufficient (Checklist TE-9,
+existed / not applied); this index and runner make the claim reviewable in Git.
