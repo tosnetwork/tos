@@ -3,11 +3,11 @@
 
 import json
 import os
-from pathlib import Path
 import shutil
 import stat
 import subprocess
 import tempfile
+from pathlib import Path
 
 
 def main():
@@ -25,8 +25,12 @@ def main():
 
         def run(*args, error=None):
             result = subprocess.run(
-                [binary, *map(str, args)], cwd=work, env=environment,
-                text=True, capture_output=True, timeout=30,
+                [binary, *map(str, args)],
+                cwd=work,
+                env=environment,
+                text=True,
+                capture_output=True,
+                timeout=30,
             )
             output = result.stdout + result.stderr
             if error is None:
@@ -58,14 +62,25 @@ def main():
         before = config.read_bytes()
         link = work / "linked.json"
         link.symlink_to(config)
-        run("config", "generate", "--output", link, "--force",
-            error="persistence target must be a regular file")
+        run(
+            "config",
+            "generate",
+            "--output",
+            link,
+            "--force",
+            error="persistence target must be a regular file",
+        )
         assert config.read_bytes() == before
         unsafe = work / "shared"
         unsafe.mkdir()
         unsafe.chmod(0o777)
-        run("config", "generate", "--output", unsafe / "config.json",
-            error="writable by other users")
+        run(
+            "config",
+            "generate",
+            "--output",
+            unsafe / "config.json",
+            error="writable by other users",
+        )
         assert not (unsafe / "config.json").exists()
         unsafe.chmod(0o700)
         run("config", "generate", "--output", unsafe / "config.json")

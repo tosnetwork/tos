@@ -17,6 +17,16 @@ nix profile install .#tosctl
 tosctl --help
 ```
 
+The VM gate uses the equivalent legacy profile installation, entirely offline:
+
+```sh
+nix-env --install ./result
+tosctl --version
+```
+
+Use one profile-management interface per profile; do not mix `nix-env` and
+`nix profile` operations on the same profile.
+
 For a declarative NixOS installation, add a flake input named `tos` pinned to
 your reviewed repository commit, pass it to the system module, and include:
 
