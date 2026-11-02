@@ -62,7 +62,12 @@ pub struct Head {
     pub state: PoolState,
     pub gas: GasLimitsPrices,
     pub checkpoint: Option<MasterchainCheckpoint>,
+    /// Time of the masterchain block the read was taken at.
     pub block_gen_utime: u32,
+    /// Time of the shard block that holds the account state read. This is
+    /// the clock the contract ran under when it produced this state, and the
+    /// only one a deadline the contract enforces can be judged against.
+    pub shard_gen_utime: u32,
     pub chain: ChainIdentity,
     source: HeadSource,
 }
@@ -124,6 +129,7 @@ pub async fn read_head_verified(
         gas,
         checkpoint: Some(evidence.checkpoint.clone()),
         block_gen_utime: evidence.block_gen_utime,
+        shard_gen_utime: evidence.account.gen_utime,
         chain,
         source: HeadSource::Proven(Box::new(proven)),
     })
@@ -176,6 +182,7 @@ pub async fn read_head_unverified(
         gas,
         checkpoint: None,
         block_gen_utime: u32::try_from(info.sync_utime).unwrap_or(u32::MAX),
+        shard_gen_utime: u32::try_from(info.sync_utime).unwrap_or(u32::MAX),
         chain,
         source: HeadSource::Rpc,
     })
@@ -642,6 +649,7 @@ mod tests {
             gas: GasLimitsPrices::default(),
             checkpoint: None,
             block_gen_utime: 0,
+            shard_gen_utime: 0,
             chain: ChainIdentity { source: "test".into(), root_hash: [0; 32], file_hash: [0; 32] },
             source: HeadSource::Rpc,
         }
@@ -666,6 +674,7 @@ mod tests {
                 denominations: vec![1],
             },
             verifying_key: vec![0; 1248],
+            anchors: shielded_pool::AnchorStore::default(),
         }
     }
 
