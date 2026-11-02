@@ -41,6 +41,7 @@ CAPABILITIES = frozenset(
         "destination_finality_v1",
         "fee_note_import_v1",
         "quote_descriptor_v1",
+        "prepared_message_recovery_v1",
     }
 )
 
@@ -171,6 +172,24 @@ class NativeAdapter:
             ),
             {"message_b64", "message_hash", "acceptance_b64"},
         )
+        return Prepared(
+            unb64(value["message_b64"], MAX_PREPARED),
+            value["message_hash"],
+            unb64(value["acceptance_b64"], MAX_ACCEPTANCE),
+        )
+
+    def recover_prepared(self, release, request, slot, issued_at, funding) -> Prepared | None:
+        self._scope(release)
+        value = self._call(
+            "recover_prepared",
+            request=dataclasses.asdict(request),
+            slot=slot,
+            issued_at=issued_at,
+            funding=funding,
+        )
+        if value is None:
+            return None
+        fields(value, {"message_b64", "message_hash", "acceptance_b64"})
         return Prepared(
             unb64(value["message_b64"], MAX_PREPARED),
             value["message_hash"],

@@ -31,6 +31,7 @@ OPERATIONS = frozenset(
         "pool_head",
         "preflight",
         "prepare",
+        "recover_prepared",
         "validate_prepared",
         "recheck",
         "broadcast",

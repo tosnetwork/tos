@@ -1,0 +1,114 @@
+{
+  "python": {
+    "result": "PASS",
+    "files": {
+      "tools/bonded-relayer/br1.py": "957384058ba59f0eae1b833592a45f80154de4d9f6a55011d9c69fc2f623e57d",
+      "tools/bonded-relayer/native_adapter.py": "79c9a04658a1c3f8f02e2b486fbefff88073f696e419a9a959dbfa273830a970",
+      "tools/bonded-relayer/native_process.py": "2d6dc482aefffa914f03129f9f07d055696843b4a82f5fcb0517cd96a36d8449",
+      "tools/bonded-relayer/relay_client.py": "6191aee1167c04cbb9c3bb555a143f2e47e69dc8ab1e937d41bc602bb2a5e89b",
+      "tools/bonded-relayer/relay_core.py": "8c925c44572ea4532c9c3912c78cb3bdec0606c8f8a3668ae07e1ee392b58177",
+      "tools/bonded-relayer/relay_http.py": "f9432ca2ed3f3ea078becc2b45243000902cd00cc0d449ce50c77ff8d10adc81",
+      "tools/bonded-relayer/relay_service.py": "5bf95a88665b7d6d2086591c82f3679f98bb30cdcd12c868f9323fedb4b944a8",
+      "tools/bonded-relayer/relay_wire.py": "771f83b25d0ca694b5e65c3c001008c0d4393f916385c939f30ccc2b66772c87",
+      "tools/bonded-relayer/tor_transport.py": "13b6fd784c1ac452a9df0f878ad62a98f94e7242c3085a16bcdc93364c6b552d",
+      "test/bonded-relayer/test_engine.py": "a9cb8b6424a2a04147d7dab8ddb98a75dd661e00b29672a7bb93ba7ade24a0f3",
+      "test/bonded-relayer/test_journal_limits.py": "84b4b4003c0fb2247889d937c3acb04cd688a2eb8e8f0b2a5751b4367072aba7",
+      "test/bonded-relayer/test_relay_service.py": "d05954c1dfa27b31d301b9249bece4037d637f4b228001d89110d7c8eb12b2ff",
+      "test/bonded-relayer/test_native_boundary.py": "60b75d6426cee288d404a13446deb9b2ef49be10e9f8acdcdbba31f65186f435",
+      "test/bonded-relayer/_service_fixture.py": "cc0d0a27a58b82643e744fe23001d57f9a20adb05525d5696680d185d41d3287",
+      "test/bonded-relayer/native_faults/prepared_controls.py": "ed7ec81021c72d8c7d09270d4b996a9d4fcf2a18b6cc70b7fadd309e51ce89b2"
+    },
+    "rows": [
+      {
+        "name": "baseline",
+        "test": null,
+        "exit": 0,
+        "sha256": "310f59da8979170144c77ae100d9169f7a51cc10d9ae6086af9ca546aeddcff1",
+        "bytes": 206
+      },
+      {
+        "name": "tick-recovery",
+        "test": "test_relay_service.ServiceTests.test_lost_prepare_reply_recovers_sealed_bytes_without_preparing_again",
+        "exit": 1,
+        "sha256": "1806da034b8e5e03c0e8feb036af54e78b2ecdeb883203a69c0e3612099ee65b",
+        "bytes": 695
+      },
+      {
+        "name": "expired-dispatch",
+        "test": "test_relay_service.ServiceTests.test_expired_sealed_recovery_keeps_bytes_and_never_broadcasts",
+        "exit": 1,
+        "sha256": "aa98ddb3dc5466f4e3bace39034111fb3df2437bc0d8e79e4b8777e93054df8d",
+        "bytes": 648
+      },
+      {
+        "name": "operation-route",
+        "test": "test_native_boundary.ProcessTests.test_recovery_operation_reaches_the_sealed_process",
+        "exit": 1,
+        "sha256": "41260cf1b6770fb32d7ab6ff0bc9600fc7b8c0f9620b35ea71661414ecf95d50",
+        "bytes": 1196
+      },
+      {
+        "name": "uncertain-locks",
+        "test": "test_relay_service.ServiceTests.test_uncertain_native_recovery_keeps_expired_reservations",
+        "exit": 1,
+        "sha256": "da334567e5499b5955ef9a4d3f1a41589a7eeb32f9e6aa856a3428dadb5910e5",
+        "bytes": 671
+      },
+      {
+        "name": "validation-before-journal",
+        "test": "test_relay_service.ServiceTests.test_recovered_bytes_require_validation_before_journaling_or_send",
+        "exit": 1,
+        "sha256": "06e1ad794fbc5eea26027447fe50b12d3c833af56003335f6c986fbf82243e19",
+        "bytes": 658
+      },
+      {
+        "name": "restored",
+        "test": null,
+        "exit": 0,
+        "sha256": "59773239c1dd6d3b7f23629e1fba3751e05b4fee3ff4283ca9b205dc7f2fe248",
+        "bytes": 206
+      }
+    ]
+  },
+  "native": {
+    "result": "PASS",
+    "source_sha256": "b55128bd717deda929baca1cf50455d3b3be7c620de59a36cf2a6128b77a81bd",
+    "driver_sha256": "3f9a1be32ed276430749303b7fc77ceca4ab772c8f2a9aa0ff53f9f559f99635",
+    "rows": [
+      {
+        "name": "baseline",
+        "exit": 0,
+        "sha256": "5f4377c6c7fc8ce1096b7ae7d7bbb04cc88c5f73caa84aac4d6db301147dca3e",
+        "bytes": 83,
+        "provider_sha256": "aaa59ad52ed3affcd3b7297b6cdfbd90779937677823b6e1a205734f21514424"
+      },
+      {
+        "name": "missing-native-validation",
+        "exit": 1,
+        "sha256": "3f9fe4000bca82105638576c751aab1a9eeff3e9fdf3ae9c7391ee68e72a88cd",
+        "bytes": 408,
+        "provider_sha256": "3794c4dfe0e9279087d0bb0775354a8b31a39a74fcaac68780224b84cbf0d458"
+      },
+      {
+        "name": "unsigned-cancellation",
+        "exit": 101,
+        "sha256": "fa82b8f00a057dbf5d6924b13054e85ce784ad7f9729fcd44bfb278164fc73dd",
+        "bytes": 983
+      },
+      {
+        "name": "restored",
+        "exit": 0,
+        "sha256": "5f4377c6c7fc8ce1096b7ae7d7bbb04cc88c5f73caa84aac4d6db301147dca3e",
+        "bytes": 83,
+        "provider_sha256": "aaa59ad52ed3affcd3b7297b6cdfbd90779937677823b6e1a205734f21514424"
+      }
+    ]
+  },
+  "raw_locations": [
+    "/tos/build/e6-relayer-fault-matrix/prepared-controls-r2",
+    "/tos/build/e6-relayer-fault-matrix/prepared-native-controls-r4"
+  ],
+  "retained_until_utc": "2027-02-01",
+  "access": "Existing authorized toserver SSH account",
+  "scope": "106 Python journal/service/process tests,32 native unit tests in both build modes,5 Python/2 native runtime controls. Native lookup checks five real historical local attempts and15changed bindings without signing/sending. Fresh lost-prepare-reply chain execution is a separate remaining acceptance case."
+}

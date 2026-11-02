@@ -196,10 +196,12 @@ class Service:
                 try:
                     row = self.journal.get(identity)
                     request = self.engine._request(row)
-                    if row["state"] == "reserved" and request.valid_until < int(
-                        self.engine.clock()
-                    ):
-                        self.journal.cancel_unprepared(identity, int(self.engine.clock()))
+                    if row["state"] == "reserved":
+                        # Recover durable native bytes even after expiry. A failed or
+                        # unsigned native lookup keeps locks; never call prepare again.
+                        state = self.engine.recover_reserved(identity)
+                        if state == "reserved" and request.valid_until < int(self.engine.clock()):
+                            self.journal.cancel_unprepared(identity, int(self.engine.clock()))
                     elif row["state"] == "prepared":
                         self.engine.dispatch(identity)
                     elif row["state"] in ("unknown", "broadcast"):
