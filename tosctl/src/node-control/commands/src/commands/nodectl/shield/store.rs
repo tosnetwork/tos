@@ -288,6 +288,21 @@ impl Store {
         self
     }
 
+    /// A second handle on the same directory that reads what is on disk and
+    /// does not take the lock: for a test that must look at the journal
+    /// while the locked handle is in use.
+    #[cfg(test)]
+    pub(super) fn unlocked_reader(&self) -> anyhow::Result<Self> {
+        let lock = File::open(self.dir.join("lock")).context("open the lock for reading")?;
+        Ok(Self {
+            dir: self.dir.clone(),
+            binding: self.binding.clone(),
+            cipher: self.cipher.clone(),
+            limit: self.limit,
+            _lock: lock,
+        })
+    }
+
     pub fn directory(&self) -> &Path {
         &self.dir
     }

@@ -25,6 +25,7 @@
 use anyhow::Context;
 use base64::Engine;
 use chain_block::{Cell, MsgAddressInt, write_boc};
+use chain_rpc_client::v2::client_json_rpc::ClientJsonRpc;
 use chain_rpc_client::v2::data_models::AccountState;
 use colored::Colorize;
 use common::task_cancellation::CancellationCtx;
@@ -45,7 +46,8 @@ use shielded_pool_prover::{INTENT_VALIDITY_WINDOW_SECS, PublicClient};
 use shielded_pool_wallet::descriptor::Descriptor;
 use shielded_pool_wallet::ledger::Ledger;
 use shielded_pool_wallet::plan::{self, Candidate, Plan, PoolTerms, RecipientKeys, Request};
-use shielded_pool_wallet::spend::{self as assembly, Assembled, Terms};
+use shielded_pool_wallet::scan::Recovered;
+use shielded_pool_wallet::spend::{self as assembly, Assembled, Prepared, Terms};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
@@ -285,7 +287,7 @@ async fn run(
     let recipient_label = target.recipient_label();
     if let Some(paid) = pending
         .iter()
-        .find(|spend| spend.recipient == recipient_label && spend.outcome != SpendOutcome::Released)
+        .find(|spend| spend.recipient == recipient_label && spend.outcome.may_have_paid())
     {
         anyhow::ensure!(
             target.is_withdrawal(),
@@ -294,29 +296,14 @@ async fn run(
             paid.outcome.describe()
         );
     }
+    // A descriptor of this instance is a valid recipient: paying it is how
+    // two small notes become one.
     if let Target::Send { descriptor, .. } = &target {
         descriptor
             .require_domain(opened.domain)
             .map_err(|error| anyhow::anyhow!("the descriptor: {error}"))?;
-        let own = opened
-            .instance
-            .owner_nf_key_hash(descriptor.note_key_index)
-            .map_err(|error| anyhow::anyhow!("owner key: {error}"))?;
-        anyhow::ensure!(
-            own != descriptor.owner_nf_key_hash,
-            "that descriptor was issued by this instance; a transfer to oneself only pays fees"
-        );
     }
-    let held = held_leaves(&pending);
-    let candidates: Vec<Candidate> = recovered
-        .notes
-        .iter()
-        .zip(recovered.leaves.iter())
-        .filter_map(|(note, leaf)| {
-            leaf.filter(|leaf| !held.contains(leaf))
-                .map(|leaf_index| Candidate { note: *note, leaf_index })
-        })
-        .collect();
+    let candidates = spendable_candidates(&recovered, &held_leaves(&pending));
     let terms = PoolTerms {
         denominations: head.state.config.denominations.clone(),
         withdrawal_fee: head.state.config.withdrawal_fee,
@@ -362,7 +349,10 @@ async fn run(
     sender_can_pay(&broadcast.from, balance, value_u64, reserve)?;
     let wallet = make_wallet(rpc.clone(), wallet_cfg, payer_secret, &broadcast.from).await?;
 
-    print_summary(&plan, &target, &anchor, &broadcast.from, &payer, &pool, value, reserve);
+    print!(
+        "{}",
+        summary_text(&plan, &target, &anchor, &broadcast.from, &payer, &pool, value, reserve)
+    );
     if anchor.kind == ANCHOR_CURRENT {
         println!(
             "{} no preserved root covers these inputs, so the proof is anchored to the pool's \
@@ -392,14 +382,15 @@ async fn run(
         opened.state.issued_high_water.max(high.context("note key index exhausted")?);
     opened.save_state()?;
 
-    // Assemble and sign. The deadline runs from the contract's clock, not
-    // this machine's.
+    // Prepare the spend, put what it commits to in the journal, and only
+    // then sign it. The deadline runs from the contract's clock, not this
+    // machine's.
     let valid_until = head
         .shard_gen_utime
         .checked_add(INTENT_VALIDITY_WINDOW_SECS)
         .context("the deadline overflows")?;
     let intent_nonce = fresh()?;
-    let assembled = assembly::assemble(
+    let prepared = assembly::prepare(
         &opened.instance,
         &plan,
         &anchor.frontier,
@@ -408,22 +399,28 @@ async fn run(
             fresh().map_err(|error| shielded_pool_wallet::error::Error::Encoding(error.to_string()))
         },
     )
-    .map_err(|error| anyhow::anyhow!("assemble the spend: {error}"))?;
-    let intent_digest = fr_to_be(&assembled.intent_digest());
-    let nullifiers = assembled.nullifiers();
-    opened.append_journal(&JournalRecord::SpendPlanned {
-        intent_digest,
-        nullifiers: [fr_to_be(&nullifiers[0]), fr_to_be(&nullifiers[1])],
-        input_leaves: plan.input_leaves(),
-        indices,
-        amount: coins(amount),
-        recipient: recipient_label,
-        withdrawal: plan.is_withdrawal(),
-        valid_until,
-        anchor_kind: anchor.kind,
-        anchor_id: anchor.id,
+    .map_err(|error| anyhow::anyhow!("prepare the spend: {error}"))?;
+    let intent_digest = fr_to_be(&prepared.intent_digest());
+    let nullifiers = prepared.nullifiers();
+    let reserved = reserve_spend(
+        &mut opened,
+        prepared,
+        PlannedSpend {
+            intent_digest,
+            nullifiers: [fr_to_be(&nullifiers[0]), fr_to_be(&nullifiers[1])],
+            input_leaves: plan.input_leaves(),
+            indices,
+            amount,
+            recipient: recipient_label,
+            withdrawal: plan.is_withdrawal(),
+            valid_until,
+            anchor_kind: anchor.kind,
+            anchor_id: anchor.id,
+        },
+    )?;
+    let assembled = reserved.sign(|prepared| {
+        prepared.sign(&opened.instance).map_err(|error| anyhow::anyhow!("sign the spend: {error}"))
     })?;
-    opened.save_state()?;
 
     eprintln!("{} proving; this takes a while", "note:".bold());
     let started = std::time::Instant::now();
@@ -433,34 +430,76 @@ async fn run(
         .map_err(|error| anyhow::anyhow!("prove: {error}"))?;
     eprintln!("{} proven in {:.1?}", "note:".bold(), started.elapsed());
 
-    // The pool may have moved while proving. Read it again, bring the state
-    // up to it, and require everything the proof assumed to still hold; the
-    // nullifier witnesses are built only now, against the tree as it is.
-    let fresh_head = broadcast.read.head(&config, &rpc, &pool).await?;
-    require_verified_same_chain(&opened, &fresh_head)?;
-    let moved = fresh_head.last_lt != head.last_lt || fresh_head.last_hash != head.last_hash;
-    let ledger = if moved {
-        eprintln!(
-            "{} the pool moved while proving (lt {} to {}); replaying what landed",
-            "note:".bold(),
-            head.last_lt,
-            fresh_head.last_lt
-        );
-        let report = sync_instance(&mut opened, &fresh_head, &rpc).await?;
-        anyhow::ensure!(report.verified, "the replayed state is not verified");
-        restore_ledger(&opened.state.ledger)?
-    } else {
-        ledger
+    // The pool, and its gas prices, may have moved while proving. Read it
+    // again, bring the state up to it, and require everything the proof
+    // assumed to still hold. A changed message value is confirmed, and the
+    // pool read once more after the prompt, so what is signed for the payer
+    // was checked against the pool as it is now; the nullifier witnesses are
+    // built only then, against the tree as it is.
+    let mut approved = value;
+    let mut rounds = 0u8;
+    let mut last_lt = head.last_lt;
+    let mut last_hash = head.last_hash;
+    let ledger = loop {
+        let fresh_head = broadcast.read.head(&config, &rpc, &pool).await?;
+        require_verified_same_chain(&opened, &fresh_head)?;
+        if fresh_head.last_lt != last_lt || fresh_head.last_hash != last_hash {
+            eprintln!(
+                "{} the pool moved while proving (lt {} to {}); replaying what landed",
+                "note:".bold(),
+                last_lt,
+                fresh_head.last_lt
+            );
+            let report = sync_instance(&mut opened, &fresh_head, &rpc).await?;
+            anyhow::ensure!(report.verified, "the replayed state is not verified");
+            last_lt = fresh_head.last_lt;
+            last_hash = fresh_head.last_hash;
+        }
+        let ledger = restore_ledger(&opened.state.ledger)?;
+        check_still_valid(
+            &ledger,
+            &fresh_head.state,
+            fresh_head.shard_gen_utime,
+            &anchor,
+            &nullifiers,
+            valid_until,
+            &intent_digest,
+        )?;
+        match value_decision(
+            approved,
+            fresh_head.transact_fee()?,
+            broadcast.yes,
+            &mut |question| confirm(question),
+        )? {
+            ValueDecision::Keep => break ledger,
+            ValueDecision::Accept(current) => {
+                approved = current;
+                rounds = rounds.checked_add(1).context("too many price changes")?;
+                anyhow::ensure!(
+                    rounds <= MAX_VALUE_ROUNDS,
+                    "the pool's gas prices changed {MAX_VALUE_ROUNDS} times while confirming; \
+                     nothing was signed for the payer. The spend (intent {}) is journalled as \
+                     planned and its inputs stay held until a verified sync shows it settled or \
+                     its deadline {} passed by the contract's clock",
+                    hex::encode(intent_digest),
+                    utc(valid_until)
+                );
+            }
+            ValueDecision::Cancel => {
+                println!(
+                    "{} nothing was signed for the payer. The spend (intent {}) is journalled as \
+                     planned and its inputs stay held until a verified sync shows it settled or \
+                     its deadline {} passed by the contract's clock",
+                    "Spend cancelled:".yellow(),
+                    hex::encode(intent_digest),
+                    utc(valid_until)
+                );
+                return Ok(());
+            }
+        }
     };
-    check_still_valid(
-        &ledger,
-        &fresh_head.state,
-        fresh_head.shard_gen_utime,
-        &anchor,
-        &nullifiers,
-        valid_until,
-        &intent_digest,
-    )?;
+    let value = approved;
+    let value_u64 = u64::try_from(value).context("the transact fee exceeds the message limit")?;
     let witnesses = assembly::nullifier_witnesses(ledger.nullifier_state(), nullifiers)
         .map_err(|error| anyhow::anyhow!("nullifier witnesses: {error}"))?;
 
@@ -482,36 +521,19 @@ async fn run(
         wallet.build_message(pool.clone(), value_u64, body, true, None, None, None).await?;
     let boc = write_boc(&message)?;
     let message_hash = *message.repr_hash().as_array();
-    opened.append_journal(&JournalRecord::SpendSigned {
-        intent_digest,
-        body_hash,
-        message_hash,
-        payer: payer.to_string(),
-        value: coins(value),
-        boc: boc.clone(),
-    })?;
-    opened.save_state()?;
-
-    match rpc.send_boc(&boc).await {
-        Ok(()) => {
-            opened.append_journal(&JournalRecord::SpendBroadcast { message_hash })?;
-            opened.save_state()?;
-        }
-        Err(error) => {
-            opened.append_journal(&JournalRecord::SpendUnknown {
-                message_hash,
-                error: error.to_string(),
-            })?;
-            opened.save_state()?;
-            anyhow::bail!(
-                "the broadcast of message {} failed: {error}. Whether it reached the network is \
-                 unknown; it is journalled and will not be rebuilt. Its inputs stay held until \
-                 `tosctl shield sync` shows the spend accepted or its deadline ({}) passed.",
-                hex::encode(message_hash),
-                utc(valid_until)
-            );
-        }
-    }
+    let journalled = journal_signed(
+        &mut opened,
+        SignedSpend {
+            intent_digest,
+            body_hash,
+            message_hash,
+            payer: payer.to_string(),
+            value,
+            boc,
+            valid_until,
+        },
+    )?;
+    submit(&mut opened, journalled, rpc.as_ref()).await?;
     let seqno_moved = wait_for_seqno_change(
         rpc.clone(),
         &payer,
@@ -826,7 +848,7 @@ fn placeholder_body_with(withdrawal: bool, fill: Fill<'_>) -> anyhow::Result<Cel
 }
 
 #[allow(clippy::too_many_arguments)]
-fn print_summary(
+fn summary_text(
     plan: &Plan,
     target: &Target,
     anchor: &AnchorChoice,
@@ -835,7 +857,7 @@ fn print_summary(
     pool: &MsgAddressInt,
     value: u128,
     reserve: u128,
-) {
+) -> String {
     let inputs: Vec<String> = plan
         .inputs
         .iter()
@@ -870,7 +892,7 @@ fn print_summary(
                 .unwrap_or(0),
         ),
     };
-    println!(
+    let mut text = format!(
         "\n{}\n  Kind:        {what}\n  To:          {to}\n  Amount:      {} TOS\n  Pool fee:    {} \
          TOS (withdrawal fee, from the notes)\n  Inputs:      {}\n  Change:      {} TOS (back to \
          this instance)\n  Anchor:      {}\n  Broadcast:   {from} ({payer}) to pool {pool}\n  \
@@ -890,11 +912,198 @@ fn print_summary(
         tos(reserve),
     );
     if target.is_withdrawal() {
-        println!(
+        text.push_str(&format!(
             "{} a withdrawal pays an ordinary address: the recipient, the amount and the time \
-             are visible on chain.",
-            "note:".bold()
-        );
+             are visible on chain. The paying wallet {from} and the recipient {to} are publicly \
+             linked to this withdrawal; use a fresh funded wallet and a fresh recipient.\n",
+            "warning:".yellow().bold()
+        ));
+    }
+    text
+}
+
+/// The notes a spend may take: those at known leaves that no pending spend
+/// holds. The planner itself passes over notes the scan shows spent.
+fn spendable_candidates(recovered: &Recovered, held: &BTreeSet<u64>) -> Vec<Candidate> {
+    recovered
+        .notes
+        .iter()
+        .zip(recovered.leaves.iter())
+        .filter_map(|(note, leaf)| {
+            leaf.filter(|leaf| !held.contains(leaf))
+                .map(|leaf_index| Candidate { note: *note, leaf_index })
+        })
+        .collect()
+}
+
+/// The message value after proving: the one confirmed, if the pool still
+/// charges it; the pool's current one, if the user accepts the change (or
+/// passed --yes); or a stop before anything is signed for the payer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ValueDecision {
+    Keep,
+    Accept(u128),
+    Cancel,
+}
+
+/// How often the value may change and be re-confirmed before the command
+/// gives up.
+const MAX_VALUE_ROUNDS: u8 = 3;
+
+fn value_decision(
+    approved: u128,
+    current: u128,
+    yes: bool,
+    confirm: &mut dyn FnMut(&str) -> anyhow::Result<bool>,
+) -> anyhow::Result<ValueDecision> {
+    if current == approved {
+        return Ok(ValueDecision::Keep);
+    }
+    let question = format!(
+        "the pool's gas prices changed while proving: the message value is now {} TOS, not the \
+         {} TOS confirmed. Send at the new value?",
+        tos(current),
+        tos(approved)
+    );
+    if yes {
+        println!("{} {question} (--yes)", "note:".bold());
+        return Ok(ValueDecision::Accept(current));
+    }
+    if confirm(&question)? { Ok(ValueDecision::Accept(current)) } else { Ok(ValueDecision::Cancel) }
+}
+
+/// Where the signed message goes. The RPC client is the command's transport;
+/// a test's records what reaches it, and when.
+#[allow(async_fn_in_trait)]
+pub(super) trait Transport {
+    async fn send_boc(&self, boc: &[u8]) -> anyhow::Result<()>;
+}
+
+impl Transport for ClientJsonRpc {
+    async fn send_boc(&self, boc: &[u8]) -> anyhow::Result<()> {
+        ClientJsonRpc::send_boc(self, &boc.to_vec()).await
+    }
+}
+
+/// What the journal holds about a spend before any input signs it.
+struct PlannedSpend {
+    intent_digest: Word,
+    nullifiers: [Word; 2],
+    input_leaves: Vec<u64>,
+    indices: Vec<u64>,
+    amount: u128,
+    recipient: String,
+    withdrawal: bool,
+    valid_until: u32,
+    anchor_kind: u8,
+    anchor_id: u32,
+}
+
+/// A prepared spend whose reservation is on disk. Only [`reserve_spend`] builds
+/// one, so no input signs an intent the journal does not hold.
+struct Reserved {
+    prepared: Prepared,
+}
+
+/// Writes the planned spend and saves the state; from here the inputs are
+/// held and the indices consumed, whatever happens next.
+fn reserve_spend(
+    opened: &mut Opened,
+    prepared: Prepared,
+    planned: PlannedSpend,
+) -> anyhow::Result<Reserved> {
+    opened.append_journal(&JournalRecord::SpendPlanned {
+        intent_digest: planned.intent_digest,
+        nullifiers: planned.nullifiers,
+        input_leaves: planned.input_leaves,
+        indices: planned.indices,
+        amount: coins(planned.amount),
+        recipient: planned.recipient,
+        withdrawal: planned.withdrawal,
+        valid_until: planned.valid_until,
+        anchor_kind: planned.anchor_kind,
+        anchor_id: planned.anchor_id,
+    })?;
+    opened.save_state()?;
+    Ok(Reserved { prepared })
+}
+
+impl Reserved {
+    /// Signs the reserved spend: with the instance's keys in the command,
+    /// with a recorder in a test.
+    fn sign(
+        self,
+        sign: impl FnOnce(Prepared) -> anyhow::Result<Assembled>,
+    ) -> anyhow::Result<Assembled> {
+        sign(self.prepared)
+    }
+}
+
+/// The signed external message with what the journal records about it.
+struct SignedSpend {
+    intent_digest: Word,
+    body_hash: Word,
+    message_hash: Word,
+    payer: String,
+    value: u128,
+    boc: Vec<u8>,
+    valid_until: u32,
+}
+
+/// A signed message the journal holds, byte for byte. Only
+/// [`journal_signed`] builds one, so nothing is sent that is not journalled
+/// first, and nothing is ever rebuilt.
+struct Journalled {
+    message_hash: Word,
+    boc: Vec<u8>,
+    valid_until: u32,
+}
+
+fn journal_signed(opened: &mut Opened, signed: SignedSpend) -> anyhow::Result<Journalled> {
+    opened.append_journal(&JournalRecord::SpendSigned {
+        intent_digest: signed.intent_digest,
+        body_hash: signed.body_hash,
+        message_hash: signed.message_hash,
+        payer: signed.payer,
+        value: coins(signed.value),
+        boc: signed.boc.clone(),
+    })?;
+    opened.save_state()?;
+    Ok(Journalled {
+        message_hash: signed.message_hash,
+        boc: signed.boc,
+        valid_until: signed.valid_until,
+    })
+}
+
+/// Sends the journalled message once and records what happened. A transport
+/// error is an unknown outcome, journalled as such; nothing is retried.
+async fn submit<T: Transport>(
+    opened: &mut Opened,
+    journalled: Journalled,
+    transport: &T,
+) -> anyhow::Result<Word> {
+    let Journalled { message_hash, boc, valid_until } = journalled;
+    match transport.send_boc(&boc).await {
+        Ok(()) => {
+            opened.append_journal(&JournalRecord::SpendBroadcast { message_hash })?;
+            opened.save_state()?;
+            Ok(message_hash)
+        }
+        Err(error) => {
+            opened.append_journal(&JournalRecord::SpendUnknown {
+                message_hash,
+                error: error.to_string(),
+            })?;
+            opened.save_state()?;
+            anyhow::bail!(
+                "the broadcast of message {} failed: {error}. Whether it reached the network is \
+                 unknown; it is journalled and will not be rebuilt. Its inputs stay held until \
+                 `tosctl shield sync` shows the spend accepted or its deadline ({}) passed.",
+                hex::encode(message_hash),
+                utc(valid_until)
+            )
+        }
     }
 }
 
@@ -903,8 +1112,10 @@ fn print_summary(
 pub(super) enum SpendOutcome {
     /// The pool's accepted intents hold its digest.
     Settled,
-    /// One of its nullifiers was published by a transaction that is not it:
-    /// an input is gone; the spend can never land and is never released.
+    /// One of its nullifiers was published by a transaction that is not it.
+    /// The pool's nullifier tree now holds that nullifier, so this body can
+    /// never land: the spend is over. The consumed input shows as spent by
+    /// the scan; the other input is free again.
     Conflicted,
     /// Not accepted, no input spent, and the contract's clock past the
     /// deadline: the inputs are free again.
@@ -916,14 +1127,21 @@ pub(super) enum SpendOutcome {
 
 impl SpendOutcome {
     pub(super) fn holds_inputs(self) -> bool {
-        matches!(self, SpendOutcome::Pending(_) | SpendOutcome::Conflicted)
+        matches!(self, SpendOutcome::Pending(_))
+    }
+
+    /// Whether the recipient may have received this spend: settled, or not
+    /// known not to have. A released or conflicted spend paid nobody.
+    pub(super) fn may_have_paid(self) -> bool {
+        matches!(self, SpendOutcome::Settled | SpendOutcome::Pending(_))
     }
 
     pub(super) fn describe(self) -> String {
         match self {
             SpendOutcome::Settled => "accepted by the pool".to_owned(),
             SpendOutcome::Conflicted => {
-                "conflicted: an input was spent by another transaction".to_owned()
+                "conflicted: an input was spent by another transaction; this spend is over"
+                    .to_owned()
             }
             SpendOutcome::Released => "released: the deadline passed unspent".to_owned(),
             SpendOutcome::Pending(how_far) => format!("pending ({how_far})"),
@@ -1056,6 +1274,7 @@ pub(super) fn print_pending_spends(spends: &[PendingSpend]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use shielded_pool_wallet::keys::PoolInstance;
     use shielded_pool_wallet::ledger::{Event, Payout, Transact};
 
     fn planned(digest: u8, nullifiers: [u8; 2], leaves: &[u64], valid_until: u32) -> JournalRecord {
@@ -1148,7 +1367,11 @@ mod tests {
         assert_eq!(spends[0].outcome, SpendOutcome::Settled);
         assert_eq!(spends[1].outcome, SpendOutcome::Conflicted);
         assert_eq!(spends[2].outcome, SpendOutcome::Pending("planned; never signed"));
-        assert_eq!(held_leaves(&spends), BTreeSet::from([1, 2, 3]), "settled inputs are free");
+        assert_eq!(
+            held_leaves(&spends),
+            BTreeSet::from([3]),
+            "settled inputs are free, and so are a conflicted spend's: it is over"
+        );
 
         // The shard clock at the deadline releases nothing; one past it does,
         // and never a conflicted spend.
@@ -1157,7 +1380,7 @@ mod tests {
         let spends = pending_spends(&journal, &accepted, Some(1001), true);
         assert_eq!(spends[1].outcome, SpendOutcome::Conflicted);
         assert_eq!(spends[2].outcome, SpendOutcome::Released);
-        assert_eq!(held_leaves(&spends), BTreeSet::from([1, 2]));
+        assert!(held_leaves(&spends).is_empty());
 
         // An unverified state settles and releases nothing, whatever it holds.
         let spends = pending_spends(&journal, &accepted, Some(5000), false);
@@ -1633,5 +1856,449 @@ mod tests {
         assert_eq!(parsed.recovery_owner_commitment, [0; 32]);
         assert_eq!(parsed.public_amount_out, 0);
         assert!(!parsed.is_withdrawal());
+    }
+
+    fn imported(index: u64, amount: u128, spent: bool) -> shielded_pool_wallet::import::Imported {
+        shielded_pool_wallet::import::Imported {
+            kind: shielded_pool_wallet::delivery::Kind::Ordinary,
+            note_key_index: index,
+            amount,
+            note_secret: Fr::from(1u64),
+            owner_commitment: Fr::from(2u64),
+            note_body: Fr::from(3 + index),
+            output_data_hash: Fr::from(4u64),
+            spendable: true,
+            spent,
+        }
+    }
+
+    fn other_descriptor() -> Descriptor {
+        let other = PoolInstance::new(&[0x22; 32], Fr::from(0xd0_0001u64));
+        Descriptor::issue(&other, 5).expect("a descriptor")
+    }
+
+    /// A nullifier of a pending spend published by a transaction that is not
+    /// it ends the spend: the pool's tree holds the nullifier, so the body
+    /// can never land. The consumed input is what the scan shows spent; the
+    /// other input is a candidate again, and the recipient was not paid.
+    #[test]
+    fn a_conflicted_spend_is_over_frees_its_survivor_and_paid_nobody() {
+        let foreign = ledger_with(fr(&[1; 32]), [fr(&[0x22; 32]), fr(&[0x09; 32])]);
+        let journal = vec![
+            planned(2, [0x22, 0x32], &[1, 2], 1000),
+            signed(2, 0x22),
+            JournalRecord::SpendBroadcast { message_hash: [0x22; 32] },
+        ];
+        let spends = pending_spends(&journal, &foreign, Some(500), true);
+        assert_eq!(spends[0].outcome, SpendOutcome::Conflicted);
+        assert!(!spends[0].outcome.holds_inputs(), "the body can never land");
+        assert!(!spends[0].outcome.may_have_paid(), "its recipient may be paid again");
+        assert!(SpendOutcome::Released.may_have_paid() == false);
+        assert!(SpendOutcome::Pending("submitted").may_have_paid());
+        assert!(SpendOutcome::Settled.may_have_paid());
+        assert!(held_leaves(&spends).is_empty(), "nothing is held by a spend that is over");
+
+        // Leaf 1 was consumed (the scan reconciles it as spent); leaf 2 is
+        // the survivor the next plan takes.
+        let recovered = Recovered {
+            notes: vec![imported(1, 1_000_000_000, true), imported(2, 1_000_000_000, false)],
+            leaves: vec![Some(1), Some(2)],
+            ..Default::default()
+        };
+        let candidates = spendable_candidates(&recovered, &held_leaves(&spends));
+        assert_eq!(candidates.iter().map(|c| c.leaf_index).collect::<Vec<_>>(), vec![1, 2]);
+        let terms = PoolTerms { denominations: vec![1_000_000_000], withdrawal_fee: 1 };
+        let request = Request::Transfer {
+            to: Box::new(RecipientKeys::of(&other_descriptor())),
+            amount: 500_000_000,
+        };
+        let mut next = 100u64;
+        let plan = plan::plan(&terms, &candidates, &request, &mut || {
+            next += 1;
+            Ok(next)
+        })
+        .expect("the survivor covers it");
+        assert_eq!(plan.input_leaves(), vec![2]);
+
+        // While the spend was merely pending, both leaves were held and the
+        // same request had nothing to take.
+        let pending = pending_spends(&journal, &Ledger::genesis(), Some(500), true);
+        assert_eq!(pending[0].outcome, SpendOutcome::Pending("submitted"));
+        let candidates = spendable_candidates(&recovered, &held_leaves(&pending));
+        assert!(candidates.is_empty());
+    }
+
+    /// After proving, the message value the user confirmed is kept if the
+    /// pool still charges it, the pool's current one is taken on a fresh
+    /// confirmation (or --yes), and a refusal stops before anything is
+    /// signed for the payer.
+    #[test]
+    fn the_message_value_is_kept_accepted_or_the_spend_is_stopped() {
+        use std::cell::{Cell, RefCell};
+        let asked: RefCell<Vec<String>> = RefCell::new(Vec::new());
+        let answer = Cell::new(true);
+        let mut confirm = |question: &str| {
+            asked.borrow_mut().push(question.to_owned());
+            Ok(answer.get())
+        };
+        assert_eq!(value_decision(7, 7, false, &mut confirm).expect("kept"), ValueDecision::Keep);
+        assert!(asked.borrow().is_empty(), "no prompt when nothing changed");
+        assert_eq!(
+            value_decision(7, 9, false, &mut confirm).expect("accepted"),
+            ValueDecision::Accept(9)
+        );
+        {
+            let asked = asked.borrow();
+            assert!(asked[0].contains(&tos(9)) && asked[0].contains(&tos(7)), "{}", asked[0]);
+        }
+        answer.set(false);
+        assert_eq!(
+            value_decision(7, 9, false, &mut confirm).expect("stopped"),
+            ValueDecision::Cancel
+        );
+        assert_eq!(
+            value_decision(7, 9, true, &mut confirm).expect("--yes"),
+            ValueDecision::Accept(9)
+        );
+        assert_eq!(asked.borrow().len(), 2, "--yes does not prompt");
+    }
+
+    /// The summary of a withdrawal says who is publicly linked to it and
+    /// what to do about that; a transfer's does not, since nothing of it is
+    /// public but the pool and the paying wallet.
+    #[test]
+    fn the_summary_names_the_public_link_of_a_withdrawal_and_not_of_a_transfer() {
+        let address: MsgAddressInt =
+            "0:1111111111111111111111111111111111111111111111111111111111111111"
+                .parse()
+                .expect("an address");
+        let pool: MsgAddressInt =
+            "0:2222222222222222222222222222222222222222222222222222222222222222"
+                .parse()
+                .expect("an address");
+        let candidate = Candidate { note: imported(0, 3_000_000_000, false), leaf_index: 4 };
+        let anchor = AnchorChoice {
+            kind: ANCHOR_RECENT,
+            id: 9,
+            root: Fr::from(0u64),
+            frontier: Frontier::new(),
+        };
+        let withdrawal = Plan {
+            inputs: [
+                plan::PlannedInput::Note(candidate.clone()),
+                plan::PlannedInput::Phantom { note_key_index: 50 },
+            ],
+            outputs: [
+                plan::PlannedOutput::Change { note_key_index: 51, amount: 1_990_000_000 },
+                plan::PlannedOutput::Dummy { note_key_index: 52 },
+                plan::PlannedOutput::Dummy { note_key_index: 53 },
+            ],
+            public_amount_out: 1_000_000_000,
+            withdrawal_fee: 10_000_000,
+            recipient_account: Some([0x11; 32]),
+            recovery: None,
+        };
+        let target = Target::Withdraw {
+            recipient: Box::new(address.clone()),
+            recipient_account: [0x11; 32],
+        };
+        let text = summary_text(&withdrawal, &target, &anchor, "hot", &address, &pool, 5, 6);
+        assert!(
+            text.contains(&format!(
+                "The paying wallet hot and the recipient {address} are publicly linked to this \
+                 withdrawal; use a fresh funded wallet and a fresh recipient."
+            )),
+            "{text}"
+        );
+        for line in [
+            "Kind:        Withdrawal",
+            &format!("To:          {address}"),
+            &format!("Amount:      {} TOS", tos(1_000_000_000)),
+            &format!("Pool fee:    {} TOS", tos(10_000_000)),
+            &format!("Inputs:      {} TOS (leaf 4)", tos(3_000_000_000)),
+            &format!("Change:      {} TOS", tos(1_990_000_000)),
+            "Anchor:      preserved root version 9",
+            &format!("Broadcast:   hot ({address}) to pool {pool}"),
+            &format!("Message:     {} TOS", tos(5)),
+            &format!("Wallet fees: {} TOS", tos(6)),
+        ] {
+            assert!(text.contains(line), "missing {line:?} in {text}");
+        }
+
+        let to = other_descriptor();
+        let transfer = Plan {
+            inputs: withdrawal.inputs.clone(),
+            outputs: [
+                plan::PlannedOutput::Recipient {
+                    to: Box::new(RecipientKeys::of(&to)),
+                    amount: 3_000_000_000,
+                },
+                plan::PlannedOutput::Dummy { note_key_index: 51 },
+                plan::PlannedOutput::Dummy { note_key_index: 52 },
+            ],
+            public_amount_out: 0,
+            withdrawal_fee: 0,
+            recipient_account: None,
+            recovery: None,
+        };
+        let target = Target::Send { descriptor: Box::new(to), descriptor_hash: [1; 32] };
+        let text = summary_text(&transfer, &target, &anchor, "hot", &address, &pool, 5, 6);
+        assert!(text.contains("Kind:        Transfer"), "{text}");
+        assert!(text.contains("To:          descriptor index 5"), "{text}");
+        assert!(!text.contains("publicly linked"), "{text}");
+    }
+
+    /// The order the gates enforce, watched from disk: the reservation is in
+    /// the journal when the input keys sign, the signed message is in the
+    /// journal when the transport is called, and the outcome follows the
+    /// call. A journal that cannot be written stops the spend unsigned; a
+    /// transport that fails leaves an unknown outcome and is not retried.
+    #[tokio::test]
+    async fn a_spend_is_journalled_before_it_is_signed_and_before_it_is_sent() {
+        use super::super::profile::{self, Profile};
+        use super::super::store::{
+            self, Binding, ChainIdentity, Keys, PersistedPoolConfig, PersistedState, Pointer,
+            STATE_FORMAT_VERSION, Store,
+        };
+        use shielded_pool_circuit::notes;
+        use shielded_pool_wallet::delivery::{self, Kind, Plaintext};
+        use shielded_pool_wallet::scan;
+        use std::cell::{Cell, RefCell};
+        use std::os::unix::fs::PermissionsExt;
+
+        // A wallet with one note, and a plan that spends it to another wallet.
+        let domain = Fr::from(0x5e5e_0001u64);
+        let instance = PoolInstance::new(&[0x51; 32], domain);
+        let plaintext = Plaintext {
+            slot: 0,
+            kind: Kind::Ordinary,
+            amount: 2_000_000_000,
+            note_secret: Fr::from(0x5ec2e7u64),
+            owner_nf_key_hash: instance.owner_nf_key_hash(0).expect("owner hash"),
+            note_key_index: 0,
+            pq_auth_key_hash: instance.pq_auth_key_hash(0).expect("pq hash"),
+        };
+        let output_data = delivery::seal(
+            &instance.mlkem_encapsulation_key().expect("key"),
+            instance.execution_domain(),
+            &plaintext,
+        )
+        .expect("seal");
+        let mut ledger = Ledger::genesis();
+        ledger
+            .apply(
+                &Event::Deposit {
+                    amount: 2_000_000_000,
+                    owner_commitment: notes::owner_commitment(
+                        plaintext.owner_nf_key_hash,
+                        plaintext.pq_auth_key_hash,
+                        plaintext.note_secret,
+                    ),
+                    output_data,
+                },
+                1,
+            )
+            .expect("deposit");
+        let recovered = scan::recover_indexed(&instance, &ledger.take_outputs()).expect("scan");
+        let candidates = spendable_candidates(&recovered, &BTreeSet::new());
+        assert_eq!(candidates.len(), 1);
+        let terms = PoolTerms { denominations: vec![1_000_000_000], withdrawal_fee: 1 };
+        let request = Request::Transfer {
+            to: Box::new(RecipientKeys::of(&other_descriptor())),
+            amount: 1_500_000_000,
+        };
+        let mut next = 10u64;
+        let plan = plan::plan(&terms, &candidates, &request, &mut || {
+            next += 1;
+            Ok(next)
+        })
+        .expect("plan");
+        let mut counter = 0u64;
+        let mut prepare = |nonce: u64| {
+            assembly::prepare(
+                &instance,
+                &plan,
+                ledger.frontier(),
+                &Terms {
+                    anchor_root: ledger.checkpoint().commitment_root,
+                    valid_until: 2000,
+                    intent_nonce: Fr::from(nonce),
+                },
+                &mut || {
+                    counter += 1;
+                    Ok(Fr::from(0xf00d_0000u64 + counter))
+                },
+            )
+            .expect("prepare")
+        };
+        let planned_for = |digest: Word, nullifiers: [Fr; 2]| PlannedSpend {
+            intent_digest: digest,
+            nullifiers: [fr_to_be(&nullifiers[0]), fr_to_be(&nullifiers[1])],
+            input_leaves: vec![0],
+            indices: vec![11, 12, 13],
+            amount: 1_500_000_000,
+            recipient: "descriptor:test".into(),
+            withdrawal: false,
+            valid_until: 2000,
+            anchor_kind: ANCHOR_CURRENT,
+            anchor_id: 0,
+        };
+
+        // An opened instance on a temporary directory.
+        let root = tempfile::Builder::new()
+            .permissions(std::fs::Permissions::from_mode(0o700))
+            .tempdir()
+            .expect("tempdir");
+        let keys = Keys::derive(&[7u8; 64], &[3u8; 32]);
+        let binding = Binding {
+            global_id: 3,
+            pool_address: "0:aa76950cf26cb74c1d1b1a977d17bd3c96c6c9f28cb259fca297cdc8d33429fe"
+                .into(),
+        };
+        let chain = ChainIdentity { source: "test".into(), root_hash: [0; 32], file_hash: [0; 32] };
+        let profile = Profile {
+            schema: profile::PROFILE_SCHEMA.into(),
+            global_id: 3,
+            pool_address: binding.pool_address.clone(),
+            pool_code_hash: "5528ff26426e36b948bbd6ab3bd6615c82c98c87dd774e4fb456f3965722c466"
+                .into(),
+        };
+        let store = Store::open(root.path(), &keys, binding.clone()).expect("open");
+        let state = PersistedState {
+            version: STATE_FORMAT_VERSION,
+            binding: binding.clone(),
+            chain: chain.clone(),
+            instance_id: *keys.instance_id(),
+            profile: profile.clone(),
+            pool_config: PersistedPoolConfig { withdrawal_fee: coins(1), denominations: vec![] },
+            cursor: None,
+            ledger: super::super::persist_ledger(&Ledger::genesis()),
+            notes: vec![],
+            diagnostics: vec![],
+            scan_next_index: 0,
+            reused_indices: vec![],
+            issued_high_water: 14,
+            journal_records: 0,
+        };
+        store.save_state(&state).expect("the initial state");
+        let pointer = Pointer {
+            schema: store::POINTER_SCHEMA.to_owned(),
+            profile,
+            binding,
+            chain,
+            directory: keys.directory_name(),
+        };
+        let mut opened = Opened {
+            pointer,
+            pointer_path: root.path().join("pointer"),
+            instance: PoolInstance::new(&[0x51; 32], domain),
+            domain,
+            store,
+            state,
+            journal: Vec::new(),
+        };
+        let reader = opened.store.unlocked_reader().expect("a reader");
+
+        // A journal that cannot be written: nothing is reserved, so nothing
+        // can be signed (the type has no other constructor).
+        let dir = opened.store.directory().to_path_buf();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o500)).expect("chmod");
+        let first = prepare(0x71);
+        let planned = planned_for(fr_to_be(&first.intent_digest()), first.nullifiers());
+        let refused = reserve_spend(&mut opened, first, planned).is_err();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).expect("chmod");
+        assert!(refused, "a reservation that could not be written");
+        assert!(opened.journal.is_empty());
+        assert!(reader.read_journal().expect("read").is_empty());
+
+        // The reservation is on disk when the keys sign.
+        let second = prepare(0x72);
+        let digest = fr_to_be(&second.intent_digest());
+        let planned = planned_for(digest, second.nullifiers());
+        let reserved = reserve_spend(&mut opened, second, planned).expect("reserved");
+        let records_at_signing = Cell::new(0usize);
+        let assembled = reserved
+            .sign(|prepared| {
+                let on_disk = reader.read_journal()?;
+                assert!(
+                    on_disk.iter().any(|record| matches!(
+                        record,
+                        JournalRecord::SpendPlanned { intent_digest, .. } if *intent_digest == digest
+                    )),
+                    "the reservation is not on disk when the keys sign"
+                );
+                records_at_signing.set(on_disk.len());
+                prepared.sign(&instance).map_err(|error| anyhow::anyhow!("{error}"))
+            })
+            .expect("signed");
+        assert_eq!(records_at_signing.get(), 1);
+        assert_eq!(fr_to_be(&assembled.intent_digest()), digest);
+        assert_eq!(opened.state.journal_records, 1);
+
+        // The signed message is on disk when the transport is called, and
+        // the outcome is recorded right after; a failure is unknown, once.
+        struct Recorder {
+            reader: Store,
+            seen: RefCell<Vec<Vec<JournalRecord>>>,
+            down: bool,
+        }
+        impl Transport for Recorder {
+            async fn send_boc(&self, boc: &[u8]) -> anyhow::Result<()> {
+                assert_eq!(boc, [1, 2, 3], "the journalled bytes, no others");
+                self.seen.borrow_mut().push(self.reader.read_journal()?);
+                anyhow::ensure!(!self.down, "the node is down");
+                Ok(())
+            }
+        }
+        let signed_as = |message: u8| SignedSpend {
+            intent_digest: digest,
+            body_hash: [5; 32],
+            message_hash: [message; 32],
+            payer: "payer".into(),
+            value: 9,
+            boc: vec![1, 2, 3],
+            valid_until: 2000,
+        };
+        let journalled = journal_signed(&mut opened, signed_as(6)).expect("journalled");
+        let up = Recorder {
+            reader: opened.store.unlocked_reader().expect("a reader"),
+            seen: RefCell::new(Vec::new()),
+            down: false,
+        };
+        let hash = submit(&mut opened, journalled, &up).await.expect("submitted");
+        assert_eq!(hash, [6; 32]);
+        let seen = up.seen.borrow();
+        assert_eq!(seen.len(), 1, "one call");
+        assert!(
+            matches!(
+                seen[0].last(),
+                Some(JournalRecord::SpendSigned { message_hash, boc, .. })
+                    if *message_hash == [6; 32] && *boc == [1, 2, 3]
+            ),
+            "the signed message is not on disk when the transport is called"
+        );
+        assert!(matches!(
+            opened.journal.last(),
+            Some(JournalRecord::SpendBroadcast { message_hash }) if *message_hash == [6; 32]
+        ));
+
+        let journalled = journal_signed(&mut opened, signed_as(7)).expect("journalled");
+        let down = Recorder {
+            reader: opened.store.unlocked_reader().expect("a reader"),
+            seen: RefCell::new(Vec::new()),
+            down: true,
+        };
+        let error = submit(&mut opened, journalled, &down).await.expect_err("down");
+        assert!(error.to_string().contains("unknown"), "{error}");
+        assert!(error.to_string().contains("will not be rebuilt"), "{error}");
+        assert_eq!(down.seen.borrow().len(), 1, "no retry");
+        assert!(matches!(
+            opened.journal.last(),
+            Some(JournalRecord::SpendUnknown { message_hash, .. }) if *message_hash == [7; 32]
+        ));
+        let on_disk = reader.read_journal().expect("read");
+        assert_eq!(on_disk.len(), opened.journal.len());
+        assert_eq!(on_disk.len(), 5);
+        assert_eq!(opened.state.journal_records, 5);
     }
 }
