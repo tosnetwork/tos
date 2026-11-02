@@ -226,7 +226,7 @@ impl Store {
     }
 
     #[cfg(test)]
-    fn with_limit(mut self, limit: usize) -> Self {
+    pub(super) fn with_limit(mut self, limit: usize) -> Self {
         self.limit = limit;
         self
     }

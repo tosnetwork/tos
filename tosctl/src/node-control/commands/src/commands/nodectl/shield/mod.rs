@@ -360,14 +360,13 @@ async fn open_instance(
         "the state belongs to another instance"
     );
     anyhow::ensure!(state.profile == pointer.profile, "the state was written for another profile");
-    anyhow::ensure!(
-        state.chain == pointer.chain,
-        "the pointer names chain {} {} but the sealed state was built against {} {}",
-        pointer.chain.source,
-        hex::encode(pointer.chain.root_hash),
-        state.chain.source,
-        hex::encode(state.chain.root_hash)
-    );
+    let mut pointer = pointer;
+    if repair_pointer(&mut pointer, &pointer_path, &state)? {
+        eprintln!(
+            "{} the pointer for {name:?} was behind the sealed state and has been rewritten",
+            "note:".bold()
+        );
+    }
     let journal = store.read_journal()?;
     anyhow::ensure!(
         u64::try_from(journal.len()).unwrap_or(u64::MAX) >= state.journal_records,
@@ -377,6 +376,24 @@ async fn open_instance(
         state.journal_records
     );
     Ok(Opened { pointer, pointer_path, instance, domain, store, state, journal })
+}
+
+/// The pointer is a public cache of what the sealed state says about the
+/// chain. When the two disagree -- a migration that stopped between its two
+/// writes -- the pointer is rewritten from the state. The state is the
+/// authority: a pointer cannot move an instance to another chain. Returns
+/// whether anything was rewritten.
+fn repair_pointer(
+    pointer: &mut Pointer,
+    path: &Path,
+    state: &PersistedState,
+) -> anyhow::Result<bool> {
+    if pointer.chain == state.chain {
+        return Ok(false);
+    }
+    pointer.chain = state.chain.clone();
+    pointer.save(path).context("rewrite the pointer from the sealed state")?;
+    Ok(true)
 }
 
 /// How the chain a head came from relates to the chain the state was built
@@ -444,12 +461,15 @@ impl Opened {
         Ok(relation)
     }
 
-    /// Records the chain the state is now built against, in the sealed state
-    /// and in the public pointer.
-    fn adopt_chain(&mut self, chain: &ChainIdentity) -> anyhow::Result<()> {
-        self.state.chain = chain.clone();
-        self.pointer.chain = chain.clone();
-        self.pointer.save(&self.pointer_path)
+    /// Writes the state, then brings the public pointer up to date with what
+    /// the state now says. The order matters: the state is the authority, so
+    /// a stop between the two writes leaves a pointer behind the state, which
+    /// the next open repairs, and a refused state write leaves both files as
+    /// they were.
+    fn save_state_and_pointer(&mut self) -> anyhow::Result<()> {
+        self.save_state()?;
+        repair_pointer(&mut self.pointer, &self.pointer_path, &self.state)?;
+        Ok(())
     }
 
     fn append_journal(&mut self, record: &JournalRecord) -> anyhow::Result<()> {
@@ -555,9 +575,9 @@ impl SyncCmd {
         state.pool_config = pool_config_of(&head);
         persist_recovered(state, &recovered);
         if relation == HeadRelation::Migrate {
-            opened.adopt_chain(&head.chain)?;
+            state.chain = head.chain.clone();
         }
-        opened.save_state()?;
+        opened.save_state_and_pointer()?;
 
         println!(
             "{} {} at masterchain {} ({}): {} transactions replayed ({} applied, {} without state \
@@ -1308,6 +1328,95 @@ mod tests {
         let pending = pending_deposits(&crash, &[], true);
         assert_eq!(pending.len(), 1);
         assert!(pending[0].outcome.contains("may have stopped after sending"));
+    }
+
+    fn test_root() -> tempfile::TempDir {
+        use std::os::unix::fs::PermissionsExt;
+        tempfile::Builder::new()
+            .permissions(std::fs::Permissions::from_mode(0o700))
+            .tempdir()
+            .expect("tempdir")
+    }
+
+    fn test_state(binding: &Binding, keys: &Keys, chain: ChainIdentity) -> PersistedState {
+        PersistedState {
+            version: STATE_FORMAT_VERSION,
+            binding: binding.clone(),
+            chain,
+            instance_id: *keys.instance_id(),
+            profile: Profile {
+                schema: profile::PROFILE_SCHEMA.into(),
+                global_id: 3,
+                pool_address: binding.pool_address.clone(),
+                pool_code_hash: "5528ff26426e36b948bbd6ab3bd6615c82c98c87dd774e4fb456f3965722c466"
+                    .into(),
+            },
+            pool_config: PersistedPoolConfig { withdrawal_fee: coins(0), denominations: vec![] },
+            cursor: None,
+            ledger: persist_ledger(&Ledger::genesis()),
+            notes: vec![],
+            diagnostics: vec![],
+            scan_next_index: 0,
+            reused_indices: vec![],
+            issued_high_water: 3,
+            journal_records: 1,
+        }
+    }
+
+    #[test]
+    fn a_migration_that_stopped_between_its_writes_is_repaired_and_keeps_the_journal() {
+        let root = test_root();
+        let keys = Keys::derive(&[7u8; 64], &[3u8; 32]);
+        let binding = Binding {
+            global_id: 3,
+            pool_address: "0:aa76950cf26cb74c1d1b1a977d17bd3c96c6c9f28cb259fca297cdc8d33429fe"
+                .into(),
+        };
+        let endpoint = identity(chain::RPC_INIT_BLOCK, 2);
+        let anchor = identity(chain::PROOF_ANCHOR, 1);
+        let store = Store::open(root.path(), &keys, binding.clone()).expect("open");
+        let mut state = test_state(&binding, &keys, endpoint.clone());
+        store.save_state(&state).expect("the initial state");
+        store.append_journal(0, &prepared(2, 1, 1)).expect("a reservation");
+        let pointer_path = store::pointer_path(root.path(), "w").expect("a pointer path");
+        let pointer = Pointer {
+            schema: store::POINTER_SCHEMA.to_owned(),
+            profile: state.profile.clone(),
+            binding: binding.clone(),
+            chain: endpoint.clone(),
+            directory: keys.directory_name(),
+        };
+        pointer.save(&pointer_path).expect("the pointer");
+
+        // The migration writes the state and stops before the pointer.
+        state.chain = anchor.clone();
+        store.save_state(&state).expect("the migrated state");
+
+        // The next open finds the pointer behind the state and rewrites it;
+        // nothing else moves.
+        let mut loaded = Pointer::load(&pointer_path).expect("load the pointer");
+        assert_eq!(loaded.chain, endpoint);
+        let on_disk = store.load_state().expect("load").expect("a state");
+        assert_eq!(on_disk.chain, anchor);
+        assert!(repair_pointer(&mut loaded, &pointer_path, &on_disk).expect("repair"));
+        assert_eq!(Pointer::load(&pointer_path).expect("reload").chain, anchor);
+        assert!(!repair_pointer(&mut loaded, &pointer_path, &on_disk).expect("already right"));
+        let journal = store.read_journal().expect("the journal survives");
+        assert_eq!(journal.len(), 1);
+        assert_eq!(store::next_issuable_index(&on_disk, &journal).expect("next"), 3);
+
+        // A refused state write leaves both files as they were, so there is
+        // nothing to repair and the migration can be retried.
+        drop(store);
+        let small =
+            Store::open(root.path(), &keys, binding.clone()).expect("reopen").with_limit(1_500);
+        let mut too_large = on_disk.clone();
+        too_large.chain = identity(chain::PROOF_ANCHOR, 9);
+        too_large.ledger.leaves = vec![[7; 32]; 100];
+        assert!(small.save_state(&too_large).is_err(), "refused");
+        let kept = small.load_state().expect("load").expect("a state");
+        assert_eq!(kept.chain, anchor);
+        assert!(!repair_pointer(&mut loaded, &pointer_path, &kept).expect("nothing to repair"));
     }
 
     #[test]
