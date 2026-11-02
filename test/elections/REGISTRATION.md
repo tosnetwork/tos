@@ -10,8 +10,10 @@ end is kept registered through the delay. An unrelated address is never attached
 no deadline is shortened, and neither renewal generates/signs a new key/message.
 
 The control operations are ordered permanent record then existing ADNL association.
-A partial failure is surfaced and the same idempotent metadata calls can reconcile
-on the next tick. Stake actions do not proceed on a reconciliation failure. An
+A partial failure is surfaced; the same idempotent calls can reconcile while
+the original address remains known. Already-deleted addresses require evidence-based recovery.
+Completed renewals update the local snapshot before another action can reuse it.
+All addresses sharing a permanent key use its longest duty deadline. Stake actions do not proceed on a reconciliation failure. An
 existing key export failure is an error, never evidence that the key is absent.
 An already-deleted ADNL association is refused with an explicit reconciliation
 message; an address is not guessed from unrelated global ADNL entries. Retention

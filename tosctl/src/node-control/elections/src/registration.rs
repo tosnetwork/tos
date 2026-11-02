@@ -39,6 +39,8 @@ pub(crate) fn duty_renewals(
     let mut result = Vec::new();
     for (&election_id, entry) in &config.keys {
         ensure!(entry.adnl_addrs.len() <= 16, "too many registered addresses");
+        let mut duties = Vec::new();
+        let mut until = entry.expired_at;
         for (adnl, expires) in &entry.adnl_addrs {
             let end = [current, next]
                 .into_iter()
@@ -53,26 +55,44 @@ pub(crate) fn duty_renewals(
                 .map(|set| u64::from(set.utime_until()))
                 .max();
             if let Some(end) = end {
-                // The installed current set remains responsible during an election delay.
-                let until =
+                let duty_until =
                     end.max(now).checked_add(RETENTION_LAG).context("duty expiry overflow")?;
-                ensure!(
-                    i32::try_from(election_id).is_ok() && i32::try_from(until).is_ok(),
-                    "registration time exceeds control protocol"
-                );
-                if entry.expired_at < until || *expires < until {
-                    ensure!(entry.key_id.len() == 32 && adnl.len() == 32, "registration key width");
-                    result.push(Renewal {
-                        election_id,
-                        key_id: entry.key_id.clone(),
-                        adnl: adnl.clone(),
-                        until: until.max(entry.expired_at).max(*expires),
-                    });
-                }
+                until = until.max(duty_until).max(*expires);
+                duties.push((adnl, *expires));
+            }
+        }
+        ensure!(
+            i32::try_from(election_id).is_ok() && i32::try_from(until).is_ok(),
+            "registration time exceeds control protocol"
+        );
+        for (adnl, expires) in duties {
+            if entry.expired_at < until || expires < until {
+                ensure!(entry.key_id.len() == 32 && adnl.len() == 32, "registration key width");
+                result.push(Renewal {
+                    election_id,
+                    key_id: entry.key_id.clone(),
+                    adnl: adnl.clone(),
+                    until,
+                });
             }
         }
     }
     Ok(result)
+}
+
+/// Reflect a completed native-console write before another action reuses the snapshot.
+pub(crate) fn mark_retained(config: &mut ValidatorConfig, plan: &Renewal) -> anyhow::Result<()> {
+    let entry =
+        config.keys.get_mut(&plan.election_id).context("retained election record disappeared")?;
+    ensure!(entry.key_id == plan.key_id, "retained election key changed");
+    let address = entry
+        .adnl_addrs
+        .iter_mut()
+        .find(|(adnl, _)| adnl == &plan.adnl)
+        .context("retained election address disappeared")?;
+    entry.expired_at = entry.expired_at.max(plan.until);
+    address.1 = address.1.max(plan.until);
+    Ok(())
 }
 
 #[cfg(test)]
@@ -178,5 +198,13 @@ mod tests {
         assert!(
             duty_renewals(&cfg, None, None, 1000).unwrap_err().to_string().contains("too many")
         );
+    }
+    #[test]
+    fn multiple_duty_addresses_share_the_longest_permanent_deadline() {
+        let mut cfg = config();
+        cfg.keys.get_mut(&100).unwrap().adnl_addrs.push((vec![4; 32], 200));
+        let plans = duty_renewals(&cfg, Some(&set(10000, 2)), Some(&set(20000, 4)), 1000).unwrap();
+        assert_eq!(plans.len(), 2);
+        assert!(plans.iter().all(|plan| plan.until == 20300));
     }
 }

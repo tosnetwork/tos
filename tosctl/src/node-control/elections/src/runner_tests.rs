@@ -2677,4 +2677,7 @@ async fn closed_elector_still_extends_actual_announced_duty_without_spending() {
         .unwrap(),
     );
     runner.run().await.unwrap();
+    let retained = &runner.nodes["node-1"].validator_config.keys[&ELECTION_ID];
+    assert_eq!(retained.expired_at, u64::from(until) + 300);
+    assert_eq!(retained.adnl_addrs[0].1, u64::from(until) + 300);
 }

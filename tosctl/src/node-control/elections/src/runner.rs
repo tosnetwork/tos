@@ -414,6 +414,7 @@ impl ElectionRunner {
                     )
                     .await
                     .with_context(|| format!("node [{node_id}] retain installed election duty"))?;
+                crate::registration::mark_retained(&mut node.validator_config, &plan)?;
             }
         }
         self.snapshot_cache.update_next_elections_range(&cfg15);
