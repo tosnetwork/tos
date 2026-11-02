@@ -117,6 +117,28 @@ pub async fn run(
     let terms = prepared::check_quote(config, identity, &record["quote"], false)?;
     let candidate = Candidate::parse(&payload["request"], config, identity, &terms)?;
     let chain = Chain::new(config)?;
+    if let Some(cached) = store.refusal(&id)? {
+        let cached = protocol::parse(&cached)?;
+        if cached["schema"] != "tos.br1.native-nonacceptance.v1"
+            || cached["evidence"]["proof_digest"]
+                != protocol::hash(&protocol::canonical(&cached["witness"])?)
+        {
+            return Ok(Value::Null);
+        }
+        return Ok(cached["evidence"].clone());
+    }
+    if let Some((receipt, witness)) =
+        crate::nonacceptance::prove(config, &chain, &record, &candidate, &payload["prepared"])
+            .await?
+    {
+        let message = store
+            .lookup(&id)?
+            .and_then(|lease| lease.message)
+            .ok_or_else(|| anyhow::anyhow!("nonacceptance unsigned lease"))?;
+        let retained = json!({"schema":"tos.br1.native-nonacceptance.v1","evidence":receipt,"witness":witness});
+        store.retire_nonaccepted(&id, &message, &protocol::canonical(&retained)?)?;
+        return Ok(receipt);
+    }
     let pool = chain
         .verifier()
         .read_account(&MsgAddressInt::from_str(&config.release.pool)?, &ReadPolicy::Live)

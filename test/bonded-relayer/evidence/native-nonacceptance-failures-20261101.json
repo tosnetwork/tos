@@ -1,0 +1,128 @@
+{
+  "schema": "tos.br1.nonacceptance.public-failure-receipt.v1",
+  "reviewed_core_commit": "132e64bae1e0bf4aaa175ad28819a8f84e1a0d9c",
+  "toolchain": "1.97.1",
+  "command": [
+    "cargo",
+    "+1.97.1",
+    "test",
+    "--manifest-path",
+    "tools/bonded-relayer/provider/Cargo.toml",
+    "--release",
+    "--locked",
+    "-j2",
+    "nonacceptance"
+  ],
+  "mutations": [
+    {
+      "guard": "wallet-shard-time",
+      "file": "tools/bonded-relayer/provider/src/nonacceptance.rs",
+      "replace_from": "proof.account.gen_utime,",
+      "replace_to": "proof.block_gen_utime,",
+      "filter": "nonacceptance",
+      "exit_code": 101,
+      "runtime_failure_excerpt": "failures:\n\n---- nonacceptance::tests::newer_masterchain_time_cannot_expire_an_older_wallet_shard_state stdout ----\n\nthread 'nonacceptance::tests::newer_masterchain_time_cannot_expire_an_older_wallet_shard_state' (708906) panicked at src/nonacceptance.rs:113:9:\nassertion failed: !unchanged_at_wallet_block(&record, 7, \"head\", &proof, 120)\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n\n\nfailures:\n    nonacceptance::tests::newer_masterchain_time_cannot_expire_an_older_wallet_shard_state\n\ntest result: FAILED. 2 passed; 1 failed; 0 ignored; 0 measured; 19 filtered out; finished in 0.02s",
+      "full_log_sha256": "42a3f55ba1a4d1dc21cc6d73c4245ce8fcd22711ceedb6f22ce49c73601531a6",
+      "full_log_bytes": 6316
+    },
+    {
+      "guard": "unchanged-sequence",
+      "file": "tools/bonded-relayer/provider/src/nonacceptance.rs",
+      "replace_from": "record[\"sequence\"].as_u64() == Some(u64::from(sequence))",
+      "replace_to": "true",
+      "filter": "nonacceptance",
+      "exit_code": 101,
+      "runtime_failure_excerpt": "failures:\n\n---- nonacceptance::tests::nonacceptance_requires_unchanged_signing_head_sequence_and_finalized_expiry stdout ----\n\nthread 'nonacceptance::tests::nonacceptance_requires_unchanged_signing_head_sequence_and_finalized_expiry' (713183) panicked at src/nonacceptance.rs:121:9:\nassertion failed: !unchanged_after_expiry(&record, 8, \"head\", 100, 120, 120)\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n\n\nfailures:\n    nonacceptance::tests::nonacceptance_requires_unchanged_signing_head_sequence_and_finalized_expiry\n\ntest result: FAILED. 2 passed; 1 failed; 0 ignored; 0 measured; 19 filtered out; finished in 0.02s",
+      "full_log_sha256": "9c028e883fe141fbafe6dfa3aaa4d1c1f0b8599a511d422d4c97019c17ca91ee",
+      "full_log_bytes": 6806
+    },
+    {
+      "guard": "unchanged-head",
+      "file": "tools/bonded-relayer/provider/src/nonacceptance.rs",
+      "replace_from": "record[\"funding_head_hash\"].as_str() == Some(head)",
+      "replace_to": "true",
+      "filter": "nonacceptance",
+      "exit_code": 101,
+      "runtime_failure_excerpt": "failures:\n\n---- nonacceptance::tests::nonacceptance_requires_unchanged_signing_head_sequence_and_finalized_expiry stdout ----\n\nthread 'nonacceptance::tests::nonacceptance_requires_unchanged_signing_head_sequence_and_finalized_expiry' (716959) panicked at src/nonacceptance.rs:122:9:\nassertion failed: !unchanged_after_expiry(&record, 7, \"changed\", 100, 120, 120)\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n\n\nfailures:\n    nonacceptance::tests::nonacceptance_requires_unchanged_signing_head_sequence_and_finalized_expiry\n\ntest result: FAILED. 2 passed; 1 failed; 0 ignored; 0 measured; 19 filtered out; finished in 0.02s",
+      "full_log_sha256": "6aafc0fb8b1481bf00294c619edeb5449fb780054ea98e9029ed532ab4d8bf70",
+      "full_log_bytes": 6794
+    },
+    {
+      "guard": "unchanged-lt",
+      "file": "tools/bonded-relayer/provider/src/nonacceptance.rs",
+      "replace_from": "record[\"funding_head_lt\"].as_u64() == Some(lt)",
+      "replace_to": "true",
+      "filter": "nonacceptance",
+      "exit_code": 101,
+      "runtime_failure_excerpt": "failures:\n\n---- nonacceptance::tests::nonacceptance_requires_unchanged_signing_head_sequence_and_finalized_expiry stdout ----\n\nthread 'nonacceptance::tests::nonacceptance_requires_unchanged_signing_head_sequence_and_finalized_expiry' (721003) panicked at src/nonacceptance.rs:123:9:\nassertion failed: !unchanged_after_expiry(&record, 7, \"head\", 101, 120, 120)\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n\n\nfailures:\n    nonacceptance::tests::nonacceptance_requires_unchanged_signing_head_sequence_and_finalized_expiry\n\ntest result: FAILED. 2 passed; 1 failed; 0 ignored; 0 measured; 19 filtered out; finished in 0.02s",
+      "full_log_sha256": "4d441528cca19e38f2609fadd76a01637a993aa7877925727e6a5984cfcd0f8c",
+      "full_log_bytes": 6782
+    },
+    {
+      "guard": "proven-expiry",
+      "file": "tools/bonded-relayer/provider/src/nonacceptance.rs",
+      "replace_from": "time >= expiry",
+      "replace_to": "true",
+      "filter": "nonacceptance",
+      "exit_code": 101,
+      "runtime_failure_excerpt": "failures:\n\n---- nonacceptance::tests::nonacceptance_requires_unchanged_signing_head_sequence_and_finalized_expiry stdout ----\n\nthread 'nonacceptance::tests::nonacceptance_requires_unchanged_signing_head_sequence_and_finalized_expiry' (724913) panicked at src/nonacceptance.rs:124:9:\nassertion failed: !unchanged_after_expiry(&record, 7, \"head\", 100, 119, 120)\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n\n---- nonacceptance::tests::newer_masterchain_time_cannot_expire_an_older_wallet_shard_state stdout ----\n\nthread 'nonacceptance::tests::newer_masterchain_time_cannot_expire_an_older_wallet_shard_state' (724912) panicked at src/nonacceptance.rs:113:9:\nassertion failed: !unchanged_at_wallet_block(&record, 7, \"head\", &proof, 120)\n\n\nfailures:\n    nonacceptance::tests::newer_masterchain_time_cannot_expire_an_older_wallet_shard_state\n    nonacceptance::tests::nonacceptance_requires_unchanged_signing_head_sequence_and_finalized_expiry\n\ntest result: FAILED. 1 passed; 2 failed; 0 ignored; 0 measured; 19 filtered out; finished in 0.02s",
+      "full_log_sha256": "fe7f91f93f39658ba7e85cf04647d19d74a44629cb36aaccc0004642b22323b5",
+      "full_log_bytes": 7397
+    },
+    {
+      "guard": "release-sequence",
+      "file": "tools/bonded-relayer/provider/src/store.rs",
+      "replace_from": "SET live=0 WHERE request=?1 AND live=1",
+      "replace_to": "SET live=1 WHERE request=?1 AND live=1",
+      "filter": "nonacceptance",
+      "exit_code": 101,
+      "runtime_failure_excerpt": "failures:\n\n---- store::tests::nonacceptance_retains_receipt_and_invalidates_permits_before_reusing_sequence stdout ----\nError: UNIQUE constraint failed: leases.sequence\n\nCaused by:\n    Error code 2067: A UNIQUE constraint failed\n\n\nfailures:\n    store::tests::nonacceptance_retains_receipt_and_invalidates_permits_before_reusing_sequence\n\ntest result: FAILED. 2 passed; 1 failed; 0 ignored; 0 measured; 19 filtered out; finished in 0.02s",
+      "full_log_sha256": "c1d3811ca4a4fcf77967ba039ccc0b984f4f94c1529defa786bfc31c31f702d9",
+      "full_log_bytes": 6133
+    },
+    {
+      "guard": "invalidate-old-permits",
+      "file": "tools/bonded-relayer/provider/src/store.rs",
+      "replace_from": "tx.execute(\"UPDATE permits SET used=1 WHERE request=?1\", [request])?;",
+      "replace_to": "",
+      "filter": "nonacceptance",
+      "exit_code": 101,
+      "runtime_failure_excerpt": "failures:\n\n---- store::tests::nonacceptance_retains_receipt_and_invalidates_permits_before_reusing_sequence stdout ----\n\nthread 'store::tests::nonacceptance_retains_receipt_and_invalidates_permits_before_reusing_sequence' (732711) panicked at src/store.rs:327:9:\nassertion `left == right` failed\n  left: 0\n right: 1\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n\n\nfailures:\n    store::tests::nonacceptance_retains_receipt_and_invalidates_permits_before_reusing_sequence\n\ntest result: FAILED. 2 passed; 1 failed; 0 ignored; 0 measured; 19 filtered out; finished in 0.02s",
+      "full_log_sha256": "94bdddd3092edc8612a9ceac9c1a2e26110c93c21d1cfa007b650b5a8d3e0e13",
+      "full_log_bytes": 6298
+    },
+    {
+      "guard": "message-identity",
+      "file": "tools/bonded-relayer/provider/src/store.rs",
+      "replace_from": "ensure!(stored == message, \"nonacceptance message mismatch\");",
+      "replace_to": "",
+      "filter": "nonacceptance",
+      "exit_code": 101,
+      "runtime_failure_excerpt": "failures:\n\n---- store::tests::nonacceptance_retains_receipt_and_invalidates_permits_before_reusing_sequence stdout ----\n\nthread 'store::tests::nonacceptance_retains_receipt_and_invalidates_permits_before_reusing_sequence' (736591) panicked at src/store.rs:320:9:\nassertion failed: s.retire_nonaccepted(\"old\", b\"changed\", b\"proof\").is_err()\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n\n\nfailures:\n    store::tests::nonacceptance_retains_receipt_and_invalidates_permits_before_reusing_sequence\n\ntest result: FAILED. 2 passed; 1 failed; 0 ignored; 0 measured; 19 filtered out; finished in 0.02s",
+      "full_log_sha256": "794186e1eb2d6a49bdc60b12a01a49765c71e39f0e2476d2fe39644e0d144d4f",
+      "full_log_bytes": 6987
+    },
+    {
+      "guard": "immutable-receipt",
+      "file": "tools/bonded-relayer/provider/src/store.rs",
+      "replace_from": "ensure!(prior == receipt, \"conflicting nonacceptance receipt\");",
+      "replace_to": "",
+      "filter": "nonacceptance",
+      "exit_code": 101,
+      "runtime_failure_excerpt": "failures:\n\n---- store::tests::nonacceptance_retains_receipt_and_invalidates_permits_before_reusing_sequence stdout ----\n\nthread 'store::tests::nonacceptance_retains_receipt_and_invalidates_permits_before_reusing_sequence' (740611) panicked at src/store.rs:335:9:\nassertion failed: s.retire_nonaccepted(\"old\", b\"message\", b\"other\").is_err()\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n\n\nfailures:\n    store::tests::nonacceptance_retains_receipt_and_invalidates_permits_before_reusing_sequence\n\ntest result: FAILED. 2 passed; 1 failed; 0 ignored; 0 measured; 19 filtered out; finished in 0.02s",
+      "full_log_sha256": "4f27bcfdc28166879c8c28114a10c646a39a14465200e28873274f4be0c6c1f3",
+      "full_log_bytes": 6805
+    }
+  ],
+  "restored": {
+    "exit_code": 0,
+    "tests": 22,
+    "summary": "test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s"
+  },
+  "redaction": "Only native unit-test failure sections retained; absolute checkout paths replaced. No seeds, status tokens, live payloads or SQL blobs. Full compiler logs are reproducible semantically but byte-identical paths/timing cannot be recreated.",
+  "retention": {
+    "public": "This bounded receipt and the reproduction runner remain in normal Git history with no scheduled expiry.",
+    "private_until": "2027-02-01T00:00:00Z",
+    "private_access": "Authorized operators can retrieve /tos/build/br1-terminal-nonacceptance via the existing authenticated SSH access to toserver. No new/public credentials or access are granted. Outsiders can audit these bounded excerpts and reproduce with the committed runner without host access."
+  }
+}
