@@ -269,6 +269,48 @@
       "file": "00022.meta.json",
       "sha256": "b9a14811c8a61ac72666389c10b40eed59096ed0d0aeab540995cd76bcfb51e3",
       "bytes": 223
+    },
+    {
+      "group": "case",
+      "file": "prepared-loss-request.json",
+      "sha256": "a3529c99581323f6b7e5deefec099d00fdea5dd5ef862405fd7618cb80dafb5f",
+      "bytes": 21398
+    },
+    {
+      "group": "case",
+      "file": "prepared-loss-transfer.boc",
+      "sha256": "1ebdcc239e9151d775e69b8a16e7ff11ceda52deb53f3852380d184b013986f0",
+      "bytes": 15566
+    },
+    {
+      "group": "case",
+      "file": "prepared-loss-quote.json",
+      "sha256": "f6edadf5d9b3ad17b1d611551e4c61c6d90acb941d131aea858953ee6d60a218",
+      "bytes": 9044
+    },
+    {
+      "group": "case",
+      "file": "prepared-loss-plan.json",
+      "sha256": "8ab3a1125fbf0966e482898738c7d323c5cf47533caaca2bf7c8df2fd1112505",
+      "bytes": 1156
+    },
+    {
+      "group": "case",
+      "file": "retained-journal.db",
+      "sha256": "6ed6c9e75fa56c0986b6b600c215965abe92dc28e9a809677d4bb789374bb4a4",
+      "bytes": 253952
+    },
+    {
+      "group": "case",
+      "file": "retained-leases.db",
+      "sha256": "f3919ed347f0ca7e9fe27196c8ba08ef3e39c40a299c5f02a3e69c1bbb95741d",
+      "bytes": 176128
+    },
+    {
+      "group": "controls",
+      "file": "active-refusal.log",
+      "sha256": "13bdd5d0ec3fab9bdb5a6110942e3464a0f128672bb498eae288ec16e7c0091d",
+      "bytes": 602
     }
   ],
   "limits": [
@@ -326,5 +368,11 @@
       "/tos/build/br1-recovery-harness/receipt-controls-r4"
     ]
   },
-  "reproduction": "Use a fresh quote/request and new output for another crash; existing markers are reconciled only. Verification controls use an already executed request and a new output directory."
+  "reproduction": "Use a fresh quote/request and new output for another crash; existing markers are reconciled only. Verification controls use an already executed request and a new output directory.",
+  "active_operator_control": {
+    "exit": 1,
+    "expected_refusal": "stop the isolated operator service before crash injection",
+    "output_created": false,
+    "log": "active-refusal.log"
+  }
 }

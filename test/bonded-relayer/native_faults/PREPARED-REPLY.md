@@ -84,7 +84,7 @@ are absent upstream at ton master
 
 `prepared-reply-evidence.json` is the bounded sanitized index: exact runner/source
 hashes, merged runtime commit/native artifact identity, commands, eight per-case
-exit statuses, and SHA256/size for25retained raw artifacts. No private payloads,
+exit statuses, and SHA256/size for32retained raw artifacts. No private payloads,
 tokens, seeds, database snapshots or binaries are committed. Its newest live
 case uses the immutable merged397 native pilot build on the isolated id3 chain;
 public id2 was not deployed. A fresh ordinary client proof/request was used.
@@ -105,3 +105,5 @@ falsely accept (driver exit0); the index labels this explicitly rather than
 counting it as secure acceptance. Baseline and restored original receipts pass.
 The initial external-only result reference was insufficient (Checklist TE-9,
 existed / not applied); this index and runner make the claim reviewable in Git.
+
+The index also binds the fresh active-service refusal, required private request/body/quote/plan files, and consistent read-only journal backups retained externally. Custody seeds are not copied; signed payloads and private database content remain outside Git.
