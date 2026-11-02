@@ -39,7 +39,18 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--release", action="store_true")
     args = parser.parse_args()
-    command = ["cargo", "test", "--manifest-path", MANIFEST, "--locked", "-j2"]
+    # These are exact unit tests; unrelated standalone integration executables
+    # implement their own argument protocol and must not receive libtest filters.
+    command = [
+        "cargo",
+        "test",
+        "--bin",
+        "br1-native-provider",
+        "--manifest-path",
+        MANIFEST,
+        "--locked",
+        "-j2",
+    ]
     if args.release:
         command.append("--release")
     results = []
