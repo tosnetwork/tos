@@ -1197,3 +1197,62 @@ fn a_transact_fits_its_ceiling_and_the_gas_this_chain_grants() {
         "a network granting 500,000 gas ran the whole path after all"
     );
 }
+
+/// The wallet-side codec reads back exactly the transact body this suite
+/// builds -- the body the contract parses all the way to the proof step -- for
+/// a transfer and for a withdrawal. A codec that read a field one bit off would
+/// still decode most bodies and rebuild a pool that is not the pool.
+#[test]
+fn the_wallet_codec_reads_the_transact_body_this_suite_builds() {
+    use contracts::shielded_pool::{self as codec, TransactBody};
+
+    let state = RefState::genesis();
+    let keys = [Key::generate(), Key::generate()];
+    let digest = small(0x7777_8888_9999_aaaa);
+    let transfer = well_formed(&state, &keys, digest);
+    let recipient = small(0xdead_beef);
+    let withdrawal = withdrawing(well_formed(&state, &keys, digest), recipient);
+
+    for (label, message) in [("transfer", &transfer), ("withdrawal", &withdrawal)] {
+        let cell = message.body();
+        let mut slice = chain_block::SliceData::load_cell(cell).expect("slice");
+        assert_eq!(slice.get_next_u32().expect("op"), codec::OP_TRANSACT);
+        let parsed = TransactBody::parse(&mut slice).unwrap_or_else(|e| panic!("{label}: {e}"));
+        assert_eq!(
+            parsed.query_id,
+            u64::from_be_bytes(message.intent_digest[24..].try_into().expect("8 bytes")),
+            "{label}: query id"
+        );
+        assert_eq!(parsed.anchor_kind, message.anchor_kind, "{label}");
+        assert_eq!(parsed.anchor_id, message.anchor_id, "{label}");
+        assert_eq!(parsed.valid_until, message.valid_until, "{label}");
+        assert_eq!(parsed.public_amount_out, u128::from(message.public_amount_out), "{label}");
+        assert_eq!(parsed.withdrawal_fee, u128::from(message.withdrawal_fee), "{label}");
+        assert_eq!(parsed.intent_digest, message.intent_digest, "{label}");
+        assert_eq!(parsed.anchor_root, message.anchor_root, "{label}");
+        assert_eq!(parsed.nullifiers, message.nullifiers, "{label}");
+        assert_eq!(parsed.note_bodies, message.note_bodies, "{label}");
+        for (slot, bytes) in parsed.payloads.iter().enumerate() {
+            assert_eq!(*bytes, payload(slot as u8), "{label}: payload {slot}");
+        }
+        assert_eq!(parsed.recovery_owner_commitment, message.recovery_owner_commitment, "{label}");
+        assert_eq!(parsed.is_withdrawal(), message.public_amount_out > 0, "{label}");
+        match &message.recipient {
+            None => {
+                assert!(parsed.recipient.is_none(), "{label}: a transfer with a recipient");
+                assert!(parsed.recovery_payload.is_none(), "{label}: a transfer with recovery");
+            }
+            Some(account) => {
+                let expected = MsgAddressInt::with_params(0, chain_block::UInt256::from(*account))
+                    .expect("address");
+                assert_eq!(parsed.recipient, Some(expected), "{label}: recipient");
+                assert_eq!(parsed.recovery_payload, Some(payload(9)), "{label}: recovery payload");
+            }
+        }
+        assert_eq!(
+            parsed.recovery_cell.repr_hash(),
+            message.recovery_data.repr_hash(),
+            "{label}: recovery cell"
+        );
+    }
+}
