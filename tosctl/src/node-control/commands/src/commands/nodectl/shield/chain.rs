@@ -669,6 +669,127 @@ mod tests {
         }
     }
 
+    /// The pool's real history from the circuit crate's sandbox run: the
+    /// deployment, four deposits, a reserve top-up, a withdrawal whose payout
+    /// was refused and bounced into a recovery note, and a withdrawal whose
+    /// payout was taken, with the state cell the pool ended in and the gas
+    /// prices it ran under.
+    const HISTORY_FIXTURE: &str = include_str!(
+        "../../../../../../../../tools/shielded-pool-circuit/fixtures/pool-history-development.json"
+    );
+
+    struct Fixture {
+        pool: MsgAddressInt,
+        gas: GasLimitsPrices,
+        state: PoolState,
+        /// Each transaction with the kind and payout the run that produced it
+        /// knows it to be.
+        transactions: Vec<(Transaction, u64, [u8; 32], String, Option<(String, u128)>)>,
+    }
+
+    fn unhex(value: &serde_json::Value) -> Vec<u8> {
+        hex::decode(value.as_str().expect("a hex string")).expect("hex")
+    }
+
+    fn fixture() -> Fixture {
+        let fixture: serde_json::Value = serde_json::from_str(HISTORY_FIXTURE).expect("json");
+        assert_eq!(fixture["schema"], "shielded-pool-history-fixture-v1");
+        let pool: MsgAddressInt =
+            fixture["pool_address"].as_str().expect("address").parse().expect("pool");
+        let gas =
+            gas_prices(&read_single_root_boc(unhex(&fixture["gas_prices_param21"])).expect("boc"))
+                .expect("gas prices");
+        let state =
+            PoolState::parse(&read_single_root_boc(unhex(&fixture["account_data"])).expect("boc"))
+                .expect("the pool's state cell");
+        let transactions = fixture["transactions"]
+            .as_array()
+            .expect("transactions")
+            .iter()
+            .map(|entry| {
+                let cell = read_single_root_boc(unhex(&entry["boc"])).expect("a transaction BOC");
+                let hash = *cell.repr_hash().as_array();
+                assert_eq!(hex::encode(hash), entry["hash"], "the recorded hash");
+                let lt = entry["lt"].as_u64().expect("lt");
+                let payout = entry["payout"].as_object().map(|payout| {
+                    (
+                        payout["recipient"].as_str().expect("recipient").to_owned(),
+                        payout["value"].as_str().expect("value").parse::<u128>().expect("a value"),
+                    )
+                });
+                let transaction = Transaction::construct_from_cell(cell).expect("a transaction");
+                (transaction, lt, hash, entry["kind"].as_str().expect("kind").to_owned(), payout)
+            })
+            .collect();
+        Fixture { pool, gas, state, transactions }
+    }
+
+    #[test]
+    fn a_real_history_classifies_and_replays_to_the_pools_state() {
+        let fixture = fixture();
+        let mut steps = Vec::new();
+        for (transaction, lt, hash, kind, payout) in &fixture.transactions {
+            // The same binding the live walk applies to each transaction.
+            let cell = transaction.serialize().expect("serialize");
+            Link::bound(cell, *hash, *lt, &fixture.pool)
+                .expect("bound to its hash, LT and account");
+            let step = decode(transaction, *lt, *hash).expect("classified");
+            match (&step.event, kind.as_str()) {
+                (None, "no-state-change") => {}
+                (Some(Event::Deposit { amount, .. }), "deposit") => {
+                    assert_eq!(*amount, 1_000_000_000, "the denomination deposited");
+                }
+                (Some(Event::Transact(transact)), "transact") => {
+                    let (recipient, value) = payout.as_ref().expect("a withdrawal's payout");
+                    let paid = transact.payout.as_ref().expect("the classifier found the payout");
+                    assert_eq!(&paid.recipient, recipient);
+                    assert_eq!(paid.value, *value);
+                    assert_eq!(transact.public_amount_out, *value);
+                }
+                (Some(Event::Bounce { value, .. }), "bounce") => {
+                    assert!(*value > 0, "the bounce carried value back");
+                }
+                (event, kind) => panic!("lt {lt} classified as {event:?}, the run says {kind}"),
+            }
+            steps.push(step);
+        }
+        let history = History { steps };
+
+        let mut head = head_with(fixture.state.clone());
+        head.gas = fixture.gas.clone();
+        let outcome =
+            replay(Ledger::genesis(), &history, &head).expect("replays to the pool's state");
+        assert_eq!(outcome.applied, 7, "four deposits, two withdrawals and one recovery");
+        assert_eq!(outcome.skipped, 2, "the deployment and the top-up");
+        let checkpoint = outcome.ledger.checkpoint();
+        assert_eq!(checkpoint.native_liability, fixture.state.native_liability);
+        assert_eq!(
+            checkpoint.commitment_next_index, 11,
+            "4 deposits, 3 outputs each from 2 withdrawals, 1 recovery note"
+        );
+        assert_eq!(checkpoint.reserved_recovery_leaves, 1, "the taken payout's leaf stays held");
+
+        // The comparison bites: the same history without its recovery bounce
+        // is refused and names the limitation that could explain it.
+        let without_bounce = History {
+            steps: history
+                .steps
+                .iter()
+                .filter(|step| !matches!(step.event, Some(Event::Bounce { .. })))
+                .map(|step| Step { lt: step.lt, hash: step.hash, event: step.event.clone() })
+                .collect(),
+        };
+        let error =
+            replay(Ledger::genesis(), &without_bounce, &head).err().expect("a different state");
+        assert!(error.to_string().contains("differs"), "{error}");
+        // And one that stops before the last withdrawal.
+        let mut short = history.steps;
+        short.pop();
+        let error =
+            replay(Ledger::genesis(), &History { steps: short }, &head).err().expect("short");
+        assert!(error.to_string().contains("previous state is kept"), "{error}");
+    }
+
     #[test]
     fn transactions_without_state_change_leave_the_replay_where_it_was() {
         let history = History {
