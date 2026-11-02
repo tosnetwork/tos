@@ -1,0 +1,378 @@
+{
+  "schema": "tos.br1.prepared-reply.acceptance-index.v1",
+  "result": "PASS",
+  "network": {
+    "global_id": 3,
+    "global_version": 16,
+    "public_activation": false
+  },
+  "runtime_commit": "f251e6bc870c19d4a039a6a841e8b2dfcb6661fb",
+  "native_release": {
+    "features": [
+      "public-testnet-pilot"
+    ],
+    "sha256": "01f76856f7bf675f9622df8bc220116fb58a89dfdbe33730eb51c88b63267315"
+  },
+  "sources": {
+    "prepared_reply.py": "fa14201ebcfb8bc65959d3a5a9b1d46afb460b027a5a62d7c57155a90d66a2ca",
+    "control.py": "895249cef7c4f0e3f557e1e0990a4e9dfd678287b9c6f1c27cfb560c5a8a09fd",
+    "prepared_reply_controls.py": "877bad605e92d11e676cb051aa1c5ae45e77ebd0e0e27cc0d41f3f362363adf4"
+  },
+  "actual_crash_exit": 86,
+  "crash_cut": {
+    "request_id": "599c3f77adade44922c195db7f83cbe3c4c41983b3abdc1f52caec989619f1b4",
+    "reply_sha256": "9ac2172745ab75b1a3399203e0dfbeed08c2d002141e52a1d1870b5adf714a6e",
+    "exit": 86,
+    "python_state": "reserved",
+    "message": null
+  },
+  "execution": {
+    "result": "PASS-EXACT-ORIGINAL-EXECUTION-WITHOUT-RESEND",
+    "request_id": "599c3f77adade44922c195db7f83cbe3c4c41983b3abdc1f52caec989619f1b4",
+    "message_hash": "6eb0c0164e844d21c3425873d1139a3928e6f0898a8ab9fdb578d55b84f35ed1",
+    "original_message_sha256": "57470eeb38b6e9d08931f3d02b2db61708693976adacf2bd8ed94aadd5c67e73",
+    "captured_exact_sends": 1,
+    "finalized_fee_imports": 1,
+    "finality": {
+      "checkpoint_root": "5e0ca9d053a32b6684d14c159dd0b02c8263f2c5556b1a17a2798c1a91b172d4",
+      "proof_digest": "e96b2c0e838280ea61d98ee6841ce39fce5be2d77628037dde18704f1ef2865a"
+    }
+  },
+  "independent_pool_replay": {
+    "commitment_next_index": "51",
+    "commitment_root": "20849987389729410610992858858425853917470292507625871557828873311865579351110",
+    "native_liability": "3000000000",
+    "nullifier_next_index": "33",
+    "nullifier_root": "22979785519169677980158703990942652504118009737178354050945615359492537432343",
+    "reserved_recovery_leaves": "0"
+  },
+  "controls": [
+    {
+      "case": "request_id-baseline",
+      "exit": 0,
+      "false_acceptance": false,
+      "log": "request_id-baseline.log",
+      "sha256": "63a9962979e7996edb78bf313520eaf4076d0885d43e3a9718abbdd9461d69fe",
+      "bytes": 33
+    },
+    {
+      "case": "request_id-wrong-binding",
+      "exit": 1,
+      "false_acceptance": false,
+      "log": "request_id-wrong-binding.log",
+      "sha256": "7edb11ef5dee5f066bf1c4915443d6f00bc4b4c4866c047edd57bc252e657632",
+      "bytes": 416
+    },
+    {
+      "case": "request_id-guard-removed",
+      "exit": 0,
+      "false_acceptance": true,
+      "log": "request_id-guard-removed.log",
+      "sha256": "63a9962979e7996edb78bf313520eaf4076d0885d43e3a9718abbdd9461d69fe",
+      "bytes": 33
+    },
+    {
+      "case": "request_id-restored",
+      "exit": 0,
+      "false_acceptance": false,
+      "log": "request_id-restored.log",
+      "sha256": "63a9962979e7996edb78bf313520eaf4076d0885d43e3a9718abbdd9461d69fe",
+      "bytes": 33
+    },
+    {
+      "case": "reply_sha256-baseline",
+      "exit": 0,
+      "false_acceptance": false,
+      "log": "reply_sha256-baseline.log",
+      "sha256": "63a9962979e7996edb78bf313520eaf4076d0885d43e3a9718abbdd9461d69fe",
+      "bytes": 33
+    },
+    {
+      "case": "reply_sha256-wrong-binding",
+      "exit": 1,
+      "false_acceptance": false,
+      "log": "reply_sha256-wrong-binding.log",
+      "sha256": "d7fd2928c590b3f5b2cd88cc8e7a24c7b524f475b07a80d4f527d8d96d16e8de",
+      "bytes": 641
+    },
+    {
+      "case": "reply_sha256-guard-removed",
+      "exit": 0,
+      "false_acceptance": true,
+      "log": "reply_sha256-guard-removed.log",
+      "sha256": "63a9962979e7996edb78bf313520eaf4076d0885d43e3a9718abbdd9461d69fe",
+      "bytes": 33
+    },
+    {
+      "case": "reply_sha256-restored",
+      "exit": 0,
+      "false_acceptance": false,
+      "log": "reply_sha256-restored.log",
+      "sha256": "63a9962979e7996edb78bf313520eaf4076d0885d43e3a9718abbdd9461d69fe",
+      "bytes": 33
+    }
+  ],
+  "retained_until_utc": "2027-02-01",
+  "retained_roots": {
+    "case": "/tos/build/br1-localnet/prepared-reply/attempt-5",
+    "controls": "/tos/build/br1-recovery-harness/receipt-controls-r4",
+    "release": "/tos/build/br1-public-release",
+    "wire": "/tos/build/br1-localnet/prepared-reply/wire"
+  },
+  "raw_artifacts": [
+    {
+      "group": "case",
+      "file": "crash.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "group": "case",
+      "file": "verify.log",
+      "sha256": "63a9962979e7996edb78bf313520eaf4076d0885d43e3a9718abbdd9461d69fe",
+      "bytes": 33
+    },
+    {
+      "group": "case",
+      "file": "fault/submit-started.json",
+      "sha256": "5531da8117f735236ebe17ef629b92c7d19199d2c6bd10ec2f3d173dcfa42d2c",
+      "bytes": 87
+    },
+    {
+      "group": "case",
+      "file": "fault/prepare-reply-lost.json",
+      "sha256": "0ff690fe3d7d7286d9ba379bb1b42d7c88f228e0b138788fcdbecf2727c7419d",
+      "bytes": 236
+    },
+    {
+      "group": "case",
+      "file": "fault/VERDICT.json",
+      "sha256": "71dcac3582667be7b2da622d950540285e49ad8fc994f58284ac3090986091a9",
+      "bytes": 588
+    },
+    {
+      "group": "case",
+      "file": "FINAL-POOL-STATE.json",
+      "sha256": "ead41615d13019ef36a13a931ed12703ae93723873973aba3cf4d814bf5a7b06",
+      "bytes": 450
+    },
+    {
+      "group": "case",
+      "file": "history-before/MANIFEST.json",
+      "sha256": "68d5e477eff1f052d5056699218163746e5b1d829ea1328a840d9f7a26357d19",
+      "bytes": 5843
+    },
+    {
+      "group": "case",
+      "file": "history-before/proven-head.json",
+      "sha256": "76d13cc6cee27b2ed4cdced27ebf7d4d9bfd1b29a11cfc2d86a5da22f2ca7410",
+      "bytes": 836
+    },
+    {
+      "group": "case",
+      "file": "history-after/MANIFEST.json",
+      "sha256": "181360fbb013cc7c847dcdb03ba10ee86561963b6185062b24a59ff81b725ce5",
+      "bytes": 6069
+    },
+    {
+      "group": "case",
+      "file": "history-after/proven-head.json",
+      "sha256": "c1600972033e1c0fc7f274500b6ec8e98f8ae2bcf36c9b714f278ddce70e9245",
+      "bytes": 836
+    },
+    {
+      "group": "controls",
+      "file": "REPORT.json",
+      "sha256": "8624558ecab58689d8e76f73972a643b938e6ba1d4f8d60359f7d390b3b2058a",
+      "bytes": 2337
+    },
+    {
+      "group": "controls",
+      "file": "request_id-baseline.log",
+      "sha256": "63a9962979e7996edb78bf313520eaf4076d0885d43e3a9718abbdd9461d69fe",
+      "bytes": 33
+    },
+    {
+      "group": "controls",
+      "file": "request_id-wrong-binding.log",
+      "sha256": "7edb11ef5dee5f066bf1c4915443d6f00bc4b4c4866c047edd57bc252e657632",
+      "bytes": 416
+    },
+    {
+      "group": "controls",
+      "file": "request_id-guard-removed.log",
+      "sha256": "63a9962979e7996edb78bf313520eaf4076d0885d43e3a9718abbdd9461d69fe",
+      "bytes": 33
+    },
+    {
+      "group": "controls",
+      "file": "request_id-restored.log",
+      "sha256": "63a9962979e7996edb78bf313520eaf4076d0885d43e3a9718abbdd9461d69fe",
+      "bytes": 33
+    },
+    {
+      "group": "controls",
+      "file": "reply_sha256-baseline.log",
+      "sha256": "63a9962979e7996edb78bf313520eaf4076d0885d43e3a9718abbdd9461d69fe",
+      "bytes": 33
+    },
+    {
+      "group": "controls",
+      "file": "reply_sha256-wrong-binding.log",
+      "sha256": "d7fd2928c590b3f5b2cd88cc8e7a24c7b524f475b07a80d4f527d8d96d16e8de",
+      "bytes": 641
+    },
+    {
+      "group": "controls",
+      "file": "reply_sha256-guard-removed.log",
+      "sha256": "63a9962979e7996edb78bf313520eaf4076d0885d43e3a9718abbdd9461d69fe",
+      "bytes": 33
+    },
+    {
+      "group": "controls",
+      "file": "reply_sha256-restored.log",
+      "sha256": "63a9962979e7996edb78bf313520eaf4076d0885d43e3a9718abbdd9461d69fe",
+      "bytes": 33
+    },
+    {
+      "group": "release",
+      "file": "RELEASE.json",
+      "sha256": "ac1f217c56bd1932b138b47e5d2ede52400c593dc00da67ffcfb421c2ac54fab",
+      "bytes": 465
+    },
+    {
+      "group": "release",
+      "file": "build-pilot.log",
+      "sha256": "1bc91671a713d9329d019abd28f9d50e355a6e2f37e00dcf4bda7f7e53a75dfc",
+      "bytes": 7146
+    },
+    {
+      "group": "release",
+      "file": "local-check.log",
+      "sha256": "b852b64d88f9d25aed232f08ad96b5af892757b230c28efdc32342db9ec6e2a6",
+      "bytes": 102
+    },
+    {
+      "group": "wire",
+      "file": "00022.request.json",
+      "sha256": "573643f9562de0d4d9f0aad59596521fc8bf611700b9403962daeb20f22c427b",
+      "bytes": 21047
+    },
+    {
+      "group": "wire",
+      "file": "00022.response.json",
+      "sha256": "f197f239c89e82c6cb992de1331552a0d27d77250403f3e47e9a5526b9f0098f",
+      "bytes": 46
+    },
+    {
+      "group": "wire",
+      "file": "00022.meta.json",
+      "sha256": "b9a14811c8a61ac72666389c10b40eed59096ed0d0aeab540995cd76bcfb51e3",
+      "bytes": 223
+    },
+    {
+      "group": "case",
+      "file": "prepared-loss-request.json",
+      "sha256": "a3529c99581323f6b7e5deefec099d00fdea5dd5ef862405fd7618cb80dafb5f",
+      "bytes": 21398
+    },
+    {
+      "group": "case",
+      "file": "prepared-loss-transfer.boc",
+      "sha256": "1ebdcc239e9151d775e69b8a16e7ff11ceda52deb53f3852380d184b013986f0",
+      "bytes": 15566
+    },
+    {
+      "group": "case",
+      "file": "prepared-loss-quote.json",
+      "sha256": "f6edadf5d9b3ad17b1d611551e4c61c6d90acb941d131aea858953ee6d60a218",
+      "bytes": 9044
+    },
+    {
+      "group": "case",
+      "file": "prepared-loss-plan.json",
+      "sha256": "8ab3a1125fbf0966e482898738c7d323c5cf47533caaca2bf7c8df2fd1112505",
+      "bytes": 1156
+    },
+    {
+      "group": "case",
+      "file": "retained-journal.db",
+      "sha256": "6ed6c9e75fa56c0986b6b600c215965abe92dc28e9a809677d4bb789374bb4a4",
+      "bytes": 253952
+    },
+    {
+      "group": "case",
+      "file": "retained-leases.db",
+      "sha256": "f3919ed347f0ca7e9fe27196c8ba08ef3e39c40a299c5f02a3e69c1bbb95741d",
+      "bytes": 176128
+    },
+    {
+      "group": "controls",
+      "file": "active-refusal.log",
+      "sha256": "13bdd5d0ec3fab9bdb5a6110942e3464a0f128672bb498eae288ec16e7c0091d",
+      "bytes": 602
+    }
+  ],
+  "limits": [
+    "isolated-chain acceptance only; no public deployment",
+    "private payloads remain external; index contains hashes/sizes and sanitized results",
+    "guard-removed controls intentionally accept a wrong receipt, demonstrating the regression oracle"
+  ],
+  "commands": {
+    "crash": [
+      "/usr/bin/python3",
+      "/tos/worktrees/tos/br1-recovery-harness/test/bonded-relayer/native_faults/prepared_reply.py",
+      "--mode",
+      "crash",
+      "--config",
+      "/tos/build/br1-localnet/operator-e/service.json",
+      "--request",
+      "/tos/build/br1-localnet/prepared-reply/attempt-5/prepared-loss-request.json",
+      "--token",
+      "/tos/build/br1-localnet/prepared-reply/attempt-5/prepared-loss-token",
+      "--inactive-unit",
+      "br1-operator-e.service",
+      "--out",
+      "/tos/build/br1-localnet/prepared-reply/attempt-5/fault"
+    ],
+    "verify": [
+      "/usr/bin/python3",
+      "/tos/worktrees/tos/br1-recovery-harness/test/bonded-relayer/native_faults/prepared_reply.py",
+      "--mode",
+      "verify",
+      "--config",
+      "/tos/build/br1-localnet/operator-e/service.json",
+      "--request",
+      "/tos/build/br1-localnet/prepared-reply/attempt-5/prepared-loss-request.json",
+      "--token",
+      "/tos/build/br1-localnet/prepared-reply/attempt-5/prepared-loss-token",
+      "--capture",
+      "/tos/build/br1-localnet/prepared-reply/wire",
+      "--out",
+      "/tos/build/br1-localnet/prepared-reply/attempt-5/fault"
+    ],
+    "controls": [
+      "/usr/bin/python3",
+      "/tos/worktrees/tos/br1-recovery-harness/test/bonded-relayer/native_faults/prepared_reply_controls.py",
+      "--config",
+      "/tos/build/br1-localnet/operator-e/service.json",
+      "--request",
+      "/tos/build/br1-localnet/prepared-reply/attempt-5/prepared-loss-request.json",
+      "--token",
+      "/tos/build/br1-localnet/prepared-reply/attempt-5/prepared-loss-token",
+      "--capture",
+      "/tos/build/br1-localnet/prepared-reply/wire",
+      "--case",
+      "/tos/build/br1-localnet/prepared-reply/attempt-5/fault",
+      "--out",
+      "/tos/build/br1-recovery-harness/receipt-controls-r4"
+    ]
+  },
+  "reproduction": "Use a fresh quote/request and new output for another crash; existing markers are reconciled only. Verification controls use an already executed request and a new output directory.",
+  "active_operator_control": {
+    "exit": 1,
+    "expected_refusal": "stop the isolated operator service before crash injection",
+    "output_created": false,
+    "log": "active-refusal.log"
+  }
+}

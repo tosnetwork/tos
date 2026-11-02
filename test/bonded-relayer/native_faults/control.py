@@ -24,7 +24,7 @@ sys.path.insert(0, str(ROOT / "tools/bonded-relayer"))
 from br1 import configuration  # noqa: E402
 from native_adapter import NativeAdapter  # noqa: E402
 from native_process import NativeRPC, PinnedProgram, Unavailable  # noqa: E402
-from relay_core import Engine, Journal, Refused, Request, encode  # noqa: E402
+from relay_core import Engine, Journal, Prepared, Refused, Request, encode  # noqa: E402
 
 
 def write_new(path, value):
@@ -55,7 +55,7 @@ def captured_sends(directory, message):
     return count
 
 
-def reconcile(args, config, request):
+def reconcile(args, config, request, *, prepared_sha256=None):
     """Only an explicit submit mode writes; every recovery query is read-only."""
     token = args.token.read_text().strip()
     identity = Request.parse(encode(request)).identity
@@ -88,10 +88,14 @@ def reconcile(args, config, request):
         raise RuntimeError("original request has not reconciled")
     with sqlite3.connect(f"file:{config['journal']}?mode=ro", uri=True) as database:
         row = database.execute(
-            "SELECT message,message_hash FROM jobs WHERE id=?", (identity,)
+            "SELECT message,message_hash,acceptance FROM jobs WHERE id=?", (identity,)
         ).fetchone()
     if row is None or row[1] != status["message_hash"]:
         raise RuntimeError("persisted original message binding")
+    if prepared_sha256 is not None:
+        prepared = NativeAdapter._prepared(Prepared(bytes(row[0]), row[1], bytes(row[2])))
+        if hashlib.sha256(encode(prepared)).hexdigest() != prepared_sha256:
+            raise RuntimeError("persisted prepared bytes differ from the lost native reply")
     count = captured_sends(args.capture, bytes(row[0]))
     if count != 1:
         raise RuntimeError(f"exact original message sent {count} times, expected one")
