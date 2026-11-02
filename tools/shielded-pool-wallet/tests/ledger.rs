@@ -91,6 +91,7 @@ fn transfer(instance: &PoolInstance, nullifiers: [u64; 2], first_index: u64) -> 
         payloads[usize::from(slot)] = sealed;
     }
     Event::Transact(Box::new(Transact {
+        intent_digest: Fr::from(0x1a7e_0000u64 + nullifiers[0] * 1000 + nullifiers[1]),
         nullifiers: [Fr::from(nullifiers[0]), Fr::from(nullifiers[1])],
         note_bodies: bodies,
         payloads,
