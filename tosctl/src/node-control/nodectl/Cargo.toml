@@ -9,6 +9,7 @@ license = 'GPL-3.0'
 [features]
 node-data-sync-native = ["commands/node-data-sync-native"]
 pq-wallet = ["commands/pq-wallet"]
+shielded = ["commands/shielded"]
 
 [dependencies]
 tokio = { version = "1.40", features = ["full"] }

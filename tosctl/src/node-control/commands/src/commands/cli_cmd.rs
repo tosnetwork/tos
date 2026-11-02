@@ -31,6 +31,9 @@ use crate::commands::{
     },
 };
 
+#[cfg(feature = "shielded")]
+use crate::commands::nodectl::shield::ShieldCmd;
+
 #[derive(clap::Subcommand, Clone)]
 pub enum Commands {
     // ─── Existing commands ───────────────────────────────────────────
@@ -69,6 +72,10 @@ pub enum Commands {
     /// Imperative wallet operations
     #[command(name = "wallet", visible_alias = "w")]
     Wallet(WalletCmd),
+    /// Shielded pool: private balances and transfers (experimental)
+    #[cfg(feature = "shielded")]
+    #[command(name = "shield")]
+    Shield(ShieldCmd),
     /// Pool lifecycle and staking operations
     #[command(name = "pool", visible_alias = "p")]
     Pool(PoolCmd),
