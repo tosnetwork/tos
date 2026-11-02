@@ -452,7 +452,15 @@ async fn run(
     } else {
         ledger
     };
-    check_still_valid(&ledger, &fresh_head, &anchor, &nullifiers, valid_until, &intent_digest)?;
+    check_still_valid(
+        &ledger,
+        &fresh_head.state,
+        fresh_head.shard_gen_utime,
+        &anchor,
+        &nullifiers,
+        valid_until,
+        &intent_digest,
+    )?;
     let witnesses = assembly::nullifier_witnesses(ledger.nullifier_state(), nullifiers)
         .map_err(|error| anyhow::anyhow!("nullifier witnesses: {error}"))?;
 
@@ -620,11 +628,13 @@ fn rebuild(leaves: &[Fr]) -> anyhow::Result<(Frontier, Fr)> {
     Ok((frontier, root))
 }
 
-/// After proving: the inputs are still unspent, the anchored root is still
-/// one the pool accepts, and the contract's clock is not near the deadline.
+/// After proving, against the re-read verified head: the inputs are still
+/// unspent, the anchored root is still one the pool accepts, and the
+/// contract's clock (`shard_gen_utime`) is not near the deadline.
 fn check_still_valid(
     ledger: &Ledger,
-    head: &Head,
+    state: &PoolState,
+    shard_gen_utime: u32,
     anchor: &AnchorChoice,
     nullifiers: &[Fr; 2],
     valid_until: u32,
@@ -644,8 +654,8 @@ fn check_still_valid(
         );
     }
     let still_anchored = match anchor.kind {
-        ANCHOR_CURRENT => head.state.commitment_root == fr_to_be(&anchor.root),
-        _ => head.state.anchors.recent_root(anchor.id) == Some(fr_to_be(&anchor.root)),
+        ANCHOR_CURRENT => state.commitment_root == fr_to_be(&anchor.root),
+        _ => state.anchors.recent_root(anchor.id) == Some(fr_to_be(&anchor.root)),
     };
     anyhow::ensure!(
         still_anchored,
@@ -653,10 +663,10 @@ fn check_still_valid(
          spend landed while proving); {held}"
     );
     anyhow::ensure!(
-        head.shard_gen_utime.saturating_add(DEADLINE_MARGIN_SECS) < valid_until,
+        shard_gen_utime.saturating_add(DEADLINE_MARGIN_SECS) < valid_until,
         "the contract's clock ({}) is within {DEADLINE_MARGIN_SECS} s of the deadline ({}); the \
          spend is not sent; {held}",
-        utc(head.shard_gen_utime),
+        utc(shard_gen_utime),
         utc(valid_until)
     );
     Ok(())
@@ -1347,6 +1357,95 @@ mod tests {
         foreign.commitment_root = [0xee; 32];
         let error = choose_anchor(&ledger, &foreign, &plan_with(&[3])).expect_err("refused");
         assert!(error.to_string().contains("does not reproduce"), "{error}");
+    }
+
+    /// The re-check after proving refuses, for its own reason, an input that
+    /// was spent meanwhile, an anchor the pool no longer holds, and a
+    /// contract clock inside the margin of the deadline; each refusal says
+    /// the inputs stay held and nothing is resent.
+    #[test]
+    fn after_proving_a_spent_input_a_lost_anchor_or_a_near_deadline_refuses_the_send() {
+        use contracts::shielded_pool::{AnchorEntry, AnchorStore, PoolConfig};
+        let mut ledger = Ledger::genesis();
+        let mut roots = vec![ledger.checkpoint().commitment_root];
+        for i in 0..2u64 {
+            ledger
+                .apply(
+                    &Event::Deposit {
+                        amount: 1_000_000_000,
+                        owner_commitment: Fr::from(200 + i),
+                        output_data: vec![i as u8; OUTPUT_DATA_BYTES],
+                    },
+                    1,
+                )
+                .expect("deposit");
+            roots.push(ledger.checkpoint().commitment_root);
+        }
+        let state = PoolState {
+            commitment_root: fr_to_be(&roots[2]),
+            commitment_next_index: 2,
+            reserved_recovery_leaves: 0,
+            nullifier_root: [0; 32],
+            nullifier_next_index: 1,
+            last_anchor_epoch: 0,
+            native_liability: 0,
+            reserve_floor: 0,
+            config: PoolConfig {
+                profile_hash: [0; 32],
+                poseidon_manifest_hash: [0; 32],
+                groth16_vk_hash: [0; 32],
+                withdrawal_fee: 1,
+                denominations: vec![1_000_000_000],
+            },
+            verifying_key: vec![],
+            anchors: AnchorStore {
+                recent: (0..2u32)
+                    .map(|id| AnchorEntry {
+                        slot: id as u16,
+                        id,
+                        root: fr_to_be(&roots[id as usize]),
+                    })
+                    .collect(),
+                epoch: vec![],
+            },
+        };
+        let (frontier, root) = rebuild(ledger.leaves()).expect("current tree");
+        let current = AnchorChoice { kind: ANCHOR_CURRENT, id: 0, root, frontier };
+        let (frontier, root) = rebuild(&ledger.leaves()[..1]).expect("version 1");
+        let recent = AnchorChoice { kind: ANCHOR_RECENT, id: 1, root, frontier };
+        let nullifiers = [Fr::from(0x71u64), Fr::from(0x72u64)];
+        let valid_until = 10_000;
+        let digest = [7; 32];
+        let check = |ledger: &Ledger, state: &PoolState, clock: u32, anchor: &AnchorChoice| {
+            check_still_valid(ledger, state, clock, anchor, &nullifiers, valid_until, &digest)
+        };
+        let refused = |result: anyhow::Result<()>, reason: &str| {
+            let error = result.expect_err(reason).to_string();
+            assert!(error.contains(reason), "{error}");
+            assert!(error.contains("stay held"), "{error}");
+        };
+
+        check(&ledger, &state, 1000, &current).expect("nothing moved");
+        check(&ledger, &state, 1000, &recent).expect("the preserved root holds");
+
+        // An input spent by what landed while proving.
+        let spent = ledger_with(Fr::from(5u64), [Fr::from(0x99u64), nullifiers[1]]);
+        refused(check(&spent, &state, 1000, &current), "spent by a transaction that landed");
+
+        // A deposit moved the current root; the preserved one is unaffected
+        // until the ring drops it.
+        let mut moved = state.clone();
+        moved.commitment_root = [0xaa; 32];
+        refused(check(&ledger, &moved, 1000, &current), "no longer one the pool accepts");
+        check(&ledger, &moved, 1000, &recent).expect("still in the ring");
+        moved.anchors.recent.retain(|entry| entry.id != 1);
+        refused(check(&ledger, &moved, 1000, &recent), "no longer one the pool accepts");
+
+        // The contract's clock must be clear of the deadline by the margin.
+        let clear = valid_until - DEADLINE_MARGIN_SECS - 1;
+        check(&ledger, &state, clear, &current).expect("just clear");
+        refused(check(&ledger, &state, clear + 1, &current), "within");
+        refused(check(&ledger, &state, valid_until + 1, &current), "within");
     }
 
     #[test]
