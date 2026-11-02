@@ -193,28 +193,23 @@ impl Store {
             .query_row("SELECT receipt FROM refusals WHERE request=?1", [request], |r| r.get(0))
             .optional()?)
     }
-    /// Called only after independently proving this exact message can never execute.
+    /// Called only after independently proving a terminal refusal of this exact attempt.
     /// Retain the receipt, old bytes and every replay tombstone atomically.
-    pub fn retire_nonaccepted(
-        &mut self,
-        request: &str,
-        message: &[u8],
-        receipt: &[u8],
-    ) -> Result<()> {
+    pub fn retire_refused(&mut self, request: &str, message: &[u8], receipt: &[u8]) -> Result<()> {
         ensure!(!receipt.is_empty() && receipt.len() <= 16384, "refusal receipt byte bound");
         let tx = self.0.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let stored: Vec<u8> =
             tx.query_row("SELECT message FROM leases WHERE request=?1", [request], |r| r.get(0))?;
-        ensure!(stored == message, "nonacceptance message mismatch");
+        ensure!(stored == message, "refusal message mismatch");
         let prior: Option<Vec<u8>> = tx
             .query_row("SELECT receipt FROM refusals WHERE request=?1", [request], |r| r.get(0))
             .optional()?;
         if let Some(prior) = prior {
-            ensure!(prior == receipt, "conflicting nonacceptance receipt");
+            ensure!(prior == receipt, "conflicting refusal receipt");
         } else {
             let changed =
                 tx.execute("UPDATE leases SET live=0 WHERE request=?1 AND live=1", [request])?;
-            ensure!(changed == 1, "nonacceptance lease not live");
+            ensure!(changed == 1, "refusal lease not live");
             tx.execute("UPDATE permits SET used=1 WHERE request=?1", [request])?;
             tx.execute("INSERT INTO refusals VALUES(?1,?2)", params![request, receipt])?;
         }
@@ -317,11 +312,11 @@ mod tests {
         s.reserve("old", "binding", 7)?;
         s.persist_prepared("old", b"message", b"record")?;
         s.permit("old", "token", &crate::protocol::hash(b"message"), 100)?;
-        assert!(s.retire_nonaccepted("old", b"changed", b"proof").is_err());
+        assert!(s.retire_refused("old", b"changed", b"proof").is_err());
         assert!(s.reserve("new", "binding", 7).is_err());
-        assert!(s.retire_nonaccepted("old", b"message", b"").is_err());
-        assert!(s.retire_nonaccepted("old", b"message", &vec![0; 16385]).is_err());
-        s.retire_nonaccepted("old", b"message", b"proof")?;
+        assert!(s.retire_refused("old", b"message", b"").is_err());
+        assert!(s.retire_refused("old", b"message", &vec![0; 16385]).is_err());
+        s.retire_refused("old", b"message", b"proof")?;
         let used: i64 =
             s.0.query_row("SELECT used FROM permits WHERE token='token'", [], |r| r.get(0))?;
         assert_eq!(used, 1);
@@ -331,8 +326,8 @@ mod tests {
         drop(s);
         let mut s = Store::open(&path, "scope")?;
         assert_eq!(s.refusal("old")?, Some(b"proof".to_vec()));
-        s.retire_nonaccepted("old", b"message", b"proof")?;
-        assert!(s.retire_nonaccepted("old", b"message", b"other").is_err());
+        s.retire_refused("old", b"message", b"proof")?;
+        assert!(s.retire_refused("old", b"message", b"other").is_err());
         assert_eq!(s.lookup("old")?.and_then(|lease| lease.message), Some(b"message".to_vec()));
         Ok(())
     }

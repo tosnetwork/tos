@@ -3,6 +3,7 @@ use crate::{chain::Chain, config::Config, identity::Identity, protocol, quotes};
 use anyhow::{bail, ensure, Result};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde_json::{json, Value};
+use std::str::FromStr;
 
 pub async fn dispatch(operation: &str, payload: &Value) -> Result<Value> {
     let directory = std::env::current_dir()?;
@@ -34,7 +35,39 @@ pub async fn dispatch(operation: &str, payload: &Value) -> Result<Value> {
             );
             crate::store::Store::open(&directory.join("leases.db"), &scope)?;
             Ok(
-                json!({"scope":scope,"protocol":"tos.br1.native.v1","features":["live_bond_v1","shield_exact_simulation_v1","worker_mldsa44_v1","funded_wallet_v1","wallet_sequence_lease_v1","destination_finality_v1","fee_note_import_v1","quote_descriptor_v1"]}),
+                json!({"scope":scope,"protocol":"tos.br1.native.v1","features":["live_bond_v1","shield_exact_simulation_v1","worker_mldsa44_v1","funded_wallet_v1","wallet_sequence_lease_v1","destination_finality_v1","fee_note_import_v1","quote_descriptor_v1","proven_pool_head_v1"]}),
+            )
+        }
+        "pool_head" => {
+            protocol::fields(payload, &["release"])?;
+            let chain = Chain::new(&config)?;
+            let (bond, _) = chain.bond(&config).await?;
+            let pool = chain
+                .verifier()
+                .read_account(
+                    &chain_block::MsgAddressInt::from_str(&config.release.pool)?,
+                    &node_contracts::proven_getters::ReadPolicy::Historical(
+                        bond.evidence().checkpoint.clone(),
+                    ),
+                )
+                .await?;
+            bond.require_same_checkpoint(&pool)?;
+            ensure!(
+                pool.evidence().account.code_hash == config.release.pool_code_hash,
+                "pool snapshot code pin"
+            );
+            let data =
+                pool.account().get_data().ok_or_else(|| anyhow::anyhow!("pool snapshot data"))?;
+            ensure!(
+                data.reference(2)?.repr_hash().to_hex_string() == config.release.pool_config_hash,
+                "pool snapshot configuration pin"
+            );
+            let proof = pool.evidence();
+            Ok(
+                json!({"schema":"tos.br1.proven-pool-head.v1","scope":scope,"pool":config.release.pool,
+                "checkpoint":{"seqno":proof.checkpoint.seqno,"root_hash":proof.checkpoint.root_hash,"file_hash":proof.checkpoint.file_hash,"utime":proof.block_gen_utime},
+                "account_state_hash":proof.account.state_hash,"account_shard_time":proof.account.gen_utime,
+                "last_transaction_hash":hex::encode(pool.last_transaction_hash()),"last_transaction_lt":proof.account.last_trans_lt}),
             )
         }
         "descriptor" => {

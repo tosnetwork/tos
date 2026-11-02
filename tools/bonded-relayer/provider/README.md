@@ -123,10 +123,28 @@ historically after later wallet activity, including while RPC is unavailable.
 Legacy records without the pre-signing head, unsupported cache formats, changed
 heads/sequences and shard states before expiry remain unknown. Never manufacture
 a baseline from today's wallet state or reset custody to release a reservation.
-This does not implement every destination failure or liveness path.
+A second terminal path authenticates an ordinary, non-destroyed destination
+transaction with `aborted=true`. Its inbound must come from this funding wallet
+and target the pinned pool. At the same proven checkpoint, the exact prepared
+external wallet message must have executed successfully and emitted that exact
+inbound message hash. A matching body sent by another wallet is skipped rather
+than mistaken for this attempt. Aborted transactions advance no commitment
+cursor and import no fee; successful attempts still require every execution
+phase to succeed. The same atomic retirement/cache rules apply. Destruction,
+unsupported descriptors or missing source links remain unknown.
 
-The full C2 matrix remains open: forced gas/action failure, every crash/write
-boundary, adversarial failover and refusal recovery, Bond retirement/slashing,
+The private native `pool_head` operation returns only the authenticated pool
+head, state hash and checkpoint. The local history runner follows predecessor
+hashes/LTs in bounded 16-row RPC pages to creation, optionally filling gaps from
+retained archives. This diagnostic export does not enlarge the provider's
+16-transaction finality window or authorize a transaction.
+
+Real local-chain acceptance covers competing-spend refusal, a newer foreign
+body replay, process death and retained-refusal recovery. Synthetic native C++
+fixtures cover gas exhaustion (-14) and action failure (37), with successful
+controls and state rollback; these are not on-chain gas/action fault injections.
+The full C2 matrix remains open: on-chain forced gas/action failure, every
+crash/write boundary, adversarial failover, Bond retirement/slashing,
 privacy transport, production custody and economic/security review. The ordinary
 private-transfer funding estimate is conservatively fixed at 0.25 local TOS and
 must fit both request and operator caps. It is not a production pricing model.
