@@ -203,8 +203,12 @@ mod tests {
     fn multiple_duty_addresses_share_the_longest_permanent_deadline() {
         let mut cfg = config();
         cfg.keys.get_mut(&100).unwrap().adnl_addrs.push((vec![4; 32], 200));
-        let plans = duty_renewals(&cfg, Some(&set(10000, 2)), Some(&set(20000, 4)), 1000).unwrap();
-        assert_eq!(plans.len(), 2);
-        assert!(plans.iter().all(|plan| plan.until == 20300));
+        for (current, next) in [(2, 4), (4, 2)] {
+            let plans =
+                duty_renewals(&cfg, Some(&set(10000, current)), Some(&set(20000, next)), 1000)
+                    .unwrap();
+            assert_eq!(plans.len(), 2);
+            assert!(plans.iter().all(|plan| plan.until == 20300));
+        }
     }
 }
