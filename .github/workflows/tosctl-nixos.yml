@@ -75,8 +75,11 @@ jobs:
           nix build --no-update-lock-file -L .#checks.x86_64-linux.tosctl-vm \
             --out-link result-vm 2>&1 | tee nixos-evidence/build.log
           nix build --no-update-lock-file .#tosctl
-          # Unit tests ran in the sandbox build; keep their counts as evidence.
-          grep -E 'test result:' nixos-evidence/build.log > nixos-evidence/tests.txt
+          # Unit tests ran in the sandbox build; keep their counts as evidence. The stored build
+          # log has them even when the package came from an earlier build.
+          nix log --no-update-lock-file .#tosctl | grep -E 'test result:' | tee nixos-evidence/tests.txt
+          ! grep -q 'FAILED' nixos-evidence/tests.txt
+          grep -qE 'test result: ok\. [1-9][0-9]* passed' nixos-evidence/tests.txt
           # Only the package fileset was imported, never the whole repository.
           python3 assembly/nix/tosctl/check-store.py \
             "$(nix eval --raw --no-update-lock-file .#packages.x86_64-linux.tosctl.src)" \
