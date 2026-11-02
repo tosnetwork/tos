@@ -206,10 +206,8 @@ fn validate(
         return Err(refused("intent expiry exceeds uint32"));
     }
     let expiry = u32::from_be_bytes(encoded[28..].try_into().map_err(|_| refused("expiry width"))?);
-    if expiry
-        .checked_sub(now)
-        .is_none_or(|remaining| remaining > INTENT_VALIDITY_WINDOW_SECS)
-    {
+    let remaining = expiry.checked_sub(now);
+    if remaining.is_none_or(|remaining| remaining > INTENT_VALIDITY_WINDOW_SECS) {
         return Err(refused("intent is expired or exceeds its one-hour window"));
     }
     Ok(())

@@ -1354,4 +1354,183 @@ mod tests {
         let (hex_pin, pin) = ceremony_vk_pin().expect("pinned");
         assert_eq!(hex::encode(pin), hex_pin);
     }
+
+    /// An assembled spend becomes the body the codec reads back as the same
+    /// spend: every public value in its place, the query id the digest's
+    /// tail, the recovery material present exactly for a withdrawal.
+    #[test]
+    fn an_assembled_spend_becomes_the_body_the_codec_reads_back() {
+        use shielded_pool_circuit::notes;
+        use shielded_pool_wallet::delivery::{self, Kind, Plaintext};
+        use shielded_pool_wallet::keys::PoolInstance;
+
+        let domain = Fr::from(0x5e5e_0001u64);
+        let alice = PoolInstance::new(&[0x51; 32], domain);
+        let bob = PoolInstance::new(&[0x52; 32], domain);
+        let mut ledger = Ledger::genesis();
+        let mut deposit = |index: u64, amount: u128| {
+            let plaintext = Plaintext {
+                slot: 0,
+                kind: Kind::Ordinary,
+                amount,
+                note_secret: Fr::from(0x5ec2e7u64 + index),
+                owner_nf_key_hash: alice.owner_nf_key_hash(index).expect("owner"),
+                note_key_index: index,
+                pq_auth_key_hash: alice.pq_auth_key_hash(index).expect("pq"),
+            };
+            let output_data =
+                delivery::seal(&alice.mlkem_encapsulation_key().expect("key"), domain, &plaintext)
+                    .expect("seal");
+            ledger
+                .apply(
+                    &Event::Deposit {
+                        amount,
+                        owner_commitment: notes::owner_commitment(
+                            plaintext.owner_nf_key_hash,
+                            plaintext.pq_auth_key_hash,
+                            plaintext.note_secret,
+                        ),
+                        output_data,
+                    },
+                    1,
+                )
+                .expect("deposit");
+        };
+        deposit(0, 2_000_000_000);
+        deposit(1, 2_000_000_000);
+        let outputs = ledger.take_outputs();
+        let notes = shielded_pool_wallet::scan::recover_indexed(&alice, &outputs).expect("scan");
+        let candidates: Vec<Candidate> = notes
+            .spendable_with_leaves()
+            .into_iter()
+            .map(|(note, leaf)| Candidate { note: *note, leaf_index: leaf.expect("leaf") })
+            .collect();
+        let mut counter = 0u64;
+        let mut fresh = || {
+            counter += 1;
+            Ok(Fr::from(0xf00d_0000u64 + counter))
+        };
+        let mut next = 10u64;
+        let mut indices = || {
+            next += 1;
+            Ok(next)
+        };
+        let proof = CanonicalProof { a: [1; 48], b: [2; 96], c: [3; 48] };
+
+        // A withdrawal of one denomination plus the fee, from both notes.
+        let terms = PoolTerms { denominations: vec![3_000_000_000], withdrawal_fee: 7 };
+        let recipient =
+            MsgAddressInt::with_params(0, chain_block::UInt256::from([0xcc; 32])).expect("addr");
+        let target =
+            Target::Withdraw { recipient: recipient.clone(), recipient_account: [0xcc; 32] };
+        let request = Request::Withdraw { amount: 3_000_000_000, recipient_account: [0xcc; 32] };
+        let plan = plan::plan(&terms, &candidates, &request, &mut indices).expect("plan");
+        let anchor = choose_anchor(
+            &ledger,
+            &PoolState {
+                commitment_root: fr_to_be(&ledger.checkpoint().commitment_root),
+                commitment_next_index: 2,
+                reserved_recovery_leaves: 0,
+                nullifier_root: [0; 32],
+                nullifier_next_index: 1,
+                last_anchor_epoch: 0,
+                native_liability: 0,
+                reserve_floor: 0,
+                config: contracts::shielded_pool::PoolConfig {
+                    profile_hash: [0; 32],
+                    poseidon_manifest_hash: [0; 32],
+                    groth16_vk_hash: [0; 32],
+                    withdrawal_fee: 7,
+                    denominations: vec![3_000_000_000],
+                },
+                verifying_key: vec![],
+                anchors: Default::default(),
+            },
+            &plan,
+        )
+        .expect("anchor");
+        let valid_until = 1_800_000_600;
+        let assembled = assembly::assemble(
+            &alice,
+            &plan,
+            &anchor.frontier,
+            &Terms { anchor_root: anchor.root, valid_until, intent_nonce: Fr::from(77u64) },
+            &mut fresh,
+        )
+        .expect("assemble");
+        let witnesses =
+            assembly::nullifier_witnesses(ledger.nullifier_state(), assembled.nullifiers())
+                .expect("witnesses");
+        let body =
+            transact_body(&assembled, &proof, &witnesses, &anchor, valid_until, &target, &plan)
+                .expect("a body");
+        let cell = body.build().expect("built");
+        let mut slice = chain_block::SliceData::load_cell(cell).expect("slice");
+        assert_eq!(slice.get_next_u32().expect("op"), contracts::shielded_pool::OP_TRANSACT);
+        let parsed = TransactBody::parse(&mut slice).expect("the codec reads it back");
+        let digest = fr_to_be(&assembled.intent_digest());
+        assert_eq!(parsed.intent_digest, digest);
+        assert_eq!(parsed.query_id.to_be_bytes(), digest[24..]);
+        assert_eq!((parsed.anchor_kind, parsed.anchor_id), (ANCHOR_CURRENT, 0));
+        assert_eq!(parsed.anchor_root, fr_to_be(&anchor.root));
+        assert_eq!(parsed.valid_until, valid_until);
+        assert_eq!(parsed.public_amount_out, 3_000_000_000);
+        assert_eq!(parsed.withdrawal_fee, 7);
+        assert_eq!(parsed.recipient, Some(recipient));
+        let nullifiers = assembled.nullifiers();
+        assert_eq!(parsed.nullifiers, [fr_to_be(&nullifiers[0]), fr_to_be(&nullifiers[1])]);
+        assert_eq!(parsed.note_bodies[2], fr_to_be(&assembled.public.note_body_2));
+        assert_eq!(parsed.payloads, assembled.payloads);
+        assert_eq!(parsed.recovery_payload, assembled.recovery_payload);
+        assert_eq!(
+            parsed.recovery_owner_commitment,
+            fr_to_be(&assembled.recovery_owner_commitment)
+        );
+        assert_eq!(
+            contracts::shielded_pool::read_byte_chain(
+                &parsed.auth_bundle.reference(2).expect("key 1"),
+                AUTH_KEY_BYTES
+            )
+            .expect("key"),
+            assembled.input_keys[1].to_vec()
+        );
+        assert_eq!(parsed.groth16_proof, groth16_proof_cell(&[1; 48], &[2; 96], &[3; 48]).unwrap());
+
+        // A transfer of the same notes: no recipient, no recovery material.
+        let to = Descriptor::issue(&bob, 3).expect("descriptor");
+        let digest: [u8; 32] = Sha256::digest(to.to_bytes()).into();
+        let target = Target::Send { descriptor: Box::new(to.clone()), descriptor_hash: digest };
+        let request =
+            Request::Transfer { to: Box::new(RecipientKeys::of(&to)), amount: 1_000_000_000 };
+        let plan = plan::plan(&terms, &candidates, &request, &mut indices).expect("plan");
+        let assembled = assembly::assemble(
+            &alice,
+            &plan,
+            &anchor.frontier,
+            &Terms { anchor_root: anchor.root, valid_until, intent_nonce: Fr::from(78u64) },
+            &mut fresh,
+        )
+        .expect("assemble");
+        let witnesses =
+            assembly::nullifier_witnesses(ledger.nullifier_state(), assembled.nullifiers())
+                .expect("witnesses");
+        let recent = AnchorChoice {
+            kind: ANCHOR_RECENT,
+            id: 4097,
+            root: anchor.root,
+            frontier: anchor.frontier.clone(),
+        };
+        let body =
+            transact_body(&assembled, &proof, &witnesses, &recent, valid_until, &target, &plan)
+                .expect("a body");
+        let mut slice = chain_block::SliceData::load_cell(body.build().expect("built")).unwrap();
+        slice.get_next_u32().expect("op");
+        let parsed = TransactBody::parse(&mut slice).expect("the codec reads it back");
+        assert_eq!((parsed.anchor_kind, parsed.anchor_id), (ANCHOR_RECENT, 4097));
+        assert_eq!(parsed.recipient, None);
+        assert_eq!(parsed.recovery_payload, None);
+        assert_eq!(parsed.recovery_owner_commitment, [0; 32]);
+        assert_eq!(parsed.public_amount_out, 0);
+        assert!(!parsed.is_withdrawal());
+    }
 }
