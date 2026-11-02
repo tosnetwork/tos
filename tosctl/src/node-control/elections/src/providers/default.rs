@@ -106,6 +106,34 @@ impl ElectionsProvider for DefaultElectionsProvider {
             .context("add_validator_adnl_addr")?;
         Ok(key_id)
     }
+    async fn retain_validator_registration(
+        &mut self,
+        election_id: u64,
+        key_id: &[u8],
+        adnl: &[u8],
+        until: u64,
+    ) -> anyhow::Result<()> {
+        anyhow::ensure!(key_id.len() == 32 && adnl.len() == 32, "registration key width");
+        let election_date = i32::try_from(election_id).context("registration election date")?;
+        let expire_at = i32::try_from(until).context("registration expiry")?;
+        anyhow::ensure!(expire_at > election_date, "registration expiry precedes election");
+        self.client
+            .add_validator_perm_key(&AddValidatorPermKeyRq {
+                key_hash: key_id.to_vec(),
+                election_date,
+                expire_at,
+            })
+            .await
+            .context("retain permanent election registration")?;
+        self.client
+            .add_validator_adnl_addr(&AddValidatorAdnlAddrRq {
+                perm_key_hash: key_id.to_vec(),
+                key_hash: adnl.to_vec(),
+                expire_at,
+            })
+            .await
+            .context("retain election ADNL registration")
+    }
     async fn validator_config(&mut self) -> anyhow::Result<ValidatorConfig> {
         let remote = self.client.get_validator_config().await?;
         let keys = remote

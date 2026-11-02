@@ -539,11 +539,8 @@ impl WalletStakeCmd {
 
         // Get election parameters for key expiration
         let cfg15 = provider.election_parameters().await.context("election_parameters")?;
-        const KEY_EXPIRED_LAG: u64 = 300;
-        let key_expired_at = election_id
-            .checked_add(u64::from(cfg15.validators_elected_for))
-            .and_then(|value| value.checked_add(KEY_EXPIRED_LAG))
-            .context("key expiration overflow")?;
+        let key_expired_at =
+            elections::pending_registration_until(election_id, common::time_format::now(), &cfg15)?;
 
         // Find or generate validator key
         let validator_config = provider.validator_config().await.context("validator_config")?;
@@ -556,6 +553,22 @@ impl WalletStakeCmd {
                 let adnl_addr = entry
                     .adnl_addr()
                     .ok_or_else(|| anyhow::anyhow!("Validator key has no ADNL address"))?;
+                let until = key_expired_at
+                    .max(entry.expired_at)
+                    .max(entry.adnl_addrs.iter().map(|(_, expiry)| *expiry).max().unwrap_or(0));
+                if entry.expired_at < key_expired_at
+                    || entry.adnl_addrs.iter().any(|(_, expiry)| *expiry < key_expired_at)
+                {
+                    provider
+                        .retain_validator_registration(
+                            election_id,
+                            &entry.key_id,
+                            &adnl_addr,
+                            until,
+                        )
+                        .await
+                        .context("retain existing election registration")?;
+                }
                 println!(
                     "{} Reusing existing validator key for election {}: {}",
                     "Info:".cyan().bold(),
