@@ -175,3 +175,26 @@ fn a_descriptor_round_trips_and_names_its_domain() {
     assert!(shielded_pool_wallet::descriptor::Descriptor::from_bytes(&bytes[..bytes.len() - 1])
         .is_err());
 }
+
+#[test]
+fn an_instance_from_the_pool_master_is_the_instance_from_the_seed() {
+    use shielded_pool_wallet::keys::{pool_master, PoolInstance};
+    let seed = [0x3cu8; 32];
+    let domain = shielded_pool_circuit::field::Fr::from(77u64);
+    let from_seed = PoolInstance::new(&seed, domain);
+    let from_master = PoolInstance::from_pool_master(&pool_master(&seed), domain);
+    for index in [0u64, 1, 500] {
+        assert_eq!(
+            from_seed.owner_nf_key(index).expect("key"),
+            from_master.owner_nf_key(index).expect("key")
+        );
+        assert_eq!(
+            from_seed.mldsa_public_key(index).expect("key"),
+            from_master.mldsa_public_key(index).expect("key")
+        );
+    }
+    assert_eq!(
+        from_seed.mlkem_encapsulation_key().expect("key"),
+        from_master.mlkem_encapsulation_key().expect("key")
+    );
+}

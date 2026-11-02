@@ -457,3 +457,82 @@ impl Ledger {
         Ok(())
     }
 }
+
+/// Everything a replay needs to continue from where it stopped, as plain
+/// data a caller can persist however it likes. The outputs are not part of
+/// it: they are scanned once, when they arrive, and other people's payloads
+/// are not kept.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Snapshot {
+    pub leaves: Vec<Fr>,
+    pub nullifiers: Vec<Fr>,
+    /// The nullifier tree's allocated leaves, index and leaf, in index order.
+    pub nullifier_tree: Vec<(u64, imt::Leaf)>,
+    pub nullifier_next_index: u64,
+    pub native_liability: u128,
+    pub reserved_recovery_leaves: u64,
+    pub pending: Vec<PendingRecovery>,
+}
+
+impl Ledger {
+    pub fn snapshot(&self) -> Snapshot {
+        Snapshot {
+            leaves: self.leaves.clone(),
+            nullifiers: self.nullifiers.clone(),
+            nullifier_tree: self.imt.tree.leaves.iter().map(|(i, leaf)| (*i, *leaf)).collect(),
+            nullifier_next_index: self.imt.next_index,
+            native_liability: self.native_liability,
+            reserved_recovery_leaves: self.reserved_recovery_leaves,
+            pending: self.pending.clone(),
+        }
+    }
+
+    /// The ledger a snapshot describes, with the commitment tree rebuilt from
+    /// its leaves. A snapshot that does not describe a ledger this code could
+    /// have produced is refused.
+    pub fn restore(snapshot: Snapshot) -> Result<Self> {
+        let mut ledger = Self::genesis();
+        for leaf in &snapshot.leaves {
+            let (_, root) = ledger
+                .frontier
+                .append(*leaf)
+                .map_err(|error| Error::Encoding(format!("restore commitment tree: {error}")))?;
+            ledger.commitment_root = root;
+        }
+        ledger.leaves = snapshot.leaves;
+        let expected_leaves = usize::try_from(snapshot.nullifier_next_index)
+            .map_err(|_| overflow("nullifier index"))?;
+        if snapshot.nullifier_tree.len() != expected_leaves
+            || snapshot.nullifiers.len().saturating_add(1) != expected_leaves
+            || snapshot.nullifier_tree.first().map(|(index, _)| *index) != Some(0)
+        {
+            return Err(Error::Encoding("a snapshot whose nullifier tree does not fit".into()));
+        }
+        let mut tree = imt::Tree::default();
+        for (index, leaf) in snapshot.nullifier_tree {
+            if tree.leaves.insert(index, leaf).is_some() {
+                return Err(Error::Encoding("a snapshot repeats a nullifier leaf".into()));
+            }
+        }
+        ledger.imt = imt::State { tree, next_index: snapshot.nullifier_next_index };
+        ledger.published = snapshot.nullifiers.iter().copied().collect();
+        if ledger.published.len() != snapshot.nullifiers.len() {
+            return Err(Error::Encoding("a snapshot repeats a nullifier".into()));
+        }
+        ledger.nullifiers = snapshot.nullifiers;
+        ledger.native_liability = snapshot.native_liability;
+        ledger.reserved_recovery_leaves = snapshot.reserved_recovery_leaves;
+        ledger.pending = snapshot.pending;
+        ledger.require_room(0, 0)?;
+        Ok(ledger)
+    }
+
+    /// Hands over every output applied since the ledger was created or last
+    /// drained, with the leaf each became, and keeps none of them.
+    pub fn take_outputs(&mut self) -> Vec<(ObservedOutput, Option<u64>)> {
+        std::mem::take(&mut self.outputs)
+            .into_iter()
+            .map(|output| (output.observed, output.leaf))
+            .collect()
+    }
+}

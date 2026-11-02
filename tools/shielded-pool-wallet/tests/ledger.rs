@@ -363,3 +363,49 @@ fn two_payments_to_one_index_burn_it() {
     assert!(recovered.reused.contains(&0));
     assert!(!recovered.may_issue(0));
 }
+
+#[test]
+fn a_restored_snapshot_is_the_ledger_it_was_taken_from() {
+    let wallet = instance();
+    let mut ledger = Ledger::genesis();
+    ledger.apply(&deposit(&wallet, 2 * TOS, 0), CHARGE).expect("deposit");
+    let w = withdrawal(&wallet, [21, 22], 1);
+    ledger.apply(&w.event, CHARGE).expect("withdrawal");
+    ledger.apply(&transfer(&wallet, [31, 32], 5), CHARGE).expect("transfer");
+
+    let restored = Ledger::restore(ledger.snapshot()).expect("restore");
+    assert_eq!(restored.checkpoint(), ledger.checkpoint());
+    assert_eq!(restored.snapshot(), ledger.snapshot());
+    assert!(restored.outputs().is_empty(), "a snapshot carries no outputs");
+
+    // Continuing from the snapshot reaches the same state as never stopping.
+    let mut continued = restored;
+    continued.apply(&bounce(&w.payout, TOS), CHARGE).expect("bounce after restore");
+    ledger.apply(&bounce(&w.payout, TOS), CHARGE).expect("bounce");
+    assert_eq!(continued.checkpoint(), ledger.checkpoint());
+    assert_eq!(continued.outputs().len(), 1, "only the output applied since the restore");
+
+    let mut broken = ledger.snapshot();
+    broken.nullifiers.pop();
+    assert!(Ledger::restore(broken).is_err(), "a snapshot missing a nullifier");
+    let mut broken = ledger.snapshot();
+    broken.nullifier_tree.remove(0);
+    assert!(Ledger::restore(broken).is_err(), "a snapshot without the sentinel");
+}
+
+#[test]
+fn draining_outputs_leaves_the_ledger_and_scans_only_what_is_new() {
+    let wallet = instance();
+    let mut ledger = Ledger::genesis();
+    ledger.apply(&deposit(&wallet, TOS, 0), CHARGE).expect("deposit");
+    let first = ledger.take_outputs();
+    assert_eq!(first.len(), 1);
+    assert!(ledger.outputs().is_empty());
+    ledger.apply(&transfer(&wallet, [11, 12], 1), CHARGE).expect("transfer");
+    let second = ledger.take_outputs();
+    assert_eq!(second.len(), 3);
+    assert_eq!(second[0].1, Some(1), "the leaf indices continue across a drain");
+    let mut recovered = scan::recover_indexed(&wallet, &first).expect("scan");
+    recovered.merge(scan::recover_indexed(&wallet, &second).expect("scan"));
+    assert_eq!(recovered.leaves, vec![Some(0), Some(1), Some(2), Some(3)]);
+}
