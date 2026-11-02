@@ -805,6 +805,11 @@ pub enum JournalRecord {
     /// The submission returned no well-formed acknowledgement; whether the
     /// request reached the relayer is not known.
     RelayUnknown { request_id: String, error: String },
+    /// This client refused to send the prepared request: the window closed
+    /// with less than the margin left, or the request no longer matched its
+    /// quote. Nothing left this machine; the inputs stay held until the
+    /// deadline passes by the contract's clock.
+    RelayWithheld { request_id: String, reason: String },
 }
 
 /// The next index this client may issue: past everything the state knows,

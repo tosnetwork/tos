@@ -36,6 +36,7 @@ use br1_client::wire;
 use chain_block::write_boc;
 use colored::Colorize;
 use common::app_config::ProofVerifierConfig;
+use contracts::proven_getters::ProvenGetterProvider;
 use contracts::relayer_bond::BondInit;
 use contracts::shielded_pool::ANCHOR_CURRENT;
 use rand::RngCore;
@@ -91,39 +92,33 @@ pub struct RelayOptions {
 /// relay; a test's records what reaches it.
 #[allow(async_fn_in_trait)]
 pub(super) trait Relay {
-    async fn quote(
-        &self,
-        slot: u8,
-        lifetime: u64,
-        token: &str,
-        now: u64,
-    ) -> Result<Quote, ClientError>;
-    async fn submit(
-        &self,
-        request: &RelayRequest,
-        quote: &Quote,
-        now: u64,
-    ) -> Result<Status, ClientError>;
+    async fn quote(&self, slot: u8, lifetime: u64, token: &str) -> Result<Quote, ClientError>;
+    async fn submit(&self, request: &RelayRequest, quote: &Quote) -> Result<Status, ClientError>;
 }
 
 impl Relay for Client {
-    async fn quote(
-        &self,
-        slot: u8,
-        lifetime: u64,
-        token: &str,
-        now: u64,
-    ) -> Result<Quote, ClientError> {
-        Client::quote(self, slot, lifetime, token, now).await
+    async fn quote(&self, slot: u8, lifetime: u64, token: &str) -> Result<Quote, ClientError> {
+        Client::quote(self, slot, lifetime, token).await
     }
 
-    async fn submit(
-        &self,
-        request: &RelayRequest,
-        quote: &Quote,
-        now: u64,
-    ) -> Result<Status, ClientError> {
-        Client::submit(self, request, quote, now).await
+    async fn submit(&self, request: &RelayRequest, quote: &Quote) -> Result<Status, ClientError> {
+        Client::submit(self, request, quote).await
+    }
+}
+
+/// The contract's clock as last read, and this machine's clock at that
+/// moment. Between a read and the moment a request leaves, serialization and
+/// durable writes take time; both clocks run at the same rate, so the
+/// contract's is projected forward by what this machine's has advanced.
+pub(super) struct ShardClock {
+    pub local_at_read: u64,
+    pub shard_at_read: u32,
+}
+
+impl ShardClock {
+    fn projected(&self, local_now: u64) -> u32 {
+        let elapsed = local_now.saturating_sub(self.local_at_read);
+        u32::try_from(u64::from(self.shard_at_read).saturating_add(elapsed)).unwrap_or(u32::MAX)
     }
 }
 
@@ -161,9 +156,10 @@ async fn read_pool_and_bond(
     profile: &RelayerProfile,
     init: &BondInit,
 ) -> anyhow::Result<(Head, BondReading)> {
+    let provider = ProvenGetterProvider::new(verifier)?;
     for _ in 0..CHECKPOINT_ATTEMPTS {
         let head = chain::read_head_verified(verifier, pool).await?;
-        match super::relayer::read_bond(verifier, &head, profile, init).await? {
+        match super::relayer::read_bond(&provider, &head, profile, init).await? {
             BondRead::AtCheckpoint(bond) => return Ok((head, *bond)),
             BondRead::OtherCheckpoint => {
                 eprintln!(
@@ -203,6 +199,90 @@ fn fee_descriptor(quote: &Quote, opened: &Opened, target: &Target) -> anyhow::Re
         );
     }
     Ok(descriptor)
+}
+
+/// A relay session: the status capability the quote will be bound to and
+/// the Tor isolation this session alone uses.
+pub(super) struct Session {
+    pub tag: Word,
+    pub status_token: String,
+    pub isolation: Isolation,
+}
+
+/// Opens a session: its capability and its isolation are on disk before the
+/// daemon is spoken to, so a restart asks about the same request through
+/// the same circuit identity and never mints a second capability for it.
+pub(super) fn open_session(
+    opened: &mut Opened,
+    options: &RelayOptions,
+    profile: &RelayerProfile,
+    endpoint: &br1_client::onion::OnionEndpoint,
+    scope: &str,
+) -> anyhow::Result<Session> {
+    let mut tag: Word = [0; 32];
+    rand::rngs::OsRng.fill_bytes(&mut tag);
+    let status_token = random_token();
+    let isolation = Isolation::random();
+    opened.append_journal(&JournalRecord::RelayQuoteRequested {
+        tag,
+        status_token: status_token.clone(),
+        isolation_user: isolation.user.clone(),
+        isolation_password: isolation.password.clone(),
+        tor_port: options.tor_port,
+        bond: profile.release.bond.clone(),
+        endpoint: endpoint.origin(),
+        release_scope: scope.to_owned(),
+    })?;
+    opened.save_state()?;
+    Ok(Session { tag, status_token, isolation })
+}
+
+/// Asks the relay for a quote under the session's capability and holds it
+/// to the spend: it must fund the pool's transact fee, name a fee descriptor
+/// of this pool that is not the recipient's, and leave the margin on both
+/// clocks. The authenticated quote is journalled before anything is planned
+/// under it; a quote that fails these checks is not.
+pub(super) async fn take_quote<R: Relay>(
+    opened: &mut Opened,
+    relay: &R,
+    session: &Session,
+    options: &RelayOptions,
+    head: &Head,
+    target: &Target,
+    funding_cap: u128,
+) -> anyhow::Result<(Quote, Descriptor, u128)> {
+    let funding_cap_u64 =
+        u64::try_from(funding_cap).context("the transact fee exceeds the message limit")?;
+    let quote = relay
+        .quote(FEE_SLOT, options.quote_lifetime, &session.status_token)
+        .await
+        .map_err(|error| anyhow::anyhow!("the relayer's quote: {error}"))?;
+    anyhow::ensure!(
+        quote.terms.funding_cap >= funding_cap_u64,
+        "the relayer's funding cap ({} TOS) is below the pool's transact fee ({} TOS); it would \
+         not fund this message",
+        tos(u128::from(quote.terms.funding_cap)),
+        tos(funding_cap)
+    );
+    let fee = u128::from(quote.terms.amount);
+    let fee_to = fee_descriptor(&quote, opened, target)?;
+    require_window_open(
+        unix_now(),
+        head.shard_gen_utime,
+        quote.terms.valid_until,
+        RELAY_DEADLINE_MARGIN_SECS,
+    )?;
+    opened.append_journal(&JournalRecord::RelayQuoted {
+        tag: session.tag,
+        quote_id: quote.identity.clone(),
+        envelope: quote.envelope.clone(),
+        note_index: quote.terms.note_index,
+        fee: coins(fee),
+        funding_cap: coins(u128::from(quote.terms.funding_cap)),
+        valid_until: u32::try_from(quote.terms.valid_until).context("the quote window end")?,
+    })?;
+    opened.save_state()?;
+    Ok((quote, fee_to, fee))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -252,64 +332,20 @@ pub(super) async fn run(
 
     // The relayer funds the message with exactly the pool's transact fee.
     let funding_cap = head.transact_fee()?;
-    let funding_cap_u64 =
-        u64::try_from(funding_cap).context("the transact fee exceeds the message limit")?;
 
-    // The session opens: its status capability and its Tor isolation are on
-    // disk before the daemon is spoken to.
-    let mut tag: Word = [0; 32];
-    rand::rngs::OsRng.fill_bytes(&mut tag);
-    let status_token = random_token();
-    let isolation = Isolation::random();
-    opened.append_journal(&JournalRecord::RelayQuoteRequested {
-        tag,
-        status_token: status_token.clone(),
-        isolation_user: isolation.user.clone(),
-        isolation_password: isolation.password.clone(),
-        tor_port: options.tor_port,
-        bond: profile.release.bond.clone(),
-        endpoint: endpoint.origin(),
-        release_scope: scope.clone(),
-    })?;
-    opened.save_state()?;
-    let proxy = TorProxy::new(options.tor_port, isolation)?;
+    let session = open_session(&mut opened, options, &profile, &endpoint, &scope)?;
+    let proxy = TorProxy::new(options.tor_port, session.isolation.clone())?;
     let relay = Client::from_identity(&profile.release, &init, proxy, options.relay_timeout)
         .map_err(|error| anyhow::anyhow!("the relayer client: {error}"))?;
-
     eprintln!(
         "{} asking {} for a quote through the Tor daemon on port {}",
         "note:".bold(),
         endpoint.authority(),
         options.tor_port
     );
-    let quote = Relay::quote(&relay, FEE_SLOT, options.quote_lifetime, &status_token, unix_now())
-        .await
-        .map_err(|error| anyhow::anyhow!("the relayer's quote: {error}"))?;
-    anyhow::ensure!(
-        quote.terms.funding_cap >= funding_cap_u64,
-        "the relayer's funding cap ({} TOS) is below the pool's transact fee ({} TOS); it would \
-         not fund this message",
-        tos(u128::from(quote.terms.funding_cap)),
-        tos(funding_cap)
-    );
-    let fee = u128::from(quote.terms.amount);
-    let fee_to = fee_descriptor(&quote, &opened, &target)?;
-    require_window_open(
-        unix_now(),
-        head.shard_gen_utime,
-        quote.terms.valid_until,
-        RELAY_DEADLINE_MARGIN_SECS,
-    )?;
-    opened.append_journal(&JournalRecord::RelayQuoted {
-        tag,
-        quote_id: quote.identity.clone(),
-        envelope: quote.envelope.clone(),
-        note_index: quote.terms.note_index,
-        fee: coins(fee),
-        funding_cap: coins(u128::from(quote.terms.funding_cap)),
-        valid_until: u32::try_from(quote.terms.valid_until).context("the quote window end")?,
-    })?;
-    opened.save_state()?;
+    let (quote, fee_to, fee) =
+        take_quote(&mut opened, &relay, &session, options, &head, &target, funding_cap).await?;
+    let tag = session.tag;
 
     let Target::Send { descriptor, .. } = &target else {
         anyhow::bail!("a withdrawal is never relayed");
@@ -431,6 +467,8 @@ pub(super) async fn run(
     // hold; the nullifier witnesses are built only then, against the tree as
     // it is.
     let (fresh_head, fresh_bond) = read_pool_and_bond(verifier, &pool, &profile, &init).await?;
+    let clocks =
+        ShardClock { local_at_read: unix_now(), shard_at_read: fresh_head.shard_gen_utime };
     require_verified_same_chain(&opened, &fresh_head)?;
     if fresh_head.last_lt != head.last_lt || fresh_head.last_hash != head.last_hash {
         eprintln!(
@@ -512,7 +550,7 @@ pub(super) async fn run(
 
     let journalled =
         journal_request(&mut opened, tag, intent_digest, body_hash, relay_request, quote)?;
-    let status = submit_relayed(&mut opened, journalled, &relay, unix_now()).await?;
+    let status = submit_relayed(&mut opened, journalled, &relay, &clocks, unix_now()).await?;
     println!(
         "{} request {} submitted; the relayer claims it is {}{}",
         "OK".green().bold(),
@@ -569,18 +607,27 @@ pub(super) fn journal_request(
     Ok(JournalledRequest { request, request_id, quote, valid_until })
 }
 
-/// Submits the journalled request once and records what happened. A refusal
-/// before anything left this machine leaves the request prepared and
-/// unsubmitted; anything after is an unknown outcome, journalled as such.
-/// Nothing is retried.
+/// Submits the journalled request once and records what happened. The
+/// window is checked with the margin on both clocks at the moment the
+/// request is about to leave; a request withheld here, or one the client
+/// refuses before connecting, never left this machine and is journalled as
+/// withheld. Anything after the request may have left is an unknown
+/// outcome, journalled as such. Nothing is retried.
 pub(super) async fn submit_relayed<R: Relay>(
     opened: &mut Opened,
     journalled: JournalledRequest,
     relay: &R,
+    clocks: &ShardClock,
     now: u64,
 ) -> anyhow::Result<Status> {
     let JournalledRequest { request, request_id, quote, valid_until } = journalled;
-    match relay.submit(&request, &quote, now).await {
+    let window_end = quote.terms.valid_until.min(u64::from(valid_until));
+    if let Err(closed) =
+        require_window_open(now, clocks.projected(now), window_end, RELAY_DEADLINE_MARGIN_SECS)
+    {
+        return Err(withhold(opened, &request_id, valid_until, &closed.to_string())?);
+    }
+    match relay.submit(&request, &quote).await {
         Ok(status) => {
             opened.append_journal(&JournalRecord::RelaySubmitted {
                 request_id: request_id.clone(),
@@ -590,12 +637,7 @@ pub(super) async fn submit_relayed<R: Relay>(
             opened.save_state()?;
             Ok(status)
         }
-        Err(ClientError::Rejected(what)) => anyhow::bail!(
-            "the request {request_id} was not submitted: {what}. Nothing left this machine; the \
-             spend is journalled as prepared and its inputs stay held until `tosctl shield sync` \
-             shows it settled or its deadline ({}) passed",
-            utc(valid_until)
-        ),
+        Err(ClientError::Rejected(what)) => Err(withhold(opened, &request_id, valid_until, &what)?),
         Err(error) => {
             opened.append_journal(&JournalRecord::RelayUnknown {
                 request_id: request_id.clone(),
@@ -612,6 +654,26 @@ pub(super) async fn submit_relayed<R: Relay>(
             )
         }
     }
+}
+
+/// Journals that the prepared request was never sent, and says so.
+fn withhold(
+    opened: &mut Opened,
+    request_id: &str,
+    valid_until: u32,
+    reason: &str,
+) -> anyhow::Result<anyhow::Error> {
+    opened.append_journal(&JournalRecord::RelayWithheld {
+        request_id: request_id.to_owned(),
+        reason: reason.to_owned(),
+    })?;
+    opened.save_state()?;
+    Ok(anyhow::anyhow!(
+        "the request {request_id} was not submitted: {reason}. Nothing left this machine; the \
+         spend is journalled as prepared and withheld, and its inputs stay held until `tosctl \
+         shield sync` shows them free or the deadline ({}) passed",
+        utc(valid_until)
+    ))
 }
 
 fn summary_text(
@@ -700,6 +762,9 @@ pub(super) struct RelayedRequest {
     pub release_scope: String,
     /// What the journal recorded of the submission, if it got that far.
     pub submission: Option<String>,
+    /// Whether this client withheld the request: it never left this machine
+    /// and the relayer is not asked about it.
+    pub withheld: bool,
 }
 
 /// Every prepared relayed request with the session it belongs to. A request
@@ -743,18 +808,28 @@ pub(super) fn relayed_requests(journal: &[JournalRecord]) -> anyhow::Result<Vec<
             JournalRecord::RelaySubmitted { request_id: id, status, message_hash }
                 if id == request_id =>
             {
-                Some(format!(
-                    "acknowledged as {status}{}",
-                    message_hash
-                        .as_deref()
-                        .map_or_else(String::new, |hash| format!(" (message {hash})"))
+                Some((
+                    format!(
+                        "acknowledged as {status}{}",
+                        message_hash
+                            .as_deref()
+                            .map_or_else(String::new, |hash| format!(" (message {hash})"))
+                    ),
+                    false,
                 ))
             }
             JournalRecord::RelayUnknown { request_id: id, error } if id == request_id => {
-                Some(format!("no acknowledgement: {error}"))
+                Some((format!("no acknowledgement: {error}"), false))
+            }
+            JournalRecord::RelayWithheld { request_id: id, reason } if id == request_id => {
+                Some((format!("never sent: {reason}"), true))
             }
             _ => None,
         });
+        let (submission, withheld) = match submission {
+            Some((text, withheld)) => (Some(text), withheld),
+            None => (None, false),
+        };
         let (status_token, isolation, bond, endpoint, release_scope) = session;
         requests.push(RelayedRequest {
             request_id: request_id.clone(),
@@ -765,9 +840,26 @@ pub(super) fn relayed_requests(journal: &[JournalRecord]) -> anyhow::Result<Vec<
             endpoint,
             release_scope,
             submission,
+            withheld,
         });
     }
     Ok(requests)
+}
+
+/// The requests relayed through the relayer a profile describes, and the
+/// rest: a request is asked about only under the release scope, Bond and
+/// endpoint it was relayed under.
+pub(super) fn through_this_relayer(
+    all: Vec<RelayedRequest>,
+    scope: &str,
+    bond: &str,
+    endpoint_origin: &str,
+) -> (Vec<RelayedRequest>, Vec<RelayedRequest>) {
+    all.into_iter().partition(|request| {
+        request.release_scope == scope
+            && request.bond == bond
+            && request.endpoint == endpoint_origin
+    })
 }
 
 impl StatusCmd {
@@ -786,11 +878,8 @@ impl StatusCmd {
         let verified = cursor.is_some_and(|cursor| cursor.verified);
         let pending = pending_spends(&opened.journal, &ledger, shard_time, verified);
         let all = relayed_requests(&opened.journal)?;
-        let (ours, others): (Vec<_>, Vec<_>) = all.into_iter().partition(|request| {
-            request.release_scope == scope
-                && request.bond == profile.release.bond
-                && request.endpoint == endpoint.origin()
-        });
+        let (ours, others) =
+            through_this_relayer(all, &scope, &profile.release.bond, &endpoint.origin());
         if let Some(wanted) = &self.request {
             anyhow::ensure!(
                 ours.iter().any(|request| &request.request_id == wanted),
@@ -843,6 +932,10 @@ impl StatusCmd {
                 "  Journal:  {}",
                 request.submission.as_deref().unwrap_or("prepared; no submission record")
             );
+            if request.withheld {
+                println!("  Relayer:  not asked; this request never left this machine");
+                continue;
+            }
             // The relayer is asked through the session's own circuit identity,
             // never a fresh one, and is answered with a claim.
             let proxy = TorProxy::new(self.tor_port, request.isolation.clone())?;
@@ -1217,38 +1310,240 @@ mod tests {
         assert!(error.to_string().contains("recipient"), "{error}");
     }
 
-    /// A relay that answers submissions as told and records what it saw.
+    /// A relay that answers as told and records what reached it.
     struct Recorder {
+        quote: RefCell<Option<Result<Quote, ClientError>>>,
         answer: RefCell<Option<Result<Status, ClientError>>>,
+        /// The capability tokens quotes were asked under.
+        tokens: RefCell<Vec<String>>,
+        /// The request bytes submitted.
         seen: RefCell<Vec<Vec<u8>>>,
     }
 
     impl Recorder {
         fn answering(answer: Result<Status, ClientError>) -> Self {
-            Self { answer: RefCell::new(Some(answer)), seen: RefCell::new(Vec::new()) }
+            Self {
+                quote: RefCell::new(None),
+                answer: RefCell::new(Some(answer)),
+                tokens: RefCell::new(Vec::new()),
+                seen: RefCell::new(Vec::new()),
+            }
+        }
+
+        fn quoting(quote: Result<Quote, ClientError>) -> Self {
+            Self {
+                quote: RefCell::new(Some(quote)),
+                answer: RefCell::new(None),
+                tokens: RefCell::new(Vec::new()),
+                seen: RefCell::new(Vec::new()),
+            }
         }
     }
 
     impl Relay for Recorder {
-        async fn quote(
-            &self,
-            _slot: u8,
-            _lifetime: u64,
-            _token: &str,
-            _now: u64,
-        ) -> Result<Quote, ClientError> {
-            Err(ClientError::Unavailable("no quotes in this test".into()))
+        async fn quote(&self, slot: u8, _lifetime: u64, token: &str) -> Result<Quote, ClientError> {
+            assert_eq!(slot, FEE_SLOT);
+            self.tokens.borrow_mut().push(token.to_owned());
+            self.quote.borrow_mut().take().expect("one quote")
         }
 
         async fn submit(
             &self,
             request: &RelayRequest,
             _quote: &Quote,
-            _now: u64,
         ) -> Result<Status, ClientError> {
             self.seen.borrow_mut().push(request.wire().expect("wire"));
             self.answer.borrow_mut().take().expect("one submission")
         }
+    }
+
+    fn options() -> RelayOptions {
+        RelayOptions {
+            tor_port: 9050,
+            relay_timeout: 60,
+            quote_lifetime: 300,
+            allow_testnet_pool: false,
+        }
+    }
+
+    /// The relayer profile of the relayer tests, and its endpoint and scope.
+    fn relayer_profile() -> (RelayerProfile, br1_client::onion::OnionEndpoint, String) {
+        let (profile, init) = super::super::relayer::tests::fixture();
+        let endpoint = br1_client::onion::OnionEndpoint::parse(&init.endpoint).expect("onion");
+        let scope = profile.scope().expect("scope");
+        (profile, endpoint, scope)
+    }
+
+    /// Clocks read together at `at`, by both the contract and this machine.
+    fn clocks(at: u64) -> ShardClock {
+        ShardClock { local_at_read: at, shard_at_read: u32::try_from(at).expect("fits") }
+    }
+
+    /// A session is on disk, with the capability the relayer is then asked
+    /// under, before the relayer is spoken to; the quote is on disk once it
+    /// passed every check, and not otherwise.
+    #[tokio::test]
+    async fn the_session_is_on_disk_before_the_relayer_is_asked_and_the_quote_once_it_passes() {
+        let domain = Fr::from(DOMAIN);
+        let (_root, mut opened) = opened_for_tests(domain);
+        let (profile, endpoint, scope) = relayer_profile();
+        let mut head = super::super::chain::tests::head_for_tests();
+        head.shard_gen_utime = 1_800_000_000;
+        let bob = Descriptor::issue(&PoolInstance::new(&[0x52; 32], domain), 7).expect("bob");
+        let target = Target::Send { descriptor: Box::new(bob), descriptor_hash: [0; 32] };
+        let relayer = PoolInstance::new(&[0x53; 32], domain);
+        let quoted_descriptor = Descriptor::issue(&relayer, 9).expect("descriptor");
+        let before = super::super::store::next_issuable_index(&opened.state, &opened.journal)
+            .expect("an index");
+
+        // The relayer does not answer: the session is on disk all the same,
+        // under the very token it was asked with, and no quote is.
+        let session =
+            open_session(&mut opened, &options(), &profile, &endpoint, &scope).expect("a session");
+        let relay = Recorder::quoting(Err(ClientError::Unavailable("no circuit".into())));
+        let error =
+            take_quote(&mut opened, &relay, &session, &options(), &head, &target, 2_500_000_000)
+                .await
+                .err()
+                .expect("no quote");
+        assert!(error.to_string().contains("no circuit"), "{error}");
+        let on_disk = opened.store.read_journal().expect("the journal on disk");
+        assert_eq!(*relay.tokens.borrow(), vec![session.status_token.clone()]);
+        assert!(matches!(
+            on_disk.last(),
+            Some(JournalRecord::RelayQuoteRequested { tag, status_token, isolation_user, isolation_password, bond, endpoint: origin, release_scope, .. })
+                if *tag == session.tag
+                    && *status_token == session.status_token
+                    && *isolation_user == session.isolation.user
+                    && *isolation_password == session.isolation.password
+                    && *bond == profile.release.bond
+                    && *origin == endpoint.origin()
+                    && *release_scope == scope
+        ));
+        assert!(!on_disk.iter().any(|record| matches!(record, JournalRecord::RelayQuoted { .. })));
+
+        // A quote that does not fund the pool's fee is refused and not kept.
+        let relay = Recorder::quoting(Ok(quoted(&quoted_descriptor, 100_000_000, 1_800_000_300)));
+        let error =
+            take_quote(&mut opened, &relay, &session, &options(), &head, &target, 6_000_000_000)
+                .await
+                .err()
+                .expect("too small a cap");
+        assert!(error.to_string().contains("funding cap"), "{error}");
+        assert!(
+            !opened
+                .journal
+                .iter()
+                .any(|record| matches!(record, JournalRecord::RelayQuoted { .. }))
+        );
+
+        // A quote that passes is on disk before anything is planned under it.
+        let relay = Recorder::quoting(Ok(quoted(&quoted_descriptor, 100_000_000, 1_800_000_300)));
+        let (quote, fee_to, fee) =
+            take_quote(&mut opened, &relay, &session, &options(), &head, &target, 2_500_000_000)
+                .await
+                .expect("a quote");
+        assert_eq!((fee, fee_to.note_key_index), (100_000_000, 9));
+        let on_disk = opened.store.read_journal().expect("the journal on disk");
+        assert!(matches!(
+            on_disk.last(),
+            Some(JournalRecord::RelayQuoted { tag, quote_id, note_index, fee, valid_until, .. })
+                if *tag == session.tag && *quote_id == quote.identity && *note_index == 9
+                    && *fee == coins(100_000_000) && *valid_until == 1_800_000_300
+        ));
+        // The relayer's index is the relayer's; this instance issued none.
+        assert_eq!(
+            super::super::store::next_issuable_index(&opened.state, &opened.journal)
+                .expect("an index"),
+            before
+        );
+
+        // A run that stops here holds nothing and asks about nothing.
+        let ledger = Ledger::genesis();
+        assert!(pending_spends(&opened.journal, &ledger, Some(1_800_000_000), true).is_empty());
+        assert!(relayed_requests(&opened.journal).expect("sessions").is_empty());
+    }
+
+    /// Just before the request leaves, both clocks must still leave the
+    /// margin; a request that would arrive inside it is withheld, journalled
+    /// as such, and never reaches the relay.
+    #[tokio::test]
+    async fn a_request_whose_window_closed_while_journalling_is_withheld_unsent() {
+        let (request, quote, assembled, _, _) = relayed_request(FEE_SLOT);
+        let request_id = request.identity().expect("identity");
+        let intent = fr_to_be(&assembled.intent_digest());
+        let (_root, mut opened) = opened_for_tests(Fr::from(DOMAIN));
+        let (profile, endpoint, scope) = relayer_profile();
+        let session =
+            open_session(&mut opened, &options(), &profile, &endpoint, &scope).expect("a session");
+        let journalled =
+            journal_request(&mut opened, session.tag, intent, [1; 32], request, quote.clone())
+                .expect("journalled");
+        // Read at 1_800_000_000 on both clocks; the window ends at the
+        // intent's 1_800_000_200. Journalling took 150 s: 50 s are left,
+        // under the 60 s margin, on the contract's clock as projected.
+        let relay = Recorder::answering(Ok(claimed(&request_id, "broadcast")));
+        let error =
+            submit_relayed(&mut opened, journalled, &relay, &clocks(1_800_000_000), 1_800_000_150)
+                .await
+                .expect_err("withheld");
+        assert!(error.to_string().contains("Nothing left this machine"), "{error}");
+        assert!(relay.seen.borrow().is_empty(), "nothing was submitted");
+        assert!(relay.answer.borrow().is_some(), "the relay was never asked");
+        let on_disk = opened.store.read_journal().expect("the journal on disk");
+        assert!(matches!(
+            on_disk.last(),
+            Some(JournalRecord::RelayWithheld { request_id: id, reason })
+                if *id == request_id && reason.contains("within 60 s")
+        ));
+        let requests = relayed_requests(&on_disk).expect("sessions");
+        assert_eq!(requests.len(), 1);
+        assert!(requests[0].withheld);
+        assert!(requests[0].submission.as_deref().is_some_and(|s| s.starts_with("never sent: ")));
+
+        // The same request with 61 s left on both clocks goes out.
+        let (request, quote, assembled, _, _) = relayed_request(FEE_SLOT);
+        let request_id = request.identity().expect("identity");
+        let intent = fr_to_be(&assembled.intent_digest());
+        let journalled = journal_request(&mut opened, session.tag, intent, [1; 32], request, quote)
+            .expect("journalled");
+        let relay = Recorder::answering(Ok(claimed(&request_id, "broadcast")));
+        submit_relayed(&mut opened, journalled, &relay, &clocks(1_800_000_000), 1_800_000_139)
+            .await
+            .expect("sent");
+        assert_eq!(relay.seen.borrow().len(), 1);
+    }
+
+    /// `status` asks only about requests relayed under this profile's
+    /// release scope, Bond and endpoint; the rest are counted, not asked.
+    #[test]
+    fn status_asks_only_about_requests_relayed_through_this_relayer() {
+        let mut other_scope = session(1);
+        if let JournalRecord::RelayQuoteRequested { release_scope, .. } = &mut other_scope {
+            *release_scope = "other".into();
+        }
+        let mut other_bond = session(2);
+        if let JournalRecord::RelayQuoteRequested { bond, .. } = &mut other_bond {
+            *bond = "0:other".into();
+        }
+        let mut other_endpoint = session(3);
+        if let JournalRecord::RelayQuoteRequested { endpoint, .. } = &mut other_endpoint {
+            *endpoint = "http://other.onion".into();
+        }
+        let journal = vec![
+            other_scope,
+            prepared(1, "r1"),
+            other_bond,
+            prepared(2, "r2"),
+            other_endpoint,
+            prepared(3, "r3"),
+            session(4),
+            prepared(4, "r4"),
+        ];
+        let all = relayed_requests(&journal).expect("sessions");
+        let (ours, others) = through_this_relayer(all, "scope", "0:bond", "http://relayer.onion");
+        assert_eq!(ours.iter().map(|r| r.request_id.as_str()).collect::<Vec<_>>(), ["r4"]);
+        assert_eq!(others.len(), 3, "a mismatched release, Bond or endpoint each");
     }
 
     fn claimed(request_id: &str, status: &str) -> Status {
@@ -1271,22 +1566,15 @@ mod tests {
         let request_id = request.identity().expect("identity");
         let intent = fr_to_be(&assembled.intent_digest());
         let (_root, mut opened) = opened_for_tests(Fr::from(DOMAIN));
-        opened
-            .append_journal(&JournalRecord::RelayQuoteRequested {
-                tag: [9; 32],
-                status_token: TOKEN.into(),
-                isolation_user: "u".into(),
-                isolation_password: "p".into(),
-                tor_port: 9050,
-                bond: "0:bond".into(),
-                endpoint: "http://relayer.onion".into(),
-                release_scope: SCOPE_BYTE.repeat(32),
-            })
-            .expect("session");
+        let (profile, endpoint, scope) = relayer_profile();
+        let session =
+            open_session(&mut opened, &options(), &profile, &endpoint, &scope).expect("a session");
+        let tag = session.tag;
+        let at = clocks(1_800_000_000);
 
         // Acknowledged: the exact journalled bytes went out, once.
         let journalled =
-            journal_request(&mut opened, [9; 32], intent, [1; 32], request.clone(), quote.clone())
+            journal_request(&mut opened, tag, intent, [1; 32], request.clone(), quote.clone())
                 .expect("journalled");
         assert_eq!(journalled.request_id, request_id);
         assert!(matches!(
@@ -1295,7 +1583,7 @@ mod tests {
                 if *id == request_id && *wire == wire_bytes && *intent_digest == intent
         ));
         let relay = Recorder::answering(Ok(claimed(&request_id, "broadcast")));
-        let status = submit_relayed(&mut opened, journalled, &relay, 1_800_000_100)
+        let status = submit_relayed(&mut opened, journalled, &relay, &at, 1_800_000_100)
             .await
             .expect("acknowledged");
         assert_eq!(status.status, "broadcast");
@@ -1311,14 +1599,13 @@ mod tests {
         let mut second = request.clone();
         second.intent = "e2".repeat(32);
         let second_id = second.identity().expect("identity");
-        let journalled =
-            journal_request(&mut opened, [9; 32], intent, [1; 32], second, quote.clone())
-                .expect("journalled");
+        let journalled = journal_request(&mut opened, tag, intent, [1; 32], second, quote.clone())
+            .expect("journalled");
         let relay = Recorder::answering(Err(ClientError::SubmissionUnknown {
             request_id: second_id.clone(),
             cause: "the circuit closed".into(),
         }));
-        let error = submit_relayed(&mut opened, journalled, &relay, 1_800_000_100)
+        let error = submit_relayed(&mut opened, journalled, &relay, &at, 1_800_000_100)
             .await
             .expect_err("unknown");
         assert!(error.to_string().contains("unknown"), "{error}");
@@ -1328,20 +1615,25 @@ mod tests {
                 if *id == second_id && error.contains("the circuit closed")
         ));
 
-        // Refused locally before anything left: no outcome record is written.
+        // Refused by the client before connecting: journalled as withheld,
+        // never as an outcome.
         let before = opened.journal.len();
         let mut third = request.clone();
         third.intent = "e3".repeat(32);
         let third_id = third.identity().expect("identity");
-        let journalled =
-            journal_request(&mut opened, [9; 32], intent, [1; 32], third, quote.clone())
-                .expect("journalled");
+        let journalled = journal_request(&mut opened, tag, intent, [1; 32], third, quote.clone())
+            .expect("journalled");
         let relay = Recorder::answering(Err(ClientError::Rejected("slot".into())));
-        let error = submit_relayed(&mut opened, journalled, &relay, 1_800_000_100)
+        let error = submit_relayed(&mut opened, journalled, &relay, &at, 1_800_000_100)
             .await
             .expect_err("rejected");
         assert!(error.to_string().contains("Nothing left this machine"), "{error}");
-        assert_eq!(opened.journal.len(), before + 1, "the prepared record and nothing after");
+        assert_eq!(opened.journal.len(), before + 2, "the prepared record and the withheld one");
+        assert!(matches!(
+            opened.journal.last(),
+            Some(JournalRecord::RelayWithheld { request_id: id, reason })
+                if *id == third_id && reason == "slot"
+        ));
 
         // A restart reads the same session, capability and bytes back from
         // disk: the status command asks about exactly this request through
@@ -1355,9 +1647,13 @@ mod tests {
             vec![request_id.clone(), second_id.clone(), third_id]
         );
         for found in &requests {
-            assert_eq!(found.status_token, TOKEN);
-            assert_eq!(found.isolation, Isolation { user: "u".into(), password: "p".into() });
+            assert_eq!(found.status_token, session.status_token);
+            assert_eq!(found.isolation, session.isolation);
             assert_eq!(found.intent_digest, intent);
+            assert_eq!(
+                (found.release_scope.as_str(), found.bond.as_str()),
+                (scope.as_str(), profile.release.bond.as_str())
+            );
         }
         assert_eq!(
             requests.iter().map(|r| r.submission.clone()).collect::<Vec<_>>(),
@@ -1368,9 +1664,10 @@ mod tests {
                       {} (the circuit closed)"
                         .replace("{}", &second_id)
                 ),
-                None,
+                Some("never sent: slot".to_owned()),
             ]
         );
+        assert_eq!(requests.iter().map(|r| r.withheld).collect::<Vec<_>>(), [false, false, true]);
         let stored_wire = reread
             .iter()
             .find_map(|record| match record {
@@ -1400,9 +1697,17 @@ mod tests {
         assert!(spends[0].outcome.holds_inputs());
         assert_eq!(
             spends[0].outcome.describe(),
+            "pending (prepared for the relayer but never sent; held until the deadline)",
+            "the last prepared request was withheld"
+        );
+        let mut stopped = vec![planned.clone()];
+        stopped.extend(reread.iter().take(reread.len() - 1).cloned());
+        let spends = pending_spends(&stopped, &Ledger::genesis(), Some(1_800_000_000), true);
+        assert_eq!(
+            spends[0].outcome.describe(),
             "pending (prepared for the relayer; outcome unknown (the command may have stopped \
              after submitting))",
-            "the last prepared request has no outcome record"
+            "a run that stopped after preparing"
         );
         let mut submitted = vec![planned];
         submitted.extend(reread.iter().take(3).cloned());

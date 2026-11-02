@@ -17,7 +17,8 @@ use node_contracts::relayer_bond::BondInit;
 use rand::{rngs::OsRng, RngCore};
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::time::Duration;
+use std::sync::Arc;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::Instant;
 
 pub const STATUS_SCHEMA: &str = "tos.br1.status.v1";
@@ -112,12 +113,25 @@ pub fn random_token() -> String {
     }
 }
 
+/// The local clock, in Unix seconds. Quote and submission windows are
+/// judged by a reading taken after the exchange, never before it: a quote
+/// issued while the request was in flight is honest, and a window that
+/// closed while the answer was in flight is closed.
+pub type Clock = Arc<dyn Fn() -> u64 + Send + Sync>;
+
+fn system_clock() -> Clock {
+    Arc::new(|| {
+        SystemTime::now().duration_since(UNIX_EPOCH).map(|elapsed| elapsed.as_secs()).unwrap_or(0)
+    })
+}
+
 pub struct Client {
     endpoint: OnionEndpoint,
     scope: String,
     worker_key: Vec<u8>,
     proxy: TorProxy,
     timeout: Duration,
+    clock: Clock,
 }
 
 impl Client {
@@ -155,7 +169,13 @@ impl Client {
             worker_key: init.worker_key.clone(),
             proxy,
             timeout: Duration::from_secs(timeout_secs),
+            clock: system_clock(),
         })
+    }
+
+    /// Replaces the system clock, for tests that fix or step time.
+    pub fn set_clock(&mut self, clock: Clock) {
+        self.clock = clock;
     }
 
     pub fn endpoint(&self) -> &OnionEndpoint {
@@ -210,15 +230,10 @@ impl Client {
         Ok((terms_value, terms, identity))
     }
 
-    /// `POST /v1/quote`. `token` is this session's fresh status capability;
-    /// `now` is the local clock the quote window is judged against.
-    pub async fn quote(
-        &self,
-        slot: u8,
-        lifetime: u64,
-        token: &str,
-        now: u64,
-    ) -> Result<Quote, ClientError> {
+    /// `POST /v1/quote`. `token` is this session's fresh status capability.
+    /// The quote's window is judged by the clock as read after the answer
+    /// arrived and was authenticated.
+    pub async fn quote(&self, slot: u8, lifetime: u64, token: &str) -> Result<Quote, ClientError> {
         let access = quote::status_hash(token).map_err(rejected)?;
         if slot > 2 {
             return Err(rejected("quote slot out of range"));
@@ -242,6 +257,7 @@ impl Client {
             return Err(rejected("quote envelope too large"));
         }
         let (terms_value, terms, identity) = self.authenticate(&result["quote"])?;
+        let now = (self.clock)();
         let quote_id = result["quote_id"].as_str().unwrap_or_default();
         if identity != quote_id
             || terms.status_hash != access
@@ -269,16 +285,13 @@ impl Client {
     }
 
     /// `POST /v1/submit`, once. The request must be the one the quote was
-    /// taken for, and still inside the window. Any failure after the request
-    /// has been sent is unknown, not failed.
-    pub async fn submit(
-        &self,
-        request: &Request,
-        stored: &Quote,
-        now: u64,
-    ) -> Result<Status, ClientError> {
+    /// taken for, and still inside the window by the clock as read just
+    /// before it leaves. Any failure after the request has been sent is
+    /// unknown, not failed.
+    pub async fn submit(&self, request: &Request, stored: &Quote) -> Result<Status, ClientError> {
         let terms = self.reverify(stored)?;
         let request_id = request.identity().map_err(rejected)?;
+        let now = (self.clock)();
         if request.release != self.scope
             || request.quote_hash != stored.identity
             || request.fee_slot != terms.slot
@@ -387,6 +400,8 @@ mod tests {
         /// Answer every request with this status instead of serving it.
         canned_status: Option<u16>,
         canned_path: String,
+        /// The body of a canned answer, in place of the default one.
+        canned_body: Option<Vec<u8>>,
         /// Alter the signed terms before answering (an honest worker signing
         /// terms the client must still refuse).
         tamper: Option<fn(&mut Value)>,
@@ -409,7 +424,12 @@ mod tests {
             behaviour.paths.push(path.clone());
             if let Some(status) = behaviour.canned_status {
                 if path.starts_with(&behaviour.canned_path) {
-                    return Some(response_bytes(status, "Refused", br#"{"error":"busy"}"#));
+                    let body = behaviour.canned_body.clone();
+                    return Some(response_bytes(
+                        status,
+                        "Refused",
+                        body.as_deref().unwrap_or(br#"{"error":"busy"}"#),
+                    ));
                 }
             }
             let payload = wire::parse_object(body, MAX_WIRE_BYTES).ok()?;
@@ -490,9 +510,27 @@ mod tests {
             }
         })
         .await?;
-        let client =
+        let mut client =
             Client::from_bond(&release, &init_b64, TorProxy::new(port, Isolation::random())?, 3)?;
+        at(&mut client, NOW);
         Ok((client, behaviour, peer, release))
+    }
+
+    /// Fixes the client's clock at `now`.
+    fn at(client: &mut Client, now: u64) {
+        client.set_clock(Arc::new(move || now));
+    }
+
+    /// A clock that reads `first` once and `then` from the second reading on.
+    fn stepping(first: u64, then: u64) -> Clock {
+        let readings = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        Arc::new(move || {
+            if readings.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+                first
+            } else {
+                then
+            }
+        })
     }
 
     fn request_for(client: &Client, q: &Quote) -> Request {
@@ -513,12 +551,14 @@ mod tests {
 
     #[tokio::test]
     async fn quote_submit_status_through_socks_only() -> anyhow::Result<()> {
-        let (client, behaviour, peer, _) = stand_up().await?;
+        let (mut client, behaviour, peer, _) = stand_up().await?;
         let token = random_token();
-        let q = client.quote(2, 300, &token, NOW + 10).await?;
+        at(&mut client, NOW + 10);
+        let q = client.quote(2, 300, &token).await?;
         assert_eq!((q.terms.amount, q.terms.slot, q.terms.valid_until - NOW), (7, 2, 300));
         let request = request_for(&client, &q);
-        let status = client.submit(&request, &q, NOW + 20).await?;
+        at(&mut client, NOW + 20);
+        let status = client.submit(&request, &q).await?;
         assert_eq!(
             (status.status.as_str(), status.request_id.as_str()),
             ("broadcast", request.identity()?.as_str())
@@ -541,23 +581,20 @@ mod tests {
 
     #[tokio::test]
     async fn quote_binding_lifetime_and_window_are_checked() -> anyhow::Result<()> {
-        let (client, behaviour, _, _) = stand_up().await?;
+        let (mut client, behaviour, _, _) = stand_up().await?;
         let token = random_token();
-        assert!(matches!(client.quote(3, 300, &token, NOW).await, Err(ClientError::Rejected(_))));
-        assert!(matches!(client.quote(2, 301, &token, NOW).await, Err(ClientError::Rejected(_))));
+        assert!(matches!(client.quote(3, 300, &token).await, Err(ClientError::Rejected(_))));
+        assert!(matches!(client.quote(2, 301, &token).await, Err(ClientError::Rejected(_))));
         assert!(matches!(
-            client.quote(2, 300, &"00".repeat(32), NOW).await,
+            client.quote(2, 300, &"00".repeat(32)).await,
             Err(ClientError::Rejected(_))
         ));
-        // Outside the window on the local clock.
-        assert!(matches!(
-            client.quote(2, 300, &token, NOW - 1).await,
-            Err(ClientError::Rejected(_))
-        ));
-        assert!(matches!(
-            client.quote(2, 300, &token, NOW + 300).await,
-            Err(ClientError::Rejected(_))
-        ));
+        // Outside the window on the local clock, read after the answer.
+        at(&mut client, NOW - 1);
+        assert!(matches!(client.quote(2, 300, &token).await, Err(ClientError::Rejected(_))));
+        at(&mut client, NOW + 300);
+        assert!(matches!(client.quote(2, 300, &token).await, Err(ClientError::Rejected(_))));
+        at(&mut client, NOW);
         // An honest signature over terms that do not match the request.
         let tampers: [fn(&mut Value); 4] = [
             |t| t["slot"] = json!(1),
@@ -567,13 +604,70 @@ mod tests {
         ];
         for tamper in tampers {
             behaviour.lock().map_err(|_| anyhow::anyhow!("lock"))?.tamper = Some(tamper);
-            assert!(matches!(
-                client.quote(2, 300, &token, NOW).await,
-                Err(ClientError::Rejected(_))
-            ));
+            assert!(matches!(client.quote(2, 300, &token).await, Err(ClientError::Rejected(_))));
         }
         behaviour.lock().map_err(|_| anyhow::anyhow!("lock"))?.tamper = None;
-        assert!(client.quote(2, 300, &token, NOW).await.is_ok());
+        assert!(client.quote(2, 300, &token).await.is_ok());
+        Ok(())
+    }
+
+    /// The relayer's clock is honest and the exchange takes time: the quote
+    /// is issued after the request left. The window is judged by the clock
+    /// as read when the answer is in hand, so ordinary latency never refuses
+    /// a fresh quote, and a window that closed in flight is closed.
+    #[tokio::test]
+    async fn the_window_is_judged_after_the_answer_arrives() -> anyhow::Result<()> {
+        let (mut client, _, _, _) = stand_up().await?;
+        let token = random_token();
+        // The relayer issues at NOW; this clock read NOW - 5 when the request
+        // left and NOW + 2 once the answer is in hand.
+        client.set_clock(stepping(NOW - 5, NOW + 2));
+        assert_eq!((client.clock)(), NOW - 5, "a reading taken before the exchange");
+        let q = client.quote(2, 300, &token).await?;
+        assert_eq!(q.terms.issued_at, NOW);
+        // A window that closed while the answer was in flight is closed,
+        // whatever the clock said when the request left.
+        client.set_clock(stepping(NOW, NOW + 300));
+        assert_eq!((client.clock)(), NOW);
+        assert!(matches!(client.quote(2, 300, &token).await, Err(ClientError::Rejected(_))));
+        let request = request_for(&client, &q);
+        client.set_clock(stepping(NOW, NOW + 300));
+        assert_eq!((client.clock)(), NOW);
+        assert!(matches!(client.submit(&request, &q).await, Err(ClientError::Rejected(_))));
+        Ok(())
+    }
+
+    /// An answer's bytes are untrusted and may echo what was sent, the status
+    /// capability included; no error ever carries them.
+    #[tokio::test]
+    async fn an_answers_bytes_never_reach_an_error() -> anyhow::Result<()> {
+        let (client, behaviour, _, _) = stand_up().await?;
+        let token = random_token();
+        let reflected = format!(r#"{{"error":"TEST-ONLY-MARKER {token}"}}"#);
+        {
+            let mut b = behaviour.lock().map_err(|_| anyhow::anyhow!("lock"))?;
+            b.canned_status = Some(400);
+            b.canned_body = Some(reflected.clone().into_bytes());
+        }
+        for shown in [
+            client.quote(2, 300, &token).await.err().map(|e| e.to_string()),
+            client.status(&"11".repeat(32), &token).await.err().map(|e| e.to_string()),
+        ] {
+            let shown = shown.ok_or_else(|| anyhow::anyhow!("refused"))?;
+            assert!(shown.contains("400"), "{shown}");
+            assert!(!shown.contains("TEST-ONLY-MARKER") && !shown.contains(&token), "{shown}");
+        }
+        // A 200 whose body is not the protocol's is unavailable with a fixed
+        // message, never the body.
+        {
+            let mut b = behaviour.lock().map_err(|_| anyhow::anyhow!("lock"))?;
+            b.canned_status = Some(200);
+            b.canned_body = Some(format!("TEST-ONLY-MARKER {token} not json").into_bytes());
+        }
+        match client.quote(2, 300, &token).await {
+            Err(ClientError::Unavailable(what)) => assert_eq!(what, "malformed JSON answer"),
+            other => anyhow::bail!("expected unavailable, got {other:?}"),
+        }
         Ok(())
     }
 
@@ -584,7 +678,7 @@ mod tests {
         for status in [429u16, 503] {
             behaviour.lock().map_err(|_| anyhow::anyhow!("lock"))?.canned_status = Some(status);
             assert!(
-                matches!(client.quote(2, 300, &token, NOW).await, Err(ClientError::Refused { status: s }) if s == status)
+                matches!(client.quote(2, 300, &token).await, Err(ClientError::Refused { status: s }) if s == status)
             );
             assert!(
                 matches!(client.status(&"11".repeat(32), &token).await, Err(ClientError::Refused { status: s }) if s == status)
@@ -596,16 +690,17 @@ mod tests {
 
     #[tokio::test]
     async fn a_refused_or_lost_submit_is_unknown_and_never_retried() -> anyhow::Result<()> {
-        let (client, behaviour, _, _) = stand_up().await?;
+        let (mut client, behaviour, _, _) = stand_up().await?;
         let token = random_token();
-        let q = client.quote(2, 300, &token, NOW).await?;
+        let q = client.quote(2, 300, &token).await?;
         let request = request_for(&client, &q);
+        at(&mut client, NOW + 1);
         {
             let mut b = behaviour.lock().map_err(|_| anyhow::anyhow!("lock"))?;
             b.canned_status = Some(503);
             b.canned_path = "/v1/submit".into();
         }
-        match client.submit(&request, &q, NOW + 1).await {
+        match client.submit(&request, &q).await {
             Err(ClientError::SubmissionUnknown { request_id, cause }) => {
                 assert_eq!(request_id, request.identity()?);
                 assert!(cause.contains("503"), "{cause}");
@@ -618,7 +713,7 @@ mod tests {
             b.drop_submit = true;
         }
         assert!(matches!(
-            client.submit(&request, &q, NOW + 1).await,
+            client.submit(&request, &q).await,
             Err(ClientError::SubmissionUnknown { .. })
         ));
         // The original is asked about, not resent.
@@ -631,31 +726,33 @@ mod tests {
     #[tokio::test]
     async fn a_request_that_does_not_match_its_quote_is_rejected_before_sending(
     ) -> anyhow::Result<()> {
-        let (client, behaviour, _, _) = stand_up().await?;
+        let (mut client, behaviour, _, _) = stand_up().await?;
         let token = random_token();
-        let q = client.quote(2, 300, &token, NOW).await?;
+        let q = client.quote(2, 300, &token).await?;
         let good = request_for(&client, &q);
         let mut wrong = good.clone();
         wrong.quote_hash = "0f".repeat(32);
-        assert!(matches!(client.submit(&wrong, &q, NOW).await, Err(ClientError::Rejected(_))));
+        assert!(matches!(client.submit(&wrong, &q).await, Err(ClientError::Rejected(_))));
         let mut wrong = good.clone();
         wrong.valid_until += 1;
-        assert!(matches!(client.submit(&wrong, &q, NOW).await, Err(ClientError::Rejected(_))));
+        assert!(matches!(client.submit(&wrong, &q).await, Err(ClientError::Rejected(_))));
         let mut wrong = good.clone();
         wrong.funding_cap += 1;
-        assert!(matches!(client.submit(&wrong, &q, NOW).await, Err(ClientError::Rejected(_))));
+        assert!(matches!(client.submit(&wrong, &q).await, Err(ClientError::Rejected(_))));
         let mut wrong = good.clone();
         wrong.fee_note_index += 1;
-        assert!(matches!(client.submit(&wrong, &q, NOW).await, Err(ClientError::Rejected(_))));
-        // Expired on the local clock.
-        assert!(matches!(client.submit(&good, &q, NOW + 300).await, Err(ClientError::Rejected(_))));
+        assert!(matches!(client.submit(&wrong, &q).await, Err(ClientError::Rejected(_))));
+        // Expired on the local clock, read just before sending.
+        at(&mut client, NOW + 300);
+        assert!(matches!(client.submit(&good, &q).await, Err(ClientError::Rejected(_))));
+        at(&mut client, NOW);
         // A quote whose stored envelope was altered is not authenticated.
         let mut altered = q.clone();
         altered.terms_value["amount"] = json!(8);
-        assert!(matches!(client.submit(&good, &altered, NOW).await, Err(ClientError::Rejected(_))));
+        assert!(matches!(client.submit(&good, &altered).await, Err(ClientError::Rejected(_))));
         let mut altered = q.clone();
         altered.status_token = random_token();
-        assert!(matches!(client.submit(&good, &altered, NOW).await, Err(ClientError::Rejected(_))));
+        assert!(matches!(client.submit(&good, &altered).await, Err(ClientError::Rejected(_))));
         assert!(behaviour
             .lock()
             .map_err(|_| anyhow::anyhow!("lock"))?
@@ -738,7 +835,7 @@ mod tests {
         let client =
             Client::from_identity(&release, &init, TorProxy::new(port, Isolation::random())?, 1)?;
         assert!(matches!(
-            client.quote(2, 300, &random_token(), NOW).await,
+            client.quote(2, 300, &random_token()).await,
             Err(ClientError::Unavailable(_))
         ));
         Ok(())

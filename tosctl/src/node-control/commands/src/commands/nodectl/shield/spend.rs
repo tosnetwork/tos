@@ -1321,6 +1321,9 @@ fn how_far(journal: &[JournalRecord], intent_digest: &Word) -> &'static str {
                 JournalRecord::RelayUnknown { request_id: id, .. } if id == request_id => {
                     Some("relay submission failed, outcome unknown")
                 }
+                JournalRecord::RelayWithheld { request_id: id, .. } if id == request_id => {
+                    Some("prepared for the relayer but never sent; held until the deadline")
+                }
                 _ => None,
             })
             .unwrap_or(

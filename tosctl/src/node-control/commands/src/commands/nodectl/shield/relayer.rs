@@ -23,8 +23,8 @@
 use anyhow::Context;
 use br1_client::release::Release;
 use chain_block::MsgAddressInt;
-use common::app_config::{AppConfig, ProofVerifierConfig};
-use contracts::proven_getters::{ProvenGetterProvider, ReadPolicy};
+use common::app_config::AppConfig;
+use contracts::proven_getters::{ProvenAccountState, ProvenGetterProvider, ReadPolicy};
 use contracts::relayer_bond::{BondInit, BondState, RelayerBond};
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::path::Path;
@@ -184,30 +184,59 @@ impl BondReading {
     }
 }
 
-/// A Bond read: at the head's checkpoint, or at another one because the
-/// masterchain moved between the two reads, in which case both are re-read.
+/// A Bond read: at the head's checkpoint, or not, because the verifier's
+/// anchor moved between the two reads, in which case both are re-read.
 pub enum BondRead {
     AtCheckpoint(Box<BondReading>),
     OtherCheckpoint,
 }
 
-/// Reads the Bond through the proof verifier at the checkpoint `head` was
-/// read at. The account must carry the Bond code, decode as a Bond, and be
-/// the very Bond the profile describes; the pool and the Bond are then two
-/// facts about one authenticated block, not two blocks.
-pub async fn read_bond(
-    verifier: &ProofVerifierConfig,
+/// Where authenticated account states come from. The proof verifier is the
+/// command's source; a test's records what it is asked for.
+#[allow(async_fn_in_trait)]
+pub trait BondSource {
+    async fn read(
+        &self,
+        address: &MsgAddressInt,
+        policy: &ReadPolicy,
+    ) -> anyhow::Result<ProvenAccountState>;
+}
+
+impl BondSource for ProvenGetterProvider {
+    async fn read(
+        &self,
+        address: &MsgAddressInt,
+        policy: &ReadPolicy,
+    ) -> anyhow::Result<ProvenAccountState> {
+        self.read_account(address, policy).await
+    }
+}
+
+/// The policy the Bond is read under: the very masterchain block the pool
+/// head was authenticated at, named explicitly. The head itself was a live
+/// read, so its freshness is already established; asking for the newest
+/// block again would race a moving chain and could fail every attempt.
+pub fn bond_policy(head: &Head) -> anyhow::Result<ReadPolicy> {
+    head.checkpoint
+        .clone()
+        .map(ReadPolicy::Historical)
+        .context("the head carries no authenticated masterchain checkpoint")
+}
+
+/// Reads the Bond at the checkpoint `head` was read at. The account must
+/// carry the Bond code, decode as a Bond, and be the very Bond the profile
+/// describes; the pool and the Bond are then two facts about one
+/// authenticated block, not two blocks.
+pub async fn read_bond<S: BondSource>(
+    source: &S,
     head: &Head,
     profile: &RelayerProfile,
     init: &BondInit,
 ) -> anyhow::Result<BondRead> {
     let proven_head = head.proven().context("the head was not read through the proof verifier")?;
+    let policy = bond_policy(head)?;
     let address = profile.bond_address()?;
-    let provider = ProvenGetterProvider::new(verifier)?;
-    let proven = provider
-        .read_account(&address, &ReadPolicy::Live)
-        .await
-        .context("authenticated Bond read")?;
+    let proven = source.read(&address, &policy).await.context("authenticated Bond read")?;
     if proven_head.require_same_checkpoint(&proven).is_err() {
         return Ok(BondRead::OtherCheckpoint);
     }
@@ -326,7 +355,7 @@ fn is_port(text: &str) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::super::profile::PROFILE_SCHEMA;
     use super::super::store::ChainIdentity;
     use super::*;
@@ -339,7 +368,7 @@ mod tests {
 
     /// A Bond and the release that pins it, on the local network, naming a
     /// pool and a genesis of the test's choosing.
-    fn fixture() -> (RelayerProfile, BondInit) {
+    pub(crate) fn fixture() -> (RelayerProfile, BondInit) {
         let (public, _) = ml_dsa_44::KG::keygen_from_seed(&[37; 32]);
         let init = BondInit {
             global_id: 3,
@@ -386,6 +415,21 @@ mod tests {
             pool_address: format!("0:{}", "77".repeat(32)),
             pool_code_hash: "88".repeat(32),
         }
+    }
+
+    /// The Bond is read at the pool head's own authenticated block, never at
+    /// "the newest": two live reads of a moving chain need never agree.
+    #[test]
+    fn the_bond_is_read_at_the_pool_heads_checkpoint_and_never_live() {
+        let mut head = matching_head();
+        assert!(bond_policy(&head).is_err(), "a head without a checkpoint names no block");
+        let checkpoint = contracts::MasterchainCheckpoint {
+            seqno: 1234,
+            root_hash: "aa".repeat(32),
+            file_hash: "bb".repeat(32),
+        };
+        head.checkpoint = Some(checkpoint.clone());
+        assert_eq!(bond_policy(&head).expect("a policy"), ReadPolicy::Historical(checkpoint));
     }
 
     fn matching_head() -> Head {
