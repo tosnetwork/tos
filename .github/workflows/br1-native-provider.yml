@@ -42,3 +42,5 @@ jobs:
           cargo fmt --manifest-path tools/bonded-relayer/provider/Cargo.toml --check
           cargo test --manifest-path tools/bonded-relayer/provider/Cargo.toml --release --locked -j2
           cargo clippy --manifest-path tools/bonded-relayer/provider/Cargo.toml --release --locked --all-targets --no-deps -j2 -- -D warnings
+          cargo test --manifest-path tools/bonded-relayer/provider/Cargo.toml --release --locked --features public-testnet-pilot -j2
+          cargo clippy --manifest-path tools/bonded-relayer/provider/Cargo.toml --release --locked --features public-testnet-pilot --all-targets --no-deps -j2 -- -D warnings

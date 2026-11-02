@@ -5,6 +5,14 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::Path;
 
+pub fn validate_global_id(global_id: i32) -> Result<()> {
+    ensure!(
+        global_id == 3 || (cfg!(feature = "public-testnet-pilot") && global_id == 2),
+        "network requires an explicitly built public-testnet pilot provider"
+    );
+    Ok(())
+}
+
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Release {
@@ -21,10 +29,7 @@ pub struct Release {
 }
 impl Release {
     pub fn validate(&self) -> Result<()> {
-        ensure!(
-            self.global_id == 3,
-            "provider is restricted to isolated local development networks"
-        );
+        validate_global_id(self.global_id)?;
         for s in [
             &self.genesis_root,
             &self.genesis_file,
@@ -89,5 +94,18 @@ impl Config {
         );
         config.proof_verifier.validate()?;
         Ok(config)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn public_testnet_requires_build_opt_in_and_other_networks_always_refuse() {
+        assert!(validate_global_id(3).is_ok());
+        assert_eq!(validate_global_id(2).is_ok(), cfg!(feature = "public-testnet-pilot"));
+        for global_id in [i32::MIN, -1, 0, 1, 4, 16, i32::MAX] {
+            assert!(validate_global_id(global_id).is_err());
+        }
     }
 }
