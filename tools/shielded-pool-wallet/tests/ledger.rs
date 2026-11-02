@@ -277,6 +277,22 @@ fn a_bounce_at_or_below_the_charge_mints_nothing_but_spends_the_reservation() {
     assert!(ledger.pending_recoveries()[0].consumed);
 }
 
+/// The boundary of section 15.4: one nanoTOS above the charge is minted as one.
+#[test]
+fn a_bounce_one_above_the_charge_mints_one() {
+    let wallet = instance();
+    let mut ledger = Ledger::genesis();
+    ledger.apply(&deposit(&wallet, 2 * TOS, 0), CHARGE).expect("deposit");
+    let w = withdrawal(&wallet, [21, 22], 1);
+    ledger.apply(&w.event, CHARGE).expect("withdrawal");
+    let before = ledger.checkpoint();
+    ledger.apply(&bounce(&w.payout, CHARGE + 1), CHARGE).expect("a bounce just above the charge");
+    let after = ledger.checkpoint();
+    assert_eq!(after.commitment_next_index, before.commitment_next_index + 1);
+    assert_eq!(after.native_liability, before.native_liability + 1);
+    assert_eq!(ledger.outputs().last().expect("minted").observed.chain.recovered, Some(1));
+}
+
 #[test]
 fn a_bounce_that_is_not_one_of_the_pools_payouts_is_refused() {
     let wallet = instance();

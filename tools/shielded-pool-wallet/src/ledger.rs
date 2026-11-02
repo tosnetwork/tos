@@ -29,6 +29,9 @@
 //! A replay that ends anywhere other than the chain's state is refused by the
 //! caller; [`Ledger::checkpoint`] is what it compares.
 
+// Every amount in this module is money: no raw arithmetic, checked or saturating only.
+#![deny(clippy::arithmetic_side_effects)]
+
 use std::collections::BTreeSet;
 
 use shielded_pool_circuit::field::Fr;
@@ -430,7 +433,9 @@ impl Ledger {
         if value <= charge {
             return Ok(());
         }
-        let amount = value - charge;
+        let amount = value
+            .checked_sub(charge)
+            .ok_or_else(|| Error::Encoding("a recovery below its charge".into()))?;
         let data_hash = wire::output_data_hash(&pending.payload);
         let note_body =
             notes::note_body_commitment(pending.owner_commitment, Fr::from(amount), data_hash);

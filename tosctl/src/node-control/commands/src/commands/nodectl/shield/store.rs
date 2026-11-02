@@ -139,6 +139,79 @@ pub struct Pointer {
 
 pub const POINTER_SCHEMA: &str = "tosctl-shield-pointer-v1";
 
+/// Opens, or creates, a private lock file and takes it exclusively without
+/// waiting. The lock is held for as long as the file stays open.
+fn take_lock(path: &Path, what: &str) -> anyhow::Result<File> {
+    let lock = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(path)
+        .with_context(|| format!("open the {what} lock"))?;
+    check_private_file(&lock, "lock")?;
+    // SAFETY: flock on a descriptor this process owns and keeps open.
+    let taken = unsafe {
+        libc::flock(std::os::unix::io::AsRawFd::as_raw_fd(&lock), libc::LOCK_EX | libc::LOCK_NB)
+    };
+    anyhow::ensure!(taken == 0, "the {what} lock is held by another shield command");
+    Ok(lock)
+}
+
+/// The lock an initialisation holds on an instance name, so that two
+/// initialisations of the same name -- which may be on different pools and so
+/// hold different instance locks -- cannot both publish a pointer under it.
+pub struct NameLock {
+    _lock: File,
+}
+
+impl NameLock {
+    pub fn take(root: &Path, name: &str) -> anyhow::Result<Self> {
+        let pointer = pointer_path(root, name)?;
+        let prepared = secrets_vault::private_file::prepare_parent(&pointer)?;
+        let lock = take_lock(&prepared.join(format!("{name}.lock")), "name")
+            .with_context(|| format!("another initialisation of {name:?} may be running"))?;
+        Ok(Self { _lock: lock })
+    }
+}
+
+/// The name of another pointer in `root` that already names `directory`, if
+/// any. A pointer that does not load is an error: it may be one.
+pub fn other_pointer_naming(
+    root: &Path,
+    directory: &str,
+    except: &str,
+) -> anyhow::Result<Option<String>> {
+    let entries = match std::fs::read_dir(root) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error).context("read the shield root"),
+    };
+    let mut names = Vec::new();
+    for entry in entries {
+        let entry = entry.context("read the shield root")?;
+        let file_name = entry.file_name();
+        let Some(name) = file_name.to_str().and_then(|n| n.strip_suffix(".json")) else {
+            continue;
+        };
+        if name == except || pointer_path(root, name).is_err() {
+            continue;
+        }
+        names.push(name.to_owned());
+    }
+    names.sort();
+    for name in names {
+        let pointer = Pointer::load(&pointer_path(root, &name)?)
+            .with_context(|| format!("the pointer {name:?} does not load"))?;
+        if pointer.directory == directory {
+            return Ok(Some(name));
+        }
+    }
+    Ok(None)
+}
+
 /// Where a tosctl configuration keeps its shielded instances.
 pub fn shield_root(config_path: &Path) -> PathBuf {
     let parent =
@@ -201,25 +274,9 @@ impl Store {
     pub fn open(root: &Path, keys: &Keys, binding: Binding) -> anyhow::Result<Self> {
         let dir = root.join(keys.directory_name());
         let prepared = secrets_vault::private_file::prepare_parent(&dir.join("state"))?;
-        let lock = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .mode(0o600)
-            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
-            .open(prepared.join("lock"))
-            .context("open the instance lock")?;
-        check_private_file(&lock, "lock")?;
-        // SAFETY: flock on a descriptor this process owns and keeps open.
-        let taken = unsafe {
-            libc::flock(std::os::unix::io::AsRawFd::as_raw_fd(&lock), libc::LOCK_EX | libc::LOCK_NB)
-        };
-        anyhow::ensure!(
-            taken == 0,
-            "another shield command is running on this instance ({})",
-            prepared.display()
-        );
+        let lock = take_lock(&prepared.join("lock"), "instance").with_context(|| {
+            format!("another shield command may be running on {}", prepared.display())
+        })?;
         let cipher = XChaCha20Poly1305::new_from_slice(&keys.key[..])
             .map_err(|_| anyhow::anyhow!("a state key of the wrong size"))?;
         Ok(Self { dir: prepared, binding, cipher, limit: MAX_RECORD_BYTES, _lock: lock })
@@ -241,10 +298,6 @@ impl Store {
 
     fn journal_path(&self) -> PathBuf {
         self.dir.join("journal")
-    }
-
-    pub fn has_state(&self) -> bool {
-        self.state_path().exists()
     }
 
     fn seal(
@@ -864,6 +917,41 @@ mod tests {
         store.append_journal(1, &record).expect("the second record fits");
         assert!(store.append_journal(2, &record).is_err(), "the third would cross the limit");
         assert_eq!(store.read_journal().expect("still readable").len(), 2);
+    }
+
+    #[test]
+    fn another_pointer_naming_the_same_directory_is_found_and_garbage_fails_closed() {
+        let root = private_root();
+        assert_eq!(other_pointer_naming(root.path(), "dir-a", "main").expect("empty"), None);
+        let pointer = |directory: &str| Pointer {
+            schema: POINTER_SCHEMA.to_owned(),
+            profile: state(&binding()).profile,
+            binding: binding(),
+            chain: chain(),
+            directory: directory.to_owned(),
+        };
+        pointer("dir-a").save(&pointer_path(root.path(), "main").expect("path")).expect("save");
+        pointer("dir-b").save(&pointer_path(root.path(), "other").expect("path")).expect("save");
+        // Its own name is not another instance; another name on its directory is.
+        assert_eq!(other_pointer_naming(root.path(), "dir-a", "main").expect("scan"), None);
+        assert_eq!(
+            other_pointer_naming(root.path(), "dir-a", "alias").expect("scan"),
+            Some("main".to_owned())
+        );
+        assert_eq!(other_pointer_naming(root.path(), "dir-c", "main").expect("scan"), None);
+        // A pointer that does not load stops the scan rather than being skipped.
+        std::fs::write(root.path().join("broken.json"), b"{").expect("write");
+        assert!(other_pointer_naming(root.path(), "dir-c", "main").is_err());
+    }
+
+    #[test]
+    fn the_name_lock_is_exclusive() {
+        let root = private_root();
+        let first = NameLock::take(root.path(), "main").expect("take");
+        assert!(NameLock::take(root.path(), "main").is_err(), "a second holder");
+        NameLock::take(root.path(), "other").expect("another name");
+        drop(first);
+        NameLock::take(root.path(), "main").expect("after release");
     }
 
     #[test]

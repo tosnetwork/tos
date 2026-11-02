@@ -52,18 +52,18 @@ fn slice_of(cell: &Cell) -> anyhow::Result<SliceData> {
         cell.cell_type() == CellType::Ordinary && cell.level() == 0,
         "ordinary level-zero cell required"
     );
-    Ok(SliceData::load_cell(cell.clone())?)
+    SliceData::load_cell(cell.clone())
 }
 
 fn bits(slice: &mut SliceData, count: usize) -> anyhow::Result<Vec<u8>> {
     anyhow::ensure!(slice.remaining_bits() >= count, "a field needs {count} bits");
-    Ok(slice.get_next_bits(count)?)
+    slice.get_next_bits(count)
 }
 
 fn uint(slice: &mut SliceData, count: usize) -> anyhow::Result<u64> {
     anyhow::ensure!(count <= 64, "an integer field of {count} bits");
     anyhow::ensure!(slice.remaining_bits() >= count, "a field needs {count} bits");
-    Ok(slice.get_next_int(count)?)
+    slice.get_next_int(count)
 }
 
 fn word(slice: &mut SliceData) -> anyhow::Result<[u8; 32]> {
@@ -89,7 +89,7 @@ fn coins(slice: &mut SliceData) -> anyhow::Result<u128> {
 
 fn reference(slice: &mut SliceData) -> anyhow::Result<Cell> {
     anyhow::ensure!(slice.remaining_references() >= 1, "a reference is missing");
-    Ok(slice.checked_drain_reference()?)
+    slice.checked_drain_reference()
 }
 
 fn finished(slice: &SliceData, what: &str) -> anyhow::Result<()> {
@@ -184,7 +184,7 @@ impl DepositBody {
         store_coins(&mut builder, self.amount)?;
         builder.append_raw(&self.owner_commitment, 256)?;
         builder.checked_append_reference(byte_chain(&self.output_data)?)?;
-        Ok(builder.into_cell()?)
+        builder.into_cell()
     }
 
     /// Reads the body after the operation code has been consumed.

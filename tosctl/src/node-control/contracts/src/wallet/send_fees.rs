@@ -99,6 +99,9 @@ pub struct AccountStorage {
     pub last_paid: u32,
     /// Storage debt already recorded on the account, charged with the next fees.
     pub due_payment: u128,
+    /// Whether the account lives on the masterchain, which has its own storage
+    /// tariff; every other workchain pays the base one.
+    pub masterchain: bool,
 }
 
 impl AccountStorage {
@@ -106,16 +109,23 @@ impl AccountStorage {
     pub fn from_account(account: &Account) -> anyhow::Result<Self> {
         let info =
             account.storage_info().ok_or_else(|| anyhow::anyhow!("the account does not exist"))?;
+        let address =
+            account.get_addr().ok_or_else(|| anyhow::anyhow!("the account has no address"))?;
         Ok(Self {
             cells: info.used().cells(),
             bits: info.used().bits(),
             last_paid: info.last_paid(),
             due_payment: info.due_payment().map_or(0, |due| due.as_u128()),
+            masterchain: address.workchain_id() == -1,
         })
     }
 
-    /// The storage metadata a node served with an account (`storage_stat`).
-    pub fn from_rpc(stat: &chain_rpc_client::v2::data_models::StorageStat) -> anyhow::Result<Self> {
+    /// The storage metadata a node served with an account (`storage_stat`), for
+    /// an account on the masterchain or not.
+    pub fn from_rpc(
+        stat: &chain_rpc_client::v2::data_models::StorageStat,
+        masterchain: bool,
+    ) -> anyhow::Result<Self> {
         let due_payment = match &stat.due_payment {
             Some(text) => text.parse::<u128>().map_err(|e| {
                 anyhow::anyhow!("storage_stat.due_payment '{text}' is not an amount: {e}")
@@ -127,12 +137,13 @@ impl AccountStorage {
             bits: stat.used_bits,
             last_paid: stat.last_paid,
             due_payment,
+            masterchain,
         })
     }
 }
 
-/// What the storage phase charges at `now`: the recorded debt plus the masterchain
-/// fees accrued since `last_paid`. Mirrors the node's
+/// What the storage phase charges at `now`: the recorded debt plus the fees accrued
+/// since `last_paid` at the tariff of the chain the account lives on. Mirrors the node's
 /// `StoragePrices::compute_storage_fees`: each price period is clipped to `now`, the
 /// fixed-point (2^-16 nanoTOS) total is accumulated across periods, and it is
 /// rounded up once at the end.
@@ -178,11 +189,16 @@ fn storage_accrued(
         let valid_until =
             prices.get(index.saturating_add(1)).map_or(now, |next| now.min(next.utime_since));
         if upto < valid_until {
+            let (bit_price, cell_price) = if storage.masterchain {
+                (period.mc_bit_price_ps, period.mc_cell_price_ps)
+            } else {
+                (period.bit_price_ps, period.cell_price_ps)
+            };
             let per_second = u128::from(storage.bits)
-                .checked_mul(u128::from(period.mc_bit_price_ps))
+                .checked_mul(u128::from(bit_price))
                 .and_then(|bit_part| {
                     u128::from(storage.cells)
-                        .checked_mul(u128::from(period.mc_cell_price_ps))
+                        .checked_mul(u128::from(cell_price))
                         .and_then(|cell_part| bit_part.checked_add(cell_part))
                 })
                 .ok_or_else(overflow)?;
@@ -308,7 +324,8 @@ mod tests {
             cell_price: 65_536,
             ..Default::default()
         };
-        let storage = AccountStorage { cells: 3, bits: 100, last_paid: 1, due_payment: 0 };
+        let storage =
+            AccountStorage { cells: 3, bits: 100, last_paid: 1, due_payment: 0, masterchain: true };
         let reserve = wallet_send_reserve(&SendFeeInputs {
             gas: &gas,
             forward: &forward,
@@ -340,7 +357,13 @@ mod tests {
                 ..Default::default()
             },
         ];
-        let storage = AccountStorage { cells: 3, bits: 100, last_paid: 900, due_payment: 0 };
+        let storage = AccountStorage {
+            cells: 3,
+            bits: 100,
+            last_paid: 900,
+            due_payment: 0,
+            masterchain: true,
+        };
         // 100 s at (100 * 1 + 3 * 500) = 1600 and 500 s at (100 * 2 + 3 * 1000) = 3200,
         // summed in 2^-16 nanoTOS and rounded up once: ceil(1_760_000 / 65536) = 27.
         // Rounding each period separately would give 3 + 25 = 28.
@@ -353,6 +376,31 @@ mod tests {
         assert_eq!(storage_due(&prices, &indebted, 900).unwrap(), 7);
     }
 
+    /// A base-workchain account pays the base tariff, not the masterchain one,
+    /// under deliberately different prices for the two.
+    #[test]
+    fn storage_due_follows_the_accounts_chain() {
+        let prices = [StoragePrices {
+            utime_since: 0,
+            bit_price_ps: 1,
+            cell_price_ps: 100,
+            mc_bit_price_ps: 1_000,
+            mc_cell_price_ps: 100_000,
+        }];
+        let base = AccountStorage {
+            cells: 2,
+            bits: 10,
+            last_paid: 100,
+            due_payment: 0,
+            masterchain: false,
+        };
+        let master = AccountStorage { masterchain: true, ..base };
+        // 100 s at (10 * 1 + 2 * 100) = 210 -> ceil(21_000 / 65536) = 1.
+        assert_eq!(storage_due(&prices, &base, 200).unwrap(), 1);
+        // 100 s at (10 * 1000 + 2 * 100_000) = 210_000 -> ceil(21_000_000 / 65536) = 321.
+        assert_eq!(storage_due(&prices, &master, 200).unwrap(), 321);
+    }
+
     /// The review's control: a price period that starts after `now` must not be
     /// charged up to its start. 1 cell at 1 nanoTOS per cell-second (65536 in 2^-16
     /// units), last paid at 1, now 100, debt 7, the next period from 1000: 99 s
@@ -363,7 +411,8 @@ mod tests {
             StoragePrices { utime_since: 0, mc_cell_price_ps: 65_536, ..Default::default() },
             StoragePrices { utime_since: 1_000, mc_cell_price_ps: 65_536, ..Default::default() },
         ];
-        let storage = AccountStorage { cells: 1, bits: 0, last_paid: 1, due_payment: 7 };
+        let storage =
+            AccountStorage { cells: 1, bits: 0, last_paid: 1, due_payment: 7, masterchain: true };
         assert_eq!(storage_due(&prices, &storage, 100).unwrap(), 106);
     }
 
@@ -391,7 +440,13 @@ mod tests {
             period(200, 2_000, 20),
             period(300, 3_000, 30),
         ];
-        let storage = AccountStorage { cells: 2, bits: 10, last_paid: 150, due_payment: 0 };
+        let storage = AccountStorage {
+            cells: 2,
+            bits: 10,
+            last_paid: 150,
+            due_payment: 0,
+            masterchain: true,
+        };
         assert_eq!(storage_due(&prices, &storage, 350).unwrap(), 13);
         // Ending inside period 2 clips it: 105_000 + 4200 * 50 = 315_000 -> ceil 4.81 = 5.
         assert_eq!(storage_due(&prices, &storage, 250).unwrap(), 5);

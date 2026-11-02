@@ -32,8 +32,9 @@ use chain_rpc_client::v2::data_models::AccountState;
 use colored::Colorize;
 use common::app_config::AppConfig;
 use common::task_cancellation::CancellationCtx;
-use contracts::Wallet;
 use contracts::shielded_pool::{DepositBody, OUTPUT_DATA_BYTES};
+use contracts::wallet::send_fees;
+use contracts::{DefaultChainProvider, Wallet};
 use rand::RngCore;
 use secrets_vault::crypto::factory::{AutoCryptoFactory, CryptoFactory};
 use secrets_vault::types::secret_id::SecretId;
@@ -55,6 +56,7 @@ use super::utils::{
     SEND_TIMEOUT, get_wallet_config, load_config_vault_rpc_client, make_wallet,
     wait_for_seqno_change, wallet_info,
 };
+use super::vote_cmd::{pinned_wallet_reserve, sender_can_pay};
 use chain::Head;
 use profile::{Network, ObservedPool, Profile};
 use store::{
@@ -69,7 +71,6 @@ const NANOTOS_PER_TOS: u128 = 1_000_000_000;
 /// Diagnostics kept in the state, newest last.
 const MAX_DIAGNOSTICS: usize = 256;
 /// What a deposit leaves in the paying wallet for its own fees.
-const PAYER_MARGIN_NANOTOS: u128 = 50_000_000;
 
 #[derive(clap::Args, Clone)]
 #[command(about = "Shielded pool: private balances and transfers (experimental)")]
@@ -184,6 +185,9 @@ impl InitCmd {
         let pool = profile.address()?;
         let root = store::shield_root(config_path);
         let pointer_path = store::pointer_path(&root, &self.name)?;
+        // Held until the pointer is written: two initialisations of one name
+        // may be on different pools and so hold different instance locks.
+        let _name_lock = store::NameLock::take(&root, &self.name)?;
         anyhow::ensure!(
             !pointer_path.exists(),
             "an instance named {:?} already exists ({})",
@@ -210,41 +214,47 @@ impl InitCmd {
         let keys = Keys::derive(&master, &fr_be32(domain));
         let binding = Binding { global_id: profile.global_id, pool_address: pool.to_string() };
         let store = Store::open(&root, &keys, binding.clone())?;
-        anyhow::ensure!(
-            !store.has_state(),
-            "this mnemonic already has an instance on this pool ({}); one instance per mnemonic \
-             and pool, whatever it is named",
-            store.directory().display()
-        );
+        if let Some(other) = store::other_pointer_naming(&root, &keys.directory_name(), &self.name)?
+        {
+            anyhow::bail!(
+                "this mnemonic already has an instance on this pool, named {other:?}; one \
+                 instance per mnemonic and pool, whatever it is named"
+            );
+        }
 
-        store_pool_master(&vault, &self.name, &master).await?;
+        // Three durable writes, each idempotent for the same mnemonic, name and
+        // profile, so an initialisation that stopped after any of them resumes
+        // on the next run: the Vault secret, the sealed state, the pointer. The
+        // pointer is last; its absence is what makes a retry a resume.
+        let secret_resumed = ensure_pool_master(&vault, &self.name, &master).await?;
         drop(master);
-
-        let state = PersistedState {
-            version: STATE_FORMAT_VERSION,
-            binding: binding.clone(),
-            chain: head.chain.clone(),
-            instance_id: *keys.instance_id(),
-            profile: profile.clone(),
-            pool_config: pool_config_of(&head),
-            cursor: None,
-            ledger: persist_ledger(&Ledger::genesis()),
-            notes: Vec::new(),
-            diagnostics: Vec::new(),
-            scan_next_index: 0,
-            reused_indices: Vec::new(),
-            issued_high_water: 0,
-            journal_records: 0,
-        };
-        store.save_state(&state)?;
+        let (state, state_resumed) = resume_or_create_state(
+            &store,
+            &keys,
+            &binding,
+            head.chain.clone(),
+            pool_config_of(&head),
+            &profile,
+        )?;
+        let resumed = secret_resumed || state_resumed;
+        // The pointer is a cache of the sealed state, so it names the chain the
+        // state was built against, which on a resume may not be this run's head.
         Pointer {
             schema: store::POINTER_SCHEMA.to_owned(),
             profile,
             binding,
-            chain: head.chain,
+            chain: state.chain.clone(),
             directory: keys.directory_name(),
         }
         .save(&pointer_path)?;
+        if resumed {
+            eprintln!(
+                "{} resumed an initialisation of {:?} that had stopped before its pointer was \
+                 written",
+                "note:".bold(),
+                self.name
+            );
+        }
         println!(
             "{} shielded instance {:?} created for pool {} on {} (global id {}); state in {}",
             "OK".green().bold(),
@@ -281,6 +291,84 @@ fn read_pool_master(file: Option<&Path>, fd: Option<i32>) -> anyhow::Result<Zero
 
 fn secret_id(name: &str) -> SecretId {
     SecretId::from(format!("shield-{name}"))
+}
+
+/// Equality of two secrets without an early exit on the first differing byte.
+fn same_secret(a: &[u8], b: &[u8]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
+
+/// Stores the pool master as `shield-<name>` unless the Vault already holds it
+/// (an earlier run stopped after this write); returns whether it did. A secret
+/// of that name holding something else refuses, and a Vault that cannot be
+/// read is never taken as permission to create.
+async fn ensure_pool_master(
+    vault: &SecretVault,
+    name: &str,
+    master: &[u8; 64],
+) -> anyhow::Result<bool> {
+    if vault.exists(&secret_id(name)).await? {
+        let existing = load_pool_master(vault, name).await?;
+        anyhow::ensure!(
+            same_secret(&existing[..], &master[..]),
+            "shield-{name} holds another mnemonic's pool master; choose another name"
+        );
+        return Ok(true);
+    }
+    store_pool_master(vault, name, master).await?;
+    Ok(false)
+}
+
+/// The instance's sealed state: the one an earlier run left (it must have been
+/// initialised for the same profile document), or a fresh genesis state written
+/// now; returns whether it was resumed.
+fn resume_or_create_state(
+    store: &Store,
+    keys: &Keys,
+    binding: &Binding,
+    chain: ChainIdentity,
+    pool_config: PersistedPoolConfig,
+    profile: &Profile,
+) -> anyhow::Result<(PersistedState, bool)> {
+    if let Some(existing) = store.load_state()? {
+        anyhow::ensure!(
+            existing.profile == *profile,
+            "the state this mnemonic already holds on this pool was initialised for another \
+             profile document"
+        );
+        return Ok((existing, true));
+    }
+    let state = PersistedState {
+        version: STATE_FORMAT_VERSION,
+        binding: binding.clone(),
+        chain,
+        instance_id: *keys.instance_id(),
+        profile: profile.clone(),
+        pool_config,
+        cursor: None,
+        ledger: persist_ledger(&Ledger::genesis()),
+        notes: Vec::new(),
+        diagnostics: Vec::new(),
+        scan_next_index: 0,
+        reused_indices: Vec::new(),
+        issued_high_water: 0,
+        journal_records: 0,
+    };
+    store.save_state(&state)?;
+    Ok((state, false))
+}
+
+/// A deposit body of exactly the real body's shape, for bounding the paying
+/// wallet's fees before the index the real one depends on is reserved: the
+/// same amount, a zero owner commitment and a zero payload of the fixed size.
+fn fee_placeholder_body(amount: u128) -> anyhow::Result<chain_block::Cell> {
+    DepositBody {
+        query_id: 0,
+        amount,
+        owner_commitment: [0; 32],
+        output_data: vec![0; OUTPUT_DATA_BYTES],
+    }
+    .build()
 }
 
 async fn store_pool_master(
@@ -573,7 +661,11 @@ impl SyncCmd {
         });
         state.ledger = persist_ledger(&replay.ledger);
         state.pool_config = pool_config_of(&head);
-        persist_recovered(state, &recovered);
+        // A rebuild starts the diagnostics afresh; a continuation keeps the
+        // retained ones and appends what this sync observed.
+        let previous =
+            if base.is_some() { std::mem::take(&mut state.diagnostics) } else { Vec::new() };
+        persist_recovered(state, &recovered, previous);
         if relation == HeadRelation::Migrate {
             state.chain = head.chain.clone();
         }
@@ -750,19 +842,22 @@ impl DepositCmd {
             "wallet {:?} is not active",
             self.from
         );
-        anyhow::ensure!(
-            u128::from(payer_info.balance)
-                >= value.checked_add(PAYER_MARGIN_NANOTOS).context("overflow")?,
-            "wallet {:?} holds {} TOS; the deposit needs {} TOS plus fees",
-            self.from,
-            tos(u128::from(payer_info.balance)),
-            tos(value)
-        );
+        // The wallet's own fees, bounded from its storage metadata and the live
+        // prices of its chain over a body of the real body's size (the real one
+        // depends on the index, which is reserved only after the confirmation).
+        // With send mode 3 a wallet short of its fees sends nothing and still
+        // advances its seqno, so this is checked before signing, and again over
+        // the real body once the prompt has been answered.
+        let chain = DefaultChainProvider::new(rpc.clone());
+        let placeholder = fee_placeholder_body(amount)?;
+        let (reserve, balance) = pinned_wallet_reserve(&chain, &payer, &placeholder).await?;
+        sender_can_pay(&self.from, balance, value_u64, reserve)?;
         let wallet = make_wallet(rpc.clone(), wallet_cfg, payer_secret, &self.from).await?;
 
         println!(
             "\n{}\n  From:        {} ({})\n  Pool:        {}\n  Note amount: {} TOS\n  Pool fee:    {} TOS \
-             (deposit gas at current prices)\n  Message:     {} TOS\n",
+             (deposit gas at current prices)\n  Message:     {} TOS\n  Wallet fees: {} TOS (upper \
+             bound, paid by the wallet on top)\n",
             "Deposit summary:".cyan().bold(),
             self.from,
             payer,
@@ -770,6 +865,7 @@ impl DepositCmd {
             tos(amount),
             tos(fee),
             tos(value),
+            tos(reserve),
         );
         println!(
             "{} a deposit is a public transaction: the paying wallet, the amount and the time are \
@@ -819,6 +915,13 @@ impl DepositCmd {
         }
         .build()?;
         let body_hash = *body.repr_hash().as_array();
+        anyhow::ensure!(
+            send_fees::tree_size(&[&body])? == send_fees::tree_size(&[&placeholder])?,
+            "the deposit body is not the size its fee bound was taken over"
+        );
+        // The prompt may have outlived the bound's storage horizon.
+        let (reserve, balance) = pinned_wallet_reserve(&chain, &payer, &body).await?;
+        sender_can_pay(&self.from, balance, value_u64, reserve)?;
 
         // Build once, journal the exact bytes, send those bytes.
         let message =
@@ -1169,7 +1272,25 @@ fn restore_ledger(persisted: &PersistedLedger) -> anyhow::Result<Ledger> {
     Ledger::restore(snapshot).map_err(|error| anyhow::anyhow!("restore the ledger: {error}"))
 }
 
-fn persist_recovered(state: &mut PersistedState, recovered: &Recovered) {
+/// The retained diagnostics after a sync: the previous ones, then the new ones,
+/// the newest `max` of them.
+fn retain_diagnostics(
+    mut previous: Vec<PersistedDiagnostic>,
+    new: impl IntoIterator<Item = PersistedDiagnostic>,
+    max: usize,
+) -> Vec<PersistedDiagnostic> {
+    previous.extend(new);
+    if previous.len() > max {
+        previous.drain(..previous.len().saturating_sub(max));
+    }
+    previous
+}
+
+fn persist_recovered(
+    state: &mut PersistedState,
+    recovered: &Recovered,
+    previous: Vec<PersistedDiagnostic>,
+) {
     let leaves = recovered.leaves.iter().copied().chain(std::iter::repeat(None));
     state.notes = recovered
         .notes
@@ -1187,18 +1308,11 @@ fn persist_recovered(state: &mut PersistedState, recovered: &Recovered) {
             leaf,
         })
         .collect();
-    let mut diagnostics: Vec<PersistedDiagnostic> = recovered
-        .diagnostics
-        .iter()
-        .map(|diagnostic| PersistedDiagnostic {
-            slot: diagnostic.slot,
-            why: format!("{:?}", diagnostic.why),
-        })
-        .collect();
-    if diagnostics.len() > MAX_DIAGNOSTICS {
-        diagnostics.drain(..diagnostics.len() - MAX_DIAGNOSTICS);
-    }
-    state.diagnostics = diagnostics;
+    let observed = recovered.diagnostics.iter().map(|diagnostic| PersistedDiagnostic {
+        slot: diagnostic.slot,
+        why: format!("{:?}", diagnostic.why),
+    });
+    state.diagnostics = retain_diagnostics(previous, observed, MAX_DIAGNOSTICS);
     state.scan_next_index = recovered.next_note_key_index;
     state.reused_indices = recovered.reused.iter().copied().collect();
     state.issued_high_water = state.issued_high_water.max(recovered.next_note_key_index);
@@ -1420,6 +1534,151 @@ mod tests {
     }
 
     #[test]
+    fn the_fee_placeholder_has_the_real_bodys_size() {
+        let mut payload = vec![0u8; OUTPUT_DATA_BYTES];
+        rand::thread_rng().fill_bytes(&mut payload);
+        for amount in [1u128, NANOTOS_PER_TOS, 1_000_000 * NANOTOS_PER_TOS] {
+            let real = DepositBody {
+                query_id: unix_now(),
+                amount,
+                owner_commitment: fr_to_be(&Fr::from(0x5eed_u64)),
+                output_data: payload.clone(),
+            }
+            .build()
+            .expect("a real body");
+            let placeholder = fee_placeholder_body(amount).expect("a placeholder");
+            assert_eq!(
+                send_fees::tree_size(&[&real]).expect("size"),
+                send_fees::tree_size(&[&placeholder]).expect("size"),
+                "amount {amount}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_initialisation_resumes_its_state_and_refuses_another_profile() {
+        let root = test_root();
+        let keys = Keys::derive(&[7u8; 64], &[3u8; 32]);
+        let binding = Binding {
+            global_id: 3,
+            pool_address: "0:aa76950cf26cb74c1d1b1a977d17bd3c96c6c9f28cb259fca297cdc8d33429fe"
+                .into(),
+        };
+        let template = test_state(&binding, &keys, identity(chain::PROOF_ANCHOR, 1));
+        let store = Store::open(root.path(), &keys, binding.clone()).expect("open");
+        let (created, resumed) = resume_or_create_state(
+            &store,
+            &keys,
+            &binding,
+            identity(chain::PROOF_ANCHOR, 1),
+            template.pool_config.clone(),
+            &template.profile,
+        )
+        .expect("a fresh state");
+        assert!(!resumed);
+        assert_eq!(created.ledger, persist_ledger(&Ledger::genesis()));
+
+        // The run stopped before its pointer; the next one finds the state and
+        // keeps it, whatever the head it sees now.
+        let later = ChainIdentity {
+            source: chain::PROOF_ANCHOR.into(),
+            root_hash: [5; 32],
+            file_hash: [6; 32],
+        };
+        let (kept, resumed) = resume_or_create_state(
+            &store,
+            &keys,
+            &binding,
+            later,
+            template.pool_config.clone(),
+            &template.profile,
+        )
+        .expect("a resumed state");
+        assert!(resumed);
+        assert_eq!(kept, created);
+
+        let mut other = template.profile.clone();
+        other.pool_code_hash = "11".repeat(32);
+        let refused = resume_or_create_state(
+            &store,
+            &keys,
+            &binding,
+            identity(chain::PROOF_ANCHOR, 1),
+            template.pool_config.clone(),
+            &other,
+        )
+        .expect_err("another profile");
+        assert!(refused.to_string().contains("another profile document"), "{refused}");
+    }
+
+    async fn test_vault(dir: &std::path::Path) -> SecretVault {
+        use secrets_vault::crypto::{key_material::KeyMaterial, master_key::MasterKey};
+        use secrets_vault::events::null_handler::NullEventHandler;
+        use secrets_vault::memory::protected_memory::ProtectedMemory;
+        use secrets_vault::storage::file_json::FileJsonStorage;
+        let key = ProtectedMemory::from_slice(&[4u8; 32]).await.expect("key");
+        let key = MasterKey::from_key_material(
+            KeyMaterial::new_symmetric_key(key).await.expect("material"),
+        )
+        .await
+        .expect("master key");
+        let storage = FileJsonStorage::new(
+            key,
+            &dir.join("vault.json"),
+            Box::new(AutoCryptoFactory {}),
+            false,
+        )
+        .await
+        .expect("storage");
+        SecretVault::new(std::sync::Arc::new(storage), std::sync::Arc::new(NullEventHandler {}))
+    }
+
+    #[tokio::test]
+    async fn the_pool_master_is_stored_once_and_another_mnemonics_is_refused() {
+        let root = test_root();
+        let vault = test_vault(root.path()).await;
+        let master = [9u8; 64];
+        assert!(!ensure_pool_master(&vault, "main", &master).await.expect("stored"));
+        assert_eq!(&load_pool_master(&vault, "main").await.expect("read")[..], &master[..]);
+        // The run stopped after the Vault write; the next one finds its own master.
+        assert!(ensure_pool_master(&vault, "main", &master).await.expect("resumed"));
+        let other = [10u8; 64];
+        let refused = ensure_pool_master(&vault, "main", &other).await.expect_err("another");
+        assert!(refused.to_string().contains("another mnemonic"), "{refused}");
+        assert_eq!(&load_pool_master(&vault, "main").await.expect("unchanged")[..], &master[..]);
+        // Another name is another secret.
+        assert!(!ensure_pool_master(&vault, "second", &other).await.expect("stored"));
+    }
+
+    #[test]
+    fn secrets_compare_by_every_byte() {
+        assert!(same_secret(&[1, 2, 3], &[1, 2, 3]));
+        assert!(!same_secret(&[1, 2, 3], &[1, 2, 4]));
+        assert!(!same_secret(&[1, 2, 3], &[1, 2]));
+        assert!(same_secret(&[], &[]));
+    }
+
+    fn diagnostic(slot: u8) -> PersistedDiagnostic {
+        PersistedDiagnostic { slot, why: "test".into() }
+    }
+
+    #[test]
+    fn diagnostics_are_retained_across_syncs_and_capped_at_the_newest() {
+        let previous = vec![diagnostic(1), diagnostic(2)];
+        // A sync that observed nothing keeps the history.
+        assert_eq!(retain_diagnostics(previous.clone(), Vec::new(), 4), previous);
+        // One that observed something appends it.
+        let appended = retain_diagnostics(previous.clone(), vec![diagnostic(3)], 4);
+        assert_eq!(appended.iter().map(|d| d.slot).collect::<Vec<_>>(), vec![1, 2, 3]);
+        // The cap keeps the newest.
+        let capped = retain_diagnostics(previous, vec![diagnostic(3), diagnostic(4)], 3);
+        assert_eq!(capped.iter().map(|d| d.slot).collect::<Vec<_>>(), vec![2, 3, 4]);
+        // A rebuild passes no history.
+        let rebuilt = retain_diagnostics(Vec::new(), vec![diagnostic(9)], 3);
+        assert_eq!(rebuilt.iter().map(|d| d.slot).collect::<Vec<_>>(), vec![9]);
+    }
+
+    #[test]
     fn a_ledger_survives_persistence() {
         let mut ledger = Ledger::genesis();
         let instance = PoolInstance::from_pool_master(&[1u8; 64], Fr::from(7u64));
@@ -1481,7 +1740,7 @@ mod tests {
             issued_high_water: 2,
             journal_records: 0,
         };
-        persist_recovered(&mut state, &recovered);
+        persist_recovered(&mut state, &recovered, Vec::new());
         assert_eq!(state.notes.len(), 2);
         assert_eq!(state.notes[0].leaf, Some(8));
         assert_eq!(state.scan_next_index, 5);
