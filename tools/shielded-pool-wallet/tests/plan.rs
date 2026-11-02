@@ -15,7 +15,7 @@ use shielded_pool_wallet::error::Error;
 use shielded_pool_wallet::import::Imported;
 use shielded_pool_wallet::keys::PoolInstance;
 use shielded_pool_wallet::plan::{
-    plan, Candidate, Plan, PlannedInput, PlannedOutput, PoolTerms, RecipientKeys, Request,
+    plan, Candidate, Fee, Plan, PlannedInput, PlannedOutput, PoolTerms, RecipientKeys, Request,
     MAX_AMOUNT,
 };
 
@@ -65,8 +65,22 @@ impl Indices {
     }
 }
 
+/// A relayer's fee descriptor: another instance, another index.
+fn relayer() -> RecipientKeys {
+    let other = PoolInstance::new(&[0x33; 32], Fr::from(0xd0_0002u64));
+    RecipientKeys::of(&Descriptor::issue(&other, 9).expect("a descriptor"))
+}
+
 fn transfer(amount: u128) -> Request {
-    Request::Transfer { to: Box::new(recipient()), amount }
+    Request::Transfer { to: Box::new(recipient()), amount, fee: None }
+}
+
+fn relayed(amount: u128, fee: u128) -> Request {
+    Request::Transfer {
+        to: Box::new(recipient()),
+        amount,
+        fee: Some(Fee { to: Box::new(relayer()), amount: fee }),
+    }
 }
 
 fn withdraw(amount: u128) -> Request {
@@ -234,4 +248,77 @@ fn conservation_is_checked_on_the_plan_itself() {
     };
     assert!(plan.input_total().is_err(), "inputs overflow");
     assert!(plan.check_conservation().is_err());
+}
+
+#[test]
+fn a_relayer_fee_takes_slot_two_and_comes_out_of_the_notes() {
+    let (plan, taken) = planned(&[note(0, 2 * TOS), note(1, 5 * TOS)], &relayed(TOS, FEE));
+    assert_eq!(plan.inputs[0], PlannedInput::Note(note(0, 2 * TOS)), "covers amount plus fee");
+    assert_eq!(plan.inputs[1], PlannedInput::Phantom { note_key_index: 101 });
+    assert_eq!(
+        plan.outputs[0],
+        PlannedOutput::Recipient { to: Box::new(recipient()), amount: TOS }
+    );
+    assert_eq!(plan.outputs[1], PlannedOutput::Change { note_key_index: 100, amount: TOS - FEE });
+    assert_eq!(plan.outputs[2], PlannedOutput::Recipient { to: Box::new(relayer()), amount: FEE });
+    assert_eq!(plan.own_indices(), vec![100, 101], "the fee slot consumes no index of ours");
+    assert_eq!(taken, 2);
+    assert_eq!(plan.withdrawal_fee, 0, "the relayer's fee is a note, not the pool's fee");
+    assert!(!plan.is_withdrawal());
+    plan.check_conservation().expect("amount plus fee plus change equals the input");
+}
+
+#[test]
+fn the_fee_counts_towards_what_the_notes_must_cover() {
+    // Exactly the amount: without a fee one note does; with it, two must.
+    let (alone, _) = planned(&[note(0, TOS), note(1, 3 * TOS)], &transfer(TOS));
+    assert_eq!(alone.input_leaves(), vec![0]);
+    let (with_fee, taken) = planned(&[note(0, TOS), note(1, 3 * TOS)], &relayed(TOS, FEE));
+    assert_eq!(with_fee.input_leaves(), vec![1], "the smallest note that covers amount plus fee");
+    assert_eq!(
+        with_fee.outputs[1],
+        PlannedOutput::Change { note_key_index: 100, amount: 2 * TOS - FEE }
+    );
+    assert_eq!(taken, 2, "change and the phantom");
+    let (exact, taken) = planned(&[note(0, TOS + FEE)], &relayed(TOS, FEE));
+    assert_eq!(exact.outputs[1], PlannedOutput::Dummy { note_key_index: 100 }, "no change");
+    assert_eq!(exact.outputs[2], PlannedOutput::Recipient { to: Box::new(relayer()), amount: FEE });
+    assert_eq!(taken, 2);
+    refused(&[note(0, TOS)], &relayed(TOS, FEE), "consolidate");
+}
+
+#[test]
+fn a_zero_out_of_range_or_self_addressed_fee_is_refused_without_an_index() {
+    let notes = [note(0, 5 * TOS)];
+    refused(&notes, &relayed(TOS, 0), "relayer fee of zero");
+    refused(&notes, &relayed(TOS, MAX_AMOUNT + 1), "relayer fee out of range");
+    refused(&notes, &relayed(TOS, MAX_AMOUNT), "consolidate");
+    let same = Request::Transfer {
+        to: Box::new(recipient()),
+        amount: TOS,
+        fee: Some(Fee { to: Box::new(recipient()), amount: FEE }),
+    };
+    refused(&notes, &same, "fee descriptor is the recipient's");
+    // The recipient's instance at another index is a different descriptor.
+    let other = PoolInstance::new(&[0x22; 32], Fr::from(0xd0_0001u64));
+    let sibling = Request::Transfer {
+        to: Box::new(recipient()),
+        amount: TOS,
+        fee: Some(Fee {
+            to: Box::new(RecipientKeys::of(&Descriptor::issue(&other, 6).expect("a descriptor"))),
+            amount: FEE,
+        }),
+    };
+    let (plan, _) = planned(&notes, &sibling);
+    assert_ne!(plan.outputs[0], plan.outputs[2]);
+}
+
+#[test]
+fn a_fee_note_is_part_of_conservation() {
+    let (mut plan, _) = planned(&[note(0, 2 * TOS)], &relayed(TOS, FEE));
+    plan.check_conservation().expect("the planner's own plan conserves");
+    plan.outputs[2] = PlannedOutput::Recipient { to: Box::new(relayer()), amount: FEE + 1 };
+    assert!(plan.check_conservation().is_err(), "a fee from nowhere");
+    plan.outputs[2] = PlannedOutput::Dummy { note_key_index: 101 };
+    assert!(plan.check_conservation().is_err(), "a fee that vanished");
 }

@@ -165,7 +165,8 @@ fn a_transfer_is_satisfiable_signed_committed_and_found_by_both_sides() {
     assert_eq!(alice_notes.balance(), 7 * TOS);
 
     let to = Descriptor::issue(&bob, 3).expect("bob's descriptor");
-    let request = Request::Transfer { to: Box::new(RecipientKeys::of(&to)), amount: 3 * TOS / 2 };
+    let request =
+        Request::Transfer { to: Box::new(RecipientKeys::of(&to)), amount: 3 * TOS / 2, fee: None };
     let plan =
         plan(&terms(), &candidates(&alice_notes), &request, &mut indices_from(10)).expect("plan");
     let assembled = assembled_for(&alice, &ledger, &plan, 0x77);
@@ -233,7 +234,8 @@ fn a_two_input_transfer_without_change_is_satisfiable_and_spends_both() {
     scan_into(&mut ledger, &alice, &mut alice_notes);
 
     let to = Descriptor::issue(&bob, 0).expect("descriptor");
-    let request = Request::Transfer { to: Box::new(RecipientKeys::of(&to)), amount: 3 * TOS };
+    let request =
+        Request::Transfer { to: Box::new(RecipientKeys::of(&to)), amount: 3 * TOS, fee: None };
     let plan =
         plan(&terms(), &candidates(&alice_notes), &request, &mut indices_from(10)).expect("plan");
     assert_eq!(plan.input_leaves(), vec![0, 1]);
@@ -305,6 +307,7 @@ fn a_withdrawal_that_bounces_mints_a_recovery_note_the_wallet_can_spend() {
     let request = Request::Transfer {
         to: Box::new(RecipientKeys::of(&to)),
         amount: TOS - 3_000_000 - CHARGE,
+        fee: None,
     };
     let second = shielded_pool_wallet::plan::plan(
         &terms(),
@@ -334,7 +337,8 @@ fn assembly_refuses_what_the_contract_or_the_scan_would() {
     let mut alice_notes = Recovered::default();
     scan_into(&mut ledger, &alice, &mut alice_notes);
     let to = Descriptor::issue(&recipient(), 0).expect("descriptor");
-    let request = Request::Transfer { to: Box::new(RecipientKeys::of(&to)), amount: TOS };
+    let request =
+        Request::Transfer { to: Box::new(RecipientKeys::of(&to)), amount: TOS, fee: None };
     let plan =
         plan(&terms(), &candidates(&alice_notes), &request, &mut indices_from(10)).expect("plan");
 
@@ -402,7 +406,7 @@ fn two_small_notes_consolidate_into_one_a_fresh_own_descriptor_receives() {
     // 2.5 TOS exceeds either note alone.
     let amount = 5 * TOS / 2;
     let own = Descriptor::issue(&alice, 20).expect("a fresh descriptor of alice's own");
-    let request = Request::Transfer { to: Box::new(RecipientKeys::of(&own)), amount };
+    let request = Request::Transfer { to: Box::new(RecipientKeys::of(&own)), amount, fee: None };
     let consolidation =
         plan(&terms(), &candidates(&notes), &request, &mut indices_from(10)).expect("plan");
     assert_eq!(consolidation.input_leaves(), vec![0, 1]);
@@ -434,7 +438,11 @@ fn two_small_notes_consolidate_into_one_a_fresh_own_descriptor_receives() {
     scan_into(&mut replayed, &alice, &mut reloaded);
     assert_eq!(reloaded.balance(), notes.balance());
     let bob = Descriptor::issue(&recipient(), 1).expect("bob's descriptor");
-    let later = Request::Transfer { to: Box::new(RecipientKeys::of(&bob)), amount: 12 * TOS / 5 };
+    let later = Request::Transfer {
+        to: Box::new(RecipientKeys::of(&bob)),
+        amount: 12 * TOS / 5,
+        fee: None,
+    };
     let later_plan = plan(&terms(), &candidates(&reloaded), &later, &mut indices_from(30))
         .expect("the consolidated note covers it");
     assert_eq!(later_plan.input_leaves(), vec![2]);

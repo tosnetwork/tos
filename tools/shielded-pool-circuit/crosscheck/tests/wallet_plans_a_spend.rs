@@ -333,7 +333,7 @@ fn a_planned_withdrawal_bounces_into_a_recovery_note_the_planner_then_spends() {
     // under the version the mint happened at, and the ledger reproduces it.
     let to = Descriptor::issue(&bob, 7).expect("bob's descriptor");
     let request =
-        Request::Transfer { to: Box::new(RecipientKeys::of(&to)), amount: recovered.amount };
+        Request::Transfer { to: Box::new(RecipientKeys::of(&to)), amount: recovered.amount, fee: None };
     let transfer =
         plan(&terms(), &candidates(&alice_notes), &request, &mut indices_from(20)).expect("plan");
     assert_eq!(transfer.input_leaves(), vec![5], "the recovery leaf, after three outputs");
@@ -395,6 +395,7 @@ fn a_spend_anchored_to_a_root_that_moved_is_refused_and_a_preserved_root_is_not(
     let request = Request::Transfer {
         to: Box::new(RecipientKeys::of(&to)),
         amount: u128::from(DENOMINATION) / 2,
+        fee: None,
     };
     let transfer =
         plan(&terms(), &candidates(&alice_notes), &request, &mut indices_from(10)).expect("plan");

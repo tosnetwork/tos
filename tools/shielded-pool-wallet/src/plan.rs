@@ -76,11 +76,23 @@ impl RecipientKeys {
     }
 }
 
+/// A note paid to a third party inside the same spend: a relayer's fee at
+/// the descriptor its quote named. It takes output slot 2, is an ordinary
+/// note the relayer recovers like any recipient, and comes out of the notes
+/// on top of the amount.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Fee {
+    pub to: Box<RecipientKeys>,
+    pub amount: u128,
+}
+
 /// What the holder asks for.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Request {
-    /// A private transfer of `amount` to the descriptor's holder.
-    Transfer { to: Box<RecipientKeys>, amount: u128 },
+    /// A private transfer of `amount` to the descriptor's holder, with an
+    /// optional fee note to a relayer. A withdrawal carries no fee note: its
+    /// shape is fixed by the pool and it is never relayed.
+    Transfer { to: Box<RecipientKeys>, amount: u128, fee: Option<Fee> },
     /// A withdrawal of `amount` to a public account of workchain 0.
     Withdraw { amount: u128, recipient_account: [u8; 32] },
 }
@@ -270,6 +282,21 @@ pub fn plan(
     if amount > MAX_AMOUNT {
         return Err(refuse("an amount out of range"));
     }
+    let relayer_fee = match request {
+        Request::Transfer { to, fee: Some(fee), .. } => {
+            if fee.amount == 0 {
+                return Err(refuse("a relayer fee of zero"));
+            }
+            if fee.amount > MAX_AMOUNT {
+                return Err(refuse("a relayer fee out of range"));
+            }
+            if fee.to.as_ref() == to.as_ref() {
+                return Err(refuse("the relayer's fee descriptor is the recipient's"));
+            }
+            fee.amount
+        }
+        Request::Transfer { fee: None, .. } | Request::Withdraw { .. } => 0,
+    };
     let withdrawal_fee = if withdrawal {
         if terms.withdrawal_fee == 0 || terms.withdrawal_fee > MAX_AMOUNT {
             return Err(refuse("the pool's withdrawal fee is out of range"));
@@ -283,7 +310,10 @@ pub fn plan(
     } else {
         0
     };
-    let need = amount.checked_add(withdrawal_fee).ok_or_else(|| refuse("amount overflow"))?;
+    let need = amount
+        .checked_add(withdrawal_fee)
+        .and_then(|need| need.checked_add(relayer_fee))
+        .ok_or_else(|| refuse("amount overflow"))?;
     let selected = select(candidates, need)?;
     let total = selected
         .iter()
@@ -303,10 +333,13 @@ pub fn plan(
             })
         };
     let outputs = match request {
-        Request::Transfer { to, .. } => [
+        Request::Transfer { to, fee, .. } => [
             PlannedOutput::Recipient { to: to.clone(), amount },
             own_output(fresh_index, change)?,
-            PlannedOutput::Dummy { note_key_index: fresh_index()? },
+            match fee {
+                Some(fee) => PlannedOutput::Recipient { to: fee.to.clone(), amount: fee.amount },
+                None => PlannedOutput::Dummy { note_key_index: fresh_index()? },
+            },
         ],
         Request::Withdraw { .. } => [
             own_output(fresh_index, change)?,

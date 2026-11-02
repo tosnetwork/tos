@@ -313,7 +313,7 @@ async fn run(
             Request::Withdraw { amount, recipient_account: *recipient_account }
         }
         Target::Send { descriptor, .. } => {
-            Request::Transfer { to: Box::new(RecipientKeys::of(descriptor)), amount }
+            Request::Transfer { to: Box::new(RecipientKeys::of(descriptor)), amount, fee: None }
         }
     };
 
@@ -1825,7 +1825,7 @@ mod tests {
         let digest: [u8; 32] = Sha256::digest(to.to_bytes()).into();
         let target = Target::Send { descriptor: Box::new(to.clone()), descriptor_hash: digest };
         let request =
-            Request::Transfer { to: Box::new(RecipientKeys::of(&to)), amount: 1_000_000_000 };
+            Request::Transfer { to: Box::new(RecipientKeys::of(&to)), amount: 1_000_000_000, fee: None };
         let plan = plan::plan(&terms, &candidates, &request, &mut indices).expect("plan");
         let assembled = assembly::assemble(
             &alice,
@@ -1911,6 +1911,7 @@ mod tests {
         let request = Request::Transfer {
             to: Box::new(RecipientKeys::of(&other_descriptor())),
             amount: 500_000_000,
+            fee: None,
         };
         let mut next = 100u64;
         let plan = plan::plan(&terms, &candidates, &request, &mut || {
@@ -2106,6 +2107,7 @@ mod tests {
         let request = Request::Transfer {
             to: Box::new(RecipientKeys::of(&other_descriptor())),
             amount: 1_500_000_000,
+            fee: None,
         };
         let mut next = 10u64;
         let plan = plan::plan(&terms, &candidates, &request, &mut || {
