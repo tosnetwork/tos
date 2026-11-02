@@ -43,3 +43,13 @@ The focused cases cover a late election, actual announced/expired duties, unrela
 and already-retained addresses, non-shortening, malformed/bounded input, exact fee
 warning threshold, a closed-elector runner warning, failed balance/export reads,
 and metadata renewal with a closed elector and no send/key generation.
+
+Native retirement is a separate policy: after a new set is installed, the engine
+may retire transport records whose original election identity precedes the new
+term, even when their expiry is later. That inherited policy is unchanged. On a
+post-quantum network these records are operator bookkeeping, not the custodied
+consensus identity: owned PQ ADNL membership is derived separately from the
+current/next/previous chain sets and configured addresses. Renewal keeps pending
+and still-present records usable; it does not promise to recreate retired keys
+or retain every legacy transport record through the entire rebased term. The
+actual current PQ certificates remain the operational authority.
