@@ -103,6 +103,14 @@ pub trait ElectionsProvider: Send + Sync {
         until: u64,
     ) -> anyhow::Result<(Vec<u8>, Vec<u8>)>;
     async fn new_adnl_addr(&mut self, perm_key_id: Vec<u8>, until: u64) -> anyhow::Result<Vec<u8>>;
+    /// Reattach the same transport keys, preserving the original election identity.
+    async fn retain_validator_registration(
+        &mut self,
+        election_id: u64,
+        key_id: &[u8],
+        adnl: &[u8],
+        until: u64,
+    ) -> anyhow::Result<()>;
     async fn validator_config(&mut self) -> anyhow::Result<ValidatorConfig>;
     async fn election_parameters(&mut self) -> anyhow::Result<ConfigParam15>;
     async fn send_boc(&mut self, msg_boc: &[u8]) -> anyhow::Result<()>;

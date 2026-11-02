@@ -36,7 +36,6 @@ use std::{
 #[path = "runner_tests.rs"]
 mod runner_tests;
 
-const EXPIRED_LAG: u64 = 300; // 5 minutes
 /// Value the elector keeps from a stake message to pay for its confirmation.
 const ELECTOR_STAKE_FEE: u64 = 1_000_000_000;
 /// Gas fee consumed by nominator pool.
@@ -97,6 +96,8 @@ struct Node {
     stake_policy: StakePolicy,
     /// Last validator config.
     validator_config: ValidatorConfig,
+    /// A failed read is unknown, not evidence that no election key exists.
+    validator_config_read_failed: bool,
     /// Current binding lifecycle status, computed each tick.
     binding_status: BindingStatus,
     /// Amount to recover from elector, computed each tick.
@@ -139,18 +140,20 @@ impl Node {
     async fn wallet_balance(&mut self) -> anyhow::Result<u64> {
         self.api.account(&self.wallet.address().to_string()).await.map(|x| x.balance())
     }
-    async fn find_election_key(&mut self, election_id: u64) -> Option<ValidatorEntry> {
+    async fn find_election_key(
+        &mut self,
+        election_id: u64,
+    ) -> anyhow::Result<Option<ValidatorEntry>> {
         let mut validator_entry = self.validator_config.find(election_id);
         if let Some(entry) = validator_entry.as_mut() {
             let pubkey = self
                 .api
                 .export_public_key(entry.key_id.as_slice())
                 .await
-                .map_err(|e| tracing::error!("export public key error: {}", e))
-                .ok()?;
+                .context("export existing election public key")?;
             entry.public_key = pubkey;
         }
-        validator_entry
+        Ok(validator_entry)
     }
 }
 
@@ -254,6 +257,7 @@ impl ElectionRunner {
                             is_next_validator: false,
                             last_error: None,
                             validator_config: ValidatorConfig::new(),
+                            validator_config_read_failed: false,
                             binding_status,
                             last_recover_amount: 0,
                         },
@@ -305,6 +309,9 @@ impl ElectionRunner {
                         tracing::error!("runner tick error: {:#}", e);
                     }
 
+                    // Fee alerts run even with no active election; they never send or refill.
+                    self.check_fee_runway().await;
+
                     // Publish snapshot after each tick (also computes binding statuses).
                     self.publish_snapshot(&store).await;
 
@@ -333,6 +340,25 @@ impl ElectionRunner {
     pub(crate) async fn run(&mut self) -> anyhow::Result<()> {
         let snapshot = self.read_elector_snapshot().await?;
         self.run_with_snapshot(snapshot).await
+    }
+
+    async fn check_fee_runway(&mut self) {
+        for (node_id, node) in &mut self.nodes {
+            if node.excluded {
+                continue;
+            }
+            let warning = match node.wallet_balance().await {
+                Ok(balance) => match fee_runway_warning(balance) {
+                    Ok(warning) => warning,
+                    Err(error) => Some(format!("ELECTION_FEE_BUDGET_UNAVAILABLE: {error:#}")),
+                },
+                Err(error) => Some(format!("ELECTION_FEE_BALANCE_UNAVAILABLE: {error:#}")),
+            };
+            if let Some(warning) = warning {
+                tracing::warn!("node [{node_id}] {warning}");
+                node.last_error.get_or_insert(warning);
+            }
+        }
     }
 
     async fn read_elector_snapshot(&mut self) -> anyhow::Result<ElectorSnapshot> {
@@ -373,6 +399,45 @@ impl ElectionRunner {
         let returned = snapshot.returned.into_iter().collect::<HashMap<_, _>>();
         let election_id = elections_info.election_id;
         let cfg15 = self.election_parameters().await?;
+        // One unavailable control socket must not suppress another node's elections.
+        let mut registration_failed = HashSet::<String>::new();
+        for (node_id, node) in &mut self.nodes {
+            let retained: anyhow::Result<()> = async {
+                anyhow::ensure!(
+                    !node.validator_config_read_failed,
+                    "validator configuration unavailable"
+                );
+                let plans = crate::registration::duty_renewals(
+                    &node.validator_config,
+                    self.snapshot_cache.last_validator_set.as_ref(),
+                    self.snapshot_cache.last_next_validator_set.as_ref(),
+                    time_format::now(),
+                )?;
+                for plan in plans {
+                    node.api
+                        .retain_validator_registration(
+                            plan.election_id,
+                            &plan.key_id,
+                            &plan.adnl,
+                            plan.until,
+                        )
+                        .await
+                        .with_context(|| {
+                            format!("node [{node_id}] retain installed election duty")
+                        })?;
+                    crate::registration::mark_retained(&mut node.validator_config, &plan)?;
+                }
+                Ok(())
+            }
+            .await;
+            if let Err(error) = retained {
+                node.last_error = Some(format!("registration retention failed: {error:#}"));
+                registration_failed.insert(node_id.clone());
+                tracing::error!(
+                    "node [{node_id}] registration retention failed; skipping its value operations: {error:#}"
+                );
+            }
+        }
         self.snapshot_cache.update_next_elections_range(&cfg15);
         self.past_elections = snapshot.past_elections;
         if election_id == 0 {
@@ -446,12 +511,18 @@ impl ElectionRunner {
         // current, so doing this afterwards would just log the same failure
         // every tick.
         for node_id in &nodes {
+            if registration_failed.contains(node_id) {
+                continue;
+            }
             if let Err(e) = self.maintain_pool(node_id).await {
                 self.nodes.get_mut(node_id).map(|node| node.last_error = Some(format!("{:#}", e)));
                 tracing::error!("node [{}] pool maintenance error: {:#}", node_id, e);
             }
         }
         for node_id in nodes {
+            if registration_failed.contains(&node_id) {
+                continue;
+            }
             tracing::info!("node [{}] recover stake", node_id);
             let excluded = self.nodes.get(&node_id).map(|node| node.excluded).unwrap_or(true);
             let recover_amount = match self.recover_stake(&node_id, &returned).await {
@@ -551,7 +622,7 @@ impl ElectionRunner {
         let max_factor = (self.calc_max_factor() * 65536.0) as u32;
         let mut node = self.nodes.get_mut(node_id).expect("node not found");
         // Find validator key for current elections in the validator config
-        let validator_key = node.find_election_key(election_id).await;
+        let validator_key = node.find_election_key(election_id).await?;
         // A member is named by the account that sends its stake: the pool when
         // there is one, otherwise the wallet.
         let validator_id = node.wallet_addr();
@@ -585,7 +656,7 @@ impl ElectionRunner {
                     election_id
                 );
                 let key_expired_at =
-                    election_id + cfg15.validators_elected_for as u64 + EXPIRED_LAG;
+                    crate::registration::pending_until(election_id, time_format::now(), cfg15)?;
                 let (key_id, pub_key) = node
                     .api
                     .new_validator_key(election_id, key_expired_at)
@@ -626,7 +697,21 @@ impl ElectionRunner {
                 Self::send_stake(node_id, node, stake).await?;
                 Ok(())
             }
-            Some(entry) => {
+            Some(mut entry) => {
+                let adnl = entry.adnl_addr().context("existing election registration lost its ADNL; reconcile original keys before participating")?;
+                let until =
+                    crate::registration::pending_until(election_id, time_format::now(), cfg15)?;
+                if entry.expired_at < until
+                    || entry.adnl_addrs.iter().any(|(_, expiry)| *expiry < until)
+                {
+                    let until = until
+                        .max(entry.expired_at)
+                        .max(entry.adnl_addrs.iter().map(|(_, expiry)| *expiry).max().unwrap_or(0));
+                    node.api
+                        .retain_validator_registration(election_id, &entry.key_id, &adnl, until)
+                        .await?;
+                    entry.expired_at = until;
+                }
                 node.key_id = entry.key_id.clone();
                 tracing::info!(
                     "node [{}] validator key found: election_id={} key_id={}, pubkey={}",
@@ -1059,13 +1144,17 @@ impl ElectionRunner {
     async fn refresh_validator_configs(&mut self) {
         tracing::trace!("fetch validator configs");
         for (node_id, node) in self.nodes.iter_mut() {
-            node.validator_config = match node.api.validator_config().await {
-                Ok(cfg) => cfg,
-                Err(e) => {
-                    tracing::error!("node [{}] get validator config error: {}", node_id, e);
-                    ValidatorConfig::new()
+            match node.api.validator_config().await {
+                Ok(cfg) => {
+                    node.validator_config = cfg;
+                    node.validator_config_read_failed = false;
                 }
-            };
+                Err(e) => {
+                    node.validator_config_read_failed = true;
+                    node.last_error = Some(format!("validator configuration unavailable: {e:#}"));
+                    tracing::error!("node [{}] get validator config error: {}", node_id, e);
+                }
+            }
         }
     }
 
@@ -1443,4 +1532,20 @@ async fn find_validator_entries(
     }
 
     Ok((current_entry, is_in_next))
+}
+
+/// Advisory reserve for three stake submissions plus storage, not a time guarantee.
+/// Recovery/maintenance and live gas prices can consume additional fees.
+fn fee_runway_warning(balance: u64) -> anyhow::Result<Option<String>> {
+    let minimum = ELECTOR_STAKE_FEE
+        .checked_add(NPOOL_COMPUTE_FEE)
+        .and_then(|value| value.checked_add(WALLET_COMPUTE_FEE))
+        .context("stake fee budget overflow")?;
+    let warning = minimum
+        .checked_mul(3)
+        .and_then(|value| value.checked_add(MIN_NANOTOS_FOR_STORAGE))
+        .context("fee warning threshold overflow")?;
+    Ok((balance < warning).then(|| format!(
+        "ELECTION_FEE_RUNWAY_LOW: balance_nanotos={balance}, next_stake_fee_nanotos={minimum}, warning_threshold_nanotos={warning}, advisory_stake_cycles=3; maintenance and recovery cost extra"
+    )))
 }
