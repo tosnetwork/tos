@@ -81,8 +81,13 @@ from it. Two checks hold it in place:
   the whole repository and requires these checks to refuse it. Its
   `--compare-variants` reads both package derivations and requires one recipe:
   the same source, builder, toolchain and metadata, differing only in the
-  attributes the shielded feature, its wrapper and its material add, and the
-  standard derivation depending on neither.
+  attributes the shielded feature, its wrapper and its material add; every
+  input derivation of the standard variant is taken by the shielded one at the
+  same store path with the same outputs (a dependency overridden under its own
+  name is a difference), and the standard derivation depends on neither the
+  wrapper nor the material. Its `--variants-control` moves a shared Rust
+  toolchain input to another store path of the same name and requires the
+  comparison to refuse it.
 
 The derivation runs the unit tests of `tosctl` and `commands` in the build
 sandbox; the remaining workspace tests stay in the repository's Rust CI.

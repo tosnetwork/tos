@@ -167,6 +167,11 @@ jobs:
             "$(nix eval --raw --no-update-lock-file .#packages.x86_64-linux.tosctl.drvPath)" \
             "$(nix eval --raw --no-update-lock-file .#packages.x86_64-linux.tosctl-shielded.drvPath)" \
             | tee -a nixos-evidence/store.txt
+          # The comparison tells a dependency at another store path from the same one by name.
+          python3 assembly/nix/tosctl/check-store.py --variants-control \
+            "$(nix eval --raw --no-update-lock-file .#packages.x86_64-linux.tosctl.drvPath)" \
+            "$(nix eval --raw --no-update-lock-file .#packages.x86_64-linux.tosctl-shielded.drvPath)" \
+            | tee -a nixos-evidence/store.txt
           {
             git rev-parse HEAD
             nix --version

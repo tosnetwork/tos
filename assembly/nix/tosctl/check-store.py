@@ -15,14 +15,22 @@ checkout) and requires the same source checks to refuse it.
 
 With --compare-variants it reads the standard and the shielded package derivations and
 requires them to be one recipe: the same source, builder, toolchain and metadata, differing
-only in the attributes the shielded feature, its wrapper and its material add; the standard
-derivation depends on neither the wrapper nor the material.
+only in the attributes the shielded feature, its wrapper and its material add. Every input
+derivation of the standard variant is taken by the shielded one at the same store path with
+the same outputs, so a dependency overridden under its own name is a difference, not a match;
+the shielded variant adds exactly the wrapper hook and the material, classified by name.
+
+With --variants-control it reads the same two derivations, requires the comparison to pass,
+then moves one shared input (a Rust toolchain derivation) to another store path of the same
+name in the shielded copy and requires the comparison to refuse that.
 
 usage: check-store.py SOURCE_STORE_PATH VM_CHECK_DRV
        check-store.py --red-control
        check-store.py --compare-variants STANDARD_DRV SHIELDED_DRV
+       check-store.py --variants-control STANDARD_DRV SHIELDED_DRV
 """
 
+import copy
 import json
 import re
 import subprocess
@@ -135,8 +143,19 @@ def drv_name(path):
     return Path(path).name.split("-", 1)[1].removesuffix(".drv")
 
 
+def input_outputs(drv):
+    """Each input derivation, by its full store path, with the outputs taken from it."""
+    return {
+        path: tuple(sorted(spec["outputs"] if isinstance(spec, dict) else spec))
+        for path, spec in drv["input_drvs"].items()
+    }
+
+
 def compare_variants(standard_path, shielded_path):
-    standard, shielded = derivation(standard_path), derivation(shielded_path)
+    return compare_derivations(derivation(standard_path), derivation(shielded_path))
+
+
+def compare_derivations(standard, shielded):
     for key in ("system", "builder", "args"):
         require(standard[key] == shielded[key], f"{key} differs between the variants")
     s_env, v_env = standard["env"], shielded["env"]
@@ -149,19 +168,49 @@ def compare_variants(standard_path, shielded_path):
         require(s_env[key] == v_env[key], f"{key} differs between the variants")
     require("shielded" in v_env["cargoBuildFlags"], "the shielded variant builds the feature")
     require("shielded" not in s_env["cargoBuildFlags"], "the standard variant builds without it")
-    standard_inputs = {drv_name(p) for p in standard["input_drvs"]}
-    shielded_inputs = {drv_name(p) for p in shielded["input_drvs"]}
-    require(standard_inputs <= shielded_inputs, f"the shielded variant drops {standard_inputs - shielded_inputs}")
-    added = shielded_inputs - standard_inputs
+    # Inputs are compared by store path and outputs: the same name at another path is a
+    # different derivation. Names classify only the additions.
+    standard_inputs, shielded_inputs = input_outputs(standard), input_outputs(shielded)
+    missing = sorted(p for p, outputs in standard_inputs.items() if shielded_inputs.get(p) != outputs)
+    require(not missing, f"the shielded variant does not take these inputs of the standard one at the same path and outputs: {missing}")
+    added = {drv_name(p) for p in set(shielded_inputs) - set(standard_inputs)}
     require(added == VARIANT_INPUTS, f"the shielded variant adds {sorted(added)}, expected {sorted(VARIANT_INPUTS)}")
     leaked = [k for k, v in s_env.items() if MATERIAL_NAME in str(v) or "wrapProgram" in str(v)]
     require(not leaked, f"the standard variant references the material or wrapper in {leaked}")
     return len(differing), sorted(added)
 
 
+def variants_control(standard_path, shielded_path):
+    """The comparison must refuse a shared dependency overridden under its own name."""
+    standard, shielded = derivation(standard_path), derivation(shielded_path)
+    compare_derivations(standard, shielded)
+    shared = sorted(set(standard["input_drvs"]) & set(shielded["input_drvs"]))
+    toolchain = [p for p in shared if drv_name(p).startswith("rust-") or "-rust-" in drv_name(p)]
+    require(toolchain, "the variants share no Rust toolchain input to move")
+    original = toolchain[0]
+    moved = re.sub(r"[a-z0-9]{32}-", "0" * 32 + "-", original, count=1)
+    require(moved != original and drv_name(moved) == drv_name(original), f"could not rename {original}")
+    forged = copy.deepcopy(shielded)
+    forged["input_drvs"][moved] = forged["input_drvs"].pop(original)
+    try:
+        compare_derivations(standard, forged)
+    except Failure as error:
+        require(original in str(error), f"the refusal does not name the moved input: {error}")
+        print(f"TOSCTL_NIX_VARIANTS_CONTROL_OK: {drv_name(original)} at another store path is refused: {error}")
+        return 0
+    print("TOSCTL_NIX_VARIANTS_CONTROL_FAILED: a same-name dependency at another store path passed", file=sys.stderr)
+    return 1
+
+
 def main():
     if sys.argv[1:] == ["--red-control"]:
         return red_control()
+    if len(sys.argv) == 4 and sys.argv[1] == "--variants-control":
+        try:
+            return variants_control(sys.argv[2], sys.argv[3])
+        except (Failure, subprocess.CalledProcessError) as error:
+            print(f"TOSCTL_NIX_STORE_FAILED: {error}", file=sys.stderr)
+            return 1
     if len(sys.argv) == 4 and sys.argv[1] == "--compare-variants":
         try:
             count, added = compare_variants(sys.argv[2], sys.argv[3])
