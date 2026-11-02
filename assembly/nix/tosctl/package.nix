@@ -51,6 +51,19 @@ in rustPlatform.buildRustPackage {
   # check. Keep the standard CLI's features; native archive and PQ signing are separate.
   doCheck = true;
   cargoTestFlags = [ "--locked" ] ++ lib.concatMap (name: [ "--package" name ]) inputs.tested_packages;
+  # The build sandbox maps the real root to uid 65534, so `/` is owned by an unmapped user.
+  # tosctl refuses to persist configuration or open a vault under a directory any ancestor of
+  # which another user can modify, so these tests cannot pass in any sandbox directory; that is
+  # the check working, not a defect. The VM acceptance test exercises the same configuration
+  # persistence (private mode, symlink and unsafe-directory refusals) on a real system, and all
+  # five run in the repository's Rust CI. The receipt counts them as "filtered out".
+  checkFlags = [ "--exact" ] ++ lib.concatMap (name: [ "--skip" name ]) [
+    "commands::nodectl::utils::tests::save_config_is_private_and_refuses_a_linked_target"
+    "commands::nodectl::utils::tests::node_control_config_opens_the_vault_for_a_vault_key"
+    "commands::nodectl::utils::tests::node_control_config_names_the_fix_for_a_non_extractable_key"
+    "commands::nodectl::config_node_cmd::tests::node_add_refuses_a_non_extractable_control_client_secret"
+    "commands::nodectl::agent_cmd::tests::legacy_generation_commands_require_explicit_choice"
+  ];
   doInstallCheck = true;
   installCheckPhase = ''
     runHook preInstallCheck
