@@ -321,7 +321,7 @@ class BackendFixture:
                 "funding": 10,
                 "checkpoint": checkpoint,
             }
-        elif operation == "prepare":
+        elif operation in ("prepare", "recover_prepared"):
             value = {
                 "message_b64": b64(b"TEST-ONLY-message"),
                 "message_hash": h(30),
@@ -417,6 +417,20 @@ class AdapterTests(unittest.TestCase):
             self.assertEqual(self.engine.reconcile(self.request.identity), "broadcast")
         self.assertEqual(self.backend.operations.count("prepare"), 1)
         self.assertEqual(self.backend.operations.count("broadcast"), 1)
+
+    def test_recovery_uses_read_only_operation_without_quote_refresh(self):
+        prepared = self.adapter.recover_prepared(self.profile, self.request, 1, 1000, 10)
+        self.assertEqual(prepared, self.prepared)
+        self.assertEqual(self.backend.operations.count("recover_prepared"), 1)
+        self.assertEqual(self.backend.operations.count("prepare"), 0)
+        self.assertEqual(self.backend.operations.count("broadcast"), 0)
+
+    def test_missing_seal_returns_none_but_malformed_recovery_refuses(self):
+        self.backend.mutate = lambda op, value: None if op == "recover_prepared" else value
+        self.assertIsNone(self.adapter.recover_prepared(self.profile, self.request, 1, 1000, 10))
+        self.backend.mutate = lambda op, value: {} if op == "recover_prepared" else value
+        with self.assertRaisesRegex(Unavailable, "fields mismatch"):
+            self.adapter.recover_prepared(self.profile, self.request, 1, 1000, 10)
 
     def test_missing_native_capabilities_refuse(self):
         self.backend.mutate = lambda op, value: (

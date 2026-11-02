@@ -128,6 +128,33 @@ pub async fn prepare(
     )
 }
 
+/// Recover only a previously sealed message. Never allocate, sign, or refresh a quote.
+pub fn recover(
+    config: &Config,
+    identity: &Identity,
+    directory: &Path,
+    payload: &Value,
+) -> Result<Value> {
+    protocol::fields(payload, &["release", "request", "slot", "issued_at", "funding"])?;
+    let mut raw = b"TOS-BR1-REQUEST\0".to_vec();
+    raw.extend(protocol::canonical(&payload["request"])?);
+    let id = protocol::hash(&raw);
+    let store = Store::open(&directory.join("leases.db"), &config.release.scope()?)?;
+    let Some(lease) = store.lookup(&id)? else {
+        return Ok(Value::Null);
+    };
+    // An unsigned lease is uncertain, not proof that no native preparation occurred.
+    let bytes = lease
+        .message
+        .ok_or_else(|| anyhow::anyhow!("interrupted signing requires manual reconciliation"))?;
+    let record = protocol::parse(&store.record(&id)?)?;
+    let prepared = json!({"message_b64":STANDARD.encode(&bytes),"message_hash":crate::candidate::ordinary_boc(&bytes)?.repr_hash().to_hex_string(),"acceptance_b64":record["acceptance_b64"]});
+    let mut checked = payload.clone();
+    checked["prepared"] = prepared.clone();
+    validate(config, identity, directory, &checked)?;
+    Ok(prepared)
+}
+
 pub fn validate(
     config: &Config,
     identity: &Identity,

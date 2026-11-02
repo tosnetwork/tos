@@ -47,7 +47,7 @@ pub async fn dispatch(operation: &str, payload: &Value) -> Result<Value> {
             );
             crate::store::Store::open(&directory.join("leases.db"), &scope)?;
             Ok(
-                json!({"scope":scope,"protocol":"tos.br1.native.v1","features":["live_bond_v1","shield_exact_simulation_v1","worker_mldsa44_v1","funded_wallet_v1","wallet_sequence_lease_v1","destination_finality_v1","fee_note_import_v1","quote_descriptor_v1","proven_pool_head_v1"]}),
+                json!({"scope":scope,"protocol":"tos.br1.native.v1","features":["live_bond_v1","shield_exact_simulation_v1","worker_mldsa44_v1","funded_wallet_v1","wallet_sequence_lease_v1","destination_finality_v1","fee_note_import_v1","quote_descriptor_v1","proven_pool_head_v1","prepared_message_recovery_v1"]}),
             )
         }
         "pool_head" => {
@@ -136,6 +136,7 @@ pub async fn dispatch(operation: &str, payload: &Value) -> Result<Value> {
             )
         }
         "prepare" => crate::prepared::prepare(&config, &identity, &directory, payload).await,
+        "recover_prepared" => crate::prepared::recover(&config, &identity, &directory, payload),
         "validate_prepared" => crate::prepared::validate(&config, &identity, &directory, payload),
         "recheck" => {
             protocol::fields(payload, &["release", "request", "prepared"])?;

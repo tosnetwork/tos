@@ -56,6 +56,68 @@ class ServiceFixture(unittest.TestCase):
 
 
 class ServiceTests(ServiceFixture):
+    def test_lost_prepare_reply_recovers_sealed_bytes_without_preparing_again(self):
+        req = candidate(self.profile, self.quote())
+        original = self.authority.prepare
+        sealed = []
+
+        def lost(*args):
+            sealed.append(original(*args))
+            raise TimeoutError("fixture lost native prepare reply after durable seal")
+
+        self.authority.prepare = lost
+        self.authority.recover_prepared = lambda *args: sealed[0]
+        with self.assertRaisesRegex(TimeoutError, "durable seal"):
+            self.engine.submit(req)
+        self.assertEqual(self.journal.get(req.identity)["state"], "reserved")
+        restarted = Engine(self.journal, self.authority, clock=lambda: self.now)
+        service = Service(restarted, fee=7, funding_cap=100, enabled=True)
+        self.assertEqual(service.tick()["unavailable"], 0)
+        self.assertEqual(self.journal.get(req.identity)["state"], "broadcast")
+        self.assertEqual(self.authority.prepares, 1)
+        self.assertEqual(self.authority.writes, [sealed[0].message])
+
+    def test_expired_sealed_recovery_keeps_bytes_and_never_broadcasts(self):
+        req = candidate(self.profile, self.quote())
+        row, _ = self.journal.reserve(req, 10, self.now)
+        sealed = self.authority.prepare(self.profile, req, row["slot"], row["issued"], 10)
+        self.authority.recover_prepared = lambda *args: sealed
+        self.now = req.valid_until + 1
+        self.assertEqual(self.service.tick()["unavailable"], 0)
+        row = self.journal.get(req.identity)
+        self.assertEqual(row["state"], "unknown")
+        self.assertEqual(bytes(row["message"]), sealed.message)
+        self.assertEqual(self.authority.writes, [])
+        self.assertEqual(self.authority.prepares, 1)
+        self.service.tick()
+        self.assertEqual(self.journal.get(req.identity)["state"], "unknown")
+
+    def test_uncertain_native_recovery_keeps_expired_reservations(self):
+        req = candidate(self.profile, self.quote())
+        self.journal.reserve(req, 10, self.now)
+
+        def uncertain(*args):
+            raise TimeoutError("fixture native state uncertain or unsigned")
+
+        self.authority.recover_prepared = uncertain
+        self.now = req.valid_until + 1
+        self.assertEqual(self.service.tick()["unavailable"], 1)
+        self.assertEqual(self.journal.get(req.identity)["state"], "reserved")
+        self.assertEqual(self.authority.prepares, 0)
+        self.assertEqual(self.authority.writes, [])
+
+    def test_recovered_bytes_require_validation_before_journaling_or_send(self):
+        req = candidate(self.profile, self.quote())
+        row, _ = self.journal.reserve(req, 10, self.now)
+        sealed = self.authority.prepare(self.profile, req, row["slot"], row["issued"], 10)
+        self.authority.recover_prepared = lambda *args: sealed
+        self.authority.bad_prepare = True
+        self.assertEqual(self.service.tick()["unavailable"], 1)
+        row = self.journal.get(req.identity)
+        self.assertEqual(row["state"], "reserved")
+        self.assertIsNone(row["message"])
+        self.assertEqual(self.authority.writes, [])
+
     def test_server_restarts_after_active_close_without_sharing_listener(self):
         server = RelayServer(self.service, ("127.0.0.1", 0))
         address = server.server_address

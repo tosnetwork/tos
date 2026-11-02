@@ -236,6 +236,9 @@ class Adapter(Protocol):
     def prepare(
         self, release: Release, request: Request, slot: int, issued_at: int, funding: int
     ) -> Prepared: ...
+    def recover_prepared(
+        self, release: Release, request: Request, slot: int, issued_at: int, funding: int
+    ) -> Prepared | None: ...
     def validate_prepared(
         self,
         release: Release,
@@ -742,6 +745,24 @@ class Engine:
         )
         self.journal.store_prepared(request.identity, prepared)
         return self.dispatch(request.identity)
+
+    def recover_reserved(self, identity: str) -> str:
+        row = self.journal.get(identity)
+        if row is None:
+            raise Refused("unknown request")
+        if row["state"] != "reserved":
+            return row["state"]
+        request = self._request(row)
+        prepared = self.adapter.recover_prepared(
+            self.release, request, row["slot"], row["issued"], row["funding"]
+        )
+        if prepared is None:
+            return "reserved"
+        self.adapter.validate_prepared(
+            self.release, request, row["slot"], row["issued"], row["funding"], prepared
+        )
+        self.journal.store_prepared(identity, prepared)
+        return self.dispatch(identity)
 
     def dispatch(self, identity: str) -> str:
         row = self.journal.get(identity)

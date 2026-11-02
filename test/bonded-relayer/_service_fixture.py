@@ -95,6 +95,10 @@ class FixtureAuthority:
             f"TEST-ONLY-acceptance:{slot}:{issued_at}:{request.identity}".encode(),
         )
 
+    def recover_prepared(self, release, request, slot, issued_at, funding):
+        # Explicit fixture: no native custody exists unless a case installs one.
+        return None
+
     def validate_prepared(self, release, request, slot, issued_at, funding, prepared):
         if self.bad_prepare or not prepared.message.endswith(f":{funding}".encode()):
             raise Refused("fixture prepared mismatch")
