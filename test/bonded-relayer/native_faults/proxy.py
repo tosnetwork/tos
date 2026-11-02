@@ -31,6 +31,12 @@ class Gate(http.server.HTTPServer):
         self.guard = threading.Lock()
         super().__init__(("127.0.0.1", args.port), Handler)
 
+    def before_send(self, value):
+        """Optional local scenario hook; the ordinary gate only forwards once."""
+
+    def after_send(self, value, receipt):
+        """Optional local scenario hook after upstream acknowledged this write."""
+
     def save(self, path, data):
         self.total += len(data)
         if self.total > 128 * 1024 * 1024:
@@ -61,6 +67,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 raise RuntimeError("capture count bound reached")
             stem = gate.args.out / f"{gate.index:05d}"
             gate.save(stem.with_suffix(".request.json"), body)
+            if value["method"] == "sendBoc":
+                gate.before_send(value)
             request = urllib.request.Request(
                 f"http://127.0.0.1:{gate.args.upstream_port}/jsonRPC",
                 body,
@@ -97,11 +105,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
                         check=True,
                         timeout=10,
                     )
+                gate.after_send(value, receipt)
                 gate.save(
                     stem.with_suffix(".fault.json"),
                     (json.dumps(receipt, sort_keys=True) + "\n").encode(),
                 )
-                self.connection.shutdown(socket.SHUT_RDWR)
+                try:
+                    self.connection.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
                 self.connection.close()
                 return
         self.send_response(200)

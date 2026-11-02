@@ -24,7 +24,11 @@ from relay_core import Refused, digest, encode, integer, unique_object
 
 OPERATIONS = frozenset(
     {
+        "client_identity",
+        "client_quote",
+        "verify_endpoint",
         "capabilities",
+        "pool_head",
         "preflight",
         "prepare",
         "validate_prepared",

@@ -1,0 +1,194 @@
+{
+  "schema": "tos.br1.testnet-pilot-guard-recipe.v1",
+  "core_commit": "7133186ec855abc3c4b15f6691fc2da91d33d6a8",
+  "mutations": [
+    {
+      "guard": "native_default_opt_in",
+      "file": "tools/bonded-relayer/provider/src/config.rs",
+      "replace_from": "(cfg!(feature = \"public-testnet-pilot\") && global_id == 2)",
+      "replace_to": "global_id == 2",
+      "command": [
+        "cargo",
+        "+1.97.1",
+        "test",
+        "--manifest-path",
+        "tools/bonded-relayer/provider/Cargo.toml",
+        "--release",
+        "--locked",
+        "-j2",
+        "config::tests"
+      ],
+      "expected_failure_marker": "test result: FAILED"
+    },
+    {
+      "guard": "native_feature_opt_in",
+      "file": "tools/bonded-relayer/provider/src/config.rs",
+      "replace_from": "cfg!(feature = \"public-testnet-pilot\") && global_id == 2",
+      "replace_to": "false && global_id == 2",
+      "command": [
+        "cargo",
+        "+1.97.1",
+        "test",
+        "--manifest-path",
+        "tools/bonded-relayer/provider/Cargo.toml",
+        "--release",
+        "--locked",
+        "-j2",
+        "--features",
+        "public-testnet-pilot",
+        "config::tests"
+      ],
+      "expected_failure_marker": "test result: FAILED"
+    },
+    {
+      "guard": "provision_precreation_scope",
+      "file": "tools/bonded-relayer/provider/src/provision.rs",
+      "replace_from": "    crate::config::validate_global_id(global_id)?;",
+      "replace_to": "",
+      "command": [
+        "cargo",
+        "+1.97.1",
+        "test",
+        "--manifest-path",
+        "tools/bonded-relayer/provider/Cargo.toml",
+        "--release",
+        "--locked",
+        "-j2",
+        "--features",
+        "public-testnet-pilot",
+        "provision::tests"
+      ],
+      "expected_failure_marker": "test result: FAILED"
+    },
+    {
+      "guard": "provision_bond_domain",
+      "file": "tools/bonded-relayer/provider/src/provision.rs",
+      "replace_from": "let bond = BondInit {\n        global_id,",
+      "replace_to": "let bond = BondInit {\n        global_id: 3,",
+      "command": [
+        "cargo",
+        "+1.97.1",
+        "test",
+        "--manifest-path",
+        "tools/bonded-relayer/provider/Cargo.toml",
+        "--release",
+        "--locked",
+        "-j2",
+        "--features",
+        "public-testnet-pilot",
+        "provision::tests"
+      ],
+      "expected_failure_marker": "test result: FAILED"
+    },
+    {
+      "guard": "provision_release_domain",
+      "file": "tools/bonded-relayer/provider/src/provision.rs",
+      "replace_from": "let release = Release {\n        global_id,",
+      "replace_to": "let release = Release {\n        global_id: 3,",
+      "command": [
+        "cargo",
+        "+1.97.1",
+        "test",
+        "--manifest-path",
+        "tools/bonded-relayer/provider/Cargo.toml",
+        "--release",
+        "--locked",
+        "-j2",
+        "--features",
+        "public-testnet-pilot",
+        "provision::tests"
+      ],
+      "expected_failure_marker": "test result: FAILED"
+    },
+    {
+      "guard": "python_runtime_opt_in",
+      "file": "tools/bonded-relayer/br1.py",
+      "replace_from": "    \"\"\"Read through a no-follow descriptor; never load private keys from arguments.\"\"\"",
+      "replace_to": "    \"\"\"Read through a no-follow descriptor; never load private keys from arguments.\"\"\"\n    enable_testnet_pilot = True",
+      "command": [
+        "/usr/bin/python3",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "test/bonded-relayer",
+        "-p",
+        "test_br1_cli.py",
+        "-v"
+      ],
+      "expected_failure_marker": "FAIL: test_public_testnet_pilot_requires_explicit_mode_and_matching_network"
+    },
+    {
+      "guard": "python_network_scope",
+      "file": "tools/bonded-relayer/br1.py",
+      "replace_from": "if data[\"release\"].global_id != (2 if enable_testnet_pilot is True else 3):",
+      "replace_to": "if False:",
+      "command": [
+        "/usr/bin/python3",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "test/bonded-relayer",
+        "-p",
+        "test_br1_cli.py",
+        "-v"
+      ],
+      "expected_failure_marker": "FAIL: test_localnet_mode_refuses_public_network_even_without_pilot_flag"
+    },
+    {
+      "guard": "python_cli_opt_in",
+      "file": "tools/bonded-relayer/br1.py",
+      "replace_from": "configuration(args.config, enable_testnet_pilot=args.testnet_pilot)",
+      "replace_to": "configuration(args.config)",
+      "command": [
+        "/usr/bin/python3",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "test/bonded-relayer",
+        "-p",
+        "test_br1_cli.py",
+        "-v"
+      ],
+      "expected_failure_marker": "FAIL: test_cli_forwards_pilot_opt_in_without_starting_a_backend"
+    }
+  ],
+  "restored_commands": [
+    [
+      "cargo",
+      "+1.97.1",
+      "test",
+      "--manifest-path",
+      "tools/bonded-relayer/provider/Cargo.toml",
+      "--release",
+      "--locked",
+      "-j2"
+    ],
+    [
+      "cargo",
+      "+1.97.1",
+      "test",
+      "--manifest-path",
+      "tools/bonded-relayer/provider/Cargo.toml",
+      "--release",
+      "--locked",
+      "-j2",
+      "--features",
+      "public-testnet-pilot"
+    ],
+    [
+      "/usr/bin/python3",
+      "-m",
+      "unittest",
+      "discover",
+      "-s",
+      "test/bonded-relayer",
+      "-p",
+      "test_br1_cli.py",
+      "-v"
+    ]
+  ],
+  "public_retention": "Normal Git history, no scheduled expiry. Actual bounded failures retained separately."
+}

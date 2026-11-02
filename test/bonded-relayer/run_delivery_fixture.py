@@ -34,6 +34,7 @@ SOURCES = (
     "tools/bonded-relayer/relay_http.py",
     "tools/bonded-relayer/relay_service.py",
     "tools/bonded-relayer/relay_client.py",
+    "tools/bonded-relayer/tor_transport.py",
     "tools/bonded-relayer/br1.py",
     "test/bonded-relayer/two_operator_harness.py",
     "test/bonded-relayer/test_two_operator.py",

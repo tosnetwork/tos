@@ -122,3 +122,14 @@ two independent funded operators on a distributed localnet, including restart an
 failover; independent and third-party security review and existing Shield
 activation gates. SDK, directory and journal components do not complete these
 integrations. Energy remains unimplemented and is not a dependency.
+
+
+## Onion transport
+
+The [Tor transport runbook](../../doc/br1-tor-transport.md) describes the wallet
+SOCKS5 adapter, native offline Bond/quote verifier, and the operator's v3 onion
+profile. Use `Client.from_bond` with wallet-approved release pins. The Python
+listener remains loopback-only; `onion_endpoint` enables exact Host binding and
+bounded onion I/O budgets after live native endpoint verification. The Rust
+provider and durable one-send boundary remain in place. Transport tests do not
+complete public activation or the funded C2 failure matrix.

@@ -104,6 +104,10 @@ class NativeAdapter:
         ):
             raise Unavailable("native backend lacks required capabilities")
 
+    def verify_endpoint(self, endpoint: str):
+        value = fields(self._call("verify_endpoint", endpoint=endpoint), {"scope", "endpoint"})
+        matches(value, {"scope": self.release.scope, "endpoint": endpoint})
+
     def _scope(self, release: Release):
         if release != self.release:
             raise Refused("adapter release mismatch")

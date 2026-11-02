@@ -4,7 +4,11 @@ on:
   pull_request:
     paths:
       - '.github/workflows/br1-native-provider.yml'
-      - 'tools/bonded-relayer/provider/**'
+      - 'tools/bonded-relayer/**'
+      - 'test/bonded-relayer/native_client_smoke.py'
+      - 'test/bonded-relayer/native_tor_controls.py'
+      - 'test/bonded-relayer/fixtures/native-refusal/**'
+      - 'test/bonded-relayer/native_faults/generate_phase_fixtures.py'
       - 'tools/shielded-pool-wallet/**'
       - 'tools/shielded-pool-circuit/**'
       - 'tosctl/src/node-control/contracts/**'
@@ -38,5 +42,20 @@ jobs:
       - name: Check provider format, regression tests and lints
         run: |
           cargo fmt --manifest-path tools/bonded-relayer/provider/Cargo.toml --check
-          cargo test --manifest-path tools/bonded-relayer/provider/Cargo.toml --release --locked -j2
+          BR1_PUBLIC_FIXTURE=/tmp/br1-public-fixture.json cargo test --manifest-path tools/bonded-relayer/provider/Cargo.toml --release --locked -j2
           cargo clippy --manifest-path tools/bonded-relayer/provider/Cargo.toml --release --locked --all-targets --no-deps -j2 -- -D warnings
+          cargo test --manifest-path tools/bonded-relayer/provider/Cargo.toml --release --locked --features public-testnet-pilot -j2
+          cargo clippy --manifest-path tools/bonded-relayer/provider/Cargo.toml --release --locked --features public-testnet-pilot --all-targets --no-deps -j2 -- -D warnings
+      - name: Exercise the real sealed wallet verifier without operator custody
+        run: |
+          cargo build --manifest-path tools/bonded-relayer/provider/Cargo.toml --release --locked -j2
+          # Cargo outputs may share an inode with target/release/deps. Install
+          # a private copy, preserving the runtime's single-link requirement.
+          install -m 0500 tools/bonded-relayer/provider/target/release/br1-native-provider "$RUNNER_TEMP/br1-native-provider"
+          cmp tools/bonded-relayer/provider/target/release/br1-native-provider "$RUNNER_TEMP/br1-native-provider"
+          test "$(stat -c %h "$RUNNER_TEMP/br1-native-provider")" = 1
+          python3 test/bonded-relayer/native_client_smoke.py \
+            --provider "$RUNNER_TEMP/br1-native-provider" \
+            --fixture /tmp/br1-public-fixture.json
+      - name: Require runtime failures after removing native privacy guards
+        run: python3 test/bonded-relayer/native_tor_controls.py --release

@@ -201,3 +201,87 @@ not published. Historical block states and expired signing windows cannot be
 regenerated after chain progress; compiler-log paths and timings also vary.
 The public excerpts are the minimal necessary failure receipts; fresh assertion
 semantics are reproducible with the committed runner above.
+
+
+## Competing spend and destination abort
+
+`race_proxy.py` is deliberately restricted to the disposable C worker, global
+id3 and ports34821/34811. Its private scenario contains `request_id`,
+`winner_body`, `target_body` (absolute BOC paths) and
+`commitments_after_winner`. Build two fresh, valid candidates over the same
+unspent notes: the target uses C's issued quote; the winner is the competing
+ordinary wallet transfer. Both must forbid public withdrawals. Start the gate:
+
+```sh
+systemd-run --user --unit br1-race-proxy --property=UMask=0077 \
+ /usr/bin/python3 "$CHECKOUT/test/bonded-relayer/native_faults/race_proxy.py" \
+ --root "$PRIVATE" --config "$PRIVATE/operator-c/service.json" \
+ --scenario "$PRIVATE/e2e-race/scenario.json" --out "$PRIVATE/wire-race" \
+ --client-python "$CLIENT_PYTHON" --toslib "$TOSLIB"
+```
+
+Route only C's provider RPC through34821, then submit the target **once** using
+its normal HTTP client/status token. The gate checks the stored prepared bytes,
+submits the winner once, observes its pool counter, forwards the original once,
+kills/stops C, then sends one newer identical-body replay from the faucet.
+Diagnostic counters select the cut points; they are not finality evidence.
+If interrupted, inspect existing captures and journals; never restart a send.
+Restore direct34811 RPC, install the reviewed refusal provider and restart C.
+The native evidence path must authenticate its own failed transaction through
+source and destination proofs, skipping the newer foreign replay. Audit it:
+
+```sh
+systemctl --user stop br1-operator-c
+/usr/bin/python3 test/bonded-relayer/native_faults/control.py \
+ --mode destination-refusal --cache-without-rpc \
+ --config "$PRIVATE/operator-c/service.json" \
+ --request "$PRIVATE/e2e-race/target-request.json" \
+ --capture "$PRIVATE/wire-race" --out "$PRIVATE/destination-durable-refusal"
+systemctl --user start br1-operator-c
+```
+
+This asserts rejected status, released input locks, retired lease, no surviving
+permit and no fee import; it replays the immutable refusal twice with RPC down.
+No journal rows are edited. The retained run had both failed transactions exit
+152; only the winner advanced pool commitments38→41 and nullifiers25→27.
+Pool liability remained2000000000 and reserved recovery leaves0.
+
+## Native execution-phase fixtures and complete local history
+
+Regenerate the small synthetic fixtures with the real C++ emulator on global
+version16/id3 (no signature bypass, chain config modification or live keys):
+
+```sh
+FUNC_PATH="$FUNC" FIFT_PATH="$FIFT" EMULATOR_PATH="$EMULATOR" \
+ /usr/bin/python3 test/bonded-relayer/native_faults/generate_phase_fixtures.py \
+ --out "$NEW_PRIVATE_FIXTURE_DIRECTORY"
+```
+
+The manifest records compiler input and emulator/config hashes. Two successful
+controls change state; gas -14 and action37 abort and preserve the prior state.
+Rust tests parse these real native transaction BOCs and exercise the production
+abort/cursor/fee classification. These fixtures establish phase semantics, not
+public-network or on-chain forced gas/action acceptance.
+
+For full historical replay, use `history.py` with a client Python that supplies
+`pytosiq_core`, `--native-python /usr/bin/python3`, `--config`, a pinned
+`--backend`/`--backend-sha256` supporting `pool_head`, and a new private `--out`.
+Optional `--archive` directories supply retained BOCs. The native proof supplies
+the exact pool head; every predecessor hash/account/LT is checked to creation.
+The retained run collected18 transactions in2 RPC pages. A single-page export
+was incomplete; this was pagination, not node pruning. Missing history refuses
+and must never be treated as an empty pool. The runner bounds4096 transactions,
+64MiB total,512KiB per transaction and2MiB per RPC response.
+
+
+Destination guard sensitivity is reproducible with `destination_mutations.py`
+using the same new `--scratch`, private `--out` and `--target-dir` arguments as
+`nonacceptance_mutations.py`. Its frozen core and eight exact anchors are in
+`../evidence/native-destination-failures-20261101.json`; bounded actual runtime
+failures are separately retained in `native-destination-runtime-failures-20261101.json`.
+All eight failed at runtime (exit101); restoring the core passed25 tests. These
+public receipts have no scheduled expiry. Full raw logs and private chain material
+remain under the indexed `/tos/build` directories until at least2027-02-01 UTC,
+retrievable through existing authorized toserver SSH access. No new credentials
+or public access are granted; live payloads, status tokens, SQL blobs and seeds
+remain private. Native gas/action fixture BOCs are synthetic and safe to publish.

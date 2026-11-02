@@ -44,6 +44,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
+      - name: Install the Tor dependency of the full acceptance suite
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tor
+          tor --version
       - name: Build native contract tools and isolated TEST ONLY signer
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release

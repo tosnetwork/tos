@@ -1,0 +1,88 @@
+{
+  "schema": "tos.br1.synthetic-native-phase-fixtures.v1",
+  "synthetic_not_network": true,
+  "global_version": 16,
+  "global_id": 3,
+  "source_sha256": "9e39eab29fab7d420e5454b674aede9f0d0680967574a3bea3fdd93b2220c50d",
+  "config_sha256": "64c687eab4748c86ee96d291a594586726e78c411429e393e257ad6853531a6a",
+  "emulator_sha256": "cc9af380058bfa2a0f874a3c514e7ff659a5931aa146d20201a3cad85680219d",
+  "cases": [
+    {
+      "name": "gas-positive",
+      "mode": 0,
+      "count": 5,
+      "data_after": 5,
+      "transaction_bytes": 430,
+      "sha256": "76f41176ed949d01ec5f812fc9a49bd5bb7a1dc6dda587ca51952e679b33bf0f",
+      "details": {
+        "exit": 0,
+        "gas": 2315,
+        "gas_limit": 100000,
+        "compute_success": true,
+        "aborted": false,
+        "action": {
+          "success": true,
+          "code": 0
+        },
+        "action_count": 1
+      }
+    },
+    {
+      "name": "gas-exhausted",
+      "mode": 0,
+      "count": 1000000000,
+      "data_after": 0,
+      "transaction_bytes": 388,
+      "sha256": "7d73b4ce9b1351ed8b7f8e8c5d0f9475af3784d20f7978390a7362cec4a7ac71",
+      "details": {
+        "exit": -14,
+        "gas": 100000,
+        "gas_limit": 100000,
+        "compute_success": false,
+        "aborted": true,
+        "action": null
+      }
+    },
+    {
+      "name": "action-positive",
+      "mode": 1,
+      "count": 1,
+      "data_after": 7,
+      "transaction_bytes": 430,
+      "sha256": "e23358ee928637db8613faec560ca863304def09540ffc13cfa64781085305fa",
+      "details": {
+        "exit": 0,
+        "gas": 2744,
+        "gas_limit": 100000,
+        "compute_success": true,
+        "aborted": false,
+        "action": {
+          "success": true,
+          "code": 0
+        },
+        "action_count": 2
+      }
+    },
+    {
+      "name": "action-no-funds",
+      "mode": 1,
+      "count": 1000000000000000000,
+      "data_after": 0,
+      "transaction_bytes": 430,
+      "sha256": "b99d41ba201a731f1794a81786c4613411bc85e7e8d23a1f5c48f38532502ee0",
+      "details": {
+        "exit": 0,
+        "gas": 2744,
+        "gas_limit": 100000,
+        "compute_success": true,
+        "aborted": true,
+        "action": {
+          "success": false,
+          "code": 37
+        },
+        "action_count": 2
+      }
+    }
+  ],
+  "public_retention": "Normal Git history; no scheduled expiry. No keys, tokens or live payloads."
+}
