@@ -6,6 +6,9 @@ use serde_json::{json, Value};
 use std::str::FromStr;
 
 pub async fn dispatch(operation: &str, payload: &Value) -> Result<Value> {
+    if matches!(operation, "client_identity" | "client_quote") {
+        return crate::client::dispatch(operation, payload);
+    }
     let directory = std::env::current_dir()?;
     let _lock = crate::private_io::lock(&directory)?;
     let config = Config::load(&directory, payload)?;
@@ -21,6 +24,15 @@ pub async fn dispatch(operation: &str, payload: &Value) -> Result<Value> {
     );
     let scope = config.release.scope()?;
     match operation {
+        "verify_endpoint" => {
+            protocol::fields(payload, &["release", "endpoint"])?;
+            let (_, bond) = Chain::new(&config)?.bond(&config).await?;
+            ensure!(
+                payload["endpoint"].as_str() == Some(bond.init.endpoint.as_str()),
+                "live Bond endpoint mismatch"
+            );
+            Ok(json!({"scope":scope,"endpoint":bond.init.endpoint}))
+        }
         "capabilities" => {
             protocol::fields(payload, &["release"])?;
             let chain = Chain::new(&config)?;

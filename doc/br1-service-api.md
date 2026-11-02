@@ -1,12 +1,13 @@
 # BR1 B1: bounded relay service and client
 
-Status: **parallel engineering increment on PR #379, not production activation**.
+Status: **implemented service boundary, not production activation**.
 The service implements real HTTP, quote allocation, capability-gated status,
 SQLite-backed submission and recovery through the existing engine. Its authority
 must provide native capabilities, descriptor generation and quote authentication.
 B1 tests explicitly supply a fake authority; B1 supplies no production signer or
 chain/finality verifier. A1's process adapter and C1's localnet entry point connect
-these modules without claiming the missing native provider exists.
+these modules to the isolated native provider described in
+`tools/bonded-relayer/provider/README.md`; production acceptance remains open.
 
 ## Public boundary
 
@@ -58,12 +59,13 @@ acceptance; acceptance is produced only after the exact candidate is admitted.
 
 ## Client
 
-`relay_client.Client` accepts an operator-selected HTTPS origin, uses normal
+In its direct mode, `relay_client.Client` accepts a wallet-selected HTTPS origin, uses normal
 certificate validation, follows no redirect, and requires a local pinned quote
 verifier before constructing or submitting a request. HTTP is permitted only
-with explicit `allow_loopback=True` and `127.0.0.1` for local tests. The client
+with explicit `allow_loopback=True` and `127.0.0.1` for local tests, or through
+the explicit onion transport described below. The client
 reverifies the envelope again on submit, so mutating a Quote object's dictionary
-cannot change the selected terms. DNS resolution remains an OS responsibility;
+cannot change the selected terms. In direct mode DNS resolution remains an OS responsibility;
 the socket I/O budget is cumulative, not an anonymity guarantee.
 
 `SubmissionUnknown` carries the already-known request identity. No automatic
@@ -111,6 +113,19 @@ control-runner file is identical in A1 and B1 so the branches can compose cleanl
 
 Still open: production native provider, complete funding/Bond lifecycle CLI,
 user-side Shield builder, native acceptance verification on the client, authenticated
-fresh discovery, privacy transport, distributed load/fault measurements, approved
+fresh discovery, public onion deployment acceptance, distributed load/fault measurements, approved
 economics, independent review and third-party audit. No main merge or activation
 is requested by this increment; Energy remains unimplemented and unnecessary.
+
+
+## Onion transport profile
+
+The [onion transport](br1-tor-transport.md) carries the same API without wire-schema
+changes. Use `Client.from_bond` for offline native authentication of the wallet's
+pinned Bond endpoint and quote worker. The default client quote lifetime is 300
+seconds; the permitted range remains 1..300. An operator config may specify
+`onion_endpoint` to require live native endpoint verification at startup and exact
+HTTP Host matching. Its loopback listener uses bounded 30-second request reads
+and ten-second response writes. Legacy local profile budgets remain five/two
+seconds. No response, timeout or redirect can trigger automatic direct fallback
+or a second submission.

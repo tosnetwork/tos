@@ -132,6 +132,7 @@ FILES = {
         S,
         H,
         C,
+        "tools/bonded-relayer/tor_transport.py",
         "tools/bonded-relayer/relay_core.py",
         "tools/bonded-relayer/relay_wire.py",
         "test/bonded-relayer/_service_fixture.py",

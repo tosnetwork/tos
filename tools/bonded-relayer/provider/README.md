@@ -146,7 +146,7 @@ fixtures cover gas exhaustion (-14) and action failure (37), with successful
 controls and state rollback; these are not on-chain gas/action fault injections.
 The full C2 matrix remains open: on-chain forced gas/action failure, every
 crash/write boundary, adversarial failover, Bond retirement/slashing,
-privacy transport, production custody and economic/security review. The ordinary
+public privacy-transport acceptance, production custody and economic/security review. The ordinary
 private-transfer funding estimate is conservatively fixed at 0.25 local TOS and
 must fit both request and operator caps. It is not a production pricing model.
 No consensus, contract bytecode or chain configuration is changed by this provider.
@@ -163,6 +163,17 @@ The two local hardening follow-ups are addressed by the current implementation:
   the lifetime of the proof provider. Path replacement cannot change the executed
   release. Dynamic libraries remain part of the trusted host environment.
 
+
+## Public wallet verification and onion endpoint binding
+
+`client_identity` and `client_quote` are bounded, offline stdio operations taking
+wallet-pinned release data and a public Bond StateInit. They run before loading
+custody or provider configuration, reconstruct the canonical Bond identity and
+verify the pinned worker's quote signature. They do not prove live eligibility.
+`verify_endpoint` is an operator-only operation: it reads the live proven Bond
+and compares the configured service origin with its immutable endpoint before
+Python opens an onion-profile listener. See the
+[transport runbook](../../../doc/br1-tor-transport.md) for the full trust boundary.
 
 ## Explicit public-testnet pilot (loopback only)
 

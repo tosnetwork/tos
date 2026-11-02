@@ -1,0 +1,10 @@
+# Run a dedicated, updated daemon under the wallet user's service manager.
+DataDirectory /var/lib/tor/br1-client
+ClientOnly 1
+SocksPort 127.0.0.1:9050 IsolateSOCKSAuth OnionTrafficOnly
+SocksPolicy accept 127.0.0.1
+SocksPolicy reject *
+SafeSocks 1
+ControlPort 0
+SafeLogging 1
+Log warn stderr

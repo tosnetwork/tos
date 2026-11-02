@@ -65,17 +65,32 @@ impl Identity {
         )
     }
     pub fn verify(&self, terms: &[u8], public: &str, signature: &str) -> Result<Value> {
-        let public = decode(public, 1312)?;
-        ensure!(public.as_slice() == self.public, "quote worker mismatch");
-        let signature = decode(signature, 2420)?;
-        let signature: [u8; 2420] =
-            signature.try_into().map_err(|_| anyhow::anyhow!("signature width"))?;
-        relayer_quote::verify_terms(&self.public, terms, &signature)?;
+        verify_quote_signature(&self.public, terms, public, signature)?;
         Ok(
             json!({"terms_sha256":protocol::hash(terms), "worker_key_hash":protocol::hash(&self.public)}),
         )
     }
 }
+/// Authenticate quote terms against `expected`, the pinned worker key: canonical base64 of
+/// exactly the ML-DSA-44 key and signature widths, a key equal to `expected`, and a valid
+/// signature over the exact `terms` bytes. The operator's `Identity::verify` and the
+/// wallet's `client_quote` both use this, so they cannot disagree on which quotes are valid.
+pub fn verify_quote_signature(
+    expected: &[u8],
+    terms: &[u8],
+    public_b64: &str,
+    signature_b64: &str,
+) -> Result<()> {
+    let public = decode(public_b64, 1312)?;
+    ensure!(public.as_slice() == expected, "quote worker mismatch");
+    let public: [u8; 1312] = public.try_into().map_err(|_| anyhow::anyhow!("key width"))?;
+    let signature = decode(signature_b64, 2420)?;
+    let signature: [u8; 2420] =
+        signature.try_into().map_err(|_| anyhow::anyhow!("signature width"))?;
+    relayer_quote::verify_terms(&public, terms, &signature)?;
+    Ok(())
+}
+
 pub fn decode(text: &str, exact: usize) -> Result<Vec<u8>> {
     let maximum = exact
         .checked_add(2)

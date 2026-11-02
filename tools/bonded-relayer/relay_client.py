@@ -6,6 +6,7 @@ A status receipt is an operator claim until independently verified on the chain.
 
 from __future__ import annotations
 
+import base64
 import dataclasses
 import hashlib
 import secrets
@@ -20,6 +21,7 @@ from relay_core import (
     MAX_QUOTE,
     TERMINAL,
     Refused,
+    Release,
     Request,
     digest,
     encode,
@@ -27,10 +29,20 @@ from relay_core import (
 )
 from relay_http import RESPONSE_LIMIT, receive, remaining
 from relay_wire import BODY_LIMIT, check_terms, exact, parse, status_hash
+from tor_transport import OnionEndpoint, TorProxy
 
 
 class ClientError(Refused):
     pass
+
+
+class RelayerRefused(ClientError):
+    """The relayer answered with a well-formed HTTP status other than 200/202. Distinct from
+    an unavailable transport; a submit still reports it as SubmissionUnknown."""
+
+    def __init__(self, status: int):
+        super().__init__(f"relayer refused the request (HTTP {status})")
+        self.status = status
 
 
 class SubmissionUnknown(ClientError):
@@ -56,9 +68,12 @@ class Client:
         *,
         allow_loopback: bool = False,
         timeout: int = 10,
+        tor: TorProxy | None = None,
         clock=time.time,
     ):
         digest(release)
+        self.tor = tor
+        self.onion = OnionEndpoint.parse(endpoint) if tor is not None else None
         parsed = urlsplit(endpoint)
         if (
             parsed.username is not None
@@ -68,34 +83,82 @@ class Client:
             or parsed.path not in ("", "/")
         ):
             raise ClientError("endpoint must be an origin without credentials")
-        if parsed.scheme == "http":
+        if tor is not None:
+            if allow_loopback:
+                raise ClientError("Tor and loopback test mode are mutually exclusive")
+        elif parsed.scheme == "http":
             if not allow_loopback or parsed.hostname != "127.0.0.1":
                 raise ClientError("plaintext HTTP is only available for explicit loopback tests")
         elif parsed.scheme != "https":
             raise ClientError("HTTPS endpoint required")
         if not parsed.hostname or any(c.isspace() for c in endpoint):
             raise ClientError("invalid endpoint host")
+        # A fully qualified name keeps its trailing dot in the parsed host ("x.onion."),
+        # which would slip past the onion suffix test below and reach the OS resolver.
+        if parsed.hostname.endswith("."):
+            raise ClientError("endpoint host must not end with a dot")
+        if tor is None and parsed.hostname.endswith(".onion"):
+            raise ClientError("onion endpoints require explicit Tor transport")
         self.host = parsed.hostname
         self.port = parsed.port or (443 if parsed.scheme == "https" else 80)
         self.secure = parsed.scheme == "https"
         self.release, self.verifier, self.clock = release, verifier, clock
         self.timeout = integer(timeout, 1, 60)
 
+    @classmethod
+    def from_bond(cls, release: Release, bond_init: bytes, rpc, *, tor: TorProxy, timeout=60):
+        """Authenticate a public StateInit against wallet-pinned release data locally.
+
+        rpc must be NativeRPC over a PinnedProgram, never a remote RPC server.
+        No operator custody files or network reads are needed by these operations.
+        This proves immutable identity, not current Bond eligibility or finality.
+        """
+        from native_process import NativeRPC
+
+        if not isinstance(rpc, NativeRPC):
+            raise ClientError("pinned local native verifier required")
+        if type(bond_init) is not bytes or not 0 < len(bond_init) <= 65536:
+            raise ClientError("Bond StateInit outside bound")
+        payload = {
+            "release": dataclasses.asdict(release),
+            "bond_init_b64": base64.b64encode(bond_init).decode("ascii"),
+        }
+        identity = rpc.call("client_identity", payload)
+        exact(identity, {"scope", "endpoint", "worker_key_hash"})
+        if (
+            identity["scope"] != release.scope
+            or identity["worker_key_hash"] != release.worker_key_hash
+        ):
+            raise ClientError("Bond identity does not match wallet release")
+        OnionEndpoint.parse(identity["endpoint"])
+
+        def verify(wire):
+            result = rpc.call("client_quote", {**payload, "envelope": parse(wire, MAX_QUOTE)})
+            exact(result, {"terms"})
+            return result["terms"]
+
+        return cls(identity["endpoint"], release.scope, verify, tor=tor, timeout=timeout)
+
     def _request(self, path: str, payload: dict) -> dict:
         wire = encode(payload)
         if len(wire) > BODY_LIMIT:
             raise ClientError("request exceeds body bound")
         deadline = time.monotonic() + self.timeout
-        connection = socket.create_connection((self.host, self.port), timeout=self.timeout)
+        connection = None
         try:
+            if self.tor is not None:
+                connection = self.tor.connect(self.onion, deadline)
+            else:
+                connection = socket.create_connection((self.host, self.port), timeout=self.timeout)
             if self.secure:
                 remaining(connection, deadline)
                 connection = ssl.create_default_context().wrap_socket(
                     connection, server_hostname=self.host
                 )
             host = f"[{self.host}]" if ":" in self.host else self.host
+            authority = self.onion.authority if self.onion is not None else f"{host}:{self.port}"
             head = (
-                f"POST {path} HTTP/1.1\r\nHost: {host}:{self.port}\r\n"
+                f"POST {path} HTTP/1.1\r\nHost: {authority}\r\n"
                 "Content-Type: application/json\r\nConnection: close\r\n"
                 f"Content-Length: {len(wire)}\r\n\r\n"
             ).encode("ascii")
@@ -103,13 +166,26 @@ class Client:
             connection.sendall(head + wire)
             line, _, body = receive(connection, RESPONSE_LIMIT, deadline)
             parts = line.split(" ", 2)
-            if len(parts) != 3 or parts[0] != "HTTP/1.1" or parts[1] not in ("200", "202"):
-                raise ClientError("relayer refused or returned an unsupported response")
+            if (
+                len(parts) != 3
+                or parts[0] != "HTTP/1.1"
+                or len(parts[1]) != 3
+                or not parts[1].isascii()
+                or not parts[1].isdigit()
+                or parts[1][0] not in "12345"
+            ):
+                # A malformed status line is not an answer from the relayer.
+                raise ClientError("relayer returned a malformed status line")
+            if parts[1] not in ("200", "202"):
+                raise RelayerRefused(int(parts[1]))
             return parse(body, RESPONSE_LIMIT)
-        except (OSError, ValueError) as error:
+        except RelayerRefused:
+            raise
+        except (OSError, ValueError, Refused) as error:
             raise ClientError("relayer response unavailable") from error
         finally:
-            connection.close()
+            if connection is not None:
+                connection.close()
 
     def _verify(self, wire: bytes) -> dict:
         if self.verifier is None:
@@ -124,7 +200,7 @@ class Client:
             raise ClientError("quote verifier did not authenticate terms")
         return terms
 
-    def quote(self, *, slot: int = 2, lifetime: int = 120, token: str | None = None) -> Quote:
+    def quote(self, *, slot: int = 2, lifetime: int = 300, token: str | None = None) -> Quote:
         if self.verifier is None:
             raise ClientError("a local pinned quote verifier is required")
         token = secrets.token_hex(32) if token is None else token
@@ -221,8 +297,6 @@ class Client:
         if value["message_hash"] is not None:
             digest(value["message_hash"])
         if value["acceptance_b64"] is not None:
-            import base64
-
             text = value["acceptance_b64"]
             if type(text) is not str or len(text) > 4 * ((MAX_ACCEPTANCE + 2) // 3):
                 raise ClientError("acceptance outside bound")

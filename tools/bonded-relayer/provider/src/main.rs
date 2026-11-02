@@ -2,6 +2,7 @@
 mod bootstrap;
 mod candidate;
 mod chain;
+mod client;
 mod config;
 mod evidence;
 mod funding;
