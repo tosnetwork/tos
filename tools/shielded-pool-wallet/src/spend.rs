@@ -89,9 +89,52 @@ fn seal(
     Ok((payload, hash))
 }
 
-/// Builds the public inputs, the witness, the payloads and the signatures of
-/// one planned spend. `fresh` supplies note secrets and the phantom input's
-/// filler, non-zero and never reused.
+/// Everything of a spend but its signatures: the public inputs (and so both
+/// nullifiers and the intent digest), the witness, the sealed payloads, the
+/// recovery material and the keys of the two input slots. A caller makes
+/// the spend durable from this and signs afterwards with [`Prepared::sign`].
+pub struct Prepared {
+    pub public: PublicInputs,
+    pub witness: TransactionWitness,
+    pub payloads: [Vec<u8>; OUTPUT_SLOTS],
+    pub recovery_owner_commitment: Fr,
+    pub recovery_payload: Option<Vec<u8>>,
+    pub input_keys: [[u8; MLDSA_PUBLIC_KEY_BYTES]; MAX_INPUTS],
+    pub input_indices: [u64; MAX_INPUTS],
+}
+
+impl Prepared {
+    pub fn intent_digest(&self) -> Fr {
+        self.public.transaction_intent_digest
+    }
+
+    pub fn nullifiers(&self) -> [Fr; MAX_INPUTS] {
+        [self.public.nullifier_0, self.public.nullifier_1]
+    }
+
+    /// Section 9.1: two signatures always, each by the key of its slot. The
+    /// last step, so that what the signatures commit to can be recorded
+    /// before any key signs it.
+    pub fn sign(self, instance: &PoolInstance) -> Result<Assembled> {
+        let digest = self.public.transaction_intent_digest;
+        let signatures = [
+            instance.sign_intent(self.input_indices[0], digest)?,
+            instance.sign_intent(self.input_indices[1], digest)?,
+        ];
+        Ok(Assembled {
+            public: self.public,
+            witness: self.witness,
+            payloads: self.payloads,
+            recovery_owner_commitment: self.recovery_owner_commitment,
+            recovery_payload: self.recovery_payload,
+            input_keys: self.input_keys,
+            signatures,
+            input_indices: self.input_indices,
+        })
+    }
+}
+
+/// Prepares and signs one planned spend in one step.
 pub fn assemble(
     instance: &PoolInstance,
     plan: &Plan,
@@ -99,6 +142,19 @@ pub fn assemble(
     terms: &Terms,
     fresh: &mut dyn FnMut() -> Result<Fr>,
 ) -> Result<Assembled> {
+    prepare(instance, plan, frontier, terms, fresh)?.sign(instance)
+}
+
+/// Builds the public inputs, the witness and the payloads of one planned
+/// spend, unsigned. `fresh` supplies note secrets and the phantom input's
+/// filler, non-zero and never reused.
+pub fn prepare(
+    instance: &PoolInstance,
+    plan: &Plan,
+    frontier: &Frontier,
+    terms: &Terms,
+    fresh: &mut dyn FnMut() -> Result<Fr>,
+) -> Result<Prepared> {
     plan.check_conservation()?;
     nonzero(terms.intent_nonce, "the intent nonce")?;
     let own_encapsulation_key = instance.mlkem_encapsulation_key()?;
@@ -283,26 +339,18 @@ pub fn assemble(
         output_data_hash,
     };
     let (public, witness) = builder.build(frontier, terms.anchor_root, held).map_err(circuit)?;
-
-    // Section 9.1: two signatures always, each by the key of its slot.
-    let digest = public.transaction_intent_digest;
     let input_keys = [
         instance.mldsa_public_key(input_indices[0])?,
         instance.mldsa_public_key(input_indices[1])?,
     ];
-    let signatures = [
-        instance.sign_intent(input_indices[0], digest)?,
-        instance.sign_intent(input_indices[1], digest)?,
-    ];
 
-    Ok(Assembled {
+    Ok(Prepared {
         public,
         witness,
         payloads,
         recovery_owner_commitment,
         recovery_payload,
         input_keys,
-        signatures,
         input_indices,
     })
 }

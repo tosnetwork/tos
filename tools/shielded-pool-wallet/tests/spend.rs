@@ -384,3 +384,60 @@ fn assembly_refuses_what_the_contract_or_the_scan_would() {
     let imported = shielded_pool_wallet::import::import(&alice, &opened, &slot).expect("no error");
     assert!(imported.is_err(), "an ordinary note of zero at a dummy's slot imports nothing");
 }
+
+/// Consolidation is a transfer to a fresh descriptor of one's own: two
+/// notes neither of which covers the amount become one note that does, found
+/// again from the chain's history alone, and spent from.
+#[test]
+fn two_small_notes_consolidate_into_one_a_fresh_own_descriptor_receives() {
+    let alice = sender();
+    let mut events = vec![deposit(&alice, TOS, 0), deposit(&alice, 2 * TOS, 1)];
+    let mut ledger = Ledger::genesis();
+    for event in &events {
+        ledger.apply(event, CHARGE).expect("deposit");
+    }
+    let mut notes = Recovered::default();
+    scan_into(&mut ledger, &alice, &mut notes);
+
+    // 2.5 TOS exceeds either note alone.
+    let amount = 5 * TOS / 2;
+    let own = Descriptor::issue(&alice, 20).expect("a fresh descriptor of alice's own");
+    let request = Request::Transfer { to: Box::new(RecipientKeys::of(&own)), amount };
+    let consolidation =
+        plan(&terms(), &candidates(&notes), &request, &mut indices_from(10)).expect("plan");
+    assert_eq!(consolidation.input_leaves(), vec![0, 1]);
+    let assembled = assembled_for(&alice, &ledger, &consolidation, 0x79);
+    assert!(satisfied(&assembled));
+    let event = committed(&assembled, &consolidation, None);
+    ledger.apply(&event, CHARGE).expect("accepted");
+    events.push(event);
+    scan_into(&mut ledger, &alice, &mut notes);
+
+    // Both inputs are spent; the consolidated note and the change are hers.
+    assert_eq!(notes.balance(), 3 * TOS, "a transfer pays no pool fee");
+    assert!(notes.notes.iter().filter(|note| note.note_key_index < 2).all(|note| note.spent));
+    let spendable: Vec<(u64, u128, Option<u64>)> = notes
+        .spendable_with_leaves()
+        .into_iter()
+        .map(|(note, leaf)| (note.note_key_index, note.amount, leaf))
+        .collect();
+    assert!(spendable.contains(&(20, amount, Some(2))), "{spendable:?}");
+    assert!(spendable.contains(&(10, TOS / 2, Some(3))), "{spendable:?}");
+
+    // Reloaded from the history alone, the consolidated note is spendable
+    // and covers what no original note did.
+    let mut replayed = Ledger::genesis();
+    for event in &events {
+        replayed.apply(event, CHARGE).expect("replay");
+    }
+    let mut reloaded = Recovered::default();
+    scan_into(&mut replayed, &alice, &mut reloaded);
+    assert_eq!(reloaded.balance(), notes.balance());
+    let bob = Descriptor::issue(&recipient(), 1).expect("bob's descriptor");
+    let later = Request::Transfer { to: Box::new(RecipientKeys::of(&bob)), amount: 12 * TOS / 5 };
+    let later_plan = plan(&terms(), &candidates(&reloaded), &later, &mut indices_from(30))
+        .expect("the consolidated note covers it");
+    assert_eq!(later_plan.input_leaves(), vec![2]);
+    let assembled = assembled_for(&alice, &replayed, &later_plan, 0x7a);
+    assert!(satisfied(&assembled));
+}

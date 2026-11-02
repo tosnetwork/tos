@@ -245,7 +245,8 @@ fn select(candidates: &[Candidate], need: u128) -> Result<Vec<Candidate>> {
     match best {
         Some((_, first, second)) => Ok(vec![first.clone(), second.clone()]),
         None => Err(refuse(format!(
-            "no one or two spendable notes cover {need}; send to your own address to consolidate"
+            "no one or two spendable notes cover {need}; consolidate first: send two notes to a fresh \
+             descriptor of this instance (`tosctl shield address`)"
         ))),
     }
 }
