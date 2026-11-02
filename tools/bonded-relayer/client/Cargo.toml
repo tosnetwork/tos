@@ -1,0 +1,32 @@
+[package]
+name = "br1-client"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "GPL-3.0-only"
+description = "The wallet side of the BR1 bonded-relayer protocol: the canonical wire rules shared with the native provider, the Bond identity check, quote authentication, the onion endpoint, a SOCKS5 adapter for a local Tor daemon, a bounded one-message HTTP/1.1 exchange and the quote/submit/status client. Holds no custody, no journal and no chain access."
+
+[dependencies]
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+base64 = "0.22"
+sha2 = "0.10"
+sha3 = "=0.10.8"
+hex = "0.4"
+rand = "0.8"
+tokio = { version = "1", features = ["net", "io-util", "time"] }
+chain_block = { path = "../../../tosctl/src/block" }
+node-contracts = { package = "contracts", path = "../../../tosctl/src/node-control/contracts" }
+shielded-pool-wallet = { path = "../../shielded-pool-wallet" }
+shielded-pool-circuit = { path = "../../shielded-pool-circuit" }
+fips204 = { version = "=0.4.6", default-features = false, features = ["ml-dsa-44", "default-rng"] }
+ark-ff = "=0.5.0"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["net", "io-util", "time", "rt-multi-thread", "macros"] }
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
