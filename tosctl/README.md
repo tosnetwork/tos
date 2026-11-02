@@ -13,6 +13,12 @@
 
 ## Installation
 
+### NixOS
+
+The repository-root flake provides an x86_64 Linux package for the standard CLI.
+See [the NixOS installation guide](../assembly/nix/tosctl/README.md) for pinned
+builds, profile/system installation, feature boundaries and the real-VM test.
+
 ### Build from source
 
 ```bash
