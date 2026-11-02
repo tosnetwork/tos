@@ -228,7 +228,7 @@ def main(argv=None):
         names = snapshot(root, args.lane)
         hashes = {name: hashlib.sha256((ROOT / name).read_bytes()).hexdigest() for name in names}
         code, log = run(root, args.lane, None)
-        expected_tests = {"adapter": 29, "service": 29, "composed": 2, "rust": 5}[args.lane]
+        expected_tests = {"adapter": 32, "service": 33, "composed": 2, "rust": 5}[args.lane]
         observed = re.search(
             r"running (\d+) tests" if args.lane == "rust" else r"Ran (\d+) tests", log
         )
