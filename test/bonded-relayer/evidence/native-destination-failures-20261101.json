@@ -1,0 +1,65 @@
+{
+  "schema": "tos.br1.destination-failure-receipts.v1",
+  "reviewed_core_commit": "4b663c4d843755cc514709eb6691f79966ac41dd",
+  "command": [
+    "cargo",
+    "+1.97.1",
+    "test",
+    "--manifest-path",
+    "tools/bonded-relayer/provider/Cargo.toml",
+    "--locked",
+    "-j2",
+    "evidence::tests"
+  ],
+  "mutations": [
+    {
+      "guard": "destroyed_pool",
+      "file": "tools/bonded-relayer/provider/src/evidence.rs",
+      "replace_from": "ensure!(!description.destroyed, \"destroyed pool needs separate evidence\");",
+      "replace_to": "ensure!(true, \"destroyed pool needs separate evidence\");"
+    },
+    {
+      "guard": "abort_descriptor",
+      "file": "tools/bonded-relayer/provider/src/evidence.rs",
+      "replace_from": "Ok(description.aborted)",
+      "replace_to": "Ok(false)"
+    },
+    {
+      "guard": "fee_abort",
+      "file": "tools/bonded-relayer/provider/src/evidence.rs",
+      "replace_from": "if atomic_abort(transaction)? {\n        return Ok(None);\n    }",
+      "replace_to": "if false {\n        return Ok(None);\n    }"
+    },
+    {
+      "guard": "cursor_abort",
+      "file": "tools/bonded-relayer/provider/src/evidence.rs",
+      "replace_from": "if atomic_abort(transaction)? {\n        return Ok(0);\n    }",
+      "replace_to": "if false {\n        return Ok(0);\n    }"
+    },
+    {
+      "guard": "source_owner",
+      "file": "tools/bonded-relayer/provider/src/evidence.rs",
+      "replace_from": "&& header.src == chain_block::MsgAddressIntOrNone::Some(funding.clone())",
+      "replace_to": "&& (header.src == chain_block::MsgAddressIntOrNone::Some(funding.clone()) || true)"
+    },
+    {
+      "guard": "destination_owner",
+      "file": "tools/bonded-relayer/provider/src/evidence.rs",
+      "replace_from": "&& header.dst == *pool",
+      "replace_to": "&& (header.dst == *pool || true)"
+    },
+    {
+      "guard": "bounced_owner",
+      "file": "tools/bonded-relayer/provider/src/evidence.rs",
+      "replace_from": "!header.bounced\n            &&",
+      "replace_to": "(!header.bounced || true)\n            &&"
+    },
+    {
+      "guard": "successful_fee",
+      "file": "tools/bonded-relayer/provider/src/evidence.rs",
+      "replace_from": "simulation::successful(transaction)?;\n    let start",
+      "replace_to": "let start"
+    }
+  ],
+  "public_retention": "Normal Git history; no scheduled expiry. Actual bounded runtime failure excerpts added after execution."
+}

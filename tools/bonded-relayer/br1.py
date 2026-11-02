@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Localnet-only BR1 entry point. No native provider or activation approval is implied."""
+"""Loopback BR1 test entry point. Public-testnet pilot requires explicit opt-in."""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ from tor_transport import OnionEndpoint
 CONFIG_LIMIT = 16384
 
 
-def configuration(path: Path) -> dict:
+def configuration(path: Path, *, enable_testnet_pilot: bool = False) -> dict:
     """Read through a no-follow descriptor; never load private keys from arguments."""
     if not path.is_absolute() or path.resolve(strict=True) != path:
         raise Refused("configuration must be canonical and absolute")
@@ -46,31 +46,35 @@ def configuration(path: Path) -> dict:
         data = object_from_bytes(bytes(chunks), CONFIG_LIMIT)
     finally:
         os.close(fd)
-    if (
-        (set(data) - {"onion_endpoint"})
-        != {
-            "schema",
-            "mode",
-            "release",
-            "backend",
-            "backend_sha256",
-            "state_dir",
-            "journal",
-            "port",
-            "fee",
-            "funding_cap",
-            "max_reserved",
-            "max_pending",
-        }
-        or data["schema"] != "tos.br1.localnet.config.v1"
-        or data["mode"] != "localnet"
+    # An onion endpoint is a localnet-only option: the pilot is loopback-only behind
+    # authenticated SSH and makes no anonymous public transport claim.
+    optional = set() if enable_testnet_pilot is True else {"onion_endpoint"}
+    if (set(data) - optional) != {
+        "schema",
+        "mode",
+        "release",
+        "backend",
+        "backend_sha256",
+        "state_dir",
+        "journal",
+        "port",
+        "fee",
+        "funding_cap",
+        "max_reserved",
+        "max_pending",
+    } or (data["schema"], data["mode"]) != (
+        ("tos.br1.testnet-pilot.config.v1", "testnet-pilot")
+        if enable_testnet_pilot is True
+        else ("tos.br1.localnet.config.v1", "localnet")
     ):
-        raise Refused("only the reviewed localnet configuration shape is supported")
+        raise Refused("localnet configuration or explicit testnet-pilot opt-in required")
     if type(data["release"]) is not dict or set(data["release"]) != {
         f.name for f in dataclasses.fields(Release)
     }:
         raise Refused("complete operator-pinned release required")
     data["release"] = Release(**data["release"])
+    if data["release"].global_id != (2 if enable_testnet_pilot is True else 3):
+        raise Refused("network does not match explicit test mode")
     for key in ("backend", "state_dir", "journal"):
         if type(data[key]) is not str or not Path(data[key]).is_absolute():
             raise Refused("absolute operator paths required")
@@ -119,7 +123,11 @@ def run(config: dict, *, check_only: bool = False) -> int:
             print(
                 json.dumps(
                     {
-                        "schema": "tos.br1.localnet.check.v1",
+                        "schema": (
+                            "tos.br1.testnet-pilot.check.v1"
+                            if config["mode"] == "testnet-pilot"
+                            else "tos.br1.localnet.check.v1"
+                        ),
                         "capabilities_available": True,
                         "production_approved": False,
                     }
@@ -166,9 +174,15 @@ def main(argv=None) -> int:
     parser.add_argument(
         "--check", action="store_true", help="probe the pinned native provider; do not listen"
     )
+    parser.add_argument(
+        "--testnet-pilot", action="store_true", help="explicitly permit global-id-2 pilot config"
+    )
     args = parser.parse_args(argv)
     try:
-        return run(configuration(args.config), check_only=args.check)
+        return run(
+            configuration(args.config, enable_testnet_pilot=args.testnet_pilot),
+            check_only=args.check,
+        )
     except (OSError, Refused, Unavailable, ValueError, TypeError):
         # Operator paths, payloads and subprocess stderr are intentionally not reflected.
         print(

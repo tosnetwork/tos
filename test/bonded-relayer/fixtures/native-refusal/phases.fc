@@ -1,0 +1,17 @@
+;; Synthetic native-executor fixture; never deployed on a network.
+() recv_internal(int balance, int value, cell message, slice body) impure {
+  int mode = body~load_uint(32);
+  int count = body~load_uint(64);
+  set_data(begin_cell().store_uint(1, 32).end_cell());
+  int result = 0;
+  if (mode == 0) {
+    repeat (count) {
+      result += 1;
+    }
+  } else {
+    raw_reserve(count, 0);
+    result = 7;
+  }
+  set_data(begin_cell().store_uint(result, 32).end_cell());
+  raw_reserve(1, 0);
+}

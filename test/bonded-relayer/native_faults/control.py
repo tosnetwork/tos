@@ -234,20 +234,35 @@ def refusal(args, config, request):
         ).fetchone()[0]
     record = json.loads(record)
     witness, evidence = retained["witness"], retained["evidence"]
-    if retained["schema"] != "tos.br1.native-nonacceptance.v1":
+    destination = args.mode == "destination-refusal"
+    schema = "tos.br1.native-refusal.v1" if destination else "tos.br1.native-nonacceptance.v1"
+    if retained["schema"] != schema:
         raise RuntimeError("unsupported refusal witness")
     if hashlib.sha256(encode(witness)).hexdigest() != evidence["proof_digest"]:
         raise RuntimeError("retained witness digest")
     if not (
+        witness["request"] == identity
+        and witness["source_external"] == job["message_hash"]
+        and live == permits == credits == 0
+    ):
+        raise RuntimeError("refusal did not retain exact bindings and release safely")
+    if destination:
+        if not (
+            sent == 1
+            and witness["kind"] == "pool_atomic_abort_linked_to_prepared"
+            and witness["pool_transaction"] == evidence["transaction"]
+        ):
+            raise RuntimeError("not the intended proven destination abort")
+        if captured_sends(args.capture, bytes(job["message"])) != 1:
+            raise RuntimeError("original destination-failure message was not sent exactly once")
+    elif not (
         witness["wallet_shard_time"] >= witness["wallet_expiry"]
         and witness["wallet_head"] == record["funding_head_hash"]
         and witness["pre_signing_lt"] == record["funding_head_lt"]
         and witness["wallet_sequence"] == sequence
-        and witness["request"] == identity
-        and witness["source_external"] == job["message_hash"]
-        and live == sent == permits == credits == 0
+        and sent == 0
     ):
-        raise RuntimeError("before-RPC refusal did not retain exact bindings and release safely")
+        raise RuntimeError("before-RPC refusal did not prove nonacceptance")
     with ExitStack() as cleanup:
         if args.cache_without_rpc:
             # Stop the unit explicitly before this opt-in configuration fault.
@@ -284,7 +299,9 @@ def refusal(args, config, request):
     write_new(
         args.out / "VERDICT.json",
         {
-            "result": "PASS-PROVEN-NONACCEPTANCE-AND-CACHED-REFUSAL",
+            "result": "PASS-PROVEN-DESTINATION-ABORT-AND-CACHED-REFUSAL"
+            if destination
+            else "PASS-PROVEN-NONACCEPTANCE-AND-CACHED-REFUSAL",
             "request_id": identity,
             "native_sequence": sequence,
             "native_lease_retired": True,
@@ -302,7 +319,14 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--mode",
-        choices=("submit", "reconcile", "expiry", "expiry-resume", "refusal"),
+        choices=(
+            "submit",
+            "reconcile",
+            "expiry",
+            "expiry-resume",
+            "refusal",
+            "destination-refusal",
+        ),
         required=True,
     )
     parser.add_argument("--config", type=Path, required=True)
@@ -317,7 +341,11 @@ def main():
     if args.mode.startswith("expiry"):
         if not all((args.baseline, args.baseline_sha256)):
             parser.error("expiry requires a pinned baseline")
-    elif args.mode != "refusal" and not all((args.token, args.capture)):
+    elif args.mode == "destination-refusal" and args.capture is None:
+        parser.error("destination-refusal requires capture directory")
+    elif args.mode not in ("refusal", "destination-refusal") and not all(
+        (args.token, args.capture)
+    ):
         parser.error("submit/reconcile require private token file and capture directory")
     args.out.mkdir(mode=0o700, parents=False, exist_ok=True)
     if args.out.stat().st_mode & 0o077:
@@ -328,7 +356,7 @@ def main():
         parser.error("fault controls require isolated global id 3")
     if args.mode.startswith("expiry"):
         expiry(args, config, request)
-    elif args.mode == "refusal":
+    elif args.mode in ("refusal", "destination-refusal"):
         refusal(args, config, request)
     else:
         reconcile(args, config, request)

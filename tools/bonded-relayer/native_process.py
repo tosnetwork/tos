@@ -28,6 +28,7 @@ OPERATIONS = frozenset(
         "client_quote",
         "verify_endpoint",
         "capabilities",
+        "pool_head",
         "preflight",
         "prepare",
         "validate_prepared",

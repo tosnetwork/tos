@@ -7,6 +7,8 @@ on:
       - 'tools/bonded-relayer/**'
       - 'test/bonded-relayer/native_client_smoke.py'
       - 'test/bonded-relayer/native_tor_controls.py'
+      - 'test/bonded-relayer/fixtures/native-refusal/**'
+      - 'test/bonded-relayer/native_faults/generate_phase_fixtures.py'
       - 'tools/shielded-pool-wallet/**'
       - 'tools/shielded-pool-circuit/**'
       - 'tosctl/src/node-control/contracts/**'
@@ -42,6 +44,8 @@ jobs:
           cargo fmt --manifest-path tools/bonded-relayer/provider/Cargo.toml --check
           BR1_PUBLIC_FIXTURE=/tmp/br1-public-fixture.json cargo test --manifest-path tools/bonded-relayer/provider/Cargo.toml --release --locked -j2
           cargo clippy --manifest-path tools/bonded-relayer/provider/Cargo.toml --release --locked --all-targets --no-deps -j2 -- -D warnings
+          cargo test --manifest-path tools/bonded-relayer/provider/Cargo.toml --release --locked --features public-testnet-pilot -j2
+          cargo clippy --manifest-path tools/bonded-relayer/provider/Cargo.toml --release --locked --features public-testnet-pilot --all-targets --no-deps -j2 -- -D warnings
       - name: Exercise the real sealed wallet verifier without operator custody
         run: |
           cargo build --manifest-path tools/bonded-relayer/provider/Cargo.toml --release --locked -j2

@@ -1,9 +1,10 @@
-# BR1 native provider for an isolated local network
+# BR1 native provider for local networks and an explicit testnet pilot
 
 This ELF supplies the chain, signing and finality operations consumed by
-`../native_adapter.py`. It is restricted to **global id 3**, global version 16
-or later, a pinned zerostate, and private Shield transfers. It is not a public
-testnet deployment or production activation approval.
+`../native_adapter.py`. The default build is restricted to **global id 3**, global version16 or later,
+a pinned zerostate and private Shield transfers. An explicit
+`public-testnet-pilot` build additionally permits global-id2. This is a bounded
+test-chain pilot capability, not production activation approval.
 
 The local acceptance run uses four real validators, two observers and two
 independently funded operators. It exercises HTTP quotes, real ML-DSA worker
@@ -123,10 +124,28 @@ historically after later wallet activity, including while RPC is unavailable.
 Legacy records without the pre-signing head, unsupported cache formats, changed
 heads/sequences and shard states before expiry remain unknown. Never manufacture
 a baseline from today's wallet state or reset custody to release a reservation.
-This does not implement every destination failure or liveness path.
+A second terminal path authenticates an ordinary, non-destroyed destination
+transaction with `aborted=true`. Its inbound must come from this funding wallet
+and target the pinned pool. At the same proven checkpoint, the exact prepared
+external wallet message must have executed successfully and emitted that exact
+inbound message hash. A matching body sent by another wallet is skipped rather
+than mistaken for this attempt. Aborted transactions advance no commitment
+cursor and import no fee; successful attempts still require every execution
+phase to succeed. The same atomic retirement/cache rules apply. Destruction,
+unsupported descriptors or missing source links remain unknown.
 
-The full C2 matrix remains open: forced gas/action failure, every crash/write
-boundary, adversarial failover and refusal recovery, Bond retirement/slashing,
+The private native `pool_head` operation returns only the authenticated pool
+head, state hash and checkpoint. The local history runner follows predecessor
+hashes/LTs in bounded 16-row RPC pages to creation, optionally filling gaps from
+retained archives. This diagnostic export does not enlarge the provider's
+16-transaction finality window or authorize a transaction.
+
+Real local-chain acceptance covers competing-spend refusal, a newer foreign
+body replay, process death and retained-refusal recovery. Synthetic native C++
+fixtures cover gas exhaustion (-14) and action failure (37), with successful
+controls and state rollback; these are not on-chain gas/action fault injections.
+The full C2 matrix remains open: on-chain forced gas/action failure, every
+crash/write boundary, adversarial failover, Bond retirement/slashing,
 public privacy-transport acceptance, production custody and economic/security review. The ordinary
 private-transfer funding estimate is conservatively fixed at 0.25 local TOS and
 must fit both request and operator caps. It is not a production pricing model.
@@ -155,3 +174,41 @@ verify the pinned worker's quote signature. They do not prove live eligibility.
 and compares the configured service origin with its immutable endpoint before
 Python opens an onion-profile listener. See the
 [transport runbook](../../../doc/br1-tor-transport.md) for the full trust boundary.
+
+## Explicit public-testnet pilot (loopback only)
+
+Build with `cargo build --release --locked --features public-testnet-pilot
+--manifest-path tools/bonded-relayer/provider/Cargo.toml`. An ordinary build
+continues to refuse global-id2. Every other global ID is refused in both builds.
+The native provisioner validates the selected network **before** creating keys.
+The Bond config, release and signed V3 wallet global ID all use that selection;
+the V3 subwallet ID remains3. Genesis root/file and pool/Bond code/config pins,
+authenticated config8/19 and full proof policy remain mandatory.
+
+Provision **fresh test custody**, using the ordinary owned0600 provision template
+with `global_id:2` and the independently authenticated public-testnet genesis,
+pool/config and execution domain. Never copy localnet keys or fabricate an
+anchor from an RPC assertion. Pin the feature-built ELF and proof helper hash.
+No native test/provision command funds accounts, activates a Bond or broadcasts
+a relay transaction. Bootstrap commands explicitly send and require a separate
+live runbook step; never repeat one with an unknown result.
+
+The Python entry point requires both `--testnet-pilot` and a private service
+config with `schema:tos.br1.testnet-pilot.config.v1`, `mode:testnet-pilot` and
+release global-id2. Other fields retain the local schema's exact shape. An
+ordinary invocation accepts only localnet/id3; mismatched mode/network refuses.
+Use `br1.py --config "$CONFIG" --testnet-pilot --check` before any listener. It
+probes the actual pinned provider and continues to report
+`production_approved:false`; missing/underfunded/unverified capability refuses.
+The listener remains127.0.0.1 only. Reach it through existing authenticated SSH,
+not a new Internet endpoint or a claim of anonymous public transport/discovery.
+
+A pilot runbook must identify the reviewed heads/artifact hashes, independently
+pinned genesis and pool, fresh custody and finite funding budget; current-term
+and maintenance/soak clearance; read-only dry runs; one-shot funding/bootstrap
+and a tiny private transfer; destination proof and real fee-note reconciliation;
+and drain/unknown-result recovery. Enforce existing test budget/no refill and
+never automatically re-sign or rebroadcast. Do not enable before applicable CI,
+non-author/third-party review and local fault gates pass. The code capability
+alone does not assert completion of full C2, production custody, economics,
+privacy transport or independent security review.

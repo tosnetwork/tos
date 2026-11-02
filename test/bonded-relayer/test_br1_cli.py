@@ -29,7 +29,7 @@ class ConfigTests(unittest.TestCase):
         self.config = {
             "schema": "tos.br1.localnet.config.v1",
             "mode": "localnet",
-            "release": dataclasses.asdict(profile(3)),
+            "release": dataclasses.asdict(dataclasses.replace(profile(3), global_id=3)),
             "backend": str(self.root / "missing-backend"),
             "backend_sha256": "ab" * 32,
             "state_dir": str(self.state),
@@ -74,8 +74,59 @@ class ConfigTests(unittest.TestCase):
 
     def test_complete_private_configuration_parses(self):
         data = br1.configuration(self.path)
-        self.assertEqual(data["release"], profile(3))
+        self.assertEqual(data["release"], dataclasses.replace(profile(3), global_id=3))
         self.assertEqual(data["max_pending"], 8)
+
+    def test_public_testnet_pilot_requires_explicit_mode_and_matching_network(self):
+        self.config["schema"] = "tos.br1.testnet-pilot.config.v1"
+        self.config["mode"] = "testnet-pilot"
+        self.config["release"]["global_id"] = 2
+        self.write()
+        with self.assertRaisesRegex(Refused, "localnet configuration"):
+            br1.configuration(self.path)
+        data = br1.configuration(self.path, enable_testnet_pilot=True)
+        self.assertEqual(data["release"].global_id, 2)
+        for global_id in (0, 1, 3, 16):
+            self.config["release"]["global_id"] = global_id
+            self.write()
+            with self.subTest(global_id=global_id), self.assertRaisesRegex(Refused, "network"):
+                br1.configuration(self.path, enable_testnet_pilot=True)
+
+    def test_public_testnet_pilot_refuses_an_onion_endpoint(self):
+        # The pilot stays loopback-only behind authenticated SSH; an onion endpoint is a
+        # localnet-only option, so a pilot configuration carrying one must not load.
+        self.config["schema"] = "tos.br1.testnet-pilot.config.v1"
+        self.config["mode"] = "testnet-pilot"
+        self.config["release"]["global_id"] = 2
+        self.config["onion_endpoint"] = (
+            "http://pg6mmjiyjmcrsslvykfwnntlaru7p5svn6y2ymmju6nubxndf4pscryd.onion"
+        )
+        self.write()
+        with self.assertRaisesRegex(Refused, "localnet configuration"):
+            br1.configuration(self.path, enable_testnet_pilot=True)
+
+    def test_cli_forwards_pilot_opt_in_without_starting_a_backend(self):
+        # Parser wiring only; the native/backend acceptance boundary is not mocked into readiness.
+        self.config["schema"] = "tos.br1.testnet-pilot.config.v1"
+        self.config["mode"] = "testnet-pilot"
+        self.config["release"]["global_id"] = 2
+        self.write()
+        with patch("br1.run", return_value=0) as runner:
+            self.assertEqual(
+                br1.main(["--config", str(self.path), "--testnet-pilot", "--check"]), 0
+            )
+            self.assertEqual(runner.call_args.args[0]["release"].global_id, 2)
+            self.assertEqual(runner.call_args.kwargs, {"check_only": True})
+        with patch("br1.run") as runner, redirect_stderr(io.StringIO()):
+            self.assertEqual(br1.main(["--config", str(self.path), "--check"]), 2)
+            runner.assert_not_called()
+
+    def test_localnet_mode_refuses_public_network_even_without_pilot_flag(self):
+        for global_id in (0, 1, 2, 16):
+            self.config["release"]["global_id"] = global_id
+            self.write()
+            with self.subTest(global_id=global_id), self.assertRaisesRegex(Refused, "network"):
+                br1.configuration(self.path)
 
     def test_production_mode_or_secret_fields_are_refused(self):
         for key, value in (("mode", "production"), ("seed", "DO-NOT-READ-ME"), ("approved", True)):
