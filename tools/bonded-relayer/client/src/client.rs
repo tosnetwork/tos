@@ -402,6 +402,9 @@ mod tests {
         canned_path: String,
         /// The body of a canned answer, in place of the default one.
         canned_body: Option<Vec<u8>>,
+        /// A clock the relayer moves to this reading as it answers, so the
+        /// client's reading before the exchange and after it differ.
+        advance: Option<(Arc<std::sync::atomic::AtomicU64>, u64)>,
         /// Alter the signed terms before answering (an honest worker signing
         /// terms the client must still refuse).
         tamper: Option<fn(&mut Value)>,
@@ -422,6 +425,9 @@ mod tests {
             let path = start.split(' ').nth(1).unwrap_or_default().to_owned();
             let mut behaviour = self.behaviour.lock().ok()?;
             behaviour.paths.push(path.clone());
+            if let Some((clock, reading)) = &behaviour.advance {
+                clock.store(*reading, std::sync::atomic::Ordering::SeqCst);
+            }
             if let Some(status) = behaviour.canned_status {
                 if path.starts_with(&behaviour.canned_path) {
                     let body = behaviour.canned_body.clone();
@@ -521,16 +527,18 @@ mod tests {
         client.set_clock(Arc::new(move || now));
     }
 
-    /// A clock that reads `first` once and `then` from the second reading on.
-    fn stepping(first: u64, then: u64) -> Clock {
-        let readings = Arc::new(std::sync::atomic::AtomicU64::new(0));
-        Arc::new(move || {
-            if readings.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
-                first
-            } else {
-                then
-            }
-        })
+    /// A clock the fake relayer moves when it answers: it reads `before` until
+    /// the relayer has answered and `after` from then on, so only a reading
+    /// taken after the exchange sees `after`.
+    fn advanced_by_the_relayer(
+        behaviour: &Arc<Mutex<Behaviour>>,
+        before: u64,
+        after: u64,
+    ) -> anyhow::Result<Clock> {
+        let reading = Arc::new(std::sync::atomic::AtomicU64::new(before));
+        behaviour.lock().map_err(|_| anyhow::anyhow!("lock"))?.advance =
+            Some((reading.clone(), after));
+        Ok(Arc::new(move || reading.load(std::sync::atomic::Ordering::SeqCst)))
     }
 
     fn request_for(client: &Client, q: &Quote) -> Request {
@@ -617,23 +625,29 @@ mod tests {
     /// a fresh quote, and a window that closed in flight is closed.
     #[tokio::test]
     async fn the_window_is_judged_after_the_answer_arrives() -> anyhow::Result<()> {
-        let (mut client, _, _, _) = stand_up().await?;
+        let (mut client, behaviour, _, _) = stand_up().await?;
         let token = random_token();
-        // The relayer issues at NOW; this clock read NOW - 5 when the request
-        // left and NOW + 2 once the answer is in hand.
-        client.set_clock(stepping(NOW - 5, NOW + 2));
-        assert_eq!((client.clock)(), NOW - 5, "a reading taken before the exchange");
+        // The relayer issues at NOW. This clock reads NOW - 5 until the
+        // relayer has answered and NOW + 2 from then on: a reading taken
+        // before the exchange refuses the honest quote, one taken after
+        // accepts it.
+        client.set_clock(advanced_by_the_relayer(&behaviour, NOW - 5, NOW + 2)?);
+        assert_eq!((client.clock)(), NOW - 5);
         let q = client.quote(2, 300, &token).await?;
         assert_eq!(q.terms.issued_at, NOW);
+        assert_eq!((client.clock)(), NOW + 2);
         // A window that closed while the answer was in flight is closed,
         // whatever the clock said when the request left.
-        client.set_clock(stepping(NOW, NOW + 300));
+        client.set_clock(advanced_by_the_relayer(&behaviour, NOW, NOW + 300)?);
         assert_eq!((client.clock)(), NOW);
         assert!(matches!(client.quote(2, 300, &token).await, Err(ClientError::Rejected(_))));
+        behaviour.lock().map_err(|_| anyhow::anyhow!("lock"))?.advance = None;
+        // A submission is judged by the clock as read just before it leaves.
         let request = request_for(&client, &q);
-        client.set_clock(stepping(NOW, NOW + 300));
-        assert_eq!((client.clock)(), NOW);
+        at(&mut client, NOW + 300);
         assert!(matches!(client.submit(&request, &q).await, Err(ClientError::Rejected(_))));
+        at(&mut client, NOW + 10);
+        assert!(client.submit(&request, &q).await.is_ok());
         Ok(())
     }
 

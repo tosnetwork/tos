@@ -238,10 +238,12 @@ pub(super) fn open_session(
 }
 
 /// Asks the relay for a quote under the session's capability and holds it
-/// to the spend: it must fund the pool's transact fee, name a fee descriptor
-/// of this pool that is not the recipient's, and leave the margin on both
-/// clocks. The authenticated quote is journalled before anything is planned
-/// under it; a quote that fails these checks is not.
+/// to the spend: its funding must cover the pool's transact fee, it must
+/// name a fee descriptor of this pool that is not the recipient's, and it
+/// must leave the margin on both clocks, `now` being this machine's. The
+/// authenticated quote is journalled before anything is planned under it; a
+/// quote that fails these checks is not.
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn take_quote<R: Relay>(
     opened: &mut Opened,
     relay: &R,
@@ -249,25 +251,26 @@ pub(super) async fn take_quote<R: Relay>(
     options: &RelayOptions,
     head: &Head,
     target: &Target,
-    funding_cap: u128,
+    transact_fee: u128,
+    now: u64,
 ) -> anyhow::Result<(Quote, Descriptor, u128)> {
-    let funding_cap_u64 =
-        u64::try_from(funding_cap).context("the transact fee exceeds the message limit")?;
+    let transact_fee_u64 =
+        u64::try_from(transact_fee).context("the transact fee exceeds the message limit")?;
     let quote = relay
         .quote(FEE_SLOT, options.quote_lifetime, &session.status_token)
         .await
         .map_err(|error| anyhow::anyhow!("the relayer's quote: {error}"))?;
     anyhow::ensure!(
-        quote.terms.funding_cap >= funding_cap_u64,
+        quote.terms.funding_cap >= transact_fee_u64,
         "the relayer's funding cap ({} TOS) is below the pool's transact fee ({} TOS); it would \
          not fund this message",
         tos(u128::from(quote.terms.funding_cap)),
-        tos(funding_cap)
+        tos(transact_fee)
     );
     let fee = u128::from(quote.terms.amount);
     let fee_to = fee_descriptor(&quote, opened, target)?;
     require_window_open(
-        unix_now(),
+        now,
         head.shard_gen_utime,
         quote.terms.valid_until,
         RELAY_DEADLINE_MARGIN_SECS,
@@ -330,8 +333,9 @@ pub(super) async fn run(
     let candidates = spendable_candidates(&recovered, &held_leaves(&pending));
     anyhow::ensure!(!candidates.is_empty(), "this instance has no spendable note");
 
-    // The relayer funds the message with exactly the pool's transact fee.
-    let funding_cap = head.transact_fee()?;
+    // The relayer funds the message from its own wallet, with the amount it
+    // quoted as its funding cap; that amount must cover the pool's fee.
+    let transact_fee = head.transact_fee()?;
 
     let session = open_session(&mut opened, options, &profile, &endpoint, &scope)?;
     let proxy = TorProxy::new(options.tor_port, session.isolation.clone())?;
@@ -343,8 +347,17 @@ pub(super) async fn run(
         endpoint.authority(),
         options.tor_port
     );
-    let (quote, fee_to, fee) =
-        take_quote(&mut opened, &relay, &session, options, &head, &target, funding_cap).await?;
+    let (quote, fee_to, fee) = take_quote(
+        &mut opened,
+        &relay,
+        &session,
+        options,
+        &head,
+        &target,
+        transact_fee,
+        unix_now(),
+    )
+    .await?;
     let tag = session.tag;
 
     let Target::Send { descriptor, .. } = &target else {
@@ -374,7 +387,7 @@ pub(super) async fn run(
 
     print!(
         "{}",
-        summary_text(&plan, descriptor, &anchor, &profile, &endpoint, &quote, funding_cap)
+        summary_text(&plan, descriptor, &anchor, &profile, &endpoint, &quote, transact_fee)
     );
     if anchor.kind == ANCHOR_CURRENT {
         println!(
@@ -516,8 +529,6 @@ pub(super) async fn run(
         tos(fresh_fee),
         tos(u128::from(quote.terms.funding_cap))
     );
-    let funding_cap_u64 =
-        u64::try_from(fresh_fee).context("the transact fee exceeds the message limit")?;
     let witnesses = assembly::nullifier_witnesses(ledger.nullifier_state(), nullifiers)
         .map_err(|error| anyhow::anyhow!("nullifier witnesses: {error}"))?;
 
@@ -541,7 +552,9 @@ pub(super) async fn run(
         fee_slot: FEE_SLOT,
         fee_note_index: quote.terms.note_index,
         valid_until,
-        funding_cap: funding_cap_u64,
+        // The relayer funds the exact amount it quoted and refuses a request
+        // whose cap is below it; the cap is the quoted one, no lower.
+        funding_cap: quote.terms.funding_cap,
     };
     // The request as the relayer will check it, checked here first.
     let value = serde_json::to_value(&relay_request)?;
@@ -683,7 +696,7 @@ fn summary_text(
     profile: &RelayerProfile,
     endpoint: &br1_client::onion::OnionEndpoint,
     quote: &Quote,
-    funding_cap: u128,
+    transact_fee: u128,
 ) -> String {
     let inputs: Vec<String> = plan
         .inputs
@@ -707,9 +720,9 @@ fn summary_text(
         "\n{}\n  Kind:        Transfer, relayed\n  To:          descriptor index {}\n  Amount:      \
          {} TOS\n  Relayer fee: {} TOS (a note to the relayer's descriptor index {}, slot \
          {FEE_SLOT}, from the notes)\n  Inputs:      {}\n  Change:      {} TOS (back to this \
-         instance)\n  Anchor:      {}\n  Relayer:     Bond {} via {}\n  Funding cap: {} TOS (the \
-         pool's transact fee; the relayer funds the message)\n  Quote:       {}, window ends \
-         {}\n",
+         instance)\n  Anchor:      {}\n  Relayer:     Bond {} via {}\n  Funding:     {} TOS from \
+         the relayer's wallet, as quoted (the pool's transact fee is {} TOS)\n  Quote:       {}, \
+         window ends {}\n",
         "Spend summary:".cyan().bold(),
         recipient.note_key_index,
         tos(plan.outputs[0].amount()),
@@ -724,7 +737,8 @@ fn summary_text(
         },
         profile.release.bond,
         endpoint.authority(),
-        tos(funding_cap),
+        tos(u128::from(quote.terms.funding_cap)),
+        tos(transact_fee),
         quote.identity,
         utc(u32::try_from(quote.terms.valid_until).unwrap_or(u32::MAX)),
     )
@@ -1058,6 +1072,8 @@ mod tests {
 
     const DOMAIN: u64 = 0x5e5e_0001;
     const SCOPE_BYTE: &str = "ab";
+    /// This machine's clock in the tests: every window is relative to it.
+    const NOW: u64 = 1_800_000_000;
     const TOKEN: &str = "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b";
 
     /// Alice with two notes of 2 TOS in a ledger, as the scan finds them.
@@ -1213,7 +1229,7 @@ mod tests {
             fee_slot,
             fee_note_index: 9,
             valid_until,
-            funding_cap: 2_500_000_000,
+            funding_cap: quote.terms.funding_cap,
         };
         (relay_request, quote, assembled, ledger, relayer)
     }
@@ -1277,6 +1293,10 @@ mod tests {
         altered_body.body_b64 = base64::engine::general_purpose::STANDARD.encode(bytes);
         let value = serde_json::to_value(&altered_body).expect("json");
         assert!(RelayCandidate::check(&value, &scope, &quote.terms_value).is_err(), "bytes");
+        // The cap is the quoted one: the relayer funds that exact amount and
+        // refuses a request whose cap is below it, after the wallet signed
+        // and proved; the client refuses one above it before connecting.
+        assert_eq!(request.funding_cap, quote.terms.funding_cap);
         let mut late = request.clone();
         late.valid_until = 1_800_000_301;
         let value = serde_json::to_value(&late).expect("json");
@@ -1401,11 +1421,19 @@ mod tests {
         let session =
             open_session(&mut opened, &options(), &profile, &endpoint, &scope).expect("a session");
         let relay = Recorder::quoting(Err(ClientError::Unavailable("no circuit".into())));
-        let error =
-            take_quote(&mut opened, &relay, &session, &options(), &head, &target, 2_500_000_000)
-                .await
-                .err()
-                .expect("no quote");
+        let error = take_quote(
+            &mut opened,
+            &relay,
+            &session,
+            &options(),
+            &head,
+            &target,
+            2_500_000_000,
+            NOW,
+        )
+        .await
+        .err()
+        .expect("no quote");
         assert!(error.to_string().contains("no circuit"), "{error}");
         let on_disk = opened.store.read_journal().expect("the journal on disk");
         assert_eq!(*relay.tokens.borrow(), vec![session.status_token.clone()]);
@@ -1424,11 +1452,19 @@ mod tests {
 
         // A quote that does not fund the pool's fee is refused and not kept.
         let relay = Recorder::quoting(Ok(quoted(&quoted_descriptor, 100_000_000, 1_800_000_300)));
-        let error =
-            take_quote(&mut opened, &relay, &session, &options(), &head, &target, 6_000_000_000)
-                .await
-                .err()
-                .expect("too small a cap");
+        let error = take_quote(
+            &mut opened,
+            &relay,
+            &session,
+            &options(),
+            &head,
+            &target,
+            6_000_000_000,
+            NOW,
+        )
+        .await
+        .err()
+        .expect("too small a cap");
         assert!(error.to_string().contains("funding cap"), "{error}");
         assert!(
             !opened
@@ -1439,10 +1475,18 @@ mod tests {
 
         // A quote that passes is on disk before anything is planned under it.
         let relay = Recorder::quoting(Ok(quoted(&quoted_descriptor, 100_000_000, 1_800_000_300)));
-        let (quote, fee_to, fee) =
-            take_quote(&mut opened, &relay, &session, &options(), &head, &target, 2_500_000_000)
-                .await
-                .expect("a quote");
+        let (quote, fee_to, fee) = take_quote(
+            &mut opened,
+            &relay,
+            &session,
+            &options(),
+            &head,
+            &target,
+            2_500_000_000,
+            NOW,
+        )
+        .await
+        .expect("a quote");
         assert_eq!((fee, fee_to.note_key_index), (100_000_000, 9));
         let on_disk = opened.store.read_journal().expect("the journal on disk");
         assert!(matches!(
