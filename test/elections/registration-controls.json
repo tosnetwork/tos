@@ -1,6 +1,6 @@
 {
   "schema": "tos.elections.registration-controls.v1",
-  "core_commit": "b119553bd8c33e6314cdae37793226abd0d858df",
+  "core_commit": "da5c6df82ff8616d5768143a1daeb368b0f087ce",
   "mutations": [
     {
       "name": "pending_delay",
@@ -113,6 +113,30 @@
       "replace_to": "// mutant: omit completed renewal snapshot update",
       "expected_count": 1,
       "test": "runner::runner_tests::closed_elector_still_extends_actual_announced_duty_without_spending"
+    },
+    {
+      "name": "node_failure_isolation",
+      "file": "tosctl/src/node-control/elections/src/runner.rs",
+      "replace_from": "registration_failed.insert(node_id.clone());",
+      "replace_to": "return Err(error);",
+      "expected_count": 1,
+      "test": "runner::runner_tests::failed_registration_isolated_from_healthy_nodes_even_when_excluded"
+    },
+    {
+      "name": "unknown_config_guard",
+      "file": "tosctl/src/node-control/elections/src/runner.rs",
+      "replace_from": "!node.validator_config_read_failed",
+      "replace_to": "true",
+      "expected_count": 1,
+      "test": "runner::runner_tests::failed_config_read_never_becomes_missing_keys_or_new_signing"
+    },
+    {
+      "name": "unknown_config_propagation",
+      "file": "tosctl/src/node-control/elections/src/runner.rs",
+      "replace_from": "node.validator_config_read_failed = true;",
+      "replace_to": "node.validator_config_read_failed = false;",
+      "expected_count": 1,
+      "test": "runner::runner_tests::failed_config_read_never_becomes_missing_keys_or_new_signing"
     }
   ]
 }

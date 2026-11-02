@@ -100,8 +100,8 @@ def main():
                 path.write_text(original)
         code, output = run(command + ["--", "--test-threads=2"], args.scratch, env)
         (args.out / "restored.log").write_bytes(output)
-        if code != 0 or b"66 passed; 0 failed" not in output:
-            raise RuntimeError("restored suite did not pass all66 tests")
+        if code != 0 or b"68 passed; 0 failed" not in output:
+            raise RuntimeError("restored suite did not pass all68 tests")
         report = dict(
             core_commit=core,
             mutations=rows,
@@ -109,7 +109,7 @@ def main():
             restored_sha256=hashlib.sha256(output).hexdigest(),
         )
         (args.out / "REPORT.json").write_text(json.dumps(report, indent=2) + "\n")
-        print("RESTORED66GREEN", flush=True)
+        print("RESTORED68GREEN", flush=True)
     finally:
         subprocess.run(["git", "worktree", "remove", str(args.scratch)], cwd=ROOT, check=True)
 
