@@ -1,0 +1,197 @@
+{
+  "schema": "tos.br1.local-fault-evidence.v1",
+  "scope": "isolated global-id-3, global version 16; not complete C2 or public activation",
+  "base": "4e718804b831ca147d3b2c30f3e1507c52dee402",
+  "upstream_default": "857b8a57a178e6ae0fe7fa86e7d81c5233de8560",
+  "upstream_comparison": "BR1 provider and service absent upstream",
+  "provider_sha256": "16bfc33e3597cfa98514f6114035c1692ef0316537f0d44f05b63e2e03a46b3a",
+  "sources": {
+    "tools/bonded-relayer/provider/src/pinned_helper.rs": "e16e008c608076b15ad6da1147743ce5fe9fd5062df0059e7e4a5f0136bcd970",
+    "tools/bonded-relayer/provider/src/chain.rs": "52c28841d1ecfb59521833089e0dcec4a664dfe336e183128d3cea87c6ea075a",
+    "tools/bonded-relayer/provider/src/prepared.rs": "8fc4127167c6c562f4bf55b990d2b8caec8a3c53bb4cf8a38d308a7df4eadfb3",
+    "tools/bonded-relayer/provider/src/provider.rs": "09380c895d5eb88b2895b7d99a0948ed744c4519d8bc9b14450de4ecf27efb95",
+    "tools/bonded-relayer/provider/src/main.rs": "b61404978ae1ff82bab947f5829fce55e538defc28c8d4fbdd8492ec14644f41",
+    "tools/bonded-relayer/relay_service.py": "f6b14c239900009ed39f460a3e61a8b53e49530a33056362a1a596a2778865aa",
+    "test/bonded-relayer/test_relay_service.py": "f05b26e90618cce077be653b6331394139707e8b981d6f20352c92c416ad3031",
+    "test/bonded-relayer/delivery_controls.py": "f478baa5b7f7d1c52bb948fdf3be19eba1cd5f8560863b6afb380ede8e7a797c",
+    "test/bonded-relayer/native_faults/control.py": "2b3d3e082cd654fba055c550143d3b8d2d0ec31d667874ba9d3835ee40705a77",
+    "test/bonded-relayer/native_faults/proxy.py": "22a282ef3e20a003224c29aa700a65d39b31fa6d1c3688eabc72dc57e1261032",
+    "test/bonded-relayer/native_faults/README.md": "fce52c07e230759a7676f16ed9cfee43a420cf20002c4530ec5459e906c44548"
+  },
+  "cases": [
+    {
+      "case": "lost_rpc_reply",
+      "result": "PASS-ACCEPTED-WRITE-LOST-REPLY-RECONCILED",
+      "receipt": {
+        "path": "/tos/build/br1-localnet/e2e-fault-r2/VERDICT.json",
+        "bytes": 974,
+        "sha256": "6c5d4ccb3b3abc9d95e97fe7e0047a9c269f89bbe7e27e754ea6852a39648a7b"
+      }
+    },
+    {
+      "case": "kill_after_accepted_write",
+      "result": "PASS-KILLED-AFTER-ACCEPTED-WRITE-READONLY-RECONCILIATION",
+      "receipt": {
+        "path": "/tos/build/br1-localnet/e2e-crash/VERDICT.json",
+        "bytes": 878,
+        "sha256": "0cc968ee01fb6221504c54d49d3d75ebf23f7e5ee1a9162e80621e4168296b7f"
+      }
+    },
+    {
+      "case": "wallet_expiry_old_new",
+      "result": "PASS-ACTUAL-WALLET-EXPIRY-OLD-ACCEPTS-NEW-REFUSES",
+      "receipt": {
+        "path": "/tos/build/br1-localnet/e2e-expiry/VERDICT.json",
+        "bytes": 540,
+        "sha256": "b51a3d98003abbd4efaffef47eb8101a9a6e155d9863351caf81186a4c0f199c"
+      }
+    }
+  ],
+  "verification": {
+    "native_tests": 19,
+    "python_tests": 141,
+    "guard_mutations": 4,
+    "source_guard_suites": 66,
+    "immediate_two_operator_restart_ready_seconds": 0.208,
+    "service_guard_mutations": 5
+  },
+  "receipts": [
+    {
+      "path": "/tos/build/br1-local-faults/MUTATIONS.json",
+      "bytes": 448,
+      "sha256": "a99b97ef63053538ec6ac447d23dd003fabca9560c69cbc135b432ad505d029c"
+    },
+    {
+      "path": "/tos/build/br1-local-faults/restored-green.log",
+      "bytes": 6733,
+      "sha256": "fc0a29221bcf1d7dcd49e547be002988ab0fae07dcd3165f57822106e8fcdd95"
+    },
+    {
+      "path": "/tos/build/br1-local-faults/python-final.log",
+      "bytes": 241,
+      "sha256": "ee61d961af1184edace802fabc2fcb7a1d068330eca382b4f2a87f1c1fe10740"
+    },
+    {
+      "path": "/tos/build/br1-local-faults/http-restart-red.log",
+      "bytes": 1008,
+      "sha256": "4930a15948d4bece11e9d1703612ab8d4e7a64525fca58edbc8e500170e9ab4c"
+    },
+    {
+      "path": "/tos/build/br1-local-faults/http-restart-green.log",
+      "bytes": 128,
+      "sha256": "4dd6c128269dd76521a730532f3e995bbde2aeb90173d866613c6ef38138cb29"
+    },
+    {
+      "path": "/tos/build/br1-local-faults/clippy.log",
+      "bytes": 16891,
+      "sha256": "cb0175d979cdccff88897963258f3bc7c8cce28a5418b86ee90a69f960ac8d67"
+    },
+    {
+      "path": "/tos/build/br1-local-faults/source-guards.log",
+      "bytes": 8775,
+      "sha256": "0f5a4e340d8ad9547a0c1d75fa33a937bb23a2cae3ffeb59cb005d8e97ea7337"
+    },
+    {
+      "path": "/tos/build/br1-local-faults/source-guards-native.log",
+      "bytes": 501,
+      "sha256": "0c85c2181788255ce445d11ce4dd8e20780bf8ff3f35176e9f17b00392a4fcf0"
+    },
+    {
+      "path": "/tos/build/br1-local-faults/delivery-controls.json",
+      "bytes": 3548,
+      "sha256": "56c295e32075c3d74c9b24a0d2d88cb16d28968723307bf7c2f94b6fbd9b1978"
+    }
+  ],
+  "harness_sources": [
+    {
+      "path": "/tos/build/br1-localnet/rpc-fault.py",
+      "bytes": 1718,
+      "sha256": "cdeb68bc36e5b968d93a4435c0a7d1cc23041f9f9a8dcbc716bc4e73f40b83f5"
+    },
+    {
+      "path": "/tos/build/br1-localnet/run-e2e-fault-r2.py",
+      "bytes": 6180,
+      "sha256": "57cb6c825fe2d63483120f53ef7c8bb92817ad772bbc15149848b3828d1eb453"
+    },
+    {
+      "path": "/tos/build/br1-localnet/run-e2e-crash.py",
+      "bytes": 6209,
+      "sha256": "8705b4b65b3764a4574b93dd22a951279630b808b01b3753f3e9e37b3900cd35"
+    },
+    {
+      "path": "/tos/build/br1-localnet/resume-crash-readonly-correct-counter.py",
+      "bytes": 1616,
+      "sha256": "d382ce8c736c63fb322a02ec6785d56a72ab3d15120e20a3ebb12b1a3d9f9bd3"
+    },
+    {
+      "path": "/tos/build/br1-localnet/generate-expiry.py",
+      "bytes": 4745,
+      "sha256": "ec2855659c3c888ed5e27af7edd7109eaf210a558fadcbe3b98d1a89fccce0e5"
+    },
+    {
+      "path": "/tos/build/br1-localnet/check-expiry.py",
+      "bytes": 2484,
+      "sha256": "9f1b66b97012274a6d560953cdfe49c5217079eaccff4a5c8ffb37ed94c8b811"
+    }
+  ],
+  "remaining": [
+    "terminal nonacceptance recovery for a prepared message that never reaches chain",
+    "forced gas/action failure with exact terminal refusal evidence",
+    "remaining crash boundaries and adversarial failover",
+    "Bond lifecycle, privacy transport and production economic/security gates"
+  ],
+  "limitations": [
+    "Initial passive capture counter restarted at zero and overwrote the first lost-reply capture; that run is superseded by e2e-fault-r2. The retained crash capture and rerun have distinct monotonically numbered files.",
+    "The TTL test signs once but never broadcasts; operator B retains native sequence 6 as a deliberate unresolved lease. Keep original keys/journals and drain B until proven nonacceptance recovery is implemented. No automatic reset/resign."
+  ],
+  "durable_runners": {
+    "control": "test/bonded-relayer/native_faults/control.py",
+    "proxy": "test/bonded-relayer/native_faults/proxy.py",
+    "commands": "test/bonded-relayer/native_faults/README.md",
+    "real_replays": [
+      {
+        "path": "/tos/build/br1-localnet/durable-submit/VERDICT.json",
+        "bytes": 588,
+        "sha256": "26d4ca4dddc16ba083b85d2557fd9905977dbf68d4f23c5c5cf7835833023933",
+        "result": "PASS-EXACT-ORIGINAL-EXECUTION-WITHOUT-RESEND"
+      },
+      {
+        "path": "/tos/build/br1-localnet/durable-expiry-d/VERDICT.json",
+        "bytes": 371,
+        "sha256": "0c7f9cb84ef1ec3330a8f23f11611491f4869fc1384d0ede43f2952859bf6d7a",
+        "result": "PASS-OLD-ACCEPTS-NEW-REFUSES-EXPIRED-WALLET"
+      },
+      {
+        "path": "/tos/build/br1-localnet/durable-crash/VERDICT.json",
+        "bytes": 588,
+        "sha256": "1882fdf0ab6ee49a830d573016b5f1dcf3a2b32cd5c425fdf949f2c8b2830b8d",
+        "result": "PASS-EXACT-ORIGINAL-EXECUTION-WITHOUT-RESEND"
+      },
+      {
+        "path": "/tos/build/br1-local-faults/DURABLE-SENSITIVITY.json",
+        "bytes": 249,
+        "sha256": "302bf1ddda7478996a4b7b1072cbdffd2593dff2671e12df61d2993c5fb60d99",
+        "result": "PASS"
+      },
+      {
+        "path": "/tos/build/br1-localnet/wire-durable-crash/00004.fault.json",
+        "bytes": 291,
+        "sha256": "62375755a5bae8c40753245b166bd7e3821679011ea167e703538e6976b53fbb",
+        "result": "one accepted send; reply dropped; named unit killed"
+      },
+      {
+        "path": "/tos/build/br1-local-faults/BAD-BASELINE.json",
+        "bytes": 129,
+        "sha256": "ba8de2838c8c5736d8e7043fc61e852556061895d57f6f51a575d4367eb36a29",
+        "result": "PASS-WRONG-PIN-REFUSED-BEFORE-RESERVATION-OR-SIGNATURE"
+      },
+      {
+        "path": "/tos/build/br1-localnet/durable-final-readonly/VERDICT.json",
+        "bytes": 588,
+        "sha256": "dcb281e34acea8d9a4a34210b1cbb7fa289144b9626bf0aecb94cdc5eb8c1dd4",
+        "result": "PASS-EXACT-ORIGINAL-EXECUTION-WITHOUT-RESEND"
+      }
+    ],
+    "scope": "Lost-reply and D expiry use the #388 ELF. C crash also validates the same gate/control against experimental nonacceptance-provider code; it does not expand #388 provider acceptance."
+  }
+}

@@ -28,9 +28,9 @@ CASES = (
     ),
     (
         "prepared.rs",
-        "now.checked_add(5).is_some_and(|end| end < expiry)",
-        "now.checked_add(5).is_some_and(|_end| expiry > 0)",
-        "prepared::expiry_tests::send_budget_refuses_expired_and_near_expiry_wallets",
+        "ensure!(u64::from(expiry) > deadline,",
+        "ensure!(u64::from(expiry) > 0 || deadline == 0,",
+        "prepared::deadline_tests::wallet_deadline_is_read_from_exact_external_message",
     ),
 )
 

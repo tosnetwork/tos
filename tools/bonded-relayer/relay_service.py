@@ -234,7 +234,8 @@ class _Handler(socketserver.BaseRequestHandler):
 
 
 class RelayServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
-    allow_reuse_address = False
+    # Rebind after an active close; SO_REUSEPORT remains disabled.
+    allow_reuse_address = True
     daemon_threads = False
     request_queue_size = 8
 

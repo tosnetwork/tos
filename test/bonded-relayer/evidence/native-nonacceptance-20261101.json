@@ -1,0 +1,111 @@
+{
+  "schema": "tos.br1.native-nonacceptance-evidence.v1",
+  "scope": "isolated global-id-3 / global-version-16, one proof-backed nonacceptance path; not full C2 or public activation",
+  "parent_pr": 388,
+  "parent_head": "d4b27c148f2312852865bec76c7a541e03efdbae",
+  "upstream_default": "857b8a57a178e6ae0fe7fa86e7d81c5233de8560",
+  "upstream_comparison": "BR1 provider/SDK consumer paths absent upstream",
+  "provider_sha256": "d1dc87a67cb83ec8025a91e4cb1500d75e253b7c3b8e7e118d1ae05c96f0a125",
+  "sources": {
+    "tools/bonded-relayer/provider/src/prepared.rs": "a6bb94fb86ed43c148396faa09c7d7739ce2ee604bd0defba4b2fa3f89ce8080",
+    "tools/bonded-relayer/provider/src/store.rs": "a447d63876bd1c310e1699574571bda93b1b4eb6de7f5e94d1a800b65a77c98d",
+    "tools/bonded-relayer/provider/src/evidence.rs": "083d9f1ede6180c45c2242cfef18a42abea7663e3e32d6bd11c03171ff1f62dc",
+    "tools/bonded-relayer/provider/src/nonacceptance.rs": "f3a7117c8319a715c17bc661bc75d07f00eda8ad4444cb2314525c6ca8f65bc4",
+    "tools/bonded-relayer/provider/src/main.rs": "3b50957b4090bf12113d86bbc505d2e91159e19305ea2b916a2e03ace49ba17d",
+    "test/bonded-relayer/native_faults/control.py": "dd0fab051449e401129ce6a0c66a0529e43144ecbc5c9e9324301f4abb0e6c59",
+    "test/bonded-relayer/native_faults/README.md": "7300fc77cb20d943e00a13b3b89fcde506765e250cf9ce511038fb80344c081c",
+    "tools/bonded-relayer/provider/README.md": "4abd569404c24e2f3d434afa0a8a79b87f95e6fe7b12f478b2f2adb0a5cc2165",
+    "test/bonded-relayer/native_faults/nonacceptance_mutations.py": "863e42d3ca6dd9bcd3b044fd266377947f2ff06150ff400a3d04785adb3a56a8"
+  },
+  "durable_commands": "test/bonded-relayer/native_faults/README.md",
+  "cases": [
+    {
+      "result": "PASS-OLD-ACCEPTS-NEW-REFUSES-EXPIRED-WALLET",
+      "receipt": {
+        "path": "/tos/build/br1-localnet/strict-expiry/VERDICT.json",
+        "bytes": 371,
+        "sha256": "cc391b04161f84f9241f68926b0725f7154af52efa231cd56e69510480770a36"
+      }
+    },
+    {
+      "result": "PASS-STRICT-SHARD-TIME-NONACCEPTANCE-AND-CACHED-REFUSAL",
+      "receipt": {
+        "path": "/tos/build/br1-localnet/strict-recovery/VERDICT.json",
+        "bytes": 1319,
+        "sha256": "b308220bf217b4ed20d5582f07750e1e9dc3d1afd4fadae227e1b4eaa8287d92"
+      }
+    },
+    {
+      "result": "PASS-PROVEN-NONACCEPTANCE-AND-CACHED-REFUSAL",
+      "receipt": {
+        "path": "/tos/build/br1-localnet/strict-durable-refusal/VERDICT.json",
+        "bytes": 1335,
+        "sha256": "b5bc72d24344e41d6fc87ff731d1f1143dead7ce345411add7a9775dd65a3e3b"
+      }
+    },
+    {
+      "result": "PASS-EXACT-ORIGINAL-EXECUTION-WITHOUT-RESEND",
+      "receipt": {
+        "path": "/tos/build/br1-localnet/strict-reuse/VERDICT.json",
+        "bytes": 588,
+        "sha256": "b0b3fd3f7021f8d14d0b230dcf7d6e28b66d595c15a99083cb9268ba47c4f103"
+      }
+    }
+  ],
+  "proof_boundary": {
+    "wallet_expiry": 1793570183,
+    "proven_wallet_shard_time": 1793570242,
+    "masterchain_time": 1793570242,
+    "retired_native_sequence": 4,
+    "cached_proof_replays_after_later_wallet_activity_with_rpc_unavailable": 2
+  },
+  "verification": {
+    "native_tests": 22,
+    "guard_removal_mutants": 9
+  },
+  "receipts": [
+    {
+      "path": "/tos/build/br1-terminal-nonacceptance/MUTATIONS.json",
+      "bytes": 924,
+      "sha256": "4dd8d1875edfb6156934e28de4e09a85af95db2a52b228b218741ec06192d43a"
+    },
+    {
+      "path": "/tos/build/br1-terminal-nonacceptance/restored-green.log",
+      "bytes": 7166,
+      "sha256": "e9a7cc3f5cdb157e76e635f620d80b8b20c7571e2df6e91ca01f1ac530fe8a02"
+    },
+    {
+      "path": "/tos/build/br1-terminal-nonacceptance/clippy-final.log",
+      "bytes": 5507,
+      "sha256": "7ff75bc70beab376683541608e2f244f16d76964a3aa368ce4b41d4d106f11fd"
+    },
+    {
+      "path": "/tos/build/br1-localnet/wire-strict-crash/00004.fault.json",
+      "bytes": 291,
+      "sha256": "9000e9c2348b4183b9dcf417a6c3ce8848eb5a7e713ff849fc69edb1fa65b24b"
+    }
+  ],
+  "limitations": [
+    "Older experimental MC-time-only runs are superseded by these strict shard-time cases. Unsupported cache formats refuse.",
+    "Legacy #387/#388 records lack the pre-signing head and remain drained, not reset or retrofitted.",
+    "Destination gas/action failures, remaining crash boundaries/adversarial failover, Bond lifecycle and transport/production/economic gates remain open."
+  ],
+  "public_failure_receipt": {
+    "path": "test/bonded-relayer/evidence/native-nonacceptance-failures-20261101.json",
+    "bytes": 11284,
+    "sha256": "7153dc58ecb9f53253965cc1b1bd2b2a3ceb8cd24a0256bfddf9ff8192241e3b",
+    "retention": "normal Git history; no scheduled expiry"
+  },
+  "retained_raw_policy": {
+    "until": "2027-02-01T00:00:00Z",
+    "access": "Existing authenticated SSH to toserver for authorized operators; private artifacts/credentials are not public. Bounded public failure sections and reproduction runner are committed for reviewers without host access.",
+    "reason_for_bounded_receipts": "Exact historical chain states and expired signed-message windows cannot be recreated after chain progress; full compiler diagnostics have transient paths/timing. Retain only the runtime failures necessary to audit guard sensitivity in Git."
+  },
+  "durable_mutation_runner": "test/bonded-relayer/native_faults/nonacceptance_mutations.py",
+  "public_runner_replay": {
+    "path": "/tos/build/br1-nonacceptance-repro-20261101/VERDICT.json",
+    "bytes": 1003,
+    "sha256": "27ca531e8a8137d8851597bd0f13f6850ec22415c0c72452b264de784f01c9a6",
+    "result": "nine runtime guard removals RED; restored22 GREEN; fresh worktree removed without force"
+  }
+}

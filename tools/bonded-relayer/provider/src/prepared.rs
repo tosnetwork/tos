@@ -120,7 +120,7 @@ pub async fn prepare(
         .await?;
     let bytes = write_boc(&message)?;
     let record = protocol::canonical(
-        &json!({"quote":payload["quote"],"slot":slot,"issued_at":issued,"funding":funding,"sequence":sequence,"acceptance_b64":STANDARD.encode(&acceptance)}),
+        &json!({"quote":payload["quote"],"slot":slot,"issued_at":issued,"funding":funding,"sequence":sequence,"funding_head_hash":hex::encode(wallet_state.last_transaction_hash()),"funding_head_lt":wallet_state.evidence().account.last_trans_lt,"acceptance_b64":STANDARD.encode(&acceptance)}),
     )?;
     store.persist_prepared(&candidate.identity, &bytes, &record)?;
     Ok(
@@ -285,39 +285,65 @@ pub fn validate(
     )
 }
 
-/// Check only at send admission, never when authenticating historical evidence.
-pub fn check_send_expiry(bytes: &[u8], now: u64) -> Result<()> {
+/// Called only on the immutable, previously validated signed wallet message.
+/// Historical validation deliberately does not depend on wall-clock time.
+pub fn wallet_expiry(bytes: &[u8]) -> Result<u32> {
     let message = Message::construct_from_cell(crate::candidate::ordinary_boc(bytes)?)?;
     let mut body = message.body().ok_or_else(|| anyhow::anyhow!("funding body absent"))?.clone();
     body.get_next_bytes(64)?;
     body.get_next_i32()?;
     body.get_next_u32()?;
-    let expiry = u64::from(body.get_next_u32()?);
-    ensure!(
-        now.checked_add(5).is_some_and(|end| end < expiry),
-        "funding wallet expires before send budget"
-    );
+    body.get_next_u32()
+}
+pub fn require_live_wallet(bytes: &[u8], now: u64, remaining: u64) -> Result<()> {
+    require_wallet_deadline(wallet_expiry(bytes)?, now, remaining)
+}
+
+fn require_wallet_deadline(expiry: u32, now: u64, remaining: u64) -> Result<()> {
+    let deadline =
+        now.checked_add(remaining).ok_or_else(|| anyhow::anyhow!("wallet deadline overflow"))?;
+    ensure!(u64::from(expiry) > deadline, "signed wallet message expired or too close to expiry");
     Ok(())
 }
 
 #[cfg(test)]
-mod expiry_tests {
+mod deadline_tests {
     use super::*;
-    use chain_block::{BuilderData, ExternalInboundMessageHeader, IBitstring, Serializable};
+    use chain_block::{
+        BuilderData, ExternalInboundMessageHeader, IBitstring, MsgAddressExt, MsgAddressInt,
+        Serializable, SliceData,
+    };
     #[test]
-    fn send_budget_refuses_expired_and_near_expiry_wallets() -> Result<()> {
+    fn wallet_deadline_is_read_from_exact_external_message() -> Result<()> {
         let mut body = BuilderData::new();
-        body.append_raw(&[0; 64], 512)?.append_i32(3)?.append_u32(3)?.append_u32(1120)?;
-        let mut message = Message::with_ext_in_header(ExternalInboundMessageHeader::default());
-        message.set_body(chain_block::SliceData::load_cell(body.into_cell()?)?);
+        body.append_raw(&[0; 64], 512)?;
+        body.append_u32(3)?.append_u32(3)?.append_u32(120)?;
+        let message = Message::with_ext_in_header_and_body(
+            ExternalInboundMessageHeader::new(
+                MsgAddressExt::AddrNone,
+                MsgAddressInt::from_str(&format!("0:{}", "01".repeat(32)))?,
+            ),
+            SliceData::load_builder(body)?,
+        );
         let bytes = write_boc(&message.serialize()?)?;
-        check_send_expiry(&bytes, 1114)?;
-        for now in [1115, 1120, 1200, u64::MAX] {
-            let error = check_send_expiry(&bytes, now)
+        require_live_wallet(&bytes, 114, 5)?;
+        let error = require_live_wallet(&bytes, 115, 5)
+            .err()
+            .ok_or_else(|| anyhow::anyhow!("wallet envelope deadline ignored"))?;
+        assert!(error.to_string().contains("signed wallet message expired"));
+        Ok(())
+    }
+
+    #[test]
+    fn wallet_expiry_bounds_permit_even_while_candidate_is_live() -> Result<()> {
+        require_wallet_deadline(120, 114, 5)?;
+        for (now, remaining) in [(115, 5), (120, 0), (121, 0)] {
+            let error = require_wallet_deadline(120, now, remaining)
                 .err()
-                .ok_or_else(|| anyhow::anyhow!("expiry guard missing"))?;
-            assert!(error.to_string().contains("funding wallet expires before send budget"));
+                .ok_or_else(|| anyhow::anyhow!("expired wallet accepted"))?;
+            assert!(error.to_string().contains("signed wallet message expired"));
         }
+        assert!(require_wallet_deadline(u32::MAX, u64::MAX, 5).is_err());
         Ok(())
     }
 }

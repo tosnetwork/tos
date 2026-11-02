@@ -57,6 +57,7 @@ impl Store {
           CREATE UNIQUE INDEX IF NOT EXISTS live_sequence ON leases(sequence) WHERE live=1;
           CREATE TABLE IF NOT EXISTS permits(token TEXT PRIMARY KEY,request TEXT NOT NULL REFERENCES leases(request),message_hash TEXT NOT NULL,expires INTEGER NOT NULL,used INTEGER NOT NULL DEFAULT 0);
           CREATE TABLE IF NOT EXISTS fee_notes(transaction_hash TEXT NOT NULL,leaf INTEGER NOT NULL,note_body TEXT NOT NULL,receipt BLOB NOT NULL,payload BLOB NOT NULL,PRIMARY KEY(transaction_hash,leaf),UNIQUE(note_body));
+          CREATE TABLE IF NOT EXISTS refusals(request TEXT PRIMARY KEY REFERENCES leases(request),receipt BLOB NOT NULL);
           CREATE TABLE IF NOT EXISTS quote_claims(quote_hash TEXT PRIMARY KEY,request TEXT NOT NULL UNIQUE REFERENCES leases(request));")?;
         let tx = c.transaction_with_behavior(TransactionBehavior::Immediate)?;
         if initialize {
@@ -186,6 +187,40 @@ impl Store {
         );
         Ok(())
     }
+    pub fn refusal(&self, request: &str) -> Result<Option<Vec<u8>>> {
+        Ok(self
+            .0
+            .query_row("SELECT receipt FROM refusals WHERE request=?1", [request], |r| r.get(0))
+            .optional()?)
+    }
+    /// Called only after independently proving this exact message can never execute.
+    /// Retain the receipt, old bytes and every replay tombstone atomically.
+    pub fn retire_nonaccepted(
+        &mut self,
+        request: &str,
+        message: &[u8],
+        receipt: &[u8],
+    ) -> Result<()> {
+        ensure!(!receipt.is_empty() && receipt.len() <= 16384, "refusal receipt byte bound");
+        let tx = self.0.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let stored: Vec<u8> =
+            tx.query_row("SELECT message FROM leases WHERE request=?1", [request], |r| r.get(0))?;
+        ensure!(stored == message, "nonacceptance message mismatch");
+        let prior: Option<Vec<u8>> = tx
+            .query_row("SELECT receipt FROM refusals WHERE request=?1", [request], |r| r.get(0))
+            .optional()?;
+        if let Some(prior) = prior {
+            ensure!(prior == receipt, "conflicting nonacceptance receipt");
+        } else {
+            let changed =
+                tx.execute("UPDATE leases SET live=0 WHERE request=?1 AND live=1", [request])?;
+            ensure!(changed == 1, "nonacceptance lease not live");
+            tx.execute("UPDATE permits SET used=1 WHERE request=?1", [request])?;
+            tx.execute("INSERT INTO refusals VALUES(?1,?2)", params![request, receipt])?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
     pub fn import_fee(
         &mut self,
         transaction: &str,
@@ -273,6 +308,34 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn nonacceptance_retains_receipt_and_invalidates_permits_before_reusing_sequence() -> Result<()>
+    {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("leases.db");
+        let mut s = Store::create(&path, "scope")?;
+        s.reserve("old", "binding", 7)?;
+        s.persist_prepared("old", b"message", b"record")?;
+        s.permit("old", "token", &crate::protocol::hash(b"message"), 100)?;
+        assert!(s.retire_nonaccepted("old", b"changed", b"proof").is_err());
+        assert!(s.reserve("new", "binding", 7).is_err());
+        assert!(s.retire_nonaccepted("old", b"message", b"").is_err());
+        assert!(s.retire_nonaccepted("old", b"message", &vec![0; 16385]).is_err());
+        s.retire_nonaccepted("old", b"message", b"proof")?;
+        let used: i64 =
+            s.0.query_row("SELECT used FROM permits WHERE token='token'", [], |r| r.get(0))?;
+        assert_eq!(used, 1);
+        assert!(s.reserve("new", "binding", 7)?.fresh);
+        assert!(s.consume("token", b"message", 101).is_err());
+        assert!(s.permit("old", "another", &crate::protocol::hash(b"message"), 101).is_err());
+        drop(s);
+        let mut s = Store::open(&path, "scope")?;
+        assert_eq!(s.refusal("old")?, Some(b"proof".to_vec()));
+        s.retire_nonaccepted("old", b"message", b"proof")?;
+        assert!(s.retire_nonaccepted("old", b"message", b"other").is_err());
+        assert_eq!(s.lookup("old")?.and_then(|lease| lease.message), Some(b"message".to_vec()));
+        Ok(())
+    }
     #[test]
     fn quotes_cannot_authorize_two_native_requests() -> Result<()> {
         let d = tempfile::tempdir()?;
