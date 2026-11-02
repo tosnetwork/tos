@@ -21,6 +21,7 @@ zeroize = "1"
 libc = "0.2"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "json"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
+br1-client = { path = "../client" }
 chain_block = { path = "../../../tosctl/src/block" }
 node-contracts = { package = "contracts", path = "../../../tosctl/src/node-control/contracts" }
 shielded-pool-wallet = { path = "../../shielded-pool-wallet" }

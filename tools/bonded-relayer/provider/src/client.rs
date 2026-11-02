@@ -2,46 +2,16 @@
 //! Public, offline wallet verification. No custody, journal, RPC or helper access.
 use crate::{config::Release, protocol};
 use anyhow::{ensure, Result};
-use base64::{engine::general_purpose::STANDARD, Engine as _};
-use chain_block::{Deserializable, MsgAddressInt, Serializable, StateInit};
-use node_contracts::relayer_bond::{BondInit, RelayerBond};
+use node_contracts::relayer_bond::BondInit;
 use serde_json::{json, Value};
-use std::str::FromStr;
 
 fn identity(payload: &Value) -> Result<(Release, BondInit)> {
     let release: Release = serde_json::from_value(payload["release"].clone())?;
     release.validate()?;
+    crate::config::validate_global_id(release.global_id)?;
     let text = payload["bond_init_b64"].as_str().ok_or_else(|| anyhow::anyhow!("Bond init"))?;
-    ensure!(!text.is_empty() && text.len() <= 87384, "Bond init byte bound");
-    let bytes = STANDARD.decode(text)?;
-    ensure!(bytes.len() <= 65536 && STANDARD.encode(&bytes) == text, "Bond init encoding");
-    let cell = crate::candidate::ordinary_boc(&bytes)?;
-    let state = StateInit::construct_from_cell(cell.clone())?;
-    let address = MsgAddressInt::from_str(&release.bond)?;
-    let data = state.data.as_ref().ok_or_else(|| anyhow::anyhow!("Bond initial data"))?;
-    let bond = RelayerBond::decode(&address, data)?;
-    let canonical = RelayerBond::state_init(&bond.init)?.serialize()?;
-    ensure!(canonical.repr_hash() == cell.repr_hash(), "noncanonical Bond StateInit");
-    ensure!(RelayerBond::address(&bond.init)? == address, "wallet Bond address pin");
-    ensure!(
-        RelayerBond::code()?.repr_hash().to_hex_string() == release.bond_code_hash,
-        "wallet Bond code pin"
-    );
-    ensure!(
-        RelayerBond::policy(&bond.init)?.repr_hash().to_hex_string() == release.policy_hash,
-        "wallet Bond policy pin"
-    );
-    ensure!(
-        bond.init.global_id == release.global_id
-            && hex::encode(bond.init.genesis_root) == release.genesis_root
-            && hex::encode(bond.init.genesis_file) == release.genesis_file,
-        "wallet Bond network pin"
-    );
-    ensure!(
-        protocol::hash(&bond.init.worker_key) == release.worker_key_hash,
-        "wallet Bond worker pin"
-    );
-    Ok((release, bond.init))
+    let init = br1_client::bond::identity(&release, text)?;
+    Ok((release, init))
 }
 
 /// The identity a wallet checks against its own pins. The worker key hash is derived from
@@ -64,29 +34,26 @@ pub fn dispatch(operation: &str, payload: &Value) -> Result<Value> {
     ensure!(operation == "client_quote", "unsupported public operation");
     protocol::fields(payload, &["release", "bond_init_b64", "envelope"])?;
     let (release, init) = identity(payload)?;
-    let envelope = &payload["envelope"];
-    protocol::fields(envelope, &["schema", "terms", "public_key_b64", "signature_b64"])?;
-    ensure!(envelope["schema"] == "tos.br1.quote.v1", "quote envelope schema");
-    let terms = protocol::canonical(&envelope["terms"])?;
-    ensure!(envelope["terms"]["release"] == release.scope()?, "wallet quote release pin");
-    crate::identity::verify_quote_signature(
+    let terms = br1_client::quote::verify_envelope(
         &init.worker_key,
-        &terms,
-        envelope["public_key_b64"].as_str().ok_or_else(|| anyhow::anyhow!("quote key"))?,
-        envelope["signature_b64"].as_str().ok_or_else(|| anyhow::anyhow!("quote signature"))?,
+        &payload["envelope"],
+        &release.scope()?,
     )?;
     // The wallet transport checks the complete terms schema, time, capability,
     // fee slot and request binding after authenticating these exact terms.
-    Ok(json!({"terms":envelope["terms"]}))
+    Ok(json!({"terms":terms}))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+    use chain_block::Serializable;
     use fips204::{
         ml_dsa_44,
         traits::{KeyGen, SerDes},
     };
+    use node_contracts::relayer_bond::RelayerBond;
 
     fn fixture() -> Result<(Value, ml_dsa_44::PrivateKey)> {
         let (public, private) = ml_dsa_44::KG::keygen_from_seed(&[37; 32]);
