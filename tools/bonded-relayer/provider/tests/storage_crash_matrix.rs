@@ -5,7 +5,7 @@ use rusqlite::{ffi, Connection};
 use serde_json::json;
 use std::{
     ffi::{c_char, c_int, c_uint, c_void, CStr},
-    path::Path,
+    path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -27,6 +27,8 @@ const SCOPE: &str = "storage-crash-fixture";
 const MESSAGE: &[u8] = b"synthetic immutable message bytes; not a signed wallet envelope";
 const RECORD: &[u8] = b"synthetic pre-signing record";
 const RECEIPT: &[u8] = b"synthetic refusal or import receipt; not proof";
+static CLAIM_STARTED: OnceLock<PathBuf> = OnceLock::new();
+static TRACE_FAILED: AtomicBool = AtomicBool::new(false);
 static ARMED: AtomicBool = AtomicBool::new(false);
 static POINT: OnceLock<String> = OnceLock::new();
 
@@ -50,6 +52,13 @@ unsafe extern "C" fn trace(
         return 0;
     }
     let sql = unsafe { CStr::from_ptr(text) }.to_string_lossy();
+    if sql == "BEGIN IMMEDIATE" {
+        if let Some(path) = CLAIM_STARTED.get() {
+            if std::fs::write(path, b"entered consume transaction\n").is_err() {
+                TRACE_FAILED.store(true, Ordering::Release);
+            }
+        }
+    }
     let Some(point) = POINT.get() else {
         return 0;
     };
@@ -257,35 +266,86 @@ fn run_case(stage: &str, point: &str) -> Result<serde_json::Value> {
     row["child_exit"] = 86.into();
     Ok(row)
 }
+fn await_files(paths: &[PathBuf], children: &mut [&mut std::process::Child]) -> Result<()> {
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while !paths.iter().all(|path| path.is_file()) {
+        ensure!(Instant::now() < deadline, "claimant barrier timeout");
+        for child in children.iter_mut() {
+            ensure!(child.try_wait()?.is_none(), "claimant exited before barrier");
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    Ok(())
+}
 fn race() -> Result<serde_json::Value> {
     let dir = tempfile::tempdir()?;
     let path = dir.path().join("leases.db");
     seed(&path, "consume")?;
-    let spawn = || -> Result<std::process::Child> {
+    let ready = [dir.path().join("ready-a"), dir.path().join("ready-b")];
+    let started = [dir.path().join("started-a"), dir.path().join("started-b")];
+    let go = dir.path().join("go");
+    let spawn = |index: usize| -> Result<std::process::Child> {
         Ok(Command::new(std::env::current_exe()?)
             .env_clear()
             .env("PATH", "/usr/bin:/bin")
-            .args(["--claim"])
+            .arg("--claim")
             .arg(&path)
+            .arg(&ready[index])
+            .arg(&started[index])
+            .arg(&go)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()?)
     };
-    let a = spawn()?;
-    let b = spawn()?;
-    let a = finish(a)?;
-    let b = finish(b)?;
+    let mut a = spawn(0)?;
+    let mut b = match spawn(1) {
+        Ok(child) => child,
+        Err(error) => {
+            a.kill()?;
+            a.wait()?;
+            return Err(error);
+        }
+    };
+    let barrier = (|| -> Result<()> {
+        await_files(&ready, &mut [&mut a, &mut b])?;
+        let db = Connection::open(&path)?;
+        db.execute_batch("BEGIN IMMEDIATE")?;
+        std::fs::write(&go, b"both stores open; enter consumption\n")?;
+        // Both processes must enter the real consume BEGIN while a parent lock
+        // still excludes either commit. A sequential replay cannot satisfy this.
+        await_files(&started, &mut [&mut a, &mut b])?;
+        db.execute_batch("ROLLBACK")?;
+        Ok(())
+    })();
+    if let Err(error) = barrier {
+        for child in [&mut a, &mut b] {
+            let _ = child.kill();
+            child.wait()?;
+        }
+        return Err(error);
+    }
+    let a = finish(a);
+    let b = finish(b);
+    let (a, b) = (a?, b?);
     let winners = usize::from(a.status.success()) + usize::from(b.status.success());
-    ensure!(
-        winners == 1
-            && [a.status.code(), b.status.code()]
-                .iter()
-                .all(|code| matches!(code, Some(0) | Some(87))),
-        "two processes did not have exactly one send claimant"
-    );
+    ensure!(winners == 1, "two processes did not have exactly one send claimant");
+    for output in [&a, &b] {
+        if !output.status.success() {
+            ensure!(
+                output.status.code() == Some(87)
+                    && String::from_utf8_lossy(&output.stderr)
+                        .contains("EXPECTED_PERMIT_REJECTION"),
+                "losing claimant did not reach the permit guard: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    }
     check(&path, "consume", true)?;
-    Ok(json!({"stage":"concurrent_consumers","winners":winners,"processes":2}))
+    Ok(
+        json!({"stage":"concurrent_consumers","winners":winners,"processes":2,"opened_before_release":2,"entered_consume_while_locked":2,"loser":"EXPECTED_PERMIT_REJECTION"}),
+    )
 }
+
 fn main() -> Result<()> {
     let args = std::env::args().collect::<Vec<_>>();
     if args.get(1).is_some_and(|arg| arg == "--child") {
@@ -293,12 +353,29 @@ fn main() -> Result<()> {
         return child(Path::new(&args[4]), &args[2], &args[3]);
     }
     if args.get(1).is_some_and(|arg| arg == "--claim") {
-        ensure!(args.len() == 3, "claim argument count");
+        ensure!(args.len() == 6, "claim argument count");
+        let rc = unsafe { ffi::sqlite3_auto_extension(Some(install_trace)) };
+        ensure!(rc == ffi::SQLITE_OK, "claim trace registration failed");
         let mut s = Store::open(Path::new(&args[2]), SCOPE)?;
-        if s.consume("permit", MESSAGE, 101).is_ok() {
-            std::process::exit(0);
-        } else {
-            std::process::exit(87);
+        CLAIM_STARTED
+            .set(PathBuf::from(&args[4]))
+            .map_err(|_| anyhow::anyhow!("claim path already set"))?;
+        ARMED.store(true, Ordering::Release);
+        std::fs::write(&args[3], b"store opened\n")?;
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while !Path::new(&args[5]).is_file() {
+            ensure!(Instant::now() < deadline, "claim release timeout");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let result = s.consume("permit", MESSAGE, 101);
+        ensure!(!TRACE_FAILED.load(Ordering::Acquire), "claim trace write failed");
+        match result {
+            Ok(()) => std::process::exit(0),
+            Err(error) if error.to_string() == "permit expired, mismatched or already consumed" => {
+                eprintln!("EXPECTED_PERMIT_REJECTION");
+                std::process::exit(87);
+            }
+            Err(error) => return Err(error.context("unexpected storage error in claimant")),
         }
     }
     ensure!(

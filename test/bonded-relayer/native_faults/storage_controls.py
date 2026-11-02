@@ -110,6 +110,30 @@ def main():
             "fee credit durability",
         ),
     ]
+    consume_start = original.index("    pub fn consume(")
+    consume_end = original.index("\n}\n", consume_start)
+    consume = original[consume_start:consume_end]
+    unguarded = '    pub fn consume(&mut self, token: &str, message: &[u8], now: u64) -> Result<()> {\n        let _ = (message, now);\n        let tx = self.0.transaction_with_behavior(TransactionBehavior::Immediate)?;\n        tx.execute("UPDATE permits SET used=1 WHERE token=?1", [token])?;\n        tx.execute("UPDATE leases SET sent=1 WHERE request=(SELECT request FROM permits WHERE token=?1)", [token])?;\n        tx.commit()?;\n        Ok(())\n    }'
+    mutations.extend(
+        [
+            (
+                "concurrent-double-claim",
+                "consume",
+                consume,
+                unguarded,
+                "concurrent_consumers",
+                "two processes did not have exactly one send claimant",
+            ),
+            (
+                "unexpected-loser-error",
+                "consume",
+                'ensure!(changed == 1, "permit expired, mismatched or already consumed");',
+                'ensure!(changed == 1, "synthetic unrelated storage failure");',
+                "concurrent_consumers",
+                "losing claimant did not reach the permit guard",
+            ),
+        ]
+    )
     try:
         run("baseline", None)
         for name, function, before, after, case, expected in mutations:
