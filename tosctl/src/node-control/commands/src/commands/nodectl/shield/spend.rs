@@ -142,7 +142,7 @@ impl WithdrawCmd {
             .context("the payout address account")?
             .try_into()
             .map_err(|_| anyhow::anyhow!("the payout address is not 256 bits"))?;
-        let target = Target::Withdraw { recipient: recipient.clone(), recipient_account };
+        let target = Target::Withdraw { recipient: Box::new(recipient.clone()), recipient_account };
         run(&self.name, amount, target, &self.broadcast, config_path).await
     }
 }
@@ -178,7 +178,7 @@ fn amount_of(text: &Option<String>, nanotos: Option<u128>) -> anyhow::Result<u12
 }
 
 enum Target {
-    Withdraw { recipient: MsgAddressInt, recipient_account: [u8; 32] },
+    Withdraw { recipient: Box<MsgAddressInt>, recipient_account: [u8; 32] },
     Send { descriptor: Box<Descriptor>, descriptor_hash: [u8; 32] },
 }
 
@@ -314,7 +314,7 @@ async fn run(
         .zip(recovered.leaves.iter())
         .filter_map(|(note, leaf)| {
             leaf.filter(|leaf| !held.contains(leaf))
-                .map(|leaf_index| Candidate { note: note.clone(), leaf_index })
+                .map(|leaf_index| Candidate { note: *note, leaf_index })
         })
         .collect();
     let terms = PoolTerms {
@@ -598,7 +598,7 @@ fn choose_anchor(ledger: &Ledger, state: &PoolState, plan: &Plan) -> anyhow::Res
     let highest_input = plan.input_leaves().into_iter().max().context("a plan without inputs")?;
     let leaves = ledger.leaves();
     let mut recent: Vec<_> = state.anchors.recent.iter().collect();
-    recent.sort_by(|a, b| b.id.cmp(&a.id));
+    recent.sort_by_key(|entry| std::cmp::Reverse(entry.id));
     for entry in recent {
         let version = u64::from(entry.id);
         if version <= highest_input || version > u64::try_from(leaves.len())? {
@@ -700,7 +700,7 @@ fn transact_body(
         intent_digest[24..].try_into().map_err(|_| anyhow::anyhow!("a digest tail"))?,
     );
     let recipient = match target {
-        Target::Withdraw { recipient, .. } => Some(recipient.clone()),
+        Target::Withdraw { recipient, .. } => Some(recipient.as_ref().clone()),
         Target::Send { .. } => None,
     };
     let recovery_cell = match &assembled.recovery_payload {
@@ -1520,8 +1520,10 @@ mod tests {
         let terms = PoolTerms { denominations: vec![3_000_000_000], withdrawal_fee: 7 };
         let recipient =
             MsgAddressInt::with_params(0, chain_block::UInt256::from([0xcc; 32])).expect("addr");
-        let target =
-            Target::Withdraw { recipient: recipient.clone(), recipient_account: [0xcc; 32] };
+        let target = Target::Withdraw {
+            recipient: Box::new(recipient.clone()),
+            recipient_account: [0xcc; 32],
+        };
         let request = Request::Withdraw { amount: 3_000_000_000, recipient_account: [0xcc; 32] };
         let plan = plan::plan(&terms, &candidates, &request, &mut indices).expect("plan");
         let anchor = choose_anchor(
