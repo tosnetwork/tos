@@ -58,9 +58,9 @@ use super::utils::{
 use chain::Head;
 use profile::{Network, ObservedPool, Profile};
 use store::{
-    Binding, Cursor, JournalRecord, Keys, PersistedDiagnostic, PersistedLedger, PersistedNote,
-    PersistedNullifierLeaf, PersistedPayout, PersistedPendingRecovery, PersistedPoolConfig,
-    PersistedState, Pointer, STATE_FORMAT_VERSION, Store, coins, coins_value,
+    Binding, ChainIdentity, Cursor, JournalRecord, Keys, PersistedDiagnostic, PersistedLedger,
+    PersistedNote, PersistedNullifierLeaf, PersistedPayout, PersistedPendingRecovery,
+    PersistedPoolConfig, PersistedState, Pointer, STATE_FORMAT_VERSION, Store, coins, coins_value,
 };
 
 const EXPERIMENTAL: &str = "EXPERIMENTAL: the shielded client has not passed its end-to-end gate; use it on an isolated \
@@ -208,11 +208,7 @@ impl InitCmd {
         let master = read_pool_master(self.mnemonic_file.as_deref(), self.mnemonic_fd)?;
         let domain = wire::execution_domain(profile.global_id, &profile.account_id()?);
         let keys = Keys::derive(&master, &fr_be32(domain));
-        let binding = Binding {
-            global_id: profile.global_id,
-            pool_address: pool.to_string(),
-            chain: head.chain.clone(),
-        };
+        let binding = Binding { global_id: profile.global_id, pool_address: pool.to_string() };
         let store = Store::open(&root, &keys, binding.clone())?;
         anyhow::ensure!(
             !store.has_state(),
@@ -227,6 +223,7 @@ impl InitCmd {
         let state = PersistedState {
             version: STATE_FORMAT_VERSION,
             binding: binding.clone(),
+            chain: head.chain.clone(),
             instance_id: *keys.instance_id(),
             profile: profile.clone(),
             pool_config: pool_config_of(&head),
@@ -244,6 +241,7 @@ impl InitCmd {
             schema: store::POINTER_SCHEMA.to_owned(),
             profile,
             binding,
+            chain: head.chain,
             directory: keys.directory_name(),
         }
         .save(&pointer_path)?;
@@ -330,6 +328,7 @@ async fn load_pool_master(vault: &SecretVault, name: &str) -> anyhow::Result<Zer
 /// An opened instance: its public pointer, its keys and its locked store.
 struct Opened {
     pointer: Pointer,
+    pointer_path: PathBuf,
     instance: PoolInstance,
     domain: Fr,
     store: Store,
@@ -343,7 +342,8 @@ async fn open_instance(
     vault: &SecretVault,
 ) -> anyhow::Result<Opened> {
     let root = store::shield_root(config_path);
-    let pointer = Pointer::load(&store::pointer_path(&root, name)?)?;
+    let pointer_path = store::pointer_path(&root, name)?;
+    let pointer = Pointer::load(&pointer_path)?;
     let master = load_pool_master(vault, name).await?;
     let domain = wire::execution_domain(pointer.profile.global_id, &pointer.profile.account_id()?);
     let keys = Keys::derive(&master, &fr_be32(domain));
@@ -360,6 +360,14 @@ async fn open_instance(
         "the state belongs to another instance"
     );
     anyhow::ensure!(state.profile == pointer.profile, "the state was written for another profile");
+    anyhow::ensure!(
+        state.chain == pointer.chain,
+        "the pointer names chain {} {} but the sealed state was built against {} {}",
+        pointer.chain.source,
+        hex::encode(pointer.chain.root_hash),
+        state.chain.source,
+        hex::encode(state.chain.root_hash)
+    );
     let journal = store.read_journal()?;
     anyhow::ensure!(
         u64::try_from(journal.len()).unwrap_or(u64::MAX) >= state.journal_records,
@@ -368,7 +376,48 @@ async fn open_instance(
         journal.len(),
         state.journal_records
     );
-    Ok(Opened { pointer, instance, domain, store, state, journal })
+    Ok(Opened { pointer, pointer_path, instance, domain, store, state, journal })
+}
+
+/// How the chain a head came from relates to the chain the state was built
+/// against.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HeadRelation {
+    /// The same identity from the same source: the state continues.
+    Same,
+    /// The state was built on an RPC endpoint's word and the head is the proof
+    /// verifier's: the history is rebuilt from the start against the verified
+    /// chain and the state then records that chain. Reservations and the
+    /// journal are kept.
+    Migrate,
+}
+
+/// The two identities come from different authorities and are not comparable,
+/// so the only move allowed is up: from the endpoint's word to the verifier's.
+/// A state built through the verifier never falls back to an endpoint, and two
+/// identities from the same source must be equal.
+fn relate_chains(stored: &ChainIdentity, head: &ChainIdentity) -> anyhow::Result<HeadRelation> {
+    if stored.source == head.source {
+        anyhow::ensure!(
+            stored == head,
+            "the chain identity ({} {}) is not the one this instance was built against ({} {})",
+            head.source,
+            hex::encode(head.root_hash),
+            stored.source,
+            hex::encode(stored.root_hash)
+        );
+        return Ok(HeadRelation::Same);
+    }
+    match (stored.source.as_str(), head.source.as_str()) {
+        (chain::RPC_INIT_BLOCK, chain::PROOF_ANCHOR) => Ok(HeadRelation::Migrate),
+        (chain::PROOF_ANCHOR, chain::RPC_INIT_BLOCK) => anyhow::bail!(
+            "this instance was built through the proof verifier; it does not take an RPC \
+             endpoint's word about the chain, so drop --unverified-rpc"
+        ),
+        (stored, head) => anyhow::bail!(
+            "the chain identity source {head:?} cannot be related to the stored {stored:?}"
+        ),
+    }
 }
 
 impl Opened {
@@ -377,27 +426,30 @@ impl Opened {
     }
 
     /// Requires the head to be the pool this instance was initialised on,
-    /// on the chain it was initialised against, still matching the pins.
-    fn check_head(&self, head: &Head) -> anyhow::Result<()> {
+    /// still matching the pins, and relates its chain identity to the one
+    /// the state was built against.
+    fn check_head(&self, head: &Head) -> anyhow::Result<HeadRelation> {
         anyhow::ensure!(
             head.global_id == self.pointer.profile.global_id,
             "the chain reports global id {} but this instance is on {}",
             head.global_id,
             self.pointer.profile.global_id
         );
-        anyhow::ensure!(
-            head.chain == self.pointer.binding.chain,
-            "the chain identity ({} {}) is not the one this instance was initialised against ({} {})",
-            head.chain.source,
-            hex::encode(head.chain.root_hash),
-            self.pointer.binding.chain.source,
-            hex::encode(self.pointer.binding.chain.root_hash)
-        );
+        let relation = relate_chains(&self.state.chain, &head.chain)?;
         profile::check_pins(
             &self.pointer.profile,
             self.network()?,
             &ObservedPool { code_hash: head.code_hash, state: &head.state },
-        )
+        )?;
+        Ok(relation)
+    }
+
+    /// Records the chain the state is now built against, in the sealed state
+    /// and in the public pointer.
+    fn adopt_chain(&mut self, chain: &ChainIdentity) -> anyhow::Result<()> {
+        self.state.chain = chain.clone();
+        self.pointer.chain = chain.clone();
+        self.pointer.save(&self.pointer_path)
     }
 
     fn append_journal(&mut self, record: &JournalRecord) -> anyhow::Result<()> {
@@ -441,21 +493,22 @@ impl SyncCmd {
         let mut opened = open_instance(config_path, &self.name, &vault).await?;
         let pool = opened.pointer.profile.address()?;
         let head = self.read.head(&config, &rpc, &pool).await?;
-        opened.check_head(&head)?;
+        let relation = opened.check_head(&head)?;
 
         // An unverified prefix is never promoted by an authenticated suffix:
         // when the verifier is available the history is rebuilt from the start.
-        let base = match (&opened.state.cursor, head.verified) {
-            (Some(cursor), true) if !cursor.verified => {
+        let base = match (&opened.state.cursor, head.verified, relation) {
+            (Some(_), _, HeadRelation::Migrate)
+            | (Some(Cursor { verified: false, .. }), true, _) => {
                 eprintln!(
-                    "{} the stored state is unverified; rebuilding it from the pool's first \
-                     transaction through the proof verifier",
+                    "{} the stored state was built on an RPC endpoint's word; rebuilding it from \
+                     the pool's first transaction through the proof verifier",
                     "note:".bold()
                 );
                 None
             }
-            (Some(cursor), _) => Some(cursor.clone()),
-            (None, _) => None,
+            (Some(cursor), _, _) => Some(cursor.clone()),
+            (None, _, _) => None,
         };
         let (ledger, mut recovered, cursor) = match &base {
             Some(cursor) => (
@@ -501,6 +554,9 @@ impl SyncCmd {
         state.ledger = persist_ledger(&replay.ledger);
         state.pool_config = pool_config_of(&head);
         persist_recovered(state, &recovered);
+        if relation == HeadRelation::Migrate {
+            opened.adopt_chain(&head.chain)?;
+        }
         opened.save_state()?;
 
         println!(
@@ -570,7 +626,7 @@ impl BalanceCmd {
             opened.state.reused_indices.len(),
             opened.state.diagnostics.len()
         );
-        print_pending(&opened.journal, &recovered);
+        print_pending(&opened.journal, &opened.state.notes, verified);
         if self.notes {
             let leaves = recovered.leaves.iter().copied().chain(std::iter::repeat(None));
             let mut seen = BTreeSet::new();
@@ -649,7 +705,12 @@ impl DepositCmd {
         let mut opened = open_instance(config_path, &self.name, &vault).await?;
         let pool = opened.pointer.profile.address()?;
         let head = self.read.head(&config, &rpc, &pool).await?;
-        opened.check_head(&head)?;
+        anyhow::ensure!(
+            opened.check_head(&head)? == HeadRelation::Same,
+            "the state was built on an RPC endpoint's word and the verifier now answers; run \
+             `tosctl shield sync --name {}` first",
+            self.name
+        );
         anyhow::ensure!(
             head.state.config.has_denomination(amount),
             "{} TOS is not a pool denomination; the pool accepts {}",
@@ -749,6 +810,7 @@ impl DepositCmd {
             amount: coins(amount),
             value: coins(value),
             payer: payer.to_string(),
+            owner_commitment: fr_to_be(&owner_commitment),
             body_hash,
             message_hash,
             boc: boc.clone(),
@@ -926,37 +988,78 @@ fn print_balance(recovered: &Recovered, verified: bool) {
     );
 }
 
-/// What the journal says about deposits whose outcome the state may not show.
-fn print_pending(journal: &[JournalRecord], recovered: &Recovered) {
-    let known: BTreeSet<u64> = recovered.notes.iter().map(|note| note.note_key_index).collect();
-    let mut pending = 0usize;
+/// A prepared deposit the verified state does not yet show.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PendingDeposit {
+    index: u64,
+    amount: u128,
+    outcome: &'static str,
+}
+
+/// What the journal says about deposits the state has not shown yet.
+///
+/// A deposit is settled only when the state is verified and holds a note at
+/// the reserved index with the same owner commitment and amount; a note at
+/// the same index alone, or any note from an unverified sync, proves nothing
+/// about the prepared message. A `DepositPrepared` record with no later record
+/// means the command stopped between journalling and recording the broadcast
+/// result; the message may or may not have been sent, so its outcome is
+/// unknown rather than "never broadcast".
+fn pending_deposits(
+    journal: &[JournalRecord],
+    notes: &[PersistedNote],
+    verified: bool,
+) -> Vec<PendingDeposit> {
+    let mut pending = Vec::new();
     for record in journal {
-        let JournalRecord::DepositPrepared { index, amount, message_hash, .. } = record else {
+        let JournalRecord::DepositPrepared {
+            index, amount, owner_commitment, message_hash, ..
+        } = record
+        else {
             continue;
         };
-        let outcome = journal.iter().rev().find_map(|later| match later {
-            JournalRecord::DepositBroadcast { message_hash: hash } if hash == message_hash => {
-                Some("submitted")
-            }
-            JournalRecord::DepositUnknown { message_hash: hash, .. } if hash == message_hash => {
-                Some("broadcast failed, outcome unknown")
-            }
-            _ => None,
-        });
-        let landed = known.contains(index);
-        if landed {
-            continue;
+        let outcome = journal
+            .iter()
+            .rev()
+            .find_map(|later| match later {
+                JournalRecord::DepositBroadcast { message_hash: hash } if hash == message_hash => {
+                    Some("submitted")
+                }
+                JournalRecord::DepositUnknown { message_hash: hash, .. }
+                    if hash == message_hash =>
+                {
+                    Some("broadcast failed, outcome unknown")
+                }
+                _ => None,
+            })
+            .unwrap_or("prepared; outcome unknown (the command may have stopped after sending)");
+        let settled = verified
+            && notes.iter().any(|note| {
+                note.note_key_index == *index
+                    && note.owner_commitment == *owner_commitment
+                    && note.amount == *amount
+            });
+        if !settled {
+            pending.push(PendingDeposit { index: *index, amount: coins_value(amount), outcome });
         }
-        pending = pending.saturating_add(1);
-        println!(
-            "  deposit of {} TOS at index {} ({}): no note at this index yet; sync to check",
-            tos(coins_value(amount)),
-            index,
-            outcome.unwrap_or("prepared, never broadcast")
-        );
     }
-    if pending == 0 {
+    pending
+}
+
+fn print_pending(journal: &[JournalRecord], notes: &[PersistedNote], verified: bool) {
+    let pending = pending_deposits(journal, notes, verified);
+    if pending.is_empty() {
         println!("Pending deposits: none");
+        return;
+    }
+    for deposit in &pending {
+        println!(
+            "  deposit of {} TOS at index {} ({}): not shown by the {} state yet; sync to check",
+            tos(deposit.amount),
+            deposit.index,
+            deposit.outcome,
+            if verified { "verified" } else { "UNVERIFIED" }
+        );
     }
 }
 
@@ -1125,6 +1228,88 @@ mod tests {
         assert_eq!(tos(500_000_000), "0.5");
     }
 
+    fn identity(source: &str, root: u8) -> ChainIdentity {
+        ChainIdentity { source: source.into(), root_hash: [root; 32], file_hash: [root; 32] }
+    }
+
+    #[test]
+    fn a_state_moves_up_from_the_endpoint_to_the_verifier_and_never_back() {
+        let anchor = identity(chain::PROOF_ANCHOR, 1);
+        let endpoint = identity(chain::RPC_INIT_BLOCK, 2);
+        assert_eq!(relate_chains(&anchor, &anchor).expect("same"), HeadRelation::Same);
+        assert_eq!(relate_chains(&endpoint, &endpoint).expect("same"), HeadRelation::Same);
+        assert_eq!(relate_chains(&endpoint, &anchor).expect("up"), HeadRelation::Migrate);
+        let down = relate_chains(&anchor, &endpoint).expect_err("never down");
+        assert!(down.to_string().contains("--unverified-rpc"), "{down}");
+        let other = relate_chains(&anchor, &identity(chain::PROOF_ANCHOR, 3)).expect_err("other");
+        assert!(other.to_string().contains("not the one"), "{other}");
+        assert!(relate_chains(&endpoint, &identity(chain::RPC_INIT_BLOCK, 3)).is_err());
+        assert!(relate_chains(&endpoint, &identity("something-else", 2)).is_err());
+    }
+
+    fn prepared(index: u64, owner: u8, message: u8) -> JournalRecord {
+        JournalRecord::DepositPrepared {
+            index,
+            amount: coins(NANOTOS_PER_TOS),
+            value: coins(NANOTOS_PER_TOS + 1),
+            payer: "w".into(),
+            owner_commitment: [owner; 32],
+            body_hash: [0; 32],
+            message_hash: [message; 32],
+            boc: vec![],
+        }
+    }
+
+    fn note(index: u64, owner: u8, amount: u128) -> PersistedNote {
+        PersistedNote {
+            kind: kind_code(Kind::Ordinary),
+            note_key_index: index,
+            amount: coins(amount),
+            note_secret: [0; 32],
+            owner_commitment: [owner; 32],
+            note_body: [0; 32],
+            spendable: true,
+            spent: false,
+            leaf: Some(index),
+        }
+    }
+
+    #[test]
+    fn a_deposit_stays_pending_until_the_verified_state_shows_its_note() {
+        let journal = vec![
+            prepared(0, 10, 1),
+            JournalRecord::DepositBroadcast { message_hash: [1; 32] },
+            prepared(1, 11, 2),
+            JournalRecord::DepositUnknown { message_hash: [2; 32], error: "down".into() },
+            prepared(2, 12, 3),
+        ];
+        let notes =
+            vec![note(0, 10, NANOTOS_PER_TOS), note(1, 99, NANOTOS_PER_TOS), note(2, 12, 7)];
+
+        // Verified state: index 0 matches by index, owner commitment and
+        // amount, and is settled. Index 1 has a note with another owner and
+        // index 2 one with another amount; both stay pending.
+        let pending = pending_deposits(&journal, &notes, true);
+        assert_eq!(pending.len(), 2, "{pending:?}");
+        assert_eq!(pending[0].index, 1);
+        assert_eq!(pending[0].outcome, "broadcast failed, outcome unknown");
+        assert_eq!(pending[1].index, 2);
+        assert!(pending[1].outcome.contains("outcome unknown"), "{}", pending[1].outcome);
+        assert!(!pending[1].outcome.contains("never"), "{}", pending[1].outcome);
+
+        // An unverified state settles nothing, whatever notes it holds.
+        let pending = pending_deposits(&journal, &notes, false);
+        assert_eq!(pending.iter().map(|p| p.index).collect::<Vec<_>>(), vec![0, 1, 2]);
+        assert_eq!(pending[0].outcome, "submitted");
+
+        // The crash window: a prepared record with nothing after it is the
+        // state the command leaves when it stops right after sendBoc.
+        let crash = vec![prepared(5, 1, 9)];
+        let pending = pending_deposits(&crash, &[], true);
+        assert_eq!(pending.len(), 1);
+        assert!(pending[0].outcome.contains("may have stopped after sending"));
+    }
+
     #[test]
     fn a_ledger_survives_persistence() {
         let mut ledger = Ledger::genesis();
@@ -1168,15 +1353,8 @@ mod tests {
         });
         let mut state = PersistedState {
             version: STATE_FORMAT_VERSION,
-            binding: Binding {
-                global_id: 3,
-                pool_address: String::new(),
-                chain: store::ChainIdentity {
-                    source: String::new(),
-                    root_hash: [0; 32],
-                    file_hash: [0; 32],
-                },
-            },
+            binding: Binding { global_id: 3, pool_address: String::new() },
+            chain: ChainIdentity { source: String::new(), root_hash: [0; 32], file_hash: [0; 32] },
             instance_id: [0; 32],
             profile: Profile {
                 schema: profile::PROFILE_SCHEMA.into(),

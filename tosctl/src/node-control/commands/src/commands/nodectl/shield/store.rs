@@ -58,12 +58,14 @@ pub struct ChainIdentity {
     pub file_hash: [u8; 32],
 }
 
-/// What every sealed record is bound to.
+/// What every sealed record is bound to: the network and the pool. The chain
+/// identity is kept inside the state and compared there, so an instance can
+/// move from the RPC endpoint's word to the proof verifier's without its
+/// journal becoming unreadable.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Binding {
     pub global_id: i32,
     pub pool_address: String,
-    pub chain: ChainIdentity,
 }
 
 impl Binding {
@@ -75,9 +77,6 @@ impl Binding {
         out.extend_from_slice(&sequence.to_be_bytes());
         out.extend_from_slice(&self.global_id.to_be_bytes());
         push_text(&mut out, &self.pool_address);
-        push_text(&mut out, &self.chain.source);
-        out.extend_from_slice(&self.chain.root_hash);
-        out.extend_from_slice(&self.chain.file_hash);
         out
     }
 }
@@ -132,6 +131,9 @@ pub struct Pointer {
     pub schema: String,
     pub profile: Profile,
     pub binding: Binding,
+    /// The chain the instance was last synchronised against. Public, and
+    /// repeated inside the sealed state, which is the copy that is trusted.
+    pub chain: ChainIdentity,
     pub directory: String,
 }
 
@@ -186,6 +188,9 @@ pub struct Store {
     dir: PathBuf,
     binding: Binding,
     cipher: XChaCha20Poly1305,
+    /// The largest state file, and the largest journal, this store writes or
+    /// reads. A write that would cross it is refused with the old file intact.
+    limit: usize,
     _lock: File,
 }
 
@@ -217,7 +222,13 @@ impl Store {
         );
         let cipher = XChaCha20Poly1305::new_from_slice(&keys.key[..])
             .map_err(|_| anyhow::anyhow!("a state key of the wrong size"))?;
-        Ok(Self { dir: prepared, binding, cipher, _lock: lock })
+        Ok(Self { dir: prepared, binding, cipher, limit: MAX_RECORD_BYTES, _lock: lock })
+    }
+
+    #[cfg(test)]
+    fn with_limit(mut self, limit: usize) -> Self {
+        self.limit = limit;
+        self
     }
 
     pub fn directory(&self) -> &Path {
@@ -292,6 +303,13 @@ impl Store {
         let mut plain = Zeroizing::new(Vec::new());
         ciborium::into_writer(state, &mut *plain).context("encode the state")?;
         let sealed = self.seal(KIND_STATE, STATE_FORMAT_VERSION, 0, &plain)?;
+        anyhow::ensure!(
+            sealed.len() <= self.limit,
+            "the state would be {} bytes, above this client's limit of {}; the previous state is \
+             kept",
+            sealed.len(),
+            self.limit
+        );
         secrets_vault::private_file::write_private_atomic(&self.state_path(), &sealed)
     }
 
@@ -304,8 +322,8 @@ impl Store {
         };
         check_private_file(&file, "state")?;
         let mut bytes = Vec::new();
-        (&mut file).take(MAX_RECORD_BYTES as u64 + 1).read_to_end(&mut bytes)?;
-        anyhow::ensure!(bytes.len() <= MAX_RECORD_BYTES, "the state file is too large");
+        (&mut file).take(self.limit as u64 + 1).read_to_end(&mut bytes)?;
+        anyhow::ensure!(bytes.len() <= self.limit, "the state file is too large");
         let plain = self.open_sealed(KIND_STATE, STATE_FORMAT_VERSION, 0, &bytes)?;
         let state: PersistedState =
             ciborium::from_reader(plain.as_slice()).context("decode the state")?;
@@ -341,6 +359,16 @@ impl Store {
             count_frames_up_to(&path, existing)? == sequence,
             "the journal holds a different number of records than this command believes"
         );
+        let after = usize::try_from(existing)
+            .ok()
+            .and_then(|existing| existing.checked_add(frame.len()))
+            .context("journal size overflow")?;
+        anyhow::ensure!(
+            after <= self.limit,
+            "the journal would grow to {after} bytes, above this client's limit of {}; the record \
+             is not written",
+            self.limit
+        );
         file.write_all(&frame)?;
         file.sync_all()?;
         File::open(&self.dir)?.sync_all()?;
@@ -359,8 +387,8 @@ impl Store {
         };
         check_private_file(&file, "journal")?;
         let mut bytes = Vec::new();
-        (&mut file).take(MAX_RECORD_BYTES as u64 + 1).read_to_end(&mut bytes)?;
-        anyhow::ensure!(bytes.len() <= MAX_RECORD_BYTES, "the journal is too large");
+        (&mut file).take(self.limit as u64 + 1).read_to_end(&mut bytes)?;
+        anyhow::ensure!(bytes.len() <= self.limit, "the journal is too large");
         let mut records = Vec::new();
         let mut at = 0usize;
         let mut sequence = 0u64;
@@ -526,6 +554,9 @@ pub struct PersistedPoolConfig {
 pub struct PersistedState {
     pub version: u32,
     pub binding: Binding,
+    /// The chain this state was built against. Compared on every read of the
+    /// head; a different chain refuses.
+    pub chain: ChainIdentity,
     pub instance_id: Word,
     pub profile: Profile,
     pub pool_config: PersistedPoolConfig,
@@ -556,6 +587,9 @@ pub enum JournalRecord {
         amount: Coins,
         value: Coins,
         payer: String,
+        /// The owner commitment the note was built with; the note the chain
+        /// later shows at this index must carry the same one.
+        owner_commitment: Word,
         body_hash: Word,
         message_hash: Word,
         boc: Vec<u8>,
@@ -606,14 +640,18 @@ mod tests {
             global_id: 3,
             pool_address: "0:aa76950cf26cb74c1d1b1a977d17bd3c96c6c9f28cb259fca297cdc8d33429fe"
                 .into(),
-            chain: ChainIdentity { source: "test".into(), root_hash: [1; 32], file_hash: [2; 32] },
         }
+    }
+
+    fn chain() -> ChainIdentity {
+        ChainIdentity { source: "test".into(), root_hash: [1; 32], file_hash: [2; 32] }
     }
 
     fn state(binding: &Binding) -> PersistedState {
         PersistedState {
             version: STATE_FORMAT_VERSION,
             binding: binding.clone(),
+            chain: chain(),
             instance_id: *keys().instance_id(),
             profile: Profile {
                 schema: super::super::profile::PROFILE_SCHEMA.into(),
@@ -668,9 +706,9 @@ mod tests {
         drop(store);
 
         let mut other = binding();
-        other.chain.root_hash = [5; 32];
+        other.global_id = 2;
         let store = Store::open(root.path(), &keys, other).expect("open");
-        assert!(store.load_state().is_err(), "another chain's binding");
+        assert!(store.load_state().is_err(), "another network's binding");
         drop(store);
 
         let store = Store::open(root.path(), &Keys::derive(&[8u8; 64], &[3u8; 32]), binding())
@@ -783,6 +821,7 @@ mod tests {
                 amount: coins(1),
                 value: coins(1),
                 payer: "w".into(),
+                owner_commitment: [0; 32],
                 body_hash: [0; 32],
                 message_hash: [0; 32],
                 boc: vec![],
@@ -794,6 +833,37 @@ mod tests {
         assert_eq!(next_issuable_index(&state, &journal).expect("next"), 5, "the journal wins");
         state.issued_high_water = u64::MAX;
         assert!(next_issuable_index(&state, &journal).is_err(), "exhausted");
+    }
+
+    #[test]
+    fn a_write_past_the_limit_is_refused_and_the_old_file_stays_readable() {
+        let root = private_root();
+        let keys = keys();
+        let store = Store::open(root.path(), &keys, binding()).expect("open").with_limit(2_000);
+        let small = state(&binding());
+        store.save_state(&small).expect("a small state fits");
+        let mut large = small.clone();
+        large.ledger.leaves = vec![[7; 32]; 200];
+        match store.save_state(&large) {
+            Ok(()) => panic!("a state past the limit was written"),
+            Err(error) => assert!(error.to_string().contains("previous state is kept"), "{error}"),
+        }
+        assert_eq!(store.load_state().expect("the old state"), Some(small));
+
+        let record = JournalRecord::DepositPrepared {
+            index: 0,
+            amount: coins(1),
+            value: coins(1),
+            payer: "w".into(),
+            owner_commitment: [0; 32],
+            body_hash: [0; 32],
+            message_hash: [0; 32],
+            boc: vec![0x5a; 300],
+        };
+        store.append_journal(0, &record).expect("the first record fits");
+        store.append_journal(1, &record).expect("the second record fits");
+        assert!(store.append_journal(2, &record).is_err(), "the third would cross the limit");
+        assert_eq!(store.read_journal().expect("still readable").len(), 2);
     }
 
     #[test]

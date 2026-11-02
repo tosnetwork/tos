@@ -39,6 +39,11 @@ use super::store::ChainIdentity;
 
 /// The most transactions one sync will fetch. Past this the sync stops with
 /// the previous state intact and says so.
+/// Chain identity taken from the proof verifier's anchor file.
+pub const PROOF_ANCHOR: &str = "proof-anchor";
+/// Chain identity taken from an RPC endpoint's word about its init block.
+pub const RPC_INIT_BLOCK: &str = "rpc-init-block";
+
 pub const MAX_HISTORY_TRANSACTIONS: u64 = 50_000;
 /// How long one sync may spend fetching history.
 pub const HISTORY_DEADLINE: Duration = Duration::from_secs(600);
@@ -104,7 +109,7 @@ pub async fn read_head_verified(
         std::fs::read(&verifier.anchor_file).context("read the proof anchor for its identity")?;
     let anchor: AnchorFile = serde_json::from_slice(&anchor_text).context("proof anchor file")?;
     let chain = ChainIdentity {
-        source: "proof-anchor".into(),
+        source: PROOF_ANCHOR.into(),
         root_hash: super::profile::word(&anchor.root_hash).context("anchor root_hash")?,
         file_hash: super::profile::word(&anchor.file_hash).context("anchor file_hash")?,
     };
@@ -149,7 +154,7 @@ pub async fn read_head_unverified(
     let master = rpc.get_masterchain_info().await.context("getMasterchainInfo")?;
     let init = master.init.context("the endpoint reports no init block")?;
     let chain = ChainIdentity {
-        source: "rpc-init-block".into(),
+        source: RPC_INIT_BLOCK.into(),
         root_hash: init
             .root_hash
             .as_slice()
