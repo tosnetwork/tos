@@ -1,0 +1,136 @@
+{
+  "schema": "tos.br1.public-testnet-pilot-preparation.v1",
+  "core_commit": "7133186ec855abc3c4b15f6691fc2da91d33d6a8",
+  "parent_commit": "51b0884b9ffdb97889169aaf21a2c5f71438ac52",
+  "public_activated": false,
+  "scope": "Explicit global-id2 test-chain pilot build and runtime opt-in; loopback only; production_approved false. No public funding/provisioning/send performed.",
+  "sources": [
+    {
+      "path": ".github/workflows/br1-native-provider.yml",
+      "sha256": "8c342874de8f233d2b6db35d0e8a3fc5a8dfba393e9c71096301f3130f03a344",
+      "bytes": 1942
+    },
+    {
+      "path": "test/bonded-relayer/test_br1_cli.py",
+      "sha256": "e78ff3d60571bffec86e0e767b38cd2fad9800f917a15854d828b676f5c9db4c",
+      "bytes": 7602
+    },
+    {
+      "path": "tools/bonded-relayer/br1.py",
+      "sha256": "8851f30f13d7d254e05cdd0aeb4ac794c5572d9d1392bb198b7a32cb24e8ee29",
+      "bytes": 6851
+    },
+    {
+      "path": "tools/bonded-relayer/provider/Cargo.toml",
+      "sha256": "38dab5dc51bb809115bc1f90d19185247017170f3700555c927347096efcef68",
+      "bytes": 1382
+    },
+    {
+      "path": "tools/bonded-relayer/provider/README.md",
+      "sha256": "887f9fa2f64162f6ce7d55db691aead59086d8c3293c0664d4128f3302a2e523",
+      "bytes": 13133
+    },
+    {
+      "path": "tools/bonded-relayer/provider/src/config.rs",
+      "sha256": "b024c7a38f915b6907707c1e2f4d2e570a9ec234ec9ce7f1707170fd41389e13",
+      "bytes": 3802
+    },
+    {
+      "path": "tools/bonded-relayer/provider/src/provision.rs",
+      "sha256": "3c3499315256bd72d8951885d8c7fc7580b9c93c1c8c6aecc6674ff1823e7667",
+      "bytes": 9906
+    },
+    {
+      "path": "test/bonded-relayer/native_faults/pilot_mutations.py",
+      "sha256": "857c1dcd71317697b450e1c683c41c3e9131b7df912d4c68f91b89498e554bcf",
+      "bytes": 4065
+    },
+    {
+      "path": "test/bonded-relayer/native_faults/PILOT.md",
+      "sha256": "215b699ebecd3ab3c23bb9d343fe2f9a5ef53473e33dcef9ba00f23646bbe3b0",
+      "bytes": 1790
+    }
+  ],
+  "results": {
+    "native_default": 27,
+    "native_feature": 27,
+    "python_full": 144,
+    "source_guards": "64 host +2 pinned Ubuntu24 runtime PASS",
+    "mutants": "8 designated runtime RED; restored27/default+27/pilot+CLI GREEN; scratch cleanly removed without force",
+    "provision": "Ephemeral offline fresh custody verifies Bond/release/signed wallet global-id binding and subwallet3; unsupported IDs refuse before directory/key creation."
+  },
+  "commands": {
+    "native": "cargo +1.97.1 test --manifest-path tools/bonded-relayer/provider/Cargo.toml --release --locked -j2; repeat with --features public-testnet-pilot",
+    "python": "umask077; provide FUNC_PATH,FIFT_PATH,EMULATOR_PATH,PQ_TEST_SIGNER; /usr/bin/python3 -m unittest discover -s test/bonded-relayer -p test_*.py",
+    "mutations": "/usr/bin/python3 test/bonded-relayer/native_faults/pilot_mutations.py --scratch $NEW_SCRATCH --out $NEW_PRIVATE_OUT --target-dir $CARGO_TARGET_DIR",
+    "runtime_guards": "Same pinned Ubuntu24 image/engine procedure as native-destination-20261101.json, with this exact checkout/build root."
+  },
+  "raw_artifacts": [
+    {
+      "path": "/tos/build/br1-public-testnet-pilot/native-checks.log",
+      "sha256": "429a58159f14d099be416810ebfce78ec8b4f65a93b6b8cd3e08fc2cf747ad3b",
+      "bytes": 30006
+    },
+    {
+      "path": "/tos/build/br1-public-testnet-pilot/provision-tests-fixed.log",
+      "sha256": "b5840856e789058b151f3f217dc2daeec0da43460d889d71c7e7ca3cb174f16a",
+      "bytes": 21006
+    },
+    {
+      "path": "/tos/build/br1-public-testnet-pilot/python-complete.log",
+      "sha256": "91c2f3266f4dc5ec576d229d9eef3836ac4fdb090c2763b11578ffc98a9ca4c4",
+      "bytes": 244
+    },
+    {
+      "path": "/tos/build/br1-public-testnet-pilot/source-guards-host.log",
+      "sha256": "75b0e06777bf6da9d6875263a6dcc086e569b0f6645bb8627486a9fe581e4e0e",
+      "bytes": 8791
+    },
+    {
+      "path": "/tos/build/br1-public-testnet-pilot/source-guards-runtime.log",
+      "sha256": "49a826d02342aa9f3256823fbde868f32adfe1ba064154e749a3bc263ed770fb",
+      "bytes": 517
+    },
+    {
+      "path": "/tos/build/br1-public-testnet-pilot/final-build.log",
+      "sha256": "5659995a4b53f2d093c2d7e471ec381e9ce09cfb9656b04a20569218afa98716",
+      "bytes": 10795
+    },
+    {
+      "path": "/tos/build/br1-pilot-guard-repro-20261101/VERDICT.json",
+      "sha256": "998c76e64563f6f4db47c528259f1b53e84b55268a2669678079c0465d172dc7",
+      "bytes": 965
+    },
+    {
+      "path": "/tos/build/br1-pilot-guard-repro-20261101/restored-0.log",
+      "sha256": "f0ba6688456b7ed4a926f07980701044176e7bd5df5d72a9784ed83160c3a60a",
+      "bytes": 7723
+    },
+    {
+      "path": "/tos/build/br1-pilot-guard-repro-20261101/restored-1.log",
+      "sha256": "acdfa64daa55cc6ffb8551bc6110f335dc4d25fc234eac63eaf59cd858a34f25",
+      "bytes": 7723
+    },
+    {
+      "path": "/tos/build/br1-pilot-guard-repro-20261101/restored-2.log",
+      "sha256": "b695ddabf978f23159d20206c316ed2787ce2623bb8974a81fefba8a2bc43e4b",
+      "bytes": 1075
+    },
+    {
+      "path": "/tos/build/br1-public-testnet-pilot/br1-provider-public-testnet-pilot-core-r1",
+      "sha256": "d542913fb7db87ddd377dee5643bf19bacd57cf9a7c97f174ad684428d9ceb76",
+      "bytes": 17091864
+    }
+  ],
+  "public_failure_files": [
+    "test/bonded-relayer/evidence/testnet-pilot-guards-20261101.json",
+    "test/bonded-relayer/evidence/testnet-pilot-runtime-failures-20261101.json"
+  ],
+  "upstream": "Absent at fetched default857b8a57a178e6ae0fe7fa86e7d81c5233de8560; no inherited engine/VM/contract change.",
+  "remaining": "Review/CI and parent merges; exact public genesis/code/config/budget/runbook, maintenance/soak clearance and one-shot actual public-chain pilot remain unexecuted. Full C2 and production/economic/security/transport/custody gates are not approved.",
+  "retention": {
+    "private_until": "2027-02-01 UTC or later",
+    "access": "Existing authorized SSH to toserver; no new/public credentials. No live seeds/tokens/payloads/SQL blobs published.",
+    "public": "Normal Git history with no scheduled expiry."
+  }
+}

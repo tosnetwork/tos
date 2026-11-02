@@ -1,0 +1,77 @@
+{
+  "schema": "tos.br1.testnet-pilot-runtime-failures.v1",
+  "recipe_sha256": "9b2820dd8a7d350759dcb431b6c05d55972db7e002d43de80a767368fe9caf86",
+  "core_commit": "7133186ec855abc3c4b15f6691fc2da91d33d6a8",
+  "public_retention": "Normal Git history; no scheduled expiry. Actual runtime failure excerpts. All provisioning/signed-wallet cases use ephemeral, unfunded test keys, no network access.",
+  "failures": [
+    {
+      "guard": "native_default_opt_in",
+      "exit_code": 101,
+      "failure": "running 1 test\ntest config::tests::public_testnet_requires_build_opt_in_and_other_networks_always_refuse ... FAILED\n\nfailures:\n\n---- config::tests::public_testnet_requires_build_opt_in_and_other_networks_always_refuse stdout ----\n\nthread 'config::tests::public_testnet_requires_build_opt_in_and_other_networks_always_refuse' (4093305) panicked at src/config.rs:106:9:\nassertion `left == right` failed\n  left: true\n right: false\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n\n\nfailures:\n    config::tests::public_testnet_requires_build_opt_in_and_other_networks_always_refuse\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 26 filtered out; finished in 0.00s",
+      "raw_path": "/tos/build/br1-pilot-guard-repro-20261101/native_default_opt_in.log",
+      "raw_sha256": "914f5d5516ab80fda62fbcadcdbd936ae839c74c00ffbb077f5b0196777df0b6",
+      "raw_bytes": 8284
+    },
+    {
+      "guard": "native_feature_opt_in",
+      "exit_code": 101,
+      "failure": "running 1 test\ntest config::tests::public_testnet_requires_build_opt_in_and_other_networks_always_refuse ... FAILED\n\nfailures:\n\n---- config::tests::public_testnet_requires_build_opt_in_and_other_networks_always_refuse stdout ----\n\nthread 'config::tests::public_testnet_requires_build_opt_in_and_other_networks_always_refuse' (4097479) panicked at src/config.rs:106:9:\nassertion `left == right` failed\n  left: false\n right: true\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n\n\nfailures:\n    config::tests::public_testnet_requires_build_opt_in_and_other_networks_always_refuse\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 26 filtered out; finished in 0.00s",
+      "raw_path": "/tos/build/br1-pilot-guard-repro-20261101/native_feature_opt_in.log",
+      "raw_sha256": "b26eddd961c15f835da16bcca08fa64341f415825bbff66a4f64d853236ee590",
+      "raw_bytes": 6153
+    },
+    {
+      "guard": "provision_precreation_scope",
+      "exit_code": 101,
+      "failure": "running 1 test\ntest provision::tests::fresh_custody_bond_and_signed_wallet_share_explicit_network ... FAILED\n\nfailures:\n\n---- provision::tests::fresh_custody_bond_and_signed_wallet_share_explicit_network stdout ----\n\nthread 'provision::tests::fresh_custody_bond_and_signed_wallet_share_explicit_network' (4102050) panicked at src/provision.rs:181:17:\nrefusal must precede custody creation\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n\n\nfailures:\n    provision::tests::fresh_custody_bond_and_signed_wallet_share_explicit_network\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 26 filtered out; finished in 0.01s",
+      "raw_path": "/tos/build/br1-pilot-guard-repro-20261101/provision_precreation_scope.log",
+      "raw_sha256": "5c0a25b83bc4c1d02cf2cc1fe8127459c26b6541e505ac49beb72bd507390638",
+      "raw_bytes": 6107
+    },
+    {
+      "guard": "provision_bond_domain",
+      "exit_code": 101,
+      "failure": "running 1 test\ntest provision::tests::fresh_custody_bond_and_signed_wallet_share_explicit_network ... FAILED\n\nfailures:\n\n---- provision::tests::fresh_custody_bond_and_signed_wallet_share_explicit_network stdout ----\n{\"bond\":\"0:ae596cc52e05a0bfa0dfb69ef7c7e6addf4e08e24d4b7fcb3ac312207019f17f\",\"funding_wallet\":\"0:2593f74fc39e4e1d5a163e62c39dae06357f8e3fa049b449b3c5fd5b3caf1ef9\",\"scope\":\"8de1a6bd42b81ccc86d3b2fe28c5a791eb67616be8a04988ee50b540ff80a388\"}\n\nthread 'provision::tests::fresh_custody_bond_and_signed_wallet_share_explicit_network' (4106746) panicked at src/provision.rs:194:13:\nassertion `left == right` failed\n  left: 3\n right: 2\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n\n\nfailures:\n    provision::tests::fresh_custody_bond_and_signed_wallet_share_explicit_network\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 26 filtered out; finished in 0.02s",
+      "raw_path": "/tos/build/br1-pilot-guard-repro-20261101/provision_bond_domain.log",
+      "raw_sha256": "8bff98ccf59ef43b3ec249be5ee96a24f32bf0b949537f6ae1b81175dd980cb3",
+      "raw_bytes": 6361
+    },
+    {
+      "guard": "provision_release_domain",
+      "exit_code": 101,
+      "failure": "running 1 test\ntest provision::tests::fresh_custody_bond_and_signed_wallet_share_explicit_network ... FAILED\n\nfailures:\n\n---- provision::tests::fresh_custody_bond_and_signed_wallet_share_explicit_network stdout ----\n{\"bond\":\"0:d18ad583bc00177839eb2b16a7ce7b5abed9561516265ac986780d3bb19156de\",\"funding_wallet\":\"0:046b5a1cd8a66d3eaad6b945ffe708127247496da56d6db40092120eef56a2c5\",\"scope\":\"849b2f5322c4a153ef52d278476b142c315723f083c986e20d859a0f723d9fe1\"}\n\nthread 'provision::tests::fresh_custody_bond_and_signed_wallet_share_explicit_network' (4110836) panicked at src/provision.rs:188:13:\nassertion `left == right` failed\n  left: 3\n right: 2\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n\n\nfailures:\n    provision::tests::fresh_custody_bond_and_signed_wallet_share_explicit_network\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 26 filtered out; finished in 0.02s",
+      "raw_path": "/tos/build/br1-pilot-guard-repro-20261101/provision_release_domain.log",
+      "raw_sha256": "371f73e17ce66e0a2de254d643460daba16e766496d8b054ec1bdacf2d186f58",
+      "raw_bytes": 6361
+    },
+    {
+      "guard": "python_runtime_opt_in",
+      "exit_code": 1,
+      "failure": "FAIL: test_public_testnet_pilot_requires_explicit_mode_and_matching_network (test_br1_cli.ConfigTests)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"CHECKOUT/test/bonded-relayer/test_br1_cli.py\", line 59, in test_public_testnet_pilot_requires_explicit_mode_and_matching_network\n    with self.assertRaisesRegex(Refused, \"localnet configuration\"):\nAssertionError: Refused not raised\n",
+      "raw_path": "/tos/build/br1-pilot-guard-repro-20261101/python_runtime_opt_in.log",
+      "raw_sha256": "e058e8e79621936b37b7000818c202ec669fd8af0aac744d7136a1e9d076ccb5",
+      "raw_bytes": 7038
+    },
+    {
+      "guard": "python_network_scope",
+      "exit_code": 1,
+      "failure": "FAIL: test_localnet_mode_refuses_public_network_even_without_pilot_flag (test_br1_cli.ConfigTests) (global_id=0)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"CHECKOUT/test/bonded-relayer/test_br1_cli.py\", line 89, in test_localnet_mode_refuses_public_network_even_without_pilot_flag\n    with self.subTest(global_id=global_id), self.assertRaisesRegex(Refused, \"network\"):\nAssertionError: Refused not raised\n",
+      "raw_path": "/tos/build/br1-pilot-guard-repro-20261101/python_network_scope.log",
+      "raw_sha256": "c9896acdcbea508105a3b153d267845d73c7500b9b6b7e2b29b105d60d4435af",
+      "raw_bytes": 5848
+    },
+    {
+      "guard": "python_cli_opt_in",
+      "exit_code": 1,
+      "failure": "FAIL: test_cli_forwards_pilot_opt_in_without_starting_a_backend (test_br1_cli.ConfigTests)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"CHECKOUT/test/bonded-relayer/test_br1_cli.py\", line 76, in test_cli_forwards_pilot_opt_in_without_starting_a_backend\n    self.assertEqual(\nAssertionError: 2 != 0\n\n----------------------------------------------------------------------\nRan 11 tests in 0.015s\n\nFAILED (failures=1)\n",
+      "raw_path": "/tos/build/br1-pilot-guard-repro-20261101/python_cli_opt_in.log",
+      "raw_sha256": "d455a68a11f955d4b783c4a1a2f8506ff02579f68e097571e397a20156ff004f",
+      "raw_bytes": 1656
+    }
+  ],
+  "restored": {
+    "default_native": 27,
+    "pilot_native": 27,
+    "python_cli": "OK"
+  }
+}
