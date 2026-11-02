@@ -16,6 +16,8 @@ fips204 = { version = "=0.4.6", default-features = false, features = ["ml-dsa-44
 # Section 3's AEAD.
 chacha20poly1305 = { version = "=0.10.1", default-features = false, features = ["alloc"] }
 ark-ff = "=0.5.0"
+# Clears the derived instance master when a PoolInstance is dropped.
+zeroize = "1.8"
 
 [lints.clippy]
 unwrap_used = "deny"

@@ -62,6 +62,14 @@ pub fn pool_master(tos_seed: &[u8; 32]) -> [u8; 64] {
     out
 }
 
+impl Drop for PoolInstance {
+    /// The instance master is as good as the mnemonic for this pool, so it
+    /// does not outlive the value that holds it.
+    fn drop(&mut self) {
+        zeroize::Zeroize::zeroize(&mut self.master);
+    }
+}
+
 /// Everything a wallet holds for one pool on one chain.
 ///
 /// Two execution domains from the same mnemonic share no key material below

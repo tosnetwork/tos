@@ -25,9 +25,14 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::delivery::{self, Kind};
 use crate::error::{Rejection, Result};
 use crate::import::{self, ChainSlot, Imported};
+use crate::keys::fr_be32;
 use crate::keys::PoolInstance;
 
 use shielded_pool_circuit::field::Fr;
+
+fn fr_key(value: Fr) -> [u8; 32] {
+    fr_be32(value)
+}
 
 /// One output slot as the chain carries it.
 #[derive(Clone)]
@@ -63,6 +68,9 @@ pub struct Recovered {
     pub reused: BTreeSet<u64>,
     /// Payloads that opened and were refused, with the rule each broke.
     pub diagnostics: Vec<Diagnostic>,
+    /// The leaf each note in `notes` occupies, in the same order, when the
+    /// caller knew it. A recovery template is not a leaf.
+    pub leaves: Vec<Option<u64>>,
 }
 
 impl Recovered {
@@ -99,12 +107,13 @@ impl Recovered {
     /// twice its money after a self-transfer: the input it spent and the
     /// outputs that replaced it were both counted. A green test asserted that
     /// doubled figure.
+    ///
+    /// Two notes with the same note body are one note as far as spending goes:
+    /// they share a nullifier, so whichever is spent first spends both. A
+    /// payer can deposit the same bytes twice -- and pays twice -- but the
+    /// receiver can move that money once, so it is counted once.
     pub fn balance(&self) -> u128 {
-        self.notes
-            .iter()
-            .filter(|note| note.spendable && !note.spent)
-            .map(|note| note.amount)
-            .sum()
+        self.spendable_notes().map(|note| note.amount).sum()
     }
 
     /// Everything this wallet was ever sent, spent or not.
@@ -118,8 +127,61 @@ impl Recovered {
     }
 
     /// The notes an input may be selected from.
+    ///
+    /// One per distinct note body, the first the chain carried; see
+    /// [`Recovered::balance`].
     pub fn spendable_notes(&self) -> impl Iterator<Item = &Imported> {
-        self.notes.iter().filter(|note| note.spendable && !note.spent)
+        let mut seen = BTreeSet::new();
+        self.notes.iter().filter(move |note| {
+            note.spendable && !note.spent && seen.insert(fr_key(note.note_body))
+        })
+    }
+
+    /// The spendable notes with the leaf each occupies.
+    pub fn spendable_with_leaves(&self) -> Vec<(&Imported, Option<u64>)> {
+        let mut seen = BTreeSet::new();
+        self.notes
+            .iter()
+            .zip(self.leaves.iter().copied().chain(std::iter::repeat(None)))
+            .filter(|(note, _)| {
+                note.spendable && !note.spent && seen.insert(fr_key(note.note_body))
+            })
+            .collect()
+    }
+
+    /// Notes that repeat an earlier note's body and therefore cannot be spent
+    /// on their own.
+    pub fn duplicates(&self) -> usize {
+        let mut seen = BTreeSet::new();
+        self.notes.iter().filter(|note| !seen.insert(fr_key(note.note_body))).count()
+    }
+
+    /// Append what a later scan found, as if both had been one scan over the
+    /// concatenated outputs.
+    pub fn merge(&mut self, later: Recovered) {
+        let padding = self.notes.len().saturating_sub(self.leaves.len());
+        self.leaves.extend(std::iter::repeat_n(None, padding));
+        self.notes.extend(later.notes);
+        self.leaves.extend(later.leaves);
+        self.diagnostics.extend(later.diagnostics);
+        self.recount();
+    }
+
+    /// Sections 2.5 rules 2 and 4 over every note held.
+    ///
+    /// A use of an index is one owner commitment under it. A recovery
+    /// template and the note minted from it share theirs, and so do two copies
+    /// of the same deposited bytes; two payments to one descriptor do not,
+    /// because each carries its own note secret.
+    fn recount(&mut self) {
+        let mut uses: BTreeMap<u64, BTreeSet<[u8; 32]>> = BTreeMap::new();
+        for note in &self.notes {
+            uses.entry(note.note_key_index).or_default().insert(fr_key(note.owner_commitment));
+        }
+        self.next_note_key_index =
+            uses.keys().next_back().map(|highest| highest.saturating_add(1)).unwrap_or(0);
+        self.reused =
+            uses.iter().filter(|(_, owners)| owners.len() > 1).map(|(index, _)| *index).collect();
     }
 
     /// Whether this index may be issued. False for an index already used, and
@@ -136,10 +198,20 @@ impl Recovered {
 /// belongs to other people -- and is not recorded. A payload that opens and is
 /// then refused is recorded, because that one is about this wallet.
 pub fn recover(instance: &PoolInstance, outputs: &[ObservedOutput]) -> Result<Recovered> {
-    let mut out = Recovered::default();
-    let mut seen: BTreeMap<u64, usize> = BTreeMap::new();
+    let indexed: Vec<(ObservedOutput, Option<u64>)> =
+        outputs.iter().map(|output| (output.clone(), None)).collect();
+    recover_indexed(instance, &indexed)
+}
 
-    for output in outputs {
+/// [`recover`], with the leaf each output became, so a wallet knows where
+/// each of its notes sits in the commitment tree.
+pub fn recover_indexed(
+    instance: &PoolInstance,
+    outputs: &[(ObservedOutput, Option<u64>)],
+) -> Result<Recovered> {
+    let mut out = Recovered::default();
+
+    for (output, leaf) in outputs {
         let plaintext = match delivery::open(instance, &output.output_data, output.slot) {
             Ok(plaintext) => plaintext,
             // Not ours, or not a payload at all. Both are silence.
@@ -150,21 +222,20 @@ pub fn recover(instance: &PoolInstance, outputs: &[ObservedOutput]) -> Result<Re
             }
         };
         match import::import(instance, &plaintext, &output.chain)? {
+            // Section 2.5 rule 3: import all of them. A second note at the
+            // same index is a privacy problem, not a reason to lose it.
             Ok(note) => {
-                // Section 2.5 rule 3: import all of them. A second note at the
-                // same index is a privacy problem, not a reason to lose it.
-                *seen.entry(note.note_key_index).or_insert(0) += 1;
                 out.notes.push(note);
+                out.leaves.push(*leaf);
             }
             Err(why) => out.diagnostics.push(Diagnostic { slot: output.slot, why }),
         }
     }
 
-    // Section 2.5 rule 2: the next index is past every index that was used,
-    // whatever kind of output used it. A dummy consumes an index too.
-    out.next_note_key_index = seen.keys().copied().max().map(|highest| highest + 1).unwrap_or(0);
-    // Rule 4: an index that carried more than one note is burnt for good.
-    out.reused = seen.iter().filter(|(_, count)| **count > 1).map(|(index, _)| *index).collect();
+    // Rule 2: the next index is past every index that was used, whatever kind
+    // of output used it -- a dummy consumes an index too. Rule 4: an index
+    // that carried more than one note is burnt for good.
+    out.recount();
     Ok(out)
 }
 
