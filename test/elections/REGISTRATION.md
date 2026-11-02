@@ -13,7 +13,9 @@ The control operations are ordered permanent record then existing ADNL associati
 A partial failure is surfaced; the same idempotent calls can reconcile while
 the original address remains known. Already-deleted addresses require evidence-based recovery.
 Completed renewals update the local snapshot before another action can reuse it.
-All addresses sharing a permanent key use its longest duty deadline. Stake actions do not proceed on a reconciliation failure. An
+All addresses sharing a permanent key use its longest duty deadline. A failed node skips its own value operations and exposes the error; healthy nodes
+continue pool maintenance, recovery and participation even if the failed node
+was excluded from future elections. An
 existing key export failure is an error, never evidence that the key is absent.
 An already-deleted ADNL association is refused with an explicit reconciliation
 message; an address is not guessed from unrelated global ADNL entries. Retention

@@ -396,25 +396,39 @@ impl ElectionRunner {
         let returned = snapshot.returned.into_iter().collect::<HashMap<_, _>>();
         let election_id = elections_info.election_id;
         let cfg15 = self.election_parameters().await?;
-        // Keep actual duties registered even while the elector is closed or finished.
+        // One unavailable control socket must not suppress another node's elections.
+        let mut registration_failed = HashSet::<String>::new();
         for (node_id, node) in &mut self.nodes {
-            let plans = crate::registration::duty_renewals(
-                &node.validator_config,
-                self.snapshot_cache.last_validator_set.as_ref(),
-                self.snapshot_cache.last_next_validator_set.as_ref(),
-                time_format::now(),
-            )?;
-            for plan in plans {
-                node.api
-                    .retain_validator_registration(
-                        plan.election_id,
-                        &plan.key_id,
-                        &plan.adnl,
-                        plan.until,
-                    )
-                    .await
-                    .with_context(|| format!("node [{node_id}] retain installed election duty"))?;
-                crate::registration::mark_retained(&mut node.validator_config, &plan)?;
+            let retained: anyhow::Result<()> = async {
+                let plans = crate::registration::duty_renewals(
+                    &node.validator_config,
+                    self.snapshot_cache.last_validator_set.as_ref(),
+                    self.snapshot_cache.last_next_validator_set.as_ref(),
+                    time_format::now(),
+                )?;
+                for plan in plans {
+                    node.api
+                        .retain_validator_registration(
+                            plan.election_id,
+                            &plan.key_id,
+                            &plan.adnl,
+                            plan.until,
+                        )
+                        .await
+                        .with_context(|| {
+                            format!("node [{node_id}] retain installed election duty")
+                        })?;
+                    crate::registration::mark_retained(&mut node.validator_config, &plan)?;
+                }
+                Ok(())
+            }
+            .await;
+            if let Err(error) = retained {
+                node.last_error = Some(format!("registration retention failed: {error:#}"));
+                registration_failed.insert(node_id.clone());
+                tracing::error!(
+                    "node [{node_id}] registration retention failed; skipping its value operations: {error:#}"
+                );
             }
         }
         self.snapshot_cache.update_next_elections_range(&cfg15);
@@ -490,12 +504,18 @@ impl ElectionRunner {
         // current, so doing this afterwards would just log the same failure
         // every tick.
         for node_id in &nodes {
+            if registration_failed.contains(node_id) {
+                continue;
+            }
             if let Err(e) = self.maintain_pool(node_id).await {
                 self.nodes.get_mut(node_id).map(|node| node.last_error = Some(format!("{:#}", e)));
                 tracing::error!("node [{}] pool maintenance error: {:#}", node_id, e);
             }
         }
         for node_id in nodes {
+            if registration_failed.contains(&node_id) {
+                continue;
+            }
             tracing::info!("node [{}] recover stake", node_id);
             let excluded = self.nodes.get(&node_id).map(|node| node.excluded).unwrap_or(true);
             let recover_amount = match self.recover_stake(&node_id, &returned).await {

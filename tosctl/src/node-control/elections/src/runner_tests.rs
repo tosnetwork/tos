@@ -2681,3 +2681,69 @@ async fn closed_elector_still_extends_actual_announced_duty_without_spending() {
     assert_eq!(retained.expired_at, u64::from(until) + 300);
     assert_eq!(retained.adnl_addrs[0].1, u64::from(until) + 300);
 }
+
+#[tokio::test]
+async fn failed_registration_isolated_from_healthy_nodes_even_when_excluded() {
+    for excluded in [false, true] {
+        let mut bad = TestHarness::new();
+        bad.elector_mock.expect_address().returning(elector_address);
+        bad.wallet_mock.expect_address().returning(wallet_address);
+        bad.provider_mock.expect_election_parameters().returning(|| Ok(default_cfg15()));
+        bad.provider_mock
+            .expect_retain_validator_registration()
+            .times(1)
+            .returning(|_, _, _, _| Err(anyhow::anyhow!("control offline")));
+        bad.provider_mock.expect_send_boc().times(0);
+        bad.provider_mock.expect_new_validator_key().times(0);
+        let mut runner = bad.build("node-1");
+        let node = runner.nodes.get_mut("node-1").unwrap();
+        node.excluded = excluded;
+        node.validator_config.keys.insert(
+            ELECTION_ID,
+            ValidatorEntry {
+                key_id: KEY_ID.to_vec(),
+                adnl_addrs: vec![(ADNL_ADDR.to_vec(), ELECTION_ID + 7200)],
+                expired_at: ELECTION_ID + 7200,
+                ..Default::default()
+            },
+        );
+        let until = u32::try_from(time_format::now() + 7200).unwrap();
+        runner.snapshot_cache.last_next_validator_set = Some(
+            ValidatorSet::new(
+                until - 7200,
+                until,
+                1,
+                vec![ValidatorDescr::with_params(
+                    chain_block::SigPubKey::from_bytes(&PUB_KEY).unwrap(),
+                    1,
+                    Some(chain_block::UInt256::from(ADNL_ADDR)),
+                )],
+            )
+            .unwrap(),
+        );
+        let mut healthy = TestHarness::new();
+        healthy.elector_mock.expect_address().returning(elector_address);
+        setup_wallet(&mut healthy.wallet_mock);
+        setup_default_provider(&mut healthy.provider_mock, WALLET_BALANCE, None);
+        runner.nodes.extend(healthy.build("node-2").nodes);
+        let snapshot = ElectorSnapshot {
+            block: snapshot_block(),
+            elections: ElectionsInfo {
+                election_id: ELECTION_ID,
+                elect_close: ELECTION_ID + 600,
+                min_stake: MIN_STAKE,
+                total_stake: 0,
+                failed: false,
+                finished: false,
+                participants: vec![],
+            },
+            past_elections: vec![],
+            returned: vec![([0xaa; 32], 0)],
+        };
+        runner.run_with_snapshot(snapshot).await.unwrap();
+        assert!(runner.nodes["node-1"].last_error.as_ref().unwrap().contains("control offline"));
+        assert!(runner.nodes["node-1"].participant.is_none());
+        assert_eq!(runner.nodes["node-2"].stake_submissions.len(), 1);
+        assert!(!runner.nodes["node-2"].stake_accepted);
+    }
+}
