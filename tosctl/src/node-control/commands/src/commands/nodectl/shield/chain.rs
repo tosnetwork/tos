@@ -69,6 +69,12 @@ pub struct Head {
     /// only one a deadline the contract enforces can be judged against.
     pub shard_gen_utime: u32,
     pub chain: ChainIdentity,
+    /// The hash of the pool's frozen configuration cell: the second
+    /// reference of its data cell, which a relayer release pins.
+    pub pool_config_hash: [u8; 32],
+    /// What the chain identity came from: the proof anchor's kind
+    /// (`zerostate` or `key_block`), or nothing for an endpoint's word.
+    pub anchor_kind: Option<String>,
     source: HeadSource,
 }
 
@@ -79,8 +85,18 @@ enum HeadSource {
 
 #[derive(serde::Deserialize)]
 struct AnchorFile {
+    kind: String,
     root_hash: String,
     file_hash: String,
+}
+
+/// The proof anchor is the genesis block itself.
+pub const ANCHOR_KIND_ZEROSTATE: &str = "zerostate";
+
+/// The pool's frozen configuration, as the second reference of its data cell.
+pub fn pool_config_hash(data: &Cell) -> anyhow::Result<[u8; 32]> {
+    anyhow::ensure!(data.references_count() == 4, "a state cell carries four references");
+    Ok(*data.reference(2).context("the pool's configuration cell")?.repr_hash().as_array())
 }
 
 /// The pool and the gas prices at one authenticated live block.
@@ -102,6 +118,7 @@ pub async fn read_head_verified(
     let code_hash = *account.get_code_hash().context("the pool has no code")?.as_array();
     let data = account.get_data().context("the pool has no data")?;
     let state = PoolState::parse(&data).context("the pool's state cell")?;
+    let pool_config_hash = pool_config_hash(&data)?;
     let global_id = match ConfigParamEnum::construct_from_cell_and_number(
         proven.config_param(19).context("config parameter 19 was not proven")?.clone(),
         19,
@@ -131,6 +148,8 @@ pub async fn read_head_verified(
         block_gen_utime: evidence.block_gen_utime,
         shard_gen_utime: evidence.account.gen_utime,
         chain,
+        pool_config_hash,
+        anchor_kind: Some(anchor.kind),
         source: HeadSource::Proven(Box::new(proven)),
     })
 }
@@ -144,8 +163,9 @@ pub async fn read_head_unverified(
     let code = info.code.as_deref().context("the pool has no code")?;
     let data = info.data.as_deref().context("the pool has no data")?;
     let code_hash = *read_single_root_boc(code).context("the pool's code")?.repr_hash().as_array();
-    let state = PoolState::parse(&read_single_root_boc(data).context("the pool's data")?)
-        .context("the pool's state cell")?;
+    let data = read_single_root_boc(data).context("the pool's data")?;
+    let state = PoolState::parse(&data).context("the pool's state cell")?;
+    let pool_config_hash = pool_config_hash(&data)?;
     let last_hash: [u8; 32] = info
         .last_transaction_id
         .hash
@@ -184,6 +204,8 @@ pub async fn read_head_unverified(
         block_gen_utime: u32::try_from(info.sync_utime).unwrap_or(u32::MAX),
         shard_gen_utime: u32::try_from(info.sync_utime).unwrap_or(u32::MAX),
         chain,
+        pool_config_hash,
+        anchor_kind: None,
         source: HeadSource::Rpc,
     })
 }
@@ -215,6 +237,16 @@ impl Head {
 
     pub fn has_history(&self) -> bool {
         self.last_lt > 0 && self.last_hash != [0; 32]
+    }
+
+    /// The authenticated account state this head was read from, if the proof
+    /// verifier read it; another proven read is compared to it checkpoint for
+    /// checkpoint.
+    pub fn proven(&self) -> Option<&ProvenAccountState> {
+        match &self.source {
+            HeadSource::Proven(proven) => Some(proven),
+            HeadSource::Rpc => None,
+        }
     }
 }
 
@@ -517,7 +549,7 @@ fn check_checkpoint(ledger: &Ledger, state: &PoolState, bounces: u64) -> anyhow:
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use chain_block::{AccountStatus, HashUpdate, Serializable, UInt256};
     use contracts::shielded_pool::PoolConfig;
@@ -645,6 +677,12 @@ mod tests {
         );
     }
 
+    /// An unverified head at the genesis state, for tests of other modules
+    /// that only need a head to alter.
+    pub(crate) fn head_for_tests() -> Head {
+        head_with(genesis_state())
+    }
+
     fn head_with(state: PoolState) -> Head {
         Head {
             verified: false,
@@ -658,6 +696,8 @@ mod tests {
             block_gen_utime: 0,
             shard_gen_utime: 0,
             chain: ChainIdentity { source: "test".into(), root_hash: [0; 32], file_hash: [0; 32] },
+            pool_config_hash: [0; 32],
+            anchor_kind: None,
             source: HeadSource::Rpc,
         }
     }

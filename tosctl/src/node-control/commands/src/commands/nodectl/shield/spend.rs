@@ -83,8 +83,11 @@ pub struct WithdrawCmd {
     /// The workchain-0 address the pool pays
     #[arg(long)]
     to: String,
+    /// The configured wallet that broadcasts and pays the message
+    #[arg(long)]
+    from: String,
     #[command(flatten)]
-    broadcast: Broadcast,
+    proving: Proving,
 }
 
 #[derive(clap::Args, Clone)]
@@ -101,31 +104,38 @@ pub struct SendCmd {
     /// The recipient's descriptor, as `shield address` printed it
     #[arg(long)]
     to: String,
-    /// Broadcast from the configured wallet directly. The wallet, the pool and
-    /// the time are then visible on chain together; accepted only on an
-    /// isolated local network
-    #[arg(long)]
+    /// Broadcast from the configured wallet named by --from directly. The
+    /// wallet, the pool and the time are then visible on chain together;
+    /// accepted only on an isolated local network
+    #[arg(long, requires = "from", conflicts_with = "relayer")]
     direct: bool,
+    /// The configured wallet that broadcasts and pays the message (--direct)
+    #[arg(long)]
+    from: Option<String>,
+    /// Relay through the bonded relayer this profile describes, over the
+    /// local Tor daemon. No configured wallet signs anything: the relayer
+    /// funds the message and is paid a fee note inside the spend
+    #[arg(long, conflicts_with_all = ["direct", "from", "unverified_rpc"])]
+    relayer: Option<PathBuf>,
     #[command(flatten)]
-    broadcast: Broadcast,
+    relay: super::relay::RelayOptions,
+    #[command(flatten)]
+    proving: Proving,
 }
 
-/// How a spend reaches the network: from a configured wallet, with the
-/// ceremony transcript audited for its proving key.
+/// What every spend needs to prove itself: the ceremony transcript, audited
+/// for its proving key, and how the pool is read.
 #[derive(clap::Args, Clone)]
-pub struct Broadcast {
-    /// The configured wallet that broadcasts and pays the message
-    #[arg(long)]
-    from: String,
+pub struct Proving {
     /// The finished phase-2 ceremony directory the proving key is read from.
     /// Its whole transcript is audited on every spend
     #[arg(long)]
-    ceremony_dir: PathBuf,
+    pub(super) ceremony_dir: PathBuf,
     /// Do not ask for confirmation
     #[arg(short = 'y', long)]
-    yes: bool,
+    pub(super) yes: bool,
     #[command(flatten)]
-    read: ReadMode,
+    pub(super) read: ReadMode,
 }
 
 impl WithdrawCmd {
@@ -145,28 +155,50 @@ impl WithdrawCmd {
             .try_into()
             .map_err(|_| anyhow::anyhow!("the payout address is not 256 bits"))?;
         let target = Target::Withdraw { recipient: Box::new(recipient.clone()), recipient_account };
-        run(&self.name, amount, target, &self.broadcast, config_path).await
+        run(&self.name, amount, target, &self.from, &self.proving, config_path).await
     }
 }
 
 impl SendCmd {
     pub async fn run(&self, config_path: &Path) -> anyhow::Result<()> {
         let amount = amount_of(&self.amount, self.amount_nanotos)?;
-        anyhow::ensure!(
-            self.direct,
-            "a send broadcast from a configured wallet shows that wallet, the pool and the time \
-             together on chain; pass --direct to accept that on an isolated local network. A \
-             relayed path that does not is not available yet"
-        );
-        let bytes = base64::engine::general_purpose::STANDARD
-            .decode(self.to.trim())
-            .context("the descriptor is not base64")?;
-        let descriptor = Descriptor::from_bytes(&bytes)
-            .map_err(|error| anyhow::anyhow!("the descriptor: {error}"))?;
-        let digest: [u8; 32] = Sha256::digest(&bytes).into();
-        let target = Target::Send { descriptor: Box::new(descriptor), descriptor_hash: digest };
-        run(&self.name, amount, target, &self.broadcast, config_path).await
+        let target = send_target(&self.to)?;
+        match (&self.relayer, &self.from) {
+            (Some(relayer), None) => {
+                super::relay::run(
+                    &self.name,
+                    amount,
+                    target,
+                    relayer,
+                    &self.relay,
+                    &self.proving,
+                    config_path,
+                )
+                .await
+            }
+            (None, Some(from)) if self.direct => {
+                run(&self.name, amount, target, from, &self.proving, config_path).await
+            }
+            _ => anyhow::bail!(
+                "a send is either relayed (--relayer PROFILE, over Tor, the relayer funds the \
+                 message) or broadcast from a configured wallet (--direct --from WALLET), which \
+                 shows that wallet, the pool and the time together on chain and is accepted only \
+                 on an isolated local network"
+            ),
+        }
     }
+}
+
+/// The recipient of a send: the descriptor as the recipient printed it, and
+/// its hash, under which the journal remembers it was paid.
+pub(super) fn send_target(descriptor_b64: &str) -> anyhow::Result<Target> {
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(descriptor_b64.trim())
+        .context("the descriptor is not base64")?;
+    let descriptor = Descriptor::from_bytes(&bytes)
+        .map_err(|error| anyhow::anyhow!("the descriptor: {error}"))?;
+    let digest: [u8; 32] = Sha256::digest(&bytes).into();
+    Ok(Target::Send { descriptor: Box::new(descriptor), descriptor_hash: digest })
 }
 
 fn amount_of(text: &Option<String>, nanotos: Option<u128>) -> anyhow::Result<u128> {
@@ -179,20 +211,20 @@ fn amount_of(text: &Option<String>, nanotos: Option<u128>) -> anyhow::Result<u12
     Ok(amount)
 }
 
-enum Target {
+pub(super) enum Target {
     Withdraw { recipient: Box<MsgAddressInt>, recipient_account: [u8; 32] },
     Send { descriptor: Box<Descriptor>, descriptor_hash: [u8; 32] },
 }
 
 impl Target {
-    fn is_withdrawal(&self) -> bool {
+    pub(super) fn is_withdrawal(&self) -> bool {
         matches!(self, Target::Withdraw { .. })
     }
 
     /// What the journal records as the recipient: the payout address, or
     /// the hash of the descriptor so the same descriptor is not paid twice
     /// from this instance.
-    fn recipient_label(&self) -> String {
+    pub(super) fn recipient_label(&self) -> String {
         match self {
             Target::Withdraw { recipient, .. } => recipient.to_string(),
             Target::Send { descriptor_hash, .. } => {
@@ -203,7 +235,7 @@ impl Target {
 }
 
 /// The ceremony key's pin, as the profile knows it.
-fn ceremony_vk_pin() -> anyhow::Result<(&'static str, [u8; 32])> {
+pub(super) fn ceremony_vk_pin() -> anyhow::Result<(&'static str, [u8; 32])> {
     let (_, pin) = super::profile::KNOWN_VERIFYING_KEYS
         .iter()
         .find(|(class, _)| *class == KeyClass::Ceremony)
@@ -211,30 +243,14 @@ fn ceremony_vk_pin() -> anyhow::Result<(&'static str, [u8; 32])> {
     Ok((pin, word(pin)?))
 }
 
-async fn run(
-    name: &str,
-    amount: u128,
-    target: Target,
-    broadcast: &Broadcast,
-    config_path: &Path,
-) -> anyhow::Result<()> {
-    eprintln!("{}", EXPERIMENTAL.yellow());
-    let (config, vault, rpc) = load_config_vault_rpc_client(config_path).await?;
-    let mut opened = open_instance(config_path, name, &vault).await?;
-    let network = opened.network()?;
-    anyhow::ensure!(
-        network == Network::Local,
-        "a spend broadcast from a configured wallet shows that wallet, the pool and the time \
-         together on chain. This client does that only on an isolated local network; this \
-         instance is on {}",
-        network.label()
-    );
-    let pool = opened.pointer.profile.address()?;
-    let head = broadcast.read.head(&config, &rpc, &pool).await?;
-    require_current_verified_head(&opened, &head, name)?;
-
-    // The pool must verify against the finished ceremony key, and the key
-    // in the given directory must be that key: audited in full, every time.
+/// The prover for this pool: the pool must verify against the finished
+/// ceremony key, and the key in the given directory must be that key,
+/// audited in full, every time.
+pub(super) fn audited_prover(
+    opened: &Opened,
+    head: &Head,
+    ceremony_dir: &Path,
+) -> anyhow::Result<PublicClient> {
     let (pin_hex, pin) = ceremony_vk_pin()?;
     anyhow::ensure!(
         head.state.config.groth16_vk_hash == pin,
@@ -245,9 +261,9 @@ async fn run(
     eprintln!(
         "{} auditing the ceremony transcript in {} (every spend pays for this)",
         "note:".bold(),
-        broadcast.ceremony_dir.display()
+        ceremony_dir.display()
     );
-    let directory = Directory::at(&broadcast.ceremony_dir);
+    let directory = Directory::at(ceremony_dir);
     let audited = shielded_pool_prover::audit_ceremony(&directory)
         .map_err(|error| anyhow::anyhow!("ceremony audit: {error}"))?;
     let client = PublicClient::load(
@@ -267,13 +283,18 @@ async fn run(
         client.execution_domain() == opened.domain,
         "the prover's execution domain is not this instance's"
     );
+    Ok(client)
+}
 
-    // What this wallet may spend: its notes at known leaves, less those a
-    // pending spend holds. One spend at a time.
-    let ledger = restore_ledger(&opened.state.ledger)?;
-    let recovered = restore_recovered(&opened.state)?;
-    let shard_time = opened.state.cursor.as_ref().map(|cursor| cursor.shard_gen_utime);
-    let pending = pending_spends(&opened.journal, &ledger, shard_time, true);
+/// One spend at a time, a descriptor paid once, and a descriptor of this
+/// pool. A descriptor of this instance is a valid recipient: paying it is how
+/// two small notes become one.
+pub(super) fn refuse_unless_spendable(
+    opened: &Opened,
+    name: &str,
+    target: &Target,
+    pending: &[PendingSpend],
+) -> anyhow::Result<()> {
     if let Some(open) = pending.iter().find(|spend| spend.outcome.holds_inputs()) {
         anyhow::bail!(
             "a spend of {} TOS to {} is {} (deadline {}); one spend at a time: run `tosctl shield \
@@ -296,13 +317,46 @@ async fn run(
             paid.outcome.describe()
         );
     }
-    // A descriptor of this instance is a valid recipient: paying it is how
-    // two small notes become one.
-    if let Target::Send { descriptor, .. } = &target {
+    if let Target::Send { descriptor, .. } = target {
         descriptor
             .require_domain(opened.domain)
             .map_err(|error| anyhow::anyhow!("the descriptor: {error}"))?;
     }
+    Ok(())
+}
+
+async fn run(
+    name: &str,
+    amount: u128,
+    target: Target,
+    from: &str,
+    proving: &Proving,
+    config_path: &Path,
+) -> anyhow::Result<()> {
+    eprintln!("{}", EXPERIMENTAL.yellow());
+    let (config, vault, rpc) = load_config_vault_rpc_client(config_path).await?;
+    let mut opened = open_instance(config_path, name, &vault).await?;
+    let network = opened.network()?;
+    anyhow::ensure!(
+        network == Network::Local,
+        "a spend broadcast from a configured wallet shows that wallet, the pool and the time \
+         together on chain. This client does that only on an isolated local network; this \
+         instance is on {}",
+        network.label()
+    );
+    let pool = opened.pointer.profile.address()?;
+    let head = proving.read.head(&config, &rpc, &pool).await?;
+    require_current_verified_head(&opened, &head, name)?;
+    let client = audited_prover(&opened, &head, &proving.ceremony_dir)?;
+
+    // What this wallet may spend: its notes at known leaves, less those a
+    // pending spend holds. One spend at a time.
+    let ledger = restore_ledger(&opened.state.ledger)?;
+    let recovered = restore_recovered(&opened.state)?;
+    let shard_time = opened.state.cursor.as_ref().map(|cursor| cursor.shard_gen_utime);
+    let pending = pending_spends(&opened.journal, &ledger, shard_time, true);
+    refuse_unless_spendable(&opened, name, &target, &pending)?;
+    let recipient_label = target.recipient_label();
     let candidates = spendable_candidates(&recovered, &held_leaves(&pending));
     let terms = PoolTerms {
         denominations: head.state.config.denominations.clone(),
@@ -334,25 +388,21 @@ async fn run(
     // are bounded over a body of the real shape before anything is signed.
     let value = head.transact_fee()?;
     let value_u64 = u64::try_from(value).context("the transact fee exceeds the message limit")?;
-    let wallet_cfg =
-        get_wallet_config(&broadcast.from, &config.wallets, config.master_wallet.as_ref())?;
+    let wallet_cfg = get_wallet_config(from, &config.wallets, config.master_wallet.as_ref())?;
     let (payer, payer_info, payer_secret) =
         wallet_info(rpc.clone(), wallet_cfg, vault.clone()).await?;
     anyhow::ensure!(
         payer_info.account_state == AccountState::Active,
         "wallet {:?} is not active",
-        broadcast.from
+        from
     );
     let chain = DefaultChainProvider::new(rpc.clone());
     let placeholder = placeholder_body(plan.is_withdrawal())?;
     let (reserve, balance) = pinned_wallet_reserve(&chain, &payer, &placeholder).await?;
-    sender_can_pay(&broadcast.from, balance, value_u64, reserve)?;
-    let wallet = make_wallet(rpc.clone(), wallet_cfg, payer_secret, &broadcast.from).await?;
+    sender_can_pay(from, balance, value_u64, reserve)?;
+    let wallet = make_wallet(rpc.clone(), wallet_cfg, payer_secret, from).await?;
 
-    print!(
-        "{}",
-        summary_text(&plan, &target, &anchor, &broadcast.from, &payer, &pool, value, reserve)
-    );
+    print!("{}", summary_text(&plan, &target, &anchor, from, &payer, &pool, value, reserve));
     if anchor.kind == ANCHOR_CURRENT {
         println!(
             "{} no preserved root covers these inputs, so the proof is anchored to the pool's \
@@ -361,12 +411,12 @@ async fn run(
              to be planned again. Nothing is rebuilt or resent on its own.",
             "warning:".yellow().bold()
         );
-        if !broadcast.yes && !confirm("Anchor to the current root anyway?")? {
+        if !proving.yes && !confirm("Anchor to the current root anyway?")? {
             println!("{}", "Spend cancelled".yellow());
             return Ok(());
         }
     }
-    if !broadcast.yes && !confirm("Confirm spend?")? {
+    if !proving.yes && !confirm("Confirm spend?")? {
         println!("{}", "Spend cancelled".yellow());
         return Ok(());
     }
@@ -441,7 +491,7 @@ async fn run(
     let mut last_lt = head.last_lt;
     let mut last_hash = head.last_hash;
     let ledger = loop {
-        let fresh_head = broadcast.read.head(&config, &rpc, &pool).await?;
+        let fresh_head = proving.read.head(&config, &rpc, &pool).await?;
         require_verified_same_chain(&opened, &fresh_head)?;
         if fresh_head.last_lt != last_lt || fresh_head.last_hash != last_hash {
             eprintln!(
@@ -464,13 +514,11 @@ async fn run(
             &nullifiers,
             valid_until,
             &intent_digest,
+            DEADLINE_MARGIN_SECS,
         )?;
-        match value_decision(
-            approved,
-            fresh_head.transact_fee()?,
-            broadcast.yes,
-            &mut |question| confirm(question),
-        )? {
+        match value_decision(approved, fresh_head.transact_fee()?, proving.yes, &mut |question| {
+            confirm(question)
+        })? {
             ValueDecision::Keep => break ledger,
             ValueDecision::Accept(current) => {
                 approved = current;
@@ -515,7 +563,7 @@ async fn run(
     );
     // The prompt and the proof may have outlived the bound's storage horizon.
     let (reserve, balance) = pinned_wallet_reserve(&chain, &payer, &body).await?;
-    sender_can_pay(&broadcast.from, balance, value_u64, reserve)?;
+    sender_can_pay(from, balance, value_u64, reserve)?;
 
     let message =
         wallet.build_message(pool.clone(), value_u64, body, true, None, None, None).await?;
@@ -563,13 +611,17 @@ async fn run(
     Ok(())
 }
 
-fn fresh() -> anyhow::Result<Fr> {
+pub(super) fn fresh() -> anyhow::Result<Fr> {
     shielded_pool_prover::fresh_nonzero_field().map_err(|error| anyhow::anyhow!("{error}"))
 }
 
 /// A spend starts from a verified head the stored state is exactly at, so
 /// the plan is made from the pool's current state and nothing else.
-fn require_current_verified_head(opened: &Opened, head: &Head, name: &str) -> anyhow::Result<()> {
+pub(super) fn require_current_verified_head(
+    opened: &Opened,
+    head: &Head,
+    name: &str,
+) -> anyhow::Result<()> {
     require_verified_same_chain(opened, head)?;
     let cursor =
         opened.state.cursor.as_ref().with_context(|| {
@@ -590,7 +642,7 @@ fn require_current_verified_head(opened: &Opened, head: &Head, name: &str) -> an
     Ok(())
 }
 
-fn require_verified_same_chain(opened: &Opened, head: &Head) -> anyhow::Result<()> {
+pub(super) fn require_verified_same_chain(opened: &Opened, head: &Head) -> anyhow::Result<()> {
     anyhow::ensure!(
         opened.check_head(head)? == HeadRelation::Same,
         "the state was built on an RPC endpoint's word and the verifier now answers; run `tosctl \
@@ -606,17 +658,21 @@ fn require_verified_same_chain(opened: &Opened, head: &Head) -> anyhow::Result<(
 /// The root a proof is anchored to and the tree the input paths are taken
 /// from.
 #[derive(Debug)]
-struct AnchorChoice {
-    kind: u8,
-    id: u32,
-    root: Fr,
-    frontier: Frontier,
+pub(super) struct AnchorChoice {
+    pub(super) kind: u8,
+    pub(super) id: u32,
+    pub(super) root: Fr,
+    pub(super) frontier: Frontier,
 }
 
 /// The newest preserved root that covers every input and that the ledger
 /// reproduces from its own leaves; failing that, the current root. A
 /// preserved root survives later deposits, the current one does not.
-fn choose_anchor(ledger: &Ledger, state: &PoolState, plan: &Plan) -> anyhow::Result<AnchorChoice> {
+pub(super) fn choose_anchor(
+    ledger: &Ledger,
+    state: &PoolState,
+    plan: &Plan,
+) -> anyhow::Result<AnchorChoice> {
     let highest_input = plan.input_leaves().into_iter().max().context("a plan without inputs")?;
     let leaves = ledger.leaves();
     let mut recent: Vec<_> = state.anchors.recent.iter().collect();
@@ -652,8 +708,10 @@ fn rebuild(leaves: &[Fr]) -> anyhow::Result<(Frontier, Fr)> {
 
 /// After proving, against the re-read verified head: the inputs are still
 /// unspent, the anchored root is still one the pool accepts, and the
-/// contract's clock (`shard_gen_utime`) is not near the deadline.
-fn check_still_valid(
+/// contract's clock (`shard_gen_utime`) is not within `margin` seconds of
+/// the deadline.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn check_still_valid(
     ledger: &Ledger,
     state: &PoolState,
     shard_gen_utime: u32,
@@ -661,6 +719,7 @@ fn check_still_valid(
     nullifiers: &[Fr; 2],
     valid_until: u32,
     intent_digest: &Word,
+    margin: u32,
 ) -> anyhow::Result<()> {
     let held = format!(
         "the spend (intent {}) is journalled as planned; its inputs stay held until a verified \
@@ -685,9 +744,9 @@ fn check_still_valid(
          spend landed while proving); {held}"
     );
     anyhow::ensure!(
-        shard_gen_utime.saturating_add(DEADLINE_MARGIN_SECS) < valid_until,
-        "the contract's clock ({}) is within {DEADLINE_MARGIN_SECS} s of the deadline ({}); the \
-         spend is not sent; {held}",
+        shard_gen_utime.saturating_add(margin) < valid_until,
+        "the contract's clock ({}) is within {margin} s of the deadline ({}); the spend is not \
+         sent; {held}",
         utc(shard_gen_utime),
         utc(valid_until)
     );
@@ -707,7 +766,7 @@ fn imt_witness(witness: &imt::Witness) -> NullifierWitness {
 
 /// The body the pool receives, from everything assembled and proven.
 #[allow(clippy::too_many_arguments)]
-fn transact_body(
+pub(super) fn transact_body(
     assembled: &Assembled,
     proof: &CanonicalProof,
     witnesses: &[imt::Witness; 2],
@@ -924,7 +983,7 @@ fn summary_text(
 
 /// The notes a spend may take: those at known leaves that no pending spend
 /// holds. The planner itself passes over notes the scan shows spent.
-fn spendable_candidates(recovered: &Recovered, held: &BTreeSet<u64>) -> Vec<Candidate> {
+pub(super) fn spendable_candidates(recovered: &Recovered, held: &BTreeSet<u64>) -> Vec<Candidate> {
     recovered
         .notes
         .iter()
@@ -986,28 +1045,28 @@ impl Transport for ClientJsonRpc {
 }
 
 /// What the journal holds about a spend before any input signs it.
-struct PlannedSpend {
-    intent_digest: Word,
-    nullifiers: [Word; 2],
-    input_leaves: Vec<u64>,
-    indices: Vec<u64>,
-    amount: u128,
-    recipient: String,
-    withdrawal: bool,
-    valid_until: u32,
-    anchor_kind: u8,
-    anchor_id: u32,
+pub(super) struct PlannedSpend {
+    pub(super) intent_digest: Word,
+    pub(super) nullifiers: [Word; 2],
+    pub(super) input_leaves: Vec<u64>,
+    pub(super) indices: Vec<u64>,
+    pub(super) amount: u128,
+    pub(super) recipient: String,
+    pub(super) withdrawal: bool,
+    pub(super) valid_until: u32,
+    pub(super) anchor_kind: u8,
+    pub(super) anchor_id: u32,
 }
 
 /// A prepared spend whose reservation is on disk. Only [`reserve_spend`] builds
 /// one, so no input signs an intent the journal does not hold.
-struct Reserved {
+pub(super) struct Reserved {
     prepared: Prepared,
 }
 
 /// Writes the planned spend and saves the state; from here the inputs are
 /// held and the indices consumed, whatever happens next.
-fn reserve_spend(
+pub(super) fn reserve_spend(
     opened: &mut Opened,
     prepared: Prepared,
     planned: PlannedSpend,
@@ -1031,7 +1090,7 @@ fn reserve_spend(
 impl Reserved {
     /// Signs the reserved spend: with the instance's keys in the command,
     /// with a recorder in a test.
-    fn sign(
+    pub(super) fn sign(
         self,
         sign: impl FnOnce(Prepared) -> anyhow::Result<Assembled>,
     ) -> anyhow::Result<Assembled> {
@@ -1186,38 +1245,7 @@ pub(super) fn pending_spends(
         else {
             continue;
         };
-        let how_far = journal
-            .iter()
-            .filter_map(|later| match later {
-                JournalRecord::SpendSigned { intent_digest: digest, message_hash, .. }
-                    if digest == intent_digest =>
-                {
-                    Some(*message_hash)
-                }
-                _ => None,
-            })
-            .next_back()
-            .map_or("planned; never signed", |message_hash| {
-                journal
-                    .iter()
-                    .rev()
-                    .find_map(|later| match later {
-                        JournalRecord::SpendBroadcast { message_hash: hash }
-                            if *hash == message_hash =>
-                        {
-                            Some("submitted")
-                        }
-                        JournalRecord::SpendUnknown { message_hash: hash, .. }
-                            if *hash == message_hash =>
-                        {
-                            Some("broadcast failed, outcome unknown")
-                        }
-                        _ => None,
-                    })
-                    .unwrap_or(
-                        "signed; outcome unknown (the command may have stopped after sending)",
-                    )
-            });
+        let how_far = how_far(journal, intent_digest);
         let outcome = if !verified {
             SpendOutcome::Pending(how_far)
         } else if accepted.contains(intent_digest) {
@@ -1240,6 +1268,67 @@ pub(super) fn pending_spends(
         });
     }
     spends
+}
+
+/// How far the command got with one planned spend, from the records that
+/// follow its plan: signed for a wallet and broadcast, or prepared for a
+/// relayer and submitted.
+fn how_far(journal: &[JournalRecord], intent_digest: &Word) -> &'static str {
+    if let Some(message_hash) = journal
+        .iter()
+        .filter_map(|later| match later {
+            JournalRecord::SpendSigned { intent_digest: digest, message_hash, .. }
+                if digest == intent_digest =>
+            {
+                Some(*message_hash)
+            }
+            _ => None,
+        })
+        .next_back()
+    {
+        return journal
+            .iter()
+            .rev()
+            .find_map(|later| match later {
+                JournalRecord::SpendBroadcast { message_hash: hash } if *hash == message_hash => {
+                    Some("submitted")
+                }
+                JournalRecord::SpendUnknown { message_hash: hash, .. } if *hash == message_hash => {
+                    Some("broadcast failed, outcome unknown")
+                }
+                _ => None,
+            })
+            .unwrap_or("signed; outcome unknown (the command may have stopped after sending)");
+    }
+    if let Some(request_id) =
+        journal
+            .iter()
+            .filter_map(|later| match later {
+                JournalRecord::RelayRequestPrepared {
+                    intent_digest: digest, request_id, ..
+                } if digest == intent_digest => Some(request_id),
+                _ => None,
+            })
+            .next_back()
+    {
+        return journal
+            .iter()
+            .rev()
+            .find_map(|later| match later {
+                JournalRecord::RelaySubmitted { request_id: id, .. } if id == request_id => {
+                    Some("submitted to the relayer")
+                }
+                JournalRecord::RelayUnknown { request_id: id, .. } if id == request_id => {
+                    Some("relay submission failed, outcome unknown")
+                }
+                _ => None,
+            })
+            .unwrap_or(
+                "prepared for the relayer; outcome unknown (the command may have stopped after \
+                 submitting)",
+            );
+    }
+    "planned; never signed"
 }
 
 /// The leaves no other spend may take.
@@ -1272,10 +1361,74 @@ pub(super) fn print_pending_spends(spends: &[PendingSpend]) {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
+    use super::super::{
+        Binding, ChainIdentity, Keys, PersistedPoolConfig, PersistedState, Pointer, Profile,
+        STATE_FORMAT_VERSION, Store, profile, store,
+    };
     use super::*;
     use shielded_pool_wallet::keys::PoolInstance;
     use shielded_pool_wallet::ledger::{Event, Payout, Transact};
+    use std::os::unix::fs::PermissionsExt;
+
+    /// An opened instance on a temporary directory, for the instance whose
+    /// seed is `0x51` on `domain`: a sealed store with an initial state and
+    /// an empty journal.
+    pub(crate) fn opened_for_tests(domain: Fr) -> (tempfile::TempDir, Opened) {
+        let root = tempfile::Builder::new()
+            .permissions(std::fs::Permissions::from_mode(0o700))
+            .tempdir()
+            .expect("tempdir");
+        let keys = Keys::derive(&[7u8; 64], &[3u8; 32]);
+        let binding = Binding {
+            global_id: 3,
+            pool_address: "0:aa76950cf26cb74c1d1b1a977d17bd3c96c6c9f28cb259fca297cdc8d33429fe"
+                .into(),
+        };
+        let chain = ChainIdentity { source: "test".into(), root_hash: [0; 32], file_hash: [0; 32] };
+        let profile = Profile {
+            schema: profile::PROFILE_SCHEMA.into(),
+            global_id: 3,
+            pool_address: binding.pool_address.clone(),
+            pool_code_hash: "5528ff26426e36b948bbd6ab3bd6615c82c98c87dd774e4fb456f3965722c466"
+                .into(),
+        };
+        let store = Store::open(root.path(), &keys, binding.clone()).expect("open");
+        let state = PersistedState {
+            version: STATE_FORMAT_VERSION,
+            binding: binding.clone(),
+            chain: chain.clone(),
+            instance_id: *keys.instance_id(),
+            profile: profile.clone(),
+            pool_config: PersistedPoolConfig { withdrawal_fee: coins(1), denominations: vec![] },
+            cursor: None,
+            ledger: super::super::persist_ledger(&Ledger::genesis()),
+            notes: vec![],
+            diagnostics: vec![],
+            scan_next_index: 0,
+            reused_indices: vec![],
+            issued_high_water: 14,
+            journal_records: 0,
+        };
+        store.save_state(&state).expect("the initial state");
+        let pointer = Pointer {
+            schema: store::POINTER_SCHEMA.to_owned(),
+            profile,
+            binding,
+            chain,
+            directory: keys.directory_name(),
+        };
+        let opened = Opened {
+            pointer,
+            pointer_path: root.path().join("pointer"),
+            instance: PoolInstance::new(&[0x51; 32], domain),
+            domain,
+            store,
+            state,
+            journal: Vec::new(),
+        };
+        (root, opened)
+    }
 
     fn planned(digest: u8, nullifiers: [u8; 2], leaves: &[u64], valid_until: u32) -> JournalRecord {
         JournalRecord::SpendPlanned {
@@ -1640,7 +1793,16 @@ mod tests {
         let valid_until = 10_000;
         let digest = [7; 32];
         let check = |ledger: &Ledger, state: &PoolState, clock: u32, anchor: &AnchorChoice| {
-            check_still_valid(ledger, state, clock, anchor, &nullifiers, valid_until, &digest)
+            check_still_valid(
+                ledger,
+                state,
+                clock,
+                anchor,
+                &nullifiers,
+                valid_until,
+                &digest,
+                DEADLINE_MARGIN_SECS,
+            )
         };
         let refused = |result: anyhow::Result<()>, reason: &str| {
             let error = result.expect_err(reason).to_string();
@@ -1824,8 +1986,11 @@ mod tests {
         let to = Descriptor::issue(&bob, 3).expect("descriptor");
         let digest: [u8; 32] = Sha256::digest(to.to_bytes()).into();
         let target = Target::Send { descriptor: Box::new(to.clone()), descriptor_hash: digest };
-        let request =
-            Request::Transfer { to: Box::new(RecipientKeys::of(&to)), amount: 1_000_000_000, fee: None };
+        let request = Request::Transfer {
+            to: Box::new(RecipientKeys::of(&to)),
+            amount: 1_000_000_000,
+            fee: None,
+        };
         let plan = plan::plan(&terms, &candidates, &request, &mut indices).expect("plan");
         let assembled = assembly::assemble(
             &alice,
@@ -2056,16 +2221,10 @@ mod tests {
     /// transport that fails leaves an unknown outcome and is not retried.
     #[tokio::test]
     async fn a_spend_is_journalled_before_it_is_signed_and_before_it_is_sent() {
-        use super::super::profile::{self, Profile};
-        use super::super::store::{
-            self, Binding, ChainIdentity, Keys, PersistedPoolConfig, PersistedState, Pointer,
-            STATE_FORMAT_VERSION, Store,
-        };
         use shielded_pool_circuit::notes;
         use shielded_pool_wallet::delivery::{self, Kind, Plaintext};
         use shielded_pool_wallet::scan;
         use std::cell::{Cell, RefCell};
-        use std::os::unix::fs::PermissionsExt;
 
         // A wallet with one note, and a plan that spends it to another wallet.
         let domain = Fr::from(0x5e5e_0001u64);
@@ -2146,59 +2305,7 @@ mod tests {
             anchor_id: 0,
         };
 
-        // An opened instance on a temporary directory.
-        let root = tempfile::Builder::new()
-            .permissions(std::fs::Permissions::from_mode(0o700))
-            .tempdir()
-            .expect("tempdir");
-        let keys = Keys::derive(&[7u8; 64], &[3u8; 32]);
-        let binding = Binding {
-            global_id: 3,
-            pool_address: "0:aa76950cf26cb74c1d1b1a977d17bd3c96c6c9f28cb259fca297cdc8d33429fe"
-                .into(),
-        };
-        let chain = ChainIdentity { source: "test".into(), root_hash: [0; 32], file_hash: [0; 32] };
-        let profile = Profile {
-            schema: profile::PROFILE_SCHEMA.into(),
-            global_id: 3,
-            pool_address: binding.pool_address.clone(),
-            pool_code_hash: "5528ff26426e36b948bbd6ab3bd6615c82c98c87dd774e4fb456f3965722c466"
-                .into(),
-        };
-        let store = Store::open(root.path(), &keys, binding.clone()).expect("open");
-        let state = PersistedState {
-            version: STATE_FORMAT_VERSION,
-            binding: binding.clone(),
-            chain: chain.clone(),
-            instance_id: *keys.instance_id(),
-            profile: profile.clone(),
-            pool_config: PersistedPoolConfig { withdrawal_fee: coins(1), denominations: vec![] },
-            cursor: None,
-            ledger: super::super::persist_ledger(&Ledger::genesis()),
-            notes: vec![],
-            diagnostics: vec![],
-            scan_next_index: 0,
-            reused_indices: vec![],
-            issued_high_water: 14,
-            journal_records: 0,
-        };
-        store.save_state(&state).expect("the initial state");
-        let pointer = Pointer {
-            schema: store::POINTER_SCHEMA.to_owned(),
-            profile,
-            binding,
-            chain,
-            directory: keys.directory_name(),
-        };
-        let mut opened = Opened {
-            pointer,
-            pointer_path: root.path().join("pointer"),
-            instance: PoolInstance::new(&[0x51; 32], domain),
-            domain,
-            store,
-            state,
-            journal: Vec::new(),
-        };
+        let (_root, mut opened) = opened_for_tests(domain);
         let reader = opened.store.unlocked_reader().expect("a reader");
 
         // A journal that cannot be written: nothing is reserved, so nothing
