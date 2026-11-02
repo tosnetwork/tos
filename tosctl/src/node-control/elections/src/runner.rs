@@ -96,6 +96,8 @@ struct Node {
     stake_policy: StakePolicy,
     /// Last validator config.
     validator_config: ValidatorConfig,
+    /// A failed read is unknown, not evidence that no election key exists.
+    validator_config_read_failed: bool,
     /// Current binding lifecycle status, computed each tick.
     binding_status: BindingStatus,
     /// Amount to recover from elector, computed each tick.
@@ -255,6 +257,7 @@ impl ElectionRunner {
                             is_next_validator: false,
                             last_error: None,
                             validator_config: ValidatorConfig::new(),
+                            validator_config_read_failed: false,
                             binding_status,
                             last_recover_amount: 0,
                         },
@@ -400,6 +403,10 @@ impl ElectionRunner {
         let mut registration_failed = HashSet::<String>::new();
         for (node_id, node) in &mut self.nodes {
             let retained: anyhow::Result<()> = async {
+                anyhow::ensure!(
+                    !node.validator_config_read_failed,
+                    "validator configuration unavailable"
+                );
                 let plans = crate::registration::duty_renewals(
                     &node.validator_config,
                     self.snapshot_cache.last_validator_set.as_ref(),
@@ -1137,13 +1144,17 @@ impl ElectionRunner {
     async fn refresh_validator_configs(&mut self) {
         tracing::trace!("fetch validator configs");
         for (node_id, node) in self.nodes.iter_mut() {
-            node.validator_config = match node.api.validator_config().await {
-                Ok(cfg) => cfg,
-                Err(e) => {
-                    tracing::error!("node [{}] get validator config error: {}", node_id, e);
-                    ValidatorConfig::new()
+            match node.api.validator_config().await {
+                Ok(cfg) => {
+                    node.validator_config = cfg;
+                    node.validator_config_read_failed = false;
                 }
-            };
+                Err(e) => {
+                    node.validator_config_read_failed = true;
+                    node.last_error = Some(format!("validator configuration unavailable: {e:#}"));
+                    tracing::error!("node [{}] get validator config error: {}", node_id, e);
+                }
+            }
         }
     }
 

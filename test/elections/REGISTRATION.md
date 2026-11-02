@@ -55,3 +55,9 @@ current/next/previous chain sets and configured addresses. Renewal keeps pending
 and still-present records usable; it does not promise to recreate retired keys
 or retain every legacy transport record through the entire rebased term. The
 actual current PQ certificates remain the operational authority.
+
+A failed full validator-configuration read is also unknown. The runner preserves
+the previous metadata for diagnostics, flags that node unavailable and skips its
+value operations. An empty successful configuration remains distinguishable from
+a failed read; neither a cold start nor a cached record is turned into permission
+to generate keys after a read failure. Other nodes continue independently.

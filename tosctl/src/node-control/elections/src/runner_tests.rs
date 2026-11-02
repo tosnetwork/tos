@@ -2747,3 +2747,51 @@ async fn failed_registration_isolated_from_healthy_nodes_even_when_excluded() {
         assert!(!runner.nodes["node-2"].stake_accepted);
     }
 }
+
+#[tokio::test]
+async fn failed_config_read_never_becomes_missing_keys_or_new_signing() {
+    for cached in [false, true] {
+        let mut harness = TestHarness::new();
+        harness.elector_mock.expect_address().returning(elector_address);
+        harness.wallet_mock.expect_address().returning(wallet_address);
+        harness.provider_mock.expect_election_parameters().returning(|| Ok(default_cfg15()));
+        harness
+            .provider_mock
+            .expect_validator_config()
+            .returning(|| Err(anyhow::anyhow!("config read failed")));
+        harness
+            .provider_mock
+            .expect_account()
+            .returning(|_| Ok(crate::providers::Account::from_balance(WALLET_BALANCE)));
+        harness.provider_mock.expect_new_validator_key().times(0);
+        harness.provider_mock.expect_export_public_key().times(0);
+        harness.provider_mock.expect_send_boc().times(0);
+        let mut runner = harness.build("node-1");
+        if cached {
+            runner.nodes.get_mut("node-1").unwrap().validator_config.keys.insert(
+                ELECTION_ID,
+                ValidatorEntry { key_id: KEY_ID.to_vec(), ..Default::default() },
+            );
+        }
+        runner.refresh_validator_configs().await;
+        let snapshot = ElectorSnapshot {
+            block: snapshot_block(),
+            elections: ElectionsInfo {
+                election_id: ELECTION_ID,
+                elect_close: ELECTION_ID + 600,
+                min_stake: MIN_STAKE,
+                total_stake: 0,
+                failed: false,
+                finished: false,
+                participants: vec![],
+            },
+            past_elections: vec![],
+            returned: vec![([0xaa; 32], 0)],
+        };
+        runner.run_with_snapshot(snapshot).await.unwrap();
+        let node = &runner.nodes["node-1"];
+        assert!(node.last_error.as_ref().unwrap().contains("validator configuration unavailable"));
+        assert!(node.participant.is_none() && node.stake_submissions.is_empty());
+        assert_eq!(node.validator_config.keys.len(), usize::from(cached));
+    }
+}
