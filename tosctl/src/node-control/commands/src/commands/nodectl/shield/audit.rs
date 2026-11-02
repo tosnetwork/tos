@@ -269,6 +269,9 @@ mod tests {
         std::fs::create_dir(&flipped).expect("mkdir");
         for name in ["beacon.bin", "ceremony.json", "contributions.bin", "key.bin"] {
             std::fs::copy(good.ceremony_dir.join(name), flipped.join(name)).expect("copy");
+            // The committed material may be read-only (a store path is); the copy is ours.
+            std::fs::set_permissions(flipped.join(name), std::fs::Permissions::from_mode(0o600))
+                .expect("writable copy");
         }
         let mut key = std::fs::read(flipped.join("key.bin")).expect("key");
         if let Some(last) = key.last_mut() {

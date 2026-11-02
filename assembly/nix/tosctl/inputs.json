@@ -1,5 +1,5 @@
 {
-  "comment": "The only list of repository inputs for the tosctl Nix package. package.nix builds its fileset from this file; check-inputs.py requires the CI workflow trigger paths to match it and every embedded file of the packaged and tested crates to be covered by it.",
+  "comment": "The only list of repository inputs for the tosctl Nix packages. package.nix builds its fileset from this file, material.nix its material; check-inputs.py requires the CI workflow trigger paths to match it, every embedded file of the packaged and tested crates to be covered by it, and material.sha256 to list exactly the material files with their digests.",
   "source": [
     "tosctl/src",
     "tl/generate/scheme",
@@ -32,6 +32,11 @@
   "exclude_suffixes": [
     ".md"
   ],
+  "shielded_material": {
+    "comment": "Shipped by the shielded variant only, as a separate store path held to material.sha256; never part of the Rust package source.",
+    "ceremony": "artifacts/phase2-ceremony-2/ceremony",
+    "phase1": "artifacts/phase1"
+  },
   "tested_packages": [
     "tosctl",
     "commands"

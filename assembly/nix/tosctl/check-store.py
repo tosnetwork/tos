@@ -13,8 +13,14 @@ older releases copy all of it (about 800 MB). After a build this checks:
 With --red-control it instead imports the whole repository (builtins.fetchGit of the local
 checkout) and requires the same source checks to refuse it.
 
+With --compare-variants it reads the standard and the shielded package derivations and
+requires them to be one recipe: the same source, builder, toolchain and metadata, differing
+only in the attributes the shielded feature, its wrapper and its material add; the standard
+derivation depends on neither the wrapper nor the material.
+
 usage: check-store.py SOURCE_STORE_PATH VM_CHECK_DRV
        check-store.py --red-control
+       check-store.py --compare-variants STANDARD_DRV SHIELDED_DRV
 """
 
 import json
@@ -30,6 +36,22 @@ MINIMUM_NIX = (2, 35)
 # Present in the repository, never in the package source.
 SENTINELS = ["validator-engine/validator-engine.cpp", "third-party/rocksdb"] + INPUTS["exclude"]
 REPOSITORY_MARKER = "tosctl/src/Cargo.toml"
+# The derivation attributes the shielded variant may set differently from the standard one.
+VARIANT_ATTRIBUTES = {
+    "name",
+    "pname",
+    "cargoBuildFlags",
+    "cargoTestFlags",
+    "checkFlags",
+    "nativeBuildInputs",
+    "installCheckPhase",
+    "preCheck",
+    "postFixup",
+    "out",
+}
+# The build inputs the shielded variant adds, by derivation name.
+VARIANT_INPUTS = {"make-shell-wrapper-hook", "tosctl-shield-material"}
+MATERIAL_NAME = "tosctl-shield-material"
 
 
 class Failure(Exception):
@@ -98,9 +120,59 @@ def red_control():
     return 1
 
 
+def derivation(path):
+    """One derivation as `nix derivation show` prints it: the version-4 document of Nix
+    2.35 (`derivations` keyed by basename, inputs under `inputs.drvs`) or the older flat one."""
+    shown = json.loads(nix("derivation", "show", path))
+    shown = shown.get("derivations", shown)
+    require(len(shown) == 1, f"{path} is one derivation, found {len(shown)}")
+    drv = next(iter(shown.values()))
+    drv["input_drvs"] = drv.get("inputs", {}).get("drvs", drv.get("inputDrvs", {}))
+    return drv
+
+
+def drv_name(path):
+    return Path(path).name.split("-", 1)[1].removesuffix(".drv")
+
+
+def compare_variants(standard_path, shielded_path):
+    standard, shielded = derivation(standard_path), derivation(shielded_path)
+    for key in ("system", "builder", "args"):
+        require(standard[key] == shielded[key], f"{key} differs between the variants")
+    s_env, v_env = standard["env"], shielded["env"]
+    require(set(s_env) <= set(v_env), f"the shielded variant drops {sorted(set(s_env) - set(v_env))}")
+    differing = sorted(k for k in s_env if s_env[k] != v_env[k]) + sorted(set(v_env) - set(s_env))
+    unexpected = [k for k in differing if k not in VARIANT_ATTRIBUTES]
+    require(not unexpected, f"the variants differ in {unexpected}, beyond {sorted(VARIANT_ATTRIBUTES)}")
+    for key in ("src", "cargoDeps", "version", "GIT_COMMIT", "SOURCE_DATE_EPOCH", "buildInputs"):
+        require(key in s_env, f"the derivation has no {key}")
+        require(s_env[key] == v_env[key], f"{key} differs between the variants")
+    require("shielded" in v_env["cargoBuildFlags"], "the shielded variant builds the feature")
+    require("shielded" not in s_env["cargoBuildFlags"], "the standard variant builds without it")
+    standard_inputs = {drv_name(p) for p in standard["input_drvs"]}
+    shielded_inputs = {drv_name(p) for p in shielded["input_drvs"]}
+    require(standard_inputs <= shielded_inputs, f"the shielded variant drops {standard_inputs - shielded_inputs}")
+    added = shielded_inputs - standard_inputs
+    require(added == VARIANT_INPUTS, f"the shielded variant adds {sorted(added)}, expected {sorted(VARIANT_INPUTS)}")
+    leaked = [k for k, v in s_env.items() if MATERIAL_NAME in str(v) or "wrapProgram" in str(v)]
+    require(not leaked, f"the standard variant references the material or wrapper in {leaked}")
+    return len(differing), sorted(added)
+
+
 def main():
     if sys.argv[1:] == ["--red-control"]:
         return red_control()
+    if len(sys.argv) == 4 and sys.argv[1] == "--compare-variants":
+        try:
+            count, added = compare_variants(sys.argv[2], sys.argv[3])
+        except (Failure, subprocess.CalledProcessError) as error:
+            print(f"TOSCTL_NIX_STORE_FAILED: {error}", file=sys.stderr)
+            return 1
+        print(
+            f"TOSCTL_NIX_VARIANTS_OK: one recipe; {count} attributes differ as the shielded "
+            f"feature requires; the shielded variant alone adds {added}"
+        )
+        return 0
     if len(sys.argv) != 3:
         print(__doc__, file=sys.stderr)
         return 2
