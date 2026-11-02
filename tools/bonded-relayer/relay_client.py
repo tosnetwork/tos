@@ -84,6 +84,10 @@ class Client:
             raise ClientError("HTTPS endpoint required")
         if not parsed.hostname or any(c.isspace() for c in endpoint):
             raise ClientError("invalid endpoint host")
+        # A fully qualified name keeps its trailing dot in the parsed host ("x.onion."),
+        # which would slip past the onion suffix test below and reach the OS resolver.
+        if parsed.hostname.endswith("."):
+            raise ClientError("endpoint host must not end with a dot")
         if tor is None and parsed.hostname.endswith(".onion"):
             raise ClientError("onion endpoints require explicit Tor transport")
         self.host = parsed.hostname

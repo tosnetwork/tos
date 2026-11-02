@@ -282,6 +282,9 @@ class OnionHTTPTests(ServiceFixture):
         for endpoint, kwargs in (
             (ORIGIN, {}),
             (ORIGIN.replace("http:", "https:"), {}),
+            # A fully qualified name keeps its trailing dot in urlparse's hostname, so a
+            # suffix test on ".onion" alone would let the OS resolver look the name up.
+            (ORIGIN.replace("http:", "https:").replace(".onion", ".onion."), {}),
             (ORIGIN, {"tor": self.proxy, "allow_loopback": True}),
         ):
             with self.subTest(endpoint=endpoint), self.assertRaises(ClientError):
