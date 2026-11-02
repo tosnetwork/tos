@@ -1,0 +1,142 @@
+{
+  "schema": "tos.elections.registration-controls.v1",
+  "core_commit": "da5c6df82ff8616d5768143a1daeb368b0f087ce",
+  "mutations": [
+    {
+      "name": "pending_delay",
+      "file": "tosctl/src/node-control/elections/src/registration.rs",
+      "replace_from": ".max(earliest_start)",
+      "replace_to": ".max(0)",
+      "expected_count": 1,
+      "test": "registration::tests::late_election_covers_close_margin_and_full_term"
+    },
+    {
+      "name": "announced_duty",
+      "file": "tosctl/src/node-control/elections/src/registration.rs",
+      "replace_from": ".map(|set| u64::from(set.utime_until()))",
+      "replace_to": ".map(|_set| election_id)",
+      "expected_count": 1,
+      "test": "registration::tests::announced_term_extends_original_election_without_new_identity"
+    },
+    {
+      "name": "extended_installed_set",
+      "file": "tosctl/src/node-control/elections/src/registration.rs",
+      "replace_from": "end.max(now).checked_add(RETENTION_LAG)",
+      "replace_to": "end.checked_add(RETENTION_LAG)",
+      "expected_count": 1,
+      "test": "registration::tests::installed_expired_set_is_retained_during_another_delay"
+    },
+    {
+      "name": "address_membership",
+      "file": "tosctl/src/node-control/elections/src/registration.rs",
+      "replace_from": "addr.as_slice().as_slice() == adnl.as_slice()",
+      "replace_to": "true",
+      "expected_count": 1,
+      "test": "registration::tests::unrelated_and_already_retained_addresses_do_not_write"
+    },
+    {
+      "name": "never_shorten",
+      "file": "tosctl/src/node-control/elections/src/registration.rs",
+      "replace_from": "until = until.max(duty_until).max(*expires)",
+      "replace_to": "until = duty_until.max(*expires)",
+      "expected_count": 1,
+      "test": "registration::tests::address_repair_never_shortens_permanent_expiry"
+    },
+    {
+      "name": "key_width",
+      "file": "tosctl/src/node-control/elections/src/registration.rs",
+      "replace_from": "entry.key_id.len() == 32 && adnl.len() == 32",
+      "replace_to": "true",
+      "expected_count": 1,
+      "test": "registration::tests::malformed_and_excessive_registration_inputs_refuse"
+    },
+    {
+      "name": "record_bound",
+      "file": "tosctl/src/node-control/elections/src/registration.rs",
+      "replace_from": "config.keys.len() <= 128",
+      "replace_to": "true",
+      "expected_count": 1,
+      "test": "registration::tests::malformed_and_excessive_registration_inputs_refuse"
+    },
+    {
+      "name": "early_fee_warning",
+      "file": "tosctl/src/node-control/elections/src/runner.rs",
+      "replace_from": "minimum\n        .checked_mul(3)",
+      "replace_to": "minimum\n        .checked_mul(0)",
+      "expected_count": 1,
+      "test": "runner::runner_tests::fee_alert_precedes_actual_stake_exhaustion_and_has_exact_boundary"
+    },
+    {
+      "name": "existing_key_read",
+      "file": "tosctl/src/node-control/elections/src/runner.rs",
+      "replace_from": ".context(\"export existing election public key\")?",
+      "replace_to": ".unwrap_or_default()",
+      "expected_count": 1,
+      "test": "runner::runner_tests::existing_key_export_failure_never_becomes_a_fresh_key"
+    },
+    {
+      "name": "closed_fee_warning",
+      "file": "tosctl/src/node-control/elections/src/runner.rs",
+      "replace_from": "self.check_fee_runway().await;",
+      "replace_to": "// mutant: omit closed-election fee warning",
+      "expected_count": 1,
+      "test": "runner::runner_tests::fee_warning_is_visible_with_closed_elections_and_does_not_send"
+    },
+    {
+      "name": "unavailable_fee_warning",
+      "file": "tosctl/src/node-control/elections/src/runner.rs",
+      "replace_from": "Some(format!(\"ELECTION_FEE_BALANCE_UNAVAILABLE: {error:#}\"))",
+      "replace_to": "None",
+      "expected_count": 1,
+      "test": "runner::runner_tests::fee_balance_read_failure_is_an_alert_not_silent_health"
+    },
+    {
+      "name": "closed_duty_renewal",
+      "file": "tosctl/src/node-control/elections/src/runner.rs",
+      "replace_from": "for plan in plans {",
+      "replace_to": "for plan in plans.into_iter().take(0) {",
+      "expected_count": 1,
+      "test": "runner::runner_tests::closed_elector_still_extends_actual_announced_duty_without_spending"
+    },
+    {
+      "name": "longest_shared_duty",
+      "file": "tosctl/src/node-control/elections/src/registration.rs",
+      "replace_from": "until = until.max(duty_until).max(*expires)",
+      "replace_to": "until = duty_until.max(*expires)",
+      "expected_count": 1,
+      "test": "registration::tests::multiple_duty_addresses_share_the_longest_permanent_deadline"
+    },
+    {
+      "name": "renewal_snapshot_order",
+      "file": "tosctl/src/node-control/elections/src/runner.rs",
+      "replace_from": "crate::registration::mark_retained(&mut node.validator_config, &plan)?;",
+      "replace_to": "// mutant: omit completed renewal snapshot update",
+      "expected_count": 1,
+      "test": "runner::runner_tests::closed_elector_still_extends_actual_announced_duty_without_spending"
+    },
+    {
+      "name": "node_failure_isolation",
+      "file": "tosctl/src/node-control/elections/src/runner.rs",
+      "replace_from": "registration_failed.insert(node_id.clone());",
+      "replace_to": "return Err(error);",
+      "expected_count": 1,
+      "test": "runner::runner_tests::failed_registration_isolated_from_healthy_nodes_even_when_excluded"
+    },
+    {
+      "name": "unknown_config_guard",
+      "file": "tosctl/src/node-control/elections/src/runner.rs",
+      "replace_from": "!node.validator_config_read_failed",
+      "replace_to": "true",
+      "expected_count": 1,
+      "test": "runner::runner_tests::failed_config_read_never_becomes_missing_keys_or_new_signing"
+    },
+    {
+      "name": "unknown_config_propagation",
+      "file": "tosctl/src/node-control/elections/src/runner.rs",
+      "replace_from": "node.validator_config_read_failed = true;",
+      "replace_to": "node.validator_config_read_failed = false;",
+      "expected_count": 1,
+      "test": "runner::runner_tests::failed_config_read_never_becomes_missing_keys_or_new_signing"
+    }
+  ]
+}

@@ -1,0 +1,134 @@
+{
+  "core_commit": "da5c6df82ff8616d5768143a1daeb368b0f087ce",
+  "source_hashes": {
+    "tosctl/src/node-control/elections/src/registration.rs": "e59a40f8bfee9fb457d449faabbfcb80373b476d1b53e85c9f2a14f614285d12",
+    "tosctl/src/node-control/elections/src/runner.rs": "bd2ed27f818cbd6d69b0c18d4849382bd858142b198a3498ccf9245d6ce9a03f",
+    "test/elections/registration_controls.py": "a170a82411ab0ddfe383dc1f0d6528d54d2904e483b5835e5d101afd37d61d02"
+  },
+  "mutations": [
+    {
+      "name": "pending_delay",
+      "test": "registration::tests::late_election_covers_close_margin_and_full_term",
+      "returncode": 101,
+      "red": true,
+      "sha256": "0613943f68af8dfbcfa96883059d69909f56133245fdb64040d3e2e4aeef5fe3"
+    },
+    {
+      "name": "announced_duty",
+      "test": "registration::tests::announced_term_extends_original_election_without_new_identity",
+      "returncode": 101,
+      "red": true,
+      "sha256": "3ca732f18b65a99b1a45da4356eadd2210c6736aa2cd4edef7c56db35532ef77"
+    },
+    {
+      "name": "extended_installed_set",
+      "test": "registration::tests::installed_expired_set_is_retained_during_another_delay",
+      "returncode": 101,
+      "red": true,
+      "sha256": "4be08df483f75d4079e38076abe1ee6d74d7e52236b2178c0cf64c2976a0d705"
+    },
+    {
+      "name": "address_membership",
+      "test": "registration::tests::unrelated_and_already_retained_addresses_do_not_write",
+      "returncode": 101,
+      "red": true,
+      "sha256": "4296d8628317a5be2bb25dfee43e1156fdcddc3a9932105b02411ee3dbc6cdd5"
+    },
+    {
+      "name": "never_shorten",
+      "test": "registration::tests::address_repair_never_shortens_permanent_expiry",
+      "returncode": 101,
+      "red": true,
+      "sha256": "9c801f158500b22035031053a085cfc502c5973f6dff1e08dbe3ca20064a4575"
+    },
+    {
+      "name": "key_width",
+      "test": "registration::tests::malformed_and_excessive_registration_inputs_refuse",
+      "returncode": 101,
+      "red": true,
+      "sha256": "2c0a0e1f3b1fd40a9077eeb9e8e9d9c24f138d39199388a47e40c6db2d0de6bf"
+    },
+    {
+      "name": "record_bound",
+      "test": "registration::tests::malformed_and_excessive_registration_inputs_refuse",
+      "returncode": 101,
+      "red": true,
+      "sha256": "111548dd8ce94e3b004e1b9634cd89e683246374d08ffb350abb83ac5811a4c8"
+    },
+    {
+      "name": "early_fee_warning",
+      "test": "runner::runner_tests::fee_alert_precedes_actual_stake_exhaustion_and_has_exact_boundary",
+      "returncode": 101,
+      "red": true,
+      "sha256": "91c0ffce85dc2f939d963fe607ff213c03626882b1649122ed1af12805ce892b"
+    },
+    {
+      "name": "existing_key_read",
+      "test": "runner::runner_tests::existing_key_export_failure_never_becomes_a_fresh_key",
+      "returncode": 101,
+      "red": true,
+      "sha256": "7d028d095c712891e026d621c713e4184d09ac9518cfd3956f400b3196e2ec4e"
+    },
+    {
+      "name": "closed_fee_warning",
+      "test": "runner::runner_tests::fee_warning_is_visible_with_closed_elections_and_does_not_send",
+      "returncode": 101,
+      "red": true,
+      "sha256": "8ccbf043ce982385065aefdd60215639ec892b984e589b3daf0339f8f42a831b"
+    },
+    {
+      "name": "unavailable_fee_warning",
+      "test": "runner::runner_tests::fee_balance_read_failure_is_an_alert_not_silent_health",
+      "returncode": 101,
+      "red": true,
+      "sha256": "fd60a3337825f88cbae5a1c62d1021fe2dac2f38640272bda4c3890ef66509a9"
+    },
+    {
+      "name": "closed_duty_renewal",
+      "test": "runner::runner_tests::closed_elector_still_extends_actual_announced_duty_without_spending",
+      "returncode": 101,
+      "red": true,
+      "sha256": "792a064b42eb10a7f97defdb306eff52feb7b96df00b5a7a1688d4305fe1ff08"
+    },
+    {
+      "name": "longest_shared_duty",
+      "test": "registration::tests::multiple_duty_addresses_share_the_longest_permanent_deadline",
+      "returncode": 101,
+      "red": true,
+      "sha256": "44a1a030244a8494f3d7ddde662fe89be01c5419779e616fd68f3a1855f46ec9"
+    },
+    {
+      "name": "renewal_snapshot_order",
+      "test": "runner::runner_tests::closed_elector_still_extends_actual_announced_duty_without_spending",
+      "returncode": 101,
+      "red": true,
+      "sha256": "17c563eb73464adcff2405902a798e434e8e2be6ec9fd1a7bc974b14af607e01"
+    },
+    {
+      "name": "node_failure_isolation",
+      "test": "runner::runner_tests::failed_registration_isolated_from_healthy_nodes_even_when_excluded",
+      "returncode": 101,
+      "red": true,
+      "sha256": "8c1f33dcbff2a19b4f8604a585389363a6a35cc326bbe17e8a3230e2421be468"
+    },
+    {
+      "name": "unknown_config_guard",
+      "test": "runner::runner_tests::failed_config_read_never_becomes_missing_keys_or_new_signing",
+      "returncode": 101,
+      "red": true,
+      "sha256": "222fec8c18c010f46cd3aaeb31206210aa62f46c7699fee464ec36488484990b"
+    },
+    {
+      "name": "unknown_config_propagation",
+      "test": "runner::runner_tests::failed_config_read_never_becomes_missing_keys_or_new_signing",
+      "returncode": 101,
+      "red": true,
+      "sha256": "29831241ba305ee10edf5588874957a7dbc82a89bcd29caff198da8398c09ce7"
+    }
+  ],
+  "restored_exit": 0,
+  "restored_sha256": "25391b2753f9e4b4f846153eed9ddeea8f87e5735db2cb1e06610fd30df35f07",
+  "retention_until": "2027-02-01",
+  "raw_artifacts": "/tos/build/e6-election-lifecycle/controls-r5/",
+  "scope": "Local metadata availability and fee observability; no consensus/contract change, no live deployment acceptance yet."
+}

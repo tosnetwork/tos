@@ -92,6 +92,7 @@ mock! {
             until: u64,
         ) -> anyhow::Result<(Vec<u8>, Vec<u8>)>;
         async fn new_adnl_addr(&mut self, perm_key_id: Vec<u8>, until: u64) -> anyhow::Result<Vec<u8>>;
+        async fn retain_validator_registration(&mut self, election_id:u64, key_id:&[u8], adnl:&[u8], until:u64) -> anyhow::Result<()>;
         async fn validator_config(&mut self) -> anyhow::Result<ValidatorConfig>;
         async fn election_parameters(&mut self) -> anyhow::Result<ConfigParam15>;
         async fn send_boc(&mut self, msg_boc: &[u8]) -> anyhow::Result<()>;
@@ -324,6 +325,7 @@ impl TestHarness {
     fn build(mut self, node_id: &str) -> ElectionRunner {
         self.bindings.entry(node_id.to_string()).or_insert_with(|| default_binding(true));
 
+        self.provider_mock.expect_retain_validator_registration().returning(|_, _, _, _| Ok(()));
         let wallet: Arc<dyn Wallet> = Arc::new(self.wallet_mock);
         let mut wallets: HashMap<String, Arc<dyn Wallet>> = HashMap::new();
         wallets.insert(node_id.to_string(), wallet);
@@ -2543,4 +2545,253 @@ async fn test_participation_status_lifecycle() {
     node.stake_submissions.clear();
     runner.snapshot_cache.last_elections_status = ElectionsStatus::Closed;
     assert_eq!(get_status(&runner), ParticipationStatus::Idle);
+}
+
+#[test]
+fn fee_alert_precedes_actual_stake_exhaustion_and_has_exact_boundary() {
+    assert!(fee_runway_warning(5_200_000_000).unwrap().is_none());
+    let early = fee_runway_warning(5_199_999_999).unwrap().unwrap();
+    assert!(early.contains("ELECTION_FEE_RUNWAY_LOW"));
+    assert!(early.contains("next_stake_fee_nanotos=1400000000"));
+    assert!(fee_runway_warning(789_690_000).unwrap().is_some());
+}
+
+#[tokio::test]
+async fn existing_key_export_failure_never_becomes_a_fresh_key() {
+    let mut harness = TestHarness::new();
+    harness.elector_mock.expect_address().returning(elector_address);
+    harness.wallet_mock.expect_address().returning(wallet_address);
+    harness
+        .provider_mock
+        .expect_export_public_key()
+        .times(1)
+        .returning(|_| Err(anyhow::anyhow!("control unavailable")));
+    harness.provider_mock.expect_new_validator_key().times(0);
+    let mut runner = harness.build("node-1");
+    let node = runner.nodes.get_mut("node-1").unwrap();
+    node.validator_config
+        .keys
+        .insert(ELECTION_ID, ValidatorEntry { key_id: KEY_ID.to_vec(), ..Default::default() });
+    assert!(
+        node.find_election_key(ELECTION_ID)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("export existing")
+    );
+}
+
+#[tokio::test]
+async fn fee_warning_is_visible_with_closed_elections_and_does_not_send() {
+    let mut harness = TestHarness::new();
+    harness.elector_mock.expect_address().returning(elector_address);
+    harness.wallet_mock.expect_address().returning(wallet_address);
+    harness
+        .provider_mock
+        .expect_account()
+        .times(1)
+        .returning(|_| Ok(crate::providers::Account::from_balance(4_000_000_000)));
+    harness.provider_mock.expect_send_boc().times(0);
+    harness.elector_mock.expect_get_active_election_id().returning(|| Ok(0));
+    harness.provider_mock.expect_election_parameters().returning(|| Ok(default_cfg15()));
+    harness.provider_mock.expect_get_current_vset().returning(|| Err(anyhow::anyhow!("no set")));
+    harness.provider_mock.expect_get_next_vset().returning(|| Ok(None));
+    harness.provider_mock.expect_validator_config().returning(|| Ok(ValidatorConfig::new()));
+    harness.provider_mock.expect_shutdown().times(1).returning(|| Ok(()));
+    let mut runner = harness.build("node-1");
+    let mut cancellation = CancellationCtx::new();
+    let signal = cancellation.clone();
+    let close = tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        cancellation.cancel(CancellationReason::GracefullyShutdown());
+    });
+    runner
+        .run_loop(Duration::from_secs(600), signal, Arc::new(SnapshotStore::new()), None)
+        .await
+        .unwrap();
+    close.await.unwrap();
+    assert!(
+        runner.nodes["node-1"].last_error.as_ref().unwrap().contains("ELECTION_FEE_RUNWAY_LOW")
+    );
+}
+
+#[tokio::test]
+async fn fee_balance_read_failure_is_an_alert_not_silent_health() {
+    let mut harness = TestHarness::new();
+    harness.elector_mock.expect_address().returning(elector_address);
+    harness.wallet_mock.expect_address().returning(wallet_address);
+    harness.provider_mock.expect_account().times(1).returning(|_| Err(anyhow::anyhow!("offline")));
+    let mut runner = harness.build("node-1");
+    runner.check_fee_runway().await;
+    assert!(
+        runner.nodes["node-1"]
+            .last_error
+            .as_ref()
+            .unwrap()
+            .contains("ELECTION_FEE_BALANCE_UNAVAILABLE")
+    );
+}
+
+#[tokio::test]
+async fn closed_elector_still_extends_actual_announced_duty_without_spending() {
+    let mut harness = TestHarness::new();
+    harness.elector_mock.expect_address().returning(elector_address);
+    harness.elector_mock.expect_get_active_election_id().returning(|| Ok(0));
+    harness.wallet_mock.expect_address().returning(wallet_address);
+    harness.provider_mock.expect_election_parameters().returning(|| Ok(default_cfg15()));
+    let until = u32::try_from(time_format::now() + 7200).unwrap();
+    harness
+        .provider_mock
+        .expect_retain_validator_registration()
+        .times(1)
+        .withf(move |election, key, adnl, expires| {
+            *election == ELECTION_ID
+                && key == KEY_ID
+                && adnl == ADNL_ADDR
+                && *expires == u64::from(until) + 300
+        })
+        .returning(|_, _, _, _| Ok(()));
+    harness.provider_mock.expect_send_boc().times(0);
+    harness.provider_mock.expect_new_validator_key().times(0);
+    let mut runner = harness.build("node-1");
+    runner.nodes.get_mut("node-1").unwrap().validator_config.keys.insert(
+        ELECTION_ID,
+        ValidatorEntry {
+            key_id: KEY_ID.to_vec(),
+            adnl_addrs: vec![(ADNL_ADDR.to_vec(), ELECTION_ID + 7200)],
+            expired_at: ELECTION_ID + 7200,
+            ..Default::default()
+        },
+    );
+    runner.snapshot_cache.last_next_validator_set = Some(
+        ValidatorSet::new(
+            until - 7200,
+            until,
+            1,
+            vec![ValidatorDescr::with_params(
+                chain_block::SigPubKey::from_bytes(&PUB_KEY).unwrap(),
+                1,
+                Some(chain_block::UInt256::from(ADNL_ADDR)),
+            )],
+        )
+        .unwrap(),
+    );
+    runner.run().await.unwrap();
+    let retained = &runner.nodes["node-1"].validator_config.keys[&ELECTION_ID];
+    assert_eq!(retained.expired_at, u64::from(until) + 300);
+    assert_eq!(retained.adnl_addrs[0].1, u64::from(until) + 300);
+}
+
+#[tokio::test]
+async fn failed_registration_isolated_from_healthy_nodes_even_when_excluded() {
+    for excluded in [false, true] {
+        let mut bad = TestHarness::new();
+        bad.elector_mock.expect_address().returning(elector_address);
+        bad.wallet_mock.expect_address().returning(wallet_address);
+        bad.provider_mock.expect_election_parameters().returning(|| Ok(default_cfg15()));
+        bad.provider_mock
+            .expect_retain_validator_registration()
+            .times(1)
+            .returning(|_, _, _, _| Err(anyhow::anyhow!("control offline")));
+        bad.provider_mock.expect_send_boc().times(0);
+        bad.provider_mock.expect_new_validator_key().times(0);
+        let mut runner = bad.build("node-1");
+        let node = runner.nodes.get_mut("node-1").unwrap();
+        node.excluded = excluded;
+        node.validator_config.keys.insert(
+            ELECTION_ID,
+            ValidatorEntry {
+                key_id: KEY_ID.to_vec(),
+                adnl_addrs: vec![(ADNL_ADDR.to_vec(), ELECTION_ID + 7200)],
+                expired_at: ELECTION_ID + 7200,
+                ..Default::default()
+            },
+        );
+        let until = u32::try_from(time_format::now() + 7200).unwrap();
+        runner.snapshot_cache.last_next_validator_set = Some(
+            ValidatorSet::new(
+                until - 7200,
+                until,
+                1,
+                vec![ValidatorDescr::with_params(
+                    chain_block::SigPubKey::from_bytes(&PUB_KEY).unwrap(),
+                    1,
+                    Some(chain_block::UInt256::from(ADNL_ADDR)),
+                )],
+            )
+            .unwrap(),
+        );
+        let mut healthy = TestHarness::new();
+        healthy.elector_mock.expect_address().returning(elector_address);
+        setup_wallet(&mut healthy.wallet_mock);
+        setup_default_provider(&mut healthy.provider_mock, WALLET_BALANCE, None);
+        runner.nodes.extend(healthy.build("node-2").nodes);
+        let snapshot = ElectorSnapshot {
+            block: snapshot_block(),
+            elections: ElectionsInfo {
+                election_id: ELECTION_ID,
+                elect_close: ELECTION_ID + 600,
+                min_stake: MIN_STAKE,
+                total_stake: 0,
+                failed: false,
+                finished: false,
+                participants: vec![],
+            },
+            past_elections: vec![],
+            returned: vec![([0xaa; 32], 0)],
+        };
+        runner.run_with_snapshot(snapshot).await.unwrap();
+        assert!(runner.nodes["node-1"].last_error.as_ref().unwrap().contains("control offline"));
+        assert!(runner.nodes["node-1"].participant.is_none());
+        assert_eq!(runner.nodes["node-2"].stake_submissions.len(), 1);
+        assert!(!runner.nodes["node-2"].stake_accepted);
+    }
+}
+
+#[tokio::test]
+async fn failed_config_read_never_becomes_missing_keys_or_new_signing() {
+    for cached in [false, true] {
+        let mut harness = TestHarness::new();
+        harness.elector_mock.expect_address().returning(elector_address);
+        harness.wallet_mock.expect_address().returning(wallet_address);
+        harness.provider_mock.expect_election_parameters().returning(|| Ok(default_cfg15()));
+        harness
+            .provider_mock
+            .expect_validator_config()
+            .returning(|| Err(anyhow::anyhow!("config read failed")));
+        harness
+            .provider_mock
+            .expect_account()
+            .returning(|_| Ok(crate::providers::Account::from_balance(WALLET_BALANCE)));
+        harness.provider_mock.expect_new_validator_key().times(0);
+        harness.provider_mock.expect_export_public_key().times(0);
+        harness.provider_mock.expect_send_boc().times(0);
+        let mut runner = harness.build("node-1");
+        if cached {
+            runner.nodes.get_mut("node-1").unwrap().validator_config.keys.insert(
+                ELECTION_ID,
+                ValidatorEntry { key_id: KEY_ID.to_vec(), ..Default::default() },
+            );
+        }
+        runner.refresh_validator_configs().await;
+        let snapshot = ElectorSnapshot {
+            block: snapshot_block(),
+            elections: ElectionsInfo {
+                election_id: ELECTION_ID,
+                elect_close: ELECTION_ID + 600,
+                min_stake: MIN_STAKE,
+                total_stake: 0,
+                failed: false,
+                finished: false,
+                participants: vec![],
+            },
+            past_elections: vec![],
+            returned: vec![([0xaa; 32], 0)],
+        };
+        runner.run_with_snapshot(snapshot).await.unwrap();
+        let node = &runner.nodes["node-1"];
+        assert!(node.last_error.as_ref().unwrap().contains("validator configuration unavailable"));
+        assert!(node.participant.is_none() && node.stake_submissions.is_empty());
+        assert_eq!(node.validator_config.keys.len(), usize::from(cached));
+    }
 }
