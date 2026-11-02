@@ -19,6 +19,9 @@ on:
       - 'third-party/slhdsa-c/**'
       - 'third-party/lms-reference/**'
       - 'test/validator/elector-control-fixture.rs'
+      - 'tools/shielded-pool-wallet/**'
+      - 'tools/shielded-pool-circuit/**'
+      - 'crypto/poseidon2/manifest.bin'
       - '.github/workflows/tosctl-nixos.yml'
       - '!tosctl/src/ci/**'
       - '!tosctl/src/docs/**'
@@ -28,6 +31,7 @@ on:
       - '!tosctl/src/Dockerfile.nodectl.dockerignore'
       - '!tosctl/src/Makefile'
       - '!tosctl/src/tosctl-config.json'
+      - '!tools/shielded-pool-circuit/crosscheck/**'
       - '!tosctl/src/**/*.md'
       - '!tl/generate/scheme/**/*.md'
       - '!crypto/pq/**/*.md'
@@ -35,6 +39,8 @@ on:
       - '!third-party/falcon-reference/**/*.md'
       - '!third-party/slhdsa-c/**/*.md'
       - '!third-party/lms-reference/**/*.md'
+      - '!tools/shielded-pool-wallet/**/*.md'
+      - '!tools/shielded-pool-circuit/**/*.md'
   push:
     branches: [main]
     paths: *inputs
