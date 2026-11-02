@@ -70,5 +70,15 @@
   "raw_location": "/tos/build/e6-relayer-fault-matrix/storage-controls-r3",
   "retained_until_utc": "2027-02-01",
   "access": "Existing authorized toserver SSH account",
-  "scope": "Production Store/SQLite process-crash and synchronized two-process consumption; synthetic bytes, no signing/network/chain/physical-power-loss claim."
+  "scope": "Production Store/SQLite process-crash and synchronized two-process consumption; synthetic bytes, no signing/network/chain/physical-power-loss claim.",
+  "unit_control_target_routing": {
+    "failed_head": "9513008357e9f82d1f952e5a3c7690939b66a722",
+    "failed_ci": "https://github.com/tosnetwork/tos/actions/runs/41387915636",
+    "failure": "Standalone storage_crash_matrix received a unit-test name plus --exact and refused its unsupported arguments.",
+    "fix": "Select --bin br1-native-provider for exact unit-test guard controls; all three baseline/mutated/restored checks then ran successfully.",
+    "raw": "/tos/build/e6-relayer-fault-matrix/ci-native-controls-fixed.log",
+    "sha256": "76f3bbd18d3133bd5976dbcddbd7e61748ca4a0c7febc4255f5fbd71b6a39738",
+    "bytes": 852,
+    "exit": 0
+  }
 }
