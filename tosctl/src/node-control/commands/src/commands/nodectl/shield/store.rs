@@ -36,7 +36,10 @@ use zeroize::Zeroizing;
 
 use super::profile::Profile;
 
-pub const STATE_FORMAT_VERSION: u32 = 1;
+/// The format of the sealed state and journal. A client reads its own format
+/// only: this tool is pre-release and carries no state across formats. An
+/// instance written in an earlier format is re-initialised from its mnemonic.
+pub const STATE_FORMAT_VERSION: u32 = 2;
 const AAD_PREFIX: &[u8] = b"TOS-SHIELD-CLI-v1";
 const KEY_LABEL: &[u8] = b"TOS-SHIELD-CLI-STATE-KEY-v1";
 const INSTANCE_LABEL: &[u8] = b"TOS-SHIELD-CLI-INSTANCE-v1";
@@ -363,6 +366,35 @@ impl Store {
         Ok(Zeroizing::new(opened))
     }
 
+    /// Opens a record of the current format. A record that opens under an
+    /// earlier format is named as such, so the message says what to do
+    /// instead of reporting a record that does not open.
+    fn open_current(
+        &self,
+        kind: u8,
+        sequence: u64,
+        bytes: &[u8],
+        what: &str,
+    ) -> anyhow::Result<Zeroizing<Vec<u8>>> {
+        match self.open_sealed(kind, STATE_FORMAT_VERSION, sequence, bytes) {
+            Ok(plain) => Ok(plain),
+            Err(error) => {
+                for version in 1..STATE_FORMAT_VERSION {
+                    if self.open_sealed(kind, version, sequence, bytes).is_ok() {
+                        anyhow::bail!(
+                            "the {what} was written in format {version} by an earlier pre-release \
+                             client; this client reads format {STATE_FORMAT_VERSION} only and \
+                             carries nothing across formats. Remove the instance directory ({}) \
+                             and run `tosctl shield init` again: the mnemonic recovers every note",
+                            self.dir.display()
+                        );
+                    }
+                }
+                Err(error)
+            }
+        }
+    }
+
     /// Replaces the state atomically: the new file is complete and synced
     /// before it takes the old one's name.
     pub fn save_state(&self, state: &PersistedState) -> anyhow::Result<()> {
@@ -392,7 +424,7 @@ impl Store {
         let mut bytes = Vec::new();
         (&mut file).take(self.limit as u64 + 1).read_to_end(&mut bytes)?;
         anyhow::ensure!(bytes.len() <= self.limit, "the state file is too large");
-        let plain = self.open_sealed(KIND_STATE, STATE_FORMAT_VERSION, 0, &bytes)?;
+        let plain = self.open_current(KIND_STATE, 0, &bytes, "state")?;
         let state: PersistedState =
             ciborium::from_reader(plain.as_slice()).context("decode the state")?;
         anyhow::ensure!(state.version == STATE_FORMAT_VERSION, "a state of another version");
@@ -474,7 +506,7 @@ impl Store {
                 );
             };
             let plain = self
-                .open_sealed(KIND_JOURNAL, STATE_FORMAT_VERSION, sequence, frame)
+                .open_current(KIND_JOURNAL, sequence, frame, "journal")
                 .with_context(|| format!("journal record {sequence}"))?;
             let record: JournalRecord =
                 ciborium::from_reader(plain.as_slice()).context("decode a journal record")?;
@@ -830,6 +862,35 @@ mod tests {
         let store = Store::open(root.path(), &Keys::derive(&[8u8; 64], &[3u8; 32]), binding())
             .expect("open");
         assert!(store.load_state().expect("another key's directory").is_none());
+    }
+
+    /// A state or journal of an earlier format is refused by name, with the
+    /// way out, rather than as a record that does not open.
+    #[test]
+    fn an_earlier_format_is_refused_by_name() {
+        let root = private_root();
+        let store = Store::open(root.path(), &keys(), binding()).expect("open");
+        let old_state = store.seal(KIND_STATE, 1, 0, b"a state of the first format").expect("seal");
+        secrets_vault::private_file::write_private_atomic(&store.state_path(), &old_state)
+            .expect("write");
+        let error = store.load_state().expect_err("refused").to_string();
+        assert!(error.contains("written in format 1"), "{error}");
+        assert!(error.contains("tosctl shield init"), "{error}");
+
+        let frame = store.seal(KIND_JOURNAL, 1, 0, b"a record of the first format").expect("seal");
+        let mut bytes = (frame.len() as u32).to_be_bytes().to_vec();
+        bytes.extend_from_slice(&frame);
+        secrets_vault::private_file::write_private_atomic(&store.journal_path(), &bytes)
+            .expect("write");
+        let error = format!("{:#}", store.read_journal().expect_err("refused"));
+        assert!(error.contains("written in format 1"), "{error}");
+
+        // A record that opens under no format is still what it was.
+        let garbage = store.seal(KIND_STATE, 7, 0, b"nothing this client wrote").expect("seal");
+        secrets_vault::private_file::write_private_atomic(&store.state_path(), &garbage)
+            .expect("write");
+        let error = store.load_state().expect_err("refused").to_string();
+        assert!(error.contains("does not open"), "{error}");
     }
 
     #[test]
