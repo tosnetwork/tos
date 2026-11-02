@@ -4,6 +4,7 @@ on:
   workflow_dispatch:
   pull_request:
     paths: &inputs
+      # Generated from assembly/nix/tosctl/inputs.json; check-inputs.py requires them equal.
       - 'flake.nix'
       - 'flake.lock'
       - 'rust-toolchain.toml'
@@ -11,12 +12,28 @@ on:
       - 'tosctl/src/**'
       - 'tl/generate/scheme/**'
       - 'crypto/pq/**'
-      - 'crypto/smartcont/*.boc.base64'
+      - 'crypto/smartcont/prediction-market-v1.boc.base64'
+      - 'crypto/smartcont/relayer-bond-v1.boc.base64'
       - 'third-party/mldsa-native/**'
       - 'third-party/falcon-reference/**'
       - 'third-party/slhdsa-c/**'
       - 'third-party/lms-reference/**'
       - '.github/workflows/tosctl-nixos.yml'
+      - '!tosctl/src/ci/**'
+      - '!tosctl/src/docs/**'
+      - '!tosctl/src/Dockerfile'
+      - '!tosctl/src/Dockerfile.dockerignore'
+      - '!tosctl/src/Dockerfile.nodectl'
+      - '!tosctl/src/Dockerfile.nodectl.dockerignore'
+      - '!tosctl/src/Makefile'
+      - '!tosctl/src/tosctl-config.json'
+      - '!tosctl/src/**/*.md'
+      - '!tl/generate/scheme/**/*.md'
+      - '!crypto/pq/**/*.md'
+      - '!third-party/mldsa-native/**/*.md'
+      - '!third-party/falcon-reference/**/*.md'
+      - '!third-party/slhdsa-c/**/*.md'
+      - '!third-party/lms-reference/**/*.md'
   push:
     branches: [main]
     paths: *inputs
@@ -46,6 +63,7 @@ jobs:
       - name: Check pinned definitions and virtualization support
         run: |
           test -r /dev/kvm && test -w /dev/kvm
+          python3 assembly/nix/tosctl/check-inputs.py
           nix flake check --no-build --no-update-lock-file
           git diff --exit-code -- flake.lock
           df -h . /nix
@@ -56,6 +74,14 @@ jobs:
           nix build --no-update-lock-file -L .#checks.x86_64-linux.tosctl-vm \
             --out-link result-vm 2>&1 | tee nixos-evidence/build.log
           nix build --no-update-lock-file .#tosctl
+          # Unit tests ran in the sandbox build; keep their counts as evidence.
+          grep -E 'test result:' nixos-evidence/build.log > nixos-evidence/tests.txt
+          # Only the package fileset was imported, never the whole repository.
+          python3 assembly/nix/tosctl/check-store.py \
+            "$(nix eval --raw --no-update-lock-file .#packages.x86_64-linux.tosctl.src)" \
+            "$(nix eval --raw --no-update-lock-file .#checks.x86_64-linux.tosctl-vm.drvPath)" \
+            | tee nixos-evidence/store.txt
+          python3 assembly/nix/tosctl/check-store.py --red-control | tee -a nixos-evidence/store.txt
           {
             git rev-parse HEAD
             nix --version

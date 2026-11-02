@@ -15,16 +15,19 @@
       pkgs = import nixpkgs { inherit system; overlays = [ rust-overlay.overlays.default ]; };
       toolchain = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
       rustPlatform = pkgs.makeRustPlatform { cargo = toolchain; rustc = toolchain; };
+      # A dirty tree has no rev; dirtyRev ("<sha>-dirty") keeps its base commit traceable.
+      sourceRevision = self.rev or self.dirtyRev or "Unknown";
+      sourceEpoch = self.lastModified or 1;
       tosctl = pkgs.callPackage ./assembly/nix/tosctl/package.nix {
-        inherit rustPlatform;
-        sourceRevision = self.rev or "uncommitted";
-        sourceEpoch = self.lastModified or 1;
+        inherit rustPlatform sourceRevision sourceEpoch;
       };
     in {
       packages.${system} = { inherit tosctl; default = tosctl; };
       apps.${system}.default = { type = "app"; program = "${tosctl}/bin/tosctl"; };
       checks.${system}.tosctl-vm = pkgs.callPackage ./assembly/nix/tosctl/vm-test.nix {
         inherit tosctl;
+        expectedCommit = sourceRevision;
+        expectedEpoch = sourceEpoch;
       };
       devShells.${system}.default = pkgs.mkShell {
         inputsFrom = [ tosctl ];
