@@ -23,12 +23,17 @@ const DIRECTORY_FLAGS: i32 =
     libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK;
 const STATE: &CStr = c"state.bin";
 const NEXT: &CStr = c"state.next";
-const PENDING_PAYMENT_TAG: &[u8] = b"TOS-PENDING-PAYMENT\x01";
+const PENDING_PAYMENT_TAG: &[u8] = b"TOS-PENDING-PAYMENT\x02";
 const STATE_HEADER: usize = 52;
 pub const MAX_STATE_BYTES: usize = snapshot::MAX_SNAPSHOT_BYTES - STATE_HEADER;
 #[path = "reservations.rs"]
 mod reservations;
 use reservations::Cursor;
+
+pub struct PendingPayment {
+    pub intent: shielded_pool_circuit::field::Fr,
+    pub request: zeroize::Zeroizing<Vec<u8>>,
+}
 
 struct StoredState {
     data: Restored,
@@ -271,45 +276,45 @@ impl StateStore {
         result
     }
     /// Return the original unresolved submission without changing its state.
-    pub fn pending_payment(&mut self) -> Result<Option<zeroize::Zeroizing<Vec<u8>>>> {
+    pub fn pending_payment(&mut self) -> Result<Option<PendingPayment>> {
         let Some(state) = self.load()? else {
             return Ok(None);
         };
         if state.plaintext.is_empty() {
             return Ok(None);
         }
-        let bytes = state
+        let (digest, request) = state
             .plaintext
             .strip_prefix(PENDING_PAYMENT_TAG)
-            .filter(|bytes| !bytes.is_empty())
+            .and_then(|bytes| bytes.split_first_chunk::<32>())
+            .filter(|(_, request)| !request.is_empty())
             .ok_or(StoreError::RecoveryRequired)?;
-        Ok(Some(zeroize::Zeroizing::new(bytes.to_vec())))
+        let intent = shielded_pool_circuit::field::fr_from_be(digest)
+            .map_err(|_| StoreError::RecoveryRequired)?;
+        Ok(Some(PendingPayment { intent, request: zeroize::Zeroizing::new(request.to_vec()) }))
     }
 
-    /// Persist the exact submission bytes before the first network attempt.
-    /// A different record cannot replace an unresolved one. Repeating the
-    /// same preparation is idempotent and leaves the existing bytes intact.
-    pub fn persist_pending_payment(&mut self, exact_request: &[u8]) -> Result<()> {
-        if exact_request.is_empty()
-            || exact_request.len() > MAX_STATE_BYTES - PENDING_PAYMENT_TAG.len()
-        {
+    /// Persist the exact submission and its locally constructed intent before networking.
+    pub fn persist_pending_payment(
+        &mut self,
+        intent: shielded_pool_circuit::field::Fr,
+        exact_request: &[u8],
+    ) -> Result<()> {
+        let overhead = PENDING_PAYMENT_TAG.len() + 32;
+        if exact_request.is_empty() || exact_request.len() > MAX_STATE_BYTES - overhead {
             return Err(Error::Limit.into());
         }
-        if let Some(existing) = self.load()? {
-            if !existing.plaintext.is_empty() {
-                return if existing.plaintext.strip_prefix(PENDING_PAYMENT_TAG)
-                    == Some(exact_request)
-                {
-                    Ok(())
-                } else {
-                    Err(StoreError::Conflict)
-                };
-            }
+        if let Some(existing) = self.pending_payment()? {
+            return if existing.intent == intent && existing.request.as_slice() == exact_request {
+                Ok(())
+            } else {
+                Err(StoreError::Conflict)
+            };
         }
-        let mut record = zeroize::Zeroizing::new(Vec::with_capacity(
-            PENDING_PAYMENT_TAG.len() + exact_request.len(),
-        ));
+        let mut record =
+            zeroize::Zeroizing::new(Vec::with_capacity(overhead + exact_request.len()));
         record.extend_from_slice(PENDING_PAYMENT_TAG);
+        record.extend_from_slice(&shielded_pool_circuit::field::fr_to_be(&intent));
         record.extend_from_slice(exact_request);
         self.commit(&record)
     }

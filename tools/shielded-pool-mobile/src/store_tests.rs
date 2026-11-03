@@ -270,14 +270,19 @@ fn exclusive_candidate_creation_never_overwrites_an_uncertain_file() {
 fn pending_payment_survives_reopen_and_refuses_replacement() {
     let fixture = Fixture::new();
     let exact = b"original request bytes";
+    let intent = shielded_pool_circuit::field::Fr::from(7u64);
     let mut store = fixture.open();
     assert!(store.pending_payment().unwrap().is_none());
-    store.persist_pending_payment(exact).unwrap();
+    store.persist_pending_payment(intent, exact).unwrap();
     drop(store);
 
     let mut store = fixture.open();
-    assert_eq!(&*store.pending_payment().unwrap().unwrap(), exact);
-    store.persist_pending_payment(exact).unwrap();
-    assert!(matches!(store.persist_pending_payment(b"new request"), Err(StoreError::Conflict)));
-    assert_eq!(&*store.pending_payment().unwrap().unwrap(), exact);
+    assert_eq!(store.pending_payment().unwrap().unwrap().request.as_slice(), exact);
+    assert_eq!(store.pending_payment().unwrap().unwrap().intent, intent);
+    store.persist_pending_payment(intent, exact).unwrap();
+    assert!(matches!(
+        store.persist_pending_payment(intent, b"new request"),
+        Err(StoreError::Conflict)
+    ));
+    assert_eq!(store.pending_payment().unwrap().unwrap().request.as_slice(), exact);
 }

@@ -309,7 +309,7 @@ fn payment_indices_are_durable_and_held_inputs_do_not_reserve() {
     drop(store);
     let mut store = fixture.open();
     assert_eq!(store.reservation_high_water().unwrap(), 10);
-    store.persist_pending_payment(b"exact signed payment").unwrap();
+    store.persist_pending_payment(word, b"exact signed payment").unwrap();
     assert!(matches!(
         store.reserve_payment_plan(&terms, &recovered, &Default::default(), &request),
         Err(StoreError::Conflict)
