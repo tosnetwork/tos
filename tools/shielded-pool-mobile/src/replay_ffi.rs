@@ -64,6 +64,29 @@ pub struct PaymentPreparation<'a> {
     pub proven_time: u32,
 }
 
+#[cfg(all(unix, feature = "proving"))]
+pub struct RecoveredRelaySubmission {
+    request: Zeroizing<Vec<u8>>,
+    quote: br1_client::client::Quote,
+    client: br1_client::client::Client,
+}
+
+#[cfg(all(unix, feature = "proving"))]
+impl RecoveredRelaySubmission {
+    pub async fn status(
+        &self,
+    ) -> std::result::Result<br1_client::client::Status, br1_client::client::ClientError> {
+        self.client.status_wire(&self.request, &self.quote).await
+    }
+
+    /// Explicit retry of the saved request through its original isolation context.
+    pub async fn retry(
+        &self,
+    ) -> std::result::Result<br1_client::client::Status, br1_client::client::ClientError> {
+        self.client.submit_wire(&self.request, &self.quote).await
+    }
+}
+
 fn bound_cell(encoded: &str, expected: &str) -> Result<chain_block::Cell> {
     let bytes = STANDARD.decode(encoded).map_err(|_| Error::InvalidInput)?;
     if STANDARD.encode(&bytes) != encoded {
@@ -373,6 +396,7 @@ impl TosShieldedReplay {
                 STANDARD.encode(&bytes),
                 STANDARD.encode(&authenticated.envelope),
                 &authenticated.status_token,
+                client.isolation(),
             ))
             .map_err(|_| Error::InvalidInput)?,
         );
@@ -388,8 +412,8 @@ impl TosShieldedReplay {
         seed: &[u8; 32],
         root: &std::path::Path,
         binding: &[u8; 228],
-        client: &br1_client::client::Client,
-    ) -> Result<Option<(Zeroizing<Vec<u8>>, br1_client::client::Quote)>> {
+        open_client: impl FnOnce(br1_client::socks::Isolation) -> Result<br1_client::client::Client>,
+    ) -> Result<Option<RecoveredRelaySubmission>> {
         let State::Ready(ledger) = &self.state else { return Err(Error::InvalidInput) };
         let pool = self.wallet_binding(binding)?;
         let mut store = crate::store::StateStore::open_wallet(
@@ -403,8 +427,16 @@ impl TosShieldedReplay {
         if ledger.accepted_intents().contains(&record.intent) {
             return Ok(None);
         }
-        let (request, envelope, token): (&str, &str, &str) =
-            serde_json::from_slice(&record.request).map_err(|_| Error::InvalidInput)?;
+        let (request, envelope, token, isolation): (
+            &str,
+            &str,
+            &str,
+            br1_client::socks::Isolation,
+        ) = serde_json::from_slice(&record.request).map_err(|_| Error::InvalidInput)?;
+        let client = open_client(isolation.clone())?;
+        if &isolation != client.isolation() {
+            return Err(Error::InvalidInput);
+        }
         let bytes = Zeroizing::new(STANDARD.decode(request).map_err(|_| Error::InvalidInput)?);
         let envelope = STANDARD.decode(envelope).map_err(|_| Error::InvalidInput)?;
         let quote = client.restore_quote(&envelope, token).map_err(|_| Error::InvalidInput)?;
@@ -416,7 +448,7 @@ impl TosShieldedReplay {
         {
             return Err(Error::InvalidInput);
         }
-        Ok(Some((bytes, quote)))
+        Ok(Some(RecoveredRelaySubmission { request: bytes, quote, client }))
     }
 
     fn scan(&self, seed: &[u8; 32], offset: usize, count: usize) -> Result<Zeroizing<Vec<u8>>> {

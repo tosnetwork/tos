@@ -135,6 +135,10 @@ pub struct Client {
 }
 
 impl Client {
+    pub fn isolation(&self) -> &crate::socks::Isolation {
+        self.proxy.isolation()
+    }
+
     /// From the release pins and the Bond's public StateInit: the endpoint
     /// and the quote worker come from the authenticated Bond and nowhere
     /// else. This proves identity, not current eligibility.
