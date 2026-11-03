@@ -427,6 +427,24 @@ The existing `agent account economic-payment-resolve` command and its
 ordinary-payment compatibility contract. They do not accept the sponsorship
 CBOR/snapshot flags.
 
+### `tosctl shield` -- Shielded pool client (experimental)
+
+Private balances and transfers in the shielded pool, relayed over Tor through a
+bonded relayer. Built with the `shielded` feature or installed as the
+`tosctl-shielded` NixOS package. The manual is [doc/tosctl-shield.md](../doc/tosctl-shield.md).
+
+```
+shield init              Create an instance for one pinned pool from a mnemonic
+shield sync              Replay the pool's history and import this instance's notes
+shield balance           Show the balance; --notes lists every note
+shield address           Issue a receiving descriptor
+shield deposit           Deposit a denomination from a configured wallet (public)
+shield withdraw          Withdraw a denomination to an ordinary address (public)
+shield send              Send to a descriptor through a relayer over Tor
+shield status            What the chain and the relayer say about relayed spends
+shield audit-ceremony    Audit the proving material without a chain
+```
+
 ### `tosctl pool` -- Staking pool management
 
 ```
