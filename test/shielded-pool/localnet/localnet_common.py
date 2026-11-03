@@ -146,6 +146,9 @@ class Localnet:
     socks_port: int
     onion: str
     operator_port: int
+    # Which commit and repository path each binary under test was built from,
+    # keyed by the index's binary names; written by whoever built them.
+    provenance: dict[str, dict[str, str]]
 
     @classmethod
     def load(cls, path: Path) -> Localnet:
@@ -168,6 +171,8 @@ class Localnet:
                 if not isinstance(value, int) or not 1 <= value <= 65535:
                     raise LocalnetError(f"{path}: {field.name} must be a port number")
                 values[field.name] = value
+            elif field.name == "provenance":
+                values[field.name] = _provenance(path, value)
             else:
                 if not isinstance(value, str) or not value:
                     raise LocalnetError(f"{path}: {field.name} must be a non-empty string")
@@ -180,6 +185,29 @@ class Localnet:
 
     def network(self) -> JSON:
         return json.loads(self.network_json.read_text())
+
+
+PROVENANCE_BINARIES = ("tosctl", "br1-native-provider", "tos-proof-verify", "local_ceremony_pool")
+
+
+def _provenance(path: Path, value: Any) -> dict[str, dict[str, str]]:
+    """Every binary under test names the full commit and the repository path
+    it was built from; nothing else, nothing missing."""
+    if not isinstance(value, dict) or set(value) != set(PROVENANCE_BINARIES):
+        raise LocalnetError(f"{path}: provenance must name exactly {list(PROVENANCE_BINARIES)}")
+    result: dict[str, dict[str, str]] = {}
+    for name, entry in value.items():
+        if (
+            not isinstance(entry, dict)
+            or set(entry) != {"commit", "path"}
+            or not isinstance(entry["commit"], str)
+            or not re.fullmatch(r"[0-9a-f]{40}", entry["commit"])
+            or not isinstance(entry["path"], str)
+            or not entry["path"]
+        ):
+            raise LocalnetError(f"{path}: provenance of {name} needs a full commit and a path")
+        result[name] = {"commit": entry["commit"], "path": entry["path"]}
+    return result
 
 
 @dataclasses.dataclass

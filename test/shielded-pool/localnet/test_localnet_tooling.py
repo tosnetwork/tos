@@ -523,19 +523,36 @@ class EvidenceIndexTests(unittest.TestCase):
     def index(self, root: Path) -> dict[str, Any]:
         receipts = root / "receipts"
         receipts.mkdir()
+        traces = root / "traces"
+        traces.mkdir()
+        trace = traces / "01-connect.strace"
+        trace.write_text("connect(3, ...)\n")
         step = receipts / "01-setup.json"
-        step.write_text('{"name": "setup"}\n')
+        step.write_text(
+            json.dumps(
+                {
+                    "name": "setup",
+                    "facts": {
+                        "connections": {
+                            "passed": True,
+                            "trace": trace.name,
+                            "trace_sha256": evidence.sha256_file(trace),
+                        }
+                    },
+                }
+            )
+            + "\n"
+        )
         control = receipts / "02-control.json"
         control.write_text('{"name": "control"}\n')
-        retention = {"schema": evidence.RETENTION_SCHEMA, "index_sha256": "00" * 32}
-        (root / "EVIDENCE-RETENTION.json").write_text(json.dumps(retention) + "\n")
+        source = {"commit": "c" * 40, "path": "tools/example"}
         return {
             "schema": evidence.INDEX_SCHEMA,
             "result": "PASS",
             "checked_utc": "2026-11-03T00:00:00+00:00",
             "base_commit": "b" * 40,
             "revisions": {},
-            "binaries": {"tosctl": {"sha256": "aa" * 32}},
+            "binaries": {"tosctl": {"sha256": "aa" * 32, "source": source}},
             "chain": {"global_id": 3, "zerostate_root": "11" * 32, "zerostate_file": "22" * 32},
             "pool": {
                 "code_hash": "33" * 32,
@@ -569,12 +586,33 @@ class EvidenceIndexTests(unittest.TestCase):
             "privacy": "index only",
         }
 
+    def write(self, root: Path, index: dict[str, Any]) -> Path:
+        """Write the index, then the retention record that retains it and
+        every receipt and trace, the way the driver does."""
+        path = root / "index.json"
+        path.write_text(json.dumps(index))
+        files = [
+            {
+                "path": str(p.relative_to(root)),
+                "bytes": p.stat().st_size,
+                "sha256": evidence.sha256_file(p),
+            }
+            for p in sorted(root.rglob("*"))
+            if p.is_file() and p.name not in ("index.json", "EVIDENCE-RETENTION.json")
+        ]
+        retention = {
+            "schema": evidence.RETENTION_SCHEMA,
+            "index_sha256": evidence.sha256_file(path),
+            "files": files,
+        }
+        (root / "EVIDENCE-RETENTION.json").write_text(json.dumps(retention) + "\n")
+        return path
+
     def test_structure_verified_and_controls(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             index = self.index(root)
-            path = root / "index.json"
-            path.write_text(json.dumps(index))
+            path = self.write(root, index)
             self.assertEqual(evidence.verify(path, None), ("structure-only", []))
             self.assertEqual(evidence.verify(path, root), ("verified", []))
             # A flipped receipt digest is refused.
@@ -584,12 +622,56 @@ class EvidenceIndexTests(unittest.TestCase):
             level, problems = evidence.verify(path, root)
             self.assertEqual(level, "structure-only")
             self.assertTrue(any("does not match" in p for p in problems))
+            # The retention record retains one index; another is not it.
+            path.write_text(json.dumps(index) + " ")
+            level, problems = evidence.verify(path, root)
+            self.assertEqual(level, "structure-only")
+            self.assertTrue(any("does not retain this index" in p for p in problems))
+            self.write(root, index)
             # A missing retained file is never verified.
-            path.write_text(json.dumps(index))
             (root / "receipts/01-setup.json").unlink()
             level, problems = evidence.verify(path, root)
             self.assertEqual(level, "structure-only")
             self.assertTrue(any("missing" in p for p in problems))
+
+    def test_connection_traces_are_verified_with_the_receipts_that_cite_them(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            index = self.index(root)
+            path = self.write(root, index)
+            self.assertEqual(evidence.verify(path, root), ("verified", []))
+            trace = root / "traces/01-connect.strace"
+            original = trace.read_bytes()
+            # A tampered trace fails both the receipt's citation and the record.
+            trace.write_bytes(original + b"connect(4, ...)\n")
+            level, problems = evidence.verify(path, root)
+            self.assertEqual(level, "structure-only")
+            self.assertTrue(
+                any("cited trace 01-connect.strace does not match" in p for p in problems)
+            )
+            self.assertTrue(any("traces/01-connect.strace does not match" in p for p in problems))
+            # A deleted trace fails them too.
+            trace.unlink()
+            level, problems = evidence.verify(path, root)
+            self.assertEqual(level, "structure-only")
+            self.assertTrue(any("cited trace 01-connect.strace is missing" in p for p in problems))
+            self.assertTrue(any("traces/01-connect.strace is missing" in p for p in problems))
+            trace.write_bytes(original)
+            # A trace the record does not retain is reported.
+            (root / "traces/02-connect.strace").write_text("connect(5, ...)\n")
+            level, problems = evidence.verify(path, root)
+            self.assertEqual(level, "structure-only")
+            self.assertTrue(any("not retained by the record" in p for p in problems))
+            (root / "traces/02-connect.strace").unlink()
+            # A receipt whose verdict cites no trace is refused.
+            receipt = root / "receipts/01-setup.json"
+            facts = json.loads(receipt.read_text())
+            del facts["facts"]["connections"]["trace_sha256"]
+            receipt.write_text(json.dumps(facts) + "\n")
+            index["steps"][0]["sha256"] = evidence.sha256_file(receipt)
+            path = self.write(root, index)
+            level, problems = evidence.verify(path, root)
+            self.assertTrue(any("cites no trace" in p for p in problems))
 
     def test_structural_refusals(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -598,6 +680,7 @@ class EvidenceIndexTests(unittest.TestCase):
                 ('["steps"][0]["outcome"] = "FAIL"', "PASS with failed steps"),
                 ('["controls"][0]["outcome"] = "GREEN"', "did not go red"),
                 ('["pool"]["development_verifying_key"] = True', "ceremony key"),
+                ('["binaries"]["tosctl"]["source"] = {"commit": "c" * 40}', "which commit"),
                 ('["chain"]["global_id"] = 2', "isolated local network"),
                 ('["tor"] = "real Tor"', "offline"),
                 ('["schema"] = "other"', "schema"),

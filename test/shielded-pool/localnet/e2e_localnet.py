@@ -419,24 +419,31 @@ class Run:
             [str(wrapper), "--version"], env={"PATH": "/usr/bin:/bin"}, timeout=60
         )
         strace = shutil.which("strace") or "/bin/false"
+        # A digest names a build; the configuration says which commit and
+        # source path it was built from, so the build can be redone.
+        source = self.net.provenance
         return {
             "tosctl": {
                 "path": str(wrapper),
                 "sha256": sha256_file(wrapper),
                 "wrapped_sha256": sha256_file(wrapped) if wrapped.is_file() else None,
                 "version": adj.strip_ansi(version.stdout).strip(),
+                "source": source["tosctl"],
             },
             "br1-native-provider": {
                 "path": str(self.net.provider),
                 "sha256": sha256_file(self.net.provider),
+                "source": source["br1-native-provider"],
             },
             "tos-proof-verify": {
                 "path": str(self.net.proof_verify),
                 "sha256": sha256_file(self.net.proof_verify),
+                "source": source["tos-proof-verify"],
             },
             "local_ceremony_pool": {
                 "path": str(self.net.local_ceremony_pool),
                 "sha256": sha256_file(self.net.local_ceremony_pool),
+                "source": source["local_ceremony_pool"],
             },
             "strace": {"path": strace, "sha256": sha256_file(Path(strace))},
         }

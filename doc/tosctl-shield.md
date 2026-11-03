@@ -194,9 +194,10 @@ spend time.
 If the submit response never arrives, nothing is sent again. The journal
 records the request as unknown and the command reports
 `the submission of request <id> returned no acknowledgement`. `status` then
-asks the relayer and reads the chain; it reconciles, it does not resubmit.
-This is the one case where you must run `status` (and `sync`) before deciding
-what happened.
+asks the relayer again and shows the chain-side outcome **as of the last
+`sync`**; it reconciles the journal, it does not resubmit, and it does not read
+the chain. The relayer's claim is a claim: run `sync` for the current verified
+state before deciding what happened. The command's first line says so.
 
 `status` prints, per request: `Request <id>`, the intent, what the chain
 shows, what the journal recorded, and what the relayer claims (with the
@@ -276,7 +277,8 @@ connection traces of the client as independent evidence of where it connected.
 It covered deposit, sync, a relayed send with two inputs and the relayer's fee
 import, a withdrawal that bounced and minted a recovery note, spending that
 note, a public withdrawal, and an ambiguous submission whose response was
-dropped and which `status` reconciled without resubmission, each with a red
+dropped, which `status` reconciled with the relayer without resubmission and a
+verified `sync` then confirmed on the chain, each with a red
 control (tampered profile, concurrent lock, loopback Bond endpoint, wrong onion
 name, direct bypass of the proxy, Tor unavailable). The run's evidence index,
 `test/shielded-pool/evidence/shield-local-e2e-20261103.json`, names the

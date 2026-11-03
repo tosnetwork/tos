@@ -66,6 +66,16 @@ def check_structure(index: Any) -> list[str]:
     for name, binary in index["binaries"].items():
         if not isinstance(binary, dict) or not hex64(binary.get("sha256")):
             problems.append(f"binary {name} has no sha256")
+            continue
+        source = binary.get("source")
+        if (
+            not isinstance(source, dict)
+            or not isinstance(source.get("commit"), str)
+            or len(source["commit"]) != 40
+            or not isinstance(source.get("path"), str)
+            or not source["path"]
+        ):
+            problems.append(f"binary {name} does not say which commit and source path built it")
     for key in ("zerostate_root", "zerostate_file"):
         if not hex64(index["chain"].get(key)):
             problems.append(f"chain.{key} is not a digest")
@@ -112,8 +122,11 @@ def check_structure(index: Any) -> list[str]:
     return problems
 
 
-def check_receipts(index: dict[str, Any], retention_root: Path) -> list[str]:
-    """Recompute every receipt digest from the retained files."""
+def check_receipts(index: dict[str, Any], retention_root: Path, index_sha256: str) -> list[str]:
+    """Recompute every receipt digest from the retained files, bind the
+    retention record to this index file (by its digest), and recompute every
+    file the record retains, including the connection traces the receipts
+    cite."""
     problems: list[str] = []
     for entry in [*index["steps"], *index["controls"]]:
         path = retention_root / str(entry["receipt"])
@@ -122,16 +135,72 @@ def check_receipts(index: dict[str, Any], retention_root: Path) -> list[str]:
             continue
         if sha256_file(path) != entry["sha256"]:
             problems.append(f"{entry['name']}: retained receipt does not match its digest")
+            continue
+        problems.extend(_check_cited_traces(entry["name"], path, retention_root))
     retention = retention_root / "EVIDENCE-RETENTION.json"
     if not retention.is_file():
         problems.append("no EVIDENCE-RETENTION.json at the retention root")
-    else:
-        record = json.loads(retention.read_text())
-        if record.get("schema") != RETENTION_SCHEMA:
-            problems.append("the retention record has the wrong schema")
-        if record.get("index_sha256") is None:
-            problems.append("the retention record does not name the index it retains")
+        return problems
+    record = json.loads(retention.read_text())
+    if record.get("schema") != RETENTION_SCHEMA:
+        problems.append("the retention record has the wrong schema")
+    if record.get("index_sha256") != index_sha256:
+        problems.append("the retention record does not retain this index")
+    files = record.get("files")
+    if not isinstance(files, list) or not files:
+        problems.append("the retention record names no files")
+        return problems
+    retained = {str(entry.get("path")) for entry in files if isinstance(entry, dict)}
+    for entry in files:
+        if not isinstance(entry, dict) or not hex64(entry.get("sha256")):
+            problems.append(f"retained file {entry!r} has no digest")
+            continue
+        path = retention_root / str(entry["path"])
+        if not path.is_file():
+            problems.append(f"retained file {entry['path']} is missing")
+        elif path.stat().st_size != entry.get("bytes") or sha256_file(path) != entry["sha256"]:
+            problems.append(f"retained file {entry['path']} does not match its digest")
+    for name in ("receipts", "traces"):
+        for path in sorted((retention_root / name).glob("*")):
+            if path.is_file() and f"{name}/{path.name}" not in retained:
+                problems.append(f"{name}/{path.name} is present but not retained by the record")
     return problems
+
+
+def _check_cited_traces(name: str, receipt: Path, retention_root: Path) -> list[str]:
+    """A receipt that cites a connection trace by digest must have that trace
+    retained with that digest; a verdict about where the client connected is
+    worth nothing without the trace it was read from."""
+    problems: list[str] = []
+    try:
+        facts = json.loads(receipt.read_text()).get("facts", {})
+    except (OSError, ValueError):
+        return [f"{name}: retained receipt is not JSON"]
+    for connections in _find_connections(facts):
+        trace, digest = connections.get("trace"), connections.get("trace_sha256")
+        if not isinstance(trace, str) or not hex64(digest):
+            problems.append(f"{name}: a connection verdict cites no trace")
+            continue
+        path = retention_root / "traces" / trace
+        if not path.is_file():
+            problems.append(f"{name}: cited trace {trace} is missing")
+        elif sha256_file(path) != digest:
+            problems.append(f"{name}: cited trace {trace} does not match its digest")
+    return problems
+
+
+def _find_connections(value: Any) -> list[dict[str, Any]]:
+    found: list[dict[str, Any]] = []
+    if isinstance(value, dict):
+        for key, inner in value.items():
+            if key == "connections" and isinstance(inner, dict):
+                found.append(inner)
+            else:
+                found.extend(_find_connections(inner))
+    elif isinstance(value, list):
+        for inner in value:
+            found.extend(_find_connections(inner))
+    return found
 
 
 def verify(index_path: Path, retention_root: Path | None) -> tuple[str, list[str]]:
@@ -141,7 +210,7 @@ def verify(index_path: Path, retention_root: Path | None) -> tuple[str, list[str
     problems = check_structure(index)
     if problems or retention_root is None:
         return "structure-only", problems
-    problems = check_receipts(index, retention_root)
+    problems = check_receipts(index, retention_root, sha256_file(index_path))
     return ("verified" if not problems else "structure-only"), problems
 
 
