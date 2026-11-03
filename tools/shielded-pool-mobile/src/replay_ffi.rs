@@ -260,10 +260,31 @@ impl TosShieldedReplay {
             .map_err(|_| Error::Crypto)
     }
 
+    /// Prove, sign and journal a confirmed payment before handing it to the
+    /// relay transport. The caller must check the quote's fee and bond policy
+    /// against the payment the user confirmed.
+    #[cfg(all(unix, feature = "proving"))]
+    pub fn stage_private_transfer(
+        &self,
+        seed: &[u8; 32],
+        root: &std::path::Path,
+        prover: &PaymentProver,
+        payment: shielded_pool_wallet::spend::Prepared,
+        proven_time: u32,
+        relay: (br1_client::client::Client, br1_client::client::Quote),
+    ) -> Result<RecoveredRelaySubmission> {
+        let (client, quote) = relay;
+        let body =
+            Zeroizing::new(self.encode_private_transfer(seed, prover, payment, proven_time)?);
+        let request =
+            self.persist_relay_submission(seed, root, &prover.binding, &body, &client, &quote)?;
+        Ok(RecoveredRelaySubmission { request, quote, client, inputs_consumed: false })
+    }
+
     /// Prove and sign a private transfer against the current replay checkpoint.
     /// The BR1 envelope must be persisted before it is submitted.
     #[cfg(all(unix, feature = "proving"))]
-    pub fn encode_private_transfer(
+    fn encode_private_transfer(
         &self,
         seed: &[u8; 32],
         prover: &PaymentProver,
@@ -347,7 +368,7 @@ impl TosShieldedReplay {
     /// Build and persist the exact BR1 request before exposing it to a transport.
     /// The quote terms must already have passed authentication and fee review.
     #[cfg(all(unix, feature = "proving"))]
-    pub fn persist_relay_submission(
+    fn persist_relay_submission(
         &self,
         seed: &[u8; 32],
         root: &std::path::Path,
