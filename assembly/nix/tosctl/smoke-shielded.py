@@ -247,7 +247,15 @@ def main():
 
         # Refusals that need no chain, instance or configuration: the relayer profile and the
         # pool profile are held to their own rules before anything else is opened.
-        run("shield", "status", "--name", "main", "--relayer", work / "none.json", error="read relayer profile")
+        run(
+            "shield",
+            "status",
+            "--name",
+            "main",
+            "--relayer",
+            work / "none.json",
+            error="read relayer profile",
+        )
         run("shield", "status", "--name", "main", "--relayer", work, error="is not a regular file")
         release = {
             "global_id": 3,
@@ -262,27 +270,73 @@ def main():
             "pool_config_hash": "99" * 32,
         }
         profile.write_text(json.dumps({"schema": "other", "release": release, "bond_init_b64": ""}))
-        run("shield", "status", "--name", "main", "--relayer", profile, error="relayer profile schema")
+        run(
+            "shield",
+            "status",
+            "--name",
+            "main",
+            "--relayer",
+            profile,
+            error="relayer profile schema",
+        )
         profile.write_text(
-            json.dumps({"schema": "tos.shield.relayer-profile.v1", "release": release, "bond_init_b64": ""})
+            json.dumps(
+                {"schema": "tos.shield.relayer-profile.v1", "release": release, "bond_init_b64": ""}
+            )
         )
         run("shield", "status", "--name", "main", "--relayer", profile, error="Bond StateInit")
         pool = work / "pool.json"
-        for global_id, error in ((1, "refuses to act on global id 1"), (2, "--allow-testnet-pool"), (99, "names no network")):
+        for global_id, error in (
+            (1, "refuses to act on global id 1"),
+            (2, "--allow-testnet-pool"),
+            (99, "names no network"),
+        ):
             pool.write_text(
                 '{"schema":"tosctl-shield-profile-v1","global_id":%d,"pool_address":"0:%s","pool_code_hash":"%s"}'
                 % (global_id, "11" * 32, "22" * 32)
             )
-            output = run("shield", "init", "--name", "main", "--profile", pool, "--mnemonic-fd", "0", error=error)
+            output = run(
+                "shield",
+                "init",
+                "--name",
+                "main",
+                "--profile",
+                pool,
+                "--mnemonic-fd",
+                "0",
+                error=error,
+            )
             # A refused network gets no notice: the notice is about acting, and nothing acted.
             require("UNPROVEN" not in output and "EXPERIMENTAL" not in output, output)
         pool.write_text(
-            '{"schema":"other","global_id":3,"pool_address":"0:%s","pool_code_hash":"%s"}' % ("11" * 32, "22" * 32)
+            '{"schema":"other","global_id":3,"pool_address":"0:%s","pool_code_hash":"%s"}'
+            % ("11" * 32, "22" * 32)
         )
-        run("shield", "init", "--name", "main", "--profile", pool, "--mnemonic-fd", "0", error="profile schema")
+        run(
+            "shield",
+            "init",
+            "--name",
+            "main",
+            "--profile",
+            pool,
+            "--mnemonic-fd",
+            "0",
+            error="profile schema",
+        )
         # A spend names its material before it reads any configuration: with the variable set
         # to nothing, the refusal names both ways to name the directory.
-        withdraw = ("shield", "withdraw", "--name", "main", "--amount", "1", "--to", "0:" + "11" * 32, "--from", "ops")
+        withdraw = (
+            "shield",
+            "withdraw",
+            "--name",
+            "main",
+            "--amount",
+            "1",
+            "--to",
+            "0:" + "11" * 32,
+            "--from",
+            "ops",
+        )
         output = run(*withdraw, env={CEREMONY_VARIABLE: ""}, error="no directory named")
         require("--ceremony-dir" in output and CEREMONY_VARIABLE in output, output)
 
@@ -299,7 +353,12 @@ def main():
 
         # The environment stands in for an absent argument, so a variable naming the tampered
         # copy is what the audit reads, over the wrapper's default.
-        output = run("shield", "audit-ceremony", env={CEREMONY_VARIABLE: str(tampered / "ceremony")}, error=AUDIT_MESSAGE)
+        output = run(
+            "shield",
+            "audit-ceremony",
+            env={CEREMONY_VARIABLE: str(tampered / "ceremony")},
+            error=AUDIT_MESSAGE,
+        )
         require("hashes to" in output, output)
         # An explicit argument wins over the variable: a missing directory named on the command
         # line is what is refused, not the tampered copy the variable names.
@@ -314,11 +373,26 @@ def main():
         require(AUDIT_MESSAGE not in output and str(work / "absent") in output, output)
         # Invalid overrides: an empty variable names nothing; a directory without a slice is
         # refused before anything is rebuilt.
-        output = run("shield", "audit-ceremony", env={PHASE1_VARIABLE: ""}, error="no directory named")
+        output = run(
+            "shield", "audit-ceremony", env={PHASE1_VARIABLE: ""}, error="no directory named"
+        )
         require("--phase1-dir" in output and PHASE1_VARIABLE in output, output)
-        run("shield", "audit-ceremony", env={PHASE1_VARIABLE: str(tampered / "phase1")}, error="the phase-1 slice")
-        run("shield", "audit-ceremony", "--ceremony-dir", tampered / "ceremony", error=AUDIT_MESSAGE)
-        run("shield", "audit-ceremony", "--phase1-dir", work / "pool.json", error="is not a directory")
+        run(
+            "shield",
+            "audit-ceremony",
+            env={PHASE1_VARIABLE: str(tampered / "phase1")},
+            error="the phase-1 slice",
+        )
+        run(
+            "shield", "audit-ceremony", "--ceremony-dir", tampered / "ceremony", error=AUDIT_MESSAGE
+        )
+        run(
+            "shield",
+            "audit-ceremony",
+            "--phase1-dir",
+            work / "pool.json",
+            error="is not a directory",
+        )
 
         # The positive audit under the wrapper's default alone: the shipped material is
         # finished and its verifying key is the pinned one. Time and peak memory are the
@@ -339,7 +413,10 @@ def main():
             proving_key = record_field(material / "ceremony" / "ceremony.json", "key_sha256")
             require(f"Proving key:     {proving_key}" in output, output)
             require(peak <= PEAK_MEMORY_LIMIT, f"peak memory {peak} bytes over {PEAK_MEMORY_LIMIT}")
-            require(elapsed <= AUDIT_SECONDS_LIMIT, f"audit took {elapsed:.0f} s, over {AUDIT_SECONDS_LIMIT}")
+            require(
+                elapsed <= AUDIT_SECONDS_LIMIT,
+                f"audit took {elapsed:.0f} s, over {AUDIT_SECONDS_LIMIT}",
+            )
             require(after.ru_utime >= before.ru_utime, "child CPU time was accounted")
             print(f"AUDIT: {elapsed:.1f} s wall, peak RSS {peak / (1024 * 1024):.0f} MiB")
 
@@ -353,9 +430,13 @@ def main():
         require(socks == [f"127.0.0.1:{SOCKS_PORT}"], f"SOCKS listens on loopback only: {bound!r}")
         require(not any(a.endswith(":9051") for a in bound), f"no control port listens: {bound!r}")
         status = socks5_connect(("ipv4", "192.0.2.1"), timeout=10)
-        require(status == SOCKS5_NOT_ALLOWED, f"an IP-literal CONNECT is refused by ruleset: {status!r}")
+        require(
+            status == SOCKS5_NOT_ALLOWED, f"an IP-literal CONNECT is refused by ruleset: {status!r}"
+        )
         status = socks5_connect(("name", "example.com"), timeout=10)
-        require(status == SOCKS5_NOT_ALLOWED, f"a clearnet hostname is refused by ruleset: {status!r}")
+        require(
+            status == SOCKS5_NOT_ALLOWED, f"a clearnet hostname is refused by ruleset: {status!r}"
+        )
         onion = "2gzyxa5ihm7nsggfxnu52rck2vv4rvmdlkiu3zzui5du4xyclen53wid.onion"
         status = socks5_connect(("name", onion), timeout=3)
         require(status != SOCKS5_NOT_ALLOWED, "an onion name is not refused by ruleset")

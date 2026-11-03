@@ -159,10 +159,14 @@ def compare_derivations(standard, shielded):
     for key in ("system", "builder", "args"):
         require(standard[key] == shielded[key], f"{key} differs between the variants")
     s_env, v_env = standard["env"], shielded["env"]
-    require(set(s_env) <= set(v_env), f"the shielded variant drops {sorted(set(s_env) - set(v_env))}")
+    require(
+        set(s_env) <= set(v_env), f"the shielded variant drops {sorted(set(s_env) - set(v_env))}"
+    )
     differing = sorted(k for k in s_env if s_env[k] != v_env[k]) + sorted(set(v_env) - set(s_env))
     unexpected = [k for k in differing if k not in VARIANT_ATTRIBUTES]
-    require(not unexpected, f"the variants differ in {unexpected}, beyond {sorted(VARIANT_ATTRIBUTES)}")
+    require(
+        not unexpected, f"the variants differ in {unexpected}, beyond {sorted(VARIANT_ATTRIBUTES)}"
+    )
     for key in ("src", "cargoDeps", "version", "GIT_COMMIT", "SOURCE_DATE_EPOCH", "buildInputs"):
         require(key in s_env, f"the derivation has no {key}")
         require(s_env[key] == v_env[key], f"{key} differs between the variants")
@@ -171,10 +175,18 @@ def compare_derivations(standard, shielded):
     # Inputs are compared by store path and outputs: the same name at another path is a
     # different derivation. Names classify only the additions.
     standard_inputs, shielded_inputs = input_outputs(standard), input_outputs(shielded)
-    missing = sorted(p for p, outputs in standard_inputs.items() if shielded_inputs.get(p) != outputs)
-    require(not missing, f"the shielded variant does not take these inputs of the standard one at the same path and outputs: {missing}")
+    missing = sorted(
+        p for p, outputs in standard_inputs.items() if shielded_inputs.get(p) != outputs
+    )
+    require(
+        not missing,
+        f"the shielded variant does not take these inputs of the standard one at the same path and outputs: {missing}",
+    )
     added = {drv_name(p) for p in set(shielded_inputs) - set(standard_inputs)}
-    require(added == VARIANT_INPUTS, f"the shielded variant adds {sorted(added)}, expected {sorted(VARIANT_INPUTS)}")
+    require(
+        added == VARIANT_INPUTS,
+        f"the shielded variant adds {sorted(added)}, expected {sorted(VARIANT_INPUTS)}",
+    )
     leaked = [k for k, v in s_env.items() if MATERIAL_NAME in str(v) or "wrapProgram" in str(v)]
     require(not leaked, f"the standard variant references the material or wrapper in {leaked}")
     return len(differing), sorted(added)
@@ -189,16 +201,23 @@ def variants_control(standard_path, shielded_path):
     require(toolchain, "the variants share no Rust toolchain input to move")
     original = toolchain[0]
     moved = re.sub(r"[a-z0-9]{32}-", "0" * 32 + "-", original, count=1)
-    require(moved != original and drv_name(moved) == drv_name(original), f"could not rename {original}")
+    require(
+        moved != original and drv_name(moved) == drv_name(original), f"could not rename {original}"
+    )
     forged = copy.deepcopy(shielded)
     forged["input_drvs"][moved] = forged["input_drvs"].pop(original)
     try:
         compare_derivations(standard, forged)
     except Failure as error:
         require(original in str(error), f"the refusal does not name the moved input: {error}")
-        print(f"TOSCTL_NIX_VARIANTS_CONTROL_OK: {drv_name(original)} at another store path is refused: {error}")
+        print(
+            f"TOSCTL_NIX_VARIANTS_CONTROL_OK: {drv_name(original)} at another store path is refused: {error}"
+        )
         return 0
-    print("TOSCTL_NIX_VARIANTS_CONTROL_FAILED: a same-name dependency at another store path passed", file=sys.stderr)
+    print(
+        "TOSCTL_NIX_VARIANTS_CONTROL_FAILED: a same-name dependency at another store path passed",
+        file=sys.stderr,
+    )
     return 1
 
 
