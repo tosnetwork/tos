@@ -78,6 +78,16 @@ TosShieldedRelayOffer *tos_shielded_relay_offer_request(
 TosShieldedResponse *tos_shielded_relay_offer_info(const TosShieldedRelayOffer *offer);
 void tos_shielded_relay_offer_free(TosShieldedRelayOffer *offer);
 
+/* Proving builds only. Stage consumes the offer, even on failure. All calls
+ * are synchronous. Submit uses Tor and reports an unverified relay status. */
+typedef struct RecoveredRelaySubmission TosShieldedPaymentSubmission;
+TosShieldedPaymentSubmission *tos_shielded_payment_stage(
+    const TosShieldedReplay *session, const TosShieldedPaymentProver *prover,
+    TosShieldedRelayOffer *offer, const uint8_t *seed, size_t seed_len,
+    const uint8_t *request, size_t request_len);
+TosShieldedResponse *tos_shielded_payment_submit(const TosShieldedPaymentSubmission *submission);
+void tos_shielded_payment_free(TosShieldedPaymentSubmission *submission);
+
 void tos_shielded_replay_free(TosShieldedReplay *session);
 /* Complete Ready-ledger summary: globally deduplicates note bodies and reconciles
  * all published nullifiers. No note secrets/nullifiers are returned. Freshness

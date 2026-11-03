@@ -883,6 +883,131 @@ pub unsafe extern "C" fn tos_shielded_relay_offer_free(offer: *mut RelayOffer) {
     }
 }
 
+/// Prove, sign and durably journal a confirmed transfer. This call consumes
+/// the offer, including on failure, and performs no network requests.
+///
+/// # Safety
+/// Session and prover must be live and serialized. A non-null offer must be
+/// owned by the caller and is invalid after this call. Buffers must be live
+/// for their lengths. The app authenticates proven time and user confirmation.
+#[cfg(all(unix, feature = "proving"))]
+#[no_mangle]
+pub unsafe extern "C" fn tos_shielded_payment_stage(
+    session: *const TosShieldedReplay,
+    prover: *const PaymentProver,
+    offer: *mut RelayOffer,
+    seed: *const u8,
+    seed_len: usize,
+    request: *const u8,
+    request_len: usize,
+) -> *mut RecoveredRelaySubmission {
+    use rand::RngCore;
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct ConfirmedRequest {
+        root: String,
+        recipient: String,
+        amount: String,
+        fee: String,
+        quote_identity: String,
+        proven_time: u32,
+    }
+    if offer.is_null() {
+        return ptr::null_mut();
+    }
+    let offer = unsafe { Box::from_raw(offer) };
+    if session.is_null()
+        || prover.is_null()
+        || seed.is_null()
+        || seed_len != 32
+        || request.is_null()
+        || !(1..=MAX_REQUEST_BYTES).contains(&request_len)
+    {
+        return ptr::null_mut();
+    }
+    let call = || {
+        let request: ConfirmedRequest =
+            serde_json::from_slice(unsafe { slice::from_raw_parts(request, request_len) })
+                .map_err(|_| Error::InvalidInput)?;
+        let root = std::path::Path::new(&request.root);
+        if request.root.len() > 4096 || request.root.as_bytes().contains(&0) || !root.is_absolute()
+        {
+            return Err(Error::InvalidInput);
+        }
+        let bytes = STANDARD.decode(&request.recipient).map_err(|_| Error::InvalidInput)?;
+        let recipient = Descriptor::from_bytes(&bytes).map_err(|_| Error::InvalidInput)?;
+        let mut key = Zeroizing::new([0; 32]);
+        key.copy_from_slice(unsafe { slice::from_raw_parts(seed, seed_len) });
+        let mut fresh = || loop {
+            let mut bytes = Zeroizing::new([0; 32]);
+            rand::rngs::OsRng.try_fill_bytes(bytes.as_mut()).map_err(|_| {
+                shielded_pool_wallet::error::Error::KeyDerivation("OS entropy unavailable".into())
+            })?;
+            if let Ok(value) = shielded_pool_circuit::field::fr_from_be(&bytes) {
+                if value != Fr::from(0u64) {
+                    return Ok(value);
+                }
+            }
+        };
+        unsafe { &*session }.stage_confirmed_transfer(
+            &key,
+            root,
+            unsafe { &*prover },
+            ConfirmedTransfer {
+                recipient: &recipient,
+                amount: request.amount.parse().map_err(|_| Error::InvalidInput)?,
+                fee: request.fee.parse().map_err(|_| Error::InvalidInput)?,
+                quote_identity: &request.quote_identity,
+            },
+            request.proven_time,
+            *offer,
+            &mut fresh,
+        )
+    };
+    match catch_unwind(AssertUnwindSafe(call)) {
+        Ok(Ok(submission)) => Box::into_raw(Box::new(submission)),
+        _ => ptr::null_mut(),
+    }
+}
+
+/// Query or retry a journaled payment over its original Tor isolation.
+///
+/// # Safety
+/// The submission must be live and serialized with other calls and free.
+#[cfg(all(unix, feature = "proving"))]
+#[no_mangle]
+pub unsafe extern "C" fn tos_shielded_payment_submit(
+    submission: *const RecoveredRelaySubmission,
+) -> *mut TosShieldedResponse {
+    response(|| {
+        let submission = unsafe { submission.as_ref() }.ok_or(Error::InvalidInput)?;
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_io()
+            .enable_time()
+            .build()
+            .map_err(|_| Error::InvalidInput)?;
+        let status = runtime.block_on(submission.retry()).map_err(|_| Error::InvalidInput)?;
+        serde_json::to_vec(&serde_json::json!({
+            "request_id": status.request_id,
+            "relay_status": status.status,
+        }))
+        .map(Zeroizing::new)
+        .map_err(|_| Error::InvalidInput)
+    })
+}
+
+/// Release a submission handle. Its encrypted journal remains on disk.
+///
+/// # Safety
+/// A non-null submission must be live and no longer in use. Free it once.
+#[cfg(all(unix, feature = "proving"))]
+#[no_mangle]
+pub unsafe extern "C" fn tos_shielded_payment_free(submission: *mut RecoveredRelaySubmission) {
+    if !submission.is_null() {
+        drop(unsafe { Box::from_raw(submission) });
+    }
+}
+
 /// Issue a descriptor only after committing its index in the canonical store.
 ///
 /// # Safety
