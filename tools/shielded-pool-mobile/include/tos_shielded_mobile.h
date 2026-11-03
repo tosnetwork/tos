@@ -63,8 +63,7 @@ TosShieldedResponse *tos_shielded_replay_scan(const TosShieldedReplay *session, 
 /* Returns 1 when local payment proving and BR1 are compiled in. */
 uint8_t tos_shielded_payment_supported(void);
 
-/* These symbols are exported only by proving builds. Load is synchronous and
- * returns NULL on failure. Paths must be absolute UTF-8 byte strings. */
+/* Load is synchronous and returns NULL on failure or in a read-only build. Paths must be absolute UTF-8 byte strings. */
 typedef struct PaymentProver TosShieldedPaymentProver;
 TosShieldedPaymentProver *tos_shielded_payment_prover_load(
     const TosShieldedReplay *session, const uint8_t *phase1, size_t phase1_len,

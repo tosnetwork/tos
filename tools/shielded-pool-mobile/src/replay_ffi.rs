@@ -660,6 +660,24 @@ pub unsafe extern "C" fn tos_shielded_payment_prover_free(prover: *mut PaymentPr
     }
 }
 
+/// Read-only builds cannot load a payment prover.
+#[cfg(not(all(unix, feature = "proving")))]
+#[no_mangle]
+pub extern "C" fn tos_shielded_payment_prover_load(
+    _session: *const TosShieldedReplay,
+    _phase1: *const u8,
+    _phase1_len: usize,
+    _ceremony: *const u8,
+    _ceremony_len: usize,
+) -> *mut std::ffi::c_void {
+    ptr::null_mut()
+}
+
+/// Read-only builds never allocate a payment prover.
+#[cfg(not(all(unix, feature = "proving")))]
+#[no_mangle]
+pub extern "C" fn tos_shielded_payment_prover_free(_prover: *mut std::ffi::c_void) {}
+
 /// Issue a descriptor only after committing its index in the canonical store.
 ///
 /// # Safety
