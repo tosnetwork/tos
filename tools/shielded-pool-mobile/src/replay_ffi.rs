@@ -111,6 +111,13 @@ fn bound_cell(encoded: &str, expected: &str) -> Result<chain_block::Cell> {
     Ok(root)
 }
 
+/// Audited proving material tied to an authenticated pool selection.
+#[cfg(all(unix, feature = "proving"))]
+pub struct PaymentProver {
+    client: shielded_pool_prover::PublicClient,
+    binding: [u8; 228],
+}
+
 impl TosShieldedReplay {
     fn create(bytes: &[u8]) -> Result<Self> {
         if bytes.len() > MAX_REQUEST_BYTES {
@@ -196,19 +203,20 @@ impl TosShieldedReplay {
         phase1: &std::path::Path,
         ceremony: &std::path::Path,
         binding: &[u8; 228],
-    ) -> Result<shielded_pool_prover::PublicClient> {
+    ) -> Result<PaymentProver> {
         if !matches!(self.state, State::Ready(_)) {
             return Err(Error::InvalidInput);
         }
         let pool = self.wallet_binding(binding)?;
-        shielded_pool_prover::PublicClient::audit_and_load(
+        let client = shielded_pool_prover::PublicClient::audit_and_load(
             phase1,
             ceremony,
             &hex::encode(pool.verifying_key_hash),
             pool.global_id,
             &pool.pool_account,
         )
-        .map_err(|_| Error::Crypto)
+        .map_err(|_| Error::Crypto)?;
+        Ok(PaymentProver { client, binding: *binding })
     }
 
     /// Prepare a spend against this completed ledger. The caller verifies the
@@ -258,7 +266,7 @@ impl TosShieldedReplay {
     pub fn encode_private_transfer(
         &self,
         seed: &[u8; 32],
-        prover: &shielded_pool_prover::PublicClient,
+        prover: &PaymentProver,
         payment: shielded_pool_wallet::spend::Prepared,
         proven_time: u32,
     ) -> Result<Vec<u8>> {
@@ -268,7 +276,8 @@ impl TosShieldedReplay {
             ANCHOR_CURRENT,
         };
         let State::Ready(ledger) = &self.state else { return Err(Error::InvalidInput) };
-        if prover.execution_domain() != self.domain
+        if self.receive_binding.as_ref() != Some(&prover.binding)
+            || prover.client.execution_domain() != self.domain
             || payment.public.anchor_root != ledger.checkpoint().commitment_root
             || payment.recovery_payload.is_some()
             || payment.public.public_amount_out != Fr::from(0u64)
@@ -281,7 +290,7 @@ impl TosShieldedReplay {
         }
         let valid_until =
             u32::from_be_bytes(expires[28..].try_into().map_err(|_| Error::InvalidInput)?);
-        let proof = crate::prove_prepared_payment(prover, &payment, proven_time)?;
+        let proof = crate::prove_prepared_payment(&prover.client, &payment, proven_time)?;
         let witnesses = shielded_pool_wallet::spend::nullifier_witnesses(
             ledger.nullifier_state(),
             payment.nullifiers(),
