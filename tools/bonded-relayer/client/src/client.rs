@@ -270,6 +270,28 @@ impl Client {
         Ok(Quote { identity, terms, terms_value, envelope, status_token: token.to_owned() })
     }
 
+    /// Rebuild a quote from an encrypted journal's original envelope and token.
+    pub fn restore_quote(&self, envelope: &[u8], token: &str) -> Result<Quote, ClientError> {
+        if envelope.len() > MAX_QUOTE_BYTES {
+            return Err(rejected("quote envelope too large"));
+        }
+        let value: Value = serde_json::from_slice(envelope).map_err(rejected)?;
+        if wire::canonical(&value).map_err(rejected)? != envelope {
+            return Err(rejected("quote envelope is not canonical"));
+        }
+        let (terms_value, terms, identity) = self.authenticate(&value)?;
+        if terms.status_hash != quote::status_hash(token).map_err(rejected)? {
+            return Err(rejected("quote token mismatch"));
+        }
+        Ok(Quote {
+            identity,
+            terms,
+            terms_value,
+            envelope: envelope.to_vec(),
+            status_token: token.to_owned(),
+        })
+    }
+
     /// Re-authenticates a quote from its stored envelope and token.
     fn reverify(&self, stored: &Quote) -> Result<Terms, ClientError> {
         let envelope = wire::parse_object(&stored.envelope, MAX_QUOTE_BYTES).map_err(rejected)?;
@@ -316,6 +338,32 @@ impl Client {
             request_id: request_id.clone(),
             cause: cause.to_string(),
         })
+    }
+
+    fn stored_request(bytes: &[u8]) -> Result<Request, ClientError> {
+        if bytes.len() > crate::request::MAX_REQUEST_WIRE_BYTES {
+            return Err(rejected("stored request exceeds wire limit"));
+        }
+        let request: Request = serde_json::from_slice(bytes).map_err(rejected)?;
+        if request.wire().map_err(rejected)? != bytes {
+            return Err(rejected("stored request is not canonical"));
+        }
+        Ok(request)
+    }
+
+    /// Submit a previously journaled canonical request without changing its identity.
+    pub async fn submit_wire(&self, bytes: &[u8], stored: &Quote) -> Result<Status, ClientError> {
+        self.submit(&Self::stored_request(bytes)?, stored).await
+    }
+
+    /// Ask about the exact journaled request. Status lookup remains available after expiry.
+    pub async fn status_wire(&self, bytes: &[u8], stored: &Quote) -> Result<Status, ClientError> {
+        self.reverify(stored)?;
+        let request = Self::stored_request(bytes)?;
+        if request.release != self.scope || request.quote_hash != stored.identity {
+            return Err(rejected("stored request does not match its quote"));
+        }
+        self.status(&request.identity().map_err(rejected)?, &stored.status_token).await
     }
 
     /// `POST /v1/status`: read-only on both sides.
@@ -734,6 +782,32 @@ mod tests {
         assert_eq!(client.status(&request.identity()?, &token).await?.status, "broadcast");
         let paths = behaviour.lock().map_err(|_| anyhow::anyhow!("lock"))?.paths.clone();
         assert_eq!(paths.iter().filter(|p| p.as_str() == "/v1/submit").count(), 2);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn recovered_wire_preserves_identity_and_requires_original_token() -> anyhow::Result<()> {
+        let (client, behaviour, _, _) = stand_up().await?;
+        let token = random_token();
+        let quote = client.quote(2, 300, &token).await?;
+        assert!(client.restore_quote(&quote.envelope, &random_token()).is_err());
+        let restored = client.restore_quote(&quote.envelope, &token)?;
+        let request = request_for(&client, &quote);
+        let mut noncanonical = request.wire()?;
+        noncanonical.push(b' ');
+        assert!(matches!(
+            client.submit_wire(&noncanonical, &restored).await,
+            Err(ClientError::Rejected(_))
+        ));
+        let status = client.submit_wire(&request.wire()?, &restored).await?;
+        assert_eq!(status.status, "broadcast");
+        assert_eq!(status.request_id, request.identity()?);
+        assert_eq!(
+            client.status_wire(&request.wire()?, &restored).await?.request_id,
+            status.request_id
+        );
+        let state = behaviour.lock().map_err(|_| anyhow::anyhow!("lock"))?;
+        assert_eq!(state.paths.iter().filter(|path| path.as_str() == "/v1/submit").count(), 1);
         Ok(())
     }
 

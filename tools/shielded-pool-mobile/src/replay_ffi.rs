@@ -220,6 +220,205 @@ impl TosShieldedReplay {
             .map_err(|_| Error::Crypto)
     }
 
+    /// Prove and sign a private transfer against the current replay checkpoint.
+    /// The BR1 envelope must be persisted before it is submitted.
+    #[cfg(all(unix, feature = "proving"))]
+    pub fn encode_private_transfer(
+        &self,
+        seed: &[u8; 32],
+        prover: &shielded_pool_prover::PublicClient,
+        payment: shielded_pool_wallet::spend::Prepared,
+        proven_time: u32,
+    ) -> Result<Vec<u8>> {
+        use shielded_pool_circuit::field::fr_to_be;
+        use shielded_pool_codec::{
+            auth_bundle, groth16_proof_cell, witness_bundle, NullifierWitness, TransactBody,
+            ANCHOR_CURRENT,
+        };
+        let State::Ready(ledger) = &self.state else { return Err(Error::InvalidInput) };
+        if prover.execution_domain() != self.domain
+            || payment.public.anchor_root != ledger.checkpoint().commitment_root
+            || payment.recovery_payload.is_some()
+            || payment.public.public_amount_out != Fr::from(0u64)
+        {
+            return Err(Error::InvalidInput);
+        }
+        let expires = fr_to_be(&payment.public.valid_until);
+        if expires[..28] != [0; 28] {
+            return Err(Error::InvalidInput);
+        }
+        let valid_until =
+            u32::from_be_bytes(expires[28..].try_into().map_err(|_| Error::InvalidInput)?);
+        let proof = crate::prove_prepared_payment(prover, &payment, proven_time)?;
+        let witnesses = shielded_pool_wallet::spend::nullifier_witnesses(
+            ledger.nullifier_state(),
+            payment.nullifiers(),
+        )
+        .map_err(|_| Error::Crypto)?
+        .map(|witness| NullifierWitness {
+            low_index: witness.low_index,
+            low_value: fr_to_be(&witness.low_value),
+            low_next_index: witness.low_next_index,
+            low_next_value: fr_to_be(&witness.low_next_value),
+            low_path: witness.low_path.iter().map(fr_to_be).collect(),
+            append_path: witness.append_path.iter().map(fr_to_be).collect(),
+        });
+        let signed =
+            payment.sign(&PoolInstance::new(seed, self.domain)).map_err(|_| Error::Crypto)?;
+        let public = signed.public;
+        let intent_digest = fr_to_be(&public.transaction_intent_digest);
+        let body = TransactBody {
+            query_id: u64::from_be_bytes(
+                intent_digest[24..].try_into().map_err(|_| Error::InvalidInput)?,
+            ),
+            anchor_kind: ANCHOR_CURRENT,
+            anchor_id: 0,
+            valid_until,
+            public_amount_out: 0,
+            withdrawal_fee: 0,
+            recipient: None,
+            intent_digest,
+            anchor_root: fr_to_be(&public.anchor_root),
+            nullifiers: [fr_to_be(&public.nullifier_0), fr_to_be(&public.nullifier_1)],
+            note_bodies: [
+                fr_to_be(&public.note_body_0),
+                fr_to_be(&public.note_body_1),
+                fr_to_be(&public.note_body_2),
+            ],
+            payloads: signed.payloads,
+            groth16_proof: groth16_proof_cell(&proof.a, &proof.b, &proof.c)
+                .map_err(|_| Error::Crypto)?,
+            recovery_owner_commitment: fr_to_be(&signed.recovery_owner_commitment),
+            recovery_payload: None,
+            recovery_cell: chain_block::Cell::default(),
+            auth_bundle: auth_bundle(
+                [&signed.input_keys[0], &signed.input_keys[1]],
+                [&signed.signatures[0], &signed.signatures[1]],
+            )
+            .map_err(|_| Error::Crypto)?,
+            witness_bundle: witness_bundle(&witnesses).map_err(|_| Error::Crypto)?,
+        }
+        .build()
+        .map_err(|_| Error::InvalidInput)?;
+        chain_block::write_boc(&body).map_err(|_| Error::InvalidInput)
+    }
+
+    /// Build and persist the exact BR1 request before exposing it to a transport.
+    /// The quote terms must already have passed authentication and fee review.
+    #[cfg(all(unix, feature = "proving"))]
+    pub fn persist_relay_submission(
+        &self,
+        seed: &[u8; 32],
+        root: &std::path::Path,
+        binding: &[u8; 228],
+        body_bytes: &[u8],
+        client: &br1_client::client::Client,
+        authenticated: &br1_client::client::Quote,
+    ) -> Result<Zeroizing<Vec<u8>>> {
+        use br1_client::{request, wire};
+        use shielded_pool_codec::TransactBody;
+        let State::Ready(ledger) = &self.state else { return Err(Error::InvalidInput) };
+        let pool = self.wallet_binding(binding)?;
+        if body_bytes.len() > request::MAX_BODY_BYTES {
+            return Err(Error::Limit);
+        }
+        let quote = client
+            .restore_quote(&authenticated.envelope, &authenticated.status_token)
+            .map_err(|_| Error::InvalidInput)?;
+        if quote.identity != authenticated.identity || quote.terms != authenticated.terms {
+            return Err(Error::InvalidInput);
+        }
+        let quote_terms = &quote.terms_value;
+        let terms = &quote.terms;
+        let scope = terms.release.as_str();
+        if terms.slot != 2 {
+            return Err(Error::InvalidInput);
+        }
+        let mut slice = chain_block::SliceData::load_cell(read_cell(body_bytes)?)
+            .map_err(|_| Error::InvalidInput)?;
+        if slice.get_next_u32().map_err(|_| Error::InvalidInput)?
+            != shielded_pool_codec::OP_TRANSACT
+        {
+            return Err(Error::InvalidInput);
+        }
+        let body = TransactBody::parse(&mut slice).map_err(|_| Error::InvalidInput)?;
+        let intent = shielded_pool_circuit::field::fr_from_be(&body.intent_digest)
+            .map_err(|_| Error::InvalidInput)?;
+        if ledger.accepted_intents().contains(&intent) {
+            return Err(Error::InvalidInput);
+        }
+        let request = request::Request {
+            release: scope.to_owned(),
+            intent: hex::encode(body.intent_digest),
+            body_b64: STANDARD.encode(body_bytes),
+            body_sha256: wire::hash(body_bytes),
+            nullifiers: body.nullifiers.map(hex::encode),
+            quote_hash: quote.identity.clone(),
+            fee_note_body: hex::encode(body.note_bodies[2]),
+            fee_slot: terms.slot,
+            fee_note_index: terms.note_index,
+            valid_until: body.valid_until,
+            funding_cap: terms.funding_cap,
+        };
+        let value = serde_json::to_value(&request).map_err(|_| Error::InvalidInput)?;
+        request::Candidate::check(&value, scope, quote_terms).map_err(|_| Error::InvalidInput)?;
+        let bytes = Zeroizing::new(request.wire().map_err(|_| Error::InvalidInput)?);
+        let mut store = crate::store::StateStore::open_wallet(
+            root,
+            crate::sealed::RecordCipher::derive(seed, pool),
+        )
+        .map_err(|_| Error::InvalidInput)?;
+        let stored = Zeroizing::new(
+            serde_json::to_vec(&(
+                STANDARD.encode(&bytes),
+                STANDARD.encode(&authenticated.envelope),
+                &authenticated.status_token,
+            ))
+            .map_err(|_| Error::InvalidInput)?,
+        );
+        store.persist_pending_payment(intent, &stored).map_err(|_| Error::InvalidInput)?;
+        Ok(bytes)
+    }
+
+    /// Recover the original submission and reauthenticate its quote before a retry.
+    /// The caller must use the approved relayer client and fresh verified replay.
+    #[cfg(all(unix, feature = "proving"))]
+    pub fn recover_relay_submission(
+        &self,
+        seed: &[u8; 32],
+        root: &std::path::Path,
+        binding: &[u8; 228],
+        client: &br1_client::client::Client,
+    ) -> Result<Option<(Zeroizing<Vec<u8>>, br1_client::client::Quote)>> {
+        let State::Ready(ledger) = &self.state else { return Err(Error::InvalidInput) };
+        let pool = self.wallet_binding(binding)?;
+        let mut store = crate::store::StateStore::open_wallet(
+            root,
+            crate::sealed::RecordCipher::derive(seed, pool),
+        )
+        .map_err(|_| Error::InvalidInput)?;
+        let Some(record) = store.pending_payment().map_err(|_| Error::InvalidInput)? else {
+            return Ok(None);
+        };
+        if ledger.accepted_intents().contains(&record.intent) {
+            return Ok(None);
+        }
+        let (request, envelope, token): (&str, &str, &str) =
+            serde_json::from_slice(&record.request).map_err(|_| Error::InvalidInput)?;
+        let bytes = Zeroizing::new(STANDARD.decode(request).map_err(|_| Error::InvalidInput)?);
+        let envelope = STANDARD.decode(envelope).map_err(|_| Error::InvalidInput)?;
+        let quote = client.restore_quote(&envelope, token).map_err(|_| Error::InvalidInput)?;
+        let parsed: br1_client::request::Request =
+            serde_json::from_slice(&bytes).map_err(|_| Error::InvalidInput)?;
+        if parsed.intent != hex::encode(shielded_pool_circuit::field::fr_to_be(&record.intent))
+            || parsed.quote_hash != quote.identity
+            || parsed.wire().map_err(|_| Error::InvalidInput)?.as_slice() != bytes.as_slice()
+        {
+            return Err(Error::InvalidInput);
+        }
+        Ok(Some((bytes, quote)))
+    }
+
     fn scan(&self, seed: &[u8; 32], offset: usize, count: usize) -> Result<Zeroizing<Vec<u8>>> {
         let State::Ready(ledger) = &self.state else {
             return Err(Error::InvalidInput);
