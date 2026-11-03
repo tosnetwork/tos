@@ -249,7 +249,36 @@ borrowed seed/plaintext remain the caller's responsibility. No complete erasure
 claim is made for hash implementation intermediates.
 
 The later store must provide private locked files, durable journal reservation,
-atomic commit and an authenticated complete page manifest/generation. Individual
+atomic commit. The snapshot layer below supplies the complete page manifest/generation. Individual
 valid pages alone do not prevent snapshot mixing or rollback of an entire older
 state/journal pair. Pin upgrades require explicit migration with the old binding;
 decryption failure must never be interpreted as permission to reset UNKNOWN.
+
+
+## Complete encrypted snapshots (Rust only)
+
+`snapshot::seal/open` wraps State or Backup records in an authenticated complete
+page manifest. The manifest contains a fresh 32-byte generation, exact plaintext
+size, page count, and each ordered ciphertext length and SHA3-256 digest. The
+manifest is record sequence zero; pages are sequences one through the page count.
+Their purpose and expected positions are authenticated by the record layer.
+
+The container is `TSSN | version:1 | reserved:3 | manifest_length:u32be |
+encrypted_manifest | encrypted_pages`. The decrypted manifest is `SM01 |
+generation:32 | plaintext_length:u32be | count:u32be | (length:u32be, hash:32)*`.
+Plaintext is capped at 32 MiB / 32 pages, with a separate ciphertext cap. The
+manifest itself is capped before decryption. All lengths, page hashes, complete
+page list and absence of trailing data are checked before allocating the output.
+Only the final page may be short. Returned plaintext is Zeroizing; a seal's
+borrowed plaintext remains the caller's responsibility. Sealing assembles one
+ciphertext buffer plus one temporary page; opening retains the input, one
+output allocation, and one temporary decrypted page. These are code bounds,
+not a measured device-memory acceptance result.
+
+A restored snapshot is unverified opaque application state. This API provides
+no note schema, files, atomic replacement, journal, backup export UX, C ABI or
+App integration. Callers must bound their business decoding, revalidate chain
+proofs, and preserve UNKNOWN and index reservations in their durable schema.
+A complete old snapshot can still be restored: generation and page membership
+do not establish freshness or detect full rollback. Wrong pins require explicit
+migration with the original binding; never initialize empty state on failure.
