@@ -69,6 +69,7 @@ pub struct RecoveredRelaySubmission {
     request: Zeroizing<Vec<u8>>,
     quote: br1_client::client::Quote,
     client: br1_client::client::Client,
+    inputs_consumed: bool,
 }
 
 #[cfg(all(unix, feature = "proving"))]
@@ -85,7 +86,9 @@ impl RecoveredRelaySubmission {
     ) -> std::result::Result<br1_client::client::Status, br1_client::client::ClientError> {
         match self.status().await {
             Ok(status) => Ok(status),
-            Err(br1_client::client::ClientError::Refused { status: 404 }) => {
+            Err(br1_client::client::ClientError::Refused { status: 404 })
+                if !self.inputs_consumed =>
+            {
                 self.client.submit_wire(&self.request, &self.quote).await
             }
             Err(error) => Err(error),
@@ -373,8 +376,19 @@ impl TosShieldedReplay {
         let body = TransactBody::parse(&mut slice).map_err(|_| Error::InvalidInput)?;
         let intent = shielded_pool_circuit::field::fr_from_be(&body.intent_digest)
             .map_err(|_| Error::InvalidInput)?;
-        if ledger.accepted_intents().contains(&intent) {
+        if body.anchor_kind != shielded_pool_codec::ANCHOR_CURRENT
+            || body.anchor_root
+                != shielded_pool_circuit::field::fr_to_be(&ledger.checkpoint().commitment_root)
+            || ledger.accepted_intents().contains(&intent)
+        {
             return Err(Error::InvalidInput);
+        }
+        for encoded in &body.nullifiers {
+            let nullifier = shielded_pool_circuit::field::fr_from_be(encoded)
+                .map_err(|_| Error::InvalidInput)?;
+            if ledger.published_nullifiers().contains(&nullifier) {
+                return Err(Error::InvalidInput);
+            }
         }
         let request = request::Request {
             release: scope.to_owned(),
@@ -454,7 +468,13 @@ impl TosShieldedReplay {
         {
             return Err(Error::InvalidInput);
         }
-        Ok(Some(RecoveredRelaySubmission { request: bytes, quote, client }))
+        let inputs_consumed = parsed.nullifiers.iter().try_fold(false, |consumed, encoded| {
+            let word = hash(encoded)?;
+            let nullifier =
+                shielded_pool_circuit::field::fr_from_be(&word).map_err(|_| Error::InvalidInput)?;
+            Ok(consumed || ledger.published_nullifiers().contains(&nullifier))
+        })?;
+        Ok(Some(RecoveredRelaySubmission { request: bytes, quote, client, inputs_consumed }))
     }
 
     fn scan(&self, seed: &[u8; 32], offset: usize, count: usize) -> Result<Zeroizing<Vec<u8>>> {
