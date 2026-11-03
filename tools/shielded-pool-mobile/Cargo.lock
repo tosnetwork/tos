@@ -1497,6 +1497,7 @@ dependencies = [
  "chacha20poly1305",
  "chain_block",
  "hex",
+ "libc",
  "rand",
  "serde",
  "serde_json",

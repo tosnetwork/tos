@@ -53,6 +53,14 @@ fn page_count(size: usize) -> Result<usize> {
 /// Caller owns and clears borrowed plaintext. Pages are encrypted directly into
 /// one output buffer; only one temporary page is retained during assembly.
 pub fn seal(cipher: &RecordCipher, kind: Kind, plaintext: &[u8]) -> Result<Vec<u8>> {
+    seal_generated(cipher, kind, plaintext).map(|(encoded, _)| encoded)
+}
+
+pub(crate) fn seal_generated(
+    cipher: &RecordCipher,
+    kind: Kind,
+    plaintext: &[u8],
+) -> Result<(Vec<u8>, [u8; 32])> {
     purpose(kind)?;
     if plaintext.len() > MAX_SNAPSHOT_BYTES {
         return Err(Error::Limit);
@@ -94,7 +102,7 @@ pub fn seal(cipher: &RecordCipher, kind: Kind, plaintext: &[u8]) -> Result<Vec<u
         return Err(Error::InvalidInput);
     }
     out.get_mut(12..prefix).ok_or(Error::InvalidInput)?.copy_from_slice(&sealed);
-    Ok(out)
+    Ok((out, generation))
 }
 
 /// Refuses incomplete, reordered, mixed or extra pages before allocating the

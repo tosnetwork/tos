@@ -282,3 +282,43 @@ proofs, and preserve UNKNOWN and index reservations in their durable schema.
 A complete old snapshot can still be restored: generation and page membership
 do not establish freshness or detect full rollback. Wrong pins require explicit
 migration with the original binding; never initialize empty state on failure.
+
+
+## Directory-relative private state store (Unix, Rust only)
+
+`store::StateStore` adapts the private-file, exclusive-lock and atomic-write
+mechanisms to the snapshot container. Supply an existing absolute OS app-private
+directory, owned by the effective UID with no group/other permission bits. It
+must come from the platform sandbox, not arbitrary shared storage. Final
+symlinks are rejected; operations use the held directory descriptor and fixed
+names, so retargeting its pathname cannot redirect an active handle. Ancestor
+symlinks used by platform container paths are not categorically rejected. This
+API does not establish sandbox provenance or defend against root or code running
+as the app UID. All writers must honor the advisory directory lock.
+
+The store holds one directory descriptor, one derived cipher key, a generation
+and a poison flag. A read checks an owned private single-link regular file and
+its capped size, allocates once, reads exactly that size and probes one extra
+byte to reject growth without further allocation. Existing encrypted data must
+authenticate under the expected seed/binding; malformed or unsupported data is
+never reset. A generation change during a handle's lifetime is a conflict, not
+full rollback protection across reopen.
+
+Commit checks current state, seals the replacement, exclusively creates
+`state.next` (0600), writes/syncs it, renames it to `state.bin` and syncs the
+directory before acknowledging success. A mutation failure freezes both reads
+and writes on the handle, even when rename already happened. Drops release all
+file descriptors and the lock; uncertain files are retained. A residual
+`state.next` refuses reopen with RecoveryRequired. This API deliberately has no
+implicit promotion, deletion or reset policy. A later business journal/recovery
+layer must reconcile it without forgetting reserved indices or UNKNOWN bytes.
+Do not treat an error as permission to construct another payment.
+
+Host tests cover actual private files and locks plus injected I/O errors at five
+commit checkpoints. Those injections are not power-loss or real disk-full
+evidence. CI separately runs the `store_enospc` harness on a fresh 64 KiB Linux
+tmpfs, requiring an actual ENOSPC, unchanged original, retained partial candidate,
+frozen handle and recovery-required reopen. Its result must be read from the
+exact-head CI; a scheduled step is not a pass. Mobile app-private path policy,
+strong-kill/restart, backup integration and all business schema/journal recovery
+remain pending. The store has no C ABI and does not make restored bytes spendable.

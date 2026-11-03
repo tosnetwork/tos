@@ -28,6 +28,8 @@ pub mod replay;
 pub mod replay_ffi;
 pub mod sealed;
 pub mod snapshot;
+#[cfg(unix)]
+pub mod store;
 
 pub const MAX_REQUEST_BYTES: usize = 2 * 1024 * 1024;
 pub const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
