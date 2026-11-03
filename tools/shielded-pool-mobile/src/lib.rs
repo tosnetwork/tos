@@ -22,6 +22,8 @@ use std::{
 };
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
+pub mod pool;
+
 pub const MAX_REQUEST_BYTES: usize = 2 * 1024 * 1024;
 pub const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
 pub const MAX_OUTPUTS: usize = 512;
@@ -273,4 +275,20 @@ pub unsafe extern "C" fn tos_shielded_response_free(response: *mut TosShieldedRe
     if !response.is_null() {
         drop(unsafe { Box::from_raw(response) });
     }
+}
+
+/// Decode one proof-extracted state cell. This does not verify a chain proof.
+/// # Safety
+/// A non-null input must identify a live allocation of the stated length.
+#[no_mangle]
+pub unsafe extern "C" fn tos_shielded_pool_state(
+    data: *const u8,
+    length: usize,
+) -> *mut TosShieldedResponse {
+    response(|| {
+        if data.is_null() || length > MAX_REQUEST_BYTES {
+            return Err(Error::InvalidInput);
+        }
+        pool::decode_pool_state(unsafe { slice::from_raw_parts(data, length) })
+    })
 }

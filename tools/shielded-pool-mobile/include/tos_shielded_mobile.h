@@ -24,6 +24,11 @@ TosShieldedResponse *tos_shielded_descriptor(const uint8_t *seed, size_t seed_le
  */
 TosShieldedResponse *tos_shielded_scan(const uint8_t *seed, size_t seed_len, const uint8_t *request,
                                        size_t request_len);
+/* Decode a single-root generic BOC, max 2 MiB, 32768 cells, depth 128.
+ * Success is layout validation only, not proof authentication. Bind data_hash
+ * to the account proof before using the result as a pool observation.
+ */
+TosShieldedResponse *tos_shielded_pool_state(const uint8_t *data, size_t length);
 /* status: 0 success; 1 invalid input/crypto failure; 2 contained panic.
  * Pointer is valid until free; free once, on the same library that allocated it.
  * The response buffer is zeroized on free. Accessors require a live handle.

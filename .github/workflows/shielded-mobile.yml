@@ -3,10 +3,15 @@ on:
   pull_request:
     paths:
       - 'tools/shielded-pool-mobile/**'
+      - 'tools/shielded-pool-codec/**'
       - 'tools/shielded-pool-wallet/**'
+      - 'tosctl/src/node-control/contracts/src/shielded_pool.rs'
+      - 'tosctl/src/node-control/contracts/Cargo.toml'
       - 'tools/shielded-pool-circuit/**'
       - 'crypto/poseidon2/**'
-      - 'tosctl/src/block/src/poseidon2_kat.rs'
+      - 'tosctl/src/block/**'
+      - 'tosctl/src/lockfree/**'
+      - 'tosctl/src/common/build/**'
       - 'scripts/build-shielded-mobile.py'
       - '.github/workflows/shielded-mobile.yml'
   workflow_dispatch:
@@ -35,5 +40,7 @@ jobs:
           cargo fmt -- --check
           cargo clippy --locked --all-targets -- -D warnings
           cargo test --locked
+          cargo fmt --manifest-path ../shielded-pool-codec/Cargo.toml -- --check
+          cargo test --locked --manifest-path ../shielded-pool-codec/Cargo.toml
       - name: Require assertion failures when spending and body guards are removed
         run: python3 tools/shielded-pool-mobile/tests/sensitivity.py --output /tmp/shielded-mobile-controls --target-dir tools/shielded-pool-mobile/target

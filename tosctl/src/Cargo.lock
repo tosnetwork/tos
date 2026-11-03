@@ -1153,6 +1153,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "shielded-pool-codec",
  "tempfile",
  "tl_api",
  "tokio",
@@ -4813,6 +4814,14 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+]
+
+[[package]]
+name = "shielded-pool-codec"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chain_block",
 ]
 
 [[package]]

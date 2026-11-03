@@ -30,6 +30,10 @@ def source_identity(root):
     paths = [
         "tools/shielded-pool-mobile",
         "tools/shielded-pool-wallet",
+        "tools/shielded-pool-codec",
+        "tosctl/src/block",
+        "tosctl/src/lockfree",
+        "tosctl/src/common/build",
         "tools/shielded-pool-circuit",
         "crypto/poseidon2",
         "tosctl/src/block/src/poseidon2_kat.rs",

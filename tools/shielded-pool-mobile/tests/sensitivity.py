@@ -28,16 +28,15 @@ base = [
     "--locked",
     "--manifest-path",
     "tools/shielded-pool-mobile/Cargo.toml",
-    "--test",
-    "core",
 ]
 results = []
-for name, path, before, after, test in [
+for name, path, before, after, suite, test in [
     (
         "spent-reconciliation",
         repo / "tools/shielded-pool-mobile/src/lib.rs",
         "recovered.reconcile_spent(&instance, &published).map_err(|_| Error::Crypto)?;",
         "// mutation control: omit spent reconciliation",
+        "core",
         "decrypts_real_payload_and_reconciles_spent_nullifiers",
     ),
     (
@@ -45,7 +44,24 @@ for name, path, before, after, test in [
         repo / "tools/shielded-pool-wallet/src/import.rs",
         "if note_body != slot.note_body {",
         "if false && note_body != slot.note_body {",
+        "core",
         "authenticated_note_body_mismatch_is_not_balance",
+    ),
+    (
+        "pool-depth-bound",
+        repo / "tools/shielded-pool-mobile/src/pool.rs",
+        ".set_max_cell_depth(MAX_BOC_DEPTH)",
+        "",
+        "pool",
+        "deep_frontier_is_rejected_before_layout_decode",
+    ),
+    (
+        "pool-cell-bound",
+        repo / "tools/shielded-pool-mobile/src/pool.rs",
+        "if cells > MAX_BOC_CELLS as u64 {",
+        "if false && cells > MAX_BOC_CELLS as u64 {",
+        "pool",
+        "cell_limit_rejects_a_valid_shallow_boc",
     ),
 ]:
     original = path.read_bytes()
@@ -55,7 +71,7 @@ for name, path, before, after, test in [
         log = root / f"native-mutation-{name}.log"
         with log.open("wb") as f:
             r = subprocess.run(
-                base + [test, "--", "--exact"],
+                base + ["--test", suite, test, "--", "--exact"],
                 cwd=repo,
                 env=env,
                 stdout=f,

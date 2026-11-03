@@ -80,3 +80,26 @@ mismatched note bodies, reconcile actual nullifiers, check duplicate accounting
 and unsigned index limits, exercise bounds/malformed input and cross the C ABI
 ownership boundary. A targeted mutation control must prove the spent-note and
 note-body tests fail when their respective checks are removed.
+
+## Pool state cells
+
+`tos_shielded_pool_state` accepts one generic single-root BOC, up to 2 MiB,
+32768 serialized cells and depth 128. Cardinality is checked before cell-table
+allocation. The existing pool codec is shared with the CLI through the
+`shielded-pool-codec` crate. Production codec logic is unchanged by extraction;
+its existing tests run in that crate's CI step.
+
+The UTF-8 JSON response includes `data_hash`, commitment/nullifier roots and
+indices, reserved recovery leaves, epoch, liability/reserve/fee/denominations,
+profile/manifest/verifying-key hashes, verifying-key bytes in standard Base64,
+and preserved anchors. Monetary quantities and indices are decimal strings;
+field/hash words are lower-case 32-byte hex. `version` is 1.
+
+This is layout decoding, **not proof verification or an assertion of a current
+balance**. Bind `data_hash` to the verified account's data root, verify the
+account address/code/network and deployment pins, then reconcile a complete
+history replay to the decoded roots before treating it as a wallet observation.
+Proofs, signing and storage remain caller responsibilities. Malformed, trailing,
+multiple-root, oversized and excessively deep data is rejected. The test suite
+includes valid shallow BOCs on both sides of the cell limit and an otherwise
+parseable state beyond the depth limit, with assertion-failure mutation controls.
