@@ -2,7 +2,8 @@
 
 A synchronous C ABI over `shielded-pool-wallet` and `shielded-pool-circuit`.
 This library does not implement a second key hierarchy or note validator. It
-currently exposes descriptor issuance and batched note recovery/reconciliation.
+exposes descriptor issuance, batched note recovery/reconciliation, pool state
+decoding and individual history-link binding.
 Planning, proving and transport must be integrated before a mobile payment is
 usable. No VM, consensus or contract changes are included.
 
@@ -103,3 +104,36 @@ Proofs, signing and storage remain caller responsibilities. Malformed, trailing,
 multiple-root, oversized and excessively deep data is rejected. The test suite
 includes valid shallow BOCs on both sides of the cell limit and an otherwise
 parseable state beyond the depth limit, with assertion-failure mutation controls.
+
+## Pool history links
+
+`tos_shielded_history_transaction` accepts a version-1 JSON request with
+`boc` (canonical standard Base64), `expected_hash`, `account_id`,
+`post_state_hash` (lower-case 32-byte hash hex), `expected_lt` (u64 decimal
+string) and `maximum_time` (u32 decimal string). The request has no unknown
+fields and is bounded by 2 MiB. The BOC has the same cell/depth bounds as pool
+state decoding. A transaction must be an ordinary level-zero cell, match the
+expected hash, LT and account, have the expected post-state, and be no newer
+than `maximum_time`. Its previous LT/hash must be consistent and go backwards.
+
+The first expectations must come from the verified ShardAccount transaction
+head and raw Account root/time. To walk backwards, feed each response's
+`previous_hash`, `previous_lt`, `pre_state_hash` and `time` as the next request's
+expectations, retaining the same account. A zero previous LT/hash terminates
+history. Persist page progress privately and impose an overall transaction/time
+budget; this stateless operation makes one bounded step and retains nothing.
+
+The JSON response includes the checked hash/LT/account/time, previous hash/LT,
+pre/post Account hashes and a classified `event`: deposit, transact, bounce or
+no-state-change. Monetary quantities are decimal strings, fields are canonical
+field hex, payloads are standard Base64. Event interpretation reuses the existing
+shared contract codec; rejection never means a transaction did not execute.
+This does not authenticate caller-supplied expectations, assert history
+completeness, perform ledger replay or return a verified private balance.
+
+Tests classify all nine original sandbox transactions. The sandbox leaves
+previous-transaction metadata zero, so link traversal is separately tested on
+explicitly linked copies with unchanged bodies/state updates. Those copies are
+unit-test constructions, not claimed as published chain transactions. Negative
+checks cover wrong hashes, LTs, accounts, state updates, future timestamps and
+skipping a linked transaction.

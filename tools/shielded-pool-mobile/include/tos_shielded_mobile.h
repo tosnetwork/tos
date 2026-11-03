@@ -29,6 +29,11 @@ TosShieldedResponse *tos_shielded_scan(const uint8_t *seed, size_t seed_len, con
  * to the account proof before using the result as a pool observation.
  */
 TosShieldedResponse *tos_shielded_pool_state(const uint8_t *data, size_t length);
+/* Bind/decode one transaction. JSON expectations originate in an account proof
+ * or a previously checked newer link. Does not establish freshness or replay
+ * completeness. Request max 2 MiB; same response ownership as the other calls.
+ */
+TosShieldedResponse *tos_shielded_history_transaction(const uint8_t *request, size_t length);
 /* status: 0 success; 1 invalid input/crypto failure; 2 contained panic.
  * Pointer is valid until free; free once, on the same library that allocated it.
  * The response buffer is zeroized on free. Accessors require a live handle.

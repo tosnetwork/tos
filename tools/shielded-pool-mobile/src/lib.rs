@@ -22,6 +22,7 @@ use std::{
 };
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
+pub mod history;
 pub mod pool;
 
 pub const MAX_REQUEST_BYTES: usize = 2 * 1024 * 1024;
@@ -290,5 +291,21 @@ pub unsafe extern "C" fn tos_shielded_pool_state(
             return Err(Error::InvalidInput);
         }
         pool::decode_pool_state(unsafe { slice::from_raw_parts(data, length) })
+    })
+}
+
+/// Decode one transaction against expectations bound to the account proof or a newer link.
+/// # Safety
+/// Non-null pointers must identify live allocations of the stated length.
+#[no_mangle]
+pub unsafe extern "C" fn tos_shielded_history_transaction(
+    request: *const u8,
+    length: usize,
+) -> *mut TosShieldedResponse {
+    response(|| {
+        if request.is_null() || length > MAX_REQUEST_BYTES {
+            return Err(Error::InvalidInput);
+        }
+        history::decode_transaction(unsafe { slice::from_raw_parts(request, length) })
     })
 }
