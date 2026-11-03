@@ -11,7 +11,7 @@ on:
       - 'crypto/poseidon2/**'
       - 'tosctl/src/block/**'
       - 'tosctl/src/lockfree/**'
-      - 'tosctl/src/common/build/**'
+      - 'tosctl/src/common/**'
       - 'scripts/build-shielded-mobile.py'
       - '.github/workflows/shielded-mobile.yml'
   workflow_dispatch:

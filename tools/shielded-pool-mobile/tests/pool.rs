@@ -42,6 +42,7 @@ fn malformed_and_unbounded_bocs_are_not_state_observations() {
     huge.extend_from_slice(&((MAX_BOC_CELLS + 1) as u32).to_be_bytes());
     huge.extend_from_slice(&1u32.to_be_bytes());
     huge.extend_from_slice(&0u32.to_be_bytes());
+    huge.push(0);
     assert_eq!(decode_pool_state(&huge), Err(Error::Limit));
 }
 
@@ -96,6 +97,25 @@ fn cell_limit_rejects_a_valid_shallow_boc() {
             assert_eq!(decode_pool_state(&boc), Err(Error::Limit));
         } else {
             assert!(decode_pool_state(&boc).is_ok());
+        }
+    }
+}
+
+#[test]
+fn total_cell_bytes_cannot_wrap_on_a_32_bit_target() {
+    let width = usize::from(GENESIS[4] & 7);
+    let size_start = 6 + 3 * width;
+    let size_end = size_start + usize::from(GENESIS[5]);
+    let actual = GENESIS[size_start..size_end].iter().fold(0u64, |n, b| (n << 8) | u64::from(*b));
+    for (declared, rejected) in [(actual, false), ((1u64 << 32) + actual, true)] {
+        let mut bytes = GENESIS[..size_start].to_vec();
+        bytes[5] = 8;
+        bytes.extend_from_slice(&declared.to_be_bytes());
+        bytes.extend_from_slice(&GENESIS[size_end..]);
+        if rejected {
+            assert_eq!(decode_pool_state(&bytes), Err(Error::Limit));
+        } else {
+            assert!(decode_pool_state(&bytes).is_ok());
         }
     }
 }

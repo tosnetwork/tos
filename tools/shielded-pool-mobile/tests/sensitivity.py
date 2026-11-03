@@ -63,6 +63,14 @@ for name, path, before, after, suite, test in [
         "pool",
         "cell_limit_rejects_a_valid_shallow_boc",
     ),
+    (
+        "pool-total-size-bound",
+        repo / "tools/shielded-pool-mobile/src/pool.rs",
+        "if declared_total > bytes.len() as u64 {",
+        "if false && declared_total > bytes.len() as u64 {",
+        "pool",
+        "total_cell_bytes_cannot_wrap_on_a_32_bit_target",
+    ),
 ]:
     original = path.read_bytes()
     assert original.decode().count(before) == 1

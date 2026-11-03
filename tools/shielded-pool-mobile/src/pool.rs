@@ -23,7 +23,10 @@ pub(crate) fn read_cell(bytes: &[u8]) -> Result<Cell> {
     // Proof-extracted state and transaction cells use the generic BOC encoding.
     // Inspect cardinality before the reader can allocate any cell tables.
     let width = usize::from(bytes[4] & 7);
-    if !(1..=4).contains(&width) || !(1..=8).contains(&bytes[5]) || bytes.len() < 6 + 3 * width {
+    if !(1..=4).contains(&width)
+        || !(1..=8).contains(&bytes[5])
+        || bytes.len() < 6 + 3 * width + usize::from(bytes[5])
+    {
         return Err(Error::InvalidInput);
     }
     let integer =
@@ -34,6 +37,15 @@ pub(crate) fn read_cell(bytes: &[u8]) -> Result<Cell> {
     }
     if cells == 0 || integer(6 + width) != 1 || integer(6 + 2 * width) != 0 {
         return Err(Error::InvalidInput);
+    }
+    let total_start = 6 + 3 * width;
+    let total_end = total_start + usize::from(bytes[5]);
+    let declared_total =
+        bytes[total_start..total_end].iter().fold(0u64, |n, b| (n << 8) | u64::from(*b));
+    // The underlying reader narrows this field to usize. Check the full wire
+    // width first so a 32-bit target cannot accept a wrapped data size.
+    if declared_total > bytes.len() as u64 {
+        return Err(Error::Limit);
     }
     let mut input = Cursor::new(bytes);
     let root = BocReader::new()

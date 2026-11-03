@@ -33,7 +33,7 @@ def source_identity(root):
         "tools/shielded-pool-codec",
         "tosctl/src/block",
         "tosctl/src/lockfree",
-        "tosctl/src/common/build",
+        "tosctl/src/common",
         "tools/shielded-pool-circuit",
         "crypto/poseidon2",
         "tosctl/src/block/src/poseidon2_kat.rs",
@@ -51,6 +51,46 @@ def source_identity(root):
     }
 
 
+def configure_date(environment, target_dir):
+    """Build metadata uses GNU date, including when this builder runs on macOS."""
+
+    def compatible(binary):
+        if binary is None:
+            return False
+        probe = subprocess.run(
+            [str(binary), "-u", "-d", "@0", "+%s"],
+            env=environment,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        return probe.returncode == 0 and probe.stdout.strip() == "0"
+
+    candidate = shutil.which("date", path=environment.get("PATH", ""))
+    if not compatible(candidate):
+        candidate = shutil.which("gdate", path=environment.get("PATH", ""))
+        if not compatible(candidate):
+            raise RuntimeError("GNU date is required for build metadata; install coreutils")
+        binary = Path(candidate).resolve()
+        tools = target_dir / "shielded-host-tools"
+        tools.mkdir(parents=True, exist_ok=True)
+        link = tools / "date"
+        if link.is_symlink() and link.resolve() != binary:
+            link.unlink()
+        if not link.is_symlink():
+            if link.exists():
+                raise RuntimeError("Refusing to replace a non-symlink host date tool")
+            try:
+                link.symlink_to(binary)
+            except FileExistsError:
+                if not link.is_symlink() or link.resolve() != binary:
+                    raise RuntimeError("Concurrent host date tool mismatch") from None
+        environment["PATH"] = str(tools) + os.pathsep + environment.get("PATH", "")
+    return subprocess.check_output(
+        [str(candidate), "--version"], text=True, env=environment
+    ).splitlines()[0]
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--platform", choices=["ios", "android"], required=True)
@@ -66,6 +106,7 @@ def main():
     env = dict(os.environ)
     env.setdefault("CARGO_BUILD_JOBS", "2")
     env["IPHONEOS_DEPLOYMENT_TARGET"] = "15.0"
+    date_version = configure_date(env, target_dir)
     targets = ["aarch64-apple-ios", "aarch64-apple-ios-sim", "x86_64-apple-ios"]
     if args.platform == "android":
         if args.abi is None or args.ndk is None:
@@ -170,6 +211,7 @@ def main():
         provenance = {
             **source_identity(root),
             "rust_toolchain": TOOLCHAIN,
+            "date_tool": date_version,
             "targets": targets,
             "files": {
                 str(p.relative_to(product)): hashlib.sha256(p.read_bytes()).hexdigest()
