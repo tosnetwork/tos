@@ -28,6 +28,11 @@ from .zerostate import NetworkConfig, PqInitialValidator, Zerostate, create_zero
 
 l = logging.getLogger(__name__)
 
+# How long a stopped node's log pipe is drained after the process exited.
+LOG_DRAIN_SECONDS = 10.0
+# How long a node may take to exit after SIGTERM before it is killed.
+STOP_SECONDS = 30.0
+
 
 def _retryable_startup_lite_error(error: BaseException) -> bool:
     """Only known 500-class transport and unsynced-node startup responses."""
@@ -121,7 +126,7 @@ class Network:
             self._static_nodes: list["DHTNode"] = []
 
             self.__process: asyncio.subprocess.Process | None = None
-            self.__process_watcher: asyncio.Task[None] | None = None
+            self.__process_watcher: asyncio.Task[int] | None = None
             self.__log_streamer: LogStreamer | None = None
 
         def _new_network_address(self) -> _IPv4AddressAndPort:
@@ -165,7 +170,7 @@ class Network:
             validator_config: tos_api.Validator_config_global | None,
             start_options: StartOptions,
         ):
-            async def process_watcher():
+            async def process_watcher() -> int:
                 assert self.__process is not None
                 return_code = await self.__process.wait()
                 if return_code < 0:
@@ -173,6 +178,7 @@ class Network:
                     l.info(f"Node '{self.name}' terminated by signal {signal_name}")
                 else:
                     l.info(f"Node '{self.name}' exited with code {return_code}")
+                return return_code
 
             assert self._network._status < _Status.CLOSED
 
@@ -261,13 +267,38 @@ class Network:
         async def run(self, options: StartOptions | None = None):
             pass
 
+        async def _reaped(self, timeout: float) -> int:
+            """The process's exit code once the child itself has been reaped.
+
+            `Process.wait()` resolves only after the log pipe reached end of
+            file as well, which a descendant that inherited the pipe can hold
+            off forever; the return code is known as soon as the child exits."""
+            assert self.__process is not None
+            deadline = asyncio.get_running_loop().time() + timeout
+            while self.__process.returncode is None:
+                if asyncio.get_running_loop().time() >= deadline:
+                    raise TimeoutError(f"node '{self.name}' did not exit within {timeout:.0f} s")
+                await asyncio.sleep(0.05)
+            return self.__process.returncode
+
+        async def wait(self, timeout: float) -> int:
+            """Wait for the node to exit on its own and return its exit code.
+
+            A node that ends by itself (a refusal, a fatal error) must be given
+            that chance before it is terminated: terminating it inside its own
+            failure handler can leave a helper child behind. The code is
+            negative when a signal ended the process."""
+            if self.__process is None:
+                raise RuntimeError(f"node '{self.name}' is not running")
+            return await self._reaped(timeout)
+
         async def stop(self):
             if self.__process:
                 # No exception can occur between self.__process and self._log_streamer creation
                 assert self.__log_streamer is not None
                 assert self.__process_watcher is not None
 
-                if not self.__process_watcher.done():
+                if self.__process.returncode is None:
                     l.info(f"Killing node '{self.name}'")
                     try:
                         self.__process.terminate()
@@ -275,9 +306,19 @@ class Network:
                         # Terminate might still fail if Python internally has already finished
                         # waiting for the child process but didn't yet resume the watcher.
                         pass
+                    try:
+                        await self._reaped(STOP_SECONDS)
+                    except TimeoutError:
+                        l.warning(f"Node '{self.name}' ignored SIGTERM for {STOP_SECONDS:.0f} s")
+                        self.__process.kill()
+                        await self._reaped(STOP_SECONDS)
 
+                # The process is gone; only a descendant that inherited the pipe
+                # can still hold the log open, and it must not hold the test.
+                # Cutting the pipe also lets the process watcher finish.
+                if not await self.__log_streamer.aclose(timeout=LOG_DRAIN_SECONDS):
+                    l.warning(f"Node '{self.name}' left a process holding its log pipe")
                 await self.__process_watcher
-                await self.__log_streamer.aclose()
 
                 self.__process = None
                 self.__process_watcher = None

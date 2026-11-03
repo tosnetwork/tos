@@ -55,8 +55,36 @@ class LogStreamer:
         self._logger = logging.getLogger(self._name)
         self._current_entry: _LogEntry | None = None
 
-    async def aclose(self):
+    async def aclose(self, timeout: float | None = None) -> bool:
+        """Wait for the raw log to drain to end of file.
+
+        The pipe reaches end of file only when every process holding its write
+        end has closed it. A descendant of the node that inherited the pipe (the
+        failure handler forks a helper, for example) keeps it open after the node
+        itself exited. With `timeout`, such a pipe is closed on this side after
+        the bound instead of being waited on forever; the return value says
+        whether the log drained by itself (True) or had to be cut (False)."""
+        if timeout is None:
+            await self._task
+            return True
+        done, _ = await asyncio.wait({self._task}, timeout=timeout)
+        if done:
+            # A failed drain (the raw log could not be written, for example)
+            # must surface here rather than be reported as a clean drain.
+            await self._task
+            return True
+        self._logger.warning(
+            "raw log pipe still open %.1f s after the process exited; "
+            "closing it instead of waiting for whatever inherited it",
+            timeout,
+        )
+        transport = getattr(self._stream, "_transport", None)
+        if transport is not None:
+            transport.close()
+        else:
+            self._stream.feed_eof()
         await self._task
+        return False
 
     def fd_binding(self) -> dict[str, int]:
         """Expose this streamer's exact pipe reader and raw-log writer FDs."""

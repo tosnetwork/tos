@@ -32,6 +32,8 @@ REPO = Path(__file__).resolve().parents[2]
 PERIOD = 1 << 17
 REFUSAL = "test-state-serializer-no-delay requires on-chain global id 3"
 NO_DELAY = "--test-state-serializer-no-delay"
+# The engine's failure handler exits with EXIT_FAILURE after printing its backtrace.
+REFUSAL_EXIT_CODE = 1
 
 
 def previous_bucket_genesis(now: int) -> int:
@@ -59,6 +61,12 @@ async def native_refusal(node: FullNode, options: StartOptions) -> None:
     async with asyncio.timeout(60):
         while REFUSAL not in node.log_path.read_text(errors="replace"):
             await asyncio.sleep(0.1)
+    # The engine ends itself after the refusal. Terminating it in the middle of
+    # its failure handler left a helper child holding the log pipe, which hung
+    # the control; waiting for its own exit also pins that the refusal is fatal.
+    code = await node.wait(30)
+    if code != REFUSAL_EXIT_CODE:
+        raise AssertionError(f"the refused node exited with {code}, expected {REFUSAL_EXIT_CODE}")
     await node.stop()
 
 
