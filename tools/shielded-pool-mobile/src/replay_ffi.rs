@@ -111,6 +111,38 @@ fn bound_cell(encoded: &str, expected: &str) -> Result<chain_block::Cell> {
     Ok(root)
 }
 
+/// Authenticated BR1 offer and the isolated transport that obtained it.
+#[cfg(all(unix, feature = "proving"))]
+pub struct RelayOffer {
+    client: br1_client::client::Client,
+    quote: br1_client::client::Quote,
+}
+
+#[cfg(all(unix, feature = "proving"))]
+impl RelayOffer {
+    /// Obtain a fee offer through the approved client's isolated Tor route.
+    pub async fn request(client: br1_client::client::Client, lifetime: u64) -> Result<Self> {
+        use rand::RngCore;
+        let mut token = Zeroizing::new([0u8; 32]);
+        rand::rngs::OsRng.try_fill_bytes(token.as_mut()).map_err(|_| Error::Crypto)?;
+        let token = Zeroizing::new(hex::encode(token.as_slice()));
+        let quote = client.quote(2, lifetime, &token).await.map_err(|_| Error::InvalidInput)?;
+        Ok(Self { client, quote })
+    }
+
+    pub fn identity(&self) -> &str {
+        &self.quote.identity
+    }
+
+    pub fn fee(&self) -> u64 {
+        self.quote.terms.amount
+    }
+
+    pub fn valid_until(&self) -> u64 {
+        self.quote.terms.valid_until
+    }
+}
+
 /// Payment details displayed and accepted by the wallet user.
 #[cfg(all(unix, feature = "proving"))]
 pub struct ConfirmedTransfer<'a> {
@@ -287,10 +319,10 @@ impl TosShieldedReplay {
         prover: &PaymentProver,
         transfer: ConfirmedTransfer<'_>,
         proven_time: u32,
-        relay: (br1_client::client::Client, br1_client::client::Quote),
+        relay: RelayOffer,
         fresh: &mut dyn FnMut() -> shielded_pool_wallet::error::Result<Fr>,
     ) -> Result<RecoveredRelaySubmission> {
-        let (client, quote) = relay;
+        let RelayOffer { client, quote } = relay;
         let quote = client
             .restore_quote(&quote.envelope, &quote.status_token)
             .map_err(|_| Error::InvalidInput)?;
