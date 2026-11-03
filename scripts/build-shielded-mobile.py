@@ -98,7 +98,9 @@ def main():
     parser.add_argument("--target-dir", type=Path, required=True)
     parser.add_argument("--ndk", type=Path)
     parser.add_argument("--abi", choices=TARGETS)
-    parser.add_argument("--proving", action="store_true", help="Build with the local payment prover")
+    parser.add_argument(
+        "--proving", action="store_true", help="Build with the local payment prover"
+    )
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     package = root / "tools/shielded-pool-mobile"
