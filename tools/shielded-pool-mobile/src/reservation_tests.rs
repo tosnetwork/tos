@@ -226,9 +226,12 @@ fn process_kill_after_journal_sync_never_reuses_the_unacknowledged_index() {
         let _result = store.reserve_inner(Some(7), 1, &mut |stage| {
             if stage == ReserveStage::DirectorySynced {
                 // SAFETY: kill only this deliberately spawned test process.
-                unsafe {
-                    libc::kill(libc::getpid(), libc::SIGKILL);
-                }
+                let sent = unsafe { libc::kill(libc::getpid(), libc::SIGKILL) };
+                assert_eq!(sent, 0);
+                // Never return into publish while a fatal process signal is
+                // pending. A missing delivery must fail, not move the boundary.
+                std::thread::sleep(std::time::Duration::from_secs(2));
+                std::process::exit(98);
             }
             Ok(())
         });
@@ -242,6 +245,7 @@ fn process_kill_after_journal_sync_never_reuses_the_unacknowledged_index() {
         .env(CHILD,&f.path).output().unwrap();
     use std::os::unix::process::ExitStatusExt;
     assert_eq!(child.status.signal(), Some(libc::SIGKILL));
+    assert!(!f.next().exists(), "Crash boundary must precede candidate creation");
     assert_eq!(fs::read(f.state()).unwrap(), before);
     let mut store = f.open();
     assert_eq!(store.reservation_high_water().unwrap(), 8);

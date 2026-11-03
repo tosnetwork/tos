@@ -359,6 +359,42 @@ tail, freeze the handle, and refuse automatic recovery. Read the exact-head job
 result before treating that Linux-only scenario as passed.
 
 
+### Canonical wallet directories (Unix, Rust only)
+
+`StateStore::open_wallet(root, cipher)` uses one existing durable OS app-private
+root for every alias of a wallet. Never put the common root under an ordinary
+wallet UUID or RPC-specific path. The caller must validate the original master
+and sandbox/root provenance; a role seed is not an interchangeable input.
+
+A 64-character hex child name is derived using SHAKE256 over the versioned mobile
+instance label, the existing pool master, canonical execution domain and trusted
+genesis root/file hashes. It excludes UI names, RPC URLs and upgradeable
+code/profile/manifest/VK pins. The record key/AAD still bind all pins exactly as
+before. An upgrade therefore reaches the existing directory and fails
+configuration authentication until an explicit migration is provided; it cannot
+silently start with a new high-water mark. The frozen synthetic identity vector
+is independently computed with Python hashlib from these fixed inputs.
+
+The constructor validates and temporarily locks the parent, refuses flat
+`state.bin`, `state.next` or `reservations.bin` entries (including dangling
+symlinks), creates a private child with mkdirat, opens it without following
+symlinks and syncs the parent before returning the exclusively locked child.
+All child operations retain the existing directory-relative state/journal
+semantics. Missing roots are not created, unsafe entries are not chmod'ed or
+removed, and uncertain candidates still require explicit recovery. The parent
+FD is released when construction finishes; one child FD and one derived key are
+retained, plus fixed identity/cursor fields. The caller controls admission and
+retention of wallet/pool instances; chain data does not create new instances.
+
+The low-level `open(path, cipher)` API remains for an explicitly selected store
+or migration tool. Never use it on the common canonical root or mix flat and
+canonical writers there. No automatic migration, global multi-device coordination
+or new mobile store ABI is supplied by this method. Host tests cover actual
+alias locking/non-reuse, distinct master/domain/genesis identities, pin changes,
+legacy refusal, unsafe entries and path retargeting; they are not App or
+power-loss acceptance.
+
+
 ## Complete Ready-ledger scan summary
 
 `tos_shielded_replay_summary(session, seed, seed_length)` scans every output

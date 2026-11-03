@@ -70,6 +70,7 @@ pub enum Kind {
 pub struct RecordCipher {
     key: Zeroizing<[u8; 32]>,
     binding: Binding,
+    instance_id: [u8; 32],
 }
 impl RecordCipher {
     /// The borrowed seed remains owned by the caller, which must clear it.
@@ -81,7 +82,23 @@ impl RecordCipher {
         shake.update(seed);
         shake.update(&binding.encode());
         shake.finalize_xof().read(key.as_mut());
-        Self { key, binding }
+        // Directory identity excludes upgradeable pins: changing them must fail
+        // authentication in the existing directory, never hide an old UNKNOWN.
+        let master = Zeroizing::new(shielded_pool_wallet::keys::pool_master(seed));
+        let domain =
+            shielded_pool_circuit::wire::execution_domain(binding.global_id, &binding.pool_account);
+        let mut identity = Shake256::default();
+        identity.update(b"TOS-SHIELD-MOBILE-INSTANCE-v1");
+        identity.update(&*master);
+        identity.update(&shielded_pool_circuit::field::fr_to_be(&domain));
+        identity.update(&binding.genesis_root);
+        identity.update(&binding.genesis_file);
+        let mut instance_id = [0; 32];
+        identity.finalize_xof().read(&mut instance_id);
+        Self { key, binding, instance_id }
+    }
+    pub(crate) fn instance_id(&self) -> &[u8; 32] {
+        &self.instance_id
     }
     fn cipher(&self) -> Result<XChaCha20Poly1305> {
         XChaCha20Poly1305::new_from_slice(self.key.as_ref()).map_err(|_| Error::Crypto)

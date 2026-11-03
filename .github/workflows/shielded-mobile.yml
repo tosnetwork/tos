@@ -30,8 +30,8 @@ jobs:
       - name: Check build and sensitivity scripts
         run: |
           python3 -m pip install ruff==0.15.2
-          ruff check --isolated --select E4,E7,E9,F,I --ignore E741 scripts/build-shielded-mobile.py tools/shielded-pool-mobile/tests/sensitivity.py tools/shielded-pool-mobile/tests/test_build_source.py tools/shielded-pool-mobile/tests/sealed_sensitivity.py tools/shielded-pool-mobile/tests/snapshot_sensitivity.py tools/shielded-pool-mobile/tests/store_sensitivity.py tools/shielded-pool-mobile/tests/wallet_sensitivity.py tools/shielded-pool-mobile/tests/reservations_sensitivity.py
-          ruff format --check --isolated --line-length 100 scripts/build-shielded-mobile.py tools/shielded-pool-mobile/tests/sensitivity.py tools/shielded-pool-mobile/tests/test_build_source.py tools/shielded-pool-mobile/tests/sealed_sensitivity.py tools/shielded-pool-mobile/tests/snapshot_sensitivity.py tools/shielded-pool-mobile/tests/store_sensitivity.py tools/shielded-pool-mobile/tests/wallet_sensitivity.py tools/shielded-pool-mobile/tests/reservations_sensitivity.py
+          ruff check --isolated --select E4,E7,E9,F,I --ignore E741 scripts/build-shielded-mobile.py tools/shielded-pool-mobile/tests/sensitivity.py tools/shielded-pool-mobile/tests/test_build_source.py tools/shielded-pool-mobile/tests/sealed_sensitivity.py tools/shielded-pool-mobile/tests/snapshot_sensitivity.py tools/shielded-pool-mobile/tests/store_sensitivity.py tools/shielded-pool-mobile/tests/wallet_sensitivity.py tools/shielded-pool-mobile/tests/reservations_sensitivity.py tools/shielded-pool-mobile/tests/instance_sensitivity.py
+          ruff format --check --isolated --line-length 100 scripts/build-shielded-mobile.py tools/shielded-pool-mobile/tests/sensitivity.py tools/shielded-pool-mobile/tests/test_build_source.py tools/shielded-pool-mobile/tests/sealed_sensitivity.py tools/shielded-pool-mobile/tests/snapshot_sensitivity.py tools/shielded-pool-mobile/tests/store_sensitivity.py tools/shielded-pool-mobile/tests/wallet_sensitivity.py tools/shielded-pool-mobile/tests/reservations_sensitivity.py tools/shielded-pool-mobile/tests/instance_sensitivity.py
       - name: Check source provenance detects changes to the builder
         run: python3 -m unittest discover -s tools/shielded-pool-mobile/tests -p 'test_build_source.py' -v
       - name: Format, lint and exercise the C ABI and actual note crypto
@@ -50,6 +50,8 @@ jobs:
         run: python3 tools/shielded-pool-mobile/tests/snapshot_sensitivity.py --out /tmp/shielded-mobile-snapshot-controls --target-dir tools/shielded-pool-mobile/target
       - name: Require assertion failures when private store safeguards are removed
         run: python3 tools/shielded-pool-mobile/tests/store_sensitivity.py --out /tmp/shielded-mobile-store-controls --target-dir tools/shielded-pool-mobile/target
+      - name: Require assertion failures when canonical instance safeguards are removed
+        run: python3 tools/shielded-pool-mobile/tests/instance_sensitivity.py --out /tmp/shielded-mobile-instance-controls --target-dir tools/shielded-pool-mobile/target
       - name: Require assertion failures when durable reservation safeguards are removed
         run: python3 tools/shielded-pool-mobile/tests/reservations_sensitivity.py --out /tmp/shielded-mobile-reservation-controls --target-dir tools/shielded-pool-mobile/target
       - name: Exercise actual disk exhaustion on a disposable private tmpfs

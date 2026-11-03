@@ -9,7 +9,7 @@ use crate::{
     Error,
 };
 use std::{
-    ffi::CStr,
+    ffi::{CStr, CString},
     fs::{File, OpenOptions},
     io::{self, Read, Write},
     os::{
@@ -19,6 +19,8 @@ use std::{
     path::Path,
 };
 
+const DIRECTORY_FLAGS: i32 =
+    libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK;
 const STATE: &CStr = c"state.bin";
 const NEXT: &CStr = c"state.next";
 const STATE_HEADER: usize = 52;
@@ -73,26 +75,88 @@ pub struct StateStore {
     journal: Cursor,
 }
 impl StateStore {
+    /// Low-level existing-directory API; never use a common open_wallet root here.
     /// Does not create directories, rewrite old formats, remove temporary files,
     /// or reset a wallet whose key/binding cannot authenticate existing state.
     pub fn open(path: &Path, cipher: RecordCipher) -> Result<Self> {
         if !path.is_absolute() {
             return Err(StoreError::UnsafeFile);
         }
-        let directory = OpenOptions::new()
-            .read(true)
-            .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK)
-            .open(path)?;
+        let directory = OpenOptions::new().read(true).custom_flags(DIRECTORY_FLAGS).open(path)?;
+        Self::from_directory(directory, cipher)
+    }
+    /// Use one durable OS app-private root for all wallet aliases. The child
+    /// name binds the original master, execution domain and trusted genesis,
+    /// excluding RPC/UI identifiers and upgradeable pins. Caller authenticates
+    /// the original master and root provenance; this API cannot establish them.
+    pub fn open_wallet(root: &Path, cipher: RecordCipher) -> Result<Self> {
+        if !root.is_absolute() {
+            return Err(StoreError::UnsafeFile);
+        }
+        let directory = OpenOptions::new().read(true).custom_flags(DIRECTORY_FLAGS).open(root)?;
+        Self::private_directory(&directory)?;
+        Self::exclusive_lock(&directory)?;
+        // Never reinterpret a legacy flat store as a fresh canonical root.
+        for name in [STATE, NEXT, c"reservations.bin"] {
+            let mut metadata = std::mem::MaybeUninit::<libc::stat>::uninit();
+            // SAFETY: live parent FD/name and space for exactly one stat result;
+            // do not follow even a dangling legacy symlink or read its contents.
+            if unsafe {
+                libc::fstatat(
+                    directory.as_raw_fd(),
+                    name.as_ptr(),
+                    metadata.as_mut_ptr(),
+                    libc::AT_SYMLINK_NOFOLLOW,
+                )
+            } == 0
+            {
+                return Err(StoreError::RecoveryRequired);
+            }
+            let error = io::Error::last_os_error();
+            if error.kind() != io::ErrorKind::NotFound {
+                return Err(error.into());
+            }
+        }
+        let name =
+            CString::new(hex::encode(cipher.instance_id())).map_err(|_| Error::InvalidInput)?;
+        // SAFETY: owned parent FD and fixed-length NUL-terminated hex name.
+        if unsafe { libc::mkdirat(directory.as_raw_fd(), name.as_ptr(), 0o700) } != 0 {
+            let error = io::Error::last_os_error();
+            if error.kind() != io::ErrorKind::AlreadyExists {
+                return Err(error.into());
+            }
+        }
+        // SAFETY: owned parent FD; flags neither create nor follow a symlink.
+        let fd = unsafe { libc::openat(directory.as_raw_fd(), name.as_ptr(), DIRECTORY_FLAGS) };
+        if fd < 0 {
+            return Err(io::Error::last_os_error().into());
+        }
+        // SAFETY: openat returned a new uniquely owned descriptor.
+        let child = unsafe { File::from_raw_fd(fd) };
+        Self::private_directory(&child)?;
+        // Sync even an existing entry: a previous creator may have failed here.
+        directory.sync_all()?;
+        Self::from_directory(child, cipher)
+    }
+    fn private_directory(directory: &File) -> Result<()> {
         let metadata = directory.metadata()?;
         // SAFETY: geteuid has no preconditions.
         let owner = unsafe { libc::geteuid() };
         if !metadata.is_dir() || metadata.uid() != owner || metadata.mode() & 0o077 != 0 {
             return Err(StoreError::UnsafeFile);
         }
-        // SAFETY: this descriptor remains owned by the store for the lock's life.
+        Ok(())
+    }
+    fn exclusive_lock(directory: &File) -> Result<()> {
+        // SAFETY: this descriptor remains owned by the caller for the lock's life.
         if unsafe { libc::flock(directory.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
             return Err(io::Error::last_os_error().into());
         }
+        Ok(())
+    }
+    fn from_directory(directory: File, cipher: RecordCipher) -> Result<Self> {
+        Self::private_directory(&directory)?;
+        Self::exclusive_lock(&directory)?;
         let mut store = Self {
             directory,
             cipher,
@@ -274,3 +338,7 @@ impl StateStore {
 #[cfg(test)]
 #[path = "store_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "instance_tests.rs"]
+mod instance_tests;
