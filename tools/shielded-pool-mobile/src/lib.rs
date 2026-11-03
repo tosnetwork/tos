@@ -25,6 +25,15 @@ use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 pub mod history;
 pub mod pool;
 pub mod replay;
+#[cfg(feature = "proving")]
+pub fn prove_prepared_payment(
+    prover: &shielded_pool_prover::PublicClient,
+    payment: &shielded_pool_wallet::spend::Prepared,
+    proven_time: u32,
+) -> Result<shielded_pool_circuit::groth16::CanonicalProof> {
+    prover.prove(payment.public, payment.witness.clone(), proven_time).map_err(|_| Error::Crypto)
+}
+
 pub mod replay_ffi;
 pub mod sealed;
 pub mod snapshot;
