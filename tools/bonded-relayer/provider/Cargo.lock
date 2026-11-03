@@ -607,6 +607,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "br1-client"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "ark-ff",
+ "base64 0.22.1",
+ "chain_block",
+ "contracts",
+ "fips204",
+ "hex",
+ "rand 0.8.5",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sha3",
+ "shielded-pool-circuit",
+ "shielded-pool-wallet",
+ "tokio",
+]
+
+[[package]]
 name = "br1-native-provider"
 version = "0.1.0"
 dependencies = [
@@ -614,6 +635,7 @@ dependencies = [
  "ark-ff",
  "async-trait",
  "base64 0.22.1",
+ "br1-client",
  "chain_block",
  "common",
  "contracts",

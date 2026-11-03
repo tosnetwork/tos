@@ -23,6 +23,7 @@ on:
       - 'tools/shielded-pool-circuit/**'
       - 'tools/shielded-pool-prover/**'
       - 'tools/shielded-pool-ceremony/**'
+      - 'tools/bonded-relayer/client/**'
       - 'crypto/poseidon2/manifest.bin'
       - '.github/workflows/tosctl-nixos.yml'
       - '!tosctl/src/ci/**'
@@ -45,6 +46,7 @@ on:
       - '!tools/shielded-pool-circuit/**/*.md'
       - '!tools/shielded-pool-prover/**/*.md'
       - '!tools/shielded-pool-ceremony/**/*.md'
+      - '!tools/bonded-relayer/client/**/*.md'
   push:
     branches: [main]
     paths: *inputs

@@ -1,7 +1,7 @@
 // Copyright 2026 TOS Network. SPDX-License-Identifier: GPL-3.0-only
 use crate::{private_io, protocol};
 use anyhow::{ensure, Result};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::Value;
 use std::path::Path;
 
@@ -13,47 +13,11 @@ pub fn validate_global_id(global_id: i32) -> Result<()> {
     Ok(())
 }
 
-#[derive(Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct Release {
-    pub global_id: i32,
-    pub genesis_root: String,
-    pub genesis_file: String,
-    pub bond: String,
-    pub bond_code_hash: String,
-    pub policy_hash: String,
-    pub worker_key_hash: String,
-    pub pool: String,
-    pub pool_code_hash: String,
-    pub pool_config_hash: String,
-}
-impl Release {
-    pub fn validate(&self) -> Result<()> {
-        validate_global_id(self.global_id)?;
-        for s in [
-            &self.genesis_root,
-            &self.genesis_file,
-            &self.bond_code_hash,
-            &self.policy_hash,
-            &self.worker_key_hash,
-            &self.pool_code_hash,
-            &self.pool_config_hash,
-        ] {
-            protocol::digest(&Value::String(s.clone()))?;
-        }
-        for s in [&self.bond, &self.pool] {
-            ensure!(s.starts_with("0:") && s.len() == 66, "canonical basechain address");
-            protocol::digest(&Value::String(s[2..].into()))?;
-        }
-        ensure!(self.bond != self.pool, "release account collision");
-        Ok(())
-    }
-    pub fn scope(&self) -> Result<String> {
-        let mut bytes = b"TOS-BR1-RELEASE\0".to_vec();
-        bytes.extend(protocol::canonical(&serde_json::to_value(self)?)?);
-        Ok(protocol::hash(&bytes))
-    }
-}
+/// The release pins, shared with the wallet. Network admission
+/// ([`validate_global_id`]) is this provider's policy and is checked at every
+/// path a release enters by.
+pub use br1_client::release::Release;
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
@@ -74,6 +38,7 @@ impl Config {
         let config: Self = serde_json::from_value(value)?;
         ensure!(config.schema == "tos.br1.provider.config.v1", "provider config schema");
         config.release.validate()?;
+        validate_global_id(config.release.global_id)?;
         ensure!(
             payload.get("release") == Some(&serde_json::to_value(&config.release)?),
             "operator release mismatch"

@@ -39,6 +39,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y pkg-config libssl-dev
           scripts/install-rust-toolchain.sh
+      - name: Check the shared client crate's format, tests and lints
+        run: |
+          cargo fmt --manifest-path tools/bonded-relayer/client/Cargo.toml --check
+          cargo test --manifest-path tools/bonded-relayer/client/Cargo.toml --locked -j2
+          cargo clippy --manifest-path tools/bonded-relayer/client/Cargo.toml --locked --all-targets --no-deps -j2 -- -D warnings
+          python3 -I test/bonded-relayer/br1_wire_corpus.py | cmp - test/bonded-relayer/fixtures/br1-wire-corpus.json
       - name: Check provider format, regression tests and lints
         run: |
           cargo fmt --manifest-path tools/bonded-relayer/provider/Cargo.toml --check

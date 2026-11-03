@@ -39,7 +39,7 @@ use super::profile::Profile;
 /// The format of the sealed state and journal. A client reads its own format
 /// only: this tool is pre-release and carries no state across formats. An
 /// instance written in an earlier format is re-initialised from its mnemonic.
-pub const STATE_FORMAT_VERSION: u32 = 2;
+pub const STATE_FORMAT_VERSION: u32 = 3;
 const AAD_PREFIX: &[u8] = b"TOS-SHIELD-CLI-v1";
 const KEY_LABEL: &[u8] = b"TOS-SHIELD-CLI-STATE-KEY-v1";
 const INSTANCE_LABEL: &[u8] = b"TOS-SHIELD-CLI-INSTANCE-v1";
@@ -390,7 +390,10 @@ impl Store {
                              with the same mnemonic. The chain gives back every note; the old \
                              journal's receipts are not carried over, and a spend that was still \
                              pending is forgotten (the pool refuses a second spend of the same \
-                             note, so at worst its fee is lost)",
+                             note, so at worst its fee is lost). A relayed spend that was \
+                             still open is forgotten too: its quote, its request identity and \
+                             the status capability for asking the relayer about it are in the \
+                             old journal only",
                             self.dir.display(),
                             self.dir
                                 .parent()
@@ -755,6 +758,58 @@ pub enum JournalRecord {
     /// The broadcast of a spend returned an error; whether the message
     /// reached the network is not known.
     SpendUnknown { message_hash: Word, error: String },
+    /// A relay session opens: before anything is sent over Tor, the status
+    /// capability the quote will be bound to and the proxy isolation this
+    /// session alone uses are on disk, so a restart asks about the same
+    /// request through the same circuit identity and never mints a second
+    /// capability for it.
+    RelayQuoteRequested {
+        /// Names the session; the later records of the session carry it.
+        tag: Word,
+        status_token: String,
+        isolation_user: String,
+        isolation_password: String,
+        tor_port: u16,
+        /// The Bond address, its declared onion endpoint and the release
+        /// scope, as the relayer profile bound them to the verified head.
+        bond: String,
+        endpoint: String,
+        release_scope: String,
+    },
+    /// The relayer's authenticated quote: its identity, the exact envelope
+    /// the worker signed, and the terms the spend is planned under. A quote
+    /// that is not followed by a prepared request burned the relayer's note
+    /// index; it is never reused or asked for again.
+    RelayQuoted {
+        tag: Word,
+        quote_id: String,
+        envelope: Vec<u8>,
+        note_index: u64,
+        fee: Coins,
+        funding_cap: Coins,
+        valid_until: u32,
+    },
+    /// The exact request wire bytes, built once from the signed and proven
+    /// spend and about to be submitted. Never rebuilt.
+    RelayRequestPrepared {
+        tag: Word,
+        intent_digest: Word,
+        request_id: String,
+        quote_id: String,
+        body_hash: Word,
+        wire: Vec<u8>,
+    },
+    /// The relayer acknowledged the exact request and claimed a status. The
+    /// claim settles nothing; a verified sync does.
+    RelaySubmitted { request_id: String, status: String, message_hash: Option<String> },
+    /// The submission returned no well-formed acknowledgement; whether the
+    /// request reached the relayer is not known.
+    RelayUnknown { request_id: String, error: String },
+    /// This client refused to send the prepared request: the window closed
+    /// with less than the margin left, or the request no longer matched its
+    /// quote. Nothing left this machine; the inputs stay held until the
+    /// deadline passes by the contract's clock.
+    RelayWithheld { request_id: String, reason: String },
 }
 
 /// The next index this client may issue: past everything the state knows,

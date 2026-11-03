@@ -22,6 +22,8 @@
 
 mod chain;
 mod profile;
+mod relay;
+mod relayer;
 mod spend;
 mod store;
 
@@ -106,6 +108,8 @@ pub enum ShieldAction {
     Withdraw(spend::WithdrawCmd),
     /// Send to another shielded descriptor
     Send(spend::SendCmd),
+    /// What the chain and the relayer say about relayed spends
+    Status(relay::StatusCmd),
 }
 
 impl ShieldCmd {
@@ -119,6 +123,7 @@ impl ShieldCmd {
             ShieldAction::Deposit(cmd) => cmd.run(config_path).await,
             ShieldAction::Withdraw(cmd) => cmd.run(config_path).await,
             ShieldAction::Send(cmd) => cmd.run(config_path).await,
+            ShieldAction::Status(cmd) => cmd.run(config_path).await,
         }
     }
 }

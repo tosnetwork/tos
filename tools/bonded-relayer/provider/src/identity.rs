@@ -71,37 +71,11 @@ impl Identity {
         )
     }
 }
-/// Authenticate quote terms against `expected`, the pinned worker key: canonical base64 of
-/// exactly the ML-DSA-44 key and signature widths, a key equal to `expected`, and a valid
-/// signature over the exact `terms` bytes. The operator's `Identity::verify` and the
-/// wallet's `client_quote` both use this, so they cannot disagree on which quotes are valid.
-pub fn verify_quote_signature(
-    expected: &[u8],
-    terms: &[u8],
-    public_b64: &str,
-    signature_b64: &str,
-) -> Result<()> {
-    let public = decode(public_b64, 1312)?;
-    ensure!(public.as_slice() == expected, "quote worker mismatch");
-    let public: [u8; 1312] = public.try_into().map_err(|_| anyhow::anyhow!("key width"))?;
-    let signature = decode(signature_b64, 2420)?;
-    let signature: [u8; 2420] =
-        signature.try_into().map_err(|_| anyhow::anyhow!("signature width"))?;
-    relayer_quote::verify_terms(&public, terms, &signature)?;
-    Ok(())
-}
-
-pub fn decode(text: &str, exact: usize) -> Result<Vec<u8>> {
-    let maximum = exact
-        .checked_add(2)
-        .and_then(|x| x.checked_div(3))
-        .and_then(|x| x.checked_mul(4))
-        .ok_or_else(|| anyhow::anyhow!("base64 bound overflow"))?;
-    ensure!(text.len() == maximum, "base64 length");
-    let bytes = STANDARD.decode(text)?;
-    ensure!(bytes.len() == exact && STANDARD.encode(&bytes) == text, "base64 canonical width");
-    Ok(bytes)
-}
+/// Quote authentication is the shared crate's, so the operator's
+/// `Identity::verify` and the wallet's `client_quote` cannot disagree on
+/// which quotes are valid.
+pub use br1_client::quote::verify_quote_signature;
+pub use br1_client::wire::decode_exact as decode;
 
 #[cfg(test)]
 mod tests {

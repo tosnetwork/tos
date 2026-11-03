@@ -133,6 +133,7 @@ pub async fn run(input: &Path, out: &Path) -> Result<()> {
         pool_config_hash: get("pool_config_hash")?,
     };
     release.validate()?;
+    crate::config::validate_global_id(release.global_id)?;
     let value = json!({"schema":"tos.br1.provider.config.v1","release":release,"execution_domain":t["execution_domain"],"fee":t["fee"],"funding_cap":t["funding_cap"],"rpc_url":t["rpc_url"],"funding_wallet":address.to_string(),"proof_verifier":t["proof_verifier"],"proof_verifier_sha256":t["proof_verifier_sha256"]});
     let config: Config = serde_json::from_value(value.clone())?;
     let wallet = crate::funding::wallet(&config, out).await?;
