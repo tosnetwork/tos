@@ -376,10 +376,12 @@ impl TosShieldedReplay {
             .restore_quote(&quote.envelope, &quote.status_token)
             .map_err(|_| Error::InvalidInput)?;
         let terms = &quote.terms;
+        // BR1 checks issuance against wall time when acquiring the offer.
+        // A verified shard timestamp can precede that issuance.
         if quote.identity != transfer.quote_identity
             || terms.amount != transfer.fee
             || terms.slot != 2
-            || !(terms.issued_at..terms.valid_until).contains(&u64::from(proven_time))
+            || u64::from(proven_time) >= terms.valid_until
         {
             return Err(Error::InvalidInput);
         }
@@ -433,7 +435,7 @@ impl TosShieldedReplay {
         let recipient = shielded_pool_wallet::plan::RecipientKeys::of(&descriptor);
         let fee = &payment.witness.outputs[2];
         if terms.slot != 2
-            || !(terms.issued_at..terms.valid_until).contains(&u64::from(proven_time))
+            || u64::from(proven_time) >= terms.valid_until
             || shielded_pool_circuit::field::fr_to_be(&payment.public.valid_until)
                 > shielded_pool_circuit::field::fr_to_be(&Fr::from(terms.valid_until))
             || descriptor.execution_domain != self.domain
