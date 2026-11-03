@@ -48,8 +48,8 @@ TosShieldedResponse *tos_shielded_replay_info(const TosShieldedReplay *session);
 
 /* Validates one binary recipient descriptor against a Ready replay's pool.
  * The response has an empty payload. This does not authorize a payment. */
-TosShieldedResponse *tos_shielded_replay_validate_recipient(const TosShieldedReplay *session,
-    const uint8_t *descriptor, size_t descriptor_len);
+TosShieldedResponse *tos_shielded_replay_validate_recipient(const TosShieldedReplay *session, const uint8_t *descriptor,
+                                                            size_t descriptor_len);
 /* Scan at most 512 outputs against the completed ledger's FULL nullifier set.
  * A page is not a complete private balance. Merge by note body, cover all pages,
  * preserve issued-index high water and recheck proof freshness before publishing.
@@ -72,10 +72,9 @@ TosShieldedResponse *tos_shielded_replay_summary(const TosShieldedReplay *sessio
  * Replay creation JSON must contain these same bytes as hex in receive_binding.
  * Success returns one descriptor after durable reservation. An error after
  * reservation can burn the index. Serialize all access to the replay. */
-TosShieldedResponse *tos_shielded_replay_receive(const TosShieldedReplay *session,
-                                                const uint8_t *seed, size_t seed_length,
-                                                const uint8_t *root, size_t root_length,
-                                                const uint8_t *binding, size_t binding_length);
+TosShieldedResponse *tos_shielded_replay_receive(const TosShieldedReplay *session, const uint8_t *seed,
+                                                 size_t seed_length, const uint8_t *root, size_t root_length,
+                                                 const uint8_t *binding, size_t binding_length);
 #endif
 
 /* status: 0 success; 1 invalid input/crypto failure; 2 contained panic.
