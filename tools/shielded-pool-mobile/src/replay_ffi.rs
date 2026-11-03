@@ -1261,6 +1261,36 @@ mod tests {
     }
     #[cfg(all(unix, feature = "proving"))]
     #[test]
+    fn payment_prover_abi_rejects_invalid_inputs() {
+        let owner = TosShieldedReplay {
+            state: State::Ready(Box::new(Ledger::genesis())),
+            domain: Fr::from(7u64),
+            receive_binding: None,
+            terms: PoolTerms { denominations: vec![], withdrawal_fee: 1 },
+        };
+        let absolute = b"/missing";
+        for (session, path) in [
+            (ptr::null(), absolute.as_slice()),
+            (&owner as *const _, b"relative".as_slice()),
+            (&owner as *const _, b"/bad\0path".as_slice()),
+            (&owner as *const _, absolute.as_slice()),
+        ] {
+            let prover = unsafe {
+                tos_shielded_payment_prover_load(
+                    session,
+                    path.as_ptr(),
+                    path.len(),
+                    absolute.as_ptr(),
+                    absolute.len(),
+                )
+            };
+            assert!(prover.is_null());
+        }
+        unsafe { tos_shielded_payment_prover_free(ptr::null_mut()) };
+    }
+
+    #[cfg(all(unix, feature = "proving"))]
+    #[test]
     fn prover_rejects_wrong_binding_before_loading_material() {
         let mut binding = [1; 228];
         binding[..4].copy_from_slice(&3i32.to_be_bytes());
