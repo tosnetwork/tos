@@ -33,6 +33,7 @@ def lookup():
 
 def probe_origin():
     # Disable curlrc; do not inherit a proxy whose remote_ip would be the proxy.
+    # A certificate-valid IP endpoint avoids depending on resolver bootstrap DNS.
     command = [
         "curl",
         "--disable",
@@ -40,7 +41,7 @@ def probe_origin():
         "--proto",
         "=https",
         "--doh-url",
-        "https://dns.google/dns-query",
+        "https://1.1.1.1/dns-query",
         "--connect-timeout",
         "10",
         "--max-time",

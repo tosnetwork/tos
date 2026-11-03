@@ -148,9 +148,7 @@ class ResolverTests(unittest.TestCase):
             self.assertNotIn("--insecure", command)
             self.assertNotIn("-k", command)
             self.assertEqual(command[-1], "https://apt.llvm.org/")
-            self.assertEqual(
-                command[command.index("--doh-url") + 1], "https://dns.google/dns-query"
-            )
+            self.assertEqual(command[command.index("--doh-url") + 1], "https://1.1.1.1/dns-query")
 
     def test_ephemeral_opt_in_is_required_before_any_dns_work(self):
         with (
