@@ -7,10 +7,17 @@ license = 'GPL-3.0'
 [features]
 node-data-sync-native = ["node-data-sync/native"]
 pq-wallet = ["dep:wallet-pq-signer", "contracts/native-wallet-vault"]
+# The shielded-pool client (`tosctl shield`). Off by default: it pulls in the
+# proving-system field arithmetic and the post-quantum primitives.
+shielded = ["dep:shielded-pool-wallet", "dep:shielded-pool-circuit", "dep:chacha20poly1305", "dep:sha3"]
 
 [dependencies]
 wallet-pq-signer = { path = "../../wallet-pq-signer", features = ["vault"], optional = true }
 tos-native-mnemonic = { path = "../../tos-native-mnemonic" }
+shielded-pool-wallet = { path = "../../../../tools/shielded-pool-wallet", optional = true }
+shielded-pool-circuit = { path = "../../../../tools/shielded-pool-circuit", optional = true }
+chacha20poly1305 = { version = "=0.10.1", default-features = false, features = ["alloc", "getrandom"], optional = true }
+sha3 = { version = "=0.10.8", optional = true }
 serde = { features = ["derive", "rc"], version = "1.0" }
 serde_json = "1.0"
 ciborium = "0.2"

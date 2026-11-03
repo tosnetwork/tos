@@ -13,7 +13,9 @@
 //! actually verifies.
 
 use ark_ff::{BigInteger, PrimeField};
-use chain_block::{BuilderData, Cell, IBitstring, MsgAddressInt, Serializable, StateInit};
+use chain_block::{
+    BuilderData, Cell, IBitstring, MsgAddressInt, Serializable, StateInit, Transaction,
+};
 use shielded_pool_circuit::field::Fr;
 use tos_sandbox::{compile_func, Blockchain, MessageBuilder, SendResult};
 
@@ -198,6 +200,9 @@ pub struct Pool {
     pub bc: Blockchain,
     pub addr: MsgAddressInt,
     payer: tos_sandbox::Treasury,
+    /// Every transaction of the pool's own account that a message sent
+    /// through this struct produced, deployment first, in execution order.
+    history: Vec<Transaction>,
 }
 
 /// Every FunC source the pool is built from, in dependency order.
@@ -332,7 +337,14 @@ impl Pool {
                 .build(),
         )?;
         require_committed(&result, "candidate deployment")?;
-        Ok(Self { bc, addr, payer })
+        let history = result.transactions_for(&addr).into_iter().cloned().collect();
+        Ok(Self { bc, addr, payer, history })
+    }
+
+    /// The pool account's transactions so far, oldest first: what a client
+    /// replaying this pool from its first transaction would be handed.
+    pub fn history(&self) -> &[Transaction] {
+        &self.history
     }
 
     /// The pool's own account id, which the execution domain is built from.
@@ -369,7 +381,9 @@ impl Pool {
             .bounce(true)
             .body(body)
             .build();
-        Ok(self.bc.send_message(msg)?)
+        let result = self.bc.send_message(msg)?;
+        self.history.extend(result.transactions_for(&self.addr).into_iter().cloned());
+        Ok(result)
     }
 
     /// The exit code, the gas, and how many messages the pool sent.

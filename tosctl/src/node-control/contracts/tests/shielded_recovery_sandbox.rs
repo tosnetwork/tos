@@ -453,6 +453,20 @@ impl Pool {
     /// body is the chain's; this arranges the delivery, which is the part
     /// section 15.3 does not accept as evidence.
     fn deliver_bounce(&mut self, src: &MsgAddressInt, body: SliceData, value: u64) -> i32 {
+        let result = self.deliver_bounce_result(src, body, value);
+        match result.read_primary_description().compute_ph {
+            chain_block::TrComputePhase::Vm(vm) => vm.exit_code,
+            chain_block::TrComputePhase::Skipped(s) => panic!("compute skipped: {:?}", s.reason),
+        }
+    }
+
+    /// The same delivery, with the transaction it produced.
+    fn deliver_bounce_result(
+        &mut self,
+        src: &MsgAddressInt,
+        body: SliceData,
+        value: u64,
+    ) -> SendResult {
         let mut header = InternalMessageHeader::with_addresses(
             src.clone(),
             self.addr.clone(),
@@ -463,11 +477,7 @@ impl Pool {
         header.ihr_disabled = true;
         let mut msg = Message::with_int_header(header);
         msg.set_body(body);
-        let result = self.bc.send_message(msg).expect("deliver the bounce");
-        match result.read_primary_description().compute_ph {
-            chain_block::TrComputePhase::Vm(vm) => vm.exit_code,
-            chain_block::TrComputePhase::Skipped(s) => panic!("compute skipped: {:?}", s.reason),
-        }
+        self.bc.send_message(msg).expect("deliver the bounce")
     }
 }
 
@@ -773,7 +783,27 @@ fn a_bounced_payout_becomes_a_note_for_what_came_back() {
     let mut pool = Pool::deploy(bc, 9 * TOS);
     let before = pool.snapshot();
     let body = bounce.body().expect("the bounce has a body").clone();
-    assert_eq!(pool.deliver_bounce(&from, body, returned), 0, "the recovery was refused");
+    let delivered = pool.deliver_bounce_result(&from, body.clone(), returned);
+    delivered.expect_success();
+
+    // The wallet-side codec sees the same transaction as an authenticated
+    // recovery from the payout's recipient, carrying the original body back.
+    {
+        use contracts::shielded_pool::{self as codec, PoolTransaction};
+        let committed = delivered.transactions_for(&pool.addr);
+        assert_eq!(committed.len(), 1, "one pool transaction");
+        let expected_hash = codec::bounce_original_body_hash(&body)
+            .expect("read the envelope")
+            .expect("the bounce carries the original body");
+        match codec::classify(committed[0]).expect("classify the bounce") {
+            PoolTransaction::Bounce { original_body_hash, sender, value } => {
+                assert_eq!(original_body_hash, expected_hash);
+                assert_eq!(sender, from, "the codec named another sender");
+                assert_eq!(value, u128::from(returned));
+            }
+            other => panic!("a committed recovery classified as {other:?}"),
+        }
+    }
 
     let after = pool.snapshot();
     assert_ne!(after[0], before[0], "the recovery minted no note");

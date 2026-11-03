@@ -847,6 +847,7 @@ dependencies = [
  "fips204",
  "sha3",
  "shielded-pool-circuit",
+ "zeroize",
 ]
 
 [[package]]

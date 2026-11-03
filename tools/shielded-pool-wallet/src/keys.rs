@@ -62,6 +62,14 @@ pub fn pool_master(tos_seed: &[u8; 32]) -> [u8; 64] {
     out
 }
 
+impl Drop for PoolInstance {
+    /// The instance master is as good as the mnemonic for this pool, so it
+    /// does not outlive the value that holds it.
+    fn drop(&mut self) {
+        zeroize::Zeroize::zeroize(&mut self.master);
+    }
+}
+
 /// Everything a wallet holds for one pool on one chain.
 ///
 /// Two execution domains from the same mnemonic share no key material below
@@ -74,9 +82,22 @@ pub struct PoolInstance {
 
 impl PoolInstance {
     pub fn new(tos_seed: &[u8; 32], execution_domain: Fr) -> Self {
+        let mut master = zeroize::Zeroizing::new(pool_master(tos_seed));
+        let instance = Self::from_pool_master(&master, execution_domain);
+        zeroize::Zeroize::zeroize(&mut *master);
+        instance
+    }
+
+    /// The same instance from the mnemonic-global base rather than the seed.
+    ///
+    /// A wallet that holds only the pool master can derive every shielded key
+    /// it will ever need and nothing else: not the chain's signing key, which
+    /// the same mnemonic also roots. That is what lets a shielded-pool client
+    /// keep its spend authority apart from the ordinary wallet's.
+    pub fn from_pool_master(pool_master: &[u8; 64], execution_domain: Fr) -> Self {
         let mut master = [0u8; 64];
         shake(
-            &[b"TOS-SHIELDED-POOL-INSTANCE-v1", &pool_master(tos_seed), &fr_be32(execution_domain)],
+            &[b"TOS-SHIELDED-POOL-INSTANCE-v1", pool_master, &fr_be32(execution_domain)],
             &mut master,
         );
         Self { master, domain: execution_domain }

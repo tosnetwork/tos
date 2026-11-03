@@ -10,7 +10,10 @@
     "third-party/falcon-reference",
     "third-party/slhdsa-c",
     "third-party/lms-reference",
-    "test/validator/elector-control-fixture.rs"
+    "test/validator/elector-control-fixture.rs",
+    "tools/shielded-pool-wallet",
+    "tools/shielded-pool-circuit",
+    "crypto/poseidon2/manifest.bin"
   ],
   "exclude": [
     "tosctl/src/ci",
@@ -20,7 +23,8 @@
     "tosctl/src/Dockerfile.nodectl",
     "tosctl/src/Dockerfile.nodectl.dockerignore",
     "tosctl/src/Makefile",
-    "tosctl/src/tosctl-config.json"
+    "tosctl/src/tosctl-config.json",
+    "tools/shielded-pool-circuit/crosscheck"
   ],
   "exclude_suffixes": [
     ".md"

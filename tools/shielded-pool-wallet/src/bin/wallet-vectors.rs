@@ -55,7 +55,6 @@ fn digest(bytes: &[u8]) -> String {
     hex(&fr_be32(wire::output_data_hash(bytes)))
 }
 
-
 /// One scan's worth of observed outputs, and what a restored wallet makes of
 /// them.
 ///
@@ -77,8 +76,13 @@ fn recovery_vector(seed: &[u8; 32], other_seed: &[u8; 32], domain: Fr) -> String
     }
 
     let mut observed: Vec<Observed> = Vec::new();
-    let mut note = |instance: &PoolInstance, kind: Kind, index: u64, amount: u128,
-                    secret: u64, slot: u8, break_owner: bool| {
+    let mut note = |instance: &PoolInstance,
+                    kind: Kind,
+                    index: u64,
+                    amount: u128,
+                    secret: u64,
+                    slot: u8,
+                    break_owner: bool| {
         let plaintext = Plaintext {
             slot,
             kind,
@@ -95,12 +99,9 @@ fn recovery_vector(seed: &[u8; 32], other_seed: &[u8; 32], domain: Fr) -> String
             note_key_index: index,
             pq_auth_key_hash: instance.pq_auth_key_hash(index).expect("a hash"),
         };
-        let sealed = delivery::seal(
-            &instance.mlkem_encapsulation_key().expect("a key"),
-            domain,
-            &plaintext,
-        )
-        .expect("seal");
+        let sealed =
+            delivery::seal(&instance.mlkem_encapsulation_key().expect("a key"), domain, &plaintext)
+                .expect("seal");
         let owner = notes::owner_commitment(
             plaintext.owner_nf_key_hash,
             plaintext.pq_auth_key_hash,
@@ -148,7 +149,7 @@ fn recovery_vector(seed: &[u8; 32], other_seed: &[u8; 32], domain: Fr) -> String
             chain: ChainSlot {
                 output_data_hash: entry.output_data_hash,
                 note_body: entry.note_body,
-            recovered: None,
+                recovered: None,
             },
         })
         .collect();
@@ -175,10 +176,7 @@ fn recovery_vector(seed: &[u8; 32], other_seed: &[u8; 32], domain: Fr) -> String
     out.push_str("\n    ],\n");
     out.push_str("    \"expected\": {\n");
     out.push_str(&format!("      \"balance\": \"{}\",\n", recovered.balance()));
-    out.push_str(&format!(
-        "      \"next_note_key_index\": {},\n",
-        recovered.next_note_key_index
-    ));
+    out.push_str(&format!("      \"next_note_key_index\": {},\n", recovered.next_note_key_index));
     out.push_str("      \"notes\": [\n");
     for (position, found) in recovered.notes.iter().enumerate() {
         if position > 0 {
@@ -324,26 +322,20 @@ fn main() {
         let slot_view = ChainSlot {
             output_data_hash,
             note_body: match kind {
-                Kind::Recovery => {
-                    wire::recovery_template_hash(owner, output_data_hash)
-                }
+                Kind::Recovery => wire::recovery_template_hash(owner, output_data_hash),
                 _ => note_body,
             },
             recovered: None,
         };
-        let imported = import(&instance, &plaintext, &slot_view)
-            .expect("import")
-            .expect("a valid payload");
+        let imported =
+            import(&instance, &plaintext, &slot_view).expect("import").expect("a valid payload");
 
         out.push_str("    {\n");
         out.push_str(&format!("      \"kind\": \"{kind:?}\",\n"));
         out.push_str(&format!("      \"slot\": {slot},\n"));
         out.push_str(&format!("      \"note_key_index\": {index},\n"));
         out.push_str(&format!("      \"amount\": \"{amount}\",\n"));
-        out.push_str(&format!(
-            "      \"note_secret\": \"{}\",\n",
-            dec(plaintext.note_secret)
-        ));
+        out.push_str(&format!("      \"note_secret\": \"{}\",\n", dec(plaintext.note_secret)));
         out.push_str(&format!("      \"plaintext_bytes\": \"{}\",\n", hex(&encoded)));
         out.push_str(&format!("      \"sealed_length\": {},\n", sealed.len()));
         // The whole sealed payload. Sealing is randomised, so this cannot be

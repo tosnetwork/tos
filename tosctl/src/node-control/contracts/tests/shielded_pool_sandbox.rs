@@ -803,3 +803,100 @@ fn a_plain_top_up_and_a_bounce_change_no_shielded_state() {
     assert!(pool.balance() > before, "the top-up did not arrive");
     pool.assert_backed("after a top-up");
 }
+
+/// The wallet-side codec, held against the contract it decodes.
+///
+/// A wallet rebuilds the pool from its history with `contracts::shielded_pool`,
+/// and a codec that agrees with itself proves nothing: the body it builds has
+/// to be the body the contract accepts, the transaction it classifies has to
+/// be the one the contract ran, and the state it decodes has to be the state
+/// the getters report, all on the real contract in the real VM.
+#[test]
+fn the_wallet_codec_agrees_with_the_contract() {
+    use contracts::shielded_pool::{self as codec, PoolTransaction};
+
+    let mut pool = Pool::deploy();
+    let owner = [9u8; 32];
+    let (payload_cell, payload_bytes) = output_data(3);
+
+    // The codec builds exactly the body this suite builds by hand.
+    let built = codec::DepositBody {
+        query_id: 1,
+        amount: TOS as u128,
+        owner_commitment: owner,
+        output_data: payload_bytes.clone(),
+    }
+    .build()
+    .expect("the codec's deposit body");
+    assert_eq!(
+        built.repr_hash(),
+        deposit_body(TOS, &owner, payload_cell.clone()).repr_hash(),
+        "the codec's deposit body differs from the suite's"
+    );
+
+    // Sent through the contract, it is a committed deposit and decodes back.
+    let result = pool.send(TOS + deposit_compute_fee(), built);
+    result.expect_success();
+    let committed = result.transactions_for(&pool.addr);
+    assert_eq!(committed.len(), 1, "one pool transaction");
+    match codec::classify(committed[0]).expect("classify a deposit") {
+        PoolTransaction::Deposit(body) => {
+            assert_eq!(body.amount, TOS as u128);
+            assert_eq!(body.owner_commitment, owner);
+            assert_eq!(body.output_data, payload_bytes);
+        }
+        other => panic!("a committed deposit classified as {other:?}"),
+    }
+
+    // A refused deposit, a top-up and a plain transfer are history that
+    // changed nothing, and are classified as exactly that -- never applied,
+    // never an error.
+    let refused =
+        pool.send(5 * TOS + deposit_compute_fee(), deposit_body(5 * TOS, &owner, payload_cell));
+    refused.expect_exit_code(202);
+    assert!(
+        matches!(
+            codec::classify(refused.transactions_for(&pool.addr)[0]).expect("classify a refusal"),
+            PoolTransaction::NoStateChange(_)
+        ),
+        "a refused deposit was not classified as no state change"
+    );
+    let mut top_up = BuilderData::new();
+    top_up.append_u32(OP_RESERVE_TOPUP).unwrap();
+    top_up.append_u64(1).unwrap();
+    let topped = pool.send(TOS, top_up.into_cell().unwrap());
+    topped.expect_success();
+    assert!(matches!(
+        codec::classify(topped.transactions_for(&pool.addr)[0]).expect("classify a top-up"),
+        PoolTransaction::NoStateChange(_)
+    ));
+    let plain = pool.send(TOS, Cell::default());
+    plain.expect_success();
+    assert!(matches!(
+        codec::classify(plain.transactions_for(&pool.addr)[0]).expect("classify a plain transfer"),
+        PoolTransaction::NoStateChange(_)
+    ));
+
+    // The state cell decodes to what the getters report, field by field.
+    let data = pool.bc.get_account(&pool.addr).and_then(|a| a.get_data()).expect("pool data");
+    let state = codec::PoolState::parse(&data).expect("decode the pool state");
+    assert_eq!(dec(&state.commitment_root), pool.get("commitment_root"));
+    assert_eq!(state.commitment_next_index.to_string(), pool.get("commitment_next_index"));
+    assert_eq!(state.commitment_next_index, 1, "one committed deposit");
+    assert_eq!(dec(&state.nullifier_root), pool.get("nullifier_root"));
+    assert_eq!(state.nullifier_next_index.to_string(), pool.get("nullifier_next_index"));
+    assert_eq!(state.native_liability.to_string(), pool.get("native_liability"));
+    assert_eq!(state.reserve_floor.to_string(), pool.get("reserve_floor"));
+    assert_eq!(state.reserved_recovery_leaves.to_string(), pool.get("reserved_recovery_leaves"));
+    assert_eq!(
+        state.config.denominations,
+        DENOMINATIONS.iter().map(|d| u128::from(*d)).collect::<Vec<_>>(),
+        "the configured denominations"
+    );
+    assert_eq!(state.config.withdrawal_fee, 50_000_000);
+    assert_eq!(
+        state.verifying_key,
+        (0..1248u32).map(|i| (i % 251) as u8).collect::<Vec<u8>>(),
+        "the verifying key bytes as deployed"
+    );
+}

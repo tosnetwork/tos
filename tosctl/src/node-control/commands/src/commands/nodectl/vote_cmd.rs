@@ -663,8 +663,9 @@ impl ProposalSummary<'_> {
 
 /// The wallet's own charge for sending `body`, as an upper bound, with the balance it
 /// holds: both read at one masterchain block. The storage it owes is counted from its
-/// last transaction (when it last paid) to shortly after now.
-async fn pinned_wallet_reserve(
+/// last transaction (when it last paid) to shortly after now. The gas, forwarding and
+/// storage tariffs are the ones of the chain the wallet lives on.
+pub(crate) async fn pinned_wallet_reserve(
     chain: &contracts::DefaultChainProvider,
     wallet: &chain_block::MsgAddressInt,
     body: &chain_block::Cell,
@@ -675,13 +676,18 @@ async fn pinned_wallet_reserve(
     let checkpoint = contracts::chain_provider::latest_checkpoint(chain).await?;
     let account = chain.get_address_info_at_unverified(wallet, &checkpoint).await?;
     let storage = wallet_storage_from_rpc(wallet, &account)?;
-    let gas = match chain.get_config_param_at_unverified(20, &checkpoint).await? {
-        ConfigParamEnum::ConfigParam20(value) => value,
-        other => anyhow::bail!("live ConfigParam 20 has unexpected representation: {other:?}"),
+    let (gas_param, forward_param) = chain_price_params(wallet.workchain_id());
+    let gas = match chain.get_config_param_at_unverified(gas_param, &checkpoint).await? {
+        ConfigParamEnum::ConfigParam20(value) | ConfigParamEnum::ConfigParam21(value) => value,
+        other => {
+            anyhow::bail!("live ConfigParam {gas_param} has unexpected representation: {other:?}")
+        }
     };
-    let forward = match chain.get_config_param_at_unverified(24, &checkpoint).await? {
-        ConfigParamEnum::ConfigParam24(value) => value,
-        other => anyhow::bail!("live ConfigParam 24 has unexpected representation: {other:?}"),
+    let forward = match chain.get_config_param_at_unverified(forward_param, &checkpoint).await? {
+        ConfigParamEnum::ConfigParam24(value) | ConfigParamEnum::ConfigParam25(value) => value,
+        other => anyhow::bail!(
+            "live ConfigParam {forward_param} has unexpected representation: {other:?}"
+        ),
     };
     let storage_prices = match chain.get_config_param_at_unverified(18, &checkpoint).await? {
         ConfigParamEnum::ConfigParam18(value) => value.prices()?,
@@ -697,6 +703,12 @@ async fn pinned_wallet_reserve(
         body,
     })?;
     Ok((reserve, account.balance))
+}
+
+/// The gas and forwarding price parameters of a chain: 20 and 24 for the masterchain,
+/// 21 and 25 for every other workchain.
+pub(crate) fn chain_price_params(workchain: i32) -> (u32, u32) {
+    if workchain == -1 { (20, 24) } else { (21, 25) }
 }
 
 /// The wallet's storage metadata (used cells and bits, last paid, recorded debt), as
@@ -718,7 +730,7 @@ pub(crate) fn wallet_storage_from_rpc(
              printed body from an external masterchain wallet with value + margin for its fees"
         );
     };
-    contracts::wallet::send_fees::AccountStorage::from_rpc(stat)
+    contracts::wallet::send_fees::AccountStorage::from_rpc(stat, wallet.workchain_id() == -1)
 }
 
 /// The wallet must hold the value and its own fees.
@@ -1914,11 +1926,20 @@ mod offer_create_tests {
                 bits: 4321,
                 last_paid: 1_700_000_123,
                 due_payment: 2_000_000_000,
+                masterchain: true,
             }
         );
         account["storage_stat"]["due_payment"] = serde_json::Value::Null;
         let info: contracts::chain_provider::AddressInfo = serde_json::from_value(account).unwrap();
         assert_eq!(wallet_storage_from_rpc(&wallet, &info).unwrap().due_payment, 0);
+    }
+
+    /// A masterchain wallet is priced by the masterchain's gas and forward
+    /// tariffs (ConfigParams 20 and 24), a base-workchain one by 21 and 25.
+    #[test]
+    fn the_price_params_follow_the_wallets_chain() {
+        assert_eq!(chain_price_params(-1), (20, 24));
+        assert_eq!(chain_price_params(0), (21, 25));
     }
 
     /// A lost answer to the send itself still yields the final report, as an

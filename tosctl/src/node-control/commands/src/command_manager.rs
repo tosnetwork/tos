@@ -60,6 +60,11 @@ impl CommandManager {
                 cmd.run().await?;
                 Ok(None)
             }
+            #[cfg(feature = "shielded")]
+            Commands::Shield(cmd) => {
+                cmd.run().await?;
+                Ok(None)
+            }
             Commands::Wallet(cmd) => {
                 cmd.run(cancellation_ctx).await?;
                 Ok(None)
