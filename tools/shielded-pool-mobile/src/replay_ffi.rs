@@ -83,7 +83,13 @@ impl RecoveredRelaySubmission {
     pub async fn retry(
         &self,
     ) -> std::result::Result<br1_client::client::Status, br1_client::client::ClientError> {
-        self.client.submit_wire(&self.request, &self.quote).await
+        match self.status().await {
+            Ok(status) => Ok(status),
+            Err(br1_client::client::ClientError::Refused { status: 404 }) => {
+                self.client.submit_wire(&self.request, &self.quote).await
+            }
+            Err(error) => Err(error),
+        }
     }
 }
 
