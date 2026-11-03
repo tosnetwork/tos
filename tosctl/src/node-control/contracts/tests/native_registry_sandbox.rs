@@ -2603,3 +2603,6 @@ fn protocol_text_with_an_empty_tail_cell_is_refused() {
     assert!(!gas.aborted && gas.exit == 0, "the canonical text was refused: {gas:?}");
     assert_eq!(capability_position(&f.state_at(&capability.address)), (1, 2));
 }
+
+#[path = "served/service_journey.rs"]
+mod service_journey;
