@@ -564,7 +564,9 @@ class Run:
 
         def tampered_profile() -> JSON:
             profile = json.loads(self.pool_profile.read_text())
-            profile["pool_code_hash"] = "00" * 32
+            genuine = str(profile["pool_code_hash"])
+            planted = "00" * 32
+            profile["pool_code_hash"] = planted
             tampered = self.private / "tampered-profile.json"
             write_private_json(tampered, profile)
             generated = self.tosctl_plain(
@@ -583,11 +585,12 @@ class Run:
                 "0",
                 stdin=(mnemonic + "\n").encode(),
             )
-            if completed.ok():
-                raise LocalnetError("a tampered profile was accepted")
+            refusal = adj.require_profile_refusal(
+                completed.returncode, completed.stderr, planted=planted, genuine=genuine
+            )
             if (s.directory / "shield" / "tampered.json").exists():
                 raise LocalnetError("a refused init left an instance behind")
-            return self.command_facts(completed)
+            return self.command_facts(completed, **refusal)
 
         self.control("control-tampered-profile-refused", tampered_profile)
 

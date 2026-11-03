@@ -372,6 +372,34 @@ def require_recovery(
     return note
 
 
+PROFILE_CODE_HASH_REFUSAL = re.compile(
+    r"the pool's code hash (?P<chain>[0-9a-f]{64}) is not the profile's (?P<profile>[0-9a-f]{64})"
+)
+
+
+def require_profile_refusal(
+    returncode: int, stderr: str, *, planted: str, genuine: str
+) -> dict[str, str]:
+    """The tampered-profile control went red for the right reason only.
+
+    `planted` is the code hash the control wrote into the profile, `genuine`
+    the one the untampered profile carries. An init that fails for any other
+    reason (an unreachable node, a verifier failure, a crash) is not evidence
+    that the profile check exists, and is refused as such."""
+    if returncode == 0:
+        raise Adjudication("a tampered profile was accepted")
+    match = PROFILE_CODE_HASH_REFUSAL.search(strip_ansi(stderr))
+    if match is None:
+        raise Adjudication(
+            "init failed, but not because of the profile's code hash: " + stderr.strip()[-400:]
+        )
+    if match["profile"] != planted:
+        raise Adjudication("the refusal names a profile code hash the control did not plant")
+    if match["chain"] != genuine:
+        raise Adjudication("the chain's code hash in the refusal is not the genuine profile's")
+    return {"chain_code_hash": match["chain"], "refused_profile_code_hash": match["profile"]}
+
+
 def require_spends_leaf(plan: SpendPlan, leaf: int) -> None:
     """The later spend consumed exactly the recovered leaf, not only change."""
     if leaf not in {planned for _, planned in plan.inputs}:

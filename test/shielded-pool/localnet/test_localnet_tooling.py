@@ -12,6 +12,7 @@ import json
 import socket
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from typing import Any, cast
@@ -31,6 +32,7 @@ from localnet_common import (  # noqa: E402
     LocalnetError,
     Receipts,
     nanotos,
+    run_measured,
     tos_text,
 )
 from socks_peer import GatedSocksPeer, path_class, serve  # noqa: E402
@@ -282,6 +284,77 @@ class RecoveryTests(unittest.TestCase):
         adj.require_spends_leaf(both, 8)
         with self.assertRaisesRegex(adj.Adjudication, "recovered leaf"):
             adj.require_spends_leaf(adj.SpendPlan([(4_980_000_000, 5)], 0, 0), 8)
+
+
+class ProfileRefusalTests(unittest.TestCase):
+    GENUINE = "ce3b21bc64e392e14065e68665228bcb10e40dd83836ef00574dd90e5ce057cd"
+    PLANTED = "00" * 32
+    REFUSAL = f"command failed: the pool's code hash {GENUINE} is not the profile's {PLANTED}\n"
+
+    def test_the_planted_hash_is_refused_against_the_genuine_one(self):
+        facts = adj.require_profile_refusal(
+            1, self.REFUSAL, planted=self.PLANTED, genuine=self.GENUINE
+        )
+        self.assertEqual(facts["chain_code_hash"], self.GENUINE)
+        self.assertEqual(facts["refused_profile_code_hash"], self.PLANTED)
+
+    def test_an_accepted_profile_is_not_red(self):
+        with self.assertRaisesRegex(adj.Adjudication, "accepted"):
+            adj.require_profile_refusal(0, "", planted=self.PLANTED, genuine=self.GENUINE)
+
+    def test_an_unrelated_failure_is_not_evidence(self):
+        for stderr in (
+            "command failed: connection refused by the lite server\n",
+            "command failed: the proof verifier exited with status 2\n",
+            "",
+        ):
+            with self.assertRaisesRegex(adj.Adjudication, "not because of the profile's code hash"):
+                adj.require_profile_refusal(1, stderr, planted=self.PLANTED, genuine=self.GENUINE)
+
+    def test_a_refusal_of_another_hash_is_not_this_control(self):
+        other = "11" * 32
+        wrong_profile = self.REFUSAL.replace(self.PLANTED, other)
+        with self.assertRaisesRegex(adj.Adjudication, "did not plant"):
+            adj.require_profile_refusal(
+                1, wrong_profile, planted=self.PLANTED, genuine=self.GENUINE
+            )
+        wrong_chain = self.REFUSAL.replace(self.GENUINE, other)
+        with self.assertRaisesRegex(adj.Adjudication, "not the genuine"):
+            adj.require_profile_refusal(1, wrong_chain, planted=self.PLANTED, genuine=self.GENUINE)
+
+
+class MeasuredCommandTests(unittest.TestCase):
+    def test_a_timeout_kills_the_command_and_its_descendants(self):
+        with tempfile.TemporaryDirectory() as directory:
+            pid_file = Path(directory) / "pid"
+            script = (
+                "import subprocess, sys\n"
+                "child = subprocess.Popen(['sleep', '60'])\n"
+                "open(sys.argv[1], 'w').write(str(child.pid))\n"
+                "child.wait()\n"
+            )
+            started = time.monotonic()
+            with self.assertRaisesRegex(LocalnetError, "timed out"):
+                run_measured([sys.executable, "-c", script, str(pid_file)], timeout=1.0)
+            self.assertLess(time.monotonic() - started, 10.0)
+            pid = int(pid_file.read_text())
+            deadline = time.monotonic() + 5.0
+            while time.monotonic() < deadline:
+                try:
+                    state = Path(f"/proc/{pid}/status").read_text()
+                except FileNotFoundError:
+                    break
+                if "State:\tZ" in state:
+                    break
+                time.sleep(0.05)
+            else:
+                self.fail("the descendant sleep survived the timeout")
+
+    def test_a_finished_command_reports_its_output_and_usage(self):
+        completed = run_measured([sys.executable, "-c", "print('out'); raise SystemExit(3)"])
+        self.assertEqual(completed.returncode, 3)
+        self.assertEqual(completed.stdout, "out\n")
+        self.assertGreater(completed.max_rss_kib, 0)
 
 
 class PayoutTests(unittest.TestCase):

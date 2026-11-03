@@ -19,6 +19,7 @@ import hashlib
 import json
 import os
 import re
+import signal
 import subprocess
 import threading
 import time
@@ -225,6 +226,10 @@ class Completed:
         return self.returncode == 0
 
 
+# How long a timed-out command's pipes are drained before they are abandoned.
+DRAIN_AFTER_TIMEOUT_SECONDS = 5.0
+
+
 def run_measured(
     argv: list[str],
     *,
@@ -236,7 +241,10 @@ def run_measured(
     """Run one command and measure its wall time and peak resident set.
 
     The child is reaped with `wait4` so that its own resource usage is read,
-    not the running maximum over every child this process ever had."""
+    not the running maximum over every child this process ever had. It leads
+    its own process group, so a timeout kills every descendant that inherited
+    the pipes as well; the drain of those pipes is then bounded rather than
+    waited for, so a descendant that escaped the group cannot hold the gate."""
     started = time.monotonic()
     process = subprocess.Popen(
         argv,
@@ -245,6 +253,7 @@ def run_measured(
         stderr=subprocess.PIPE,
         env=env,
         cwd=cwd,
+        start_new_session=True,
     )
     captured: dict[str, bytes] = {}
 
@@ -264,16 +273,25 @@ def run_measured(
         except BrokenPipeError:
             pass
         process.stdin.close()
-    timer = threading.Timer(timeout, process.kill)
+
+    def kill_group() -> None:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+
+    timer = threading.Timer(timeout, kill_group)
     timer.start()
     try:
         _, status, usage = os.wait4(process.pid, 0)
     finally:
         timer.cancel()
     process.returncode = -os.WTERMSIG(status) if os.WIFSIGNALED(status) else os.WEXITSTATUS(status)
+    timed_out = not timer.is_alive() and time.monotonic() - started >= timeout
     for reader in readers:
-        reader.join()
-    if not timer.is_alive() and time.monotonic() - started >= timeout:
+        reader.join(DRAIN_AFTER_TIMEOUT_SECONDS if timed_out else None)
+    if timed_out:
+        kill_group()
         raise LocalnetError(f"timed out after {timeout:.0f} s: {argv[0]}")
     return Completed(
         argv=list(argv),
