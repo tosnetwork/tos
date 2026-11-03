@@ -50,6 +50,10 @@ TosShieldedResponse *tos_shielded_replay_info(const TosShieldedReplay *session);
  * The response has an empty payload. This does not authorize a payment. */
 TosShieldedResponse *tos_shielded_replay_validate_recipient(const TosShieldedReplay *session, const uint8_t *descriptor,
                                                             size_t descriptor_len);
+/* Returns one byte. 1 means the Ready ledger observed the exact intent.
+ * 0 means absent from this observation and cannot authorize a replacement. */
+TosShieldedResponse *tos_shielded_replay_intent_accepted(const TosShieldedReplay *session, const uint8_t *digest,
+                                                         size_t digest_len);
 /* Scan at most 512 outputs against the completed ledger's FULL nullifier set.
  * A page is not a complete private balance. Merge by note body, cover all pages,
  * preserve issued-index high water and recheck proof freshness before publishing.

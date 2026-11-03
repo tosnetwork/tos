@@ -292,6 +292,29 @@ pub unsafe extern "C" fn tos_shielded_replay_validate_recipient(
     })
 }
 
+/// # Safety
+/// Pointers must identify live allocations of the stated types and lengths.
+#[no_mangle]
+pub unsafe extern "C" fn tos_shielded_replay_intent_accepted(
+    session: *const TosShieldedReplay,
+    digest: *const u8,
+    digest_len: usize,
+) -> *mut TosShieldedResponse {
+    response(|| {
+        if session.is_null() || digest.is_null() || digest_len != 32 {
+            return Err(Error::InvalidInput);
+        }
+        let State::Ready(ledger) = &unsafe { &*session }.state else {
+            return Err(Error::InvalidInput);
+        };
+        let mut encoded = [0; 32];
+        encoded.copy_from_slice(unsafe { slice::from_raw_parts(digest, digest_len) });
+        let intent =
+            shielded_pool_circuit::field::fr_from_be(&encoded).map_err(|_| Error::InvalidInput)?;
+        Ok(Zeroizing::new(vec![u8::from(ledger.accepted_intents().contains(&intent))]))
+    })
+}
+
 unsafe fn mutate(
     session: *mut TosShieldedReplay,
     operation: impl FnOnce(State) -> Result<State>,
@@ -506,6 +529,17 @@ mod tests {
             serde_json::from_slice(&after.scan(&seed, 0, 1).unwrap()).unwrap();
         assert_eq!(page["scan"]["batch_unspent_balance"], "0");
         assert_eq!(page["scan"]["notes"][0]["spent"], true);
+        let accepted = |session: &TosShieldedReplay, digest: &[u8; 32]| unsafe {
+            Box::from_raw(tos_shielded_replay_intent_accepted(
+                session,
+                digest.as_ptr(),
+                digest.len(),
+            ))
+        };
+        let digest = shielded_pool_circuit::field::fr_to_be(&Fr::from(77u64));
+        assert_eq!(&*accepted(&before, &digest).bytes, &[0]);
+        assert_eq!(&*accepted(&after, &digest).bytes, &[1]);
+        assert_eq!(accepted(&after, &[255; 32]).status, 1);
     }
 
     #[test]
