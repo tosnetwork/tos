@@ -121,7 +121,7 @@ pub struct RelayOffer {
 #[cfg(all(unix, feature = "proving"))]
 impl RelayOffer {
     /// Obtain a fee offer through the approved client's isolated Tor route.
-    pub async fn request(client: br1_client::client::Client, lifetime: u64) -> Result<Self> {
+    async fn request(client: br1_client::client::Client, lifetime: u64) -> Result<Self> {
         use rand::RngCore;
         let mut token = Zeroizing::new([0u8; 32]);
         rand::rngs::OsRng.try_fill_bytes(token.as_mut()).map_err(|_| Error::Crypto)?;
@@ -306,6 +306,38 @@ impl TosShieldedReplay {
         let instance = PoolInstance::new(seed, self.domain);
         shielded_pool_wallet::spend::prepare(&instance, &plan, ledger.frontier(), terms, fresh)
             .map_err(|_| Error::Crypto)
+    }
+
+    /// Get an authenticated quote for the pool proven by this replay. The app
+    /// supplies an approved release and verifies current on-chain bond eligibility.
+    #[cfg(all(unix, feature = "proving"))]
+    pub async fn request_relay_offer(
+        &self,
+        release: &br1_client::release::Release,
+        bond_init: &str,
+        tor_port: u16,
+        timeout_secs: u64,
+        lifetime: u64,
+    ) -> Result<RelayOffer> {
+        use br1_client::socks::{Isolation, TorProxy};
+        if !matches!(self.state, State::Ready(_)) {
+            return Err(Error::InvalidInput);
+        }
+        let pool =
+            self.wallet_binding(self.receive_binding.as_ref().ok_or(Error::InvalidInput)?)?;
+        if release.global_id != pool.global_id
+            || release.genesis_root != hex::encode(pool.genesis_root)
+            || release.genesis_file != hex::encode(pool.genesis_file)
+            || release.pool != format!("0:{}", hex::encode(pool.pool_account))
+            || release.pool_code_hash != hex::encode(pool.code_hash)
+        {
+            return Err(Error::InvalidInput);
+        }
+        let proxy =
+            TorProxy::new(tor_port, Isolation::random()).map_err(|_| Error::InvalidInput)?;
+        let client = br1_client::client::Client::from_bond(release, bond_init, proxy, timeout_secs)
+            .map_err(|_| Error::InvalidInput)?;
+        RelayOffer::request(client, lifetime).await
     }
 
     /// Build the spend from the exact confirmed recipient, amount and BR1 quote.
