@@ -106,7 +106,7 @@ On every read the client holds the pool's code and configuration to the
 profile's pins and to the pins compiled into it: the profile revision
 (`KNOWN_PROFILE_HASHES`), the audited verifying key (`KNOWN_VERIFYING_KEYS`)
 and, outside local networks, the known pool code hashes (`KNOWN_CODE_HASHES`).
-A mismatch is a refusal, not a warning.
+A mismatch is a refusal, not a warning. The code pins include both the frozen V16 candidate and the authenticated Epoch-6 code used by the ceremony-key local end-to-end gate. This readonly code/configuration compatibility does not enable public deployment or certify public relaying.
 
 **Relayer profile** (`tos.shield.relayer-profile.v1`): the relayer's `release`
 pins (`global_id`, genesis root and file, `bond`, `bond_code_hash`,

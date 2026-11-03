@@ -157,8 +157,11 @@ pub enum KeyClass {
 }
 
 /// Pool code this tool knows, by code-cell hash.
-pub const KNOWN_CODE_HASHES: &[&str] =
-    &["5528ff26426e36b948bbd6ab3bd6615c82c98c87dd774e4fb456f3965722c466"];
+pub const KNOWN_CODE_HASHES: &[&str] = &[
+    "5528ff26426e36b948bbd6ab3bd6615c82c98c87dd774e4fb456f3965722c466",
+    // The authenticated public-testnet code, also used by the ceremony-key local gate.
+    "ce3b21bc64e392e14065e68665228bcb10e40dd83836ef00574dd90e5ce057cd",
+];
 
 /// Profile documents this tool was written against, by domain-prefixed hash.
 pub const KNOWN_PROFILE_HASHES: &[&str] = &[
@@ -394,6 +397,68 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    fn epoch6_public_fixture() -> (Profile, PoolState, [u8; 32]) {
+        use base64::Engine;
+        let fixture: serde_json::Value =
+            serde_json::from_str(include_str!("fixtures/epoch6-public-pool.json"))
+                .expect("public pool fixture");
+        let decode = |name: &str| {
+            base64::engine::general_purpose::STANDARD
+                .decode(fixture[name].as_str().expect("fixture field"))
+                .expect("base64")
+        };
+        let code = chain_block::read_single_root_boc(decode("code_boc")).expect("code cell");
+        let config = chain_block::read_single_root_boc(decode("config_boc")).expect("config cell");
+        let code_hash = *code.repr_hash().as_array();
+        assert_eq!(hex::encode(code_hash), fixture["code_hash"].as_str().expect("code hash"));
+        let mut state = observed_state();
+        state.config = contracts::shielded_pool::PoolConfig::parse(&config).expect("pool config");
+        state.verifying_key = decode("verifying_key_b64");
+        let profile = Profile {
+            schema: PROFILE_SCHEMA.into(),
+            global_id: 2,
+            pool_address: fixture["pool"].as_str().expect("pool").into(),
+            pool_code_hash: hex::encode(code_hash),
+        };
+        (profile, state, code_hash)
+    }
+
+    #[test]
+    fn epoch6_public_pool_uses_the_authenticated_ceremony_release() {
+        let (profile, state, code_hash) = epoch6_public_fixture();
+        Network::Testnet.gate(true).expect("explicit testnet gate");
+        check_pins(&profile, Network::Testnet, &ObservedPool { code_hash, state: &state })
+            .expect("authenticated Epoch6 code and ceremony parameters");
+        assert!(Network::Mainnet.gate(true).is_err(), "mainnet remains refused");
+    }
+
+    #[test]
+    fn epoch6_public_pool_refuses_a_different_code_even_when_the_profile_agrees() {
+        let (mut profile, state, mut code_hash) = epoch6_public_fixture();
+        code_hash[0] ^= 1;
+        profile.pool_code_hash = hex::encode(code_hash);
+        let error =
+            check_pins(&profile, Network::Testnet, &ObservedPool { code_hash, state: &state })
+                .expect_err("unrecognized code");
+        assert!(error.to_string().contains("not pool code this client knows"), "{error}");
+    }
+
+    #[test]
+    fn epoch6_public_pool_keeps_the_profile_and_verifying_key_checks() {
+        let (profile, mut state, code_hash) = epoch6_public_fixture();
+        state.config.profile_hash[0] ^= 1;
+        let error =
+            check_pins(&profile, Network::Testnet, &ObservedPool { code_hash, state: &state })
+                .expect_err("foreign profile");
+        assert!(error.to_string().contains("profile hash"), "{error}");
+        state.config.profile_hash[0] ^= 1;
+        state.verifying_key[0] ^= 1;
+        let error =
+            check_pins(&profile, Network::Testnet, &ObservedPool { code_hash, state: &state })
+                .expect_err("altered verifying key");
+        assert!(error.to_string().contains("hashes to"), "{error}");
     }
 
     #[test]
