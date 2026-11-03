@@ -274,6 +274,28 @@ impl TosShieldedReplay {
         relay: (br1_client::client::Client, br1_client::client::Quote),
     ) -> Result<RecoveredRelaySubmission> {
         let (client, quote) = relay;
+        let quote = client
+            .restore_quote(&quote.envelope, &quote.status_token)
+            .map_err(|_| Error::InvalidInput)?;
+        let terms = &quote.terms;
+        let descriptor = STANDARD.decode(&terms.descriptor_b64).map_err(|_| Error::InvalidInput)?;
+        let descriptor = shielded_pool_wallet::descriptor::Descriptor::from_bytes(&descriptor)
+            .map_err(|_| Error::InvalidInput)?;
+        let recipient = shielded_pool_wallet::plan::RecipientKeys::of(&descriptor);
+        let fee = &payment.witness.outputs[2];
+        if terms.slot != 2
+            || !(terms.issued_at..terms.valid_until).contains(&u64::from(proven_time))
+            || shielded_pool_circuit::field::fr_to_be(&payment.public.valid_until)
+                > shielded_pool_circuit::field::fr_to_be(&Fr::from(terms.valid_until))
+            || descriptor.execution_domain != self.domain
+            || fee.is_dummy
+            || fee.amount != Fr::from(terms.amount)
+            || fee.owner_nf_key_hash != recipient.owner_nf_key_hash
+            || fee.pq_auth_key_hash != recipient.pq_auth_key_hash
+        {
+            return Err(Error::InvalidInput);
+        }
+
         let body =
             Zeroizing::new(self.encode_private_transfer(seed, prover, payment, proven_time)?);
         let request =
