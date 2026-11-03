@@ -13,6 +13,7 @@ import os
 import socket
 import stat
 import subprocess
+import sys
 from pathlib import Path
 
 HOST = "apt.llvm.org"
@@ -56,7 +57,12 @@ def probe_origin():
         "%{remote_ip}",
         "https://apt.llvm.org/",
     ]
-    text = subprocess.check_output(command, text=True, stderr=subprocess.PIPE, timeout=40).strip()
+    try:
+        text = subprocess.check_output(command, text=True, stderr=subprocess.PIPE, timeout=40).strip()
+    except subprocess.CalledProcessError as error:
+        # curl stderr contains public endpoint diagnostics; bound the retained output.
+        print(f"LLVM TLS/DoH probe failed: {(error.stderr or '')[-2048:]}", file=sys.stderr)
+        raise
     address = ipaddress.IPv4Address(text)
     if not address.is_global or address.is_multicast or address.is_reserved:
         raise RuntimeError("TLS origin probe did not return a public unicast IPv4 address")
