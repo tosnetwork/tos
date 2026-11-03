@@ -10,10 +10,11 @@ description = "Bounded mobile C ABI over the existing shielded wallet cryptograp
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [features]
-proving = ["dep:shielded-pool-prover", "dep:br1-client"]
+proving = ["dep:shielded-pool-prover", "dep:br1-client", "dep:tokio"]
 
 [dependencies]
 br1-client = { path = "../bonded-relayer/client", optional = true }
+tokio = { version = "=1.54.1", features = ["rt", "net", "time"], optional = true }
 shielded-pool-codec = { path = "../shielded-pool-codec" }
 chain_block = { path = "../../tosctl/src/block" }
 shielded-pool-wallet = { path = "../shielded-pool-wallet" }

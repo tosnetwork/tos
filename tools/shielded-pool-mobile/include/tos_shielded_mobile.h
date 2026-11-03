@@ -70,6 +70,14 @@ TosShieldedPaymentProver *tos_shielded_payment_prover_load(
     const uint8_t *ceremony, size_t ceremony_len);
 void tos_shielded_payment_prover_free(TosShieldedPaymentProver *prover);
 
+/* Proving builds only. The request call uses loopback Tor and blocks.
+ * The caller must verify current on-chain Bond eligibility before calling. */
+typedef struct RelayOffer TosShieldedRelayOffer;
+TosShieldedRelayOffer *tos_shielded_relay_offer_request(
+    const TosShieldedReplay *session, const uint8_t *request, size_t length);
+TosShieldedResponse *tos_shielded_relay_offer_info(const TosShieldedRelayOffer *offer);
+void tos_shielded_relay_offer_free(TosShieldedRelayOffer *offer);
+
 void tos_shielded_replay_free(TosShieldedReplay *session);
 /* Complete Ready-ledger summary: globally deduplicates note bodies and reconciles
  * all published nullifiers. No note secrets/nullifiers are returned. Freshness

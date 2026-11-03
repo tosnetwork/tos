@@ -803,6 +803,86 @@ pub extern "C" fn tos_shielded_payment_prover_load(
 #[no_mangle]
 pub extern "C" fn tos_shielded_payment_prover_free(_prover: *mut std::ffi::c_void) {}
 
+/// Request a signed BR1 quote over loopback Tor. Call from a worker thread.
+#[cfg(all(unix, feature = "proving"))]
+///
+/// # Safety
+/// The session must be live and serialized. The request buffer must be valid
+/// for its stated length and contain locally approved release and Bond pins.
+#[no_mangle]
+pub unsafe extern "C" fn tos_shielded_relay_offer_request(
+    session: *const TosShieldedReplay,
+    request: *const u8,
+    length: usize,
+) -> *mut RelayOffer {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct OfferRequest {
+        release: br1_client::release::Release,
+        bond_init: String,
+        tor_port: u16,
+        timeout_secs: u64,
+        lifetime: u64,
+    }
+    if session.is_null() || request.is_null() || !(1..=MAX_REQUEST_BYTES).contains(&length) {
+        return ptr::null_mut();
+    }
+    let call = || {
+        let request: OfferRequest =
+            serde_json::from_slice(unsafe { slice::from_raw_parts(request, length) })
+                .map_err(|_| Error::InvalidInput)?;
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_io()
+            .enable_time()
+            .build()
+            .map_err(|_| Error::InvalidInput)?;
+        runtime.block_on(unsafe { &*session }.request_relay_offer(
+            &request.release,
+            &request.bond_init,
+            request.tor_port,
+            request.timeout_secs,
+            request.lifetime,
+        ))
+    };
+    match catch_unwind(AssertUnwindSafe(call)) {
+        Ok(Ok(offer)) => Box::into_raw(Box::new(offer)),
+        _ => ptr::null_mut(),
+    }
+}
+
+/// Return only displayable offer details, with integer values as decimal strings.
+///
+/// # Safety
+/// The offer must be live and must not be freed during this call.
+#[cfg(all(unix, feature = "proving"))]
+#[no_mangle]
+pub unsafe extern "C" fn tos_shielded_relay_offer_info(
+    offer: *const RelayOffer,
+) -> *mut TosShieldedResponse {
+    response(|| {
+        let offer = unsafe { offer.as_ref() }.ok_or(Error::InvalidInput)?;
+        serde_json::to_vec(&serde_json::json!({
+            "identity": offer.identity(),
+            "fee": offer.fee().to_string(),
+            "valid_until": offer.valid_until().to_string(),
+        }))
+        .map(Zeroizing::new)
+        .map_err(|_| Error::InvalidInput)
+    })
+}
+
+/// Release an offer after confirmation, cancellation or expiry.
+///
+/// # Safety
+/// A non-null offer must be live and no longer in use. Free each offer once.
+#[cfg(all(unix, feature = "proving"))]
+#[no_mangle]
+pub unsafe extern "C" fn tos_shielded_relay_offer_free(offer: *mut RelayOffer) {
+    if !offer.is_null() {
+        drop(unsafe { Box::from_raw(offer) });
+    }
+}
+
 /// Issue a descriptor only after committing its index in the canonical store.
 ///
 /// # Safety

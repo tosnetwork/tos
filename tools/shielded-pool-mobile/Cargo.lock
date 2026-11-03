@@ -1579,6 +1579,7 @@ dependencies = [
  "shielded-pool-codec",
  "shielded-pool-prover",
  "shielded-pool-wallet",
+ "tokio",
  "zeroize",
 ]
 
