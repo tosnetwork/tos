@@ -279,9 +279,12 @@ note, a public withdrawal, and an ambiguous submission whose response was
 dropped and which `status` reconciled without resubmission, each with a red
 control (tampered profile, concurrent lock, loopback Bond endpoint, wrong onion
 name, direct bypass of the proxy, Tor unavailable). The run's evidence index,
-with the hashes of every receipt and the retention record of the private
-material, is kept under `test/shielded-pool/evidence/`; the driver and its
-controls are `test/shielded-pool/localnet/`.
+`test/shielded-pool/evidence/shield-local-e2e-20261103.json`, names the
+binary under test by digest, every receipt by hash and the retention root of
+the raw material, which stays outside Git with its retention record; the
+driver and its controls are `test/shielded-pool/localnet/`, and
+`localnet/evidence.py` checks an index, recomputing the receipt digests when
+the retention root is present.
 
 What that evidence does not establish:
 
