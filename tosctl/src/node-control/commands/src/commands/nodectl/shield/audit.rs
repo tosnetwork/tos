@@ -23,8 +23,6 @@ use shielded_pool_ceremony::record::{self, Directory};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
-use super::EXPERIMENTAL;
-
 /// The environment variable an installation names the ceremony directory in.
 pub const CEREMONY_DIR_VARIABLE: &str = "TOSCTL_SHIELD_CEREMONY_DIR";
 /// The environment variable an installation names the phase-1 slice in.
@@ -165,7 +163,6 @@ pub struct AuditCeremonyCmd {
 
 impl AuditCeremonyCmd {
     pub fn run(&self) -> anyhow::Result<()> {
-        eprintln!("{}", EXPERIMENTAL.yellow());
         let resolved = self.material.resolve()?;
         let started = std::time::Instant::now();
         let (_, audited) = audit_material(&resolved)?;

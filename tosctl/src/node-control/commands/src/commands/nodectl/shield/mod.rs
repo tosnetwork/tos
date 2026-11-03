@@ -69,8 +69,12 @@ use store::{
     PersistedPoolConfig, PersistedState, Pointer, STATE_FORMAT_VERSION, Store, coins, coins_value,
 };
 
-const EXPERIMENTAL: &str = "EXPERIMENTAL: the shielded client has not passed its end-to-end gate; use it on an isolated \
-     network or at your own risk";
+/// Printed by a write command once its network is known and admitted.
+fn notice(network: Network) {
+    if let Some(text) = network.unproven_notice() {
+        eprintln!("{}", text.yellow());
+    }
+}
 const NANOTOS_PER_TOS: u128 = 1_000_000_000;
 /// Diagnostics kept in the state, newest last.
 const MAX_DIAGNOSTICS: usize = 256;
@@ -188,10 +192,10 @@ pub struct InitCmd {
 
 impl InitCmd {
     pub async fn run(&self, config_path: &Path) -> anyhow::Result<()> {
-        eprintln!("{}", EXPERIMENTAL.yellow());
         let profile = Profile::load(&self.profile)?;
         let network = Network::of(profile.global_id)?;
         network.gate(self.allow_testnet_pool)?;
+        notice(network);
         if network == Network::Testnet {
             eprintln!(
                 "{} the testnet pool is gated and may be reset without notice",
@@ -871,7 +875,6 @@ pub struct DepositCmd {
 
 impl DepositCmd {
     pub async fn run(&self, config_path: &Path) -> anyhow::Result<()> {
-        eprintln!("{}", EXPERIMENTAL.yellow());
         let amount = match (&self.amount, self.amount_nanotos) {
             (Some(text), None) => parse_tos(text)?,
             (None, Some(value)) => value,
@@ -881,6 +884,7 @@ impl DepositCmd {
 
         let (config, vault, rpc) = load_config_vault_rpc_client(config_path).await?;
         let mut opened = open_instance(config_path, &self.name, &vault).await?;
+        notice(opened.network()?);
         let pool = opened.pointer.profile.address()?;
         let head = self.read.head(&config, &rpc, &pool).await?;
         anyhow::ensure!(

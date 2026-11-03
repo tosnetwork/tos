@@ -59,8 +59,8 @@ use super::chain::Head;
 use super::profile::{KeyClass, Network, word};
 use super::store::{JournalRecord, Word, coins, coins_value};
 use super::{
-    EXPERIMENTAL, HeadRelation, Opened, ReadMode, confirm, open_instance, parse_tos,
-    restore_ledger, restore_recovered, sync_instance, tos, utc,
+    HeadRelation, Opened, ReadMode, confirm, open_instance, parse_tos, restore_ledger,
+    restore_recovered, sync_instance, tos, utc,
 };
 
 /// A spend is not sent when the contract's clock is this close to its
@@ -323,7 +323,6 @@ async fn run(
     proving: &Proving,
     config_path: &Path,
 ) -> anyhow::Result<()> {
-    eprintln!("{}", EXPERIMENTAL.yellow());
     let material = proving.material.resolve()?;
     let (config, vault, rpc) = load_config_vault_rpc_client(config_path).await?;
     let mut opened = open_instance(config_path, name, &vault).await?;

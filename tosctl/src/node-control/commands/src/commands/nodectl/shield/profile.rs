@@ -85,6 +85,13 @@ impl Profile {
     }
 }
 
+/// What a write command tells its operator before it acts anywhere the evidence
+/// behind this client does not reach. The end-to-end gate ran on an isolated
+/// local network with an offline Tor stand-in; nothing else has been exercised.
+pub const UNPROVEN_OUTSIDE_LOCAL_NETWORKS: &str = "UNPROVEN OUTSIDE LOCAL NETWORKS: the shielded client has passed its end-to-end gate on an \
+     isolated local network with an offline Tor stand-in; real Tor circuits and public networks \
+     are unexercised";
+
 /// The network a global id names, and the gate on each.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Network {
@@ -127,6 +134,15 @@ impl Network {
             Self::Local => "local",
             Self::Testnet => "testnet",
             Self::Mainnet => "mainnet",
+        }
+    }
+
+    /// The notice a write command prints on this network, if any: none on a
+    /// local network, which is where the client's evidence was gathered.
+    pub fn unproven_notice(self) -> Option<&'static str> {
+        match self {
+            Self::Local => None,
+            Self::Testnet | Self::Mainnet => Some(UNPROVEN_OUTSIDE_LOCAL_NETWORKS),
         }
     }
 }
@@ -274,6 +290,19 @@ mod tests {
         assert!(Network::of(2).expect("testnet").gate(true).is_ok());
         assert!(Network::of(1).expect("mainnet").gate(true).is_err());
         assert!(Network::of(7).is_err());
+    }
+
+    #[test]
+    fn only_a_local_network_acts_without_the_unproven_notice() {
+        assert_eq!(Network::of(3).expect("local").unproven_notice(), None);
+        for global_id in [1, 2] {
+            let notice = Network::of(global_id)
+                .expect("a known network")
+                .unproven_notice()
+                .expect("a notice outside local networks");
+            assert!(notice.starts_with("UNPROVEN OUTSIDE LOCAL NETWORKS: "));
+            assert!(notice.contains("offline Tor stand-in"));
+        }
     }
 
     fn local_profile() -> Profile {

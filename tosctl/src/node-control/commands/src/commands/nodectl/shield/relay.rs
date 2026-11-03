@@ -57,7 +57,7 @@ use super::spend::{
 };
 use super::store::{JournalRecord, Word, coins};
 use super::{
-    EXPERIMENTAL, Opened, confirm, load_config_vault_rpc_client, open_instance, restore_ledger,
+    Opened, confirm, load_config_vault_rpc_client, notice, open_instance, restore_ledger,
     restore_recovered, sync_instance, tos, unix_now, utc,
 };
 
@@ -298,12 +298,13 @@ pub(super) async fn run(
     proving: &Proving,
     config_path: &Path,
 ) -> anyhow::Result<()> {
-    eprintln!("{}", EXPERIMENTAL.yellow());
     let material = proving.material.resolve()?;
     anyhow::ensure!(!target.is_withdrawal(), "a withdrawal is never relayed");
     let (config, vault, rpc) = load_config_vault_rpc_client(config_path).await?;
     let mut opened = open_instance(config_path, name, &vault).await?;
-    opened.network()?.gate(options.allow_testnet_pool)?;
+    let network = opened.network()?;
+    network.gate(options.allow_testnet_pool)?;
+    notice(network);
     anyhow::ensure!(
         !proving.read.unverified_rpc,
         "a relayed spend is built only on heads the proof verifier authenticated; drop \
@@ -880,7 +881,6 @@ pub(super) fn through_this_relayer(
 
 impl StatusCmd {
     pub async fn run(&self, config_path: &Path) -> anyhow::Result<()> {
-        eprintln!("{}", EXPERIMENTAL.yellow());
         // The profile is public material and is held to its own rules first,
         // so a wrong profile is reported as such whether or not an instance
         // of this name exists.
