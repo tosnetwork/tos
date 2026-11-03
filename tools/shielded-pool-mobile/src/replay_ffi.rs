@@ -252,6 +252,13 @@ impl TosShieldedReplay {
             crate::sealed::RecordCipher::derive(seed, pool),
         )
         .map_err(|_| Error::InvalidInput)?;
+        if let Some(pending) = store.pending_payment().map_err(|_| Error::InvalidInput)? {
+            if !ledger.accepted_intents().contains(&pending.intent) {
+                return Err(Error::InvalidInput);
+            }
+            // Only authenticated chain replay can settle a journaled payment.
+            store.commit(&[]).map_err(|_| Error::InvalidInput)?;
+        }
         let plan = store
             .reserve_payment_plan(&self.terms, &recovered.0, &Default::default(), request)
             .map_err(|_| Error::InvalidInput)?;
