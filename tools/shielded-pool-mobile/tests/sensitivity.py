@@ -274,8 +274,8 @@ for name, path, before, after, suite, test in [
     (
         "session-published-set",
         repo / "tools/shielded-pool-mobile/src/replay_ffi.rs",
-        "ledger.published_nullifiers()",
-        "&std::collections::BTreeSet::new()",
+        "recover_notes(&instance, &outputs, ledger.published_nullifiers())?",
+        "recover_notes(&instance, &outputs, &std::collections::BTreeSet::new())?",
         "lib",
         "replay_ffi::tests::completed_scan_uses_the_full_published_nullifier_set",
     ),
@@ -289,7 +289,7 @@ for name, path, before, after, suite, test in [
     ),
 ]:
     original = path.read_bytes()
-    assert original.decode().count(before) == 1
+    assert original.decode().count(before) == 1, (name, path, before)
     try:
         path.write_text(original.decode().replace(before, after))
         log = root / f"native-mutation-{name}.log"

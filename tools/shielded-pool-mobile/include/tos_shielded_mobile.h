@@ -65,30 +65,29 @@ uint8_t tos_shielded_payment_supported(void);
 
 /* Load is synchronous and returns NULL on failure or in a read-only build. Paths must be absolute UTF-8 byte strings. */
 typedef struct PaymentProver TosShieldedPaymentProver;
-TosShieldedPaymentProver *tos_shielded_payment_prover_load(
-    const TosShieldedReplay *session, const uint8_t *phase1, size_t phase1_len,
-    const uint8_t *ceremony, size_t ceremony_len);
+TosShieldedPaymentProver *tos_shielded_payment_prover_load(const TosShieldedReplay *session, const uint8_t *phase1,
+                                                           size_t phase1_len, const uint8_t *ceremony,
+                                                           size_t ceremony_len);
 void tos_shielded_payment_prover_free(TosShieldedPaymentProver *prover);
 
 /* Requires proving support. The request call uses loopback Tor and blocks.
  * The caller must verify current on-chain Bond eligibility before calling. */
 typedef struct RelayOffer TosShieldedRelayOffer;
-TosShieldedRelayOffer *tos_shielded_relay_offer_request(
-    const TosShieldedReplay *session, const uint8_t *request, size_t length);
+TosShieldedRelayOffer *tos_shielded_relay_offer_request(const TosShieldedReplay *session, const uint8_t *request,
+                                                        size_t length);
 TosShieldedResponse *tos_shielded_relay_offer_info(const TosShieldedRelayOffer *offer);
 void tos_shielded_relay_offer_free(TosShieldedRelayOffer *offer);
 
 /* Requires proving support. Stage consumes the offer, even on failure. All calls
  * are synchronous. Submit uses Tor and reports an unverified relay status. */
 typedef struct RecoveredRelaySubmission TosShieldedPaymentSubmission;
-TosShieldedPaymentSubmission *tos_shielded_payment_stage(
-    const TosShieldedReplay *session, const TosShieldedPaymentProver *prover,
-    TosShieldedRelayOffer *offer, const uint8_t *seed, size_t seed_len,
-    const uint8_t *request, size_t request_len);
+TosShieldedPaymentSubmission *tos_shielded_payment_stage(const TosShieldedReplay *session,
+                                                         const TosShieldedPaymentProver *prover,
+                                                         TosShieldedRelayOffer *offer, const uint8_t *seed,
+                                                         size_t seed_len, const uint8_t *request, size_t request_len);
 /* Returns 0 on success (NULL output if none is pending), 1 on error. */
-uint8_t tos_shielded_payment_recover(
-    const TosShieldedReplay *session, const uint8_t *seed, size_t seed_len,
-    const uint8_t *request, size_t request_len, TosShieldedPaymentSubmission **output);
+uint8_t tos_shielded_payment_recover(const TosShieldedReplay *session, const uint8_t *seed, size_t seed_len,
+                                     const uint8_t *request, size_t request_len, TosShieldedPaymentSubmission **output);
 TosShieldedResponse *tos_shielded_payment_submit(const TosShieldedPaymentSubmission *submission);
 void tos_shielded_payment_free(TosShieldedPaymentSubmission *submission);
 
