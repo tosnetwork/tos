@@ -150,6 +150,28 @@ impl TosShieldedReplay {
         Ok(binding)
     }
 
+    /// Audit the installed material for the exact pool this replay authenticated.
+    #[cfg(all(unix, feature = "proving"))]
+    pub fn load_payment_prover(
+        &self,
+        phase1: &std::path::Path,
+        ceremony: &std::path::Path,
+        binding: &[u8; 228],
+    ) -> Result<shielded_pool_prover::PublicClient> {
+        if !matches!(self.state, State::Ready(_)) {
+            return Err(Error::InvalidInput);
+        }
+        let pool = self.wallet_binding(binding)?;
+        shielded_pool_prover::PublicClient::audit_and_load(
+            phase1,
+            ceremony,
+            &hex::encode(pool.verifying_key_hash),
+            pool.global_id,
+            &pool.pool_account,
+        )
+        .map_err(|_| Error::Crypto)
+    }
+
     fn scan(&self, seed: &[u8; 32], offset: usize, count: usize) -> Result<Zeroizing<Vec<u8>>> {
         let State::Ready(ledger) = &self.state else {
             return Err(Error::InvalidInput);
@@ -806,6 +828,25 @@ mod tests {
         assert_eq!(summary["unspent_balance"], "0");
         assert_eq!(summary["total_outputs"], "0");
     }
+    #[cfg(all(unix, feature = "proving"))]
+    #[test]
+    fn prover_rejects_wrong_binding_before_loading_material() {
+        let mut binding = [1; 228];
+        binding[..4].copy_from_slice(&3i32.to_be_bytes());
+        let owner = TosShieldedReplay {
+            state: State::Ready(Box::new(Ledger::genesis())),
+            domain: wire::execution_domain(3, &[1; 32]),
+            receive_binding: Some(binding),
+            terms: PoolTerms { denominations: vec![], withdrawal_fee: 1 },
+        };
+        binding[164] ^= 1;
+        let missing = std::path::Path::new("/nonexistent-proving-material");
+        assert!(matches!(
+            owner.load_payment_prover(missing, missing, &binding),
+            Err(Error::InvalidInput)
+        ));
+    }
+
     #[cfg(unix)]
     #[test]
     fn receive_reserves_before_return_and_survives_replay_restart() {

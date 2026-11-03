@@ -98,6 +98,7 @@ def main():
     parser.add_argument("--target-dir", type=Path, required=True)
     parser.add_argument("--ndk", type=Path)
     parser.add_argument("--abi", choices=TARGETS)
+    parser.add_argument("--proving", action="store_true", help="Build with the local payment prover")
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     package = root / "tools/shielded-pool-mobile"
@@ -138,6 +139,7 @@ def main():
                 target,
                 "--target-dir",
                 target_dir,
+                *(["--features", "proving"] if args.proving else []),
             ],
             cwd=root,
             env=env,
@@ -213,6 +215,7 @@ def main():
             "rust_toolchain": TOOLCHAIN,
             "date_tool": date_version,
             "targets": targets,
+            "features": ["proving"] if args.proving else [],
             "files": {
                 str(p.relative_to(product)): hashlib.sha256(p.read_bytes()).hexdigest()
                 for p in sorted(product.rglob("*"))
