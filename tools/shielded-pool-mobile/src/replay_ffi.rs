@@ -254,6 +254,28 @@ pub unsafe extern "C" fn tos_shielded_replay_scan(
     })
 }
 
+/// Complete global scan, not a sum of independent page balances.
+/// # Safety
+/// Session is live and serialized; seed points to seed_length readable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn tos_shielded_replay_summary(
+    session: *const TosShieldedReplay,
+    seed: *const u8,
+    seed_length: usize,
+) -> *mut TosShieldedResponse {
+    response(|| {
+        if session.is_null() || seed.is_null() || seed_length != 32 {
+            return Err(Error::InvalidInput);
+        }
+        let State::Ready(ledger) = &unsafe { &*session }.state else {
+            return Err(Error::InvalidInput);
+        };
+        let mut key = Zeroizing::new([0; 32]);
+        key.copy_from_slice(unsafe { slice::from_raw_parts(seed, 32) });
+        crate::wallet::summary(ledger, &key, unsafe { &*session }.domain)
+    })
+}
+
 /// # Safety
 /// Non-null session is a live allocation from this library, freed exactly once without concurrent calls.
 #[no_mangle]
@@ -348,5 +370,125 @@ mod tests {
         assert_eq!(result, 2);
         assert!(matches!(owner.state, State::Failed));
         assert_eq!(unsafe { tos_shielded_replay_finish(&mut owner) }, 1);
+    }
+    fn summary_json(owner: &TosShieldedReplay, seed: &[u8; 32]) -> serde_json::Value {
+        let raw = unsafe { tos_shielded_replay_summary(owner, seed.as_ptr(), seed.len()) };
+        assert!(!raw.is_null());
+        let response = unsafe { Box::from_raw(raw) };
+        assert_eq!(response.status, 0);
+        serde_json::from_slice(&response.bytes).unwrap()
+    }
+    #[test]
+    fn complete_summary_deduplicates_across_pages_and_keeps_same_index_distinct_notes() {
+        // Real ML-KEM payloads on a synthetic ledger: no VM/proof execution claim.
+        let seed = [42; 32];
+        let domain = Fr::from(7u64);
+        let keys = PoolInstance::new(&seed, domain);
+        let make = |secret| {
+            let plain = Plaintext {
+                slot: 0,
+                kind: Kind::Ordinary,
+                amount: 1000,
+                note_secret: Fr::from(secret),
+                note_key_index: 7,
+                owner_nf_key_hash: keys.owner_nf_key_hash(7).unwrap(),
+                pq_auth_key_hash: keys.pq_auth_key_hash(7).unwrap(),
+            };
+            let payload =
+                delivery::seal(&keys.mlkem_encapsulation_key().unwrap(), domain, &plain).unwrap();
+            let owner = notes::owner_commitment(
+                plain.owner_nf_key_hash,
+                plain.pq_auth_key_hash,
+                plain.note_secret,
+            );
+            let body = notes::note_body_commitment(
+                owner,
+                Fr::from(1000u64),
+                wire::output_data_hash(&payload),
+            );
+            (Event::Deposit { amount: 1000, owner_commitment: owner, output_data: payload }, body)
+        };
+        let (event, body) = make(123u64);
+        let mut ledger = Ledger::genesis();
+        for _ in 0..513 {
+            ledger.apply(&event, 0).unwrap();
+        }
+        let (second, _) = make(124u64);
+        ledger.apply(&second, 0).unwrap();
+        let before = TosShieldedReplay { state: State::Ready(Box::new(ledger.clone())), domain };
+        let page_a: serde_json::Value =
+            serde_json::from_slice(&before.scan(&seed, 0, 512).unwrap()).unwrap();
+        let page_b: serde_json::Value =
+            serde_json::from_slice(&before.scan(&seed, 512, 2).unwrap()).unwrap();
+        assert_eq!(page_a["scan"]["batch_unspent_balance"], "1000");
+        assert_eq!(page_b["scan"]["batch_unspent_balance"], "2000");
+        let summary = summary_json(&before, &seed);
+        assert_eq!(summary["unspent_balance"], "2000");
+        assert_eq!(summary["owned_outputs"], "514");
+        assert_eq!(summary["unique_unspent_notes"], "2");
+        assert_eq!(summary["duplicate_outputs"], "512");
+        assert_eq!(summary["reused_indices_count"], "1");
+        assert_eq!(summary["scan_next_index"], "8");
+        let summary_keys: std::collections::BTreeSet<_> =
+            summary.as_object().unwrap().keys().map(String::as_str).collect();
+        assert_eq!(
+            summary_keys,
+            [
+                "version",
+                "total_outputs",
+                "owned_outputs",
+                "unique_unspent_notes",
+                "duplicate_outputs",
+                "reused_indices_count",
+                "diagnostics_count",
+                "unspent_balance",
+                "scan_next_index"
+            ]
+            .into_iter()
+            .collect()
+        );
+        let nullifier = notes::nullifier(body, keys.owner_nf_key(7).unwrap());
+        ledger
+            .apply(
+                &Event::Transact(Box::new(Transact {
+                    intent_digest: Fr::from(77u64),
+                    nullifiers: [nullifier, Fr::from(999u64)],
+                    note_bodies: [Fr::from(11u64), Fr::from(12u64), Fr::from(13u64)],
+                    payloads: std::array::from_fn(|_| vec![0; delivery::OUTPUT_DATA_BYTES]),
+                    public_amount_out: 0,
+                    withdrawal_fee: 0,
+                    recovery_owner_commitment: Fr::from(0u64),
+                    recovery_payload: None,
+                    payout: None,
+                })),
+                0,
+            )
+            .unwrap();
+        let after = TosShieldedReplay { state: State::Ready(Box::new(ledger)), domain };
+        let summary = summary_json(&after, &seed);
+        assert_eq!(summary["unspent_balance"], "1000");
+        assert_eq!(summary["unique_unspent_notes"], "1");
+        assert_eq!(summary["scan_next_index"], "8");
+    }
+    #[test]
+    fn summary_requires_ready_and_exact_seed_and_allows_authentic_empty_ledger() {
+        let seed = [42; 32];
+        let domain = Fr::from(7u64);
+        let mut owner = TosShieldedReplay { state: State::Failed, domain };
+        for (session, key, length) in [
+            (&owner as *const _, seed.as_ptr(), 32),
+            (ptr::null(), seed.as_ptr(), 32),
+            (&owner as *const _, ptr::null(), 32),
+            (&owner as *const _, seed.as_ptr(), 31),
+        ] {
+            let raw = unsafe { tos_shielded_replay_summary(session, key, length) };
+            let response = unsafe { Box::from_raw(raw) };
+            assert_eq!(response.status, 1);
+            assert!(response.bytes.is_empty());
+        }
+        owner.state = State::Ready(Box::new(Ledger::genesis()));
+        let summary = summary_json(&owner, &seed);
+        assert_eq!(summary["unspent_balance"], "0");
+        assert_eq!(summary["total_outputs"], "0");
     }
 }

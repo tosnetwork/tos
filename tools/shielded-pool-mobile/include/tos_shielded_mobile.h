@@ -38,7 +38,7 @@ TosShieldedResponse *tos_shielded_history_transaction(const uint8_t *request, si
  * and head metadata MUST come from one verified observation; see request schema.
  * Serialize every call/free. Create returns NULL on error. Mutators return
  * 0 success, 1 error, 2 contained panic; any failed mutator poisons the session.
- * Only after successful finish can info/scan read the completed ledger.
+ * Only after successful finish can info/scan/summary read the completed ledger.
  */
 typedef struct TosShieldedReplay TosShieldedReplay;
 TosShieldedReplay *tos_shielded_replay_create(const uint8_t *request, size_t length);
@@ -52,6 +52,12 @@ TosShieldedResponse *tos_shielded_replay_info(const TosShieldedReplay *session);
 TosShieldedResponse *tos_shielded_replay_scan(const TosShieldedReplay *session, const uint8_t *seed, size_t seed_length,
                                               size_t offset, size_t count);
 void tos_shielded_replay_free(TosShieldedReplay *session);
+/* Complete Ready-ledger summary: globally deduplicates note bodies and reconciles
+ * all published nullifiers. No note secrets/nullifiers are returned. Freshness
+ * still belongs to the proof layer; scan_next_index excludes durable reservations.
+ */
+TosShieldedResponse *tos_shielded_replay_summary(const TosShieldedReplay *session, const uint8_t *seed,
+                                                 size_t seed_length);
 /* status: 0 success; 1 invalid input/crypto failure; 2 contained panic.
  * Pointer is valid until free; free once, on the same library that allocated it.
  * The response buffer is zeroized on free. Accessors require a live handle.

@@ -322,3 +322,30 @@ frozen handle and recovery-required reopen. Its result must be read from the
 exact-head CI; a scheduled step is not a pass. Mobile app-private path policy,
 strong-kill/restart, backup integration and all business schema/journal recovery
 remain pending. The store has no C ABI and does not make restored bytes spendable.
+
+
+## Complete Ready-ledger scan summary
+
+`tos_shielded_replay_summary(session, seed, seed_length)` scans every output
+from a finished replay, recovers in 512-output chunks, merges with the existing
+wallet scanner and reconciles the complete published nullifier set. It uses
+global `spendable_notes()` deduplication by note body; summing independent batch
+balances is incorrect. Different notes at a reused index remain included.
+Amounts use checked u128 addition. Separate 32768-output and total-payload-byte caps are checked before
+cloning/decrypting; work and temporary collections are bounded by these caps (payload bytes at most 32768 * OUTPUT_DATA_BYTES).
+The call is synchronous: run it on the client's bounded worker, not the UI
+thread, and check observation freshness/cancellation before and after it. No
+cache, thread or seed is retained after the call. The held aggregate's note
+secret/amount/identity fields are cleared on drop; upstream import/derivation
+intermediates are not claimed fully erased.
+
+Returns version 1 JSON with decimal-string `total_outputs`, `owned_outputs`,
+`unique_unspent_notes`, `duplicate_outputs`, `reused_indices_count`,
+`diagnostics_count`, `unspent_balance` and optional `scan_next_index`. Null index
+means u64 exhaustion, not an issuable maximum. The index reflects on-chain
+observations only: issuance still requires durable reservation/high water. No
+private notes, secrets or nullifiers are returned. An empty finished ledger can
+return zero; incomplete/failed sessions and malformed arguments return error,
+never a partial summary. The caller still authenticates proof/trust selections
+and freshness, and commits business state before publishing a usable balance.
+This adds no business schema, journal, persistence C ABI or mobile acceptance.
