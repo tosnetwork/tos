@@ -178,7 +178,8 @@ jobs:
             ./result-shielded/bin/tosctl --version
             ./result-shielded/bin/tosctl shield --help
             sha256sum result-shielded/bin/.tosctl-wrapped flake.lock assembly/nix/tosctl/material.sha256
-            (cd result-material && sha256sum --check --strict ../assembly/nix/tosctl/material.sha256)
+            # result-material is a store symlink, so a relative parent would resolve inside the store.
+            (cd result-material && sha256sum --check --strict "$GITHUB_WORKSPACE/assembly/nix/tosctl/material.sha256")
             nix path-info -Sh ./result-shielded ./result-material
           } > nixos-evidence/receipt.txt
           cp -rL result-vm nixos-evidence/vm
