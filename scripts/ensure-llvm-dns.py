@@ -9,12 +9,14 @@ Never invoke the opt-in mode on a persistent host.
 
 import argparse
 import ipaddress
+import json
 import os
 import socket
 import stat
 import subprocess
 import sys
 from pathlib import Path
+from urllib.request import Request, urlopen
 
 HOST = "apt.llvm.org"
 HOSTS_FILE = Path("/etc/hosts")
@@ -32,17 +34,42 @@ def lookup():
     return socket.getaddrinfo(HOST, 443, type=socket.SOCK_STREAM)
 
 
+def resolve_hint():
+    # This response supplies only an IP hint; original-origin TLS remains mandatory.
+    request = Request(
+        "https://1.1.1.1/dns-query?name=apt.llvm.org&type=A",
+        headers={"accept": "application/dns-json"},
+    )
+    with urlopen(request, timeout=15) as response:
+        raw = response.read(16385)
+    if len(raw) > 16384:
+        raise RuntimeError("DNS HTTPS response exceeds 16 KiB")
+    data = json.loads(raw)
+    if not isinstance(data, dict) or data.get("Status") != 0 or data.get("TC") is not False:
+        raise RuntimeError("DNS HTTPS response is unsuccessful or truncated")
+    answers = data.get("Answer")
+    if not isinstance(answers, list) or len(answers) > 32:
+        raise RuntimeError("DNS HTTPS response has invalid answer bounds")
+    for answer in answers:
+        if isinstance(answer, dict) and answer.get("type") == 1:
+            address = ipaddress.IPv4Address(answer.get("data"))
+            if address.is_global and not address.is_multicast and not address.is_reserved:
+                return str(address)
+    raise RuntimeError("DNS HTTPS response has no public IPv4 answer")
+
+
 def probe_origin():
     # Disable curlrc; do not inherit a proxy whose remote_ip would be the proxy.
     # A certificate-valid IP endpoint avoids depending on resolver bootstrap DNS.
+    hint = resolve_hint()
     command = [
         "curl",
         "--disable",
         "--ipv4",
         "--proto",
         "=https",
-        "--doh-url",
-        "https://1.1.1.1/dns-query",
+        "--resolve",
+        f"{HOST}:443:{hint}",
         "--connect-timeout",
         "10",
         "--max-time",

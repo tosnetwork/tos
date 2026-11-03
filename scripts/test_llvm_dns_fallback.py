@@ -6,6 +6,7 @@ import contextlib
 import importlib.util
 import io
 import ipaddress
+import json
 import os
 import socket
 import stat
@@ -15,7 +16,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 SPEC = importlib.util.spec_from_file_location(
     "llvm_dns", Path(__file__).with_name("ensure-llvm-dns.py")
@@ -107,6 +108,7 @@ class ResolverTests(unittest.TestCase):
                 "lookup",
                 side_effect=[socket.gaierror(socket.EAI_AGAIN, "temporary"), ANSWER],
             ),
+            patch.object(MODULE, "resolve_hint", return_value=ADDRESS),
             patch.object(
                 MODULE.subprocess,
                 "check_output",
@@ -138,17 +140,51 @@ class ResolverTests(unittest.TestCase):
 
     def test_probe_requires_public_ip_and_preserves_tls_options(self):
         for value in ["127.0.0.1", "10.0.0.1", "224.0.0.1", "not an IP"]:
-            with patch.object(MODULE.subprocess, "check_output", return_value=value):
+            with (
+                patch.object(MODULE, "resolve_hint", return_value=ADDRESS),
+                patch.object(MODULE.subprocess, "check_output", return_value=value),
+            ):
                 with self.assertRaises((RuntimeError, ipaddress.AddressValueError)):
                     MODULE.probe_origin()
-        with patch.object(MODULE.subprocess, "check_output", return_value=ADDRESS) as curl:
+        with (
+            patch.object(MODULE, "resolve_hint", return_value=ADDRESS),
+            patch.object(MODULE.subprocess, "check_output", return_value=ADDRESS) as curl,
+        ):
             self.assertEqual(MODULE.probe_origin(), ADDRESS)
             command = curl.call_args.args[0]
             self.assertEqual(command[:2], ["curl", "--disable"])
             self.assertNotIn("--insecure", command)
             self.assertNotIn("-k", command)
             self.assertEqual(command[-1], "https://apt.llvm.org/")
-            self.assertEqual(command[command.index("--doh-url") + 1], "https://1.1.1.1/dns-query")
+            self.assertEqual(command[command.index("--resolve") + 1], f"apt.llvm.org:443:{ADDRESS}")
+
+    def test_https_hint_is_bounded_and_rejects_invalid_answers(self):
+        valid = {"Status": 0, "TC": False, "Answer": [{"type": 1, "data": ADDRESS}]}
+        cases = [
+            json.dumps(valid).encode() + b" " * 16385,
+            b"invalid",
+            b"[]",
+            json.dumps({**valid, "Status": 3}).encode(),
+            json.dumps({**valid, "TC": True}).encode(),
+            json.dumps({**valid, "Answer": []}).encode(),
+            json.dumps({**valid, "Answer": valid["Answer"] * 33}).encode(),
+            json.dumps({**valid, "Answer": [{"type": 1, "data": "127.0.0.1"}]}).encode(),
+        ]
+        for raw in cases:
+            response = MagicMock()
+            response.__enter__.return_value.read.return_value = raw
+            with patch.object(MODULE, "urlopen", return_value=response):
+                with self.assertRaises((RuntimeError, ValueError)):
+                    MODULE.resolve_hint()
+        response = MagicMock()
+        response.__enter__.return_value.read.return_value = json.dumps(valid).encode()
+        with patch.object(MODULE, "urlopen", return_value=response) as request:
+            self.assertEqual(MODULE.resolve_hint(), ADDRESS)
+            self.assertEqual(
+                request.call_args.args[0].full_url,
+                "https://1.1.1.1/dns-query?name=apt.llvm.org&type=A",
+            )
+            response.__enter__.return_value.read.assert_called_once_with(16385)
 
     def test_ephemeral_opt_in_is_required_before_any_dns_work(self):
         with (
@@ -267,6 +303,28 @@ def run_controls():
             "ephemeral_opt_in_is_required_before_any_dns_work",
         ),
     ]
+    variants.extend(
+        [
+            (
+                "hint-size",
+                "if len(raw) > 16384:",
+                "if False:",
+                "https_hint_is_bounded_and_rejects_invalid_answers",
+            ),
+            (
+                "hint-status",
+                'if not isinstance(data, dict) or data.get("Status") != 0 or data.get("TC") is not False:',
+                "if not isinstance(data, dict):",
+                "https_hint_is_bounded_and_rejects_invalid_answers",
+            ),
+            (
+                "hint-answer-bound",
+                "if not isinstance(answers, list) or len(answers) > 32:",
+                "if not isinstance(answers, list):",
+                "https_hint_is_bounded_and_rejects_invalid_answers",
+            ),
+        ]
+    )
     try:
         for label, before, after, test in variants:
             if source.count(before) != 1:
@@ -294,8 +352,8 @@ def run_controls():
     result = unittest.TextTestRunner(verbosity=2).run(
         unittest.defaultTestLoader.loadTestsFromTestCase(ResolverTests)
     )
-    if not result.wasSuccessful() or result.testsRun != 12:
-        raise RuntimeError("Restored baseline did not pass all 12 tests")
+    if not result.wasSuccessful() or result.testsRun != 13:
+        raise RuntimeError("Restored baseline did not pass all 13 tests")
 
 
 if __name__ == "__main__":
