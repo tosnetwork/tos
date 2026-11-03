@@ -85,6 +85,10 @@ TosShieldedPaymentSubmission *tos_shielded_payment_stage(
     const TosShieldedReplay *session, const TosShieldedPaymentProver *prover,
     TosShieldedRelayOffer *offer, const uint8_t *seed, size_t seed_len,
     const uint8_t *request, size_t request_len);
+/* Returns 0 on success (NULL output if none is pending), 1 on error. */
+uint8_t tos_shielded_payment_recover(
+    const TosShieldedReplay *session, const uint8_t *seed, size_t seed_len,
+    const uint8_t *request, size_t request_len, TosShieldedPaymentSubmission **output);
 TosShieldedResponse *tos_shielded_payment_submit(const TosShieldedPaymentSubmission *submission);
 void tos_shielded_payment_free(TosShieldedPaymentSubmission *submission);
 

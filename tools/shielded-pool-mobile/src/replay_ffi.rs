@@ -319,7 +319,25 @@ impl TosShieldedReplay {
         timeout_secs: u64,
         lifetime: u64,
     ) -> Result<RelayOffer> {
-        use br1_client::socks::{Isolation, TorProxy};
+        let client = self.open_relay_client(
+            release,
+            bond_init,
+            tor_port,
+            timeout_secs,
+            br1_client::socks::Isolation::random(),
+        )?;
+        RelayOffer::request(client, lifetime).await
+    }
+
+    #[cfg(all(unix, feature = "proving"))]
+    fn open_relay_client(
+        &self,
+        release: &br1_client::release::Release,
+        bond_init: &str,
+        tor_port: u16,
+        timeout_secs: u64,
+        isolation: br1_client::socks::Isolation,
+    ) -> Result<br1_client::client::Client> {
         if !matches!(self.state, State::Ready(_)) {
             return Err(Error::InvalidInput);
         }
@@ -333,11 +351,10 @@ impl TosShieldedReplay {
         {
             return Err(Error::InvalidInput);
         }
-        let proxy =
-            TorProxy::new(tor_port, Isolation::random()).map_err(|_| Error::InvalidInput)?;
-        let client = br1_client::client::Client::from_bond(release, bond_init, proxy, timeout_secs)
+        let proxy = br1_client::socks::TorProxy::new(tor_port, isolation)
             .map_err(|_| Error::InvalidInput)?;
-        RelayOffer::request(client, lifetime).await
+        br1_client::client::Client::from_bond(release, bond_init, proxy, timeout_secs)
+            .map_err(|_| Error::InvalidInput)
     }
 
     /// Build the spend from the exact confirmed recipient, amount and BR1 quote.
@@ -967,6 +984,79 @@ pub unsafe extern "C" fn tos_shielded_payment_stage(
     match catch_unwind(AssertUnwindSafe(call)) {
         Ok(Ok(submission)) => Box::into_raw(Box::new(submission)),
         _ => ptr::null_mut(),
+    }
+}
+
+/// Reopen the encrypted request and original Tor isolation without networking.
+///
+/// # Safety
+/// The session and input buffers must be live and serialized. The output
+/// must be writable and disjoint from all inputs. The app supplies approved pins.
+#[cfg(all(unix, feature = "proving"))]
+#[no_mangle]
+pub unsafe extern "C" fn tos_shielded_payment_recover(
+    session: *const TosShieldedReplay,
+    seed: *const u8,
+    seed_len: usize,
+    request: *const u8,
+    request_len: usize,
+    output: *mut *mut RecoveredRelaySubmission,
+) -> u8 {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct RecoveryRequest {
+        root: String,
+        release: br1_client::release::Release,
+        bond_init: String,
+        tor_port: u16,
+        timeout_secs: u64,
+    }
+    if output.is_null() {
+        return 1;
+    }
+    unsafe { output.write(ptr::null_mut()) };
+    if session.is_null()
+        || seed.is_null()
+        || seed_len != 32
+        || request.is_null()
+        || !(1..=MAX_REQUEST_BYTES).contains(&request_len)
+    {
+        return 1;
+    }
+    let call = || {
+        let owner = unsafe { &*session };
+        let request: RecoveryRequest =
+            serde_json::from_slice(unsafe { slice::from_raw_parts(request, request_len) })
+                .map_err(|_| Error::InvalidInput)?;
+        let root = std::path::Path::new(&request.root);
+        if request.root.len() > 4096 || request.root.as_bytes().contains(&0) || !root.is_absolute()
+        {
+            return Err(Error::InvalidInput);
+        }
+        let mut key = Zeroizing::new([0; 32]);
+        key.copy_from_slice(unsafe { slice::from_raw_parts(seed, seed_len) });
+        owner.recover_relay_submission(
+            &key,
+            root,
+            owner.receive_binding.as_ref().ok_or(Error::InvalidInput)?,
+            |isolation| {
+                owner.open_relay_client(
+                    &request.release,
+                    &request.bond_init,
+                    request.tor_port,
+                    request.timeout_secs,
+                    isolation,
+                )
+            },
+        )
+    };
+    match catch_unwind(AssertUnwindSafe(call)) {
+        Ok(Ok(Some(submission))) => {
+            unsafe { output.write(Box::into_raw(Box::new(submission))) };
+            0
+        }
+        Ok(Ok(None)) => 0,
+        _ => 1,
     }
 }
 
