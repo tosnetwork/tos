@@ -25,6 +25,7 @@ import adjudicate as adj  # noqa: E402
 import evidence  # noqa: E402
 from connection_trace import Connect, adjudicate_connections, parse_connects  # noqa: E402
 from localnet_common import (  # noqa: E402
+    PROVENANCE_BINARIES,
     Completed,
     LeakedSecret,
     LocalnetError,
@@ -552,7 +553,10 @@ class EvidenceIndexTests(unittest.TestCase):
             "checked_utc": "2026-11-03T00:00:00+00:00",
             "base_commit": "b" * 40,
             "revisions": {},
-            "binaries": {"tosctl": {"sha256": "aa" * 32, "source": source}},
+            "binaries": {
+                **{name: {"sha256": "aa" * 32, "source": source} for name in PROVENANCE_BINARIES},
+                "strace": {"sha256": "ab" * 32},
+            },
             "chain": {"global_id": 3, "zerostate_root": "11" * 32, "zerostate_file": "22" * 32},
             "pool": {
                 "code_hash": "33" * 32,
@@ -681,6 +685,9 @@ class EvidenceIndexTests(unittest.TestCase):
                 ('["controls"][0]["outcome"] = "GREEN"', "did not go red"),
                 ('["pool"]["development_verifying_key"] = True', "ceremony key"),
                 ('["binaries"]["tosctl"]["source"] = {"commit": "c" * 40}', "which commit"),
+                ('["binaries"]["tosctl"].pop("source")', "which commit"),
+                ('["binaries"]["strace"]["source"] = {"commit": "c" * 40}', "which commit"),
+                ('["binaries"].pop("tos-proof-verify")', "missing from the index"),
                 ('["chain"]["global_id"] = 2', "isolated local network"),
                 ('["tor"] = "real Tor"', "offline"),
                 ('["schema"] = "other"', "schema"),

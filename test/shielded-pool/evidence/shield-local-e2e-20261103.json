@@ -11,27 +11,43 @@
     "relayed_send_with_dropped_submit": "1000000000",
     "relayer_fee": "300000000"
   },
-  "base_commit": "84ca86d72a396e87620b7d47bd2abc1b392d96eb",
+  "base_commit": "fa679ca9e1152ed95a6042b8e61b1f745e32a486",
   "binaries": {
     "br1-native-provider": {
       "path": "/tos/build/shield-cli/e2e/bin/br1-native-provider",
-      "sha256": "944a66271fae2d577a7e14f36213e8ace684e8432b1e432a509d7dcc8c63876d"
+      "sha256": "944a66271fae2d577a7e14f36213e8ace684e8432b1e432a509d7dcc8c63876d",
+      "source": {
+        "commit": "da96ec7d3e40342bad1e84992d864da1e5221407",
+        "path": "tools/bonded-relayer/provider"
+      }
     },
     "local_ceremony_pool": {
       "path": "/tos/build/shield-cli/target-crosscheck/release/local_ceremony_pool",
-      "sha256": "c1192203ec20853232247e584a846f7a15968ed1cfd487fe1553aed3ea556aad"
+      "sha256": "c1192203ec20853232247e584a846f7a15968ed1cfd487fe1553aed3ea556aad",
+      "source": {
+        "commit": "da96ec7d3e40342bad1e84992d864da1e5221407",
+        "path": "tools/shielded-pool-circuit/crosscheck"
+      }
     },
     "strace": {
       "path": "/usr/bin/strace",
       "sha256": "38a5c75cb29dd85ddd7780d54f5bf595554d7a1b5c42524b23065f5dc4c4b01d"
     },
     "tos-proof-verify": {
-      "path": "/tos/build/br1-localnet/bin/tos-proof-verify",
-      "sha256": "98600da98c209817b4f15414188e243e07cc48183fbc978285009c91d9befbe9"
+      "path": "/tos/build/shield-cli/e2e/bin/tos-proof-verify",
+      "sha256": "552686e7165b7d99e1ca55ef21049a417fc9ab187aed010f98c4cbbe471cf71a",
+      "source": {
+        "commit": "da96ec7d3e40342bad1e84992d864da1e5221407",
+        "path": "lite-client/proof-verify"
+      }
     },
     "tosctl": {
       "path": "/tos/build/shield-cli/pr5/head/result-shielded/bin/tosctl",
       "sha256": "0fbbd98bc2191fb3f86d7507bf0d883c61e98e1c64783e1bf19426bf887bd85a",
+      "source": {
+        "commit": "01bbff722cae29647b3a0b904c74ce0c9b606038",
+        "path": "assembly/nix/tosctl"
+      },
       "version": "tosctl 0.3.0\nCOMMIT_ID: 01bbff722cae29647b3a0b904c74ce0c9b606038\nBUILD_DATE: 2026-11-03 02:38:33 +0000\nCOMMIT_DATE: 2026-11-03 02:38:33 +0000\nGIT_BRANCH: Unknown\nRUST_VERSION: rustc 1.97.1 (8bab26f4f 2026-07-14)",
       "wrapped_sha256": "677c5a7286c044f007c7cc5116387ff265dfe5fc0019385292449a0d5b45f27e"
     }
@@ -54,44 +70,44 @@
     "zerostate_file": "e8ea468bac5a153d0f9bd9b1ba56c6f0311be43bf0a2d057e90d427afcfe4fc8",
     "zerostate_root": "221bdfb283d69551cfcf641c58ac2585a4ada2410799d40b9ac54032c4356c46"
   },
-  "checked_utc": "2026-11-03T03:06:18+00:00",
+  "checked_utc": "2026-11-03T03:33:03+00:00",
   "client_memory_cap": "32G",
   "controls": [
     {
       "name": "control-tampered-profile-refused",
       "outcome": "RED",
       "receipt": "receipts/05-control-tampered-profile-refused.json",
-      "sha256": "f305bd5adf5ea4f05ff18aa100ce6f221c58c9132e0b9789c2fe833d9a50e245"
+      "sha256": "e7c47d80f37656e59c3b351c81b1b6c1f43e17f4904c89e4afd97b5fb96f7430"
     },
     {
       "name": "control-second-spend-refused-by-lock",
       "outcome": "RED",
       "receipt": "receipts/15-control-second-spend-refused-by-lock.json",
-      "sha256": "e3fc7335712b21666bd7b7bd27979edfe37d00122d6f4469452c0b6b44684e73"
+      "sha256": "2f6c5f067eef9623df3e025157211f243e96aeff7d99e36fc4df0767f34acffb"
     },
     {
       "name": "control-send-fails-closed-without-socks-peer",
       "outcome": "RED",
       "receipt": "receipts/21-control-send-fails-closed-without-socks-peer.json",
-      "sha256": "46bb3e702112e983f78c7c44dbb21457d4c6cb980dc47f03e25d40838ee56026"
+      "sha256": "7664578c01003c530edbbca94347a2f26e83d06fd9923c2784956eec3d9736b1"
     },
     {
       "name": "control-loopback-bond-endpoint-refused-before-connecting",
       "outcome": "RED",
       "receipt": "receipts/22-control-loopback-bond-endpoint-refused-before-connecting.json",
-      "sha256": "5443dae1d52177bb4080f8011c4e2f31e52c72fdf374e56669f010af736c8036"
+      "sha256": "8b1661f6a9e7ea6f7738cae83905e60718e90e79a0d6ccf5d4797ffc195455d3"
     },
     {
       "name": "control-socks-peer-refuses-other-onion-name",
       "outcome": "RED",
       "receipt": "receipts/23-control-socks-peer-refuses-other-onion-name.json",
-      "sha256": "8460a4a2d81f1c330135c7f05c12128e334c955edf8c138a7c9f973c310534fc"
+      "sha256": "d21b252a8e957327721989b5816b4e7dfdd72b8ad08ffcef8b59283bc8b7ece0"
     },
     {
       "name": "control-direct-bypass-is-detected-by-connection-trace",
       "outcome": "RED",
       "receipt": "receipts/24-control-direct-bypass-is-detected-by-connection-trace.json",
-      "sha256": "2550c028e3105f92147072837f0f52b2c3fc4fc74721bae31a7a9614afbf1acb"
+      "sha256": "d8e243669b782f8b60961085ef653e9f7d4afe2be2967448aeac8e5055bffafe"
     }
   ],
   "failed_step": null,
@@ -109,36 +125,36 @@
   "proving": [
     {
       "command": "audit-ceremony",
-      "max_rss_kib": 168000,
-      "seconds": 89.3
+      "max_rss_kib": 171072,
+      "seconds": 71.1
     },
     {
       "command": "send --relayer (relayed)",
-      "max_rss_kib": 180216,
-      "seconds": 110.5
+      "max_rss_kib": 175640,
+      "seconds": 102.3
     },
     {
       "command": "withdraw (bounced)",
-      "max_rss_kib": 180544,
-      "seconds": 78.4
+      "max_rss_kib": 177788,
+      "seconds": 76.6
     },
     {
       "command": "send --direct",
-      "max_rss_kib": 179336,
-      "seconds": 76.2
+      "max_rss_kib": 179352,
+      "seconds": 79.6
     },
     {
       "command": "withdraw (public)",
-      "max_rss_kib": 183944,
-      "seconds": 81.3
+      "max_rss_kib": 180892,
+      "seconds": 77.0
     },
     {
       "command": "send --relayer (dropped)",
-      "max_rss_kib": 178756,
-      "seconds": 104.4
+      "max_rss_kib": 179092,
+      "seconds": 101.9
     }
   ],
-  "raw_retention_root": "/tos/build/shield-cli/e2e/20261103",
+  "raw_retention_root": "/tos/build/shield-cli/e2e/20261103-2",
   "result": "PASS",
   "revisions": {
     "harness_sha256": {
@@ -162,13 +178,13 @@
       "test/shielded-pool/localnet/chain.py": "08b30fdbda023935a813b47d4e3bbd93a4346ebf294ca2c27f12e02ce458ac0d",
       "test/shielded-pool/localnet/connection_trace.py": "00446097affc732284e327a7e0ffea628960b2ed83c532b588a3cc0be826ef95",
       "test/shielded-pool/localnet/deploy_pool.py": "3f46fdb3847fcaa2e60ec8490956d46f1445f1b2b9c28c0e6dc64380c55b5f6e",
-      "test/shielded-pool/localnet/e2e_localnet.py": "03bae0006ca7f71f0a3822da58c154040ff1f0d3b0e769e5c4d2d18047bf16b2",
-      "test/shielded-pool/localnet/evidence.py": "e60c38ff111596757bb1cc7bd71b79b5cb0d2c3817bb9effc92c888f66605b27",
-      "test/shielded-pool/localnet/localnet_common.py": "5b33d3ef0c9c01203ba1de686620849bea633d076a4ed3378b7a53bd6e0fd4e6",
+      "test/shielded-pool/localnet/e2e_localnet.py": "c3709efeb6799f2886d037377d612c601bff36e7faa4ad360add0214f458bf4b",
+      "test/shielded-pool/localnet/evidence.py": "e631899b53307e7c2fd54160a068bafe61e42bc89f542b022adbcd913861bfd1",
+      "test/shielded-pool/localnet/localnet_common.py": "271210672cfa89d5dc379a3e062e9db4d6df21350bd074a44f17cad8d62b310f",
       "test/shielded-pool/localnet/operator_journal.py": "4f973e198b60e917055c9083f71d2d24a7de87232188a866b0933a25c214f331",
       "test/shielded-pool/localnet/provision_operator.py": "056f1820964d0a4ae0bb6d94da0da23ed7006f2fa9077de7edfb4b5cf16571aa",
       "test/shielded-pool/localnet/socks_peer.py": "b0d86e7df93b6d774501f770bb8a7af21b5c00e891fc1a0f6f9ba064c63fc9eb",
-      "test/shielded-pool/localnet/test_localnet_tooling.py": "fc0cc68745874c8070baef0231e7b2054d5430103285b01f223d1de30f3a8d99",
+      "test/shielded-pool/localnet/test_localnet_tooling.py": "aaeb274301c4ae2f9d9dfec83ae647de1433bf0c8d832722d4cf2178125fd87c",
       "tools/bonded-relayer/br1.py": "957384058ba59f0eae1b833592a45f80154de4d9f6a55011d9c69fc2f623e57d"
     },
     "operator": {
@@ -179,7 +195,7 @@
       "generator_sha256": "c1192203ec20853232247e584a846f7a15968ed1cfd487fe1553aed3ea556aad",
       "state_init_sha256": "c006c6c4c5d7657cbec77ec77f46ca823d3b7613f396524391ed7c805d6b4143"
     },
-    "worktree_head": "84ca86d72a396e87620b7d47bd2abc1b392d96eb"
+    "worktree_head": "fa679ca9e1152ed95a6042b8e61b1f745e32a486"
   },
   "schema": "tos.shield.localnet.evidence-index.v1",
   "steps": [
@@ -187,115 +203,115 @@
       "name": "setup",
       "outcome": "PASS",
       "receipt": "receipts/01-setup.json",
-      "sha256": "cf2592a7597e459aa8e4a789758310660667891aafee159f6aa74488bc8846c7"
+      "sha256": "d44b9837f877c30e71a8be22d97d58d51601782e5fa0d5fcb0977889a6db506c"
     },
     {
       "name": "audit-ceremony",
       "outcome": "PASS",
       "receipt": "receipts/02-audit-ceremony.json",
-      "sha256": "5e71904e7e94bef82baecb79fc1981a2770f1a118f67836666a3c9eb56b723b7"
+      "sha256": "f149a2b9301b2140b321203fd25ee7c990daaeb4705e1497a57314b95f1594c4"
     },
     {
       "name": "init-s",
       "outcome": "PASS",
       "receipt": "receipts/03-init-s.json",
-      "sha256": "4276debf2a901d7dccec78d7f58b41070145750ca95a5df98dfb6a3b7cbe117d"
+      "sha256": "f5b83279a0b649b9c5097aac46a0fab288a0b267e846a3914b2f82c5caac1b79"
     },
     {
       "name": "init-r",
       "outcome": "PASS",
       "receipt": "receipts/04-init-r.json",
-      "sha256": "60de6e3380e7b5ee9b8a7d7f22649af8a3bcb48aeb2253101c8831dd1a199e9f"
+      "sha256": "80a2e1b440a75657e214cdaca5265f2c8aa57d7694fafbf515eff97729e88260"
     },
     {
       "name": "deposit-1",
       "outcome": "PASS",
       "receipt": "receipts/06-deposit-1.json",
-      "sha256": "455c68131fdf83bc6e409bc8f6e68bcdba5406a21b44f6de391bf039fc652a30"
+      "sha256": "aa7be4d6d14545288fd2d14d7095c9f3fd32130e5c5eb533157ad55f4c54a38d"
     },
     {
       "name": "deposit-2",
       "outcome": "PASS",
       "receipt": "receipts/07-deposit-2.json",
-      "sha256": "b95d721aee01661cdec39b60531ce4e2a758ec6bb817f59b983751521ab04a19"
+      "sha256": "145d6d047149727f1271f60a0f52e3b9cb776c4ecf554928ab457407511c71de"
     },
     {
       "name": "sync-s-after-deposits",
       "outcome": "PASS",
       "receipt": "receipts/08-sync-s-after-deposits.json",
-      "sha256": "f3ce2244fa37c9795abb4c8fe4932c97be925f557fbfb537999ccc6b30f57917"
+      "sha256": "b0eea949ead250e68b64d682cdea896b81fc596886aff8b2fdd21b63611d6e8d"
     },
     {
       "name": "address-r",
       "outcome": "PASS",
       "receipt": "receipts/09-address-r.json",
-      "sha256": "14150e9dcf620656175f372965022004240246ee52c0401d4dbd45499e5a3839"
+      "sha256": "eaca28970f4247aa5705f7552a955d3087a30146dd07ce02b7b6ad3a4b5a4011"
     },
     {
       "name": "send-relayed",
       "outcome": "PASS",
       "receipt": "receipts/10-send-relayed.json",
-      "sha256": "c9eecd59f131a82e83ae6b9c12aafec0369941d222331680fdae55f1013ceb4c"
+      "sha256": "0ff5a593005613eb8bacad6873e01d1beee5f7fbc5f7336b1c5b432f47abf648"
     },
     {
       "name": "settle-relayed",
       "outcome": "PASS",
       "receipt": "receipts/11-settle-relayed.json",
-      "sha256": "542a3e9f66265fdb837923821ba6244c6c7656afc03aaf02b8b1558a268a3817"
+      "sha256": "25e828472e330cd2d059ed5ec02d11753a82603b3675a7c5d78446f2b5942590"
     },
     {
       "name": "withdraw-r-bounce-and-recovery",
       "outcome": "PASS",
       "receipt": "receipts/12-withdraw-r-bounce-and-recovery.json",
-      "sha256": "cfd5c93d9b927ca229785bb135b041ba7b94ef899fcd22839975111ed198c902"
+      "sha256": "3de48bd38e927f39a49611130067b679d0482a8616131907ab3982bd33b74bc0"
     },
     {
       "name": "address-s",
       "outcome": "PASS",
       "receipt": "receipts/13-address-s.json",
-      "sha256": "5148f2105396f792177eff7765c6f5c4b18b49cd02b3603c46da1e91df986b63"
+      "sha256": "fe64aa66fd40a1e196bc48bd380878b8514e7f6e61d83693e21eb4c18ba1ddc6"
     },
     {
       "name": "send-direct-r-to-s-spends-recovered-leaf",
       "outcome": "PASS",
       "receipt": "receipts/14-send-direct-r-to-s-spends-recovered-leaf.json",
-      "sha256": "ba1adf4dd460ed53d18f66d8eabe713a7cf3410aeaccd4ac5dc570385482bfdb"
+      "sha256": "28392cac98fa66e29ffeef76afced0bf6ad6310e5778beadbf35a34cdccbd055"
     },
     {
       "name": "withdraw-s-to-w",
       "outcome": "PASS",
       "receipt": "receipts/16-withdraw-s-to-w.json",
-      "sha256": "7e1e1bc92b6bfc0fb54062e224902a1f9e8235199ef18a89bb402def340db9a8"
+      "sha256": "e9c6ef6a197098412f01c0905f95cad55f9a26f51b598ecd6882a1d029f1d5a0"
     },
     {
       "name": "address-r-again",
       "outcome": "PASS",
       "receipt": "receipts/17-address-r-again.json",
-      "sha256": "25d9b8c6ecbd574a71d544b9da779f40d4a9697cc507815f187f44a9d95a9103"
+      "sha256": "2383ba5c0fc0e889ca0ddf3dcf313d611a61b5778b1b5da3eaf2f3553cab4779"
     },
     {
       "name": "send-relayed-dropped-submit",
       "outcome": "PASS",
       "receipt": "receipts/18-send-relayed-dropped-submit.json",
-      "sha256": "6f8b5e3718619e2f700087c5359750c96d7db14e98cd2cad0e39d60a19e63cdf"
+      "sha256": "2bca0e1c1b4b01a5a0496525949d19a62882382a7530a1a9c268a2ccdf601792"
     },
     {
       "name": "settle-dropped-submit-without-resubmission",
       "outcome": "PASS",
       "receipt": "receipts/19-settle-dropped-submit-without-resubmission.json",
-      "sha256": "001377229374255379514c0b32cfab46c4df3fb8ca3c1aabef545b0a36055580"
+      "sha256": "2b1792f262bea274eb21cfc19fdc993c5a648560ba83b76d18d4d9e091120f22"
     },
     {
       "name": "address-r-unpaid",
       "outcome": "PASS",
       "receipt": "receipts/20-address-r-unpaid.json",
-      "sha256": "f588eb90fb93d680e05f9ff1aba592090207a3ae502d1431455433e374c924ae"
+      "sha256": "60d7e7baa44bab4e5b2338b8e998c134810ee2e5e435457b0f016c981c3eec0f"
     },
     {
       "name": "final-state",
       "outcome": "PASS",
       "receipt": "receipts/25-final-state.json",
-      "sha256": "0b6d98e89b33804b2fe90e037ef09c3dff1837c9246765bf795d398810838758"
+      "sha256": "b05a0945d8a8da8505ceff6b11eca461b6567ab9f419ae206f98bfa22d9b41e2"
     }
   ],
   "tor": "offline SOCKS peer standing in for the Tor client; transport boundary only, no onion anonymity claim"
