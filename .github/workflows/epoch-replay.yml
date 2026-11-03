@@ -47,6 +47,11 @@ jobs:
           key: epoch-replay-${{ matrix.arch }}
           cache-bin: false
           workspaces: tosctl/src -> target
+      - name: Check and prepare LLVM DNS on the ephemeral runner
+        run: |
+          python3 scripts/test_llvm_dns_fallback.py --controls
+          sudo python3 scripts/ensure-llvm-dns.py --ephemeral-runner
+
       - name: Install the release toolchain
         run: |
           sudo apt-get update

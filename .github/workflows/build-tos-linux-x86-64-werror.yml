@@ -65,6 +65,12 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y build-essential git cmake ninja-build libjemalloc-dev ccache
 
+    - name: Check and prepare LLVM repository DNS
+      if: steps.snapshot.outputs.run-tests == 'true'
+      run: |
+        python3 scripts/test_llvm_dns_fallback.py --controls
+        sudo python3 scripts/ensure-llvm-dns.py --ephemeral-runner
+
     - name: Install Clang 21
       if: steps.snapshot.outputs.run-tests == 'true'
       run: |
@@ -195,6 +201,12 @@ jobs:
         grep -cE '\.py$' changed-files.txt > python-count.txt || echo 0 > python-count.txt
         echo "python_count=$(cat python-count.txt)" >> "$GITHUB_OUTPUT"
         echo "Files touched: $(wc -l < changed-files.txt)"
+
+    - name: Check and prepare LLVM DNS on the ephemeral runner
+      if: steps.snapshot.outputs.run-tests == 'true'
+      run: |
+        python3 scripts/test_llvm_dns_fallback.py --controls
+        sudo python3 scripts/ensure-llvm-dns.py --ephemeral-runner
 
     - name: Install Clang 21 formatting tools
       if: steps.snapshot.outputs.run-tests == 'true'
