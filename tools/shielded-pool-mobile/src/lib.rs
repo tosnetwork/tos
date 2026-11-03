@@ -1,5 +1,5 @@
 // Copyright 2026 TOS Network. SPDX-License-Identifier: GPL-3.0-only
-//! Stateless cryptographic operations for mobile callers. The caller owns
+//! Bounded native wallet operations for mobile callers. The caller owns
 //! proof verification, durable index allocation, encrypted storage and transport.
 
 use base64::{engine::general_purpose::STANDARD, Engine};
@@ -24,6 +24,7 @@ use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 pub mod history;
 pub mod pool;
+pub mod replay;
 
 pub const MAX_REQUEST_BYTES: usize = 2 * 1024 * 1024;
 pub const MAX_RESPONSE_BYTES: usize = 1024 * 1024;

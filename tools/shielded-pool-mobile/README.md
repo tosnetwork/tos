@@ -137,3 +137,41 @@ explicitly linked copies with unchanged bodies/state updates. Those copies are
 unit-test constructions, not claimed as published chain transactions. Negative
 checks cover wrong hashes, LTs, accounts, state updates, future timestamps and
 skipping a linked transaction.
+
+## Provisional ledger replay (Rust core)
+
+`replay::Replay` reuses the existing wallet ledger. Its typed `Head` and expected
+`PoolState` must come from the same verified account observation; the bounce
+recovery charge comes from the proven gas configuration. `push` accepts raw
+transaction BOCs oldest first, starting at the account's first transaction.
+It checks account, time/LT ceilings, previous hash/LT, strictly increasing LT,
+non-decreasing timestamps and continuity of raw Account state hashes before
+applying the existing codec's event. No provisional ledger is exposed.
+
+`finish` consumes the replay and returns a ledger only if the final hash/LT and
+raw Account root match the supplied head, and all six ledger checkpoint fields
+match the expected pool state. An incomplete/reordered history, unknown state
+change, failed application or checkpoint mismatch returns no ledger. The empty
+history case also requires an empty head and the exact genesis checkpoint.
+A failed push discards provisional state; it cannot be resumed and published.
+The owner releases a cancelled replay by dropping it. There is no registry.
+
+The whole replay is bounded by **8192 transactions and 32 MiB of cumulative
+serialized BOCs**, in addition to each BOC's existing bounds. Those bounds also
+limit ledger leaves, nullifiers, pending recovery records and stored ciphertext:
+a transaction can add at most three leaves/two nullifiers/one pending recovery
+and its admitted payloads. Requests beyond either budget fail closed with no
+balance result. Mobile integration must surface that as incomplete, preserve the
+previous durable observation, and must not substitute a zero balance. This is
+not a claim that every future pool history fits this initial bounded replay;
+incremental durable replay remains necessary.
+
+Like the existing CLI, pricing historical recovery bounces with current prices
+can disagree after a gas-price change. The final checkpoint refuses that result
+rather than estimating a balance. Tests exercise deposits, two spends and a
+bounce, each checkpoint field, head mismatch, missing/reordered links, failure
+poisoning and both aggregate resource boundaries using valid BOCs.
+
+This typed replay core is not yet exposed through the mobile C ABI, connected
+to App history acquisition, persisted or used for product balance display.
+The existing one-link ABI and its mobile device evidence remain separate.
