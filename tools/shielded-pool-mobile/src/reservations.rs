@@ -130,6 +130,41 @@ impl StateStore {
         }
         Ok(self.journal.next)
     }
+    /// Plan under the wallet directory lock and persist every output index
+    /// before handing the plan to the caller for proof preparation.
+    pub fn reserve_payment_plan(
+        &mut self,
+        terms: &shielded_pool_wallet::plan::PoolTerms,
+        recovered: &shielded_pool_wallet::scan::Recovered,
+        held: &std::collections::BTreeSet<u64>,
+        request: &shielded_pool_wallet::plan::Request,
+    ) -> Result<shielded_pool_wallet::plan::Plan> {
+        use shielded_pool_wallet::plan::plan_recovered;
+        let scanned_next = match recovered.notes.iter().map(|note| note.note_key_index).max() {
+            Some(index) => index.checked_add(1).ok_or(Error::Limit)?,
+            None => 0,
+        };
+        let first = scanned_next.max(self.reservation_high_water()?);
+        let mut next = first;
+        let plan = plan_recovered(terms, recovered, held, request, &mut || {
+            let index = next;
+            next = index.checked_add(1).ok_or_else(|| {
+                shielded_pool_wallet::error::Error::Planning("note key index exhausted".into())
+            })?;
+            Ok(index)
+        })
+        .map_err(|_| Error::InvalidInput)?;
+        let count = u8::try_from(next - first).map_err(|_| Error::Limit)?;
+        if count > 0 {
+            let reserved = self.reserve_indices(Some(scanned_next), count)?;
+            if reserved.into_iter().ne(first..next) {
+                self.poisoned = true;
+                return Err(Error::InvalidInput.into());
+            }
+        }
+        Ok(plan)
+    }
+
     /// Reserve before displaying a descriptor or preparing an output. Caller
     /// supplies a complete authenticated scan's next index; None is exhaustion.
     /// Failure can burn indices; never expose a range from a failed call.

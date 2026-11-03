@@ -263,3 +263,49 @@ fn authenticated_legacy_opaque_state_is_preserved_without_automatic_reinterpreta
     assert_eq!(fs::read(f.state()).unwrap(), old);
     assert!(!path(&f).exists());
 }
+
+#[test]
+fn payment_indices_are_durable_and_held_inputs_do_not_reserve() {
+    use shielded_pool_circuit::field::Fr;
+    use shielded_pool_wallet::{
+        delivery::Kind,
+        descriptor::Descriptor,
+        import::Imported,
+        keys::PoolInstance,
+        plan::{PoolTerms, Request},
+        scan::Recovered,
+    };
+    let domain = Fr::from(7u64);
+    let recipient = Descriptor::issue(&PoolInstance::new(&[1; 32], domain), 0).unwrap();
+    let fee = Descriptor::issue(&PoolInstance::new(&[2; 32], domain), 0).unwrap();
+    let request = Request::relayed_transfer(domain, &recipient, 10, &fee, 1).unwrap();
+    let terms = PoolTerms { denominations: vec![], withdrawal_fee: 1 };
+    let word = Fr::from(1u64);
+    let recovered = Recovered {
+        notes: vec![Imported {
+            kind: Kind::Ordinary,
+            note_key_index: 7,
+            amount: 20,
+            note_secret: word,
+            owner_commitment: word,
+            note_body: word,
+            output_data_hash: word,
+            spendable: true,
+            spent: false,
+        }],
+        leaves: vec![Some(3)],
+        ..Default::default()
+    };
+    let fixture = Fixture::new();
+    let mut store = fixture.open();
+    assert!(store.reserve_payment_plan(&terms, &recovered, &[3].into(), &request).is_err());
+    assert_eq!(store.reservation_high_water().unwrap(), 0);
+    let mut indices = store
+        .reserve_payment_plan(&terms, &recovered, &Default::default(), &request)
+        .unwrap()
+        .own_indices();
+    indices.sort_unstable();
+    assert_eq!(indices, vec![8, 9]);
+    drop(store);
+    assert_eq!(fixture.open().reservation_high_water().unwrap(), 10);
+}
