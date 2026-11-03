@@ -439,7 +439,6 @@ class Run:
                 "sha256": sha256_file(self.net.local_ceremony_pool),
             },
             "strace": {"path": strace, "sha256": sha256_file(Path(strace))},
-            "client_memory_cap": MEMORY_CAP,
         }
 
     # ------------------------------------------------------------ the gate ---
@@ -1170,6 +1169,7 @@ class Run:
             "failed_step": self.failed,
             "checked_utc": utc_now(),
             "base_commit": self.base_commit,
+            "client_memory_cap": MEMORY_CAP,
             "revisions": {
                 "worktree_head": git_head(),
                 "harness_sha256": self.harness_revisions(),
