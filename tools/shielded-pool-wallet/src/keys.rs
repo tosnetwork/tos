@@ -207,12 +207,18 @@ impl PoolInstance {
             .map_err(|error| Error::KeyDerivation(format!("ML-DSA-44 signing: {error}")))
     }
 
+    pub(crate) fn parse_encapsulation_key(
+        bytes: &[u8; MLKEM_ENCAPSULATION_KEY_BYTES],
+    ) -> Result<ml_kem_768::EncapsKey> {
+        ml_kem_768::EncapsKey::try_from_bytes(*bytes)
+            .map_err(|error| Error::KeyDerivation(format!("ML-KEM-768 public key: {error}")))
+    }
+
     /// Section 3 step 1: encapsulate to a recipient's key.
     pub fn encapsulate_to(
         encapsulation_key: &[u8; MLKEM_ENCAPSULATION_KEY_BYTES],
     ) -> Result<([u8; SHARED_SECRET_BYTES], [u8; MLKEM_CIPHERTEXT_BYTES])> {
-        let key = ml_kem_768::EncapsKey::try_from_bytes(*encapsulation_key)
-            .map_err(|error| Error::KeyDerivation(format!("ML-KEM-768 public key: {error}")))?;
+        let key = Self::parse_encapsulation_key(encapsulation_key)?;
         let (secret, ciphertext) = key
             .try_encaps()
             .map_err(|error| Error::KeyDerivation(format!("ML-KEM-768 encapsulation: {error}")))?;

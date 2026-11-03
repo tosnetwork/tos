@@ -15,7 +15,11 @@ use chain_block::ConfigParamEnum;
 use serde::{Deserialize, Serialize};
 use shielded_pool_circuit::{field::Fr, wire};
 use shielded_pool_codec::{compute_fee, PoolState, BOUNCE_GAS_CEILING};
-use shielded_pool_wallet::{keys::PoolInstance, ledger::Ledger};
+use shielded_pool_wallet::{
+    descriptor::{Descriptor, DESCRIPTOR_BYTES},
+    keys::PoolInstance,
+    ledger::Ledger,
+};
 use std::{
     panic::{catch_unwind, AssertUnwindSafe},
     ptr, slice,
@@ -256,6 +260,29 @@ pub unsafe extern "C" fn tos_shielded_replay_receive(
         let index = indices.first().copied().ok_or(Error::InvalidInput)?;
         crate::issue_descriptor(&key, &shielded_pool_circuit::field::fr_to_be(&owner.domain), index)
             .map(Zeroizing::new)
+    })
+}
+
+/// # Safety
+/// The session and descriptor pointers must identify live allocations of the stated types and lengths.
+#[no_mangle]
+pub unsafe extern "C" fn tos_shielded_replay_validate_recipient(
+    session: *const TosShieldedReplay,
+    descriptor: *const u8,
+    descriptor_len: usize,
+) -> *mut TosShieldedResponse {
+    response(|| {
+        if session.is_null() || descriptor.is_null() || descriptor_len != DESCRIPTOR_BYTES {
+            return Err(Error::InvalidInput);
+        }
+        let owner = unsafe { &*session };
+        if !matches!(owner.state, State::Ready(_)) {
+            return Err(Error::InvalidInput);
+        }
+        Descriptor::from_bytes(unsafe { slice::from_raw_parts(descriptor, descriptor_len) })
+            .and_then(|recipient| recipient.validate_recipient(owner.domain))
+            .map_err(|_| Error::InvalidInput)?;
+        Ok(Zeroizing::new(Vec::new()))
     })
 }
 
@@ -593,6 +620,41 @@ mod tests {
         assert_eq!(summary["unique_unspent_notes"], "1");
         assert_eq!(summary["scan_next_index"], "8");
     }
+    #[test]
+    fn recipient_validation_requires_ready_pool_and_canonical_key() {
+        let domain = wire::execution_domain(3, &[1; 32]);
+        let mut owner = TosShieldedReplay {
+            state: State::Ready(Box::new(Ledger::genesis())),
+            domain,
+            receive_binding: None,
+        };
+        let issue = |domain| {
+            crate::issue_descriptor(&[42; 32], &shielded_pool_circuit::field::fr_to_be(&domain), 0)
+                .unwrap()
+        };
+        let validate = |owner: &TosShieldedReplay, bytes: &[u8]| unsafe {
+            Box::from_raw(tos_shielded_replay_validate_recipient(
+                owner,
+                bytes.as_ptr(),
+                bytes.len(),
+            ))
+        };
+        let good = issue(domain);
+        let result = validate(&owner, &good);
+        assert_eq!(result.status, 0);
+        assert!(result.bytes.is_empty());
+        assert_eq!(validate(&owner, &good[..good.len() - 1]).status, 1);
+        assert_eq!(validate(&owner, &issue(wire::execution_domain(3, &[2; 32]))).status, 1);
+
+        let mut malformed = good.clone();
+        let kem_offset = DESCRIPTOR_BYTES - 1184;
+        malformed[kem_offset..kem_offset + 3].fill(0xff);
+        assert_eq!(validate(&owner, &malformed).status, 1);
+
+        owner.state = State::Failed;
+        assert_eq!(validate(&owner, &good).status, 1);
+    }
+
     #[test]
     fn summary_requires_ready_and_exact_seed_and_allows_authentic_empty_ledger() {
         let seed = [42; 32];

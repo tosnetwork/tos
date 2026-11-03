@@ -49,6 +49,15 @@ impl Descriptor {
         })
     }
 
+    /// Validate the recipient for a payment in the selected pool.
+    pub fn validate_recipient(&self, domain: Fr) -> Result<()> {
+        if self.execution_domain != domain {
+            return Err(Error::Encoding("descriptor belongs to another pool".into()));
+        }
+        PoolInstance::parse_encapsulation_key(&self.mlkem_encapsulation_key)?;
+        Ok(())
+    }
+
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(DESCRIPTOR_BYTES);
         out.extend_from_slice(&MAGIC.to_be_bytes());

@@ -45,6 +45,11 @@ TosShieldedReplay *tos_shielded_replay_create(const uint8_t *request, size_t len
 int32_t tos_shielded_replay_push(TosShieldedReplay *session, const uint8_t *boc, size_t length);
 int32_t tos_shielded_replay_finish(TosShieldedReplay *session);
 TosShieldedResponse *tos_shielded_replay_info(const TosShieldedReplay *session);
+
+/* Validates one binary recipient descriptor against a Ready replay's pool.
+ * The response has an empty payload. This does not authorize a payment. */
+TosShieldedResponse *tos_shielded_replay_validate_recipient(const TosShieldedReplay *session,
+    const uint8_t *descriptor, size_t descriptor_len);
 /* Scan at most 512 outputs against the completed ledger's FULL nullifier set.
  * A page is not a complete private balance. Merge by note body, cover all pages,
  * preserve issued-index high water and recheck proof freshness before publishing.
