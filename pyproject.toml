@@ -28,7 +28,11 @@ line-length = 100
 # Scripts also run under the system python3 of the CI images, so keep syntax that
 # older interpreters parse (for example parenthesised multi-type except clauses).
 target-version = "py312"
-include = ["test/integration/**/*.py", "test/tostester/**/*.py"]
+include = [
+    "test/integration/**/*.py",
+    "test/tostester/**/*.py",
+    "test/shielded-pool/localnet/**/*.py",
+]
 # Evidence records pin these files by their exact bytes (sha256), and the A03
 # ledger re-hashes the working tree; reformatting them would break those
 # bindings. Source guards also apply exact-text mutations to some of them, so the
@@ -105,7 +109,7 @@ ignore = [
 "scripts/x02_stage_a_child.py" = ["F821"]
 
 [tool.pyright]
-include = ["test/integration", "test/tostester"]
+include = ["test/integration", "test/tostester", "test/shielded-pool/localnet"]
 # The cell codec deliberately imports its mutually recursive representations
 # inside methods. Keep cycle diagnostics visible; runtime import and codec tests
 # check these deferred edges. Type and nullability errors remain blocking.
@@ -113,6 +117,13 @@ reportImportCycles = "warning"
 # Keep gradual-typing warnings visible without treating them as type errors.
 # The CLI still exits nonzero for every error diagnostic.
 failOnWarnings = false
+
+# The local end-to-end tooling runs as scripts from its own directory and
+# borrows the test-only SOCKS peer from the relayer tests and the wallet
+# helpers from tostester, so those directories are its import roots.
+[[tool.pyright.executionEnvironments]]
+root = "test/shielded-pool/localnet"
+extraPaths = ["test/bonded-relayer", "tools/bonded-relayer", "test/tostester/src"]
 
 [tool.pytest]
 testpaths = ["test/tostester/tests"]

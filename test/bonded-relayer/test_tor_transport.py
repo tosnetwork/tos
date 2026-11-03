@@ -42,7 +42,7 @@ class SocksPeer(socketserver.ThreadingTCPServer):
 
     daemon_threads = False
 
-    def __init__(self, target):
+    def __init__(self, target, listen_port=0):
         self.target = target
         self.credentials, self.targets, self.paths, self.errors = [], [], [], []
         self.method = b"\x05\x02"
@@ -52,15 +52,52 @@ class SocksPeer(socketserver.ThreadingTCPServer):
         # Bytes to answer with instead of forwarding, for requests whose path starts with
         # `canned_path`.
         self.canned, self.canned_path = None, ""
-        super().__init__(("127.0.0.1", 0), SocksHandler)
+        # Seconds one read from the client or from the upstream may take; the live
+        # operator behind the localnet gate verifies proofs before it answers.
+        self.client_timeout = self.upstream_timeout = 3.0
+        super().__init__(("127.0.0.1", listen_port), SocksHandler)
 
     def handle_error(self, request, client_address):
         self.errors.append(sys.exception())
 
+    def accept_target(self, host: str, port: int) -> bool:
+        """Whether a CONNECT to `host:port` may open the upstream at all.
+
+        The base peer forwards every domain to its one fixed upstream, which is
+        what the transport tests need. A peer standing in for Tor on a live
+        network overrides this to refuse every name but the operator's before
+        anything is connected."""
+        return True
+
+    def observe(self, record: dict) -> None:
+        """Called once per connection with what the peer saw: the credentials,
+        the target, the request path and how the connection ended. The base
+        peer keeps its own lists; a gate turns the record into a receipt."""
+
+
+REFUSED_BY_RULESET = b"\x05\x02\x00\x01\x00\x00\x00\x00\x00\x00"
+
 
 class SocksHandler(socketserver.BaseRequestHandler):
     def handle(self):
-        self.request.settimeout(3)
+        record = {
+            "user": None,
+            "password": None,
+            "target": None,
+            "path": None,
+            "forwarded": False,
+            "dropped": False,
+            "refused_target": False,
+            "upstream_status": None,
+        }
+        try:
+            self.handle_recorded(record)
+        finally:
+            self.server.observe(record)
+
+    def handle_recorded(self, record):
+        client_timeout = self.server.client_timeout
+        self.request.settimeout(client_timeout)
         try:
             if read_exact(self.request, 3) != b"\x05\x01\x02":
                 raise AssertionError("client did not require SOCKS authentication")
@@ -71,6 +108,7 @@ class SocksHandler(socketserver.BaseRequestHandler):
                 raise AssertionError("wrong authentication version")
             user = read_exact(self.request, read_exact(self.request, 1)[0])
             password = read_exact(self.request, read_exact(self.request, 1)[0])
+            record["user"], record["password"] = user, password
             self.server.credentials.append((user, password))
             self.request.sendall(self.server.auth)
             if self.server.auth != b"\x01\x00":
@@ -79,13 +117,23 @@ class SocksHandler(socketserver.BaseRequestHandler):
                 raise AssertionError("client resolved destination instead of sending domain")
             host = read_exact(self.request, read_exact(self.request, 1)[0])
             port = int.from_bytes(read_exact(self.request, 2), "big")
+            record["target"] = (host.decode(), port)
             self.server.targets.append((host.decode(), port))
+            if not self.server.accept_target(host.decode(), port):
+                # Refused by the ruleset before any upstream exists, so a wrong
+                # name never learns whether anything listens behind the peer.
+                record["refused_target"] = True
+                self.request.sendall(REFUSED_BY_RULESET)
+                return
             # Fragment replies to exercise exact framing, including the bound address.
             for byte in self.server.reply:
                 self.request.sendall(bytes([byte]))
             if self.server.reply[:3] != b"\x05\x00\x00" or self.server.reply[3] not in (1, 3, 4):
                 return
-            start, headers, body = receive(self.request, 512 * 1024, time.monotonic() + 3)
+            start, headers, body = receive(
+                self.request, 512 * 1024, time.monotonic() + client_timeout
+            )
+            record["path"] = start.split(" ")[1]
             self.server.paths.append(start.split(" ")[1])
             if self.server.canned is not None and start.split(" ")[1].startswith(
                 self.server.canned_path
@@ -97,18 +145,27 @@ class SocksHandler(socketserver.BaseRequestHandler):
                     b"HTTP/1.1 302 Found\r\nLocation: https://example.invalid\r\nContent-Length: 0\r\n\r\n"
                 )
                 return
+            upstream_timeout = self.server.upstream_timeout
             upstream = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             with upstream:
-                upstream.settimeout(3)
+                upstream.settimeout(upstream_timeout)
                 upstream.connect(self.server.target)
                 wire = (
                     start + "\r\n" + "".join(f"{k}: {v}\r\n" for k, v in headers.items()) + "\r\n"
                 )
                 upstream.sendall(wire.encode() + body)
-                line, _, result = receive(upstream, 65536, time.monotonic() + 3)
+                line, _, result = receive(upstream, 65536, time.monotonic() + upstream_timeout)
+            record["forwarded"] = True
+            record["upstream_status"] = int(line.split(" ")[1])
             if self.server.drop_submit and start.startswith("POST /v1/submit "):
+                record["dropped"] = True
                 return
-            respond(self.request, int(line.split(" ")[1]), json.loads(result), time.monotonic() + 3)
+            respond(
+                self.request,
+                int(line.split(" ")[1]),
+                json.loads(result),
+                time.monotonic() + client_timeout,
+            )
         except (EOFError, BrokenPipeError, ConnectionResetError):
             pass
 

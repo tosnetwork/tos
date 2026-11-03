@@ -48,6 +48,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     let profile_hash = shielded_pool_genesis::profile_hash(&parameters.profile_bytes);
     let reserve = parameters.reserve_floor;
+    let withdrawal_fee = parameters.withdrawal_fee;
+    let denominations: Vec<String> =
+        parameters.denominations.iter().map(ToString::to_string).collect();
     let genesis = shielded_pool_genesis::build(parameters)?;
     let init = StateInit::with_code_and_data(code.clone(), genesis.state.clone());
     let account = init.write_to_new_cell()?.into_cell()?.hash(0);
@@ -72,6 +75,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "ceremony_transcript": audited.transcript(),
         "execution_domain": hex(&fr_to_be(&domain)),
         "reserve_floor_nanotos": reserve.to_string(),
+        "withdrawal_fee_nanotos": withdrawal_fee.to_string(),
+        "denominations_nanotos": denominations,
         "commitment_root": dec(genesis.commitment_root),
         "nullifier_root": dec(genesis.nullifier_root)
     });

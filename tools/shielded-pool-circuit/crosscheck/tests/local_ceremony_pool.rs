@@ -46,6 +46,14 @@ fn the_local_ceremony_pool_carries_the_clients_pins_and_agrees_with_itself() {
     assert_eq!(manifest["development_verifying_key"], false);
     assert_eq!(manifest["global_id"], 3);
     assert_eq!(manifest["scope"], "isolated-local-ceremony-key");
+    // The fee and the denominations a local driver plans its amounts around.
+    assert_eq!(
+        manifest["withdrawal_fee_nanotos"],
+        shielded_pool_genesis::WITHDRAWAL_FEE.to_string()
+    );
+    let denominations: Vec<String> =
+        shielded_pool_genesis::DENOMINATIONS.iter().map(ToString::to_string).collect();
+    assert_eq!(manifest["denominations_nanotos"], serde_json::json!(denominations));
 
     // The documents describe the one StateInit that was written.
     let code = read_single_root_boc(std::fs::read(out.join("code.boc")).unwrap()).unwrap();
