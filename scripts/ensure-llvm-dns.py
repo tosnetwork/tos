@@ -58,7 +58,9 @@ def probe_origin():
         "https://apt.llvm.org/",
     ]
     try:
-        text = subprocess.check_output(command, text=True, stderr=subprocess.PIPE, timeout=40).strip()
+        text = subprocess.check_output(
+            command, text=True, stderr=subprocess.PIPE, timeout=40
+        ).strip()
     except subprocess.CalledProcessError as error:
         # curl stderr contains public endpoint diagnostics; bound the retained output.
         print(f"LLVM TLS/DoH probe failed: {(error.stderr or '')[-2048:]}", file=sys.stderr)
