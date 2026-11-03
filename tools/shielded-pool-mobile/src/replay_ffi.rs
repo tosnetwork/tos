@@ -1098,6 +1098,67 @@ pub unsafe extern "C" fn tos_shielded_payment_free(submission: *mut RecoveredRel
     }
 }
 
+#[cfg(not(all(unix, feature = "proving")))]
+#[no_mangle]
+pub extern "C" fn tos_shielded_relay_offer_request(
+    _session: *const TosShieldedReplay,
+    _request: *const u8,
+    _length: usize,
+) -> *mut std::ffi::c_void {
+    ptr::null_mut()
+}
+
+#[cfg(not(all(unix, feature = "proving")))]
+#[no_mangle]
+pub extern "C" fn tos_shielded_relay_offer_info(
+    _offer: *const std::ffi::c_void,
+) -> *mut TosShieldedResponse {
+    ptr::null_mut()
+}
+
+#[cfg(not(all(unix, feature = "proving")))]
+#[no_mangle]
+pub extern "C" fn tos_shielded_relay_offer_free(_offer: *mut std::ffi::c_void) {}
+
+#[cfg(not(all(unix, feature = "proving")))]
+#[no_mangle]
+pub extern "C" fn tos_shielded_payment_stage(
+    _session: *const TosShieldedReplay,
+    _prover: *const std::ffi::c_void,
+    _offer: *mut std::ffi::c_void,
+    _seed: *const u8,
+    _seed_len: usize,
+    _request: *const u8,
+    _request_len: usize,
+) -> *mut std::ffi::c_void {
+    ptr::null_mut()
+}
+
+#[cfg(not(all(unix, feature = "proving")))]
+#[no_mangle]
+pub extern "C" fn tos_shielded_payment_recover(
+    _session: *const TosShieldedReplay,
+    _seed: *const u8,
+    _seed_len: usize,
+    _request: *const u8,
+    _request_len: usize,
+    _output: *mut *mut std::ffi::c_void,
+) -> u8 {
+    1
+}
+
+#[cfg(not(all(unix, feature = "proving")))]
+#[no_mangle]
+pub extern "C" fn tos_shielded_payment_submit(
+    _submission: *const std::ffi::c_void,
+) -> *mut TosShieldedResponse {
+    ptr::null_mut()
+}
+
+#[cfg(not(all(unix, feature = "proving")))]
+#[no_mangle]
+pub extern "C" fn tos_shielded_payment_free(_submission: *mut std::ffi::c_void) {}
+
 /// Issue a descriptor only after committing its index in the canonical store.
 ///
 /// # Safety

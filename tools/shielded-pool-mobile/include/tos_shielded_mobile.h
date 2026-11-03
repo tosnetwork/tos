@@ -70,7 +70,7 @@ TosShieldedPaymentProver *tos_shielded_payment_prover_load(
     const uint8_t *ceremony, size_t ceremony_len);
 void tos_shielded_payment_prover_free(TosShieldedPaymentProver *prover);
 
-/* Proving builds only. The request call uses loopback Tor and blocks.
+/* Requires proving support. The request call uses loopback Tor and blocks.
  * The caller must verify current on-chain Bond eligibility before calling. */
 typedef struct RelayOffer TosShieldedRelayOffer;
 TosShieldedRelayOffer *tos_shielded_relay_offer_request(
@@ -78,7 +78,7 @@ TosShieldedRelayOffer *tos_shielded_relay_offer_request(
 TosShieldedResponse *tos_shielded_relay_offer_info(const TosShieldedRelayOffer *offer);
 void tos_shielded_relay_offer_free(TosShieldedRelayOffer *offer);
 
-/* Proving builds only. Stage consumes the offer, even on failure. All calls
+/* Requires proving support. Stage consumes the offer, even on failure. All calls
  * are synchronous. Submit uses Tor and reports an unverified relay status. */
 typedef struct RecoveredRelaySubmission TosShieldedPaymentSubmission;
 TosShieldedPaymentSubmission *tos_shielded_payment_stage(
