@@ -202,11 +202,13 @@ class Run:
         self.rpc_port = int(self.net.rpc_url.split(":")[2].split("/")[0])
         self.trace_count = 0
         self.last_trace: Path | None = None
+        self.last_command: Completed | None = None
 
     # ------------------------------------------------------------ commands ---
 
     def tosctl_plain(self, who: Participant, *args: str) -> Completed:
         completed = run_measured(capped([str(self.net.tosctl), *args]), env=who.env, timeout=600)
+        self.last_command = completed
         if not completed.ok():
             raise LocalnetError(
                 f"tosctl {args[0]} {args[1] if len(args) > 1 else ''} failed: "
@@ -225,6 +227,7 @@ class Run:
             argv = strace_argv(argv, trace_file)
         argv = capped(argv)
         completed = run_measured(argv, env=who.env, stdin=stdin, timeout=3600)
+        self.last_command = completed
         if trace_file is not None:
             completed.argv = [*completed.argv[: len(argv) - len(args) - 1], "<tosctl>", *args]
             self.last_trace = trace_file
@@ -277,19 +280,21 @@ class Run:
             print(f"SKIP {name}", flush=True)
             return
         print(f"STEP {name} ...", flush=True)
+        self.last_command = None
         try:
             facts = body()
             receipt = self.receipts.build(name, facts=facts, outcome="PASS")
             outcome = "PASS"
         except Exception as error:  # noqa: BLE001 - every failure is a FAIL receipt, never a crash
-            receipt = self.receipts.build(
-                name,
-                facts={
-                    "error": self.receipts.redact_text(str(error)),
-                    "traceback": self.receipts.redact_text(traceback.format_exc()),
-                },
-                outcome="FAIL",
-            )
+            failure: JSON = {
+                "error": self.receipts.redact_text(str(error)),
+                "traceback": self.receipts.redact_text(traceback.format_exc()),
+            }
+            if self.last_command is not None:
+                # What the client itself said is the first thing a reader of a
+                # failed receipt needs, whatever the adjudicator tripped on.
+                failure["last_command"] = self.command_facts(self.last_command)
+            receipt = self.receipts.build(name, facts=failure, outcome="FAIL")
             outcome = "FAIL"
             self.failed = name
         path = self.receipts.write(receipt)
@@ -508,7 +513,7 @@ class Run:
         self.step("setup", setup)
 
         def audit() -> JSON:
-            completed = self.shield(s, "audit-ceremony", "-c", str(s.config))
+            completed = self.shield(s, "audit-ceremony")
             if not completed.ok():
                 raise LocalnetError(completed.stderr[-800:])
             self.record_proving("audit-ceremony", completed)
@@ -637,7 +642,7 @@ class Run:
                 if len(descriptor) < 40:
                     raise LocalnetError("no descriptor line")
                 state[key] = descriptor
-                self.receipts.add_secret(f"descriptor-{name}", descriptor)
+                self.receipts.add_secret(f"descriptor-{key}", descriptor)
                 return self.command_facts(
                     completed, descriptor_sha256=sha256_bytes(descriptor.encode())
                 )
@@ -646,7 +651,9 @@ class Run:
 
         self.step("address-r", address(r, "r", "r_descriptor"))
 
-        def relayed_send(key: str, amount: int, drop: bool) -> Callable[[], JSON]:
+        def relayed_send(
+            key: str, amount: int, drop: bool, descriptor_key: str
+        ) -> Callable[[], JSON]:
             def body() -> JSON:
                 _, r_before, _ = self.notes(r, "r")
                 _, s_before, _ = self.notes(s, "s")
@@ -663,7 +670,7 @@ class Run:
                         "--relayer",
                         str(self.relayer_profile),
                         "--to",
-                        state["r_descriptor"],
+                        state[descriptor_key],
                         "--amount",
                         str(amount // TOS),
                         "--tor-port",
@@ -677,6 +684,8 @@ class Run:
                 connections = self.connection_verdict()
                 if not connections["passed"]:
                     raise LocalnetError(f"connection evidence: {connections['reason']}")
+                if not drop and not completed.ok():
+                    raise LocalnetError(completed.stderr[-1200:])
                 plan = adj.parse_spend_plan(completed.stdout)
                 facts: JSON = self.command_facts(
                     completed, plan=plan.as_json(), connections=connections
@@ -689,8 +698,6 @@ class Run:
                     )[0]
                     facts["ambiguous"] = True
                 else:
-                    if not completed.ok():
-                        raise LocalnetError(completed.stderr[-1200:])
                     request_id, claimed = adj.parse_request(completed.stdout)
                     facts["claimed"] = claimed
                     adj.require_two_real_inputs(plan, amount, int(self.operator["fee"]))
@@ -708,7 +715,7 @@ class Run:
 
             return body
 
-        self.step("send-relayed", relayed_send("relayed", RELAYED_SEND, drop=False))
+        self.step("send-relayed", relayed_send("relayed", RELAYED_SEND, False, "r_descriptor"))
 
         def settle_relayed(key: str, amount: int, expected_groups: int) -> Callable[[], JSON]:
             def body() -> JSON:
@@ -966,8 +973,11 @@ class Run:
 
         self.step("withdraw-s-to-w", public_withdrawal)
 
+        # A descriptor is paid once, so the second relayed send needs a fresh one.
+        self.step("address-r-again", address(r, "r", "r_descriptor_again"))
         self.step(
-            "send-relayed-dropped-submit", relayed_send("dropped", RELAYED_SEND_SECOND, drop=True)
+            "send-relayed-dropped-submit",
+            relayed_send("dropped", RELAYED_SEND_SECOND, True, "r_descriptor_again"),
         )
 
         def settle_dropped() -> JSON:
@@ -986,6 +996,10 @@ class Run:
 
         self.step("settle-dropped-submit-without-resubmission", settle_dropped)
 
+        # The fail-closed controls must get as far as the connection: a paid
+        # descriptor would make the client refuse before it, for another reason.
+        self.step("address-r-unpaid", address(r, "r", "r_descriptor_unpaid"))
+
         def peer_unreachable() -> JSON:
             _, r_before, _ = self.notes(r, "r")
             fee_before = op.fee_notes(self.leases_db)
@@ -998,7 +1012,7 @@ class Run:
                 "--relayer",
                 str(self.relayer_profile),
                 "--to",
-                state["r_descriptor"],
+                state["r_descriptor_unpaid"],
                 "--amount",
                 "1",
                 "--tor-port",
@@ -1009,6 +1023,8 @@ class Run:
             if completed.ok():
                 raise LocalnetError("a send without a reachable SOCKS peer succeeded")
             connects = parse_connects(self.trace_text())
+            if not any(c.port == closed for c in connects):
+                raise LocalnetError("the client failed before it tried the SOCKS port")
             if any(c.port == net.operator_port for c in connects):
                 raise LocalnetError("the client fell back to a direct connection")
             _, r_after, _ = self.notes(r, "r")
@@ -1041,7 +1057,7 @@ class Run:
                 "--relayer",
                 str(loopback_profile),
                 "--to",
-                state["r_descriptor"],
+                state["r_descriptor_unpaid"],
                 "--amount",
                 "1",
                 "--tor-port",

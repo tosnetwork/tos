@@ -45,6 +45,10 @@ def path_class(path: str | None) -> str | None:
 class GatedSocksPeer(SocksPeer):
     """`SocksPeer` that admits one name on one port and writes redacted receipts."""
 
+    # The stand-in keeps one fixed port across runs; connections the previous
+    # run left in TIME-WAIT must not keep the next run from binding it.
+    allow_reuse_address = True
+
     def __init__(
         self,
         upstream: tuple[str, int],

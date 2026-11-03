@@ -211,7 +211,11 @@ if the recipient cannot accept it (an uninitialised address, for example) the
 value bounces back to the pool, which mints a **recovery note** to the sender
 for the bounced value minus the pool's recovery charge (the `recovery_charge`
 getter; no note when the value does not exceed the charge). The next `sync`
-imports it as a note of kind `recovery`, spendable like any other.
+imports it as a note of kind `recovery`, spendable like any other. The
+withdrawal itself already consumed the index the recovery note would use;
+`balance --notes` lists that as a `recovery` row of 0 TOS with no leaf (the
+template the withdrawal signed), and the minted note, when it comes, appears
+at the same index with its leaf and value.
 
 `send --direct --from WALLET` is accepted only when the instance is on an
 isolated local network. It never runs when a relayed send fails.

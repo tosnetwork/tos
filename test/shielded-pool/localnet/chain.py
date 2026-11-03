@@ -266,4 +266,13 @@ def fund(
     if marker is not None:
         with marker.open("x") as handle:
             handle.write("one setup transfer; reconcile on unknown outcome\n")
+    # The genesis wallet signs with its chain-side sequence number, so the next
+    # transfer may only be built once this one has become a transaction.
+    genesis = str(net.network()["genesis_wallet_address"])
+    before = last_lt(net, genesis)
     asyncio.run(_send_from_genesis(net, destination, amount, init_boc, bounce=False))
+    wait_for(
+        lambda: last_lt(net, genesis) > before,
+        f"the genesis transfer of {amount} nanotos to {destination}",
+        timeout=120.0,
+    )

@@ -64,6 +64,21 @@ Spend summary:
 OK request 0a1b2c submitted; the relayer claims it is accepted (message deadbeef)
 """
 
+RELAYED_SPEND_OUTPUT = """
+Spend summary:
+  Kind:        Transfer, relayed
+  To:          descriptor index 1
+  Amount:      3 TOS
+  Relayer fee: 0.3 TOS (a note to the relayer's descriptor index 0, slot 1, from the notes)
+  Inputs:      3 TOS (leaf 2) + 1 TOS (leaf 3)
+  Change:      0.7 TOS (back to this instance)
+  Anchor:      the current root
+  Relayer:     Bond 0:fa via pg6m.onion:80
+  Funding:     up to 0.25 TOS from the relayer's wallet, the quoted maximum (the pool's transact fee is 0.01 TOS)
+  Quote:       baef52, window ends 2026-11-03 02:05:05 UTC
+OK request a1be9b submitted; the relayer claims it is accepted
+"""
+
 SYNC_LINE = (
     "OK verified at masterchain 301 (2026-11-03 00:00:00 UTC): 9 transactions replayed "
     "(8 applied, 1 without state change), 2 new notes, 2 notes in all"
@@ -98,6 +113,13 @@ class ParsingTests(unittest.TestCase):
         self.assertEqual(plan.inputs, [(10 * TOS, 0), (10 * TOS, 1)])
         self.assertEqual(plan.change, 4_700_000_000)
         self.assertEqual(adj.parse_request(SPEND_OUTPUT), ("0a1b2c", "accepted"))
+
+    def test_relayed_spend_plan_names_the_pool_fee_in_its_funding_line(self):
+        plan = adj.parse_spend_plan(RELAYED_SPEND_OUTPUT)
+        self.assertEqual(plan.inputs, [(3 * TOS, 2), (1 * TOS, 3)])
+        self.assertEqual((plan.change, plan.pool_fee), (700_000_000, 10_000_000))
+        adj.require_two_real_inputs(plan, 3 * TOS, 300_000_000)
+        self.assertEqual(adj.parse_request(RELAYED_SPEND_OUTPUT), ("a1be9b", "accepted"))
 
     def test_sync_line(self):
         report = adj.parse_sync(SYNC_LINE)
@@ -209,6 +231,7 @@ class FeeCreditTests(unittest.TestCase):
 
 class RecoveryTests(unittest.TestCase):
     before = [note(0, 3, 15 * TOS, spent=True), note(1, 5, 4_980_000_000)]
+    template = note(2, None, 0, "recovery")
     recovered = note(2, 8, 9_990_000_000 - 10_000_000, "recovery")
 
     def bounce(self, **over: Any) -> adj.Bounce:
@@ -227,8 +250,18 @@ class RecoveryTests(unittest.TestCase):
         )
 
     def test_recovery_and_its_controls(self):
-        after = [*self.before, self.recovered]
+        after = [*self.before, self.template, self.recovered]
         self.assertEqual(self.recovery(self.bounce(), after).leaf, 8)
+        with self.assertRaisesRegex(adj.Adjudication, "recovery template"):
+            self.recovery(self.bounce(), [*self.before, self.recovered])
+        with self.assertRaisesRegex(adj.Adjudication, "recovery template"):
+            self.recovery(
+                self.bounce(), [*self.before, note(2, None, 1, "recovery"), self.recovered]
+            )
+        with self.assertRaisesRegex(adj.Adjudication, "not the template's"):
+            self.recovery(
+                self.bounce(), [*self.before, note(3, None, 0, "recovery"), self.recovered]
+            )
         with self.assertRaisesRegex(adj.Adjudication, "no bounce"):
             self.recovery(None, after)
         with self.assertRaisesRegex(adj.Adjudication, "not a bounce"):
@@ -238,8 +271,8 @@ class RecoveryTests(unittest.TestCase):
         with self.assertRaisesRegex(adj.Adjudication, "carries"):
             self.recovery(self.bounce(value=9_980_000_000), after)
         with self.assertRaisesRegex(adj.Adjudication, "exactly one new recovery"):
-            self.recovery(self.bounce(), self.before)
-        early = [*self.before, note(2, 4, 9_990_000_000 - 10_000_000, "recovery")]
+            self.recovery(self.bounce(), [*self.before, self.template])
+        early = [*self.before, self.template, note(2, 4, 9_990_000_000 - 10_000_000, "recovery")]
         with self.assertRaisesRegex(adj.Adjudication, "not after"):
             self.recovery(self.bounce(), early)
 

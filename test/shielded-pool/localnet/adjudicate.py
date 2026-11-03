@@ -41,6 +41,9 @@ DEPOSIT_MESSAGE_LINE = re.compile(r"OK deposit message (?P<hash>[0-9a-f]{64}) su
 INPUT_LEAF = re.compile(r"(?P<amount>[\d.]+) TOS \(leaf (?P<leaf>\d+)\)")
 CHANGE_LINE = re.compile(r"^\s+Change:\s+(?P<amount>[\d.]+) TOS")
 POOL_FEE_LINE = re.compile(r"^\s+Pool fee:\s+(?P<amount>[\d.]+) TOS")
+# A relayed summary names the pool's fee inside its funding line, because the
+# relayer, not the notes, pays it.
+RELAYED_POOL_FEE = re.compile(r"the pool's transact fee is (?P<amount>[\d.]+) TOS")
 STATUS_CHAIN_LINE = re.compile(r"^\s+Chain:\s+(?P<outcome>.+?)(?: \(|$)")
 STATUS_RELAYER_LINE = re.compile(r"^\s+Relayer:\s+(?P<claim>.+)$")
 STATUS_JOURNAL_LINE = re.compile(r"^\s+Journal:\s+(?P<entry>.+)$")
@@ -153,6 +156,8 @@ def parse_spend_plan(stdout: str) -> SpendPlan:
         elif (match := CHANGE_LINE.match(line)) is not None:
             change = nanotos(match.group("amount"))
         elif (match := POOL_FEE_LINE.match(line)) is not None:
+            pool_fee = nanotos(match.group("amount"))
+        elif (match := RELAYED_POOL_FEE.search(line)) is not None:
             pool_fee = nanotos(match.group("amount"))
     if not inputs or change is None or pool_fee is None:
         raise Adjudication("no complete spend summary in the client's output")
@@ -343,10 +348,21 @@ def require_recovery(
     if recovery_charge <= 0:
         raise Adjudication("a recovery charge of zero")
     fresh = new_notes(before, after)
-    recoveries = [note for note in fresh if note.kind == "recovery"]
+    # The withdrawal itself leaves a recovery template: the index it consumed,
+    # listed without a leaf and without money. The bounce then mints the note.
+    templates = [note for note in fresh if note.kind == "recovery" and note.leaf is None]
+    if len(templates) != 1 or templates[0].amount != 0:
+        raise Adjudication(
+            f"expected exactly one leafless recovery template of 0 TOS, found {templates}"
+        )
+    recoveries = [note for note in fresh if note.kind == "recovery" and note.leaf is not None]
     if len(recoveries) != 1:
         raise Adjudication(f"expected exactly one new recovery note, found {len(recoveries)}")
     note = recoveries[0]
+    if note.index != templates[0].index:
+        raise Adjudication(
+            f"the recovery note's index {note.index} is not the template's {templates[0].index}"
+        )
     if note.amount != bounce.value - recovery_charge:
         raise Adjudication(
             f"the recovery note carries {note.amount}, not {bounce.value} less {recovery_charge}"
