@@ -24,6 +24,7 @@ on:
       - 'tools/shielded-pool-circuit/**'
       - 'tools/shielded-pool-prover/**'
       - 'tools/shielded-pool-ceremony/**'
+      - 'tools/bonded-relayer/bond-codec/**'
       - 'tools/bonded-relayer/client/**'
       - 'crypto/poseidon2/manifest.bin'
       - 'artifacts/phase2-ceremony-2/ceremony/**'
@@ -50,6 +51,7 @@ on:
       - '!tools/shielded-pool-circuit/**/*.md'
       - '!tools/shielded-pool-prover/**/*.md'
       - '!tools/shielded-pool-ceremony/**/*.md'
+      - '!tools/bonded-relayer/bond-codec/**/*.md'
       - '!tools/bonded-relayer/client/**/*.md'
   push:
     branches: [main]

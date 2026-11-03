@@ -13,7 +13,7 @@ use crate::{
     socks::TorProxy,
     wire,
 };
-use node_contracts::relayer_bond::BondInit;
+use br1_bond_codec::BondInit;
 use rand::{rngs::OsRng, RngCore};
 use serde::Deserialize;
 use serde_json::{json, Value};

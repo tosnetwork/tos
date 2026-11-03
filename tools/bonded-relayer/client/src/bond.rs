@@ -5,8 +5,8 @@
 use crate::{release::Release, request::ordinary_boc, wire};
 use anyhow::{ensure, Result};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
+use br1_bond_codec::{BondInit, RelayerBond};
 use chain_block::{Deserializable, MsgAddressInt, Serializable, StateInit};
-use node_contracts::relayer_bond::{BondInit, RelayerBond};
 use std::str::FromStr;
 
 /// The most bytes a Bond StateInit BOC may have, and its base64 length.

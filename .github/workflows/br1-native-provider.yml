@@ -39,6 +39,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y pkg-config libssl-dev
           scripts/install-rust-toolchain.sh
+      - name: Check the shared pure Bond codec and assertion controls
+        run: |
+          cargo fmt --manifest-path tools/bonded-relayer/bond-codec/Cargo.toml --check
+          cargo test --locked --manifest-path tools/bonded-relayer/bond-codec/Cargo.toml -j2
+          cargo clippy --locked --manifest-path tools/bonded-relayer/bond-codec/Cargo.toml --all-targets --no-deps -j2 -- -D warnings
+          python3 test/bonded-relayer/native_bond_codec_controls.py --out /tmp/br1-bond-codec-controls --target-dir tools/bonded-relayer/bond-codec/target
       - name: Check the shared client crate's format, tests and lints
         run: |
           cargo fmt --manifest-path tools/bonded-relayer/client/Cargo.toml --check

@@ -17,7 +17,7 @@ hex = "0.4"
 rand = "0.8"
 tokio = { version = "1", features = ["net", "io-util", "time"] }
 chain_block = { path = "../../../tosctl/src/block" }
-node-contracts = { package = "contracts", path = "../../../tosctl/src/node-control/contracts" }
+br1-bond-codec = { path = "../bond-codec" }
 shielded-pool-wallet = { path = "../../shielded-pool-wallet" }
 shielded-pool-circuit = { path = "../../shielded-pool-circuit" }
 fips204 = { version = "=0.4.6", default-features = false, features = ["ml-dsa-44", "default-rng"] }

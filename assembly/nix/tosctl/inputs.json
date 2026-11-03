@@ -16,6 +16,7 @@
     "tools/shielded-pool-circuit",
     "tools/shielded-pool-prover",
     "tools/shielded-pool-ceremony",
+    "tools/bonded-relayer/bond-codec",
     "tools/bonded-relayer/client",
     "crypto/poseidon2/manifest.bin"
   ],

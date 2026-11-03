@@ -208,7 +208,7 @@ impl Candidate {
         for slot in 0..3 {
             let c = output.checked_drain_reference()?;
             if slot == request.fee_slot {
-                fee_payload = node_contracts::relayer_bond::chain_bytes(&c, OUTPUT_PAYLOAD_BYTES)?;
+                fee_payload = br1_bond_codec::chain_bytes(&c, OUTPUT_PAYLOAD_BYTES)?;
             }
         }
         ensure!(

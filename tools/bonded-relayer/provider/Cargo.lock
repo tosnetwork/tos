@@ -607,14 +607,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "br1-bond-codec"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chain_block",
+ "sha2",
+]
+
+[[package]]
 name = "br1-client"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "ark-ff",
  "base64 0.22.1",
+ "br1-bond-codec",
  "chain_block",
- "contracts",
  "fips204",
  "hex",
  "rand 0.8.5",
@@ -939,6 +948,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "base64 0.22.1",
+ "br1-bond-codec",
  "chain-rpc-client",
  "chain_block",
  "common",
