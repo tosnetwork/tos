@@ -38,12 +38,17 @@ REQUIRED = {
     "privacy",
 }
 HEX64 = 64
+COMMIT_ID = 40
 
 
 def hex64(value: Any) -> bool:
+    return lowercase_hex(value, HEX64)
+
+
+def lowercase_hex(value: Any, length: int) -> bool:
     return (
         isinstance(value, str)
-        and len(value) == HEX64
+        and len(value) == length
         and all(c in "0123456789abcdef" for c in value)
     )
 
@@ -61,7 +66,7 @@ def check_structure(index: Any) -> list[str]:
         return problems
     if index["result"] not in ("PASS", "FAIL"):
         problems.append("result is neither PASS nor FAIL")
-    if not isinstance(index["base_commit"], str) or len(index["base_commit"]) != 40:
+    if not lowercase_hex(index["base_commit"], COMMIT_ID):
         problems.append("base_commit is not a full commit id")
     # The binaries built from this repository must name the commit and source
     # path that built them. A system tool such as strace is identified by its
@@ -78,8 +83,7 @@ def check_structure(index: Any) -> list[str]:
             continue
         if (
             not isinstance(source, dict)
-            or not isinstance(source.get("commit"), str)
-            or len(source["commit"]) != 40
+            or not lowercase_hex(source.get("commit"), COMMIT_ID)
             or not isinstance(source.get("path"), str)
             or not source["path"]
         ):

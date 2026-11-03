@@ -337,18 +337,33 @@ class MeasuredCommandTests(unittest.TestCase):
             with self.assertRaisesRegex(LocalnetError, "timed out"):
                 run_measured([sys.executable, "-c", script, str(pid_file)], timeout=1.0)
             self.assertLess(time.monotonic() - started, 10.0)
-            pid = int(pid_file.read_text())
-            deadline = time.monotonic() + 5.0
-            while time.monotonic() < deadline:
-                try:
-                    state = Path(f"/proc/{pid}/status").read_text()
-                except FileNotFoundError:
-                    break
-                if "State:\tZ" in state:
-                    break
-                time.sleep(0.05)
-            else:
-                self.fail("the descendant sleep survived the timeout")
+            self.assert_gone(int(pid_file.read_text()))
+
+    def test_a_command_that_exits_at_once_but_leaves_a_child_on_its_pipes_times_out(self):
+        with tempfile.TemporaryDirectory() as directory:
+            pid_file = Path(directory) / "pid"
+            script = (
+                "import subprocess, sys\n"
+                "child = subprocess.Popen(['sleep', '60'])\n"
+                "open(sys.argv[1], 'w').write(str(child.pid))\n"
+            )
+            started = time.monotonic()
+            with self.assertRaisesRegex(LocalnetError, "timed out"):
+                run_measured([sys.executable, "-c", script, str(pid_file)], timeout=1.0)
+            self.assertLess(time.monotonic() - started, 10.0)
+            self.assert_gone(int(pid_file.read_text()))
+
+    def assert_gone(self, pid: int) -> None:
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            try:
+                state = Path(f"/proc/{pid}/status").read_text()
+            except FileNotFoundError:
+                return
+            if "State:\tZ" in state:
+                return
+            time.sleep(0.05)
+        self.fail("the descendant sleep survived the timeout")
 
     def test_a_finished_command_reports_its_output_and_usage(self):
         completed = run_measured([sys.executable, "-c", "print('out'); raise SystemExit(3)"])
@@ -759,6 +774,9 @@ class EvidenceIndexTests(unittest.TestCase):
                 ('["pool"]["development_verifying_key"] = True', "ceremony key"),
                 ('["binaries"]["tosctl"]["source"] = {"commit": "c" * 40}', "which commit"),
                 ('["binaries"]["tosctl"].pop("source")', "which commit"),
+                ('["binaries"]["tosctl"]["source"]["commit"] = "x" * 40', "which commit"),
+                ('["binaries"]["tosctl"]["source"]["commit"] = "C" * 40', "which commit"),
+                ('["base_commit"] = "x" * 40', "full commit id"),
                 ('["binaries"]["strace"]["source"] = {"commit": "c" * 40}', "which commit"),
                 ('["binaries"].pop("tos-proof-verify")', "missing from the index"),
                 ('["chain"]["global_id"] = 2', "isolated local network"),

@@ -287,9 +287,17 @@ def run_measured(
     finally:
         timer.cancel()
     process.returncode = -os.WTERMSIG(status) if os.WIFSIGNALED(status) else os.WEXITSTATUS(status)
-    timed_out = not timer.is_alive() and time.monotonic() - started >= timeout
+    # The deadline stays in force while the pipes drain: a command that exits
+    # at once but leaves a child holding its output is still bounded by it.
+    timed_out = time.monotonic() - started >= timeout
     for reader in readers:
-        reader.join(DRAIN_AFTER_TIMEOUT_SECONDS if timed_out else None)
+        if not timed_out:
+            reader.join(max(0.0, timeout - (time.monotonic() - started)))
+            if reader.is_alive():
+                timed_out = True
+                kill_group()
+        if timed_out:
+            reader.join(DRAIN_AFTER_TIMEOUT_SECONDS)
     if timed_out:
         kill_group()
         raise LocalnetError(f"timed out after {timeout:.0f} s: {argv[0]}")
