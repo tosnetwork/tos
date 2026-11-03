@@ -23,6 +23,7 @@ const DIRECTORY_FLAGS: i32 =
     libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK;
 const STATE: &CStr = c"state.bin";
 const NEXT: &CStr = c"state.next";
+const PENDING_PAYMENT_TAG: &[u8] = b"TOS-PENDING-PAYMENT\x01";
 const STATE_HEADER: usize = 52;
 pub const MAX_STATE_BYTES: usize = snapshot::MAX_SNAPSHOT_BYTES - STATE_HEADER;
 #[path = "reservations.rs"]
@@ -269,6 +270,50 @@ impl StateStore {
         }
         result
     }
+    /// Return the original unresolved submission without changing its state.
+    pub fn pending_payment(&mut self) -> Result<Option<zeroize::Zeroizing<Vec<u8>>>> {
+        let Some(state) = self.load()? else {
+            return Ok(None);
+        };
+        if state.plaintext.is_empty() {
+            return Ok(None);
+        }
+        let bytes = state
+            .plaintext
+            .strip_prefix(PENDING_PAYMENT_TAG)
+            .filter(|bytes| !bytes.is_empty())
+            .ok_or(StoreError::RecoveryRequired)?;
+        Ok(Some(zeroize::Zeroizing::new(bytes.to_vec())))
+    }
+
+    /// Persist the exact submission bytes before the first network attempt.
+    /// A different record cannot replace an unresolved one. Repeating the
+    /// same preparation is idempotent and leaves the existing bytes intact.
+    pub fn persist_pending_payment(&mut self, exact_request: &[u8]) -> Result<()> {
+        if exact_request.is_empty()
+            || exact_request.len() > MAX_STATE_BYTES - PENDING_PAYMENT_TAG.len()
+        {
+            return Err(Error::Limit.into());
+        }
+        if let Some(existing) = self.load()? {
+            if !existing.plaintext.is_empty() {
+                return if existing.plaintext.strip_prefix(PENDING_PAYMENT_TAG)
+                    == Some(exact_request)
+                {
+                    Ok(())
+                } else {
+                    Err(StoreError::Conflict)
+                };
+            }
+        }
+        let mut record = zeroize::Zeroizing::new(Vec::with_capacity(
+            PENDING_PAYMENT_TAG.len() + exact_request.len(),
+        ));
+        record.extend_from_slice(PENDING_PAYMENT_TAG);
+        record.extend_from_slice(exact_request);
+        self.commit(&record)
+    }
+
     /// Any failure after beginning the durable operation freezes this handle.
     /// A failed result may already have published the replacement: retain it,
     /// reopen/inspect explicitly, and never infer permission to send again.

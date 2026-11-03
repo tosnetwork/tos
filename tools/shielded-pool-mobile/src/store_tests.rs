@@ -265,3 +265,19 @@ fn exclusive_candidate_creation_never_overwrites_an_uncertain_file() {
     assert_eq!(fs::read(f.state()).unwrap(), old);
     assert_eq!(fs::read(f.next()).unwrap(), b"preserve uncertain candidate");
 }
+
+#[test]
+fn pending_payment_survives_reopen_and_refuses_replacement() {
+    let fixture = Fixture::new();
+    let exact = b"original request bytes";
+    let mut store = fixture.open();
+    assert!(store.pending_payment().unwrap().is_none());
+    store.persist_pending_payment(exact).unwrap();
+    drop(store);
+
+    let mut store = fixture.open();
+    assert_eq!(&*store.pending_payment().unwrap().unwrap(), exact);
+    store.persist_pending_payment(exact).unwrap();
+    assert!(matches!(store.persist_pending_payment(b"new request"), Err(StoreError::Conflict)));
+    assert_eq!(&*store.pending_payment().unwrap().unwrap(), exact);
+}

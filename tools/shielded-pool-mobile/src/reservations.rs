@@ -140,6 +140,9 @@ impl StateStore {
         request: &shielded_pool_wallet::plan::Request,
     ) -> Result<shielded_pool_wallet::plan::Plan> {
         use shielded_pool_wallet::plan::plan_recovered;
+        if self.pending_payment()?.is_some() {
+            return Err(StoreError::Conflict);
+        }
         let scanned_next = match recovered.notes.iter().map(|note| note.note_key_index).max() {
             Some(index) => index.checked_add(1).ok_or(Error::Limit)?,
             None => 0,
