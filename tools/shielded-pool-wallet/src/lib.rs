@@ -19,9 +19,11 @@ pub mod error;
 pub mod import;
 pub mod keys;
 pub mod ledger;
+pub mod plan;
 pub mod relayer_fee;
 pub mod relayer_quote;
 pub mod scan;
+pub mod spend;
 
 /// Section 9.4: exactly 28 ASCII bytes, and it never varies.
 pub const SIGNATURE_CONTEXT: &[u8] = b"TOS-SHIELDED-POOL-MLDSA44-v1";

@@ -15,6 +15,8 @@ pub enum Error {
     Encoding(String),
     /// The payload decrypted but does not describe a note this wallet owns.
     Rejected(Rejection),
+    /// A spend cannot be planned from what the wallet holds or was asked for.
+    Planning(String),
 }
 
 /// Exactly which section 3.1 rule a payload broke. A wallet keeps this so a
@@ -51,6 +53,7 @@ impl std::fmt::Display for Error {
             Error::KeyDerivation(message) => write!(f, "key derivation: {message}"),
             Error::Encoding(message) => write!(f, "encoding: {message}"),
             Error::Rejected(why) => write!(f, "payload rejected: {why:?}"),
+            Error::Planning(message) => write!(f, "planning: {message}"),
         }
     }
 }

@@ -40,6 +40,10 @@ pub struct Imported {
     pub note_secret: Fr,
     pub owner_commitment: Fr,
     pub note_body: Fr,
+    /// The hash the contract computed over the payload bytes that delivered
+    /// this note. The note body commits to it, so spending the note means
+    /// presenting it again; it cannot be recovered from the body.
+    pub output_data_hash: Fr,
     /// True for an ordinary output, which is the only kind a wallet may add
     /// to its balance and later spend.
     pub spendable: bool,
@@ -151,6 +155,7 @@ pub fn import(
                 note_secret: plaintext.note_secret,
                 owner_commitment,
                 note_body: minted,
+                output_data_hash: slot.output_data_hash,
                 spendable: true,
                 spent: false,
             }));
@@ -169,6 +174,7 @@ pub fn import(
             note_secret: plaintext.note_secret,
             owner_commitment,
             note_body: template,
+            output_data_hash: slot.output_data_hash,
             spendable: false,
             spent: false,
         }));
@@ -185,6 +191,7 @@ pub fn import(
         note_secret: plaintext.note_secret,
         owner_commitment,
         note_body,
+        output_data_hash: slot.output_data_hash,
         spendable: plaintext.kind == Kind::Ordinary,
         spent: false,
     }))

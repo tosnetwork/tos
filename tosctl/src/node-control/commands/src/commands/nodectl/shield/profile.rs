@@ -306,6 +306,7 @@ mod tests {
                 denominations: vec![1_000_000_000],
             },
             verifying_key,
+            anchors: contracts::shielded_pool::AnchorStore::default(),
         }
     }
 

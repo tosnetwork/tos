@@ -36,7 +36,10 @@ use zeroize::Zeroizing;
 
 use super::profile::Profile;
 
-pub const STATE_FORMAT_VERSION: u32 = 1;
+/// The format of the sealed state and journal. A client reads its own format
+/// only: this tool is pre-release and carries no state across formats. An
+/// instance written in an earlier format is re-initialised from its mnemonic.
+pub const STATE_FORMAT_VERSION: u32 = 2;
 const AAD_PREFIX: &[u8] = b"TOS-SHIELD-CLI-v1";
 const KEY_LABEL: &[u8] = b"TOS-SHIELD-CLI-STATE-KEY-v1";
 const INSTANCE_LABEL: &[u8] = b"TOS-SHIELD-CLI-INSTANCE-v1";
@@ -288,6 +291,21 @@ impl Store {
         self
     }
 
+    /// A second handle on the same directory that reads what is on disk and
+    /// does not take the lock: for a test that must look at the journal
+    /// while the locked handle is in use.
+    #[cfg(test)]
+    pub(super) fn unlocked_reader(&self) -> anyhow::Result<Self> {
+        let lock = File::open(self.dir.join("lock")).context("open the lock for reading")?;
+        Ok(Self {
+            dir: self.dir.clone(),
+            binding: self.binding.clone(),
+            cipher: self.cipher.clone(),
+            limit: self.limit,
+            _lock: lock,
+        })
+    }
+
     pub fn directory(&self) -> &Path {
         &self.dir
     }
@@ -348,6 +366,46 @@ impl Store {
         Ok(Zeroizing::new(opened))
     }
 
+    /// Opens a record of the current format. A record that opens under an
+    /// earlier format is named as such, so the message says what to do
+    /// instead of reporting a record that does not open.
+    fn open_current(
+        &self,
+        kind: u8,
+        sequence: u64,
+        bytes: &[u8],
+        what: &str,
+    ) -> anyhow::Result<Zeroizing<Vec<u8>>> {
+        match self.open_sealed(kind, STATE_FORMAT_VERSION, sequence, bytes) {
+            Ok(plain) => Ok(plain),
+            Err(error) => {
+                for version in 1..STATE_FORMAT_VERSION {
+                    if self.open_sealed(kind, version, sequence, bytes).is_ok() {
+                        anyhow::bail!(
+                            "the {what} was written in format {version} by an earlier pre-release \
+                             client; this client reads format {STATE_FORMAT_VERSION} only and \
+                             carries nothing across formats. To start over: remove the instance \
+                             directory ({}) and the pointer file that names it (under {}, the \
+                             file whose `directory` is {:?}), then run `tosctl shield init` again \
+                             with the same mnemonic. The chain gives back every note; the old \
+                             journal's receipts are not carried over, and a spend that was still \
+                             pending is forgotten (the pool refuses a second spend of the same \
+                             note, so at worst its fee is lost)",
+                            self.dir.display(),
+                            self.dir
+                                .parent()
+                                .map_or_else(|| "..".into(), |root| root.display().to_string()),
+                            self.dir.file_name().map_or_else(String::new, |name| name
+                                .to_string_lossy()
+                                .into_owned())
+                        );
+                    }
+                }
+                Err(error)
+            }
+        }
+    }
+
     /// Replaces the state atomically: the new file is complete and synced
     /// before it takes the old one's name.
     pub fn save_state(&self, state: &PersistedState) -> anyhow::Result<()> {
@@ -377,7 +435,7 @@ impl Store {
         let mut bytes = Vec::new();
         (&mut file).take(self.limit as u64 + 1).read_to_end(&mut bytes)?;
         anyhow::ensure!(bytes.len() <= self.limit, "the state file is too large");
-        let plain = self.open_sealed(KIND_STATE, STATE_FORMAT_VERSION, 0, &bytes)?;
+        let plain = self.open_current(KIND_STATE, 0, &bytes, "state")?;
         let state: PersistedState =
             ciborium::from_reader(plain.as_slice()).context("decode the state")?;
         anyhow::ensure!(state.version == STATE_FORMAT_VERSION, "a state of another version");
@@ -459,7 +517,7 @@ impl Store {
                 );
             };
             let plain = self
-                .open_sealed(KIND_JOURNAL, STATE_FORMAT_VERSION, sequence, frame)
+                .open_current(KIND_JOURNAL, sequence, frame, "journal")
                 .with_context(|| format!("journal record {sequence}"))?;
             let record: JournalRecord =
                 ciborium::from_reader(plain.as_slice()).context("decode a journal record")?;
@@ -535,7 +593,11 @@ pub struct Cursor {
     pub checkpoint_seqno: u32,
     pub checkpoint_root_hash: String,
     pub checkpoint_file_hash: String,
+    /// Time of the masterchain block the head was read at.
     pub block_gen_utime: u32,
+    /// Time of the shard block holding the pool's state: the contract's own
+    /// clock, the only one a spend's deadline is judged against.
+    pub shard_gen_utime: u32,
     pub transactions_replayed: u64,
 }
 
@@ -567,6 +629,8 @@ pub struct PersistedNullifierLeaf {
 pub struct PersistedLedger {
     pub leaves: Vec<Word>,
     pub nullifiers: Vec<Word>,
+    /// The intent digest of every accepted transact, in order.
+    pub intents: Vec<Word>,
     pub nullifier_tree: Vec<PersistedNullifierLeaf>,
     pub nullifier_next_index: u64,
     pub native_liability: Coins,
@@ -584,6 +648,9 @@ pub struct PersistedNote {
     pub note_secret: Word,
     pub owner_commitment: Word,
     pub note_body: Word,
+    /// The hash the chain computed over the sealed payload; a spend witness
+    /// needs it.
+    pub output_data_hash: Word,
     pub spendable: bool,
     pub spent: bool,
     pub leaf: Option<u64>,
@@ -652,6 +719,42 @@ pub enum JournalRecord {
     /// The broadcast returned an error; whether the message reached the
     /// network is not known.
     DepositUnknown { message_hash: Word, error: String },
+    /// The indices one spend will seal and sign with, reserved before any of
+    /// them is used for anything.
+    IndicesReserved { indices: Vec<u64>, purpose: String },
+    /// A spend is assembled and about to be proven. Its input notes are held
+    /// from any other spend until a verified sync shows the intent accepted,
+    /// shows an input spent by something else, or shows the contract's clock
+    /// past the deadline.
+    SpendPlanned {
+        intent_digest: Word,
+        nullifiers: [Word; 2],
+        input_leaves: Vec<u64>,
+        indices: Vec<u64>,
+        amount: Coins,
+        /// The payout address of a withdrawal, or the hash of the descriptor
+        /// a transfer pays.
+        recipient: String,
+        withdrawal: bool,
+        valid_until: u32,
+        anchor_kind: u8,
+        anchor_id: u32,
+    },
+    /// The exact external message of a spend, built and about to be
+    /// broadcast. It is never rebuilt.
+    SpendSigned {
+        intent_digest: Word,
+        body_hash: Word,
+        message_hash: Word,
+        payer: String,
+        value: Coins,
+        boc: Vec<u8>,
+    },
+    /// The endpoint accepted the exact spend message.
+    SpendBroadcast { message_hash: Word },
+    /// The broadcast of a spend returned an error; whether the message
+    /// reached the network is not known.
+    SpendUnknown { message_hash: Word, error: String },
 }
 
 /// The next index this client may issue: past everything the state knows,
@@ -663,10 +766,12 @@ pub fn next_issuable_index(
 ) -> anyhow::Result<u64> {
     let journal_next = journal
         .iter()
-        .filter_map(|record| match record {
-            JournalRecord::IndexReserved { index, .. } => Some(*index),
-            JournalRecord::DepositPrepared { index, .. } => Some(*index),
-            _ => None,
+        .flat_map(|record| match record {
+            JournalRecord::IndexReserved { index, .. }
+            | JournalRecord::DepositPrepared { index, .. } => vec![*index],
+            JournalRecord::IndicesReserved { indices, .. }
+            | JournalRecord::SpendPlanned { indices, .. } => indices.clone(),
+            _ => Vec::new(),
         })
         .map(|index| index.checked_add(1))
         .try_fold(0u64, |best, next| next.map(|next| best.max(next)))
@@ -720,6 +825,7 @@ mod tests {
             ledger: PersistedLedger {
                 leaves: vec![[9; 32]],
                 nullifiers: Vec::new(),
+                intents: Vec::new(),
                 nullifier_tree: vec![PersistedNullifierLeaf {
                     index: 0,
                     value: [0; 32],
@@ -767,6 +873,60 @@ mod tests {
         let store = Store::open(root.path(), &Keys::derive(&[8u8; 64], &[3u8; 32]), binding())
             .expect("open");
         assert!(store.load_state().expect("another key's directory").is_none());
+    }
+
+    /// A state or journal of an earlier format is refused by name, with the
+    /// way out, rather than as a record that does not open.
+    #[test]
+    fn an_earlier_format_is_refused_by_name() {
+        let root = private_root();
+        let store = Store::open(root.path(), &keys(), binding()).expect("open");
+        let old_state = store.seal(KIND_STATE, 1, 0, b"a state of the first format").expect("seal");
+        secrets_vault::private_file::write_private_atomic(&store.state_path(), &old_state)
+            .expect("write");
+        let error = store.load_state().expect_err("refused").to_string();
+        assert!(error.contains("written in format 1"), "{error}");
+        assert!(error.contains("tosctl shield init"), "{error}");
+        assert!(error.contains(&format!("directory ({})", store.directory().display())), "{error}");
+        assert!(error.contains(&format!("under {}", root.path().display())), "{error}");
+        assert!(error.contains(&format!("{:?}", keys().directory_name())), "{error}");
+
+        let frame = store.seal(KIND_JOURNAL, 1, 0, b"a record of the first format").expect("seal");
+        let mut bytes = (frame.len() as u32).to_be_bytes().to_vec();
+        bytes.extend_from_slice(&frame);
+        secrets_vault::private_file::write_private_atomic(&store.journal_path(), &bytes)
+            .expect("write");
+        let error = format!("{:#}", store.read_journal().expect_err("refused"));
+        assert!(error.contains("written in format 1"), "{error}");
+
+        // A record that opens under no format is still what it was.
+        let garbage = store.seal(KIND_STATE, 7, 0, b"nothing this client wrote").expect("seal");
+        secrets_vault::private_file::write_private_atomic(&store.state_path(), &garbage)
+            .expect("write");
+        let error = store.load_state().expect_err("refused").to_string();
+        assert!(error.contains("does not open"), "{error}");
+
+        // The stated way out works: with the directory and the pointer that
+        // names it gone, the name is free for `init` and the directory is
+        // empty for the store it will open.
+        let pointer_path = pointer_path(root.path(), "w").expect("a pointer path");
+        Pointer {
+            schema: POINTER_SCHEMA.to_owned(),
+            profile: state(&binding()).profile,
+            binding: binding(),
+            chain: state(&binding()).chain,
+            directory: keys().directory_name(),
+        }
+        .save(&pointer_path)
+        .expect("the pointer");
+        let dir = store.directory().to_path_buf();
+        drop(store);
+        std::fs::remove_dir_all(&dir).expect("remove the instance directory");
+        std::fs::remove_file(&pointer_path).expect("remove the pointer");
+        assert!(!pointer_path.exists(), "the name is free again");
+        let store = Store::open(root.path(), &keys(), binding()).expect("open afresh");
+        assert!(store.load_state().expect("an empty directory").is_none());
+        assert!(store.read_journal().expect("an empty journal").is_empty());
     }
 
     #[test]

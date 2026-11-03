@@ -62,6 +62,9 @@ pub struct Payout {
 /// `public_amount_out > 0`.
 #[derive(Clone, Debug)]
 pub struct Transact {
+    /// The intent the two signatures and the proof were made over. A wallet
+    /// that sent a spend recognises its own by this.
+    pub intent_digest: Fr,
     pub nullifiers: [Fr; 2],
     pub note_bodies: [Fr; 3],
     pub payloads: [Vec<u8>; 3],
@@ -124,6 +127,8 @@ pub struct Ledger {
     imt: imt::State,
     nullifiers: Vec<Fr>,
     published: BTreeSet<Fr>,
+    /// The intent digest of every transact the pool accepted, in order.
+    intents: Vec<Fr>,
     native_liability: u128,
     reserved_recovery_leaves: u64,
     pending: Vec<PendingRecovery>,
@@ -153,6 +158,7 @@ impl Ledger {
             imt: imt::State::genesis(),
             nullifiers: Vec::new(),
             published: BTreeSet::new(),
+            intents: Vec::new(),
             native_liability: 0,
             reserved_recovery_leaves: 0,
             pending: Vec::new(),
@@ -179,6 +185,11 @@ impl Ledger {
     /// Every nullifier the pool has accepted, in insertion order.
     pub fn nullifiers(&self) -> &[Fr] {
         &self.nullifiers
+    }
+
+    /// The intent digests of the transacts the pool accepted, in order.
+    pub fn accepted_intents(&self) -> &[Fr] {
+        &self.intents
     }
 
     pub fn published_nullifiers(&self) -> &BTreeSet<Fr> {
@@ -286,6 +297,7 @@ impl Ledger {
 
     fn apply_transact(&mut self, transact: &Transact) -> Result<()> {
         let Transact {
+            intent_digest,
             nullifiers,
             note_bodies,
             payloads,
@@ -339,6 +351,7 @@ impl Ledger {
             self.nullifiers.push(*nullifier);
             self.published.insert(*nullifier);
         }
+        self.intents.push(*intent_digest);
         for (slot, (body, payload)) in note_bodies.iter().zip(payloads.iter()).enumerate() {
             let leaf = self.append(*body)?;
             self.outputs.push(Output {
@@ -471,6 +484,8 @@ impl Ledger {
 pub struct Snapshot {
     pub leaves: Vec<Fr>,
     pub nullifiers: Vec<Fr>,
+    /// The accepted intent digests, in order.
+    pub intents: Vec<Fr>,
     /// The nullifier tree's allocated leaves, index and leaf, in index order.
     pub nullifier_tree: Vec<(u64, imt::Leaf)>,
     pub nullifier_next_index: u64,
@@ -484,6 +499,7 @@ impl Ledger {
         Snapshot {
             leaves: self.leaves.clone(),
             nullifiers: self.nullifiers.clone(),
+            intents: self.intents.clone(),
             nullifier_tree: self.imt.tree.leaves.iter().map(|(i, leaf)| (*i, *leaf)).collect(),
             nullifier_next_index: self.imt.next_index,
             native_liability: self.native_liability,
@@ -525,6 +541,14 @@ impl Ledger {
             return Err(Error::Encoding("a snapshot repeats a nullifier".into()));
         }
         ledger.nullifiers = snapshot.nullifiers;
+        // Two nullifiers per accepted transact, and every transact is one
+        // intent; a snapshot that disagrees was not produced by this code.
+        if snapshot.intents.len().checked_mul(2) != Some(ledger.nullifiers.len()) {
+            return Err(Error::Encoding(
+                "a snapshot whose intents do not fit its nullifiers".into(),
+            ));
+        }
+        ledger.intents = snapshot.intents;
         ledger.native_liability = snapshot.native_liability;
         ledger.reserved_recovery_leaves = snapshot.reserved_recovery_leaves;
         ledger.pending = snapshot.pending;
