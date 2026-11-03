@@ -595,6 +595,12 @@ pub unsafe extern "C" fn tos_shielded_replay_create(
     }
 }
 
+/// Report whether this library includes local proving and BR1 submission.
+#[no_mangle]
+pub extern "C" fn tos_shielded_payment_supported() -> u8 {
+    u8::from(cfg!(all(unix, feature = "proving")))
+}
+
 /// Issue a descriptor only after committing its index in the canonical store.
 ///
 /// # Safety

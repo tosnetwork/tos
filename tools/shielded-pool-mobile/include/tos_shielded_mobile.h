@@ -60,6 +60,9 @@ TosShieldedResponse *tos_shielded_replay_intent_accepted(const TosShieldedReplay
  */
 TosShieldedResponse *tos_shielded_replay_scan(const TosShieldedReplay *session, const uint8_t *seed, size_t seed_length,
                                               size_t offset, size_t count);
+/* Returns 1 when local payment proving and BR1 are compiled in. */
+uint8_t tos_shielded_payment_supported(void);
+
 void tos_shielded_replay_free(TosShieldedReplay *session);
 /* Complete Ready-ledger summary: globally deduplicates note bodies and reconciles
  * all published nullifiers. No note secrets/nullifiers are returned. Freshness
