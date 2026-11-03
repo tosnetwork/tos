@@ -26,6 +26,7 @@ pub mod history;
 pub mod pool;
 pub mod replay;
 pub mod replay_ffi;
+pub mod sealed;
 
 pub const MAX_REQUEST_BYTES: usize = 2 * 1024 * 1024;
 pub const MAX_RESPONSE_BYTES: usize = 1024 * 1024;

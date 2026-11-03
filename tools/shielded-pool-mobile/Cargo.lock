@@ -1494,10 +1494,13 @@ name = "shielded-pool-mobile"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
+ "chacha20poly1305",
  "chain_block",
  "hex",
+ "rand",
  "serde",
  "serde_json",
+ "sha3",
  "shielded-pool-circuit",
  "shielded-pool-codec",
  "shielded-pool-wallet",

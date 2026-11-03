@@ -228,3 +228,28 @@ and explicitly synthetic ledgers/transaction-state pairs for real ML-KEM note
 recovery and spent reconciliation. They do not claim native VM execution or
 chain proofs for the synthetic pairs. A deliberate test-only unwind exercises
 session invalidation through the actual FFI mutator boundary.
+
+## Encrypted record primitive (Rust only)
+
+`sealed::RecordCipher` supplies bounded XChaCha20-Poly1305 pages for subsequent
+state, journal and backup storage. This is not a filesystem store or a C ABI.
+Its fixed-width binding includes the network ID, canonical workchain-zero pool
+account, trusted genesis root/file hashes and code/profile/manifest/verifying-key
+pins. Callers authenticate these expected selections independently; successful
+decryption proves neither current chain state nor a spendable balance.
+
+A separately labelled SHAKE256 derivation produces the record key. Each seal
+uses a fresh random 24-byte nonce and authenticates format, record kind and the
+caller's expected sequence. The envelope is `TSP1 | version:u8 | kind:u8 |
+sequence:u64be | nonce:24 | ciphertext | tag:16`. Plaintext is limited to 1 MiB
+before encryption; ciphertext input is capped before decoding. Oversized,
+partial, altered or different-format records are refused without modifying the
+input. Held keys, cipher keys on drop, and returned plaintext are zeroized;
+borrowed seed/plaintext remain the caller's responsibility. No complete erasure
+claim is made for hash implementation intermediates.
+
+The later store must provide private locked files, durable journal reservation,
+atomic commit and an authenticated complete page manifest/generation. Individual
+valid pages alone do not prevent snapshot mixing or rollback of an entire older
+state/journal pair. Pin upgrades require explicit migration with the old binding;
+decryption failure must never be interpreted as permission to reset UNKNOWN.
