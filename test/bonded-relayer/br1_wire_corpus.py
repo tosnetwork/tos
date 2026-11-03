@@ -19,7 +19,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools/bonded-relayer"))
 from relay_core import MAX_BODY, Refused, Release, Request, encode  # noqa: E402
-from relay_wire import BODY_LIMIT, check_terms, parse, status_hash  # noqa: E402
+from relay_wire import BODY_LIMIT, check_terms, status_hash  # noqa: E402
 
 
 def h(n: int) -> str:
@@ -75,7 +75,7 @@ def corpus() -> dict:
     )
     canonical_inputs = [
         {"z": {"b": 2, "a": 1}, "a": 0},
-        {"n": 18446744073709551615, "s": "a\"b\\c/\u0001"},
+        {"n": 18446744073709551615, "s": 'a"b\\c/\u0001'},
         {"empty": {}, "list": [3, {"y": 1, "x": [True, False, None]}]},
     ]
     parse_inputs = [
@@ -112,11 +112,21 @@ def corpus() -> dict:
         altered = dict(terms)
         altered[field] = value
         terms_vectors.append(
-            {"field": field, "value": value, "refused": refuses(lambda: check_terms(altered, release.scope))}
+            {
+                "field": field,
+                "value": value,
+                "refused": refuses(lambda: check_terms(altered, release.scope)),
+            }
         )
     extra = dict(terms)
     extra["extra"] = 1
-    terms_vectors.append({"field": "extra", "value": 1, "refused": refuses(lambda: check_terms(extra, release.scope))})
+    terms_vectors.append(
+        {
+            "field": "extra",
+            "value": 1,
+            "refused": refuses(lambda: check_terms(extra, release.scope)),
+        }
+    )
     request_cases = [
         ("nullifiers", [h(12), h(12)]),
         ("intent", "f" * 64),
@@ -134,8 +144,13 @@ def corpus() -> dict:
         wire = json.loads(request.wire)
         wire[field] = value
         request_vectors.append(
-            {"field": field, "value": value, "refused": refuses(lambda: Request.parse(encode(wire)))}
+            {
+                "field": field,
+                "value": value,
+                "refused": refuses(lambda: Request.parse(encode(wire))),
+            }
         )
+
     # The client's status-line predicate, copied from relay_client.Client._request:
     # "HTTP/1.1", a three-digit ASCII code whose first digit is 1..5, a phrase.
     def answered(line: str) -> bool:
@@ -181,7 +196,11 @@ def corpus() -> dict:
             "identity": request.identity,
             "cases": request_vectors,
         },
-        "limits": {"max_body": MAX_BODY, "max_request_wire": 2 * MAX_BODY, "http_body_limit": BODY_LIMIT},
+        "limits": {
+            "max_body": MAX_BODY,
+            "max_request_wire": 2 * MAX_BODY,
+            "http_body_limit": BODY_LIMIT,
+        },
         "status_lines": [{"line": line, "answered": answered(line)} for line in status_lines],
     }
 
