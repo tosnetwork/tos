@@ -69,6 +69,9 @@ class LogStreamer:
             return True
         done, _ = await asyncio.wait({self._task}, timeout=timeout)
         if done:
+            # A failed drain (the raw log could not be written, for example)
+            # must surface here rather than be reported as a clean drain.
+            await self._task
             return True
         self._logger.warning(
             "raw log pipe still open %.1f s after the process exited; "

@@ -1,6 +1,7 @@
 """A process that inherits a node's log pipe must not hold the harness after the node exited."""
 
 import asyncio
+import errno
 import os
 import signal
 import time
@@ -50,3 +51,25 @@ def test_a_descendant_holding_the_pipe_is_cut_after_the_bound(tmp_path: Path):
     assert drained is False
     assert elapsed < 5.0
     assert content == b"first\n"
+
+
+def test_a_failed_drain_is_reported_not_swallowed():
+    """A raw log that cannot be written fails the drain even inside the bound."""
+
+    async def run() -> None:
+        process = await asyncio.create_subprocess_exec(
+            "bash", "-c", "echo first >&2; exit 0", stderr=asyncio.subprocess.PIPE
+        )
+        assert process.stderr is not None
+        with open("/dev/full", "wb", buffering=0) as full:
+            streamer = LogStreamer(full, "node", process.stderr)  # pyright: ignore[reportArgumentType]
+            while process.returncode is None:
+                await asyncio.sleep(0.05)
+            await streamer.aclose(timeout=5.0)
+
+    try:
+        asyncio.run(run())
+    except OSError as error:
+        assert error.errno == errno.ENOSPC
+    else:
+        raise AssertionError("a drain into a full device was reported as clean")
