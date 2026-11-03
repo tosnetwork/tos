@@ -69,6 +69,20 @@ pub fn spendable_candidates(recovered: &Recovered, held: &BTreeSet<u64>) -> Vec<
         .collect()
 }
 
+/// Plan from a complete wallet scan and its locally held inputs.
+pub fn plan_recovered(
+    terms: &PoolTerms,
+    recovered: &Recovered,
+    held: &BTreeSet<u64>,
+    request: &Request,
+    fresh_index: &mut dyn FnMut() -> Result<u64>,
+) -> Result<Plan> {
+    if !recovered.diagnostics.is_empty() {
+        return Err(refuse("the wallet scan reported diagnostics"));
+    }
+    plan(terms, &spendable_candidates(recovered, held), request, fresh_index)
+}
+
 /// Where a recipient's note goes: the parts of a descriptor the sealing needs.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RecipientKeys {

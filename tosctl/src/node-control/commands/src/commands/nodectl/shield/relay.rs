@@ -331,8 +331,12 @@ pub(super) async fn run(
     let pending = pending_spends(&opened.journal, &ledger, shard_time, true);
     refuse_unless_spendable(&opened, name, &target, &pending)?;
     let recipient_label = target.recipient_label();
-    let candidates = spendable_candidates(&recovered, &held_leaves(&pending));
-    anyhow::ensure!(!candidates.is_empty(), "this instance has no spendable note");
+    let held = held_leaves(&pending);
+    anyhow::ensure!(recovered.diagnostics.is_empty(), "the wallet scan reported diagnostics");
+    anyhow::ensure!(
+        !spendable_candidates(&recovered, &held).is_empty(),
+        "this instance has no spendable note"
+    );
 
     // The relayer funds the message from its own wallet, up to the cap it
     // quoted; that cap must cover the pool's fee for the message to run.
@@ -372,7 +376,7 @@ pub(super) async fn run(
     // The plan asks for indices only once every check has passed; they are
     // provisional until journalled below.
     let mut next = super::store::next_issuable_index(&opened.state, &opened.journal)?;
-    let plan = plan::plan(&terms, &candidates, &request, &mut || {
+    let plan = plan::plan_recovered(&terms, &recovered, &held, &request, &mut || {
         let index = next;
         next = next.checked_add(1).ok_or_else(|| {
             shielded_pool_wallet::error::Error::Planning("note key index exhausted".into())
@@ -1066,8 +1070,8 @@ mod tests {
     use shielded_pool_wallet::delivery::{self, Kind, Plaintext};
     use shielded_pool_wallet::keys::PoolInstance;
     use shielded_pool_wallet::ledger::{Event, Ledger};
-    use shielded_pool_wallet::plan::Candidate;
     use shielded_pool_wallet::scan;
+    use shielded_pool_wallet::scan::Recovered;
     use std::cell::RefCell;
 
     const DOMAIN: u64 = 0x5e5e_0001;
@@ -1077,7 +1081,7 @@ mod tests {
     const TOKEN: &str = "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b";
 
     /// Alice with two notes of 2 TOS in a ledger, as the scan finds them.
-    fn alice_with_two_notes() -> (PoolInstance, Ledger, Vec<Candidate>) {
+    fn alice_with_two_notes() -> (PoolInstance, Ledger, Recovered) {
         let domain = Fr::from(DOMAIN);
         let alice = PoolInstance::new(&[0x51; 32], domain);
         let mut ledger = Ledger::genesis();
@@ -1110,8 +1114,7 @@ mod tests {
                 .expect("deposit");
         }
         let recovered = scan::recover_indexed(&alice, &ledger.take_outputs()).expect("scan");
-        let candidates = spendable_candidates(&recovered, &std::collections::BTreeSet::new());
-        (alice, ledger, candidates)
+        (alice, ledger, recovered)
     }
 
     fn pool_state(ledger: &Ledger) -> contracts::shielded_pool::PoolState {
@@ -1165,7 +1168,7 @@ mod tests {
 
     /// A real relayed spend body and the request the wallet builds for it.
     fn relayed_request(fee_slot: u8) -> (RelayRequest, Quote, Assembled, Ledger, PoolInstance) {
-        let (alice, ledger, candidates) = alice_with_two_notes();
+        let (alice, ledger, recovered) = alice_with_two_notes();
         let domain = Fr::from(DOMAIN);
         let bob = PoolInstance::new(&[0x52; 32], domain);
         let relayer = PoolInstance::new(&[0x53; 32], domain);
@@ -1179,11 +1182,12 @@ mod tests {
                 .expect("relayed transfer");
         let terms = PoolTerms { denominations: vec![3_000_000_000], withdrawal_fee: 7 };
         let mut next = 10u64;
-        let plan = plan::plan(&terms, &candidates, &request, &mut || {
-            next += 1;
-            Ok(next)
-        })
-        .expect("plan");
+        let plan =
+            plan::plan_recovered(&terms, &recovered, &Default::default(), &request, &mut || {
+                next += 1;
+                Ok(next)
+            })
+            .expect("plan");
         assert_eq!(plan.outputs[2].amount(), u128::from(fee));
         let anchor = choose_anchor(&ledger, &pool_state(&ledger), &plan).expect("anchor");
         let mut counter = 0u64;

@@ -15,6 +15,7 @@ use chain_block::ConfigParamEnum;
 use serde::{Deserialize, Serialize};
 use shielded_pool_circuit::{field::Fr, wire};
 use shielded_pool_codec::{compute_fee, PoolState, BOUNCE_GAS_CEILING};
+use shielded_pool_wallet::plan::PoolTerms;
 use shielded_pool_wallet::{
     descriptor::{Descriptor, DESCRIPTOR_BYTES},
     keys::PoolInstance,
@@ -53,6 +54,7 @@ pub struct TosShieldedReplay {
     state: State,
     domain: Fr,
     receive_binding: Option<[u8; 228]>,
+    terms: PoolTerms,
 }
 
 fn bound_cell(encoded: &str, expected: &str) -> Result<chain_block::Cell> {
@@ -117,6 +119,10 @@ impl TosShieldedReplay {
             state: State::Building(Box::new(Replay::new(head, &state, charge)?)),
             domain,
             receive_binding,
+            terms: PoolTerms {
+                denominations: state.config.denominations,
+                withdrawal_fee: state.config.withdrawal_fee,
+            },
         })
     }
 
@@ -362,7 +368,9 @@ pub unsafe extern "C" fn tos_shielded_replay_info(
             "nullifier_root":hex::encode(shielded_pool_circuit::field::fr_to_be(&checkpoint.nullifier_root)),
             "nullifier_next_index":checkpoint.nullifier_next_index.to_string(),
             "reserved_recovery_leaves":checkpoint.reserved_recovery_leaves.to_string(),
-            "native_liability":checkpoint.native_liability.to_string()}))
+            "native_liability":checkpoint.native_liability.to_string(),
+            "withdrawal_fee": unsafe { &*session }.terms.withdrawal_fee.to_string(),
+            "denominations": unsafe { &*session }.terms.denominations.iter().map(ToString::to_string).collect::<Vec<_>>()}))
             .map(Zeroizing::new).map_err(|_|Error::InvalidInput)
     })
 }
@@ -467,6 +475,7 @@ mod tests {
             state: State::Ready(Box::new(ledger.clone())),
             domain,
             receive_binding: None,
+            terms: PoolTerms { denominations: vec![], withdrawal_fee: 1 },
         };
         let page: serde_json::Value =
             serde_json::from_slice(&before.scan(&seed, 0, 1).unwrap()).unwrap();
@@ -491,6 +500,7 @@ mod tests {
             state: State::Ready(Box::new(ledger)),
             domain,
             receive_binding: None,
+            terms: PoolTerms { denominations: vec![], withdrawal_fee: 1 },
         };
         let page: serde_json::Value =
             serde_json::from_slice(&after.scan(&seed, 0, 1).unwrap()).unwrap();
@@ -505,6 +515,7 @@ mod tests {
             state: State::Ready(Box::new(Ledger::genesis())),
             domain: Fr::from(7u64),
             receive_binding: None,
+            terms: PoolTerms { denominations: vec![], withdrawal_fee: 1 },
         };
         let result = unsafe {
             mutate(&mut owner, |_old| std::panic::resume_unwind(Box::new("injected test unwind")))
@@ -561,6 +572,7 @@ mod tests {
             state: State::Ready(Box::new(ledger.clone())),
             domain,
             receive_binding: None,
+            terms: PoolTerms { denominations: vec![], withdrawal_fee: 1 },
         };
         let page_a: serde_json::Value =
             serde_json::from_slice(&before.scan(&seed, 0, 512).unwrap()).unwrap();
@@ -614,6 +626,7 @@ mod tests {
             state: State::Ready(Box::new(ledger)),
             domain,
             receive_binding: None,
+            terms: PoolTerms { denominations: vec![], withdrawal_fee: 1 },
         };
         let summary = summary_json(&after, &seed);
         assert_eq!(summary["unspent_balance"], "1000");
@@ -627,6 +640,7 @@ mod tests {
             state: State::Ready(Box::new(Ledger::genesis())),
             domain,
             receive_binding: None,
+            terms: PoolTerms { denominations: vec![], withdrawal_fee: 1 },
         };
         let issue = |domain| {
             crate::issue_descriptor(&[42; 32], &shielded_pool_circuit::field::fr_to_be(&domain), 0)
@@ -645,7 +659,20 @@ mod tests {
             Descriptor::from_bytes(&issue(wire::execution_domain(3, &[2; 32]))).unwrap();
         let fee_recipient = Descriptor::issue(&PoolInstance::new(&[43; 32], domain), 0).unwrap();
         use shielded_pool_wallet::plan::Request;
-        assert!(Request::relayed_transfer(domain, &recipient, 10, &fee_recipient, 1).is_ok());
+        let request = Request::relayed_transfer(domain, &recipient, 10, &fee_recipient, 1).unwrap();
+        let mut index_requested = false;
+        assert!(shielded_pool_wallet::plan::plan_recovered(
+            &owner.terms,
+            &Default::default(),
+            &Default::default(),
+            &request,
+            &mut || {
+                index_requested = true;
+                Ok(0)
+            },
+        )
+        .is_err());
+        assert!(!index_requested);
         assert!(Request::relayed_transfer(domain, &recipient, 10, &other_pool, 1).is_err());
         assert!(Request::relayed_transfer(domain, &other_pool, 10, &fee_recipient, 1).is_err());
 
@@ -668,7 +695,12 @@ mod tests {
     fn summary_requires_ready_and_exact_seed_and_allows_authentic_empty_ledger() {
         let seed = [42; 32];
         let domain = Fr::from(7u64);
-        let mut owner = TosShieldedReplay { state: State::Failed, domain, receive_binding: None };
+        let mut owner = TosShieldedReplay {
+            state: State::Failed,
+            domain,
+            receive_binding: None,
+            terms: PoolTerms { denominations: vec![], withdrawal_fee: 1 },
+        };
         for (session, key, length) in [
             (&owner as *const _, seed.as_ptr(), 32),
             (ptr::null(), seed.as_ptr(), 32),
@@ -714,13 +746,18 @@ mod tests {
             ))
         };
         let domain = wire::execution_domain(3, &[1; 32]);
-        let failed =
-            TosShieldedReplay { state: State::Failed, domain, receive_binding: Some(binding) };
+        let failed = TosShieldedReplay {
+            state: State::Failed,
+            domain,
+            receive_binding: Some(binding),
+            terms: PoolTerms { denominations: vec![], withdrawal_fee: 1 },
+        };
         assert_eq!(receive(&failed, &binding).status, 1);
         let make_ready = || TosShieldedReplay {
             state: State::Ready(Box::new(Ledger::genesis())),
             domain,
             receive_binding: Some(binding),
+            terms: PoolTerms { denominations: vec![], withdrawal_fee: 1 },
         };
         let mut other_pool = binding;
         other_pool[4] = 2;
@@ -765,6 +802,7 @@ mod tests {
             state: State::Ready(Box::new(ledger)),
             domain,
             receive_binding: Some(binding),
+            terms: PoolTerms { denominations: vec![], withdrawal_fee: 1 },
         };
         for (owner, expected) in [(&observed, 8), (&make_ready(), 9)] {
             let result = receive(owner, &binding);
