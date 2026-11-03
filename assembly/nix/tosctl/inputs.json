@@ -11,6 +11,7 @@
     "third-party/slhdsa-c",
     "third-party/lms-reference",
     "test/validator/elector-control-fixture.rs",
+    "tools/shielded-pool-codec",
     "tools/shielded-pool-wallet",
     "tools/shielded-pool-circuit",
     "tools/shielded-pool-prover",

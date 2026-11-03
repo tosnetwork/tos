@@ -85,6 +85,10 @@ jobs:
     timeout-minutes: 180
     env:
       TOS_ROOT: ${{ github.workspace }}
+      # CI does not use incremental state or debug symbols; avoid exhausting runner storage.
+      CARGO_INCREMENTAL: "0"
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
       CARGO_TARGET_DIR: ${{ github.workspace }}/build-cargo
       FUNC_PATH: ${{ github.workspace }}/build/crypto/func
       FIFT_PATH: ${{ github.workspace }}/build/crypto/fift
