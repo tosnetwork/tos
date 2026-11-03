@@ -35,6 +35,7 @@ with tests; deployment records and their frozen profiles belong in `artifacts/`.
 | [LiteClient.md](LiteClient.md) | Using the lite client |
 | [Validator.md](Validator.md) | Running a validator |
 | [validator-genesis-bootstrap.md](validator-genesis-bootstrap.md) | Post-quantum genesis validator bootstrap and `validator-pq.pub` |
+| [tosctl-shield.md](tosctl-shield.md) | Using the shielded pool client in `tosctl`: what it hides, prerequisites, commands, relayed sends, state, the NixOS package, evidence and limits |
 
 ## Release process
 

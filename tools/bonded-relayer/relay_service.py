@@ -32,6 +32,13 @@ from relay_http import HTTPRefused, receive, respond
 from relay_wire import BODY_LIMIT, check_terms, exact, parse, status_hash
 from tor_transport import OnionEndpoint
 
+# How long a request waits for the one worker before it is refused as busy.
+# The recovery tick holds the worker about once a second for a capability
+# probe of the native backend; an honest request that lands in that window
+# must be answered after it, not refused for the relayer's own housekeeping.
+# A worker held longer than this is busy with jobs, and the request is refused.
+BUSY_WAIT_SECONDS = 5.0
+
 
 class Service:
     def __init__(self, engine: Engine, *, fee: int, funding_cap: int, enabled: bool = False):
@@ -47,6 +54,7 @@ class Service:
         self.funding_cap = integer(funding_cap, 1, self.journal.max_reserved)
         self.enabled = enabled
         self._busy = threading.Lock()
+        self.busy_wait = BUSY_WAIT_SECONDS
         self._healthy = False
         if enabled:
             self.authority.check_capabilities()
@@ -66,7 +74,7 @@ class Service:
             return 404, {"error": "not_found"}
         if not self.enabled:
             return 503, {"error": "service_disabled"}
-        if not self._busy.acquire(blocking=False):
+        if not self._busy.acquire(timeout=self.busy_wait):
             return 429, {"error": "worker_busy"}
         try:
             data = parse(wire, BODY_LIMIT if path == "/v1/submit" else 2048)

@@ -221,6 +221,7 @@ def main():
 
         # The commands and their arguments, as the installed binary describes them.
         help_text = run("shield", "--help")
+        require("(experimental)" in help_text, "shield --help keeps the experimental mark")
         for command in SUBCOMMANDS:
             require(f"\n  {command} " in help_text, f"shield --help lists {command}")
         send_help = run("shield", "send", "--help")
@@ -272,7 +273,9 @@ def main():
                 '{"schema":"tosctl-shield-profile-v1","global_id":%d,"pool_address":"0:%s","pool_code_hash":"%s"}'
                 % (global_id, "11" * 32, "22" * 32)
             )
-            run("shield", "init", "--name", "main", "--profile", pool, "--mnemonic-fd", "0", error=error)
+            output = run("shield", "init", "--name", "main", "--profile", pool, "--mnemonic-fd", "0", error=error)
+            # A refused network gets no notice: the notice is about acting, and nothing acted.
+            require("UNPROVEN" not in output and "EXPERIMENTAL" not in output, output)
         pool.write_text(
             '{"schema":"other","global_id":3,"pool_address":"0:%s","pool_code_hash":"%s"}' % ("11" * 32, "22" * 32)
         )
@@ -330,6 +333,8 @@ def main():
             after = resource.getrusage(resource.RUSAGE_CHILDREN)
             peak = after.ru_maxrss * 1024
             require("OK" in output and "is finished" in output, output)
+            # The audit has no network, so it carries no network notice.
+            require("UNPROVEN" not in output and "EXPERIMENTAL" not in output, output)
             require(f"Verifying key:   {PINNED_VK} (pinned)" in output, output)
             proving_key = record_field(material / "ceremony" / "ceremony.json", "key_sha256")
             require(f"Proving key:     {proving_key}" in output, output)

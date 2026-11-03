@@ -33,6 +33,9 @@ on:
       - "tools/shielded-pool-circuit/**"
       - "tools/shielded-pool-genesis/**"
       - "tools/shielded-pool-wallet/**"
+      # The local end-to-end driver's pure parts and the evidence it committed.
+      - "test/shielded-pool/localnet/**"
+      - "test/shielded-pool/evidence/**"
       # The genesis tests build against the ceremony crate and read the
       # committed ceremony transcript, the phase-1 inputs, the profile and
       # the genesis manifest.
@@ -56,6 +59,9 @@ on:
       - "tools/shielded-pool-circuit/**"
       - "tools/shielded-pool-genesis/**"
       - "tools/shielded-pool-wallet/**"
+      # The local end-to-end driver's pure parts and the evidence it committed.
+      - "test/shielded-pool/localnet/**"
+      - "test/shielded-pool/evidence/**"
       # The genesis tests build against the ceremony crate and read the
       # committed ceremony transcript, the phase-1 inputs, the profile and
       # the genesis manifest.
@@ -84,6 +90,21 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      # No job here has a chain, so the local end-to-end driver itself never
+      # runs in CI. Its pure parts do: the output parsers, the adjudications
+      # and their red controls, the connection-trace verdicts, the gated SOCKS
+      # stand-in and the evidence index's structure and redaction checks. The
+      # committed index of each run is then checked structurally; the receipt
+      # digests it names are recomputed only where the retention root is.
+      - name: Local end-to-end driver, the parts without a chain
+        run: python3 -m unittest discover -s test/shielded-pool/localnet -p 'test_*.py' -v
+
+      - name: Committed evidence indexes have the agreed structure
+        run: |
+          for index in test/shielded-pool/evidence/*.json; do
+            python3 test/shielded-pool/localnet/evidence.py "$index"
+          done
 
       - name: Install repository-pinned Rust toolchain
         run: scripts/install-rust-toolchain.sh

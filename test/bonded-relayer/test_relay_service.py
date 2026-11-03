@@ -301,12 +301,48 @@ class ServiceTests(ServiceFixture):
             self.assertEqual(self.service.handle("POST", path, b"{}")[0], 404)
         self.assertEqual(self.journal.get(request.identity)["state"], "broadcast")
 
-    def test_busy_service_refuses_without_a_wait_queue(self):
+    def test_busy_service_refuses_once_its_bounded_wait_is_over(self):
+        self.service.busy_wait = 0.2
         self.service._busy.acquire()
         try:
+            started = time.monotonic()
             self.assertEqual(self.service.handle("POST", "/v1/quote", b"{}")[0], 429)
+            self.assertGreaterEqual(time.monotonic() - started, 0.2)
+            self.assertLess(time.monotonic() - started, 2.0)
         finally:
             self.service._busy.release()
+
+    def test_a_request_during_a_recovery_tick_is_answered_after_it(self):
+        probing = threading.Event()
+
+        def slow_probe():
+            probing.set()
+            time.sleep(0.5)
+
+        with patch.object(self.authority, "check_capabilities", side_effect=slow_probe):
+            tick = threading.Thread(target=self.service.tick)
+            tick.start()
+            try:
+                self.assertTrue(probing.wait(5))
+                status, result = self.service.handle(
+                    "POST",
+                    "/v1/quote",
+                    encode({"slot": 2, "lifetime": 100, "status_token": self.token}),
+                )
+            finally:
+                tick.join()
+        self.assertEqual(status, 200, result)
+        # Without the wait the same request is refused for the relayer's housekeeping.
+        self.service.busy_wait = 0
+        with patch.object(self.authority, "check_capabilities", side_effect=slow_probe):
+            probing.clear()
+            tick = threading.Thread(target=self.service.tick)
+            tick.start()
+            try:
+                self.assertTrue(probing.wait(5))
+                self.assertEqual(self.service.handle("POST", "/v1/quote", b"{}")[0], 429)
+            finally:
+                tick.join()
 
     def test_unknown_and_unauthorized_status_are_indistinguishable(self):
         request = candidate(self.profile, self.quote())

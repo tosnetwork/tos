@@ -1,0 +1,318 @@
+{
+  "amounts": {
+    "bounced_withdrawal": "10000000000",
+    "deposits": [
+      "10000000000",
+      "10000000000"
+    ],
+    "direct_send_spending_recovered_leaf": "12000000000",
+    "public_withdrawal": "1000000000",
+    "relayed_send": "15000000000",
+    "relayed_send_with_dropped_submit": "1000000000",
+    "relayer_fee": "300000000"
+  },
+  "base_commit": "7446aeeb307f681107ea16488d8c89375d0bbce7",
+  "binaries": {
+    "br1-native-provider": {
+      "path": "/tos/build/shield-cli/e2e/bin/br1-native-provider",
+      "sha256": "944a66271fae2d577a7e14f36213e8ace684e8432b1e432a509d7dcc8c63876d",
+      "source": {
+        "commit": "da96ec7d3e40342bad1e84992d864da1e5221407",
+        "path": "tools/bonded-relayer/provider"
+      }
+    },
+    "local_ceremony_pool": {
+      "path": "/tos/build/shield-cli/target-crosscheck/release/local_ceremony_pool",
+      "sha256": "c1192203ec20853232247e584a846f7a15968ed1cfd487fe1553aed3ea556aad",
+      "source": {
+        "commit": "da96ec7d3e40342bad1e84992d864da1e5221407",
+        "path": "tools/shielded-pool-circuit/crosscheck"
+      }
+    },
+    "strace": {
+      "path": "/usr/bin/strace",
+      "sha256": "38a5c75cb29dd85ddd7780d54f5bf595554d7a1b5c42524b23065f5dc4c4b01d"
+    },
+    "tos-proof-verify": {
+      "path": "/tos/build/shield-cli/e2e/bin/tos-proof-verify",
+      "sha256": "552686e7165b7d99e1ca55ef21049a417fc9ab187aed010f98c4cbbe471cf71a",
+      "source": {
+        "commit": "da96ec7d3e40342bad1e84992d864da1e5221407",
+        "path": "lite-client/proof-verify"
+      }
+    },
+    "tosctl": {
+      "path": "/tos/build/shield-cli/pr5/head/result-shielded/bin/tosctl",
+      "sha256": "0fbbd98bc2191fb3f86d7507bf0d883c61e98e1c64783e1bf19426bf887bd85a",
+      "source": {
+        "commit": "01bbff722cae29647b3a0b904c74ce0c9b606038",
+        "path": "assembly/nix/tosctl"
+      },
+      "version": "tosctl 0.3.0\nCOMMIT_ID: 01bbff722cae29647b3a0b904c74ce0c9b606038\nBUILD_DATE: 2026-11-03 02:38:33 +0000\nCOMMIT_DATE: 2026-11-03 02:38:33 +0000\nGIT_BRANCH: Unknown\nRUST_VERSION: rustc 1.97.1 (8bab26f4f 2026-07-14)",
+      "wrapped_sha256": "677c5a7286c044f007c7cc5116387ff265dfe5fc0019385292449a0d5b45f27e"
+    }
+  },
+  "bond": {
+    "bond": "0:fa5bf073ca99fdc504f209a9da5aa8a58f64db3737d83b0cd4aa1ffe15c50c6a",
+    "bond_code_hash": "785ed15deca07a3354e1474c652562e78bd89957a79cae9bb9b45874f6d298ae",
+    "genesis_file": "e8ea468bac5a153d0f9bd9b1ba56c6f0311be43bf0a2d057e90d427afcfe4fc8",
+    "genesis_root": "221bdfb283d69551cfcf641c58ac2585a4ada2410799d40b9ac54032c4356c46",
+    "global_id": 3,
+    "policy_hash": "968882820d01497846ad7b25f39d3866672b8ad4d0b0fc86504061ec19965e17",
+    "pool": "0:60b33d9dbd3e6e4a45a6cf3f3693106186c3911cd75c8c26cb6a679294c29a34",
+    "pool_code_hash": "ce3b21bc64e392e14065e68665228bcb10e40dd83836ef00574dd90e5ce057cd",
+    "pool_config_hash": "4f6680282fd2e7c012561217458806ae99f62401e628d7ed855f792166d7e15b",
+    "worker_key_hash": "9b87ffb57350fae6e817fe62641db18a3c790c81065400bd1a7594e230134538"
+  },
+  "chain": {
+    "global_id": 3,
+    "global_version": 16,
+    "zerostate_file": "e8ea468bac5a153d0f9bd9b1ba56c6f0311be43bf0a2d057e90d427afcfe4fc8",
+    "zerostate_root": "221bdfb283d69551cfcf641c58ac2585a4ada2410799d40b9ac54032c4356c46"
+  },
+  "checked_utc": "2026-11-03T04:02:24+00:00",
+  "client_memory_cap": "32G",
+  "controls": [
+    {
+      "name": "control-tampered-profile-refused",
+      "outcome": "RED",
+      "receipt": "receipts/05-control-tampered-profile-refused.json",
+      "sha256": "05843a3cb4e4a1bef88e299a01043b8055156fb5d95ffcabd16ee9ebf80c83cb"
+    },
+    {
+      "name": "control-second-spend-refused-by-lock",
+      "outcome": "RED",
+      "receipt": "receipts/15-control-second-spend-refused-by-lock.json",
+      "sha256": "6c52b9e657b756abd250311eaf588842e0224c2b11336c6543aa57f60d65707e"
+    },
+    {
+      "name": "control-send-fails-closed-without-socks-peer",
+      "outcome": "RED",
+      "receipt": "receipts/21-control-send-fails-closed-without-socks-peer.json",
+      "sha256": "2b3051310598608e2498e387f56f8ca988b27795693f454f253a74a1f4a76c4e"
+    },
+    {
+      "name": "control-loopback-bond-endpoint-refused-before-connecting",
+      "outcome": "RED",
+      "receipt": "receipts/22-control-loopback-bond-endpoint-refused-before-connecting.json",
+      "sha256": "3a34a34f4c2899b025194e0596593d9e7874f82981c70139710969615cca2bff"
+    },
+    {
+      "name": "control-socks-peer-refuses-other-onion-name",
+      "outcome": "RED",
+      "receipt": "receipts/23-control-socks-peer-refuses-other-onion-name.json",
+      "sha256": "6ac4131f39b5df61d94873e43247846684c7bdc1e26b1b60b41189cf128ecba4"
+    },
+    {
+      "name": "control-direct-bypass-is-detected-by-connection-trace",
+      "outcome": "RED",
+      "receipt": "receipts/24-control-direct-bypass-is-detected-by-connection-trace.json",
+      "sha256": "573bd62c7d442c07fb1dcdc1c4b23787c5eb3a39792f52839a4c76c4642df5b5"
+    }
+  ],
+  "failed_step": null,
+  "pool": {
+    "address": "0:60b33d9dbd3e6e4a45a6cf3f3693106186c3911cd75c8c26cb6a679294c29a34",
+    "ceremony_transcript": "03e67eb4b1cff48c9bc5952992a46d37ae0c32d6ba2f76910f785daca8704579",
+    "code_hash": "ce3b21bc64e392e14065e68665228bcb10e40dd83836ef00574dd90e5ce057cd",
+    "development_verifying_key": false,
+    "groth16_vk_hash": "49696f52f361817869f68c3ba68d0d5a854737a4133ae4616255ac4a3846778c",
+    "initial_data_hash": "af121ba3f8b8d8461802c852b65d6c9b17c48cdcc1f215cbcd2f353dff2a521b",
+    "pool_config_hash": "4f6680282fd2e7c012561217458806ae99f62401e628d7ed855f792166d7e15b",
+    "profile_hash": "4de5d5c81406f9ce973dd2b7e4026a72750330b757ba7f4c32bdb9edd07ccbec"
+  },
+  "privacy": "index only; Vaults, mnemonics, descriptors, encrypted journals and SOCKS credentials are not copied to Git and are redacted from receipts",
+  "proving": [
+    {
+      "command": "audit-ceremony",
+      "max_rss_kib": 169536,
+      "seconds": 61.2
+    },
+    {
+      "command": "send --relayer (relayed)",
+      "max_rss_kib": 181220,
+      "seconds": 91.0
+    },
+    {
+      "command": "withdraw (bounced)",
+      "max_rss_kib": 182896,
+      "seconds": 78.1
+    },
+    {
+      "command": "send --direct",
+      "max_rss_kib": 182420,
+      "seconds": 65.0
+    },
+    {
+      "command": "withdraw (public)",
+      "max_rss_kib": 175960,
+      "seconds": 63.1
+    },
+    {
+      "command": "send --relayer (dropped)",
+      "max_rss_kib": 176324,
+      "seconds": 93.5
+    }
+  ],
+  "raw_retention_root": "/tos/build/shield-cli/e2e/20261103-4",
+  "result": "PASS",
+  "revisions": {
+    "harness_sha256": {
+      "crypto/smartcont/shielded/anchors.fc": "dfb6975476389d621a04f2bcb46f8f8bb580debcee1294460d0a0f3c8f010484",
+      "crypto/smartcont/shielded/auth.fc": "2c219c0f17a0973503ed566bb69cf3640fa054ff84d05914b187341128b45698",
+      "crypto/smartcont/shielded/domain.fc": "d543dccc9dfb57e597d3381daef699f98b0cb91db6bbcf1f4a5ca86ed98ec849",
+      "crypto/smartcont/shielded/domains.fc": "808552023c6a3dff550ae60300ba3ead1ea364315861579daa69569ea02e9036",
+      "crypto/smartcont/shielded/empty-roots.fc": "645b1b80337e5585a45a3f047cedcbd5293e9c8355e267362f2490ba6fa59cbc",
+      "crypto/smartcont/shielded/groth16.fc": "3591626d752eb7e97119263e0bb3ea7f95b24678b18ee15526363e628559f713",
+      "crypto/smartcont/shielded/imt.fc": "40d6749ddfd660f5ee121d819cda987e0dcfb0de94cb6462c52d12f93cb574fa",
+      "crypto/smartcont/shielded/notes.fc": "9174c9faf00f637149e48c41e0d25ea0968a51459f4fe581ab0bbd1621316432",
+      "crypto/smartcont/shielded/payload.fc": "c9085a5bbf9ea4ede387fd6e79f2f8d63e1a4656bf3e91c6012668d202e7b0c7",
+      "crypto/smartcont/shielded/payout.fc": "c0ffc3446c00abf50688b95986069c315bbd4a3bf6e77504d06f731dfe4c2376",
+      "crypto/smartcont/shielded/recovery.fc": "61462a72e30919cb0579dc676e20b4eea6ef363737a9c9773e96e11a62ee6ac5",
+      "crypto/smartcont/shielded/state.fc": "b299edce84461c4fb762a6a63384b5b379356e6f11501f9a106c6bc81c9ff0c1",
+      "crypto/smartcont/shielded/transact.fc": "f1b615bf7a3b29f0b145624d4fcdabdc570a632f5db19a616431c15bec14d06b",
+      "crypto/smartcont/shielded/tree.fc": "bba0e77a57f1b6f0de92fc03b21ee5e2870d85f6a5c51ba05955e09f21899285",
+      "crypto/smartcont/tos-shielded-pool-v1.fc": "a320257d7ce467ca857dec8f465e255c195574f0906d75aac433b3129b9ae026",
+      "test/bonded-relayer/test_tor_transport.py": "9f1e8042919d3cf0dd4d23ad02fe1cb6314227d728c4567a4c15ece6f7c7091e",
+      "test/shielded-pool/localnet/adjudicate.py": "38ae3189df384cdb254e6daf8c49ebd9a39b463072cce5a3344d64d9017f7cb4",
+      "test/shielded-pool/localnet/chain.py": "08b30fdbda023935a813b47d4e3bbd93a4346ebf294ca2c27f12e02ce458ac0d",
+      "test/shielded-pool/localnet/connection_trace.py": "00446097affc732284e327a7e0ffea628960b2ed83c532b588a3cc0be826ef95",
+      "test/shielded-pool/localnet/deploy_pool.py": "3f46fdb3847fcaa2e60ec8490956d46f1445f1b2b9c28c0e6dc64380c55b5f6e",
+      "test/shielded-pool/localnet/e2e_localnet.py": "52df79f989eda2630f05ce0d5e80fc0238d532ced04f8ed726ad0a4cd3df10bf",
+      "test/shielded-pool/localnet/evidence.py": "19db1cd2ea2c90d7eaee4e29da81ea9193bdedae3323d69284d765769ee94918",
+      "test/shielded-pool/localnet/localnet_common.py": "c52a1635d7d535e43f60507a51ee1e9473760e0ede29aeb68b590af0361ce9ca",
+      "test/shielded-pool/localnet/operator_journal.py": "4f973e198b60e917055c9083f71d2d24a7de87232188a866b0933a25c214f331",
+      "test/shielded-pool/localnet/provision_operator.py": "056f1820964d0a4ae0bb6d94da0da23ed7006f2fa9077de7edfb4b5cf16571aa",
+      "test/shielded-pool/localnet/socks_peer.py": "b0d86e7df93b6d774501f770bb8a7af21b5c00e891fc1a0f6f9ba064c63fc9eb",
+      "test/shielded-pool/localnet/test_localnet_tooling.py": "b8a4cc693dde63c019cbe713c5395bbc28f5f77ed5b6e49c0115e7014f4a7548",
+      "tools/bonded-relayer/br1.py": "957384058ba59f0eae1b833592a45f80154de4d9f6a55011d9c69fc2f623e57d"
+    },
+    "operator": {
+      "provider_sha256": "944a66271fae2d577a7e14f36213e8ace684e8432b1e432a509d7dcc8c63876d",
+      "relayer_profile_sha256": "e3f53b2608b6ee3baa81bde454256983535895f27f3d04401ca627fa95fffe26"
+    },
+    "pool_deployment": {
+      "generator_sha256": "c1192203ec20853232247e584a846f7a15968ed1cfd487fe1553aed3ea556aad",
+      "state_init_sha256": "c006c6c4c5d7657cbec77ec77f46ca823d3b7613f396524391ed7c805d6b4143"
+    },
+    "worktree_head": "7446aeeb307f681107ea16488d8c89375d0bbce7"
+  },
+  "schema": "tos.shield.localnet.evidence-index.v1",
+  "steps": [
+    {
+      "name": "setup",
+      "outcome": "PASS",
+      "receipt": "receipts/01-setup.json",
+      "sha256": "1ae5d329592992ec8ea5d6596715e3645892a90d38f2f9bbf69fe342db3825c0"
+    },
+    {
+      "name": "audit-ceremony",
+      "outcome": "PASS",
+      "receipt": "receipts/02-audit-ceremony.json",
+      "sha256": "db32158f184281722df989ffc0ac547f3cb572a89e4903a014d2b9aa9ccbf68d"
+    },
+    {
+      "name": "init-s",
+      "outcome": "PASS",
+      "receipt": "receipts/03-init-s.json",
+      "sha256": "cc4d6a05824e2e2d4438be9cfcef1afe55317f35c5aa4202e6989ae73e93ac8c"
+    },
+    {
+      "name": "init-r",
+      "outcome": "PASS",
+      "receipt": "receipts/04-init-r.json",
+      "sha256": "50b121242d2ebc25ccebb0537cd8232afb096c9c27c5e95f4833a0f89d80d424"
+    },
+    {
+      "name": "deposit-1",
+      "outcome": "PASS",
+      "receipt": "receipts/06-deposit-1.json",
+      "sha256": "a99b0e7e914f4e2aea0410efd39622145b8989f8136e60a2f4c7c4df8f87499d"
+    },
+    {
+      "name": "deposit-2",
+      "outcome": "PASS",
+      "receipt": "receipts/07-deposit-2.json",
+      "sha256": "ab2724502826a9c481c619252fdd17d1933a84ddd063b2d879c2c23b53cd258d"
+    },
+    {
+      "name": "sync-s-after-deposits",
+      "outcome": "PASS",
+      "receipt": "receipts/08-sync-s-after-deposits.json",
+      "sha256": "71982aa1ee62818e3a4dc92cc9b60d36788ec5c531ea8689765055f54f49702c"
+    },
+    {
+      "name": "address-r",
+      "outcome": "PASS",
+      "receipt": "receipts/09-address-r.json",
+      "sha256": "14cfab3ed1db8081137f742df2b36cf31f410f9b9f97d2019df238c971845b64"
+    },
+    {
+      "name": "send-relayed",
+      "outcome": "PASS",
+      "receipt": "receipts/10-send-relayed.json",
+      "sha256": "0d255cab0d23122269a0b86f861d8a3b000dfd3e612fcd5411b91b7556e40868"
+    },
+    {
+      "name": "settle-relayed",
+      "outcome": "PASS",
+      "receipt": "receipts/11-settle-relayed.json",
+      "sha256": "462f70148e758aad4840b9b4c4a732f4821362edc1450373acb6acbd571409ae"
+    },
+    {
+      "name": "withdraw-r-bounce-and-recovery",
+      "outcome": "PASS",
+      "receipt": "receipts/12-withdraw-r-bounce-and-recovery.json",
+      "sha256": "7c75f046f8ead7d3f695d7647583cad8f650adaeea9f3ee4eee99b6ecb4cc3eb"
+    },
+    {
+      "name": "address-s",
+      "outcome": "PASS",
+      "receipt": "receipts/13-address-s.json",
+      "sha256": "2da3eb5bab41959436590a02846f58d30111ce24e5dd88713c336ede2ecea103"
+    },
+    {
+      "name": "send-direct-r-to-s-spends-recovered-leaf",
+      "outcome": "PASS",
+      "receipt": "receipts/14-send-direct-r-to-s-spends-recovered-leaf.json",
+      "sha256": "9ac231a25dd92b80c29e55263cc70572558a12fd23b55e1f20441ab00e2fdaec"
+    },
+    {
+      "name": "withdraw-s-to-w",
+      "outcome": "PASS",
+      "receipt": "receipts/16-withdraw-s-to-w.json",
+      "sha256": "a5ae7508ae9f097792e9740a1146e04e53fd62ae2b9baa51c002a4b49024af11"
+    },
+    {
+      "name": "address-r-again",
+      "outcome": "PASS",
+      "receipt": "receipts/17-address-r-again.json",
+      "sha256": "00ebd38db223fe751c4ece659240de8606738b29070bb0d890147104642bf4cd"
+    },
+    {
+      "name": "send-relayed-dropped-submit",
+      "outcome": "PASS",
+      "receipt": "receipts/18-send-relayed-dropped-submit.json",
+      "sha256": "9061203f4d0fedd2625b26f6a67e5539639ea4d57fef491d61e6228a2c292b11"
+    },
+    {
+      "name": "settle-dropped-submit-without-resubmission",
+      "outcome": "PASS",
+      "receipt": "receipts/19-settle-dropped-submit-without-resubmission.json",
+      "sha256": "ae46edaa461cd4ad920bcbfb4c5c3e99f49a601bdc8198ec9d7603a471b97c55"
+    },
+    {
+      "name": "address-r-unpaid",
+      "outcome": "PASS",
+      "receipt": "receipts/20-address-r-unpaid.json",
+      "sha256": "e9c147cf644ed0089fed2634bf88fa634b81a12a6abdd5a5383a46f36b181ac8"
+    },
+    {
+      "name": "final-state",
+      "outcome": "PASS",
+      "receipt": "receipts/25-final-state.json",
+      "sha256": "0d8eed07e4ab1ca4187917b28ed6e70d8f8b57ba8c3cd4bbc2e2d03485e902b4"
+    }
+  ],
+  "tor": "offline SOCKS peer standing in for the Tor client; transport boundary only, no onion anonymity claim"
+}
