@@ -1,0 +1,37 @@
+name: Shielded mobile core
+on:
+  pull_request:
+    paths:
+      - 'tools/shielded-pool-mobile/**'
+      - 'tools/shielded-pool-wallet/**'
+      - 'tools/shielded-pool-circuit/**'
+      - 'crypto/poseidon2/**'
+      - 'tosctl/src/block/src/poseidon2_kat.rs'
+      - 'scripts/build-shielded-mobile.py'
+      - '.github/workflows/shielded-mobile.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  core:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Install pinned Rust
+        run: rustup toolchain install 1.97.1 --profile minimal --component clippy,rustfmt
+      - name: Check build and sensitivity scripts
+        run: |
+          python3 -m pip install ruff==0.15.2
+          ruff check --isolated --select E4,E7,E9,F,I --ignore E741 scripts/build-shielded-mobile.py tools/shielded-pool-mobile/tests/sensitivity.py
+          ruff format --check --isolated --line-length 100 scripts/build-shielded-mobile.py tools/shielded-pool-mobile/tests/sensitivity.py
+      - name: Format, lint and exercise the C ABI and actual note crypto
+        working-directory: tools/shielded-pool-mobile
+        run: |
+          cargo fmt -- --check
+          cargo clippy --locked --all-targets -- -D warnings
+          cargo test --locked
+      - name: Require assertion failures when spending and body guards are removed
+        run: python3 tools/shielded-pool-mobile/tests/sensitivity.py --output /tmp/shielded-mobile-controls --target-dir tools/shielded-pool-mobile/target

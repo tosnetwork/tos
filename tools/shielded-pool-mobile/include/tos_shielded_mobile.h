@@ -1,0 +1,38 @@
+#ifndef TOS_SHIELDED_MOBILE_H
+#define TOS_SHIELDED_MOBILE_H
+#include <stddef.h>
+#include <stdint.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
+/* Every pointer must designate a live allocation of at least the stated length.
+ * Seed is exactly the protocol's 32-byte TOS seed, not mnemonic UTF-8 bytes.
+ * Calls are synchronous, do not retain input, and perform no networking.
+ * Limit application concurrency; a call may perform expensive PQ cryptography.
+ * Response contents may contain private note material: never log them.
+ */
+typedef struct TosShieldedResponse TosShieldedResponse;
+/* Issue: domain is a canonical 32-byte big-endian field element.
+ * The caller MUST durably reserve note_index before publishing this descriptor.
+ * Success payload is the 2573-byte descriptor; failure payload is empty.
+ */
+TosShieldedResponse *tos_shielded_descriptor(const uint8_t *seed, size_t seed_len,
+    const uint8_t *domain, size_t domain_len, uint64_t note_index);
+/* Scan a bounded JSON batch. Chain slots/nullifiers must come from verified
+ * state. This function authenticates no chain and asserts no balance freshness.
+ * Success payload is UTF-8 JSON, failure payload empty. See README.md.
+ */
+TosShieldedResponse *tos_shielded_scan(const uint8_t *seed, size_t seed_len,
+    const uint8_t *request, size_t request_len);
+/* status: 0 success; 1 invalid input/crypto failure; 2 contained panic.
+ * Pointer is valid until free; free once, on the same library that allocated it.
+ * The response buffer is zeroized on free. Accessors require a live handle.
+ */
+int32_t tos_shielded_response_status(const TosShieldedResponse *response);
+const uint8_t *tos_shielded_response_data(const TosShieldedResponse *response);
+size_t tos_shielded_response_size(const TosShieldedResponse *response);
+void tos_shielded_response_free(TosShieldedResponse *response);
+#ifdef __cplusplus
+}
+#endif
+#endif
