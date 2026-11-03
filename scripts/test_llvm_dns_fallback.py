@@ -186,6 +186,30 @@ class ResolverTests(unittest.TestCase):
             )
             response.__enter__.return_value.read.assert_called_once_with(16385)
 
+    def test_second_resolver_only_follows_servfail(self):
+        valid = {"Status": 0, "TC": False, "Answer": [{"type": 1, "data": ADDRESS}]}
+        response = MagicMock()
+        response.__enter__.return_value.read.side_effect = [
+            b'{"Status":2}',
+            json.dumps(valid).encode(),
+        ]
+        with patch.object(MODULE, "urlopen", return_value=response) as request:
+            self.assertEqual(MODULE.resolve_hint(), ADDRESS)
+            self.assertEqual(request.call_count, 2)
+            self.assertEqual(
+                request.call_args.args[0].full_url,
+                "https://8.8.8.8/resolve?name=apt.llvm.org&type=A",
+            )
+        for status in [3, 2]:
+            response = MagicMock()
+            response.__enter__.return_value.read.return_value = json.dumps(
+                {"Status": status}
+            ).encode()
+            with patch.object(MODULE, "urlopen", return_value=response) as request:
+                with self.assertRaises(RuntimeError):
+                    MODULE.resolve_hint()
+                self.assertEqual(request.call_count, 1 if status == 3 else 2)
+
     def test_ephemeral_opt_in_is_required_before_any_dns_work(self):
         with (
             patch("sys.argv", ["ensure-llvm-dns.py"]),
@@ -325,6 +349,14 @@ def run_controls():
             ),
         ]
     )
+    variants.append(
+        (
+            "secondary",
+            '"https://8.8.8.8/resolve?name=apt.llvm.org&type=A"',
+            '"https://1.1.1.1/dns-query?name=apt.llvm.org&type=A"',
+            "second_resolver_only_follows_servfail",
+        )
+    )
     try:
         for label, before, after, test in variants:
             if source.count(before) != 1:
@@ -352,8 +384,8 @@ def run_controls():
     result = unittest.TextTestRunner(verbosity=2).run(
         unittest.defaultTestLoader.loadTestsFromTestCase(ResolverTests)
     )
-    if not result.wasSuccessful() or result.testsRun != 13:
-        raise RuntimeError("Restored baseline did not pass all 13 tests")
+    if not result.wasSuccessful() or result.testsRun != 14:
+        raise RuntimeError("Restored baseline did not pass all 14 tests")
 
 
 if __name__ == "__main__":

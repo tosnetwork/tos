@@ -34,10 +34,14 @@ def lookup():
     return socket.getaddrinfo(HOST, 443, type=socket.SOCK_STREAM)
 
 
-def resolve_hint():
+class TemporaryResolverError(RuntimeError):
+    pass
+
+
+def resolve_hint_from(endpoint):
     # This response supplies only an IP hint; original-origin TLS remains mandatory.
     request = Request(
-        "https://1.1.1.1/dns-query?name=apt.llvm.org&type=A",
+        endpoint,
         headers={"accept": "application/dns-json"},
     )
     with urlopen(request, timeout=15) as response:
@@ -45,8 +49,15 @@ def resolve_hint():
     if len(raw) > 16384:
         raise RuntimeError("DNS HTTPS response exceeds 16 KiB")
     data = json.loads(raw)
+    if isinstance(data, dict) and data.get("Status") == 2:
+        raise TemporaryResolverError("HTTPS DNS resolver returned SERVFAIL")
     if not isinstance(data, dict) or data.get("Status") != 0 or data.get("TC") is not False:
-        raise RuntimeError("DNS HTTPS response is unsuccessful or truncated")
+        details = (
+            repr((data.get("Status"), data.get("TC")))[:120]
+            if isinstance(data, dict)
+            else "not an object"
+        )
+        raise RuntimeError(f"DNS HTTPS response is unsuccessful or truncated: {details}")
     answers = data.get("Answer")
     if not isinstance(answers, list) or len(answers) > 32:
         raise RuntimeError("DNS HTTPS response has invalid answer bounds")
@@ -56,6 +67,18 @@ def resolve_hint():
             if address.is_global and not address.is_multicast and not address.is_reserved:
                 return str(address)
     raise RuntimeError("DNS HTTPS response has no public IPv4 answer")
+
+
+def resolve_hint():
+    for endpoint in (
+        "https://1.1.1.1/dns-query?name=apt.llvm.org&type=A",
+        "https://8.8.8.8/resolve?name=apt.llvm.org&type=A",
+    ):
+        try:
+            return resolve_hint_from(endpoint)
+        except TemporaryResolverError:
+            print("HTTPS DNS resolver returned SERVFAIL; trying the next bounded endpoint")
+    raise TemporaryResolverError("Both HTTPS DNS resolvers returned SERVFAIL")
 
 
 def probe_origin():
