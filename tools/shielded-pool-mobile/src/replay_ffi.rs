@@ -36,6 +36,7 @@ struct Request {
     pool_data_hash: String,
     gas_boc: String,
     gas_hash: String,
+    receive_binding: Option<String>,
 }
 
 enum State {
@@ -47,6 +48,7 @@ enum State {
 pub struct TosShieldedReplay {
     state: State,
     domain: Fr,
+    receive_binding: Option<[u8; 228]>,
 }
 
 fn bound_cell(encoded: &str, expected: &str) -> Result<chain_block::Cell> {
@@ -91,7 +93,27 @@ impl TosShieldedReplay {
         };
         let charge = compute_fee(&prices, BOUNCE_GAS_CEILING).map_err(|_| Error::InvalidInput)?;
         let domain = wire::execution_domain(r.global_id, &head.account_id);
-        Ok(Self { state: State::Building(Box::new(Replay::new(head, &state, charge)?)), domain })
+        let receive_binding = r
+            .receive_binding
+            .map(|encoded| {
+                let mut bytes = [0; 228];
+                hex::decode_to_slice(encoded, &mut bytes).map_err(|_| Error::InvalidInput)?;
+                if bytes[..4] != r.global_id.to_be_bytes()
+                    || bytes[4..36] != head.account_id
+                    || bytes[132..164] != state.config.profile_hash
+                    || bytes[164..196] != state.config.poseidon_manifest_hash
+                    || bytes[196..228] != state.config.groth16_vk_hash
+                {
+                    return Err(Error::InvalidInput);
+                }
+                Ok(bytes)
+            })
+            .transpose()?;
+        Ok(Self {
+            state: State::Building(Box::new(Replay::new(head, &state, charge)?)),
+            domain,
+            receive_binding,
+        })
     }
 
     fn scan(&self, seed: &[u8; 32], offset: usize, count: usize) -> Result<Zeroizing<Vec<u8>>> {
@@ -151,6 +173,90 @@ pub unsafe extern "C" fn tos_shielded_replay_create(
         Ok(Ok(session)) => Box::into_raw(Box::new(session)),
         _ => ptr::null_mut(),
     }
+}
+
+/// Issue a descriptor only after committing its index in the canonical store.
+///
+/// # Safety
+/// The session must be live and serialized. All input pointers must be valid
+/// for their lengths. The caller authenticates freshness, the original master,
+/// and the binding against the same observation used to create the replay.
+#[cfg(unix)]
+#[no_mangle]
+pub unsafe extern "C" fn tos_shielded_replay_receive(
+    session: *const TosShieldedReplay,
+    seed: *const u8,
+    seed_length: usize,
+    root: *const u8,
+    root_length: usize,
+    binding: *const u8,
+    binding_length: usize,
+) -> *mut TosShieldedResponse {
+    response(|| {
+        if session.is_null()
+            || seed.is_null()
+            || root.is_null()
+            || binding.is_null()
+            || seed_length != 32
+            || !(1..=4096).contains(&root_length)
+            || binding_length != 228
+        {
+            return Err(Error::InvalidInput);
+        }
+        let owner = unsafe { &*session };
+        let State::Ready(ledger) = &owner.state else {
+            return Err(Error::InvalidInput);
+        };
+        let root = std::str::from_utf8(unsafe { slice::from_raw_parts(root, root_length) })
+            .map_err(|_| Error::InvalidInput)?;
+        if root.as_bytes().contains(&0) || !std::path::Path::new(root).is_absolute() {
+            return Err(Error::InvalidInput);
+        }
+        let bytes = unsafe { slice::from_raw_parts(binding, binding_length) };
+        if owner.receive_binding.as_ref().map(|value| value.as_slice()) != Some(bytes) {
+            return Err(Error::InvalidInput);
+        }
+        let field = |offset| -> Result<[u8; 32]> {
+            bytes[offset..offset + 32].try_into().map_err(|_| Error::InvalidInput)
+        };
+        let binding = crate::sealed::Binding {
+            global_id: i32::from_be_bytes(bytes[..4].try_into().map_err(|_| Error::InvalidInput)?),
+            pool_account: field(4)?,
+            genesis_root: field(36)?,
+            genesis_file: field(68)?,
+            code_hash: field(100)?,
+            profile_hash: field(132)?,
+            manifest_hash: field(164)?,
+            verifying_key_hash: field(196)?,
+        };
+        if wire::execution_domain(binding.global_id, &binding.pool_account) != owner.domain {
+            return Err(Error::InvalidInput);
+        }
+        let mut key = Zeroizing::new([0; 32]);
+        key.copy_from_slice(unsafe { slice::from_raw_parts(seed, 32) });
+        let recovered = crate::wallet::recover_complete(
+            ledger.outputs(),
+            ledger.published_nullifiers(),
+            &key,
+            owner.domain,
+        )?;
+        if !recovered.0.diagnostics.is_empty() {
+            return Err(Error::InvalidInput);
+        }
+        let next = match recovered.0.notes.iter().map(|note| note.note_key_index).max() {
+            Some(index) => index.checked_add(1).ok_or(Error::Limit)?,
+            None => 0,
+        };
+        let mut store = crate::store::StateStore::open_wallet(
+            std::path::Path::new(root),
+            crate::sealed::RecordCipher::derive(&key, binding),
+        )
+        .map_err(|_| Error::InvalidInput)?;
+        let indices = store.reserve_indices(Some(next), 1).map_err(|_| Error::InvalidInput)?;
+        let index = indices.first().copied().ok_or(Error::InvalidInput)?;
+        crate::issue_descriptor(&key, &shielded_pool_circuit::field::fr_to_be(&owner.domain), index)
+            .map(Zeroizing::new)
+    })
 }
 
 unsafe fn mutate(
@@ -330,7 +436,11 @@ mod tests {
                 0,
             )
             .unwrap();
-        let before = TosShieldedReplay { state: State::Ready(Box::new(ledger.clone())), domain };
+        let before = TosShieldedReplay {
+            state: State::Ready(Box::new(ledger.clone())),
+            domain,
+            receive_binding: None,
+        };
         let page: serde_json::Value =
             serde_json::from_slice(&before.scan(&seed, 0, 1).unwrap()).unwrap();
         assert_eq!(page["scan"]["batch_unspent_balance"], "1000");
@@ -350,7 +460,11 @@ mod tests {
                 0,
             )
             .unwrap();
-        let after = TosShieldedReplay { state: State::Ready(Box::new(ledger)), domain };
+        let after = TosShieldedReplay {
+            state: State::Ready(Box::new(ledger)),
+            domain,
+            receive_binding: None,
+        };
         let page: serde_json::Value =
             serde_json::from_slice(&after.scan(&seed, 0, 1).unwrap()).unwrap();
         assert_eq!(page["scan"]["batch_unspent_balance"], "0");
@@ -363,6 +477,7 @@ mod tests {
         let mut owner = TosShieldedReplay {
             state: State::Ready(Box::new(Ledger::genesis())),
             domain: Fr::from(7u64),
+            receive_binding: None,
         };
         let result = unsafe {
             mutate(&mut owner, |_old| std::panic::resume_unwind(Box::new("injected test unwind")))
@@ -415,7 +530,11 @@ mod tests {
         }
         let (second, _) = make(124u64);
         ledger.apply(&second, 0).unwrap();
-        let before = TosShieldedReplay { state: State::Ready(Box::new(ledger.clone())), domain };
+        let before = TosShieldedReplay {
+            state: State::Ready(Box::new(ledger.clone())),
+            domain,
+            receive_binding: None,
+        };
         let page_a: serde_json::Value =
             serde_json::from_slice(&before.scan(&seed, 0, 512).unwrap()).unwrap();
         let page_b: serde_json::Value =
@@ -464,7 +583,11 @@ mod tests {
                 0,
             )
             .unwrap();
-        let after = TosShieldedReplay { state: State::Ready(Box::new(ledger)), domain };
+        let after = TosShieldedReplay {
+            state: State::Ready(Box::new(ledger)),
+            domain,
+            receive_binding: None,
+        };
         let summary = summary_json(&after, &seed);
         assert_eq!(summary["unspent_balance"], "1000");
         assert_eq!(summary["unique_unspent_notes"], "1");
@@ -474,7 +597,7 @@ mod tests {
     fn summary_requires_ready_and_exact_seed_and_allows_authentic_empty_ledger() {
         let seed = [42; 32];
         let domain = Fr::from(7u64);
-        let mut owner = TosShieldedReplay { state: State::Failed, domain };
+        let mut owner = TosShieldedReplay { state: State::Failed, domain, receive_binding: None };
         for (session, key, length) in [
             (&owner as *const _, seed.as_ptr(), 32),
             (ptr::null(), seed.as_ptr(), 32),
@@ -490,5 +613,105 @@ mod tests {
         let summary = summary_json(&owner, &seed);
         assert_eq!(summary["unspent_balance"], "0");
         assert_eq!(summary["total_outputs"], "0");
+    }
+    #[cfg(unix)]
+    #[test]
+    fn receive_reserves_before_return_and_survives_replay_restart() {
+        use std::os::unix::fs::DirBuilderExt;
+        let root = std::env::temp_dir().join(format!("tos-receive-{}", rand::random::<u64>()));
+        std::fs::DirBuilder::new().mode(0o700).create(&root).unwrap();
+        struct Cleanup(std::path::PathBuf);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let _cleanup = Cleanup(root.clone());
+        let path = root.to_str().unwrap().as_bytes();
+        let key = [42; 32];
+        let mut binding = [1; 228];
+        binding[..4].copy_from_slice(&3i32.to_be_bytes());
+        let receive = |owner: &TosShieldedReplay, binding: &[u8]| unsafe {
+            Box::from_raw(tos_shielded_replay_receive(
+                owner,
+                key.as_ptr(),
+                key.len(),
+                path.as_ptr(),
+                path.len(),
+                binding.as_ptr(),
+                binding.len(),
+            ))
+        };
+        let domain = wire::execution_domain(3, &[1; 32]);
+        let failed =
+            TosShieldedReplay { state: State::Failed, domain, receive_binding: Some(binding) };
+        assert_eq!(receive(&failed, &binding).status, 1);
+        let make_ready = || TosShieldedReplay {
+            state: State::Ready(Box::new(Ledger::genesis())),
+            domain,
+            receive_binding: Some(binding),
+        };
+        let mut other_pool = binding;
+        other_pool[4] = 2;
+        assert_eq!(receive(&make_ready(), &other_pool).status, 1);
+        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 0);
+        for index in [0, 1] {
+            let result = receive(&make_ready(), &binding);
+            assert_eq!(result.status, 0);
+            let descriptor =
+                shielded_pool_wallet::descriptor::Descriptor::from_bytes(&result.bytes).unwrap();
+            assert_eq!(descriptor.note_key_index, index);
+        }
+        let keys = PoolInstance::new(&key, domain);
+        let plain = Plaintext {
+            slot: 0,
+            kind: Kind::Ordinary,
+            amount: 1000,
+            note_secret: Fr::from(123u64),
+            note_key_index: 7,
+            owner_nf_key_hash: keys.owner_nf_key_hash(7).unwrap(),
+            pq_auth_key_hash: keys.pq_auth_key_hash(7).unwrap(),
+        };
+        let payload =
+            delivery::seal(&keys.mlkem_encapsulation_key().unwrap(), domain, &plain).unwrap();
+        let commitment = notes::owner_commitment(
+            plain.owner_nf_key_hash,
+            plain.pq_auth_key_hash,
+            plain.note_secret,
+        );
+        let mut ledger = Ledger::genesis();
+        ledger
+            .apply(
+                &Event::Deposit {
+                    amount: plain.amount,
+                    owner_commitment: commitment,
+                    output_data: payload,
+                },
+                0,
+            )
+            .unwrap();
+        let observed = TosShieldedReplay {
+            state: State::Ready(Box::new(ledger)),
+            domain,
+            receive_binding: Some(binding),
+        };
+        for (owner, expected) in [(&observed, 8), (&make_ready(), 9)] {
+            let result = receive(owner, &binding);
+            assert_eq!(result.status, 0);
+            let descriptor =
+                shielded_pool_wallet::descriptor::Descriptor::from_bytes(&result.bytes).unwrap();
+            assert_eq!(descriptor.note_key_index, expected);
+        }
+        let mut wrong_genesis = binding;
+        wrong_genesis[36] ^= 1;
+        let refused = receive(&make_ready(), &wrong_genesis);
+        assert_eq!(refused.status, 1);
+        assert!(refused.bytes.is_empty());
+        let mut upgraded = binding;
+        upgraded[100] = 2;
+        let refused = receive(&make_ready(), &upgraded);
+        assert_eq!(refused.status, 1);
+        assert!(refused.bytes.is_empty());
+        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 1);
     }
 }

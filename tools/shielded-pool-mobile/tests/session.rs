@@ -214,3 +214,27 @@ fn completed_ledger_scan_decrypts_a_real_owned_note() {
     assert_eq!(page["scan"]["notes"][0]["leaf_index"], "0");
     assert_eq!(page["scan"]["next_note_key_index"], "8");
 }
+
+#[test]
+fn receive_binding_is_checked_when_creating_a_replay() {
+    let f = common::linked_fixture();
+    let mut request = fixture_request(&f);
+    let data = hex::decode(f["account_data"].as_str().unwrap()).unwrap();
+    let config =
+        shielded_pool_codec::PoolState::parse(&read_single_root_boc(data).unwrap()).unwrap().config;
+    let mut binding = [1; 228];
+    binding[..4].copy_from_slice(&3i32.to_be_bytes());
+    hex::decode_to_slice(request["account_id"].as_str().unwrap(), &mut binding[4..36]).unwrap();
+    binding[132..164].copy_from_slice(&config.profile_hash);
+    binding[164..196].copy_from_slice(&config.poseidon_manifest_hash);
+    binding[196..228].copy_from_slice(&config.groth16_vk_hash);
+    request["receive_binding"] = json!(hex::encode(binding));
+    let _valid = create(&request);
+    for offset in [0, 4, 132, 164, 196] {
+        let mut invalid = binding;
+        invalid[offset] ^= 1;
+        request["receive_binding"] = json!(hex::encode(invalid));
+        let bytes = serde_json::to_vec(&request).unwrap();
+        assert!(unsafe { tos_shielded_replay_create(bytes.as_ptr(), bytes.len()) }.is_null());
+    }
+}

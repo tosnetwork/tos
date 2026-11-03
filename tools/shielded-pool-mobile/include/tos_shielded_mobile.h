@@ -58,6 +58,21 @@ void tos_shielded_replay_free(TosShieldedReplay *session);
  */
 TosShieldedResponse *tos_shielded_replay_summary(const TosShieldedReplay *session, const uint8_t *seed,
                                                  size_t seed_length);
+#if defined(__unix__) || defined(__APPLE__)
+/* Ready replay and original master are required. Authenticate freshness and all
+ * binding fields against the same observation before calling. Root is the UTF-8
+ * absolute common app-private directory. Binding is big-endian i32 global ID
+ * followed by seven 32-byte fields: pool account, genesis root, genesis file,
+ * code hash, profile hash, manifest hash, verifying-key hash.
+ * Replay creation JSON must contain these same bytes as hex in receive_binding.
+ * Success returns one descriptor after durable reservation. An error after
+ * reservation can burn the index. Serialize all access to the replay. */
+TosShieldedResponse *tos_shielded_replay_receive(const TosShieldedReplay *session,
+                                                const uint8_t *seed, size_t seed_length,
+                                                const uint8_t *root, size_t root_length,
+                                                const uint8_t *binding, size_t binding_length);
+#endif
+
 /* status: 0 success; 1 invalid input/crypto failure; 2 contained panic.
  * Pointer is valid until free; free once, on the same library that allocated it.
  * The response buffer is zeroized on free. Accessors require a live handle.

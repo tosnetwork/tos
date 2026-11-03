@@ -420,3 +420,13 @@ return zero; incomplete/failed sessions and malformed arguments return error,
 never a partial summary. The caller still authenticates proof/trust selections
 and freshness, and commits business state before publishing a usable balance.
 This adds no business schema, journal, persistence C ABI or mobile acceptance.
+
+On Unix, `tos_shielded_replay_receive` issues a descriptor from a Ready replay
+and the original master. The caller supplies the common private root and the
+trusted binding from the same fresh observation. Include the binding as hex in
+the replay creation JSON field `receive_binding`. The SDK requires that binding
+to match at issuance and checks the execution
+domain, scans the complete ledger, and commits the greater of the observed next
+index and the local high water before constructing the descriptor. An issuance
+failure after reservation consumes the index. The caller must recheck freshness
+before displaying the result and discard it if the operation was cancelled.
