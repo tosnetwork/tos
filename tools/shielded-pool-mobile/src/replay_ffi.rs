@@ -640,6 +640,15 @@ mod tests {
             ))
         };
         let good = issue(domain);
+        let recipient = Descriptor::from_bytes(&good).unwrap();
+        let other_pool =
+            Descriptor::from_bytes(&issue(wire::execution_domain(3, &[2; 32]))).unwrap();
+        let fee_recipient = Descriptor::issue(&PoolInstance::new(&[43; 32], domain), 0).unwrap();
+        use shielded_pool_wallet::plan::Request;
+        assert!(Request::relayed_transfer(domain, &recipient, 10, &fee_recipient, 1).is_ok());
+        assert!(Request::relayed_transfer(domain, &recipient, 10, &other_pool, 1).is_err());
+        assert!(Request::relayed_transfer(domain, &other_pool, 10, &fee_recipient, 1).is_err());
+
         let result = validate(&owner, &good);
         assert_eq!(result.status, 0);
         assert!(result.bytes.is_empty());

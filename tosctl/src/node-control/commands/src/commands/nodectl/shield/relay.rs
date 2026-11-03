@@ -43,7 +43,7 @@ use rand::RngCore;
 use shielded_pool_circuit::field::fr_to_be;
 use shielded_pool_prover::INTENT_VALIDITY_WINDOW_SECS;
 use shielded_pool_wallet::descriptor::Descriptor;
-use shielded_pool_wallet::plan::{self, Fee, Plan, PoolTerms, RecipientKeys, Request};
+use shielded_pool_wallet::plan::{self, Plan, PoolTerms, Request, spendable_candidates};
 use shielded_pool_wallet::spend::{self as assembly, Assembled, Terms};
 use std::path::{Path, PathBuf};
 
@@ -52,8 +52,7 @@ use super::relayer::{BondRead, BondReading, RelayerProfile};
 use super::spend::{
     self, AnchorChoice, PlannedSpend, Proving, Target, audited_prover, check_still_valid,
     choose_anchor, held_leaves, pending_spends, refuse_unless_spendable,
-    require_current_verified_head, require_verified_same_chain, reserve_spend,
-    spendable_candidates, transact_body,
+    require_current_verified_head, require_verified_same_chain, reserve_spend, transact_body,
 };
 use super::store::{JournalRecord, Word, coins};
 use super::{
@@ -369,11 +368,7 @@ pub(super) async fn run(
         denominations: head.state.config.denominations.clone(),
         withdrawal_fee: head.state.config.withdrawal_fee,
     };
-    let request = Request::Transfer {
-        to: Box::new(RecipientKeys::of(descriptor)),
-        amount,
-        fee: Some(Fee { to: Box::new(RecipientKeys::of(&fee_to)), amount: fee }),
-    };
+    let request = Request::relayed_transfer(opened.domain, descriptor, amount, &fee_to, fee)?;
     // The plan asks for indices only once every check has passed; they are
     // provisional until journalled below.
     let mut next = super::store::next_issuable_index(&opened.state, &opened.journal)?;
@@ -1179,14 +1174,9 @@ mod tests {
         let fee = 100_000_000u64;
         let valid_until: u32 = 1_800_000_200;
         let quote = quoted(&quoted_descriptor, fee, 1_800_000_300);
-        let request = Request::Transfer {
-            to: Box::new(RecipientKeys::of(&to)),
-            amount: 1_500_000_000,
-            fee: Some(Fee {
-                to: Box::new(RecipientKeys::of(&quoted_descriptor)),
-                amount: fee.into(),
-            }),
-        };
+        let request =
+            Request::relayed_transfer(domain, &to, 1_500_000_000, &quoted_descriptor, fee.into())
+                .expect("relayed transfer");
         let terms = PoolTerms { denominations: vec![3_000_000_000], withdrawal_fee: 7 };
         let mut next = 10u64;
         let plan = plan::plan(&terms, &candidates, &request, &mut || {

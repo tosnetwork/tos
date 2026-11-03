@@ -24,7 +24,9 @@ use crate::descriptor::Descriptor;
 use crate::error::{Error, Result};
 use crate::import::Imported;
 use crate::keys::MLKEM_ENCAPSULATION_KEY_BYTES;
+use crate::scan::Recovered;
 use shielded_pool_circuit::field::Fr;
+use std::collections::BTreeSet;
 
 /// Section 11.1: a transaction spends at most two notes.
 pub const MAX_INPUTS: usize = 2;
@@ -52,6 +54,19 @@ pub struct PoolTerms {
 pub struct Candidate {
     pub note: Imported,
     pub leaf_index: u64,
+}
+
+/// Select recovered notes with known leaves, excluding locally held inputs.
+pub fn spendable_candidates(recovered: &Recovered, held: &BTreeSet<u64>) -> Vec<Candidate> {
+    recovered
+        .notes
+        .iter()
+        .zip(recovered.leaves.iter())
+        .filter_map(|(note, leaf)| {
+            leaf.filter(|leaf| !held.contains(leaf))
+                .map(|leaf_index| Candidate { note: *note, leaf_index })
+        })
+        .collect()
 }
 
 /// Where a recipient's note goes: the parts of a descriptor the sealing needs.
@@ -95,6 +110,25 @@ pub enum Request {
     Transfer { to: Box<RecipientKeys>, amount: u128, fee: Option<Fee> },
     /// A withdrawal of `amount` to a public account of workchain 0.
     Withdraw { amount: u128, recipient_account: [u8; 32] },
+}
+
+impl Request {
+    /// Build a relayed transfer from the recipient and the quoted fee descriptor.
+    pub fn relayed_transfer(
+        domain: Fr,
+        recipient: &Descriptor,
+        amount: u128,
+        fee_recipient: &Descriptor,
+        fee_amount: u128,
+    ) -> Result<Self> {
+        recipient.validate_recipient(domain)?;
+        fee_recipient.validate_recipient(domain)?;
+        Ok(Self::Transfer {
+            to: Box::new(RecipientKeys::of(recipient)),
+            amount,
+            fee: Some(Fee { to: Box::new(RecipientKeys::of(fee_recipient)), amount: fee_amount }),
+        })
+    }
 }
 
 /// One input slot of the plan.

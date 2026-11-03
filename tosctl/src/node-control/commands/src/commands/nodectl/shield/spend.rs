@@ -44,7 +44,12 @@ use shielded_pool_circuit::tree::Frontier;
 use shielded_pool_prover::{INTENT_VALIDITY_WINDOW_SECS, PublicClient};
 use shielded_pool_wallet::descriptor::Descriptor;
 use shielded_pool_wallet::ledger::Ledger;
-use shielded_pool_wallet::plan::{self, Candidate, Plan, PoolTerms, RecipientKeys, Request};
+#[cfg(test)]
+use shielded_pool_wallet::plan::Candidate;
+use shielded_pool_wallet::plan::{
+    self, Plan, PoolTerms, RecipientKeys, Request, spendable_candidates,
+};
+#[cfg(test)]
 use shielded_pool_wallet::scan::Recovered;
 use shielded_pool_wallet::spend::{self as assembly, Assembled, Prepared, Terms};
 use std::collections::BTreeSet;
@@ -973,18 +978,6 @@ fn summary_text(
 
 /// The notes a spend may take: those at known leaves that no pending spend
 /// holds. The planner itself passes over notes the scan shows spent.
-pub(super) fn spendable_candidates(recovered: &Recovered, held: &BTreeSet<u64>) -> Vec<Candidate> {
-    recovered
-        .notes
-        .iter()
-        .zip(recovered.leaves.iter())
-        .filter_map(|(note, leaf)| {
-            leaf.filter(|leaf| !held.contains(leaf))
-                .map(|leaf_index| Candidate { note: *note, leaf_index })
-        })
-        .collect()
-}
-
 /// The message value after proving: the one confirmed, if the pool still
 /// charges it; the pool's current one, if the user accepts the change (or
 /// passed --yes); or a stop before anything is signed for the payer.
