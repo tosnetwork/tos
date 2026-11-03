@@ -25,6 +25,8 @@ on:
       - 'tools/shielded-pool-ceremony/**'
       - 'tools/bonded-relayer/client/**'
       - 'crypto/poseidon2/manifest.bin'
+      - 'artifacts/phase2-ceremony-2/ceremony/**'
+      - 'artifacts/phase1/**'
       - '.github/workflows/tosctl-nixos.yml'
       - '!tosctl/src/ci/**'
       - '!tosctl/src/docs/**'
@@ -110,6 +112,81 @@ jobs:
         if: always()
         with:
           name: tosctl-nixos-evidence
+          path: nixos-evidence/
+          retention-days: 14
+          if-no-files-found: warn
+
+  nixos-vm-shielded:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: cachix/install-nix-action@448cde739abec1eaf0646249e3d25bb8d9bc7702 # v31.11.2
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = false
+            max-jobs = 2
+            cores = 2
+      - name: Check pinned definitions and virtualization support
+        run: |
+          test -r /dev/kvm && test -w /dev/kvm
+          python3 assembly/nix/tosctl/check-inputs.py
+          nix flake check --no-build --no-update-lock-file
+          git diff --exit-code -- flake.lock
+          df -h . /nix
+      - name: Build the shielded CLI with its material and boot a real NixOS VM with a Tor client
+        run: |
+          set -o pipefail
+          mkdir -p nixos-evidence
+          # The material build refuses a flipped byte and an unlisted file before anything
+          # depends on it.
+          nix build --no-update-lock-file -L \
+            .#checks.x86_64-linux.tosctl-shield-material-refuses-flip \
+            .#checks.x86_64-linux.tosctl-shield-material-refuses-extra \
+            --out-link result-material-control 2>&1 | tee nixos-evidence/material-controls.log
+          cat result-material-control* | tee nixos-evidence/material-controls.txt
+          nix build --no-update-lock-file -L .#checks.x86_64-linux.tosctl-shielded-vm \
+            --out-link result-vm 2>&1 | tee nixos-evidence/build.log
+          nix build --no-update-lock-file .#tosctl-shielded --out-link result-shielded
+          nix build --no-update-lock-file .#tosctl-shield-material --out-link result-material
+          # Unit tests ran in the sandbox build with the shielded feature on; keep their counts.
+          nix log --no-update-lock-file .#tosctl-shielded | grep -E 'test result:' | tee nixos-evidence/tests.txt
+          ! grep -q 'FAILED' nixos-evidence/tests.txt
+          grep -qE 'test result: ok\. [1-9][0-9]* passed' nixos-evidence/tests.txt
+          # Only the package fileset and the material were imported, never the whole repository.
+          python3 assembly/nix/tosctl/check-store.py \
+            "$(nix eval --raw --no-update-lock-file .#packages.x86_64-linux.tosctl-shielded.src)" \
+            "$(nix eval --raw --no-update-lock-file .#checks.x86_64-linux.tosctl-shielded-vm.drvPath)" \
+            | tee nixos-evidence/store.txt
+          # The two variants are one recipe: same source, toolchain and metadata; the shielded
+          # one adds the feature, the wrapper and the material, and the standard one none of them.
+          python3 assembly/nix/tosctl/check-store.py --compare-variants \
+            "$(nix eval --raw --no-update-lock-file .#packages.x86_64-linux.tosctl.drvPath)" \
+            "$(nix eval --raw --no-update-lock-file .#packages.x86_64-linux.tosctl-shielded.drvPath)" \
+            | tee -a nixos-evidence/store.txt
+          # The comparison tells a dependency at another store path from the same one by name.
+          python3 assembly/nix/tosctl/check-store.py --variants-control \
+            "$(nix eval --raw --no-update-lock-file .#packages.x86_64-linux.tosctl.drvPath)" \
+            "$(nix eval --raw --no-update-lock-file .#packages.x86_64-linux.tosctl-shielded.drvPath)" \
+            | tee -a nixos-evidence/store.txt
+          {
+            git rev-parse HEAD
+            nix --version
+            ./result-shielded/bin/tosctl --version
+            ./result-shielded/bin/tosctl shield --help
+            sha256sum result-shielded/bin/.tosctl-wrapped flake.lock assembly/nix/tosctl/material.sha256
+            # result-material is a store symlink, so a relative parent would resolve inside the store.
+            (cd result-material && sha256sum --check --strict "$GITHUB_WORKSPACE/assembly/nix/tosctl/material.sha256")
+            nix path-info -Sh ./result-shielded ./result-material
+          } > nixos-evidence/receipt.txt
+          cp -rL result-vm nixos-evidence/vm
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: tosctl-nixos-shielded-evidence
           path: nixos-evidence/
           retention-days: 14
           if-no-files-found: warn

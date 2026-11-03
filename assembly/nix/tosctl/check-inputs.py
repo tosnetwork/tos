@@ -1,21 +1,25 @@
 #!/usr/bin/env python3
 """Hold the tosctl Nix package's inputs to their one list, assembly/nix/tosctl/inputs.json.
 
-Two checks, both fail-closed:
+Three checks, all fail-closed:
 
 1. The CI workflow's trigger paths are exactly the ones inputs.json implies: the Nix files,
-   every source entry (directories as "dir/**"), the exclusions as negations, and the
-   workflow itself. Editing docs or an unrelated contract does not start the VM run, and a
-   new source entry cannot be left untriggered.
+   every source entry (directories as "dir/**"), the shielded material directories, the
+   exclusions as negations, and the workflow itself. Editing docs or an unrelated contract
+   does not start the VM run, and a new source entry cannot be left untriggered.
 2. Every include_str!/include_bytes! target of the crates the package builds or tests
    resolves inside the package source. Only a string literal or
    concat!(env!("CARGO_MANIFEST_DIR"), "...") is resolved; any other expression is an error.
    A test-only include of a crate whose tests the package does not run must be listed in
    inputs.json "test_only_includes" with a reason; the list is checked for stale entries.
+3. material.sha256 lists exactly the files under the shielded material directories, each
+   with the digest the checkout holds, so the material derivation that checks against it
+   ships what the repository commits and nothing else.
 
 usage: check-inputs.py [REPOSITORY_ROOT]
 """
 
+import hashlib
 import json
 import re
 import sys
@@ -24,6 +28,7 @@ from pathlib import Path
 
 ROOT = Path(sys.argv[1] if len(sys.argv) > 1 else Path(__file__).resolve().parents[3]).resolve()
 INPUTS = ROOT / "assembly/nix/tosctl/inputs.json"
+MATERIAL_MANIFEST = ROOT / "assembly/nix/tosctl/material.sha256"
 WORKFLOW = ROOT / ".github/workflows/tosctl-nixos.yml"
 WORKSPACE = ROOT / "tosctl/src"
 # include!, include_str! and include_bytes! all read a file at compile time; a #[path]
@@ -45,10 +50,17 @@ def require(condition, message):
         raise Failure(message)
 
 
+def material_directories(inputs):
+    """The shielded material, by the name the store path uses: {name: repository path}."""
+    return {k: v for k, v in inputs["shielded_material"].items() if k != "comment"}
+
+
 def expected_paths(inputs):
     positive = list(inputs["nix_files"])
     for entry in inputs["source"]:
         positive.append(entry + "/**" if (ROOT / entry).is_dir() else entry)
+    for entry in material_directories(inputs).values():
+        positive.append(entry + "/**")
     positive.append(WORKFLOW.relative_to(ROOT).as_posix())
     negative = []
     for entry in inputs["exclude"]:
@@ -303,15 +315,46 @@ def check_includes(inputs):
     return len(built), count
 
 
+def check_material(inputs):
+    """material.sha256 names every file under the material directories, by the store path's
+    layout (<name>/<file>), with the digest the checkout holds, and nothing else."""
+    expected = {}
+    for name, relative in material_directories(inputs).items():
+        directory = ROOT / relative
+        require(directory.is_dir(), f"material directory {relative} is missing")
+        for file in sorted(directory.rglob("*")):
+            if file.is_file():
+                digest = hashlib.sha256(file.read_bytes()).hexdigest()
+                expected[f"{name}/{file.relative_to(directory).as_posix()}"] = digest
+    require(expected, "the material directories hold no files")
+    listed = {}
+    for number, line in enumerate(MATERIAL_MANIFEST.read_text().splitlines(), 1):
+        match = re.fullmatch(r"([0-9a-f]{64})  (\S+)", line)
+        require(match, f"material.sha256:{number}: not '<sha256>  <path>': {line!r}")
+        require(match.group(2) not in listed, f"material.sha256:{number}: {match.group(2)} twice")
+        listed[match.group(2)] = match.group(1)
+    missing = sorted(set(expected) - set(listed))
+    unexpected = sorted(set(listed) - set(expected))
+    differing = sorted(p for p in set(listed) & set(expected) if listed[p] != expected[p])
+    require(not missing, f"material.sha256 lacks committed files: {missing}")
+    require(not unexpected, f"material.sha256 lists files the checkout lacks: {unexpected}")
+    require(not differing, f"material.sha256 digests differ from the checkout: {differing}")
+    return len(listed)
+
+
 def main():
     inputs = json.loads(INPUTS.read_text())
     try:
         paths = check_workflow(inputs)
         crates, count = check_includes(inputs)
+        files = check_material(inputs)
     except Failure as error:
         print(f"TOSCTL_NIX_INPUTS_FAILED: {error}", file=sys.stderr)
         return 1
-    print(f"TOSCTL_NIX_INPUTS_OK: {paths} workflow paths, {crates} crates, {count} embedded files")
+    print(
+        f"TOSCTL_NIX_INPUTS_OK: {paths} workflow paths, {crates} crates, {count} embedded files, "
+        f"{files} material files"
+    )
     return 0
 
 

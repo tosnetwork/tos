@@ -20,6 +20,7 @@
 //! shielded instance never needs the wallet's signing key and the wallet
 //! never needs to give it up.
 
+mod audit;
 mod chain;
 mod profile;
 mod relay;
@@ -110,6 +111,8 @@ pub enum ShieldAction {
     Send(spend::SendCmd),
     /// What the chain and the relayer say about relayed spends
     Status(relay::StatusCmd),
+    /// Audit the proving material an installation ships, without a chain
+    AuditCeremony(audit::AuditCeremonyCmd),
 }
 
 impl ShieldCmd {
@@ -124,6 +127,7 @@ impl ShieldCmd {
             ShieldAction::Withdraw(cmd) => cmd.run(config_path).await,
             ShieldAction::Send(cmd) => cmd.run(config_path).await,
             ShieldAction::Status(cmd) => cmd.run(config_path).await,
+            ShieldAction::AuditCeremony(cmd) => cmd.run(),
         }
     }
 }

@@ -299,6 +299,7 @@ pub(super) async fn run(
     config_path: &Path,
 ) -> anyhow::Result<()> {
     eprintln!("{}", EXPERIMENTAL.yellow());
+    let material = proving.material.resolve()?;
     anyhow::ensure!(!target.is_withdrawal(), "a withdrawal is never relayed");
     let (config, vault, rpc) = load_config_vault_rpc_client(config_path).await?;
     let mut opened = open_instance(config_path, name, &vault).await?;
@@ -320,7 +321,7 @@ pub(super) async fn run(
     require_current_verified_head(&opened, &head, name)?;
     profile.bind(&opened.pointer.profile, &head)?;
     bond.require_eligible()?;
-    let client = audited_prover(&opened, &head, &proving.ceremony_dir)?;
+    let client = audited_prover(&opened, &head, &material)?;
 
     // What this wallet may spend: its notes at known leaves, less those a
     // pending spend holds. One spend at a time.
@@ -880,12 +881,15 @@ pub(super) fn through_this_relayer(
 impl StatusCmd {
     pub async fn run(&self, config_path: &Path) -> anyhow::Result<()> {
         eprintln!("{}", EXPERIMENTAL.yellow());
-        let (_config, vault, _rpc) = load_config_vault_rpc_client(config_path).await?;
-        let opened = open_instance(config_path, &self.name, &vault).await?;
+        // The profile is public material and is held to its own rules first,
+        // so a wrong profile is reported as such whether or not an instance
+        // of this name exists.
         let profile = RelayerProfile::load(&self.relayer)?;
         let init = profile.validate()?;
         let scope = profile.scope()?;
         let endpoint = br1_client::onion::OnionEndpoint::parse(&init.endpoint)?;
+        let (_config, vault, _rpc) = load_config_vault_rpc_client(config_path).await?;
+        let opened = open_instance(config_path, &self.name, &vault).await?;
 
         let ledger = restore_ledger(&opened.state.ledger)?;
         let cursor = opened.state.cursor.as_ref();
