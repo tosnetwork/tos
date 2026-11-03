@@ -111,6 +111,15 @@ fn bound_cell(encoded: &str, expected: &str) -> Result<chain_block::Cell> {
     Ok(root)
 }
 
+/// Payment details displayed and accepted by the wallet user.
+#[cfg(all(unix, feature = "proving"))]
+pub struct ConfirmedTransfer<'a> {
+    pub recipient: &'a Descriptor,
+    pub amount: u128,
+    pub fee: u64,
+    pub quote_identity: &'a str,
+}
+
 /// Audited proving material tied to an authenticated pool selection.
 #[cfg(all(unix, feature = "proving"))]
 pub struct PaymentProver {
@@ -265,6 +274,58 @@ impl TosShieldedReplay {
         let instance = PoolInstance::new(seed, self.domain);
         shielded_pool_wallet::spend::prepare(&instance, &plan, ledger.frontier(), terms, fresh)
             .map_err(|_| Error::Crypto)
+    }
+
+    /// Build the spend from the exact confirmed recipient, amount and BR1 quote.
+    /// The caller supplies fresh proven time and an approved bonded relay client.
+    #[cfg(all(unix, feature = "proving"))]
+    #[allow(clippy::too_many_arguments)]
+    pub fn stage_confirmed_transfer(
+        &self,
+        seed: &[u8; 32],
+        root: &std::path::Path,
+        prover: &PaymentProver,
+        transfer: ConfirmedTransfer<'_>,
+        proven_time: u32,
+        relay: (br1_client::client::Client, br1_client::client::Quote),
+        fresh: &mut dyn FnMut() -> shielded_pool_wallet::error::Result<Fr>,
+    ) -> Result<RecoveredRelaySubmission> {
+        let (client, quote) = relay;
+        let quote = client
+            .restore_quote(&quote.envelope, &quote.status_token)
+            .map_err(|_| Error::InvalidInput)?;
+        let terms = &quote.terms;
+        if quote.identity != transfer.quote_identity
+            || terms.amount != transfer.fee
+            || terms.slot != 2
+            || !(terms.issued_at..terms.valid_until).contains(&u64::from(proven_time))
+        {
+            return Err(Error::InvalidInput);
+        }
+        let fee_bytes = STANDARD.decode(&terms.descriptor_b64).map_err(|_| Error::InvalidInput)?;
+        let fee = Descriptor::from_bytes(&fee_bytes).map_err(|_| Error::InvalidInput)?;
+        let request = shielded_pool_wallet::plan::Request::relayed_transfer(
+            self.domain,
+            transfer.recipient,
+            transfer.amount,
+            &fee,
+            u128::from(terms.amount),
+        )
+        .map_err(|_| Error::InvalidInput)?;
+        let State::Ready(ledger) = &self.state else { return Err(Error::InvalidInput) };
+        let terms = shielded_pool_wallet::spend::Terms {
+            anchor_root: ledger.checkpoint().commitment_root,
+            valid_until: u32::try_from(terms.valid_until).map_err(|_| Error::InvalidInput)?,
+            intent_nonce: fresh().map_err(|_| Error::Crypto)?,
+        };
+        let prepared = self.prepare_payment(
+            seed,
+            root,
+            &prover.binding,
+            PaymentPreparation { request: &request, terms: &terms, proven_time },
+            fresh,
+        )?;
+        self.stage_private_transfer(seed, root, prover, prepared, proven_time, (client, quote))
     }
 
     /// Prove, sign and journal a confirmed payment before handing it to the
