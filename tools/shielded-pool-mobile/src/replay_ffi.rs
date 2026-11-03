@@ -57,6 +57,13 @@ pub struct TosShieldedReplay {
     terms: PoolTerms,
 }
 
+#[cfg(all(unix, feature = "proving"))]
+pub struct PaymentPreparation<'a> {
+    pub request: &'a shielded_pool_wallet::plan::Request,
+    pub terms: &'a shielded_pool_wallet::spend::Terms,
+    pub proven_time: u32,
+}
+
 fn bound_cell(encoded: &str, expected: &str) -> Result<chain_block::Cell> {
     let bytes = STANDARD.decode(encoded).map_err(|_| Error::InvalidInput)?;
     if STANDARD.encode(&bytes) != encoded {
@@ -170,6 +177,47 @@ impl TosShieldedReplay {
             &pool.pool_account,
         )
         .map_err(|_| Error::Crypto)
+    }
+
+    /// Prepare a spend against this completed ledger. The caller verifies the
+    /// quote and freshness before invoking this operation and before signing.
+    #[cfg(all(unix, feature = "proving"))]
+    pub fn prepare_payment(
+        &self,
+        seed: &[u8; 32],
+        root: &std::path::Path,
+        binding: &[u8; 228],
+        payment: PaymentPreparation<'_>,
+        fresh: &mut dyn FnMut() -> shielded_pool_wallet::error::Result<Fr>,
+    ) -> Result<shielded_pool_wallet::spend::Prepared> {
+        let PaymentPreparation { request, terms, proven_time } = payment;
+        let State::Ready(ledger) = &self.state else { return Err(Error::InvalidInput) };
+        if terms.anchor_root != ledger.checkpoint().commitment_root
+            || terms.intent_nonce == Fr::from(0u64)
+            || !terms.valid_until.checked_sub(proven_time).is_some_and(|remaining| {
+                (1..=shielded_pool_prover::INTENT_VALIDITY_WINDOW_SECS).contains(&remaining)
+            })
+        {
+            return Err(Error::InvalidInput);
+        }
+        let pool = self.wallet_binding(binding)?;
+        let recovered = crate::wallet::recover_complete(
+            ledger.outputs(),
+            ledger.published_nullifiers(),
+            seed,
+            self.domain,
+        )?;
+        let mut store = crate::store::StateStore::open_wallet(
+            root,
+            crate::sealed::RecordCipher::derive(seed, pool),
+        )
+        .map_err(|_| Error::InvalidInput)?;
+        let plan = store
+            .reserve_payment_plan(&self.terms, &recovered.0, &Default::default(), request)
+            .map_err(|_| Error::InvalidInput)?;
+        let instance = PoolInstance::new(seed, self.domain);
+        shielded_pool_wallet::spend::prepare(&instance, &plan, ledger.frontier(), terms, fresh)
+            .map_err(|_| Error::Crypto)
     }
 
     fn scan(&self, seed: &[u8; 32], offset: usize, count: usize) -> Result<Zeroizing<Vec<u8>>> {
@@ -299,6 +347,8 @@ pub unsafe extern "C" fn tos_shielded_replay_receive(
 
 #[cfg(unix)]
 #[no_mangle]
+/// # Safety
+/// Pointers must refer to live allocations of the stated lengths and the session must be serialized.
 pub unsafe extern "C" fn tos_shielded_replay_pending_status(
     session: *const TosShieldedReplay,
     seed: *const u8,
