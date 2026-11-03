@@ -206,8 +206,11 @@ class ResolverTests(unittest.TestCase):
                 {"Status": status}
             ).encode()
             with patch.object(MODULE, "urlopen", return_value=response) as request:
-                with self.assertRaises(RuntimeError):
-                    MODULE.resolve_hint()
+                if status == 3:
+                    with self.assertRaises(RuntimeError):
+                        MODULE.resolve_hint()
+                else:
+                    self.assertEqual(MODULE.resolve_hint(), "199.232.194.49")
                 self.assertEqual(request.call_count, 1 if status == 3 else 2)
 
     def test_ephemeral_opt_in_is_required_before_any_dns_work(self):
@@ -354,6 +357,14 @@ def run_controls():
             "secondary",
             '"https://8.8.8.8/resolve?name=apt.llvm.org&type=A"',
             '"https://1.1.1.1/dns-query?name=apt.llvm.org&type=A"',
+            "second_resolver_only_follows_servfail",
+        )
+    )
+    variants.append(
+        (
+            "last-known",
+            'return "199.232.194.49"',
+            'return "127.0.0.1"',
             "second_resolver_only_follows_servfail",
         )
     )

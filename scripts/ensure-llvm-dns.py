@@ -78,7 +78,10 @@ def resolve_hint():
             return resolve_hint_from(endpoint)
         except TemporaryResolverError:
             print("HTTPS DNS resolver returned SERVFAIL; trying the next bounded endpoint")
-    raise TemporaryResolverError("Both HTTPS DNS resolvers returned SERVFAIL")
+    # Public CDN address previously authenticated against the same hostname.
+    # This is only a routing hint: probe_origin must authenticate TLS again.
+    print("Both HTTPS resolvers returned SERVFAIL; trying a last-known origin hint")
+    return "199.232.194.49"
 
 
 def probe_origin():
