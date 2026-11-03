@@ -34,6 +34,24 @@ TosShieldedResponse *tos_shielded_pool_state(const uint8_t *data, size_t length)
  * completeness. Request max 2 MiB; same response ownership as the other calls.
  */
 TosShieldedResponse *tos_shielded_history_transaction(const uint8_t *request, size_t length);
+/* Replay owns bounded provisional public history, never a seed. Creation hashes
+ * and head metadata MUST come from one verified observation; see request schema.
+ * Serialize every call/free. Create returns NULL on error. Mutators return
+ * 0 success, 1 error, 2 contained panic; any failed mutator poisons the session.
+ * Only after successful finish can info/scan read the completed ledger.
+ */
+typedef struct TosShieldedReplay TosShieldedReplay;
+TosShieldedReplay *tos_shielded_replay_create(const uint8_t *request, size_t length);
+int32_t tos_shielded_replay_push(TosShieldedReplay *session, const uint8_t *boc, size_t length);
+int32_t tos_shielded_replay_finish(TosShieldedReplay *session);
+TosShieldedResponse *tos_shielded_replay_info(const TosShieldedReplay *session);
+/* Scan at most 512 outputs against the completed ledger's FULL nullifier set.
+ * A page is not a complete private balance. Merge by note body, cover all pages,
+ * preserve issued-index high water and recheck proof freshness before publishing.
+ */
+TosShieldedResponse *tos_shielded_replay_scan(const TosShieldedReplay *session, const uint8_t *seed, size_t seed_length,
+                                              size_t offset, size_t count);
+void tos_shielded_replay_free(TosShieldedReplay *session);
 /* status: 0 success; 1 invalid input/crypto failure; 2 contained panic.
  * Pointer is valid until free; free once, on the same library that allocated it.
  * The response buffer is zeroized on free. Accessors require a live handle.

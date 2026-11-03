@@ -3,7 +3,7 @@
 A synchronous C ABI over `shielded-pool-wallet` and `shielded-pool-circuit`.
 This library does not implement a second key hierarchy or note validator. It
 exposes descriptor issuance, batched note recovery/reconciliation, pool state
-decoding and individual history-link binding.
+decoding, individual history-link binding and owned replay sessions.
 Planning, proving and transport must be integrated before a mobile payment is
 usable. No VM, consensus or contract changes are included.
 
@@ -172,6 +172,59 @@ rather than estimating a balance. Tests exercise deposits, two spends and a
 bounce, each checkpoint field, head mismatch, missing/reordered links, failure
 poisoning and both aggregate resource boundaries using valid BOCs.
 
-This typed replay core is not yet exposed through the mobile C ABI, connected
-to App history acquisition, persisted or used for product balance display.
-The existing one-link ABI and its mobile device evidence remain separate.
+The typed replay core is exposed by the session C ABI below, but is not yet
+connected to App history acquisition, persisted or used for product balance
+display. Previous one-link mobile device evidence remains separate.
+
+## Replay session C ABI
+
+Create an opaque session with `tos_shielded_replay_create` and a version-1 JSON
+object containing these fields (no unknown fields):
+
+- `global_id`: signed 32-bit JSON integer from proven config 19.
+- `account_id`, `last_hash`, `account_root`: lower-case 32-byte hex. The latter
+  two name the verified ShardAccount transaction head and raw Account root.
+- `last_lt` / `shard_time`: canonical unsigned decimal strings, u64 / u32.
+- `pool_state_boc` / `pool_data_hash`: canonical standard Base64 and lower-case
+  root hash for the data extracted from that verified Account.
+- `gas_boc` / `gas_hash`: config-21 BOC and its root hash from the SAME checkpoint.
+
+Hashes are checked before decoding. Gas pricing uses the existing codec. The
+execution domain uses the existing global-ID/account-ID derivation. The App
+must verify the network/trust anchor, address/workchain, account code and pool
+profile/manifest/VK pins, ensure all these values came from ONE authenticated
+observation and check freshness. The C ABI does not establish those facts from
+caller-supplied expectations. A forged expectation does not become a proof.
+
+Input pointers live for the call only. Sessions retain decoded public history,
+not input pointers, seeds or private notes. Creation returns NULL on error.
+Serialize all calls on a handle, including reads and free. Feed oldest-first
+raw BOCs through `tos_shielded_replay_push`, then `tos_shielded_replay_finish`.
+A mutator error or contained panic invalidates the session before returning;
+only `tos_shielded_replay_free` is useful afterwards. Drop cancelled sessions too.
+Mutator status is 0 success, 1 error, 2 contained panic. Never retry a failed
+session as if its partial ledger were usable.
+
+Only finished sessions permit `tos_shielded_replay_info` and
+`tos_shielded_replay_scan`. Info returns public checkpoint fields and
+`total_outputs`; `native_liability` is the WHOLE POOL liability, not this wallet's
+balance. Scan consumes a temporary 32-byte seed copy and `offset`/`count` for a
+non-empty page of at most 512 outputs. It reconciles against the completed
+ledger's FULL published-nullifier set. The JSON envelope contains `version`,
+`output_offset`, `output_count`, `total_outputs` and `scan` (the same protected
+note result as the batch API). Numeric quantities are decimal strings.
+
+Scan every page, merge notes by body, preserve the greatest durable issued
+index and recheck proof freshness before atomically publishing/persisting a
+wallet observation. A page's batch balance is not a complete wallet balance.
+An empty ledger has zero outputs and requires no scan call. Read-only argument
+errors do not change an otherwise finished session. Free every response and
+session exactly once with the same library. Scan responses contain secrets;
+never log them. Their fields/buffers are zeroized on destruction as in the
+existing batch API. This does not claim all upstream intermediates are wiped.
+
+Tests use original sandbox events/linked copies for lifecycle and completion,
+and explicitly synthetic ledgers/transaction-state pairs for real ML-KEM note
+recovery and spent reconciliation. They do not claim native VM execution or
+chain proofs for the synthetic pairs. A deliberate test-only unwind exercises
+session invalidation through the actual FFI mutator boundary.

@@ -25,6 +25,7 @@ use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 pub mod history;
 pub mod pool;
 pub mod replay;
+pub mod replay_ffi;
 
 pub const MAX_REQUEST_BYTES: usize = 2 * 1024 * 1024;
 pub const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
@@ -147,8 +148,24 @@ pub fn scan_batch(seed: &[u8; 32], request: &[u8]) -> Result<Zeroizing<Vec<u8>>>
             return Err(Error::InvalidInput);
         }
     }
-    let mut recovered = scan::recover_indexed(&instance, &outputs).map_err(|_| Error::Crypto)?;
-    recovered.reconcile_spent(&instance, &published).map_err(|_| Error::Crypto)?;
+    let result = recover_notes(&instance, &outputs, &published)?;
+    let response = Zeroizing::new(serde_json::to_vec(&result).map_err(|_| Error::InvalidInput)?);
+    if response.len() > MAX_RESPONSE_BYTES {
+        return Err(Error::Limit);
+    }
+    Ok(response)
+}
+
+fn recover_notes(
+    instance: &PoolInstance,
+    outputs: &[(ObservedOutput, Option<u64>)],
+    published: &BTreeSet<Fr>,
+) -> Result<ScanResult> {
+    if outputs.len() > MAX_OUTPUTS {
+        return Err(Error::Limit);
+    }
+    let mut recovered = scan::recover_indexed(instance, outputs).map_err(|_| Error::Crypto)?;
+    recovered.reconcile_spent(instance, published).map_err(|_| Error::Crypto)?;
     let balance = recovered
         .spendable_notes()
         .try_fold(0u128, |sum, note| sum.checked_add(note.amount).ok_or(Error::Limit))?;
@@ -174,11 +191,7 @@ pub fn scan_batch(seed: &[u8; 32], request: &[u8]) -> Result<Zeroizing<Vec<u8>>>
             leaf_index: recovered.leaves.get(index).copied().flatten().map(|v| v.to_string()),
         });
     }
-    let response = Zeroizing::new(serde_json::to_vec(&result).map_err(|_| Error::InvalidInput)?);
-    if response.len() > MAX_RESPONSE_BYTES {
-        return Err(Error::Limit);
-    }
-    Ok(response)
+    Ok(result)
 }
 
 /// Opaque allocation; no mobile caller may construct or mutate it.

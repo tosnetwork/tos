@@ -34,7 +34,7 @@ for name, path, before, after, suite, test in [
     (
         "spent-reconciliation",
         repo / "tools/shielded-pool-mobile/src/lib.rs",
-        "recovered.reconcile_spent(&instance, &published).map_err(|_| Error::Crypto)?;",
+        "recovered.reconcile_spent(instance, published).map_err(|_| Error::Crypto)?;",
         "// mutation control: omit spent reconciliation",
         "core",
         "decrypts_real_payload_and_reconciles_spent_nullifiers",
@@ -255,6 +255,38 @@ for name, path, before, after, suite, test in [
         "replay",
         "skipped_reordered_foreign_or_failed_pushes_poison_the_replay",
     ),
+    (
+        "session-hash",
+        repo / "tools/shielded-pool-mobile/src/replay_ffi.rs",
+        "root.repr_hash().as_array() != &hash(expected)?",
+        "false",
+        "session",
+        "rejected_creation_and_premature_finish_return_no_ledger",
+    ),
+    (
+        "session-poison",
+        repo / "tools/shielded-pool-mobile/src/replay_ffi.rs",
+        "std::mem::replace(&mut owner.state, State::Failed)",
+        "std::mem::replace(&mut owner.state, State::Ready(Box::new(Ledger::genesis())))",
+        "lib",
+        "replay_ffi::tests::contained_mutator_panic_leaves_the_owner_failed",
+    ),
+    (
+        "session-published-set",
+        repo / "tools/shielded-pool-mobile/src/replay_ffi.rs",
+        "ledger.published_nullifiers()",
+        "&std::collections::BTreeSet::new()",
+        "lib",
+        "replay_ffi::tests::completed_scan_uses_the_full_published_nullifier_set",
+    ),
+    (
+        "session-final-gate",
+        repo / "tools/shielded-pool-mobile/src/replay_ffi.rs",
+        "State::Ready(Box::new(replay.finish()?))",
+        "State::Ready(Box::new(Ledger::genesis()))",
+        "session",
+        "rejected_creation_and_premature_finish_return_no_ledger",
+    ),
 ]:
     original = path.read_bytes()
     assert original.decode().count(before) == 1
@@ -263,7 +295,9 @@ for name, path, before, after, suite, test in [
         log = root / f"native-mutation-{name}.log"
         with log.open("wb") as f:
             r = subprocess.run(
-                base + ["--test", suite, test, "--", "--exact"],
+                base
+                + (["--lib"] if suite == "lib" else ["--test", suite])
+                + [test, "--", "--exact"],
                 cwd=repo,
                 env=env,
                 stdout=f,
