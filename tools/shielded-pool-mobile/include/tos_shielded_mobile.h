@@ -79,6 +79,13 @@ TosShieldedResponse *tos_shielded_replay_summary(const TosShieldedReplay *sessio
 TosShieldedResponse *tos_shielded_replay_receive(const TosShieldedReplay *session, const uint8_t *seed,
                                                  size_t seed_length, const uint8_t *root, size_t root_length,
                                                  const uint8_t *binding, size_t binding_length);
+
+/* Read the unresolved payment against the same wallet-bound Ready replay.
+ * Payload: 0 no record, 1 intent absent, 2 intent accepted. Keeps the record. */
+TosShieldedResponse *tos_shielded_replay_pending_status(const TosShieldedReplay *session, const uint8_t *seed,
+                                                        size_t seed_length, const uint8_t *root, size_t root_length,
+                                                        const uint8_t *binding, size_t binding_length);
+
 #endif
 
 /* status: 0 success; 1 invalid input/crypto failure; 2 contained panic.

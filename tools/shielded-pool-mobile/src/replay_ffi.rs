@@ -126,6 +126,30 @@ impl TosShieldedReplay {
         })
     }
 
+    #[cfg(unix)]
+    fn wallet_binding(&self, bytes: &[u8]) -> Result<crate::sealed::Binding> {
+        if self.receive_binding.as_ref().map(|value| value.as_slice()) != Some(bytes) {
+            return Err(Error::InvalidInput);
+        }
+        let field = |offset| -> Result<[u8; 32]> {
+            bytes[offset..offset + 32].try_into().map_err(|_| Error::InvalidInput)
+        };
+        let binding = crate::sealed::Binding {
+            global_id: i32::from_be_bytes(bytes[..4].try_into().map_err(|_| Error::InvalidInput)?),
+            pool_account: field(4)?,
+            genesis_root: field(36)?,
+            genesis_file: field(68)?,
+            code_hash: field(100)?,
+            profile_hash: field(132)?,
+            manifest_hash: field(164)?,
+            verifying_key_hash: field(196)?,
+        };
+        if wire::execution_domain(binding.global_id, &binding.pool_account) != self.domain {
+            return Err(Error::InvalidInput);
+        }
+        Ok(binding)
+    }
+
     fn scan(&self, seed: &[u8; 32], offset: usize, count: usize) -> Result<Zeroizing<Vec<u8>>> {
         let State::Ready(ledger) = &self.state else {
             return Err(Error::InvalidInput);
@@ -223,25 +247,7 @@ pub unsafe extern "C" fn tos_shielded_replay_receive(
             return Err(Error::InvalidInput);
         }
         let bytes = unsafe { slice::from_raw_parts(binding, binding_length) };
-        if owner.receive_binding.as_ref().map(|value| value.as_slice()) != Some(bytes) {
-            return Err(Error::InvalidInput);
-        }
-        let field = |offset| -> Result<[u8; 32]> {
-            bytes[offset..offset + 32].try_into().map_err(|_| Error::InvalidInput)
-        };
-        let binding = crate::sealed::Binding {
-            global_id: i32::from_be_bytes(bytes[..4].try_into().map_err(|_| Error::InvalidInput)?),
-            pool_account: field(4)?,
-            genesis_root: field(36)?,
-            genesis_file: field(68)?,
-            code_hash: field(100)?,
-            profile_hash: field(132)?,
-            manifest_hash: field(164)?,
-            verifying_key_hash: field(196)?,
-        };
-        if wire::execution_domain(binding.global_id, &binding.pool_account) != owner.domain {
-            return Err(Error::InvalidInput);
-        }
+        let binding = owner.wallet_binding(bytes)?;
         let mut key = Zeroizing::new([0; 32]);
         key.copy_from_slice(unsafe { slice::from_raw_parts(seed, 32) });
         let recovered = crate::wallet::recover_complete(
@@ -266,6 +272,55 @@ pub unsafe extern "C" fn tos_shielded_replay_receive(
         let index = indices.first().copied().ok_or(Error::InvalidInput)?;
         crate::issue_descriptor(&key, &shielded_pool_circuit::field::fr_to_be(&owner.domain), index)
             .map(Zeroizing::new)
+    })
+}
+
+#[cfg(unix)]
+#[no_mangle]
+pub unsafe extern "C" fn tos_shielded_replay_pending_status(
+    session: *const TosShieldedReplay,
+    seed: *const u8,
+    seed_length: usize,
+    root: *const u8,
+    root_length: usize,
+    binding: *const u8,
+    binding_length: usize,
+) -> *mut TosShieldedResponse {
+    response(|| {
+        if session.is_null()
+            || seed.is_null()
+            || root.is_null()
+            || binding.is_null()
+            || seed_length != 32
+            || !(1..=4096).contains(&root_length)
+            || binding_length != 228
+        {
+            return Err(Error::InvalidInput);
+        }
+        let owner = unsafe { &*session };
+        let State::Ready(ledger) = &owner.state else {
+            return Err(Error::InvalidInput);
+        };
+        let root = std::str::from_utf8(unsafe { slice::from_raw_parts(root, root_length) })
+            .map_err(|_| Error::InvalidInput)?;
+        if root.as_bytes().contains(&0) || !std::path::Path::new(root).is_absolute() {
+            return Err(Error::InvalidInput);
+        }
+        let bytes = unsafe { slice::from_raw_parts(binding, binding_length) };
+        let binding = owner.wallet_binding(bytes)?;
+        let mut key = Zeroizing::new([0; 32]);
+        key.copy_from_slice(unsafe { slice::from_raw_parts(seed, 32) });
+        let mut store = crate::store::StateStore::open_wallet(
+            std::path::Path::new(root),
+            crate::sealed::RecordCipher::derive(&key, binding),
+        )
+        .map_err(|_| Error::InvalidInput)?;
+        let status = match store.pending_payment().map_err(|_| Error::InvalidInput)? {
+            None => 0,
+            Some(payment) if ledger.accepted_intents().contains(&payment.intent) => 2,
+            Some(_) => 1,
+        };
+        Ok(Zeroizing::new(vec![status]))
     })
 }
 
@@ -832,7 +887,7 @@ mod tests {
                 0,
             )
             .unwrap();
-        let observed = TosShieldedReplay {
+        let mut observed = TosShieldedReplay {
             state: State::Ready(Box::new(ledger)),
             domain,
             receive_binding: Some(binding),
@@ -856,5 +911,52 @@ mod tests {
         assert_eq!(refused.status, 1);
         assert!(refused.bytes.is_empty());
         assert_eq!(std::fs::read_dir(&root).unwrap().count(), 1);
+        let pending = |owner: &TosShieldedReplay, pins: &[u8]| unsafe {
+            Box::from_raw(tos_shielded_replay_pending_status(
+                owner,
+                key.as_ptr(),
+                key.len(),
+                path.as_ptr(),
+                path.len(),
+                pins.as_ptr(),
+                pins.len(),
+            ))
+        };
+        assert_eq!(&*pending(&observed, &binding).bytes, &[0]);
+        let open = || {
+            crate::store::StateStore::open_wallet(
+                &root,
+                crate::sealed::RecordCipher::derive(
+                    &key,
+                    observed.wallet_binding(&binding).unwrap(),
+                ),
+            )
+            .unwrap()
+        };
+        let intent = Fr::from(77u64);
+        open().persist_pending_payment(intent, b"original submission").unwrap();
+        assert_eq!(&*pending(&observed, &binding).bytes, &[1]);
+        assert_eq!(pending(&observed, &wrong_genesis).status, 1);
+        let recovered = open().pending_payment().unwrap().unwrap();
+        assert_eq!(recovered.intent, intent);
+        assert_eq!(recovered.request.as_slice(), b"original submission");
+        let State::Ready(ledger) = &mut observed.state else { unreachable!() };
+        ledger
+            .apply(
+                &Event::Transact(Box::new(Transact {
+                    intent_digest: intent,
+                    nullifiers: [Fr::from(998u64), Fr::from(999u64)],
+                    note_bodies: [Fr::from(11u64), Fr::from(12u64), Fr::from(13u64)],
+                    payloads: std::array::from_fn(|_| vec![0; delivery::OUTPUT_DATA_BYTES]),
+                    public_amount_out: 0,
+                    withdrawal_fee: 0,
+                    recovery_owner_commitment: Fr::from(0u64),
+                    recovery_payload: None,
+                    payout: None,
+                })),
+                0,
+            )
+            .unwrap();
+        assert_eq!(&*pending(&observed, &binding).bytes, &[2]);
     }
 }

@@ -281,6 +281,10 @@ fn pending_payment_survives_reopen_and_refuses_replacement() {
     assert_eq!(store.pending_payment().unwrap().unwrap().intent, intent);
     store.persist_pending_payment(intent, exact).unwrap();
     assert!(matches!(
+        store.persist_pending_payment(shielded_pool_circuit::field::Fr::from(8u64), exact),
+        Err(StoreError::Conflict)
+    ));
+    assert!(matches!(
         store.persist_pending_payment(intent, b"new request"),
         Err(StoreError::Conflict)
     ));
