@@ -324,6 +324,41 @@ strong-kill/restart, backup integration and all business schema/journal recovery
 remain pending. The store has no C ABI and does not make restored bytes spendable.
 
 
+### Durable index reservations (Unix, Rust only)
+
+`reserve_indices(scan_next_index, count)` reserves one to four indices starting
+at the greater of the complete verified scan's next index and the durable local
+high-water mark. An exhausted scan refuses issuance. The caller must establish
+observation freshness and use the original wallet master; this method does not
+verify either. Choose a canonical private directory per master, pool domain and
+trusted genesis, never per RPC URL or ordinary-wallet UI identifier.
+
+The store appends an authenticated Journal-purpose record to `reservations.bin`,
+syncs the file and directory, then publishes the state checkpoint before returning
+any indices. The checkpoint binds the record count, next index and digest of the
+entire framed prefix. Reopen burns complete authenticated extra tail records;
+a missing, shortened, substituted or overlapping anchored prefix is refused.
+A failed mutation freezes the handle and can burn indices without returning them.
+A leftover `state.next` still requires explicit recovery; never remove it to retry
+a payment. Normal state commits retain the reservation checkpoint.
+
+The encrypted state payload has a 52-byte versioned internal envelope, leaving
+`snapshot::MAX_SNAPSHOT_BYTES - 52` bytes for opaque caller data. Earlier opaque
+snapshots are rejected and preserved, without automatic conversion or reset.
+The journal is capped at 4096 records and 16 MiB, checked before growth; exhaustion
+refuses further reservations. Only reservation records are currently supported.
+There is no compaction, outgoing UNKNOWN/exact-request journal, combined journal
+backup/import, multi-device coordination or detection of a paired old state/log
+rollback yet. This Rust API has no mobile ABI or App integration.
+
+Host tests include an actual child-process SIGKILL after journal directory sync
+and before checkpoint publication, restart, and non-reuse. This is not device
+power-loss evidence. CI's separate `reserve` tmpfs scenario must observe actual
+ENOSPC after the reservation is durable, retain the old state and new journal
+tail, freeze the handle, and refuse automatic recovery. Read the exact-head job
+result before treating that Linux-only scenario as passed.
+
+
 ## Complete Ready-ledger scan summary
 
 `tos_shielded_replay_summary(session, seed, seed_length)` scans every output

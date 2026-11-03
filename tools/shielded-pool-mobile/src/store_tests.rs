@@ -8,12 +8,12 @@ use std::{
     path::PathBuf,
 };
 
-struct Fixture {
-    root: PathBuf,
-    path: PathBuf,
+pub(super) struct Fixture {
+    pub(super) root: PathBuf,
+    pub(super) path: PathBuf,
 }
 impl Fixture {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         let root = std::env::temp_dir().join(format!(
             "tos-mobile-store-{}-{}",
             std::process::id(),
@@ -24,13 +24,13 @@ impl Fixture {
         fs::DirBuilder::new().mode(0o700).create(&path).unwrap();
         Self { root, path }
     }
-    fn open(&self) -> StateStore {
+    pub(super) fn open(&self) -> StateStore {
         StateStore::open(&self.path, cipher(42)).unwrap()
     }
-    fn state(&self) -> PathBuf {
+    pub(super) fn state(&self) -> PathBuf {
         self.path.join("state.bin")
     }
-    fn next(&self) -> PathBuf {
+    pub(super) fn next(&self) -> PathBuf {
         self.path.join("state.next")
     }
 }
@@ -51,12 +51,17 @@ fn binding() -> Binding {
         verifying_key_hash: [7; 32],
     }
 }
-fn cipher(seed: u8) -> RecordCipher {
+pub(super) fn cipher(seed: u8) -> RecordCipher {
     RecordCipher::derive(&[seed; 32], binding())
 }
-fn private_write(path: &Path, bytes: &[u8]) {
+pub(super) fn private_write(path: &Path, bytes: &[u8]) {
     fs::write(path, bytes).unwrap();
     fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
+}
+fn valid_stored_state(data: &[u8]) -> Vec<u8> {
+    let fixture = Fixture::new();
+    fixture.open().commit(data).unwrap();
+    fs::read(fixture.state()).unwrap()
 }
 #[test]
 fn real_files_round_trip_replace_and_reopen_privately() {
@@ -169,7 +174,7 @@ fn outside_replacement_freezes_handle_without_overwriting_new_bytes() {
     let f = Fixture::new();
     let mut store = f.open();
     store.commit(b"old").unwrap();
-    let external = snapshot::seal(&cipher(42), Kind::State, b"external replacement").unwrap();
+    let external = valid_stored_state(b"external replacement");
     private_write(&f.state(), &external);
     assert!(matches!(store.load(), Err(StoreError::Conflict)));
     assert!(matches!(store.commit(b"must not publish"), Err(StoreError::Poisoned)));
@@ -188,9 +193,8 @@ fn directory_descriptor_prevents_path_retargeting() {
     store.commit(b"new in held directory").unwrap();
     assert_eq!(fs::read(f.state()).unwrap(), b"do not touch replacement directory");
     let state =
-        snapshot::open(&cipher(42), Kind::State, &fs::read(moved.join("state.bin")).unwrap())
-            .unwrap();
-    assert_eq!(&*state.plaintext, b"new in held directory");
+        StateStore::decode_state(&cipher(42), &fs::read(moved.join("state.bin")).unwrap()).unwrap();
+    assert_eq!(&*state.data.plaintext, b"new in held directory");
 }
 #[test]
 fn interrupted_commit_freezes_reads_and_writes_and_retains_both_outcomes() {
@@ -211,9 +215,9 @@ fn interrupted_commit_freezes_reads_and_writes_and_retains_both_outcomes() {
         assert!(matches!(store.load(), Err(StoreError::Poisoned)));
         assert!(matches!(store.commit(b"retry forbidden"), Err(StoreError::Poisoned)));
         let published =
-            snapshot::open(&cipher(42), Kind::State, &fs::read(f.state()).unwrap()).unwrap();
+            StateStore::decode_state(&cipher(42), &fs::read(f.state()).unwrap()).unwrap();
         let renamed = matches!(stage, Stage::Renamed | Stage::DirectorySynced);
-        assert_eq!(&*published.plaintext, if renamed { b"new" } else { b"old" });
+        assert_eq!(&*published.data.plaintext, if renamed { b"new" } else { b"old" });
         assert_eq!(f.next().exists(), !renamed);
         drop(store);
         if renamed {
@@ -233,11 +237,8 @@ fn commit_preflight_rejects_changed_or_corrupt_state_before_creating_a_candidate
         let f = Fixture::new();
         let mut store = f.open();
         store.commit(b"old").unwrap();
-        let external = if corrupt {
-            b"broken state".to_vec()
-        } else {
-            snapshot::seal(&cipher(42), Kind::State, b"external").unwrap()
-        };
+        let external =
+            if corrupt { b"broken state".to_vec() } else { valid_stored_state(b"external") };
         private_write(&f.state(), &external);
         let result = store.commit(b"must not replace external data");
         if corrupt {

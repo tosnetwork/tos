@@ -67,7 +67,7 @@ cases = [
     ),
     (
         "generation",
-        "        if state.as_ref().map(|state| state.generation) != self.generation {\n            return Err(StoreError::Conflict);\n        }\n",
+        "        if state.as_ref().map(|state| state.data.generation) != self.generation {\n            return Err(StoreError::Conflict);\n        }\n",
         "",
         "outside_replacement_freezes_handle_without_overwriting_new_bytes",
     ),
@@ -79,8 +79,8 @@ cases = [
     ),
     (
         "freeze",
-        "        let (encoded, generation) = snapshot::seal_generated(&self.cipher, Kind::State, plaintext)?;\n        self.poisoned = true;",
-        "        let (encoded, generation) = snapshot::seal_generated(&self.cipher, Kind::State, plaintext)?;\n        self.poisoned = false;",
+        "        let (encoded, generation) = snapshot::seal_generated(&self.cipher, Kind::State, &wrapped)?;\n        self.poisoned = true;",
+        "        let (encoded, generation) = snapshot::seal_generated(&self.cipher, Kind::State, &wrapped)?;\n        self.poisoned = false;",
         "interrupted_commit_freezes_reads_and_writes_and_retains_both_outcomes",
     ),
     (
@@ -91,20 +91,34 @@ cases = [
     ),
     (
         "authenticate_existing",
-        "Ok(Some(snapshot::open(&self.cipher, Kind::State, &bytes)?))",
+        "Ok(Some(Self::decode_state(&self.cipher, &bytes)?))",
         "Ok(None)",
         "wrong_seed_genesis_corruption_and_old_format_never_reset_existing_state",
     ),
 ]
+cases.append(
+    (
+        "state_envelope_version",
+        'plain.len() < STATE_HEADER || &plain[..4] != b"SJS1"',
+        "plain.len() < STATE_HEADER",
+        "store::reservations::tests::authenticated_legacy_opaque_state_is_preserved_without_automatic_reinterpretation",
+    )
+)
 results = []
 try:
     for name, before, after, test in cases:
         require(original.count(before) == 1, "Mutation target changed: " + name)
         source.write_text(original.replace(before, after))
+        qualified = test if "::" in test else "store::tests::" + test
+        test_source = (
+            "src/reservation_tests.rs:"
+            if "::reservations::" in qualified
+            else "src/store_tests.rs:"
+        )
         log = out / (name + ".log")
         with log.open("wb") as stream:
             result = subprocess.run(
-                full + ["--lib", "store::tests::" + test, "--", "--exact"],
+                full + ["--lib", qualified, "--", "--exact"],
                 cwd=root,
                 env=env,
                 stdout=stream,
@@ -113,11 +127,11 @@ try:
             )
         text = log.read_text()
         require(
-            result.returncode == 101 and ("test store::tests::" + test + " ... FAILED") in text,
+            result.returncode == 101 and ("test " + qualified + " ... FAILED") in text,
             "Expected failed test: " + name,
         )
         require(
-            "panicked at src/store_tests.rs:" in text and "assertion" in text,
+            ("panicked at " + test_source) in text and "assertion" in text,
             "Expected runtime assertion: " + name,
         )
         results.append(
