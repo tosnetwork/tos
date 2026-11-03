@@ -601,6 +601,65 @@ pub extern "C" fn tos_shielded_payment_supported() -> u8 {
     u8::from(cfg!(all(unix, feature = "proving")))
 }
 
+/// Audit installed proving material against the live replay's pool binding.
+#[cfg(all(unix, feature = "proving"))]
+///
+/// # Safety
+/// The session must be live and serialized. Both path pointers must be valid
+/// for their stated lengths. The caller supplies trusted local paths.
+#[no_mangle]
+pub unsafe extern "C" fn tos_shielded_payment_prover_load(
+    session: *const TosShieldedReplay,
+    phase1: *const u8,
+    phase1_len: usize,
+    ceremony: *const u8,
+    ceremony_len: usize,
+) -> *mut PaymentProver {
+    if session.is_null()
+        || phase1.is_null()
+        || ceremony.is_null()
+        || !(1..=4096).contains(&phase1_len)
+        || !(1..=4096).contains(&ceremony_len)
+    {
+        return ptr::null_mut();
+    }
+    let load = || {
+        let path = |bytes| {
+            let text = std::str::from_utf8(bytes).map_err(|_| Error::InvalidInput)?;
+            let path = std::path::Path::new(text);
+            if !path.is_absolute() || text.as_bytes().contains(&0) {
+                return Err(Error::InvalidInput);
+            }
+            Ok(path)
+        };
+        let owner = unsafe { &*session };
+        let phase1 = path(unsafe { slice::from_raw_parts(phase1, phase1_len) })?;
+        let ceremony = path(unsafe { slice::from_raw_parts(ceremony, ceremony_len) })?;
+        owner.load_payment_prover(
+            phase1,
+            ceremony,
+            owner.receive_binding.as_ref().ok_or(Error::InvalidInput)?,
+        )
+    };
+    match catch_unwind(AssertUnwindSafe(load)) {
+        Ok(Ok(prover)) => Box::into_raw(Box::new(prover)),
+        _ => ptr::null_mut(),
+    }
+}
+
+/// Release a loaded proving handle.
+///
+/// # Safety
+/// A non-null pointer must be a live handle returned by the load function.
+/// Release each handle once, after all uses have ended.
+#[cfg(all(unix, feature = "proving"))]
+#[no_mangle]
+pub unsafe extern "C" fn tos_shielded_payment_prover_free(prover: *mut PaymentProver) {
+    if !prover.is_null() {
+        drop(unsafe { Box::from_raw(prover) });
+    }
+}
+
 /// Issue a descriptor only after committing its index in the canonical store.
 ///
 /// # Safety
