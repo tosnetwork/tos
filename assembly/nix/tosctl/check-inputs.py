@@ -277,8 +277,10 @@ def check_includes(inputs):
     for name in sorted(built):
         package = found[name]
         manifest = package["directory"] / "Cargo.toml"
-        require(covered(manifest, inputs),
-                f"local dependency manifest {manifest.relative_to(ROOT)} is not in the package source")
+        require(
+            covered(manifest, inputs),
+            f"local dependency manifest {manifest.relative_to(ROOT)} is not in the package source",
+        )
         queue, visited = list(sources(package, name in tested)), set()
         while queue:
             source = queue.pop(0).resolve()
