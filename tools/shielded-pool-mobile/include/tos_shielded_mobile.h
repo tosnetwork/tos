@@ -16,14 +16,14 @@ typedef struct TosShieldedResponse TosShieldedResponse;
  * The caller MUST durably reserve note_index before publishing this descriptor.
  * Success payload is the 2573-byte descriptor; failure payload is empty.
  */
-TosShieldedResponse *tos_shielded_descriptor(const uint8_t *seed, size_t seed_len,
-    const uint8_t *domain, size_t domain_len, uint64_t note_index);
+TosShieldedResponse *tos_shielded_descriptor(const uint8_t *seed, size_t seed_len, const uint8_t *domain,
+                                             size_t domain_len, uint64_t note_index);
 /* Scan a bounded JSON batch. Chain slots/nullifiers must come from verified
  * state. This function authenticates no chain and asserts no balance freshness.
  * Success payload is UTF-8 JSON, failure payload empty. See README.md.
  */
-TosShieldedResponse *tos_shielded_scan(const uint8_t *seed, size_t seed_len,
-    const uint8_t *request, size_t request_len);
+TosShieldedResponse *tos_shielded_scan(const uint8_t *seed, size_t seed_len, const uint8_t *request,
+                                       size_t request_len);
 /* status: 0 success; 1 invalid input/crypto failure; 2 contained panic.
  * Pointer is valid until free; free once, on the same library that allocated it.
  * The response buffer is zeroized on free. Accessors require a live handle.

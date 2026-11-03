@@ -25,6 +25,28 @@ def run(args, **kwargs):
     subprocess.run([str(a) for a in args], check=True, **kwargs)
 
 
+def source_identity(root):
+    """Include the builder itself: its flags and packaging affect the artifact."""
+    paths = [
+        "tools/shielded-pool-mobile",
+        "tools/shielded-pool-wallet",
+        "tools/shielded-pool-circuit",
+        "crypto/poseidon2",
+        "tosctl/src/block/src/poseidon2_kat.rs",
+        "scripts/build-shielded-mobile.py",
+    ]
+    return {
+        "source_commit": subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=root, text=True
+        ).strip(),
+        "source_dirty": bool(
+            subprocess.check_output(
+                ["git", "status", "--porcelain", "--", *paths], cwd=root, text=True
+            )
+        ),
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--platform", choices=["ios", "android"], required=True)
@@ -142,26 +164,7 @@ def main():
                 ]
             )
         provenance = {
-            "source_commit": subprocess.check_output(
-                ["git", "rev-parse", "HEAD"], cwd=root, text=True
-            ).strip(),
-            "source_dirty": bool(
-                subprocess.check_output(
-                    [
-                        "git",
-                        "status",
-                        "--porcelain",
-                        "--",
-                        "tools/shielded-pool-mobile",
-                        "tools/shielded-pool-wallet",
-                        "tools/shielded-pool-circuit",
-                        "crypto/poseidon2",
-                        "tosctl/src/block/src/poseidon2_kat.rs",
-                    ],
-                    cwd=root,
-                    text=True,
-                )
-            ),
+            **source_identity(root),
             "rust_toolchain": TOOLCHAIN,
             "targets": targets,
             "files": {
