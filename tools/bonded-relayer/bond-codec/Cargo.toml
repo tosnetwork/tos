@@ -1,0 +1,17 @@
+[package]
+name = "br1-bond-codec"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "GPL-3.0-only"
+description = "Pure BR1 Bond deployment, identity and bounded cell codec shared by wallets and nodes"
+
+[dependencies]
+anyhow = "1"
+chain_block = { path = "../../../tosctl/src/block" }
+sha2 = "0.10"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"

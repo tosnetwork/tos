@@ -341,6 +341,9 @@ jobs:
   suites:
     name: contract-sandboxes (suites)
     runs-on: ubuntu-24.04
+    env:
+      # Keep independent large link processes from competing; all suites still run.
+      CARGO_BUILD_JOBS: 1
     # Each half rebuilds the native tools it needs from the shared compile
     # cache and then runs its share of the checks. One job held both halves and
     # sat close to its limit: on a slower runner it was cancelled at 90 minutes.
@@ -407,6 +410,27 @@ jobs:
       # Select this checkout explicitly for the whole suite. Local runs also
       # discover the enclosing worktree without requiring TOS_ROOT or a build/
       # directory when compiler binaries are supplied through their overrides.
+      - name: Record resources before Rust suite compilation
+        run: |
+          df -h
+          df -i
+          free -h
+          for path in build tosctl/src/target "${CCACHE_DIR:-}"; do
+            if [ -n "$path" ] && [ -d "$path" ]; then
+              du -sh "$path"
+            else
+              printf '%s: unavailable\n' "${path:-unset cache path}"
+            fi
+          done
+          for field in memory.current memory.max memory.peak memory.events; do
+            path="/sys/fs/cgroup/$field"
+            if [ -r "$path" ]; then
+              printf '%s: ' "$field"; cat "$path"
+            else
+              printf '%s: unavailable\n' "$field"
+            fi
+          done
+
       - name: Contract sandbox suites
         env:
           TOS_ROOT: ${{ github.workspace }}
@@ -564,6 +588,28 @@ jobs:
 
       - name: Frozen BOCs match their sources
         run: git diff --exit-code
+      - name: Record resources after suite completion or failure
+        if: always()
+        run: |
+          df -h
+          df -i
+          free -h
+          for path in build tosctl/src/target "${CCACHE_DIR:-}"; do
+            if [ -n "$path" ] && [ -d "$path" ]; then
+              du -sh "$path"
+            else
+              printf '%s: unavailable\n' "${path:-unset cache path}"
+            fi
+          done
+          for field in memory.current memory.max memory.peak memory.events; do
+            path="/sys/fs/cgroup/$field"
+            if [ -r "$path" ]; then
+              printf '%s: ' "$field"; cat "$path"
+            else
+              printf '%s: unavailable\n' "$field"
+            fi
+          done
+
       - name: Compile cache statistics
         if: always()
         run: if command -v ccache >/dev/null 2>&1; then ccache --show-stats; else echo "ccache is not installed, so an earlier step failed before the compile cache was set up"; fi

@@ -75,7 +75,14 @@ fn only_a_finished_unchanged_key_matching_the_reviewed_vk_is_loaded() {
 }
 #[test]
 fn repeated_proofs_of_the_same_witness_have_fresh_full_width_randomness() {
-    let client = client();
+    let client = PublicClient::audit_and_load(
+        &root().join("artifacts/phase1"),
+        &root().join("artifacts/phase2-ceremony-2/ceremony"),
+        VK,
+        2,
+        &[9; 32],
+    )
+    .expect("installed public proving material");
     let (public, witness) = request(&client);
     let a = client.prove(public, witness.clone(), 1_799_999_900).expect("first proof");
     let b = client.prove(public, witness, 1_799_999_900).expect("second proof");

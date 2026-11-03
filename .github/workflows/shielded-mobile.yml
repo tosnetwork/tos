@@ -1,0 +1,74 @@
+name: Shielded mobile core
+on:
+  pull_request:
+    paths:
+      - 'tools/shielded-pool-mobile/**'
+      - 'tools/shielded-pool-codec/**'
+      - 'tools/shielded-pool-wallet/**'
+      - 'tosctl/src/node-control/contracts/src/shielded_pool.rs'
+      - 'tosctl/src/node-control/contracts/Cargo.toml'
+      - 'tools/shielded-pool-circuit/**'
+      - 'crypto/poseidon2/**'
+      - 'tosctl/src/block/**'
+      - 'tosctl/src/lockfree/**'
+      - 'tosctl/src/common/**'
+      - 'scripts/build-shielded-mobile.py'
+      - '.github/workflows/shielded-mobile.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  core:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Install pinned Rust
+        run: rustup toolchain install 1.97.1 --profile minimal --component clippy,rustfmt
+      - name: Check build and sensitivity scripts
+        run: |
+          python3 -m pip install ruff==0.15.2
+          ruff check --isolated --select E4,E7,E9,F,I --ignore E741 scripts/build-shielded-mobile.py tools/shielded-pool-mobile/tests/sensitivity.py tools/shielded-pool-mobile/tests/test_build_source.py tools/shielded-pool-mobile/tests/sealed_sensitivity.py tools/shielded-pool-mobile/tests/snapshot_sensitivity.py tools/shielded-pool-mobile/tests/store_sensitivity.py tools/shielded-pool-mobile/tests/wallet_sensitivity.py tools/shielded-pool-mobile/tests/reservations_sensitivity.py tools/shielded-pool-mobile/tests/instance_sensitivity.py
+          ruff format --check --isolated --line-length 100 scripts/build-shielded-mobile.py tools/shielded-pool-mobile/tests/sensitivity.py tools/shielded-pool-mobile/tests/test_build_source.py tools/shielded-pool-mobile/tests/sealed_sensitivity.py tools/shielded-pool-mobile/tests/snapshot_sensitivity.py tools/shielded-pool-mobile/tests/store_sensitivity.py tools/shielded-pool-mobile/tests/wallet_sensitivity.py tools/shielded-pool-mobile/tests/reservations_sensitivity.py tools/shielded-pool-mobile/tests/instance_sensitivity.py
+      - name: Check source provenance detects changes to the builder
+        run: python3 -m unittest discover -s tools/shielded-pool-mobile/tests -p 'test_build_source.py' -v
+      - name: Format, lint and exercise the C ABI and actual note crypto
+        working-directory: tools/shielded-pool-mobile
+        run: |
+          cargo fmt -- --check
+          cargo clippy --locked --all-targets -- -D warnings
+          cargo test --locked
+          cargo fmt --manifest-path ../shielded-pool-codec/Cargo.toml -- --check
+          cargo test --locked --manifest-path ../shielded-pool-codec/Cargo.toml
+      - name: Require assertion failures when spending and body guards are removed
+        run: python3 tools/shielded-pool-mobile/tests/sensitivity.py --output /tmp/shielded-mobile-controls --target-dir tools/shielded-pool-mobile/target
+      - name: Require assertion failures when record bindings and limits are removed
+        run: python3 tools/shielded-pool-mobile/tests/sealed_sensitivity.py --out /tmp/shielded-mobile-sealed-controls --target-dir tools/shielded-pool-mobile/target
+      - name: Require assertion failures when complete snapshot guards are removed
+        run: python3 tools/shielded-pool-mobile/tests/snapshot_sensitivity.py --out /tmp/shielded-mobile-snapshot-controls --target-dir tools/shielded-pool-mobile/target
+      - name: Require assertion failures when private store safeguards are removed
+        run: python3 tools/shielded-pool-mobile/tests/store_sensitivity.py --out /tmp/shielded-mobile-store-controls --target-dir tools/shielded-pool-mobile/target
+      - name: Require assertion failures when canonical instance safeguards are removed
+        run: python3 tools/shielded-pool-mobile/tests/instance_sensitivity.py --out /tmp/shielded-mobile-instance-controls --target-dir tools/shielded-pool-mobile/target
+      - name: Require assertion failures when durable reservation safeguards are removed
+        run: python3 tools/shielded-pool-mobile/tests/reservations_sensitivity.py --out /tmp/shielded-mobile-reservation-controls --target-dir tools/shielded-pool-mobile/target
+      - name: Exercise actual disk exhaustion on a disposable private tmpfs
+        working-directory: tools/shielded-pool-mobile
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --locked --example store_enospc
+          for privacy_case in state reserve; do
+            privacy_mount="$(mktemp -d "$RUNNER_TEMP/shielded-store-enospc.XXXXXX")"
+            trap 'if mountpoint -q "$privacy_mount"; then sudo umount "$privacy_mount"; fi; rmdir "$privacy_mount"' EXIT
+            chmod 0700 "$privacy_mount"
+            sudo mount -t tmpfs -o "size=64k,mode=0700,uid=$(id -u),gid=$(id -g)" tmpfs "$privacy_mount"
+            cargo run --locked --example store_enospc -- "$privacy_mount" "$privacy_case"
+            sudo umount "$privacy_mount"
+            rmdir "$privacy_mount"
+            trap - EXIT
+          done
+      - name: Require assertion failures when complete wallet summary guards are removed
+        run: python3 tools/shielded-pool-mobile/tests/wallet_sensitivity.py --out /tmp/shielded-mobile-wallet-controls --target-dir tools/shielded-pool-mobile/target

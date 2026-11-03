@@ -126,6 +126,20 @@ pub struct PublicClient {
 }
 
 impl PublicClient {
+    /// Load proving material supplied by an installed application. The expected
+    /// verification key pin must come from the app's trusted pool selection.
+    pub fn audit_and_load(
+        phase1: &std::path::Path,
+        ceremony: &std::path::Path,
+        expected_vk: &str,
+        global_id: i32,
+        pool_account: &[u8; 32],
+    ) -> Result<Self> {
+        let directory = Directory::at(ceremony);
+        let audited = audit_ceremony_from(phase1, &directory)?;
+        Self::load(&directory, &audited, expected_vk, global_id, pool_account)
+    }
+
     /// `audited` must come from the complete ceremony audit; `expected_vk`
     /// comes from the reviewed deployment manifest, not from an endpoint.
     pub fn load(
