@@ -32,7 +32,8 @@ pub async fn run(mode: &str) -> Result<()> {
     } else if mode == "retire-bond" || mode == "withdraw-bond" {
         let (state, bond) = chain.bond_identity(&config).await?;
         let owner = chain_block::MsgAddressInt::from_str(&config.funding_wallet)?;
-        let clock = state.evidence().block_gen_utime.min(state.evidence().account.gen_utime);
+        let clock =
+            lifecycle_clock(state.evidence().block_gen_utime, state.evidence().account.gen_utime);
         let op = lifecycle_operation(
             mode,
             config.release.global_id,
@@ -47,15 +48,7 @@ pub async fn run(mode: &str) -> Result<()> {
         (1_100_000_000, read_single_root_boc(&bytes)?, None)
     };
     if mode == "retire-bond" || mode == "withdraw-bond" {
-        ensure!(amount <= config.funding_cap, "lifecycle funding cap");
-        let balance = funding_state.evidence().account.balance.parse::<u128>()?;
-        let ceiling = u128::from(amount)
-            .checked_add(100_000_000)
-            .ok_or_else(|| anyhow::anyhow!("lifecycle funding ceiling overflow"))?;
-        ensure!(
-            balance.checked_sub(ceiling).is_some_and(|left| left >= 1_000_000_000),
-            "lifecycle funding wallet must retain one TOS after amount and fee ceiling"
-        );
+        lifecycle_budget(config.funding_cap, &funding_state.evidence().account.balance, amount)?;
     }
     let request = protocol::hash(format!("{}:{mode}", config.release.scope()?).as_bytes());
     let binding = protocol::hash(&protocol::canonical(
@@ -96,6 +89,23 @@ pub async fn run(mode: &str) -> Result<()> {
     println!(
         "{}",
         json!({"status":"submitted-not-finalized","operation":mode,"sequence":sequence,"message_hash":message.repr_hash().to_hex_string(),"message_sha256":protocol::hash(&bytes)})
+    );
+    Ok(())
+}
+
+fn lifecycle_clock(master: u32, shard: u32) -> u32 {
+    master.min(shard)
+}
+
+fn lifecycle_budget(cap: u64, balance: &str, amount: u64) -> Result<()> {
+    ensure!(amount <= cap, "lifecycle funding cap");
+    let balance = balance.parse::<u128>()?;
+    let ceiling = u128::from(amount)
+        .checked_add(100_000_000)
+        .ok_or_else(|| anyhow::anyhow!("lifecycle funding ceiling overflow"))?;
+    ensure!(
+        balance.checked_sub(ceiling).is_some_and(|left| left >= 1_000_000_000),
+        "lifecycle funding wallet must retain one TOS after amount and fee ceiling"
     );
     Ok(())
 }
@@ -147,5 +157,36 @@ mod lifecycle_tests {
         assert!(lifecycle_operation("withdraw-bond", 3, true, 2, 100, 99).is_err());
         assert!(lifecycle_operation("withdraw-bond", 3, true, 2, 0, 100).is_err());
         assert!(lifecycle_operation("activate-bond", 3, true, 1, 0, 100).is_err());
+    }
+    #[test]
+    fn lifecycle_budget_exact_reserve_and_cap() {
+        assert!(lifecycle_budget(100_000_000, "1200000000", 100_000_000).is_ok());
+        assert!(lifecycle_budget(99_999_999, "1200000000", 100_000_000).is_err());
+        for bad in [
+            "1199999999",
+            "0",
+            "199999999",
+            "-1",
+            "not-a-balance",
+            "340282366920938463463374607431768211456",
+        ] {
+            assert!(lifecycle_budget(100_000_000, bad, 100_000_000).is_err());
+        }
+    }
+    #[test]
+    fn lifecycle_deadline_requires_both_proven_clocks() {
+        for (master, shard) in [(100, 99), (99, 100), (u32::MAX, 99), (99, u32::MAX)] {
+            assert!(lifecycle_operation(
+                "withdraw-bond",
+                3,
+                true,
+                2,
+                100,
+                lifecycle_clock(master, shard)
+            )
+            .is_err());
+        }
+        assert!(lifecycle_operation("withdraw-bond", 3, true, 2, 100, lifecycle_clock(100, 100))
+            .is_ok());
     }
 }
