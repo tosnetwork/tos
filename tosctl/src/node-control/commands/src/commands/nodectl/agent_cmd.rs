@@ -2284,6 +2284,9 @@ impl AgentTaskSendCmd {
                 &validation_context,
             )?;
             let body_boc = base64::engine::general_purpose::STANDARD.encode(write_boc(&body)?);
+            // Deferred attestation signing above is complete. The delegated
+            // controller command opens its own exclusive Vault handle.
+            drop(vault);
             AgentAccountTaskSendCmd {
                 wallet: agent_wallet.clone(),
                 target: destination.to_string(),
@@ -15075,3 +15078,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(all(test, unix))]
+#[path = "agent_task_vault_tests.rs"]
+mod task_vault_tests;
