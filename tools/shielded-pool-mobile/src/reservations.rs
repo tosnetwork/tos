@@ -4,9 +4,9 @@ use super::*;
 use crate::sealed::MAX_SEALED_BYTES;
 use sha3::{Digest, Sha3_256};
 
-const JOURNAL: &CStr = c"reservations.bin";
+pub(super) const JOURNAL: &CStr = c"reservations.bin";
 const MAX_RECORDS: u64 = 4096;
-const MAX_JOURNAL_BYTES: usize = 16 * 1024 * 1024;
+pub(super) const MAX_JOURNAL_BYTES: usize = 16 * 1024 * 1024;
 const MAX_RESERVE: u8 = 4;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -54,7 +54,7 @@ enum ReserveStage {
 impl StateStore {
     pub(super) fn replay_journal(&self, anchor: Cursor) -> Result<Cursor> {
         anchor.validate()?;
-        let mut file = match self.file(JOURNAL, libc::O_RDONLY, 0) {
+        let file = match self.file(JOURNAL, libc::O_RDONLY, 0) {
             Ok(file) => file,
             Err(StoreError::Io(error)) if error.kind() == io::ErrorKind::NotFound => {
                 return if anchor == Cursor::default() {
@@ -67,6 +67,16 @@ impl StateStore {
         };
         Self::private(&file)?;
         let size = usize::try_from(file.metadata()?.len()).map_err(|_| Error::Limit)?;
+        Self::decode_journal(&self.cipher, file, size, anchor)
+    }
+
+    pub(super) fn decode_journal(
+        cipher: &RecordCipher,
+        mut file: impl Read,
+        size: usize,
+        anchor: Cursor,
+    ) -> Result<Cursor> {
+        anchor.validate()?;
         if size > MAX_JOURNAL_BYTES {
             return Err(Error::Limit.into());
         }
@@ -101,7 +111,7 @@ impl StateStore {
             record.try_reserve_exact(length).map_err(|_| Error::Limit)?;
             record.resize(length, 0);
             file.read_exact(&mut record)?;
-            let plain = self.cipher.open(Kind::Journal, cursor.records, &record)?;
+            let plain = cipher.open(Kind::Journal, cursor.records, &record)?;
             let mut frame = Vec::with_capacity(length + 4);
             frame.extend_from_slice(&prefix);
             frame.extend_from_slice(&record);

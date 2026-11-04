@@ -29,6 +29,9 @@ pub const MAX_STATE_BYTES: usize = snapshot::MAX_SNAPSHOT_BYTES - STATE_HEADER;
 #[path = "reservations.rs"]
 mod reservations;
 use reservations::Cursor;
+#[path = "backup.rs"]
+mod backup;
+pub use backup::{BackupSummary, MAX_BACKUP_BYTES};
 
 pub struct PendingPayment {
     pub intent: shielded_pool_circuit::field::Fr,
@@ -96,35 +99,9 @@ impl StateStore {
     /// excluding RPC/UI identifiers and upgradeable pins. Caller authenticates
     /// the original master and root provenance; this API cannot establish them.
     pub fn open_wallet(root: &Path, cipher: RecordCipher) -> Result<Self> {
-        if !root.is_absolute() {
-            return Err(StoreError::UnsafeFile);
-        }
-        let directory = OpenOptions::new().read(true).custom_flags(DIRECTORY_FLAGS).open(root)?;
-        Self::private_directory(&directory)?;
-        Self::exclusive_lock(&directory)?;
-        // Never reinterpret a legacy flat store as a fresh canonical root.
-        for name in [STATE, NEXT, c"reservations.bin"] {
-            let mut metadata = std::mem::MaybeUninit::<libc::stat>::uninit();
-            // SAFETY: live parent FD/name and space for exactly one stat result;
-            // do not follow even a dangling legacy symlink or read its contents.
-            if unsafe {
-                libc::fstatat(
-                    directory.as_raw_fd(),
-                    name.as_ptr(),
-                    metadata.as_mut_ptr(),
-                    libc::AT_SYMLINK_NOFOLLOW,
-                )
-            } == 0
-            {
-                return Err(StoreError::RecoveryRequired);
-            }
-            let error = io::Error::last_os_error();
-            if error.kind() != io::ErrorKind::NotFound {
-                return Err(error.into());
-            }
-        }
-        let name =
-            CString::new(hex::encode(cipher.instance_id())).map_err(|_| Error::InvalidInput)?;
+        let directory = Self::open_wallet_root(root)?;
+        let name = Self::wallet_name(&cipher)?;
+        Self::require_absent(&directory, &backup::restore_name(&cipher)?)?;
         // SAFETY: owned parent FD and fixed-length NUL-terminated hex name.
         if unsafe { libc::mkdirat(directory.as_raw_fd(), name.as_ptr(), 0o700) } != 0 {
             let error = io::Error::last_os_error();
@@ -132,6 +109,48 @@ impl StateStore {
                 return Err(error.into());
             }
         }
+        let child = Self::open_child(&directory, &name)?;
+        // Sync even an existing entry: a previous creator may have failed here.
+        directory.sync_all()?;
+        Self::from_directory(child, cipher)
+    }
+    fn open_wallet_root(root: &Path) -> Result<File> {
+        if !root.is_absolute() {
+            return Err(StoreError::UnsafeFile);
+        }
+        let directory = OpenOptions::new().read(true).custom_flags(DIRECTORY_FLAGS).open(root)?;
+        Self::private_directory(&directory)?;
+        Self::exclusive_lock(&directory)?;
+        // Never reinterpret a legacy flat store as a fresh canonical root.
+        for name in [STATE, NEXT, reservations::JOURNAL] {
+            Self::require_absent(&directory, name)?;
+        }
+        Ok(directory)
+    }
+    fn require_absent(directory: &File, name: &CStr) -> Result<()> {
+        let mut metadata = std::mem::MaybeUninit::<libc::stat>::uninit();
+        // SAFETY: live parent FD/name and space for one stat result; never follow links.
+        if unsafe {
+            libc::fstatat(
+                directory.as_raw_fd(),
+                name.as_ptr(),
+                metadata.as_mut_ptr(),
+                libc::AT_SYMLINK_NOFOLLOW,
+            )
+        } == 0
+        {
+            return Err(StoreError::RecoveryRequired);
+        }
+        let error = io::Error::last_os_error();
+        if error.kind() != io::ErrorKind::NotFound {
+            return Err(error.into());
+        }
+        Ok(())
+    }
+    fn wallet_name(cipher: &RecordCipher) -> Result<CString> {
+        CString::new(hex::encode(cipher.instance_id())).map_err(|_| Error::InvalidInput.into())
+    }
+    fn open_child(directory: &File, name: &CStr) -> Result<File> {
         // SAFETY: owned parent FD; flags neither create nor follow a symlink.
         let fd = unsafe { libc::openat(directory.as_raw_fd(), name.as_ptr(), DIRECTORY_FLAGS) };
         if fd < 0 {
@@ -140,9 +159,7 @@ impl StateStore {
         // SAFETY: openat returned a new uniquely owned descriptor.
         let child = unsafe { File::from_raw_fd(fd) };
         Self::private_directory(&child)?;
-        // Sync even an existing entry: a previous creator may have failed here.
-        directory.sync_all()?;
-        Self::from_directory(child, cipher)
+        Ok(child)
     }
     fn private_directory(directory: &File) -> Result<()> {
         let metadata = directory.metadata()?;
@@ -212,7 +229,12 @@ impl StateStore {
         Ok(())
     }
     fn read(&self) -> Result<Option<StoredState>> {
-        let mut file = match self.file(STATE, libc::O_RDONLY, 0) {
+        self.read_private_bytes(STATE, MAX_ENCODED_BYTES)?
+            .map(|bytes| Self::decode_state(&self.cipher, &bytes))
+            .transpose()
+    }
+    fn read_private_bytes(&self, name: &CStr, limit: usize) -> Result<Option<Vec<u8>>> {
+        let mut file = match self.file(name, libc::O_RDONLY, 0) {
             Ok(file) => file,
             Err(StoreError::Io(error)) if error.kind() == io::ErrorKind::NotFound => {
                 return Ok(None)
@@ -221,7 +243,7 @@ impl StateStore {
         };
         Self::private(&file)?;
         let size = usize::try_from(file.metadata()?.len()).map_err(|_| Error::Limit)?;
-        if size > MAX_ENCODED_BYTES {
+        if size > limit {
             return Err(Error::Limit.into());
         }
         let mut bytes = Vec::new();
@@ -232,7 +254,7 @@ impl StateStore {
         if file.read(&mut [0; 1])? != 0 {
             return Err(StoreError::Conflict);
         }
-        Ok(Some(Self::decode_state(&self.cipher, &bytes)?))
+        Ok(Some(bytes))
     }
     fn decode_state(cipher: &RecordCipher, bytes: &[u8]) -> Result<StoredState> {
         let mut data = snapshot::open(cipher, Kind::State, bytes)?;

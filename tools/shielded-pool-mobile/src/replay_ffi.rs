@@ -1382,6 +1382,95 @@ pub unsafe extern "C" fn tos_shielded_replay_pending_status(
     })
 }
 
+#[cfg(unix)]
+#[no_mangle]
+/// # Safety
+/// The session and pointers must be live and serialized. The caller owns the
+/// descriptor and must keep it open without concurrent access during this call.
+pub unsafe extern "C" fn tos_shielded_replay_backup_file(
+    session: *const TosShieldedReplay,
+    seed: *const u8,
+    seed_length: usize,
+    root: *const u8,
+    root_length: usize,
+    binding: *const u8,
+    binding_length: usize,
+    fd: libc::c_int,
+    restore: libc::c_int,
+) -> *mut TosShieldedResponse {
+    use crate::store::{StateStore, MAX_BACKUP_BYTES};
+    use std::{
+        fs::File,
+        io::{Read, Seek, SeekFrom},
+        os::fd::FromRawFd,
+        path::Path,
+    };
+
+    response(|| {
+        if session.is_null()
+            || seed.is_null()
+            || root.is_null()
+            || binding.is_null()
+            || seed_length != 32
+            || !(1..=4096).contains(&root_length)
+            || binding_length != 228
+            || !matches!(restore, 0 | 1)
+        {
+            return Err(Error::InvalidInput);
+        }
+        let owner = unsafe { &*session };
+        if !matches!(owner.state, State::Ready(_)) {
+            return Err(Error::InvalidInput);
+        }
+        let root = std::str::from_utf8(unsafe { slice::from_raw_parts(root, root_length) })
+            .map_err(|_| Error::InvalidInput)?;
+        if root.as_bytes().contains(&0) || !Path::new(root).is_absolute() {
+            return Err(Error::InvalidInput);
+        }
+        let binding =
+            owner.wallet_binding(unsafe { slice::from_raw_parts(binding, binding_length) })?;
+        let mut key = Zeroizing::new([0; 32]);
+        key.copy_from_slice(unsafe { slice::from_raw_parts(seed, 32) });
+        let cipher = crate::sealed::RecordCipher::derive(&key, binding);
+        // SAFETY: fcntl duplicates the caller-owned descriptor; only the copy is closed.
+        let duplicate = unsafe { libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, 0) };
+        if duplicate < 0 {
+            return Err(Error::InvalidInput);
+        }
+        // SAFETY: duplicate is a new uniquely owned descriptor.
+        let mut file = unsafe { File::from_raw_fd(duplicate) };
+        let metadata = file.metadata().map_err(|_| Error::InvalidInput)?;
+        if !metadata.is_file() {
+            return Err(Error::InvalidInput);
+        }
+        file.seek(SeekFrom::Start(0)).map_err(|_| Error::InvalidInput)?;
+        if restore == 0 {
+            if metadata.len() != 0 {
+                return Err(Error::InvalidInput);
+            }
+            let mut store = StateStore::open_wallet(Path::new(root), cipher)
+                .map_err(|_| Error::InvalidInput)?;
+            store.export_backup(&mut file).map_err(|_| Error::InvalidInput)?;
+            file.sync_all().map_err(|_| Error::InvalidInput)?;
+        } else {
+            let size = usize::try_from(metadata.len()).map_err(|_| Error::Limit)?;
+            if !(1..=MAX_BACKUP_BYTES).contains(&size) {
+                return Err(Error::Limit);
+            }
+            let mut backup = Vec::new();
+            backup.try_reserve_exact(size).map_err(|_| Error::Limit)?;
+            backup.resize(size, 0);
+            file.read_exact(&mut backup).map_err(|_| Error::InvalidInput)?;
+            if file.read(&mut [0; 1]).map_err(|_| Error::InvalidInput)? != 0 {
+                return Err(Error::InvalidInput);
+            }
+            StateStore::restore_backup(Path::new(root), cipher, &backup)
+                .map_err(|_| Error::InvalidInput)?;
+        }
+        Ok(Zeroizing::new(Vec::new()))
+    })
+}
+
 /// # Safety
 /// The session and descriptor pointers must identify live allocations of the stated types and lengths.
 #[no_mangle]
@@ -2096,6 +2185,52 @@ mod tests {
         let recovered = open().pending_payment().unwrap().unwrap();
         assert_eq!(recovered.intent, intent);
         assert_eq!(recovered.request.as_slice(), b"original submission");
+        {
+            use std::os::{fd::AsRawFd, unix::fs::DirBuilderExt};
+            let file = std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create_new(true)
+                .open(root.join("backup"))
+                .unwrap();
+            let restored_root = root.join("restored");
+            std::fs::DirBuilder::new().mode(0o700).create(&restored_root).unwrap();
+            let transfer = |root: &[u8], pins: &[u8], operation| unsafe {
+                Box::from_raw(tos_shielded_replay_backup_file(
+                    &observed,
+                    key.as_ptr(),
+                    key.len(),
+                    root.as_ptr(),
+                    root.len(),
+                    pins.as_ptr(),
+                    pins.len(),
+                    file.as_raw_fd(),
+                    operation,
+                ))
+            };
+            assert_eq!(transfer(path, &binding, 0).status, 0);
+            let length = file.metadata().unwrap().len();
+            assert!(length > 0);
+            assert_eq!(transfer(path, &binding, 0).status, 1);
+            assert_eq!(file.metadata().unwrap().len(), length);
+            let restored_path = restored_root.to_str().unwrap().as_bytes();
+            assert_eq!(transfer(restored_path, &wrong_genesis, 1).status, 1);
+            assert_eq!(transfer(restored_path, &binding, 1).status, 0);
+            assert_eq!(transfer(restored_path, &binding, 1).status, 1);
+            let mut restored = crate::store::StateStore::open_wallet(
+                &restored_root,
+                crate::sealed::RecordCipher::derive(
+                    &key,
+                    observed.wallet_binding(&binding).unwrap(),
+                ),
+            )
+            .unwrap();
+            assert_eq!(restored.reservation_high_water().unwrap(), 10);
+            assert_eq!(
+                restored.pending_payment().unwrap().unwrap().request.as_slice(),
+                b"original submission"
+            );
+        }
         let State::Ready(ledger) = &mut observed.state else { unreachable!() };
         ledger
             .apply(

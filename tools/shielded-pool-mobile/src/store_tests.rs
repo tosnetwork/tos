@@ -63,6 +63,89 @@ fn valid_stored_state(data: &[u8]) -> Vec<u8> {
     fixture.open().commit(data).unwrap();
     fs::read(fixture.state()).unwrap()
 }
+
+#[test]
+fn backup_binds_the_exact_state_and_later_reservations() {
+    let f = Fixture::new();
+    let mut store = f.open();
+    assert_eq!(store.reserve_indices(Some(4), 2).unwrap(), [4, 5]);
+    store.commit(b"local state").unwrap();
+    assert_eq!(store.reserve_indices(Some(0), 1).unwrap(), [6]);
+    let mut backup = Vec::new();
+    store.export_backup(&mut backup).unwrap();
+    assert_eq!(
+        StateStore::inspect_backup(&cipher(42), &backup).unwrap(),
+        BackupSummary { reservation_high_water: 7, has_state: true },
+    );
+    assert!(StateStore::inspect_backup(&cipher(43), &backup).is_err());
+    let mut other_genesis = binding();
+    other_genesis.genesis_root[0] ^= 1;
+    assert!(StateStore::inspect_backup(&RecordCipher::derive(&[42; 32], other_genesis), &backup)
+        .is_err());
+    assert!(StateStore::inspect_backup(&cipher(42), &backup[..backup.len() - 1]).is_err());
+    let state_offset = 4 + u32::from_be_bytes(backup[..4].try_into().unwrap()) as usize;
+    let replacement = valid_stored_state(b"local state");
+    let state_size = fs::metadata(f.state()).unwrap().len() as usize;
+    assert_eq!(replacement.len(), state_size);
+    backup[state_offset..state_offset + state_size].copy_from_slice(&replacement);
+    assert!(matches!(StateStore::inspect_backup(&cipher(42), &backup), Err(StoreError::Conflict)));
+}
+
+#[test]
+fn backup_includes_the_checkpoint_for_an_empty_state_payload() {
+    let f = Fixture::new();
+    let mut store = f.open();
+    assert_eq!(store.reserve_indices(Some(8), 1).unwrap(), [8]);
+    let mut backup = Vec::new();
+    store.export_backup(&mut backup).unwrap();
+    assert_eq!(
+        StateStore::inspect_backup(&cipher(42), &backup).unwrap(),
+        BackupSummary { reservation_high_water: 9, has_state: true },
+    );
+}
+
+#[test]
+fn backup_restore_preserves_pending_bytes_and_the_next_index() {
+    let source = Fixture::new();
+    let target = Fixture::new();
+    let mut store = source.open();
+    let intent = 1_u64.into();
+    let request = b"original unresolved request";
+    store.reserve_indices(Some(19), 1).unwrap();
+    store.persist_pending_payment(intent, request).unwrap();
+    store.reserve_indices(Some(0), 1).unwrap();
+    let mut backup = Vec::new();
+    store.export_backup(&mut backup).unwrap();
+    assert!(StateStore::restore_backup(&target.path, cipher(43), &backup).is_err());
+    assert_eq!(fs::read_dir(&target.path).unwrap().count(), 0);
+    let summary = StateStore::restore_backup(&target.path, cipher(42), &backup).unwrap();
+    assert_eq!(summary.reservation_high_water, 21);
+    let mut restored = StateStore::open_wallet(&target.path, cipher(42)).unwrap();
+    let pending = restored.pending_payment().unwrap().unwrap();
+    assert_eq!(pending.intent, intent);
+    assert_eq!(pending.request.as_slice(), request);
+    assert_eq!(restored.reserve_indices(Some(0), 1).unwrap(), [21]);
+    assert!(matches!(
+        StateStore::restore_backup(&target.path, cipher(42), &backup),
+        Err(StoreError::RecoveryRequired),
+    ));
+    assert_eq!(restored.reservation_high_water().unwrap(), 22);
+}
+
+#[test]
+fn an_interrupted_backup_restore_prevents_fresh_wallet_creation() {
+    let f = Fixture::new();
+    let candidate = backup::restore_name(&cipher(42)).unwrap();
+    let candidate = f.path.join(candidate.to_str().unwrap());
+    fs::DirBuilder::new().mode(0o700).create(&candidate).unwrap();
+    private_write(&candidate.join("state.bin"), b"interrupted candidate");
+    assert!(matches!(
+        StateStore::open_wallet(&f.path, cipher(42)),
+        Err(StoreError::RecoveryRequired),
+    ));
+    assert_eq!(fs::read(candidate.join("state.bin")).unwrap(), b"interrupted candidate");
+    assert_eq!(fs::read_dir(&f.path).unwrap().count(), 1);
+}
 #[test]
 fn real_files_round_trip_replace_and_reopen_privately() {
     let f = Fixture::new();
