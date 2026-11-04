@@ -686,12 +686,12 @@ def _punishment_tier(config: dict[str, int], severe: bool, interval: int) -> tup
     return flat, part
 
 
-def _write_pq_manifest(directory):
+def _write_pq_manifest(directory, count=4):
     import re
 
     directory.chmod(0o700)
     records = []
-    for index in range(4):
+    for index in range(count):
         seed = hashlib.sha256(f"disposable-genesis-{index}".encode()).hexdigest()
         proc = subprocess.run(
             [
@@ -1721,3 +1721,100 @@ def test_admission_candidate_localnet_validation_deletion_is_detected(tmp_path, 
         ):
             require_rejection(tmp_path / "mutated")
     require_rejection(tmp_path / "restored")
+
+
+def _pq_fixture_validators(count, directory=None):
+    if directory is not None:
+        return [
+            PqInitialValidator(validator_id, key_id, public, adnl)
+            for validator_id, adnl, public, key_id in _write_pq_manifest(directory, count)
+        ]
+    # Validation-only inputs must be rejected before key or state tools are invoked.
+    return [
+        PqInitialValidator(
+            validator_id=index.to_bytes(32, "big"),
+            key_id=(index + 100).to_bytes(32, "big"),
+            public_key=bytes([index + 1]) * 1312,
+            adnl_id=(index + 200).to_bytes(32, "big"),
+        )
+        for index in range(count)
+    ]
+
+
+def _decoded_pq_weights(state):
+    cell = _config_cells(state)[34].copy()
+    assert cell.load_uint(8) == 0x12
+    cell.skip_bits(64)
+    count = cell.load_uint(16)
+    main = cell.load_uint(16)
+    total_weight = cell.load_uint(64)
+
+    def weight(value):
+        assert value.load_uint(8) == 0xB3
+        value.skip_bits(256 + 16 + 256)
+        value.load_ref()
+        return value.load_uint(64)
+
+    weights = cell.load_dict(16, value_deserializer=weight)
+    return count, main, total_weight, [weights[i] for i in range(count)]
+
+
+@pytest.mark.parametrize("count", [7, 21])
+def test_pq_genesis_preserves_explicit_unequal_weights(tmp_path, count):
+    weights = tuple(range(1, count + 1))
+    config = NetworkConfig(shard_validators=count, pq_validator_weights=weights)
+    state = _load_masterchain_state(
+        create_zerostate(
+            Install(BUILD_DIR, REPO), tmp_path, config, [], _pq_fixture_validators(count, tmp_path)
+        ).masterchain.file
+    )
+    assert _decoded_pq_weights(state) == (count, count, sum(weights), list(weights))
+
+
+@pytest.mark.parametrize("weights", [(0,), (True,), (-1,), (1 << 64,), (1, 2), (1 << 63, 1 << 63)])
+def test_pq_genesis_refuses_invalid_explicit_weights_before_fift(tmp_path, monkeypatch, weights):
+    def unexpected(*args, **kwargs):
+        raise AssertionError("invalid weights reached create-state")
+
+    monkeypatch.setattr(subprocess, "run", unexpected)
+    count = 2 if weights == (1 << 63, 1 << 63) else 1
+    with pytest.raises(ValueError, match="PQ validator weights"):
+        create_zerostate(
+            Install(BUILD_DIR, REPO),
+            tmp_path,
+            NetworkConfig(pq_validator_weights=weights),
+            [],
+            _pq_fixture_validators(count),
+        )
+
+
+def test_pq_weights_require_a_pq_genesis(tmp_path):
+    with pytest.raises(ValueError, match="PQ validator weights"):
+        create_zerostate(
+            Install(BUILD_DIR, REPO), tmp_path, NetworkConfig(pq_validator_weights=(1,)), [Key()]
+        )
+
+
+def test_default_pq_genesis_keeps_uniform_weight_seventeen(tmp_path):
+    count = 7
+    state = _load_masterchain_state(
+        create_zerostate(
+            Install(BUILD_DIR, REPO),
+            tmp_path,
+            NetworkConfig(shard_validators=count),
+            [],
+            _pq_fixture_validators(count, tmp_path),
+        ).masterchain.file
+    )
+    assert _decoded_pq_weights(state) == (count, count, 17 * count, [17] * count)
+
+
+def test_explicit_pq_weights_refuse_public_networks(tmp_path):
+    with pytest.raises(ValueError, match="PQ validator weights"):
+        create_zerostate(
+            Install(BUILD_DIR, REPO),
+            tmp_path,
+            NetworkConfig(global_id=2, pq_validator_weights=(1,)),
+            [],
+            _pq_fixture_validators(1),
+        )

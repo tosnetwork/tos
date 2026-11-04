@@ -89,6 +89,8 @@ class NetworkConfig:
     # Test-only funded basechain genesis; allocation is deducted from the faucet.
     basechain_fixture: bytes | None = field(default=None, repr=False)
     shard_validators: int = 1  # DEV-SPECIFIC: single-validator bootstrap rehearsal
+    # Explicit isolated PQ quorum fixtures; None preserves the existing weight 17.
+    pq_validator_weights: tuple[int, ...] | None = None
     block_limit_mul: int = 1
     mc_valgroup_lifetime: int = 100000  # DEV: long lifetime for local testnet stability
     mc_consensus: SimplexConsensusConfig | None = field(
@@ -657,6 +659,21 @@ def create_zerostate(
             raise ValueError("Genesis wallet seed must be exactly 32 bytes")
     pq_validators = [] if pq_validators is None else pq_validators
     validator_count = len(validator_keys) + len(pq_validators)
+    weights = config.pq_validator_weights
+    if weights is not None:
+        if (
+            config.global_id != 3
+            or not pq_validators
+            or validator_keys
+            or not isinstance(weights, tuple)
+            or len(weights) != len(pq_validators)
+            or any(type(weight) is not int or not 0 < weight < (1 << 64) for weight in weights)
+            or sum(weights) >= (1 << 64)
+        ):
+            raise ValueError(
+                "PQ validator weights require an isolated global-id-3 PQ genesis, "
+                "one positive uint64 per validator, and a uint64 total"
+            )
     if not 1 <= config.shard_validators <= MAX_SHARD_COMMITTEE:
         raise ValueError(
             f"shard validator count {config.shard_validators} is outside the enforced launch "
@@ -759,11 +776,12 @@ def create_zerostate(
             f"B{{{key.public_key.key.hex()}}} B{{{key.id.hex()}}} 256 B>u@ 17 add-adnl-validator"
         )
     for index, validator in enumerate(pq_validators):
+        weight = 17 if weights is None else weights[index]
         descriptor_name = f"pq-validator-{index}.boc"
         _ = (state_dir / descriptor_name).write_bytes(
-            _pq_validator_descriptor(validator, 17).to_boc()
+            _pq_validator_descriptor(validator, weight).to_boc()
         )
-        keys.append(f'17 "{descriptor_name}" file>B B>boc register-validator')
+        keys.append(f'{weight} "{descriptor_name}" file>B B>boc register-validator')
 
     if config.validator_economics_profile:
         profile = {
