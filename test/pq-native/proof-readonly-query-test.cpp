@@ -53,10 +53,13 @@ int main() {
   check("empty-proof-response-refused", tos::proofverify::readonly_reply_json(td::Slice()).is_error());
   auto getter = [](const std::string &name) {
     return tos::proofverify::parse_request(
-        "{\"mode\":\"live\",\"max_age_seconds\":30,\"account\":\"0:" + std::string(64, '0') +
+        "{\"mode\":\"live\",\"max_age_seconds\":30,\"account\":\"0:" + std::string(64, '1') +
         "\",\"get_methods\":[{\"method\":\"" + name +
         "\",\"args\":[{\"type\":\"int\",\"value\":\"0\"},{\"type\":\"int\",\"value\":\"0\"}]}]}");
   };
+  auto ordinary = getter("seqno");
+  check("ordinary-getter-fixture-and-selector",
+        ordinary.is_ok() && ordinary.ok().get_methods.size() == 1 && ordinary.ok().get_methods[0].method_id == 85143);
   auto predicate = getter("processed?");
   check("predicate-getter-name-and-selector", predicate.is_ok() && predicate.ok().get_methods.size() == 1 &&
                                                   predicate.ok().get_methods[0].method_id == 117746 &&
