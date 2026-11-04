@@ -53,6 +53,18 @@ Missing or empty native databases refuse; they are never implicitly recreated
 beside existing custody. Unknown outcomes require reconciliation of the original
 bytes, not another setup invocation.
 
+For an isolated global-id-3 lifecycle rehearsal, stop the operator and reconcile
+all outstanding jobs before `--bootstrap retire-bond`. The proven owner must be
+the funding wallet and the Bond must be ACTIVE. `--bootstrap withdraw-bond`
+requires EXITING and both the proven masterchain and account shard clocks at or
+after the immutable exit deadline. Each operation attaches 0.1 TOS, respects the
+configured funding cap, and requires one TOS left after an additional 0.1 TOS fee
+ceiling. It uses the same persisted original message and one-send lease: inspect
+chain receipts after any unknown result; never reset the lease or repeat a send.
+These lifecycle commands refuse public networks even in a public-pilot build.
+Admission, quoting and simulation continue to require an ACTIVE, backed Bond.
+
+
 The runtime reads `provider.json` and its protected seed files from its private
 working directory. The existing BR1 `localnet` configuration selects this ELF;
 no fixture or unpinned manual broadcaster is used as a fallback.
