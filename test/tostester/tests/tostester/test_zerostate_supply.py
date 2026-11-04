@@ -1771,7 +1771,10 @@ def test_pq_genesis_preserves_explicit_unequal_weights(tmp_path, count):
     assert _decoded_pq_weights(state) == (count, count, sum(weights), list(weights))
 
 
-@pytest.mark.parametrize("weights", [(0,), (True,), (-1,), (1 << 64,), (1, 2), (1 << 63, 1 << 63)])
+@pytest.mark.parametrize(
+    "weights",
+    [(0,), (True,), (-1,), (1 << 64,), (1, 2), (1 << 63, 1 << 63), (((1 << 64) - 1) // 3 + 1,)],
+)
 def test_pq_genesis_refuses_invalid_explicit_weights_before_fift(tmp_path, monkeypatch, weights):
     def unexpected(*args, **kwargs):
         raise AssertionError("invalid weights reached create-state")
@@ -1818,3 +1821,17 @@ def test_explicit_pq_weights_refuse_public_networks(tmp_path):
             [],
             _pq_fixture_validators(1),
         )
+
+
+def test_pq_genesis_accepts_protocol_weight_cap(tmp_path):
+    cap = ((1 << 64) - 1) // 3
+    state = _load_masterchain_state(
+        create_zerostate(
+            Install(BUILD_DIR, REPO),
+            tmp_path,
+            NetworkConfig(pq_validator_weights=(cap,)),
+            [],
+            _pq_fixture_validators(1, tmp_path),
+        ).masterchain.file
+    )
+    assert _decoded_pq_weights(state) == (1, 1, cap, [cap])

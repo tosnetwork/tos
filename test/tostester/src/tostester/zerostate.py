@@ -668,11 +668,11 @@ def create_zerostate(
             or not isinstance(weights, tuple)
             or len(weights) != len(pq_validators)
             or any(type(weight) is not int or not 0 < weight < (1 << 64) for weight in weights)
-            or sum(weights) >= (1 << 64)
+            or sum(weights) > ((1 << 64) - 1) // 3
         ):
             raise ValueError(
                 "PQ validator weights require an isolated global-id-3 PQ genesis, "
-                "one positive uint64 per validator, and a uint64 total"
+                "one positive uint64 per validator, and a protocol-capped total"
             )
     if not 1 <= config.shard_validators <= MAX_SHARD_COMMITTEE:
         raise ValueError(
