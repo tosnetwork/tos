@@ -130,7 +130,7 @@ TosShieldedResponse *tos_shielded_replay_pending_status(const TosShieldedReplay 
  * restores into a fresh private wallet instance. Existing instances and
  * interrupted restore candidates are retained. Reverify chain state after
  * restore. The caller owns fd; the call changes its offset and requires
- * exclusive access for its duration. Success has no response payload. */
+ * exclusive access for its duration. Success returns one byte with value 1. */
 TosShieldedResponse *tos_shielded_replay_backup_file(
     const TosShieldedReplay *session, const uint8_t *seed, size_t seed_length,
     const uint8_t *root, size_t root_length, const uint8_t *binding, size_t binding_length,

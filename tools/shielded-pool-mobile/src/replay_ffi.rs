@@ -1467,7 +1467,7 @@ pub unsafe extern "C" fn tos_shielded_replay_backup_file(
             StateStore::restore_backup(Path::new(root), cipher, &backup)
                 .map_err(|_| Error::InvalidInput)?;
         }
-        Ok(Zeroizing::new(Vec::new()))
+        Ok(Zeroizing::new(vec![1]))
     })
 }
 
