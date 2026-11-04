@@ -146,7 +146,7 @@ impl Candidate {
     /// Every check of a request that needs no custody: release scope, slot,
     /// a positive cap, distinct canonical nullifiers, exact body bytes and
     /// digest, the transact shape, the wire's intent, expiry, nullifiers and
-    /// fee note, a private transfer, the fee payload at the fee slot, and the
+    /// fee note, the payout shape, the fee payload at the fee slot, and the
     /// quote binding (slot, index, expiry, digest). `terms` are the quote's
     /// authenticated terms. The caller bounds `funding_cap` against its own
     /// policy and checks the fee output's derivation.
@@ -164,11 +164,19 @@ impl Candidate {
         let _anchor_kind = s.get_next_int(8)?;
         let _anchor_id = s.get_next_u32()?;
         ensure!(s.get_next_u32()? == request.valid_until, "wire expiry mismatch");
-        ensure!(
-            Coins::construct_from(&mut s)?.is_zero() && Coins::construct_from(&mut s)?.is_zero(),
-            "local provider supports private transfers only"
-        );
-        ensure!(s.get_next_int(2)? == 0, "private transfer recipient");
+        let withdrawal = !Coins::construct_from(&mut s)?.is_zero();
+        let has_pool_fee = !Coins::construct_from(&mut s)?.is_zero();
+        ensure!(withdrawal == has_pool_fee, "withdrawal fee shape");
+        let recipient_tag = s.get_next_int(2)?;
+        if withdrawal {
+            ensure!(
+                recipient_tag == 2 && s.get_next_int(1)? == 0 && s.get_next_int(8)? == 0,
+                "withdrawal requires a standard workchain-0 recipient"
+            );
+            s.get_next_bytes(32)?;
+        } else {
+            ensure!(recipient_tag == 0, "private transfer recipient");
+        }
         ensure!(
             hex::encode(s.get_next_bytes(32)?) == request.intent
                 && query == u64::from_str_radix(&request.intent[48..], 16)?,
@@ -210,6 +218,9 @@ impl Candidate {
             if slot == request.fee_slot {
                 fee_payload = br1_bond_codec::chain_bytes(&c, OUTPUT_PAYLOAD_BYTES)?;
             }
+        }
+        if withdrawal {
+            br1_bond_codec::chain_bytes(&output.checked_drain_reference()?, OUTPUT_PAYLOAD_BYTES)?;
         }
         ensure!(
             terms["slot"] == request.fee_slot

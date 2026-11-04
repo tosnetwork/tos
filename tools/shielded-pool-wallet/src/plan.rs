@@ -119,14 +119,31 @@ pub struct Fee {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Request {
     /// A private transfer of `amount` to the descriptor's holder, with an
-    /// optional fee note to a relayer. A withdrawal carries no fee note: its
-    /// shape is fixed by the pool and it is never relayed.
+    /// optional fee note to a relayer.
     Transfer { to: Box<RecipientKeys>, amount: u128, fee: Option<Fee> },
     /// A withdrawal of `amount` to a public account of workchain 0.
     Withdraw { amount: u128, recipient_account: [u8; 32] },
+    /// A withdrawal with a fee note in output slot 2.
+    RelayedWithdraw { amount: u128, recipient_account: [u8; 32], fee: Fee },
 }
 
 impl Request {
+    /// Build a withdrawal that compensates the relayer from the input notes.
+    pub fn relayed_withdrawal(
+        domain: Fr,
+        recipient_account: [u8; 32],
+        amount: u128,
+        fee_recipient: &Descriptor,
+        fee_amount: u128,
+    ) -> Result<Self> {
+        fee_recipient.validate_recipient(domain)?;
+        Ok(Self::RelayedWithdraw {
+            amount,
+            recipient_account,
+            fee: Fee { to: Box::new(RecipientKeys::of(fee_recipient)), amount: fee_amount },
+        })
+    }
+
     /// Build a relayed transfer from the recipient and the quoted fee descriptor.
     pub fn relayed_transfer(
         domain: Fr,
@@ -322,7 +339,9 @@ pub fn plan(
 ) -> Result<Plan> {
     let (amount, withdrawal) = match request {
         Request::Transfer { amount, .. } => (*amount, false),
-        Request::Withdraw { amount, .. } => (*amount, true),
+        Request::Withdraw { amount, .. } | Request::RelayedWithdraw { amount, .. } => {
+            (*amount, true)
+        }
     };
     if amount == 0 {
         return Err(refuse("an amount of zero"));
@@ -330,20 +349,21 @@ pub fn plan(
     if amount > MAX_AMOUNT {
         return Err(refuse("an amount out of range"));
     }
-    let relayer_fee = match request {
-        Request::Transfer { to, fee: Some(fee), .. } => {
-            if fee.amount == 0 {
-                return Err(refuse("a relayer fee of zero"));
-            }
-            if fee.amount > MAX_AMOUNT {
-                return Err(refuse("a relayer fee out of range"));
-            }
-            if fee.to.as_ref() == to.as_ref() {
+    let fee = match request {
+        Request::Transfer { to, fee, .. } => {
+            if fee.as_ref().is_some_and(|fee| fee.to == *to) {
                 return Err(refuse("the relayer's fee descriptor is the recipient's"));
             }
-            fee.amount
+            fee.as_ref()
         }
-        Request::Transfer { fee: None, .. } | Request::Withdraw { .. } => 0,
+        Request::RelayedWithdraw { fee, .. } => Some(fee),
+        Request::Withdraw { .. } => None,
+    };
+    let relayer_fee = match fee {
+        Some(fee) if fee.amount == 0 => return Err(refuse("a relayer fee of zero")),
+        Some(fee) if fee.amount > MAX_AMOUNT => return Err(refuse("a relayer fee out of range")),
+        Some(fee) => fee.amount,
+        None => 0,
     };
     let withdrawal_fee = if withdrawal {
         if terms.withdrawal_fee == 0 || terms.withdrawal_fee > MAX_AMOUNT {
@@ -389,10 +409,13 @@ pub fn plan(
                 None => PlannedOutput::Dummy { note_key_index: fresh_index()? },
             },
         ],
-        Request::Withdraw { .. } => [
+        Request::Withdraw { .. } | Request::RelayedWithdraw { .. } => [
             own_output(fresh_index, change)?,
             PlannedOutput::Dummy { note_key_index: fresh_index()? },
-            PlannedOutput::Dummy { note_key_index: fresh_index()? },
+            match fee {
+                Some(fee) => PlannedOutput::Recipient { to: fee.to.clone(), amount: fee.amount },
+                None => PlannedOutput::Dummy { note_key_index: fresh_index()? },
+            },
         ],
     };
     let recovery =
@@ -409,7 +432,8 @@ pub fn plan(
         public_amount_out: if withdrawal { amount } else { 0 },
         withdrawal_fee,
         recipient_account: match request {
-            Request::Withdraw { recipient_account, .. } => Some(*recipient_account),
+            Request::Withdraw { recipient_account, .. }
+            | Request::RelayedWithdraw { recipient_account, .. } => Some(*recipient_account),
             Request::Transfer { .. } => None,
         },
         recovery,

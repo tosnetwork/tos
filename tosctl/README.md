@@ -445,6 +445,20 @@ shield status            What the chain and the relayer say about relayed spends
 shield audit-ceremony    Audit the proving material without a chain
 ```
 
+For a Tor withdrawal, use `shield withdraw --name NAME --amount AMOUNT --to ADDRESS
+--relayer PROFILE` with the same proving options as `shield send`. The amount
+must be a pool denomination and the address must be on workchain 0. The
+relayer funds the message and receives a private fee note. The pool fee and
+relayer fee are both paid from the input notes, in addition to the payout.
+The payout address, amount and time are public. Use an updated relayer
+provider that accepts withdrawal bodies. The existing relay network gates apply:
+localnet is supported, public testnet requires explicit opt-in on both sides,
+and mainnet is disabled. If submission is uncertain, use
+`shield status` and verified sync to track the original request.
+
+For an isolated local network, `--from WALLET` selects the existing direct
+withdrawal path.
+
 ### `tosctl pool` -- Staking pool management
 
 ```
