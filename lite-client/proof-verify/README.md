@@ -73,7 +73,10 @@ refused.
   and fully contained in the proof.
 * `account`: `-1:<hex>` or `0:<hex>`.
 * `get_methods`: at most 16, each run on the same proven account state; requires
-  `account`. Arguments are listed bottom first, in the order the method takes
+  `account`. Method names contain letters, digits or underscores, optionally
+  followed by one `?` or `!` suffix (for example `processed?`); the suffix is
+  included in the method selector. Names remain limited to 128 bytes.
+  Arguments are listed bottom first, in the order the method takes
   them. Argument entries: `{"type":"null"}`, `{"type":"int","value":"<decimal>"}`,
   `{"type":"cell","boc":"<base64>"}`, `{"type":"slice","boc":"<base64>"}`,
   `{"type":"tuple","items":[...]}`.
