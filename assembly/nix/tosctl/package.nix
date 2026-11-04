@@ -67,13 +67,14 @@ in rustPlatform.buildRustPackage ({
   # which another user can modify, so these tests cannot pass in any sandbox directory; that is
   # the check working, not a defect. The VM acceptance test exercises the same configuration
   # persistence (private mode, symlink and unsafe-directory refusals) on a real system, and all
-  # five run in the repository's Rust CI. The receipt counts them as "filtered out".
+  # six run in the repository's Rust CI. The receipt counts them as "filtered out".
   checkFlags = [ "--exact" ] ++ lib.concatMap (name: [ "--skip" name ]) ([
     "commands::nodectl::utils::tests::save_config_is_private_and_refuses_a_linked_target"
     "commands::nodectl::utils::tests::node_control_config_opens_the_vault_for_a_vault_key"
     "commands::nodectl::utils::tests::node_control_config_names_the_fix_for_a_non_extractable_key"
     "commands::nodectl::config_node_cmd::tests::node_add_refuses_a_non_extractable_control_client_secret"
     "commands::nodectl::agent_cmd::tests::legacy_generation_commands_require_explicit_choice"
+    "commands::nodectl::agent_cmd::task_vault_tests::via_agent_task_releases_outer_file_vault_before_delegation"
   ] ++ lib.optionals shielded [
     # The shield store persists state, pointers, locks and the journal under the same
     # private-directory rule, so every test that opens an instance on disk is refused in the
