@@ -7,7 +7,13 @@ use contracts::{
 };
 
 fn send(bc: &mut Blockchain, from: &MsgAddressInt, to: &MsgAddressInt, body: Cell) -> SendResult {
-    recorded_send(bc, MessageBuilder::internal(from, to, TOS / 4).body(body).build(), to)
+    recorded_send(
+        bc,
+        MessageBuilder::internal(from, to, TOS.checked_div(4).expect("message funding divisor"))
+            .body(body)
+            .build(),
+        to,
+    )
 }
 
 fn recorded_send(
@@ -123,7 +129,11 @@ fn signed_call(
         0,
         seqno,
         bc.now().checked_add(300).unwrap(),
-        &AgentCheckedContractCallV2 { target: target.clone(), value: TOS / 4, body },
+        &AgentCheckedContractCallV2 {
+            target: target.clone(),
+            value: TOS.checked_div(4).expect("message funding divisor"),
+            body,
+        },
     )
     .unwrap();
     let digest = AgentAccountContract::controller_hash_to_sign(account, 42, &payload).unwrap();
@@ -147,9 +157,15 @@ fn journey(disputed: bool) {
     // leaving size limits absent here would execute the fallback branch only
     // in Rust and compare different instruction paths and gas totals.
     f.bc.set_size_limits_config(chain_block::SizeLimitsConfig::default()).unwrap();
-    let buyer = f.bc.treasury("journey-buyer", 100 * TOS).unwrap();
-    let verifier = f.bc.treasury("journey-verifier", 100 * TOS).unwrap();
-    let outsider = f.bc.treasury("journey-outsider", 100 * TOS).unwrap();
+    let buyer =
+        f.bc.treasury("journey-buyer", TOS.checked_mul(100).expect("treasury funding overflow"))
+            .unwrap();
+    let verifier =
+        f.bc.treasury("journey-verifier", TOS.checked_mul(100).expect("treasury funding overflow"))
+            .unwrap();
+    let outsider =
+        f.bc.treasury("journey-outsider", TOS.checked_mul(100).expect("treasury funding overflow"))
+            .unwrap();
     let controller = SigningKey::from_bytes(&[0x62; 32]);
     let attestor = SigningKey::from_bytes(&[0x63; 32]);
     let account_init = AgentAccountInit {
@@ -157,7 +173,7 @@ fn journey(disputed: bool) {
         controller_pubkey: controller.verifying_key().to_bytes(),
         deployment_id: [0x64; 32],
         max_per_tx: TOS,
-        daily_limit: 2 * TOS,
+        daily_limit: TOS.checked_mul(2).expect("budget or limit overflow"),
         default_task_timeout_secs: 3600,
         metadata_hash: Some(f.object_id),
         service_endpoint_hash: None,
@@ -168,7 +184,7 @@ fn journey(disputed: bool) {
         buyer.address(),
         &account,
         AgentAccountContract::build_state_init(&account_init).unwrap(),
-        5 * TOS,
+        TOS.checked_mul(5).expect("account funding overflow"),
     );
     // Canonical fixture manifest binds execution address, code and authority.
     // Binding it into the registry does not grant that registry spending rights.
@@ -193,7 +209,7 @@ fn journey(disputed: bool) {
         creator: buyer.address().clone(),
         assigned_agent: Some(account.clone()),
         verifier: Some(verifier.address().clone()),
-        budget: 2 * TOS,
+        budget: TOS.checked_mul(2).expect("budget or limit overflow"),
         deadline: u64::from(f.bc.now()).checked_add(3600).unwrap(),
         review_period: 3600,
         settlement_policy_hash: manifest,
@@ -207,7 +223,7 @@ fn journey(disputed: bool) {
         buyer.address(),
         &escrow,
         TaskEscrowContract::build_state_init(&init).unwrap(),
-        3 * TOS,
+        TOS.checked_mul(3).expect("escrow funding overflow"),
     );
     let protected = f.bc.get_account(&escrow).unwrap().get_data_hash();
     send(&mut f.bc, outsider.address(), &escrow, TaskEscrowContract::accept(1).unwrap())
@@ -276,7 +292,7 @@ fn journey(disputed: bool) {
         .expect_success();
         assert_eq!(task_status(&f.bc, &escrow), 7);
     }
-    let payout = if disputed { TOS / 2 } else { TOS };
+    let payout = if disputed { TOS.checked_div(2).expect("split payout divisor") } else { TOS };
     let digest = if disputed {
         contracts::resolve_domain_hash(42, &escrow, &result_hash, &dispute_hash, payout)
     } else {
@@ -312,10 +328,14 @@ fn journey(disputed: bool) {
     send(&mut f.bc, payer, &escrow, terminal.clone()).expect_success();
     assert_eq!(task_status(&f.bc, &escrow), 3);
     let paid_after = balance(&f.bc, &account);
-    assert!(paid_after > paid_before && paid_after - paid_before <= payout);
-    assert!(paid_after - paid_before > payout - TOS / 100);
-    assert!(balance(&f.bc, buyer.address()) > refund_before + TOS);
-    assert!(balance(&f.bc, &escrow) < TOS / 100);
+    let paid_delta = paid_after.checked_sub(paid_before).expect("recipient balance decreased");
+    let fee_tolerance = TOS.checked_div(100).expect("fee tolerance divisor");
+    let minimum_payout = payout.checked_sub(fee_tolerance).expect("payout below fee tolerance");
+    let minimum_refund = refund_before.checked_add(TOS).expect("refund balance bound overflow");
+    assert!(paid_delta > 0 && paid_delta <= payout);
+    assert!(paid_delta > minimum_payout);
+    assert!(balance(&f.bc, buyer.address()) > minimum_refund);
+    assert!(balance(&f.bc, &escrow) < fee_tolerance);
     let snapshot = f.bc.snapshot();
     let mut restarted = Blockchain::with_global_version(16).unwrap();
     restarted.set_workchain(-1);
