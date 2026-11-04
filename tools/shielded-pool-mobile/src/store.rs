@@ -114,6 +114,20 @@ impl StateStore {
         directory.sync_all()?;
         Self::from_directory(child, cipher)
     }
+
+    pub(crate) fn open_existing_wallet(root: &Path, cipher: RecordCipher) -> Result<Option<Self>> {
+        let directory = Self::open_wallet_root(root)?;
+        Self::require_absent(&directory, &backup::restore_name(&cipher)?)?;
+        let name = Self::wallet_name(&cipher)?;
+        match Self::open_child(&directory, &name) {
+            Ok(child) => {
+                directory.sync_all()?;
+                Self::from_directory(child, cipher).map(Some)
+            }
+            Err(StoreError::Io(error)) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
     fn open_wallet_root(root: &Path) -> Result<File> {
         if !root.is_absolute() {
             return Err(StoreError::UnsafeFile);

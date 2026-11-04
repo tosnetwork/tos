@@ -1368,11 +1368,14 @@ pub unsafe extern "C" fn tos_shielded_replay_pending_status(
         let binding = owner.wallet_binding(bytes)?;
         let mut key = Zeroizing::new([0; 32]);
         key.copy_from_slice(unsafe { slice::from_raw_parts(seed, 32) });
-        let mut store = crate::store::StateStore::open_wallet(
+        let Some(mut store) = crate::store::StateStore::open_existing_wallet(
             std::path::Path::new(root),
             crate::sealed::RecordCipher::derive(&key, binding),
         )
-        .map_err(|_| Error::InvalidInput)?;
+        .map_err(|_| Error::InvalidInput)?
+        else {
+            return Ok(Zeroizing::new(vec![0]));
+        };
         let status = match store.pending_payment().map_err(|_| Error::InvalidInput)? {
             None => 0,
             Some(payment) if ledger.accepted_intents().contains(&payment.intent) => 2,
@@ -1448,8 +1451,9 @@ pub unsafe extern "C" fn tos_shielded_replay_backup_file(
             if metadata.len() != 0 {
                 return Err(Error::InvalidInput);
             }
-            let mut store = StateStore::open_wallet(Path::new(root), cipher)
-                .map_err(|_| Error::InvalidInput)?;
+            let mut store = StateStore::open_existing_wallet(Path::new(root), cipher)
+                .map_err(|_| Error::InvalidInput)?
+                .ok_or(Error::InvalidInput)?;
             store.export_backup(&mut file).map_err(|_| Error::InvalidInput)?;
             file.sync_all().map_err(|_| Error::InvalidInput)?;
         } else {
@@ -2214,6 +2218,19 @@ mod tests {
             assert_eq!(transfer(path, &binding, 0).status, 1);
             assert_eq!(file.metadata().unwrap().len(), length);
             let restored_path = restored_root.to_str().unwrap().as_bytes();
+            let empty = unsafe {
+                Box::from_raw(tos_shielded_replay_pending_status(
+                    &observed,
+                    key.as_ptr(),
+                    key.len(),
+                    restored_path.as_ptr(),
+                    restored_path.len(),
+                    binding.as_ptr(),
+                    binding.len(),
+                ))
+            };
+            assert_eq!(&*empty.bytes, &[0]);
+            assert_eq!(std::fs::read_dir(&restored_root).unwrap().count(), 0);
             assert_eq!(transfer(restored_path, &wrong_genesis, 1).status, 1);
             assert_eq!(transfer(restored_path, &binding, 1).status, 0);
             assert_eq!(transfer(restored_path, &binding, 1).status, 1);
