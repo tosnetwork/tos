@@ -173,7 +173,108 @@ policy; do not invent backward-compatibility requirements for them. Likewise,
 proposed features need design-level invariants until implementation and real
 execution evidence exist. A design cannot be counted as a tested capability.
 
-## 5. Proposed execution program
+## 5. Incident-driven acceptance engineering
+
+### Threat assumptions and evidence states
+
+Selected public incident analyses within the five-year window from 2021-11-04
+through 2026-11-04 expose failures across implementation, consensus, contracts,
+operations and software delivery. This is a mechanism-focused selection, not
+an exhaustive incident census or a claim to have reviewed every year equally. Translate the failure mechanism
+into a reachable TOS scenario before adding a gate. Similar terminology does
+not establish an identical architecture or vulnerability. Historical incidents
+motivate these checks; they do not establish that TOS has the same defect.
+
+Every acceptance case declares its adversary and trust boundary: unauthenticated
+peer, authenticated but malicious participant, compromised signing authority,
+malicious contract/caller, untrusted state provider, or compromised build input.
+Record the allowed faulty weight, authorized key set, network assumptions,
+trusted checkpoints and storage guarantees. Do not promise safety after those
+assumptions are exceeded. Still test detection, containment and recovery for
+credible outside-model events, with their weaker guarantee stated explicitly.
+
+Use these evidence states in each release's coverage register:
+
+- **Observed mechanism:** a source-inspected test or harness exists. It needs a
+  run on the release candidate and does not automatically cover the whole row.
+- **Proposed extension:** the scenario or stronger oracle remains work to do.
+- **Not applicable:** an owner-reviewed architecture/deployment reason shows the
+  attack surface is absent. Reassess when that boundary is introduced.
+- **Executed result:** attach a separate pass, fail, skipped or blocked receipt
+  to the exact case and commit. Source presence is never a substitute.
+
+The matrix below is a set of proposed acceptance obligations. Existing anchors
+identify partial reusable mechanisms only. No row is certified complete here.
+The broad matrix in section 4 identifies domains; A1-A13 below refine specific
+acceptance risks within those domains. Not-applicable, skipped, blocked, timed-out
+and unsupported cases remain visible and outside the pass numerator. No item may
+disappear because its harness is inconvenient or a run timed out.
+
+### Failure-mechanism acceptance matrix
+
+| ID and security property | Reachable adversarial or failure scenario | Oracle, control and acceptance condition | Existing anchor / remaining work |
+| --- | --- | --- | --- |
+| A1: Execution terminates and is deterministic | Exercise deploy/use, evict, reload, upgrade and reuse with cold/warm caches; replay valid historical inputs across supported versions and architectures | Compare complete effects against independent assertions; bound compilation/retry work; detect repeated non-progress. Mutate invalidation/version binding to make the case fail | Root comparison mechanisms exist; systematic cache-lifecycle and version replay is proposed |
+| A2: Valid traffic cannot consume unbounded work | Replay correctly signed but obsolete messages; churn peers and requests; exceed every per-source and aggregate count/byte budget while legitimate work continues | Measure actual retained memory, queue/CPU/disk work and legitimate progress under a declared load envelope, then resource recovery. Removing the bound must trigger the observer | [Admission tests](test-security-boundaries.cpp) and [cache retention tests](test-liteserver-cache.cpp) exist; combined sustained consensus-load qualification is proposed |
+| A3: Malformed input cannot halt the process or fork interpretation | Send malformed, deeply nested, truncated, noncanonical and boundary-sized messages through real ingress; mutate every parser field affecting identity or execution | Exact refusal without unexpected state change; no crash, undefined behavior or unbounded work; valid near-boundary controls still execute; compare independent decoders | [Exception and null-input tests](test-vm-exception-hardening.cpp) exist; broad structure-aware corpus and ingress coverage require an inventory |
+| A4: Finality is never fabricated from the wrong authority | Duplicate signers, omit weight, use unknown/expired/wrong-epoch keys, reorder messages around set transitions and restart signed state from a stale copy | Recompute signed weight and context independently; inspect conflicting votes/certificates and durable signing history. Arithmetic controls cover exact threshold, one below and rounding boundaries; certificate controls use the nearest reachable signer-weight subsets below and meeting the threshold | [Quorum arithmetic](test-quorum.cpp), [key rotation](test-pq-consensus-key-rotation.cpp), and [signing restore drills](integration/signing_fence_drills.py) exist; their composition remains a proposed acceptance case |
+| A5: Verification binds the exact object and trust root | Pair a well-formed proof, signature or receipt with the wrong network, account, payload, state root, session or verifier configuration; include empty/default/uninitialized authority cases | Each binding mutation is refused before value release or live-state import; a valid counterpart succeeds. No caller-controlled metadata may assert that verification already happened | Existing review requirements cover these bindings; enumerate each proof/receipt consumer and add missing independent controls before claiming coverage |
+| A6: Asynchronous contract settlement remains solvent | Interleave payment, receipt, bounce, refund and retry messages; fail each action/hop; vary fee/storage prices and expiry at exact boundaries | Check per-transaction balance/obligation/reserve accounting after fees and actual phase outcomes; no duplicate release and accounting stays safe at every step. Under declared delivery, timing and authority assumptions, complete release/refund/reconciliation within the preapproved bound. Mutate sender/nonce checks to expose the intended invariant | Real transaction-root mechanisms exist; each contract needs its own executable accounting model and cascade coverage |
+| A7: Recovery does not trust an attacker-selected state | Supply structurally valid but wrong-root state, stale checkpoints, interrupted imports, truncated files and disk/write failures; restart before/after promotion or cleanup | Verify trusted identity/root before promotion; preserve or recover the valid durable state; release temporary resources; distinguish transient retry from permanent refusal | [State-download recovery](test-state-download-recovery.cpp) uses production paths with fixture-supplied trusted proof metadata; [cleanup crash recovery](integration/crash_boundary_recovery.py) covers one cut point. End-to-end trust establishment and all write cuts remain separate work |
+| A8: Released bytes are the reviewed bytes | Replace a dependency, compiler/build input, generated contract, cached package or published artifact; attempt publication using a revoked or over-broad release identity in an isolated exercise | Verify pinned immutable inputs and artifact identities against independently retained expectations; reject substitution and unauthorized publication. Document residual trust in the build/release authority | Existing artifact-reproduction principles apply; dependency provenance, publisher privilege review and revocation rehearsal are proposed process gates |
+| A9: Operational recovery restores the intended chain | Combine overload or partition with restart, partial rollout and stale state; exercise the approved recovery procedure with a declared validator-weight subset slow or absent, within the recovery assumptions | Independent observers agree on finalized identities, account results and membership after recovery; retained signing history remains safe; recovery time and lost/unknown operations are explicitly accounted for | Local crash and signing drills exist; a combined release rehearsal and measured recovery objectives are proposed |
+| A10: Missing initialization never grants authority | Exercise fresh, partially initialized and upgraded instances with empty/default roots, zero-valued identifiers, missing owners and interrupted migration | Uninitialized state cannot authorize proof acceptance, release or privileged mutation; exact valid initialization enables only its intended authority. Remove the initialization guard to show red | Proposed explicit cases for each authority-bearing state machine; apply only to existing components, with old-to-new state fixtures where supported |
+| A11: One logical value-moving operation has at most one business effect | Crash before/after durable intent, signing, broadcast, execution and receipt persistence; lose replies; reorder or duplicate callbacks; retry concurrently from two workers | Reconcile by transaction identity and durable intent; resubmit only the same signed attempt where allowed; no new attempt while the prior effect is unknown. Count the actual chain effect, not API calls or signatures | [Readiness/relayer controls](pq-readiness/test_controls.py) cover orchestration and durable unknown states; full real-chain cut-point and concurrent-worker coverage is proposed |
+| A12: Partition and recovery respect weighted consensus assumptions | Partition by reachable validator-weight subsets below, meeting and above configured decision thresholds; heal with delayed/reordered votes, stale nodes and a set transition | Within the stated fault model, no conflicting finalized identity; when timing and honest connectivity assumptions recover, progress returns within the preapproved envelope. Outside-model runs report containment/recovery only, never a safety proof | Quorum arithmetic and signing/key-transition anchors exist; combined weighted-network fault exploration is proposed. Node counts and a few successful seeds are insufficient |
+| A13: Economic/accounting failure is detected and contained | Where applicable, violate a reserve/accounting invariant or supply stale/manipulated market data while operations are pending | Independently recompute obligations and observe a bounded-latency alert plus the specifically approved refusal, pause or escalation behavior; preserve pending-operation evidence and reconcile recovery | Proposed for deployed components with an explicit economic model and authorized response. Absent integrations are not applicable with a recorded reason; design-only resource-pricing features cannot claim implementation or acceptance |
+
+The state-download anchor deliberately supplies trusted proof metadata through
+its fixture manager. Do not use it to claim that trust-root acquisition itself
+was tested. Likewise, signature-valid messages may still be adversarial, and
+arithmetic threshold tests do not prove cryptographic certificate verification.
+
+### Conditional application and economic tests
+
+Bridges, wrapped assets, price feeds, lending, governance execution and external
+signing services require additional models only where they exist in the
+approved deployment. Before marking a row applicable, identify the real contract,
+trusted parties, external finality rule and value at risk. Otherwise record a
+reasoned not-applicable decision rather than inventing a deployed capability.
+
+For an applicable value-release integration, test forged or replayed receipts,
+wrong-domain proofs, stale or reorganized external state, signer compromise
+within and beyond the assumed threshold, and delayed/censored delivery. Verify
+locked collateral versus minted/released obligations under the specified model.
+For an applicable market-dependent system, test stale/manipulated observations,
+liquidity shocks, precision/rounding boundaries and feedback between price,
+collateral and incentives. Correct execution alone does not prove economic
+stability. A simulator demonstrates its stated model, not real-market safety.
+
+### Make each matrix row executable and falsifiable
+
+Before a release relies on a row, create a case record with a stable ID, owner,
+source/test path, command, setup and cleanup, exact candidate configuration,
+preconditions, failure injection, independent expected outcome and red control.
+Specify the safety predicate and the liveness/resource envelope separately.
+Choose measurable limits from the protocol and deployment budget before seeing
+the result, and obtain the responsible owner's approval. Undefined load, duration,
+resource, recovery or alert thresholds make the affected acceptance case blocked,
+not passed. Do not invent a universal timeout or throughput target here.
+
+Record intermediate and final state, not only the last success flag. Run both
+isolated faults and risk-driven combinations, such as cache churn plus replay,
+partition plus key rotation, or disk failure during upgrade. Preserve the
+minimal triggering sequence and test sibling paths. Use independently stated protocol rules as the oracle, then independent observers
+that do not share the same helper, cache or trust assertion as the implementation
+under test; explicitly document unavoidable shared dependencies.
+
+An incident regression needs: a confirmed failure mechanism, a minimized local
+reproducer, the guard-removal or old-behavior red result, a corrected green run,
+and a classification of the coverage gap. Never reproduce harmful traffic on
+shared or live networks without separate operational authorization. Run release
+credential and recovery exercises with isolated identities and disposable state.
+
+## 6. Proposed execution program
 
 1. **Fast, targeted feedback.** Keep unit, property, contract and frozen-vector
    tests close to the changed boundary. Test the intended error and include a
@@ -201,7 +302,7 @@ cadence, CI budgets, hosts and owners must be established in scoped changes;
 this document does not schedule jobs, allocate infrastructure, authorize live
 fault injection or activate a network feature.
 
-## 6. Minimum evidence record for a claim
+## 7. Minimum evidence record for a claim
 
 Record the following together so another person can reproduce and challenge it:
 
