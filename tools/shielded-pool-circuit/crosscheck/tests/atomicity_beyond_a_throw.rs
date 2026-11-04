@@ -21,7 +21,7 @@
 //! contract would be testing the edit.
 
 use ark_ff::PrimeField;
-use chain_block::SizeLimitsConfig;
+use chain_block::{BuilderData, IBitstring, SizeLimitsConfig, SliceData};
 use shielded_pool_circuit::field::Fr;
 use shielded_pool_circuit::wire;
 use shielded_pool_circuit_crosscheck::pool::{Pool, PoolState, DENOMINATION, WITHDRAWAL_FEE};
@@ -273,5 +273,41 @@ fn a_deposit_refused_by_the_state_limit_changes_nothing() {
         pool.state_snapshot().expect("the state"),
         before,
         "a deposit the chain refused to store left the state changed"
+    );
+}
+
+/// A snapshot must also distinguish fields that its semantic getters omit.
+#[test]
+fn the_snapshot_detects_a_change_only_to_the_reserve_floor() {
+    let mut pool = Pool::deploy().expect("deploy the pool");
+    let before = pool.state_snapshot().expect("before snapshot");
+    let floor_before = pool.get("reserve_floor").expect("before reserve floor");
+    let mut account = pool.bc.get_account(&pool.addr).expect("pool account").clone();
+    let data = account.get_data().expect("pool data");
+    let bits = data.bit_length();
+    let mut slice = SliceData::load_cell(data.clone()).expect("state slice");
+    let prefix = slice.get_next_bits(bits - 1).expect("all but the last reserve bit");
+    let last = slice.get_next_bit().expect("last reserve bit");
+    let mut changed = BuilderData::new();
+    changed.append_raw(&prefix, bits - 1).expect("unchanged root bits");
+    if last {
+        changed.append_bit_zero().expect("changed reserve bit");
+    } else {
+        changed.append_bit_one().expect("changed reserve bit");
+    }
+    for index in 0..data.references_count() {
+        changed
+            .checked_append_reference(data.reference(index).expect("original reference"))
+            .expect("unchanged state reference");
+    }
+    let changed = changed.into_cell().expect("changed data cell");
+    assert_ne!(changed.repr_hash(), data.repr_hash(), "the sensitivity input did not change");
+    assert!(account.set_data(changed), "replace only pool data");
+    pool.bc.set_account(pool.addr.clone(), account);
+    assert_ne!(pool.get("reserve_floor").expect("valid changed reserve"), floor_before);
+    assert_ne!(
+        pool.state_snapshot().expect("valid after snapshot"),
+        before,
+        "a snapshot ignored a changed persistent reserve field"
     );
 }

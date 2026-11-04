@@ -768,7 +768,15 @@ impl Pool {
             fields.push(self.get(method)?);
         }
         let (recent, epoch) = self.anchor_rings()?;
-        Ok(PoolState { fields, recent, epoch })
+        let data_hash = *self
+            .bc
+            .get_account(&self.addr)
+            .ok_or_else(|| CrossCheckError::Sandbox("the pool has no account".to_string()))?
+            .get_data()
+            .ok_or_else(|| CrossCheckError::Sandbox("the pool has no data".to_string()))?
+            .repr_hash()
+            .as_array();
+        Ok(PoolState { fields, recent, epoch, data_hash })
     }
 
     /// Set the pool's balance, breaking the backing invariant on purpose.
@@ -867,6 +875,9 @@ pub struct Phases {
 /// Every persistent field of the pool, for comparing before with after.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PoolState {
+    // Bind every data bit and reference, including fields not exposed by the getters.
+    // Account balances and transaction fees are deliberately outside this data snapshot.
+    data_hash: [u8; 32],
     fields: Vec<String>,
     recent: Vec<AnchorEntry>,
     epoch: Vec<AnchorEntry>,
