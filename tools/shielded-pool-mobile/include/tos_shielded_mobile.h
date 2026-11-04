@@ -110,6 +110,13 @@ TosShieldedResponse *tos_shielded_replay_summary(const TosShieldedReplay *sessio
 TosShieldedResponse *tos_shielded_replay_receive(const TosShieldedReplay *session, const uint8_t *seed,
                                                  size_t seed_length, const uint8_t *root, size_t root_length,
                                                  const uint8_t *binding, size_t binding_length);
+/* Ready replay; decimal minimum attached nanoTOS, excluding wallet fees. */
+TosShieldedResponse *tos_shielded_replay_deposit_value(const TosShieldedReplay *session, uint64_t amount);
+/* Same authenticated replay and index reservation as receive. Returns body BOC. */
+TosShieldedResponse *tos_shielded_replay_self_deposit(
+    const TosShieldedReplay *session, const uint8_t *seed, size_t seed_length,
+    const uint8_t *root, size_t root_length, const uint8_t *binding, size_t binding_length,
+    uint64_t amount, uint64_t query_id);
 
 /* Read the unresolved payment against the same wallet-bound Ready replay.
  * Payload: 0 no record, 1 intent absent, 2 intent accepted. Keeps the record. */
