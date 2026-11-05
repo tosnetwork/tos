@@ -133,6 +133,23 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(recovered.reconcile(req.identity), "unknown")
         self.assertEqual((self.adapter.prepares, len(self.adapter.writes)), (1, 1))
 
+    def test_execution_evidence_after_restart_releases_the_only_pending_slot(self):
+        req = request()
+        self.assertEqual(self.engine.submit(req), "broadcast")
+        reopened = Journal(self.path, release(), max_pending=1, max_reserved=10)
+        self.addCleanup(reopened.close)
+        recovered = Engine(reopened, self.adapter, clock=lambda: 1001)
+        later = request(n=31)
+        self.assertEqual(recovered.reconcile(req.identity), "broadcast")
+        with self.assertRaisesRegex(Refused, "pending queue or aggregate funding cap reached"):
+            recovered.submit(later)
+        self.adapter.outcome = "executed"
+        self.assertEqual(recovered.reconcile(req.identity), "executed")
+        self.assertEqual(recovered.submit(req), "executed")
+        self.assertEqual((self.adapter.prepares, len(self.adapter.writes)), (1, 1))
+        self.assertEqual(recovered.submit(later), "broadcast")
+        self.assertEqual((self.adapter.prepares, len(self.adapter.writes)), (2, 2))
+
     def test_conflicting_request_cannot_steal_a_reserved_nullifier(self):
         req = request()
         self.engine.submit(req)
