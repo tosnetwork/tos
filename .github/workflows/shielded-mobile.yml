@@ -5,6 +5,10 @@ on:
       - 'tools/shielded-pool-mobile/**'
       - 'tools/shielded-pool-codec/**'
       - 'tools/shielded-pool-wallet/**'
+      - 'tools/shielded-pool-prover/**'
+      - 'tools/shielded-pool-ceremony/**'
+      - 'tools/bonded-relayer/client/**'
+      - 'tools/bonded-relayer/bond-codec/**'
       - 'tosctl/src/node-control/contracts/src/shielded_pool.rs'
       - 'tosctl/src/node-control/contracts/Cargo.toml'
       - 'tools/shielded-pool-circuit/**'
@@ -18,6 +22,20 @@ on:
 permissions:
   contents: read
 jobs:
+  proving:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Install pinned Rust
+        run: rustup toolchain install 1.97.1 --profile minimal --component clippy
+      - name: Lint and test payment staging with proving enabled
+        working-directory: tools/shielded-pool-mobile
+        run: |
+          cargo clippy --locked --features proving --all-targets -- -D warnings
+          cargo test --locked --features proving
   core:
     runs-on: ubuntu-24.04
     timeout-minutes: 20

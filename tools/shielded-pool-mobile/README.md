@@ -430,3 +430,22 @@ domain, scans the complete ledger, and commits the greater of the observed next
 index and the local high water before constructing the descriptor. An issuance
 failure after reservation consumes the index. The caller must recheck freshness
 before displaying the result and discard it if the operation was cancelled.
+
+## Tor withdrawals
+
+With `proving` enabled, `tos_shielded_payment_stage` accepts a withdrawal using
+an ordinary workchain-0 address in `recipient` and a decimal `withdrawal_fee`
+string. Read that fee from the authenticated replay info and include it in the
+user confirmation alongside `amount`, relay `fee`, and the full recipient.
+The SDK rejects a changed pool fee and unsupported workchains before proving.
+Omitting `withdrawal_fee` retains private-transfer descriptor semantics.
+
+The shared planner selects notes, reserves change and recovery indices,
+constructs the recovery ciphertext and binds the public payout to the proof.
+The exact BR1 submission is persisted before network submission. Existing
+recover/status/submit calls handle retry and restart without rebuilding a spend.
+A relay response is provisional until authenticated pool history confirms it;
+a bounced payout is recovered through the pool's authenticated recovery history.
+Tor is required for relay traffic, with no direct RPC submission fallback.
+The ordinary payout recipient and amount remain public on chain. Balance
+synchronization still uses the configured RPC transport independently of Tor.

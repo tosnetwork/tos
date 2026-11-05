@@ -153,6 +153,12 @@ pub struct ConfirmedTransfer<'a> {
     pub quote_identity: &'a str,
 }
 
+#[cfg(all(unix, feature = "proving"))]
+enum PaymentRecipient<'a> {
+    Private(&'a Descriptor),
+    Withdrawal(&'a chain_block::MsgAddressInt),
+}
+
 /// Audited proving material tied to an authenticated pool selection.
 #[cfg(all(unix, feature = "proving"))]
 pub struct PaymentProver {
@@ -386,6 +392,79 @@ impl TosShieldedReplay {
         relay: RelayOffer,
         fresh: &mut dyn FnMut() -> shielded_pool_wallet::error::Result<Fr>,
     ) -> Result<RecoveredRelaySubmission> {
+        self.stage_confirmed_payment(
+            seed,
+            root,
+            prover,
+            PaymentRecipient::Private(transfer.recipient),
+            transfer.amount,
+            transfer.fee,
+            transfer.quote_identity,
+            proven_time,
+            relay,
+            fresh,
+        )
+    }
+
+    #[cfg(all(unix, feature = "proving"))]
+    fn withdrawal_account(
+        &self,
+        recipient: &chain_block::MsgAddressInt,
+        pool_fee: u128,
+    ) -> Result<[u8; 32]> {
+        if recipient.workchain_id() != 0 || pool_fee != self.terms.withdrawal_fee {
+            return Err(Error::InvalidInput);
+        }
+        recipient.address().get_bytestring(0).as_slice().try_into().map_err(|_| Error::InvalidInput)
+    }
+
+    /// Prepare a Tor withdrawal to the exact ordinary address the user reviewed.
+    #[cfg(all(unix, feature = "proving"))]
+    #[allow(clippy::too_many_arguments)]
+    pub fn stage_confirmed_withdrawal(
+        &self,
+        seed: &[u8; 32],
+        root: &std::path::Path,
+        prover: &PaymentProver,
+        recipient: chain_block::MsgAddressInt,
+        amount: u128,
+        pool_fee: u128,
+        fee: u64,
+        quote_identity: &str,
+        proven_time: u32,
+        relay: RelayOffer,
+        fresh: &mut dyn FnMut() -> shielded_pool_wallet::error::Result<Fr>,
+    ) -> Result<RecoveredRelaySubmission> {
+        self.withdrawal_account(&recipient, pool_fee)?;
+        self.stage_confirmed_payment(
+            seed,
+            root,
+            prover,
+            PaymentRecipient::Withdrawal(&recipient),
+            amount,
+            fee,
+            quote_identity,
+            proven_time,
+            relay,
+            fresh,
+        )
+    }
+
+    #[cfg(all(unix, feature = "proving"))]
+    #[allow(clippy::too_many_arguments)]
+    fn stage_confirmed_payment(
+        &self,
+        seed: &[u8; 32],
+        root: &std::path::Path,
+        prover: &PaymentProver,
+        recipient: PaymentRecipient<'_>,
+        amount: u128,
+        confirmed_fee: u64,
+        quote_identity: &str,
+        proven_time: u32,
+        relay: RelayOffer,
+        fresh: &mut dyn FnMut() -> shielded_pool_wallet::error::Result<Fr>,
+    ) -> Result<RecoveredRelaySubmission> {
         let RelayOffer { client, quote } = relay;
         let quote = client
             .restore_quote(&quote.envelope, &quote.status_token)
@@ -393,8 +472,8 @@ impl TosShieldedReplay {
         let terms = &quote.terms;
         // BR1 checks issuance against wall time when acquiring the offer.
         // A verified shard timestamp can precede that issuance.
-        if quote.identity != transfer.quote_identity
-            || terms.amount != transfer.fee
+        if quote.identity != quote_identity
+            || terms.amount != confirmed_fee
             || terms.slot != 2
             || u64::from(proven_time) >= terms.valid_until
         {
@@ -402,13 +481,30 @@ impl TosShieldedReplay {
         }
         let fee_bytes = STANDARD.decode(&terms.descriptor_b64).map_err(|_| Error::InvalidInput)?;
         let fee = Descriptor::from_bytes(&fee_bytes).map_err(|_| Error::InvalidInput)?;
-        let request = shielded_pool_wallet::plan::Request::relayed_transfer(
-            self.domain,
-            transfer.recipient,
-            transfer.amount,
-            &fee,
-            u128::from(terms.amount),
-        )
+        let withdrawal = match &recipient {
+            PaymentRecipient::Withdrawal(address) => Some((*address).clone()),
+            PaymentRecipient::Private(_) => None,
+        };
+        let request = if let PaymentRecipient::Withdrawal(address) = &recipient {
+            let account = self.withdrawal_account(address, self.terms.withdrawal_fee)?;
+            shielded_pool_wallet::plan::Request::relayed_withdrawal(
+                self.domain,
+                account,
+                amount,
+                &fee,
+                u128::from(terms.amount),
+            )
+        } else if let PaymentRecipient::Private(descriptor) = recipient {
+            shielded_pool_wallet::plan::Request::relayed_transfer(
+                self.domain,
+                descriptor,
+                amount,
+                &fee,
+                u128::from(terms.amount),
+            )
+        } else {
+            return Err(Error::InvalidInput);
+        }
         .map_err(|_| Error::InvalidInput)?;
         let State::Ready(ledger) = &self.state else { return Err(Error::InvalidInput) };
         let terms = shielded_pool_wallet::spend::Terms {
@@ -423,7 +519,7 @@ impl TosShieldedReplay {
             PaymentPreparation { request: &request, terms: &terms, proven_time },
             fresh,
         )?;
-        self.stage_private_transfer(seed, root, prover, prepared, proven_time, (client, quote))
+        self.stage_payment(seed, root, prover, prepared, withdrawal, proven_time, (client, quote))
     }
 
     /// Prove, sign and journal a confirmed payment before handing it to the
@@ -436,6 +532,21 @@ impl TosShieldedReplay {
         root: &std::path::Path,
         prover: &PaymentProver,
         payment: shielded_pool_wallet::spend::Prepared,
+        proven_time: u32,
+        relay: (br1_client::client::Client, br1_client::client::Quote),
+    ) -> Result<RecoveredRelaySubmission> {
+        self.stage_payment(seed, root, prover, payment, None, proven_time, relay)
+    }
+
+    #[cfg(all(unix, feature = "proving"))]
+    #[allow(clippy::too_many_arguments)]
+    fn stage_payment(
+        &self,
+        seed: &[u8; 32],
+        root: &std::path::Path,
+        prover: &PaymentProver,
+        payment: shielded_pool_wallet::spend::Prepared,
+        withdrawal: Option<chain_block::MsgAddressInt>,
         proven_time: u32,
         relay: (br1_client::client::Client, br1_client::client::Quote),
     ) -> Result<RecoveredRelaySubmission> {
@@ -462,8 +573,13 @@ impl TosShieldedReplay {
             return Err(Error::InvalidInput);
         }
 
-        let body =
-            Zeroizing::new(self.encode_private_transfer(seed, prover, payment, proven_time)?);
+        let body = Zeroizing::new(self.encode_private_transfer(
+            seed,
+            prover,
+            payment,
+            withdrawal,
+            proven_time,
+        )?);
         let request =
             self.persist_relay_submission(seed, root, &prover.binding, &body, &client, &quote)?;
         Ok(RecoveredRelaySubmission { request, quote, client, inputs_consumed: false })
@@ -477,6 +593,7 @@ impl TosShieldedReplay {
         seed: &[u8; 32],
         prover: &PaymentProver,
         payment: shielded_pool_wallet::spend::Prepared,
+        withdrawal: Option<chain_block::MsgAddressInt>,
         proven_time: u32,
     ) -> Result<Vec<u8>> {
         use shielded_pool_circuit::field::fr_to_be;
@@ -488,8 +605,8 @@ impl TosShieldedReplay {
         if self.receive_binding.as_ref() != Some(&prover.binding)
             || prover.client.execution_domain() != self.domain
             || payment.public.anchor_root != ledger.checkpoint().commitment_root
-            || payment.recovery_payload.is_some()
-            || payment.public.public_amount_out != Fr::from(0u64)
+            || payment.recovery_payload.is_some() != withdrawal.is_some()
+            || (payment.public.public_amount_out != Fr::from(0u64)) != withdrawal.is_some()
         {
             return Err(Error::InvalidInput);
         }
@@ -517,6 +634,19 @@ impl TosShieldedReplay {
             payment.sign(&PoolInstance::new(seed, self.domain)).map_err(|_| Error::Crypto)?;
         let public = signed.public;
         let intent_digest = fr_to_be(&public.transaction_intent_digest);
+        let coins = |value: Fr| -> Result<u128> {
+            let bytes = fr_to_be(&value);
+            if bytes[..16] != [0; 16] {
+                return Err(Error::InvalidInput);
+            }
+            Ok(u128::from_be_bytes(bytes[16..].try_into().map_err(|_| Error::InvalidInput)?))
+        };
+        let recovery_cell = match &signed.recovery_payload {
+            Some(payload) => {
+                shielded_pool_codec::byte_chain(payload).map_err(|_| Error::InvalidInput)?
+            }
+            None => chain_block::Cell::default(),
+        };
         let body = TransactBody {
             query_id: u64::from_be_bytes(
                 intent_digest[24..].try_into().map_err(|_| Error::InvalidInput)?,
@@ -524,9 +654,9 @@ impl TosShieldedReplay {
             anchor_kind: ANCHOR_CURRENT,
             anchor_id: 0,
             valid_until,
-            public_amount_out: 0,
-            withdrawal_fee: 0,
-            recipient: None,
+            public_amount_out: coins(public.public_amount_out)?,
+            withdrawal_fee: coins(public.withdrawal_fee)?,
+            recipient: withdrawal,
             intent_digest,
             anchor_root: fr_to_be(&public.anchor_root),
             nullifiers: [fr_to_be(&public.nullifier_0), fr_to_be(&public.nullifier_1)],
@@ -539,8 +669,8 @@ impl TosShieldedReplay {
             groth16_proof: groth16_proof_cell(&proof.a, &proof.b, &proof.c)
                 .map_err(|_| Error::Crypto)?,
             recovery_owner_commitment: fr_to_be(&signed.recovery_owner_commitment),
-            recovery_payload: None,
-            recovery_cell: chain_block::Cell::default(),
+            recovery_payload: signed.recovery_payload,
+            recovery_cell,
             auth_bundle: auth_bundle(
                 [&signed.input_keys[0], &signed.input_keys[1]],
                 [&signed.signatures[0], &signed.signatures[1]],
@@ -944,6 +1074,8 @@ pub unsafe extern "C" fn tos_shielded_payment_stage(
         amount: String,
         fee: String,
         quote_identity: String,
+        #[serde(default)]
+        withdrawal_fee: Option<String>,
         proven_time: u32,
     }
     if offer.is_null() {
@@ -968,8 +1100,6 @@ pub unsafe extern "C" fn tos_shielded_payment_stage(
         {
             return Err(Error::InvalidInput);
         }
-        let bytes = STANDARD.decode(&request.recipient).map_err(|_| Error::InvalidInput)?;
-        let recipient = Descriptor::from_bytes(&bytes).map_err(|_| Error::InvalidInput)?;
         let mut key = Zeroizing::new([0; 32]);
         key.copy_from_slice(unsafe { slice::from_raw_parts(seed, seed_len) });
         let mut fresh = || loop {
@@ -983,20 +1113,46 @@ pub unsafe extern "C" fn tos_shielded_payment_stage(
                 }
             }
         };
-        unsafe { &*session }.stage_confirmed_transfer(
-            &key,
-            root,
-            unsafe { &*prover },
-            ConfirmedTransfer {
-                recipient: &recipient,
-                amount: request.amount.parse().map_err(|_| Error::InvalidInput)?,
-                fee: request.fee.parse().map_err(|_| Error::InvalidInput)?,
-                quote_identity: &request.quote_identity,
-            },
-            request.proven_time,
-            *offer,
-            &mut fresh,
-        )
+        let amount = request.amount.parse().map_err(|_| Error::InvalidInput)?;
+        let fee = request.fee.parse().map_err(|_| Error::InvalidInput)?;
+        let session = unsafe { &*session };
+        let prover = unsafe { &*prover };
+        match request.withdrawal_fee {
+            Some(pool_fee) => {
+                let recipient = request.recipient.parse().map_err(|_| Error::InvalidInput)?;
+                session.stage_confirmed_withdrawal(
+                    &key,
+                    root,
+                    prover,
+                    recipient,
+                    amount,
+                    pool_fee.parse().map_err(|_| Error::InvalidInput)?,
+                    fee,
+                    &request.quote_identity,
+                    request.proven_time,
+                    *offer,
+                    &mut fresh,
+                )
+            }
+            None => {
+                let bytes = STANDARD.decode(&request.recipient).map_err(|_| Error::InvalidInput)?;
+                let recipient = Descriptor::from_bytes(&bytes).map_err(|_| Error::InvalidInput)?;
+                session.stage_confirmed_transfer(
+                    &key,
+                    root,
+                    prover,
+                    ConfirmedTransfer {
+                        recipient: &recipient,
+                        amount,
+                        fee,
+                        quote_identity: &request.quote_identity,
+                    },
+                    request.proven_time,
+                    *offer,
+                    &mut fresh,
+                )
+            }
+        }
     };
     match catch_unwind(AssertUnwindSafe(call)) {
         Ok(Ok(submission)) => Box::into_raw(Box::new(submission)),
@@ -1667,6 +1823,25 @@ mod tests {
         delivery::{self, Kind, Plaintext},
         ledger::{Event, Transact},
     };
+
+    #[cfg(all(unix, feature = "proving"))]
+    #[test]
+    fn withdrawal_requires_reviewed_pool_fee_and_workchain_zero() {
+        let replay = TosShieldedReplay {
+            state: State::Ready(Box::new(Ledger::genesis())),
+            domain: Fr::from(7u64),
+            receive_binding: None,
+            terms: PoolTerms { denominations: vec![1_000_000_000], withdrawal_fee: 20_000_000 },
+            deposit_compute_fee: 42,
+        };
+        let address: chain_block::MsgAddressInt = format!("0:{}", "ab".repeat(32)).parse().unwrap();
+        assert_eq!(replay.withdrawal_account(&address, 20_000_000).unwrap(), [0xab; 32]);
+        // Existing pools retain their deployed fee, even when new pool defaults change.
+        assert!(replay.withdrawal_account(&address, 1_000_000).is_err());
+        let wrong_chain: chain_block::MsgAddressInt =
+            format!("-1:{}", "ab".repeat(32)).parse().unwrap();
+        assert!(replay.withdrawal_account(&wrong_chain, 20_000_000).is_err());
+    }
 
     #[test]
     fn completed_scan_uses_the_full_published_nullifier_set() {
