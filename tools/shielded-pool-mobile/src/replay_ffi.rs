@@ -156,7 +156,7 @@ pub struct ConfirmedTransfer<'a> {
 #[cfg(all(unix, feature = "proving"))]
 enum PaymentRecipient<'a> {
     Private(&'a Descriptor),
-    Withdrawal(chain_block::MsgAddressInt),
+    Withdrawal(&'a chain_block::MsgAddressInt),
 }
 
 /// Audited proving material tied to an authenticated pool selection.
@@ -440,7 +440,7 @@ impl TosShieldedReplay {
             seed,
             root,
             prover,
-            PaymentRecipient::Withdrawal(recipient),
+            PaymentRecipient::Withdrawal(&recipient),
             amount,
             fee,
             quote_identity,
@@ -482,7 +482,7 @@ impl TosShieldedReplay {
         let fee_bytes = STANDARD.decode(&terms.descriptor_b64).map_err(|_| Error::InvalidInput)?;
         let fee = Descriptor::from_bytes(&fee_bytes).map_err(|_| Error::InvalidInput)?;
         let withdrawal = match &recipient {
-            PaymentRecipient::Withdrawal(address) => Some(address.clone()),
+            PaymentRecipient::Withdrawal(address) => Some((*address).clone()),
             PaymentRecipient::Private(_) => None,
         };
         let request = if let PaymentRecipient::Withdrawal(address) = &recipient {
