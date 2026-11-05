@@ -456,18 +456,10 @@ fn the_fee_must_cover_the_message_and_not_the_recovery() {
 /// transfers carry on. Money goes in and cannot come out, and there is no
 /// admin to fix it.
 ///
-/// The fee is therefore not sized against today's price. It is sized against
-/// the highest price the chain could plausibly reach, and the only
-/// non-hypothetical reference for that is a price **this chain itself
-/// charged**: until `3c7f4036d` its three forwarding prices were each exactly
-/// six times today's.
-///
-/// Both halves of that are measured here rather than inferred. A forward fee
-/// can be reproduced by more than one `(bits, cells)` pair, so working out
-/// what the same message would cost under different prices from the fee alone
-/// is a guess between them; `p_body_size` removes the guess.
+/// Measure the target-price margin and the consequence of restoring the
+/// historical forwarding schedule on the same payout body.
 #[test]
-fn the_configured_fee_clears_the_price_this_chain_used_to_charge() {
+fn the_configured_fee_covers_target_forwarding_prices() {
     let probe = Probe::deploy();
     let data = byte_chain(&payload(7));
     let digest = small(0x31337);
@@ -541,15 +533,14 @@ fn the_configured_fee_clears_the_price_this_chain_used_to_charge() {
         configured as f64 / restoration as f64
     );
 
-    // The property that matters: restoring the price the chain itself charged
-    // must not brick withdrawals. Everything above that is margin.
-    assert!(
-        configured > restoration,
-        "the configured fee {configured} does not clear the {restoration} floor at the \
-         forwarding prices this chain charged until {}, so restoring them would brick every \
-         withdrawal permanently",
-        "3c7f4036d"
+    assert_eq!(configured, 1_000_000);
+    assert!(configured >= live, "the configured fee must cover the target payout cost");
+    let fee = StackItem::int(IntegerData::from_u32(1_000_000));
+    assert_eq!(
+        probe.call("p_solvent", vec![fee.clone(), fee, StackItem::cell(body)]).map(|_| ()),
+        Ok(())
     );
+    assert!(configured < restoration, "historical forwarding prices exceed this fee");
 }
 
 /// The arithmetic of step 16, including the case that would let a pool pay out

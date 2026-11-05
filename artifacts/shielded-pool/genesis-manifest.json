@@ -21,7 +21,7 @@
   },
   "configuration": {
     "reserve_floor": "50000000000",
-    "withdrawal_fee": "20000000",
+    "withdrawal_fee": "1000000",
     "denominations": ["1000000000", "10000000000", "100000000000", "1000000000000"]
   },
   "state": {
@@ -34,6 +34,6 @@
     "native_liability": "0",
     "frontier": "twelve zero levels, seven slots each",
     "anchor_rings": "two empty dictionaries",
-    "hash": "4793c10b826c47dc534ed940878220058c34c8bd21746da38c0a8f1d75425b32"
+    "hash": "2878061dad62bc1c0697910a818e579b187ee257adf29e7573c4e0b80db3ba56"
   }
 }
