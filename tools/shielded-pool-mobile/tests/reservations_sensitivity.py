@@ -61,8 +61,8 @@ cases = [
     ),
     (
         "record_purpose",
-        "self.cipher.open(Kind::Journal, cursor.records, &record)",
-        "self.cipher.open(Kind::State, cursor.records, &record)",
+        "cipher.open(Kind::Journal, cursor.records, &record)",
+        "cipher.open(Kind::State, cursor.records, &record)",
         "journal_records_cannot_use_the_state_encryption_purpose",
     ),
     (

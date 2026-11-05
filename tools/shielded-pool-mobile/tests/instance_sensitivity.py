@@ -70,7 +70,7 @@ cases = [
     (
         "store",
         "legacy_entries",
-        'for name in [STATE, NEXT, c"reservations.bin"] {',
+        'for name in [STATE, NEXT, reservations::JOURNAL] {',
         "for name in [] as [&CStr; 0] {",
         "legacy_flat_stores_and_their_lock_never_become_fresh_roots",
     ),
