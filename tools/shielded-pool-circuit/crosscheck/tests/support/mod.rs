@@ -14,8 +14,11 @@
 //! always the one nobody ran.
 
 use chain_block::{Cell, CommonMsgInfo, MsgAddressInt, Serializable, StateInit};
-use shielded_pool_circuit::circuit::{HeldNote, ShieldedTransactionCircuit, TransactionBuilder};
+use shielded_pool_circuit::circuit::{
+    HeldNote, ShieldedTransactionCircuit, TransactionBuilder, TransactionWitness,
+};
 use shielded_pool_circuit::field::Fr;
+use shielded_pool_circuit::public_inputs::PublicInputs;
 use shielded_pool_circuit::{groth16, imt, notes, wire};
 use tos_sandbox::{compile_func, Blockchain, MessageBuilder};
 
@@ -110,6 +113,9 @@ pub struct Outcome {
     pub refused_at: Option<String>,
     pub bounced_from: Option<String>,
     pub destination: String,
+    pub payout_value: Option<u128>,
+    pub recipient_credit: Option<u128>,
+    pub recipient_success: Option<bool>,
     pub transactions: usize,
     /// How many messages the pool's own transaction sent.
     ///
@@ -199,17 +205,26 @@ pub struct Age {
 
 /// Two deposits, then one proved withdrawal of `amount` to the destination.
 pub fn run(withdrawal: &Withdrawal) -> Outcome {
+    let pool = Pool::deploy_with_denominations(withdrawal.denominations).expect("deploy the pool");
+    let domain = execution_domain(&pool);
+    run_with_pool(withdrawal, pool, domain, development_proof)
+}
+
+/// Run the same withdrawal cascade against an exact candidate and external prover.
+/// The caller binds the candidate, chain configuration and proving key beforehand.
+pub fn run_with_pool(
+    withdrawal: &Withdrawal,
+    mut pool: Pool,
+    domain: Fr,
+    mut prove: impl FnMut(PublicInputs, TransactionWitness, u32) -> groth16::CanonicalProof,
+) -> Outcome {
     let mut frontier = shielded_pool_circuit::tree::Frontier::new();
     let nullifiers = imt::State::genesis();
-    let mut pool =
-        Pool::deploy_with_denominations(withdrawal.denominations).expect("deploy the pool");
     let destination = deploy_destination(
         &mut pool.bc,
         withdrawal.destination_name,
         withdrawal.destination_source,
     );
-
-    let domain = execution_domain(&pool);
 
     // --- two notes, because a withdrawal has to cover its own fee ---------
     //
@@ -220,19 +235,22 @@ pub fn run(withdrawal: &Withdrawal) -> Outcome {
 
     // --- the withdrawal ---------------------------------------------------
     let mut tree = nullifiers.clone();
-    let body = prove_withdrawal(ProvedWithdrawal {
-        pool: &pool,
-        domain,
-        frontier: &frontier,
-        root,
-        anchor: Anchor::Current,
-        inputs: [&held[0], &held[1]],
-        amount: withdrawal.amount,
-        recipient: &destination,
-        intent_nonce: 0xfeed_face,
-        recovery_owner_commitment: Fr::from(0x5eedu64),
-        nullifiers: &mut tree,
-    });
+    let body = prove_withdrawal_with(
+        ProvedWithdrawal {
+            pool: &pool,
+            domain,
+            frontier: &frontier,
+            root,
+            anchor: Anchor::Current,
+            inputs: [&held[0], &held[1]],
+            amount: withdrawal.amount,
+            recipient: &destination,
+            intent_nonce: 0xfeed_face,
+            recovery_owner_commitment: Fr::from(0x5eedu64),
+            nullifiers: &mut tree,
+        },
+        &mut prove,
+    );
 
     // --- the whole cascade, in one message -------------------------------
     let liability_before: u128 =
@@ -329,12 +347,34 @@ pub fn run(withdrawal: &Withdrawal) -> Outcome {
         .out_msgs
         .len()
         .expect("counting what the pool sent");
+    let mut payout_value = None;
+    let mut recipient_credit = None;
+    let mut recipient_success = None;
     let mut refused_at = None;
     let mut bounced_from = None;
     let mut recovery_gas = 0i64;
     let mut bounced_value = 0u128;
     let mut recovery_exit = 0i32;
     for (addr, tx) in &result.transactions {
+        if addr == &destination {
+            if let Ok(Some(msg)) = tx.read_in_msg() {
+                if let CommonMsgInfo::IntMsgInfo(info) = msg.header() {
+                    if info.src_ref() == Some(&pool.addr) {
+                        payout_value = Some(info.value.coins.as_u128());
+                    }
+                }
+            }
+            if let Ok(chain_block::TransactionDescr::Ordinary(d)) = tx.read_description() {
+                recipient_credit = d.credit_ph.as_ref().map(|phase| phase.credit.coins.as_u128());
+                recipient_success = Some(
+                    !d.aborted
+                        && matches!(&d.compute_ph, chain_block::TrComputePhase::Vm(vm) if vm.success && vm.exit_code == 0)
+                        && d.action.as_ref().is_none_or(|a| {
+                            a.valid && a.success && !a.no_funds && a.result_code == 0
+                        }),
+                );
+            }
+        }
         if let Ok(Some(msg)) = tx.read_in_msg() {
             if let CommonMsgInfo::IntMsgInfo(info) = msg.header() {
                 if info.bounced {
@@ -374,6 +414,9 @@ pub fn run(withdrawal: &Withdrawal) -> Outcome {
         refused_at,
         bounced_from,
         destination: destination.to_string(),
+        payout_value,
+        recipient_credit,
+        recipient_success,
         transactions,
         exit,
         body_bytes,
@@ -474,6 +517,30 @@ pub struct ProvedWithdrawal<'a> {
 /// Two notes in, `amount` out to the recipient, the configured fee leaving
 /// with it, and the change staying inside as three output notes.
 pub fn prove_withdrawal(w: ProvedWithdrawal) -> Cell {
+    prove_withdrawal_with(w, development_proof)
+}
+
+fn development_proof(
+    public: PublicInputs,
+    witness: TransactionWitness,
+    _now: u32,
+) -> groth16::CanonicalProof {
+    let keys = groth16::development_keys(ShieldedTransactionCircuit::blank(public))
+        .expect("development keys");
+    assert_eq!(
+        groth16::canonical_verifying_key(&keys.verifying).expect("vk bytes").bytes,
+        development_vk_bytes().expect("the fixture verifying key"),
+        "the prover's verifying key is not the one the pool was deployed with"
+    );
+    let proof =
+        groth16::prove(&keys, ShieldedTransactionCircuit::new(public, witness), 3).expect("prove");
+    groth16::CanonicalProof::from_proof(&proof).expect("canonical proof")
+}
+
+fn prove_withdrawal_with(
+    w: ProvedWithdrawal,
+    mut prove: impl FnMut(PublicInputs, TransactionWitness, u32) -> groth16::CanonicalProof,
+) -> Cell {
     let change = u128::from(DENOMINATION) * 2 - u128::from(w.amount) - u128::from(WITHDRAWAL_FEE);
     let recipient_account = account_of(w.recipient);
     let recipient_hash = wire::public_recipient_hash(&recipient_account);
@@ -526,16 +593,7 @@ pub fn prove_withdrawal(w: ProvedWithdrawal) -> Cell {
         .build(w.frontier, w.root, [input(w.inputs[0]), input(w.inputs[1])])
         .expect("build the withdrawal");
 
-    let keys = groth16::development_keys(ShieldedTransactionCircuit::blank(public))
-        .expect("development keys");
-    assert_eq!(
-        groth16::canonical_verifying_key(&keys.verifying).expect("vk bytes").bytes,
-        development_vk_bytes().expect("the fixture verifying key"),
-        "the prover's verifying key is not the one the pool was deployed with"
-    );
-    let proof =
-        groth16::prove(&keys, ShieldedTransactionCircuit::new(public, witness), 3).expect("prove");
-    let canonical = groth16::CanonicalProof::from_proof(&proof).expect("canonical proof");
+    let canonical = prove(public, witness, w.pool.bc.now());
 
     let digest = public.transaction_intent_digest;
     let signatures = [
