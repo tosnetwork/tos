@@ -323,7 +323,7 @@ fn each_bound_field_is_refused_when_it_differs() {
             "provenance is not the plan's",
         ),
         (
-            "\"withdrawal_fee\": \"20000000\"".into(),
+            "\"withdrawal_fee\": \"1000000\"".into(),
             "\"withdrawal_fee\": \"1\"".into(),
             "does not describe",
         ),

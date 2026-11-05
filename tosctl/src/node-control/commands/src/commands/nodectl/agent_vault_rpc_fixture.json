@@ -1,0 +1,359 @@
+{
+  "schema": "tos.agent-task-vault-regression.v1",
+  "scope": "unsigned readonly RPC responses, with nested max_per_tx=0 sentinel and fixed deadline; not execution/finality evidence",
+  "account": "0:9ebc96eb460d459f44dd98b0987591ab7bd1bf336d50d947213d15d86abe69db",
+  "task_record": {
+    "address": "0:170f9ea0704705b8a4f896591fb23713f2beda884bce871b6ac33dd25180e920",
+    "creator": "0:68f463ddf7909a6016a42766187618767fbba6f1cfeefe4c3f55694217cd155a",
+    "assigned_agent": "0:9ebc96eb460d459f44dd98b0987591ab7bd1bf336d50d947213d15d86abe69db",
+    "verifier": "0:bf637f918f4a44b496901f21863d5f4a5e0090a8bb50f55cb8a65a93e8e15347",
+    "budget": 5000000000,
+    "deadline": 4000000000,
+    "review_period": 3600,
+    "policy_hash": "5555555555555555555555555555555555555555555555555555555555555555",
+    "attestor_pubkey": "26658781d975f1c364ab97fc1dc895ca370b967dbc94252b552acf13a749dfa2",
+    "created_at": 1793747548
+  },
+  "task": {
+    "@type": "smc.runResult",
+    "gas_used": 0,
+    "stack": [
+      {
+        "@type": "tvm.stackEntryNumber",
+        "number": {
+          "@type": "tvm.numberDecimal",
+          "number": "0"
+        }
+      },
+      {
+        "@type": "tvm.stackEntryNumber",
+        "number": {
+          "@type": "tvm.numberDecimal",
+          "number": "5000"
+        }
+      },
+      {
+        "@type": "tvm.stackEntryNumber",
+        "number": {
+          "@type": "tvm.numberDecimal",
+          "number": "17367275036197963162968556221883064694078463757203432593710673021546265173922"
+        }
+      },
+      {
+        "@type": "tvm.stackEntryNumber",
+        "number": {
+          "@type": "tvm.numberDecimal",
+          "number": "1"
+        }
+      },
+      {
+        "@type": "tvm.stackEntryNumber",
+        "number": {
+          "@type": "tvm.numberDecimal",
+          "number": "0"
+        }
+      },
+      {
+        "@type": "tvm.stackEntryNumber",
+        "number": {
+          "@type": "tvm.numberDecimal",
+          "number": "0"
+        }
+      },
+      {
+        "@type": "tvm.stackEntryNumber",
+        "number": {
+          "@type": "tvm.numberDecimal",
+          "number": "3600"
+        }
+      },
+      {
+        "@type": "tvm.stackEntryNumber",
+        "number": {
+          "@type": "tvm.numberDecimal",
+          "number": "0"
+        }
+      },
+      {
+        "@type": "tvm.stackEntryNumber",
+        "number": {
+          "@type": "tvm.numberDecimal",
+          "number": "38597363079105398474523661669562635951089994888546854679819194669304376546645"
+        }
+      },
+      {
+        "@type": "tvm.stackEntryNumber",
+        "number": {
+          "@type": "tvm.numberDecimal",
+          "number": "0"
+        }
+      },
+      {
+        "@type": "tvm.stackEntryNumber",
+        "number": {
+          "@type": "tvm.numberDecimal",
+          "number": "0"
+        }
+      },
+      {
+        "@type": "tvm.stackEntryNumber",
+        "number": {
+          "@type": "tvm.numberDecimal",
+          "number": "0"
+        }
+      },
+      {
+        "@type": "tvm.stackEntryNumber",
+        "number": {
+          "@type": "tvm.numberDecimal",
+          "number": "4000000000"
+        }
+      },
+      {
+        "@type": "tvm.stackEntryNumber",
+        "number": {
+          "@type": "tvm.numberDecimal",
+          "number": "5000000000"
+        }
+      },
+      {
+        "@type": "tvm.stackEntryNumber",
+        "number": {
+          "@type": "tvm.numberDecimal",
+          "number": "1"
+        }
+      },
+      {
+        "@type": "tvm.stackEntrySlice",
+        "slice": {
+          "@type": "tvm.slice",
+          "bytes": "te6ccgEBAQEAJAAAQ4AX7G/yMelIlpLSA+Qwx6vpS8ASFRdqHquXFMtSfRwqaPA="
+        }
+      },
+      {
+        "@type": "tvm.stackEntryNumber",
+        "number": {
+          "@type": "tvm.numberDecimal",
+          "number": "1"
+        }
+      },
+      {
+        "@type": "tvm.stackEntrySlice",
+        "slice": {
+          "@type": "tvm.slice",
+          "bytes": "te6ccgEBAQEAJAAAQ4AT15LdaMGos+ibsxYTDrI1b3o35m2qGyjkJ6K7DVfNO3A="
+        }
+      },
+      {
+        "@type": "tvm.stackEntrySlice",
+        "slice": {
+          "@type": "tvm.slice",
+          "bytes": "te6ccgEBAQEAJAAAQ4ANHox7vvITTALUhOzDDsMOz/d03jn938mH6q0oQvmiq1A="
+        }
+      }
+    ],
+    "exit_code": 0,
+    "last_transaction_id": null,
+    "block_id": {
+      "@type": "tos.blockIdExt",
+      "workchain": -1,
+      "shard": "-9223372036854775808",
+      "seqno": 418,
+      "root_hash": "mH4RIbabhvJYw3s8lZUy2kfskeGwY/4BmtQ87X75EtA=",
+      "file_hash": "N6LLL2yVI0AbBxzsy+R4fdrkASj3gDNYcDFVBT8sv4E="
+    }
+  },
+  "agent": {
+    "@type": "smc.runResult",
+    "gas_used": 0,
+    "stack": [
+      {
+        "@type": "tvm.stackEntryNumber",
+        "number": {
+          "@type": "tvm.numberDecimal",
+          "number": "0"
+        }
+      },
+      {
+        "@type": "tvm.stackEntryNumber",
+        "number": {
+          "@type": "tvm.numberDecimal",
+          "number": "0"
+        }
+      },
+      {
+        "@type": "tvm.stackEntryNumber",
+        "number": {
+          "@type": "tvm.numberDecimal",
+          "number": "0"
+        }
+      },
+      {
+        "@type": "tvm.stackEntryNumber",
+        "number": {
+          "@type": "tvm.numberDecimal",
+          "number": "-1"
+        }
+      },
+      {
+        "@type": "tvm.stackEntryNumber",
+        "number": {
+          "@type": "tvm.numberDecimal",
+          "number": "-1"
+        }
+      },
+      {
+        "@type": "tvm.stackEntryNumber",
+        "number": {
+          "@type": "tvm.numberDecimal",
+          "number": "3600"
+        }
+      },
+      {
+        "@type": "tvm.stackEntryNumber",
+        "number": {
+          "@type": "tvm.numberDecimal",
+          "number": "10000000000"
+        }
+      },
+      {
+        "@type": "tvm.stackEntryNumber",
+        "number": {
+          "@type": "tvm.numberDecimal",
+          "number": "0"
+        }
+      },
+      {
+        "@type": "tvm.stackEntryNumber",
+        "number": {
+          "@type": "tvm.numberDecimal",
+          "number": "0"
+        }
+      },
+      {
+        "@type": "tvm.stackEntryNumber",
+        "number": {
+          "@type": "tvm.numberDecimal",
+          "number": "19428863757355142482548677504112813095043464793231904774562342705851854798980"
+        }
+      },
+      {
+        "@type": "tvm.stackEntryNumber",
+        "number": {
+          "@type": "tvm.numberDecimal",
+          "number": "42226954649900933115030866047007490276282208796309705057357147847344894031980"
+        }
+      },
+      {
+        "@type": "tvm.stackEntrySlice",
+        "slice": {
+          "@type": "tvm.slice",
+          "bytes": "te6ccgEBAQEAJAAAQ4AHuKtILqj8gxbm/ym3EvHZukezZyFXLYel+UDbysJYs/A="
+        }
+      }
+    ],
+    "exit_code": 0,
+    "last_transaction_id": null,
+    "block_id": {
+      "@type": "tos.blockIdExt",
+      "workchain": -1,
+      "shard": "-9223372036854775808",
+      "seqno": 418,
+      "root_hash": "mH4RIbabhvJYw3s8lZUy2kfskeGwY/4BmtQ87X75EtA=",
+      "file_hash": "N6LLL2yVI0AbBxzsy+R4fdrkASj3gDNYcDFVBT8sv4E="
+    }
+  },
+  "master": {
+    "@type": "blocks.masterchainInfo",
+    "last": {
+      "@type": "tos.blockIdExt",
+      "workchain": -1,
+      "shard": "-9223372036854775808",
+      "seqno": 418,
+      "root_hash": "mH4RIbabhvJYw3s8lZUy2kfskeGwY/4BmtQ87X75EtA=",
+      "file_hash": "N6LLL2yVI0AbBxzsy+R4fdrkASj3gDNYcDFVBT8sv4E="
+    },
+    "state_root_hash": "uO0JANYMBw6F8uA3JcG67g9YCX5ZZuHKGHyOT71dKlk=",
+    "init": {
+      "@type": "tos.blockIdExt",
+      "workchain": -1,
+      "shard": "-9223372036854775808",
+      "seqno": 0,
+      "root_hash": "OHZdzeHTsHOiCmKF3QbDsfs5NKpNhw7jHbfGLQJhdp4=",
+      "file_hash": "ece6loX/BIzKO/CwFvppShZNISwdQhj3Dt7pf/xQco0="
+    }
+  },
+  "header": {
+    "@type": "blocks.header",
+    "id": {
+      "@type": "tos.blockIdExt",
+      "workchain": -1,
+      "shard": "-9223372036854775808",
+      "seqno": 418,
+      "root_hash": "mH4RIbabhvJYw3s8lZUy2kfskeGwY/4BmtQ87X75EtA=",
+      "file_hash": "N6LLL2yVI0AbBxzsy+R4fdrkASj3gDNYcDFVBT8sv4E="
+    },
+    "global_id": 3,
+    "version": 0,
+    "after_merge": false,
+    "before_split": false,
+    "after_split": false,
+    "want_merge": true,
+    "want_split": false,
+    "validator_list_hash_short": 1539357077,
+    "catchain_seqno": 0,
+    "min_ref_mc_seqno": 416,
+    "is_key_block": false,
+    "prev_key_block_seqno": 0,
+    "start_lt": "419000000",
+    "end_lt": "419000004",
+    "gen_utime": 1800000000,
+    "prev_blocks": [
+      {
+        "@type": "tos.blockIdExt",
+        "workchain": -1,
+        "shard": "-9223372036854775808",
+        "seqno": 417,
+        "root_hash": "vcQm93XzkxzLKzS5BJz+Lbk45keG9G51nNyFek7ODdM=",
+        "file_hash": "naA/hdi3Tt8+vcHNIw7AjvomFX2Z9+WuNDCHoVLYV54="
+      }
+    ]
+  },
+  "config19": {
+    "@type": "configInfo",
+    "config": {
+      "@type": "tvm.cell",
+      "bytes": "te6ccgEBAQEABgAACAAAAAM="
+    }
+  },
+  "task_account_info": {
+    "@type": "raw.fullAccountState",
+    "balance": "0",
+    "code": "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",
+    "data": "te6ccgECBAEAAVAAAduADR6Me77yE0wC1ITsww7DDs/3dN45/d/Jh+qtKEL5oqtYAT15LdaMGos+ibsxYTDrI1b3o35m2qGyjkJ6K7DVfNO3gBfsb/Ix6UiWktID5DDHq+lLwBIVF2oeq5cUy1J9HCpo4AAAAADV1PDUBwEC2IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiImZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZlVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVQAADhAAAAAAaup6sQIDAJQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAE4gAAAAAAAAAAABBkzLDwOy6+OGyVcv+DuRK5RuFyz7eShKVqpVnidOk79FA",
+    "last_transaction_id": {
+      "@type": "internal.transactionId",
+      "lt": "591000003",
+      "hash": "PlAUj4dBvVbZaJLSNLBJX9pe+fUnjuz85Ms5+QLBTYc="
+    },
+    "block_id": {
+      "@type": "tos.blockIdExt",
+      "workchain": -1,
+      "shard": "-9223372036854775808",
+      "seqno": 1002,
+      "root_hash": "/YLCgOx7oYeGI+W6ZZKx0sfT9Ckdl/de8l8N/7m89O4=",
+      "file_hash": "RreDc5EXd2FizNcn3VdPKl+oQqgT4g2k565i4+rZbAg="
+    },
+    "sync_utime": 1793748297,
+    "extra_currencies": [],
+    "state": "active",
+    "frozen_hash": "",
+    "storage_stat": {
+      "@type": "storage.stat",
+      "used_cells": "30",
+      "used_bits": "20416",
+      "last_paid": 1793748133,
+      "due_payment": null
+    }
+  }
+}

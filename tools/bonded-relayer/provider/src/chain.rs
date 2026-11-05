@@ -35,6 +35,15 @@ impl Chain {
         Ok(Self { verifier: ProvenGetterProvider::new(&verifier_config)?, _helper: helper })
     }
     pub async fn bond(&self, config: &Config) -> Result<(ProvenAccountState, BondState)> {
+        let (state, bond) = self.bond_identity(config).await?;
+        ensure!(
+            bond.eligible(state.evidence().account.balance.parse::<u128>()?),
+            "bond is not live and backed"
+        );
+        Ok((state, bond))
+    }
+    /// Lifecycle inspection keeps every identity pin without granting admission.
+    pub async fn bond_identity(&self, config: &Config) -> Result<(ProvenAccountState, BondState)> {
         let address = MsgAddressInt::from_str(&config.release.bond)?;
         let state =
             self.verifier.read_account_with_config(&address, &[8, 19], &ReadPolicy::Live).await?;
@@ -64,10 +73,6 @@ impl Chain {
             crate::protocol::hash(&bond.init.worker_key) == config.release.worker_key_hash
                 && bond.init.worker == MsgAddressInt::from_str(&config.funding_wallet)?,
             "bond worker pin"
-        );
-        ensure!(
-            bond.eligible(state.evidence().account.balance.parse::<u128>()?),
-            "bond is not live and backed"
         );
         let global = state.config_param(19).ok_or_else(|| anyhow::anyhow!("global id missing"))?;
         let mut global = chain_block::SliceData::load_cell(global.clone())?;

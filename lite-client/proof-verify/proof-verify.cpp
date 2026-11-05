@@ -1216,8 +1216,10 @@ td::Result<Request> parse_request(td::Slice json) {
       if (method.method.empty() || method.method.size() > 128) {
         return td::Status::Error("get-method name is empty or too long");
       }
-      for (unsigned char c : method.method) {
-        if (!(std::isalnum(c) || c == '_')) {
+      for (std::size_t i = 0; i < method.method.size(); ++i) {
+        auto c = static_cast<unsigned char>(method.method[i]);
+        bool suffix = i > 0 && i + 1 == method.method.size() && (c == '?' || c == '!');
+        if (!(std::isalnum(c) || c == '_' || suffix)) {
           return td::Status::Error("get-method name must be an identifier");
         }
       }

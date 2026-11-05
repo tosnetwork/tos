@@ -2,7 +2,7 @@
 
 This ELF supplies the chain, signing and finality operations consumed by
 `../native_adapter.py`. The default build is restricted to **global id 3**, global version16 or later,
-a pinned zerostate and private Shield transfers. An explicit
+a pinned zerostate and Shield transfers or withdrawals. An explicit
 `public-testnet-pilot` build additionally permits global-id2. This is a bounded
 test-chain pilot capability, not production activation approval.
 
@@ -13,6 +13,12 @@ submission, destination finality and encrypted commission-note import. Restarted
 operators retain their original keys and journals. A further transaction spends
 two actual commission notes through the other operator. Evidence indexes are
 kept separately from seeds, raw transactions and logs.
+
+For a withdrawal followed by a recovery bounce, the provider can use an
+authenticated historical pool counter to locate the original fee leaf. The
+snapshot must match the hash-linked transaction history. The difference
+between the historical and live counters accounts for recovery appends. If
+the available proofs cannot establish the leaf, the request remains pending.
 
 ## Build and custody
 
@@ -52,6 +58,18 @@ proven, backed active Bond and the correct funded wallet before service startup.
 Missing or empty native databases refuse; they are never implicitly recreated
 beside existing custody. Unknown outcomes require reconciliation of the original
 bytes, not another setup invocation.
+
+For an isolated global-id-3 lifecycle rehearsal, stop the operator and reconcile
+all outstanding jobs before `--bootstrap retire-bond`. The proven owner must be
+the funding wallet and the Bond must be ACTIVE. `--bootstrap withdraw-bond`
+requires EXITING and both the proven masterchain and account shard clocks at or
+after the immutable exit deadline. Each operation attaches 0.1 TOS, respects the
+configured funding cap, and requires one TOS left after an additional 0.1 TOS fee
+ceiling. It uses the same persisted original message and one-send lease: inspect
+chain receipts after any unknown result; never reset the lease or repeat a send.
+These lifecycle commands refuse public networks even in a public-pilot build.
+Admission, quoting and simulation continue to require an ACTIVE, backed Bond.
+
 
 The runtime reads `provider.json` and its protected seed files from its private
 working directory. The existing BR1 `localnet` configuration selects this ELF;

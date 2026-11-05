@@ -1,6 +1,7 @@
 /* Copyright 2026 TOS Blockchain Teams. SPDX-License-Identifier: LGPL-2.0-or-later */
 #include <cstdio>
 
+#include "lite-client/proof-verify/proof-verify.h"
 #include "lite-client/proof-verify/readonly-query.h"
 int main() {
   int failures = 0;
@@ -50,5 +51,29 @@ int main() {
   check("large-proof-response-not-truncated",
         encoded.is_ok() && encoded.ok() == expected && encoded.ok().size() > (128u << 10));
   check("empty-proof-response-refused", tos::proofverify::readonly_reply_json(td::Slice()).is_error());
+  auto getter = [](const std::string &name) {
+    return tos::proofverify::parse_request(
+        "{\"mode\":\"live\",\"max_age_seconds\":30,\"account\":\"0:" + std::string(64, '1') +
+        "\",\"get_methods\":[{\"method\":\"" + name +
+        "\",\"args\":[{\"type\":\"int\",\"value\":\"0\"},{\"type\":\"int\",\"value\":\"0\"}]}]}");
+  };
+  auto ordinary = getter("seqno");
+  check("ordinary-getter-fixture-and-selector",
+        ordinary.is_ok() && ordinary.ok().get_methods.size() == 1 && ordinary.ok().get_methods[0].method_id == 85143);
+  auto predicate = getter("processed?");
+  check("predicate-getter-name-and-selector", predicate.is_ok() && predicate.ok().get_methods.size() == 1 &&
+                                                  predicate.ok().get_methods[0].method_id == 117746 &&
+                                                  predicate.ok().get_methods[0].args.size() == 2);
+  auto bang = getter("get_thing!");
+  check("bang-getter-name-and-selector",
+        bang.is_ok() && bang.ok().get_methods.size() == 1 && bang.ok().get_methods[0].method_id == 119782);
+  for (const auto *name : {"?", "!", "processed??", "processed?!", "proc?essed", "get;thing"}) {
+    auto invalid = getter(name);
+    check(name, invalid.is_error() && invalid.error().message().str() == "get-method name must be an identifier");
+  }
+  check("suffix-at-name-limit", getter(std::string(127, 'a') + "?").is_ok());
+  auto overlong = getter(std::string(128, 'a') + "?");
+  check("suffix-over-name-limit",
+        overlong.is_error() && overlong.error().message().str() == "get-method name is empty or too long");
   return failures ? 1 : 0;
 }

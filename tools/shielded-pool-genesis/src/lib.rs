@@ -360,86 +360,18 @@ pub fn address(code: &Cell, state: &Cell) -> Result<[u8; 32]> {
 /// storage prices, which are an activation decision of their own.
 pub const RESERVE_FLOOR: u128 = 50_000_000_000;
 
-/// Section 14.2's fee, and the one constant here whose size is decided by a
-/// price nobody has chosen yet.
+/// Section 14.2's fixed fee for the pool's outbound payout.
 ///
-/// The fee funds what the pool spends **as the sender of the payout**, and
-/// nothing else. Section 14.2 requires, and `payout_require_solvent` enforces
-/// at run time:
+/// At the target basechain forwarding prices, the sandbox measured a payout
+/// body of 10,984 bits in 13 cells. The contract's quote and the action
+/// phase's actual charge both measured 885,601 nanotos. The solvency check
+/// accepted that exact amount and refused one nanoto less. The configured
+/// 1,000,000 nanotos leaves 114,399 nanotos (12.9%) above the measured cost.
 ///
-/// ```text
-///     withdrawal_fee >= payout_forward_fee(body)
-/// ```
-///
-/// That term reads the chain's **live** configuration and this constant is
-/// **immutable**, so the check is on the deployment rather than on the
-/// message. If forwarding is ever governed past what the pool charges, every
-/// withdrawal fails at exit 243 for good, while deposits and transfers carry
-/// on -- money goes in and can never come out again. That is the failure this
-/// number is sized against, and it is irreversible.
-///
-/// # What it no longer funds
-///
-/// Until 2026-09-22 the floor also carried a whole bounded recovery's
-/// compute, and that term was the dangerous one: it moved with the **gas**
-/// price, which the chain governs directly. Section 15.4 now charges the
-/// recovery to the money being recovered, at the prices live when the bounce
-/// arrives, so the floor holds only a term that prices bytes. It is also
-/// fairer -- every withdrawal used to pre-pay for a recovery almost none of
-/// them will ever need.
-///
-/// # Where the cliff is, measured
-///
-/// The floor is `payout_forward_fee` of the section 15.2 body, which
-/// `the_configured_fee_clears_the_price_this_chain_used_to_charge` measures
-/// rather than assumes -- a forward fee can be reproduced by more than one
-/// `(bits, cells)` pair, so reconstructing it under other prices from the fee
-/// alone is a guess between them. The body is **10,984 bits in 13 cells**.
-///
-/// The only non-hypothetical reference for "how high could forwarding go" is
-/// a price **this chain itself charged**: until `3c7f4036d` each of its three
-/// ConfigParam 25 prices was today's, multiplied by six (today's are the old
-/// ones divided by six and rounded up, so six times today's is two nanotos
-/// over each).
-///
-/// ```text
-///     forwarding prices                 floor    20,000,000 covers it
-///     today (upstream live)           885,601             22.6x
-///     6x    (this chain, until        5,313,600            3.76x
-///            2026-09-21)
-/// ```
-///
-/// # Why 20,000,000
-///
-/// It is the same safety standard the previous derivation settled on, applied
-/// to the term that is left. That one kept 50,000,000 because it cleared the
-/// gas price this chain had just left by **3.35x**; 20,000,000 clears the
-/// forwarding price this chain had just left by **3.76x**, so it is strictly
-/// further from its cliff than the number it replaces was from the old one.
-///
-/// And it is 2.0x what a whole private transaction costs the sender, where
-/// 50,000,000 was 5.1x. The difference is not a transfer: section 14.3 leaves
-/// the fee in the balance as unencumbered reserve, and with no admin and no
-/// upgrade path it can never be paid out to anyone. Over-charging is burnt,
-/// not collected.
-///
-/// The alternatives, for a deployment that wants to weigh it again:
-///
-/// ```text
-///     fee            TOS   x today  x the 6x this chain ran at
-///     50,000,000   0.050     56.5x                      9.41x
-///     25,000,000   0.025     28.2x                      4.70x
-///     20,000,000   0.020     22.6x                      3.76x   <- here
-///     10,000,000   0.010     11.3x                      1.88x
-///      5,313,601   0.0053     6.0x                      1.00x   at the cliff
-/// ```
-///
-/// **Weighed again and kept on 2026-09-23**, against the floor measured rather
-/// than recalled: `payout_forward_fee` of a real payout body is 885,601
-/// nanotos, and the contract's figure and what the action phase charged agree
-/// to the nanoton. The profile still frames the mainnet fee as an activation
-/// decision, which it remains for any other deployment; this one has chosen.
-pub const WITHDRAWAL_FEE: u128 = 20_000_000;
+/// The fee is fixed for each deployment. If live ConfigParam 25 prices raise
+/// the payout cost above that fee, withdrawals fail with exit 243. The
+/// pre-alignment schedule would charge 5,313,600 nanotos for the same body.
+pub const WITHDRAWAL_FEE: u128 = 1_000_000;
 
 /// Section 12.1's immutable list, sorted and positive.
 ///
