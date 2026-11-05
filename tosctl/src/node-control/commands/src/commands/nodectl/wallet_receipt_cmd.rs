@@ -187,6 +187,14 @@ fn fresh(account: &ProvenAccountState, age: u32) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn receipt_age(configured: Option<u32>, intended: u32) -> anyhow::Result<u32> {
+    anyhow::ensure!(
+        configured.is_some_and(|v| v > 0 && v <= intended),
+        "live proof age policy required"
+    );
+    configured.context("live proof age policy required")
+}
+
 impl WalletReceiptCmd {
     pub async fn run(&self) -> anyhow::Result<()> {
         let raw = bounded(&self.intent, 64 << 10)?;
@@ -194,10 +202,7 @@ impl WalletReceiptCmd {
         intent.validate()?;
         let config: ProofVerifierConfig =
             serde_json::from_slice(&bounded(&self.proof_config, 64 << 10)?)?;
-        anyhow::ensure!(
-            config.live_max_age_seconds.is_some_and(|v| v <= intent.max_age_seconds),
-            "live proof age policy required"
-        );
+        let max_age = receipt_age(config.live_max_age_seconds, intent.max_age_seconds)?;
         let anchor: serde_json::Value =
             serde_json::from_slice(&bounded(&config.anchor_file, 64 << 10)?)?;
         anyhow::ensure!(
@@ -236,8 +241,8 @@ impl WalletReceiptCmd {
                 receipts.push((source.root().repr_hash(), delivery.root().repr_hash(), outgoing.repr_hash()));
             }
             anyhow::ensure!(receipts[0] == receipts[1], "RPC authenticated receipts differ");
-            fresh(&sender, intent.max_age_seconds)?;
-            fresh(&recipient, intent.max_age_seconds)?;
+            fresh(&sender, max_age)?;
+            fresh(&recipient, max_age)?;
             Ok::<_, anyhow::Error>(serde_json::json!({"schema":"tos.operation-delivery-receipt/1",
                 "status":"AUTHENTICATED_REQUEST_AND_DELIVERY", "operation":intent.operation,
                 "intent_sha256":hex::encode(Sha256::digest(&raw)), "checkpoint":{"seqno":sender.evidence().checkpoint.seqno,"root_hash":sender.evidence().checkpoint.root_hash,"file_hash":sender.evidence().checkpoint.file_hash},
@@ -281,6 +286,15 @@ mod tests {
         let mut message = Message::with_int_header(header);
         message.set_body(SliceData::load_cell(Cell::default()).expect("synthetic body"));
         message
+    }
+
+    #[test]
+    fn receipt_keeps_the_stricter_configured_age_through_completion() {
+        assert_eq!(receipt_age(Some(30), 60).expect("strict local policy"), 30);
+        assert_eq!(receipt_age(Some(60), 60).expect("same policy"), 60);
+        assert!(receipt_age(None, 60).is_err());
+        assert!(receipt_age(Some(0), 60).is_err());
+        assert!(receipt_age(Some(61), 60).is_err());
     }
 
     #[test]

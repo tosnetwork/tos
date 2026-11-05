@@ -24,6 +24,8 @@ not be assembled from an unverified RPC reply. The caller must pin its approved
 intent, CLI executable, native verifier executable/configuration, operation and
 controller generation before using the result. The configured verifier is a
 local trust source, exactly as for the existing proven-getter APIs.
+The configured live-age bound must be no larger than the intent's bound, and
+that stricter configured bound still applies after all history lookups complete.
 
 `external_message_hash` is the full message **cell representation hash**, not a
 SHA-256 of HTTP/JSON-RPC bytes, a query ID or a wallet sequence number. The
