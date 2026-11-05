@@ -3381,6 +3381,36 @@ pub(crate) mod transaction_receipt_tests {
         (proof, root)
     }
     #[tokio::test]
+    async fn hash_only_history_keeps_chain_and_exact_message_binding() {
+        let (proof, head) = fixture("payment-wallet");
+        let (_, prior) = fixture("migrate-wallet");
+        let tx = Transaction::construct_from_cell(prior.clone()).unwrap();
+        let expected = *tx.in_msg_cell().unwrap().repr_hash().as_array();
+        for case in ["found", "missing", "wrong-head"] {
+            let mut wanted = expected;
+            if case == "missing" {
+                wanted[0] ^= 1;
+            }
+            let mut calls = 0;
+            let result = ProvenTransaction::find_inbound_hash(&proof, wanted, 2, |_, _, _| {
+                calls += 1;
+                let root =
+                    if calls == 1 && case != "wrong-head" { head.clone() } else { prior.clone() };
+                std::future::ready(Ok(root))
+            })
+            .await;
+            if case == "found" {
+                assert_eq!(result.unwrap().root().repr_hash(), prior.repr_hash());
+                assert_eq!(calls, 2);
+            } else {
+                let error = result.err().expect("intended hash lookup refusal");
+                let expected = if case == "missing" { "budget exhausted" } else { "hash mismatch" };
+                assert!(error.to_string().contains(expected), "{case}: {error}");
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn bounded_history_fetch_authenticates_each_step() {
         let (proof, head) = fixture("payment-wallet");
         let (_, prior) = fixture("migrate-wallet");
@@ -3487,6 +3517,48 @@ pub(crate) mod transaction_receipt_tests {
         // Deliberately false metadata: only the authenticated BOC is evidence.
         serde_json::json!({"lt":"1", "hash":"untrusted", "utime":0,
             "data":base64::engine::general_purpose::STANDARD.encode(chain_block::write_boc(cell).unwrap())})
+    }
+
+    #[tokio::test]
+    async fn hash_only_rpc_lookup_authenticates_boc_not_rpc_labels() {
+        use chain_rpc_client::v2::client_json_rpc::ClientJsonRpc;
+        use std::time::Duration;
+        let (proof, head) = fixture("payment-wallet");
+        let (_, other) = fixture("migrate-wallet");
+        let tx = Transaction::construct_from_cell(head.clone()).unwrap();
+        let expected = *tx.in_msg_cell().unwrap().repr_hash().as_array();
+        for case in ["found", "missing", "wrong-head"] {
+            let mut wanted = expected;
+            if case == "missing" {
+                wanted[0] ^= 1;
+            }
+            let cell = if case == "wrong-head" { &other } else { &head };
+            let (url, server) = receipt_rpc_server(
+                vec![serde_json::json!([rpc_transaction(cell)])],
+                Duration::ZERO,
+            )
+            .await;
+            let rpc = ClientJsonRpc::connect(url, None).unwrap();
+            let result = ProvenTransaction::find_inbound_hash_rpc(
+                &proof,
+                wanted,
+                1,
+                Duration::from_secs(3),
+                &rpc,
+            )
+            .await;
+            if case == "found" {
+                assert_eq!(result.unwrap().root().repr_hash(), head.repr_hash());
+            } else {
+                let error = result.err().expect("intended hash RPC refusal");
+                let expected = if case == "missing" { "budget exhausted" } else { "hash mismatch" };
+                assert!(error.to_string().contains(expected), "{case}: {error}");
+            }
+            let requests = server.await.unwrap();
+            assert_eq!(requests.len(), 1);
+            assert_eq!(requests[0]["method"], "getTransactions");
+            assert_eq!(requests[0]["params"]["limit"], 1);
+        }
     }
 
     #[tokio::test]
