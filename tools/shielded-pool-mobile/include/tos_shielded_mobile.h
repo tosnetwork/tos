@@ -79,7 +79,10 @@ TosShieldedResponse *tos_shielded_relay_offer_info(const TosShieldedRelayOffer *
 void tos_shielded_relay_offer_free(TosShieldedRelayOffer *offer);
 
 /* Requires proving support. Stage consumes the offer, even on failure. All calls
- * are synchronous. Submit uses Tor and reports an unverified relay status. */
+ * are synchronous. Submit uses Tor and reports an unverified relay status.
+ * For a withdrawal, recipient is a workchain-0 address and withdrawal_fee is a
+ * decimal string copied from authenticated replay info. Omit withdrawal_fee
+ * for a private transfer, whose recipient is a Base64 SHD1 descriptor. */
 typedef struct RecoveredRelaySubmission TosShieldedPaymentSubmission;
 TosShieldedPaymentSubmission *tos_shielded_payment_stage(const TosShieldedReplay *session,
                                                          const TosShieldedPaymentProver *prover,
