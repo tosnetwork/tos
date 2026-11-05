@@ -447,17 +447,11 @@ fn the_fee_must_cover_the_message_and_not_the_recovery() {
     );
 }
 
-/// How far the configured fee is from the cliff, measured rather than argued.
-///
-/// `config.withdrawal_fee` is written into the genesis store and can never
-/// change, while the check that enforces it reads the chain's **live**
-/// forwarding prices. So if ConfigParam 25 is ever governed past what the fee
-/// affords, every withdrawal fails at exit 243 permanently while deposits and
-/// transfers carry on. Money goes in and cannot come out, and there is no
-/// admin to fix it.
-///
-/// Measure the target-price margin and the consequence of restoring the
-/// historical forwarding schedule on the same payout body.
+/// At the target schedule, the 10,984-bit, 13-cell payout costs 885,601
+/// nanotos, leaving 114,399 nanotos below the configured fee. The same payout
+/// would cost 5,313,600 nanotos at the pre-alignment schedule. The contract
+/// checks live forwarding prices and returns exit 243 when they exceed the
+/// fixed deployment fee.
 #[test]
 fn the_configured_fee_covers_target_forwarding_prices() {
     let probe = Probe::deploy();

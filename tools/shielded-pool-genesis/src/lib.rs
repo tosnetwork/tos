@@ -360,17 +360,17 @@ pub fn address(code: &Cell, state: &Cell) -> Result<[u8; 32]> {
 /// storage prices, which are an activation decision of their own.
 pub const RESERVE_FLOOR: u128 = 50_000_000_000;
 
-/// Section 14.2's fee, and the one constant here whose size is decided by a
-/// price nobody has chosen yet.
+/// Section 14.2's fixed fee for the pool's outbound payout.
 ///
-/// The fee covers the pool's outbound payout forwarding cost. The sandbox
-/// measures 885,601 nanotos for the payout body at the target basechain
-/// forwarding prices. One million nanotos leaves 114,399 nanotos of headroom.
+/// At the target basechain forwarding prices, the sandbox measured a payout
+/// body of 10,984 bits in 13 cells. The contract's quote and the action
+/// phase's actual charge both measured 885,601 nanotos. The solvency check
+/// accepted that exact amount and refused one nanoto less. The configured
+/// 1,000,000 nanotos leaves 114,399 nanotos (12.9%) above the measured cost.
 ///
-/// This fee is immutable for each deployment. The contract checks it against
-/// live ConfigParam 25 prices, so restoring the pre-alignment prices (a
-/// 5,313,600-nanotos payout floor) would make this deployment refuse withdrawals.
-/// Check the target network's forwarding prices before deployment.
+/// The fee is fixed for each deployment. If live ConfigParam 25 prices raise
+/// the payout cost above that fee, withdrawals fail with exit 243. The
+/// pre-alignment schedule would charge 5,313,600 nanotos for the same body.
 pub const WITHDRAWAL_FEE: u128 = 1_000_000;
 
 /// Section 12.1's immutable list, sorted and positive.

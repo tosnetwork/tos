@@ -11,9 +11,8 @@ use std::path::PathBuf;
 /// The deployment's configured withdrawal fee, read out of the generated
 /// manifest.
 ///
-/// A copy here is a number that reports headroom for a fee nobody deploys.
-/// This file carried 50,000,000 for a day after the fee was re-derived to
-/// 20,000,000, and printed a multiple of the wrong one.
+/// Reading the manifest keeps the sandbox comparison tied to the fee that
+/// new pools actually receive.
 pub fn configured_withdrawal_fee() -> i128 {
     let path = PathBuf::from(concat!(
         env!("CARGO_MANIFEST_DIR"),
