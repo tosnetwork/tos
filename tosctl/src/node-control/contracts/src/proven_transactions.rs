@@ -40,6 +40,25 @@ impl ProvenTransaction {
         timeout: Duration,
         rpc: &ClientJsonRpc,
     ) -> anyhow::Result<Self> {
+        Self::find_inbound_hash_rpc(
+            account,
+            *expected.repr_hash().as_array(),
+            maximum,
+            timeout,
+            rpc,
+        )
+        .await
+    }
+
+    /// The same authenticated lookup using a locally approved original-message
+    /// representation hash. No signed carrier needs to leave its custody owner.
+    pub async fn find_inbound_hash_rpc(
+        account: &ProvenAccountState,
+        expected: [u8; 32],
+        maximum: u32,
+        timeout: Duration,
+        rpc: &ClientJsonRpc,
+    ) -> anyhow::Result<Self> {
         anyhow::ensure!(
             !timeout.is_zero() && timeout <= Duration::from_secs(300),
             "invalid receipt lookup timeout"
@@ -48,7 +67,7 @@ impl ProvenTransaction {
             .checked_add(timeout)
             .ok_or_else(|| anyhow::anyhow!("receipt deadline overflow"))?;
         let lookup =
-            Self::find_inbound(account, expected, maximum, |address, lt, hash| async move {
+            Self::find_inbound_hash(account, expected, maximum, |address, lt, hash| async move {
                 let page = rpc
                     .get_transactions(
                         &address,
@@ -95,6 +114,21 @@ impl ProvenTransaction {
         account: &ProvenAccountState,
         expected: &Cell,
         maximum: u32,
+        fetch: F,
+    ) -> anyhow::Result<Self>
+    where
+        F: FnMut(MsgAddressInt, u64, [u8; 32]) -> Fut,
+        Fut: std::future::Future<Output = anyhow::Result<Cell>>,
+    {
+        Self::find_inbound_hash(account, *expected.repr_hash().as_array(), maximum, fetch).await
+    }
+
+    /// Hash-only form of `find_inbound`. The hash must come from the local
+    /// original-operation record, never from the history endpoint being checked.
+    pub async fn find_inbound_hash<F, Fut>(
+        account: &ProvenAccountState,
+        expected: [u8; 32],
+        maximum: u32,
         mut fetch: F,
     ) -> anyhow::Result<Self>
     where
@@ -120,7 +154,7 @@ impl ProvenTransaction {
             if next
                 .transaction
                 .in_msg_cell()
-                .is_some_and(|cell| cell.repr_hash() == expected.repr_hash())
+                .is_some_and(|cell| cell.repr_hash().as_array() == &expected)
             {
                 return Ok(next);
             }

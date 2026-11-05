@@ -121,6 +121,8 @@ pub enum WalletAction {
     Send(WalletSendCmd),
     /// Broadcast an exact external message emitted by `wallet send --build-only`
     BroadcastPrepared(WalletBroadcastPreparedCmd),
+    /// Authenticate an original request and its exact downstream delivery; never sends
+    Receipt(super::wallet_receipt_cmd::WalletReceiptCmd),
 }
 
 #[derive(clap::Args, Clone)]
@@ -446,6 +448,7 @@ impl WalletCmd {
             WalletAction::SetVersion(cmd) => cmd.run(&self.config).await,
             WalletAction::Send(cmd) => cmd.run(&self.config).await,
             WalletAction::BroadcastPrepared(cmd) => cmd.run(&self.config).await,
+            WalletAction::Receipt(cmd) => cmd.run().await,
         }
     }
 

@@ -45,6 +45,7 @@ pub(crate) mod tx_cmd;
 mod utils;
 pub(crate) mod vote_cmd;
 pub(crate) mod wallet_cmd;
+mod wallet_receipt_cmd;
 
 pub(crate) mod node_dump_cmd;
 pub(crate) mod node_sync_cmd;
