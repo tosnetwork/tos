@@ -14,9 +14,11 @@ use shielded_pool_wallet::{
 };
 use zeroize::Zeroizing;
 
-/// Build the body of a self-deposit. The caller supplies a durably reserved
-/// note index and must preserve the resulting bytes when retrying a submission.
-/// The ordinary wallet attaches value and signs the enclosing message.
+/// Build the body of a self-deposit using a durably reserved note index.
+/// The ordinary wallet attaches value and signs the enclosing transaction.
+/// Before submission, the caller must durably retain that complete signed
+/// transaction. Retries must resend those exact signed bytes: signing the
+/// same body again with a new wallet sequence can debit the wallet twice.
 pub fn build_self_deposit(
     instance: &PoolInstance,
     note_key_index: u64,

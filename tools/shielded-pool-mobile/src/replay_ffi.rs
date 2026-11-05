@@ -1230,7 +1230,10 @@ pub unsafe extern "C" fn tos_shielded_replay_deposit_value(
 }
 
 /// Construct a self-deposit body after durably reserving its note index.
-/// The caller must retain the exact body with the ordinary payment before sending.
+/// Before sending, the caller must durably retain the complete signed ordinary
+/// wallet transaction containing this body. Retry by resending that transaction's
+/// exact signed bytes. Signing the body again with a new wallet sequence can
+/// debit the wallet twice.
 ///
 /// # Safety
 /// The same pointer, serialization and authentication requirements as

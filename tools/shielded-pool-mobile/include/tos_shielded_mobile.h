@@ -112,7 +112,10 @@ TosShieldedResponse *tos_shielded_replay_receive(const TosShieldedReplay *sessio
                                                  const uint8_t *binding, size_t binding_length);
 /* Ready replay; decimal minimum attached nanoTOS, excluding wallet fees. */
 TosShieldedResponse *tos_shielded_replay_deposit_value(const TosShieldedReplay *session, uint64_t amount);
-/* Same authenticated replay and index reservation as receive. Returns body BOC. */
+/* Same authenticated replay and index reservation as receive. Returns body BOC.
+ * Before submission, durably retain the complete signed ordinary-wallet
+ * transaction. Retries must resend its exact signed bytes; signing this body
+ * again with a new wallet sequence can debit the wallet twice. */
 TosShieldedResponse *tos_shielded_replay_self_deposit(const TosShieldedReplay *session, const uint8_t *seed,
                                                       size_t seed_length, const uint8_t *root, size_t root_length,
                                                       const uint8_t *binding, size_t binding_length, uint64_t amount,
