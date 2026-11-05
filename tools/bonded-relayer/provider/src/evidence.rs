@@ -148,7 +148,7 @@ fn commitment_next(config: &Config, pool: &ProvenAccountState) -> Result<u64> {
         "pool state version"
     );
     let _root = state.get_next_bytes(32)?;
-    Ok(state.get_next_u64()?)
+    state.get_next_u64()
 }
 
 async fn checkpoint_hint(config: &Config, selector: Value) -> Result<MasterchainCheckpoint> {
