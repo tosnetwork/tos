@@ -1,6 +1,11 @@
 //! Offline final-ceremony withdrawal against the exact 0.001 TOS candidate.
 //! Public candidate, price snapshot and ceremony inputs only; no network or wallet.
 //! Explicitly ignored unless the retained public-input paths are supplied.
+#![cfg_attr(
+    test,
+    allow(clippy::expect_used, reason = "Invalid public fixtures must fail the integration test")
+)]
+
 mod support;
 
 use chain_block::{read_single_root_boc, ConfigParamEnum};
@@ -31,7 +36,7 @@ fn bounded(path: &Path) -> Vec<u8> {
 }
 
 fn unhex(text: &str) -> Vec<u8> {
-    assert!(text.is_ascii() && text.len() % 2 == 0);
+    assert!(text.is_ascii() && text.len().is_multiple_of(2));
     (0..text.len())
         .step_by(2)
         .map(|i| u8::from_str_radix(&text[i..i + 2], 16).expect("hex"))

@@ -12,6 +12,14 @@
 //! either takes the money or refuses it, and a careful reading of what
 //! happened. Two copies of that would drift, and the one that drifts is
 //! always the one nobody ran.
+#![cfg_attr(
+    test,
+    allow(
+        clippy::expect_used,
+        clippy::panic,
+        reason = "Fixture setup failures and unexpected execution phases must fail the integration test"
+    )
+)]
 
 use ark_ff::AdditiveGroup;
 use chain_block::{Cell, CommonMsgInfo, MsgAddressInt, Serializable, StateInit};
@@ -71,8 +79,13 @@ pub fn deploy_destination(bc: &mut Blockchain, name: &str, source: &str) -> MsgA
         .join("../../../crypto/smartcont/stdlib.fc");
     let code = compile_func(&[stdlib, path]).expect("compile the destination");
     let si = StateInit::with_code_and_data(code, Cell::default());
-    let hash = si.write_to_new_cell().unwrap().into_cell().unwrap().hash(0);
-    let addr = MsgAddressInt::with_params(0, hash).unwrap();
+    let hash = si
+        .write_to_new_cell()
+        .expect("destination state init")
+        .into_cell()
+        .expect("destination state cell")
+        .hash(0);
+    let addr = MsgAddressInt::with_params(0, hash).expect("destination address");
     let payer = bc.treasury(name, 1_000 * TOS).expect("treasury");
     bc.send_message(
         MessageBuilder::internal(payer.address(), &addr, 100 * TOS)
@@ -492,12 +505,14 @@ fn run_with_pool_mode(
         assert_eq!(outcome.bounced_from.as_deref(), Some(outcome.destination.as_str()));
         outcome.respend = Some(respend_recovery(
             &mut pool,
-            frontier,
-            tree,
-            withdrawal_public,
-            recovery,
-            domain,
-            withdrawal.before_transact.value.unwrap_or(COMPUTE_FEE * 4),
+            RecoverySpend {
+                frontier,
+                tree,
+                withdrawal: withdrawal_public,
+                recovered: recovery,
+                domain,
+                compute_credit: withdrawal.before_transact.value.unwrap_or(COMPUTE_FEE * 4),
+            },
             &outcome,
             &mut prove,
         ));
@@ -617,7 +632,7 @@ fn prove_withdrawal_with(
         wire::output_data_hash(&recovery_payload),
     );
 
-    let now: u32 = w.pool.bc.now().try_into().expect("a unix time");
+    let now = w.pool.bc.now();
     let valid_until = now + 600;
     let output_payloads = [payload(1), payload(2), payload(3)];
     let output_data_hash = [
@@ -695,19 +710,26 @@ fn prove_withdrawal_with(
     (body, public)
 }
 
+/// Witness state and synthetic owner retained from the actual withdrawal cascade.
+struct RecoverySpend {
+    frontier: shielded_pool_circuit::tree::Frontier,
+    tree: imt::State,
+    withdrawal: PublicInputs,
+    recovered: Held,
+    domain: Fr,
+    compute_credit: u64,
+}
+
 /// Spend the actual bounced recovery leaf, then retry against a still-valid anchor.
 /// Every key/witness here belongs to an unfunded synthetic sandbox note.
 fn respend_recovery(
     pool: &mut Pool,
-    mut frontier: shielded_pool_circuit::tree::Frontier,
-    mut tree: imt::State,
-    withdrawal: PublicInputs,
-    mut recovered: Held,
-    domain: Fr,
-    compute_credit: u64,
+    spend: RecoverySpend,
     outcome: &Outcome,
     prove: &mut impl FnMut(PublicInputs, TransactionWitness, u32) -> groth16::CanonicalProof,
 ) -> RespendOutcome {
+    let RecoverySpend { mut frontier, mut tree, withdrawal, mut recovered, domain, compute_credit } =
+        spend;
     assert_eq!(outcome.commitment_next_index, "6");
     assert_eq!(outcome.nullifier_next_index, "3");
     assert_eq!(outcome.reserved_recovery_leaves, "0");
