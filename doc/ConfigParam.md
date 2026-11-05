@@ -163,7 +163,7 @@ native units (tomis):
 | Pool input | Value |
 |---|---:|
 | Reserve floor | 50,000,000,000 |
-| Withdrawal fee | 20,000,000 |
+| Withdrawal fee | 1,000,000 |
 | Note denominations | 1,000,000,000; 10,000,000,000; 100,000,000,000; 1,000,000,000,000 |
 
 The byte-frozen [V1 profile](../artifacts/shielded-pool/PROFILE.md) defines the
