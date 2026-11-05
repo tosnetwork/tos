@@ -38,7 +38,7 @@ fn unhex(text: &str) -> Vec<u8> {
         .collect()
 }
 
-fn run(refuse: bool) -> Outcome {
+fn run(refuse: bool, spend_recovery: bool) -> Outcome {
     let candidate = input("TOS_FINAL_POOL_CANDIDATE");
     let fees: serde_json::Value =
         serde_json::from_slice(&bounded(&input("TOS_FINAL_POOL_FEES"))).expect("price snapshot");
@@ -84,21 +84,21 @@ fn run(refuse: bool) -> Outcome {
     assert_eq!(audited.vk_sha256(), VK);
     assert_eq!(audited.transcript(), TRANSCRIPT);
     let client = PublicClient::load(&directory, &audited, VK, 2, &account).expect("final prover");
-    let outcome = support::run_with_pool(
-        &Withdrawal {
-            denominations: &[AMOUNT, 10 * AMOUNT, 100 * AMOUNT, 1000 * AMOUNT],
-            amount: AMOUNT,
-            destination_name: if refuse { "final-refuser" } else { "final-accepter" },
-            destination_source: if refuse { REFUSER } else { ACCEPTER },
-            age: None,
-            before_transact: Perturbation { value: Some(11_500_010), ..Default::default() },
-        },
-        pool,
-        client.execution_domain(),
-        |public, witness, now| {
-            client.prove(public, witness, now).expect("final-key withdrawal proof")
-        },
-    );
+    let withdrawal = Withdrawal {
+        denominations: &[AMOUNT, 10 * AMOUNT, 100 * AMOUNT, 1000 * AMOUNT],
+        amount: AMOUNT,
+        destination_name: if refuse { "final-refuser" } else { "final-accepter" },
+        destination_source: if refuse { REFUSER } else { ACCEPTER },
+        age: None,
+        before_transact: Perturbation { value: Some(11_500_010), ..Default::default() },
+    };
+    let mut prove =
+        |public, witness, now| client.prove(public, witness, now).expect("final-key proof");
+    let outcome = if spend_recovery {
+        support::run_with_pool_and_respend(&withdrawal, pool, client.execution_domain(), &mut prove)
+    } else {
+        support::run_with_pool(&withdrawal, pool, client.execution_domain(), &mut prove)
+    };
     assert_eq!(outcome.exit, 0);
     assert_eq!(outcome.action, Some(0));
     assert!(!outcome.aborted);
@@ -115,7 +115,7 @@ fn run(refuse: bool) -> Outcome {
 #[test]
 #[ignore = "requires explicit final candidate, audited public ceremony and fee snapshot paths"]
 fn final_key_withdrawal_pays_out_with_the_new_fee() {
-    let outcome = run(false);
+    let outcome = run(false, false);
     assert_eq!(outcome.transactions, 2);
     assert_eq!(outcome.recipient_success, Some(true));
     assert_eq!(outcome.refused_at, None);
@@ -128,7 +128,7 @@ fn final_key_withdrawal_pays_out_with_the_new_fee() {
 #[test]
 #[ignore = "requires explicit final candidate, audited public ceremony and fee snapshot paths"]
 fn final_key_withdrawal_refusal_bounces_and_recovers() {
-    let outcome = run(true);
+    let outcome = run(true, false);
     assert_eq!(outcome.transactions, 3);
     assert_eq!(outcome.recipient_success, Some(false));
     assert_eq!(outcome.refused_at.as_deref(), Some(outcome.destination.as_str()));
@@ -141,4 +141,19 @@ fn final_key_withdrawal_refusal_bounces_and_recovers() {
         outcome.pool_liability_after,
         u128::from(AMOUNT - FEE) + outcome.bounced_value - outcome.recovery_charge
     );
+}
+
+#[test]
+#[ignore = "requires explicit final candidate, audited public ceremony and fee snapshot paths"]
+fn final_key_recovered_note_can_be_spent_once() {
+    let outcome = run(true, true);
+    let respend = outcome.respend.expect("actual recovery-note spend did not run");
+    assert_eq!(respend.recovered_amount, outcome.bounced_value - outcome.recovery_charge);
+    assert_eq!(respend.liability_before, outcome.pool_liability_after);
+    assert_eq!(respend.liability_after, respend.liability_before);
+    assert_eq!(respend.commitment_next_index, "9");
+    assert_eq!(respend.nullifier_next_index, "5");
+    assert_eq!(respend.replay_exit, 115);
+    assert!(respend.gas > 0);
+    eprintln!("actual recovered-note spend: amount={}, gas={}, commitment_index={}, nullifier_index={}, valid-anchor replay_exit={}", respend.recovered_amount, respend.gas, respend.commitment_next_index, respend.nullifier_next_index, respend.replay_exit);
 }

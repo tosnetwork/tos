@@ -13,6 +13,7 @@
 //! happened. Two copies of that would drift, and the one that drifts is
 //! always the one nobody ran.
 
+use ark_ff::AdditiveGroup;
 use chain_block::{Cell, CommonMsgInfo, MsgAddressInt, Serializable, StateInit};
 use shielded_pool_circuit::circuit::{
     HeldNote, ShieldedTransactionCircuit, TransactionBuilder, TransactionWitness,
@@ -102,7 +103,18 @@ pub struct Held {
 }
 
 /// What a withdrawal left behind.
+pub struct RespendOutcome {
+    pub recovered_amount: u128,
+    pub liability_before: u128,
+    pub liability_after: u128,
+    pub commitment_next_index: String,
+    pub nullifier_next_index: String,
+    pub gas: i64,
+    pub replay_exit: i32,
+}
+
 pub struct Outcome {
+    pub respend: Option<RespendOutcome>,
     pub pool_liability_before: u128,
     pub pool_liability_after: u128,
     pub commitment_next_index: String,
@@ -214,9 +226,29 @@ pub fn run(withdrawal: &Withdrawal) -> Outcome {
 /// The caller binds the candidate, chain configuration and proving key beforehand.
 pub fn run_with_pool(
     withdrawal: &Withdrawal,
+    pool: Pool,
+    domain: Fr,
+    prove: impl FnMut(PublicInputs, TransactionWitness, u32) -> groth16::CanonicalProof,
+) -> Outcome {
+    run_with_pool_mode(withdrawal, pool, domain, prove, false)
+}
+
+/// Recover to an owner whose synthetic keys are known, then spend that actual note.
+pub fn run_with_pool_and_respend(
+    withdrawal: &Withdrawal,
+    pool: Pool,
+    domain: Fr,
+    prove: impl FnMut(PublicInputs, TransactionWitness, u32) -> groth16::CanonicalProof,
+) -> Outcome {
+    run_with_pool_mode(withdrawal, pool, domain, prove, true)
+}
+
+fn run_with_pool_mode(
+    withdrawal: &Withdrawal,
     mut pool: Pool,
     domain: Fr,
     mut prove: impl FnMut(PublicInputs, TransactionWitness, u32) -> groth16::CanonicalProof,
+    spend_recovery: bool,
 ) -> Outcome {
     let mut frontier = shielded_pool_circuit::tree::Frontier::new();
     let nullifiers = imt::State::genesis();
@@ -235,7 +267,24 @@ pub fn run_with_pool(
 
     // --- the withdrawal ---------------------------------------------------
     let mut tree = nullifiers.clone();
-    let body = prove_withdrawal_with(
+    let recovery = spend_recovery.then(|| Held {
+        key: AuthKey::generate().expect("synthetic recovery signing key"),
+        owner_nf_key: Fr::from(0x7eedu64),
+        note_secret: Fr::from(0x8eedu64),
+        data_hash: wire::output_data_hash(&payload(0x77)),
+        leaf_index: 0,
+    });
+    let recovery_owner = recovery
+        .as_ref()
+        .map(|note| {
+            notes::owner_commitment(
+                notes::owner_nf_key_hash(note.owner_nf_key),
+                note.key.hash(),
+                note.note_secret,
+            )
+        })
+        .unwrap_or_else(|| Fr::from(0x5eedu64));
+    let (body, withdrawal_public) = prove_withdrawal_with(
         ProvedWithdrawal {
             pool: &pool,
             domain,
@@ -246,7 +295,7 @@ pub fn run_with_pool(
             amount: withdrawal.amount,
             recipient: &destination,
             intent_nonce: 0xfeed_face,
-            recovery_owner_commitment: Fr::from(0x5eedu64),
+            recovery_owner_commitment: recovery_owner,
             nullifiers: &mut tree,
         },
         &mut prove,
@@ -402,7 +451,8 @@ pub fn run_with_pool(
     let liability_after: u128 =
         pool.get("native_liability").expect("liability").parse().expect("a number");
     let balance = pool.bc.get_account(&pool.addr).expect("the pool account");
-    Outcome {
+    let mut outcome = Outcome {
+        respend: None,
         sent_by_the_pool,
         pool_liability_before: liability_before,
         pool_liability_after: liability_after,
@@ -436,7 +486,23 @@ pub fn run_with_pool(
             .expect("a number"),
         holds: balance.balance().map(|value| value.coins.as_u128()).expect("a balance"),
         reserve: pool.get("reserve_floor").expect("reserve floor").parse().expect("a number"),
+    };
+    if let Some(recovery) = recovery {
+        assert_eq!(outcome.recovery_exit, 0);
+        assert_eq!(outcome.bounced_from.as_deref(), Some(outcome.destination.as_str()));
+        outcome.respend = Some(respend_recovery(
+            &mut pool,
+            frontier,
+            tree,
+            withdrawal_public,
+            recovery,
+            domain,
+            withdrawal.before_transact.value.unwrap_or(COMPUTE_FEE * 4),
+            &outcome,
+            &mut prove,
+        ));
     }
+    outcome
 }
 
 /// The execution domain of section 8 for this pool, on this chain.
@@ -517,7 +583,7 @@ pub struct ProvedWithdrawal<'a> {
 /// Two notes in, `amount` out to the recipient, the configured fee leaving
 /// with it, and the change staying inside as three output notes.
 pub fn prove_withdrawal(w: ProvedWithdrawal) -> Cell {
-    prove_withdrawal_with(w, development_proof)
+    prove_withdrawal_with(w, development_proof).0
 }
 
 fn development_proof(
@@ -540,7 +606,7 @@ fn development_proof(
 fn prove_withdrawal_with(
     w: ProvedWithdrawal,
     mut prove: impl FnMut(PublicInputs, TransactionWitness, u32) -> groth16::CanonicalProof,
-) -> Cell {
+) -> (Cell, PublicInputs) {
     let change = u128::from(DENOMINATION) * 2 - u128::from(w.amount) - u128::from(WITHDRAWAL_FEE);
     let recipient_account = account_of(w.recipient);
     let recipient_hash = wire::public_recipient_hash(&recipient_account);
@@ -608,7 +674,7 @@ fn prove_withdrawal_with(
         w.nullifiers.witness_for(&public.nullifier_1).expect("second witness");
     w.nullifiers.apply(after_second);
 
-    Transact {
+    let body = Transact {
         public: &public,
         proof: &canonical,
         anchor_root: w.root,
@@ -625,5 +691,240 @@ fn prove_withdrawal_with(
         recovery_payload: Some(recovery_payload),
     }
     .body()
-    .expect("a transact body")
+    .expect("a transact body");
+    (body, public)
+}
+
+/// Spend the actual bounced recovery leaf, then retry against a still-valid anchor.
+/// Every key/witness here belongs to an unfunded synthetic sandbox note.
+fn respend_recovery(
+    pool: &mut Pool,
+    mut frontier: shielded_pool_circuit::tree::Frontier,
+    mut tree: imt::State,
+    withdrawal: PublicInputs,
+    mut recovered: Held,
+    domain: Fr,
+    compute_credit: u64,
+    outcome: &Outcome,
+    prove: &mut impl FnMut(PublicInputs, TransactionWitness, u32) -> groth16::CanonicalProof,
+) -> RespendOutcome {
+    assert_eq!(outcome.commitment_next_index, "6");
+    assert_eq!(outcome.nullifier_next_index, "3");
+    assert_eq!(outcome.reserved_recovery_leaves, "0");
+    for note in [withdrawal.note_body_0, withdrawal.note_body_1, withdrawal.note_body_2] {
+        let leaf = notes::note_commitment(note, Fr::from(frontier.next_index()));
+        frontier.append(leaf).expect("withdrawal output frontier");
+    }
+    let amount = outcome
+        .bounced_value
+        .checked_sub(outcome.recovery_charge)
+        .expect("recovery charge exceeds actual bounce value");
+    assert!(amount > 0);
+    let owner = notes::owner_commitment(
+        notes::owner_nf_key_hash(recovered.owner_nf_key),
+        recovered.key.hash(),
+        recovered.note_secret,
+    );
+    let body = notes::note_body_commitment(owner, Fr::from(amount), recovered.data_hash);
+    recovered.leaf_index = frontier.next_index();
+    assert_eq!(recovered.leaf_index, 5);
+    frontier
+        .append(notes::note_commitment(body, Fr::from(recovered.leaf_index)))
+        .expect("actual recovered note frontier");
+    let root = frontier.recomputed_root();
+    assert_eq!(
+        pool.get("commitment_root").expect("recovered root"),
+        dec(root),
+        "actual recovery leaf does not match bounce value, charge, owner and payload"
+    );
+    assert_eq!(pool.get("nullifier_root").expect("withdrawal nullifier root"), dec(tree.root()));
+    let version: u32 = frontier.next_index().try_into().expect("recent version");
+    let phantom = AuthKey::generate().expect("synthetic phantom signing key");
+    let output_payloads = [payload(0x81), payload(0x82), payload(0x83)];
+    let output_data_hash = output_payloads.each_ref().map(|bytes| wire::output_data_hash(bytes));
+    let mut scenario = shielded_pool_circuit::scenario::Pool::new();
+    let outputs = [
+        scenario.real_output(Fr::from(amount / 2)),
+        scenario.real_output(Fr::from(amount - amount / 2)),
+        scenario.dummy_output(),
+    ];
+    let valid_until = pool.bc.now().checked_add(600).expect("test expiry");
+    let (public, witness) = TransactionBuilder {
+        execution_domain: domain,
+        valid_until,
+        intent_nonce: Fr::from(0xfeed_f002u64),
+        public_amount_out: Fr::ZERO,
+        withdrawal_fee: Fr::ZERO,
+        public_recipient_hash: Fr::ZERO,
+        recovery_template_hash: Fr::ZERO,
+        is_withdrawal: None,
+        input_pq_auth_key_hash: [recovered.key.hash(), phantom.hash()],
+        outputs,
+        output_data_hash,
+    }
+    .build(
+        &frontier,
+        root,
+        [
+            HeldNote {
+                is_phantom: false,
+                owner_nf_key: recovered.owner_nf_key,
+                note_secret: recovered.note_secret,
+                amount: Fr::from(amount),
+                output_data_hash: recovered.data_hash,
+                leaf_index: recovered.leaf_index,
+            },
+            HeldNote {
+                is_phantom: true,
+                owner_nf_key: Fr::from(7u64),
+                note_secret: Fr::from(9u64),
+                amount: Fr::ZERO,
+                output_data_hash: Fr::from(11u64),
+                leaf_index: 0,
+            },
+        ],
+    )
+    .expect("build actual recovery-note spend");
+    let canonical = prove(public, witness, pool.bc.now());
+    let signatures = [
+        recovered.key.sign(public.transaction_intent_digest).expect("recovery signature"),
+        phantom.sign(public.transaction_intent_digest).expect("phantom signature"),
+    ];
+    let (first, after_first) =
+        tree.witness_for(&public.nullifier_0).expect("recovery spend first witness");
+    tree.apply(after_first);
+    let (second, after_second) =
+        tree.witness_for(&public.nullifier_1).expect("recovery spend second witness");
+    tree.apply(after_second);
+    let witnesses = [first, second];
+    let encode = |anchor| {
+        Transact {
+            public: &public,
+            proof: &canonical,
+            anchor_root: root,
+            anchor,
+            valid_until,
+            output_payloads: &output_payloads,
+            keys: [&recovered.key.public, &phantom.public],
+            signatures: &signatures,
+            witnesses: &witnesses,
+            public_amount_out: 0,
+            withdrawal_fee: 0,
+            recipient: None,
+            recovery_owner_commitment: Fr::ZERO,
+            recovery_payload: None,
+        }
+        .body()
+        .expect("recovery spend body")
+    };
+    let body = encode(Anchor::Current);
+    let replay_body = encode(Anchor::Recent(version));
+    let before = pool.state_snapshot().expect("before recovery spend");
+    let liability_before: u128 =
+        pool.get("native_liability").expect("before spend liability").parse().expect("coins");
+    let result = pool.send(compute_credit, body).expect("send actual recovery-note spend");
+    result.expect_success();
+    let description = result.read_primary_description();
+    assert!(!description.aborted);
+    assert!(description.action.as_ref().is_none_or(|a| a.valid
+        && a.success
+        && !a.no_funds
+        && a.result_code == 0
+        && a.skipped_actions == 0));
+    let gas = match description.compute_ph {
+        chain_block::TrComputePhase::Vm(vm) => {
+            assert!(vm.success && vm.exit_code == 0);
+            vm.gas_used.to_string().parse().expect("spend gas")
+        }
+        _ => panic!("recovery spend compute skipped"),
+    };
+    assert_eq!(result.transaction_count(), 1);
+    assert_eq!(
+        result
+            .first_transaction()
+            .expect("spend transaction")
+            .out_msgs
+            .len()
+            .expect("output count"),
+        0
+    );
+    for note in [public.note_body_0, public.note_body_1, public.note_body_2] {
+        let leaf = notes::note_commitment(note, Fr::from(frontier.next_index()));
+        frontier.append(leaf).expect("respend output frontier");
+    }
+    assert_eq!(
+        pool.get("commitment_root").expect("respend root"),
+        dec(frontier.recomputed_root()),
+        "recovery note was not actually spent"
+    );
+    assert_eq!(pool.get("nullifier_root").expect("respend nullifier root"), dec(tree.root()));
+    let commitment_next_index =
+        pool.get("commitment_next_index").expect("respend commitment index");
+    let nullifier_next_index = pool.get("nullifier_next_index").expect("respend nullifier index");
+    assert_eq!(commitment_next_index, "9");
+    assert_eq!(nullifier_next_index, "5");
+    assert_ne!(before, pool.state_snapshot().expect("after recovery spend"));
+    let liability_after =
+        pool.get("native_liability").expect("after spend liability").parse().expect("coins");
+    assert_eq!(liability_before, liability_after);
+    assert_eq!(liability_after, outcome.pool_liability_after);
+    assert_eq!(pool.get("reserved_recovery_leaves").expect("respend reservations"), "0");
+    let balance = pool.bc.get_account(&pool.addr).expect("respend pool account");
+    assert!(
+        balance.balance().expect("respend balance").coins.as_u128()
+            >= liability_after + outcome.reserve
+    );
+    let (recent, _) = pool.anchor_rings().expect("actual recent anchor ring");
+    assert!(
+        recent.iter().any(|entry| entry.version == u64::from(version)
+            && entry.root == shielded_pool_circuit_crosscheck::pool::be(root)),
+        "replay anchor is not actually preserved"
+    );
+    let before_replay = pool.state_snapshot().expect("before repeated spend");
+    let replay = pool.send(compute_credit, replay_body).expect("repeat spent recovery note");
+    let replay_exit = match replay.read_primary_description().compute_ph {
+        chain_block::TrComputePhase::Vm(vm) => vm.exit_code,
+        _ => panic!("replay compute skipped"),
+    };
+    assert_eq!(
+        replay_exit, 115,
+        "replay must reach the stale nullifier witness with a valid recent anchor"
+    );
+    assert_eq!(
+        before_replay,
+        pool.state_snapshot().expect("after repeated spend"),
+        "rejected replay changed full persistent data"
+    );
+    // Refusing an inbound bounceable message returns the unused compute credit.
+    // Require the one protocol bounce, never an application payout or a new note.
+    let transaction = replay.first_transaction().expect("replay transaction");
+    let inbound = transaction.read_in_msg().expect("replay inbound").expect("inbound present");
+    let CommonMsgInfo::IntMsgInfo(input) = inbound.header() else {
+        panic!("replay input is not internal");
+    };
+    let sender = input.src_ref().expect("replay sender");
+    let mut refunds = 0;
+    transaction
+        .iterate_out_msgs(|message| {
+            let CommonMsgInfo::IntMsgInfo(info) = message.header() else {
+                panic!("replay emitted an external message");
+            };
+            assert!(info.bounced && !info.bounce, "replay emitted an application payout");
+            assert_eq!(info.src_ref(), Some(&pool.addr));
+            assert_eq!(&info.dst, sender, "refund recipient differs from original sender");
+            assert!(info.value.coins.as_u128() <= u128::from(compute_credit));
+            refunds += 1;
+            Ok(true)
+        })
+        .expect("replay output decoding");
+    assert_eq!(refunds, 1, "rejected replay did not return exactly one protocol refund");
+    RespendOutcome {
+        recovered_amount: amount,
+        liability_before,
+        liability_after,
+        commitment_next_index,
+        nullifier_next_index,
+        gas,
+        replay_exit,
+    }
 }
