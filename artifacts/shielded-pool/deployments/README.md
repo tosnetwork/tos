@@ -35,14 +35,21 @@ randomness and independence remain declarations, not properties proved here.
 
 ## Reproduction
 
-Use an independently held checkout containing the profile commit and finished
-ceremony. Set `TOS_ROOT` to a matching V16 compiler checkout; build `func` and
-`fift` with `cmake --build build --target func fift -j6`. The run used compiler
+Use an independently held checkout of generator revision
+`53fdb486ee1aba86a40e15a1a13b240ea0381d2b`, which contains the frozen
+candidate, the verifier, and the original 20,000,000-nanoto withdrawal fee.
+Run both generation and verification from that checkout. The current
+generator's 1,000,000-nanoto default produces a different candidate.
+
+Set `TOS_ROOT` to a matching V16 compiler checkout. Build `func` and `fift`
+with `cmake --build build --target func fift -j6`. The run used compiler
 version 0.4.6 built from runtime commit
-`85c679c3454f306eb867e25b1960ae3d757bd3dd`; contract sources come from this
-checkout, never from `TOS_ROOT`. Use a fresh output directory:
+`85c679c3454f306eb867e25b1960ae3d757bd3dd`. The generator reads the contract
+sources from the pinned checkout. Use a fresh output directory:
 
 ```sh
+git worktree add --detach ../tos-epoch4-v16-repro 53fdb486ee1aba86a40e15a1a13b240ea0381d2b
+cd ../tos-epoch4-v16-repro
 export FUNC_PATH="$TOS_ROOT/build/crypto/func"
 export FIFT_PATH="$TOS_ROOT/build/crypto/fift"
 export CARGO_TARGET_DIR="$PWD/target"

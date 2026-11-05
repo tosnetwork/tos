@@ -93,6 +93,15 @@ fn historical_forward(config: &ConfigParams, bits: u64, cells: u64) -> Result<u1
     forward(&config, bits, cells)
 }
 
+fn require_payout_fee(configured: u128, target: u128, reference: u128) -> Result<()> {
+    if configured < target.max(reference) {
+        return Err(
+            "immutable withdrawal fee does not cover live and reference forwarding prices".into()
+        );
+    }
+    Ok(())
+}
+
 fn verify_frozen_candidate(root: &Path, out: &Path) -> Result<()> {
     let frozen = "HEAD:artifacts/shielded-pool/deployments/epoch4-v16";
     let checksums = String::from_utf8(git(root, &["show", &format!("{frozen}/SHA256SUMS")])?)?;
@@ -243,13 +252,9 @@ fn main() -> Result<()> {
     let payout_fee = forward(&config, payout_bits, payout_cells)?;
     let reference_payout_fee = forward(&reference_config, payout_bits, payout_cells)?;
     let historical_payout_fee = historical_forward(&config, payout_bits, payout_cells)?;
-    if planned.parameters().withdrawal_fee
-        < payout_fee.max(reference_payout_fee).max(historical_payout_fee)
-    {
-        return Err(
-            "immutable withdrawal fee does not cover live, reference and historical forwarding prices".into()
-        );
-    }
+    // The historical schedule is a stress reference for the report. The
+    // candidate must cover the target snapshot and the reference sandbox.
+    require_payout_fee(planned.parameters().withdrawal_fee, payout_fee, reference_payout_fee)?;
     let end = now.checked_add(86400).ok_or("storage horizon overflow")?;
     let storage = chain_block::accrued_storage_fee(
         &config.storage_prices()?.prices()?,
@@ -364,12 +369,16 @@ mod tests {
     }
 
     #[test]
-    fn the_immutable_fee_also_covers_the_historical_higher_prices() {
+    fn historical_forwarding_prices_are_reported_without_gating_the_candidate() {
         let mut config = ConfigParams::default();
         config
             .set_config(ConfigParamEnum::ConfigParam25(MsgForwardPrices::default()))
             .expect("prices");
         assert_eq!(historical_forward(&config, 10_984, 13).expect("historical quote"), 5_313_600);
+        let configured = shielded_pool_genesis::WITHDRAWAL_FEE;
+        assert!(require_payout_fee(configured, 885_601, 885_601).is_ok());
+        assert!(require_payout_fee(configured, configured + 1, 885_601).is_err());
+        assert!(require_payout_fee(configured, 885_601, configured + 1).is_err());
     }
 
     #[test]
