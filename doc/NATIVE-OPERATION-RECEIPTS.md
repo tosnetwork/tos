@@ -19,7 +19,10 @@ JSON file containing:
   and `timeout_seconds` (1–300 for the combined proof/history operation).
 
 Hashes are 64 lowercase hexadecimal characters. RPC endpoints may not carry
-credentials, query strings, or fragments. The intent is local policy; it must
+credentials, query strings, or fragments. Distinctness uses the RPC transport's
+canonical URL identity: trailing path slashes, trailing host dots, host casing,
+and default ports do not create another source. Remote endpoints require HTTPS;
+HTTP is allowed only for loopback. The intent is local policy; it must
 not be assembled from an unverified RPC reply. The caller must pin its approved
 intent, CLI executable, native verifier executable/configuration, operation and
 controller generation before using the result. The configured verifier is a

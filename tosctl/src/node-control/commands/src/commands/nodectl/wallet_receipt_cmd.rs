@@ -3,7 +3,7 @@
 //! deliberately outside this command. A public original-message hash suffices.
 use anyhow::Context as _;
 use chain_block::{Cell, CurrencyCollection, Deserializable, Message, MsgAddressInt};
-use chain_rpc_client::v2::client_json_rpc::ClientJsonRpc;
+use chain_rpc_client::v2::client_json_rpc::{ClientJsonRpc, canonicalize_chain_rpc_endpoint};
 use common::app_config::ProofVerifierConfig;
 use contracts::{
     proven_getters::{ProvenAccountState, ProvenGetterProvider, ReadPolicy},
@@ -118,16 +118,8 @@ impl Intent {
         anyhow::ensure!((1..=3600).contains(&self.max_age_seconds), "live age bound");
         let mut endpoints = Vec::new();
         for endpoint in &self.rpc {
-            let url = reqwest::Url::parse(endpoint)?;
-            anyhow::ensure!(
-                matches!(url.scheme(), "http" | "https")
-                    && url.username().is_empty()
-                    && url.password().is_none()
-                    && url.query().is_none()
-                    && url.fragment().is_none(),
-                "plain public RPC endpoint required"
-            );
-            endpoints.push(url.to_string());
+            // Compare the same identity ClientJsonRpc uses when connecting.
+            endpoints.push(canonicalize_chain_rpc_endpoint(endpoint)?.0);
         }
         anyhow::ensure!(endpoints[0] != endpoints[1], "two distinct RPC endpoints required");
         Ok(())
@@ -421,6 +413,37 @@ mod tests {
             };
             let error = intent.validate().expect_err("intended refusal");
             assert!(error.to_string().contains(expected), "wrong refusal for {changed}: {error}");
+        }
+    }
+
+    #[test]
+    fn receipt_rpc_distinctness_uses_transport_identity() {
+        let mut intent = intent();
+        for second in [
+            "https://other.example/jsonRPC",
+            "https://rpc.example/other",
+            "https://rpc.example:8443/jsonRPC",
+        ] {
+            intent.rpc = ["https://rpc.example/jsonRPC".into(), second.into()];
+            intent.validate().expect("distinct transport endpoints remain valid");
+        }
+        for second in [
+            "https://rpc.example/jsonRPC/",
+            "https://rpc.example./jsonRPC",
+            "https://RPC.EXAMPLE:443/jsonRPC",
+            "https://RPC.EXAMPLE.:443/jsonRPC///",
+            "https://rpc.example/jsonRPC",
+        ] {
+            intent.rpc = ["https://rpc.example/jsonRPC".into(), second.into()];
+            let first = canonicalize_chain_rpc_endpoint(&intent.rpc[0]).expect("first endpoint");
+            let second = canonicalize_chain_rpc_endpoint(&intent.rpc[1]).expect("second endpoint");
+            assert_eq!(first.0, second.0, "fixture must reach the same transport endpoint");
+            let error = intent.validate().expect_err("aliases are not distinct RPC sources");
+            assert!(
+                error.to_string().contains("two distinct RPC endpoints"),
+                "wrong refusal for {:?}: {error}",
+                intent.rpc
+            );
         }
     }
 
