@@ -110,12 +110,34 @@ TosShieldedResponse *tos_shielded_replay_summary(const TosShieldedReplay *sessio
 TosShieldedResponse *tos_shielded_replay_receive(const TosShieldedReplay *session, const uint8_t *seed,
                                                  size_t seed_length, const uint8_t *root, size_t root_length,
                                                  const uint8_t *binding, size_t binding_length);
+/* Ready replay; decimal minimum attached nanoTOS, excluding wallet fees. */
+TosShieldedResponse *tos_shielded_replay_deposit_value(const TosShieldedReplay *session, uint64_t amount);
+/* Same authenticated replay and index reservation as receive. Returns body BOC.
+ * Before submission, durably retain the complete signed ordinary-wallet
+ * transaction. Retries must resend its exact signed bytes; signing this body
+ * again with a new wallet sequence can debit the wallet twice. */
+TosShieldedResponse *tos_shielded_replay_self_deposit(const TosShieldedReplay *session, const uint8_t *seed,
+                                                      size_t seed_length, const uint8_t *root, size_t root_length,
+                                                      const uint8_t *binding, size_t binding_length, uint64_t amount,
+                                                      uint64_t query_id);
 
 /* Read the unresolved payment against the same wallet-bound Ready replay.
  * Payload: 0 no record, 1 intent absent, 2 intent accepted. Keeps the record. */
 TosShieldedResponse *tos_shielded_replay_pending_status(const TosShieldedReplay *session, const uint8_t *seed,
                                                         size_t seed_length, const uint8_t *root, size_t root_length,
                                                         const uint8_t *binding, size_t binding_length);
+
+/* Ready replay, original master and authenticated binding as for receive.
+ * Operation 0 exports to an empty caller-staged regular file, which must only
+ * be published after success. Operation 1 reads a regular backup file and
+ * restores into a fresh private wallet instance. Existing instances and
+ * interrupted restore candidates are retained. Reverify chain state after
+ * restore. The caller owns fd; the call changes its offset and requires
+ * exclusive access for its duration. Success returns one byte with value 1. */
+TosShieldedResponse *tos_shielded_replay_backup_file(const TosShieldedReplay *session, const uint8_t *seed,
+                                                     size_t seed_length, const uint8_t *root, size_t root_length,
+                                                     const uint8_t *binding, size_t binding_length, int32_t fd,
+                                                     int32_t operation);
 
 #endif
 

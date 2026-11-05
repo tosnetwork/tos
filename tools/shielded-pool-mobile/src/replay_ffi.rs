@@ -14,7 +14,7 @@ use base64::{engine::general_purpose::STANDARD, Engine};
 use chain_block::ConfigParamEnum;
 use serde::{Deserialize, Serialize};
 use shielded_pool_circuit::{field::Fr, wire};
-use shielded_pool_codec::{compute_fee, PoolState, BOUNCE_GAS_CEILING};
+use shielded_pool_codec::{compute_fee, PoolState, BOUNCE_GAS_CEILING, DEPOSIT_GAS_CEILING};
 use shielded_pool_wallet::plan::PoolTerms;
 use shielded_pool_wallet::{
     descriptor::{Descriptor, DESCRIPTOR_BYTES},
@@ -55,6 +55,7 @@ pub struct TosShieldedReplay {
     domain: Fr,
     receive_binding: Option<[u8; 228]>,
     terms: PoolTerms,
+    deposit_compute_fee: u128,
 }
 
 #[cfg(all(unix, feature = "proving"))]
@@ -206,11 +207,25 @@ impl TosShieldedReplay {
             state: State::Building(Box::new(Replay::new(head, &state, charge)?)),
             domain,
             receive_binding,
+            deposit_compute_fee: compute_fee(&prices, DEPOSIT_GAS_CEILING)
+                .map_err(|_| Error::InvalidInput)?,
             terms: PoolTerms {
                 denominations: state.config.denominations,
                 withdrawal_fee: state.config.withdrawal_fee,
             },
         })
+    }
+
+    fn deposit_value(&self, amount: u64) -> Result<u64> {
+        let amount = u128::from(amount);
+        if amount == 0
+            || !matches!(self.state, State::Ready(_))
+            || !self.terms.denominations.contains(&amount)
+        {
+            return Err(Error::InvalidInput);
+        }
+        let value = amount.checked_add(self.deposit_compute_fee).ok_or(Error::Limit)?;
+        u64::try_from(value).map_err(|_| Error::Limit)
     }
 
     #[cfg(unix)]
@@ -1178,6 +1193,99 @@ pub unsafe extern "C" fn tos_shielded_replay_receive(
     binding: *const u8,
     binding_length: usize,
 ) -> *mut TosShieldedResponse {
+    unsafe {
+        with_reserved_receive_index(
+            session,
+            seed,
+            seed_length,
+            root,
+            root_length,
+            binding,
+            binding_length,
+            |key, domain, index| {
+                crate::issue_descriptor(
+                    key,
+                    &shielded_pool_circuit::field::fr_to_be(&domain),
+                    index,
+                )
+            },
+        )
+    }
+}
+
+/// Return the minimum attached value in nanoTOS as canonical decimal bytes.
+/// The ordinary wallet must separately estimate its own transaction fees.
+///
+/// # Safety
+/// The replay must be live, serialized and backed by a fresh verified observation.
+#[no_mangle]
+pub unsafe extern "C" fn tos_shielded_replay_deposit_value(
+    session: *const TosShieldedReplay,
+    amount: u64,
+) -> *mut TosShieldedResponse {
+    response(|| {
+        let owner = unsafe { session.as_ref() }.ok_or(Error::InvalidInput)?;
+        Ok(Zeroizing::new(owner.deposit_value(amount)?.to_string().into_bytes()))
+    })
+}
+
+/// Construct a self-deposit body after durably reserving its note index.
+/// Before sending, the caller must durably retain the complete signed ordinary
+/// wallet transaction containing this body. Retry by resending that transaction's
+/// exact signed bytes. Signing the body again with a new wallet sequence can
+/// debit the wallet twice.
+///
+/// # Safety
+/// The same pointer, serialization and authentication requirements as
+/// `tos_shielded_replay_receive` apply.
+#[cfg(unix)]
+#[no_mangle]
+pub unsafe extern "C" fn tos_shielded_replay_self_deposit(
+    session: *const TosShieldedReplay,
+    seed: *const u8,
+    seed_length: usize,
+    root: *const u8,
+    root_length: usize,
+    binding: *const u8,
+    binding_length: usize,
+    amount: u64,
+    query_id: u64,
+) -> *mut TosShieldedResponse {
+    let result = unsafe { session.as_ref() }
+        .ok_or(Error::InvalidInput)
+        .and_then(|owner| owner.deposit_value(amount));
+    if let Err(error) = result {
+        return response(|| Err(error));
+    }
+    unsafe {
+        with_reserved_receive_index(
+            session,
+            seed,
+            seed_length,
+            root,
+            root_length,
+            binding,
+            binding_length,
+            |key, domain, index| {
+                let instance = PoolInstance::new(key, domain);
+                crate::deposit::build_self_deposit(&instance, index, amount, query_id)
+            },
+        )
+    }
+}
+
+#[cfg(unix)]
+#[allow(clippy::too_many_arguments)]
+unsafe fn with_reserved_receive_index(
+    session: *const TosShieldedReplay,
+    seed: *const u8,
+    seed_length: usize,
+    root: *const u8,
+    root_length: usize,
+    binding: *const u8,
+    binding_length: usize,
+    build: impl FnOnce(&[u8; 32], Fr, u64) -> Result<Vec<u8>>,
+) -> *mut TosShieldedResponse {
     response(|| {
         if session.is_null()
             || seed.is_null()
@@ -1222,8 +1330,7 @@ pub unsafe extern "C" fn tos_shielded_replay_receive(
         .map_err(|_| Error::InvalidInput)?;
         let indices = store.reserve_indices(Some(next), 1).map_err(|_| Error::InvalidInput)?;
         let index = indices.first().copied().ok_or(Error::InvalidInput)?;
-        crate::issue_descriptor(&key, &shielded_pool_circuit::field::fr_to_be(&owner.domain), index)
-            .map(Zeroizing::new)
+        build(&key, owner.domain, index).map(Zeroizing::new)
     })
 }
 
@@ -1264,17 +1371,110 @@ pub unsafe extern "C" fn tos_shielded_replay_pending_status(
         let binding = owner.wallet_binding(bytes)?;
         let mut key = Zeroizing::new([0; 32]);
         key.copy_from_slice(unsafe { slice::from_raw_parts(seed, 32) });
-        let mut store = crate::store::StateStore::open_wallet(
+        let Some(mut store) = crate::store::StateStore::open_existing_wallet(
             std::path::Path::new(root),
             crate::sealed::RecordCipher::derive(&key, binding),
         )
-        .map_err(|_| Error::InvalidInput)?;
+        .map_err(|_| Error::InvalidInput)?
+        else {
+            return Ok(Zeroizing::new(vec![0]));
+        };
         let status = match store.pending_payment().map_err(|_| Error::InvalidInput)? {
             None => 0,
             Some(payment) if ledger.accepted_intents().contains(&payment.intent) => 2,
             Some(_) => 1,
         };
         Ok(Zeroizing::new(vec![status]))
+    })
+}
+
+#[cfg(unix)]
+#[no_mangle]
+/// # Safety
+/// The session and pointers must be live and serialized. The caller owns the
+/// descriptor and must keep it open without concurrent access during this call.
+pub unsafe extern "C" fn tos_shielded_replay_backup_file(
+    session: *const TosShieldedReplay,
+    seed: *const u8,
+    seed_length: usize,
+    root: *const u8,
+    root_length: usize,
+    binding: *const u8,
+    binding_length: usize,
+    fd: libc::c_int,
+    restore: libc::c_int,
+) -> *mut TosShieldedResponse {
+    use crate::store::{StateStore, MAX_BACKUP_BYTES};
+    use std::{
+        fs::File,
+        io::{Read, Seek, SeekFrom},
+        os::fd::FromRawFd,
+        path::Path,
+    };
+
+    response(|| {
+        if session.is_null()
+            || seed.is_null()
+            || root.is_null()
+            || binding.is_null()
+            || seed_length != 32
+            || !(1..=4096).contains(&root_length)
+            || binding_length != 228
+            || !matches!(restore, 0 | 1)
+        {
+            return Err(Error::InvalidInput);
+        }
+        let owner = unsafe { &*session };
+        if !matches!(owner.state, State::Ready(_)) {
+            return Err(Error::InvalidInput);
+        }
+        let root = std::str::from_utf8(unsafe { slice::from_raw_parts(root, root_length) })
+            .map_err(|_| Error::InvalidInput)?;
+        if root.as_bytes().contains(&0) || !Path::new(root).is_absolute() {
+            return Err(Error::InvalidInput);
+        }
+        let binding =
+            owner.wallet_binding(unsafe { slice::from_raw_parts(binding, binding_length) })?;
+        let mut key = Zeroizing::new([0; 32]);
+        key.copy_from_slice(unsafe { slice::from_raw_parts(seed, 32) });
+        let cipher = crate::sealed::RecordCipher::derive(&key, binding);
+        // SAFETY: fcntl duplicates the caller-owned descriptor; only the copy is closed.
+        let duplicate = unsafe { libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, 0) };
+        if duplicate < 0 {
+            return Err(Error::InvalidInput);
+        }
+        // SAFETY: duplicate is a new uniquely owned descriptor.
+        let mut file = unsafe { File::from_raw_fd(duplicate) };
+        let metadata = file.metadata().map_err(|_| Error::InvalidInput)?;
+        if !metadata.is_file() {
+            return Err(Error::InvalidInput);
+        }
+        file.seek(SeekFrom::Start(0)).map_err(|_| Error::InvalidInput)?;
+        if restore == 0 {
+            if metadata.len() != 0 {
+                return Err(Error::InvalidInput);
+            }
+            let mut store = StateStore::open_existing_wallet(Path::new(root), cipher)
+                .map_err(|_| Error::InvalidInput)?
+                .ok_or(Error::InvalidInput)?;
+            store.export_backup(&mut file).map_err(|_| Error::InvalidInput)?;
+            file.sync_all().map_err(|_| Error::InvalidInput)?;
+        } else {
+            let size = usize::try_from(metadata.len()).map_err(|_| Error::Limit)?;
+            if !(1..=MAX_BACKUP_BYTES).contains(&size) {
+                return Err(Error::Limit);
+            }
+            let mut backup = Vec::new();
+            backup.try_reserve_exact(size).map_err(|_| Error::Limit)?;
+            backup.resize(size, 0);
+            file.read_exact(&mut backup).map_err(|_| Error::InvalidInput)?;
+            if file.read(&mut [0; 1]).map_err(|_| Error::InvalidInput)? != 0 {
+                return Err(Error::InvalidInput);
+            }
+            StateStore::restore_backup(Path::new(root), cipher, &backup)
+                .map_err(|_| Error::InvalidInput)?;
+        }
+        Ok(Zeroizing::new(vec![1]))
     })
 }
 
@@ -1508,6 +1708,7 @@ mod tests {
             domain,
             receive_binding: None,
             terms: PoolTerms { denominations: vec![], withdrawal_fee: 1 },
+            deposit_compute_fee: 42,
         };
         let page: serde_json::Value =
             serde_json::from_slice(&before.scan(&seed, 0, 1).unwrap()).unwrap();
@@ -1533,6 +1734,7 @@ mod tests {
             domain,
             receive_binding: None,
             terms: PoolTerms { denominations: vec![], withdrawal_fee: 1 },
+            deposit_compute_fee: 42,
         };
         let page: serde_json::Value =
             serde_json::from_slice(&after.scan(&seed, 0, 1).unwrap()).unwrap();
@@ -1559,6 +1761,7 @@ mod tests {
             domain: Fr::from(7u64),
             receive_binding: None,
             terms: PoolTerms { denominations: vec![], withdrawal_fee: 1 },
+            deposit_compute_fee: 42,
         };
         let result = unsafe {
             mutate(&mut owner, |_old| std::panic::resume_unwind(Box::new("injected test unwind")))
@@ -1616,6 +1819,7 @@ mod tests {
             domain,
             receive_binding: None,
             terms: PoolTerms { denominations: vec![], withdrawal_fee: 1 },
+            deposit_compute_fee: 42,
         };
         let page_a: serde_json::Value =
             serde_json::from_slice(&before.scan(&seed, 0, 512).unwrap()).unwrap();
@@ -1670,6 +1874,7 @@ mod tests {
             domain,
             receive_binding: None,
             terms: PoolTerms { denominations: vec![], withdrawal_fee: 1 },
+            deposit_compute_fee: 42,
         };
         let summary = summary_json(&after, &seed);
         assert_eq!(summary["unspent_balance"], "1000");
@@ -1684,6 +1889,7 @@ mod tests {
             domain,
             receive_binding: None,
             terms: PoolTerms { denominations: vec![], withdrawal_fee: 1 },
+            deposit_compute_fee: 42,
         };
         let issue = |domain| {
             crate::issue_descriptor(&[42; 32], &shielded_pool_circuit::field::fr_to_be(&domain), 0)
@@ -1743,6 +1949,7 @@ mod tests {
             domain,
             receive_binding: None,
             terms: PoolTerms { denominations: vec![], withdrawal_fee: 1 },
+            deposit_compute_fee: 42,
         };
         for (session, key, length) in [
             (&owner as *const _, seed.as_ptr(), 32),
@@ -1768,6 +1975,7 @@ mod tests {
             domain: Fr::from(7u64),
             receive_binding: None,
             terms: PoolTerms { denominations: vec![], withdrawal_fee: 1 },
+            deposit_compute_fee: 42,
         };
         let absolute = b"/missing";
         for (session, path) in [
@@ -1800,6 +2008,7 @@ mod tests {
             domain: wire::execution_domain(3, &[1; 32]),
             receive_binding: Some(binding),
             terms: PoolTerms { denominations: vec![], withdrawal_fee: 1 },
+            deposit_compute_fee: 42,
         };
         binding[164] ^= 1;
         let missing = std::path::Path::new("/nonexistent-proving-material");
@@ -1843,13 +2052,15 @@ mod tests {
             domain,
             receive_binding: Some(binding),
             terms: PoolTerms { denominations: vec![], withdrawal_fee: 1 },
+            deposit_compute_fee: 42,
         };
         assert_eq!(receive(&failed, &binding).status, 1);
         let make_ready = || TosShieldedReplay {
             state: State::Ready(Box::new(Ledger::genesis())),
             domain,
             receive_binding: Some(binding),
-            terms: PoolTerms { denominations: vec![], withdrawal_fee: 1 },
+            terms: PoolTerms { denominations: vec![1000, u128::from(u64::MAX)], withdrawal_fee: 1 },
+            deposit_compute_fee: 42,
         };
         let mut other_pool = binding;
         other_pool[4] = 2;
@@ -1863,6 +2074,43 @@ mod tests {
             assert_eq!(descriptor.note_key_index, index);
         }
         let keys = PoolInstance::new(&key, domain);
+        let value = |owner: &TosShieldedReplay, amount| unsafe {
+            Box::from_raw(tos_shielded_replay_deposit_value(owner, amount))
+        };
+        assert_eq!(value(&failed, 1000).status, 1);
+        assert_eq!(value(&make_ready(), 0).status, 1);
+        assert_eq!(value(&make_ready(), 1001).status, 1);
+        assert_eq!(value(&make_ready(), u64::MAX).status, 1);
+        assert_eq!(value(&make_ready(), 1000).bytes.as_slice(), b"1042");
+        let deposit = |owner: &TosShieldedReplay, binding: &[u8], amount| unsafe {
+            Box::from_raw(tos_shielded_replay_self_deposit(
+                owner,
+                key.as_ptr(),
+                key.len(),
+                path.as_ptr(),
+                path.len(),
+                binding.as_ptr(),
+                binding.len(),
+                amount,
+                23,
+            ))
+        };
+        assert_eq!(deposit(&failed, &binding, 1000).status, 1);
+        assert_eq!(deposit(&make_ready(), &other_pool, 1000).status, 1);
+        assert_eq!(deposit(&make_ready(), &binding, 0).status, 1);
+        assert_eq!(deposit(&make_ready(), &binding, 1001).status, 1);
+        let result = deposit(&make_ready(), &binding, 1000);
+        assert_eq!(result.status, 0);
+        let mut body =
+            chain_block::SliceData::load_cell(read_cell(&result.bytes).unwrap()).unwrap();
+        assert_eq!(body.get_next_u32().unwrap(), shielded_pool_codec::OP_DEPOSIT);
+        let deposit = shielded_pool_codec::DepositBody::parse(&mut body).unwrap();
+        assert_eq!(deposit.amount, 1000);
+        assert_eq!(deposit.query_id, 23);
+        assert_eq!(delivery::open(&keys, &deposit.output_data, 0).unwrap().note_key_index, 2);
+        let result = receive(&make_ready(), &binding);
+        assert_eq!(result.status, 0);
+        assert_eq!(Descriptor::from_bytes(&result.bytes).unwrap().note_key_index, 3);
         let plain = Plaintext {
             slot: 0,
             kind: Kind::Ordinary,
@@ -1895,6 +2143,7 @@ mod tests {
             domain,
             receive_binding: Some(binding),
             terms: PoolTerms { denominations: vec![], withdrawal_fee: 1 },
+            deposit_compute_fee: 42,
         };
         for (owner, expected) in [(&observed, 8), (&make_ready(), 9)] {
             let result = receive(owner, &binding);
@@ -1943,6 +2192,65 @@ mod tests {
         let recovered = open().pending_payment().unwrap().unwrap();
         assert_eq!(recovered.intent, intent);
         assert_eq!(recovered.request.as_slice(), b"original submission");
+        {
+            use std::os::{fd::AsRawFd, unix::fs::DirBuilderExt};
+            let file = std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create_new(true)
+                .open(root.join("backup"))
+                .unwrap();
+            let restored_root = root.join("restored");
+            std::fs::DirBuilder::new().mode(0o700).create(&restored_root).unwrap();
+            let transfer = |root: &[u8], pins: &[u8], operation| unsafe {
+                Box::from_raw(tos_shielded_replay_backup_file(
+                    &observed,
+                    key.as_ptr(),
+                    key.len(),
+                    root.as_ptr(),
+                    root.len(),
+                    pins.as_ptr(),
+                    pins.len(),
+                    file.as_raw_fd(),
+                    operation,
+                ))
+            };
+            assert_eq!(transfer(path, &binding, 0).status, 0);
+            let length = file.metadata().unwrap().len();
+            assert!(length > 0);
+            assert_eq!(transfer(path, &binding, 0).status, 1);
+            assert_eq!(file.metadata().unwrap().len(), length);
+            let restored_path = restored_root.to_str().unwrap().as_bytes();
+            let empty = unsafe {
+                Box::from_raw(tos_shielded_replay_pending_status(
+                    &observed,
+                    key.as_ptr(),
+                    key.len(),
+                    restored_path.as_ptr(),
+                    restored_path.len(),
+                    binding.as_ptr(),
+                    binding.len(),
+                ))
+            };
+            assert_eq!(&*empty.bytes, &[0]);
+            assert_eq!(std::fs::read_dir(&restored_root).unwrap().count(), 0);
+            assert_eq!(transfer(restored_path, &wrong_genesis, 1).status, 1);
+            assert_eq!(transfer(restored_path, &binding, 1).status, 0);
+            assert_eq!(transfer(restored_path, &binding, 1).status, 1);
+            let mut restored = crate::store::StateStore::open_wallet(
+                &restored_root,
+                crate::sealed::RecordCipher::derive(
+                    &key,
+                    observed.wallet_binding(&binding).unwrap(),
+                ),
+            )
+            .unwrap();
+            assert_eq!(restored.reservation_high_water().unwrap(), 10);
+            assert_eq!(
+                restored.pending_payment().unwrap().unwrap().request.as_slice(),
+                b"original submission"
+            );
+        }
         let State::Ready(ledger) = &mut observed.state else { unreachable!() };
         ledger
             .apply(

@@ -34,6 +34,7 @@ pub fn prove_prepared_payment(
     prover.prove(payment.public, payment.witness.clone(), proven_time).map_err(|_| Error::Crypto)
 }
 
+pub mod deposit;
 pub mod replay_ffi;
 pub mod sealed;
 pub mod snapshot;

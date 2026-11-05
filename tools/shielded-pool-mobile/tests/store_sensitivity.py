@@ -91,7 +91,7 @@ cases = [
     ),
     (
         "authenticate_existing",
-        "Ok(Some(Self::decode_state(&self.cipher, &bytes)?))",
+        "self.read_private_bytes(STATE, MAX_ENCODED_BYTES)?\n            .map(|bytes| Self::decode_state(&self.cipher, &bytes))\n            .transpose()",
         "Ok(None)",
         "wrong_seed_genesis_corruption_and_old_format_never_reset_existing_state",
     ),
