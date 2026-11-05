@@ -32,7 +32,7 @@ use crate::commands::{
 };
 
 #[cfg(feature = "shielded")]
-use crate::commands::nodectl::shield::ShieldCmd;
+use crate::commands::nodectl::shield::{ShieldCmd, UnshieldCmd};
 
 #[derive(clap::Subcommand, Clone)]
 pub enum Commands {
@@ -76,6 +76,10 @@ pub enum Commands {
     #[cfg(feature = "shielded")]
     #[command(name = "shield")]
     Shield(ShieldCmd),
+    /// Withdraw shielded funds to a public address
+    #[cfg(feature = "shielded")]
+    #[command(name = "unshield")]
+    Unshield(UnshieldCmd),
     /// Pool lifecycle and staking operations
     #[command(name = "pool", visible_alias = "p")]
     Pool(PoolCmd),

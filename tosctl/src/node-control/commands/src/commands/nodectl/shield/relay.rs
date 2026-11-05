@@ -4,7 +4,7 @@
  * Licensed under the GNU General Public License v3.0.
  * See the LICENSE file in the root of this repository.
  */
-//! `shield send --relayer`: a transfer that reaches the pool through a bonded
+//! `shield send --relayer` and `shield withdraw --relayer`: spends through a bonded
 //! relayer, and `shield status`: what the chain and the relayer say about it.
 //!
 //! A relayed spend is the same spend as a direct one -- planned from the
@@ -298,7 +298,6 @@ pub(super) async fn run(
     config_path: &Path,
 ) -> anyhow::Result<()> {
     let material = proving.material.resolve()?;
-    anyhow::ensure!(!target.is_withdrawal(), "a withdrawal is never relayed");
     let (config, vault, rpc) = load_config_vault_rpc_client(config_path).await?;
     let mut opened = open_instance(config_path, name, &vault).await?;
     let network = opened.network()?;
@@ -365,14 +364,18 @@ pub(super) async fn run(
     .await?;
     let tag = session.tag;
 
-    let Target::Send { descriptor, .. } = &target else {
-        anyhow::bail!("a withdrawal is never relayed");
-    };
     let terms = PoolTerms {
         denominations: head.state.config.denominations.clone(),
         withdrawal_fee: head.state.config.withdrawal_fee,
     };
-    let request = Request::relayed_transfer(opened.domain, descriptor, amount, &fee_to, fee)?;
+    let request = match &target {
+        Target::Send { descriptor, .. } => {
+            Request::relayed_transfer(opened.domain, descriptor, amount, &fee_to, fee)?
+        }
+        Target::Withdraw { recipient_account, .. } => {
+            Request::relayed_withdrawal(opened.domain, *recipient_account, amount, &fee_to, fee)?
+        }
+    };
     // The plan asks for indices only once every check has passed; they are
     // provisional until journalled below.
     let mut next = super::store::next_issuable_index(&opened.state, &opened.journal)?;
@@ -386,10 +389,7 @@ pub(super) async fn run(
     .map_err(|error| anyhow::anyhow!("{error}"))?;
     let anchor = choose_anchor(&ledger, &head.state, &plan)?;
 
-    print!(
-        "{}",
-        summary_text(&plan, descriptor, &anchor, &profile, &endpoint, &quote, transact_fee)
-    );
+    print!("{}", summary_text(&plan, &target, &anchor, &profile, &endpoint, &quote, transact_fee));
     if anchor.kind == ANCHOR_CURRENT {
         println!(
             "{} no preserved root covers these inputs, so the proof is anchored to the pool's \
@@ -418,7 +418,8 @@ pub(super) async fn run(
     let indices = plan.own_indices();
     opened.append_journal(&JournalRecord::IndicesReserved {
         indices: indices.clone(),
-        purpose: "send (relayed)".into(),
+        purpose: if target.is_withdrawal() { "withdraw (relayed)" } else { "send (relayed)" }
+            .into(),
     })?;
     let high = indices.iter().max().copied().unwrap_or(0).checked_add(1);
     opened.state.issued_high_water =
@@ -457,7 +458,7 @@ pub(super) async fn run(
             indices,
             amount,
             recipient: recipient_label,
-            withdrawal: false,
+            withdrawal: target.is_withdrawal(),
             valid_until,
             anchor_kind: anchor.kind,
             anchor_id: anchor.id,
@@ -693,7 +694,7 @@ fn withhold(
 
 fn summary_text(
     plan: &Plan,
-    recipient: &Descriptor,
+    target: &Target,
     anchor: &AnchorChoice,
     profile: &RelayerProfile,
     endpoint: &br1_client::onion::OnionEndpoint,
@@ -718,16 +719,32 @@ fn summary_text(
             _ => None,
         })
         .unwrap_or(0);
+    let (kind, recipient, amount, payout_notice) = match target {
+        Target::Send { descriptor, .. } => (
+            "Transfer",
+            format!("descriptor index {}", descriptor.note_key_index),
+            plan.outputs[0].amount(),
+            String::new(),
+        ),
+        Target::Withdraw { recipient, .. } => (
+            "Withdrawal",
+            recipient.to_string(),
+            plan.public_amount_out,
+            format!(
+                "  Pool fee:    {} TOS (from the notes)\n  The payout address, amount and time are public.\n",
+                tos(plan.withdrawal_fee)
+            ),
+        ),
+    };
     format!(
-        "\n{}\n  Kind:        Transfer, relayed\n  To:          descriptor index {}\n  Amount:      \
+        "\n{}\n  Kind:        {kind}, relayed\n  To:          {recipient}\n  Amount:      \
          {} TOS\n  Relayer fee: {} TOS (a note to the relayer's descriptor index {}, slot \
          {FEE_SLOT}, from the notes)\n  Inputs:      {}\n  Change:      {} TOS (back to this \
          instance)\n  Anchor:      {}\n  Relayer:     Bond {} via {}\n  Funding:     up to {} TOS \
          from the relayer's wallet, the quoted maximum (the pool's transact fee is {} TOS)\n  \
-         Quote:       {}, window ends {}\n",
+         Quote:       {}, window ends {}\n{payout_notice}",
         "Spend summary:".cyan().bold(),
-        recipient.note_key_index,
-        tos(plan.outputs[0].amount()),
+        tos(amount),
         tos(plan.outputs[2].amount()),
         quote.terms.note_index,
         inputs.join(" + "),
@@ -1167,7 +1184,10 @@ mod tests {
     }
 
     /// A real relayed spend body and the request the wallet builds for it.
-    fn relayed_request(fee_slot: u8) -> (RelayRequest, Quote, Assembled, Ledger, PoolInstance) {
+    fn relayed_request(
+        fee_slot: u8,
+        withdrawal: bool,
+    ) -> (RelayRequest, Quote, Assembled, Ledger, PoolInstance) {
         let (alice, ledger, recovered) = alice_with_two_notes();
         let domain = Fr::from(DOMAIN);
         let bob = PoolInstance::new(&[0x52; 32], domain);
@@ -1177,9 +1197,33 @@ mod tests {
         let fee = 100_000_000u64;
         let valid_until: u32 = 1_800_000_200;
         let quote = quoted(&quoted_descriptor, fee, 1_800_000_300);
-        let request =
-            Request::relayed_transfer(domain, &to, 1_500_000_000, &quoted_descriptor, fee.into())
-                .expect("relayed transfer");
+        let (request, target) = if withdrawal {
+            let account = [0xcc; 32];
+            let recipient = format!("0:{}", hex::encode(account)).parse().expect("address");
+            (
+                Request::relayed_withdrawal(
+                    domain,
+                    account,
+                    3_000_000_000,
+                    &quoted_descriptor,
+                    fee.into(),
+                )
+                .expect("relayed withdrawal"),
+                Target::Withdraw { recipient: Box::new(recipient), recipient_account: account },
+            )
+        } else {
+            (
+                Request::relayed_transfer(
+                    domain,
+                    &to,
+                    1_500_000_000,
+                    &quoted_descriptor,
+                    fee.into(),
+                )
+                .expect("relayed transfer"),
+                Target::Send { descriptor: Box::new(to), descriptor_hash: [0; 32] },
+            )
+        };
         let terms = PoolTerms { denominations: vec![3_000_000_000], withdrawal_fee: 7 };
         let mut next = 10u64;
         let plan =
@@ -1206,7 +1250,6 @@ mod tests {
             assembly::nullifier_witnesses(ledger.nullifier_state(), assembled.nullifiers())
                 .expect("witnesses");
         let proof = CanonicalProof { a: [1; 48], b: [2; 96], c: [3; 48] };
-        let target = Target::Send { descriptor: Box::new(to), descriptor_hash: [0; 32] };
         let body =
             transact_body(&assembled, &proof, &witnesses, &anchor, valid_until, &target, &plan)
                 .expect("a body")
@@ -1234,8 +1277,30 @@ mod tests {
     }
 
     #[test]
+    fn relayed_withdrawal_wire_carries_public_payout_and_quoted_fee_note() {
+        let (request, quote, assembled, _, relayer) = relayed_request(FEE_SLOT, true);
+        let value = serde_json::to_value(&request).expect("request JSON");
+        let candidate = RelayCandidate::check(&value, &request.release, &quote.terms_value)
+            .expect("provider accepts the withdrawal body");
+        shielded_pool_wallet::relayer_fee::preflight_fee_output(
+            &relayer,
+            &shielded_pool_wallet::relayer_fee::FeeTerms {
+                execution_domain: Fr::from(DOMAIN),
+                slot: FEE_SLOT,
+                amount: u128::from(quote.terms.amount),
+                note_key_index: quote.terms.note_index,
+            },
+            &candidate.fee_payload,
+            candidate.fee_body,
+        )
+        .expect("provider can recover the quoted fee");
+        assert_eq!(assembled.public.public_amount_out, Fr::from(3_000_000_000u64));
+        assert_eq!(assembled.public.withdrawal_fee, Fr::from(7u64));
+    }
+
+    #[test]
     fn the_wallets_request_passes_the_checks_a_relayer_makes_and_pays_the_quoted_index() {
-        let (request, quote, assembled, mut ledger, relayer) = relayed_request(FEE_SLOT);
+        let (request, quote, assembled, mut ledger, relayer) = relayed_request(FEE_SLOT, false);
         let scope = SCOPE_BYTE.repeat(32);
         let value = serde_json::to_value(&request).expect("json");
         let candidate =
@@ -1272,7 +1337,7 @@ mod tests {
 
         // Every binding the relayer checks is one the wallet cannot get wrong
         // silently: the slot, the index, the quote, the body bytes.
-        let (other_slot, ..) = relayed_request(1);
+        let (other_slot, ..) = relayed_request(1, false);
         let value = serde_json::to_value(&other_slot).expect("json");
         assert!(RelayCandidate::check(&value, &scope, &quote.terms_value).is_err(), "slot");
         let mut other_index = request.clone();
@@ -1512,7 +1577,7 @@ mod tests {
     /// as such, and never reaches the relay.
     #[tokio::test]
     async fn a_request_whose_window_closed_while_journalling_is_withheld_unsent() {
-        let (request, quote, assembled, _, _) = relayed_request(FEE_SLOT);
+        let (request, quote, assembled, _, _) = relayed_request(FEE_SLOT, false);
         let request_id = request.identity().expect("identity");
         let intent = fr_to_be(&assembled.intent_digest());
         let (_root, mut opened) = opened_for_tests(Fr::from(DOMAIN));
@@ -1545,7 +1610,7 @@ mod tests {
         assert!(requests[0].submission.as_deref().is_some_and(|s| s.starts_with("never sent: ")));
 
         // The same request with 61 s left on both clocks goes out.
-        let (request, quote, assembled, _, _) = relayed_request(FEE_SLOT);
+        let (request, quote, assembled, _, _) = relayed_request(FEE_SLOT, false);
         let request_id = request.identity().expect("identity");
         let intent = fr_to_be(&assembled.intent_digest());
         let journalled = journal_request(&mut opened, session.tag, intent, [1; 32], request, quote)
@@ -1604,7 +1669,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_request_is_journalled_byte_for_byte_before_it_is_submitted_and_its_outcome_after() {
-        let (request, quote, assembled, _, _) = relayed_request(FEE_SLOT);
+        let (request, quote, assembled, _, _) = relayed_request(FEE_SLOT, false);
         let wire_bytes = request.wire().expect("wire");
         let request_id = request.identity().expect("identity");
         let intent = fr_to_be(&assembled.intent_digest());

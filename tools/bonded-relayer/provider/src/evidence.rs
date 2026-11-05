@@ -14,7 +14,10 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 use chain_block::{
     Cell, Deserializable, Message, MsgAddressInt, SliceData, Transaction, TransactionDescr,
 };
-use node_contracts::proven_getters::{ProvenAccountState, ReadPolicy};
+use node_contracts::{
+    proven_getters::{ProvenAccountState, ReadPolicy},
+    MasterchainCheckpoint,
+};
 use serde_json::{json, Value};
 use std::{path::Path, str::FromStr};
 
@@ -97,31 +100,178 @@ fn target_leaf(transaction: &Transaction, next: u64, slot: u8) -> Result<Option<
         start.checked_add(u64::from(slot)).ok_or_else(|| anyhow::anyhow!("fee leaf overflow"))?,
     ))
 }
-fn append_count(transaction: &Transaction) -> Result<u64> {
+fn append_count(transaction: &Transaction) -> Result<Option<u64>> {
     if atomic_abort(transaction)? {
-        return Ok(0);
+        return Ok(Some(0));
     }
     simulation::successful(transaction)?;
     let (_, message) = inbound(transaction)?;
     counter_delta(&message)
 }
-fn counter_delta(message: &Message) -> Result<u64> {
+fn counter_delta(message: &Message) -> Result<Option<u64>> {
     let header =
         message.int_header().ok_or_else(|| anyhow::anyhow!("pool mutation must be internal"))?;
-    ensure!(!header.bounced, "intervening bounce needs separate recovery evidence");
-    let Some(body) = message.body() else { return Ok(0) };
-    if body.remaining_bits() == 0 {
-        return Ok(0);
+    if header.bounced {
+        let body = message.body().cloned().unwrap_or_default();
+        return Ok(node_contracts::shielded_pool::bounce_original_body_hash(&body)?
+            .is_none()
+            .then_some(0));
+    }
+    let Some(body) = message.body() else { return Ok(Some(0)) };
+    if body.remaining_bits() < 32 {
+        return Ok(Some(0));
     }
     let mut body = body.clone();
     let operation = body.get_next_u32()?;
     match operation {
-        0x53485001 => Ok(1),
-        0x53485002 => Ok(3),
-        0x53485003 => Ok(0),
+        0x53485001 => Ok(Some(1)),
+        0x53485002 => Ok(Some(3)),
+        0x53485003 => Ok(Some(0)),
         _ => anyhow::bail!("unsupported intervening pool mutation"),
     }
 }
+/// A checkpoint supplies the actual commitment counter, including any recovery
+/// notes the chain minted. Never price an earlier bounce with today's gas.
+fn commitment_next(config: &Config, pool: &ProvenAccountState) -> Result<u64> {
+    ensure!(
+        pool.evidence().account.code_hash == config.release.pool_code_hash,
+        "pool evidence code pin"
+    );
+    let data = pool.account().get_data().ok_or_else(|| anyhow::anyhow!("pool data absent"))?;
+    ensure!(
+        data.reference(2)?.repr_hash().to_hex_string() == config.release.pool_config_hash,
+        "pool evidence configuration pin"
+    );
+    let mut state = SliceData::load_cell(data)?;
+    ensure!(
+        state.get_next_u32()? == 0x53505631 && state.get_next_int(16)? == 1,
+        "pool state version"
+    );
+    let _root = state.get_next_bytes(32)?;
+    state.get_next_u64()
+}
+
+async fn checkpoint_hint(config: &Config, selector: Value) -> Result<MasterchainCheckpoint> {
+    let url = config.rpc_url.clone();
+    let block = tokio::task::spawn_blocking(move || {
+        let mut params = selector;
+        params["workchain"] = json!(-1);
+        params["shard"] = json!("-9223372036854775808");
+        transport::rpc(&url, "lookupBlock", params)
+    })
+    .await??;
+    let seqno = block["seqno"]
+        .as_u64()
+        .and_then(|n| u32::try_from(n).ok())
+        .ok_or_else(|| anyhow::anyhow!("checkpoint sequence absent"))?;
+    let hash = |field: &str| -> Result<String> {
+        let value =
+            block[field].as_str().ok_or_else(|| anyhow::anyhow!("checkpoint hash absent"))?;
+        let bytes = if value.len() == 64 { hex::decode(value)? } else { STANDARD.decode(value)? };
+        ensure!(bytes.len() == 32, "checkpoint hash length");
+        Ok(hex::encode(bytes))
+    };
+    Ok(MasterchainCheckpoint {
+        seqno,
+        root_hash: hash("root_hash")?,
+        file_hash: hash("file_hash")?,
+    })
+}
+
+/// Move between two positions in the hash-linked history. A successful rich
+/// bounce is deliberately not assigned a delta from its envelope or value.
+fn counter_at(
+    deltas: &[Option<u64>],
+    mut next: u64,
+    from: usize,
+    to: usize,
+) -> Result<Option<u64>> {
+    if from < to {
+        for delta in &deltas[from..to] {
+            let Some(delta) = delta else { return Ok(None) };
+            next = next
+                .checked_sub(*delta)
+                .ok_or_else(|| anyhow::anyhow!("commitment history underflow"))?;
+        }
+    } else {
+        for delta in deltas[to..from].iter().rev() {
+            let Some(delta) = delta else { return Ok(None) };
+            next = next
+                .checked_add(*delta)
+                .ok_or_else(|| anyhow::anyhow!("commitment history overflow"))?;
+        }
+    }
+    Ok(Some(next))
+}
+
+/// Reconcile the two proven counters with the known append operations.
+fn recovery_appends(deltas: &[Option<u64>], live: u64, destination: u64) -> Result<u64> {
+    let known = deltas.iter().flatten().sum::<u64>();
+    let recoveries = deltas.iter().filter(|delta| delta.is_none()).count() as u64;
+    let appended = live
+        .checked_sub(destination)
+        .and_then(|delta| delta.checked_sub(known))
+        .ok_or_else(|| anyhow::anyhow!("recovery commitment history underflow"))?;
+    ensure!(appended <= recoveries, "recovery commitment history mismatch");
+    Ok(appended)
+}
+
+async fn counter_at_destination(
+    config: &Config,
+    chain: &Chain,
+    address: &MsgAddressInt,
+    live: &ProvenAccountState,
+    history: &[(Cell, Transaction)],
+    target: usize,
+) -> Result<u64> {
+    let next = commitment_next(config, live)?;
+    let deltas =
+        history[..target].iter().map(|(_, tx)| append_count(tx)).collect::<Result<Vec<_>>>()?;
+    if let Some(counter) = counter_at(&deltas, next, 0, target)? {
+        return Ok(counter);
+    }
+
+    // The RPC's LT lookup is only a hint. A snapshot counts only when the
+    // verifier proves it and its account head occurs in this exact history.
+    let lt = history[target].1.logical_time();
+    let hint = checkpoint_hint(config, json!({"lt":lt.to_string()})).await?;
+    let live_seqno = live.evidence().checkpoint.seqno;
+    for seqno in [hint.seqno, hint.seqno.saturating_add(1), hint.seqno.saturating_sub(1)] {
+        if seqno == 0 || seqno >= live_seqno {
+            continue;
+        }
+        let checkpoint = if seqno == hint.seqno {
+            hint.clone()
+        } else {
+            checkpoint_hint(config, json!({"seqno":seqno})).await?
+        };
+        ensure!(checkpoint.seqno == seqno, "checkpoint sequence mismatch");
+        let snapshot =
+            chain.verifier().read_account(address, &ReadPolicy::Historical(checkpoint)).await?;
+        let Some(position) = history.iter().position(|(cell, tx)| {
+            tx.logical_time() == snapshot.evidence().account.last_trans_lt
+                && cell.repr_hash().as_array() == snapshot.last_transaction_hash()
+        }) else {
+            continue;
+        };
+        let snapshot_next = commitment_next(config, &snapshot)?;
+        let counter = if position <= target {
+            counter_at(&deltas, snapshot_next, position, target)?
+        } else {
+            let forward = history[target..position]
+                .iter()
+                .map(|(_, tx)| append_count(tx))
+                .collect::<Result<Vec<_>>>()?;
+            counter_at(&forward, snapshot_next, forward.len(), 0)?
+        };
+        if let Some(counter) = counter {
+            recovery_appends(&deltas, next, counter)?;
+            return Ok(counter);
+        }
+    }
+    anyhow::bail!("no authenticated checkpoint isolates the destination from intervening mutations")
+}
+
 pub async fn run(
     config: &Config,
     identity: &Identity,
@@ -170,49 +320,31 @@ pub async fn run(
         store.retire_refused(&id, &message, &protocol::canonical(&retained)?)?;
         return Ok(receipt);
     }
-    let pool = chain
-        .verifier()
-        .read_account(&MsgAddressInt::from_str(&config.release.pool)?, &ReadPolicy::Live)
-        .await?;
-    ensure!(
-        pool.evidence().account.code_hash == config.release.pool_code_hash,
-        "pool evidence code pin"
-    );
-    let data = pool.account().get_data().ok_or_else(|| anyhow::anyhow!("pool data absent"))?;
-    ensure!(
-        data.reference(2)?.repr_hash().to_hex_string() == config.release.pool_config_hash,
-        "pool evidence configuration pin"
-    );
-    let mut state = SliceData::load_cell(data)?;
-    ensure!(
-        state.get_next_u32()? == 0x53505631 && state.get_next_int(16)? == 1,
-        "pool state version"
-    );
-    let _root = state.get_next_bytes(32)?;
-    let mut next = state.get_next_u64()?;
+    let pool_address = MsgAddressInt::from_str(&config.release.pool)?;
+    let funding = MsgAddressInt::from_str(&config.funding_wallet)?;
+    let pool = chain.verifier().read_account(&pool_address, &ReadPolicy::Live).await?;
+    commitment_next(config, &pool)?;
     let transactions = history(config, &config.release.pool, &pool).await?;
     let mut target = None;
-    for (cell, transaction) in &transactions {
+    for (index, (cell, transaction)) in transactions.iter().enumerate() {
         let (_, message) = inbound(transaction)?;
         let matches = message.body().is_some_and(|b| {
             b.clone().into_cell().is_ok_and(|body| body.repr_hash() == candidate.body.repr_hash())
         });
-        if matches
-            && owned_inbound(
-                &message,
-                &MsgAddressInt::from_str(&config.funding_wallet)?,
-                &MsgAddressInt::from_str(&config.release.pool)?,
-            )
-        {
-            let leaf = target_leaf(transaction, next, candidate.request.fee_slot)?;
-            target = Some((cell.repr_hash().to_hex_string(), leaf, transaction));
+        if matches && owned_inbound(&message, &funding, &pool_address) {
+            target = Some((index, cell.repr_hash().to_hex_string(), transaction));
             break;
         }
-        next = next
-            .checked_sub(append_count(transaction)?)
-            .ok_or_else(|| anyhow::anyhow!("commitment history underflow"))?;
     }
-    let Some((transaction_hash, leaf, transaction)) = target else { return Ok(Value::Null) };
+    let Some((index, transaction_hash, transaction)) = target else { return Ok(Value::Null) };
+    let leaf = if atomic_abort(transaction)? {
+        None
+    } else {
+        let next =
+            counter_at_destination(config, &chain, &pool_address, &pool, &transactions, index)
+                .await?;
+        target_leaf(transaction, next, candidate.request.fee_slot)?
+    };
     let wallet = chain
         .verifier()
         .read_account(
@@ -376,7 +508,7 @@ mod tests {
             if aborted {
                 assert!(simulation::successful(&transaction).is_err());
                 assert_eq!(target_leaf(&transaction, 0, 2)?, None);
-                assert_eq!(append_count(&transaction)?, 0);
+                assert_eq!(append_count(&transaction)?, Some(0));
             } else {
                 simulation::successful(&transaction)?;
             }
@@ -387,7 +519,7 @@ mod tests {
     fn atomic_abort_never_mints_fee_and_destroyed_or_nonaborted_failures_stay_unknown() -> Result<()>
     {
         let aborted = described(true, false)?;
-        assert_eq!(append_count(&aborted)?, 0);
+        assert_eq!(append_count(&aborted)?, Some(0));
         assert_eq!(target_leaf(&aborted, 0, 2)?, None);
         assert!(target_leaf(&described(false, false)?, 3, 2).is_err());
         let error = target_leaf(&described(true, true)?, 3, 2)
@@ -411,11 +543,53 @@ mod tests {
         Ok(())
     }
     #[test]
-    fn bounced_deposit_prefix_cannot_move_fee_leaf_cursor() -> Result<()> {
-        let result = counter_delta(&incoming(0x53485001, true)?);
-        assert!(
-            matches!(result,Err(error) if error.to_string()=="intervening bounce needs separate recovery evidence")
-        );
+    fn plain_bounce_does_not_move_fee_leaf_cursor() -> Result<()> {
+        assert_eq!(counter_delta(&incoming(0x53485001, true)?)?, Some(0));
+        Ok(())
+    }
+    #[test]
+    fn fee_leaf_uses_the_same_historical_counter_with_or_without_recovery_credit() -> Result<()> {
+        // Newest first: a later deposit, the recovery, the withdrawal, and
+        // the deposit immediately preceding it. The recovery may mint zero
+        // or one leaf, so the live counter alone cannot place the fee note.
+        let deltas = [Some(1), None, Some(3), Some(1)];
+        for (live, appended) in [(5, 0), (6, 1)] {
+            assert_eq!(counter_at(&deltas, live, 0, 2)?, None);
+            assert_eq!(recovery_appends(&deltas[..2], live, 4)?, appended);
+        }
+        assert!(recovery_appends(&deltas[..2], 7, 4).is_err());
+        assert_eq!(counter_at(&deltas, 4, 2, 2)?, Some(4));
+        // Even if the withdrawal and bounce first appear in the same
+        // checkpoint, the preceding proven state can place the fee.
+        assert_eq!(counter_at(&deltas, 1, 3, 2)?, Some(4));
+        Ok(())
+    }
+    #[test]
+    fn native_withdrawal_bounce_history_places_the_original_fee_leaf() -> Result<()> {
+        let fixture: Value = serde_json::from_str(include_str!(
+            "../../../shielded-pool-circuit/fixtures/pool-history-development.json"
+        ))?;
+        let decode = |value: &Value| -> Result<Cell> {
+            let encoded = value.as_str().ok_or_else(|| anyhow::anyhow!("fixture BOC absent"))?;
+            chain_block::read_single_root_boc(&hex::decode(encoded)?)
+        };
+        let state =
+            node_contracts::shielded_pool::PoolState::parse(&decode(&fixture["account_data"])?)?;
+        let rows = fixture["transactions"]
+            .as_array()
+            .ok_or_else(|| anyhow::anyhow!("fixture history absent"))?;
+        let transactions = rows
+            .iter()
+            .rev()
+            .map(|row| Transaction::construct_from_cell(decode(&row["boc"])?))
+            .collect::<Result<Vec<_>>>()?;
+        let deltas = transactions.iter().take(3).map(append_count).collect::<Result<Vec<_>>>()?;
+        assert_eq!(deltas, [Some(3), None, Some(3)]);
+        assert_eq!(counter_at(&deltas, state.commitment_next_index, 0, 2)?, None);
+        let before = 4;
+        assert_eq!(counter_at(&deltas, before, 3, 2)?, Some(7));
+        assert_eq!(recovery_appends(&deltas[..2], state.commitment_next_index, 7)?, 1);
+        assert_eq!(target_leaf(&transactions[2], 7, 2)?, Some(6));
         Ok(())
     }
     #[test]

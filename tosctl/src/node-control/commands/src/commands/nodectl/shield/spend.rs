@@ -87,9 +87,14 @@ pub struct WithdrawCmd {
     /// The workchain-0 address the pool pays
     #[arg(long)]
     to: String,
-    /// The configured wallet that broadcasts and pays the message
-    #[arg(long)]
-    from: String,
+    /// Broadcast and pay from this configured wallet on an isolated local network
+    #[arg(long, required_unless_present = "relayer", conflicts_with = "relayer")]
+    from: Option<String>,
+    /// Pay a bonded relayer from the input notes and submit over Tor
+    #[arg(long, conflicts_with = "unverified_rpc")]
+    relayer: Option<PathBuf>,
+    #[command(flatten)]
+    relay: super::relay::RelayOptions,
     #[command(flatten)]
     proving: Proving,
 }
@@ -157,7 +162,20 @@ impl WithdrawCmd {
             .try_into()
             .map_err(|_| anyhow::anyhow!("the payout address is not 256 bits"))?;
         let target = Target::Withdraw { recipient: Box::new(recipient.clone()), recipient_account };
-        run(&self.name, amount, target, &self.from, &self.proving, config_path).await
+        if let Some(relayer) = &self.relayer {
+            return super::relay::run(
+                &self.name,
+                amount,
+                target,
+                relayer,
+                &self.relay,
+                &self.proving,
+                config_path,
+            )
+            .await;
+        }
+        let from = self.from.as_deref().context("withdraw requires --from or --relayer")?;
+        run(&self.name, amount, target, from, &self.proving, config_path).await
     }
 }
 

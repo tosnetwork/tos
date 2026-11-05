@@ -81,8 +81,7 @@ const MAX_DIAGNOSTICS: usize = 256;
 /// What a deposit leaves in the paying wallet for its own fees.
 
 #[derive(clap::Args, Clone)]
-#[command(about = "Shielded pool: private balances and transfers (experimental)")]
-pub struct ShieldCmd {
+struct ShieldConfig {
     #[arg(
         short = 'c',
         long = "config",
@@ -92,9 +91,30 @@ pub struct ShieldCmd {
         global = true
     )]
     config: String,
+}
+
+#[derive(clap::Args, Clone)]
+#[command(about = "Shielded pool: private balances and transfers (experimental)")]
+pub struct ShieldCmd {
+    #[command(flatten)]
+    settings: ShieldConfig,
 
     #[command(subcommand)]
     action: ShieldAction,
+}
+
+#[derive(clap::Args, Clone)]
+pub struct UnshieldCmd {
+    #[command(flatten)]
+    settings: ShieldConfig,
+    #[command(flatten)]
+    withdrawal: spend::WithdrawCmd,
+}
+
+impl UnshieldCmd {
+    pub async fn run(&self) -> anyhow::Result<()> {
+        self.withdrawal.run(Path::new(&self.settings.config)).await
+    }
 }
 
 #[derive(clap::Subcommand, Clone)]
@@ -121,7 +141,7 @@ pub enum ShieldAction {
 
 impl ShieldCmd {
     pub async fn run(&self) -> anyhow::Result<()> {
-        let config_path = Path::new(&self.config);
+        let config_path = Path::new(&self.settings.config);
         match &self.action {
             ShieldAction::Init(cmd) => cmd.run(config_path).await,
             ShieldAction::Sync(cmd) => cmd.run(config_path).await,
@@ -1858,6 +1878,36 @@ mod tests {
     fn the_command_line_is_consistent() {
         use clap::Args;
         ShieldCmd::augment_args(clap::Command::new("shield")).debug_assert();
+    }
+
+    #[test]
+    fn unshield_accepts_the_withdrawal_arguments_at_the_top_level() {
+        use crate::commands::cli_cmd::Commands;
+        use clap::Subcommand;
+
+        let cli = Commands::augment_subcommands(clap::Command::new("tosctl"));
+        let matches = cli
+            .try_get_matches_from([
+                "tosctl",
+                "unshield",
+                "--config",
+                "test.json",
+                "--name",
+                "test",
+                "--amount",
+                "1",
+                "--to",
+                "0:recipient",
+                "--relayer",
+                "relay.json",
+            ])
+            .expect("unshield accepts Tor withdrawal options");
+        let args = matches.subcommand_matches("unshield").expect("top-level unshield");
+        assert_eq!(args.get_one::<String>("config").map(String::as_str), Some("test.json"));
+        assert_eq!(
+            args.get_one::<std::path::PathBuf>("relayer").map(|path| path.as_path()),
+            Some(Path::new("relay.json"))
+        );
     }
 
     #[test]

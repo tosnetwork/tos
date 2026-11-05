@@ -2,7 +2,7 @@
 
 This ELF supplies the chain, signing and finality operations consumed by
 `../native_adapter.py`. The default build is restricted to **global id 3**, global version16 or later,
-a pinned zerostate and private Shield transfers. An explicit
+a pinned zerostate and Shield transfers or withdrawals. An explicit
 `public-testnet-pilot` build additionally permits global-id2. This is a bounded
 test-chain pilot capability, not production activation approval.
 
@@ -13,6 +13,12 @@ submission, destination finality and encrypted commission-note import. Restarted
 operators retain their original keys and journals. A further transaction spends
 two actual commission notes through the other operator. Evidence indexes are
 kept separately from seeds, raw transactions and logs.
+
+For a withdrawal followed by a recovery bounce, the provider can use an
+authenticated historical pool counter to locate the original fee leaf. The
+snapshot must match the hash-linked transaction history. The difference
+between the historical and live counters accounts for recovery appends. If
+the available proofs cannot establish the leaf, the request remains pending.
 
 ## Build and custody
 
