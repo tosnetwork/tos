@@ -1437,6 +1437,35 @@ pub fn native_dict_contains(root: &Option<Cell>, key: &[u8; 32]) -> Result<bool>
     Ok(map.get(SliceData::from_raw(key.to_vec(), 256))?.is_some())
 }
 
+/// One stored Capability version.
+#[derive(Clone, Debug)]
+pub struct NativeCapabilityVersion {
+    pub manifest_digest: [u8; 32],
+    pub revoked: bool,
+    pub name: Cell,
+}
+
+/// The stored version `version_hash` of a Capability's version dictionary
+/// (`manifest:uint256 revoked:Bool ^name`), `None` when absent.
+pub fn native_capability_version(
+    root: &Option<Cell>,
+    version_hash: &[u8; 32],
+) -> Result<Option<NativeCapabilityVersion>> {
+    use chain_block::{HashmapE, SliceData};
+    let map = HashmapE::with_hashmap(256, root.clone());
+    let Some(mut entry) = map.get(SliceData::from_raw(version_hash.to_vec(), 256))? else {
+        return Ok(None);
+    };
+    let manifest_digest = next_bytes32(&mut entry, "version manifest")?;
+    let revoked = entry.get_next_bit()?;
+    let name = entry.checked_drain_reference()?;
+    anyhow::ensure!(
+        entry.remaining_bits() == 0 && entry.remaining_references() == 0,
+        "native registry version trailing data"
+    );
+    Ok(Some(NativeCapabilityVersion { manifest_digest, revoked, name }))
+}
+
 /// The generation, sequence and predecessor the next action of `kind` must
 /// carry on an object whose current state is `current` (`None`: not yet
 /// registered), following the contract's rules: a registration starts at

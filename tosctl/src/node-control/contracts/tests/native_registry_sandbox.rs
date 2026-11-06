@@ -3070,7 +3070,25 @@ mod builder_driven {
             0x86,
         );
         assert_address_success(&result, &cap.address);
-        assert!(!net.state(&cap.address).expect("state").tombstone);
+        let after_version = net.state(&cap.address).expect("state");
+        assert!(!after_version.tombstone);
+        let NativeRegistryStateDetail::Capability { versions, version_root, .. } =
+            &after_version.detail
+        else {
+            panic!("capability")
+        };
+        assert_eq!(*versions, 2, "revoking a version keeps it in the collection");
+        let v10: [u8; 32] = Sha256::digest(b"1.0.0").into();
+        let revoked_version =
+            native_capability_version(version_root, &v10).expect("decode").expect("present");
+        assert!(revoked_version.revoked);
+        assert_eq!(revoked_version.manifest_digest, [0x5e; 32], "manifest unchanged");
+        let mut name = SliceData::load_cell(revoked_version.name).expect("name");
+        assert_eq!(name.get_next_bytes(5).expect("name bytes"), b"1.0.0".to_vec());
+        let other =
+            native_capability_version(version_root, &v11).expect("decode").expect("present");
+        assert!(!other.revoked, "the other version is unaffected");
+        assert_eq!(other.manifest_digest, [0x5f; 32]);
         let result = net.capability_action(
             &b,
             &cap,
