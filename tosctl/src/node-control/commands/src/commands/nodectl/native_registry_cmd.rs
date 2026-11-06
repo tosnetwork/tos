@@ -372,6 +372,18 @@ impl<T: ChainSource> RegistryChain for RpcChain<'_, T> {
 /// Length of an ML-DSA-44 key-generation seed.
 const CONTROLLER_SEED_BYTES: usize = 32;
 
+/// The tag a stored controller begins with: the record kind and the suite. A
+/// vault blob without it is not a registry controller, whatever its length.
+const CONTROLLER_RECORD_TAG: &[u8] = b"TOS-NATIVE-REGISTRY-CONTROLLER-SEED-v1\0ML-DSA-44\0";
+
+/// A stored controller: the tag, then the seed.
+fn controller_record(seed: &[u8; CONTROLLER_SEED_BYTES]) -> Zeroizing<Vec<u8>> {
+    let mut record = Zeroizing::new(Vec::with_capacity(CONTROLLER_RECORD_TAG.len() + seed.len()));
+    record.extend_from_slice(CONTROLLER_RECORD_TAG);
+    record.extend_from_slice(seed);
+    record
+}
+
 /// The vault secret holding registry controller `name`.
 fn controller_secret_id(name: &str) -> anyhow::Result<SecretId> {
     anyhow::ensure!(
@@ -402,12 +414,19 @@ async fn read_controller_seed(
     );
     let data = blob.data().await?;
     let guard = data.lock().await?;
-    anyhow::ensure!(
-        guard.len() == CONTROLLER_SEED_BYTES,
-        "native-registry-{name} is not an ML-DSA-44 controller seed"
-    );
+    let seed_bytes = guard
+        .strip_prefix(CONTROLLER_RECORD_TAG)
+        .filter(|rest| rest.len() == CONTROLLER_SEED_BYTES)
+        .ok_or_else(|| {
+            anyhow::anyhow!("native-registry-{name} is not an ML-DSA-44 registry controller")
+        })?;
     let mut seed = Zeroizing::new([0u8; CONTROLLER_SEED_BYTES]);
-    seed.copy_from_slice(&guard[..]);
+    seed.copy_from_slice(seed_bytes);
+    // An all-zero seed is a key anyone can derive; refuse it however it was stored.
+    anyhow::ensure!(
+        seed.iter().any(|b| *b != 0),
+        "native-registry-{name} holds an all-zero seed and is refused"
+    );
     Ok(seed)
 }
 
@@ -461,8 +480,9 @@ async fn store_new_controller(
             secrets_vault::types::algorithm::Algorithm::None,
             true,
         );
+        let record = controller_record(&seed);
         let secret = secrets_vault::types::secret::Secret::from_raw_data(
-            seed.as_ref(),
+            record.as_ref(),
             metadata,
             AutoCryptoFactory {}.new_crypto()?,
         )
@@ -1350,6 +1370,49 @@ mod tests {
             "an Ed25519 key was read as a controller: {refused:?}"
         );
         assert!(signer.key_id("missing").await.is_err());
+
+        // A blob of the seed's length without the controller tag, a tagged
+        // all-zero seed, and a tagged seed of the wrong length are refused.
+        use secrets_vault::crypto::factory::{AutoCryptoFactory, CryptoFactory};
+        let put_blob = |name: &'static str, bytes: Vec<u8>| {
+            let vault = vault.clone();
+            async move {
+                let id = controller_secret_id(name).expect("name");
+                let metadata = secrets_vault::types::metadata::Metadata::new(
+                    Some(&id),
+                    secrets_vault::types::algorithm::Algorithm::None,
+                    true,
+                );
+                let secret = secrets_vault::types::secret::Secret::from_raw_data(
+                    &bytes,
+                    metadata,
+                    AutoCryptoFactory {}.new_crypto().expect("crypto"),
+                )
+                .await
+                .expect("secret");
+                vault
+                    .put(&secret, secrets_vault::types::store_mode::StoreMode::NewOnly)
+                    .await
+                    .expect("store blob");
+            }
+        };
+        put_blob("plain", vec![7u8; CONTROLLER_SEED_BYTES]).await;
+        put_blob("zero", controller_record(&[0u8; CONTROLLER_SEED_BYTES]).to_vec()).await;
+        let mut short = controller_record(&[7u8; CONTROLLER_SEED_BYTES]).to_vec();
+        short.pop();
+        put_blob("short", short).await;
+        for (name, reason) in [
+            ("plain", "not an ML-DSA-44 registry controller"),
+            ("zero", "all-zero seed"),
+            ("short", "not an ML-DSA-44 registry controller"),
+        ] {
+            let refused = signer.key_id(name).await.err().map(|e| format!("{e:#}"));
+            assert!(
+                refused.as_deref().is_some_and(|e| e.contains(reason)),
+                "{name} was read as a controller: {refused:?}"
+            );
+            assert!(signer.sign(name, &action).await.is_err(), "{name} signed");
+        }
         for name in ["", "with space", "../escape", &"x".repeat(65)] {
             assert!(controller_secret_id(name).is_err(), "name {name:?} accepted");
         }
