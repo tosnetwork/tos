@@ -4686,6 +4686,25 @@ impl AgentAccountTaskSendCmd {
     }
 }
 
+/// The whole of `task-send-prepare` after the request was validated: sign
+/// into the journal, then (only after the durable attach) export the exact
+/// bytes if asked. The command's network handle is passed in only so that the
+/// no-write property is testable with a trap transport; it must never be used.
+async fn prepare_task_send<S: TaskSendSigner + ?Sized, T: TaskSendTransport + ?Sized>(
+    journal: &AgentAccountCustodyJournal,
+    draft: &TaskSendDraft,
+    signer: &S,
+    _network: &T,
+    signed_boc_out: Option<&Path>,
+    now: u64,
+) -> anyhow::Result<SignedTaskSend> {
+    let signed = sign_task_send_into_journal(journal, draft, signer, now).await?;
+    if let Some(path) = signed_boc_out {
+        save_signed_task_send_boc(path, &signed.boc)?;
+    }
+    Ok(signed)
+}
+
 impl AgentAccountTaskSendPrepareCmd {
     pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
         let Some(loaded) =
@@ -4694,16 +4713,15 @@ impl AgentAccountTaskSendPrepareCmd {
             return Ok(());
         };
         let journal = open_controller_journal(Path::new(config_path))?;
-        let signed = sign_task_send_into_journal(
+        let signed = prepare_task_send(
             &journal,
             &loaded.draft,
             loaded.secret.as_keypair()?,
+            loaded.rpc_client.as_ref(),
+            self.signed_boc_out.as_deref(),
             time_format::now(),
         )
         .await?;
-        if let Some(path) = &self.signed_boc_out {
-            save_signed_task_send_boc(path, &signed.boc)?;
-        }
         println!(
             "{}",
             serde_json::json!({
@@ -13188,8 +13206,8 @@ mod tests {
     use super::{
         AgentAccountTaskSendBroadcastCmd, AgentAccountTaskSendPrepareCmd, TaskSendDraft,
         TaskSendSigner, TaskSendTransport, begin_or_resume_task_send_broadcast,
-        broadcast_signed_task_send, exact_task_send_broadcast_boc, save_signed_task_send_boc,
-        sign_task_send_into_journal, task_send_claim,
+        broadcast_signed_task_send, exact_task_send_broadcast_boc, prepare_task_send,
+        save_signed_task_send_boc, sign_task_send_into_journal, task_send_claim,
     };
     use std::cell::RefCell;
 
@@ -13281,6 +13299,47 @@ mod tests {
             persisted.exact_signed_boc_base64.as_deref(),
             Some(base64::engine::general_purpose::STANDARD.encode(&signed.boc).as_str())
         );
+    }
+
+    #[tokio::test]
+    async fn task_send_prepare_command_core_never_touches_the_network_and_exports_after_attach() {
+        let directory = TemporaryDirectory::create("task-send-prepare-trap");
+        let journal_directory = TemporaryDirectory::create("task-send-prepare-trap-journal");
+        let journal = AgentAccountCustodyJournal::open(journal_directory.0.clone()).unwrap();
+        let signer = counting_signer();
+        let trap = RecordingTransport { sent: RefCell::new(Vec::new()), refuse: true };
+        let draft = task_send_draft(&"6".repeat(64), 1_900_000_000);
+        let out = directory.0.join("task-send-query.boc");
+
+        let signed = prepare_task_send(&journal, &draft, &signer, &trap, Some(out.as_path()), 10)
+            .await
+            .unwrap();
+
+        assert!(trap.sent.borrow().is_empty(), "task-send-prepare wrote to the network");
+        assert_eq!(*signer.signatures.borrow(), 1);
+        let record = journal.action_by_idempotency_key(&draft.action_id).unwrap();
+        assert_eq!(record.status, ControllerActionStatus::Signed);
+        assert_eq!(record.exact_signed_boc_digest.as_deref(), Some(signed.digest.as_str()));
+        assert_eq!(fs::read(&out).unwrap(), signed.boc);
+
+        // A failed export leaves the durable Signed record and never sends.
+        let blocked = directory.0.join("missing").join("q.boc");
+        let again =
+            prepare_task_send(&journal, &draft, &signer, &trap, Some(blocked.as_path()), 11).await;
+        assert!(again.is_err());
+        assert!(trap.sent.borrow().is_empty());
+        assert_eq!(
+            journal.action_by_idempotency_key(&draft.action_id).unwrap().status,
+            ControllerActionStatus::Signed
+        );
+        assert_eq!(*signer.signatures.borrow(), 1);
+
+        // Without --signed-boc-out nothing is written to disk.
+        let fresh_journal_directory = TemporaryDirectory::create("task-send-prepare-trap-nofile");
+        let fresh = AgentAccountCustodyJournal::open(fresh_journal_directory.0.clone()).unwrap();
+        prepare_task_send(&fresh, &draft, &signer, &trap, None, 12).await.unwrap();
+        assert!(trap.sent.borrow().is_empty());
+        assert_eq!(fs::read_dir(&directory.0).unwrap().count(), 1);
     }
 
     #[tokio::test]
