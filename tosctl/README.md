@@ -729,6 +729,41 @@ tosctl account send-boc /tmp/external_message.boc
 tosctl account send-boc /tmp/message.boc -f json
 ```
 
+### Signing a controller action without broadcasting it
+
+`agent account task-send` signs and broadcasts in one call. Like upstream wallet
+tooling, which saves a signed query to a file and sends it separately, the
+Agent Account also supports the two-step form:
+
+```bash
+# Sign one task-send into the custody journal (status Signed); nothing is sent
+tosctl agent account task-send-prepare -n my-agent --target <addr> --value 0.1 \
+  --valid-until <unix-time> --action-id <64-hex> \
+  [--signed-boc-out /absolute/owner-private/task-send-query.boc]
+
+# Later: broadcast exactly the journaled bytes (Signed -> Broadcasting)
+tosctl agent account task-send-broadcast -n my-agent --action-id <64-hex>
+```
+
+`task-send-prepare` applies every check of `task-send` (future `valid_until`
+within the account's default task timeout, controller key, spending limits) and
+reuses an already journaled BOC instead of signing twice. `task-send-broadcast`
+never signs and deliberately does not re-check `valid_until`: it submits the
+exact bytes already frozen in the journal, so the chain decides. This is how an
+operator produces the contract's expiry refusal (exit code 1706) on purpose.
+
+`--signed-boc-out` writes the same bytes to an owner-chosen file (absolute path
+in an owner-private directory, mode 0600, never overwritten with different
+bytes) for an external sender such as `tosctl account send-boc`. Until
+`valid_until` passes that file is a valid spend authorization: keep it under
+the same rules as the custody journal.
+
+A rejected or unknown broadcast outcome leaves the record `Broadcasting`; the
+sequence stays reserved until finalized state resolves it. There is no absence
+resolver for a plain task-send yet, so an expired message that the node refuses
+at admission keeps blocking new primary actions on that wallet. Use a dedicated
+wallet for expiry probes and keep that probe its last action.
+
 ### Monitoring node status
 
 ```bash
