@@ -51,13 +51,13 @@ def main() -> int:
         details = result.get("details") or {}
         row = {
             "controllers": case["controllers"],
-            "hash_keys": case["hash_keys"],
+            "hash_keys": case.get("hash_keys", case.get("path")),
             "rust_gas": case["gas_used"],
             "cpp_success": result["success"],
             "cpp_gas": details.get("gas"),
             "cpp_gas_limit": details.get("gas_limit"),
             "cpp_exit": details.get("exit"),
-            "body_cells": case["body_cells"],
+            "body_cells": case.get("body_cells", case.get("external_bytes")),
             "error": result.get("error"),
         }
         rows.append(row)

@@ -290,3 +290,341 @@ fn registry_shaped_mldsa44_authorization_gas() {
         std::fs::write(out, serde_json::to_string_pretty(&rows).expect("json")).expect("write");
     }
 }
+
+// ---------------------------------------------------------------------------
+// Lifecycle paths with the real key codec, and their serialized message sizes.
+//
+// The first probe hashed raw chains; a registry validates stored keys through
+// pq::stored_key and derives ids with pq::key_id, and walks some policies more
+// than once. This probe does exactly that work per path, and builds each path's
+// whole message to measure its serialized BOC size.
+
+const LIFECYCLE_PROBE: &str = r#"
+;; body: op:uint32 ^message ^pairs ^keys
+;; pair:  ^stored_key ^stored_signature [^next]   -- one verification each
+;; key:   walks:uint8 ^stored_key [^next]          -- pq::key_id `walks` times each
+() recv_internal(int msg_value, cell in_msg_full, slice in_msg) impure {
+  slice full = in_msg_full.begin_parse();
+  if (full~load_uint(4) & 1) { return (); }
+  if (in_msg.slice_bits() < 32) { return (); }
+  in_msg~load_uint(32);
+  cell message = in_msg~load_ref();
+  cell pairs = in_msg~load_ref();
+  cell keys = in_msg~load_ref();
+  in_msg.end_parse();
+  cell context = begin_cell().store_slice("TOS-NATIVE-REGISTRY-v2").end_cell();
+  slice p = pairs.begin_parse();
+  int more = -1;
+  while (more) {
+    (_, cell key) = pq::stored_key(1, p~load_ref());
+    cell signature = pq::stored_signature(1, p~load_ref());
+    throw_unless(52, pq_check_mldsa44(message, context, signature, key));
+    if (p.slice_refs() > 0) { p = p~load_ref().begin_parse(); } else { more = 0; }
+  }
+  slice k = keys.begin_parse();
+  int acc = 0;
+  more = -1;
+  while (more) {
+    int walks = k~load_uint(8);
+    cell stored = k~load_ref();
+    repeat (walks) { acc ^= pq::key_id(1, stored); }
+    if (k.slice_refs() > 0) { k = k~load_ref().begin_parse(); } else { more = 0; }
+  }
+  throw_if(53, acc == -1);
+}
+"#;
+
+fn stored(bytes: &[u8]) -> Cell {
+    let mut b = BuilderData::new();
+    b.append_u32(u32::try_from(bytes.len()).expect("length")).expect("length");
+    b.checked_append_reference(byte_chain(bytes)).expect("chain");
+    b.into_cell().expect("stored")
+}
+
+struct Pq {
+    stored_key: Cell,
+    key_id: [u8; 32],
+    secret: ml_dsa_44::PrivateKey,
+}
+
+fn pq_set(n: usize) -> Vec<Pq> {
+    (0..n)
+        .map(|_| {
+            let (public, secret) = ml_dsa_44::try_keygen().expect("keygen");
+            let bytes = public.into_bytes();
+            let mut preimage = b"TOS-PQ-CONSENSUS-KEY-v1".to_vec();
+            preimage.extend_from_slice(&[1, 0]);
+            preimage.extend_from_slice(&bytes);
+            Pq { stored_key: stored(&bytes), key_id: chain_block::sha256_digest(&preimage), secret }
+        })
+        .collect()
+}
+
+fn pq_sign(c: &Pq, message: &[u8]) -> Cell {
+    stored(&c.secret.try_sign(message, b"TOS-NATIVE-REGISTRY-v2").expect("sign"))
+}
+
+/// V2 policy: header, then controllers key_id weight purposes recovery ^stored_key [^next].
+fn v2_policy(set: &[Pq]) -> Cell {
+    let entries = set
+        .iter()
+        .map(|c| {
+            let mut b = BuilderData::new();
+            b.append_raw(&c.key_id, 256).expect("id");
+            b.append_u32(1).expect("weight");
+            b.append_u16(15).expect("purposes");
+            b.append_bit_one().expect("recovery");
+            b.checked_append_reference(c.stored_key.clone()).expect("key");
+            b
+        })
+        .collect();
+    let mut root = BuilderData::new();
+    root.append_u32(0x4e56_5031).expect("magic");
+    root.append_u16(2).expect("schema");
+    root.append_u32(u32::try_from(set.len()).expect("n")).expect("threshold");
+    root.append_u32(1).expect("recovery threshold");
+    root.append_u64(86_400).expect("timelock");
+    root.append_u8(u8::try_from(set.len()).expect("n")).expect("count");
+    root.checked_append_reference(linked(entries)).expect("controllers");
+    root.into_cell().expect("policy")
+}
+
+/// V2 signature set: count:uint8 ^entry, entry = key_id ^stored_signature [^next].
+fn v2_signatures(set: &[Pq], message: &[u8]) -> Cell {
+    let mut root = BuilderData::new();
+    root.append_u8(u8::try_from(set.len()).expect("n")).expect("count");
+    if !set.is_empty() {
+        let entries = set
+            .iter()
+            .map(|c| {
+                let mut b = BuilderData::new();
+                b.append_raw(&c.key_id, 256).expect("id");
+                b.checked_append_reference(pq_sign(c, message)).expect("signature");
+                b
+            })
+            .collect();
+        root.checked_append_reference(linked(entries)).expect("entries");
+    }
+    root.into_cell().expect("signature set")
+}
+
+/// One registry submission as a wallet would carry it: the action (with its payload),
+/// both signature sets, optionally a StateInit with the release code, inside an internal
+/// message, inside a wallet external message signed with ML-DSA-44.
+fn wallet_external(action_payload: Cell, authority: Cell, counterparty: Cell, with_code: bool) -> Cell {
+    let mut action = BuilderData::new();
+    action.append_u32(0x4e56_4131).expect("magic");
+    action.append_u16(2).expect("schema");
+    action.append_raw(&[0x5a; 2 + 16 + 96], (2 + 16 + 96) * 8).expect("header fields");
+    let mut domain = BuilderData::new();
+    domain.append_raw(&[0x11; 96], 96 * 8).expect("domain");
+    let mut code_hash = BuilderData::new();
+    code_hash.append_raw(&[0x44; 32], 256).expect("code hash");
+    domain.checked_append_reference(code_hash.into_cell().expect("cell")).expect("ref");
+    action.checked_append_reference(domain.into_cell().expect("domain")).expect("ref");
+    action.checked_append_reference(action_payload).expect("payload");
+    let mut body = BuilderData::new();
+    body.append_u32(0x4e56_0001).expect("op");
+    body.append_u64(1).expect("query");
+    body.checked_append_reference(action.into_cell().expect("action")).expect("action");
+    body.checked_append_reference(authority).expect("authority");
+    body.checked_append_reference(counterparty).expect("counterparty");
+    let body = body.into_cell().expect("body");
+
+    let wallet = pq_set(1);
+    let destination =
+        MsgAddressInt::with_params(0, chain_block::UInt256::from([0x33; 32])).expect("destination");
+    let mut builder = MessageBuilder::internal(&destination, &destination, TOS).bounce(!with_code).body(body);
+    if with_code {
+        // The current registry release stands in for the size of a V2 code cell tree.
+        let encoded: String = include_str!(
+            "../../../../../crypto/smartcont/tos-service-native-registry-v1.boc.base64"
+        )
+        .split_whitespace()
+        .collect();
+        let code = chain_block::read_single_root_boc(
+            chain_block::base64_decode(&encoded).expect("base64"),
+        )
+        .expect("release code");
+        builder = builder.state_init(StateInit::with_code_and_data(code, Cell::default()));
+    }
+    let internal = builder.build().serialize().expect("internal message");
+    let mut signed = BuilderData::new();
+    signed.append_u32(0x2a).expect("subwallet");
+    signed.append_u32(1_800_000_000).expect("valid until");
+    signed.append_u32(7).expect("seqno");
+    signed.append_u8(3).expect("mode");
+    signed.checked_append_reference(internal).expect("message");
+    let signed = signed.into_cell().expect("signed");
+    let mut external = BuilderData::new();
+    external.append_raw(&[0x88; 80], 80 * 8).expect("ext_in header and destination");
+    external.checked_append_reference(pq_sign(&wallet[0], signed.repr_hash().as_slice())).expect("sig");
+    external.checked_append_reference(signed).expect("signed");
+    external.into_cell().expect("external")
+}
+
+fn boc_len(cell: &Cell) -> usize {
+    chain_block::write_boc(cell).expect("boc").len()
+}
+
+#[derive(Clone, Copy)]
+enum Path {
+    Registration,
+    PolicyUpdate,
+    RecoveryInitiation,
+    TransferLeg,
+}
+
+/// (pairs to verify, key walks, serialized external message bytes) for one path at width n.
+fn lifecycle_case(path: Path, n: usize) -> (Cell, usize) {
+    let old = pq_set(n);
+    let new = pq_set(n);
+    let message = chain_block::sha256_digest(format!("lifecycle-{n}").as_bytes());
+    let none = v2_signatures(&[], &message);
+    let mut pairs = Vec::new();
+    let mut keys = Vec::new();
+    let pair = |c: &Pq, pairs: &mut Vec<BuilderData>| {
+        let mut b = BuilderData::new();
+        b.checked_append_reference(c.stored_key.clone()).expect("key");
+        b.checked_append_reference(pq_sign(c, &message)).expect("signature");
+        pairs.push(b);
+    };
+    let key = |c: &Pq, walks: u8, keys: &mut Vec<BuilderData>| {
+        let mut b = BuilderData::new();
+        b.append_u8(walks).expect("walks");
+        b.checked_append_reference(c.stored_key.clone()).expect("key");
+        keys.push(b);
+    };
+    let size = match path {
+        Path::Registration => {
+            // Possession by every new controller; the installed policy validated once.
+            new.iter().for_each(|c| pair(c, &mut pairs));
+            new.iter().for_each(|c| key(c, 1, &mut keys));
+            let mut payload = BuilderData::new();
+            payload.append_raw(&[0x6f; 32], 256).expect("object nonce");
+            payload.checked_append_reference(v2_policy(&new)).expect("policy");
+            boc_len(&wallet_external(
+                payload.into_cell().expect("payload"),
+                v2_signatures(&new, &message),
+                none,
+                true,
+            ))
+        }
+        Path::PolicyUpdate | Path::RecoveryInitiation => {
+            // Old controllers authorize, every new controller proves possession; the
+            // stored policy and the installed one are validated (twice each for
+            // recovery initiation, as the current contract does).
+            let (old_walks, new_walks) =
+                if matches!(path, Path::RecoveryInitiation) { (2, 2) } else { (1, 2) };
+            old.iter().for_each(|c| pair(c, &mut pairs));
+            new.iter().for_each(|c| pair(c, &mut pairs));
+            old.iter().for_each(|c| key(c, old_walks, &mut keys));
+            new.iter().for_each(|c| key(c, new_walks, &mut keys));
+            let mut payload = BuilderData::new();
+            if matches!(path, Path::RecoveryInitiation) {
+                payload.append_u64(1_800_000_000).expect("execute after");
+            }
+            payload.checked_append_reference(v2_policy(&new)).expect("policy");
+            boc_len(&wallet_external(
+                payload.into_cell().expect("payload"),
+                v2_signatures(&old, &message),
+                v2_signatures(&new, &message),
+                false,
+            ))
+        }
+        Path::TransferLeg => {
+            // One Agent's transaction: its own threshold signatures, its policy once. The
+            // submitted message carries both owners' signature sets.
+            old.iter().for_each(|c| pair(c, &mut pairs));
+            old.iter().for_each(|c| key(c, 1, &mut keys));
+            let mut payload = BuilderData::new();
+            payload.append_raw(&[0x4a; 64], 512).expect("owners");
+            boc_len(&wallet_external(
+                payload.into_cell().expect("payload"),
+                v2_signatures(&old, &message),
+                v2_signatures(&new, &message),
+                false,
+            ))
+        }
+    };
+    let mut body = BuilderData::new();
+    body.append_u32(0x5051_5053).expect("op");
+    body.checked_append_reference(byte_chain(&message)).expect("message");
+    body.checked_append_reference(linked(pairs)).expect("pairs");
+    body.checked_append_reference(linked(keys)).expect("keys");
+    (body.into_cell().expect("body"), size)
+}
+
+/// Prints gas and serialized size per path and width. PQ_REGISTRY_LIFECYCLE_OUT=<path>
+/// writes JSON (including the probe inputs for the C++ emulator).
+#[test]
+fn registry_lifecycle_paths_with_the_real_key_codec() {
+    let dir = tempfile::tempdir().expect("probe dir");
+    let path = dir.path().join("pq_registry_lifecycle_probe.fc");
+    let smartcont = concat!(env!("CARGO_MANIFEST_DIR"), "/../../../../crypto/smartcont");
+    std::fs::write(&path, LIFECYCLE_PROBE).expect("probe source");
+    let code = compile_func_with_stdlib(&[
+        std::path::PathBuf::from(format!("{smartcont}/pq.fc")),
+        std::path::PathBuf::from(format!("{smartcont}/pq-bytes.fc")),
+        path,
+    ])
+    .expect("the lifecycle probe compiles with pq-bytes.fc");
+    let mut rows = Vec::new();
+    for n in [4usize, 6, 8, 10, 12, 16] {
+        for (name, p) in [
+            ("registration", Path::Registration),
+            ("policy-update", Path::PolicyUpdate),
+            ("recovery-initiation", Path::RecoveryInitiation),
+            ("transfer-leg", Path::TransferLeg),
+        ] {
+            let (body, external_bytes) = lifecycle_case(p, n);
+            let mut bc = Blockchain::with_global_version_and_base_workchain(ACTIVE_VERSION)
+                .expect("chain");
+            bc.set_workchain(0);
+            let payer = bc.treasury("lifecycle-payer", 1_000 * TOS).expect("payer");
+            let init = StateInit::with_code_and_data(code.clone(), Cell::default());
+            let address = MsgAddressInt::with_params(
+                0,
+                init.write_to_new_cell().expect("init").into_cell().expect("init").repr_hash(),
+            )
+            .expect("address");
+            bc.send_message(
+                MessageBuilder::internal(payer.address(), &address, 10 * TOS)
+                    .bounce(false)
+                    .state_init(init)
+                    .body(Cell::default())
+                    .build(),
+            )
+            .expect("deploy")
+            .expect_success();
+            let result = bc
+                .send_message(
+                    MessageBuilder::internal(payer.address(), &address, 10 * TOS).body(body.clone()).build(),
+                )
+                .expect("submit");
+            let transaction = result.transactions_for(&address).into_iter().last().expect("tx");
+            let TransactionDescr::Ordinary(description) =
+                transaction.read_description().expect("description")
+            else {
+                panic!("ordinary")
+            };
+            let TrComputePhase::Vm(vm) = description.compute_ph else { panic!("compute") };
+            println!(
+                "{name:<20} n={n:>2} gas={:>8} exit={} external_bytes={external_bytes:>6} fits_65535={}",
+                vm.gas_used.as_u64(),
+                vm.exit_code,
+                external_bytes <= 65_535
+            );
+            rows.push(serde_json::json!({
+                "path": name, "controllers": n, "gas_used": vm.gas_used.as_u64(),
+                "exit_code": vm.exit_code, "aborted": description.aborted,
+                "external_bytes": external_bytes, "fits_max_ext_msg_size": external_bytes <= 65_535,
+                "code_boc": b64(&code), "data_boc": b64(&Cell::default()), "body_boc": b64(&body),
+                "address": address.to_string(),
+            }));
+        }
+    }
+    if let Ok(out) = std::env::var("PQ_REGISTRY_LIFECYCLE_OUT") {
+        std::fs::write(out, serde_json::to_string_pretty(&rows).expect("json")).expect("write");
+    }
+}
