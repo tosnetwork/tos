@@ -10,12 +10,16 @@
 //!
 //! No command here sends anything. `register-agent` and `action` read the chain,
 //! refuse before signing every action the contract would refuse for a reason
-//! visible in finalized state, sign with controller keys read from the vault
-//! into this process, and print the exact message parts: destination, value-less
-//! body BOC and, for a registration, the StateInit BOC. The message itself is
-//! sent through the Agent Account custody path (`agent account task-send` /
-//! `deploy-send`), which journals the exact signed bytes before any broadcast.
-//! `show` reads and decodes one registry object.
+//! visible in the state they read (judged at that view's chain time), sign with
+//! controller keys read from the vault into this process, and print the exact
+//! message parts: destination, body BOC and, for a registration, the StateInit
+//! BOC. A caller sends them as one wallet message: `wallet send --build-only
+//! --body-boc ... [--state-init-boc ...]` produces the exact signed external
+//! message, which the caller journals before broadcasting those bytes only
+//! (the wallet seqno makes it apply at most once). A bounceable message
+//! refunds a refusal by the first Agent only: registry objects forward without
+//! bounce, so value attached to a refused forwarded action stays with the
+//! registry object. `show` reads and decodes one registry object.
 //!
 //! The identity domain is never implied: genesis anchors come from the given
 //! global config, the network label is given explicitly, and both are checked
@@ -44,6 +48,10 @@ use std::{
 const MAX_GLOBAL_CONFIG_BYTES: u64 = 16 << 20;
 /// Largest policy file this command reads.
 const MAX_POLICY_BYTES: u64 = 64 << 10;
+/// Headroom between the chain time an action is planned at and the time it
+/// can execute: a recovery initiation must leave the contract's timelock
+/// satisfied when it runs, not only when it was read.
+const RECOVERY_SUBMISSION_MARGIN_SECS: u64 = 300;
 
 /// `tosctl agent native-registry` -- Native Registry build, sign and read.
 #[derive(clap::Args, Clone)]
@@ -240,49 +248,92 @@ impl DomainArgs {
     }
 }
 
-/// Refuse unless the RPC serves the chain the domain names: the same zero
-/// state, and a network label equal to `tos:global-id:<ConfigParam 19>`.
-async fn check_chain(rpc: &ClientJsonRpc, loaded: &LoadedDomain) -> anyhow::Result<()> {
-    let master = rpc.get_masterchain_info().await?;
-    let zero = master.init.context("RPC omitted the zero-state identity")?;
-    anyhow::ensure!(
-        zero.root_hash.as_slice() == loaded.domain.genesis_root
-            && zero.file_hash.as_slice() == loaded.domain.genesis_file,
-        "the RPC serves another chain than the global config's zero state"
-    );
-    let global_id = match rpc.get_config_param(19).await? {
-        ConfigParamEnum::ConfigParam19(value) => value,
-        _ => anyhow::bail!("chain config parameter 19 is not a global ID"),
-    };
-    anyhow::ensure!(
-        loaded.label == format!("tos:global-id:{global_id}").into_bytes(),
-        "network label does not match this chain (global id {global_id})"
-    );
-    Ok(())
+/// The read-only chain view the commands act on. It has no method that sends.
+trait RegistryChain {
+    /// Refuse unless the view serves the domain's chain.
+    async fn check_chain(&self, loaded: &LoadedDomain) -> anyhow::Result<()>;
+    /// The verified registry object at `address` (`None` when no account
+    /// exists) and the unix time of the view it was read from.
+    async fn read_object(
+        &self,
+        loaded: &LoadedDomain,
+        address: &MsgAddressInt,
+    ) -> anyhow::Result<(Option<NativeRegistryObject>, u64)>;
 }
 
-/// The verified registry object at `address`, `None` when no account exists.
-async fn read_object(
-    rpc: &ClientJsonRpc,
-    loaded: &LoadedDomain,
-    address: &MsgAddressInt,
-) -> anyhow::Result<Option<NativeRegistryObject>> {
-    let info = rpc.get_address_information(address).await?;
-    match info.state {
-        AccountState::Uninitialized => return Ok(None),
-        AccountState::Frozen => anyhow::bail!("registry account {address} is frozen"),
-        AccountState::Active => {}
+/// Controller keys by name: their public keys and signatures over a hash.
+trait ControllerSigner {
+    async fn public_key(&self, name: &str) -> anyhow::Result<[u8; 32]>;
+    async fn sign(&self, name: &str, hash: &[u8; 32]) -> anyhow::Result<[u8; 64]>;
+}
+
+struct RpcChain<'a>(&'a ClientJsonRpc);
+
+impl RegistryChain for RpcChain<'_> {
+    /// The same zero state as the global config, and a network label equal to
+    /// `tos:global-id:<ConfigParam 19>`.
+    async fn check_chain(&self, loaded: &LoadedDomain) -> anyhow::Result<()> {
+        let master = self.0.get_masterchain_info().await?;
+        let zero = master.init.context("RPC omitted the zero-state identity")?;
+        anyhow::ensure!(
+            zero.root_hash.as_slice() == loaded.domain.genesis_root
+                && zero.file_hash.as_slice() == loaded.domain.genesis_file,
+            "the RPC serves another chain than the global config's zero state"
+        );
+        let global_id = match self.0.get_config_param(19).await? {
+            ConfigParamEnum::ConfigParam19(value) => value,
+            _ => anyhow::bail!("chain config parameter 19 is not a global ID"),
+        };
+        anyhow::ensure!(
+            loaded.label == format!("tos:global-id:{global_id}").into_bytes(),
+            "network label does not match this chain (global id {global_id})"
+        );
+        Ok(())
     }
-    let code = read_single_root_boc(info.code.context("active account without code")?)?;
-    let data = read_single_root_boc(info.data.context("active account without data")?)?;
-    Ok(Some(verify_native_registry_account(
-        &loaded.domain,
-        &loaded.label,
-        &loaded.code,
-        address,
-        &code,
-        &data,
-    )?))
+
+    async fn read_object(
+        &self,
+        loaded: &LoadedDomain,
+        address: &MsgAddressInt,
+    ) -> anyhow::Result<(Option<NativeRegistryObject>, u64)> {
+        let info = self.0.get_address_information(address).await?;
+        let now = info.sync_utime;
+        match info.state {
+            AccountState::Uninitialized => return Ok((None, now)),
+            AccountState::Frozen => anyhow::bail!("registry account {address} is frozen"),
+            AccountState::Active => {}
+        }
+        let code = read_single_root_boc(info.code.context("active account without code")?)?;
+        let data = read_single_root_boc(info.data.context("active account without data")?)?;
+        let object = verify_native_registry_account(
+            &loaded.domain,
+            &loaded.label,
+            &loaded.code,
+            address,
+            &code,
+            &data,
+        )?;
+        Ok((Some(object), now))
+    }
+}
+
+struct VaultSigner(Arc<SecretVault>);
+
+impl ControllerSigner for VaultSigner {
+    async fn public_key(&self, name: &str) -> anyhow::Result<[u8; 32]> {
+        let secret =
+            KeyConfig::VaultKey { name: name.to_owned() }.read_secret(Some(self.0.clone())).await?;
+        let raw = secret
+            .as_keypair()?
+            .public_key()
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("vault key '{name}' has no public key"))?;
+        raw.try_into().map_err(|_| anyhow::anyhow!("vault key '{name}' is not an Ed25519 key"))
+    }
+
+    async fn sign(&self, name: &str, hash: &[u8; 32]) -> anyhow::Result<[u8; 64]> {
+        sign_hash_with_vault_key(name, hash, self.0.clone()).await
+    }
 }
 
 #[derive(serde::Deserialize)]
@@ -432,11 +483,16 @@ fn plan_action(
             ActionInput::InitiateRecovery { execute_after, policy: next },
         ) => {
             check_native_possession(next, counter)?;
-            let earliest =
-                now.checked_add(policy.recovery_timelock).context("recovery time overflows")?;
+            // The contract compares with the time it executes the message, which
+            // is later than the view `now` was read from.
+            let earliest = now
+                .checked_add(policy.recovery_timelock)
+                .and_then(|t| t.checked_add(RECOVERY_SUBMISSION_MARGIN_SECS))
+                .context("recovery time overflows")?;
             ensure!(
                 *execute_after >= earliest,
-                "--execute-after must be at least now + the current recovery timelock ({earliest})"
+                "--execute-after must be at least chain time + the current recovery timelock + \
+                 {RECOVERY_SUBMISSION_MARGIN_SECS} s ({earliest})"
             );
             (
                 build_native_initiate_recovery_payload(*execute_after, next)?,
@@ -516,6 +572,12 @@ fn plan_action(
         }
         (_, _) if capability_kind => {
             let (cap_address, cap) = objects.capability.context("--capability is required")?;
+            // The owner Agent forwards to an address it derives in its own
+            // workchain; a Capability elsewhere would never receive the action.
+            ensure!(
+                cap_address.workchain_id() == agent_address.workchain_id(),
+                "--capability is in another workchain than its owner Agent"
+            );
             let cap = cap.context("the Capability is not registered")?;
             ensure!(cap.object_kind == 2, "--capability is not a Capability");
             let cap_state = cap.state.as_ref().context("the Capability is not registered")?;
@@ -539,7 +601,12 @@ fn plan_action(
                     build_native_add_version_payload(agent.object_id, version, *manifest)?
                 }
                 (ActionKind::TransferCapability, ActionInput::TransferCapability) => {
-                    let (_, receiver) = objects.new_owner.context("--new-owner is required")?;
+                    let (receiver_address, receiver) =
+                        objects.new_owner.context("--new-owner is required")?;
+                    ensure!(
+                        receiver_address.workchain_id() == agent_address.workchain_id(),
+                        "--new-owner is in another workchain than the current owner"
+                    );
                     let receiver_state = agent_state(receiver)?;
                     ensure!(receiver.object_id != agent.object_id, "transfer to the same owner");
                     check_native_threshold(&agent_policy(receiver_state)?, counter, code)
@@ -585,37 +652,192 @@ fn plan_action(
     })
 }
 
-async fn vault_public_key(name: &str, vault: Arc<SecretVault>) -> anyhow::Result<[u8; 32]> {
-    let secret = KeyConfig::VaultKey { name: name.to_owned() }.read_secret(Some(vault)).await?;
-    let raw = secret
-        .as_keypair()?
-        .public_key()
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("vault key '{name}' has no public key"))?;
-    raw.try_into().map_err(|_| anyhow::anyhow!("vault key '{name}' is not an Ed25519 key"))
-}
-
-async fn public_keys(names: &[String], vault: Arc<SecretVault>) -> anyhow::Result<Vec<[u8; 32]>> {
+async fn public_keys<S: ControllerSigner>(
+    signer: &S,
+    names: &[String],
+) -> anyhow::Result<Vec<[u8; 32]>> {
     let mut keys = Vec::with_capacity(names.len());
     for name in names {
-        keys.push(vault_public_key(name, vault.clone()).await?);
+        keys.push(signer.public_key(name).await?);
     }
     Ok(keys)
 }
 
-async fn sign_all(
+async fn sign_all<S: ControllerSigner>(
+    signer: &S,
     names: &[String],
     keys: &[[u8; 32]],
     action: &Cell,
-    vault: Arc<SecretVault>,
 ) -> anyhow::Result<Vec<NativeControllerSignature>> {
     let hash = *action.repr_hash().as_array();
     let mut out = Vec::with_capacity(names.len());
     for (name, public_key) in names.iter().zip(keys) {
-        let signature = sign_hash_with_vault_key(name, &hash, vault.clone()).await?;
+        let signature = signer.sign(name, &hash).await?;
         out.push(NativeControllerSignature { public_key: *public_key, signature });
     }
     Ok(out)
+}
+
+/// Build and sign an Agent registration. Every read and refusal happens before
+/// the first signature; nothing is sent.
+async fn prepare_register<C: RegistryChain, S: ControllerSigner>(
+    chain: &C,
+    signer: &S,
+    loaded: &LoadedDomain,
+    policy: &NativePolicy,
+    nonce: [u8; 32],
+    workchain: i8,
+    signer_names: &[String],
+) -> anyhow::Result<serde_json::Value> {
+    chain.check_chain(loaded).await?;
+    let registration = build_native_agent_registration(&loaded.domain, nonce, policy)?;
+    let (init, address) = build_native_registry_deployment(
+        &loaded.domain,
+        1,
+        registration.object_id,
+        workchain,
+        &loaded.label,
+        &loaded.code,
+    )?;
+    let (existing, _) = chain.read_object(loaded, &address).await?;
+    anyhow::ensure!(existing.is_none(), "an account already exists at {address}");
+    let keys = public_keys(signer, signer_names).await?;
+    check_native_possession(policy, &keys)?;
+    let (generation, sequence, predecessor) =
+        next_native_position(None, NATIVE_KIND_REGISTER_AGENT)?;
+    let action = build_native_action(
+        &loaded.domain,
+        &NativeRegistryAction {
+            kind: NATIVE_KIND_REGISTER_AGENT,
+            generation,
+            sequence,
+            object_id: registration.object_id,
+            predecessor,
+            nonce,
+            payload: registration.payload,
+        },
+    )?;
+    let signatures = sign_all(signer, signer_names, &keys, &action).await?;
+    let body = build_native_submission(&loaded.domain, &action, 1, &signatures, &[])?;
+    let state_init = init.write_to_new_cell()?.into_cell()?;
+    Ok(serde_json::json!({
+        "kind": "register-agent",
+        "object_id": hex::encode(registration.object_id),
+        "destination": address.to_string(),
+        "final_target": address.to_string(),
+        "action_hash": hex::encode(action.repr_hash().as_slice()),
+        "generation": generation,
+        "sequence": sequence,
+        "state_init_boc": b64(&state_init)?,
+        "body_boc": b64(&body)?,
+    }))
+}
+
+/// The address a Capability registration under `agent` deploys.
+fn registration_address(
+    loaded: &LoadedDomain,
+    agent_address: &MsgAddressInt,
+    agent_id: [u8; 32],
+    input: &ActionInput,
+) -> anyhow::Result<Option<MsgAddressInt>> {
+    let ActionInput::RegisterCapability { object_nonce, version, manifest } = input else {
+        return Ok(None);
+    };
+    let registration = build_native_capability_registration(
+        &loaded.domain,
+        *object_nonce,
+        agent_id,
+        version,
+        *manifest,
+    )?;
+    let workchain = i8::try_from(agent_address.workchain_id())?;
+    let (_, address) = build_native_registry_deployment(
+        &loaded.domain,
+        2,
+        registration.object_id,
+        workchain,
+        &loaded.label,
+        &loaded.code,
+    )?;
+    Ok(Some(address))
+}
+
+/// Read every object an action touches, refuse before signing, then sign.
+/// Nothing is sent.
+#[allow(clippy::too_many_arguments)]
+async fn prepare_action<C: RegistryChain, S: ControllerSigner>(
+    chain: &C,
+    signer: &S,
+    loaded: &LoadedDomain,
+    kind: ActionKind,
+    input: &ActionInput,
+    nonce: [u8; 32],
+    agent_address: &MsgAddressInt,
+    capability_address: Option<&MsgAddressInt>,
+    new_owner_address: Option<&MsgAddressInt>,
+    signer_names: &[String],
+    counter_names: &[String],
+) -> anyhow::Result<serde_json::Value> {
+    chain.check_chain(loaded).await?;
+    let (agent, now) = chain.read_object(loaded, agent_address).await?;
+    let agent = agent.context("no registry account at --agent")?;
+    // A registration always reads the address it derives, whether or not
+    // --capability names it.
+    let derived = registration_address(loaded, agent_address, agent.object_id, input)?;
+    let capability_address = match (&derived, capability_address) {
+        (Some(derived), Some(given)) => {
+            anyhow::ensure!(
+                given == derived,
+                "--capability is not the address this registration derives"
+            );
+            Some(derived.clone())
+        }
+        (Some(derived), None) => Some(derived.clone()),
+        (None, given) => given.cloned(),
+    };
+    let capability = match &capability_address {
+        Some(address) => Some(chain.read_object(loaded, address).await?.0),
+        None => None,
+    };
+    let new_owner = match new_owner_address {
+        Some(address) => Some(
+            chain
+                .read_object(loaded, address)
+                .await?
+                .0
+                .context("no registry account at --new-owner")?,
+        ),
+        None => None,
+    };
+    let objects = ActionObjects {
+        agent: (agent_address, &agent),
+        capability: capability_address
+            .as_ref()
+            .zip(capability.as_ref())
+            .map(|(address, object)| (address, object.as_ref())),
+        new_owner: new_owner_address.zip(new_owner.as_ref()),
+    };
+    let signer_keys = public_keys(signer, signer_names).await?;
+    let counter_keys = public_keys(signer, counter_names).await?;
+    let planned =
+        plan_action(loaded, kind, input, &objects, &signer_keys, &counter_keys, nonce, now)?;
+    let authority = sign_all(signer, signer_names, &signer_keys, &planned.action).await?;
+    let counterparty = sign_all(signer, counter_names, &counter_keys, &planned.action).await?;
+    let body =
+        build_native_submission(&loaded.domain, &planned.action, 1, &authority, &counterparty)?;
+    Ok(serde_json::json!({
+        "kind": kind.to_possible_value_name(),
+        "kind_code": planned.kind,
+        "target_id": hex::encode(planned.target_id),
+        "destination": planned.destination.to_string(),
+        "final_target": planned.final_target.to_string(),
+        "action_hash": hex::encode(planned.action.repr_hash().as_slice()),
+        "generation": planned.generation,
+        "sequence": planned.sequence,
+        "predecessor": hex::encode(planned.predecessor),
+        "chain_time": now,
+        "body_boc": b64(&body)?,
+    }))
 }
 
 fn b64(cell: &Cell) -> anyhow::Result<String> {
@@ -667,53 +889,17 @@ impl RegisterAgentCmd {
         let policy = read_policy(&self.policy)?;
         let nonce = nonce_arg("nonce", &self.nonce)?;
         let (_, vault, rpc) = load_config_vault_rpc_client(Path::new(config_path)).await?;
-        check_chain(&rpc, &loaded).await?;
-        let registration = build_native_agent_registration(&loaded.domain, nonce, &policy)?;
-        let (init, address) = build_native_registry_deployment(
-            &loaded.domain,
-            1,
-            registration.object_id,
+        let view = prepare_register(
+            &RpcChain(&rpc),
+            &VaultSigner(vault),
+            &loaded,
+            &policy,
+            nonce,
             self.workchain,
-            &loaded.label,
-            &loaded.code,
-        )?;
-        anyhow::ensure!(
-            read_object(&rpc, &loaded, &address).await?.is_none(),
-            "an account already exists at {address}"
-        );
-        let keys = public_keys(&self.signers, vault.clone()).await?;
-        check_native_possession(&policy, &keys)?;
-        let (generation, sequence, predecessor) =
-            next_native_position(None, NATIVE_KIND_REGISTER_AGENT)?;
-        let action = build_native_action(
-            &loaded.domain,
-            &NativeRegistryAction {
-                kind: NATIVE_KIND_REGISTER_AGENT,
-                generation,
-                sequence,
-                object_id: registration.object_id,
-                predecessor,
-                nonce,
-                payload: registration.payload,
-            },
-        )?;
-        let signatures = sign_all(&self.signers, &keys, &action, vault).await?;
-        let body = build_native_submission(&loaded.domain, &action, 1, &signatures, &[])?;
-        let state_init = init.write_to_new_cell()?.into_cell()?;
-        print_view(
-            &serde_json::json!({
-                "kind": "register-agent",
-                "object_id": hex::encode(registration.object_id),
-                "destination": address.to_string(),
-                "final_target": address.to_string(),
-                "action_hash": hex::encode(action.repr_hash().as_slice()),
-                "generation": generation,
-                "sequence": sequence,
-                "state_init_boc": b64(&state_init)?,
-                "body_boc": b64(&body)?,
-            }),
-            &self.format,
+            &self.signers,
         )
+        .await?;
+        print_view(&view, &self.format)
     }
 }
 
@@ -756,78 +942,32 @@ impl ActionCmd {
         let loaded = self.domain.load()?;
         let input = self.input()?;
         let nonce = nonce_arg("nonce", &self.nonce)?;
-        let (_, vault, rpc) = load_config_vault_rpc_client(Path::new(config_path)).await?;
-        check_chain(&rpc, &loaded).await?;
+        let parse = |value: &Option<String>, what: &str| {
+            value
+                .as_deref()
+                .map(str::parse::<MsgAddressInt>)
+                .transpose()
+                .with_context(|| format!("invalid {what}"))
+        };
         let agent_address: MsgAddressInt = self.agent.parse().context("invalid --agent")?;
-        let agent = read_object(&rpc, &loaded, &agent_address)
-            .await?
-            .context("no registry account at --agent")?;
-        let capability_address = self
-            .capability
-            .as_deref()
-            .map(str::parse::<MsgAddressInt>)
-            .transpose()
-            .context("invalid --capability")?;
-        let capability = match &capability_address {
-            Some(address) => Some(read_object(&rpc, &loaded, address).await?),
-            None => None,
-        };
-        let new_owner_address = self
-            .new_owner
-            .as_deref()
-            .map(str::parse::<MsgAddressInt>)
-            .transpose()
-            .context("invalid --new-owner")?;
-        let new_owner = match &new_owner_address {
-            Some(address) => Some(
-                read_object(&rpc, &loaded, address)
-                    .await?
-                    .context("no registry account at --new-owner")?,
-            ),
-            None => None,
-        };
-        let objects = ActionObjects {
-            agent: (&agent_address, &agent),
-            capability: capability_address
-                .as_ref()
-                .zip(capability.as_ref())
-                .map(|(address, object)| (address, object.as_ref())),
-            new_owner: new_owner_address.as_ref().zip(new_owner.as_ref()),
-        };
-        let signer_keys = public_keys(&self.signers, vault.clone()).await?;
-        let counter_keys = public_keys(&self.counter_signers, vault.clone()).await?;
-        let now = common::time_format::now();
-        let planned = plan_action(
+        let capability_address = parse(&self.capability, "--capability")?;
+        let new_owner_address = parse(&self.new_owner, "--new-owner")?;
+        let (_, vault, rpc) = load_config_vault_rpc_client(Path::new(config_path)).await?;
+        let view = prepare_action(
+            &RpcChain(&rpc),
+            &VaultSigner(vault),
             &loaded,
             self.kind,
             &input,
-            &objects,
-            &signer_keys,
-            &counter_keys,
             nonce,
-            now,
-        )?;
-        let authority =
-            sign_all(&self.signers, &signer_keys, &planned.action, vault.clone()).await?;
-        let counterparty =
-            sign_all(&self.counter_signers, &counter_keys, &planned.action, vault).await?;
-        let body =
-            build_native_submission(&loaded.domain, &planned.action, 1, &authority, &counterparty)?;
-        print_view(
-            &serde_json::json!({
-                "kind": self.kind.to_possible_value_name(),
-                "kind_code": planned.kind,
-                "target_id": hex::encode(planned.target_id),
-                "destination": planned.destination.to_string(),
-                "final_target": planned.final_target.to_string(),
-                "action_hash": hex::encode(planned.action.repr_hash().as_slice()),
-                "generation": planned.generation,
-                "sequence": planned.sequence,
-                "predecessor": hex::encode(planned.predecessor),
-                "body_boc": b64(&body)?,
-            }),
-            &self.format,
+            &agent_address,
+            capability_address.as_ref(),
+            new_owner_address.as_ref(),
+            &self.signers,
+            &self.counter_signers,
         )
+        .await?;
+        print_view(&view, &self.format)
     }
 }
 
@@ -874,12 +1014,16 @@ impl ShowCmd {
         let loaded = self.domain.load()?;
         let config = common::app_config::AppConfig::load(Path::new(config_path))?;
         let rpc = try_create_rpc_client(&config).await?;
-        check_chain(&rpc, &loaded).await?;
+        let chain = RpcChain(&rpc);
+        chain.check_chain(&loaded).await?;
         let address: MsgAddressInt = self.address.parse().context("invalid --address")?;
-        let object = read_object(&rpc, &loaded, &address)
-            .await?
-            .context("no registry account at --address")?;
-        print_view(&object_view(&address, &object), &self.format)
+        let (object, now) = chain.read_object(&loaded, &address).await?;
+        let object = object.context("no registry account at --address")?;
+        let mut view = object_view(&address, &object);
+        if let Some(map) = view.as_object_mut() {
+            map.insert("chain_time".into(), now.into());
+        }
+        print_view(&view, &self.format)
     }
 }
 
@@ -1053,11 +1197,12 @@ mod tests {
         // Recovery initiation must respect the current timelock.
         let initiate =
             |at| ActionInput::InitiateRecovery { execute_after: at, policy: one_key_policy(4, 60) };
+        // Chain time 1000 + timelock 60 + submission margin 300.
         assert!(
-            plan(ActionKind::InitiateRecovery, initiate(1_059), &objects, &[1], &[4], 1_000)
+            plan(ActionKind::InitiateRecovery, initiate(1_359), &objects, &[1], &[4], 1_000)
                 .is_err()
         );
-        plan(ActionKind::InitiateRecovery, initiate(1_060), &objects, &[1], &[4], 1_000)
+        plan(ActionKind::InitiateRecovery, initiate(1_360), &objects, &[1], &[4], 1_000)
             .expect("initiate");
         // Completion needs a pending recovery under the current policy, after its time.
         assert!(
@@ -1196,5 +1341,262 @@ mod tests {
         assert!(
             plan(ActionKind::RegisterCapability, input(), &objects_taken, &[1], &[], 0).is_err()
         );
+    }
+
+    #[test]
+    fn capability_and_receiver_must_share_the_owner_workchain() {
+        let (aa, ba) = (address(1), address(2));
+        let ca_elsewhere: MsgAddressInt =
+            format!("-1:{}", hex::encode([0xc0; 32])).parse().expect("address");
+        let b_elsewhere: MsgAddressInt =
+            format!("-1:{}", hex::encode([2; 32])).parse().expect("address");
+        let (a, b) = (agent(1, false, 0), agent(2, false, 0));
+        let cap = capability(1, false, 1);
+        let add = || ActionInput::AddVersion { version: b"1.1.0".to_vec(), manifest: [0x5f; 32] };
+        let foreign_cap = ActionObjects {
+            agent: (&aa, &a),
+            capability: Some((&ca_elsewhere, Some(&cap))),
+            new_owner: None,
+        };
+        assert!(plan(ActionKind::AddVersion, add(), &foreign_cap, &[1], &[], 0).is_err());
+        let ca = address(0xc0);
+        let foreign_receiver = ActionObjects {
+            agent: (&aa, &a),
+            capability: Some((&ca, Some(&cap))),
+            new_owner: Some((&b_elsewhere, &b)),
+        };
+        assert!(
+            plan(
+                ActionKind::TransferCapability,
+                ActionInput::TransferCapability,
+                &foreign_receiver,
+                &[1],
+                &[2],
+                0
+            )
+            .is_err()
+        );
+        let same = ActionObjects {
+            agent: (&aa, &a),
+            capability: Some((&ca, Some(&cap))),
+            new_owner: Some((&ba, &b)),
+        };
+        plan(ActionKind::TransferCapability, ActionInput::TransferCapability, &same, &[1], &[2], 0)
+            .expect("same workchain");
+    }
+
+    /// A chain view with fixed answers that records nothing it is not asked.
+    struct FakeChain {
+        serves_domain: bool,
+        objects: std::collections::HashMap<String, NativeRegistryObject>,
+        now: u64,
+    }
+
+    impl RegistryChain for FakeChain {
+        async fn check_chain(&self, _: &LoadedDomain) -> anyhow::Result<()> {
+            anyhow::ensure!(self.serves_domain, "another chain");
+            Ok(())
+        }
+        async fn read_object(
+            &self,
+            _: &LoadedDomain,
+            address: &MsgAddressInt,
+        ) -> anyhow::Result<(Option<NativeRegistryObject>, u64)> {
+            Ok((self.objects.get(&address.to_string()).cloned(), self.now))
+        }
+    }
+
+    /// Deterministic fixture keys by name, counting every signature produced.
+    struct CountingSigner {
+        signatures: std::sync::atomic::AtomicUsize,
+    }
+
+    impl CountingSigner {
+        fn new() -> Self {
+            Self { signatures: std::sync::atomic::AtomicUsize::new(0) }
+        }
+        fn count(&self) -> usize {
+            self.signatures.load(std::sync::atomic::Ordering::SeqCst)
+        }
+        fn seed(name: &str) -> anyhow::Result<u8> {
+            name.strip_prefix("key-").context("fixture key name")?.parse().context("seed")
+        }
+    }
+
+    impl ControllerSigner for CountingSigner {
+        async fn public_key(&self, name: &str) -> anyhow::Result<[u8; 32]> {
+            Ok(key(Self::seed(name)?))
+        }
+        async fn sign(&self, name: &str, hash: &[u8; 32]) -> anyhow::Result<[u8; 64]> {
+            use ed25519_dalek::Signer;
+            self.signatures.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let signing = ed25519_dalek::SigningKey::from_bytes(&[Self::seed(name)?; 32]);
+            Ok(signing.sign(hash).to_bytes())
+        }
+    }
+
+    fn names(seeds: &[u8]) -> Vec<String> {
+        seeds.iter().map(|s| format!("key-{s}")).collect()
+    }
+
+    fn chain_with(objects: &[(&MsgAddressInt, NativeRegistryObject)], now: u64) -> FakeChain {
+        FakeChain {
+            serves_domain: true,
+            objects: objects.iter().map(|(a, o)| (a.to_string(), o.clone())).collect(),
+            now,
+        }
+    }
+
+    async fn action(
+        chain: &FakeChain,
+        signer: &CountingSigner,
+        kind: ActionKind,
+        input: ActionInput,
+        capability: Option<&MsgAddressInt>,
+        counter: &[u8],
+    ) -> anyhow::Result<serde_json::Value> {
+        prepare_action(
+            chain,
+            signer,
+            &loaded(),
+            kind,
+            &input,
+            [0x77; 32],
+            &address(1),
+            capability,
+            None,
+            &names(&[1]),
+            &names(counter),
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn every_refusal_happens_before_any_signature() {
+        let aa = address(1);
+        let delegate = || ActionInput::Delegate([0x71; 32]);
+        // Another chain.
+        let signer = CountingSigner::new();
+        let mut chain = chain_with(&[(&aa, agent(1, false, 0))], 0);
+        chain.serves_domain = false;
+        assert!(
+            action(&chain, &signer, ActionKind::Delegate, delegate(), None, &[]).await.is_err()
+        );
+        // No account at --agent.
+        let empty = chain_with(&[], 0);
+        assert!(
+            action(&empty, &signer, ActionKind::Delegate, delegate(), None, &[]).await.is_err()
+        );
+        // Revoked Agent; early recovery completion by chain time.
+        let dead = chain_with(&[(&aa, agent(1, true, 0))], 0);
+        assert!(action(&dead, &signer, ActionKind::Delegate, delegate(), None, &[]).await.is_err());
+        let stored = build_policy(&one_key_policy(1, 60)).expect("policy");
+        let pending = NativePendingRecovery {
+            initiation: [0x99; 32],
+            old_policy_hash: *stored.repr_hash().as_array(),
+            execute_after: 2_000,
+            policy: build_policy(&one_key_policy(4, 60)).expect("policy"),
+        };
+        let early = chain_with(&[(&aa, agent_with(1, false, 0, Some(pending)))], 1_999);
+        assert!(
+            action(
+                &early,
+                &signer,
+                ActionKind::CompleteRecovery,
+                ActionInput::CompleteRecovery,
+                None,
+                &[]
+            )
+            .await
+            .is_err()
+        );
+        assert_eq!(signer.count(), 0, "nothing was signed for a refused action");
+        // The same completion at chain time 2000 signs exactly once.
+        let ready = FakeChain { now: 2_000, ..early };
+        let view = action(
+            &ready,
+            &signer,
+            ActionKind::CompleteRecovery,
+            ActionInput::CompleteRecovery,
+            None,
+            &[],
+        )
+        .await
+        .expect("complete");
+        assert_eq!(signer.count(), 1);
+        assert_eq!(view["chain_time"], 2_000);
+        assert_eq!(view["generation"], 2);
+    }
+
+    #[tokio::test]
+    async fn registration_reads_the_derived_address_even_without_capability() {
+        let aa = address(1);
+        let a = agent(1, false, 0);
+        let input = || ActionInput::RegisterCapability {
+            object_nonce: [0x81; 32],
+            version: b"1.0.0".to_vec(),
+            manifest: [0x5e; 32],
+        };
+        let derived = registration_address(&loaded(), &aa, a.object_id, &input())
+            .expect("derive")
+            .expect("address");
+        let signer = CountingSigner::new();
+        let occupied = chain_with(&[(&aa, a.clone()), (&derived, capability(1, false, 1))], 0);
+        assert!(
+            action(&occupied, &signer, ActionKind::RegisterCapability, input(), None, &[])
+                .await
+                .is_err()
+        );
+        let other = address(0xee);
+        let free = chain_with(&[(&aa, a)], 0);
+        assert!(
+            action(&free, &signer, ActionKind::RegisterCapability, input(), Some(&other), &[])
+                .await
+                .is_err()
+        );
+        assert_eq!(signer.count(), 0);
+        let view = action(&free, &signer, ActionKind::RegisterCapability, input(), None, &[])
+            .await
+            .expect("register");
+        assert_eq!(view["final_target"], derived.to_string());
+        assert_eq!(view["destination"], aa.to_string());
+        assert_eq!(signer.count(), 1);
+    }
+
+    #[tokio::test]
+    async fn agent_registration_refuses_an_occupied_address_before_signing() {
+        let policy = one_key_policy(1, 60);
+        let registration =
+            build_native_agent_registration(&loaded().domain, [0x61; 32], &policy).expect("reg");
+        let l = loaded();
+        let (_, address) = build_native_registry_deployment(
+            &l.domain,
+            1,
+            registration.object_id,
+            0,
+            &l.label,
+            &l.code,
+        )
+        .expect("address");
+        let signer = CountingSigner::new();
+        let occupied = chain_with(&[(&address, agent(1, false, 0))], 0);
+        assert!(
+            prepare_register(&occupied, &signer, &l, &policy, [0x61; 32], 0, &names(&[1]))
+                .await
+                .is_err()
+        );
+        // A signer set that is not exactly the policy's controllers.
+        let free = chain_with(&[], 0);
+        assert!(
+            prepare_register(&free, &signer, &l, &policy, [0x61; 32], 0, &names(&[2]))
+                .await
+                .is_err()
+        );
+        assert_eq!(signer.count(), 0);
+        let view = prepare_register(&free, &signer, &l, &policy, [0x61; 32], 0, &names(&[1]))
+            .await
+            .expect("register");
+        assert_eq!(view["destination"], address.to_string());
+        assert_eq!(signer.count(), 1);
     }
 }
