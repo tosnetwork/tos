@@ -308,6 +308,10 @@ const LIFECYCLE_PROBE: &str = r#"
   if (full~load_uint(4) & 1) { return (); }
   if (in_msg.slice_bits() < 32) { return (); }
   in_msg~load_uint(32);
+  ;; optimized: the native instruction checks operand lengths and canonical chains, so
+  ;; keys and signatures are read without the FunC chain walk, and a key id is one
+  ;; SHA256C over the domain, the suite and the chain.
+  int optimized = in_msg~load_uint(8);
   cell message = in_msg~load_ref();
   cell pairs = in_msg~load_ref();
   cell keys = in_msg~load_ref();
@@ -316,8 +320,15 @@ const LIFECYCLE_PROBE: &str = r#"
   slice p = pairs.begin_parse();
   int more = -1;
   while (more) {
-    (_, cell key) = pq::stored_key(1, p~load_ref());
-    cell signature = pq::stored_signature(1, p~load_ref());
+    cell key = null();
+    cell signature = null();
+    if (optimized) {
+      slice ks = p~load_ref().begin_parse(); ks~skip_bits(32); key = ks~load_ref();
+      slice ss = p~load_ref().begin_parse(); ss~skip_bits(32); signature = ss~load_ref();
+    } else {
+      (_, key) = pq::stored_key(1, p~load_ref());
+      signature = pq::stored_signature(1, p~load_ref());
+    }
     throw_unless(52, pq_check_mldsa44(message, context, signature, key));
     if (p.slice_refs() > 0) { p = p~load_ref().begin_parse(); } else { more = 0; }
   }
@@ -327,7 +338,15 @@ const LIFECYCLE_PROBE: &str = r#"
   while (more) {
     int walks = k~load_uint(8);
     cell stored = k~load_ref();
-    repeat (walks) { acc ^= pq::key_id(1, stored); }
+    if (optimized) {
+      slice cs = stored.begin_parse(); cs~skip_bits(32); cell chain = cs~load_ref();
+      repeat (walks) {
+        acc ^= begin_cell().store_slice("TOS-PQ-CONSENSUS-KEY-v1").store_uint(256, 16)
+          .store_ref(chain).end_cell().snake_string_hash();
+      }
+    } else {
+      repeat (walks) { acc ^= pq::key_id(1, stored); }
+    }
     if (k.slice_refs() > 0) { k = k~load_ref().begin_parse(); } else { more = 0; }
   }
   throw_if(53, acc == -1);
@@ -476,7 +495,7 @@ enum Path {
 }
 
 /// (pairs to verify, key walks, serialized external message bytes) for one path at width n.
-fn lifecycle_case(path: Path, n: usize) -> (Cell, usize) {
+fn lifecycle_case(path: Path, n: usize, optimized: bool) -> (Cell, usize) {
     let old = pq_set(n);
     let new = pq_set(n);
     let message = chain_block::sha256_digest(format!("lifecycle-{n}").as_bytes());
@@ -514,8 +533,15 @@ fn lifecycle_case(path: Path, n: usize) -> (Cell, usize) {
             // Old controllers authorize, every new controller proves possession; the
             // stored policy and the installed one are validated (twice each for
             // recovery initiation, as the current contract does).
-            let (old_walks, new_walks) =
-                if matches!(path, Path::RecoveryInitiation) { (2, 2) } else { (1, 2) };
+            // Optimized: stored ids are trusted after installation, so only the
+            // installed policy is derived, once.
+            let (old_walks, new_walks) = if optimized {
+                (0, 1)
+            } else if matches!(path, Path::RecoveryInitiation) {
+                (2, 2)
+            } else {
+                (1, 2)
+            };
             old.iter().for_each(|c| pair(c, &mut pairs));
             new.iter().for_each(|c| pair(c, &mut pairs));
             old.iter().for_each(|c| key(c, old_walks, &mut keys));
@@ -536,7 +562,7 @@ fn lifecycle_case(path: Path, n: usize) -> (Cell, usize) {
             // One Agent's transaction: its own threshold signatures, its policy once. The
             // submitted message carries both owners' signature sets.
             old.iter().for_each(|c| pair(c, &mut pairs));
-            old.iter().for_each(|c| key(c, 1, &mut keys));
+            old.iter().for_each(|c| key(c, u8::from(!optimized), &mut keys));
             let mut payload = BuilderData::new();
             payload.append_raw(&[0x4a; 64], 512).expect("owners");
             boc_len(&wallet_external(
@@ -549,6 +575,7 @@ fn lifecycle_case(path: Path, n: usize) -> (Cell, usize) {
     };
     let mut body = BuilderData::new();
     body.append_u32(0x5051_5053).expect("op");
+    body.append_u8(u8::from(optimized)).expect("mode");
     body.checked_append_reference(byte_chain(&message)).expect("message");
     body.checked_append_reference(linked(pairs)).expect("pairs");
     body.checked_append_reference(linked(keys)).expect("keys");
@@ -570,14 +597,14 @@ fn registry_lifecycle_paths_with_the_real_key_codec() {
     ])
     .expect("the lifecycle probe compiles with pq-bytes.fc");
     let mut rows = Vec::new();
-    for n in [4usize, 6, 8, 10, 12, 16] {
+    for (n, optimized) in [4usize, 6, 8, 10, 12, 16].into_iter().flat_map(|n| [(n, false), (n, true)]) {
         for (name, p) in [
             ("registration", Path::Registration),
             ("policy-update", Path::PolicyUpdate),
             ("recovery-initiation", Path::RecoveryInitiation),
             ("transfer-leg", Path::TransferLeg),
         ] {
-            let (body, external_bytes) = lifecycle_case(p, n);
+            let (body, external_bytes) = lifecycle_case(p, n, optimized);
             let mut bc = Blockchain::with_global_version_and_base_workchain(ACTIVE_VERSION)
                 .expect("chain");
             bc.set_workchain(0);
@@ -610,13 +637,13 @@ fn registry_lifecycle_paths_with_the_real_key_codec() {
             };
             let TrComputePhase::Vm(vm) = description.compute_ph else { panic!("compute") };
             println!(
-                "{name:<20} n={n:>2} gas={:>8} exit={} external_bytes={external_bytes:>6} fits_65535={}",
+                "{name:<20} n={n:>2} optimized={optimized:<5} gas={:>8} exit={} external_bytes={external_bytes:>6} fits_65535={}",
                 vm.gas_used.as_u64(),
                 vm.exit_code,
                 external_bytes <= 65_535
             );
             rows.push(serde_json::json!({
-                "path": name, "controllers": n, "gas_used": vm.gas_used.as_u64(),
+                "path": name, "controllers": n, "optimized": optimized, "gas_used": vm.gas_used.as_u64(),
                 "exit_code": vm.exit_code, "aborted": description.aborted,
                 "external_bytes": external_bytes, "fits_max_ext_msg_size": external_bytes <= 65_535,
                 "code_boc": b64(&code), "data_boc": b64(&Cell::default()), "body_boc": b64(&body),
