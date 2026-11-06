@@ -382,6 +382,74 @@ fn submit_body(action: Cell, authority: Cell, counterparty: Cell) -> Cell {
     b.into_cell().unwrap()
 }
 
+/// Runs `send` and, when `NATIVE_REGISTRY_TRACE_DIR` is set, records every
+/// transaction it caused in the format `scripts/replay-token-bridge-trace.py`
+/// replays through the native (C++) transaction engine: the configuration,
+/// the account before the send, the inbound message, and the Rust
+/// transaction and account afterwards. An account that runs more than once in
+/// one cascade has no recorded intermediate state, so only accounts that ran
+/// once are recorded.
+fn traced(bc: &mut Blockchain, send: impl FnOnce(&mut Blockchain) -> SendResult) -> SendResult {
+    use chain_block::{Account, HashmapType, ShardAccount, UInt256, base64_encode, write_boc};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static RECORD: AtomicUsize = AtomicUsize::new(0);
+
+    let Some(dir) = std::env::var_os("NATIVE_REGISTRY_TRACE_DIR") else {
+        return send(bc);
+    };
+    let boc = |cell: Cell| base64_encode(write_boc(&cell).unwrap());
+    let config = boc(HashmapType::data(&bc.config_params().config_params).unwrap().clone());
+    let before = bc.snapshot();
+    let result = send(bc);
+    let after = bc.snapshot();
+
+    let mut runs = std::collections::HashMap::<String, usize>::new();
+    for (address, _) in &result.transactions {
+        *runs.entry(address.to_string()).or_default() += 1;
+    }
+    let once: Vec<_> =
+        result.transactions.iter().filter(|(address, _)| runs[&address.to_string()] == 1).collect();
+    bc.restore(before);
+    let accounts_before: Vec<Account> = once
+        .iter()
+        .map(|(address, _)| bc.get_account(address).cloned().unwrap_or_default())
+        .collect();
+    bc.restore(after);
+
+    let thread = std::thread::current();
+    let dir =
+        std::path::PathBuf::from(dir).join(thread.name().unwrap_or("main").replace("::", "-"));
+    std::fs::create_dir_all(&dir).unwrap();
+    for ((address, transaction), account_before) in once.into_iter().zip(accounts_before) {
+        let account_after = bc.get_account(address).cloned().unwrap_or_default();
+        let record = serde_json::json!({
+            "address": address.to_string(),
+            "unixtime": transaction.now(),
+            "lt": transaction.logical_time().to_string(),
+            "config": config,
+            "shard_account": boc(
+                ShardAccount::with_params(&account_before, UInt256::default(), 0)
+                    .unwrap()
+                    .serialize()
+                    .unwrap()
+            ),
+            "message": boc(transaction.in_msg_cell().expect("an inbound message")),
+            "rust_transaction": boc(transaction.serialize().unwrap()),
+            "shard_account_after": boc(
+                ShardAccount::with_params(&account_after, UInt256::default(), 0)
+                    .unwrap()
+                    .serialize()
+                    .unwrap()
+            ),
+        });
+        let index = RECORD.fetch_add(1, Ordering::Relaxed);
+        let path = dir.join(format!("{index:05}-{}.json", transaction.logical_time()));
+        let file = std::fs::OpenOptions::new().write(true).create_new(true).open(path).unwrap();
+        serde_json::to_writer(file, &record).unwrap();
+    }
+    result
+}
+
 struct Fixture {
     bc: Blockchain,
     relayer: Treasury,
@@ -560,7 +628,7 @@ impl Fixture {
         let msg = MessageBuilder::internal(self.relayer.address(), &destination, value)
             .body(body)
             .build();
-        self.bc.send_message(msg).expect("submit")
+        traced(&mut self.bc, |bc| bc.send_message(msg).expect("submit"))
     }
 
     fn deploy_agent(
@@ -1675,7 +1743,7 @@ impl Fixture {
         authority: impl Fn(&Cell) -> Cell,
     ) -> (SendResult, MsgAddressInt) {
         let (deploy, address) = self.registration_message(agent_policy, object_nonce, authority);
-        (self.bc.send_message(deploy).expect("register"), address)
+        (traced(&mut self.bc, |bc| bc.send_message(deploy).expect("register")), address)
     }
 
     /// The deploying registration message [`Fixture::register_with`] sends.
@@ -2883,8 +2951,16 @@ fn two_valid_signature_sets_for_one_action_make_one_transition() {
     f.send(first).expect_success();
     let applied = f.state();
     assert_eq!(f.state_position(), (1, 2));
+    // The action is already applied: the registry recognizes it by its hash
+    // and accepts the copy as a replay, without a second transition. Being
+    // refused instead -- by the predecessor check, say -- would make a
+    // re-signed broadcast look like a failure of an operation that succeeded.
     let result = f.send(second);
     let gas = gas_at(&result, &f.registry);
+    assert!(
+        !gas.aborted && gas.exit == 0,
+        "a re-signed copy was not accepted as a replay: {gas:?}"
+    );
     assert_eq!(
         f.state().hash(0),
         applied.hash(0),
