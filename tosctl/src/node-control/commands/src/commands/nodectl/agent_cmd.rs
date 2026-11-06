@@ -26,7 +26,7 @@ use chain_block::{
     Transaction, TransactionDescr, read_single_root_boc, write_boc,
 };
 use chain_rpc_client::v2::client_json_rpc::{
-    canonicalize_chain_rpc_endpoint, validate_exact_boc_before_broadcast,
+    ClientJsonRpc, canonicalize_chain_rpc_endpoint, validate_exact_boc_before_broadcast,
 };
 use chain_rpc_client::v2::data_models::{
     AccountState, ExactBocSubmissionResult, ExactBocSubmissionStatus, RawTransaction,
@@ -65,6 +65,7 @@ use std::{
     io::{Cursor, Read, Write},
     path::{Path, PathBuf},
     str::FromStr,
+    sync::Arc,
 };
 
 mod dual_absence;
@@ -601,6 +602,10 @@ pub enum AgentAccountAction {
     TaskSend(AgentAccountTaskSendCmd),
     /// Resolve one already-broadcast task-send from exact transaction evidence
     TaskSendResolve(AgentAccountTaskSendResolveCmd),
+    /// Sign one controller task-send into the custody journal without broadcasting it
+    TaskSendPrepare(AgentAccountTaskSendPrepareCmd),
+    /// Broadcast the exact previously prepared task-send BOC from the custody journal
+    TaskSendBroadcast(AgentAccountTaskSendBroadcastCmd),
     /// Prepare one owner-authorized, bodyless native TOS transfer without broadcasting it
     NativePrepare(AgentAccountNativePrepareCmd),
     /// Resolve one exact native transfer from a strict majority of independent RPC views
@@ -804,6 +809,33 @@ pub struct AgentAccountTaskSendCmd {
     #[arg(long, help = "Unix timestamp after which the request is invalid")]
     valid_until: u32,
     #[arg(long, help = "Stable 64-lowercase-hex idempotency ID")]
+    action_id: String,
+    #[arg(long, help = "Skip confirmation prompt")]
+    yes: bool,
+}
+
+#[derive(clap::Args, Clone)]
+#[command(
+    about = "Sign one controller task-send into the custody journal without broadcasting it; broadcast later with task-send-broadcast"
+)]
+pub struct AgentAccountTaskSendPrepareCmd {
+    #[command(flatten)]
+    request: AgentAccountTaskSendCmd,
+    #[arg(
+        long,
+        help = "Also save the exact signed external message BOC to this absolute owner-private path (mode 0600, never overwritten with different bytes)"
+    )]
+    signed_boc_out: Option<PathBuf>,
+}
+
+#[derive(clap::Args, Clone)]
+#[command(
+    about = "Broadcast the exact previously prepared task-send BOC from the custody journal; never signs and never checks expiry"
+)]
+pub struct AgentAccountTaskSendBroadcastCmd {
+    #[arg(short = 'n', long = "wallet", help = "Agent Wallet profile name")]
+    wallet: String,
+    #[arg(long, help = "Stable 64-lowercase-hex task-send action ID")]
     action_id: String,
     #[arg(long, help = "Skip confirmation prompt")]
     yes: bool,
@@ -1630,6 +1662,8 @@ impl AgentAccountCmd {
             AgentAccountAction::RotateController(cmd) => cmd.run(config_path).await,
             AgentAccountAction::TaskSend(cmd) => cmd.run(config_path).await,
             AgentAccountAction::TaskSendResolve(cmd) => cmd.run(config_path).await,
+            AgentAccountAction::TaskSendPrepare(cmd) => cmd.run(config_path).await,
+            AgentAccountAction::TaskSendBroadcast(cmd) => cmd.run(config_path).await,
             AgentAccountAction::NativePrepare(cmd) => cmd.run(config_path).await,
             AgentAccountAction::NativeResolve(cmd) => cmd.run(config_path).await,
             AgentAccountAction::EconomicPaymentPrepare(cmd) => cmd.run(config_path).await,
@@ -4240,16 +4274,293 @@ impl AgentAccountRotateControllerCmd {
     }
 }
 
-impl AgentAccountTaskSendCmd {
-    pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
-        if self.action_id.len() != 64
-            || !self
-                .action_id
-                .bytes()
-                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
-        {
-            anyhow::bail!("action_id must be exactly 64 lowercase hexadecimal characters");
+/// Controller signature seam for task-send: production signs with the vault
+/// keypair, tests count signatures. `task-send` and `task-send-prepare` share
+/// one signing path so the exact bytes are identical whichever command made
+/// them.
+trait TaskSendSigner {
+    async fn sign_controller_hash(&self, hash: &[u8; 32]) -> anyhow::Result<[u8; 64]>;
+}
+
+impl TaskSendSigner for dyn secrets_vault::types::secret::KeyPair {
+    async fn sign_controller_hash(&self, hash: &[u8; 32]) -> anyhow::Result<[u8; 64]> {
+        self.sign(hash)
+            .await?
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("controller signature must be 64 bytes"))
+    }
+}
+
+/// Exact-byte submission seam for task-send: production is the RPC client,
+/// tests record or refuse the bytes. The prepare path has no transport at all.
+trait TaskSendTransport {
+    async fn send_exact_boc(&self, boc: &[u8]) -> anyhow::Result<()>;
+}
+
+impl TaskSendTransport for ClientJsonRpc {
+    async fn send_exact_boc(&self, boc: &[u8]) -> anyhow::Result<()> {
+        self.send_boc(&boc.to_vec()).await
+    }
+}
+
+/// Everything one controller task-send is bound to, read from the request and
+/// the deployed account before any signature.
+struct TaskSendDraft {
+    account: MsgAddressInt,
+    target: MsgAddressInt,
+    value: u64,
+    body: Cell,
+    valid_until: u32,
+    action_id: String,
+    global_id: i32,
+    network_domain: RelayNetworkDomainPin,
+    deployment_id: [u8; 32],
+    controller_epoch: u64,
+    seqno: u32,
+}
+
+struct LoadedTaskSend {
+    draft: TaskSendDraft,
+    secret: Secret,
+    rpc_client: Arc<ClientJsonRpc>,
+}
+
+/// One controller task-send whose exact signed bytes are durable in the
+/// custody journal (status Signed). Nothing has been broadcast by the call
+/// that produced this value.
+struct SignedTaskSend {
+    claim: ControllerActionClaim,
+    boc: Vec<u8>,
+    digest: String,
+    reused_journaled_boc: bool,
+}
+
+fn task_send_claim(draft: &TaskSendDraft) -> anyhow::Result<(ControllerActionClaim, Cell)> {
+    let action_body_hash = *draft.body.repr_hash().as_array();
+    let action_body_identity = agent_account_task_body_hash(&draft.body);
+    let payload = AgentAccountContract::build_task_send_payload(
+        draft.global_id,
+        draft.controller_epoch,
+        draft.seqno,
+        draft.valid_until,
+        &draft.target,
+        draft.value,
+        draft.body.clone(),
+    )?;
+    let mut identity = Sha256::new();
+    identity.update(b"tos.agent-account.controller-action.v1\0");
+    let account_text = draft.account.to_string();
+    let target_text = draft.target.to_string();
+    for part in [draft.action_id.as_bytes(), account_text.as_bytes(), target_text.as_bytes()] {
+        identity.update((part.len() as u64).to_be_bytes());
+        identity.update(part);
+    }
+    for part in [
+        draft.global_id.to_be_bytes().as_slice(),
+        draft.value.to_be_bytes().as_slice(),
+        draft.valid_until.to_be_bytes().as_slice(),
+        action_body_hash.as_slice(),
+    ] {
+        identity.update((part.len() as u64).to_be_bytes());
+        identity.update(part);
+    }
+    let claim = ControllerActionClaim {
+        account: account_text,
+        network_global_id: draft.global_id,
+        network_domain: Some(draft.network_domain.clone()),
+        deployment_id: hex::encode(draft.deployment_id),
+        controller_epoch: draft.controller_epoch,
+        seqno: draft.seqno,
+        target: target_text,
+        value_atomic: draft.value,
+        body_hash: Some(action_body_identity),
+        state_init_hash: None,
+        action_kind: "agent-task-send".to_owned(),
+        idempotency_key: draft.action_id.clone(),
+        action_identity: format!("sha256:{}", hex::encode(identity.finalize())),
+        valid_until: draft.valid_until,
+    };
+    Ok((claim, payload))
+}
+
+/// Claim the account sequence in the custody journal and make the signed
+/// external message durable (status Signed). A record that already carries
+/// an exact BOC is reused byte for byte and nothing is signed again.
+async fn sign_task_send_into_journal<S: TaskSendSigner + ?Sized>(
+    journal: &AgentAccountCustodyJournal,
+    draft: &TaskSendDraft,
+    signer: &S,
+    now: u64,
+) -> anyhow::Result<SignedTaskSend> {
+    let (claim, payload) = task_send_claim(draft)?;
+    journal.reconcile_finalized_state(
+        &claim.account,
+        claim.network_global_id,
+        &claim.deployment_id,
+        draft.controller_epoch,
+        draft.seqno,
+        now,
+    )?;
+    let (record, _) = journal.claim_primary(claim.clone(), now)?;
+    if record.status == ControllerActionStatus::Resolved {
+        anyhow::bail!(
+            "controller action {} sequence was consumed without a confirmed task dispatch; verify the target transaction/task state",
+            draft.action_id,
+        );
+    }
+    if record.status == ControllerActionStatus::Broadcasting {
+        anyhow::bail!(
+            "controller action broadcast is ambiguous; resolve finalized seqno before retrying"
+        );
+    }
+    if let Some(encoded) = record.exact_signed_boc_base64 {
+        let boc = base64::engine::general_purpose::STANDARD.decode(encoded)?;
+        let digest = format!("sha256:{}", hex::encode(Sha256::digest(&boc)));
+        if record.exact_signed_boc_digest.as_deref() != Some(digest.as_str()) {
+            anyhow::bail!("custody BOC digest is inconsistent");
         }
+        return Ok(SignedTaskSend { claim, boc, digest, reused_journaled_boc: true });
+    }
+    let hash_to_sign =
+        AgentAccountContract::controller_hash_to_sign(&draft.account, draft.global_id, &payload)?;
+    let signature = signer.sign_controller_hash(&hash_to_sign).await?;
+    let signed = AgentAccountContract::build_signed_controller_message(payload, &signature)?;
+    let message =
+        AgentAccountContract::build_external_controller_message(draft.account.clone(), signed)?;
+    let boc = write_boc(&message)?;
+    let digest = format!("sha256:{}", hex::encode(Sha256::digest(&boc)));
+    journal.attach_signed_boc(
+        &claim,
+        &base64::engine::general_purpose::STANDARD.encode(&boc),
+        &digest,
+        now,
+    )?;
+    Ok(SignedTaskSend { claim, boc, digest, reused_journaled_boc: false })
+}
+
+/// Signed -> Broadcasting, then exactly the journaled bytes go to the
+/// transport. A refused write leaves the record Broadcasting: the outcome is
+/// unknown to custody until finalized state resolves it.
+async fn broadcast_signed_task_send<T: TaskSendTransport + ?Sized>(
+    journal: &AgentAccountCustodyJournal,
+    signed: &SignedTaskSend,
+    transport: &T,
+    now: u64,
+) -> anyhow::Result<()> {
+    validate_exact_boc_before_broadcast(&signed.boc)?;
+    journal.begin_broadcast(&signed.claim, now)?;
+    transport.send_exact_boc(&signed.boc).await
+}
+
+/// The exact bytes a journaled task-send may (re)broadcast: a Signed or
+/// Broadcasting `agent-task-send` record of this account whose stored BOC
+/// passes the exact-BOC gate and matches its digest. Expiry is deliberately
+/// not checked here: like a saved wallet query sent with `sendfile`, the chain
+/// judges `valid_until`, which is what lets an operator produce the contract's
+/// expiry refusal on purpose.
+fn exact_task_send_broadcast_boc(
+    record: &ControllerActionRecord,
+    account: &MsgAddressInt,
+) -> anyhow::Result<Vec<u8>> {
+    if record.claim.action_kind != "agent-task-send" || record.claim.account != account.to_string()
+    {
+        anyhow::bail!("action ID does not name a task-send of this Agent Account");
+    }
+    match record.status {
+        ControllerActionStatus::Claimed => {
+            anyhow::bail!("task-send is not signed yet; run task-send-prepare first")
+        }
+        ControllerActionStatus::Resolved => {
+            anyhow::bail!("task-send is already resolved; nothing to broadcast")
+        }
+        ControllerActionStatus::Signed | ControllerActionStatus::Broadcasting => {}
+    }
+    validate_unresolved_task_send_boc(record)?;
+    let encoded = record
+        .exact_signed_boc_base64
+        .as_deref()
+        .context("signed task-send record has no exact BOC")?;
+    Ok(base64::engine::general_purpose::STANDARD.decode(encoded)?)
+}
+
+fn begin_or_resume_task_send_broadcast(
+    journal: &AgentAccountCustodyJournal,
+    record: &ControllerActionRecord,
+    account: &MsgAddressInt,
+    now: u64,
+) -> anyhow::Result<Vec<u8>> {
+    let boc = exact_task_send_broadcast_boc(record, account)?;
+    journal.begin_or_resume_exact_broadcast(&record.claim, now)?;
+    Ok(boc)
+}
+
+/// Save the exact signed external message the way upstream wallet tooling
+/// saves a query file: absolute path inside an owner-private directory, mode
+/// 0600, never overwritten with different bytes. Until `valid_until` passes
+/// the file is a valid spend authorization, hence the custody-grade rules.
+fn save_signed_task_send_boc(path: &Path, boc: &[u8]) -> anyhow::Result<()> {
+    require_owner_private_agent_storage()?;
+    if !path.is_absolute() {
+        anyhow::bail!("--signed-boc-out must be an absolute path");
+    }
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .context("--signed-boc-out has no parent directory")?;
+    let metadata =
+        fs::symlink_metadata(parent).context("inspect the --signed-boc-out directory")?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        anyhow::bail!("--signed-boc-out directory is not a real directory");
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        if metadata.uid() != unsafe { libc::geteuid() }
+            || metadata.permissions().mode() & 0o077 != 0
+        {
+            anyhow::bail!(
+                "--signed-boc-out directory must be owner-private (mode 0700, owned by the caller)"
+            );
+        }
+    }
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => {
+            if open_private_snapshot_file(path)? == boc {
+                return Ok(());
+            }
+            anyhow::bail!("a different signed message is already saved at --signed-boc-out");
+        }
+        Ok(_) => anyhow::bail!("--signed-boc-out exists and is not a regular file"),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error).context("inspect --signed-boc-out"),
+    }
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
+    }
+    let mut file = options.open(path).context("create --signed-boc-out")?;
+    if let Err(error) = file.write_all(boc).and_then(|()| file.sync_all()) {
+        drop(file);
+        // A truncated authorization must not survive a failed export.
+        let _ = fs::remove_file(path);
+        return Err(error).context("write --signed-boc-out");
+    }
+    Ok(())
+}
+
+impl AgentAccountTaskSendCmd {
+    /// Validate the request against the deployed account, pin the network
+    /// domain and ask the owner. `Ok(None)` means the owner declined. Nothing
+    /// is signed or journaled here.
+    async fn load_draft(
+        &self,
+        config_path: &str,
+        purpose: &str,
+    ) -> anyhow::Result<Option<LoadedTaskSend>> {
+        validate_controller_action_id(&self.action_id)?;
         validate_tos_amount("value", self.value)?;
         if self.value == 0.0 {
             anyhow::bail!("value must be greater than zero");
@@ -4286,8 +4597,8 @@ impl AgentAccountTaskSendCmd {
             anyhow::bail!("valid_until exceeds the Agent Account default_task_timeout");
         }
         let secret = agent_wallet.controller_key.read_secret(Some(vault)).await?;
-        let keypair = secret.as_keypair()?;
-        let controller_pubkey: [u8; 32] = keypair
+        let controller_pubkey: [u8; 32] = secret
+            .as_keypair()?
             .public_key()
             .await?
             .ok_or_else(|| anyhow::anyhow!("controller secret has no public key"))?
@@ -4315,22 +4626,9 @@ impl AgentAccountTaskSendCmd {
             zero_state_file_hash: format!("sha256:{}", hex::encode(&zero_state.file_hash)),
             workchain_id: account.workchain_id(),
         };
-        let action_body_hash = *body.repr_hash().as_array();
-        let action_body_identity = agent_account_task_body_hash(&body);
-        let payload = AgentAccountContract::build_task_send_payload(
-            global_id,
-            data.controller_epoch,
-            data.seqno,
-            self.valid_until,
-            &target,
-            value,
-            body,
-        )?;
-        let hash_to_sign =
-            AgentAccountContract::controller_hash_to_sign(&account, global_id, &payload)?;
         if !self.yes
             && !confirm(&format!(
-                "Authorize controller action {} from {} to {} for {}, seqno {}, valid_until {}?",
+                "{purpose} controller action {} from {} to {} for {}, seqno {}, valid_until {}?",
                 self.action_id,
                 account,
                 target,
@@ -4339,89 +4637,190 @@ impl AgentAccountTaskSendCmd {
                 self.valid_until
             ))?
         {
-            return Ok(());
+            return Ok(None);
         }
+        Ok(Some(LoadedTaskSend {
+            draft: TaskSendDraft {
+                account,
+                target,
+                value,
+                body,
+                valid_until: self.valid_until,
+                action_id: self.action_id.clone(),
+                global_id,
+                network_domain,
+                deployment_id: data.deployment_id,
+                controller_epoch: data.controller_epoch,
+                seqno: data.seqno,
+            },
+            secret,
+            rpc_client,
+        }))
+    }
 
-        let mut identity = Sha256::new();
-        identity.update(b"tos.agent-account.controller-action.v1\0");
-        let account_text = account.to_string();
-        let target_text = target.to_string();
-        for part in [self.action_id.as_bytes(), account_text.as_bytes(), target_text.as_bytes()] {
-            identity.update((part.len() as u64).to_be_bytes());
-            identity.update(part);
-        }
-        for part in [
-            global_id.to_be_bytes().as_slice(),
-            value.to_be_bytes().as_slice(),
-            self.valid_until.to_be_bytes().as_slice(),
-            action_body_hash.as_slice(),
-        ] {
-            identity.update((part.len() as u64).to_be_bytes());
-            identity.update(part);
-        }
-        let claim = ControllerActionClaim {
-            account: account.to_string(),
-            network_global_id: global_id,
-            network_domain: Some(network_domain),
-            deployment_id: hex::encode(data.deployment_id),
-            controller_epoch: data.controller_epoch,
-            seqno: data.seqno,
-            target: target.to_string(),
-            value_atomic: value,
-            body_hash: Some(action_body_identity),
-            state_init_hash: None,
-            action_kind: "agent-task-send".to_owned(),
-            idempotency_key: self.action_id.clone(),
-            action_identity: format!("sha256:{}", hex::encode(identity.finalize())),
-            valid_until: self.valid_until,
+    pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+        let Some(loaded) = self.load_draft(config_path, "Authorize").await? else {
+            return Ok(());
         };
         let journal = open_controller_journal(Path::new(config_path))?;
+        let signed = sign_task_send_into_journal(
+            &journal,
+            &loaded.draft,
+            loaded.secret.as_keypair()?,
+            time_format::now(),
+        )
+        .await?;
+        broadcast_signed_task_send(
+            &journal,
+            &signed,
+            loaded.rpc_client.as_ref(),
+            time_format::now(),
+        )
+        .await?;
+        println!(
+            "{} controller task action sent from {}",
+            "OK".green().bold(),
+            loaded.draft.account
+        );
+        Ok(())
+    }
+}
+
+/// The whole of `task-send-prepare` after the request was validated: sign
+/// into the journal, then (only after the durable attach) export the exact
+/// bytes if asked. Exported bytes may be submitted by any sender, so before
+/// they leave custody the record moves to Broadcasting: the exact winner can
+/// then be bound with `task-send-resolve`, and `task-send-broadcast` can only
+/// resume those same bytes. The command's network handle is passed in only so
+/// that the no-write property is testable with a trap transport; it must
+/// never be used.
+async fn prepare_task_send<S: TaskSendSigner + ?Sized, T: TaskSendTransport + ?Sized>(
+    journal: &AgentAccountCustodyJournal,
+    draft: &TaskSendDraft,
+    signer: &S,
+    _network: &T,
+    signed_boc_out: Option<&Path>,
+    now: u64,
+) -> anyhow::Result<SignedTaskSend> {
+    let signed = sign_task_send_into_journal(journal, draft, signer, now).await?;
+    if let Some(path) = signed_boc_out {
+        journal.begin_or_resume_exact_broadcast(&signed.claim, now)?;
+        save_signed_task_send_boc(path, &signed.boc)?;
+    }
+    Ok(signed)
+}
+
+impl AgentAccountTaskSendPrepareCmd {
+    pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+        let Some(loaded) =
+            self.request.load_draft(config_path, "Sign without broadcasting").await?
+        else {
+            return Ok(());
+        };
+        let journal = open_controller_journal(Path::new(config_path))?;
+        let signed = prepare_task_send(
+            &journal,
+            &loaded.draft,
+            loaded.secret.as_keypair()?,
+            loaded.rpc_client.as_ref(),
+            self.signed_boc_out.as_deref(),
+            time_format::now(),
+        )
+        .await?;
+        println!(
+            "{}",
+            serde_json::json!({
+                    "schema": "tosctl.agent-account.task-send-prepare.v1",
+                    "action_id": loaded.draft.action_id,
+                    "account": loaded.draft.account.to_string(),
+                    "controller_epoch": loaded.draft.controller_epoch,
+                    "seqno": loaded.draft.seqno,
+                    "valid_until": loaded.draft.valid_until,
+                    "exact_signed_boc_digest": signed.digest,
+                    "reused_journaled_boc": signed.reused_journaled_boc,
+                    "signed_boc_out": self.signed_boc_out.as_ref().map(|path| path.display().to_string()),
+                    // Custody status: an exported request is treated as possibly broadcast.
+            "state": if self.signed_boc_out.is_some() { "broadcasting" } else { "signed" },
+                })
+        );
+        Ok(())
+    }
+}
+
+impl AgentAccountTaskSendBroadcastCmd {
+    pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+        validate_controller_action_id(&self.action_id)?;
+        let path = Path::new(config_path);
+        let (config, _vault, rpc_client) = load_config_vault_rpc_client(path).await?;
+        let agent_wallet = config
+            .agent_wallets
+            .get(&self.wallet)
+            .ok_or_else(|| anyhow::anyhow!("Agent wallet '{}' not found", self.wallet))?;
+        let account = agent_wallet
+            .agent_account_address
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Agent Account is not deployed for this wallet"))?
+            .parse::<MsgAddressInt>()?;
+        let provider = contracts::contract_provider!(rpc_client.clone());
+        let data = AgentAccountContract::get_data(provider.as_ref(), &account).await?;
+        let global_id = match rpc_client.get_config_param(19).await? {
+            ConfigParamEnum::ConfigParam19(value) => value as i32,
+            _ => anyhow::bail!("chain config parameter 19 is not a global ID"),
+        };
+        let journal = open_controller_journal(path)?;
+        let deployment_id = hex::encode(data.deployment_id);
         journal.reconcile_finalized_state(
-            &claim.account,
-            claim.network_global_id,
-            &claim.deployment_id,
+            &account.to_string(),
+            global_id,
+            &deployment_id,
             data.controller_epoch,
             data.seqno,
             time_format::now(),
         )?;
-        let (record, _) = journal.claim_primary(claim.clone(), time_format::now())?;
-        if record.status == ControllerActionStatus::Resolved {
-            anyhow::bail!(
-                "controller action {} sequence was consumed without a confirmed task dispatch; verify the target transaction/task state",
-                self.action_id,
-            );
-        }
-        if record.status == ControllerActionStatus::Broadcasting {
-            anyhow::bail!(
-                "controller action broadcast is ambiguous; resolve finalized seqno before retrying"
-            );
-        }
-        let boc = if let Some(encoded) = record.exact_signed_boc_base64 {
-            base64::engine::general_purpose::STANDARD.decode(encoded)?
-        } else {
-            let signature = keypair.sign(&hash_to_sign).await?;
-            let signature: [u8; 64] = signature
-                .try_into()
-                .map_err(|_| anyhow::anyhow!("controller signature must be 64 bytes"))?;
-            let signed =
-                AgentAccountContract::build_signed_controller_message(payload, &signature)?;
-            let message =
-                AgentAccountContract::build_external_controller_message(account.clone(), signed)?;
-            let boc = write_boc(&message)?;
-            let digest = format!("sha256:{}", hex::encode(Sha256::digest(&boc)));
-            journal.attach_signed_boc(
-                &claim,
-                &base64::engine::general_purpose::STANDARD.encode(&boc),
-                &digest,
-                time_format::now(),
+        let record = journal
+            .find_primary(
+                &account.to_string(),
+                global_id,
+                &deployment_id,
+                data.controller_epoch,
+                &self.action_id,
+            )?
+            .context(
+                "prepared task-send was not found for this wallet, network and controller epoch",
             )?;
-            boc
-        };
-        validate_exact_boc_before_broadcast(&boc)?;
-        journal.begin_broadcast(&claim, time_format::now())?;
-        rpc_client.send_boc(&boc).await?;
-        println!("{} controller task action sent from {}", "OK".green().bold(), account);
-        Ok(())
+        exact_task_send_broadcast_boc(&record, &account)?;
+        let network = validate_task_send_resolution_claim(&record, &account)?;
+        if !self.yes
+            && !confirm(&format!(
+                "Broadcast the exact prepared task-send {} from {} (seqno {}, valid_until {})?",
+                self.action_id, account, record.claim.seqno, record.claim.valid_until
+            ))?
+        {
+            anyhow::bail!("owner declined task-send broadcast");
+        }
+        rpc_client.verify_pinned_primary_network(&network).await?;
+        // Signed -> Broadcasting, or resume Broadcasting: only the bytes already
+        // frozen in the journal are sent, never a replacement message.
+        let boc =
+            begin_or_resume_task_send_broadcast(&journal, &record, &account, time_format::now())?;
+        let submission = rpc_client.submit_exact_boc_pinned(&boc, &network).await?;
+        println!(
+            "{}",
+            serde_json::json!({
+                "schema": "tosctl.agent-account.task-send-broadcast.v1",
+                "action_id": self.action_id,
+                "account": account.to_string(),
+                "controller_epoch": record.claim.controller_epoch,
+                "seqno": record.claim.seqno,
+                "valid_until": record.claim.valid_until,
+                "exact_signed_boc_digest": record.exact_signed_boc_digest,
+                "state": "broadcasting",
+                "submission": &submission,
+            })
+        );
+        // Rejected and Unknown leave the record Broadcasting: an admission
+        // refusal is not proof of absence and never resolves custody here.
+        require_exact_submission_accepted(&submission, "task-send")
     }
 }
 
@@ -12808,6 +13207,413 @@ mod tests {
         let mut corrupted = broadcasting;
         corrupted.exact_signed_boc_digest = Some(format!("sha256:{}", "f".repeat(64)));
         assert!(begin_or_resume_task_deploy_broadcast(&reopened, &corrupted, 14).is_err());
+    }
+
+    use super::{
+        AgentAccountTaskSendBroadcastCmd, AgentAccountTaskSendPrepareCmd, TaskSendDraft,
+        TaskSendSigner, TaskSendTransport, begin_or_resume_task_send_broadcast,
+        broadcast_signed_task_send, exact_task_send_broadcast_boc, prepare_task_send,
+        save_signed_task_send_boc, sign_task_send_into_journal, task_send_claim,
+    };
+    use std::cell::RefCell;
+
+    struct CountingSigner {
+        key: SigningKey,
+        signatures: RefCell<usize>,
+    }
+
+    impl TaskSendSigner for CountingSigner {
+        async fn sign_controller_hash(&self, hash: &[u8; 32]) -> anyhow::Result<[u8; 64]> {
+            *self.signatures.borrow_mut() += 1;
+            Ok(self.key.sign(hash).to_bytes())
+        }
+    }
+
+    struct RecordingTransport {
+        sent: RefCell<Vec<Vec<u8>>>,
+        refuse: bool,
+    }
+
+    impl TaskSendTransport for RecordingTransport {
+        async fn send_exact_boc(&self, boc: &[u8]) -> anyhow::Result<()> {
+            self.sent.borrow_mut().push(boc.to_vec());
+            if self.refuse {
+                anyhow::bail!("sendBoc write attempt failed; rpc_error_category=endpoint_error");
+            }
+            Ok(())
+        }
+    }
+
+    fn counting_signer() -> CountingSigner {
+        CountingSigner { key: SigningKey::from_bytes(&[7u8; 32]), signatures: RefCell::new(0) }
+    }
+
+    fn task_send_draft(action_id: &str, valid_until: u32) -> TaskSendDraft {
+        TaskSendDraft {
+            account: address(2),
+            target: address(4),
+            value: 5_000_000_000,
+            body: Cell::default(),
+            valid_until,
+            action_id: action_id.to_owned(),
+            global_id: test_network().global_id,
+            network_domain: test_network(),
+            deployment_id: [0x33; 32],
+            controller_epoch: 7,
+            seqno: 11,
+        }
+    }
+
+    #[tokio::test]
+    async fn task_send_prepare_signs_into_the_journal_and_never_broadcasts() {
+        let directory = TemporaryDirectory::create("task-send-prepare");
+        let journal = AgentAccountCustodyJournal::open(directory.0.clone()).unwrap();
+        let signer = counting_signer();
+        let draft = task_send_draft(&"6".repeat(64), 1_900_000_000);
+
+        let signed = sign_task_send_into_journal(&journal, &draft, &signer, 10).await.unwrap();
+
+        assert!(!signed.reused_journaled_boc);
+        assert_eq!(*signer.signatures.borrow(), 1);
+        assert_eq!(signed.digest, format!("sha256:{}", hex::encode(Sha256::digest(&signed.boc))));
+        let record = journal.action_by_idempotency_key(&draft.action_id).unwrap();
+        assert_eq!(record.status, ControllerActionStatus::Signed);
+        assert_eq!(record.exact_signed_boc_digest.as_deref(), Some(signed.digest.as_str()));
+        assert_eq!(record.claim, task_send_claim(&draft).unwrap().0);
+        assert_eq!(record.claim.action_kind, "agent-task-send");
+
+        // The durable bytes are the claimed action: signature, opcode, network,
+        // epoch, seqno and expiry in the contract's order.
+        let message = <Message as chain_block::Deserializable>::construct_from_cell(
+            read_single_root_boc(&signed.boc).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(message.ext_in_header().unwrap().dst.to_string(), draft.account.to_string());
+        let mut body = message.body().cloned().unwrap();
+        body.move_by(512).unwrap();
+        assert_eq!(body.get_next_u32().unwrap(), contracts::agent_account::AGENT_TASK_SEND_OPCODE);
+        assert_eq!(body.get_next_i32().unwrap(), draft.global_id);
+        assert_eq!(body.get_next_u64().unwrap(), 7);
+        assert_eq!(body.get_next_u32().unwrap(), 11);
+        assert_eq!(body.get_next_u32().unwrap(), 1_900_000_000);
+
+        // Reopening shows the same Signed record; nothing entered Broadcasting.
+        let reopened = AgentAccountCustodyJournal::open(directory.0.clone()).unwrap();
+        let persisted = reopened.action_by_idempotency_key(&draft.action_id).unwrap();
+        assert_eq!(persisted.status, ControllerActionStatus::Signed);
+        assert_eq!(
+            persisted.exact_signed_boc_base64.as_deref(),
+            Some(base64::engine::general_purpose::STANDARD.encode(&signed.boc).as_str())
+        );
+    }
+
+    #[tokio::test]
+    async fn task_send_prepare_command_core_never_touches_the_network_and_exports_after_attach() {
+        let directory = TemporaryDirectory::create("task-send-prepare-trap");
+        let journal_directory = TemporaryDirectory::create("task-send-prepare-trap-journal");
+        let journal = AgentAccountCustodyJournal::open(journal_directory.0.clone()).unwrap();
+        let signer = counting_signer();
+        let trap = RecordingTransport { sent: RefCell::new(Vec::new()), refuse: true };
+        let draft = task_send_draft(&"6".repeat(64), 1_900_000_000);
+        let out = directory.0.join("task-send-query.boc");
+
+        let signed = prepare_task_send(&journal, &draft, &signer, &trap, Some(out.as_path()), 10)
+            .await
+            .unwrap();
+
+        assert!(trap.sent.borrow().is_empty(), "task-send-prepare wrote to the network");
+        assert_eq!(*signer.signatures.borrow(), 1);
+        let record = journal.action_by_idempotency_key(&draft.action_id).unwrap();
+        // Exported bytes may be sent by anyone: custody treats them as broadcast,
+        // so the exact winner can be resolved and only these bytes resumed.
+        assert_eq!(record.status, ControllerActionStatus::Broadcasting);
+        assert_eq!(record.exact_signed_boc_digest.as_deref(), Some(signed.digest.as_str()));
+        assert_eq!(fs::read(&out).unwrap(), signed.boc);
+        validate_task_send_resolution_claim(&record, &draft.account).unwrap();
+        assert_eq!(
+            begin_or_resume_task_send_broadcast(&journal, &record, &draft.account, 11).unwrap(),
+            signed.boc
+        );
+        // A second prepare for the same sequence is refused, never re-signed.
+        assert!(
+            prepare_task_send(&journal, &draft, &signer, &trap, Some(out.as_path()), 12)
+                .await
+                .is_err()
+        );
+        assert_eq!(*signer.signatures.borrow(), 1);
+
+        // A failed export never sends and leaves the record Broadcasting: the
+        // bytes can still be resumed exactly, never re-signed.
+        let failed_journal_directory = TemporaryDirectory::create("task-send-prepare-trap-fail");
+        let failed = AgentAccountCustodyJournal::open(failed_journal_directory.0.clone()).unwrap();
+        let blocked = directory.0.join("missing").join("q.boc");
+        let again =
+            prepare_task_send(&failed, &draft, &signer, &trap, Some(blocked.as_path()), 13).await;
+        assert!(again.is_err());
+        assert!(trap.sent.borrow().is_empty());
+        let stranded = failed.action_by_idempotency_key(&draft.action_id).unwrap();
+        assert_eq!(stranded.status, ControllerActionStatus::Broadcasting);
+        assert!(
+            begin_or_resume_task_send_broadcast(&failed, &stranded, &draft.account, 14).is_ok()
+        );
+        assert_eq!(*signer.signatures.borrow(), 2);
+
+        // Without --signed-boc-out nothing is written to disk and the record
+        // stays Signed for task-send-broadcast.
+        let fresh_journal_directory = TemporaryDirectory::create("task-send-prepare-trap-nofile");
+        let fresh = AgentAccountCustodyJournal::open(fresh_journal_directory.0.clone()).unwrap();
+        prepare_task_send(&fresh, &draft, &signer, &trap, None, 15).await.unwrap();
+        assert!(trap.sent.borrow().is_empty());
+        assert_eq!(
+            fresh.action_by_idempotency_key(&draft.action_id).unwrap().status,
+            ControllerActionStatus::Signed
+        );
+        assert_eq!(fs::read_dir(&directory.0).unwrap().count(), 1);
+    }
+
+    #[tokio::test]
+    async fn task_send_prepare_twice_reuses_the_journaled_boc_without_a_second_signature() {
+        let directory = TemporaryDirectory::create("task-send-prepare-reuse");
+        let journal = AgentAccountCustodyJournal::open(directory.0.clone()).unwrap();
+        let signer = counting_signer();
+        let draft = task_send_draft(&"6".repeat(64), 1_900_000_000);
+
+        let first = sign_task_send_into_journal(&journal, &draft, &signer, 10).await.unwrap();
+        let second = sign_task_send_into_journal(&journal, &draft, &signer, 11).await.unwrap();
+
+        assert!(!first.reused_journaled_boc);
+        assert!(second.reused_journaled_boc);
+        assert_eq!(second.boc, first.boc);
+        assert_eq!(second.digest, first.digest);
+        assert_eq!(second.claim, first.claim);
+        assert_eq!(*signer.signatures.borrow(), 1);
+    }
+
+    #[tokio::test]
+    async fn task_send_broadcast_rebroadcasts_exact_journaled_bytes_even_after_expiry() {
+        let directory = TemporaryDirectory::create("task-send-broadcast-expired");
+        let journal = AgentAccountCustodyJournal::open(directory.0.clone()).unwrap();
+        let signer = counting_signer();
+        // An expiry far in the past: the saved query is stale, the chain must judge it.
+        let draft = task_send_draft(&"6".repeat(64), 1_700_000_000);
+        let signed = sign_task_send_into_journal(&journal, &draft, &signer, 10).await.unwrap();
+        let record = journal.action_by_idempotency_key(&draft.action_id).unwrap();
+        assert_eq!(record.status, ControllerActionStatus::Signed);
+
+        assert_eq!(exact_task_send_broadcast_boc(&record, &draft.account).unwrap(), signed.boc);
+        // Signed -> Broadcasting with exactly the journaled bytes.
+        assert_eq!(
+            begin_or_resume_task_send_broadcast(&journal, &record, &draft.account, 12).unwrap(),
+            signed.boc
+        );
+        let broadcasting = journal.action_by_idempotency_key(&draft.action_id).unwrap();
+        assert_eq!(broadcasting.status, ControllerActionStatus::Broadcasting);
+        // Resume after a crash: identical bytes, still one signature in total.
+        let reopened = AgentAccountCustodyJournal::open(directory.0.clone()).unwrap();
+        assert_eq!(
+            begin_or_resume_task_send_broadcast(&reopened, &broadcasting, &draft.account, 13)
+                .unwrap(),
+            signed.boc
+        );
+        assert_eq!(*signer.signatures.borrow(), 1);
+
+        // Refusals: another action kind, another account, a corrupted digest,
+        // a resolved record, an unsigned claim.
+        let mut other_kind = broadcasting.clone();
+        other_kind.claim.action_kind = "agent-native-send".into();
+        assert!(exact_task_send_broadcast_boc(&other_kind, &draft.account).is_err());
+        assert!(exact_task_send_broadcast_boc(&broadcasting, &address(9)).is_err());
+        let mut wrong_digest = broadcasting.clone();
+        wrong_digest.exact_signed_boc_digest = Some(format!("sha256:{}", "f".repeat(64)));
+        assert!(exact_task_send_broadcast_boc(&wrong_digest, &draft.account).is_err());
+        let mut resolved = broadcasting.clone();
+        resolved.status = ControllerActionStatus::Resolved;
+        assert!(exact_task_send_broadcast_boc(&resolved, &draft.account).is_err());
+        let mut unsigned = broadcasting;
+        unsigned.status = ControllerActionStatus::Claimed;
+        unsigned.exact_signed_boc_base64 = None;
+        unsigned.exact_signed_boc_digest = None;
+        assert!(exact_task_send_broadcast_boc(&unsigned, &draft.account).is_err());
+    }
+
+    #[tokio::test]
+    async fn task_send_transport_gets_exactly_the_journaled_bytes_and_a_refusal_stays_broadcasting()
+    {
+        let directory = TemporaryDirectory::create("task-send-transport");
+        let journal = AgentAccountCustodyJournal::open(directory.0.clone()).unwrap();
+        let signer = counting_signer();
+        let draft = task_send_draft(&"6".repeat(64), 1_900_000_000);
+        let signed = sign_task_send_into_journal(&journal, &draft, &signer, 10).await.unwrap();
+
+        let refusing = RecordingTransport { sent: RefCell::new(Vec::new()), refuse: true };
+        assert!(broadcast_signed_task_send(&journal, &signed, &refusing, 12).await.is_err());
+        assert_eq!(refusing.sent.borrow().as_slice(), &[signed.boc.clone()]);
+        let record = journal.action_by_idempotency_key(&draft.action_id).unwrap();
+        assert_eq!(record.status, ControllerActionStatus::Broadcasting);
+
+        // A replacement action for the same account sequence is refused before
+        // anything is signed, and the same action cannot be re-prepared.
+        let replacement = task_send_draft(&"7".repeat(64), 1_900_000_100);
+        let error =
+            sign_task_send_into_journal(&journal, &replacement, &signer, 13).await.err().unwrap();
+        assert!(
+            error.to_string().contains("another primary controller action already owns"),
+            "{error}"
+        );
+        assert!(sign_task_send_into_journal(&journal, &draft, &signer, 14).await.is_err());
+        assert_eq!(*signer.signatures.borrow(), 1);
+
+        // The only way forward is resuming the exact bytes.
+        let accepting = RecordingTransport { sent: RefCell::new(Vec::new()), refuse: false };
+        let resumed =
+            begin_or_resume_task_send_broadcast(&journal, &record, &draft.account, 15).unwrap();
+        accepting.send_exact_boc(&resumed).await.unwrap();
+        assert_eq!(accepting.sent.borrow().as_slice(), &[signed.boc.clone()]);
+        assert_eq!(
+            journal.action_by_idempotency_key(&draft.action_id).unwrap().status,
+            ControllerActionStatus::Broadcasting
+        );
+    }
+
+    #[tokio::test]
+    async fn task_send_prepare_saves_the_exact_signed_boc_only_into_an_owner_private_directory() {
+        let directory = TemporaryDirectory::create("task-send-savefile");
+        let journal_directory = TemporaryDirectory::create("task-send-savefile-journal");
+        let journal = AgentAccountCustodyJournal::open(journal_directory.0.clone()).unwrap();
+        let signer = counting_signer();
+        let draft = task_send_draft(&"6".repeat(64), 1_900_000_000);
+        let signed = sign_task_send_into_journal(&journal, &draft, &signer, 10).await.unwrap();
+
+        let path = directory.0.join("task-send-query.boc");
+        save_signed_task_send_boc(&path, &signed.boc).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), signed.boc);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+        }
+        // Idempotent for identical bytes, refused for anything else.
+        save_signed_task_send_boc(&path, &signed.boc).unwrap();
+        assert!(save_signed_task_send_boc(&path, b"different bytes").is_err());
+        assert_eq!(fs::read(&path).unwrap(), signed.boc);
+        assert!(save_signed_task_send_boc(Path::new("relative-query.boc"), &signed.boc).is_err());
+        #[cfg(unix)]
+        {
+            // A symlink planted at the export path is refused, never followed.
+            let victim = directory.0.join("victim");
+            fs::write(&victim, b"keep").unwrap();
+            let link = directory.0.join("linked-query.boc");
+            std::os::unix::fs::symlink(&victim, &link).unwrap();
+            assert!(save_signed_task_send_boc(&link, &signed.boc).is_err());
+            assert_eq!(fs::read(&victim).unwrap(), b"keep");
+            let dangling = directory.0.join("dangling-query.boc");
+            std::os::unix::fs::symlink(directory.0.join("absent"), &dangling).unwrap();
+            assert!(save_signed_task_send_boc(&dangling, &signed.boc).is_err());
+            assert!(!directory.0.join("absent").exists());
+        }
+        assert!(
+            save_signed_task_send_boc(&directory.0.join("missing").join("q.boc"), &signed.boc)
+                .is_err()
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let shared = directory.0.join("shared");
+            fs::create_dir(&shared).unwrap();
+            fs::set_permissions(&shared, fs::Permissions::from_mode(0o755)).unwrap();
+            assert!(save_signed_task_send_boc(&shared.join("q.boc"), &signed.boc).is_err());
+        }
+    }
+
+    #[test]
+    fn task_send_prepare_and_broadcast_cli_shapes() {
+        use clap::Parser;
+
+        let action_id = "a".repeat(64);
+        let target = address(4).to_string();
+        let prepared = AccountActionParser::try_parse_from([
+            "agent-account",
+            "task-send-prepare",
+            "--wallet=campaign-agent-0",
+            &format!("--target={target}"),
+            "--value=1.5",
+            "--valid-until=1900000000",
+            &format!("--action-id={action_id}"),
+            "--signed-boc-out=/private/task-send-query.boc",
+            "--yes",
+        ])
+        .unwrap();
+        match prepared.action {
+            AgentAccountAction::TaskSendPrepare(command) => {
+                assert_eq!(command.request.wallet, "campaign-agent-0");
+                assert_eq!(command.request.target, target);
+                assert_eq!(command.request.value, 1.5);
+                assert_eq!(command.request.valid_until, 1_900_000_000);
+                assert_eq!(command.request.action_id, action_id);
+                assert!(command.request.body_boc.is_none());
+                assert!(command.request.yes);
+                assert_eq!(
+                    command.signed_boc_out.as_deref(),
+                    Some(Path::new("/private/task-send-query.boc"))
+                );
+            }
+            _ => panic!("task-send-prepare parsed as another command"),
+        }
+        let plain = AccountActionParser::try_parse_from([
+            "agent-account",
+            "task-send-prepare",
+            "--wallet=campaign-agent-0",
+            &format!("--target={target}"),
+            "--value=1.5",
+            "--valid-until=1900000000",
+            &format!("--action-id={action_id}"),
+        ])
+        .unwrap();
+        match plain.action {
+            AgentAccountAction::TaskSendPrepare(command) => {
+                assert!(command.signed_boc_out.is_none());
+                assert!(!command.request.yes);
+            }
+            _ => panic!("task-send-prepare parsed as another command"),
+        }
+
+        let broadcast = AccountActionParser::try_parse_from([
+            "agent-account",
+            "task-send-broadcast",
+            "--wallet=campaign-agent-0",
+            &format!("--action-id={action_id}"),
+            "--yes",
+        ])
+        .unwrap();
+        match broadcast.action {
+            AgentAccountAction::TaskSendBroadcast(command) => {
+                assert_eq!(command.wallet, "campaign-agent-0");
+                assert_eq!(command.action_id, action_id);
+                assert!(command.yes);
+            }
+            _ => panic!("task-send-broadcast parsed as another command"),
+        }
+        for forbidden in [
+            format!("--target={target}"),
+            "--value=1".to_owned(),
+            "--valid-until=1900000000".to_owned(),
+            "--body-boc=te6ccgEBAQEAAgAAAA==".to_owned(),
+            "--signed-boc-out=/private/q.boc".to_owned(),
+        ] {
+            assert!(
+                AccountActionParser::try_parse_from([
+                    "agent-account",
+                    "task-send-broadcast",
+                    "--wallet=campaign-agent-0",
+                    &format!("--action-id={action_id}"),
+                    &forbidden,
+                ])
+                .is_err(),
+                "task-send-broadcast unexpectedly accepted signing option {forbidden}"
+            );
+        }
+        let _: fn(&AgentAccountTaskSendBroadcastCmd) = |_| {};
+        let _: fn(&AgentAccountTaskSendPrepareCmd) = |_| {};
     }
 
     #[test]
