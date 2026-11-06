@@ -3139,3 +3139,1034 @@ fn a_registry_outside_workchain_zero_registers_nothing() {
 
 #[path = "served/service_journey.rs"]
 mod service_journey;
+
+/// The public SC-01/SC-02 journeys driven only through the client builders in
+/// `contracts::native_registry` (no hand-built cells), against the release code
+/// and the frozen public identity domain: the testnet genesis anchors and the
+/// label `tos:global-id:2`. Every action's generation, sequence and predecessor
+/// come from `next_native_position` over the decoded on-chain state, and every
+/// signer set passes the client's threshold/possession checks before it is sent,
+/// except where a test deliberately sends what the client would refuse.
+mod builder_driven {
+    use super::{assert_address_exit, assert_address_success, current_network};
+    use chain_block::{Cell, MsgAddressInt, SliceData, base64_decode};
+    use contracts::native_registry::*;
+    use ed25519_dalek::{Signer, SigningKey};
+    use tos_sandbox::{Blockchain, MessageBuilder, SendResult, Treasury};
+
+    const TOS: u64 = 1_000_000_000;
+    const LABEL: &[u8] = b"tos:global-id:2";
+    // Public testnet genesis anchors (tos.network/testnet-global.config.json).
+    const GENESIS_ROOT: &str = "/2BFnLilFwhUgpCvoW/U34DRZ3W/PBM5IUam0bVmLVc=";
+    const GENESIS_FILE: &str = "OzdN9evRg2jUvw6zdHBHcdr42s2FF1YF87/Rx6kioDk=";
+    // The sandbox runs user contracts on the masterchain, like the fixture above.
+    const WORKCHAIN: i8 = -1;
+    const ERR_WRONG_NETWORK: i32 = 2201;
+    const ERR_BAD_PREDECESSOR: i32 = 2204;
+    const ERR_TOMBSTONED: i32 = 2206;
+    const ERR_BAD_SIGNATURE: i32 = 2208;
+    const ERR_BAD_TRANSITION: i32 = 2210;
+    const ERR_IMMUTABLE_VERSION: i32 = 2211;
+    const ERR_TIMELOCK: i32 = 2212;
+
+    fn anchor(value: &str) -> [u8; 32] {
+        base64_decode(value).expect("anchor base64").try_into().expect("anchor width")
+    }
+
+    fn public_domain(code: &Cell) -> NativeRegistryDomain {
+        NativeRegistryDomain::for_label(
+            anchor(GENESIS_ROOT),
+            anchor(GENESIS_FILE),
+            LABEL,
+            *code.repr_hash().as_array(),
+        )
+        .expect("public domain")
+    }
+
+    struct Agent {
+        id: [u8; 32],
+        address: MsgAddressInt,
+        key: SigningKey,
+    }
+
+    struct Capability {
+        id: [u8; 32],
+        address: MsgAddressInt,
+    }
+
+    struct Net {
+        bc: Blockchain,
+        relayer: Treasury,
+        domain: NativeRegistryDomain,
+        code: Cell,
+    }
+
+    fn single_controller_policy(key: &SigningKey, timelock: u64) -> NativePolicy {
+        NativePolicy {
+            threshold: 1,
+            recovery_threshold: 1,
+            recovery_timelock: timelock,
+            controllers: vec![NativePolicyController {
+                public_key: key.verifying_key().to_bytes(),
+                weight: 1,
+                purposes: 15,
+            }],
+        }
+    }
+
+    fn signatures(keys: &[&SigningKey], action: &Cell) -> Vec<NativeControllerSignature> {
+        keys.iter()
+            .map(|k| NativeControllerSignature {
+                public_key: k.verifying_key().to_bytes(),
+                signature: k.sign(action.repr_hash().as_slice()).to_bytes(),
+            })
+            .collect()
+    }
+
+    fn public_keys(keys: &[&SigningKey]) -> Vec<[u8; 32]> {
+        keys.iter().map(|k| k.verifying_key().to_bytes()).collect()
+    }
+
+    fn agent_policy(state: &NativeRegistryState) -> NativePolicy {
+        let NativeRegistryStateDetail::Agent { policy, .. } = &state.detail else {
+            panic!("expected an Agent state")
+        };
+        decode_native_policy(policy).expect("stored policy")
+    }
+
+    impl Net {
+        fn new() -> Self {
+            let mut bc = Blockchain::with_global_version(current_network::global_version())
+                .expect("blockchain");
+            bc.set_workchain(WORKCHAIN);
+            let relayer =
+                bc.treasury("native-registry-builder-relayer", 1_000 * TOS).expect("relayer");
+            let code = native_registry_release_code().expect("release code");
+            let domain = public_domain(&code);
+            Self { bc, relayer, domain, code }
+        }
+
+        /// The decoded stored state at `address`, `None` before registration.
+        /// Every read goes through the client's account verifier, as the CLI's
+        /// pre-sign checks do.
+        fn state(&self, address: &MsgAddressInt) -> Option<NativeRegistryState> {
+            let account = self.bc.get_account(address)?;
+            let (code, data) = (account.get_code()?, account.get_data()?);
+            verify_native_registry_account(&self.domain, LABEL, &self.code, address, &code, &data)
+                .expect("verified registry account")
+                .state
+        }
+
+        fn object_address(&self, kind: u8, id: [u8; 32]) -> MsgAddressInt {
+            build_native_registry_deployment(&self.domain, kind, id, WORKCHAIN, LABEL, &self.code)
+                .expect("deployment")
+                .1
+        }
+
+        fn action(
+            &self,
+            domain: &NativeRegistryDomain,
+            kind: u8,
+            object_id: [u8; 32],
+            current: Option<&NativeRegistryState>,
+            nonce: u8,
+            payload: Cell,
+        ) -> Cell {
+            let (generation, sequence, predecessor) =
+                next_native_position(current, kind).expect("position");
+            build_native_action(
+                domain,
+                &NativeRegistryAction {
+                    kind,
+                    generation,
+                    sequence,
+                    object_id,
+                    predecessor,
+                    nonce: [nonce; 32],
+                    payload,
+                },
+            )
+            .expect("action")
+        }
+
+        fn register_agent(&mut self, seed: u8, timelock: u64) -> Agent {
+            let key = SigningKey::from_bytes(&[seed; 32]);
+            let policy = single_controller_policy(&key, timelock);
+            let registration =
+                build_native_agent_registration(&self.domain, [seed; 32], &policy).expect("reg");
+            let (init, address) = build_native_registry_deployment(
+                &self.domain,
+                1,
+                registration.object_id,
+                WORKCHAIN,
+                LABEL,
+                &self.code,
+            )
+            .expect("deployment");
+            assert!(self.state(&address).is_none());
+            let action = self.action(
+                &self.domain,
+                NATIVE_KIND_REGISTER_AGENT,
+                registration.object_id,
+                None,
+                seed,
+                registration.payload,
+            );
+            check_native_possession(&policy, &public_keys(&[&key])).expect("possession");
+            let body = build_native_submission(
+                &self.domain,
+                &action,
+                1,
+                &signatures(&[&key], &action),
+                &[],
+            )
+            .expect("body");
+            let msg = MessageBuilder::internal(self.relayer.address(), &address, TOS)
+                .bounce(false)
+                .state_init(init)
+                .body(body)
+                .build();
+            let result = self.bc.send_message(msg).expect("register");
+            assert_address_success(&result, &address);
+            let state = self.state(&address).expect("registered");
+            assert_eq!((state.generation, state.sequence, state.tombstone), (1, 1, false));
+            assert_eq!(state.last_action, *action.repr_hash().as_array());
+            Agent { id: registration.object_id, address, key }
+        }
+
+        fn send(&mut self, to: &MsgAddressInt, body: Cell) -> SendResult {
+            let msg =
+                MessageBuilder::internal(self.relayer.address(), to, TOS / 2).body(body).build();
+            self.bc.send_message(msg).expect("send")
+        }
+
+        /// An Agent action signed by `signers` (checked against the stored
+        /// policy first) and, for counterparty kinds, `counter`.
+        fn agent_action(
+            &mut self,
+            agent: &Agent,
+            kind: u8,
+            payload: Cell,
+            signers: &[&SigningKey],
+            counter: &[&SigningKey],
+            nonce: u8,
+        ) -> (SendResult, Cell) {
+            let current = self.state(&agent.address).expect("agent state");
+            check_native_threshold(&agent_policy(&current), &public_keys(signers), kind)
+                .expect("signer threshold");
+            let action = self.action(&self.domain, kind, agent.id, Some(&current), nonce, payload);
+            let body = build_native_submission(
+                &self.domain,
+                &action,
+                1,
+                &signatures(signers, &action),
+                &signatures(counter, &action),
+            )
+            .expect("body");
+            (self.send(&agent.address, body), action)
+        }
+
+        /// A Capability action sent to `via` (its owner Agent, or the old owner
+        /// for a transfer).
+        fn capability_action(
+            &mut self,
+            via: &Agent,
+            capability: &Capability,
+            kind: u8,
+            payload: Cell,
+            signers: &[&SigningKey],
+            counter: &[&SigningKey],
+            nonce: u8,
+        ) -> SendResult {
+            let current = self.state(&capability.address);
+            let action =
+                self.action(&self.domain, kind, capability.id, current.as_ref(), nonce, payload);
+            let body = build_native_submission(
+                &self.domain,
+                &action,
+                1,
+                &signatures(signers, &action),
+                &signatures(counter, &action),
+            )
+            .expect("body");
+            self.send(&via.address, body)
+        }
+
+        fn register_capability(&mut self, owner: &Agent, nonce: u8, version: &[u8]) -> Capability {
+            let registration = build_native_capability_registration(
+                &self.domain,
+                [nonce; 32],
+                owner.id,
+                version,
+                [0x5e; 32],
+            )
+            .expect("capability registration");
+            let capability = Capability {
+                id: registration.object_id,
+                address: self.object_address(2, registration.object_id),
+            };
+            let key = owner.key.clone();
+            let result = self.capability_action(
+                owner,
+                &capability,
+                NATIVE_KIND_REGISTER_CAPABILITY,
+                registration.payload,
+                &[&key],
+                &[],
+                nonce,
+            );
+            assert_address_success(&result, &capability.address);
+            capability
+        }
+    }
+
+    fn capability_owner(state: &NativeRegistryState) -> [u8; 32] {
+        let NativeRegistryStateDetail::Capability { owner, .. } = state.detail else {
+            panic!("expected a Capability state")
+        };
+        owner
+    }
+
+    #[test]
+    fn public_domain_reproduces_the_inventory_hash_and_binds_addresses() {
+        let code = native_registry_release_code().expect("release code");
+        let domain = public_domain(&code);
+        assert_eq!(
+            hex::encode(domain.network_tag),
+            "867b460108f617ef4508e406addf30db563dbabf44f7e90e58cff93ddeacf4a9"
+        );
+        let key = SigningKey::from_bytes(&[0x61; 32]);
+        let reg = build_native_agent_registration(
+            &domain,
+            [0x61; 32],
+            &single_controller_policy(&key, 60),
+        )
+        .expect("registration");
+        let (_, public) =
+            build_native_registry_deployment(&domain, 1, reg.object_id, 0, LABEL, &code)
+                .expect("public address");
+        let local = NativeRegistryDomain::for_label(
+            domain.genesis_root,
+            domain.genesis_file,
+            b"tos-e6-e7-isolated-native",
+            domain.runtime_code_hash,
+        )
+        .expect("local domain");
+        let local_reg = build_native_agent_registration(
+            &local,
+            [0x61; 32],
+            &single_controller_policy(&key, 60),
+        )
+        .expect("local registration");
+        let (_, other) = build_native_registry_deployment(
+            &local,
+            1,
+            local_reg.object_id,
+            0,
+            b"tos-e6-e7-isolated-native",
+            &code,
+        )
+        .expect("local address");
+        assert_ne!(reg.object_id, local_reg.object_id, "the label binds the identity");
+        assert_ne!(public, other, "the label binds the address");
+    }
+
+    #[test]
+    fn account_verifier_refuses_another_domain_label_or_code() {
+        let mut net = Net::new();
+        let a = net.register_agent(0x67, 60);
+        let account = net.bc.get_account(&a.address).expect("account");
+        let (code, data) = (account.get_code().expect("code"), account.get_data().expect("data"));
+        let object =
+            verify_native_registry_account(&net.domain, LABEL, &net.code, &a.address, &code, &data)
+                .expect("verified");
+        assert_eq!((object.object_kind, object.object_id), (1, a.id));
+        let other = NativeRegistryDomain::for_label(
+            net.domain.genesis_root,
+            net.domain.genesis_file,
+            b"tos:global-id:1",
+            net.domain.runtime_code_hash,
+        )
+        .expect("other domain");
+        assert!(
+            verify_native_registry_account(
+                &other,
+                b"tos:global-id:1",
+                &net.code,
+                &a.address,
+                &code,
+                &data
+            )
+            .is_err()
+        );
+        let mut moved = net.domain.clone();
+        moved.genesis_file[0] ^= 1;
+        assert!(
+            verify_native_registry_account(&moved, LABEL, &net.code, &a.address, &code, &data)
+                .is_err()
+        );
+        let foreign_code = chain_block::Cell::default();
+        assert!(
+            verify_native_registry_account(
+                &net.domain,
+                LABEL,
+                &net.code,
+                &a.address,
+                &foreign_code,
+                &data
+            )
+            .is_err()
+        );
+        let b = net.register_agent(0x68, 60);
+        assert!(
+            verify_native_registry_account(&net.domain, LABEL, &net.code, &b.address, &code, &data)
+                .is_err(),
+            "another object's data at this address is refused"
+        );
+    }
+
+    #[test]
+    fn agent_and_capability_lifecycle_through_the_builders() {
+        let mut net = Net::new();
+        let a = net.register_agent(0x61, 60);
+        let b = net.register_agent(0x62, 60);
+        let a_key = a.key.clone();
+        let b_key = b.key.clone();
+
+        // Delegation, then the identical action again: a silent no-op.
+        let (result, delegate) = net.agent_action(
+            &a,
+            NATIVE_KIND_DELEGATE_AGENT,
+            build_native_delegate_payload([0x71; 32]).expect("payload"),
+            &[&a_key],
+            &[],
+            2,
+        );
+        assert_address_success(&result, &a.address);
+        let after = net.state(&a.address).expect("state");
+        assert_eq!((after.generation, after.sequence), (1, 2));
+        let NativeRegistryStateDetail::Agent { delegations, delegation_root, .. } = &after.detail
+        else {
+            panic!("agent")
+        };
+        assert_eq!(*delegations, 1);
+        assert!(native_dict_contains(delegation_root, &[0x71; 32]).expect("lookup"));
+        let replay = build_native_submission(
+            &net.domain,
+            &delegate,
+            1,
+            &signatures(&[&a_key], &delegate),
+            &[],
+        )
+        .expect("replay body");
+        let result = net.send(&a.address, replay);
+        assert_address_success(&result, &a.address);
+        assert_eq!(net.state(&a.address).expect("state").state_hash, after.state_hash);
+
+        // Capability under A, a second version, and a refused duplicate version.
+        let cap = net.register_capability(&a, 0x81, b"1.0.0");
+        let cs = net.state(&cap.address).expect("capability state");
+        assert_eq!((cs.generation, cs.sequence, capability_owner(&cs)), (1, 1, a.id));
+        let result = net.capability_action(
+            &a,
+            &cap,
+            NATIVE_KIND_ADD_CAPABILITY_VERSION,
+            build_native_add_version_payload(a.id, b"1.1.0", [0x5f; 32]).expect("payload"),
+            &[&a_key],
+            &[],
+            0x82,
+        );
+        assert_address_success(&result, &cap.address);
+        let result = net.capability_action(
+            &a,
+            &cap,
+            NATIVE_KIND_ADD_CAPABILITY_VERSION,
+            build_native_add_version_payload(a.id, b"1.1.0", [0x60; 32]).expect("payload"),
+            &[&a_key],
+            &[],
+            0x83,
+        );
+        assert_address_exit(&result, &cap.address, ERR_IMMUTABLE_VERSION);
+        let cs = net.state(&cap.address).expect("capability state");
+        let NativeRegistryStateDetail::Capability { versions, version_root, .. } = &cs.detail
+        else {
+            panic!("capability")
+        };
+        assert_eq!(*versions, 2);
+        use sha2::{Digest, Sha256};
+        let v11: [u8; 32] = Sha256::digest(b"1.1.0").into();
+        assert!(native_dict_contains(version_root, &v11).expect("lookup"));
+
+        // Transfer A -> B: the client refuses it without B's consent; with it,
+        // the Capability moves to the next generation under B.
+        let transfer_action = net.action(
+            &net.domain,
+            NATIVE_KIND_TRANSFER_CAPABILITY,
+            cap.id,
+            Some(&cs),
+            0x84,
+            build_native_transfer_payload(a.id, b.id).expect("payload"),
+        );
+        assert!(
+            build_native_submission(
+                &net.domain,
+                &transfer_action,
+                1,
+                &signatures(&[&a_key], &transfer_action),
+                &[],
+            )
+            .is_err()
+        );
+        let result = net.capability_action(
+            &a,
+            &cap,
+            NATIVE_KIND_TRANSFER_CAPABILITY,
+            build_native_transfer_payload(a.id, b.id).expect("payload"),
+            &[&a_key],
+            &[&b_key],
+            0x84,
+        );
+        assert_address_success(&result, &b.address);
+        assert_address_success(&result, &cap.address);
+        let cs = net.state(&cap.address).expect("capability state");
+        assert_eq!((cs.generation, cs.sequence, capability_owner(&cs)), (2, 1, b.id));
+
+        // Stale authority: the previous owner can no longer add a version.
+        let result = net.capability_action(
+            &a,
+            &cap,
+            NATIVE_KIND_ADD_CAPABILITY_VERSION,
+            build_native_add_version_payload(a.id, b"2.0.0", [0x61; 32]).expect("payload"),
+            &[&a_key],
+            &[],
+            0x85,
+        );
+        assert_address_exit(&result, &cap.address, ERR_BAD_TRANSITION);
+        assert_eq!(net.state(&cap.address).expect("state").state_hash, cs.state_hash);
+
+        // Revoke one version, then the whole Capability; nothing applies after.
+        let result = net.capability_action(
+            &b,
+            &cap,
+            NATIVE_KIND_REVOKE_CAPABILITY,
+            build_native_revoke_capability_payload(b.id, Some(b"1.0.0")).expect("payload"),
+            &[&b_key],
+            &[],
+            0x86,
+        );
+        assert_address_success(&result, &cap.address);
+        let after_version = net.state(&cap.address).expect("state");
+        assert!(!after_version.tombstone);
+        let NativeRegistryStateDetail::Capability { versions, version_root, .. } =
+            &after_version.detail
+        else {
+            panic!("capability")
+        };
+        assert_eq!(*versions, 2, "revoking a version keeps it in the collection");
+        let v10: [u8; 32] = Sha256::digest(b"1.0.0").into();
+        let revoked_version =
+            native_capability_version(version_root, &v10).expect("decode").expect("present");
+        assert!(revoked_version.revoked);
+        assert_eq!(revoked_version.manifest_digest, [0x5e; 32], "manifest unchanged");
+        let mut name = SliceData::load_cell(revoked_version.name).expect("name");
+        assert_eq!(name.get_next_bytes(5).expect("name bytes"), b"1.0.0".to_vec());
+        let other =
+            native_capability_version(version_root, &v11).expect("decode").expect("present");
+        assert!(!other.revoked, "the other version is unaffected");
+        assert_eq!(other.manifest_digest, [0x5f; 32]);
+        let result = net.capability_action(
+            &b,
+            &cap,
+            NATIVE_KIND_REVOKE_CAPABILITY,
+            build_native_revoke_capability_payload(b.id, None).expect("payload"),
+            &[&b_key],
+            &[],
+            0x87,
+        );
+        assert_address_success(&result, &cap.address);
+        let revoked = net.state(&cap.address).expect("state");
+        assert!(revoked.tombstone);
+        assert!(next_native_position(Some(&revoked), NATIVE_KIND_ADD_CAPABILITY_VERSION).is_err());
+        let late = net.action(
+            &net.domain,
+            NATIVE_KIND_ADD_CAPABILITY_VERSION,
+            cap.id,
+            Some(&cs),
+            0x88,
+            build_native_add_version_payload(b.id, b"3.0.0", [0x62; 32]).expect("payload"),
+        );
+        let late =
+            build_native_submission(&net.domain, &late, 1, &signatures(&[&b_key], &late), &[])
+                .expect("late body");
+        let result = net.send(&b.address, late);
+        assert_address_exit(&result, &cap.address, ERR_TOMBSTONED);
+
+        // Agent revocation is terminal.
+        let (result, _) = net.agent_action(
+            &a,
+            NATIVE_KIND_REVOKE_AGENT,
+            build_native_revoke_agent_payload().expect("payload"),
+            &[&a_key],
+            &[],
+            3,
+        );
+        assert_address_success(&result, &a.address);
+        let dead = net.state(&a.address).expect("state");
+        assert!(dead.tombstone);
+        let late = net.action(
+            &net.domain,
+            NATIVE_KIND_DELEGATE_AGENT,
+            a.id,
+            Some(&after),
+            4,
+            build_native_delegate_payload([0x72; 32]).expect("payload"),
+        );
+        let late =
+            build_native_submission(&net.domain, &late, 1, &signatures(&[&a_key], &late), &[])
+                .expect("late body");
+        let result = net.send(&a.address, late);
+        assert_address_exit(&result, &a.address, ERR_TOMBSTONED);
+    }
+
+    #[test]
+    fn refusals_wrong_network_controller_and_predecessor_leave_state_unchanged() {
+        let mut net = Net::new();
+        let a = net.register_agent(0x63, 60);
+        let a_key = a.key.clone();
+        let before = net.state(&a.address).expect("state");
+
+        // Wrong network: a consistent action for another label.
+        let other = NativeRegistryDomain::for_label(
+            net.domain.genesis_root,
+            net.domain.genesis_file,
+            b"tos:global-id:1",
+            net.domain.runtime_code_hash,
+        )
+        .expect("other domain");
+        let action = net.action(
+            &other,
+            NATIVE_KIND_DELEGATE_AGENT,
+            a.id,
+            Some(&before),
+            2,
+            build_native_delegate_payload([0x73; 32]).expect("payload"),
+        );
+        let body =
+            build_native_submission(&other, &action, 1, &signatures(&[&a_key], &action), &[])
+                .expect("body");
+        assert!(
+            build_native_submission(&net.domain, &action, 1, &signatures(&[&a_key], &action), &[])
+                .is_err()
+        );
+        let result = net.send(&a.address, body);
+        assert_address_exit(&result, &a.address, ERR_WRONG_NETWORK);
+
+        // Wrong controller: refused by the client check, and by the contract.
+        let stranger = SigningKey::from_bytes(&[0x99; 32]);
+        assert!(
+            check_native_threshold(
+                &agent_policy(&before),
+                &public_keys(&[&stranger]),
+                NATIVE_KIND_DELEGATE_AGENT
+            )
+            .is_err()
+        );
+        let action = net.action(
+            &net.domain,
+            NATIVE_KIND_DELEGATE_AGENT,
+            a.id,
+            Some(&before),
+            3,
+            build_native_delegate_payload([0x74; 32]).expect("payload"),
+        );
+        let body = build_native_submission(
+            &net.domain,
+            &action,
+            1,
+            &signatures(&[&stranger], &action),
+            &[],
+        )
+        .expect("body");
+        let result = net.send(&a.address, body);
+        assert_address_exit(&result, &a.address, ERR_BAD_SIGNATURE);
+        assert_eq!(net.state(&a.address).expect("state").state_hash, before.state_hash);
+
+        // Stale predecessor: an action positioned on the state before a
+        // successful one.
+        let (result, _) = net.agent_action(
+            &a,
+            NATIVE_KIND_DELEGATE_AGENT,
+            build_native_delegate_payload([0x75; 32]).expect("payload"),
+            &[&a_key],
+            &[],
+            4,
+        );
+        assert_address_success(&result, &a.address);
+        let moved = net.state(&a.address).expect("state");
+        let action = net.action(
+            &net.domain,
+            NATIVE_KIND_DELEGATE_AGENT,
+            a.id,
+            Some(&before),
+            5,
+            build_native_delegate_payload([0x76; 32]).expect("payload"),
+        );
+        let body =
+            build_native_submission(&net.domain, &action, 1, &signatures(&[&a_key], &action), &[])
+                .expect("body");
+        let result = net.send(&a.address, body);
+        assert_address_exit(&result, &a.address, ERR_BAD_PREDECESSOR);
+        assert_eq!(net.state(&a.address).expect("state").state_hash, moved.state_hash);
+    }
+
+    #[test]
+    fn recovery_waits_for_its_timelock_and_policy_update_retires_the_old_key() {
+        let mut net = Net::new();
+        let a = net.register_agent(0x64, 60);
+        let a_key = a.key.clone();
+        let rescue = SigningKey::from_bytes(&[0x65; 32]);
+        let rescue_policy = single_controller_policy(&rescue, 60);
+
+        // Initiation needs possession of the recovery policy.
+        check_native_possession(&rescue_policy, &public_keys(&[&rescue])).expect("possession");
+        let execute_after = u64::from(net.bc.now()) + 60;
+        let (result, initiate) = net.agent_action(
+            &a,
+            NATIVE_KIND_INITIATE_RECOVERY,
+            build_native_initiate_recovery_payload(execute_after, &rescue_policy).expect("payload"),
+            &[&a_key],
+            &[&rescue],
+            2,
+        );
+        assert_address_success(&result, &a.address);
+        let pending = net.state(&a.address).expect("state");
+        let NativeRegistryStateDetail::Agent { recovery: Some(r), .. } = &pending.detail else {
+            panic!("pending recovery")
+        };
+        assert_eq!(r.initiation, *initiate.repr_hash().as_array());
+        assert_eq!(r.execute_after, execute_after);
+
+        // Completion before the timelock is refused and changes nothing.
+        let payload = build_native_complete_recovery_payload(r.initiation).expect("payload");
+        let (result, _) =
+            net.agent_action(&a, NATIVE_KIND_COMPLETE_RECOVERY, payload.clone(), &[&a_key], &[], 3);
+        assert_address_exit(&result, &a.address, ERR_TIMELOCK);
+        assert_eq!(net.state(&a.address).expect("state").state_hash, pending.state_hash);
+
+        // At the timelock it completes and starts the next generation under
+        // the recovery policy.
+        net.bc.set_now(u32::try_from(execute_after).expect("time"));
+        let (result, _) =
+            net.agent_action(&a, NATIVE_KIND_COMPLETE_RECOVERY, payload, &[&a_key], &[], 4);
+        assert_address_success(&result, &a.address);
+        let recovered = net.state(&a.address).expect("state");
+        assert_eq!((recovered.generation, recovered.sequence), (2, 1));
+        assert_eq!(agent_policy(&recovered), rescue_policy);
+
+        // The old key is no longer a controller.
+        let old = net.action(
+            &net.domain,
+            NATIVE_KIND_DELEGATE_AGENT,
+            a.id,
+            Some(&recovered),
+            5,
+            build_native_delegate_payload([0x77; 32]).expect("payload"),
+        );
+        let body = build_native_submission(&net.domain, &old, 1, &signatures(&[&a_key], &old), &[])
+            .expect("body");
+        let result = net.send(&a.address, body);
+        assert_address_exit(&result, &a.address, ERR_BAD_SIGNATURE);
+
+        // Policy update to a third key needs its possession signature; afterwards
+        // the recovery key is retired the same way.
+        let third = SigningKey::from_bytes(&[0x66; 32]);
+        let next = single_controller_policy(&third, 120);
+        let (result, _) = net.agent_action(
+            &a,
+            NATIVE_KIND_UPDATE_AGENT_POLICY,
+            build_native_update_policy_payload(&next).expect("payload"),
+            &[&rescue],
+            &[&third],
+            6,
+        );
+        assert_address_success(&result, &a.address);
+        let updated = net.state(&a.address).expect("state");
+        assert_eq!((updated.generation, updated.sequence), (2, 2));
+        assert_eq!(agent_policy(&updated), next);
+        assert!(
+            check_native_threshold(
+                &agent_policy(&updated),
+                &public_keys(&[&rescue]),
+                NATIVE_KIND_DELEGATE_AGENT
+            )
+            .is_err()
+        );
+    }
+}
+
+/// Conformance vectors for the off-chain Native Registry encoders in
+/// tosnetwork/tos-service-protocol (`pkg/nativecore/testdata/native_registry_v1_vectors.json`),
+/// produced by executing the release code: the inputs are the protocol's frozen
+/// inputs; the object ids must equal its frozen ids (they do not depend on the
+/// code); the contract address, action hash, action BOC and signature depend on
+/// the code hash and are recorded in `fixtures/native_registry/protocol-vectors.json`
+/// only after the release contract accepted exactly these actions at exactly
+/// these addresses. `NATIVE_REGISTRY_VECTORS_OUT=<path>` writes the values
+/// instead of comparing them.
+mod protocol_vectors {
+    use super::assert_address_success;
+    use super::current_network;
+    use chain_block::{Cell, MsgAddressInt};
+    use contracts::native_registry::*;
+    use ed25519_dalek::{Signer, SigningKey};
+    use tos_sandbox::{Blockchain, MessageBuilder};
+
+    const TOS: u64 = 1_000_000_000;
+    const FIXTURE: &str = include_str!("fixtures/native_registry/protocol-vectors.json");
+
+    fn hex32(value: &str) -> [u8; 32] {
+        hex::decode(value).expect("hex").try_into().expect("32 bytes")
+    }
+
+    fn data_state(bc: &Blockchain, address: &MsgAddressInt) -> NativeRegistryState {
+        let data = bc.get_account(address).expect("account").get_data().expect("data");
+        decode_native_registry_data(&data).expect("data").state.expect("registered")
+    }
+
+    /// The protocol's frozen action BOCs carry a CRC32-C trailer (`te6cck…`).
+    fn b64(cell: &Cell) -> String {
+        use base64::Engine;
+        let mut bytes = Vec::new();
+        chain_block::BocWriter::with_flags([cell.clone()], chain_block::BocFlags::Crc32)
+            .expect("boc writer")
+            .write(&mut bytes)
+            .expect("boc");
+        assert!(bytes.starts_with(&[0xb5, 0xee, 0x9c, 0x72]));
+        assert_eq!(chain_block::read_single_root_boc(bytes.clone()).expect("reread"), *cell);
+        base64::engine::general_purpose::STANDARD.encode(bytes)
+    }
+
+    #[test]
+    fn protocol_registration_vectors_execute_on_the_release_code() {
+        let code = native_registry_release_code().expect("release code");
+        let domain = NativeRegistryDomain::for_label(
+            [0x11; 32],
+            [0x22; 32],
+            b"tos-testnet",
+            *code.repr_hash().as_array(),
+        )
+        .expect("domain");
+        // The protocol's vectors live in basechain 0, which the default sandbox
+        // config does not describe.
+        let mut bc =
+            Blockchain::with_global_version_and_base_workchain(current_network::global_version())
+                .expect("blockchain");
+        bc.set_workchain(0);
+        let relayer = bc.treasury("protocol-vector-relayer", 100 * TOS).expect("relayer");
+
+        // Agent registration (the protocol's inputs).
+        let key = SigningKey::from_bytes(&hex32(
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+        ));
+        assert_eq!(
+            hex::encode(key.verifying_key().to_bytes()),
+            "79b5562e8fe654f94078b112e8a98ba7901f853ae695bed7e0e3910bad049664"
+        );
+        let policy = NativePolicy {
+            threshold: 1,
+            recovery_threshold: 1,
+            recovery_timelock: 86_400,
+            controllers: vec![NativePolicyController {
+                public_key: key.verifying_key().to_bytes(),
+                weight: 1,
+                purposes: 15,
+            }],
+        };
+        let agent = build_native_agent_registration(&domain, [0x6f; 32], &policy).expect("agent");
+        assert_eq!(
+            hex::encode(agent.object_id),
+            "c082c865f6c332e53615a84da797c1b1f2e993779b7aae191e4f30be5661526f",
+            "the identity does not depend on the code and must stay the protocol's"
+        );
+        let (init, agent_address) =
+            build_native_registry_deployment(&domain, 1, agent.object_id, 0, b"tos-testnet", &code)
+                .expect("agent deployment");
+        let agent_action = build_native_action(
+            &domain,
+            &NativeRegistryAction {
+                kind: NATIVE_KIND_REGISTER_AGENT,
+                generation: 1,
+                sequence: 1,
+                object_id: agent.object_id,
+                predecessor: [0; 32],
+                nonce: [0x61; 32],
+                payload: agent.payload,
+            },
+        )
+        .expect("agent action");
+        let agent_signature = key.sign(agent_action.repr_hash().as_slice());
+        let body = build_native_submission(
+            &domain,
+            &agent_action,
+            1,
+            &[NativeControllerSignature {
+                public_key: key.verifying_key().to_bytes(),
+                signature: agent_signature.to_bytes(),
+            }],
+            &[],
+        )
+        .expect("agent body");
+        let result = bc
+            .send_message(
+                MessageBuilder::internal(relayer.address(), &agent_address, TOS)
+                    .bounce(false)
+                    .state_init(init)
+                    .body(body)
+                    .build(),
+            )
+            .expect("register agent");
+        assert_address_success(&result, &agent_address);
+        assert_eq!(
+            data_state(&bc, &agent_address).last_action,
+            *agent_action.repr_hash().as_array()
+        );
+
+        // Capability registration under that Agent (the protocol's inputs).
+        let capability = build_native_capability_registration(
+            &domain,
+            [0x63; 32],
+            agent.object_id,
+            b"1.0.0",
+            [0x55; 32],
+        )
+        .expect("capability");
+        assert_eq!(
+            hex::encode(capability.object_id),
+            "bca64ca932644f320e3c03df3983ac00ca700a0590ba73b832ee2152b4643b8b"
+        );
+        let (_, capability_address) = build_native_registry_deployment(
+            &domain,
+            2,
+            capability.object_id,
+            0,
+            b"tos-testnet",
+            &code,
+        )
+        .expect("capability deployment");
+        let capability_action = build_native_action(
+            &domain,
+            &NativeRegistryAction {
+                kind: NATIVE_KIND_REGISTER_CAPABILITY,
+                generation: 1,
+                sequence: 1,
+                object_id: capability.object_id,
+                predecessor: [0; 32],
+                nonce: [0x62; 32],
+                payload: capability.payload,
+            },
+        )
+        .expect("capability action");
+        let capability_signature = key.sign(capability_action.repr_hash().as_slice());
+        let body = build_native_submission(
+            &domain,
+            &capability_action,
+            1,
+            &[NativeControllerSignature {
+                public_key: key.verifying_key().to_bytes(),
+                signature: capability_signature.to_bytes(),
+            }],
+            &[],
+        )
+        .expect("capability body");
+        let result = bc
+            .send_message(
+                MessageBuilder::internal(relayer.address(), &agent_address, TOS).body(body).build(),
+            )
+            .expect("register capability");
+        assert_address_success(&result, &capability_address);
+        assert_eq!(
+            data_state(&bc, &capability_address).last_action,
+            *capability_action.repr_hash().as_array()
+        );
+
+        // The same builders under the protocol's earlier code hash reproduce
+        // its earlier frozen action hashes exactly: the encoders agree, and
+        // only the code hash moved.
+        let earlier = NativeRegistryDomain {
+            runtime_code_hash: hex32(
+                "600f2fda83462bc86a1c32af930c35a4fc8f80f1d2966f5593ceba217a91ffa0",
+            ),
+            ..domain.clone()
+        };
+        let earlier_agent =
+            build_native_agent_registration(&earlier, [0x6f; 32], &policy).expect("agent");
+        let earlier_agent_action = build_native_action(
+            &earlier,
+            &NativeRegistryAction {
+                kind: NATIVE_KIND_REGISTER_AGENT,
+                generation: 1,
+                sequence: 1,
+                object_id: earlier_agent.object_id,
+                predecessor: [0; 32],
+                nonce: [0x61; 32],
+                payload: earlier_agent.payload,
+            },
+        )
+        .expect("earlier agent action");
+        assert_eq!(
+            hex::encode(earlier_agent_action.repr_hash().as_slice()),
+            "a1794daed9d20818104bf3c10688388dc7acbfe7fd17fa7bed310d72545dc1f8"
+        );
+        let earlier_capability = build_native_capability_registration(
+            &earlier,
+            [0x63; 32],
+            agent.object_id,
+            b"1.0.0",
+            [0x55; 32],
+        )
+        .expect("earlier capability");
+        let earlier_capability_action = build_native_action(
+            &earlier,
+            &NativeRegistryAction {
+                kind: NATIVE_KIND_REGISTER_CAPABILITY,
+                generation: 1,
+                sequence: 1,
+                object_id: earlier_capability.object_id,
+                predecessor: [0; 32],
+                nonce: [0x62; 32],
+                payload: earlier_capability.payload,
+            },
+        )
+        .expect("earlier capability action");
+        assert_eq!(
+            hex::encode(earlier_capability_action.repr_hash().as_slice()),
+            "205bd2aa9ba96541c36b8f594884f9d7eae0e832035e4ddacd318f08592215e4"
+        );
+
+        let address_text = |a: &MsgAddressInt| a.to_string();
+        let actual = serde_json::json!({
+            "contract_code_hash": format!("tvm-cell-sha256:{}", hex::encode(code.repr_hash().as_slice())),
+            "agent_registration": {
+                "object_id": format!("agent_{}", hex::encode(agent.object_id)),
+                "contract_address": address_text(&agent_address),
+                "action_hash": format!("sha256:{}", hex::encode(agent_action.repr_hash().as_slice())),
+                "action_boc_base64": b64(&agent_action),
+                "signature_hex": hex::encode(agent_signature.to_bytes()),
+            },
+            "capability_registration": {
+                "object_id": format!("cap_{}", hex::encode(capability.object_id)),
+                "contract_address": address_text(&capability_address),
+                "action_hash": format!("sha256:{}", hex::encode(capability_action.repr_hash().as_slice())),
+                "action_boc_base64": b64(&capability_action),
+                "signature_hex": hex::encode(capability_signature.to_bytes()),
+            },
+        });
+        if let Ok(path) = std::env::var("NATIVE_REGISTRY_VECTORS_OUT") {
+            std::fs::write(&path, serde_json::to_string_pretty(&actual).expect("json") + "\n")
+                .expect("write vectors");
+            return;
+        }
+        let expected: serde_json::Value = serde_json::from_str(FIXTURE).expect("fixture");
+        assert_eq!(actual, expected, "conformance vectors moved; regenerate deliberately");
+    }
+}
