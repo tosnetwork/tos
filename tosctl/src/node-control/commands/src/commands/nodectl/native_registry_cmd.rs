@@ -267,23 +267,62 @@ trait ControllerSigner {
     async fn sign(&self, name: &str, hash: &[u8; 32]) -> anyhow::Result<[u8; 64]>;
 }
 
-struct RpcChain<'a>(&'a ClientJsonRpc);
+/// One account as the RPC returns it: state, raw code and data BOCs, and the
+/// unix time of the block the view was read at.
+struct AccountSnapshot {
+    state: AccountState,
+    code: Option<Vec<u8>>,
+    data: Option<Vec<u8>>,
+    sync_utime: u64,
+}
 
-impl RegistryChain for RpcChain<'_> {
+/// The raw RPC reads `RpcChain` needs; nothing here verifies or sends.
+trait ChainSource {
+    async fn zero_state(&self) -> anyhow::Result<(Vec<u8>, Vec<u8>)>;
+    async fn global_id(&self) -> anyhow::Result<u32>;
+    async fn account(&self, address: &MsgAddressInt) -> anyhow::Result<AccountSnapshot>;
+}
+
+impl ChainSource for ClientJsonRpc {
+    async fn zero_state(&self) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
+        let master = self.get_masterchain_info().await?;
+        let zero = master.init.context("RPC omitted the zero-state identity")?;
+        Ok((zero.root_hash, zero.file_hash))
+    }
+
+    async fn global_id(&self) -> anyhow::Result<u32> {
+        match self.get_config_param(19).await? {
+            ConfigParamEnum::ConfigParam19(value) => Ok(value),
+            _ => anyhow::bail!("chain config parameter 19 is not a global ID"),
+        }
+    }
+
+    async fn account(&self, address: &MsgAddressInt) -> anyhow::Result<AccountSnapshot> {
+        let info = self.get_address_information(address).await?;
+        Ok(AccountSnapshot {
+            state: info.state,
+            code: info.code,
+            data: info.data,
+            sync_utime: info.sync_utime,
+        })
+    }
+}
+
+/// The production chain view: raw reads from a source, every account verified
+/// against the domain before it is used.
+struct RpcChain<'a, T: ChainSource>(&'a T);
+
+impl<T: ChainSource> RegistryChain for RpcChain<'_, T> {
     /// The same zero state as the global config, and a network label equal to
     /// `tos:global-id:<ConfigParam 19>`.
     async fn check_chain(&self, loaded: &LoadedDomain) -> anyhow::Result<()> {
-        let master = self.0.get_masterchain_info().await?;
-        let zero = master.init.context("RPC omitted the zero-state identity")?;
+        let (root, file) = self.0.zero_state().await?;
         anyhow::ensure!(
-            zero.root_hash.as_slice() == loaded.domain.genesis_root
-                && zero.file_hash.as_slice() == loaded.domain.genesis_file,
+            root.as_slice() == loaded.domain.genesis_root
+                && file.as_slice() == loaded.domain.genesis_file,
             "the RPC serves another chain than the global config's zero state"
         );
-        let global_id = match self.0.get_config_param(19).await? {
-            ConfigParamEnum::ConfigParam19(value) => value,
-            _ => anyhow::bail!("chain config parameter 19 is not a global ID"),
-        };
+        let global_id = self.0.global_id().await?;
         anyhow::ensure!(
             loaded.label == format!("tos:global-id:{global_id}").into_bytes(),
             "network label does not match this chain (global id {global_id})"
@@ -296,7 +335,7 @@ impl RegistryChain for RpcChain<'_> {
         loaded: &LoadedDomain,
         address: &MsgAddressInt,
     ) -> anyhow::Result<(Option<NativeRegistryObject>, u64)> {
-        let info = self.0.get_address_information(address).await?;
+        let info = self.0.account(address).await?;
         let now = info.sync_utime;
         match info.state {
             AccountState::Uninitialized => return Ok((None, now)),
@@ -890,7 +929,7 @@ impl RegisterAgentCmd {
         let nonce = nonce_arg("nonce", &self.nonce)?;
         let (_, vault, rpc) = load_config_vault_rpc_client(Path::new(config_path)).await?;
         let view = prepare_register(
-            &RpcChain(&rpc),
+            &RpcChain(rpc.as_ref()),
             &VaultSigner(vault),
             &loaded,
             &policy,
@@ -954,7 +993,7 @@ impl ActionCmd {
         let new_owner_address = parse(&self.new_owner, "--new-owner")?;
         let (_, vault, rpc) = load_config_vault_rpc_client(Path::new(config_path)).await?;
         let view = prepare_action(
-            &RpcChain(&rpc),
+            &RpcChain(rpc.as_ref()),
             &VaultSigner(vault),
             &loaded,
             self.kind,
@@ -1014,7 +1053,7 @@ impl ShowCmd {
         let loaded = self.domain.load()?;
         let config = common::app_config::AppConfig::load(Path::new(config_path))?;
         let rpc = try_create_rpc_client(&config).await?;
-        let chain = RpcChain(&rpc);
+        let chain = RpcChain(rpc.as_ref());
         chain.check_chain(&loaded).await?;
         let address: MsgAddressInt = self.address.parse().context("invalid --address")?;
         let (object, now) = chain.read_object(&loaded, &address).await?;
@@ -1598,5 +1637,161 @@ mod tests {
             .expect("register");
         assert_eq!(view["destination"], address.to_string());
         assert_eq!(signer.count(), 1);
+    }
+
+    /// Raw RPC answers for the production `RpcChain`: zero state, global id and
+    /// account snapshots by address.
+    struct FakeSource {
+        zero: (Vec<u8>, Vec<u8>),
+        global_id: u32,
+        accounts: std::collections::HashMap<String, (Cell, Cell)>,
+        now: u64,
+    }
+
+    impl ChainSource for FakeSource {
+        async fn zero_state(&self) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
+            Ok(self.zero.clone())
+        }
+        async fn global_id(&self) -> anyhow::Result<u32> {
+            Ok(self.global_id)
+        }
+        async fn account(&self, address: &MsgAddressInt) -> anyhow::Result<AccountSnapshot> {
+            Ok(match self.accounts.get(&address.to_string()) {
+                None => AccountSnapshot {
+                    state: AccountState::Uninitialized,
+                    code: None,
+                    data: None,
+                    sync_utime: self.now,
+                },
+                Some((code, data)) => AccountSnapshot {
+                    state: AccountState::Active,
+                    code: Some(write_boc(code)?),
+                    data: Some(write_boc(data)?),
+                    sync_utime: self.now,
+                },
+            })
+        }
+    }
+
+    /// A registered Agent account exactly as the contract stores it: the
+    /// deployment data with its state flag set and an NVS1 state attached.
+    fn registered_agent_account(l: &LoadedDomain, seed: u8) -> (MsgAddressInt, [u8; 32], Cell) {
+        use chain_block::{BuilderData, IBitstring, SliceData};
+        let policy = one_key_policy(seed, 60);
+        let registration =
+            build_native_agent_registration(&l.domain, [seed; 32], &policy).expect("reg");
+        let (init, address) = build_native_registry_deployment(
+            &l.domain,
+            1,
+            registration.object_id,
+            0,
+            &l.label,
+            &l.code,
+        )
+        .expect("deployment");
+        let initial = init.data.expect("data");
+        let mut s = SliceData::load_cell(initial).expect("slice");
+        let header = s.get_next_bits(32 + 16 + 8 + 256).expect("header");
+        let config = s.checked_drain_reference().expect("config");
+        let mut delegations = BuilderData::new();
+        delegations.append_u16(0).expect("count").append_bit_zero().expect("dict");
+        let mut recovery = BuilderData::new();
+        recovery.append_bit_zero().expect("recovery");
+        let mut state = BuilderData::new();
+        state
+            .append_u32(0x4e56_5331)
+            .expect("magic")
+            .append_u16(1)
+            .expect("schema")
+            .append_u8(1)
+            .expect("kind")
+            .append_bit_zero()
+            .expect("tombstone")
+            .append_u64(1)
+            .expect("generation")
+            .append_u64(1)
+            .expect("sequence")
+            .append_raw(&[0x0a; 32], 256)
+            .expect("action");
+        state.checked_append_reference(build_policy(&policy).expect("policy")).expect("ref");
+        state.checked_append_reference(delegations.into_cell().expect("cell")).expect("ref");
+        state.checked_append_reference(recovery.into_cell().expect("cell")).expect("ref");
+        let mut data = BuilderData::new();
+        data.append_raw(&header, 32 + 16 + 8 + 256).expect("header");
+        data.checked_append_reference(config).expect("config");
+        data.append_bit_one().expect("has state");
+        data.checked_append_reference(state.into_cell().expect("state")).expect("state ref");
+        (address, registration.object_id, data.into_cell().expect("data"))
+    }
+
+    fn source(l: &LoadedDomain, accounts: &[(&MsgAddressInt, Cell, Cell)]) -> FakeSource {
+        FakeSource {
+            zero: (l.domain.genesis_root.to_vec(), l.domain.genesis_file.to_vec()),
+            global_id: 2,
+            accounts: accounts
+                .iter()
+                .map(|(a, code, data)| (a.to_string(), (code.clone(), data.clone())))
+                .collect(),
+            now: 1_000,
+        }
+    }
+
+    async fn delegate_through(
+        source: &FakeSource,
+        signer: &CountingSigner,
+        agent: &MsgAddressInt,
+        seed: u8,
+    ) -> anyhow::Result<serde_json::Value> {
+        prepare_action(
+            &RpcChain(source),
+            signer,
+            &loaded(),
+            ActionKind::Delegate,
+            &ActionInput::Delegate([0x71; 32]),
+            [0x77; 32],
+            agent,
+            None,
+            None,
+            &names(&[seed]),
+            &[],
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn production_reads_verify_every_account_before_signing() {
+        let l = loaded();
+        let (a_address, a_id, a_data) = registered_agent_account(&l, 1);
+        let (b_address, _, b_data) = registered_agent_account(&l, 2);
+        let signer = CountingSigner::new();
+
+        // The real account, read and verified through the production adapter.
+        let good = source(&l, &[(&a_address, l.code.clone(), a_data.clone())]);
+        let view = delegate_through(&good, &signer, &a_address, 1).await.expect("delegate");
+        assert_eq!(view["target_id"], hex::encode(a_id));
+        assert_eq!(view["chain_time"], 1_000);
+        assert_eq!(signer.count(), 1);
+
+        // Foreign code at the address.
+        let foreign = source(&l, &[(&a_address, Cell::default(), a_data.clone())]);
+        let error = delegate_through(&foreign, &signer, &a_address, 1).await.expect_err("code");
+        assert!(error.to_string().contains("release code"), "{error:#}");
+        // Another object's data at the address.
+        let swapped = source(&l, &[(&a_address, l.code.clone(), b_data)]);
+        let error = delegate_through(&swapped, &signer, &a_address, 1).await.expect_err("address");
+        assert!(error.to_string().contains("does not derive"), "{error:#}");
+        // Another zero state, and another global id.
+        let mut other_chain = source(&l, &[(&a_address, l.code.clone(), a_data.clone())]);
+        other_chain.zero.1[0] ^= 1;
+        let error = delegate_through(&other_chain, &signer, &a_address, 1).await.expect_err("zero");
+        assert!(error.to_string().contains("another chain"), "{error:#}");
+        let mut other_id = source(&l, &[(&a_address, l.code.clone(), a_data)]);
+        other_id.global_id = 1;
+        let error = delegate_through(&other_id, &signer, &a_address, 1).await.expect_err("label");
+        assert!(error.to_string().contains("network label"), "{error:#}");
+        // No account at all.
+        let empty = source(&l, &[]);
+        assert!(delegate_through(&empty, &signer, &b_address, 2).await.is_err());
+        assert_eq!(signer.count(), 1, "no refused read produced a signature");
     }
 }
