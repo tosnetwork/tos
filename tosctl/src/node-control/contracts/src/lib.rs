@@ -101,7 +101,9 @@ pub use dispute::{
 pub use elector::{ElectionsInfo, ElectorWrapper, ElectorWrapperImpl, Participant};
 pub use native_registry::{
     NATIVE_REGISTRY_ERR_POLICY_TOO_WIDE, NATIVE_REGISTRY_GAS_CEILING,
-    NATIVE_REGISTRY_MAX_POLICY_CONTROLLERS, NativePolicy, NativePolicyController,
+    NATIVE_REGISTRY_MAX_POLICY_CONTROLLERS, NATIVE_REGISTRY_PUBLIC_KEY_BYTES,
+    NATIVE_REGISTRY_SIGNATURE_BYTES, NATIVE_REGISTRY_SIGNATURE_CONTEXT, NativePolicy,
+    NativePolicyController, controller_key_id,
 };
 pub use nominator::{NOMINATOR_POOL_WORKCHAIN, NominatorWrapper, NominatorWrapperImpl};
 pub use nominator_pool::{

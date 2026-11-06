@@ -5,6 +5,7 @@ use contracts::{
     AgentAccountContract, AgentAccountInit, AgentCheckedContractCallV2, ProofAttestationContract,
     ProofAttestationInit, TaskEscrowContract, TaskEscrowInit,
 };
+use ed25519_dalek::{Signer, SigningKey};
 
 fn send(bc: &mut Blockchain, from: &MsgAddressInt, to: &MsgAddressInt, body: Cell) -> SendResult {
     recorded_send(
@@ -153,6 +154,10 @@ fn signed_call(
 
 fn journey(disputed: bool) {
     let mut f = Fixture::new();
+    // The registry lives in workchain 0; the account, escrow and attestation
+    // contracts of this journey and their counterparties stay in the
+    // masterchain, where the restarted chain below replays them.
+    f.bc.set_workchain(-1);
     // Pin parameter43 explicitly. Native replay completes mandatory config;
     // leaving size limits absent here would execute the fallback branch only
     // in Rust and compare different instruction paths and gas totals.
@@ -198,7 +203,7 @@ fn journey(disputed: bool) {
     let manifest = bytes_hash(manifest_bytes.as_bytes());
     let id = f.object_id;
     let registry = f.registry.clone();
-    let registry_key = SigningKey::from_bytes(&[0x31; 32]);
+    let registry_key = RegistryKey::from_bytes(&[0x31; 32]);
     let cap = f.register_capability(&id, &registry, &registry_key, [0x65; 32], b"1.0.0", manifest);
     assert!(resolve(&f, &cap, &manifest));
     assert!(

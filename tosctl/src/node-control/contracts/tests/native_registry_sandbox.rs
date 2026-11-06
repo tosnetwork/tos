@@ -10,6 +10,10 @@
 //! the contract test independent of the Go SDK while proving that the TVM
 //! accepts generation resets with a live predecessor and that recovery is
 //! bound to the policy under which it was initiated.
+//!
+//! Controllers are ML-DSA-44 keys derived from fixed seeds, and every
+//! signature is a real Pure ML-DSA-44 signature over the 32 raw bytes of the
+//! action hash under the registry context, checked by PQCHECKSIG_MLDSA44.
 
 #[path = "fixtures/current_network.rs"]
 mod current_network;
@@ -23,7 +27,8 @@ use contracts::native_registry::{
     NATIVE_REGISTRY_MAX_POLICY_CONTROLLERS, NATIVE_REGISTRY_TRANSACTION_GAS_LIMIT, NativePolicy,
     NativePolicyController, build_policy,
 };
-use ed25519_dalek::{Signer, SigningKey};
+use fips204::ml_dsa_44;
+use fips204::traits::{KeyGen, SerDes, Signer as _};
 use sha2::{Digest, Sha256};
 use tos_sandbox::{Blockchain, MessageBuilder, SendResult, Treasury};
 
@@ -70,60 +75,130 @@ fn bytes_hash(value: &[u8]) -> [u8; 32] {
     Sha256::digest(value).into()
 }
 
-fn policy(key: &SigningKey) -> Cell {
-    let public_key = key.verifying_key().to_bytes();
-    let mut controller = BuilderData::new();
-    controller
-        .append_u256(&public_key)
-        .unwrap()
-        .append_u256(&public_key)
-        .unwrap()
-        .append_u32(1)
-        .unwrap()
-        .append_u16(0x0f)
-        .unwrap()
-        .append_bit_one()
-        .unwrap();
+const SIGNATURE_CONTEXT: &[u8] = b"TOS-NATIVE-REGISTRY";
+const KEY_ID_DOMAIN: &[u8] = b"TOS-PQ-CONSENSUS-KEY-v1";
+const ML_DSA_44_PUBLIC_KEY_BYTES: usize = 1312;
+const ML_DSA_44_SIGNATURE_BYTES: usize = 2420;
+const CHUNK_BYTES: usize = 127;
+const ALL_PURPOSES: u16 = 0x0f;
 
-    let mut root = BuilderData::new();
-    root.append_u32(MAGIC_POLICY)
-        .unwrap()
-        .append_u16(1)
-        .unwrap()
-        .append_u32(1)
-        .unwrap()
-        .append_u32(1)
-        .unwrap()
-        .append_u64(10)
-        .unwrap()
-        .append_u8(1)
-        .unwrap()
-        .checked_append_reference(controller.into_cell().unwrap())
-        .unwrap();
-    root.into_cell().unwrap()
+/// Bytes as the registry stores key and signature material: a chain of full
+/// 127-byte cells ending in a non-empty cell.
+fn byte_chain(bytes: &[u8]) -> Cell {
+    let mut next: Option<Cell> = None;
+    for chunk in bytes.chunks(CHUNK_BYTES).rev() {
+        let mut cell = BuilderData::new();
+        cell.append_raw(chunk, chunk.len() * 8).unwrap();
+        if let Some(link) = next {
+            cell.checked_append_reference(link).unwrap();
+        }
+        next = Some(cell.into_cell().unwrap());
+    }
+    next.expect("non-empty key or signature material")
 }
 
-fn purpose_partitioned_unreachable_policy() -> Cell {
-    let first = SigningKey::from_bytes(&[0x81; 32]).verifying_key().to_bytes();
-    let second = SigningKey::from_bytes(&[0x82; 32]).verifying_key().to_bytes();
-    let mut controllers = vec![(first, 0x05_u16, true), (second, 0x0a_u16, false)];
-    controllers.sort_by_key(|entry| entry.0);
+/// `len:uint32 ^chain`, the wrapper a stored key or signature travels in.
+fn stored_with_length(length: u32, chain: Cell) -> Cell {
+    let mut wrapper = BuilderData::new();
+    wrapper.append_u32(length).unwrap().checked_append_reference(chain).unwrap();
+    wrapper.into_cell().unwrap()
+}
+
+fn stored(bytes: &[u8]) -> Cell {
+    stored_with_length(bytes.len() as u32, byte_chain(bytes))
+}
+
+/// The registry's key identity: SHA-256 over the domain, the suite number 1
+/// as two little-endian bytes, and the public key.
+fn key_id(public_key: &[u8]) -> [u8; 32] {
+    let mut preimage = KEY_ID_DOMAIN.to_vec();
+    preimage.extend_from_slice(&[1, 0]);
+    preimage.extend_from_slice(public_key);
+    bytes_hash(&preimage)
+}
+
+/// An ML-DSA-44 registry controller derived from a fixed seed, so every key
+/// in this suite is the same on every run.
+#[derive(Clone)]
+struct RegistryKey {
+    seed: [u8; 32],
+    public_key: Vec<u8>,
+    secret: ml_dsa_44::PrivateKey,
+}
+
+impl RegistryKey {
+    fn from_bytes(seed: &[u8; 32]) -> Self {
+        let (public_key, secret) = ml_dsa_44::KG::keygen_from_seed(seed);
+        let public_key = public_key.into_bytes().to_vec();
+        assert_eq!(public_key.len(), ML_DSA_44_PUBLIC_KEY_BYTES);
+        Self { seed: *seed, public_key, secret }
+    }
+
+    fn to_bytes(&self) -> [u8; 32] {
+        self.seed
+    }
+
+    fn public_key(&self) -> &[u8] {
+        &self.public_key
+    }
+
+    fn id(&self) -> [u8; 32] {
+        key_id(&self.public_key)
+    }
+
+    fn stored_key(&self) -> Cell {
+        stored(&self.public_key)
+    }
+
+    /// The raw signature over `action`'s hash under `context`. The signing
+    /// randomness is an explicit argument so that tests are reproducible and
+    /// can produce two distinct valid signatures for one action.
+    fn signature_bytes(&self, action: &Cell, context: &[u8], randomness: &[u8; 32]) -> Vec<u8> {
+        self.secret
+            .try_sign_with_seed(randomness, action.hash(0).as_slice(), context)
+            .expect("ML-DSA-44 signing")
+            .to_vec()
+    }
+
+    /// A stored signature wrapper for `action`, as the registry expects it.
+    fn sign(&self, action: &Cell) -> Cell {
+        stored(&self.signature_bytes(action, SIGNATURE_CONTEXT, &[0x5a; 32]))
+    }
+}
+
+/// One controller entry: `(key, weight, purposes, recovery)`.
+type ControllerSpec<'a> = (&'a RegistryKey, u32, u16, bool);
+
+/// One raw controller entry: `(key_id, stored_key, weight, purposes,
+/// recovery)`, so that a test can declare an id or a wrapper that does not
+/// match its key.
+type ControllerCells = ([u8; 32], Cell, u32, u16, bool);
+
+/// A policy in the registry's layout from raw controller entries, sorted by
+/// key id the way the contract requires; the recovery timelock is 10 s.
+fn policy_cells(
+    threshold: u32,
+    recovery_threshold: u32,
+    mut entries: Vec<ControllerCells>,
+) -> Cell {
+    entries.sort_by_key(|entry| entry.0);
+    let count = entries.len() as u8;
     let mut next: Option<Cell> = None;
-    for (public_key, purposes, recovery) in controllers.into_iter().rev() {
+    for (id, stored_key, weight, purposes, recovery) in entries.into_iter().rev() {
         let mut controller = BuilderData::new();
         controller
-            .append_u256(&public_key)
+            .append_u256(&id)
             .unwrap()
-            .append_u256(&public_key)
-            .unwrap()
-            .append_u32(1)
+            .append_u32(weight)
             .unwrap()
             .append_u16(purposes)
             .unwrap()
             .append_bit_bool(recovery)
+            .unwrap()
+            .checked_append_reference(stored_key)
             .unwrap();
-        if let Some(cell) = next {
-            controller.checked_append_reference(cell).unwrap();
+        if let Some(link) = next {
+            controller.checked_append_reference(link).unwrap();
         }
         next = Some(controller.into_cell().unwrap());
     }
@@ -132,101 +207,102 @@ fn purpose_partitioned_unreachable_policy() -> Cell {
         .unwrap()
         .append_u16(1)
         .unwrap()
-        .append_u32(2)
+        .append_u32(threshold)
         .unwrap()
-        .append_u32(1)
+        .append_u32(recovery_threshold)
         .unwrap()
         .append_u64(10)
         .unwrap()
-        .append_u8(2)
+        .append_u8(count)
         .unwrap()
-        .checked_append_reference(next.unwrap())
+        .checked_append_reference(next.expect("a policy has a controller"))
         .unwrap();
     root.into_cell().unwrap()
 }
 
-fn signature_set(key: &SigningKey, action: &Cell) -> Cell {
+/// A policy over `(key, weight, purposes, recovery)` controllers.
+fn policy_of(threshold: u32, recovery_threshold: u32, controllers: &[ControllerSpec]) -> Cell {
+    policy_cells(
+        threshold,
+        recovery_threshold,
+        controllers
+            .iter()
+            .map(|(key, weight, purposes, recovery)| {
+                (key.id(), key.stored_key(), *weight, *purposes, *recovery)
+            })
+            .collect(),
+    )
+}
+
+/// One controller holding every purpose and the recovery designation.
+fn policy(key: &RegistryKey) -> Cell {
+    policy_of(1, 1, &[(key, 1, ALL_PURPOSES, true)])
+}
+
+/// Two controllers whose purposes are partitioned so that the agent
+/// threshold of 2 is reachable only by pooling weight across purposes.
+fn purpose_partitioned_unreachable_policy() -> Cell {
+    let first = RegistryKey::from_bytes(&[0x81; 32]);
+    let second = RegistryKey::from_bytes(&[0x82; 32]);
+    policy_of(2, 1, &[(&first, 1, 0x05, true), (&second, 1, 0x0a, false)])
+}
+
+fn signature_set(key: &RegistryKey, action: &Cell) -> Cell {
     signature_set_many(&[key], action)
 }
 
-fn purpose_isolated_policy() -> (Cell, Vec<SigningKey>) {
+fn purpose_isolated_policy() -> (Cell, Vec<RegistryKey>) {
     three_controller_policy([0x05, 0x02, 0x08])
 }
 
 /// Three controllers with the given purpose bits (0x04 marks a recovery key),
-/// threshold 1 for every purpose. Keys are returned in policy (sorted) order so
-/// a possession list signed in that order lines up with the policy.
-fn three_controller_policy(purposes: [u16; 3]) -> (Cell, Vec<SigningKey>) {
-    let mut keyed: Vec<(SigningKey, u16)> = [[0x91u8; 32], [0x92; 32], [0x93; 32]]
+/// threshold 1 for every purpose. Keys are returned in policy (key id) order
+/// so a possession list signed in that order lines up with the policy.
+fn three_controller_policy(purposes: [u16; 3]) -> (Cell, Vec<RegistryKey>) {
+    let mut keyed: Vec<(RegistryKey, u16)> = [[0x91u8; 32], [0x92; 32], [0x93; 32]]
         .iter()
         .zip(purposes)
-        .map(|(seed, purpose)| (SigningKey::from_bytes(seed), purpose))
+        .map(|(seed, purpose)| (RegistryKey::from_bytes(seed), purpose))
         .collect();
-    keyed.sort_by_key(|(key, _)| key.verifying_key().to_bytes());
-    let controllers: Vec<([u8; 32], u16, bool)> = keyed
-        .iter()
-        .map(|(key, purpose)| (key.verifying_key().to_bytes(), *purpose, purpose & 0x04 != 0))
-        .collect();
-    let keys: Vec<SigningKey> = keyed.into_iter().map(|(key, _)| key).collect();
-    let mut next: Option<Cell> = None;
-    for (public_key, purposes, recovery) in controllers.into_iter().rev() {
-        let mut controller = BuilderData::new();
-        controller
-            .append_u256(&public_key)
-            .unwrap()
-            .append_u256(&public_key)
-            .unwrap()
-            .append_u32(1)
-            .unwrap()
-            .append_u16(purposes)
-            .unwrap()
-            .append_bit_bool(recovery)
-            .unwrap();
-        if let Some(cell) = next {
-            controller.checked_append_reference(cell).unwrap();
-        }
-        next = Some(controller.into_cell().unwrap());
-    }
-    let mut root = BuilderData::new();
-    root.append_u32(MAGIC_POLICY)
-        .unwrap()
-        .append_u16(1)
-        .unwrap()
-        .append_u32(1)
-        .unwrap()
-        .append_u32(1)
-        .unwrap()
-        .append_u64(10)
-        .unwrap()
-        .append_u8(3)
-        .unwrap()
-        .checked_append_reference(next.unwrap())
-        .unwrap();
-    (root.into_cell().unwrap(), keys)
+    keyed.sort_by_key(|(key, _)| key.id());
+    let controllers: Vec<ControllerSpec> =
+        keyed.iter().map(|(key, purpose)| (key, 1, *purpose, purpose & 0x04 != 0)).collect();
+    let policy = policy_of(1, 1, &controllers);
+    (policy, keyed.into_iter().map(|(key, _)| key).collect())
 }
 
-fn signature_set_many(keys: &[&SigningKey], action: &Cell) -> Cell {
-    let mut signatures: Vec<_> = keys
-        .iter()
-        .map(|key| {
-            let public_key = key.verifying_key().to_bytes();
-            let signature = key.sign(action.hash(0).as_slice()).to_bytes();
-            (public_key, signature)
-        })
-        .collect();
-    signatures.sort_by_key(|entry| entry.0);
+/// A signature list from `(key_id, stored_signature)` pairs, sorted by id.
+fn signature_entries(mut entries: Vec<([u8; 32], Cell)>) -> Cell {
+    entries.sort_by_key(|entry| entry.0);
+    signature_entries_in_order(entries)
+}
+
+/// [`signature_entries`] without sorting, for tests of the order rule.
+fn signature_entries_in_order(entries: Vec<([u8; 32], Cell)>) -> Cell {
+    let count = entries.len() as u8;
     let mut next: Option<Cell> = None;
-    for (public_key, signature) in signatures.into_iter().rev() {
+    for (id, signature) in entries.into_iter().rev() {
         let mut entry = BuilderData::new();
-        entry.append_u256(&public_key).unwrap().append_raw(&signature, 512).unwrap();
-        if let Some(cell) = next {
-            entry.checked_append_reference(cell).unwrap();
+        entry.append_u256(&id).unwrap().checked_append_reference(signature).unwrap();
+        if let Some(link) = next {
+            entry.checked_append_reference(link).unwrap();
         }
         next = Some(entry.into_cell().unwrap());
     }
     let mut root = BuilderData::new();
-    root.append_u8(keys.len() as u8).unwrap().checked_append_reference(next.unwrap()).unwrap();
+    root.append_u8(count).unwrap();
+    if let Some(first) = next {
+        root.checked_append_reference(first).unwrap();
+    }
     root.into_cell().unwrap()
+}
+
+fn signed(key: &RegistryKey, action: &Cell) -> ([u8; 32], Cell) {
+    (key.id(), key.sign(action))
+}
+
+fn signature_set_many(keys: &[&RegistryKey], action: &Cell) -> Cell {
+    signature_entries(keys.iter().map(|key| signed(key, action)).collect())
 }
 
 fn empty_signatures() -> Cell {
@@ -315,17 +391,21 @@ struct Fixture {
     identity_domain: Cell,
     config: Cell,
     contract_code: Cell,
-    old_key: SigningKey,
+    old_key: RegistryKey,
 }
 
 impl Fixture {
     fn new() -> Self {
         // Execute the frozen registry on the current network version, including SHA256C.
+        // The registry admits workchain 0 only; run it there under the genesis
+        // basechain per-transaction gas limit.
         let mut bc =
-            Blockchain::with_global_version(current_network::global_version()).expect("blockchain");
-        bc.set_workchain(-1);
+            Blockchain::with_global_version_and_base_workchain(current_network::global_version())
+                .expect("blockchain");
+        bc.set_workchain(0);
+        bc.set_workchain_gas_limit(NATIVE_REGISTRY_TRANSACTION_GAS_LIMIT);
         let relayer = bc.treasury("native-registry-relayer", 1_000 * TOS).expect("relayer");
-        let old_key = SigningKey::from_bytes(&[0x31; 32]);
+        let old_key = RegistryKey::from_bytes(&[0x31; 32]);
         let old_policy = policy(&old_key);
         let contract_code = code();
         let code_hash = contract_code.hash(0);
@@ -360,7 +440,7 @@ impl Fixture {
         network_id.append_raw(b"tos-testnet", 11 * 8).unwrap();
         let mut runtime = BuilderData::new();
         runtime
-            .append_i32(-1)
+            .append_i32(0)
             .unwrap()
             .append_raw(code_hash.as_slice(), 256)
             .unwrap()
@@ -410,7 +490,7 @@ impl Fixture {
         let state_init =
             StateInit::with_code_and_data(contract_code.clone(), data.into_cell().unwrap());
         let registry_hash = state_init.write_to_new_cell().unwrap().into_cell().unwrap().hash(0);
-        let registry = MsgAddressInt::with_params(-1, registry_hash).expect("registry address");
+        let registry = MsgAddressInt::with_params(0, registry_hash).expect("registry address");
 
         let mut register_payload = BuilderData::new();
         register_payload
@@ -485,7 +565,7 @@ impl Fixture {
 
     fn deploy_agent(
         &mut self,
-        key: &SigningKey,
+        key: &RegistryKey,
         object_nonce: [u8; 32],
     ) -> ([u8; 32], MsgAddressInt) {
         let agent_policy = policy(key);
@@ -519,7 +599,7 @@ impl Fixture {
         let state_init =
             StateInit::with_code_and_data(self.contract_code.clone(), data.into_cell().unwrap());
         let address_hash = state_init.write_to_new_cell().unwrap().into_cell().unwrap().hash(0);
-        let address = MsgAddressInt::with_params(-1, address_hash).expect("agent address");
+        let address = MsgAddressInt::with_params(0, address_hash).expect("agent address");
 
         let mut payload = BuilderData::new();
         payload.append_u256(&object_nonce).unwrap().checked_append_reference(agent_policy).unwrap();
@@ -592,7 +672,7 @@ impl Fixture {
         let state_init =
             StateInit::with_code_and_data(self.contract_code.clone(), data.into_cell().unwrap());
         let address_hash = state_init.write_to_new_cell().unwrap().into_cell().unwrap().hash(0);
-        (MsgAddressInt::with_params(-1, address_hash).expect("object address"), state_init)
+        (MsgAddressInt::with_params(0, address_hash).expect("object address"), state_init)
     }
 
     fn build_capability_action(
@@ -627,7 +707,7 @@ impl Fixture {
         &mut self,
         owner_id: &[u8; 32],
         owner_address: &MsgAddressInt,
-        owner_key: &SigningKey,
+        owner_key: &RegistryKey,
         object_nonce: [u8; 32],
         version: &[u8],
         manifest: [u8; 32],
@@ -799,7 +879,7 @@ fn assert_address_success(result: &SendResult, address: &MsgAddressInt) {
 #[test]
 fn recovery_survives_delegation_and_completes_with_generation_reset() {
     let mut f = Fixture::new();
-    let recovery_key = SigningKey::from_bytes(&[0x52; 32]);
+    let recovery_key = RegistryKey::from_bytes(&[0x52; 32]);
     let recovery_policy = policy(&recovery_key);
     let execute_after = u64::from(f.bc.now()) + 10;
 
@@ -839,7 +919,7 @@ fn recovery_survives_delegation_and_completes_with_generation_reset() {
 #[test]
 fn policy_replacement_invalidates_pending_recovery() {
     let mut f = Fixture::new();
-    let recovery_key = SigningKey::from_bytes(&[0x52; 32]);
+    let recovery_key = RegistryKey::from_bytes(&[0x52; 32]);
     let recovery_policy = policy(&recovery_key);
     let execute_after = u64::from(f.bc.now()) + 10;
 
@@ -859,7 +939,7 @@ fn policy_replacement_invalidates_pending_recovery() {
     ))
     .expect_success();
 
-    let replacement_key = SigningKey::from_bytes(&[0x63; 32]);
+    let replacement_key = RegistryKey::from_bytes(&[0x63; 32]);
     let mut update_payload = BuilderData::new();
     update_payload.checked_append_reference(policy(&replacement_key)).unwrap();
     let update = f.build_action(UPDATE_AGENT_POLICY, 1, 3, 3, update_payload.into_cell().unwrap());
@@ -921,7 +1001,7 @@ fn policy_update_accepts_reachable_purpose_isolation() {
 fn agent_registration_rejects_caller_selected_identity() {
     let mut f = Fixture::new();
     let chosen_id = [0xf1; 32];
-    let chosen_key = SigningKey::from_bytes(&[0xf2; 32]);
+    let chosen_key = RegistryKey::from_bytes(&[0xf2; 32]);
     let chosen_policy = policy(&chosen_key);
     let (address, state_init) = f.object_address(1, &chosen_id);
     let mut payload = BuilderData::new();
@@ -957,7 +1037,7 @@ fn agent_full_lifecycle_replay_revocation_and_terminal_rejection() {
     let mut f = Fixture::new();
     assert_eq!(f.state_position(), (1, 1), "registration position");
 
-    let replacement_key = SigningKey::from_bytes(&[0xa1; 32]);
+    let replacement_key = RegistryKey::from_bytes(&[0xa1; 32]);
     let mut update_payload = BuilderData::new();
     update_payload.checked_append_reference(policy(&replacement_key)).unwrap();
     let update = f.build_action(UPDATE_AGENT_POLICY, 1, 2, 20, update_payload.into_cell().unwrap());
@@ -1066,7 +1146,7 @@ fn agent_rejects_stale_predecessor_skipped_sequence_wrong_target_and_bad_signatu
     .expect_aborted()
     .expect_exit_code(ERR_BAD_ACTION);
 
-    let attacker = SigningKey::from_bytes(&[0xb5; 32]);
+    let attacker = RegistryKey::from_bytes(&[0xb5; 32]);
     let mut unsigned_payload = BuilderData::new();
     unsigned_payload.append_u256(&[0xb6; 32]).unwrap();
     let unsigned = f.build_action(DELEGATE_AGENT, 1, 3, 34, unsigned_payload.into_cell().unwrap());
@@ -1124,8 +1204,8 @@ fn agent_rejects_stale_predecessor_skipped_sequence_wrong_target_and_bad_signatu
 #[test]
 fn recovery_rejects_early_completion_and_superseded_initiation() {
     let mut f = Fixture::new();
-    let first_key = SigningKey::from_bytes(&[0xc1; 32]);
-    let second_key = SigningKey::from_bytes(&[0xc2; 32]);
+    let first_key = RegistryKey::from_bytes(&[0xc1; 32]);
+    let second_key = RegistryKey::from_bytes(&[0xc2; 32]);
     let first_execute_after = u64::from(f.bc.now()) + 10;
 
     let mut first_payload = BuilderData::new();
@@ -1209,8 +1289,8 @@ fn capability_full_lifecycle_transfer_is_atomic_and_terminal() {
     let mut f = Fixture::new();
     let old_owner_id = f.object_id;
     let old_owner_address = f.registry.clone();
-    let old_owner_key = SigningKey::from_bytes(&f.old_key.to_bytes());
-    let new_owner_key = SigningKey::from_bytes(&[0xd1; 32]);
+    let old_owner_key = RegistryKey::from_bytes(&f.old_key.to_bytes());
+    let new_owner_key = RegistryKey::from_bytes(&[0xd1; 32]);
     let (new_owner_id, new_owner_address) = f.deploy_agent(&new_owner_key, [0xd2; 32]);
     let capability = f.register_capability(
         &old_owner_id,
@@ -1423,9 +1503,9 @@ fn capability_rejects_duplicate_version_and_failed_transfer_is_state_atomic() {
     let mut f = Fixture::new();
     let old_owner_id = f.object_id;
     let old_owner_address = f.registry.clone();
-    let old_owner_key = SigningKey::from_bytes(&f.old_key.to_bytes());
-    let new_owner_key = SigningKey::from_bytes(&[0xe1; 32]);
-    let wrong_acceptance_key = SigningKey::from_bytes(&[0xe2; 32]);
+    let old_owner_key = RegistryKey::from_bytes(&f.old_key.to_bytes());
+    let new_owner_key = RegistryKey::from_bytes(&[0xe1; 32]);
+    let wrong_acceptance_key = RegistryKey::from_bytes(&[0xe2; 32]);
     let (new_owner_id, _) = f.deploy_agent(&new_owner_key, [0xe3; 32]);
     let capability = f.register_capability(
         &old_owner_id,
@@ -1534,105 +1614,7 @@ fn capability_rejects_duplicate_version_and_failed_transfer_is_state_atomic() {
     assert_eq!(capability_owner(&f.state_at(&capability.address)), old_owner_id);
 }
 
-mod weak_ed25519;
-
 const ERR_THRESHOLD: i32 = 2209;
-const ERR_WEAK_KEY: i32 = 2214;
-const ALL_PURPOSES: u16 = 0x0f;
-
-/// Exit code a policy naming `key` is refused with. The all-zero key already
-/// fails the older nonzero check, which runs first and answers with
-/// `bad_policy`; every other weak key reaches the weak-key check.
-fn weak_admission_code(key: &[u8; 32]) -> i32 {
-    if key == &[0u8; 32] { ERR_BAD_POLICY } else { ERR_WEAK_KEY }
-}
-
-/// A policy over `(public_key, weight, purposes, recovery)` controllers, sorted
-/// by key the way the contract requires.
-fn policy_of(
-    threshold: u32,
-    recovery_threshold: u32,
-    controllers: &[([u8; 32], u32, u16, bool)],
-) -> Cell {
-    let mut sorted = controllers.to_vec();
-    sorted.sort_by_key(|entry| entry.0);
-    let mut next: Option<Cell> = None;
-    for (public_key, weight, purposes, recovery) in sorted.into_iter().rev() {
-        let mut controller = BuilderData::new();
-        controller
-            .append_u256(&public_key)
-            .unwrap()
-            .append_u256(&public_key)
-            .unwrap()
-            .append_u32(weight)
-            .unwrap()
-            .append_u16(purposes)
-            .unwrap()
-            .append_bit_bool(recovery)
-            .unwrap();
-        if let Some(cell) = next {
-            controller.checked_append_reference(cell).unwrap();
-        }
-        next = Some(controller.into_cell().unwrap());
-    }
-    let mut root = BuilderData::new();
-    root.append_u32(MAGIC_POLICY)
-        .unwrap()
-        .append_u16(1)
-        .unwrap()
-        .append_u32(threshold)
-        .unwrap()
-        .append_u32(recovery_threshold)
-        .unwrap()
-        .append_u64(10)
-        .unwrap()
-        .append_u8(controllers.len() as u8)
-        .unwrap()
-        .checked_append_reference(next.unwrap())
-        .unwrap();
-    root.into_cell().unwrap()
-}
-
-/// A signature list from `(public_key, signature)` pairs, sorted by key.
-fn signature_entries(mut entries: Vec<([u8; 32], [u8; 64])>) -> Cell {
-    entries.sort_by_key(|entry| entry.0);
-    let count = entries.len() as u8;
-    let mut next: Option<Cell> = None;
-    for (public_key, signature) in entries.into_iter().rev() {
-        let mut entry = BuilderData::new();
-        entry.append_u256(&public_key).unwrap().append_raw(&signature, 512).unwrap();
-        if let Some(cell) = next {
-            entry.checked_append_reference(cell).unwrap();
-        }
-        next = Some(entry.into_cell().unwrap());
-    }
-    let mut root = BuilderData::new();
-    root.append_u8(count).unwrap().checked_append_reference(next.unwrap()).unwrap();
-    root.into_cell().unwrap()
-}
-
-fn signed(key: &SigningKey, action: &Cell) -> ([u8; 32], [u8; 64]) {
-    (key.verifying_key().to_bytes(), key.sign(action.hash(0).as_slice()).to_bytes())
-}
-
-/// The order-2 torsion key: canonical, on the curve, and forgeable for about
-/// half of all messages.
-fn forgeable_weak_key() -> [u8; 32] {
-    let key = weak_ed25519::weak_keys()[4];
-    assert_eq!(key[0], 0xec, "the order-2 point (y = -1)");
-    key
-}
-
-/// Builds the action `make(nonce)` for successive nonces until the weak key's
-/// signature over it can be forged, and returns both.
-fn forge_for(weak: &[u8; 32], make: impl Fn(u8) -> Cell) -> (Cell, [u8; 64]) {
-    (100..=255)
-        .find_map(|nonce| {
-            let action = make(nonce);
-            weak_ed25519::forge(weak, action.hash(0).as_slice()).map(|sig| (action, sig))
-        })
-        .expect("some nonce admits a forged signature")
-}
 
 impl Fixture {
     /// Replaces the agent's stored policy without going through any action,
@@ -1692,6 +1674,17 @@ impl Fixture {
         object_nonce: [u8; 32],
         authority: impl Fn(&Cell) -> Cell,
     ) -> (SendResult, MsgAddressInt) {
+        let (deploy, address) = self.registration_message(agent_policy, object_nonce, authority);
+        (self.bc.send_message(deploy).expect("register"), address)
+    }
+
+    /// The deploying registration message [`Fixture::register_with`] sends.
+    fn registration_message(
+        &self,
+        agent_policy: Cell,
+        object_nonce: [u8; 32],
+        authority: impl Fn(&Cell) -> Cell,
+    ) -> (chain_block::Message, MsgAddressInt) {
         let mut identity = BuilderData::new();
         identity
             .append_u32(MAGIC_IDENTITY)
@@ -1724,7 +1717,7 @@ impl Fixture {
             .state_init(state_init)
             .body(submit_body(register.clone(), authority(&register), empty_signatures()))
             .build();
-        (self.bc.send_message(deploy).expect("register"), address)
+        (deploy, address)
     }
 
     fn registered(&self, address: &MsgAddressInt) -> bool {
@@ -1737,279 +1730,41 @@ impl Fixture {
     }
 }
 
-/// Every weak key is refused when an agent registers a policy naming it, even
-/// next to a strong key that alone meets every threshold.
-#[test]
-fn registration_refuses_every_weak_controller_key() {
-    let mut f = Fixture::new();
-    let strong = SigningKey::from_bytes(&[0xc1; 32]);
-    for (i, weak) in weak_ed25519::weak_keys().into_iter().enumerate() {
-        let weak_policy = policy_of(
-            1,
-            1,
-            &[
-                (strong.verifying_key().to_bytes(), 1, ALL_PURPOSES, true),
-                (weak, 1, ALL_PURPOSES, true),
-            ],
-        );
-        let nonce = [0xd0 + i as u8; 32];
-        let (result, address) = f.register_with(weak_policy, nonce, |register| {
-            signature_entries(vec![signed(&strong, register), (weak, [0u8; 64])])
-        });
-        result.expect_aborted().expect_exit_code(weak_admission_code(&weak));
-        assert!(!f.registered(&address), "weak key {i} must not leave a registered agent");
-    }
-    // The same strong key alone registers: the refusals above are the weak key's.
-    let strong_policy =
-        policy_of(1, 1, &[(strong.verifying_key().to_bytes(), 1, ALL_PURPOSES, true)]);
-    let (result, address) = f.register_with(strong_policy, [0xcf; 32], |register| {
-        signature_entries(vec![signed(&strong, register)])
-    });
-    result.expect_success();
-    assert!(f.registered(&address));
-}
-
-/// Every weak key is refused when an existing agent rotates to a policy naming it.
-#[test]
-fn policy_update_refuses_every_weak_controller_key() {
-    let mut f = Fixture::new();
-    let before = f.state().hash(0);
-    let strong = SigningKey::from_bytes(&[0xc2; 32]);
-    for weak in weak_ed25519::weak_keys() {
-        let weak_policy = policy_of(
-            1,
-            1,
-            &[
-                (strong.verifying_key().to_bytes(), 1, ALL_PURPOSES, true),
-                (weak, 1, ALL_PURPOSES, true),
-            ],
-        );
-        let mut payload = BuilderData::new();
-        payload.checked_append_reference(weak_policy).unwrap();
-        let update = f.build_action(UPDATE_AGENT_POLICY, 1, 2, 40, payload.into_cell().unwrap());
-        f.send(submit_body(
-            update.clone(),
-            signature_set(&f.old_key, &update),
-            signature_entries(vec![signed(&strong, &update), (weak, [0u8; 64])]),
-        ))
-        .expect_aborted()
-        .expect_exit_code(weak_admission_code(&weak));
-        assert_eq!(f.state().hash(0), before, "a refused policy must not be installed");
-    }
-}
-
-/// A recovery policy naming a weak key is refused when recovery is initiated.
-#[test]
-fn recovery_initiation_refuses_a_weak_controller_key() {
-    let mut f = Fixture::new();
-    let before = f.state().hash(0);
-    let weak = forgeable_weak_key();
-    let strong = SigningKey::from_bytes(&[0xc3; 32]);
-    let recovery_policy = policy_of(
-        1,
-        1,
-        &[
-            (strong.verifying_key().to_bytes(), 1, ALL_PURPOSES, true),
-            (weak, 1, ALL_PURPOSES, true),
-        ],
-    );
-    let execute_after = u64::from(f.bc.now()) + 10;
-    let (initiate, forged) = forge_for(&weak, |nonce| {
-        let mut payload = BuilderData::new();
-        payload
-            .append_u64(execute_after)
-            .unwrap()
-            .checked_append_reference(recovery_policy.clone())
-            .unwrap();
-        f.build_action(INITIATE_RECOVERY, 1, 2, nonce, payload.into_cell().unwrap())
-    });
-    f.send(submit_body(
-        initiate.clone(),
-        signature_set(&f.old_key, &initiate),
-        signature_entries(vec![signed(&strong, &initiate), (weak, forged)]),
-    ))
-    .expect_aborted()
-    .expect_exit_code(ERR_WEAK_KEY);
-    assert_eq!(f.state().hash(0), before);
-}
-
-/// Proof of possession for a weak key proves nothing: a signature forged with
-/// no secret verifies under it, and the policy is still refused.
-#[test]
-fn a_forged_possession_signature_does_not_install_a_weak_key() {
-    let mut f = Fixture::new();
-    let before = f.state().hash(0);
-    let weak = forgeable_weak_key();
-    let strong = SigningKey::from_bytes(&[0xc4; 32]);
-    let weak_policy = policy_of(
-        1,
-        1,
-        &[
-            (strong.verifying_key().to_bytes(), 1, ALL_PURPOSES, true),
-            (weak, 1, ALL_PURPOSES, true),
-        ],
-    );
-    let (update, forged) = forge_for(&weak, |nonce| {
-        let mut payload = BuilderData::new();
-        payload.checked_append_reference(weak_policy.clone()).unwrap();
-        f.build_action(UPDATE_AGENT_POLICY, 1, 2, nonce, payload.into_cell().unwrap())
-    });
-    f.send(submit_body(
-        update.clone(),
-        signature_set(&f.old_key, &update),
-        signature_entries(vec![signed(&strong, &update), (weak, forged)]),
-    ))
-    .expect_aborted()
-    .expect_exit_code(ERR_WEAK_KEY);
-    assert_eq!(f.state().hash(0), before, "a forged possession proof installed a weak key");
-}
-
-/// A stored policy that names a weak key -- one no action could have installed
-/// -- is refused when it is used, so a threshold met only by counting the weak
-/// key's forged signature authorizes nothing.
-#[test]
-fn a_stored_weak_key_does_not_count_toward_a_threshold() {
-    let mut f = Fixture::new();
-    let weak = forgeable_weak_key();
-    let strong = SigningKey::from_bytes(&[0xc5; 32]);
-    let second = SigningKey::from_bytes(&[0xc6; 32]);
-
-    // Positive control for the injection itself: a stored 2-of-2 of strong keys
-    // authorizes with both signatures and not with one.
-    f.install_policy(policy_of(
-        2,
-        1,
-        &[
-            (strong.verifying_key().to_bytes(), 1, ALL_PURPOSES, true),
-            (second.verifying_key().to_bytes(), 1, ALL_PURPOSES, true),
-        ],
-    ));
-    let one = f.delegate_action(2, 50);
-    f.send(submit_body(one.clone(), signature_set(&strong, &one), empty_signatures()))
-        .expect_aborted()
-        .expect_exit_code(ERR_THRESHOLD);
-    let both = f.delegate_action(2, 51);
-    f.send(submit_body(
-        both.clone(),
-        signature_set_many(&[&strong, &second], &both),
-        empty_signatures(),
-    ))
-    .expect_success();
-    assert_eq!(f.state_position(), (1, 2));
-
-    // The same threshold where the second key is weak: the strong signature
-    // alone is short, and the weak key's forged signature must not fill the gap.
-    f.install_policy(policy_of(
-        2,
-        1,
-        &[
-            (strong.verifying_key().to_bytes(), 1, ALL_PURPOSES, true),
-            (weak, 1, ALL_PURPOSES, true),
-        ],
-    ));
-    let before = f.state().hash(0);
-    let (counted, forged) = forge_for(&weak, |nonce| f.delegate_action(3, nonce));
-    f.send(submit_body(
-        counted.clone(),
-        signature_entries(vec![signed(&strong, &counted), (weak, forged)]),
-        empty_signatures(),
-    ))
-    .expect_aborted()
-    .expect_exit_code(ERR_WEAK_KEY);
-    assert_eq!(f.state().hash(0), before, "a forged weak signature completed a threshold");
-}
-
-/// The identity and the order-2 point spelled with the sign bit set pass a y
-/// range check. Each is refused at admission even with a forged possession
-/// proof, and a stored policy naming one does not let its forged signature
-/// complete a threshold.
-#[test]
-fn sign_bit_aliases_neither_install_nor_count() {
-    let strong = SigningKey::from_bytes(&[0xc7; 32]);
-    for alias in weak_ed25519::sign_bit_aliases() {
-        let alias_policy = |threshold| {
-            policy_of(
-                threshold,
-                1,
-                &[
-                    (strong.verifying_key().to_bytes(), 1, ALL_PURPOSES, true),
-                    (alias, 1, ALL_PURPOSES, true),
-                ],
-            )
-        };
-
-        let mut f = Fixture::new();
-        let before = f.state().hash(0);
-        let (update, forged) = forge_for(&alias, |nonce| {
-            let mut payload = BuilderData::new();
-            payload.checked_append_reference(alias_policy(1)).unwrap();
-            f.build_action(UPDATE_AGENT_POLICY, 1, 2, nonce, payload.into_cell().unwrap())
-        });
-        f.send(submit_body(
-            update.clone(),
-            signature_set(&f.old_key, &update),
-            signature_entries(vec![signed(&strong, &update), (alias, forged)]),
-        ))
-        .expect_aborted()
-        .expect_exit_code(ERR_WEAK_KEY);
-        assert_eq!(f.state().hash(0), before, "a forged possession proof installed an alias");
-
-        f.install_policy(alias_policy(2));
-        let before = f.state().hash(0);
-        let (counted, forged) = forge_for(&alias, |nonce| f.delegate_action(2, nonce));
-        f.send(submit_body(
-            counted.clone(),
-            signature_entries(vec![signed(&strong, &counted), (alias, forged)]),
-            empty_signatures(),
-        ))
-        .expect_aborted()
-        .expect_exit_code(ERR_WEAK_KEY);
-        assert_eq!(f.state().hash(0), before, "an alias's forged signature completed a threshold");
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Supported policy width.
 //
 // Every path that walks a policy or checks a signature per controller is
 // measured at maximum-width inputs: every controller holds every purpose and
-// the recovery flag, every controller signs, and every key takes the weak-key
-// check's longer branch. Each such path must stay within the gas ceiling at
-// the supported width, and one controller more must be refused wherever a
-// policy enters storage.
+// the recovery flag, and every controller signs. Each such path must stay
+// within the gas ceiling at the supported width, and one controller more must
+// be refused wherever a policy enters storage.
 // ---------------------------------------------------------------------------
 
 const MAX_WIDTH: usize = NATIVE_REGISTRY_MAX_POLICY_CONTROLLERS;
 const ERR_POLICY_TOO_WIDE: i32 = NATIVE_REGISTRY_ERR_POLICY_TOO_WIDE;
-/// Enough value for the whole masterchain gas limit and a second leg.
+/// Enough value for the whole basechain gas limit and a second leg.
 const MEASURE_VALUE: u64 = 40 * TOS;
 
-/// `width` deterministic keys whose first byte is below 0xec, where the
-/// weak-key check runs its longer branch.
-fn width_keys(width: usize, salt: u8) -> Vec<SigningKey> {
-    let mut keys = Vec::with_capacity(width);
-    let mut counter: u32 = 0;
-    while keys.len() < width {
-        let mut seed = vec![salt];
-        seed.extend_from_slice(&counter.to_be_bytes());
-        counter += 1;
-        let key = SigningKey::from_bytes(&bytes_hash(&seed));
-        if key.verifying_key().to_bytes()[0] < 0xec {
-            keys.push(key);
-        }
-    }
-    keys
+/// `width` deterministic keys, distinct per `salt`.
+fn width_keys(width: usize, salt: u8) -> Vec<RegistryKey> {
+    (0..width as u32)
+        .map(|counter| {
+            let mut seed = vec![salt];
+            seed.extend_from_slice(&counter.to_be_bytes());
+            RegistryKey::from_bytes(&bytes_hash(&seed))
+        })
+        .collect()
 }
 
 /// Every key holds every purpose and the recovery flag with weight 1, and both
 /// thresholds need every key.
-fn wide_policy(keys: &[SigningKey]) -> Cell {
-    let controllers: Vec<_> =
-        keys.iter().map(|key| (key.verifying_key().to_bytes(), 1, ALL_PURPOSES, true)).collect();
+fn wide_policy(keys: &[RegistryKey]) -> Cell {
+    let controllers: Vec<ControllerSpec> =
+        keys.iter().map(|key| (key, 1, ALL_PURPOSES, true)).collect();
     policy_of(keys.len() as u32, keys.len() as u32, &controllers)
 }
 
-fn all_sign(keys: &[SigningKey], action: &Cell) -> Cell {
+fn all_sign(keys: &[RegistryKey], action: &Cell) -> Cell {
     signature_entries(keys.iter().map(|key| signed(key, action)).collect())
 }
 
@@ -2246,7 +2001,7 @@ fn measure_paths(width: usize, next_width: usize) -> PathGas {
         authorize_revoke_version = gas_at(&result, &owner);
         assert_address_success(&result, &capability.address);
 
-        let placeholder = SigningKey::from_bytes(&[0x6b; 32]);
+        let placeholder = RegistryKey::from_bytes(&[0x6b; 32]);
         let (new_owner_id, new_owner) = f.deploy_agent(&placeholder, [0x6c; 32]);
         f.install_policy_at(&new_owner, &new_owner_id, wide_policy(&next_keys));
         let mut payload = BuilderData::new();
@@ -2293,7 +2048,7 @@ fn measure_paths(width: usize, next_width: usize) -> PathGas {
 }
 
 /// Every policy-walking path succeeds at the supported width, from and to a
-/// maximum-width policy, within the gas ceiling of the masterchain limit. A
+/// maximum-width policy, within the registry's gas ceiling. A
 /// cost increase that erodes the headroom fails here before it can strand a
 /// supported policy.
 #[test]
@@ -2311,13 +2066,130 @@ fn every_policy_path_fits_the_gas_ceiling_at_the_supported_width() {
     }
 }
 
+/// Largest external message a validator accepts (genesis ConfigParam 43,
+/// `max_ext_msg_size`).
+const MAX_EXTERNAL_MESSAGE_BYTES: usize = 65_535;
+
+/// The relayer route's external message around `internal`: an `ext_in`
+/// header to the relayer wallet and a wallet v3r2 request -- placeholder
+/// signature, the TOS `global_id`, subwallet, expiry, seqno and send mode --
+/// carrying the internal message to the registry. The wallet's signature
+/// authorizes only the transport; the registry's authority is the ML-DSA-44
+/// signature sets inside the body.
+fn relayer_external_bytes(internal: &chain_block::Message) -> usize {
+    use chain_block::{ExternalInboundMessageHeader, Message, MsgAddressExt, UInt256};
+    let mut wallet_body = BuilderData::new();
+    wallet_body
+        .append_raw(&[0x5e; 64], 512)
+        .unwrap()
+        .append_i32(2)
+        .unwrap()
+        .append_u32(698_983_191)
+        .unwrap()
+        .append_u32(1_800_000_000)
+        .unwrap()
+        .append_u32(7)
+        .unwrap()
+        .append_u8(3)
+        .unwrap()
+        .checked_append_reference(internal.serialize().unwrap())
+        .unwrap();
+    let header = ExternalInboundMessageHeader {
+        src: MsgAddressExt::AddrNone,
+        dst: MsgAddressInt::with_params(0, UInt256::from([0x77; 32])).unwrap(),
+        import_fee: Default::default(),
+    };
+    let message = Message::with_ext_in_header_and_body(
+        header,
+        SliceData::load_cell(wallet_body.into_cell().unwrap()).unwrap(),
+    );
+    chain_block::write_boc(&message.serialize().unwrap()).unwrap().len()
+}
+
+/// Every path's relayer message at the supported width fits one external
+/// message: registration (it carries the code and account data), and the
+/// paths that carry two maximum-width signature sets -- a disjoint policy
+/// update, a recovery initiation, and the transfer leg that carries both
+/// owners' sets. This bounds the route's envelope as built here; the gate on
+/// the exact bytes the relayer wallet broadcasts is run against a test
+/// network.
+#[test]
+fn every_widest_relayer_message_fits_one_external_message() {
+    let keys = width_keys(MAX_WIDTH, 1);
+    let next_keys = width_keys(MAX_WIDTH, 2);
+    let mut f = Fixture::new();
+    f.install_policy(wide_policy(&keys));
+    let to_registry = |f: &Fixture, destination: &MsgAddressInt, body: Cell| {
+        MessageBuilder::internal(f.relayer.address(), destination, MEASURE_VALUE).body(body).build()
+    };
+
+    let (registration, _) =
+        f.registration_message(wide_policy(&keys), [0x60; 32], |action| all_sign(&keys, action));
+
+    let mut payload = BuilderData::new();
+    payload.checked_append_reference(wide_policy(&next_keys)).unwrap();
+    let update = f.build_action(UPDATE_AGENT_POLICY, 1, 2, 0x63, payload.into_cell().unwrap());
+    let update = to_registry(
+        &f,
+        &f.registry,
+        submit_body(update.clone(), all_sign(&keys, &update), all_sign(&next_keys, &update)),
+    );
+
+    let mut payload = BuilderData::new();
+    payload
+        .append_u64(u64::from(f.bc.now()) + 10)
+        .unwrap()
+        .checked_append_reference(wide_policy(&next_keys))
+        .unwrap();
+    let initiate = f.build_action(INITIATE_RECOVERY, 1, 2, 0x64, payload.into_cell().unwrap());
+    let initiate = to_registry(
+        &f,
+        &f.registry,
+        submit_body(initiate.clone(), all_sign(&keys, &initiate), all_sign(&next_keys, &initiate)),
+    );
+
+    let mut payload = BuilderData::new();
+    payload.append_u256(&f.object_id).unwrap().append_u256(&[0x6c; 32]).unwrap();
+    let (capability, _) = f.object_address(2, &[0x66; 32]);
+    let transfer = f.build_capability_action(
+        TRANSFER_CAPABILITY,
+        &[0x66; 32],
+        &capability,
+        1,
+        1,
+        0x6d,
+        payload.into_cell().unwrap(),
+    );
+    let transfer = to_registry(
+        &f,
+        &f.registry,
+        authorization_body(
+            transfer.clone(),
+            all_sign(&keys, &transfer),
+            all_sign(&next_keys, &transfer),
+        ),
+    );
+
+    for (path, message) in [
+        ("register_agent", registration),
+        ("update_agent_policy", update),
+        ("initiate_recovery", initiate),
+        ("transfer_capability", transfer),
+    ] {
+        let bytes = relayer_external_bytes(&message);
+        eprintln!(
+            "width {MAX_WIDTH}: {path}: external message {bytes} B of {MAX_EXTERNAL_MESSAGE_BYTES}"
+        );
+        assert!(bytes <= MAX_EXTERNAL_MESSAGE_BYTES, "{path}: {bytes} B exceeds max_ext_msg_size");
+    }
+}
+
 /// The capacity table behind the supported width. Run with
 /// `--ignored --nocapture`.
 #[test]
 #[ignore = "measurement sweep; prints the gas table"]
 fn policy_width_gas_table() {
-    let mut cases: Vec<(usize, usize)> =
-        [1, 4, 8, 12, 16, 18, 20, 21, 22, 24, 26, 28].iter().map(|w| (*w, *w)).collect();
+    let mut cases: Vec<(usize, usize)> = [1, 2, 4, 6, 8, 9].iter().map(|w| (*w, *w)).collect();
     cases.extend([(MAX_WIDTH, 1), (1, MAX_WIDTH)]);
     for (width, next_width) in cases {
         let gas = measure_paths(width, next_width);
@@ -2332,11 +2204,12 @@ fn policy_width_gas_table() {
 
 // One controller more than the supported width is refused with its own exit
 // code wherever a policy enters storage -- registration, policy update and
-// recovery initiation -- and a stored policy that wide, which only a
-// hand-built state could carry, authorizes nothing. Each admission point has
-// its own test so that each one's guard is shown to be what refuses it.
+// recovery initiation. Each admission point has its own test so that each
+// one's guard is shown to be what refuses it. A stored policy is never
+// re-validated: only an admitted policy is ever stored, so the bound on what
+// a stored policy can authorize is the signature-list bound.
 
-fn too_wide_keys() -> Vec<SigningKey> {
+fn too_wide_keys() -> Vec<RegistryKey> {
     width_keys(MAX_WIDTH + 1, 4)
 }
 
@@ -2363,7 +2236,7 @@ fn registration_refuses_a_policy_wider_than_supported() {
 /// the same update to the supported width is installed.
 #[test]
 fn policy_update_refuses_a_policy_wider_than_supported() {
-    let update_to = |f: &mut Fixture, keys: &[SigningKey]| {
+    let update_to = |f: &mut Fixture, keys: &[RegistryKey]| {
         let mut payload = BuilderData::new();
         payload.checked_append_reference(wide_policy(keys)).unwrap();
         let update = f.build_action(UPDATE_AGENT_POLICY, 1, 2, 0x72, payload.into_cell().unwrap());
@@ -2389,7 +2262,7 @@ fn policy_update_refuses_a_policy_wider_than_supported() {
 /// initiation, while recovery toward the supported width is accepted.
 #[test]
 fn recovery_initiation_refuses_a_policy_wider_than_supported() {
-    let initiate_to = |f: &mut Fixture, keys: &[SigningKey]| {
+    let initiate_to = |f: &mut Fixture, keys: &[RegistryKey]| {
         let execute_after = u64::from(f.bc.now()) + 10;
         let mut payload = BuilderData::new();
         payload
@@ -2416,10 +2289,12 @@ fn recovery_initiation_refuses_a_policy_wider_than_supported() {
     assert_eq!(f.state_position(), (1, 2));
 }
 
-/// A stored policy wider than supported authorizes nothing, even with every
-/// one of its controllers signing.
+/// A stored policy wider than supported, which only a hand-built state could
+/// carry, is not re-validated; a threshold that needs every one of its
+/// controllers still cannot be met, because a signature list longer than the
+/// supported width is refused first.
 #[test]
-fn a_stored_policy_wider_than_supported_authorizes_nothing() {
+fn a_stored_policy_wider_than_supported_cannot_be_met_by_all_its_controllers() {
     let wide_keys = too_wide_keys();
     let mut f = Fixture::new();
     f.install_policy(wide_policy(&wide_keys));
@@ -2431,7 +2306,7 @@ fn a_stored_policy_wider_than_supported_authorizes_nothing() {
         MEASURE_VALUE,
     )
     .expect_aborted()
-    .expect_exit_code(ERR_POLICY_TOO_WIDE);
+    .expect_exit_code(ERR_THRESHOLD);
     assert_eq!(f.state().hash(0), before);
 }
 
@@ -2445,7 +2320,7 @@ fn a_signature_list_longer_than_the_supported_width_is_refused_unread() {
     f.install_policy(wide_policy(&keys));
     let before = f.state().hash(0);
     let delegate = f.delegate_action(2, 0x75);
-    let mut signers: Vec<SigningKey> = keys.clone();
+    let mut signers: Vec<RegistryKey> = keys.clone();
     signers.push(extra);
     f.send_value(
         f.registry.clone(),
@@ -2470,14 +2345,14 @@ fn a_signature_list_longer_than_the_supported_width_is_refused_unread() {
 /// refuses one controller more than the contract admits.
 #[test]
 fn the_client_builder_matches_the_contract_and_refuses_the_same_width() {
-    let to_policy = |keys: &[SigningKey]| NativePolicy {
+    let to_policy = |keys: &[RegistryKey]| NativePolicy {
         threshold: keys.len() as u32,
         recovery_threshold: keys.len() as u32,
         recovery_timelock: 10,
         controllers: keys
             .iter()
             .map(|key| NativePolicyController {
-                public_key: key.verifying_key().to_bytes(),
+                public_key: key.public_key().to_vec(),
                 weight: 1,
                 purposes: ALL_PURPOSES,
             })
@@ -2550,7 +2425,7 @@ fn protocol_text_with_an_empty_tail_cell_is_refused() {
     let mut f = Fixture::new();
     let owner_id = f.object_id;
     let owner_address = f.registry.clone();
-    let owner_key = SigningKey::from_bytes(&f.old_key.to_bytes());
+    let owner_key = RegistryKey::from_bytes(&f.old_key.to_bytes());
     let capability = f.register_capability(
         &owner_id,
         &owner_address,
@@ -2602,6 +2477,588 @@ fn protocol_text_with_an_empty_tail_cell_is_refused() {
     let gas = gas_at(&result, &capability.address);
     assert!(!gas.aborted && gas.exit == 0, "the canonical text was refused: {gas:?}");
     assert_eq!(capability_position(&f.state_at(&capability.address)), (1, 2));
+}
+
+// ---------------------------------------------------------------------------
+// ML-DSA-44 controllers: adversarial cases.
+//
+// Each refusal leaves the agent's state exactly as it was. Where a check is the
+// contract's own, the exit code is the registry's; where the material reaches
+// PQCHECKSIG_MLDSA44 malformed, the instruction itself refuses it (exit 9), and
+// a cell that is not ordinary is refused by the codec's parse (exit 63) before
+// anything is read from it.
+// ---------------------------------------------------------------------------
+
+const ERR_WRONG_CONTRACT: i32 = 2202;
+const ERR_DUPLICATE_SIGNATURE: i32 = 2213;
+const EXIT_CELL_UNDERFLOW: i32 = 9;
+const EXIT_NOT_ORDINARY: i32 = 63;
+
+/// The same cell, presented as a reference into the library collection.
+fn library_reference(root: &Cell) -> Cell {
+    let mut data = vec![0x80u8; 34];
+    data[0] = u8::from(chain_block::CellType::LibraryReference);
+    data[1..33].copy_from_slice(root.repr_hash().as_slice());
+    Cell::with_cell_impl(
+        chain_block::DataCell::with_params(
+            vec![],
+            &data,
+            chain_block::CellType::LibraryReference,
+            0,
+            None,
+        )
+        .expect("a library reference"),
+    )
+}
+
+/// [`byte_chain`] with the cell at `index` (and so everything after it)
+/// replaced by a library reference to it.
+fn chain_with_library_at(bytes: &[u8], index: usize) -> Cell {
+    let chunks: Vec<&[u8]> = bytes.chunks(CHUNK_BYTES).collect();
+    let mut next: Option<Cell> = None;
+    for (position, chunk) in chunks.iter().enumerate().rev() {
+        let mut cell = BuilderData::new();
+        cell.append_raw(chunk, chunk.len() * 8).unwrap();
+        if let Some(link) = next {
+            cell.checked_append_reference(link).unwrap();
+        }
+        let cell = cell.into_cell().unwrap();
+        next = Some(if position == index { library_reference(&cell) } else { cell });
+    }
+    next.unwrap()
+}
+
+/// A chain carrying `bytes` whose first cell holds `first` bytes instead of a
+/// full 127: the same bytes in a non-canonical shape.
+fn non_canonical_chain(bytes: &[u8], first: usize) -> Cell {
+    let (head, tail) = bytes.split_at(first);
+    let mut cell = BuilderData::new();
+    cell.append_raw(head, head.len() * 8)
+        .unwrap()
+        .checked_append_reference(byte_chain(tail))
+        .unwrap();
+    cell.into_cell().unwrap()
+}
+
+/// A stored wrapper with one data bit, or one reference, after the chain.
+fn wrapper_with_trailing(bytes: &[u8], extra_reference: bool) -> Cell {
+    let mut wrapper = BuilderData::new();
+    wrapper
+        .append_u32(bytes.len() as u32)
+        .unwrap()
+        .checked_append_reference(byte_chain(bytes))
+        .unwrap();
+    if extra_reference {
+        wrapper.checked_append_reference(Cell::default()).unwrap();
+    } else {
+        wrapper.append_bit_one().unwrap();
+    }
+    wrapper.into_cell().unwrap()
+}
+
+/// The exit code `result` aborted with on `address`, asserting that it did.
+fn refusal(result: &SendResult, address: &MsgAddressInt) -> i32 {
+    let gas = gas_at(result, address);
+    assert!(gas.aborted, "expected a refusal, got {gas:?}");
+    gas.exit
+}
+
+impl Fixture {
+    /// A policy update to `next` authorized by the fixture's key, with the
+    /// possession set `possession` builds over the action.
+    fn update_to(
+        &mut self,
+        next: Cell,
+        nonce: u8,
+        possession: impl Fn(&Cell) -> Cell,
+    ) -> SendResult {
+        let mut payload = BuilderData::new();
+        payload.checked_append_reference(next).unwrap();
+        let update =
+            self.build_action(UPDATE_AGENT_POLICY, 1, 2, nonce, payload.into_cell().unwrap());
+        let authority = signature_set(&self.old_key, &update);
+        let counterparty = possession(&update);
+        self.send_value(
+            self.registry.clone(),
+            submit_body(update, authority, counterparty),
+            MEASURE_VALUE,
+        )
+    }
+
+    /// A delegation authorized by the signature set `authority` builds.
+    fn delegate_by(&mut self, nonce: u8, authority: impl Fn(&Cell) -> Cell) -> SendResult {
+        let delegate = self.delegate_action(2, nonce);
+        let signatures = authority(&delegate);
+        self.send_value(
+            self.registry.clone(),
+            submit_body(delegate, signatures, empty_signatures()),
+            MEASURE_VALUE,
+        )
+    }
+
+    /// Asserts that `result` was refused with `code` and changed nothing.
+    fn assert_refused(&self, result: &SendResult, code: i32, before: &Cell, case: &str) {
+        assert_eq!(refusal(result, &self.registry), code, "{case}");
+        assert_eq!(self.state().hash(0), before.hash(0), "{case} changed state");
+    }
+}
+
+/// A signature by the right key over the right action, but under any context
+/// other than the registry's -- none, a near miss, the consensus key-identity
+/// domain or a consensus role -- does not authorize: one key may serve several
+/// roles without a signature in one being usable in another.
+#[test]
+fn a_signature_under_another_context_is_refused() {
+    let mut f = Fixture::new();
+    let before = f.state();
+    let contexts: [&[u8]; 4] =
+        [b"", b"TOS-NATIVE-REGISTRY-v2", b"TOS-PQ-CONSENSUS-KEY-v1", b"TOS-CONSENSUS-VOTE"];
+    for (i, context) in contexts.into_iter().enumerate() {
+        let key = f.old_key.clone();
+        let result = f.delegate_by(0x80 + i as u8, |action| {
+            let signature = stored(&key.signature_bytes(action, context, &[0x5a; 32]));
+            signature_entries(vec![(key.id(), signature)])
+        });
+        f.assert_refused(&result, ERR_BAD_SIGNATURE, &before, "foreign context");
+    }
+    let key = f.old_key.clone();
+    f.delegate_by(0x84, |action| signature_set(&key, action)).expect_success();
+    assert_eq!(f.state_position(), (1, 2));
+}
+
+/// A controller whose declared id is another key's -- a victim's -- is
+/// refused even though the signature verifies against the key it carries:
+/// the id is derived from the verified key and must equal the declared one.
+#[test]
+fn a_controller_id_that_does_not_match_its_key_is_refused() {
+    let mut f = Fixture::new();
+    let before = f.state();
+    let attacker = RegistryKey::from_bytes(&[0x85; 32]);
+    let victim = RegistryKey::from_bytes(&[0x86; 32]);
+    let forged =
+        policy_cells(1, 1, vec![(victim.id(), attacker.stored_key(), 1, ALL_PURPOSES, true)]);
+    let result = f.update_to(forged, 0x85, |action| {
+        signature_entries(vec![(victim.id(), attacker.sign(action))])
+    });
+    f.assert_refused(&result, ERR_BAD_POLICY, &before, "mismatched key id");
+
+    let honest = policy(&attacker);
+    f.update_to(honest, 0x86, |action| signature_set(&attacker, action)).expect_success();
+    assert_eq!(f.state_position(), (1, 2));
+}
+
+/// Stored key wrappers of the wrong declared length, with trailing data, or
+/// carrying a key in a non-canonical, short or long chain are refused at
+/// admission.
+#[test]
+fn malformed_stored_keys_are_refused() {
+    let mut f = Fixture::new();
+    let before = f.state();
+    let key = RegistryKey::from_bytes(&[0x87; 32]);
+    let bytes = key.public_key().to_vec();
+    let mut long = bytes.clone();
+    long.push(0);
+    let cases: Vec<(&str, Cell, i32)> = vec![
+        ("declared one byte short", stored_with_length(1311, byte_chain(&bytes)), ERR_BAD_POLICY),
+        ("declared as an Ed25519 key", stored_with_length(32, byte_chain(&bytes)), ERR_BAD_POLICY),
+        ("short chain", stored_with_length(1312, byte_chain(&bytes[..1311])), EXIT_CELL_UNDERFLOW),
+        ("long chain", stored_with_length(1312, byte_chain(&long)), EXIT_CELL_UNDERFLOW),
+        (
+            "non-canonical chain",
+            stored_with_length(1312, non_canonical_chain(&bytes, 126)),
+            EXIT_CELL_UNDERFLOW,
+        ),
+        ("trailing bit", wrapper_with_trailing(&bytes, false), EXIT_CELL_UNDERFLOW),
+        ("trailing reference", wrapper_with_trailing(&bytes, true), EXIT_CELL_UNDERFLOW),
+    ];
+    for (i, (case, wrapper, code)) in cases.into_iter().enumerate() {
+        let next = policy_cells(1, 1, vec![(key.id(), wrapper, 1, ALL_PURPOSES, true)]);
+        let result = f.update_to(next, 0x90 + i as u8, |action| signature_set(&key, action));
+        f.assert_refused(&result, code, &before, case);
+    }
+}
+
+/// Stored signature wrappers of the wrong declared length, with trailing
+/// data, or in a non-canonical, short or long chain do not authorize.
+#[test]
+fn malformed_stored_signatures_are_refused() {
+    let mut f = Fixture::new();
+    let before = f.state();
+    let key = f.old_key.clone();
+    let cases: [(&str, i32); 7] = [
+        ("declared one byte short", ERR_BAD_SIGNATURE),
+        ("declared as an Ed25519 signature", ERR_BAD_SIGNATURE),
+        ("short chain", EXIT_CELL_UNDERFLOW),
+        ("long chain", EXIT_CELL_UNDERFLOW),
+        ("non-canonical chain", EXIT_CELL_UNDERFLOW),
+        ("trailing bit", EXIT_CELL_UNDERFLOW),
+        ("trailing reference", EXIT_CELL_UNDERFLOW),
+    ];
+    for (i, (case, code)) in cases.into_iter().enumerate() {
+        let result = f.delegate_by(0xa0 + i as u8, |action| {
+            let bytes = key.signature_bytes(action, SIGNATURE_CONTEXT, &[0x5a; 32]);
+            assert_eq!(bytes.len(), ML_DSA_44_SIGNATURE_BYTES);
+            let mut long = bytes.clone();
+            long.push(0);
+            let wrapper = match i {
+                0 => stored_with_length(2419, byte_chain(&bytes)),
+                1 => stored_with_length(64, byte_chain(&bytes)),
+                2 => stored_with_length(2420, byte_chain(&bytes[..2419])),
+                3 => stored_with_length(2420, byte_chain(&long)),
+                4 => stored_with_length(2420, non_canonical_chain(&bytes, 126)),
+                5 => wrapper_with_trailing(&bytes, false),
+                _ => wrapper_with_trailing(&bytes, true),
+            };
+            signature_entries(vec![(key.id(), wrapper)])
+        });
+        f.assert_refused(&result, code, &before, case);
+    }
+}
+
+/// A library reference in place of a controller cell, a stored key wrapper,
+/// a key chain's first or a continuation cell, a signature wrapper or a
+/// signature chain cell is refused: the registry reads material as itself,
+/// never as a reference to it.
+#[test]
+fn library_cells_in_place_of_key_or_signature_cells_are_refused() {
+    let mut f = Fixture::new();
+    let before = f.state();
+    let key = RegistryKey::from_bytes(&[0x88; 32]);
+    let bytes = key.public_key().to_vec();
+
+    let mut controller_as_library = None;
+    let honest = policy(&key);
+    {
+        let mut root = SliceData::load_cell(honest.clone()).unwrap();
+        let header = root.get_next_slice(32 + 16 + 32 + 32 + 64 + 8).unwrap();
+        let controller = root.checked_drain_reference().unwrap();
+        let mut rebuilt = BuilderData::new();
+        rebuilt
+            .append_builder(&header.as_builder().unwrap())
+            .unwrap()
+            .checked_append_reference(library_reference(&controller))
+            .unwrap();
+        controller_as_library.replace(rebuilt.into_cell().unwrap());
+    }
+    let key_cases: Vec<(&str, Cell, i32)> = vec![
+        ("controller cell", controller_as_library.unwrap(), EXIT_NOT_ORDINARY),
+        (
+            "stored key wrapper",
+            policy_cells(
+                1,
+                1,
+                vec![(key.id(), library_reference(&key.stored_key()), 1, ALL_PURPOSES, true)],
+            ),
+            EXIT_NOT_ORDINARY,
+        ),
+        (
+            "first key chain cell",
+            policy_cells(
+                1,
+                1,
+                vec![(
+                    key.id(),
+                    stored_with_length(1312, chain_with_library_at(&bytes, 0)),
+                    1,
+                    ALL_PURPOSES,
+                    true,
+                )],
+            ),
+            EXIT_CELL_UNDERFLOW,
+        ),
+        (
+            "key continuation cell",
+            policy_cells(
+                1,
+                1,
+                vec![(
+                    key.id(),
+                    stored_with_length(1312, chain_with_library_at(&bytes, 5)),
+                    1,
+                    ALL_PURPOSES,
+                    true,
+                )],
+            ),
+            EXIT_CELL_UNDERFLOW,
+        ),
+    ];
+    for (i, (case, next, code)) in key_cases.into_iter().enumerate() {
+        let result = f.update_to(next, 0xb0 + i as u8, |action| signature_set(&key, action));
+        f.assert_refused(&result, code, &before, case);
+    }
+
+    let signer = f.old_key.clone();
+    let signature_cases: [(&str, i32); 3] = [
+        ("signature wrapper", EXIT_NOT_ORDINARY),
+        ("first signature chain cell", EXIT_CELL_UNDERFLOW),
+        ("signature continuation cell", EXIT_CELL_UNDERFLOW),
+    ];
+    for (i, (case, code)) in signature_cases.into_iter().enumerate() {
+        let result = f.delegate_by(0xb8 + i as u8, |action| {
+            let bytes = signer.signature_bytes(action, SIGNATURE_CONTEXT, &[0x5a; 32]);
+            let wrapper = match i {
+                0 => library_reference(&stored(&bytes)),
+                1 => stored_with_length(2420, chain_with_library_at(&bytes, 0)),
+                _ => stored_with_length(2420, chain_with_library_at(&bytes, 9)),
+            };
+            signature_entries(vec![(signer.id(), wrapper)])
+        });
+        f.assert_refused(&result, code, &before, case);
+    }
+    f.update_to(honest, 0xbf, |action| signature_set(&key, action)).expect_success();
+}
+
+/// Signature entries must be strictly ascending by key id: a repeated or an
+/// out-of-order entry is refused when authorizing, and a possession set out of
+/// the policy's order is refused at admission.
+#[test]
+fn duplicate_and_out_of_order_signature_entries_are_refused() {
+    let mut f = Fixture::new();
+    let mut keys = vec![RegistryKey::from_bytes(&[0x89; 32]), RegistryKey::from_bytes(&[0x8a; 32])];
+    keys.sort_by_key(RegistryKey::id);
+    f.install_policy(wide_policy(&keys));
+    let before = f.state();
+
+    let (low, high) = (keys[0].clone(), keys[1].clone());
+    let result = f.delegate_by(0xc0, |action| {
+        signature_entries_in_order(vec![signed(&high, action), signed(&low, action)])
+    });
+    f.assert_refused(&result, ERR_DUPLICATE_SIGNATURE, &before, "out of order");
+    let result = f.delegate_by(0xc1, |action| {
+        signature_entries_in_order(vec![signed(&low, action), signed(&low, action)])
+    });
+    f.assert_refused(&result, ERR_DUPLICATE_SIGNATURE, &before, "repeated entry");
+
+    let mut payload = BuilderData::new();
+    let next = RegistryKey::from_bytes(&[0x8b; 32]);
+    let mut next_keys = vec![next.clone(), RegistryKey::from_bytes(&[0x8c; 32])];
+    next_keys.sort_by_key(RegistryKey::id);
+    payload.checked_append_reference(wide_policy(&next_keys)).unwrap();
+    let update = f.build_action(UPDATE_AGENT_POLICY, 1, 2, 0xc3, payload.into_cell().unwrap());
+    let reversed = signature_entries_in_order(vec![
+        signed(&next_keys[1], &update),
+        signed(&next_keys[0], &update),
+    ]);
+    let result = f.send_value(
+        f.registry.clone(),
+        submit_body(update.clone(), all_sign(&keys, &update), reversed),
+        MEASURE_VALUE,
+    );
+    f.assert_refused(&result, ERR_BAD_SIGNATURE, &before, "possession out of policy order");
+    f.send_value(
+        f.registry.clone(),
+        submit_body(update.clone(), all_sign(&keys, &update), all_sign(&next_keys, &update)),
+        MEASURE_VALUE,
+    )
+    .expect_success();
+    assert_eq!(f.state_position(), (1, 2));
+}
+
+/// ML-DSA-44 signing is randomized: one action has many valid signature sets.
+/// Whichever arrives first makes the one transition; a second, differently
+/// signed copy of the same action changes nothing.
+#[test]
+fn two_valid_signature_sets_for_one_action_make_one_transition() {
+    let mut f = Fixture::new();
+    let next = RegistryKey::from_bytes(&[0x8d; 32]);
+    let mut payload = BuilderData::new();
+    payload.checked_append_reference(policy(&next)).unwrap();
+    let update = f.build_action(UPDATE_AGENT_POLICY, 1, 2, 0xd0, payload.into_cell().unwrap());
+    let signed_with = |key: &RegistryKey, randomness: [u8; 32]| {
+        let signature = stored(&key.signature_bytes(&update, SIGNATURE_CONTEXT, &randomness));
+        signature_entries(vec![(key.id(), signature)])
+    };
+    let first = submit_body(
+        update.clone(),
+        signed_with(&f.old_key, [0x01; 32]),
+        signed_with(&next, [0x02; 32]),
+    );
+    let second = submit_body(
+        update.clone(),
+        signed_with(&f.old_key, [0x03; 32]),
+        signed_with(&next, [0x04; 32]),
+    );
+    assert_ne!(first.hash(0), second.hash(0), "the two signature sets must differ");
+
+    f.send(first).expect_success();
+    let applied = f.state();
+    assert_eq!(f.state_position(), (1, 2));
+    let result = f.send(second);
+    let gas = gas_at(&result, &f.registry);
+    assert_eq!(
+        f.state().hash(0),
+        applied.hash(0),
+        "a re-signed copy made a second transition: {gas:?}"
+    );
+    assert_eq!(f.state_position(), (1, 2));
+}
+
+/// The previous Ed25519 layouts -- a controller of two 256-bit key fields and
+/// no stored key, and a signature entry of a key and 512 signature bits -- are
+/// refused, not read as something else.
+#[test]
+fn ed25519_shaped_policies_and_signature_entries_are_refused() {
+    let mut f = Fixture::new();
+    let before = f.state();
+    let ed25519 = ed25519_dalek::SigningKey::from_bytes(&[0x8e; 32]);
+    let public_key = ed25519.verifying_key().to_bytes();
+
+    let mut controller = BuilderData::new();
+    controller
+        .append_u256(&public_key)
+        .unwrap()
+        .append_u256(&public_key)
+        .unwrap()
+        .append_u32(1)
+        .unwrap()
+        .append_u16(ALL_PURPOSES)
+        .unwrap()
+        .append_bit_one()
+        .unwrap();
+    let mut root = BuilderData::new();
+    root.append_u32(MAGIC_POLICY)
+        .unwrap()
+        .append_u16(1)
+        .unwrap()
+        .append_u32(1)
+        .unwrap()
+        .append_u32(1)
+        .unwrap()
+        .append_u64(10)
+        .unwrap()
+        .append_u8(1)
+        .unwrap()
+        .checked_append_reference(controller.into_cell().unwrap())
+        .unwrap();
+    let old_policy = root.into_cell().unwrap();
+    let result = f.update_to(old_policy, 0xe0, |action| {
+        use ed25519_dalek::Signer;
+        let mut entry = BuilderData::new();
+        entry
+            .append_u256(&public_key)
+            .unwrap()
+            .append_raw(&ed25519.sign(action.hash(0).as_slice()).to_bytes(), 512)
+            .unwrap();
+        let mut set = BuilderData::new();
+        set.append_u8(1).unwrap().checked_append_reference(entry.into_cell().unwrap()).unwrap();
+        set.into_cell().unwrap()
+    });
+    let code = refusal(&result, &f.registry);
+    assert!(code == ERR_BAD_POLICY || code == EXIT_CELL_UNDERFLOW, "Ed25519 policy: exit {code}");
+    assert_eq!(f.state().hash(0), before.hash(0));
+
+    let result = f.delegate_by(0xe1, |action| {
+        use ed25519_dalek::Signer;
+        let mut entry = BuilderData::new();
+        entry
+            .append_u256(&fixture_controller_id())
+            .unwrap()
+            .append_raw(&ed25519.sign(action.hash(0).as_slice()).to_bytes(), 512)
+            .unwrap();
+        let mut set = BuilderData::new();
+        set.append_u8(1).unwrap().checked_append_reference(entry.into_cell().unwrap()).unwrap();
+        set.into_cell().unwrap()
+    });
+    f.assert_refused(&result, EXIT_CELL_UNDERFLOW, &before, "Ed25519 signature entry");
+}
+
+/// The id of the fixture's own controller, so that an Ed25519-shaped entry
+/// names a real member and is refused for its shape alone.
+fn fixture_controller_id() -> [u8; 32] {
+    RegistryKey::from_bytes(&[0x31; 32]).id()
+}
+
+/// Rebuilds the fixture's configuration with its runtime workchain set to
+/// `workchain`.
+fn config_in_workchain(config: &Cell, workchain: i32) -> Cell {
+    let mut outer = SliceData::load_cell(config.clone()).unwrap();
+    let roots = outer.get_next_slice(256 * 3).unwrap();
+    let mut runtime = SliceData::load_cell(outer.checked_drain_reference().unwrap()).unwrap();
+    runtime.move_by(32).unwrap();
+    let code_hash = runtime.get_next_bytes(32).unwrap();
+    let network_id = runtime.checked_drain_reference().unwrap();
+    let code = runtime.checked_drain_reference().unwrap();
+    let mut rebuilt = BuilderData::new();
+    rebuilt
+        .append_i32(workchain)
+        .unwrap()
+        .append_raw(&code_hash, 256)
+        .unwrap()
+        .checked_append_reference(network_id)
+        .unwrap()
+        .checked_append_reference(code)
+        .unwrap();
+    let mut next = BuilderData::new();
+    next.append_builder(&roots.as_builder().unwrap())
+        .unwrap()
+        .checked_append_reference(rebuilt.into_cell().unwrap())
+        .unwrap();
+    next.into_cell().unwrap()
+}
+
+/// The registry admits workchain 0 only: a registry whose configuration
+/// names the masterchain, or one deployed in the masterchain under a
+/// workchain-0 configuration, registers nothing.
+#[test]
+fn a_registry_outside_workchain_zero_registers_nothing() {
+    let mut f = Fixture::new();
+    let key = RegistryKey::from_bytes(&[0x8f; 32]);
+    for (i, (config_workchain, address_workchain)) in [(-1, -1), (0, -1)].into_iter().enumerate() {
+        let agent_policy = policy(&key);
+        let nonce = [0xf0 + i as u8; 32];
+        let mut identity = BuilderData::new();
+        identity
+            .append_u32(MAGIC_IDENTITY)
+            .unwrap()
+            .append_u8(1)
+            .unwrap()
+            .append_u256(&nonce)
+            .unwrap()
+            .append_raw(agent_policy.hash(0).as_slice(), 256)
+            .unwrap()
+            .checked_append_reference(f.identity_domain.clone())
+            .unwrap();
+        let object_id = *identity.into_cell().unwrap().hash(0).as_slice();
+        let config = config_in_workchain(&f.config, config_workchain);
+        let mut data = BuilderData::new();
+        data.append_u32(MAGIC_DATA)
+            .unwrap()
+            .append_u16(1)
+            .unwrap()
+            .append_u8(1)
+            .unwrap()
+            .append_u256(&object_id)
+            .unwrap()
+            .checked_append_reference(config)
+            .unwrap()
+            .append_bit_zero()
+            .unwrap();
+        let state_init =
+            StateInit::with_code_and_data(f.contract_code.clone(), data.into_cell().unwrap());
+        let address_hash = state_init.write_to_new_cell().unwrap().into_cell().unwrap().hash(0);
+        let address = MsgAddressInt::with_params(address_workchain, address_hash).unwrap();
+        let mut payload = BuilderData::new();
+        payload.append_u256(&nonce).unwrap().checked_append_reference(agent_policy).unwrap();
+        let register = action(
+            REGISTER_AGENT,
+            1,
+            1,
+            1,
+            &object_id,
+            &[0; 32],
+            nonce[0],
+            &f.domain,
+            payload.into_cell().unwrap(),
+        );
+        let deploy = MessageBuilder::internal(f.relayer.address(), &address, 20 * TOS)
+            .bounce(false)
+            .state_init(state_init)
+            .body(submit_body(register.clone(), signature_set(&key, &register), empty_signatures()))
+            .build();
+        let result = f.bc.send_message(deploy).expect("registration outside workchain 0");
+        assert_eq!(refusal(&result, &address), ERR_WRONG_CONTRACT, "config {config_workchain}");
+        assert!(!f.registered(&address));
+    }
 }
 
 #[path = "served/service_journey.rs"]
