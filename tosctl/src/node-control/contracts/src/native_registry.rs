@@ -361,7 +361,7 @@ pub fn build_native_action(
         .append_raw(&action.nonce, 256)?;
     out.checked_append_reference(chain.into_cell()?)?;
     out.checked_append_reference(action.payload.clone())?;
-    Ok(out.into_cell()?)
+    out.into_cell()
 }
 
 /// Check exact action shape and configured domain before requesting a signature.
@@ -652,7 +652,7 @@ fn native_identity_domain(domain: &NativeRegistryDomain) -> Result<Cell> {
     b.append_raw(&domain.genesis_root, 256)?
         .append_raw(&domain.genesis_file, 256)?
         .append_raw(&domain.network_tag, 256)?;
-    Ok(b.into_cell()?)
+    b.into_cell()
 }
 
 /// Use the existing admission-checked policy builder before deriving an Agent ID.
@@ -854,7 +854,7 @@ pub(crate) fn native_signature_chain(
     if let Some(cell) = next {
         root.checked_append_reference(cell)?;
     }
-    Ok(root.into_cell()?)
+    root.into_cell()
 }
 
 /// Build the caller-to-Agent envelope after exact domain and signature checks.
@@ -895,7 +895,7 @@ pub fn build_native_submission(
     body.checked_append_reference(action.clone())?;
     body.checked_append_reference(auth)?;
     body.checked_append_reference(counter)?;
-    Ok(body.into_cell()?)
+    body.into_cell()
 }
 
 #[cfg(test)]
@@ -1118,7 +1118,7 @@ fn native_protocol_text(text: &[u8]) -> Result<([u8; 32], Cell)> {
 pub fn build_native_update_policy_payload(next: &NativePolicy) -> Result<Cell> {
     let mut b = BuilderData::new();
     b.checked_append_reference(build_policy(next)?)?;
-    Ok(b.into_cell()?)
+    b.into_cell()
 }
 
 /// Payload of a delegation: a nonzero 256-bit delegation id.
@@ -1126,7 +1126,7 @@ pub fn build_native_delegate_payload(delegation: [u8; 32]) -> Result<Cell> {
     anyhow::ensure!(delegation != [0; 32], "zero native registry delegation");
     let mut b = BuilderData::new();
     b.append_raw(&delegation, 256)?;
-    Ok(b.into_cell()?)
+    b.into_cell()
 }
 
 /// Payload of a recovery initiation: the unix time after which it may complete
@@ -1139,7 +1139,7 @@ pub fn build_native_initiate_recovery_payload(
     anyhow::ensure!(execute_after > 0, "zero native registry recovery time");
     let mut b = BuilderData::new();
     b.append_u64(execute_after)?.checked_append_reference(build_policy(recovery)?)?;
-    Ok(b.into_cell()?)
+    b.into_cell()
 }
 
 /// Payload of a recovery completion: the hash of the initiating action.
@@ -1147,12 +1147,12 @@ pub fn build_native_complete_recovery_payload(initiation: [u8; 32]) -> Result<Ce
     anyhow::ensure!(initiation != [0; 32], "zero native registry recovery initiation");
     let mut b = BuilderData::new();
     b.append_raw(&initiation, 256)?;
-    Ok(b.into_cell()?)
+    b.into_cell()
 }
 
 /// Payload of an Agent revocation: empty.
 pub fn build_native_revoke_agent_payload() -> Result<Cell> {
-    Ok(BuilderData::new().into_cell()?)
+    BuilderData::new().into_cell()
 }
 
 /// Payload of a new Capability version under its current owner Agent.
@@ -1169,7 +1169,7 @@ pub fn build_native_add_version_payload(
         .append_raw(&version_hash, 256)?
         .append_raw(&manifest_digest, 256)?
         .checked_append_reference(name)?;
-    Ok(b.into_cell()?)
+    b.into_cell()
 }
 
 /// Payload of a Capability transfer between two distinct owner Agents.
@@ -1181,7 +1181,7 @@ pub fn build_native_transfer_payload(old_owner: [u8; 32], new_owner: [u8; 32]) -
     anyhow::ensure!(old_owner != new_owner, "native registry transfer to the same owner");
     let mut b = BuilderData::new();
     b.append_raw(&old_owner, 256)?.append_raw(&new_owner, 256)?;
-    Ok(b.into_cell()?)
+    b.into_cell()
 }
 
 /// Payload of a Capability revocation: the whole Capability (tombstone) when
@@ -1202,7 +1202,7 @@ pub fn build_native_revoke_capability_payload(
             b.append_bit_one()?.append_raw(&hash, 256)?.checked_append_reference(name)?;
         }
     }
-    Ok(b.into_cell()?)
+    b.into_cell()
 }
 
 fn next_bytes32(s: &mut chain_block::SliceData, what: &str) -> Result<[u8; 32]> {

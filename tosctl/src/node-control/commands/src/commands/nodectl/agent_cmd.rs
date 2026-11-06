@@ -9,6 +9,7 @@
 
 use super::capability_registry_cmd::CapabilityRegistryCmd;
 use super::dispute_cmd::DisputeCmd;
+use super::native_registry_cmd::NativeRegistryCmd;
 use super::output_format::OutputFormat;
 use super::prediction_cmd::PredictionCmd;
 use super::proof_attestation_cmd::ProofAttestationCmd;
@@ -117,6 +118,8 @@ pub enum AgentAction {
     Task(AgentTaskCmd),
     /// Capability Registry operations
     Registry(CapabilityRegistryCmd),
+    /// Native Registry Agents and Capabilities: build, sign and read (never sends)
+    NativeRegistry(NativeRegistryCmd),
     /// Service Actor operations
     Service(ServiceActorCmd),
     /// Dispute case operations
@@ -1610,6 +1613,7 @@ impl AgentCmd {
             AgentAction::Account(cmd) => cmd.run(&self.config).await,
             AgentAction::Task(cmd) => cmd.run(&self.config).await,
             AgentAction::Registry(cmd) => cmd.run(&self.config).await,
+            AgentAction::NativeRegistry(cmd) => cmd.run(&self.config).await,
             AgentAction::Service(cmd) => cmd.run(&self.config).await,
             AgentAction::Dispute(cmd) => cmd.run(&self.config).await,
             AgentAction::Attestation(cmd) => cmd.run(&self.config).await,
