@@ -8,6 +8,11 @@
 //! `tosctl agent native-registry`: build, sign and read for the TOS Native
 //! Service Registry (`crypto/smartcont/native-registry-code.fc`).
 //!
+//! Controllers are ML-DSA-44 keys. Each is held in the vault as its 32-byte
+//! key-generation seed under the secret id `native-registry-<name>`, created by
+//! `new-controller`; `controller` prints its public key and key id for a policy
+//! file. The seed is read into this process to sign and wiped afterwards.
+//!
 //! No command here sends anything. `register-agent` and `action` read the chain,
 //! refuse before signing every action the contract would refuse for a reason
 //! visible in the state they read (judged at that view's chain time), sign with
@@ -26,7 +31,7 @@
 //! against the chain the RPC serves (zero state, and the label against
 //! `tos:global-id:<ConfigParam 19>`) before anything is signed.
 
-use super::agent_cmd::{parse_required_hash, sign_hash_with_vault_key};
+use super::agent_cmd::parse_required_hash;
 use super::output_format::OutputFormat;
 use super::utils::{load_config_vault_rpc_client, try_create_rpc_client};
 use anyhow::Context;
@@ -35,14 +40,15 @@ use chain_block::{
     Cell, ConfigParamEnum, MsgAddressInt, Serializable, read_single_root_boc, write_boc,
 };
 use chain_rpc_client::v2::{client_json_rpc::ClientJsonRpc, data_models::AccountState};
-use common::app_config::KeyConfig;
 use contracts::native_registry::*;
+use secrets_vault::types::secret_id::SecretId;
 use secrets_vault::vault::SecretVault;
 use std::{
     io::Read,
     path::{Path, PathBuf},
     sync::Arc,
 };
+use zeroize::Zeroizing;
 
 /// Largest global config this command reads.
 const MAX_GLOBAL_CONFIG_BYTES: u64 = 16 << 20;
@@ -68,9 +74,13 @@ enum NativeRegistrySubcommand {
     /// Build and sign an Agent registration: StateInit, body and address
     RegisterAgent(RegisterAgentCmd),
     /// Build and sign an action on a registered Agent or Capability
-    Action(ActionCmd),
+    Action(Box<ActionCmd>),
     /// Read and decode one registry object
     Show(ShowCmd),
+    /// Create an ML-DSA-44 registry controller in the vault
+    NewController(NewControllerCmd),
+    /// Print a registry controller's public key and key id
+    Controller(ControllerCmd),
 }
 
 impl NativeRegistryCmd {
@@ -80,6 +90,8 @@ impl NativeRegistryCmd {
             NativeRegistrySubcommand::RegisterAgent(cmd) => cmd.run(config_path).await,
             NativeRegistrySubcommand::Action(cmd) => cmd.run(config_path).await,
             NativeRegistrySubcommand::Show(cmd) => cmd.run(config_path).await,
+            NativeRegistrySubcommand::NewController(cmd) => cmd.run(config_path).await,
+            NativeRegistrySubcommand::Controller(cmd) => cmd.run(config_path).await,
         }
     }
 }
@@ -182,9 +194,9 @@ struct ActionCmd {
     version: Option<String>,
     #[arg(long, help = "32-byte hex manifest digest (register-capability, add-version)")]
     manifest: Option<String>,
-    #[arg(long = "signer", required = true, help = "Vault key of an authority signer")]
+    #[arg(long = "signer", required = true, help = "Registry controller of an authority signer")]
     signers: Vec<String>,
-    #[arg(long = "counter-signer", help = "Vault key of a counterparty signer")]
+    #[arg(long = "counter-signer", help = "Registry controller of a counterparty signer")]
     counter_signers: Vec<String>,
     #[arg(short, long, default_value = "json")]
     format: OutputFormat,
@@ -261,10 +273,11 @@ trait RegistryChain {
     ) -> anyhow::Result<(Option<NativeRegistryObject>, u64)>;
 }
 
-/// Controller keys by name: their public keys and signatures over a hash.
+/// Registry controllers by name: their key ids and their signatures over an
+/// action.
 trait ControllerSigner {
-    async fn public_key(&self, name: &str) -> anyhow::Result<[u8; 32]>;
-    async fn sign(&self, name: &str, hash: &[u8; 32]) -> anyhow::Result<[u8; 64]>;
+    async fn key_id(&self, name: &str) -> anyhow::Result<[u8; 32]>;
+    async fn sign(&self, name: &str, action: &Cell) -> anyhow::Result<NativeControllerSignature>;
 }
 
 /// One account as the RPC returns it: state, raw code and data BOCs, and the
@@ -356,23 +369,142 @@ impl<T: ChainSource> RegistryChain for RpcChain<'_, T> {
     }
 }
 
+/// Length of an ML-DSA-44 key-generation seed.
+const CONTROLLER_SEED_BYTES: usize = 32;
+
+/// The vault secret holding registry controller `name`.
+fn controller_secret_id(name: &str) -> anyhow::Result<SecretId> {
+    anyhow::ensure!(
+        !name.is_empty()
+            && name.len() <= 64
+            && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'),
+        "a registry controller name is 1..=64 characters of [A-Za-z0-9_-]"
+    );
+    Ok(SecretId::from(format!("native-registry-{name}")))
+}
+
+/// Reads registry controller `name`'s seed from the vault.
+async fn read_controller_seed(
+    vault: &SecretVault,
+    name: &str,
+) -> anyhow::Result<Zeroizing<[u8; CONTROLLER_SEED_BYTES]>> {
+    let id = controller_secret_id(name)?;
+    let secret = vault
+        .get(&id)
+        .await
+        .with_context(|| format!("read the registry controller native-registry-{name}"))?;
+    let blob = secret
+        .as_blob()
+        .with_context(|| format!("native-registry-{name} is not a registry controller"))?;
+    anyhow::ensure!(
+        blob.metadata().algorithm == secrets_vault::types::algorithm::Algorithm::None,
+        "native-registry-{name} is not a registry controller"
+    );
+    let data = blob.data().await?;
+    let guard = data.lock().await?;
+    anyhow::ensure!(
+        guard.len() == CONTROLLER_SEED_BYTES,
+        "native-registry-{name} is not an ML-DSA-44 controller seed"
+    );
+    let mut seed = Zeroizing::new([0u8; CONTROLLER_SEED_BYTES]);
+    seed.copy_from_slice(&guard[..]);
+    Ok(seed)
+}
+
 struct VaultSigner(Arc<SecretVault>);
 
 impl ControllerSigner for VaultSigner {
-    async fn public_key(&self, name: &str) -> anyhow::Result<[u8; 32]> {
-        let secret =
-            KeyConfig::VaultKey { name: name.to_owned() }.read_secret(Some(self.0.clone())).await?;
-        let raw = secret
-            .as_keypair()?
-            .public_key()
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("vault key '{name}' has no public key"))?;
-        raw.try_into().map_err(|_| anyhow::anyhow!("vault key '{name}' is not an Ed25519 key"))
+    async fn key_id(&self, name: &str) -> anyhow::Result<[u8; 32]> {
+        let seed = read_controller_seed(&self.0, name).await?;
+        controller_key_id(&native_public_key_from_seed(&seed))
     }
 
-    async fn sign(&self, name: &str, hash: &[u8; 32]) -> anyhow::Result<[u8; 64]> {
-        sign_hash_with_vault_key(name, hash, self.0.clone()).await
+    async fn sign(&self, name: &str, action: &Cell) -> anyhow::Result<NativeControllerSignature> {
+        let seed = read_controller_seed(&self.0, name).await?;
+        sign_native_action(&seed, action)
     }
+}
+
+/// `new-controller`: a fresh ML-DSA-44 controller seed from the operating
+/// system's CSPRNG, stored only if no controller of that name exists.
+#[derive(clap::Args, Clone)]
+struct NewControllerCmd {
+    #[arg(long, help = "Controller name; stored as vault secret native-registry-<name>")]
+    name: String,
+    #[arg(short, long, default_value = "json")]
+    format: OutputFormat,
+}
+
+impl NewControllerCmd {
+    async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+        controller_secret_id(&self.name)?;
+        let (_, vault) = super::utils::load_config_vault(Path::new(config_path)).await?;
+        print_view(&store_new_controller(&vault, &self.name).await?, &self.format)
+    }
+}
+
+/// Generates and stores a new controller, refusing a name already in use, and
+/// returns its public view.
+async fn store_new_controller(
+    vault: &SecretVault,
+    name: &str,
+) -> anyhow::Result<serde_json::Value> {
+    use rand::RngCore;
+    use secrets_vault::crypto::factory::{AutoCryptoFactory, CryptoFactory};
+    let id = controller_secret_id(name)?;
+    {
+        let mut seed = Zeroizing::new([0u8; CONTROLLER_SEED_BYTES]);
+        rand::rngs::OsRng.fill_bytes(seed.as_mut());
+        anyhow::ensure!(seed.iter().any(|b| *b != 0), "the CSPRNG returned an all-zero seed");
+        let metadata = secrets_vault::types::metadata::Metadata::new(
+            Some(&id),
+            secrets_vault::types::algorithm::Algorithm::None,
+            true,
+        );
+        let secret = secrets_vault::types::secret::Secret::from_raw_data(
+            seed.as_ref(),
+            metadata,
+            AutoCryptoFactory {}.new_crypto()?,
+        )
+        .await?;
+        vault
+            .put(&secret, secrets_vault::types::store_mode::StoreMode::NewOnly)
+            .await
+            .with_context(|| format!("store the registry controller native-registry-{name}"))?;
+        vault.flush().await?;
+        controller_view(name, &seed)
+    }
+}
+
+/// `controller`: the public key and key id of an existing controller, as a
+/// policy file names it.
+#[derive(clap::Args, Clone)]
+struct ControllerCmd {
+    #[arg(long, help = "Controller name (vault secret native-registry-<name>)")]
+    name: String,
+    #[arg(short, long, default_value = "json")]
+    format: OutputFormat,
+}
+
+impl ControllerCmd {
+    async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+        let (_, vault) = super::utils::load_config_vault(Path::new(config_path)).await?;
+        let seed = read_controller_seed(&vault, &self.name).await?;
+        print_view(&controller_view(&self.name, &seed)?, &self.format)
+    }
+}
+
+fn controller_view(
+    name: &str,
+    seed: &[u8; CONTROLLER_SEED_BYTES],
+) -> anyhow::Result<serde_json::Value> {
+    let public_key = native_public_key_from_seed(seed);
+    Ok(serde_json::json!({
+        "name": name,
+        "suite": "ML-DSA-44",
+        "key_id": hex::encode(controller_key_id(&public_key)?),
+        "public_key": hex::encode(&public_key),
+    }))
 }
 
 #[derive(serde::Deserialize)]
@@ -398,11 +530,15 @@ fn parse_policy(bytes: &[u8]) -> anyhow::Result<NativePolicy> {
         .controllers
         .iter()
         .map(|c| {
-            Ok(NativePolicyController {
-                public_key: parse_required_hash("public_key", &Some(c.public_key.clone()))?,
-                weight: c.weight,
-                purposes: c.purposes,
-            })
+            let text = c.public_key.strip_prefix("0x").unwrap_or(&c.public_key);
+            let public_key = hex::decode(text).context("controller public_key hex")?;
+            anyhow::ensure!(
+                public_key.len() == NATIVE_REGISTRY_PUBLIC_KEY_BYTES,
+                "controller public_key is an ML-DSA-44 key of {NATIVE_REGISTRY_PUBLIC_KEY_BYTES} \
+                 bytes, not {}",
+                public_key.len()
+            );
+            Ok(NativePolicyController { public_key, weight: c.weight, purposes: c.purposes })
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
     let policy = NativePolicy {
@@ -691,28 +827,35 @@ fn plan_action(
     })
 }
 
+/// The key ids of the named controllers, for the threshold and possession
+/// checks that run before anything is signed.
 async fn public_keys<S: ControllerSigner>(
     signer: &S,
     names: &[String],
 ) -> anyhow::Result<Vec<[u8; 32]>> {
     let mut keys = Vec::with_capacity(names.len());
     for name in names {
-        keys.push(signer.public_key(name).await?);
+        keys.push(signer.key_id(name).await?);
     }
     Ok(keys)
 }
 
+/// One signature per named controller, each from the key whose id the checks
+/// were run against.
 async fn sign_all<S: ControllerSigner>(
     signer: &S,
     names: &[String],
     keys: &[[u8; 32]],
     action: &Cell,
 ) -> anyhow::Result<Vec<NativeControllerSignature>> {
-    let hash = *action.repr_hash().as_array();
     let mut out = Vec::with_capacity(names.len());
-    for (name, public_key) in names.iter().zip(keys) {
-        let signature = signer.sign(name, &hash).await?;
-        out.push(NativeControllerSignature { public_key: *public_key, signature });
+    for (name, key_id) in names.iter().zip(keys) {
+        let signature = signer.sign(name, action).await?;
+        anyhow::ensure!(
+            signature.key_id()? == *key_id,
+            "controller {name} signed with a key other than the one checked"
+        );
+        out.push(signature);
     }
     Ok(out)
 }
@@ -1078,9 +1221,15 @@ mod tests {
             .expect("domain")
     }
 
+    /// The public key of a deliberately public deterministic test fixture,
+    /// never an operational key.
+    fn public(seed: u8) -> Vec<u8> {
+        native_public_key_from_seed(&[seed; 32])
+    }
+
+    /// The key id of fixture controller `seed`.
     fn key(seed: u8) -> [u8; 32] {
-        // Deliberately public deterministic test fixture, never an operational key.
-        ed25519_dalek::SigningKey::from_bytes(&[seed; 32]).verifying_key().to_bytes()
+        controller_key_id(&public(seed)).expect("fixture key id")
     }
 
     fn one_key_policy(seed: u8, timelock: u64) -> NativePolicy {
@@ -1089,7 +1238,7 @@ mod tests {
             recovery_threshold: 1,
             recovery_timelock: timelock,
             controllers: vec![NativePolicyController {
-                public_key: key(seed),
+                public_key: public(seed),
                 weight: 1,
                 purposes: 15,
             }],
@@ -1165,6 +1314,47 @@ mod tests {
         plan_action(&loaded(), kind, &input, objects, &signers, &counter, [0x77; 32], now)
     }
 
+    /// A controller created in a real file vault reads back as the same key,
+    /// signs a verifiable registry signature, and cannot be overwritten; a
+    /// secret that is not a controller seed, and a malformed name, are refused.
+    #[tokio::test]
+    async fn controllers_live_in_the_vault_as_ml_dsa_44_seeds() {
+        let vault = super::super::utils::test_vault::with_ed25519_keys(&[(
+            "native-registry-ed25519",
+            true,
+        )])
+        .await;
+        let vault = vault.open().await;
+        let view = store_new_controller(&vault, "alice").await.expect("create controller");
+        let public_key =
+            hex::decode(view["public_key"].as_str().expect("public key")).expect("hex");
+        assert_eq!(public_key.len(), NATIVE_REGISTRY_PUBLIC_KEY_BYTES);
+        let signer = VaultSigner(vault.clone());
+        let key_id = signer.key_id("alice").await.expect("key id");
+        assert_eq!(hex::encode(key_id), view["key_id"].as_str().expect("key id"));
+        assert_eq!(controller_key_id(&public_key).expect("derived id"), key_id);
+
+        let action = Cell::default();
+        let signature = signer.sign("alice", &action).await.expect("sign");
+        assert_eq!(signature.public_key, public_key);
+        verify_native_signature(&public_key, &signature.signature, action.repr_hash().as_array())
+            .expect("a registry signature");
+
+        let again = store_new_controller(&vault, "alice").await;
+        assert!(again.is_err(), "an existing controller was overwritten");
+        assert_eq!(signer.key_id("alice").await.expect("key id"), key_id);
+
+        let refused = signer.key_id("ed25519").await.err().map(|e| e.to_string());
+        assert!(
+            refused.as_deref().is_some_and(|e| e.contains("not a registry controller")),
+            "an Ed25519 key was read as a controller: {refused:?}"
+        );
+        assert!(signer.key_id("missing").await.is_err());
+        for name in ["", "with space", "../escape", &"x".repeat(65)] {
+            assert!(controller_secret_id(name).is_err(), "name {name:?} accepted");
+        }
+    }
+
     #[test]
     fn domain_comes_from_the_global_config_and_an_explicit_label() {
         let d = loaded();
@@ -1186,9 +1376,16 @@ mod tests {
         let good = format!(
             r#"{{"threshold":1,"recovery_threshold":1,"recovery_timelock":60,
                 "controllers":[{{"public_key":"{}","weight":1,"purposes":15}}]}}"#,
-            hex::encode(key(1))
+            hex::encode(public(1))
         );
         assert_eq!(parse_policy(good.as_bytes()).expect("policy"), one_key_policy(1, 60));
+        // A key of any other length, an Ed25519-sized one among them, is refused.
+        let ed25519_sized = good.replacen(&hex::encode(public(1)), &hex::encode([7u8; 32]), 1);
+        assert!(
+            parse_policy(ed25519_sized.as_bytes())
+                .err()
+                .is_some_and(|e| e.to_string().contains("ML-DSA-44"))
+        );
         let extra = good.replacen("\"threshold\"", "\"extra\":1,\"threshold\"", 1);
         assert!(parse_policy(extra.as_bytes()).is_err());
         let unreachable = good.replacen("\"threshold\":1", "\"threshold\":2", 1);
@@ -1463,14 +1660,16 @@ mod tests {
     }
 
     impl ControllerSigner for CountingSigner {
-        async fn public_key(&self, name: &str) -> anyhow::Result<[u8; 32]> {
+        async fn key_id(&self, name: &str) -> anyhow::Result<[u8; 32]> {
             Ok(key(Self::seed(name)?))
         }
-        async fn sign(&self, name: &str, hash: &[u8; 32]) -> anyhow::Result<[u8; 64]> {
-            use ed25519_dalek::Signer;
+        async fn sign(
+            &self,
+            name: &str,
+            action: &Cell,
+        ) -> anyhow::Result<NativeControllerSignature> {
             self.signatures.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            let signing = ed25519_dalek::SigningKey::from_bytes(&[Self::seed(name)?; 32]);
-            Ok(signing.sign(hash).to_bytes())
+            sign_native_action(&[Self::seed(name)?; 32], action)
         }
     }
 
