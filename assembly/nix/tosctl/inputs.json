@@ -6,6 +6,8 @@
     "crypto/pq",
     "crypto/smartcont/prediction-market-v1.boc.base64",
     "crypto/smartcont/relayer-bond-v1.boc.base64",
+    "crypto/smartcont/tos-service-native-registry-v1.boc.base64",
+    "crypto/smartcont/tos-service-native-registry-v1.release.json",
     "third-party/mldsa-native",
     "third-party/falcon-reference",
     "third-party/slhdsa-c",
