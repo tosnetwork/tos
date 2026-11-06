@@ -144,6 +144,53 @@ pub fn stored_bytes(bytes: &[u8]) -> Result<Cell> {
     wrapper.into_cell()
 }
 
+/// The bytes a stored wrapper `len:uint32 ^chain` carries, refusing anything
+/// but the canonical shape [`stored_bytes`] writes: exactly `expected` bytes,
+/// full 127-byte cells each with one continuation, and a non-empty last cell
+/// without one. Exotic cells are refused.
+pub fn read_stored_bytes(stored: &Cell, expected: usize) -> Result<Vec<u8>> {
+    use anyhow::ensure;
+    use chain_block::SliceData;
+    ensure!(
+        stored.cell_type() == chain_block::CellType::Ordinary,
+        "stored material is not an ordinary cell"
+    );
+    let mut wrapper = SliceData::load_cell(stored.clone())?;
+    ensure!(
+        usize::try_from(wrapper.get_next_u32()?)? == expected,
+        "stored material is not {expected} bytes"
+    );
+    let mut cursor = wrapper.checked_drain_reference()?;
+    ensure!(
+        wrapper.remaining_bits() == 0 && wrapper.remaining_references() == 0,
+        "stored material wrapper has trailing data"
+    );
+    let mut bytes = Vec::with_capacity(expected);
+    loop {
+        ensure!(
+            cursor.cell_type() == chain_block::CellType::Ordinary,
+            "stored material chain cell is not ordinary"
+        );
+        let mut cell = SliceData::load_cell(cursor.clone())?;
+        let bits = cell.remaining_bits();
+        ensure!(bits % 8 == 0, "stored material chain cell is not byte-aligned");
+        let length = bits / 8;
+        let total = bytes.len().checked_add(length).ok_or_else(|| anyhow!("overflow"))?;
+        ensure!(length > 0 && total <= expected, "stored material chain length");
+        bytes.extend_from_slice(&cell.get_next_bytes(length)?);
+        match cell.remaining_references() {
+            0 => break,
+            1 => {
+                ensure!(length == CHAIN_CHUNK_BYTES, "stored material chain is not canonical");
+                cursor = cell.checked_drain_reference()?;
+            }
+            _ => anyhow::bail!("stored material chain cell has more than one continuation"),
+        }
+    }
+    ensure!(bytes.len() == expected, "stored material is not {expected} bytes");
+    Ok(bytes)
+}
+
 /// Serializes `policy` in the registry's canonical form: controllers sorted by
 /// key id, each `key_id weight purposes recovery ^stored_key`, linked to the
 /// next.
@@ -599,6 +646,7 @@ pub fn build_native_registry_deployment(
     use chain_block::Serializable;
     use sha2::{Digest, Sha256};
     validate_native_domain(domain)?;
+    ensure!(workchain == 0, "the native registry runs in workchain 0 only, not {workchain}");
     ensure!(matches!(object_kind, 1 | 2), "native registry object kind");
     ensure!(object_id != [0; 32], "zero native registry object identity");
     ensure!((1..=127).contains(&network_label.len()), "native registry network label length");
@@ -659,10 +707,12 @@ mod deployment_tests {
             address.address().storage(),
             init.write_to_new_cell()?.into_cell()?.repr_hash().as_slice()
         );
-        let (_, other) =
-            build_native_registry_deployment(&d, 1, [3; 32], -1, b"fixture-network", &code)?;
-        assert_ne!(address, other);
-        assert_ne!(address.address(), other.address());
+        let refused =
+            build_native_registry_deployment(&d, 1, [3; 32], -1, b"fixture-network", &code)
+                .err()
+                .map(|e| e.to_string())
+                .unwrap_or_default();
+        assert!(refused.contains("workchain 0 only"), "masterchain deployment: {refused}");
         let mut changed = d.clone();
         changed.genesis_file[0] ^= 1;
         let (_, other) =
@@ -792,7 +842,7 @@ mod registration_tests {
             recovery_threshold: 1,
             recovery_timelock: 10,
             controllers: vec![NativePolicyController {
-                public_key: [9; 32],
+                public_key: native_public_key_from_seed(&[9; 32]),
                 weight: 1,
                 purposes: 15,
             }],
@@ -870,12 +920,80 @@ mod registration_tests {
     }
 }
 
-/// Public controller signature bytes supplied by a separate custody owner.
+/// An ML-DSA-44 controller signature over an action, with the key that made it.
 /// Cryptographic validity does not establish membership in a current policy.
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NativeControllerSignature {
-    pub public_key: [u8; 32],
-    pub signature: [u8; 64],
+    /// The controller's ML-DSA-44 public key,
+    /// [`NATIVE_REGISTRY_PUBLIC_KEY_BYTES`] long.
+    pub public_key: Vec<u8>,
+    /// Pure ML-DSA-44 over the 32 bytes of the action hash under
+    /// [`NATIVE_REGISTRY_SIGNATURE_CONTEXT`], [`NATIVE_REGISTRY_SIGNATURE_BYTES`]
+    /// long.
+    pub signature: Vec<u8>,
+}
+
+impl NativeControllerSignature {
+    /// The registry's identity for the signing key.
+    pub fn key_id(&self) -> Result<[u8; 32]> {
+        controller_key_id(&self.public_key)
+    }
+}
+
+/// Verifies a registry signature over `action_hash` exactly as
+/// PQCHECKSIG_MLDSA44 will: Pure ML-DSA-44 under the registry context.
+pub fn verify_native_signature(
+    public_key: &[u8],
+    signature: &[u8],
+    action_hash: &[u8; 32],
+) -> Result<()> {
+    use fips204::ml_dsa_44;
+    use fips204::traits::{SerDes, Verifier};
+    let key: [u8; NATIVE_REGISTRY_PUBLIC_KEY_BYTES] = public_key.try_into().map_err(|_| {
+        anyhow!(
+            "a native registry key is {NATIVE_REGISTRY_PUBLIC_KEY_BYTES} bytes, not {}",
+            public_key.len()
+        )
+    })?;
+    let signature: [u8; NATIVE_REGISTRY_SIGNATURE_BYTES] = signature.try_into().map_err(|_| {
+        anyhow!(
+            "a native registry signature is {NATIVE_REGISTRY_SIGNATURE_BYTES} bytes, not {}",
+            signature.len()
+        )
+    })?;
+    let key = ml_dsa_44::PublicKey::try_from_bytes(key)
+        .map_err(|e| anyhow!("native registry signature key: {e}"))?;
+    anyhow::ensure!(
+        key.verify(action_hash, &signature, NATIVE_REGISTRY_SIGNATURE_CONTEXT),
+        "native registry signature verification failed"
+    );
+    Ok(())
+}
+
+/// The ML-DSA-44 public key of the controller whose key-generation seed is
+/// `seed`.
+pub fn native_public_key_from_seed(seed: &[u8; 32]) -> Vec<u8> {
+    use fips204::ml_dsa_44;
+    use fips204::traits::{KeyGen, SerDes};
+    let (public_key, _secret) = ml_dsa_44::KG::keygen_from_seed(seed);
+    public_key.into_bytes().to_vec()
+}
+
+/// Signs `action` with the ML-DSA-44 controller whose key-generation seed is
+/// `seed`: hedged Pure ML-DSA-44 over the 32 bytes of the action hash under
+/// the registry context. The derived private key is wiped when it goes out of
+/// scope; the seed is the caller's to protect.
+pub fn sign_native_action(seed: &[u8; 32], action: &Cell) -> Result<NativeControllerSignature> {
+    use fips204::ml_dsa_44;
+    use fips204::traits::{KeyGen, SerDes, Signer};
+    let (public_key, secret) = ml_dsa_44::KG::keygen_from_seed(seed);
+    let signature = secret
+        .try_sign(action.repr_hash().as_slice(), NATIVE_REGISTRY_SIGNATURE_CONTEXT)
+        .map_err(|e| anyhow!("native registry signing failed: {e}"))?;
+    Ok(NativeControllerSignature {
+        public_key: public_key.into_bytes().to_vec(),
+        signature: signature.to_vec(),
+    })
 }
 
 pub(crate) fn native_signature_chain(
@@ -889,25 +1007,21 @@ pub(crate) fn native_signature_chain(
             && (allow_empty || !signatures.is_empty()),
         "native registry signature count"
     );
-    let mut sorted = signatures.to_vec();
-    sorted.sort_by_key(|s| s.public_key);
-    for (i, s) in sorted.iter().enumerate() {
-        ensure!(
-            i == 0 || sorted[i - 1].public_key != s.public_key,
-            "duplicate native registry signature"
-        );
-        let key = ed25519_dalek::VerifyingKey::from_bytes(&s.public_key)
-            .context("native registry signature key")?;
-        key.verify_strict(
-            action.repr_hash().as_slice(),
-            &ed25519_dalek::Signature::from_bytes(&s.signature),
-        )
-        .context("native registry signature verification failed")?;
+    let hash: [u8; 32] = *action.repr_hash().as_array();
+    let mut sorted = Vec::with_capacity(signatures.len());
+    for s in signatures {
+        sorted.push((s.key_id()?, s));
+    }
+    sorted.sort_by_key(|entry| entry.0);
+    for (i, (key_id, s)) in sorted.iter().enumerate() {
+        ensure!(i == 0 || sorted[i - 1].0 != *key_id, "duplicate native registry signature");
+        verify_native_signature(&s.public_key, &s.signature, &hash)
+            .with_context(|| format!("signature of controller {}", hex::encode(key_id)))?;
     }
     let mut next = None;
-    for s in sorted.iter().rev() {
+    for (key_id, s) in sorted.iter().rev() {
         let mut b = BuilderData::new();
-        b.append_raw(&s.public_key, 256)?.append_raw(&s.signature, 512)?;
+        b.append_raw(key_id, 256)?.checked_append_reference(stored_bytes(&s.signature)?)?;
         if let Some(cell) = next {
             b.checked_append_reference(cell)?;
         }
@@ -965,7 +1079,6 @@ pub fn build_native_submission(
 #[cfg(test)]
 mod signature_tests {
     use super::*;
-    use ed25519_dalek::Signer;
     fn fixture(kind: u8) -> Result<(NativeRegistryDomain, Cell)> {
         let d = NativeRegistryDomain {
             genesis_root: [1; 32],
@@ -989,11 +1102,7 @@ mod signature_tests {
     }
     fn public_fixture_signature(action: &Cell, seed: u8) -> NativeControllerSignature {
         // Deliberately public deterministic test fixture, never an operational key.
-        let key = ed25519_dalek::SigningKey::from_bytes(&[seed; 32]);
-        NativeControllerSignature {
-            public_key: key.verifying_key().to_bytes(),
-            signature: key.sign(action.repr_hash().as_slice()).to_bytes(),
-        }
+        sign_native_action(&[seed; 32], action).expect("fixture signature")
     }
     #[test]
     fn submission_checks_signatures_and_canonical_order() -> Result<()> {
@@ -1017,8 +1126,22 @@ mod signature_tests {
         assert!(
             build_native_submission(&d, &a, 1, &[bad], &[])
                 .err()
-                .is_some_and(|e| e.to_string().contains("signature verification failed"))
+                .is_some_and(|e| format!("{e:#}").contains("signature verification failed"))
         );
+        // A signature under another context, or by another key, does not verify.
+        let mut foreign = x.clone();
+        foreign.public_key = native_public_key_from_seed(&[99; 32]);
+        assert!(build_native_submission(&d, &a, 1, &[foreign], &[]).is_err());
+        let mut short = x.clone();
+        short.signature.pop();
+        assert!(
+            build_native_submission(&d, &a, 1, &[short], &[])
+                .err()
+                .is_some_and(|e| format!("{e:#}").contains("2420 bytes"))
+        );
+        let mut ed25519_sized = x.clone();
+        ed25519_sized.public_key.truncate(32);
+        assert!(build_native_submission(&d, &a, 1, &[ed25519_sized], &[]).is_err());
         assert!(
             build_native_submission(&d, &a, 1, &[x.clone(), x], &[])
                 .err()
@@ -1029,7 +1152,7 @@ mod signature_tests {
                 .err()
                 .is_some_and(|e| e.to_string().contains("signature count"))
         );
-        let too_many: Vec<_> = (1..=21).map(|s| public_fixture_signature(&a, s)).collect();
+        let too_many: Vec<_> = (1..=9).map(|s| public_fixture_signature(&a, s)).collect();
         assert!(
             build_native_submission(&d, &a, 1, &too_many, &[])
                 .err()
@@ -1301,9 +1424,7 @@ pub fn decode_native_policy(cell: &Cell) -> Result<NativePolicy> {
     let mut controllers = Vec::with_capacity(count);
     for index in 0..count {
         let mut c = SliceData::load_cell(cursor.clone())?;
-        let key_hash = next_bytes32(&mut c, "controller key hash")?;
-        let public_key = next_bytes32(&mut c, "controller key")?;
-        ensure!(key_hash == public_key, "native registry controller key hash");
+        let key_id = next_bytes32(&mut c, "controller key id")?;
         let weight = c.get_next_u32()?;
         let purposes = c.get_next_u16()?;
         let recovery = c.get_next_bit()?;
@@ -1311,6 +1432,9 @@ pub fn decode_native_policy(cell: &Cell) -> Result<NativePolicy> {
             recovery == (purposes & PURPOSE_RECOVERY != 0),
             "native registry controller recovery flag"
         );
+        let public_key =
+            read_stored_bytes(&c.checked_drain_reference()?, NATIVE_REGISTRY_PUBLIC_KEY_BYTES)?;
+        ensure!(controller_key_id(&public_key)? == key_id, "native registry controller key id");
         let last = index.checked_add(1) == Some(count);
         if !last {
             cursor = c.checked_drain_reference()?;
@@ -1329,11 +1453,11 @@ pub fn decode_native_policy(cell: &Cell) -> Result<NativePolicy> {
     Ok(policy)
 }
 
-/// Check, before anything is signed, that `signers` meet `policy` for `kind` the
-/// way the contract's `verify_signatures` will: every signer a controller with
-/// the required purpose (and the recovery flag for recovery kinds), no
-/// duplicates, and the weight reaching the threshold (the recovery threshold
-/// for recovery kinds).
+/// Check, before anything is signed, that `signers` -- controller key ids --
+/// meet `policy` for `kind` the way the contract's `verify_signatures` will:
+/// every signer a controller with the required purpose (and the recovery flag
+/// for recovery kinds), no duplicates, and the weight reaching the threshold
+/// (the recovery threshold for recovery kinds).
 pub fn check_native_threshold(policy: &NativePolicy, signers: &[[u8; 32]], kind: u8) -> Result<()> {
     use anyhow::ensure;
     let required = required_native_purpose(kind)?;
@@ -1346,12 +1470,16 @@ pub fn check_native_threshold(policy: &NativePolicy, signers: &[[u8; 32]], kind:
     let mut sorted = signers.to_vec();
     sorted.sort();
     ensure!(sorted.windows(2).all(|w| w[0] != w[1]), "duplicate native registry signer");
+    let mut controllers = Vec::with_capacity(policy.controllers.len());
+    for controller in &policy.controllers {
+        controllers.push((controller_key_id(&controller.public_key)?, controller));
+    }
     let mut total: u64 = 0;
     for signer in &sorted {
-        let controller =
-            policy.controllers.iter().find(|c| c.public_key == *signer).ok_or_else(|| {
-                anyhow::anyhow!("signer {} is not a controller", hex::encode(signer))
-            })?;
+        let (_, controller) = controllers
+            .iter()
+            .find(|(id, _)| id == signer)
+            .ok_or_else(|| anyhow::anyhow!("signer {} is not a controller", hex::encode(signer)))?;
         ensure!(
             controller.purposes & required != 0,
             "signer {} lacks the purpose action kind {kind} requires",
@@ -1374,10 +1502,14 @@ pub fn check_native_threshold(policy: &NativePolicy, signers: &[[u8; 32]], kind:
     Ok(())
 }
 
-/// Check that `signers` is exactly the controller set of `policy`: the contract
-/// requires a possession signature from every controller of a policy it installs.
+/// Check that `signers` -- controller key ids -- are exactly the controller set
+/// of `policy`: the contract requires a possession signature from every
+/// controller of a policy it installs.
 pub fn check_native_possession(policy: &NativePolicy, signers: &[[u8; 32]]) -> Result<()> {
-    let mut wanted: Vec<[u8; 32]> = policy.controllers.iter().map(|c| c.public_key).collect();
+    let mut wanted = Vec::with_capacity(policy.controllers.len());
+    for controller in &policy.controllers {
+        wanted.push(controller_key_id(&controller.public_key)?);
+    }
     wanted.sort();
     let mut given = signers.to_vec();
     given.sort();
@@ -1653,9 +1785,15 @@ mod lifecycle_builder_tests {
     use super::*;
     use chain_block::SliceData;
 
+    /// The public key of a deliberately public deterministic test fixture,
+    /// never an operational key.
+    fn public(seed: u8) -> Vec<u8> {
+        native_public_key_from_seed(&[seed; 32])
+    }
+
+    /// The key id of the fixture controller `seed`.
     fn key(seed: u8) -> [u8; 32] {
-        // Deliberately public deterministic test fixture, never an operational key.
-        ed25519_dalek::SigningKey::from_bytes(&[seed; 32]).verifying_key().to_bytes()
+        controller_key_id(&public(seed)).expect("fixture key id")
     }
 
     fn policy(keys: &[(u8, u32, u16)], threshold: u32, recovery: u32) -> NativePolicy {
@@ -1666,7 +1804,7 @@ mod lifecycle_builder_tests {
             controllers: keys
                 .iter()
                 .map(|&(seed, weight, purposes)| NativePolicyController {
-                    public_key: key(seed),
+                    public_key: public(seed),
                     weight,
                     purposes,
                 })
@@ -1784,24 +1922,34 @@ mod lifecycle_builder_tests {
         let p = policy(&[(1, 2, 15), (2, 1, 1), (3, 5, 12)], 2, 5);
         let cell = build_policy(&p)?;
         let mut sorted = p.clone();
-        sorted.controllers.sort_by(|a, b| a.public_key.cmp(&b.public_key));
+        sorted.controllers.sort_by_key(|c| controller_key_id(&c.public_key).unwrap_or_default());
         assert_eq!(decode_native_policy(&cell)?, sorted);
-        // A recovery flag that disagrees with the purposes is refused.
+        // A recovery flag that disagrees with the purposes, or a declared key id
+        // that is not the stored key's, is refused.
         let header_bits = 32 + 16 + 32 + 32 + 64 + 8;
-        let field_bits = 256 + 256 + 32 + 16;
-        let mut root = SliceData::load_cell(cell)?;
-        let header = root.get_next_bits(header_bits)?;
-        let mut c = SliceData::load_cell(root.checked_drain_reference()?)?;
-        let fields = c.get_next_bits(field_bits)?;
-        let flag = c.get_next_bit()?;
-        let link = c.checked_drain_reference()?;
-        let mut forged = BuilderData::new();
-        forged.append_raw(&fields, field_bits)?.append_bit_bool(!flag)?;
-        forged.checked_append_reference(link)?;
-        let mut forged_root = BuilderData::new();
-        forged_root.append_raw(&header, header_bits)?;
-        forged_root.checked_append_reference(forged.into_cell()?)?;
-        assert!(decode_native_policy(&forged_root.into_cell()?).is_err());
+        let field_bits = 256 + 32 + 16;
+        let forge = |flip_flag: bool, flip_id: bool| -> Result<Cell> {
+            let mut root = SliceData::load_cell(cell.clone())?;
+            let header = root.get_next_bits(header_bits)?;
+            let mut c = SliceData::load_cell(root.checked_drain_reference()?)?;
+            let mut fields = c.get_next_bits(field_bits)?;
+            if flip_id {
+                fields[0] ^= 1;
+            }
+            let flag = c.get_next_bit()?;
+            let stored_key = c.checked_drain_reference()?;
+            let link = c.checked_drain_reference()?;
+            let mut forged = BuilderData::new();
+            forged.append_raw(&fields, field_bits)?.append_bit_bool(flag ^ flip_flag)?;
+            forged.checked_append_reference(stored_key)?.checked_append_reference(link)?;
+            let mut forged_root = BuilderData::new();
+            forged_root.append_raw(&header, header_bits)?;
+            forged_root.checked_append_reference(forged.into_cell()?)?;
+            Ok(forged_root.into_cell()?)
+        };
+        assert!(decode_native_policy(&forge(false, false)?).is_ok());
+        assert!(decode_native_policy(&forge(true, false)?).is_err());
+        assert!(decode_native_policy(&forge(false, true)?).is_err());
         Ok(())
     }
 
@@ -1872,14 +2020,12 @@ mod lifecycle_builder_tests {
 
     #[test]
     fn counterparty_consent_is_required_exactly_where_the_contract_requires_it() -> Result<()> {
-        use ed25519_dalek::Signer;
         let d = NativeRegistryDomain {
             genesis_root: [1; 32],
             genesis_file: [2; 32],
             network_tag: [3; 32],
             runtime_code_hash: [4; 32],
         };
-        let signer = ed25519_dalek::SigningKey::from_bytes(&[70; 32]);
         for kind in 1..=10u8 {
             let action = build_native_action(
                 &d,
@@ -1893,10 +2039,7 @@ mod lifecycle_builder_tests {
                     payload: Cell::default(),
                 },
             )?;
-            let sig = NativeControllerSignature {
-                public_key: signer.verifying_key().to_bytes(),
-                signature: signer.sign(action.repr_hash().as_slice()).to_bytes(),
-            };
+            let sig = sign_native_action(&[70; 32], &action)?;
             let without = build_native_submission(&d, &action, 1, &[sig.clone()], &[]);
             let with = build_native_submission(&d, &action, 1, &[sig.clone()], &[sig]);
             assert_eq!(without.is_ok(), !native_kind_takes_counterparty(kind), "kind {kind}");

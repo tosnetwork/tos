@@ -32,6 +32,9 @@ chain-rpc-client = { path = "../chain-rpc-client" }
 fs2 = "0.4"
 libc = "0.2"
 ed25519-dalek = "2"
+# ML-DSA-44 for Native Registry controller signatures: verification before a
+# submission is built, and hedged signing from a controller seed. Pinned exactly.
+fips204 = { version = "=0.4.6", default-features = false, features = ["ml-dsa-44", "default-rng"] }
 errno = "0.3"
 base64 = "0.22"
 # Proven reads run the trusted verifier in a private request directory, with a
