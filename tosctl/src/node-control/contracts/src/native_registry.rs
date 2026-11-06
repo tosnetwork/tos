@@ -1430,6 +1430,84 @@ pub fn decode_native_registry_state(state: &Cell) -> Result<NativeRegistryState>
     })
 }
 
+/// A registry account's stored data (NVD1): the object it holds, its
+/// configuration cell and, once registered, its state.
+#[derive(Clone, Debug)]
+pub struct NativeRegistryObject {
+    pub object_kind: u8,
+    pub object_id: [u8; 32],
+    pub config: Cell,
+    pub state: Option<NativeRegistryState>,
+}
+
+/// Decode a registry account's data cell.
+pub fn decode_native_registry_data(data: &Cell) -> Result<NativeRegistryObject> {
+    use anyhow::ensure;
+    use chain_block::SliceData;
+    let mut s = SliceData::load_cell(data.clone())?;
+    ensure!(
+        s.get_next_u32()? == 0x4e56_4431 && s.get_next_u16()? == 1,
+        "native registry data tag or schema"
+    );
+    let object_kind = s.get_next_byte()?;
+    ensure!(matches!(object_kind, 1 | 2), "native registry object kind");
+    let object_id = next_bytes32(&mut s, "object id")?;
+    let config = s.checked_drain_reference()?;
+    let state = if s.get_next_bit()? {
+        Some(decode_native_registry_state(&s.checked_drain_reference()?)?)
+    } else {
+        None
+    };
+    ensure!(
+        s.remaining_bits() == 0 && s.remaining_references() == 0,
+        "native registry data trailing data"
+    );
+    if let Some(state) = &state {
+        ensure!(state.object_kind == object_kind, "native registry state kind mismatch");
+    }
+    Ok(NativeRegistryObject { object_kind, object_id, config, state })
+}
+
+/// Check, before anything is signed for it, that the account at `address`
+/// runs the domain's code and is the registry object the domain derives for
+/// the kind and id it stores: the code hash equals the domain's, the address
+/// re-derives from (domain, kind, id, workchain, label, code) and the stored
+/// configuration is exactly the one that derivation deploys. Returns the
+/// decoded object.
+pub fn verify_native_registry_account(
+    domain: &NativeRegistryDomain,
+    network_label: &[u8],
+    code: &Cell,
+    address: &chain_block::MsgAddressInt,
+    account_code: &Cell,
+    account_data: &Cell,
+) -> Result<NativeRegistryObject> {
+    use anyhow::{Context, ensure};
+    ensure!(
+        account_code.repr_hash() == code.repr_hash()
+            && code.repr_hash().as_array() == &domain.runtime_code_hash,
+        "account code is not the native registry release code of this domain"
+    );
+    let object = decode_native_registry_data(account_data)?;
+    let workchain = i8::try_from(address.workchain_id()).context("registry workchain")?;
+    let (init, derived) = build_native_registry_deployment(
+        domain,
+        object.object_kind,
+        object.object_id,
+        workchain,
+        network_label,
+        code,
+    )?;
+    ensure!(&derived == address, "account address does not derive from this domain and object");
+    let initial = init.data.context("deployment data")?;
+    let expected = decode_native_registry_data(&initial)?;
+    ensure!(
+        expected.config.repr_hash() == object.config.repr_hash(),
+        "account configuration differs from this domain's deployment"
+    );
+    Ok(object)
+}
+
 /// Whether a 256-bit key is present in a stored delegation or version dictionary.
 pub fn native_dict_contains(root: &Option<Cell>, key: &[u8; 32]) -> Result<bool> {
     use chain_block::{HashmapE, SliceData};

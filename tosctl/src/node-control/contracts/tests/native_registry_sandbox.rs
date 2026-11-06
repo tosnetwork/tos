@@ -2714,16 +2714,14 @@ mod builder_driven {
         }
 
         /// The decoded stored state at `address`, `None` before registration.
+        /// Every read goes through the client's account verifier, as the CLI's
+        /// pre-sign checks do.
         fn state(&self, address: &MsgAddressInt) -> Option<NativeRegistryState> {
-            let data = self.bc.get_account(address)?.get_data()?;
-            let mut s = SliceData::load_cell(data).expect("data");
-            s.move_by(32 + 16 + 8 + 256).expect("data header");
-            s.checked_drain_reference().expect("config");
-            if !s.get_next_bit().expect("has state") {
-                return None;
-            }
-            let state = s.checked_drain_reference().expect("state");
-            Some(decode_native_registry_state(&state).expect("decoded state"))
+            let account = self.bc.get_account(address)?;
+            let (code, data) = (account.get_code()?, account.get_data()?);
+            verify_native_registry_account(&self.domain, LABEL, &self.code, address, &code, &data)
+                .expect("verified registry account")
+                .state
         }
 
         fn object_address(&self, kind: u8, id: [u8; 32]) -> MsgAddressInt {
@@ -2938,6 +2936,60 @@ mod builder_driven {
         .expect("local address");
         assert_ne!(reg.object_id, local_reg.object_id, "the label binds the identity");
         assert_ne!(public, other, "the label binds the address");
+    }
+
+    #[test]
+    fn account_verifier_refuses_another_domain_label_or_code() {
+        let mut net = Net::new();
+        let a = net.register_agent(0x67, 60);
+        let account = net.bc.get_account(&a.address).expect("account");
+        let (code, data) = (account.get_code().expect("code"), account.get_data().expect("data"));
+        let object =
+            verify_native_registry_account(&net.domain, LABEL, &net.code, &a.address, &code, &data)
+                .expect("verified");
+        assert_eq!((object.object_kind, object.object_id), (1, a.id));
+        let other = NativeRegistryDomain::for_label(
+            net.domain.genesis_root,
+            net.domain.genesis_file,
+            b"tos:global-id:1",
+            net.domain.runtime_code_hash,
+        )
+        .expect("other domain");
+        assert!(
+            verify_native_registry_account(
+                &other,
+                b"tos:global-id:1",
+                &net.code,
+                &a.address,
+                &code,
+                &data
+            )
+            .is_err()
+        );
+        let mut moved = net.domain.clone();
+        moved.genesis_file[0] ^= 1;
+        assert!(
+            verify_native_registry_account(&moved, LABEL, &net.code, &a.address, &code, &data)
+                .is_err()
+        );
+        let foreign_code = chain_block::Cell::default();
+        assert!(
+            verify_native_registry_account(
+                &net.domain,
+                LABEL,
+                &net.code,
+                &a.address,
+                &foreign_code,
+                &data
+            )
+            .is_err()
+        );
+        let b = net.register_agent(0x68, 60);
+        assert!(
+            verify_native_registry_account(&net.domain, LABEL, &net.code, &b.address, &code, &data)
+                .is_err(),
+            "another object's data at this address is refused"
+        );
     }
 
     #[test]
