@@ -138,7 +138,14 @@ def main():
             path.write_text(candidate.replace(old, new))
             code, log = run(name)
             assert code != 0 and f"{witness} ... FAILED" in log
-            assert "panicked at" in log and "assertion" in log
+            if name == "lock":
+                # The contention test returns an error when removing the lock
+                # lets a second writer in. Unrelated I/O errors are not evidence.
+                assert (
+                    "Error: competing writer unexpectedly acquired the journal" in log.splitlines()
+                ), log[-2000:]
+            else:
+                assert "panicked at" in log and "assertion" in log, log[-2000:]
             results[name] = {"exit": code, "semantic_witness": witness}
     finally:
         for path, original in originals.items():
