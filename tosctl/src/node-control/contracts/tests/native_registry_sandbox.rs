@@ -3151,7 +3151,6 @@ mod builder_driven {
     use super::{assert_address_exit, assert_address_success, current_network};
     use chain_block::{Cell, MsgAddressInt, SliceData, base64_decode};
     use contracts::native_registry::*;
-    use ed25519_dalek::{Signer, SigningKey};
     use tos_sandbox::{Blockchain, MessageBuilder, SendResult, Treasury};
 
     const TOS: u64 = 1_000_000_000;
@@ -3159,8 +3158,8 @@ mod builder_driven {
     // Public testnet genesis anchors (tos.network/testnet-global.config.json).
     const GENESIS_ROOT: &str = "/2BFnLilFwhUgpCvoW/U34DRZ3W/PBM5IUam0bVmLVc=";
     const GENESIS_FILE: &str = "OzdN9evRg2jUvw6zdHBHcdr42s2FF1YF87/Rx6kioDk=";
-    // The sandbox runs user contracts on the masterchain, like the fixture above.
-    const WORKCHAIN: i8 = -1;
+    // The registry admits workchain 0 only.
+    const WORKCHAIN: i8 = 0;
     const ERR_WRONG_NETWORK: i32 = 2201;
     const ERR_BAD_PREDECESSOR: i32 = 2204;
     const ERR_TOMBSTONED: i32 = 2206;
@@ -3181,6 +3180,25 @@ mod builder_driven {
             *code.repr_hash().as_array(),
         )
         .expect("public domain")
+    }
+
+    /// A deliberately public deterministic ML-DSA-44 test controller, held as
+    /// its key-generation seed; never an operational key.
+    #[derive(Clone)]
+    struct SigningKey([u8; 32]);
+
+    impl SigningKey {
+        fn from_bytes(seed: &[u8; 32]) -> Self {
+            Self(*seed)
+        }
+
+        fn public_key(&self) -> Vec<u8> {
+            native_public_key_from_seed(&self.0)
+        }
+
+        fn key_id(&self) -> [u8; 32] {
+            controller_key_id(&self.public_key()).expect("fixture key id")
+        }
     }
 
     struct Agent {
@@ -3207,7 +3225,7 @@ mod builder_driven {
             recovery_threshold: 1,
             recovery_timelock: timelock,
             controllers: vec![NativePolicyController {
-                public_key: key.verifying_key().to_bytes(),
+                public_key: key.public_key(),
                 weight: 1,
                 purposes: 15,
             }],
@@ -3215,16 +3233,12 @@ mod builder_driven {
     }
 
     fn signatures(keys: &[&SigningKey], action: &Cell) -> Vec<NativeControllerSignature> {
-        keys.iter()
-            .map(|k| NativeControllerSignature {
-                public_key: k.verifying_key().to_bytes(),
-                signature: k.sign(action.repr_hash().as_slice()).to_bytes(),
-            })
-            .collect()
+        keys.iter().map(|k| sign_native_action(&k.0, action).expect("fixture signature")).collect()
     }
 
+    /// The key ids the client's threshold and possession checks take.
     fn public_keys(keys: &[&SigningKey]) -> Vec<[u8; 32]> {
-        keys.iter().map(|k| k.verifying_key().to_bytes()).collect()
+        keys.iter().map(|k| k.key_id()).collect()
     }
 
     fn agent_policy(state: &NativeRegistryState) -> NativePolicy {
@@ -3236,9 +3250,12 @@ mod builder_driven {
 
     impl Net {
         fn new() -> Self {
-            let mut bc = Blockchain::with_global_version(current_network::global_version())
-                .expect("blockchain");
+            let mut bc = Blockchain::with_global_version_and_base_workchain(
+                current_network::global_version(),
+            )
+            .expect("blockchain");
             bc.set_workchain(WORKCHAIN);
+            bc.set_workchain_gas_limit(NATIVE_REGISTRY_TRANSACTION_GAS_LIMIT);
             let relayer =
                 bc.treasury("native-registry-builder-relayer", 1_000 * TOS).expect("relayer");
             let code = native_registry_release_code().expect("release code");
@@ -3918,11 +3935,43 @@ mod protocol_vectors {
     use super::current_network;
     use chain_block::{Cell, MsgAddressInt};
     use contracts::native_registry::*;
-    use ed25519_dalek::{Signer, SigningKey};
+    use fips204::ml_dsa_44;
+    use fips204::traits::{KeyGen, SerDes, Signer};
+    use sha2::{Digest, Sha256};
     use tos_sandbox::{Blockchain, MessageBuilder};
 
     const TOS: u64 = 1_000_000_000;
     const FIXTURE: &str = include_str!("fixtures/native_registry/protocol-vectors.json");
+
+    /// The frozen controller: an ML-DSA-44 key from a fixed public seed, signing
+    /// with the FIPS 204 deterministic variant (all-zero randomness) so that
+    /// any implementation reproduces its signatures. Never an operational key.
+    struct VectorKey {
+        public_key: Vec<u8>,
+        secret: ml_dsa_44::PrivateKey,
+    }
+
+    impl VectorKey {
+        fn from_seed(seed: &[u8; 32]) -> Self {
+            let (public_key, secret) = ml_dsa_44::KG::keygen_from_seed(seed);
+            Self { public_key: public_key.into_bytes().to_vec(), secret }
+        }
+
+        fn sign(&self, action: &Cell) -> NativeControllerSignature {
+            let signature = self
+                .secret
+                .try_sign_with_seed(
+                    &[0; 32],
+                    action.repr_hash().as_slice(),
+                    NATIVE_REGISTRY_SIGNATURE_CONTEXT,
+                )
+                .expect("vector signature");
+            NativeControllerSignature {
+                public_key: self.public_key.clone(),
+                signature: signature.to_vec(),
+            }
+        }
+    }
 
     fn hex32(value: &str) -> [u8; 32] {
         hex::decode(value).expect("hex").try_into().expect("32 bytes")
@@ -3965,29 +4014,21 @@ mod protocol_vectors {
         let relayer = bc.treasury("protocol-vector-relayer", 100 * TOS).expect("relayer");
 
         // Agent registration (the protocol's inputs).
-        let key = SigningKey::from_bytes(&hex32(
+        let key = VectorKey::from_seed(&hex32(
             "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
         ));
-        assert_eq!(
-            hex::encode(key.verifying_key().to_bytes()),
-            "79b5562e8fe654f94078b112e8a98ba7901f853ae695bed7e0e3910bad049664"
-        );
+        let key_id = controller_key_id(&key.public_key).expect("key id");
         let policy = NativePolicy {
             threshold: 1,
             recovery_threshold: 1,
             recovery_timelock: 86_400,
             controllers: vec![NativePolicyController {
-                public_key: key.verifying_key().to_bytes(),
+                public_key: key.public_key.clone(),
                 weight: 1,
                 purposes: 15,
             }],
         };
         let agent = build_native_agent_registration(&domain, [0x6f; 32], &policy).expect("agent");
-        assert_eq!(
-            hex::encode(agent.object_id),
-            "c082c865f6c332e53615a84da797c1b1f2e993779b7aae191e4f30be5661526f",
-            "the identity does not depend on the code and must stay the protocol's"
-        );
         let (init, agent_address) =
             build_native_registry_deployment(&domain, 1, agent.object_id, 0, b"tos-testnet", &code)
                 .expect("agent deployment");
@@ -4004,18 +4045,10 @@ mod protocol_vectors {
             },
         )
         .expect("agent action");
-        let agent_signature = key.sign(agent_action.repr_hash().as_slice());
-        let body = build_native_submission(
-            &domain,
-            &agent_action,
-            1,
-            &[NativeControllerSignature {
-                public_key: key.verifying_key().to_bytes(),
-                signature: agent_signature.to_bytes(),
-            }],
-            &[],
-        )
-        .expect("agent body");
+        let agent_signature = key.sign(&agent_action);
+        let body =
+            build_native_submission(&domain, &agent_action, 1, &[agent_signature.clone()], &[])
+                .expect("agent body");
         let result = bc
             .send_message(
                 MessageBuilder::internal(relayer.address(), &agent_address, TOS)
@@ -4040,10 +4073,6 @@ mod protocol_vectors {
             [0x55; 32],
         )
         .expect("capability");
-        assert_eq!(
-            hex::encode(capability.object_id),
-            "bca64ca932644f320e3c03df3983ac00ca700a0590ba73b832ee2152b4643b8b"
-        );
         let (_, capability_address) = build_native_registry_deployment(
             &domain,
             2,
@@ -4066,15 +4095,12 @@ mod protocol_vectors {
             },
         )
         .expect("capability action");
-        let capability_signature = key.sign(capability_action.repr_hash().as_slice());
+        let capability_signature = key.sign(&capability_action);
         let body = build_native_submission(
             &domain,
             &capability_action,
             1,
-            &[NativeControllerSignature {
-                public_key: key.verifying_key().to_bytes(),
-                signature: capability_signature.to_bytes(),
-            }],
+            &[capability_signature.clone()],
             &[],
         )
         .expect("capability body");
@@ -4089,76 +4115,30 @@ mod protocol_vectors {
             *capability_action.repr_hash().as_array()
         );
 
-        // The same builders under the protocol's earlier code hash reproduce
-        // its earlier frozen action hashes exactly: the encoders agree, and
-        // only the code hash moved.
-        let earlier = NativeRegistryDomain {
-            runtime_code_hash: hex32(
-                "600f2fda83462bc86a1c32af930c35a4fc8f80f1d2966f5593ceba217a91ffa0",
-            ),
-            ..domain.clone()
-        };
-        let earlier_agent =
-            build_native_agent_registration(&earlier, [0x6f; 32], &policy).expect("agent");
-        let earlier_agent_action = build_native_action(
-            &earlier,
-            &NativeRegistryAction {
-                kind: NATIVE_KIND_REGISTER_AGENT,
-                generation: 1,
-                sequence: 1,
-                object_id: earlier_agent.object_id,
-                predecessor: [0; 32],
-                nonce: [0x61; 32],
-                payload: earlier_agent.payload,
-            },
-        )
-        .expect("earlier agent action");
-        assert_eq!(
-            hex::encode(earlier_agent_action.repr_hash().as_slice()),
-            "a1794daed9d20818104bf3c10688388dc7acbfe7fd17fa7bed310d72545dc1f8"
-        );
-        let earlier_capability = build_native_capability_registration(
-            &earlier,
-            [0x63; 32],
-            agent.object_id,
-            b"1.0.0",
-            [0x55; 32],
-        )
-        .expect("earlier capability");
-        let earlier_capability_action = build_native_action(
-            &earlier,
-            &NativeRegistryAction {
-                kind: NATIVE_KIND_REGISTER_CAPABILITY,
-                generation: 1,
-                sequence: 1,
-                object_id: earlier_capability.object_id,
-                predecessor: [0; 32],
-                nonce: [0x62; 32],
-                payload: earlier_capability.payload,
-            },
-        )
-        .expect("earlier capability action");
-        assert_eq!(
-            hex::encode(earlier_capability_action.repr_hash().as_slice()),
-            "205bd2aa9ba96541c36b8f594884f9d7eae0e832035e4ddacd318f08592215e4"
-        );
-
         let address_text = |a: &MsgAddressInt| a.to_string();
         let actual = serde_json::json!({
             "contract_code_hash": format!("tvm-cell-sha256:{}", hex::encode(code.repr_hash().as_slice())),
+            "controller": {
+                "key_seed_hex": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+                "suite": "ML-DSA-44",
+                "public_key_sha256": format!("sha256:{}", hex::encode(Sha256::digest(&key.public_key))),
+                "key_id": hex::encode(key_id),
+                "signature_context": String::from_utf8_lossy(NATIVE_REGISTRY_SIGNATURE_CONTEXT),
+                "signing": "deterministic (rnd = 0^32)",
+            },
             "agent_registration": {
                 "object_id": format!("agent_{}", hex::encode(agent.object_id)),
                 "contract_address": address_text(&agent_address),
                 "action_hash": format!("sha256:{}", hex::encode(agent_action.repr_hash().as_slice())),
                 "action_boc_base64": b64(&agent_action),
-                "signature_hex": hex::encode(agent_signature.to_bytes()),
+                "signature_sha256": format!("sha256:{}", hex::encode(Sha256::digest(&agent_signature.signature))),
             },
             "capability_registration": {
                 "object_id": format!("cap_{}", hex::encode(capability.object_id)),
                 "contract_address": address_text(&capability_address),
                 "action_hash": format!("sha256:{}", hex::encode(capability_action.repr_hash().as_slice())),
                 "action_boc_base64": b64(&capability_action),
-                "signature_hex": hex::encode(capability_signature.to_bytes()),
+                "signature_sha256": format!("sha256:{}", hex::encode(Sha256::digest(&capability_signature.signature))),
             },
         });
         if let Ok(path) = std::env::var("NATIVE_REGISTRY_VECTORS_OUT") {
