@@ -357,6 +357,7 @@ impl FeeJournal {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use anyhow::Context;
     use std::os::unix::fs::PermissionsExt;
 
     fn route() -> FeeRoute {
@@ -386,7 +387,17 @@ mod tests {
         let directory = std::env::var("TOS_LMS_JOURNAL_TEST_DIR")?;
         let mode = std::env::var("TOS_LMS_JOURNAL_TEST_MODE")?;
         if mode == "locked" {
-            assert!(FeeJournal::open(Path::new(&directory), route(), 3700).is_err());
+            let error = FeeJournal::open(Path::new(&directory), route(), 3700)
+                .err()
+                .context("competing process unexpectedly acquired the journal")?;
+            let error = error
+                .downcast_ref::<std::io::Error>()
+                .context("competing process refused for a non-lock reason")?;
+            anyhow::ensure!(
+                error.kind() == std::io::ErrorKind::WouldBlock,
+                "competing process expected WouldBlock, received {:?}",
+                error.kind()
+            );
         } else {
             anyhow::ensure!(mode == "restart", "unknown child probe mode");
             let mut journal = FeeJournal::open(Path::new(&directory), route(), 3700)?;
@@ -399,12 +410,15 @@ mod tests {
 
     #[test]
     fn exclusive_process_handoff_preserves_reservations() -> anyhow::Result<()> {
-        let dir = tempfile::tempdir()?;
-        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700))?;
-        let mut journal = FeeJournal::open(dir.path(), route(), 100)?;
-        journal.reserve(3700, 0, 4, [4; 32])?;
+        let dir = tempfile::tempdir().context("handoff fixture directory")?;
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700))
+            .context("handoff fixture permissions")?;
+        let mut journal =
+            FeeJournal::open(dir.path(), route(), 100).context("handoff parent open")?;
+        journal.reserve(3700, 0, 4, [4; 32]).context("handoff parent reservation")?;
         let child = |mode| -> anyhow::Result<()> {
-            let result = std::process::Command::new(std::env::current_exe()?)
+            let executable = std::env::current_exe().context("handoff executable identity")?;
+            let result = std::process::Command::new(executable)
                 .args([
                     "--ignored",
                     "--exact",
@@ -413,7 +427,8 @@ mod tests {
                 ])
                 .env("TOS_LMS_JOURNAL_TEST_DIR", dir.path())
                 .env("TOS_LMS_JOURNAL_TEST_MODE", mode)
-                .output()?;
+                .output()
+                .with_context(|| format!("spawn {mode} journal probe"))?;
             anyhow::ensure!(
                 result.status.success(),
                 "child failed: {} {}",
@@ -429,7 +444,8 @@ mod tests {
         child("locked")?;
         drop(journal);
         child("restart")?;
-        let reopened = FeeJournal::open(dir.path(), route(), 7300)?;
+        let reopened =
+            FeeJournal::open(dir.path(), route(), 7300).context("handoff final reopen")?;
         assert_eq!(reopened.state.next_unreserved, 9);
         assert!(reopened.preview(7300, 0).is_err());
         assert_eq!(reopened.preview(10900, 0)?.leaf, 12);
@@ -441,7 +457,17 @@ mod tests {
         let dir = tempfile::tempdir()?;
         std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700))?;
         let mut journal = FeeJournal::open(dir.path(), route(), 100)?;
-        assert!(FeeJournal::open(dir.path(), route(), 100).is_err());
+        let error = FeeJournal::open(dir.path(), route(), 100)
+            .err()
+            .context("competing writer unexpectedly acquired the journal")?;
+        let error = error
+            .downcast_ref::<std::io::Error>()
+            .context("competing writer refused for a non-lock reason")?;
+        anyhow::ensure!(
+            error.kind() == std::io::ErrorKind::WouldBlock,
+            "competing writer expected WouldBlock, received {:?}",
+            error.kind()
+        );
         assert!(journal.preview(3699, 0).is_err());
         assert_eq!(journal.preview(3700, 0)?.leaf, 4);
         let reserved = journal.reserve(3700, 0, 4, [7; 32])?;
