@@ -754,9 +754,12 @@ operator produces the contract's expiry refusal (exit code 1706) on purpose.
 
 `--signed-boc-out` writes the same bytes to an owner-chosen file (absolute path
 in an owner-private directory, mode 0600, never overwritten with different
-bytes) for an external sender such as `tosctl account send-boc`. Until
-`valid_until` passes that file is a valid spend authorization: keep it under
-the same rules as the custody journal.
+bytes) for an external sender such as `tosctl account send-boc`. Because any
+sender may then submit them, the record moves to `Broadcasting` before the file
+is written: `task-send-resolve` binds the exact winner afterwards, and
+`task-send-broadcast` can only resume those same bytes. Until `valid_until`
+passes that file is a valid spend authorization: keep it under the same rules
+as the custody journal.
 
 A rejected or unknown broadcast outcome leaves the record `Broadcasting`; the
 sequence stays reserved until finalized state resolves it. There is no absence

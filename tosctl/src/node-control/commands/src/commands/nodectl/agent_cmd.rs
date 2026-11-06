@@ -4688,8 +4688,12 @@ impl AgentAccountTaskSendCmd {
 
 /// The whole of `task-send-prepare` after the request was validated: sign
 /// into the journal, then (only after the durable attach) export the exact
-/// bytes if asked. The command's network handle is passed in only so that the
-/// no-write property is testable with a trap transport; it must never be used.
+/// bytes if asked. Exported bytes may be submitted by any sender, so before
+/// they leave custody the record moves to Broadcasting: the exact winner can
+/// then be bound with `task-send-resolve`, and `task-send-broadcast` can only
+/// resume those same bytes. The command's network handle is passed in only so
+/// that the no-write property is testable with a trap transport; it must
+/// never be used.
 async fn prepare_task_send<S: TaskSendSigner + ?Sized, T: TaskSendTransport + ?Sized>(
     journal: &AgentAccountCustodyJournal,
     draft: &TaskSendDraft,
@@ -4700,6 +4704,7 @@ async fn prepare_task_send<S: TaskSendSigner + ?Sized, T: TaskSendTransport + ?S
 ) -> anyhow::Result<SignedTaskSend> {
     let signed = sign_task_send_into_journal(journal, draft, signer, now).await?;
     if let Some(path) = signed_boc_out {
+        journal.begin_or_resume_exact_broadcast(&signed.claim, now)?;
         save_signed_task_send_boc(path, &signed.boc)?;
     }
     Ok(signed)
@@ -4725,17 +4730,18 @@ impl AgentAccountTaskSendPrepareCmd {
         println!(
             "{}",
             serde_json::json!({
-                "schema": "tosctl.agent-account.task-send-prepare.v1",
-                "action_id": loaded.draft.action_id,
-                "account": loaded.draft.account.to_string(),
-                "controller_epoch": loaded.draft.controller_epoch,
-                "seqno": loaded.draft.seqno,
-                "valid_until": loaded.draft.valid_until,
-                "exact_signed_boc_digest": signed.digest,
-                "reused_journaled_boc": signed.reused_journaled_boc,
-                "signed_boc_out": self.signed_boc_out.as_ref().map(|path| path.display().to_string()),
-                "state": "signed",
-            })
+                    "schema": "tosctl.agent-account.task-send-prepare.v1",
+                    "action_id": loaded.draft.action_id,
+                    "account": loaded.draft.account.to_string(),
+                    "controller_epoch": loaded.draft.controller_epoch,
+                    "seqno": loaded.draft.seqno,
+                    "valid_until": loaded.draft.valid_until,
+                    "exact_signed_boc_digest": signed.digest,
+                    "reused_journaled_boc": signed.reused_journaled_boc,
+                    "signed_boc_out": self.signed_boc_out.as_ref().map(|path| path.display().to_string()),
+                    // Custody status: an exported request is treated as possibly broadcast.
+            "state": if self.signed_boc_out.is_some() { "broadcasting" } else { "signed" },
+                })
         );
         Ok(())
     }
@@ -13318,27 +13324,50 @@ mod tests {
         assert!(trap.sent.borrow().is_empty(), "task-send-prepare wrote to the network");
         assert_eq!(*signer.signatures.borrow(), 1);
         let record = journal.action_by_idempotency_key(&draft.action_id).unwrap();
-        assert_eq!(record.status, ControllerActionStatus::Signed);
+        // Exported bytes may be sent by anyone: custody treats them as broadcast,
+        // so the exact winner can be resolved and only these bytes resumed.
+        assert_eq!(record.status, ControllerActionStatus::Broadcasting);
         assert_eq!(record.exact_signed_boc_digest.as_deref(), Some(signed.digest.as_str()));
         assert_eq!(fs::read(&out).unwrap(), signed.boc);
-
-        // A failed export leaves the durable Signed record and never sends.
-        let blocked = directory.0.join("missing").join("q.boc");
-        let again =
-            prepare_task_send(&journal, &draft, &signer, &trap, Some(blocked.as_path()), 11).await;
-        assert!(again.is_err());
-        assert!(trap.sent.borrow().is_empty());
+        validate_task_send_resolution_claim(&record, &draft.account).unwrap();
         assert_eq!(
-            journal.action_by_idempotency_key(&draft.action_id).unwrap().status,
-            ControllerActionStatus::Signed
+            begin_or_resume_task_send_broadcast(&journal, &record, &draft.account, 11).unwrap(),
+            signed.boc
+        );
+        // A second prepare for the same sequence is refused, never re-signed.
+        assert!(
+            prepare_task_send(&journal, &draft, &signer, &trap, Some(out.as_path()), 12)
+                .await
+                .is_err()
         );
         assert_eq!(*signer.signatures.borrow(), 1);
 
-        // Without --signed-boc-out nothing is written to disk.
+        // A failed export never sends and leaves the record Broadcasting: the
+        // bytes can still be resumed exactly, never re-signed.
+        let failed_journal_directory = TemporaryDirectory::create("task-send-prepare-trap-fail");
+        let failed = AgentAccountCustodyJournal::open(failed_journal_directory.0.clone()).unwrap();
+        let blocked = directory.0.join("missing").join("q.boc");
+        let again =
+            prepare_task_send(&failed, &draft, &signer, &trap, Some(blocked.as_path()), 13).await;
+        assert!(again.is_err());
+        assert!(trap.sent.borrow().is_empty());
+        let stranded = failed.action_by_idempotency_key(&draft.action_id).unwrap();
+        assert_eq!(stranded.status, ControllerActionStatus::Broadcasting);
+        assert!(
+            begin_or_resume_task_send_broadcast(&failed, &stranded, &draft.account, 14).is_ok()
+        );
+        assert_eq!(*signer.signatures.borrow(), 2);
+
+        // Without --signed-boc-out nothing is written to disk and the record
+        // stays Signed for task-send-broadcast.
         let fresh_journal_directory = TemporaryDirectory::create("task-send-prepare-trap-nofile");
         let fresh = AgentAccountCustodyJournal::open(fresh_journal_directory.0.clone()).unwrap();
-        prepare_task_send(&fresh, &draft, &signer, &trap, None, 12).await.unwrap();
+        prepare_task_send(&fresh, &draft, &signer, &trap, None, 15).await.unwrap();
         assert!(trap.sent.borrow().is_empty());
+        assert_eq!(
+            fresh.action_by_idempotency_key(&draft.action_id).unwrap().status,
+            ControllerActionStatus::Signed
+        );
         assert_eq!(fs::read_dir(&directory.0).unwrap().count(), 1);
     }
 
