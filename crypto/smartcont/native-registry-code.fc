@@ -31,16 +31,17 @@ const int purpose::capability_control = 8;
 const int purpose::known_mask = 15;
 const int max::controller_weight = 1000000;
 const int max::recovery_timelock = 31536000;
-;; The widest policy the registry admits. Every path that walks a policy --
-;; registration, policy update, recovery initiation and completion, and
-;; capability authorization -- has been measured with this many controllers,
-;; all signing, and stays within 80% of one masterchain transaction's gas.
-;; The costliest is recovery initiation from one maximum-width policy to
-;; another. A wider policy could register yet be unable to recover, so it is
+;; The widest policy the registry admits, and the most entries a signature set holds.
+;; Controllers are ML-DSA-44 keys (1,312-byte keys, 2,420-byte signatures). A
+;; disjoint policy update or recovery initiation carries the old policy's threshold
+;; signatures, a possession signature for every new controller and every new key in
+;; one relayed message; eight keeps that message inside the 65,535-byte external
+;; message limit with margin, and every policy-walking path within 80% of one
+;; transaction's gas. A wider policy could register yet be unable to recover, so it is
 ;; refused wherever a policy is validated, before any controller is read.
-;; native_registry_sandbox.rs pins every path's gas under that ceiling; the
-;; client builder (contracts::native_registry) carries the same limit.
-const int max::policy_controllers = 20;
+;; native_registry_sandbox.rs pins every path's gas and message size at this width;
+;; the client builder (contracts::native_registry) carries the same limit.
+const int max::policy_controllers = 8;
 
 const int err::bad_message = 2200;
 const int err::wrong_network = 2201;
@@ -56,13 +57,12 @@ const int err::bad_transition = 2210;
 const int err::immutable_version = 2211;
 const int err::timelock = 2212;
 const int err::duplicate_signature = 2213;
-;; A policy names a controller key anyone can sign for (strong-ed25519-key.fc).
-;; Such a key would add weight to every threshold and prove possession of
-;; nothing, so the whole policy is refused wherever it is validated.
-const int err::weak_key = 2214;
 const int err::policy_too_wide = 2215;
 
-#include "strong-ed25519-key.fc";
+;; Controllers are ML-DSA-44 keys (TVM global version 16): pq.fc declares
+;; PQCHECKSIG_MLDSA44, pq-bytes.fc the stored-key shape and the ordinary-cell parser.
+#include "pq.fc";
+#include "pq-bytes.fc";
 
 ;; data = magic:uint32 schema:uint16 object_kind:uint8 object_id:uint256
 ;;        ^config has_state:Bool [^state]
@@ -112,7 +112,10 @@ const int err::policy_too_wide = 2215;
     .store_uint(1, 1).store_ref(code).store_uint(1, 1).store_ref(data)
     .store_uint(0, 1).end_cell();
   (int actual_wc, int actual_account) = my_address().parse_std_addr();
-  throw_unless(err::wrong_contract, (actual_wc == workchain) & (actual_account == cell_hash(init)));
+  ;; Registry objects live in the basechain only: policies hold ML-DSA-44 keys, and the
+  ;; masterchain's per-account state limit is not meant for that.
+  throw_unless(err::wrong_contract, (workchain == 0) & (actual_wc == workchain) &
+    (actual_account == cell_hash(init)));
 }
 
 (int, cell) object_state_init(int object_kind, int object_id, cell config) inline_ref {
@@ -217,12 +220,59 @@ int required_purpose(int kind) inline {
 }
 
 ;; policy = magic:uint32 schema:uint16 threshold:uint32 recovery_threshold:uint32
-;;          recovery_timelock:uint64 count:uint8 ^controllers
+;;          recovery_timelock:uint64 count:uint8 ^controller
 ;;          (1 <= count <= max::policy_controllers)
-;; controller = key_hash:uint256 public_key:uint256 weight:uint32
-;;              purposes:uint16 recovery:Bool [^next]
-(int, int, int) validate_policy(cell policy) impure inline_ref {
-  slice ps = policy.begin_parse();
+;; controller = key_id:uint256 weight:uint32 purposes:uint16 recovery:Bool
+;;              ^stored_key [^next]           -- strictly ascending key_id
+;; stored_key = len:uint32(=1312) ^chain      -- an ML-DSA-44 public key
+;;
+;; Every cell of a policy, a controller and a stored key wrapper is parsed as an
+;; ordinary cell. The key chain itself is checked by PQCHECKSIG_MLDSA44, which refuses
+;; a wrong length or any non-canonical, exotic or library chain.
+
+slice ordinary(cell c) inline {
+  return c.pq::parse_ordinary();
+}
+
+;; The key chain a stored key wrapper carries, after checking the wrapper alone.
+cell stored_key_chain(cell stored) inline {
+  slice cs = ordinary(stored);
+  throw_unless(err::bad_policy, cs~load_uint(32) == pq::mldsa44_public_key_bytes);
+  cell chain = cs~load_ref();
+  cs.end_parse();
+  return chain;
+}
+
+;; The signature chain a stored signature wrapper carries, after checking the wrapper.
+cell stored_signature_chain(cell stored) inline {
+  slice cs = ordinary(stored);
+  throw_unless(err::bad_signature, cs~load_uint(32) == pq::mldsa44_signature_bytes);
+  cell chain = cs~load_ref();
+  cs.end_parse();
+  return chain;
+}
+
+;; pq::key_id over a key chain PQCHECKSIG_MLDSA44 has already accepted, so the chain is
+;; canonical and one SHA256C over the domain, the suite and the chain is the identity.
+int verified_key_id(cell chain) inline {
+  return begin_cell().store_slice("TOS-PQ-CONSENSUS-KEY-v1")
+    .store_uint(0x0100, 16) ;; u16_le(1): suite 1 is the bytes 01 00
+    .store_ref(chain).end_cell().snake_string_hash();
+}
+
+cell registry_context() inline {
+  return begin_cell().store_slice("TOS-NATIVE-REGISTRY").end_cell();
+}
+
+cell action_message(int action_hash) inline {
+  return begin_cell().store_uint(action_hash, 256).end_cell();
+}
+
+;; The shape of a policy and its thresholds: header, controller order, weights,
+;; purposes, recovery designation, wrapper shapes and per-purpose reachability. It
+;; derives no key id and checks no signature; `admit_policy` adds both.
+(int, int, int) validate_policy_shape(cell policy) impure inline_ref {
+  slice ps = ordinary(policy);
   throw_unless(err::bad_policy, ps~load_uint(32) == magic::policy);
   throw_unless(err::bad_policy, ps~load_uint(16) == 1);
   int threshold = ps~load_uint(32);
@@ -234,7 +284,6 @@ int required_purpose(int kind) inline {
     (count > 0) & (timelock <= max::recovery_timelock) & (ps.slice_refs() == 1));
   cell cursor = ps~load_ref();
   ps.end_parse();
-  cell pub_seen = null();
   int agent_total = 0;
   int delegation_total = 0;
   int capability_total = 0;
@@ -242,25 +291,22 @@ int required_purpose(int kind) inline {
   int previous_key = -1;
   int i = 0;
   while (i < count) {
-    slice cs = cursor.begin_parse();
-    int key_hash = cs~load_uint(256);
-    int public_key = cs~load_uint(256);
+    slice cs = ordinary(cursor);
+    int key_id = cs~load_uint(256);
     int weight = cs~load_uint(32);
     int purposes = cs~load_uint(16);
     int recovery = cs~load_uint(1);
-    var (_, duplicate_pub) = pub_seen.udict_get?(256, public_key);
-    throw_unless(err::bad_policy, (key_hash > previous_key) & (key_hash == public_key) & (public_key != 0) &
-      (weight > 0) & (weight <= max::controller_weight) & (purposes != 0) & ((purposes & (~ purpose::known_mask)) == 0) &
-      (~ duplicate_pub));
-    throw_if(err::weak_key, weak_ed25519_key?(public_key));
+    throw_unless(err::bad_policy, (key_id > previous_key) &
+      (weight > 0) & (weight <= max::controller_weight) & (purposes != 0) &
+      ((purposes & (~ purpose::known_mask)) == 0));
     throw_unless(err::bad_policy,
       (recovery != 0) == ((purposes & purpose::recovery) != 0));
-    pub_seen~udict_set_builder(256, public_key, begin_cell().store_uint(1, 1));
+    stored_key_chain(cs~load_ref());
     agent_total += weight * (purposes & purpose::agent_control);
     delegation_total += weight * ((purposes & purpose::delegation) >> 1);
     capability_total += weight * ((purposes & purpose::capability_control) >> 3);
     recovery_total += weight * recovery;
-    previous_key = key_hash;
+    previous_key = key_id;
     i += 1;
     if (i < count) {
       throw_unless(err::bad_policy, cs.slice_refs() == 1);
@@ -277,7 +323,60 @@ int required_purpose(int kind) inline {
   return (threshold, recovery_threshold, timelock);
 }
 
-(int, int, int, int) find_controller(cell policy, int wanted) inline_ref {
+;; The thresholds of a policy the registry already admitted and stored.
+(int, int, int) policy_header(cell policy) inline {
+  slice ps = policy.begin_parse();
+  ps~skip_bits(32 + 16);
+  return (ps~load_uint(32), ps~load_uint(32), ps~load_uint(64));
+}
+
+;; signatures = count:uint8 [^entry]              -- count = 0 has no reference
+;; entry = key_id:uint256 ^stored_signature [^next] -- strictly ascending key_id
+;; stored_signature = len:uint32(=2420) ^chain
+
+;; Admission of a policy submitted for installation (registration, policy update,
+;; recovery initiation): its shape, then a possession signature over the action from
+;; exactly every controller, in key order, each verified against the key the policy
+;; carries; only a key that has passed PQCHECKSIG_MLDSA44 has its id derived, which must
+;; equal the declared id. Returns the thresholds.
+(int, int, int) admit_policy(cell policy, cell signatures, int action_hash) impure inline_ref {
+  (int threshold, int recovery_threshold, int timelock) = validate_policy_shape(policy);
+  slice ps = policy.begin_parse();
+  ps~skip_bits(32 + 16 + 32 + 32 + 64);
+  int count = ps~load_uint(8);
+  cell controllers = ps~load_ref();
+  slice sr = ordinary(signatures);
+  throw_unless(err::bad_signature, (sr~load_uint(8) == count) & (sr.slice_refs() == 1));
+  cell signed = sr~load_ref();
+  sr.end_parse();
+  cell message = action_message(action_hash);
+  cell context = registry_context();
+  int i = 0;
+  while (i < count) {
+    slice cs = controllers.begin_parse();
+    int key_id = cs~load_uint(256);
+    cs~skip_bits(32 + 16 + 1);
+    cell key = stored_key_chain(cs~load_ref());
+    slice ss = ordinary(signed);
+    throw_unless(err::bad_signature, ss~load_uint(256) == key_id);
+    cell signature = stored_signature_chain(ss~load_ref());
+    throw_unless(err::bad_signature, pq_check_mldsa44(message, context, signature, key));
+    throw_unless(err::bad_policy, verified_key_id(key) == key_id);
+    i += 1;
+    if (i < count) {
+      throw_unless(err::bad_signature, ss.slice_refs() == 1);
+      controllers = cs~load_ref(); signed = ss~load_ref();
+    } else {
+      throw_unless(err::bad_signature, ss.slice_refs() == 0);
+    }
+    ss.end_parse();
+  }
+  return (threshold, recovery_threshold, timelock);
+}
+
+;; The stored key chain, weight, purposes and recovery designation of the controller
+;; `wanted` in an admitted policy, or (null, 0, 0, 0).
+(cell, int, int, int) find_controller(cell policy, int wanted) inline_ref {
   slice ps = policy.begin_parse();
   ps~skip_bits(32 + 16 + 32 + 32 + 64);
   int count = ps~load_uint(8);
@@ -285,25 +384,29 @@ int required_purpose(int kind) inline {
   int i = 0;
   while (i < count) {
     slice cs = cursor.begin_parse();
-    int key_hash = cs~load_uint(256);
-    int public_key = cs~load_uint(256);
+    int key_id = cs~load_uint(256);
     int weight = cs~load_uint(32);
     int purposes = cs~load_uint(16);
     int recovery = cs~load_uint(1);
-    if (key_hash == wanted) { return (public_key, weight, purposes, recovery); }
+    cell stored = cs~load_ref();
+    if (key_id == wanted) {
+      slice ks = stored.begin_parse();
+      ks~skip_bits(32);
+      return (ks~load_ref(), weight, purposes, recovery);
+    }
     i += 1;
     if (i < count) { cursor = cs~load_ref(); }
   }
-  return (0, 0, 0, 0);
+  return (null(), 0, 0, 0);
 }
 
 ;; Consent to a registration. Every controller of the initial policy has proved possession
 ;; by the time this runs, so the weight that consents is the policy's agent-control weight,
-;; held to the agent threshold. validate_policy already guarantees the threshold is met, so
-;; this walk cannot fail today; it states the rule at the one place it applies, so a change
-;; to validate_policy cannot silently remove it. A key without agent control consents to
-;; nothing and refuses nothing: isolating a key to delegation, capability control or
-;; recovery is what the purpose bits are for.
+;; held to the agent threshold. validate_policy_shape already guarantees the threshold is
+;; met, so this walk cannot fail today; it states the rule at the one place it applies, so
+;; a change to the shape check cannot silently remove it. A key without agent control
+;; consents to nothing and refuses nothing: isolating a key to delegation, capability
+;; control or recovery is what the purpose bits are for.
 () verify_registration_consent(cell policy, int threshold) impure inline_ref {
   slice ps = policy.begin_parse();
   ps~skip_bits(32 + 16 + 32 + 32 + 64);
@@ -313,23 +416,28 @@ int required_purpose(int kind) inline {
   int i = 0;
   while (i < count) {
     slice cs = controllers.begin_parse();
-    cs~skip_bits(256 + 256);
+    cs~skip_bits(256);
     int weight = cs~load_uint(32);
     int purposes = cs~load_uint(16);
     total += weight * (purposes & purpose::agent_control);
     i += 1;
     if (i < count) {
+      cs~load_uint(1); cs~load_ref();
       controllers = cs~load_ref();
     }
   }
   throw_unless(err::threshold, total >= threshold);
 }
 
+;; Threshold authorization against an admitted policy: every signer a controller with the
+;; required purpose (and the recovery designation in recovery mode), signers strictly
+;; ascending, their weight reaching the threshold (the recovery threshold in recovery
+;; mode). The stored policy is trusted; no key id is re-derived.
 () verify_signatures(cell policy, cell signatures, int required, int recovery_mode,
     int action_hash) impure inline_ref {
-  (int threshold, int recovery_threshold, int timelock) = validate_policy(policy);
+  (int threshold, int recovery_threshold, _) = policy_header(policy);
   int wanted = recovery_mode ? recovery_threshold : threshold;
-  slice root = signatures.begin_parse();
+  slice root = ordinary(signatures);
   int count = root~load_uint(8);
   ;; At most one signature per controller; a longer list is refused before
   ;; any entry is looked up.
@@ -337,20 +445,22 @@ int required_purpose(int kind) inline {
     (root.slice_refs() == 1));
   cell cursor = root~load_ref();
   root.end_parse();
+  cell message = action_message(action_hash);
+  cell context = registry_context();
   int total = 0;
   int previous_key = -1;
   int i = 0;
   while (i < count) {
-    slice ss = cursor.begin_parse();
-    int key_hash = ss~load_uint(256);
-    slice signature = ss~load_bits(512);
-    throw_unless(err::duplicate_signature, key_hash > previous_key);
-    (int public_key, int weight, int purposes, int recovery) = find_controller(policy, key_hash);
-    throw_unless(err::bad_signature, (public_key != 0) & (purposes & required));
+    slice ss = ordinary(cursor);
+    int key_id = ss~load_uint(256);
+    cell signature = stored_signature_chain(ss~load_ref());
+    throw_unless(err::duplicate_signature, key_id > previous_key);
+    (cell key, int weight, int purposes, int recovery) = find_controller(policy, key_id);
+    throw_unless(err::bad_signature, (~ null?(key)) & (purposes & required));
     if (recovery_mode) { throw_unless(err::bad_signature, recovery); }
-    throw_unless(err::bad_signature, check_signature(action_hash, signature, public_key));
+    throw_unless(err::bad_signature, pq_check_mldsa44(message, context, signature, key));
     total += weight;
-    previous_key = key_hash;
+    previous_key = key_id;
     i += 1;
     if (i < count) {
       throw_unless(err::bad_signature, ss.slice_refs() == 1);
@@ -363,43 +473,8 @@ int required_purpose(int kind) inline {
   throw_unless(err::threshold, total >= wanted);
 }
 
-;; Policy installation requires proof of possession for every declared key.
-() verify_policy_possession(cell policy, cell signatures, int action_hash) impure inline_ref {
-  validate_policy(policy);
-  slice ps = policy.begin_parse();
-  ps~skip_bits(32 + 16 + 32 + 32 + 64);
-  int count = ps~load_uint(8);
-  cell controllers = ps~load_ref(); ps.end_parse();
-  slice sr = signatures.begin_parse();
-  throw_unless(err::bad_signature, (sr~load_uint(8) == count) &
-    (sr.slice_refs() == 1));
-  cell signed = sr~load_ref(); sr.end_parse();
-  int i = 0;
-  while (i < count) {
-    slice cs = controllers.begin_parse();
-    int key_hash = cs~load_uint(256);
-    int public_key = cs~load_uint(256);
-    cs~skip_bits(32 + 16 + 1);
-    slice ss = signed.begin_parse();
-    throw_unless(err::bad_signature, ss~load_uint(256) == key_hash);
-    slice signature = ss~load_bits(512);
-    throw_unless(err::bad_signature,
-      check_signature(action_hash, signature, public_key));
-    i += 1;
-    if (i < count) {
-      throw_unless(err::bad_signature, (cs.slice_refs() == 1) &
-        (ss.slice_refs() == 1));
-      controllers = cs~load_ref(); signed = ss~load_ref();
-    } else {
-      throw_unless(err::bad_signature, (cs.slice_refs() == 0) &
-        (ss.slice_refs() == 0));
-    }
-    cs.end_parse(); ss.end_parse();
-  }
-}
-
 () require_empty_signatures(cell signatures) impure inline {
-  slice s = signatures.begin_parse();
+  slice s = ordinary(signatures);
   throw_unless(err::bad_signature, s~load_uint(8) == 0);
   s.end_parse();
 }
@@ -628,14 +703,15 @@ cell empty_delegations() inline { return begin_cell().store_uint(0, 16).store_di
     int object_nonce = p~load_uint(256);
     cell policy = p~load_ref(); p.end_parse();
     throw_unless(err::bad_action, object_nonce != 0);
-    (int threshold, _, _) = validate_policy(policy);
+    ;; Possession by every controller of the initial policy; consent is its
+    ;; agent-control weight.
+    (int threshold, _, _) = admit_policy(policy, authority_signatures, action_hash);
     cell identity_domain = begin_cell().store_uint(genesis_root, 256)
       .store_uint(genesis_file, 256).store_uint(network_hash, 256).end_cell();
     cell identity = begin_cell().store_uint(magic::identity, 32).store_uint(1, 8)
       .store_uint(object_nonce, 256).store_uint(cell_hash(policy), 256)
       .store_ref(identity_domain).end_cell();
     throw_unless(err::bad_transition, cell_hash(identity) == object_id);
-    verify_policy_possession(policy, authority_signatures, action_hash);
     verify_registration_consent(policy, threshold);
     save_object(object_kind, object_id, config, 1, build_agent_state(0, generation,
       sequence, action_hash, policy, empty_delegations(), empty_recovery()));
@@ -681,8 +757,8 @@ cell empty_delegations() inline { return begin_cell().store_uint(0, 16).store_di
     cell next_policy = policy;
     int tombstone = 0;
     if (kind == kind::update_agent_policy) {
-      next_policy = p~load_ref(); p.end_parse(); validate_policy(next_policy);
-      verify_policy_possession(next_policy, counterparty_signatures, action_hash);
+      next_policy = p~load_ref(); p.end_parse();
+      admit_policy(next_policy, counterparty_signatures, action_hash);
       recovery = empty_recovery();
     } elseif (kind == kind::delegate_agent) {
       int delegation = p~load_uint(256); p.end_parse();
@@ -695,9 +771,8 @@ cell empty_delegations() inline { return begin_cell().store_uint(0, 16).store_di
       delegations = begin_cell().store_uint(count + 1, 16).store_dict(dict).end_cell();
     } elseif (kind == kind::initiate_recovery) {
       int execute_after = p~load_uint(64); cell recovery_policy = p~load_ref(); p.end_parse();
-      (int normal, int recover, int timelock) = validate_policy(policy);
-      validate_policy(recovery_policy);
-      verify_policy_possession(recovery_policy, counterparty_signatures, action_hash);
+      (int normal, int recover, int timelock) = policy_header(policy);
+      admit_policy(recovery_policy, counterparty_signatures, action_hash);
       throw_unless(err::timelock, execute_after >= now() + timelock);
       recovery = begin_cell().store_uint(1, 1).store_uint(action_hash, 256)
         .store_uint(old_policy_hash, 256).store_uint(execute_after, 64)
@@ -709,8 +784,10 @@ cell empty_delegations() inline { return begin_cell().store_uint(0, 16).store_di
       throw_unless(err::bad_transition, recovery_state~load_uint(256) == initiation);
       throw_unless(err::bad_transition, recovery_state~load_uint(256) == cell_hash(policy));
       throw_unless(err::timelock, now() >= recovery_state~load_uint(64));
+      ;; The pending policy was admitted, possession included, at initiation, and
+      ;; its hash is bound into the stored recovery state: it is promoted as is.
       next_policy = recovery_state~load_ref(); recovery_state.end_parse();
-      validate_policy(next_policy); recovery = empty_recovery(); delegations = empty_delegations();
+      recovery = empty_recovery(); delegations = empty_delegations();
     } elseif (kind == kind::revoke_agent) {
       p.end_parse(); tombstone = 1; delegations = empty_delegations(); recovery = empty_recovery();
     } else {
