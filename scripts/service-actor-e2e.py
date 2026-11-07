@@ -453,25 +453,37 @@ async def refund_show(name: str, request_id: int):
     )
 
 
-async def send_op(operation: str, name: str, frm: str, *extra: str) -> str:
+async def send_op_raw(operation: str, name: str, frm: str, *extra: str) -> str:
     return await tosctl(
         "agent", "service", "send", "--operation", operation, "--name", name,
         "--from", frm, "--yes", *extra,
     )
 
 
-async def rejected_cli_funding(label: str, address: str, payer: str,
-                               name: str, frm: str, operation: str, *extra: str) -> None:
+async def send_op(operation: str, name: str, frm: str, *extra: str) -> str:
+    """Send an operation; a call states the terms hash its buyer accepted.
+
+    The CLI never defaults a call's terms to live state. This script quotes
+    the service immediately before each call, so the quote is the live terms.
+    """
+    if operation == "call" and "--expected-terms-hash" not in extra:
+        extra = (*extra, "--expected-terms-hash", (await service_show(name))["terms_hash"])
+    return await send_op_raw(operation, name, frm, *extra)
+
+
+async def rejected_cli_preflight(label: str, address: str, payer: str, marker: str,
+                                 name: str, frm: str, operation: str, *extra: str) -> None:
+    """Require the CLI to refuse before any wallet submission, with `marker` in its error."""
     before_state = await service_show(name)
     wallet_lt, contract_lt = last_lt(payer), last_lt(address)
     try:
-        await send_op(operation, name, frm, *extra)
+        await send_op_raw(operation, name, frm, *extra)
     except RuntimeError as error:
         receipt = str(error)
-        if "Service Actor message requires at least" not in receipt or "message submitted" in receipt:
+        if marker not in receipt or "message submitted" in receipt:
             raise
     else:
-        raise RuntimeError(f"{label}: underfunded command was not refused")
+        raise RuntimeError(f"{label}: command was not refused before submission")
     if (last_lt(payer) != wallet_lt or last_lt(address) != contract_lt
             or await service_show(name) != before_state):
         raise RuntimeError(f"{label}: preflight refusal changed a wallet or Service Actor")
@@ -481,6 +493,14 @@ async def rejected_cli_funding(label: str, address: str, payer: str,
         "state": before_state,
     })
     check(label, True)
+
+
+async def rejected_cli_funding(label: str, address: str, payer: str,
+                               name: str, frm: str, operation: str, *extra: str) -> None:
+    if operation == "call" and "--expected-terms-hash" not in extra:
+        extra = (*extra, "--expected-terms-hash", (await service_show(name))["terms_hash"])
+    await rejected_cli_preflight(label, address, payer, "Service Actor message requires at least",
+                                 name, frm, operation, *extra)
 
 
 async def rejected_operation(label: str, address: str, payer: str, expected_exit: int,
@@ -765,10 +785,9 @@ async def successful_operation(operation: str, name: str, frm: str, *extra: str)
                 if not same_addr(principal_destination, payer):
                     principal_baseline_lt = last_lt(principal_destination)
             else:
-                entry = await request_show(name, request_id)
-                if not entry.get("found"):
-                    entry = await refund_show(name, request_id)
-                expected_payout = atomic_tos(str(entry["cleanup_bounty"]))
+                # A sweep pays two principals (the price back to the caller and
+                # the bounty to the sweeper); this observer binds one.
+                raise RuntimeError("a successful sweep is not observed by this script")
     before_head = finalized_mc_header()
     wallet_lt, contract_lt = last_lt(payer), last_lt(address)
     receipt = await send_op(operation, name, frm, *extra)
@@ -799,7 +818,7 @@ async def deploy_service(
     name: str, owner: str, *, price_per_call: float = 0.05, rate_limit_per_day: int = 0,
     authorized_caller: str | None = None, open_access: bool = False,
     metadata_hash: str = METADATA_HASH, proof_scheme_hash: str = PROOF_SCHEME_HASH,
-    signer_vault_key: str | None = None, amount: float = 2.0,
+    attestor_controller: str | None = None, amount: float = 2.0,
 ):
     args = [
         "agent", "service", "deploy", "--name", name, "--owner", owner,
@@ -813,8 +832,8 @@ async def deploy_service(
         args.append("--open-access")
     else:
         args += ["--authorized-caller", authorized_caller]
-    if signer_vault_key:
-        args += ["--signer-vault-key", signer_vault_key]
+    if attestor_controller:
+        args += ["--attestor-controller", attestor_controller]
     args += ["--from", "owner", "--amount", str(amount), "-w", "0", "--yes"]
     before_head = finalized_mc_header()
     wallet_lt = last_lt(owner)
@@ -921,6 +940,13 @@ async def run_checks(faucet) -> None:
         await rejected_cli_funding("underpaid call rejected before wallet submission",
                                    address, caller, "svc-1", "caller", "call",
                                    "--request-hash", "bb" * 32, "--amount", "0.01")
+        await rejected_cli_preflight("call without the accepted terms hash refused",
+                                     address, caller, "--expected-terms-hash is required",
+                                     "svc-1", "caller", "call", "--request-hash", "bb" * 32)
+        await rejected_cli_preflight("call quoting other terms refused",
+                                     address, caller, "the service's terms changed",
+                                     "svc-1", "caller", "call", "--request-hash", "bb" * 32,
+                                     "--expected-terms-hash", "00" * 32)
 
         print("\n=== concurrent requests: two outstanding calls, resolved independently ===")
         # This is the headline feature the upgrade adds: unlike the single-slot
@@ -1126,21 +1152,30 @@ async def run_checks(faucet) -> None:
     check("owner balance increased", balance(owner) > owner_before, "")
 
     print("\n=== non-owner rejections ===")
+    # Attestors are ML-DSA-44 controllers held in the vault.
+    attestor_keys = {}
+    for controller in ("service-attestor-key", "wrong-service-attestor-key",
+                       "rotated-service-attestor-key"):
+        view = await tosctl_json("agent", "native-registry", "new-controller", "--name", controller)
+        attestor_keys[controller] = view
     await rejected_operation("non-owner rotate-attestor-key rejected", address, outsider,
                              1900, "svc-1", "outsider", "rotate-attestor-key",
-                             "--new-attestor-pubkey", "aa" * 32)
+                             "--new-attestor-pubkey",
+                             attestor_keys["wrong-service-attestor-key"]["public_key"])
     await rejected_operation("non-owner revoke-attestor rejected", address, outsider,
                              1900, "svc-1", "outsider", "revoke-attestor")
 
     print("\n=== attestor path: respond requires a signature over the request-bound domain ===")
-    await tosctl("key", "add", "--name", "service-attestor-key")
-    await tosctl("key", "add", "--name", "wrong-service-attestor-key")
+    def key_id(controller: str) -> str:
+        return "mldsa44:" + attestor_keys[controller]["key_id"]
+
     address2 = await deploy_service(
         "svc-2", owner, price_per_call=0.01, open_access=True,
-        signer_vault_key="service-attestor-key",
+        attestor_controller="service-attestor-key",
     )
     data = await service_show("svc-2")
-    check("attestor pubkey recorded on-chain", bool(data.get("attestor_pubkey")), str(data))
+    check("attestor key recorded on-chain",
+          data.get("attestor_key_id") == key_id("service-attestor-key"), str(data))
 
     req_id2 = await next_request_id("svc-2")
     await successful_operation("call", "svc-2", "outsider", "--request-hash", "cc" * 32)
@@ -1149,41 +1184,51 @@ async def run_checks(faucet) -> None:
                              "svc-2", "owner", "respond", "--request-id", str(req_id2),
                              "--response-hash", "dd" * 32)
 
-    await rejected_operation("respond with wrong attestor key rejected", address2, owner,
-                             1911, "svc-2", "owner", "respond", "--request-id", str(req_id2),
+    # The CLI refuses to sign with a controller the request did not snapshot;
+    # the contract refuses a signature that does not verify.
+    await rejected_cli_preflight("respond with wrong attestor controller refused",
+                                 address2, owner, "is not the attestor request",
+                                 "svc-2", "owner", "respond", "--request-id", str(req_id2),
+                                 "--response-hash", "dd" * 32,
+                                 "--attestor-controller", "wrong-service-attestor-key")
+    await rejected_operation("respond with an invalid attestation signature rejected", address2,
+                             owner, 1911, "svc-2", "owner", "respond", "--request-id", str(req_id2),
                              "--response-hash", "dd" * 32,
-                             "--signer-vault-key", "wrong-service-attestor-key")
+                             "--attestation-signature", "11" * 2420)
 
     await successful_operation("respond", "svc-2", "owner", "--request-id", str(req_id2), "--response-hash", "dd" * 32,
-                  "--signer-vault-key", "service-attestor-key")
+                  "--attestor-controller", "service-attestor-key")
     req2_data = await request_show("svc-2", req_id2)
     check("attestor-signed respond recorded", not req2_data["found"], str(req2_data))
 
     print("\n=== snapshot behavior: rotating the attestor key does not affect an already-pending request ===")
-    await tosctl("key", "add", "--name", "rotated-service-attestor-key")
     req_id3 = await next_request_id("svc-2")
     await successful_operation("call", "svc-2", "outsider", "--request-hash", "06" * 32)
     req3_before_rotate = await request_show("svc-2", req_id3)
-    check("request snapshotted the attestor pubkey in force at call time", req3_before_rotate["found"],
+    check("request snapshotted the attestor key in force at call time",
+          req3_before_rotate["found"]
+          and req3_before_rotate.get("attestor_key_id") == key_id("service-attestor-key"),
           str(req3_before_rotate))
 
     # Rotation is unrestricted -- no pending-state freeze in this design,
     # unlike Task Escrow/Dispute -- but must not retroactively rewrite what
     # req_id3 requires.
     await successful_operation("rotate-attestor-key", "svc-2", "owner",
-                  "--signer-vault-key", "rotated-service-attestor-key")
+                  "--attestor-controller", "rotated-service-attestor-key")
     data = await service_show("svc-2")
-    check("attestor key rotated on the live policy", bool(data.get("attestor_pubkey")), str(data))
+    check("attestor key rotated on the live policy",
+          data.get("attestor_key_id") == key_id("rotated-service-attestor-key"), str(data))
 
     # A signature under the *new* key must not satisfy req_id3's snapshot.
-    await rejected_operation("new attestor key does not satisfy the old request's snapshot",
-                             address2, owner, 1911, "svc-2", "owner", "respond",
-                             "--request-id", str(req_id3), "--response-hash", "07" * 32,
-                             "--signer-vault-key", "rotated-service-attestor-key")
+    await rejected_cli_preflight("new attestor key does not satisfy the old request's snapshot",
+                                 address2, owner, "is not the attestor request",
+                                 "svc-2", "owner", "respond",
+                                 "--request-id", str(req_id3), "--response-hash", "07" * 32,
+                                 "--attestor-controller", "rotated-service-attestor-key")
 
     # The *old* key still does.
     await successful_operation("respond", "svc-2", "owner", "--request-id", str(req_id3), "--response-hash", "07" * 32,
-                  "--signer-vault-key", "service-attestor-key")
+                  "--attestor-controller", "service-attestor-key")
     req3_data = await request_show("svc-2", req_id3)
     check("old (pre-rotation) attestor key still satisfies the pending request",
           not req3_data["found"], str(req3_data))
@@ -1191,18 +1236,19 @@ async def run_checks(faucet) -> None:
     # New requests require the new key.
     req_id4 = await next_request_id("svc-2")
     await successful_operation("call", "svc-2", "outsider", "--request-hash", "08" * 32)
-    await rejected_operation("old key rejected for a request accepted after rotation",
-                             address2, owner, 1911, "svc-2", "owner", "respond",
-                             "--request-id", str(req_id4), "--response-hash", "09" * 32,
-                             "--signer-vault-key", "service-attestor-key")
+    await rejected_cli_preflight("old key refused for a request accepted after rotation",
+                                 address2, owner, "is not the attestor request",
+                                 "svc-2", "owner", "respond",
+                                 "--request-id", str(req_id4), "--response-hash", "09" * 32,
+                                 "--attestor-controller", "service-attestor-key")
     await successful_operation("respond", "svc-2", "owner", "--request-id", str(req_id4), "--response-hash", "09" * 32,
-                  "--signer-vault-key", "rotated-service-attestor-key")
+                  "--attestor-controller", "rotated-service-attestor-key")
     req4_data = await request_show("svc-2", req_id4)
     check("new key satisfies a request accepted after rotation", not req4_data["found"], str(req4_data))
 
     await successful_operation("revoke-attestor", "svc-2", "owner")
     data = await service_show("svc-2")
-    check("owner can revoke the attestor once idle", not data.get("attestor_pubkey"), str(data))
+    check("owner can revoke the attestor once idle", not data.get("attestor_key_id"), str(data))
 
     print("\n=== snapshot behavior: update-policy does not change an already-pending request's terms ===")
     address4 = await deploy_service("svc-4", owner, price_per_call=0.01, open_access=True)

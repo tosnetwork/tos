@@ -396,7 +396,7 @@ fn controller_secret_id(name: &str) -> anyhow::Result<SecretId> {
 }
 
 /// Reads registry controller `name`'s seed from the vault.
-async fn read_controller_seed(
+pub(crate) async fn read_controller_seed(
     vault: &SecretVault,
     name: &str,
 ) -> anyhow::Result<Zeroizing<[u8; CONTROLLER_SEED_BYTES]>> {

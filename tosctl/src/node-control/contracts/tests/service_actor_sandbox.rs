@@ -32,14 +32,13 @@ use chain_block::{
 use contracts::service_actor::protocol_constants::{
     ADMISSION_GAS_ALLOWANCE, MINIMUM_OPERATING_RESERVE, PAYOUT_GAS_ALLOWANCE,
 };
+use contracts::service_actor::{RequestSnapshot, decode_request_snapshot};
 use contracts::{ServiceActorContract, ServiceActorData, ServiceActorInit};
-use ed25519_dalek::{Signer, SigningKey};
 use tos_sandbox::{Blockchain, MessageBuilder, SendResult, Treasury};
 use tos_vm::stack::StackItem;
 
 #[path = "fixtures/current_network.rs"]
 mod current_network;
-mod weak_ed25519;
 
 const TOS: u64 = 1_000_000_000;
 const MIN_RESPONSE_SLA: u32 = 3_600;
@@ -85,16 +84,48 @@ struct Fixture {
     init: ServiceActorInit,
 }
 
+/// A test-only ML-DSA-44 attestor derived from a fixed seed; never an
+/// operational key.
+#[derive(Clone)]
+struct Attestor {
+    seed: [u8; 32],
+    public_key: Vec<u8>,
+}
+
+impl Attestor {
+    fn from_bytes(seed: &[u8; 32]) -> Self {
+        Self {
+            seed: *seed,
+            public_key: contracts::native_registry::native_public_key_from_seed(seed),
+        }
+    }
+
+    fn public_key(&self) -> Vec<u8> {
+        self.public_key.clone()
+    }
+
+    fn key_id(&self) -> [u8; 32] {
+        contracts::native_registry::controller_key_id(&self.public_key).expect("attestor key id")
+    }
+
+    /// An ML-DSA-44 signature over a response domain hash.
+    fn sign(&self, domain_hash: &[u8; 32]) -> Vec<u8> {
+        contracts::service_actor::sign_service_response(&self.seed, domain_hash)
+            .expect("attestor signature")
+            .1
+    }
+}
+
 impl Fixture {
     fn new() -> Self {
         Self::build(None)
     }
 
-    fn with_attestor(attestor_pubkey: [u8; 32]) -> Self {
+    fn with_attestor(attestor_pubkey: Vec<u8>) -> Self {
         Self::build(Some(attestor_pubkey))
     }
 
-    fn build(attestor_pubkey: Option<[u8; 32]>) -> Self {
+    fn build(attestor_pubkey: Option<Vec<u8>>) -> Self {
         let mut bc =
             Blockchain::with_global_version(current_network::global_version()).expect("blockchain");
         // The sandbox config has no basechain workchain descriptor, so run
@@ -305,7 +336,7 @@ impl Fixture {
         query_id: u64,
         request_id: u64,
         response_hash: [u8; 32],
-        signature: &[u8; 64],
+        signature: &[u8],
     ) -> SendResult {
         let owner = self.owner.address().clone();
         self.send_from_with_value(
@@ -354,6 +385,9 @@ fn service_outputs(result: &SendResult) -> Vec<(MsgAddressInt, u64)> {
         .first_transaction()
         .expect("service transaction")
         .iterate_out_msgs(|message| {
+            if message.int_header().is_none() {
+                return Ok(true);
+            }
             outputs.push((
                 message.dst().expect("internal destination"),
                 message.get_value().expect("internal value").coins.as_u64().expect("u64 value"),
@@ -362,6 +396,47 @@ fn service_outputs(result: &SendResult) -> Vec<(MsgAddressInt, u64)> {
         })
         .expect("outgoing messages");
     outputs
+}
+
+/// Decode every request snapshot event the service transaction emitted.
+fn request_snapshots(result: &SendResult) -> Vec<RequestSnapshot> {
+    let mut snapshots = Vec::new();
+    result
+        .first_transaction()
+        .expect("service transaction")
+        .iterate_out_msgs(|message| {
+            if message.int_header().is_none() {
+                assert!(message.ext_out_header().is_some(), "only internal or external-out");
+                let body = message.body().expect("snapshot body").clone().into_cell().unwrap();
+                snapshots.push(decode_request_snapshot(&body).expect("canonical snapshot"));
+            }
+            Ok(true)
+        })
+        .expect("outgoing messages");
+    snapshots
+}
+
+/// A sweep returns the swept price to the caller, pays the bounty, and
+/// returns the sweeper's unused execution funding, in that order.
+fn expect_sweep(
+    result: &SendResult,
+    caller: &MsgAddressInt,
+    price: u64,
+    sweeper: &MsgAddressInt,
+    bounty: u64,
+    budget: u64,
+) {
+    result.expect_success().expect_exit_code(0);
+    assert!(request_snapshots(result).is_empty(), "a sweep emits no snapshot");
+    let outputs = service_outputs(result);
+    assert_eq!(outputs.len(), 3, "price, bounty and change have distinct messages");
+    assert_eq!(outputs[0], (caller.clone(), price), "the swept price returns to the caller");
+    assert_eq!(outputs[1], (sweeper.clone(), bounty), "the bounty is paid in full");
+    assert_eq!(
+        outputs[2],
+        (sweeper.clone(), budget.checked_sub(execution_fees(result)).unwrap()),
+        "only this operation's execution and forwarding fees reduce change"
+    );
 }
 
 fn execution_fees(result: &SendResult) -> u64 {
@@ -549,7 +624,7 @@ fn call_then_respond_round_trip() {
     assert_eq!(request.price, f.init.price_per_call);
     assert_eq!(request.storage_fee, f.init.storage_fee);
     assert_eq!(request.request_hash, [0xAA; 32]);
-    assert_eq!(request.attestor_pubkey, None);
+    assert_eq!(request.attestor_key_id, None);
 
     f.respond(2, 0, [0xBB; 32]).expect_success();
     let data = f.data();
@@ -952,6 +1027,45 @@ fn sweep_boundary_is_exact() {
 // sweep_expired_request against both dictionaries
 // ---------------------------------------------------------------------------
 
+/// Every accepted call emits exactly one canonical snapshot whose fields equal
+/// the stored request, so an index rebuilt from transactions agrees with state.
+#[test]
+fn every_admission_emits_a_snapshot_matching_the_stored_request() {
+    let attestor = Attestor::from_bytes(&[0x5a; 32]);
+    for with_attestor in [false, true] {
+        let mut f = if with_attestor {
+            Fixture::with_attestor(attestor.public_key().to_vec())
+        } else {
+            Fixture::new()
+        };
+        let caller = f.caller.address().clone();
+        for (query_id, request_hash) in [(1, [0xA1; 32]), (2, [0xA2; 32])] {
+            let result = f.call(&caller, query_id, request_hash);
+            result.expect_success();
+            let snapshots = request_snapshots(&result);
+            assert_eq!(snapshots.len(), 1, "exactly one snapshot per admission");
+            let snapshot = &snapshots[0];
+            let stored = f.request(snapshot.request_id).expect("snapshot names a live request");
+            assert_eq!(snapshot.request_id, query_id - 1, "ids are contract-assigned in order");
+            assert_eq!(snapshot.caller, caller);
+            assert_eq!(snapshot.caller, stored.caller);
+            assert_eq!(snapshot.request_hash, request_hash);
+            assert_eq!(snapshot.request_hash, stored.request_hash);
+            assert_eq!(snapshot.terms_hash, stored.terms_hash);
+            assert_eq!(snapshot.terms_hash, f.terms());
+            assert_eq!(snapshot.price, u128::from(stored.price));
+            assert_eq!(snapshot.response_deadline, stored.response_deadline);
+            assert_eq!(snapshot.refund_claim_deadline, stored.refund_claim_deadline);
+            assert_eq!(snapshot.attestor_key_id, stored.attestor_key_id);
+            assert_eq!(
+                snapshot.attestor_key_id,
+                with_attestor.then(|| attestor.key_id()),
+                "the snapshot names exactly the attestor key in force"
+            );
+        }
+    }
+}
+
 #[test]
 fn sweep_works_directly_against_a_never_expired_pending_request() {
     let mut f = Fixture::new();
@@ -964,7 +1078,14 @@ fn sweep_works_directly_against_a_never_expired_pending_request() {
     // both deadlines.
     f.bc.set_now(request.refund_claim_deadline as u32);
     let result = f.sweep(&outsider, 2, 0);
-    expect_payment_and_change(&result, &outsider, &outsider, f.init.cleanup_bounty, TOS / 2);
+    expect_sweep(
+        &result,
+        &caller,
+        f.init.price_per_call,
+        &outsider,
+        f.init.cleanup_bounty,
+        TOS / 2,
+    );
 
     assert!(f.request(0).is_none(), "sweep must clean up a still-pending entry directly");
     assert!(f.refund(0).is_none());
@@ -975,7 +1096,8 @@ fn sweep_works_directly_against_a_never_expired_pending_request() {
     assert_eq!(data.locked_storage_fees, 0);
     assert_eq!(
         data.withdrawable_revenue,
-        f.init.price_per_call + f.init.storage_fee - f.init.cleanup_bounty
+        f.init.storage_fee - f.init.cleanup_bounty,
+        "the swept price returns to the caller; only the net fee is revenue"
     );
 }
 
@@ -992,7 +1114,14 @@ fn sweep_works_against_a_properly_expired_refund_entry() {
 
     f.bc.set_now(refund.refund_claim_deadline as u32);
     let result = f.sweep(&outsider, 3, 0);
-    expect_payment_and_change(&result, &outsider, &outsider, f.init.cleanup_bounty, TOS / 2);
+    expect_sweep(
+        &result,
+        &caller,
+        f.init.price_per_call,
+        &outsider,
+        f.init.cleanup_bounty,
+        TOS / 2,
+    );
 
     assert!(f.refund(0).is_none());
     let data = f.data();
@@ -1000,7 +1129,8 @@ fn sweep_works_against_a_properly_expired_refund_entry() {
     assert_eq!(data.locked_storage_fees, 0);
     assert_eq!(
         data.withdrawable_revenue,
-        f.init.price_per_call + f.init.storage_fee - f.init.cleanup_bounty
+        f.init.storage_fee - f.init.cleanup_bounty,
+        "the swept price returns to the caller; only the net fee is revenue"
     );
 }
 
@@ -1063,9 +1193,9 @@ fn only_the_original_caller_can_claim_their_refund() {
 
 #[test]
 fn attestor_signature_cannot_be_replayed_across_requests() {
-    let attestor = SigningKey::from_bytes(&[0x77; 32]);
-    let attestor_pubkey = attestor.verifying_key().to_bytes();
-    let mut f = Fixture::with_attestor(attestor_pubkey);
+    let attestor = Attestor::from_bytes(&[0x77; 32]);
+    let attestor_pubkey = attestor.public_key();
+    let mut f = Fixture::with_attestor(attestor_pubkey.clone());
     let caller = f.caller.address().clone();
 
     f.call(&caller, 1, [0xAA; 32]).expect_success(); // request 0
@@ -1086,10 +1216,10 @@ fn attestor_signature_cannot_be_replayed_across_requests() {
         request0.refund_claim_deadline,
     )
     .unwrap();
-    let signature_0: [u8; 64] = attestor.sign(&domain_0).to_bytes();
+    let signature_0 = attestor.sign(&domain_0);
 
     // A wrong signature is rejected outright.
-    f.respond_signed(3, 0, response_hash, &[0u8; 64])
+    f.respond_signed(3, 0, response_hash, &[0u8; 2420])
         .expect_aborted()
         .expect_exit_code(ERR_BAD_RESPONSE_SIGNATURE);
 
@@ -1120,15 +1250,15 @@ fn attestor_signature_cannot_be_replayed_across_requests() {
         request1.refund_claim_deadline,
     )
     .unwrap();
-    let signature_1: [u8; 64] = attestor.sign(&domain_1).to_bytes();
+    let signature_1 = attestor.sign(&domain_1);
     f.respond_signed(6, 1, response_hash, &signature_1).expect_success();
 }
 
 #[test]
 fn attestor_signed_respond_matches_the_compiled_bytecode() {
-    let attestor = SigningKey::from_bytes(&[0x77; 32]);
-    let attestor_pubkey = attestor.verifying_key().to_bytes();
-    let mut f = Fixture::with_attestor(attestor_pubkey);
+    let attestor = Attestor::from_bytes(&[0x77; 32]);
+    let attestor_pubkey = attestor.public_key();
+    let mut f = Fixture::with_attestor(attestor_pubkey.clone());
     let caller = f.caller.address().clone();
     f.call(&caller, 1, [0xAA; 32]).expect_success();
 
@@ -1137,7 +1267,7 @@ fn attestor_signed_respond_matches_the_compiled_bytecode() {
     assert!(f.request(0).is_some());
 
     let request = f.request(0).unwrap();
-    assert_eq!(request.attestor_pubkey, Some(attestor_pubkey));
+    assert_eq!(request.attestor_key_id, Some(key_id_of(&attestor_pubkey)));
     let response_hash = [0xBB; 32];
     let domain_hash = contracts::service_respond_domain_hash(
         sandbox_global_id(&f.bc),
@@ -1152,7 +1282,7 @@ fn attestor_signed_respond_matches_the_compiled_bytecode() {
         request.refund_claim_deadline,
     )
     .unwrap();
-    let signature: [u8; 64] = attestor.sign(&domain_hash).to_bytes();
+    let signature = attestor.sign(&domain_hash);
     f.respond_signed(3, 0, response_hash, &signature).expect_success();
     assert!(f.request(0).is_none());
 }
@@ -1163,9 +1293,9 @@ fn attestor_signed_respond_matches_the_compiled_bytecode() {
 
 #[test]
 fn update_policy_and_attestor_rotation_never_alter_already_snapshotted_requests() {
-    let old_attestor = SigningKey::from_bytes(&[0x11; 32]);
-    let old_attestor_pubkey = old_attestor.verifying_key().to_bytes();
-    let mut f = Fixture::with_attestor(old_attestor_pubkey);
+    let old_attestor = Attestor::from_bytes(&[0x11; 32]);
+    let old_attestor_pubkey = old_attestor.public_key();
+    let mut f = Fixture::with_attestor(old_attestor_pubkey.clone());
     let owner = f.owner.address().clone();
     let caller = f.caller.address().clone();
 
@@ -1175,10 +1305,13 @@ fn update_policy_and_attestor_rotation_never_alter_already_snapshotted_requests(
     // Rotate the attestor key and change the price -- request 0's snapshot
     // must be completely unaffected, and this must succeed unconditionally
     // (no pending-state freeze, unlike the single-slot predecessor).
-    let new_attestor = SigningKey::from_bytes(&[0x22; 32]);
-    let new_attestor_pubkey = new_attestor.verifying_key().to_bytes();
-    f.send_from(&owner, ServiceActorContract::rotate_attestor_key(2, new_attestor_pubkey).unwrap())
-        .expect_success();
+    let new_attestor = Attestor::from_bytes(&[0x22; 32]);
+    let new_attestor_pubkey = new_attestor.public_key();
+    f.send_from(
+        &owner,
+        ServiceActorContract::rotate_attestor_key(2, &new_attestor_pubkey).unwrap(),
+    )
+    .expect_success();
 
     let mut new_init = f.init.clone();
     new_init.price_per_call *= 2;
@@ -1213,7 +1346,7 @@ fn update_policy_and_attestor_rotation_never_alter_already_snapshotted_requests(
     f.call(&caller, 4, [0xBB; 32]).expect_success(); // request 1
     let request1 = f.request(1).unwrap();
     assert_eq!(request1.price, new_init.price_per_call);
-    assert_eq!(request1.attestor_pubkey, Some(new_attestor_pubkey));
+    assert_eq!(request1.attestor_key_id, Some(key_id_of(&new_attestor_pubkey)));
     assert_ne!(request1.terms_hash, request0_after.terms_hash);
 
     // request 0 still requires the OLD attestor's signature, not the new one.
@@ -1231,11 +1364,11 @@ fn update_policy_and_attestor_rotation_never_alter_already_snapshotted_requests(
         request0_after.refund_claim_deadline,
     )
     .unwrap();
-    let wrong_key_signature: [u8; 64] = new_attestor.sign(&domain_0).to_bytes();
+    let wrong_key_signature = new_attestor.sign(&domain_0);
     f.respond_signed(5, 0, response_hash, &wrong_key_signature)
         .expect_aborted()
         .expect_exit_code(ERR_BAD_RESPONSE_SIGNATURE);
-    let old_key_signature: [u8; 64] = old_attestor.sign(&domain_0).to_bytes();
+    let old_key_signature = old_attestor.sign(&domain_0);
     f.respond_signed(6, 0, response_hash, &old_key_signature).expect_success();
 
     // request 1 requires the NEW attestor's signature.
@@ -1253,29 +1386,29 @@ fn update_policy_and_attestor_rotation_never_alter_already_snapshotted_requests(
         request1_after.refund_claim_deadline,
     )
     .unwrap();
-    let new_key_signature: [u8; 64] = new_attestor.sign(&domain_1).to_bytes();
+    let new_key_signature = new_attestor.sign(&domain_1);
     f.respond_signed(7, 1, response_hash, &new_key_signature).expect_success();
 }
 
 #[test]
 fn revoke_attestor_is_never_frozen_by_a_pending_request() {
-    let attestor = SigningKey::from_bytes(&[0x11; 32]);
-    let mut f = Fixture::with_attestor(attestor.verifying_key().to_bytes());
+    let attestor = Attestor::from_bytes(&[0x11; 32]);
+    let mut f = Fixture::with_attestor(attestor.public_key());
     let owner = f.owner.address().clone();
     let caller = f.caller.address().clone();
 
     f.call(&caller, 1, [0xAA; 32]).expect_success(); // request 0, has_attestor snapshotted
     f.send_from(&owner, ServiceActorContract::revoke_attestor(2).unwrap()).expect_success();
-    assert_eq!(f.data().attestor_pubkey, None);
+    assert_eq!(f.data().attestor_key_id, None);
 
     // request 0 still requires its own snapshotted attestor signature.
     let request = f.request(0).unwrap();
-    assert_eq!(request.attestor_pubkey, Some(attestor.verifying_key().to_bytes()));
+    assert_eq!(request.attestor_key_id, Some(attestor.key_id()));
     f.respond(3, 0, [0xBB; 32]).expect_aborted();
 
     // A new request accepted after revocation needs no signature at all.
     f.call(&caller, 4, [0xCC; 32]).expect_success(); // request 1
-    assert_eq!(f.request(1).unwrap().attestor_pubkey, None);
+    assert_eq!(f.request(1).unwrap().attestor_key_id, None);
     f.respond(5, 1, [0xDD; 32]).expect_success();
 }
 
@@ -1757,9 +1890,16 @@ fn only_owner_can_call_owner_only_operations() {
     .expect_aborted()
     .expect_exit_code(ERR_NOT_OWNER);
 
-    f.send_from(&outsider, ServiceActorContract::rotate_attestor_key(2, [0x99; 32]).unwrap())
-        .expect_aborted()
-        .expect_exit_code(ERR_NOT_OWNER);
+    f.send_from(
+        &outsider,
+        ServiceActorContract::rotate_attestor_key(
+            2,
+            &Attestor::from_bytes(&[0x99; 32]).public_key(),
+        )
+        .unwrap(),
+    )
+    .expect_aborted()
+    .expect_exit_code(ERR_NOT_OWNER);
     f.send_from(&outsider, ServiceActorContract::revoke_attestor(3).unwrap())
         .expect_aborted()
         .expect_exit_code(ERR_NOT_OWNER);
@@ -1776,39 +1916,75 @@ fn sandbox_global_id(bc: &Blockchain) -> i32 {
     }
 }
 
-const ERR_WEAK_ATTESTOR: i32 = 1925;
+/// pq::error::key_length and pq::error::malformed_key (pq-bytes.fc).
+const ERR_PQ_KEY_LENGTH: i32 = 62;
+const ERR_PQ_MALFORMED_KEY: i32 = 63;
 
-/// An attestor key anyone could sign for is refused when the owner rotates to
-/// it, and refused at response when it arrived in a hand-built StateInit.
+fn key_id_of(public_key: &[u8]) -> [u8; 32] {
+    contracts::native_registry::controller_key_id(public_key).expect("key id")
+}
+
+/// `len:uint32 ^chain` over `bytes` with an explicit declared length and a
+/// first cell of `first` bytes (127 is the canonical shape).
+fn stored_with(declared: u32, bytes: &[u8], first: usize) -> chain_block::Cell {
+    let canonical = contracts::native_registry::stored_bytes(&bytes[first..]).expect("tail");
+    let mut tail = chain_block::SliceData::load_cell(canonical).expect("wrapper");
+    tail.get_next_u32().expect("length");
+    let rest = tail.checked_drain_reference().expect("chain");
+    let mut head = BuilderData::new();
+    head.append_raw(&bytes[..first], first * 8).expect("head");
+    head.checked_append_reference(rest).expect("link");
+    let mut wrapper = BuilderData::new();
+    wrapper.append_u32(declared).expect("length");
+    wrapper.checked_append_reference(head.into_cell().expect("head")).expect("chain");
+    wrapper.into_cell().expect("stored")
+}
+
+/// A rotation to anything but a canonical 1,312-byte ML-DSA-44 key is refused
+/// before any state moves, and a response whose signature is not 2,420 bytes
+/// is refused; a canonical key rotates in.
 #[test]
-fn weak_attestor_keys_are_refused_when_set_and_when_used() {
+fn malformed_attestor_keys_and_signatures_are_refused() {
     let mut f = Fixture::new();
     let owner = f.owner.address().clone();
-    for weak in weak_ed25519::weak_keys() {
-        f.send_from(&owner, ServiceActorContract::rotate_attestor_key(1, weak).unwrap())
-            .expect_aborted()
-            .expect_exit_code(ERR_WEAK_ATTESTOR);
-    }
-    assert_eq!(f.data().attestor_pubkey, None, "a refused key must not be stored");
-    let strong = SigningKey::from_bytes(&[0x77; 32]).verifying_key().to_bytes();
-    f.send_from(&owner, ServiceActorContract::rotate_attestor_key(2, strong).unwrap())
-        .expect_success();
-    assert_eq!(f.data().attestor_pubkey, Some(strong));
-
-    let mut f = Fixture::with_attestor(weak_ed25519::weak_keys()[0]);
-    let caller = f.caller.address().clone();
-    f.call(&caller, 1, [0xAA; 32]).expect_success();
-    f.respond_signed(2, 0, [0xBB; 32], &[0u8; 64])
+    let key = Attestor::from_bytes(&[0x77; 32]).public_key();
+    let rotate_raw = |stored: chain_block::Cell| {
+        let mut b = BuilderData::new();
+        b.append_u32(contracts::service_actor::SVC_ROTATE_ATTESTOR_KEY_OPCODE).unwrap();
+        b.append_u64(1).unwrap();
+        b.checked_append_reference(stored).unwrap();
+        b.into_cell().unwrap()
+    };
+    f.send_from(&owner, rotate_raw(stored_with(1311, &key, 127)))
         .expect_aborted()
-        .expect_exit_code(ERR_WEAK_ATTESTOR);
+        .expect_exit_code(ERR_PQ_KEY_LENGTH);
+    f.send_from(&owner, rotate_raw(stored_with(1312, &key, 126)))
+        .expect_aborted()
+        .expect_exit_code(ERR_PQ_MALFORMED_KEY);
+    assert_eq!(f.data().attestor_key_id, None, "a refused key must not be stored");
+    f.send_from(&owner, ServiceActorContract::rotate_attestor_key(2, &key).unwrap())
+        .expect_success();
+    assert_eq!(f.data().attestor_key_id, Some(key_id_of(&key)));
+
+    let caller = f.caller.address().clone();
+    f.call(&caller, 3, [0xAA; 32]).expect_success();
+    let mut b = BuilderData::new();
+    b.append_u32(contracts::service_actor::SVC_RESPOND_OPCODE).unwrap();
+    b.append_u64(4).unwrap();
+    b.append_u64(0).unwrap();
+    b.append_raw(&[0xBB; 32], 256).unwrap();
+    b.checked_append_reference(stored_with(2419, &[0u8; 2419], 127)).unwrap();
+    f.send_from(&owner, b.into_cell().unwrap())
+        .expect_aborted()
+        .expect_exit_code(ERR_PQ_KEY_LENGTH);
     assert!(f.request(0).is_some());
 }
 
 /// A response signed for another network does not answer here.
 #[test]
 fn a_response_signed_for_another_network_is_refused() {
-    let attestor = SigningKey::from_bytes(&[0x77; 32]);
-    let mut f = Fixture::with_attestor(attestor.verifying_key().to_bytes());
+    let attestor = Attestor::from_bytes(&[0x77; 32]);
+    let mut f = Fixture::with_attestor(attestor.public_key());
     let caller = f.caller.address().clone();
     f.call(&caller, 1, [0xAA; 32]).expect_success();
     let request = f.request(0).unwrap();
@@ -1829,8 +2005,8 @@ fn a_response_signed_for_another_network_is_refused() {
         )
         .unwrap()
     };
-    let elsewhere = attestor.sign(&domain(here.wrapping_add(1))).to_bytes();
-    let this_network = attestor.sign(&domain(here)).to_bytes();
+    let elsewhere = attestor.sign(&domain(here.wrapping_add(1)));
+    let this_network = attestor.sign(&domain(here));
     f.respond_signed(2, 0, response_hash, &elsewhere)
         .expect_aborted()
         .expect_exit_code(ERR_BAD_RESPONSE_SIGNATURE);
@@ -1848,8 +2024,8 @@ fn a_response_signed_for_another_network_is_refused() {
 /// for the new terms is admitted under them.
 #[test]
 fn a_call_quoted_under_one_policy_is_refused_under_another() {
-    let attestor = SigningKey::from_bytes(&[0x11; 32]);
-    let mut f = Fixture::with_attestor(attestor.verifying_key().to_bytes());
+    let attestor = Attestor::from_bytes(&[0x11; 32]);
+    let mut f = Fixture::with_attestor(attestor.public_key());
     let owner = f.owner.address().clone();
     let caller = f.caller.address().clone();
 
@@ -1858,7 +2034,7 @@ fn a_call_quoted_under_one_policy_is_refused_under_another() {
     f.call(&caller, 1, [0xAA; 32]).expect_success();
     let quoted = f.request(0).expect("request 0");
     assert_eq!(quoted.price, f.init.price_per_call);
-    assert_eq!(quoted.attestor_pubkey, Some(attestor.verifying_key().to_bytes()));
+    assert_eq!(quoted.attestor_key_id, Some(attestor.key_id()));
     assert_eq!(quoted.terms_hash, quoted_terms, "the snapshot carries the published terms");
 
     // Between quote and execution the owner revokes the attestor and doubles
@@ -1905,7 +2081,7 @@ fn a_call_quoted_under_one_policy_is_refused_under_another() {
     f.call(&caller, 5, [0xAC; 32]).expect_success();
     let admitted = f.request(1).expect("request 1");
     assert_eq!(admitted.price, doubled);
-    assert_eq!(admitted.attestor_pubkey, None);
+    assert_eq!(admitted.attestor_key_id, None);
     assert_eq!(admitted.terms_hash, f.terms());
 }
 
@@ -2240,26 +2416,21 @@ fn a_liability_that_would_go_negative_is_refused_with_the_range_code() {
     assert!(f.request(0).is_some(), "the request stays pending");
 }
 
-/// The sweep's revenue credit is taken in the order whose checked steps never
-/// exceed the final result: `price + (fee - bounty)`, added to the revenue. A
-/// checked sum that first added price and fee to the revenue would refuse this
-/// state although the result fits. The pre-fix raw arithmetic also produced the
-/// result, so this guards the order of the checked operations, not a change in
-/// what the contract accepts.
+/// The sweep's revenue credit is the net fee `fee - bounty`, taken before it
+/// is added to the revenue, so no checked step exceeds the final result. A
+/// checked sum that first added the fee to the revenue would refuse this state
+/// although the result fits. The swept price returns to the caller and is never
+/// credited.
 #[test]
 fn a_sweep_credits_the_net_fee_so_no_checked_step_exceeds_the_result() {
     let mut f = Fixture::new();
     let caller = f.caller.address().clone();
     let outsider = f.outsider.address().clone();
     f.call(&caller, 1, [0xAA; 32]).expect_success();
-    let price = u128::from(f.init.price_per_call);
     let fee = u128::from(f.init.storage_fee);
     let bounty = u128::from(f.init.cleanup_bounty);
-    let credit = price
-        .checked_add(fee)
-        .and_then(|gross| gross.checked_sub(bounty))
-        .expect("the storage fee covers the bounty");
-    // revenue + price + fee would pass the bound; revenue + (price + fee - bounty) is the maximum.
+    let credit = fee.checked_sub(bounty).expect("the storage fee covers the bounty");
+    // revenue + fee would pass the bound; revenue + (fee - bounty) is the maximum.
     f.patch_accounting(|a| Accounting { withdrawable_revenue: coins_below_max(credit), ..a });
     let request = f.request(0).expect("pending request");
     f.bc.set_now(request.refund_claim_deadline as u32);
@@ -2478,7 +2649,8 @@ fn solvency_admission_requires_execution_budget() {
     let body = ServiceActorContract::call(1, [1; 32], f.terms()).unwrap();
     let result =
         f.no_bounce(&caller, principal.checked_add(ADMISSION_GAS_ALLOWANCE).unwrap(), body);
-    result.expect_success().expect_out_msgs(1);
+    result.expect_success().expect_out_msgs(2);
+    assert_eq!(request_snapshots(&result).len(), 1, "an admission emits exactly one snapshot");
     assert_eq!(f.balance(&f.service), MINIMUM_OPERATING_RESERVE.checked_add(principal).unwrap());
     assert_eq!(
         service_outputs(&result),
@@ -2512,7 +2684,8 @@ fn solvency_admission_preserves_operator_excess() {
                     .build(),
                 )
                 .unwrap();
-            result.expect_success().expect_out_msgs(1);
+            result.expect_success().expect_out_msgs(2);
+            assert_eq!(request_snapshots(&result).len(), 1, "one snapshot per admission");
             assert_eq!(storage_fees(&result), 0, "fixed-time admissions accrue no rent");
             assert_eq!(
                 f.balance(&f.service),
@@ -2660,10 +2833,16 @@ fn solvency_payouts_require_execution_budget() {
         assert_eq!(f.state_hash(), before, "underfunded payout consumed an entry");
         let backing = f.balance(&f.service);
         let result = f.no_bounce(&payer, PAYOUT_GAS_ALLOWANCE, body);
-        expect_payment_and_change(&result, &payer, &payer, principal, PAYOUT_GAS_ALLOWANCE);
+        let spent = if operation == "sweep" {
+            expect_sweep(&result, &caller, request.price, &payer, principal, PAYOUT_GAS_ALLOWANCE);
+            principal.checked_add(request.price).unwrap()
+        } else {
+            expect_payment_and_change(&result, &payer, &payer, principal, PAYOUT_GAS_ALLOWANCE);
+            principal
+        };
         assert_eq!(
             f.balance(&f.service),
-            backing.checked_sub(principal).unwrap().checked_sub(storage_fees(&result)).unwrap(),
+            backing.checked_sub(spent).unwrap().checked_sub(storage_fees(&result)).unwrap(),
             "payout spent more than its entitlement"
         );
     }
@@ -2779,7 +2958,8 @@ fn solvency_sweep_after_real_rent_preserves_other_entries() {
         f.send_from(&caller, ServiceActorContract::expire(4, 1).unwrap()).expect_success();
         let target = if refund { 1 } else { 0 };
         let floor_after = f.floor() - f.init.price_per_call - f.init.storage_fee;
-        let cap = floor_after + f.init.cleanup_bounty;
+        // The sweep pays the bounty and returns the entry's price to its caller.
+        let cap = floor_after + f.init.cleanup_bounty + f.init.price_per_call;
         let before = f.state_hash();
         // Real storage-phase charges, with all three entries still in storage.
         let mut day = 0;
@@ -2801,9 +2981,10 @@ fn solvency_sweep_after_real_rent_preserves_other_entries() {
         assert_eq!(f.state_hash(), before, "top-up changed service data");
         let backing = f.balance(&f.service);
         let result = f.no_bounce(&sweeper, PAYOUT_GAS_ALLOWANCE, body);
-        expect_payment_and_change(
+        expect_sweep(
             &result,
-            &sweeper,
+            &caller,
+            f.init.price_per_call,
             &sweeper,
             f.init.cleanup_bounty,
             PAYOUT_GAS_ALLOWANCE,
@@ -2812,6 +2993,8 @@ fn solvency_sweep_after_real_rent_preserves_other_entries() {
             f.balance(&f.service),
             backing
                 .checked_sub(f.init.cleanup_bounty)
+                .unwrap()
+                .checked_sub(f.init.price_per_call)
                 .unwrap()
                 .checked_sub(storage_fees(&result))
                 .unwrap(),
@@ -2903,6 +3086,8 @@ fn gas_stress_seed(f: &Fixture) -> &'static GasStressSeed {
         commitments.append_u256(&old_terms).unwrap();
         commitments.append_bit_zero().unwrap();
         commitments.append_u256(&[0; 32]).unwrap();
+        // No attestor: the snapshotted key reference is absent.
+        commitments.append_bit_zero().unwrap();
         let commitments = commitments.into_cell().unwrap();
 
         // Each populated trie has a long path near the uint64 limit, modeling
@@ -3132,7 +3317,11 @@ fn solvency_admission_gas_at_capacity_with_sparse_ids_and_wide_accounting() {
         );
         let label = if existing { "admit/existing-caller" } else { "admit/new-caller" };
         let (cost, rent) = gas_stress_measure(label, &result, ADMISSION_GAS_ALLOWANCE);
-        result.expect_out_msgs(1);
+        result.expect_out_msgs(2);
+        let snapshots = request_snapshots(&result);
+        assert_eq!(snapshots.len(), 1, "an admission at capacity still emits its snapshot");
+        assert_eq!(snapshots[0].request_id, GAS_STRESS_NEXT_ID);
+        assert_eq!(snapshots[0].caller, caller);
         assert_eq!(f.live_count(), 100_000);
         assert_eq!(f.caller_live_count(&caller), if existing { 1000 } else { 1 });
         assert_eq!(
@@ -3140,7 +3329,8 @@ fn solvency_admission_gas_at_capacity_with_sparse_ids_and_wide_accounting() {
             before.checked_sub(rent).unwrap().checked_add(u128::from(principal)).unwrap(),
             "successful admission cannot spend preexisting backing on execution"
         );
-        let outgoing = result.first_transaction().unwrap().get_out_msg(0).unwrap().unwrap();
+        // The snapshot is emitted first; the change is the second output.
+        let outgoing = result.first_transaction().unwrap().get_out_msg(1).unwrap().unwrap();
         assert_eq!(
             outgoing.int_header().unwrap().value.coins.as_u128(),
             u128::from(ADMISSION_GAS_ALLOWANCE).checked_sub(cost).unwrap()
@@ -3187,20 +3377,32 @@ fn solvency_payout_gas_at_capacity_with_sparse_ids_and_wide_coins() {
         let before = gas_stress_balance(&f);
         let result = f.no_bounce(&sender, PAYOUT_GAS_ALLOWANCE, body);
         let (cost, rent) = gas_stress_measure(operation, &result, PAYOUT_GAS_ALLOWANCE);
-        result.expect_out_msgs(2);
+        // A sweep also returns the swept entry's price to its caller, first.
+        let returned = if operation.starts_with("sweep") { GAS_STRESS_PRICE } else { 0 };
+        let principals: Vec<u128> = [returned, amount].into_iter().filter(|v| *v > 0).collect();
+        result.expect_out_msgs(principals.len() + 1);
         assert_eq!(
             gas_stress_balance(&f),
-            before.checked_sub(rent).unwrap().checked_sub(amount).unwrap(),
+            before
+                .checked_sub(rent)
+                .unwrap()
+                .checked_sub(amount)
+                .unwrap()
+                .checked_sub(returned)
+                .unwrap(),
             "successful payout cannot spend any backing beyond its authorized principal"
         );
         let transaction = result.first_transaction().unwrap();
-        let paid = transaction.get_out_msg(0).unwrap().unwrap();
-        let change = transaction.get_out_msg(1).unwrap().unwrap();
-        assert_eq!(
-            paid.int_header().unwrap().value.coins.as_u128(),
-            amount,
-            "principal must be exact"
-        );
+        for (index, expected) in principals.iter().enumerate() {
+            let paid = transaction.get_out_msg(i16::try_from(index).unwrap()).unwrap().unwrap();
+            assert_eq!(
+                paid.int_header().unwrap().value.coins.as_u128(),
+                *expected,
+                "principal must be exact"
+            );
+        }
+        let change =
+            transaction.get_out_msg(i16::try_from(principals.len()).unwrap()).unwrap().unwrap();
         assert_eq!(
             change.int_header().unwrap().value.coins.as_u128(),
             u128::from(PAYOUT_GAS_ALLOWANCE).checked_sub(cost).unwrap(),
@@ -3244,10 +3446,11 @@ fn solvency_change_does_not_transfer_preexisting_extra_currencies() {
         .first_transaction()
         .unwrap()
         .iterate_out_msgs(|message| {
-            assert!(
-                message.get_value().unwrap().other.is_empty(),
-                "change must not sweep unrelated currencies"
-            );
+            let Some(value) = message.get_value() else {
+                assert!(message.ext_out_header().is_some(), "only the snapshot carries no value");
+                return Ok(true);
+            };
+            assert!(value.other.is_empty(), "change must not sweep unrelated currencies");
             Ok(true)
         })
         .unwrap();
@@ -3265,10 +3468,11 @@ fn solvency_change_does_not_transfer_preexisting_extra_currencies() {
         .first_transaction()
         .unwrap()
         .iterate_out_msgs(|message| {
-            assert!(
-                message.get_value().unwrap().other.is_empty(),
-                "principal and change carry native coins only"
-            );
+            let Some(value) = message.get_value() else {
+                assert!(message.ext_out_header().is_some(), "only the snapshot carries no value");
+                return Ok(true);
+            };
+            assert!(value.other.is_empty(), "principal and change carry native coins only");
             Ok(true)
         })
         .unwrap();

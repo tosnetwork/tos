@@ -554,7 +554,8 @@ pub struct ServiceActorConfig {
     /// Hex-encoded 32-byte hash identifying the supported proof/attestation scheme.
     pub proof_scheme_hash: String,
     /// Optional hex-encoded ed25519 public key required to sign `respond`'s
-    /// response_hash, on top of the existing owner authorization.
+    /// response_hash, on top of the existing owner authorization. Hex of the
+    /// 1,312-byte ML-DSA-44 public key.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attestor_pubkey: Option<String>,
     /// Unix timestamp when this local record was created.

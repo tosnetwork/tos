@@ -6,10 +6,10 @@
  */
 
 use super::agent_cmd::{
-    confirm, parse_optional_hash, parse_optional_signature, parse_required_hash,
-    resolve_attestor_pubkey, send_wallet_message, send_wallet_message_with_state_init,
-    sign_hash_with_vault_key, validate_tos_amount,
+    confirm, parse_required_hash, send_wallet_message, send_wallet_message_with_state_init,
+    validate_tos_amount,
 };
+use super::native_registry_cmd::read_controller_seed;
 use super::output_format::OutputFormat;
 use super::utils::{
     get_wallet_config, load_config_vault_rpc_client, make_wallet, save_config,
@@ -121,17 +121,18 @@ pub struct ServiceActorDeployCmd {
     proof_scheme_hash: String,
     #[arg(
         long,
-        conflicts_with = "signer_vault_key",
-        help = "Optional 32-byte ed25519 public key; when set, respond also requires a signature \
-                over the request-bound attestation domain"
+        conflicts_with = "attestor_controller",
+        help = "Optional ML-DSA-44 attestor public key (1,312 bytes, hex); when set, respond \
+                also requires its signature over the request-bound attestation domain"
     )]
     attestor_pubkey: Option<String>,
     #[arg(
         long,
         conflicts_with = "attestor_pubkey",
-        help = "Derive --attestor-pubkey from a vault key instead of passing it directly"
+        help = "Derive --attestor-pubkey from this ML-DSA-44 controller in the vault \
+                (secret native-registry-<name>; see `native-registry new-controller`)"
     )]
-    signer_vault_key: Option<String>,
+    attestor_controller: Option<String>,
     #[arg(long, help = "Funding wallet name or master_wallet")]
     from: String,
     #[arg(
@@ -246,8 +247,8 @@ pub struct ServiceActorSendCmd {
     request_hash: Option<String>,
     #[arg(
         long,
-        help = "Terms hash the call commits to (hex); defaults to the hash of the service's \
-                current terms, so a policy change between quote and call is refused on chain"
+        help = "Terms hash the call commits to (hex), as the accepted quote states it; required \
+                for call, so terms that changed after the quote are refused on chain"
     )]
     expected_terms_hash: Option<String>,
     #[arg(
@@ -260,19 +261,20 @@ pub struct ServiceActorSendCmd {
     response_hash: Option<String>,
     #[arg(
         long,
-        conflicts_with = "signer_vault_key",
-        help = "64-byte ed25519 signature over the request-bound attestation domain hash, for \
-                respond on a service deployed with --attestor-pubkey"
+        conflicts_with = "attestor_controller",
+        help = "2,420-byte ML-DSA-44 signature (hex) over the request-bound attestation domain \
+                hash, for respond on a service deployed with an attestor"
     )]
     attestation_signature: Option<String>,
     #[arg(
         long,
         conflicts_with = "attestation_signature",
-        help = "Sign the request-bound attestation domain hash with this vault key instead of \
-                passing --attestation-signature directly (fetches the request's on-chain terms \
-                first, since the domain binds them)"
+        help = "ML-DSA-44 controller in the vault (secret native-registry-<name>): signs the \
+                request-bound attestation domain for respond (after fetching the request's \
+                on-chain terms, which the domain binds), or names the new key for \
+                rotate-attestor-key"
     )]
-    signer_vault_key: Option<String>,
+    attestor_controller: Option<String>,
     #[arg(allow_hyphen_values = true, value_parser = super::utils::address_arg, long, help = "Refund destination address for claim-refund")]
     destination: Option<String>,
     #[arg(long, help = "New price per call, in TOS, for update-policy")]
@@ -309,8 +311,9 @@ pub struct ServiceActorSendCmd {
     withdraw_amount: Option<f64>,
     #[arg(
         long,
-        conflicts_with = "signer_vault_key",
-        help = "New 32-byte ed25519 public key for rotate-attestor-key (owner-only)"
+        conflicts_with = "attestor_controller",
+        help = "New ML-DSA-44 attestor public key (1,312 bytes, hex) for rotate-attestor-key \
+                (owner-only)"
     )]
     new_attestor_pubkey: Option<String>,
     #[arg(
@@ -349,14 +352,89 @@ pub struct ServiceActorBuildStateCmd {
     proof_scheme_hash: String,
     #[arg(
         long,
-        help = "Optional 32-byte ed25519 public key; when set, respond also requires a signature \
-                over the request-bound attestation domain"
+        help = "Optional ML-DSA-44 attestor public key (1,312 bytes, hex); when set, respond \
+                also requires its signature over the request-bound attestation domain"
     )]
     attestor_pubkey: Option<String>,
     #[arg(short = 'w', long = "workchain", allow_negative_numbers = true, default_value_t = super::utils::USER_CONTRACT_WORKCHAIN)]
     workchain: i32,
     #[arg(short, long, default_value = "table")]
     format: OutputFormat,
+}
+
+/// Text form of an ML-DSA-44 key id.
+fn key_id_text(key_id: &[u8; 32]) -> String {
+    format!("mldsa44:{}", hex::encode(key_id))
+}
+
+/// An ML-DSA-44 attestor public key given as hex: exactly 1,312 bytes.
+fn parse_attestor_public_key(
+    name: &str,
+    value: &Option<String>,
+) -> anyhow::Result<Option<Vec<u8>>> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let bytes = hex::decode(value.strip_prefix("0x").unwrap_or(value))
+        .with_context(|| format!("{name} must be hex"))?;
+    // Deriving the key id checks the length.
+    contracts::native_registry::controller_key_id(&bytes).with_context(|| name.to_owned())?;
+    Ok(Some(bytes))
+}
+
+/// A respond attestation signature given as hex: exactly 2,420 bytes.
+fn parse_attestation_signature(value: &Option<String>) -> anyhow::Result<Option<Vec<u8>>> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let bytes = hex::decode(value.strip_prefix("0x").unwrap_or(value))
+        .context("attestation-signature must be hex")?;
+    anyhow::ensure!(
+        bytes.len() == contracts::native_registry::NATIVE_REGISTRY_SIGNATURE_BYTES,
+        "attestation-signature must be an ML-DSA-44 signature of {} bytes, not {}",
+        contracts::native_registry::NATIVE_REGISTRY_SIGNATURE_BYTES,
+        bytes.len()
+    );
+    Ok(Some(bytes))
+}
+
+/// The attestor key: given directly, or derived from an ML-DSA-44 controller
+/// seed held in the vault. At most one source may be named.
+async fn resolve_attestor_key(
+    public_key: &Option<String>,
+    controller: &Option<String>,
+    vault: &secrets_vault::vault::SecretVault,
+) -> anyhow::Result<Option<Vec<u8>>> {
+    match (public_key, controller) {
+        (Some(_), Some(_)) => {
+            anyhow::bail!("provide at most one attestor public key or attestor controller")
+        }
+        (Some(_), None) => parse_attestor_public_key("attestor public key", public_key),
+        (None, Some(name)) => {
+            let seed = read_controller_seed(vault, name).await?;
+            Ok(Some(contracts::native_registry::native_public_key_from_seed(&seed)))
+        }
+        (None, None) => Ok(None),
+    }
+}
+
+/// The terms hash a `call` commits to: required, and refused locally when it no
+/// longer matches the live terms, since the contract would refuse it anyway.
+fn call_terms_hash(expected: &Option<String>, live: &ServiceActorData) -> anyhow::Result<[u8; 32]> {
+    anyhow::ensure!(
+        expected.is_some(),
+        "--expected-terms-hash is required for call: pass the terms hash of the accepted quote \
+         (`agent service show` prints the current one)"
+    );
+    let expected = parse_required_hash("expected-terms-hash", expected)?;
+    let current = ServiceActorContract::terms_hash_of_data(live)?;
+    anyhow::ensure!(
+        expected == current,
+        "the service's terms changed: the quote commits to {}, the service now offers {}",
+        hex::encode(expected),
+        hex::encode(current)
+    );
+    Ok(expected)
 }
 
 /// Resolve the service address from an explicit `--address` or a stored `--name` record.
@@ -393,7 +471,7 @@ fn build_init(
     refund_claim_window: u32,
     metadata_hash: &str,
     proof_scheme_hash: &str,
-    attestor_pubkey: Option<[u8; 32]>,
+    attestor_pubkey: Option<Vec<u8>>,
 ) -> anyhow::Result<ServiceActorInit> {
     validate_tos_amount("price-per-call", price_per_call)?;
     validate_tos_amount("storage-fee", storage_fee)?;
@@ -536,8 +614,7 @@ impl ServiceActorDeployCmd {
         let path = Path::new(config_path);
         let (mut config, vault, rpc_client) = load_config_vault_rpc_client(path).await?;
         let attestor_pubkey =
-            resolve_attestor_pubkey(&self.attestor_pubkey, &self.signer_vault_key, vault.clone())
-                .await?;
+            resolve_attestor_key(&self.attestor_pubkey, &self.attestor_controller, &vault).await?;
         let init = build_init(
             owner.clone(),
             authorized_caller,
@@ -626,7 +703,7 @@ impl ServiceActorDeployCmd {
                 rate_limit_per_day: init.rate_limit_per_day,
                 metadata_hash: hex::encode(init.metadata_hash),
                 proof_scheme_hash: hex::encode(init.proof_scheme_hash),
-                attestor_pubkey: init.attestor_pubkey.map(hex::encode),
+                attestor_pubkey: init.attestor_pubkey.as_ref().map(hex::encode),
                 created_at: Some(time_format::now()),
             },
         );
@@ -672,8 +749,9 @@ struct ServiceActorDataView {
     calls_today: u32,
     metadata_hash: String,
     proof_scheme_hash: String,
+    /// Key id of the current attestor key, `mldsa44:<hex>`.
     #[serde(skip_serializing_if = "Option::is_none")]
-    attestor_pubkey: Option<String>,
+    attestor_key_id: Option<String>,
     next_request_id: u64,
     pending_count: u32,
     live_count: u32,
@@ -703,7 +781,7 @@ fn data_view(address: &MsgAddressInt, data: ServiceActorData) -> ServiceActorDat
         calls_today: data.calls_today,
         metadata_hash: hex::encode(data.metadata_hash),
         proof_scheme_hash: hex::encode(data.proof_scheme_hash),
-        attestor_pubkey: data.attestor_pubkey.map(hex::encode),
+        attestor_key_id: data.attestor_key_id.as_ref().map(key_id_text),
         next_request_id: data.next_request_id,
         pending_count: data.pending_count,
         live_count: data.live_count,
@@ -752,7 +830,7 @@ impl ServiceActorShowCmd {
                 "Rate limit/day: {}  (calls today: {})",
                 view.rate_limit_per_day, view.calls_today
             );
-            println!("Attestor pubkey: {}", view.attestor_pubkey.as_deref().unwrap_or("none"));
+            println!("Attestor key: {}", view.attestor_key_id.as_deref().unwrap_or("none"));
             println!(
                 "Requests: next_id={} pending={} live={}",
                 view.next_request_id, view.pending_count, view.live_count
@@ -791,8 +869,9 @@ struct RequestView {
     request_hash: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     terms_hash: Option<String>,
+    /// Key id of the attestor key this request snapshotted, `mldsa44:<hex>`.
     #[serde(skip_serializing_if = "Option::is_none")]
-    attestor_pubkey: Option<String>,
+    attestor_key_id: Option<String>,
 }
 
 fn request_view(request_id: u64, data: Option<PendingRequestData>) -> RequestView {
@@ -809,7 +888,7 @@ fn request_view(request_id: u64, data: Option<PendingRequestData>) -> RequestVie
             policy_version: None,
             request_hash: None,
             terms_hash: None,
-            attestor_pubkey: None,
+            attestor_key_id: None,
         },
         Some(data) => RequestView {
             request_id,
@@ -823,7 +902,7 @@ fn request_view(request_id: u64, data: Option<PendingRequestData>) -> RequestVie
             policy_version: Some(data.policy_version),
             request_hash: Some(hex::encode(data.request_hash)),
             terms_hash: Some(hex::encode(data.terms_hash)),
-            attestor_pubkey: data.attestor_pubkey.map(hex::encode),
+            attestor_key_id: data.attestor_key_id.as_ref().map(key_id_text),
         },
     }
 }
@@ -867,7 +946,7 @@ impl ServiceActorRequestShowCmd {
             println!("Policy version: {}", view.policy_version.unwrap());
             println!("Request hash: {}", view.request_hash.unwrap());
             println!("Terms hash: {}", view.terms_hash.unwrap());
-            println!("Attestor pubkey: {}", view.attestor_pubkey.as_deref().unwrap_or("none"));
+            println!("Attestor key: {}", view.attestor_key_id.as_deref().unwrap_or("none"));
         }
         Ok(())
     }
@@ -1144,21 +1223,19 @@ impl ServiceActorSendCmd {
         let body = match self.operation {
             ServiceActorOperation::Call => {
                 let data = call_service_data.as_ref().expect("service data fetched above");
-                let expected_terms_hash = match &self.expected_terms_hash {
-                    Some(_) => {
-                        parse_required_hash("expected-terms-hash", &self.expected_terms_hash)?
-                    }
-                    None => ServiceActorContract::terms_hash_of_data(data)?,
-                };
-                // The terms this call commits to, so the user can compare them with the
-                // quote before confirming; the contract refuses the call if they move.
+                // The buyer states the terms it accepted; reading them from live state would
+                // commit to whatever the service changed them to after the quote.
+                let expected_terms_hash = call_terms_hash(&self.expected_terms_hash, data)?;
                 println!(
                     "Terms committed to: hash {} (policy version {}, price {} nanoTOS, storage fee {} nanoTOS, attestor {})",
                     hex::encode(expected_terms_hash),
                     data.policy_version,
                     data.price_per_call,
                     data.storage_fee,
-                    data.attestor_pubkey.map(hex::encode).unwrap_or_else(|| "none".to_string()),
+                    data.attestor_key_id
+                        .as_ref()
+                        .map(key_id_text)
+                        .unwrap_or_else(|| "none".to_string()),
                 );
                 ServiceActorContract::call(
                     self.query_id,
@@ -1169,12 +1246,9 @@ impl ServiceActorSendCmd {
             ServiceActorOperation::Respond => {
                 let id = request_id()?;
                 let response_hash = parse_required_hash("response-hash", &self.response_hash)?;
-                let signature = match parse_optional_signature(
-                    "attestation-signature",
-                    &self.attestation_signature,
-                )? {
+                let signature = match parse_attestation_signature(&self.attestation_signature)? {
                     Some(signature) => Some(signature),
-                    None => match &self.signer_vault_key {
+                    None => match &self.attestor_controller {
                         Some(name) => {
                             // The signature must bind the exact request this
                             // response answers, under the terms it was
@@ -1204,7 +1278,31 @@ impl ServiceActorSendCmd {
                                 request.response_deadline,
                                 request.refund_claim_deadline,
                             )?;
-                            Some(sign_hash_with_vault_key(name, &domain_hash, vault.clone()).await?)
+                            let seed = read_controller_seed(&vault, name).await?;
+                            let (public_key, signature) =
+                                contracts::service_actor::sign_service_response(
+                                    &seed,
+                                    &domain_hash,
+                                )?;
+                            let key_id =
+                                contracts::native_registry::controller_key_id(&public_key)?;
+                            anyhow::ensure!(
+                                request.attestor_key_id == Some(key_id),
+                                "controller {name} ({}) is not the attestor request {id} \
+                                 snapshotted ({})",
+                                key_id_text(&key_id),
+                                request
+                                    .attestor_key_id
+                                    .as_ref()
+                                    .map(key_id_text)
+                                    .unwrap_or_else(|| "none".to_string())
+                            );
+                            contracts::service_actor::verify_service_response(
+                                &public_key,
+                                &signature,
+                                &domain_hash,
+                            )?;
+                            Some(signature)
                         }
                         None => None,
                     },
@@ -1286,18 +1384,19 @@ impl ServiceActorSendCmd {
                 ),
             )?,
             ServiceActorOperation::RotateAttestorKey => {
-                let pubkey = resolve_attestor_pubkey(
+                let public_key = resolve_attestor_key(
                     &self.new_attestor_pubkey,
-                    &self.signer_vault_key,
-                    vault.clone(),
+                    &self.attestor_controller,
+                    &vault,
                 )
                 .await?
                 .ok_or_else(|| {
                     anyhow::anyhow!(
-                        "provide --new-attestor-pubkey or --signer-vault-key for rotate-attestor-key"
+                        "provide --new-attestor-pubkey or --attestor-controller for \
+                         rotate-attestor-key"
                     )
                 })?;
-                ServiceActorContract::rotate_attestor_key(self.query_id, pubkey)?
+                ServiceActorContract::rotate_attestor_key(self.query_id, &public_key)?
             }
             ServiceActorOperation::RevokeAttestor => {
                 ServiceActorContract::revoke_attestor(self.query_id)?
@@ -1405,7 +1504,7 @@ impl ServiceActorBuildStateCmd {
             self.refund_claim_window,
             &self.metadata_hash,
             &self.proof_scheme_hash,
-            parse_optional_hash("attestor-pubkey", &self.attestor_pubkey)?,
+            parse_attestor_public_key("attestor-pubkey", &self.attestor_pubkey)?,
         )?;
         let address = ServiceActorContract::calculate_address(self.workchain, &init)?;
         if self.format == OutputFormat::Json {
@@ -1560,5 +1659,93 @@ mod solvency_tests {
             let error = cmd.run("/nonexistent/service-solvency-config.json").await.unwrap_err();
             assert!(error.to_string().contains("amount"), "{operation}: {error:#}");
         }
+    }
+}
+
+#[cfg(test)]
+mod attestor_cli_tests {
+    use super::*;
+
+    fn live_data() -> ServiceActorData {
+        ServiceActorData {
+            owner: format!("0:{}", "11".repeat(32)).parse().unwrap(),
+            active: true,
+            policy_version: 3,
+            price_per_call: 100_000_000,
+            storage_fee: 200_000_000,
+            cleanup_bounty: 100_000_000,
+            response_sla: 3_600,
+            refund_claim_window: 3_600,
+            open_access: true,
+            authorized_caller: None,
+            rate_limit_per_day: 0,
+            metadata_hash: [0x11; 32],
+            proof_scheme_hash: [0x22; 32],
+            attestor_key_id: None,
+            next_request_id: 0,
+            pending_count: 0,
+            live_count: 0,
+            withdrawable_revenue: 0,
+            locked_storage_fees: 0,
+            pending_liability: 0,
+            refundable_liability: 0,
+            call_day: 0,
+            calls_today: 0,
+        }
+    }
+
+    #[test]
+    fn a_call_never_defaults_its_terms_to_live_state() {
+        let data = live_data();
+        let error = call_terms_hash(&None, &data).unwrap_err();
+        assert!(error.to_string().contains("--expected-terms-hash is required"), "{error:#}");
+
+        let current = ServiceActorContract::terms_hash_of_data(&data).unwrap();
+        assert_eq!(call_terms_hash(&Some(hex::encode(current)), &data).unwrap(), current);
+
+        let mut moved = data.clone();
+        moved.price_per_call = moved.price_per_call.checked_add(1).unwrap();
+        let error = call_terms_hash(&Some(hex::encode(current)), &moved).unwrap_err();
+        assert!(error.to_string().contains("terms changed"), "{error:#}");
+    }
+
+    #[test]
+    fn attestor_keys_and_signatures_have_ml_dsa_44_lengths() {
+        let key = contracts::native_registry::native_public_key_from_seed(&[7; 32]);
+        assert_eq!(
+            parse_attestor_public_key("k", &Some(hex::encode(&key))).unwrap(),
+            Some(key.clone())
+        );
+        assert_eq!(parse_attestor_public_key("k", &None).unwrap(), None);
+        for bad in [hex::encode([1u8; 32]), hex::encode(&key[1..]), "zz".to_string()] {
+            assert!(parse_attestor_public_key("k", &Some(bad)).is_err());
+        }
+
+        let signature = vec![3u8; contracts::native_registry::NATIVE_REGISTRY_SIGNATURE_BYTES];
+        assert_eq!(
+            parse_attestation_signature(&Some(hex::encode(&signature))).unwrap(),
+            Some(signature.clone())
+        );
+        for bad in [hex::encode([1u8; 64]), hex::encode(&signature[1..])] {
+            assert!(parse_attestation_signature(&Some(bad)).is_err());
+        }
+    }
+
+    #[test]
+    fn a_controller_signed_response_verifies_under_its_own_key_only() {
+        let domain = [0x42; 32];
+        let (public_key, signature) =
+            contracts::service_actor::sign_service_response(&[9; 32], &domain).unwrap();
+        assert_eq!(public_key, contracts::native_registry::native_public_key_from_seed(&[9; 32]));
+        contracts::service_actor::verify_service_response(&public_key, &signature, &domain)
+            .unwrap();
+        let other = contracts::native_registry::native_public_key_from_seed(&[8; 32]);
+        assert!(
+            contracts::service_actor::verify_service_response(&other, &signature, &domain).is_err()
+        );
+        assert!(
+            contracts::service_actor::verify_service_response(&public_key, &signature, &[0x43; 32])
+                .is_err()
+        );
     }
 }

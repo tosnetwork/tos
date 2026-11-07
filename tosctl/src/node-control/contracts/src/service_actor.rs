@@ -15,7 +15,7 @@ use chain_block::{
 };
 use common::tvm_stack_parser::TvmStackParser;
 
-pub const SERVICE_ACTOR_CODE_B64: &str = "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juM6VxxXHREbVhjHBfLnbBEY0REWERoRFhEVERkRFREUERgRFBETERcRExESERYREhERERUREREQERQREA8REw8OERIODRERDQwREAwQvxCuEJ0QjBB7EGpwChBZEEgQN0YTUFLgER2CEFNWQwm64wJfD18PMDMvMAGq8udyERKkERcRGxEXBhEaBhEVERkRFREUERgRFBETERcRExEWCxEVCwoRFAoJERMJCBESCAcREQcFERAFEE8QPhAtEIwbEHoQWRBIEDcQJhBFEDQQIzMAkoLwJuiVj8KyJ7BFw/SJ8u+Y8NXfrAXTxjM5sTgCiG1T/IW6sQGC8McXanA9TdhPujwLdg0QZw8qIFP6LDnMxk7H/XeSrAP6urEB/FYdVhvHBfLnbBEb+gDRVh6BB4L4J28QUwK+EvL0ASDC/1MhvrDy54ehVHAGvvLngicgwv9TIb6w8ueHoVMGvvLngiYgwv9TIb6w8ueHoVMIvvLngiggwv9TIb6w8ueHoSCCEDuaygC+8ueCghA7msoAIML/UyG+sPLnh6FSkDEABvLHdgH8tghSILvy54IRH4IQC+vCAL7y54lWGgIBER4BER9WHmYgwv9TIb6w8ueHoXD7AiDCAI4WEnFwgBDIywVQBM8WWPoCEstqyQH7AJIwMeJwgwZwgBDIywVQBM8WWPoCEstqyQH7ABEbFSDC/1MhvrDy54ehERcRGxEXERYRGhEWMgGSERURGREVERQRGBEUERMRFxETERIRFhESERERFRERERARFBEQDxETDw4REg4NERENDBEQDBC/EK4QnRCMEHsQahBZCBA3RlBDADMA4gzIy/8by/8ZywAXy//JERPIyx8BERL6AgEREPoCUA76AhzLHxrLHxjLABbLAFAEzxYSyx8azMnIUAX6AlAF+gJQBfoCUAX6AhXLHxPLH8kByPQAEvQAE/QAychQCM8WFssAFMs/Essfyx8SzMzMye1Uo8shBA==";
+pub const SERVICE_ACTOR_CODE_B64: &str = "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cIAQyMsFUATPFlj6AhLLaskB+wAAMFYcAXFwgBDIywVQBM8WWPoCEstqyQH7AAHSgwZwgBDIywVQBM8WWPoCEstqyQH7ABETpREXERsRFxEWERoRFhEVERkRFREVERgRFREXERIRFhESERERFRERERARFBEQDxETDw4REg4NERENDBEQDBC/EK4QnRCMEHsQahBZRxgQNkBUOwGq8udyERKkERcRGxEXBhEaBhEVERkRFREUERgRFBETERcRExEWCxEVCwoRFAoJERMJCBESCAcREQcFERAFEE8QPhAtEIwbEHoQWRBIEDcQJhBFEDQQIzsBxjpXHFcdERtWGMcF8udsERjRERYRGhEWERURGREVERQRGBEUERMRFxETERIRFhESERERFRERERARFBEQDxETDw4REg4NERENDBEQDBC/EK4QnRCMEHsQanAKEFkQSBA3RhNQUjsBIoIQU1ZDCbrjAl8PXw8w8sd2OAH8Vh1WG8cF8udsERv6ANFWHoEHgvgnbxBTAr4S8vQBIML/UyG+sPLnh6FUcAa+8ueCJyDC/1MhvrDy54ehUwa+8ueCJiDC/1MhvrDy54ehUwi+8ueCKCDC/1MhvrDy54ehIIIQO5rKAL7y54KCEDuaygAgwv9TIb6w8ueHoVKQOQH8tghSILvy54IRH4IQC+vCAL7y54lWGgIBER4BER9WHmYgwv9TIb6w8ueHoXD7AiDCAI4WEnFwgBDIywVQBM8WWPoCEstqyQH7AJIwMeJwgwZwgBDIywVQBM8WWPoCEstqyQH7ABEbFSDC/1MhvrDy54ehERcRGxEXERYRGhEWOgGSERURGREVERQRGBEUERMRFxETERIRFhESERERFRERERARFBEQDxETDw4REg4NERENDBEQDBC/EK4QnRCMEHsQahBZCBA3RlBDADsA6vhBDcjL/xzL/xrLABjL/xr0AMkRE8jLHwEREvoCAREQ+gJQDvoCHMsfGssfGMsAFssAUATPFhLLHxrMychQBfoCUAX6AlAF+gJQBfoCFcsfFcsfyQLI9AD0ABP0AMnIUAjPFhbLABTLPxLLH8sfEszMzMntVACZV/kSCOQCLXOfJ/INdJIddKIXew8n8gwgHyfwGrAlMEvPJ/AcABmDQjwH/yv9QwjhBsISDCACGBAIC5sPK/AnAB4lAjoQHoMDHAAPK/gCASA+PwBBCHAAfK91znyf9Mf1NECwAGTgQUgkXDiUhC68r5c8AUBgADEAcAB8r3XOfJ/0x/U0SGBCXS68r5SAvAFgDCHVqQ==";
 
 pub const SVC_CALL_OPCODE: u32 = 0x5356_4301;
 pub const SVC_RESPOND_OPCODE: u32 = 0x5356_4302;
@@ -91,11 +91,64 @@ pub struct ServiceActorInit {
     pub refund_claim_window: u32,
     pub metadata_hash: [u8; 32],
     pub proof_scheme_hash: [u8; 32],
-    /// Optional ed25519 public key. When set, `respond` additionally
-    /// requires a signature over the full request-bound domain under this
-    /// key -- on top of, never instead of, the existing owner sender
-    /// authorization.
-    pub attestor_pubkey: Option<[u8; 32]>,
+    /// Optional ML-DSA-44 attestor public key (1,312 bytes). When set,
+    /// `respond` additionally requires an ML-DSA-44 signature over the full
+    /// request-bound domain under this key -- on top of, never instead of,
+    /// the owner sender authorization. State keeps its key id and the
+    /// stored key, which each request snapshots by reference.
+    pub attestor_pubkey: Option<Vec<u8>>,
+}
+
+/// The ML-DSA-44 context of an attestor `respond` signature.
+pub const SERVICE_ACTOR_RESPOND_CONTEXT: &[u8] = b"TOS-SERVICE-ACTOR-RESPOND-V1";
+
+/// Tag of the request snapshot every accepted `call` emits ("SAR1").
+pub const SERVICE_ACTOR_REQUEST_SNAPSHOT_TAG: u32 = 0x5341_5231;
+
+impl ServiceActorInit {
+    /// The key id of the attestor key, when one is set.
+    pub fn attestor_key_id(&self) -> anyhow::Result<Option<[u8; 32]>> {
+        self.attestor_pubkey.as_deref().map(crate::native_registry::controller_key_id).transpose()
+    }
+}
+
+/// Signs a Service Actor response domain hash with the ML-DSA-44 attestor
+/// whose key-generation seed is `seed` (hedged). Returns the public key and
+/// the 2,420-byte signature.
+pub fn sign_service_response(
+    seed: &[u8; 32],
+    domain_hash: &[u8; 32],
+) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
+    use fips204::ml_dsa_44;
+    use fips204::traits::{KeyGen, SerDes, Signer};
+    let (public_key, secret) = ml_dsa_44::KG::keygen_from_seed(seed);
+    let signature = secret
+        .try_sign(domain_hash, SERVICE_ACTOR_RESPOND_CONTEXT)
+        .map_err(|e| anyhow::anyhow!("Service Actor response signing failed: {e}"))?;
+    Ok((public_key.into_bytes().to_vec(), signature.to_vec()))
+}
+
+/// Verifies a Service Actor response signature exactly as `respond` will.
+pub fn verify_service_response(
+    public_key: &[u8],
+    signature: &[u8],
+    domain_hash: &[u8; 32],
+) -> anyhow::Result<()> {
+    use fips204::ml_dsa_44;
+    use fips204::traits::{SerDes, Verifier};
+    let key: [u8; 1312] = public_key
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("an attestor key is 1,312 bytes, not {}", public_key.len()))?;
+    let signature: [u8; 2420] = signature.try_into().map_err(|_| {
+        anyhow::anyhow!("an attestor signature is 2,420 bytes, not {}", signature.len())
+    })?;
+    let key = ml_dsa_44::PublicKey::try_from_bytes(key)
+        .map_err(|e| anyhow::anyhow!("attestor key: {e}"))?;
+    anyhow::ensure!(
+        key.verify(domain_hash, &signature, SERVICE_ACTOR_RESPOND_CONTEXT),
+        "Service Actor response signature verification failed"
+    );
+    Ok(())
 }
 
 pub struct ServiceActorContract;
@@ -115,7 +168,8 @@ pub struct ServiceActorData {
     pub rate_limit_per_day: u32,
     pub metadata_hash: [u8; 32],
     pub proof_scheme_hash: [u8; 32],
-    pub attestor_pubkey: Option<[u8; 32]>,
+    /// Key id of the current attestor key, when an attestor is set.
+    pub attestor_key_id: Option<[u8; 32]>,
     pub next_request_id: u64,
     pub pending_count: u32,
     /// Pending + refundable entries combined -- the quantity
@@ -142,7 +196,8 @@ pub struct PendingRequestData {
     pub policy_version: u32,
     pub request_hash: [u8; 32],
     pub terms_hash: [u8; 32],
-    pub attestor_pubkey: Option<[u8; 32]>,
+    /// Key id of the attestor key the request snapshotted at `call`.
+    pub attestor_key_id: Option<[u8; 32]>,
 }
 
 /// Decoded `get_refund` result: an expired, not-yet-claimed-or-swept request.
@@ -161,8 +216,7 @@ impl ServiceActorContract {
     }
 
     pub fn build_data(init: &ServiceActorInit) -> anyhow::Result<chain_block::Cell> {
-        let has_attestor = init.attestor_pubkey.is_some();
-        let attestor_pubkey = init.attestor_pubkey.unwrap_or([0u8; 32]);
+        let attestor_key_id = init.attestor_key_id()?;
         // Mirrors ServiceActorInit's V1 convention: authorized_caller always
         // carries a concrete address on chain, defaulting to the owner when
         // none is explicitly given (meaningful only while has_authorized_caller
@@ -172,12 +226,20 @@ impl ServiceActorContract {
         let mut commitments = BuilderData::new();
         commitments.append_u256(&init.metadata_hash)?;
         commitments.append_u256(&init.proof_scheme_hash)?;
-        if has_attestor {
-            commitments.append_bit_one()?;
-        } else {
-            commitments.append_bit_zero()?;
+        match (attestor_key_id, init.attestor_pubkey.as_deref()) {
+            (Some(key_id), Some(public_key)) => {
+                commitments.append_bit_one()?;
+                commitments.append_raw(&key_id, 256)?;
+                commitments.append_bit_one()?;
+                commitments
+                    .checked_append_reference(crate::native_registry::stored_bytes(public_key)?)?;
+            }
+            _ => {
+                commitments.append_bit_zero()?;
+                commitments.append_raw(&[0u8; 32], 256)?;
+                commitments.append_bit_zero()?;
+            }
         }
-        commitments.append_raw(&attestor_pubkey, 256)?;
 
         let mut policy = BuilderData::new();
         policy.append_u32(0)?; // policy_version = 0 at deploy
@@ -260,7 +322,7 @@ impl ServiceActorContract {
             rate_limit_per_day: stack.u64(11)? as u32,
             metadata_hash: parse_hash(stack, 12)?,
             proof_scheme_hash: parse_hash(stack, 13)?,
-            attestor_pubkey: if stack.bool(14)? { Some(parse_hash(stack, 15)?) } else { None },
+            attestor_key_id: if stack.bool(14)? { Some(parse_hash(stack, 15)?) } else { None },
             next_request_id: stack.u64(16)?,
             pending_count: stack.u64(17)? as u32,
             live_count: stack.u64(18)? as u32,
@@ -291,7 +353,7 @@ impl ServiceActorContract {
             policy_version: stack.u64(7)? as u32,
             request_hash: parse_hash(stack, 8)?,
             terms_hash: parse_hash(stack, 9)?,
-            attestor_pubkey: if stack.bool(10)? { Some(parse_hash(stack, 11)?) } else { None },
+            attestor_key_id: if stack.bool(10)? { Some(parse_hash(stack, 11)?) } else { None },
         }))
     }
 
@@ -349,8 +411,8 @@ impl ServiceActorContract {
             data.refund_claim_window,
             &data.metadata_hash,
             &data.proof_scheme_hash,
-            data.attestor_pubkey.is_some(),
-            &data.attestor_pubkey.unwrap_or([0u8; 32]),
+            data.attestor_key_id.is_some(),
+            &data.attestor_key_id.unwrap_or([0u8; 32]),
         )
     }
 
@@ -367,7 +429,7 @@ impl ServiceActorContract {
             &init.metadata_hash,
             &init.proof_scheme_hash,
             init.attestor_pubkey.is_some(),
-            &init.attestor_pubkey.unwrap_or([0u8; 32]),
+            &init.attestor_key_id()?.unwrap_or([0u8; 32]),
         )
     }
 
@@ -383,19 +445,25 @@ impl ServiceActorContract {
     }
 
     /// Respond on a request whose snapshotted attestor requires a
-    /// signature: `signature` must be valid over
-    /// `contracts::service_respond_domain_hash(..)` under that key, or the
-    /// contract rejects the message.
+    /// signature: `signature` (ML-DSA-44, 2,420 bytes) must be valid over
+    /// `contracts::service_respond_domain_hash(..)` under that key with
+    /// [`SERVICE_ACTOR_RESPOND_CONTEXT`], or the contract rejects the message.
     pub fn respond_signed(
         query_id: u64,
         request_id: u64,
         response_hash: [u8; 32],
-        signature: &[u8; 64],
+        signature: &[u8],
     ) -> anyhow::Result<chain_block::Cell> {
+        anyhow::ensure!(
+            signature.len() == 2420,
+            "an attestor signature is 2,420 bytes, not {}",
+            signature.len()
+        );
+        let stored = crate::native_registry::stored_bytes(signature)?;
         message(SVC_RESPOND_OPCODE, query_id, |b| {
             b.append_u64(request_id)?;
             b.append_u256(&response_hash)?;
-            b.append_raw(signature, 512).map(|_| ())
+            b.checked_append_reference(stored).map(|_| ())
         })
     }
 
@@ -412,7 +480,7 @@ impl ServiceActorContract {
     /// receives the exact price; unused execution funding returns to the caller. Other
     /// callers' liabilities and locked fees stay protected; the operator's reserve
     /// does not take priority over a backed refund. Refusal does not pause the claim
-    /// window; after expiry, sweep releases the unclaimed price as owner revenue.
+    /// window; after expiry, sweep returns the unclaimed price to the caller.
     pub fn claim_refund(
         query_id: u64,
         request_id: u64,
@@ -507,10 +575,12 @@ impl ServiceActorContract {
     /// snapshot regardless of later rotation.
     pub fn rotate_attestor_key(
         query_id: u64,
-        new_attestor_pubkey: [u8; 32],
+        new_attestor_pubkey: &[u8],
     ) -> anyhow::Result<chain_block::Cell> {
+        crate::native_registry::controller_key_id(new_attestor_pubkey)?;
+        let stored = crate::native_registry::stored_bytes(new_attestor_pubkey)?;
         message(SVC_ROTATE_ATTESTOR_KEY_OPCODE, query_id, |b| {
-            b.append_raw(&new_attestor_pubkey, 256).map(|_| ())
+            b.checked_append_reference(stored).map(|_| ())
         })
     }
 
@@ -520,6 +590,77 @@ impl ServiceActorContract {
     pub fn revoke_attestor(query_id: u64) -> anyhow::Result<chain_block::Cell> {
         message(SVC_REVOKE_ATTESTOR_OPCODE, query_id, |_| Ok(()))
     }
+}
+
+/// Decoded `request_snapshot#53415231` external-out event, emitted once by
+/// every accepted `call`. It carries the terms a buyer accepted so an index can
+/// be rebuilt from transactions alone; the contract state stays authoritative.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RequestSnapshot {
+    pub request_id: u64,
+    pub caller: MsgAddressInt,
+    pub request_hash: [u8; 32],
+    pub terms_hash: [u8; 32],
+    pub price: u128,
+    pub response_deadline: u64,
+    pub refund_claim_deadline: u64,
+    /// Key id of the attestor key the request snapshotted, if any.
+    pub attestor_key_id: Option<[u8; 32]>,
+}
+
+/// Decode a request snapshot event body, refusing any other tag, a missing or
+/// extra field, and trailing bits or references in either cell.
+pub fn decode_request_snapshot(body: &chain_block::Cell) -> anyhow::Result<RequestSnapshot> {
+    let mut slice = chain_block::SliceData::load_cell_ref(body)?;
+    let tag = slice.get_next_u32()?;
+    if tag != SERVICE_ACTOR_REQUEST_SNAPSHOT_TAG {
+        anyhow::bail!("not a Service Actor request snapshot (tag {tag:#010x})");
+    }
+    let request_id = slice.get_next_u64()?;
+    let caller = MsgAddressInt::construct_from(&mut slice)?;
+    let request_hash = next_hash(&mut slice)?;
+    let terms_hash = next_hash(&mut slice)?;
+    let tail_cell = slice.checked_drain_reference()?;
+    exhausted(&slice, "request snapshot")?;
+    let mut tail = chain_block::SliceData::load_cell(tail_cell)?;
+    let price = Coins::construct_from(&mut tail)?.as_u128();
+    let response_deadline = tail.get_next_u64()?;
+    let refund_claim_deadline = tail.get_next_u64()?;
+    let has_attestor = tail.get_next_bit()?;
+    let key_id = next_hash(&mut tail)?;
+    exhausted(&tail, "request snapshot terms")?;
+    let attestor_key_id = match (has_attestor, key_id == [0u8; 32]) {
+        (true, false) => Some(key_id),
+        (false, true) => None,
+        (true, true) => anyhow::bail!("request snapshot names an attestor with a zero key id"),
+        (false, false) => anyhow::bail!("request snapshot carries a key id without an attestor"),
+    };
+    if refund_claim_deadline <= response_deadline {
+        anyhow::bail!("request snapshot refund deadline does not follow the response deadline");
+    }
+    Ok(RequestSnapshot {
+        request_id,
+        caller,
+        request_hash,
+        terms_hash,
+        price,
+        response_deadline,
+        refund_claim_deadline,
+        attestor_key_id,
+    })
+}
+
+fn next_hash(slice: &mut chain_block::SliceData) -> anyhow::Result<[u8; 32]> {
+    let mut out = [0u8; 32];
+    slice.get_next_bytes_to_slice(&mut out)?;
+    Ok(out)
+}
+
+fn exhausted(slice: &chain_block::SliceData, what: &str) -> anyhow::Result<()> {
+    if slice.remaining_bits() != 0 || slice.remaining_references() != 0 {
+        anyhow::bail!("{what} has trailing data");
+    }
+    Ok(())
 }
 
 fn parse_hash(stack: &TvmStackParser, index: usize) -> anyhow::Result<[u8; 32]> {
@@ -550,6 +691,57 @@ mod tests {
         slice,
         stackentry::{StackEntryNumber, StackEntrySlice},
     };
+
+    fn snapshot_body(
+        tag: u32,
+        has_attestor: bool,
+        key_id: [u8; 32],
+        deadlines: (u64, u64),
+        trailing: bool,
+    ) -> chain_block::Cell {
+        let mut tail = BuilderData::new();
+        Coins::from(7_u64).write_to(&mut tail).unwrap();
+        tail.append_u64(deadlines.0).unwrap();
+        tail.append_u64(deadlines.1).unwrap();
+        tail.append_bit_bool(has_attestor).unwrap();
+        tail.append_raw(&key_id, 256).unwrap();
+        if trailing {
+            tail.append_bit_one().unwrap();
+        }
+        let mut body = BuilderData::new();
+        body.append_u32(tag).unwrap();
+        body.append_u64(5).unwrap();
+        MsgAddressInt::standard(0, [0x33; 32]).write_to(&mut body).unwrap();
+        body.append_raw(&[0x44; 32], 256).unwrap();
+        body.append_raw(&[0x55; 32], 256).unwrap();
+        body.checked_append_reference(tail.into_cell().unwrap()).unwrap();
+        body.into_cell().unwrap()
+    }
+
+    #[test]
+    fn request_snapshots_decode_exactly_and_refuse_every_inconsistency() {
+        let tag = SERVICE_ACTOR_REQUEST_SNAPSHOT_TAG;
+        let ok = decode_request_snapshot(&snapshot_body(tag, true, [9; 32], (10, 20), false))
+            .unwrap();
+        assert_eq!(ok.request_id, 5);
+        assert_eq!(ok.caller, MsgAddressInt::standard(0, [0x33; 32]));
+        assert_eq!((ok.request_hash, ok.terms_hash), ([0x44; 32], [0x55; 32]));
+        assert_eq!((ok.price, ok.response_deadline, ok.refund_claim_deadline), (7, 10, 20));
+        assert_eq!(ok.attestor_key_id, Some([9; 32]));
+        let open = decode_request_snapshot(&snapshot_body(tag, false, [0; 32], (10, 20), false))
+            .unwrap();
+        assert_eq!(open.attestor_key_id, None);
+
+        for (name, body) in [
+            ("tag", snapshot_body(tag ^ 1, false, [0; 32], (10, 20), false)),
+            ("trailing", snapshot_body(tag, false, [0; 32], (10, 20), true)),
+            ("zero key", snapshot_body(tag, true, [0; 32], (10, 20), false)),
+            ("orphan key", snapshot_body(tag, false, [9; 32], (10, 20), false)),
+            ("deadlines", snapshot_body(tag, false, [0; 32], (20, 20), false)),
+        ] {
+            assert!(decode_request_snapshot(&body).is_err(), "{name} was accepted");
+        }
+    }
 
     #[test]
     fn service_actor_minimum_call_payment_checks_all_components() {
@@ -637,7 +829,7 @@ mod tests {
         assert_eq!(slice.get_next_bytes(32).unwrap(), vec![0xBB; 32]);
         assert_eq!(slice.remaining_bits(), 0);
 
-        let signature = [0x5Au8; 64];
+        let signature = [0x5Au8; 2420];
         let respond_signed =
             ServiceActorContract::respond_signed(3, 7, [0xCC; 32], &signature).unwrap();
         let mut slice = SliceData::load_cell(respond_signed).unwrap();
@@ -645,8 +837,16 @@ mod tests {
         assert_eq!(slice.get_next_u64().unwrap(), 3);
         assert_eq!(slice.get_next_u64().unwrap(), 7);
         assert_eq!(slice.get_next_bytes(32).unwrap(), vec![0xCC; 32]);
-        assert_eq!(slice.get_next_bytes(64).unwrap(), signature.to_vec());
         assert_eq!(slice.remaining_bits(), 0);
+        assert_eq!(
+            crate::native_registry::read_stored_bytes(
+                &slice.checked_drain_reference().unwrap(),
+                2420
+            )
+            .unwrap(),
+            signature.to_vec()
+        );
+        assert!(ServiceActorContract::respond_signed(3, 7, [0xCC; 32], &[0u8; 64]).is_err());
     }
 
     #[test]
@@ -726,11 +926,20 @@ mod tests {
         assert_eq!(Coins::construct_from(&mut slice).unwrap().as_u128(), 500_000_000);
         assert_eq!(slice.remaining_bits(), 0);
 
-        let rotate = ServiceActorContract::rotate_attestor_key(9, [0xEE; 32]).unwrap();
+        let key = crate::native_registry::native_public_key_from_seed(&[0xEE; 32]);
+        let rotate = ServiceActorContract::rotate_attestor_key(9, &key).unwrap();
         let mut slice = SliceData::load_cell(rotate).unwrap();
         assert_eq!(slice.get_next_u32().unwrap(), SVC_ROTATE_ATTESTOR_KEY_OPCODE);
         assert_eq!(slice.get_next_u64().unwrap(), 9);
-        assert_eq!(slice.get_next_bytes(32).unwrap(), vec![0xEE; 32]);
+        assert_eq!(
+            crate::native_registry::read_stored_bytes(
+                &slice.checked_drain_reference().unwrap(),
+                1312
+            )
+            .unwrap(),
+            key
+        );
+        assert!(ServiceActorContract::rotate_attestor_key(9, &[0xEE; 32]).is_err());
 
         let revoke = ServiceActorContract::revoke_attestor(10).unwrap();
         let mut slice = SliceData::load_cell(revoke).unwrap();
@@ -782,7 +991,7 @@ mod tests {
         assert_eq!(data.rate_limit_per_day, svc.rate_limit_per_day);
         assert_eq!(data.metadata_hash, svc.metadata_hash);
         assert_eq!(data.proof_scheme_hash, svc.proof_scheme_hash);
-        assert_eq!(data.attestor_pubkey, Some([0x99; 32]));
+        assert_eq!(data.attestor_key_id, Some([0x99; 32]));
         assert_eq!(data.next_request_id, 42);
         assert_eq!(data.pending_count, 2);
         assert_eq!(data.live_count, 5);
@@ -827,7 +1036,7 @@ mod tests {
         let data = ServiceActorContract::decode_data(&stack).unwrap();
         assert!(data.open_access);
         assert_eq!(data.authorized_caller, None);
-        assert_eq!(data.attestor_pubkey, None);
+        assert_eq!(data.attestor_key_id, None);
     }
 
     #[test]
@@ -864,7 +1073,7 @@ mod tests {
         assert_eq!(data.policy_version, 3);
         assert_eq!(data.request_hash, [0xAA; 32]);
         assert_eq!(data.terms_hash, [0xBB; 32]);
-        assert_eq!(data.attestor_pubkey, Some([0x99; 32]));
+        assert_eq!(data.attestor_key_id, Some([0x99; 32]));
     }
 
     #[test]
