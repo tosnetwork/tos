@@ -253,6 +253,72 @@ def write_configs():
         path.write_text(json.dumps(observer, indent=2))
 
 
+def resolved_transfer_hash(
+    account_rows: list, transaction_hash_hex: str, target: str, value: int
+) -> str | None:
+    """The hash of the one outbound transfer of `value` to `target` in the
+    account transaction whose hash is `transaction_hash_hex`."""
+    for row in account_rows:
+        if base64.b64decode(row["transaction_id"]["hash"]).hex() != transaction_hash_hex:
+            continue
+        transfers = [
+            message
+            for message in row.get("out_msgs") or []
+            if message.get("kind") == "internal"
+            and norm(message.get("destination", "")) == target
+            and int(message.get("value", "0")) == value
+        ]
+        return transfers[0]["hash"] if len(transfers) == 1 else None
+    return None
+
+
+def credit_matches(target_rows: list, message_hash: str, source: str, value: int) -> bool:
+    """Whether one of the target's transactions took exactly that message."""
+    return any(
+        (row.get("in_msg") or {}).get("kind") == "internal"
+        and (row.get("in_msg") or {}).get("hash") == message_hash
+        and norm((row.get("in_msg") or {}).get("source", "")) == source
+        and int((row.get("in_msg") or {}).get("value", "0")) == value
+        for row in target_rows
+    )
+
+
+def self_test() -> None:
+    """Offline: the credit predicate takes only the resolved message."""
+    account = "0:" + "11" * 32
+    target = "0:" + "22" * 32
+    value = 200_000_000
+    sent, other = base64.b64encode(b"\x01" * 32).decode(), base64.b64encode(b"\x02" * 32).decode()
+    tx_hash = b"\x03" * 32
+    account_rows = [
+        {
+            "transaction_id": {"hash": base64.b64encode(b"\x04" * 32).decode()},
+            "out_msgs": [
+                {"kind": "internal", "destination": target, "value": str(value), "hash": other}
+            ],
+        },
+        {
+            "transaction_id": {"hash": base64.b64encode(tx_hash).decode()},
+            "out_msgs": [
+                {"kind": "internal", "destination": target, "value": str(value), "hash": sent}
+            ],
+        },
+    ]
+    assert resolved_transfer_hash(account_rows, tx_hash.hex(), target, value) == sent
+    assert resolved_transfer_hash(account_rows, (b"\x05" * 32).hex(), target, value) is None
+    credit = {"kind": "internal", "source": account, "value": str(value), "hash": sent}
+    assert credit_matches([{"in_msg": credit}], sent, account, value)
+    # An equal-value credit from the same account under another message hash.
+    assert not credit_matches([{"in_msg": {**credit, "hash": other}}], sent, account, value)
+    assert not credit_matches(
+        [{"in_msg": {**credit, "value": str(value + 1)}}], sent, account, value
+    )
+    assert not credit_matches(
+        [{"in_msg": {**credit, "source": "0:" + "33" * 32}}], sent, account, value
+    )
+    print("REHEARSAL_SELF_TEST_OK")
+
+
 async def send_and_resolve(
     account: str,
     controller: str,
@@ -281,9 +347,6 @@ async def send_and_resolve(
         "--relay-amount",
         "2",
         "--yes",
-    )
-    target_last = int(
-        rpc_call("getAddressInformation", address=target)["result"]["last_transaction_id"]["lt"]
     )
     _, out = await tosctl(*args, "--relayer", relayer)
     sent = last_json(out)
@@ -339,21 +402,34 @@ async def send_and_resolve(
         json.dumps(resolved)[:2000],
     )
 
-    # The target's own inbound transaction from the account, of exactly the
-    # signed value: a balance comparison would also count its storage fees.
-    def credited() -> bool:
-        rows = rpc_call("getTransactions", address=target, limit=20)["result"]
-        return any(
-            (row.get("in_msg") or {}).get("kind") == "internal"
-            and norm((row.get("in_msg") or {}).get("source", "")) == account
-            and int((row.get("in_msg") or {}).get("value", "0")) == int(0.2 * NANO)
-            and int(row["transaction_id"]["lt"]) > target_last
-            for row in rows
-        )
-
+    # The target's credit is the exact outbound message of the account
+    # transaction the three views resolved: matched by message hash, source
+    # and value, so no other transfer of the same value can stand in for it.
+    transaction_hash = ((resolved.get("observation") or {}).get("transaction") or {}).get(
+        "transaction_hash", ""
+    )
+    account_rows = rpc_call("getTransactions", address=account, limit=50)["result"]
+    message_hash = resolved_transfer_hash(
+        account_rows, transaction_hash.removeprefix("sha256:"), target, int(0.2 * NANO)
+    )
+    result["transfer_message_hash"] = message_hash
     check(
-        f"{action_id[:8]}: the target received exactly the signed value from the account",
-        await wait_for(credited, timeout=60),
+        f"{action_id[:8]}: the resolved account transaction sent exactly one signed transfer",
+        message_hash is not None,
+        transaction_hash,
+    )
+    check(
+        f"{action_id[:8]}: the target was credited by that exact message",
+        message_hash is not None
+        and await wait_for(
+            lambda: credit_matches(
+                rpc_call("getTransactions", address=target, limit=20)["result"],
+                message_hash,
+                account,
+                int(0.2 * NANO),
+            ),
+            timeout=60,
+        ),
     )
     if rebroadcast_relayer:
         check(
@@ -880,4 +956,8 @@ async def main() -> int:
 
 
 if __name__ == "__main__":
+    if sys.argv[1:] == ["--self-test"]:
+        self_test()
+        sys.exit(0)
+    self_test()
     sys.exit(asyncio.run(main()))
