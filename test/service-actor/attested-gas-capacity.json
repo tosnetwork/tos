@@ -1,6 +1,6 @@
 {
  "schema": "tos.evidence.index.v1",
- "claim": "At 100,000 live entries under a stored ML-DSA-44 attestor key, attested admission, a really verified ML-DSA-44 response and the four payouts each leave at least 25% of their 0.2 TOS allowance",
+ "claim": "Under a stored ML-DSA-44 attestor key, an attested admission (99,999 -> 100,000 live entries), a response at 100,000 live entries carrying a really verified ML-DSA-44 signature, and the four payouts (each starting from the 99,999-entry seed) each leave at least 25% of their 0.2 TOS allowance",
  "qualification": "Synthetic stress state: 99,999 seeded entries (sparse ids near 2^64, 99,001 callers, wide coin values) with the account-cell cap lifted only for this account; real gas, storage and forwarding prices. It does not show that production account limits admit 100,000 requests. respond enforces no allowance and returns no change; it is held to PAYOUT_GAS_ALLOWANCE as a test budget.",
  "measured_commit": "135533e8c96208f11e8a1af7dba7c9166759c119",
  "base": "fc5e7723e5dfb04890902abdd456aa41b4655a10",
@@ -159,38 +159,44 @@
   }
  ],
  "red_green": {
-  "method": "scratch patch on 135533e8c (never committed): env-selected shrink of the asserted allowance for one labelled measurement, and an env-selected swap of the negative-control signer; one build, five runs, file restored with git checkout",
+  "runner": "test/service-actor/attested_gas_controls.sh controls",
+  "patch": "test/service-actor/attested-gas-mutation.patch",
   "patch_sha256": "2d34b1695809f72297bafd7d64efd0cef0ddd3980dbf1ccf05072e58fe8e1a82",
+  "method": "the runner applies the patch (env-selected shrink of the asserted allowance for one labelled measurement; env-selected swap of the negative-control signer), builds once, runs the two attested tests five times, requires each expected outcome and message, and restores the test file",
+  "result": {
+   "exit": 0,
+   "final_line": "ATTESTED_GAS_CONTROLS_OK"
+  },
   "runs": [
    {
     "run": "control (no env)",
-    "exit": 0
+    "outcome": "green"
    },
    {
-    "run": "admit-attested allowance 62,000,000",
-    "exit": 101,
+    "run": "SHRINK_LABEL=admit-attested SHRINK_TO=62000000",
+    "outcome": "red",
     "failure": "admit-attested/new-caller: measured execution cost must leave at least 25% allowance headroom"
    },
    {
-    "run": "respond-attested allowance 65,000,000",
-    "exit": 101,
+    "run": "SHRINK_LABEL=respond-attested SHRINK_TO=65000000",
+    "outcome": "red",
     "failure": "respond-attested/new-caller: measured execution cost must leave at least 25% allowance headroom"
    },
    {
-    "run": "refund-attested allowance 47,000,000",
-    "exit": 101,
+    "run": "SHRINK_LABEL=refund-attested SHRINK_TO=47000000",
+    "outcome": "red",
     "failure": "refund-attested: measured execution cost must leave at least 25% allowance headroom"
    },
    {
-    "run": "negative control signed by the attestor itself",
-    "exit": 101,
+    "run": "SWAP_NEGATIVE=1",
+    "outcome": "red",
     "failure": "expected first transaction to be aborted, but it succeeded"
    }
   ]
  },
  "native_replay": {
-  "command": "SERVICE_ACTOR_TRACE_DIR=<dir> cargo test ... --exact solvency_attested_gas_at_capacity_with_sparse_ids_and_wide_accounting solvency_attested_payout_gas_at_capacity_with_sparse_ids_and_wide_coins; python3 scripts/replay-token-bridge-trace.py <dir> --emulator <libemulator.so>",
-  "population_check": "exactly 6 records (2 callers x admission, refused response, accepted response) and 4 payout records, and no other file in the directory",
+  "command": "FUNC_PATH=<func> FIFT_PATH=<fift> test/service-actor/attested_gas_controls.sh replay <empty-trace-dir> <libemulator.so>",
+  "population_check": "the runner requires exactly 6 records under the admission/response test directory (2 callers x admission, refused response, accepted response), exactly 4 under the payout test directory, and no other file, printing TRACE_POPULATION_OK 6+4",
   "result": "replayed 10 transactions in the native engine; 0 differ",
   "emulator": {
    "path": "<tos checkout>/build/emulator/libemulator.so",
@@ -204,6 +210,7 @@
    "manifest": "trace-20261107T090513Z.manifest.sha256 (sha256 of each record, sorted)",
    "manifest_sha256": "0df3eac52b443c89c0fb17266b12d94cc49228673fd7ce660d2d7e5f5284bd4f",
    "retention_days": 90
-  }
+  },
+  "note": "the retained traces were recorded and replayed by the same steps before the runner was committed: cargo test -p contracts --test service_actor_sandbox -- --test-threads=1 --exact <both attested tests> with SERVICE_ACTOR_TRACE_DIR set, the same population check, then python3 scripts/replay-token-bridge-trace.py <dir> --emulator <libemulator.so>"
  }
 }

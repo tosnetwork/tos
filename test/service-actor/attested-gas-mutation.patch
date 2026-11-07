@@ -1,0 +1,27 @@
+diff --git a/tosctl/src/node-control/contracts/tests/service_actor_sandbox.rs b/tosctl/src/node-control/contracts/tests/service_actor_sandbox.rs
+index 510638d31..aab1e5cc1 100644
+--- a/tosctl/src/node-control/contracts/tests/service_actor_sandbox.rs
++++ b/tosctl/src/node-control/contracts/tests/service_actor_sandbox.rs
+@@ -3531,6 +3531,13 @@ fn gas_stress_balance(f: &Fixture) -> u128 {
+ // separately reported total_action_fees again. Storage rent is operator-funded
+ // and reported separately from the incoming execution allowance.
+ fn gas_stress_measure(label: &str, result: &SendResult, allowance: u64) -> (u128, u128) {
++    // SCRATCH MUTATION: shrink the asserted allowance for one labelled measurement.
++    let allowance = match std::env::var("SHRINK_LABEL") {
++        Ok(prefix) if label.starts_with(prefix.as_str()) => {
++            std::env::var("SHRINK_TO").unwrap().parse::<u64>().unwrap()
++        }
++        _ => allowance,
++    };
+     let desc = result.read_primary_description();
+     let compute = match &desc.compute_ph {
+         chain_block::TrComputePhase::Vm(vm) => vm,
+@@ -3677,7 +3684,7 @@ fn solvency_attested_gas_at_capacity_with_sparse_ids_and_wide_accounting() {
+                 78,
+                 GAS_STRESS_NEXT_ID,
+                 response_hash,
+-                &other.sign(&domain_hash),
++                &if std::env::var("SWAP_NEGATIVE").is_ok() { &attestor } else { &other }.sign(&domain_hash),
+             )
+             .unwrap(),
+         );
