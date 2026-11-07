@@ -295,8 +295,13 @@ struct EpochChangeFence {
     /// The auth epoch the fenced stage expects, and the module it stages: the
     /// stage is seen to land only as the transition to (staged, this epoch +
     /// 1, this module). Controller counters alone never show it, since an
-    /// owner rotate-controller advances them too.
+    /// owner rotate-controller advances them too. A fence written before
+    /// these fields existed decodes with an empty module hash, which no auth
+    /// state matches: it is never lifted automatically, only by explicit
+    /// recovery.
+    #[serde(default)]
     start_auth_epoch: u64,
+    #[serde(default)]
     staged_module_hash: String,
 }
 
@@ -3964,6 +3969,70 @@ mod tests {
                 )
                 .unwrap()
         );
+    }
+
+    #[test]
+    fn an_interrupted_fence_survives_a_rotation_and_is_recovered_explicitly() {
+        use crate::agent_account_auth::{AUTH_MODE_STAGED, AgentAuthState};
+        let directory = tempfile::tempdir().unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let journal =
+            AgentAccountCustodyJournal::open(directory.path().canonicalize().unwrap()).unwrap();
+        let action = mldsa_claim(3);
+        let (account, id, deployment) =
+            (&action.account, action.network_global_id, &action.deployment_id);
+        let a_staged =
+            AgentAuthState { mode: AUTH_MODE_STAGED, epoch: 1, nonce: 0, module_hash: [0xaa; 32] };
+        // Install B fences (3, 3) and is interrupted before sending; an owner
+        // rotation then moves the counters to (4, 4) with the auth state kept.
+        journal
+            .begin_controller_epoch_change(
+                account,
+                id,
+                deployment,
+                3,
+                3,
+                1,
+                &[0xbb; 32],
+                &"b".repeat(64),
+            )
+            .unwrap();
+        assert!(
+            !journal
+                .finish_landed_controller_epoch_change(account, id, deployment, 4, 4, &a_staged)
+                .unwrap()
+        );
+        assert!(
+            journal
+                .claim_primary(ControllerActionClaim { controller_epoch: 4, ..mldsa_claim(4) }, 10)
+                .is_err()
+        );
+        // Explicit recovery at the advanced counters lifts it; the next claim
+        // at those counters is admitted.
+        journal.end_controller_epoch_change(account, id, deployment, 4, 4, None).unwrap();
+        assert_eq!(journal.controller_epoch_change(account, id, deployment).unwrap(), None);
+        assert!(
+            journal
+                .claim_primary(ControllerActionClaim { controller_epoch: 4, ..mldsa_claim(4) }, 11)
+                .unwrap()
+                .1
+        );
+    }
+
+    #[test]
+    fn a_fence_without_its_stage_identity_is_never_lifted_automatically() {
+        // A fence journaled before the stage identity was recorded decodes,
+        // and no auth state can match its empty module hash.
+        let legacy: EpochChangeFence = serde_json::from_value(serde_json::json!({
+            "controller_epoch": 3, "seqno": 3, "owner_token": "b".repeat(64)
+        }))
+        .unwrap();
+        assert_eq!(legacy.staged_module_hash, "");
+        assert_ne!(legacy.staged_module_hash, hex::encode([0u8; 32]));
     }
 
     #[test]

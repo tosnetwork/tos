@@ -423,12 +423,36 @@ impl AgentAccountMldsa44InstallCmd {
             ctx.data.seqno,
             &ctx.auth,
         )?;
-        let interrupted =
+        let mut interrupted =
             journal.controller_epoch_change(&account_text, ctx.global_id, &deployment_id)?;
+        if let Some(start) = interrupted
+            && self.recover_interrupted
+        {
+            // The operator states the fenced stage was never sent or can no
+            // longer be accepted. Handled before any other decision, so a
+            // fence stays recoverable whichever module is staged now and
+            // after an owner rotation moved the counters (the journal still
+            // refuses counters older than the fence's start).
+            journal.end_controller_epoch_change(
+                &account_text,
+                ctx.global_id,
+                &deployment_id,
+                ctx.data.controller_epoch,
+                ctx.data.seqno,
+                None,
+            )?;
+            println!(
+                "{} lifted the fence of an interrupted install started at controller epoch {}, seqno {}",
+                "NOTE".yellow().bold(),
+                start.0,
+                start.1
+            );
+            interrupted = None;
+        }
         if decision == StageDecision::AlreadyStaged {
             if interrupted.is_some() {
                 println!(
-                    "{} another authentication change of this account is still fenced in the custody journal; it is left held",
+                    "{} another authentication change of this account is still fenced in the custody journal; it is left held (lift it with --recover-interrupted once its stage cannot arrive)",
                     "NOTE".yellow().bold()
                 );
             }
@@ -439,24 +463,11 @@ impl AgentAccountMldsa44InstallCmd {
             // An earlier run fenced the account and did not see its stage
             // land. Its stage message may still arrive; only the operator can
             // say it was never sent or can no longer be accepted.
-            anyhow::ensure!(
-                self.recover_interrupted,
+            anyhow::bail!(
                 "an earlier mldsa44-install of this account did not finish (fenced at controller epoch {}, seqno {}); if its stage message was never sent or its wallet message has expired, run again with --recover-interrupted",
                 start.0,
                 start.1
             );
-            anyhow::ensure!(
-                start == (ctx.data.controller_epoch, ctx.data.seqno),
-                "the account's counters moved since the interrupted install; inspect it before recovering"
-            );
-            journal.end_controller_epoch_change(
-                &account_text,
-                ctx.global_id,
-                &deployment_id,
-                ctx.data.controller_epoch,
-                ctx.data.seqno,
-                None,
-            )?;
         }
         journal.reconcile_finalized_state(
             &account_text,

@@ -30,6 +30,8 @@ mutated file before the next control:
   without the snapshot proof; its unit test must fail.
 - rebroadcast-ignores-chain-identity: a journaled submission is relayed to a
   chain with the same global id but another zero state; its test must fail.
+- legacy-fence-undecodable: a fence journaled without its stage identity no
+  longer decodes; its unit test must fail.
 - classifier-ignores-action-rollback: a delivery whose action phase failed
   is counted as committed; the resolver's unit test must fail.
 
@@ -272,6 +274,29 @@ mutation(
             CARGO_DIR,
             True,
             "a_retry_is_never_relayed_to_another_chain_with_the_same_global_id",
+        )
+    ],
+)
+mutation(
+    "legacy-fence-undecodable",
+    [
+        (
+            CUSTODY,
+            "    #[serde(default)]\n    start_auth_epoch: u64,",
+            "    start_auth_epoch: u64,",
+        ),
+        (
+            CUSTODY,
+            "    #[serde(default)]\n    staged_module_hash: String,",
+            "    staged_module_hash: String,",
+        ),
+    ],
+    [
+        (
+            CONTRACTS_LIB + ["a_fence_without_its_stage_identity_is_never_lifted_automatically"],
+            CARGO_DIR,
+            True,
+            "a_fence_without_its_stage_identity_is_never_lifted_automatically",
         )
     ],
 )
