@@ -1,0 +1,114 @@
+{
+ "schema": "tos.evidence.index.v1",
+ "claim": "Each new check of the tosctl ML-DSA-44 Agent Account route can fail: removing the module's verifier, changing the signing context, dropping the staged-module precondition, accepting an envelope from any sender, or accepting a submission for another account each turns its test red",
+ "reviewed_commit": "4477114d2",
+ "runner": "test/mldsa-auth/cli_route_mutations.py",
+ "command": "cd <checkout> && FUNC_PATH=<func> FIFT_PATH=<fift> python3 test/mldsa-auth/cli_route_mutations.py <results.json>",
+ "compiler": "FunC/Fift v0.4.6 build 392bc162e095cc34292eb9ea0709273407e06ca7",
+ "result": {
+  "exit": 0,
+  "final_line": "MLDSA44_CLI_ROUTE_CONTROLS_OK"
+ },
+ "module": {
+  "source": "crypto/smartcont/mldsa44-auth-module.fc",
+  "code_hash": "570a064f8cd152c32f2c8a5694e1807c39cfb54efabb7e1147552a3c907cc239"
+ },
+ "results": [
+  {
+   "control": "baseline",
+   "command": "cargo test -p contracts --test agent_account_mldsa44_sandbox --",
+   "exit": 0,
+   "expected": "green",
+   "marker": null,
+   "matched": true
+  },
+  {
+   "control": "baseline",
+   "command": "cargo test -p contracts --lib -- agent_account",
+   "exit": 0,
+   "expected": "green",
+   "marker": null,
+   "matched": true
+  },
+  {
+   "control": "baseline",
+   "command": "cargo test -p commands --lib --no-default-features -- mldsa44",
+   "exit": 0,
+   "expected": "green",
+   "marker": null,
+   "matched": true
+  },
+  {
+   "control": "module-verifier-removed",
+   "command": "python3 scripts/update-auth-contract-code.py",
+   "exit": 0,
+   "expected": "green",
+   "marker": "Updated: tosctl/src/node-control/contracts/src/agent_account_auth.rs",
+   "matched": true
+  },
+  {
+   "control": "module-verifier-removed",
+   "command": "cargo test -p contracts --test agent_account_mldsa44_sandbox -- the_module_refuses_another_key_another_context_and_too_little_funding",
+   "exit": 101,
+   "expected": "red",
+   "marker": "another key",
+   "matched": true
+  },
+  {
+   "control": "context-changed",
+   "command": "cargo test -p contracts --test agent_account_mldsa44_sandbox -- a_staged_module_executes_one_native_send_and_refuses_its_replay",
+   "exit": 101,
+   "expected": "red",
+   "marker": "the module must accept before anything is forwarded",
+   "matched": true
+  },
+  {
+   "control": "staged-module-check-dropped",
+   "command": "cargo test -p contracts --lib -- the_window_and_the_staged_module_are_checked_before_signing",
+   "exit": 101,
+   "expected": "red",
+   "marker": "the_window_and_the_staged_module_are_checked_before_signing",
+   "matched": true
+  },
+  {
+   "control": "classifier-ignores-source",
+   "command": "cargo test -p commands --lib --no-default-features -- account_transactions_are_classified_by_module_envelope",
+   "exit": 101,
+   "expected": "red",
+   "marker": "account_transactions_are_classified_by_module_envelope_commit_and_transfer",
+   "matched": true
+  },
+  {
+   "control": "custody-ignores-account",
+   "command": "cargo test -p contracts --lib -- an_mldsa_submission_is_journaled_only_when_every_layer_matches_the_claim",
+   "exit": 101,
+   "expected": "red",
+   "marker": "an_mldsa_submission_is_journaled_only_when_every_layer_matches_the_claim",
+   "matched": true
+  },
+  {
+   "control": "restored",
+   "command": "cargo test -p contracts --test agent_account_mldsa44_sandbox --",
+   "exit": 0,
+   "expected": "green",
+   "marker": null,
+   "matched": true
+  },
+  {
+   "control": "restored",
+   "command": "cargo test -p contracts --lib -- agent_account",
+   "exit": 0,
+   "expected": "green",
+   "marker": null,
+   "matched": true
+  },
+  {
+   "control": "restored",
+   "command": "cargo test -p commands --lib --no-default-features -- mldsa44",
+   "exit": 0,
+   "expected": "green",
+   "marker": null,
+   "matched": true
+  }
+ ]
+}
