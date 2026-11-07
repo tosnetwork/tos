@@ -23,6 +23,7 @@
 pub mod agent_account;
 pub mod agent_account_auth;
 pub mod agent_account_custody;
+pub mod agent_account_reconfigure;
 pub mod attestation;
 pub mod capability_registry;
 pub mod chain_provider;
@@ -74,8 +75,8 @@ pub use agent_account::{
 pub use agent_account_custody::{
     AgentAccountCustodyJournal, ControllerActionClaim, ControllerActionRecord,
     ControllerActionResolutionEvidence, ControllerActionStatus, EconomicActionAuthorization,
-    EconomicEffectAuthorization, MAX_MLDSA44_RELAY_ATTEMPTS, Mldsa44RelayAttempt,
-    PredictionRelayMasterchainCheckpoint, PredictionRelayRecoveryBoundary,
+    EconomicEffectAuthorization, EpochChangeRecovery, MAX_MLDSA44_RELAY_ATTEMPTS,
+    Mldsa44RelayAttempt, PredictionRelayMasterchainCheckpoint, PredictionRelayRecoveryBoundary,
     PredictionRelaySourceCursor, agent_account_task_body_hash,
     controller_resolution_evidence_digest,
 };

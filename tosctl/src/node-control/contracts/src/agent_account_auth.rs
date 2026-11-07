@@ -43,6 +43,9 @@ pub const AUTH_REQUEST_TAG: u64 = 0x544f_532d_4155_5448;
 pub const MLDSA44_AUTH_CONTEXT: &[u8] = b"TOS-AUTH-ML-DSA-44-v1";
 /// Request kind that executes an unsigned controller-action payload.
 pub const AUTH_KIND_EXECUTE: u8 = 0;
+/// Request kind that reconfigures the authentication root: payload
+/// `mode:uint2 module:MsgAddressInt`, authorized by the current root.
+pub const AUTH_KIND_CONFIGURE: u8 = 1;
 /// The module refuses a request valid for longer than this.
 pub const MLDSA44_AUTH_MAX_TTL_SECS: u32 = 3_600;
 /// `get_auth_state` modes.
@@ -344,6 +347,126 @@ impl AuthRequest {
         ensure!(kind == AUTH_KIND_EXECUTE, "AUTH request kind {kind} is not execute");
         Ok(Self { global_id, account, epoch, nonce, valid_until, kind, payload })
     }
+}
+
+/// A kind-1 request that reconfigures the account's authentication root to
+/// `mode` with `module`, under the current auth counters. Only strict modes
+/// are built: this route never stages.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ConfigureRequest {
+    pub global_id: i32,
+    pub account: MsgAddressInt,
+    pub epoch: u64,
+    pub nonce: u64,
+    pub valid_until: u32,
+    pub mode: u8,
+    pub module: MsgAddressInt,
+}
+
+impl ConfigureRequest {
+    /// `mode:uint2 module:MsgAddressInt`, the payload `auth_reconfigure` reads.
+    pub fn payload(&self) -> anyhow::Result<Cell> {
+        ensure!(
+            self.mode == AUTH_MODE_MODULE_ONLY || self.mode == AUTH_MODE_HYBRID,
+            "a reconfiguration targets strict mode 2 or 3, not {}",
+            self.mode
+        );
+        check_module_address(&self.module, &self.account)?;
+        let mut payload = BuilderData::new();
+        payload.append_bits(usize::from(self.mode), 2)?;
+        self.module.write_to(&mut payload)?;
+        payload.into_cell()
+    }
+
+    pub fn to_cell(&self) -> anyhow::Result<Cell> {
+        let mut request = BuilderData::new();
+        request.append_i32(self.global_id)?;
+        self.account.write_to(&mut request)?;
+        request.append_u64(self.epoch)?.append_u64(self.nonce)?.append_u32(self.valid_until)?;
+        request.append_u8(AUTH_KIND_CONFIGURE)?;
+        request.checked_append_reference(self.payload()?)?;
+        request.into_cell()
+    }
+
+    /// Reads a kind-1 request, refusing trailing data at every layer.
+    pub fn parse(cell: &Cell) -> anyhow::Result<Self> {
+        let mut s = SliceData::load_cell(cell.clone())?;
+        let global_id = s.get_next_i32()?;
+        let account = MsgAddressInt::construct_from(&mut s)?;
+        let epoch = s.get_next_u64()?;
+        let nonce = s.get_next_u64()?;
+        let valid_until = s.get_next_u32()?;
+        let kind = s.get_next_byte()?;
+        ensure!(kind == AUTH_KIND_CONFIGURE, "AUTH request kind {kind} is not configure");
+        let payload = s.checked_drain_reference()?;
+        ensure!(
+            s.remaining_bits() == 0 && s.remaining_references() == 0,
+            "AUTH request has trailing data"
+        );
+        let mut p = SliceData::load_cell(payload)?;
+        let mode = u8::try_from(p.get_next_int(2)?).context("configure mode")?;
+        let module = MsgAddressInt::construct_from(&mut p)?;
+        ensure!(
+            p.remaining_bits() == 0 && p.remaining_references() == 0,
+            "configure payload has trailing data"
+        );
+        let request = Self { global_id, account, epoch, nonce, valid_until, mode, module };
+        ensure!(request.to_cell()? == *cell, "the configure request is not canonical");
+        Ok(request)
+    }
+}
+
+/// A kind-1 submission read back in full, as [`parse_mldsa44_submit`] reads
+/// an execute one.
+#[derive(Clone, Debug)]
+pub struct ParsedMldsa44ConfigureSubmission {
+    pub query_id: u64,
+    pub envelope: Cell,
+    pub request: ConfigureRequest,
+    pub signature: Vec<u8>,
+}
+
+pub fn parse_mldsa44_configure_submit(
+    body: &Cell,
+) -> anyhow::Result<ParsedMldsa44ConfigureSubmission> {
+    let mut s = SliceData::load_cell(body.clone())?;
+    ensure!(s.get_next_u32()? == MLDSA44_AUTH_SUBMIT_OPCODE, "not an ML-DSA-44 submission");
+    let query_id = s.get_next_u64()?;
+    let envelope = s.checked_drain_reference()?;
+    let signature_chain = s.checked_drain_reference()?;
+    ensure!(
+        s.remaining_bits() == 0 && s.remaining_references() == 0,
+        "ML-DSA-44 submission has trailing data"
+    );
+    let signature = read_byte_chain(&signature_chain, NATIVE_REGISTRY_SIGNATURE_BYTES)?;
+    let mut e = SliceData::load_cell(envelope.clone())?;
+    ensure!(e.get_next_u32()? == AUTH_ENVELOPE_OPCODE, "not an AUTH envelope");
+    let request_cell = e.checked_drain_reference()?;
+    ensure!(!e.get_next_bit()?, "this route carries no cosignature");
+    ensure!(
+        e.remaining_bits() == 0 && e.remaining_references() == 0,
+        "AUTH envelope has trailing data"
+    );
+    let request = ConfigureRequest::parse(&request_cell)?;
+    Ok(ParsedMldsa44ConfigureSubmission { query_id, envelope, request, signature })
+}
+
+/// Whether `after` shows the reconfiguration from `before` to (`mode`,
+/// `module_hash`) landed: one auth epoch later with a fresh nonce, and the
+/// controller epoch and seqno each advanced by one.
+pub fn reconfiguration_landed(
+    before: &AgentAccountState,
+    after: &AgentAccountState,
+    mode: u8,
+    module_hash: &[u8; 32],
+) -> bool {
+    after.auth.mode == mode
+        && before.auth.epoch.checked_add(1) == Some(after.auth.epoch)
+        && after.auth.nonce == 0
+        && after.auth.module_hash == *module_hash
+        && after.deployment_id == before.deployment_id
+        && before.controller_epoch.checked_add(1) == Some(after.controller_epoch)
+        && before.seqno.checked_add(1) == Some(after.seqno)
 }
 
 /// The 32 bytes every authentication root signs: the hash of

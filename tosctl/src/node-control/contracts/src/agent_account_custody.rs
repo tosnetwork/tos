@@ -325,6 +325,43 @@ struct EpochChangeFence {
     start_auth_epoch: u64,
     #[serde(default)]
     staged_module_hash: String,
+    /// The auth mode the fenced change lands in: staged for an owner stage,
+    /// strict for an authenticated reconfiguration. A fence written before
+    /// this field existed is a stage fence.
+    #[serde(default = "staged_target_mode")]
+    target_mode: u8,
+    /// A reconfiguration's signed submission, bound once after signing and
+    /// before any relay, and the expiry it carries. Until it is bound
+    /// nothing was signed, so the fence can only be the crash window between
+    /// fencing and signing; once bound, the fence is recovered only from a
+    /// finalized account snapshot whose time is past `valid_until`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    submission_digest: String,
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    valid_until: u32,
+    /// The one relay of the bound submission, journaled before it is sent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    relay: Option<Mldsa44RelayAttempt>,
+}
+
+fn staged_target_mode() -> u8 {
+    crate::agent_account_auth::AUTH_MODE_STAGED
+}
+
+fn is_zero_u32(value: &u32) -> bool {
+    *value == 0
+}
+
+/// What a recovery from a finalized account snapshot did with a fence.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EpochChangeRecovery {
+    /// No fence was held.
+    NoFence,
+    /// The fenced change had landed; the fence was finished, nothing resent.
+    Landed,
+    /// The fenced change cannot land any more (never signed, or expired in
+    /// the snapshot); the fence was lifted.
+    Lifted,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -936,6 +973,68 @@ impl AgentAccountCustodyJournal {
         staged_module_hash: &[u8; 32],
         owner_token: &str,
     ) -> anyhow::Result<()> {
+        self.begin_fence(
+            account,
+            network_global_id,
+            deployment_id,
+            (controller_epoch, seqno),
+            start_auth_epoch,
+            staged_module_hash,
+            crate::agent_account_auth::AUTH_MODE_STAGED,
+            owner_token,
+        )
+    }
+
+    /// Fences one account generation before an authenticated reconfiguration
+    /// (AUTH kind 1) into the strict `target_mode` with `module_hash` as its
+    /// root, from the finalized `(controller_epoch, seqno)` and auth epoch.
+    /// Same admission as [`Self::begin_controller_epoch_change`]; the fence
+    /// lands only as (target_mode, auth epoch + 1, module_hash), and after its
+    /// submission is bound it is recovered only by
+    /// [`Self::recover_controller_epoch_change`] past the submission's expiry.
+    #[allow(clippy::too_many_arguments)]
+    pub fn begin_auth_reconfiguration(
+        &self,
+        account: &str,
+        network_global_id: i32,
+        deployment_id: &str,
+        controller_epoch: u64,
+        seqno: u32,
+        start_auth_epoch: u64,
+        module_hash: &[u8; 32],
+        target_mode: u8,
+        owner_token: &str,
+    ) -> anyhow::Result<()> {
+        if !(crate::agent_account_auth::AUTH_MODE_MODULE_ONLY
+            ..=crate::agent_account_auth::AUTH_MODE_HYBRID)
+            .contains(&target_mode)
+        {
+            anyhow::bail!("an authenticated reconfiguration fences a strict target mode");
+        }
+        self.begin_fence(
+            account,
+            network_global_id,
+            deployment_id,
+            (controller_epoch, seqno),
+            start_auth_epoch,
+            module_hash,
+            target_mode,
+            owner_token,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn begin_fence(
+        &self,
+        account: &str,
+        network_global_id: i32,
+        deployment_id: &str,
+        (controller_epoch, seqno): (u64, u32),
+        start_auth_epoch: u64,
+        module_hash: &[u8; 32],
+        target_mode: u8,
+        owner_token: &str,
+    ) -> anyhow::Result<()> {
         validate_generation(account, network_global_id, deployment_id)?;
         if !valid_idempotency_key(owner_token) {
             anyhow::bail!("an epoch-change owner token is 64 lowercase hex characters");
@@ -946,7 +1045,11 @@ impl AgentAccountCustodyJournal {
             seqno,
             owner_token: owner_token.to_owned(),
             start_auth_epoch,
-            staged_module_hash: hex::encode(staged_module_hash),
+            staged_module_hash: hex::encode(module_hash),
+            target_mode,
+            submission_digest: String::new(),
+            valid_until: 0,
+            relay: None,
         };
         self.with_document(|document| {
             let unresolved = document
@@ -1066,6 +1169,11 @@ impl AgentAccountCustodyJournal {
             if owner_token.is_some_and(|token| token != start.owner_token) {
                 anyhow::bail!("this authentication change is held by another invocation");
             }
+            if owner_token.is_none() && !start.submission_digest.is_empty() {
+                anyhow::bail!(
+                    "a signed authentication reconfiguration is recovered only from a finalized account snapshot past its expiry"
+                );
+            }
             let finalized = (finalized_controller_epoch, finalized_seqno);
             if finalized < (start.controller_epoch, start.seqno) {
                 anyhow::bail!("finalized counters are older than the authentication change");
@@ -1104,10 +1212,7 @@ impl AgentAccountCustodyJournal {
             let Some(start) = document.epoch_change_fences.get(&generation).cloned() else {
                 return Ok(false);
             };
-            let landed = auth.mode == crate::agent_account_auth::AUTH_MODE_STAGED
-                && start.start_auth_epoch.checked_add(1) == Some(auth.epoch)
-                && hex::encode(auth.module_hash) == start.staged_module_hash;
-            if !landed {
+            if !fence_landed(&start, auth) {
                 return Ok(false);
             }
             let finalized = (finalized_controller_epoch, finalized_seqno);
@@ -1115,14 +1220,132 @@ impl AgentAccountCustodyJournal {
                 anyhow::bail!("the stage landed but the controller counters did not advance");
             }
             document.epoch_change_fences.remove(&generation);
-            let high = document.high_water.entry(generation).or_default();
-            if finalized > (high.controller_epoch, high.seqno) {
-                *high = FinalizedHighWater {
-                    controller_epoch: finalized_controller_epoch,
-                    seqno: finalized_seqno,
-                };
-            }
+            raise_high_water(document, generation, finalized);
             Ok(true)
+        })
+    }
+
+    /// Binds a reconfiguration fence to its signed submission, once, after
+    /// signing and before any relay. Only the holder of `owner_token` binds;
+    /// the same digest and expiry again is a no-op, anything else is refused.
+    #[allow(clippy::too_many_arguments)]
+    pub fn bind_epoch_change_submission(
+        &self,
+        account: &str,
+        network_global_id: i32,
+        deployment_id: &str,
+        owner_token: &str,
+        submission_digest: &str,
+        valid_until: u32,
+    ) -> anyhow::Result<()> {
+        validate_generation(account, network_global_id, deployment_id)?;
+        if !valid_digest(submission_digest) || valid_until == 0 {
+            anyhow::bail!("a bound reconfiguration names its submission digest and expiry");
+        }
+        let generation = generation_key_parts(account, network_global_id, deployment_id);
+        self.with_document(|document| {
+            let fence = document
+                .epoch_change_fences
+                .get_mut(&generation)
+                .context("no authentication change of this Agent Account is fenced")?;
+            if fence.owner_token != owner_token {
+                anyhow::bail!("this authentication change is held by another invocation");
+            }
+            if fence.target_mode == crate::agent_account_auth::AUTH_MODE_STAGED {
+                anyhow::bail!("an owner stage has no authenticated submission to bind");
+            }
+            if !fence.submission_digest.is_empty() {
+                if fence.submission_digest != submission_digest || fence.valid_until != valid_until
+                {
+                    anyhow::bail!("this reconfiguration is already bound to another submission");
+                }
+                return Ok(());
+            }
+            fence.submission_digest = submission_digest.to_owned();
+            fence.valid_until = valid_until;
+            Ok(())
+        })
+    }
+
+    /// Journals the one relay of a bound reconfiguration before it is sent.
+    /// Refused unless `owner_token` holds the fence, `submission_digest` is
+    /// the bound one, and no relay is on record yet.
+    pub fn record_epoch_change_relay(
+        &self,
+        account: &str,
+        network_global_id: i32,
+        deployment_id: &str,
+        owner_token: &str,
+        submission_digest: &str,
+        attempt: Mldsa44RelayAttempt,
+    ) -> anyhow::Result<()> {
+        validate_generation(account, network_global_id, deployment_id)?;
+        validate_mldsa44_relay_attempt(&attempt)?;
+        let generation = generation_key_parts(account, network_global_id, deployment_id);
+        self.with_document(|document| {
+            let fence = document
+                .epoch_change_fences
+                .get_mut(&generation)
+                .context("no authentication change of this Agent Account is fenced")?;
+            if fence.owner_token != owner_token {
+                anyhow::bail!("this authentication change is held by another invocation");
+            }
+            if fence.submission_digest.is_empty() || fence.submission_digest != submission_digest {
+                anyhow::bail!("the relayed bytes are not the bound reconfiguration submission");
+            }
+            if fence.relay.is_some() {
+                anyhow::bail!("this reconfiguration was already relayed");
+            }
+            fence.relay = Some(attempt);
+            Ok(())
+        })
+    }
+
+    /// Recovers a fence from a finalized account snapshot taken at
+    /// `state_time`, whichever invocation held it. A change the snapshot
+    /// shows landed is finished, never resent. A stage, or a reconfiguration
+    /// never bound to a signed submission, is lifted on the operator's word
+    /// (nothing authenticated can still arrive for it). A bound
+    /// reconfiguration is lifted only when the snapshot is past its expiry
+    /// and does not show it landed: the account refuses it from then on.
+    pub fn recover_controller_epoch_change(
+        &self,
+        account: &str,
+        network_global_id: i32,
+        deployment_id: &str,
+        state: &crate::agent_account_auth::AgentAccountState,
+        state_time: u32,
+    ) -> anyhow::Result<EpochChangeRecovery> {
+        validate_generation(account, network_global_id, deployment_id)?;
+        if hex::encode(state.deployment_id) != deployment_id {
+            anyhow::bail!("the account snapshot belongs to another deployment");
+        }
+        let generation = generation_key_parts(account, network_global_id, deployment_id);
+        self.with_document(|document| {
+            let Some(start) = document.epoch_change_fences.get(&generation).cloned() else {
+                return Ok(EpochChangeRecovery::NoFence);
+            };
+            let finalized = (state.controller_epoch, state.seqno);
+            if finalized < (start.controller_epoch, start.seqno) {
+                anyhow::bail!("finalized counters are older than the authentication change");
+            }
+            if fence_landed(&start, &state.auth) {
+                if finalized <= (start.controller_epoch, start.seqno) {
+                    anyhow::bail!("the change landed but the controller counters did not advance");
+                }
+                document.epoch_change_fences.remove(&generation);
+                raise_high_water(document, generation, finalized);
+                return Ok(EpochChangeRecovery::Landed);
+            }
+            if !start.submission_digest.is_empty() && state_time <= start.valid_until {
+                anyhow::bail!(
+                    "the signed reconfiguration may still land until {} (account state time {state_time}); recover after it expires",
+                    start.valid_until
+                );
+            }
+            document.epoch_change_fences.remove(&generation);
+            raise_high_water(document, generation, finalized);
+            Ok(EpochChangeRecovery::Lifted)
         })
     }
 
@@ -3177,6 +3400,46 @@ fn generation_key_parts(account: &str, network_global_id: i32, deployment_id: &s
     format!("{network_global_id}:{}:{account}:{deployment_id}", account.len())
 }
 
+/// Whether `auth` shows the fenced change landed: the fence's target mode,
+/// one auth epoch past the one it started from, and the module it installs.
+/// Controller counters alone never show it, since an owner rotate-controller
+/// advances them too.
+fn fence_landed(
+    fence: &EpochChangeFence,
+    auth: &crate::agent_account_auth::AgentAuthState,
+) -> bool {
+    auth.mode == fence.target_mode
+        && fence.start_auth_epoch.checked_add(1) == Some(auth.epoch)
+        && hex::encode(auth.module_hash) == fence.staged_module_hash
+}
+
+fn raise_high_water(document: &mut JournalDocument, generation: String, finalized: (u64, u32)) {
+    let high = document.high_water.entry(generation).or_default();
+    if finalized > (high.controller_epoch, high.seqno) {
+        *high = FinalizedHighWater { controller_epoch: finalized.0, seqno: finalized.1 };
+    }
+}
+
+/// A fence as it may be stored: a stage carries no submission; a
+/// reconfiguration's submission, once bound, carries its expiry; a relay
+/// only follows a bound submission.
+fn validate_fence(fence: &EpochChangeFence) -> anyhow::Result<()> {
+    use crate::agent_account_auth::{AUTH_MODE_HYBRID, AUTH_MODE_STAGED};
+    let bound = !fence.submission_digest.is_empty();
+    if !valid_idempotency_key(&fence.owner_token)
+        || !(AUTH_MODE_STAGED..=AUTH_MODE_HYBRID).contains(&fence.target_mode)
+        || (fence.target_mode == AUTH_MODE_STAGED && bound)
+        || (bound && (!valid_digest(&fence.submission_digest) || fence.valid_until == 0))
+        || (!bound && (fence.valid_until != 0 || fence.relay.is_some()))
+    {
+        anyhow::bail!("invalid authentication-change fence in Agent Account custody journal");
+    }
+    if let Some(relay) = &fence.relay {
+        validate_mldsa44_relay_attempt(relay)?;
+    }
+    Ok(())
+}
+
 fn compact_records(document: &mut JournalDocument) {
     let mut active = Vec::new();
     let mut resolved = Vec::new();
@@ -3347,6 +3610,9 @@ fn check_controller_payload(
 fn validate_document(document: &JournalDocument) -> anyhow::Result<()> {
     if document.records.len() > MAX_TOTAL_RECORDS {
         anyhow::bail!("Agent Account custody journal contains too many records");
+    }
+    for fence in document.epoch_change_fences.values() {
+        validate_fence(fence)?;
     }
     for record in &document.records {
         validate_claim(&record.claim)?;
@@ -4283,6 +4549,202 @@ mod tests {
                 .unwrap()
                 .1
         );
+    }
+
+    #[test]
+    fn a_reconfiguration_fence_binds_one_submission_and_one_relay() {
+        let directory = tempfile::tempdir().unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let path = directory.path().canonicalize().unwrap();
+        let journal = AgentAccountCustodyJournal::open(&path).unwrap();
+        let action = mldsa_claim(3);
+        let (account, id, deployment) =
+            (&action.account, action.network_global_id, &action.deployment_id);
+        let (holder, other) = ("a".repeat(64), "b".repeat(64));
+        let digest = format!("sha256:{}", "1".repeat(64));
+        let another = format!("sha256:{}", "2".repeat(64));
+        // A stage fence has no submission to bind.
+        journal
+            .begin_controller_epoch_change(account, id, deployment, 3, 3, 1, &[0xbb; 32], &holder)
+            .unwrap();
+        assert!(
+            journal
+                .bind_epoch_change_submission(account, id, deployment, &holder, &digest, 900)
+                .is_err()
+        );
+        journal.end_controller_epoch_change(account, id, deployment, 3, 3, Some(&holder)).unwrap();
+        // Only strict targets are reconfigurations.
+        assert!(
+            journal
+                .begin_auth_reconfiguration(
+                    account,
+                    id,
+                    deployment,
+                    3,
+                    3,
+                    1,
+                    &[0xbb; 32],
+                    1,
+                    &holder
+                )
+                .is_err()
+        );
+        journal
+            .begin_auth_reconfiguration(account, id, deployment, 3, 3, 1, &[0xbb; 32], 2, &holder)
+            .unwrap();
+        // No relay before the bind; only the holder binds; no zero expiry.
+        assert!(
+            journal
+                .record_epoch_change_relay(
+                    account,
+                    id,
+                    deployment,
+                    &holder,
+                    &digest,
+                    relay_attempt(1, 9)
+                )
+                .is_err()
+        );
+        assert!(
+            journal
+                .bind_epoch_change_submission(account, id, deployment, &other, &digest, 900)
+                .is_err()
+        );
+        assert!(
+            journal
+                .bind_epoch_change_submission(account, id, deployment, &holder, &digest, 0)
+                .is_err()
+        );
+        journal
+            .bind_epoch_change_submission(account, id, deployment, &holder, &digest, 900)
+            .unwrap();
+        // The same bind again is a no-op; another submission or expiry is refused.
+        journal
+            .bind_epoch_change_submission(account, id, deployment, &holder, &digest, 900)
+            .unwrap();
+        for (bound, until) in [(&another, 900), (&digest, 901)] {
+            assert!(
+                journal
+                    .bind_epoch_change_submission(account, id, deployment, &holder, bound, until)
+                    .is_err()
+            );
+        }
+        // One relay, of the bound submission, by the holder.
+        assert!(
+            journal
+                .record_epoch_change_relay(
+                    account,
+                    id,
+                    deployment,
+                    &holder,
+                    &another,
+                    relay_attempt(1, 9)
+                )
+                .is_err()
+        );
+        assert!(
+            journal
+                .record_epoch_change_relay(
+                    account,
+                    id,
+                    deployment,
+                    &other,
+                    &digest,
+                    relay_attempt(1, 9)
+                )
+                .is_err()
+        );
+        journal
+            .record_epoch_change_relay(
+                account,
+                id,
+                deployment,
+                &holder,
+                &digest,
+                relay_attempt(1, 9),
+            )
+            .unwrap();
+        assert!(
+            journal
+                .record_epoch_change_relay(
+                    account,
+                    id,
+                    deployment,
+                    &holder,
+                    &digest,
+                    relay_attempt(2, 9)
+                )
+                .is_err()
+        );
+        // The bound fence survives reopening, and its recovery waits for the expiry.
+        drop(journal);
+        let journal = AgentAccountCustodyJournal::open(&path).unwrap();
+        let state = crate::agent_account_auth::AgentAccountState {
+            deployment_id: [0x55; 32],
+            controller_epoch: 3,
+            seqno: 3,
+            auth: crate::agent_account_auth::AgentAuthState {
+                mode: crate::agent_account_auth::AUTH_MODE_STAGED,
+                epoch: 1,
+                nonce: 1,
+                module_hash: [0xbb; 32],
+            },
+        };
+        assert!(journal.end_controller_epoch_change(account, id, deployment, 3, 3, None).is_err());
+        assert!(
+            journal.recover_controller_epoch_change(account, id, deployment, &state, 900).is_err()
+        );
+        assert_eq!(
+            journal.recover_controller_epoch_change(account, id, deployment, &state, 901).unwrap(),
+            EpochChangeRecovery::Lifted
+        );
+        assert_eq!(
+            journal.recover_controller_epoch_change(account, id, deployment, &state, 901).unwrap(),
+            EpochChangeRecovery::NoFence
+        );
+    }
+
+    #[test]
+    fn a_malformed_reconfiguration_fence_is_refused_on_load() {
+        let fence = EpochChangeFence {
+            controller_epoch: 3,
+            seqno: 3,
+            owner_token: "a".repeat(64),
+            start_auth_epoch: 1,
+            staged_module_hash: hex::encode([0xbb; 32]),
+            target_mode: 2,
+            submission_digest: format!("sha256:{}", "1".repeat(64)),
+            valid_until: 900,
+            relay: Some(relay_attempt(1, 9)),
+        };
+        validate_fence(&fence).unwrap();
+        for bad in [
+            EpochChangeFence { valid_until: 0, ..fence.clone() },
+            EpochChangeFence { target_mode: 1, ..fence.clone() },
+            EpochChangeFence { target_mode: 0, ..fence.clone() },
+            EpochChangeFence { submission_digest: String::new(), valid_until: 0, ..fence.clone() },
+            EpochChangeFence { submission_digest: "sha256:00".into(), ..fence.clone() },
+        ] {
+            assert!(validate_fence(&bad).is_err(), "{bad:?}");
+        }
+        // An unbound reconfiguration fence and a legacy stage fence are valid.
+        validate_fence(&EpochChangeFence {
+            submission_digest: String::new(),
+            valid_until: 0,
+            relay: None,
+            ..fence.clone()
+        })
+        .unwrap();
+        let legacy: EpochChangeFence = serde_json::from_value(serde_json::json!({
+            "controller_epoch": 3, "seqno": 3, "owner_token": "a".repeat(64)
+        }))
+        .unwrap();
+        assert_eq!(legacy.target_mode, crate::agent_account_auth::AUTH_MODE_STAGED);
+        validate_fence(&legacy).unwrap();
     }
 
     #[test]

@@ -82,7 +82,8 @@ use dual_absence::{
     AgentAccountEconomicPaymentSponsorshipDualAbsenceProofVerifyCmd,
 };
 use mldsa44::{
-    AgentAccountMldsa44InstallCmd, AgentAccountMldsa44ResolveCmd, AgentAccountMldsa44SendCmd,
+    AgentAccountMldsa44CutoverCmd, AgentAccountMldsa44InstallCmd, AgentAccountMldsa44ResolveCmd,
+    AgentAccountMldsa44RotateCmd, AgentAccountMldsa44SendCmd,
 };
 use prediction_relay::{
     AgentAccountPredictionRelayBounceCreditResolveCmd,
@@ -678,6 +679,10 @@ pub enum AgentAccountAction {
     Mldsa44Send(AgentAccountMldsa44SendCmd),
     /// Resolve an ML-DSA-44 native transfer from three RPC views
     Mldsa44Resolve(AgentAccountMldsa44ResolveCmd),
+    /// IRREVERSIBLE: switch a staged account to ML-DSA-44-only mode 2
+    Mldsa44Cutover(AgentAccountMldsa44CutoverCmd),
+    /// IRREVERSIBLE: replace a mode-2 account's ML-DSA-44 root
+    Mldsa44Rotate(AgentAccountMldsa44RotateCmd),
 }
 
 #[derive(clap::Args, Clone)]
@@ -1722,6 +1727,8 @@ impl AgentAccountCmd {
             AgentAccountAction::Mldsa44Install(cmd) => cmd.run(config_path).await,
             AgentAccountAction::Mldsa44Send(cmd) => cmd.run(config_path).await,
             AgentAccountAction::Mldsa44Resolve(cmd) => cmd.run(config_path).await,
+            AgentAccountAction::Mldsa44Cutover(cmd) => cmd.run(config_path).await,
+            AgentAccountAction::Mldsa44Rotate(cmd) => cmd.run(config_path).await,
         }
     }
 }
