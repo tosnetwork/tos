@@ -8,7 +8,7 @@ use std::{
 
 use anyhow::Context;
 use chain_block::{
-    Cell, Coins, Deserializable, Message, MsgAddressInt, base64_decode, base64_encode,
+    Cell, Coins, Deserializable, Message, MsgAddressInt, SliceData, base64_decode, base64_encode,
     read_single_root_boc, write_boc,
 };
 use chain_rpc_client::v2::{
@@ -27,6 +27,10 @@ use crate::agent_account::{
 };
 
 const PREDICTION_CUSTODY_EFFECT_PROFILE_V1: &str = "tos.prediction.checked-call.v1";
+
+/// A native send authorized through the account's ML-DSA-44 module. Its exact
+/// artifact is the module submission, not an external message to the account.
+pub const MLDSA44_NATIVE_SEND_ACTION_KIND: &str = "agent-mldsa44-native-send";
 
 const SCHEMA: &str = "tos.agent-account.controller-journal.v2";
 const JOURNAL_FILE: &str = "controller-actions.json";
@@ -87,6 +91,12 @@ pub struct ControllerActionClaim {
     pub idempotency_key: String,
     pub action_identity: String,
     pub valid_until: u32,
+    /// The ML-DSA-44 module the action was submitted through, verified before
+    /// signing. Present exactly for [`MLDSA44_NATIVE_SEND_ACTION_KIND`]; the
+    /// resolver matches the account's inbound message against it, never
+    /// against whatever module the account names later.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_module: Option<String>,
 }
 
 /// The authenticated history boundary captured immediately before a
@@ -268,7 +278,31 @@ struct JournalDocument {
     high_water: std::collections::BTreeMap<String, FinalizedHighWater>,
     #[serde(default)]
     economic_authority_high_water: std::collections::BTreeMap<String, EconomicAuthorityHighWater>,
+    /// Generations whose controller epoch an owner operation (staging an
+    /// authentication module) is about to advance. No claim is admitted for
+    /// them until the operation is finished, so none can be stranded by it.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    epoch_change_fences: std::collections::BTreeMap<String, EpochChangeFence>,
     records: Vec<ControllerActionRecord>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+struct EpochChangeFence {
+    controller_epoch: u64,
+    seqno: u32,
+    /// Random per invocation: only the invocation holding it lifts the fence.
+    owner_token: String,
+    /// The auth epoch the fenced stage expects, and the module it stages: the
+    /// stage is seen to land only as the transition to (staged, this epoch +
+    /// 1, this module). Controller counters alone never show it, since an
+    /// owner rotate-controller advances them too. A fence written before
+    /// these fields existed decodes with an empty module hash, which no auth
+    /// state matches: it is never lifted automatically, only by explicit
+    /// recovery.
+    #[serde(default)]
+    start_auth_epoch: u64,
+    #[serde(default)]
+    staged_module_hash: String,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -838,6 +872,238 @@ impl AgentAccountCustodyJournal {
         })
     }
 
+    /// How many actions of one account generation are not yet resolved, read
+    /// under the journal lock. An operation that advances the controller
+    /// epoch (such as staging an authentication module) refuses to run while
+    /// any exist, since it would strand them.
+    pub fn unresolved_count(
+        &self,
+        account: &str,
+        network_global_id: i32,
+        deployment_id: &str,
+    ) -> anyhow::Result<usize> {
+        validate_generation(account, network_global_id, deployment_id)?;
+        let generation = generation_key_parts(account, network_global_id, deployment_id);
+        self.with_document(|document| {
+            Ok(document
+                .records
+                .iter()
+                .filter(|record| {
+                    generation_key(&record.claim) == generation
+                        && record.status != ControllerActionStatus::Resolved
+                })
+                .count())
+        })
+    }
+
+    /// Fences one account generation before an owner operation that advances
+    /// its controller epoch from the finalized `(controller_epoch, seqno)`.
+    /// Under the journal lock: refused while any of its actions is unresolved
+    /// or another fence is held; from then on no claim is admitted for it
+    /// until the holder of `owner_token` (or an explicit recovery) calls
+    /// [`Self::end_controller_epoch_change`].
+    #[allow(clippy::too_many_arguments)]
+    pub fn begin_controller_epoch_change(
+        &self,
+        account: &str,
+        network_global_id: i32,
+        deployment_id: &str,
+        controller_epoch: u64,
+        seqno: u32,
+        start_auth_epoch: u64,
+        staged_module_hash: &[u8; 32],
+        owner_token: &str,
+    ) -> anyhow::Result<()> {
+        validate_generation(account, network_global_id, deployment_id)?;
+        if !valid_idempotency_key(owner_token) {
+            anyhow::bail!("an epoch-change owner token is 64 lowercase hex characters");
+        }
+        let generation = generation_key_parts(account, network_global_id, deployment_id);
+        let start = EpochChangeFence {
+            controller_epoch,
+            seqno,
+            owner_token: owner_token.to_owned(),
+            start_auth_epoch,
+            staged_module_hash: hex::encode(staged_module_hash),
+        };
+        self.with_document(|document| {
+            let unresolved = document
+                .records
+                .iter()
+                .filter(|record| {
+                    generation_key(&record.claim) == generation
+                        && record.status != ControllerActionStatus::Resolved
+                })
+                .count();
+            if unresolved != 0 {
+                anyhow::bail!(
+                    "{unresolved} custody action(s) of this Agent Account are unresolved; resolve them before an operation that advances the controller epoch"
+                );
+            }
+            if let Some(high) = document.high_water.get(&generation)
+                && (controller_epoch, seqno) < (high.controller_epoch, high.seqno)
+            {
+                anyhow::bail!("Agent Account finalized controller epoch/seqno rolled back");
+            }
+            if document.epoch_change_fences.contains_key(&generation) {
+                anyhow::bail!(
+                    "another authentication change of this Agent Account is in progress or was interrupted"
+                );
+            }
+            document.epoch_change_fences.insert(generation.clone(), start);
+            Ok(())
+        })
+    }
+
+    /// Terminalizes an ML-DSA-44 claim that was never signed: no submission
+    /// exists, so nothing can ever execute under it, and its reserved
+    /// sequence is released. Refused once a submission is attached.
+    pub fn release_unsigned_mldsa44_claim(
+        &self,
+        claim: &ControllerActionClaim,
+        reason: &str,
+        now: u64,
+    ) -> anyhow::Result<ControllerActionRecord> {
+        validate_claim(claim)?;
+        if claim.action_kind != MLDSA44_NATIVE_SEND_ACTION_KIND || now == 0 {
+            anyhow::bail!("only an unsigned ML-DSA-44 claim can be released");
+        }
+        let evidence_kind = "tos.agent-account.unsigned-claim-released.v1";
+        let evidence = serde_json::json!({
+            "schema": evidence_kind,
+            "account": claim.account,
+            "action_id": claim.idempotency_key,
+            "controller_epoch": claim.controller_epoch,
+            "seqno": claim.seqno,
+            "reason": reason,
+        });
+        let resolution = ControllerActionResolutionEvidence {
+            evidence_kind: evidence_kind.to_owned(),
+            evidence_digest: controller_resolution_evidence_digest(evidence_kind, &evidence)?,
+            evidence,
+        };
+        self.with_document(|document| {
+            let record = document
+                .records
+                .iter_mut()
+                .find(|record| record.claim == *claim)
+                .context("the unsigned claim was not found")?;
+            if record.status != ControllerActionStatus::Claimed
+                || record.exact_signed_boc_base64.is_some()
+                || record.exact_signed_boc_digest.is_some()
+            {
+                anyhow::bail!("a signed or broadcast action cannot be released unsigned");
+            }
+            record.status = ControllerActionStatus::Resolved;
+            record.exact_winner_resolution = Some(resolution);
+            record.updated_at_unix = now;
+            let output = record.clone();
+            compact_records(document);
+            Ok(output)
+        })
+    }
+
+    /// The counters an unfinished fence started from, if one is held.
+    pub fn controller_epoch_change(
+        &self,
+        account: &str,
+        network_global_id: i32,
+        deployment_id: &str,
+    ) -> anyhow::Result<Option<(u64, u32)>> {
+        validate_generation(account, network_global_id, deployment_id)?;
+        let generation = generation_key_parts(account, network_global_id, deployment_id);
+        self.with_document(|document| {
+            Ok(document
+                .epoch_change_fences
+                .get(&generation)
+                .map(|fence| (fence.controller_epoch, fence.seqno)))
+        })
+    }
+
+    /// Lifts the fence once the finalized state is known: the change landed
+    /// (counters advanced) or was never sent (counters unchanged). Only the
+    /// holder's `owner_token` lifts it; `None` is the explicit recovery of an
+    /// interrupted holder, which the caller may use only when it knows the
+    /// change landed or can no longer land. A generation without a fence is
+    /// left as it is.
+    pub fn end_controller_epoch_change(
+        &self,
+        account: &str,
+        network_global_id: i32,
+        deployment_id: &str,
+        finalized_controller_epoch: u64,
+        finalized_seqno: u32,
+        owner_token: Option<&str>,
+    ) -> anyhow::Result<()> {
+        validate_generation(account, network_global_id, deployment_id)?;
+        let generation = generation_key_parts(account, network_global_id, deployment_id);
+        self.with_document(|document| {
+            let Some(start) = document.epoch_change_fences.get(&generation).cloned() else {
+                return Ok(());
+            };
+            if owner_token.is_some_and(|token| token != start.owner_token) {
+                anyhow::bail!("this authentication change is held by another invocation");
+            }
+            let finalized = (finalized_controller_epoch, finalized_seqno);
+            if finalized < (start.controller_epoch, start.seqno) {
+                anyhow::bail!("finalized counters are older than the authentication change");
+            }
+            document.epoch_change_fences.remove(&generation);
+            let high = document.high_water.entry(generation).or_default();
+            if finalized > (high.controller_epoch, high.seqno) {
+                *high = FinalizedHighWater {
+                    controller_epoch: finalized_controller_epoch,
+                    seqno: finalized_seqno,
+                };
+            }
+            Ok(())
+        })
+    }
+
+    /// Lifts a fence only when the finalized account state shows its own
+    /// stage landed: auth mode staged, auth epoch one past the epoch the stage
+    /// expected, and the module it staged. Any other state keeps the fence:
+    /// a second install about to replace the module, or an owner
+    /// rotate-controller that moved the controller counters but not the auth
+    /// state. Compared and removed under one lock. Returns whether a fence
+    /// was lifted.
+    pub fn finish_landed_controller_epoch_change(
+        &self,
+        account: &str,
+        network_global_id: i32,
+        deployment_id: &str,
+        finalized_controller_epoch: u64,
+        finalized_seqno: u32,
+        auth: &crate::agent_account_auth::AgentAuthState,
+    ) -> anyhow::Result<bool> {
+        validate_generation(account, network_global_id, deployment_id)?;
+        let generation = generation_key_parts(account, network_global_id, deployment_id);
+        self.with_document(|document| {
+            let Some(start) = document.epoch_change_fences.get(&generation).cloned() else {
+                return Ok(false);
+            };
+            let landed = auth.mode == crate::agent_account_auth::AUTH_MODE_STAGED
+                && start.start_auth_epoch.checked_add(1) == Some(auth.epoch)
+                && hex::encode(auth.module_hash) == start.staged_module_hash;
+            if !landed {
+                return Ok(false);
+            }
+            let finalized = (finalized_controller_epoch, finalized_seqno);
+            if finalized <= (start.controller_epoch, start.seqno) {
+                anyhow::bail!("the stage landed but the controller counters did not advance");
+            }
+            document.epoch_change_fences.remove(&generation);
+            let high = document.high_water.entry(generation).or_default();
+            if finalized > (high.controller_epoch, high.seqno) {
+                *high = FinalizedHighWater {
+                    controller_epoch: finalized_controller_epoch,
+                    seqno: finalized_seqno,
+                };
+            }
+            Ok(true)
+        })
+    }
+
     /// Find one economic payment by the owner-wide stable action identity.
     /// This supports crash recovery after chain finalization without requiring
     /// a live RPC or current Provider account merely to rediscover the frozen
@@ -1245,8 +1511,10 @@ impl AgentAccountCustodyJournal {
         })
     }
 
-    /// Atomically terminalize one exact signed economic action after an
-    /// independently verified, expiry-mature absence proof. Unlike
+    /// Atomically terminalize one exact signed action after an independently
+    /// verified absence proof: expiry-mature with the sequence unconsumed, or
+    /// (for an ML-DSA-44 action) superseded, the counters past it while its
+    /// auth nonce was never consumed, at the observed checkpoint. Unlike
     /// `resolve_exact_winner`, the checkpoint is allowed to retain the signed
     /// sequence because the exact message was not included. The proof bytes
     /// and digest are persisted before caller output for crash-safe replay.
@@ -2218,6 +2486,7 @@ fn validate_claim(claim: &ControllerActionClaim) -> anyhow::Result<()> {
         || !matches!(
             claim.action_kind.as_str(),
             "agent-native-send"
+                | MLDSA44_NATIVE_SEND_ACTION_KIND
                 | "agent-task-send"
                 | "agent-deploy-send"
                 | "agent-checked-contract-call-v2"
@@ -2230,8 +2499,9 @@ fn validate_claim(claim: &ControllerActionClaim) -> anyhow::Result<()> {
         || claim.valid_until == 0
         || claim.body_hash.as_ref().is_some_and(|value| !valid_cell_digest(value))
         || claim.state_init_hash.as_ref().is_some_and(|value| !valid_cell_digest(value))
-        || (claim.action_kind == "agent-native-send" && claim.body_hash.is_some())
-        || (claim.action_kind == "agent-native-send" && claim.state_init_hash.is_some())
+        || (is_native_send_kind(&claim.action_kind) && claim.body_hash.is_some())
+        || (is_native_send_kind(&claim.action_kind) && claim.state_init_hash.is_some())
+        || (claim.action_kind == MLDSA44_NATIVE_SEND_ACTION_KIND) != claim.auth_module.is_some()
         || (claim.action_kind == "agent-task-send"
             && (claim.body_hash.is_none() || claim.state_init_hash.is_some()))
         || (claim.action_kind == "agent-checked-contract-call-v2"
@@ -2241,7 +2511,23 @@ fn validate_claim(claim: &ControllerActionClaim) -> anyhow::Result<()> {
     {
         anyhow::bail!("invalid controller action claim");
     }
+    if let Some(module) = &claim.auth_module {
+        let module = module
+            .parse::<MsgAddressInt>()
+            .context("controller claim authentication module is invalid")?;
+        let account = claim
+            .account
+            .parse::<MsgAddressInt>()
+            .context("controller claim source account is invalid")?;
+        crate::agent_account_auth::check_module_address(&module, &account)?;
+    }
     Ok(())
+}
+
+/// A bodyless single native transfer, authorized by the Ed25519 controller or
+/// through the ML-DSA-44 module.
+fn is_native_send_kind(kind: &str) -> bool {
+    kind == "agent-native-send" || kind == MLDSA44_NATIVE_SEND_ACTION_KIND
 }
 
 fn admit_claim(
@@ -2251,6 +2537,11 @@ fn admit_claim(
     now: u64,
 ) -> anyhow::Result<(ControllerActionRecord, bool)> {
     let generation = generation_key(&claim);
+    if document.epoch_change_fences.contains_key(&generation) {
+        anyhow::bail!(
+            "an authentication change of this Agent Account is in progress; finish it (mldsa44-install) before claiming actions"
+        );
+    }
     if document.records.iter().any(|record| {
         record.claim.account == claim.account
             && record.claim.network_global_id == claim.network_global_id
@@ -2884,6 +3175,25 @@ fn validate_signed_boc(
     if write_boc(&root)? != bytes {
         anyhow::bail!("signed Agent Account BOC uses non-canonical serialization");
     }
+    if claim.action_kind == MLDSA44_NATIVE_SEND_ACTION_KIND {
+        // The exact artifact is the module submission. Every layer is read
+        // back in full; the payload passes the same checks as an Ed25519 one.
+        if !matches!(expected_action, ExpectedAction::Primary) {
+            anyhow::bail!("an ML-DSA-44 module action has no cancellation message");
+        }
+        let submission = crate::agent_account_auth::parse_mldsa44_submit(&root)
+            .context("stored ML-DSA-44 submission is malformed")?;
+        let request = &submission.request;
+        if request.global_id != claim.network_global_id
+            || request.account.to_string() != claim.account
+            || request.valid_until != claim.valid_until
+        {
+            anyhow::bail!("stored ML-DSA-44 request does not match custody claim");
+        }
+        let payload = SliceData::load_cell(request.payload.clone())
+            .context("stored ML-DSA-44 request payload is not an ordinary cell")?;
+        return check_controller_payload(claim, payload, expected_action);
+    }
     let message =
         Message::construct_from_cell(root).context("parse external Agent Account message")?;
     let header = message
@@ -2894,6 +3204,16 @@ fn validate_signed_boc(
     }
     let mut body = message.body().cloned().context("stored Agent Account BOC has no body")?;
     body.move_by(512).context("stored Agent Account BOC has a truncated signature")?;
+    check_controller_payload(claim, body, expected_action)
+}
+
+/// The unsigned controller-action body a claim names: opcode, network,
+/// controller counters, expiry, target, value and the kind's references.
+fn check_controller_payload(
+    claim: &ControllerActionClaim,
+    mut body: SliceData,
+    expected_action: ExpectedAction,
+) -> anyhow::Result<()> {
     let opcode = body.get_next_u32()?;
     let expected_opcode = match expected_action {
         ExpectedAction::Cancellation => AGENT_CANCEL_SEQNO_OPCODE,
@@ -2901,7 +3221,7 @@ fn validate_signed_boc(
         ExpectedAction::Primary if claim.action_kind == "agent-deploy-send" => {
             AGENT_DEPLOY_SEND_OPCODE
         }
-        ExpectedAction::Primary if claim.action_kind == "agent-native-send" => {
+        ExpectedAction::Primary if is_native_send_kind(&claim.action_kind) => {
             AGENT_NATIVE_SEND_OPCODE
         }
         ExpectedAction::Primary if claim.action_kind == "agent-checked-contract-call-v2" => {
@@ -3200,6 +3520,7 @@ mod tests {
             idempotency_key: "1".repeat(64),
             action_identity: format!("sha256:{}", marker.to_string().repeat(64)),
             valid_until: 2000,
+            auth_module: None,
         }
     }
 
@@ -3320,6 +3641,416 @@ mod tests {
         let bytes = write_boc(&message).unwrap();
         let digest = format!("sha256:{}", hex::encode(Sha256::digest(&bytes)));
         (base64_encode(bytes), digest)
+    }
+
+    fn mldsa_claim(seqno: u32) -> ControllerActionClaim {
+        ControllerActionClaim {
+            action_kind: MLDSA44_NATIVE_SEND_ACTION_KIND.into(),
+            auth_module: Some(
+                MsgAddressInt::with_standart(None, -1, [0x66; 32].into()).unwrap().to_string(),
+            ),
+            ..claim(seqno, 'e')
+        }
+    }
+
+    /// The exact submission for `claim`, with `request` free to differ from it.
+    fn mldsa_submission(
+        claim: &ControllerActionClaim,
+        request: impl FnOnce(&mut crate::agent_account_auth::AuthRequest),
+    ) -> Cell {
+        use crate::agent_account_auth::*;
+        let payload = crate::AgentAccountContract::build_native_send_payload(
+            claim.network_global_id,
+            claim.controller_epoch,
+            claim.seqno,
+            claim.valid_until,
+            &claim.target.parse::<MsgAddressInt>().unwrap(),
+            claim.value_atomic,
+        )
+        .unwrap();
+        let mut auth = AuthRequest {
+            global_id: claim.network_global_id,
+            account: claim.account.parse().unwrap(),
+            epoch: 1,
+            nonce: 0,
+            valid_until: claim.valid_until,
+            kind: AUTH_KIND_EXECUTE,
+            payload,
+        };
+        request(&mut auth);
+        let cell = auth.to_cell().unwrap();
+        let signature = sign_auth_request(&[0x21; 32], &cell).unwrap();
+        build_mldsa44_submit(7, &build_auth_envelope(&cell).unwrap(), &signature).unwrap()
+    }
+
+    fn encoded(cell: &Cell) -> (String, String) {
+        let bytes = write_boc(cell).unwrap();
+        let digest = format!("sha256:{}", hex::encode(Sha256::digest(&bytes)));
+        (base64_encode(bytes), digest)
+    }
+
+    #[test]
+    fn an_mldsa_claim_names_exactly_one_module_in_the_account_workchain() {
+        validate_claim(&mldsa_claim(3)).unwrap();
+        let without = ControllerActionClaim { auth_module: None, ..mldsa_claim(3) };
+        assert!(validate_claim(&without).is_err());
+        let ed25519_with_module =
+            ControllerActionClaim { auth_module: mldsa_claim(3).auth_module, ..claim(3, 'a') };
+        assert!(validate_claim(&ed25519_with_module).is_err());
+        let basechain = ControllerActionClaim {
+            auth_module: Some(
+                MsgAddressInt::with_standart(None, 0, [0x66; 32].into()).unwrap().to_string(),
+            ),
+            ..mldsa_claim(3)
+        };
+        assert!(validate_claim(&basechain).is_err());
+        let itself =
+            ControllerActionClaim { auth_module: Some(mldsa_claim(3).account), ..mldsa_claim(3) };
+        assert!(validate_claim(&itself).is_err());
+        let with_body = ControllerActionClaim {
+            body_hash: Some(agent_account_task_body_hash(&Cell::default())),
+            ..mldsa_claim(3)
+        };
+        assert!(validate_claim(&with_body).is_err());
+    }
+
+    #[test]
+    fn an_mldsa_submission_is_journaled_only_when_every_layer_matches_the_claim() {
+        let action = mldsa_claim(3);
+        let (exact, _) = encoded(&mldsa_submission(&action, |_| {}));
+        validate_signed_boc(&action, &exact, None, ExpectedAction::Primary).unwrap();
+        // No cancellation message exists for a module action.
+        assert!(validate_signed_boc(&action, &exact, None, ExpectedAction::Cancellation).is_err());
+        // An Ed25519 native-send claim does not accept a module submission.
+        assert!(
+            validate_signed_boc(&claim(3, 'a'), &exact, None, ExpectedAction::Primary).is_err()
+        );
+
+        let other_account = MsgAddressInt::with_standart(None, -1, [0x12; 32].into()).unwrap();
+        let refused: Vec<Box<dyn FnOnce(&mut crate::agent_account_auth::AuthRequest)>> = vec![
+            Box::new(move |r| r.account = other_account),
+            Box::new(|r| r.global_id = 43),
+            Box::new(|r| r.valid_until = 2001),
+        ];
+        for alter in refused {
+            let (altered, _) = encoded(&mldsa_submission(&action, alter));
+            assert!(validate_signed_boc(&action, &altered, None, ExpectedAction::Primary).is_err());
+        }
+        // The payload is checked like an Ed25519 one: seqno, target, value.
+        for other in [
+            ControllerActionClaim { seqno: 4, ..action.clone() },
+            ControllerActionClaim { value_atomic: 2, ..action.clone() },
+            ControllerActionClaim {
+                target: MsgAddressInt::with_standart(None, 0, [0x23; 32].into())
+                    .unwrap()
+                    .to_string(),
+                ..action.clone()
+            },
+        ] {
+            let (signed_for_other, _) = encoded(&mldsa_submission(&other, |_| {}));
+            assert!(
+                validate_signed_boc(&action, &signed_for_other, None, ExpectedAction::Primary)
+                    .is_err()
+            );
+        }
+        // Trailing data after the submission is refused.
+        let mut trailing =
+            chain_block::BuilderData::from_cell(&mldsa_submission(&action, |_| {})).unwrap();
+        trailing.append_bit_one().unwrap();
+        let (trailing, _) = encoded(&trailing.into_cell().unwrap());
+        assert!(validate_signed_boc(&action, &trailing, None, ExpectedAction::Primary).is_err());
+    }
+
+    #[test]
+    fn an_mldsa_action_reserves_the_sequence_and_counts_as_unresolved() {
+        let directory = tempfile::tempdir().unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let journal =
+            AgentAccountCustodyJournal::open(directory.path().canonicalize().unwrap()).unwrap();
+        let action = mldsa_claim(3);
+        let generation = (&action.account, action.network_global_id, &action.deployment_id);
+        assert_eq!(journal.unresolved_count(generation.0, generation.1, generation.2).unwrap(), 0);
+        assert!(journal.claim_primary(action.clone(), 10).unwrap().1);
+        // An Ed25519 action cannot take the same controller sequence.
+        let mut competing = claim(3, 'c');
+        competing.idempotency_key = "2".repeat(64);
+        assert!(journal.claim_primary(competing, 11).is_err());
+        let (boc, digest) = encoded(&mldsa_submission(&action, |_| {}));
+        journal.attach_signed_boc(&action, &boc, &digest, 12).unwrap();
+        // A retry reuses the exact journaled bytes.
+        let record = journal.action_by_idempotency_key(&action.idempotency_key).unwrap();
+        assert_eq!(record.exact_signed_boc_base64.as_deref(), Some(boc.as_str()));
+        journal.begin_broadcast(&action, 13).unwrap();
+        assert_eq!(journal.unresolved_count(generation.0, generation.1, generation.2).unwrap(), 1);
+    }
+
+    #[test]
+    fn an_epoch_change_fence_excludes_claims_until_it_is_lifted() {
+        let directory = tempfile::tempdir().unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let journal =
+            AgentAccountCustodyJournal::open(directory.path().canonicalize().unwrap()).unwrap();
+        let action = mldsa_claim(3);
+        let (account, id, deployment) =
+            (&action.account, action.network_global_id, &action.deployment_id);
+        let (first, second) = ("a".repeat(64), "b".repeat(64));
+        journal
+            .begin_controller_epoch_change(account, id, deployment, 3, 3, 1, &[0xbb; 32], &first)
+            .unwrap();
+        assert_eq!(journal.controller_epoch_change(account, id, deployment).unwrap(), Some((3, 3)));
+        // A second invocation can neither enter nor lift the held fence.
+        assert!(
+            journal
+                .begin_controller_epoch_change(
+                    account,
+                    id,
+                    deployment,
+                    3,
+                    3,
+                    1,
+                    &[0xbb; 32],
+                    &second
+                )
+                .is_err()
+        );
+        assert!(
+            journal
+                .end_controller_epoch_change(account, id, deployment, 3, 3, Some(&second))
+                .is_err()
+        );
+        // No claim is admitted while the change is in progress.
+        assert!(journal.claim_primary(action.clone(), 10).is_err());
+        assert!(
+            journal
+                .end_controller_epoch_change(account, id, deployment, 3, 2, Some(&first))
+                .is_err()
+        );
+        journal.end_controller_epoch_change(account, id, deployment, 4, 4, Some(&first)).unwrap();
+        // Lifting twice is a no-op; the high-water mark moved to the new counters.
+        journal.end_controller_epoch_change(account, id, deployment, 4, 4, Some(&first)).unwrap();
+        assert_eq!(journal.controller_epoch_change(account, id, deployment).unwrap(), None);
+        assert!(journal.claim_primary(action.clone(), 11).is_err(), "rolled-back counters");
+        let current = ControllerActionClaim { controller_epoch: 4, ..mldsa_claim(4) };
+        assert!(journal.claim_primary(current.clone(), 12).unwrap().1);
+        // An unresolved action blocks the next change.
+        assert!(
+            journal
+                .begin_controller_epoch_change(
+                    account,
+                    id,
+                    deployment,
+                    4,
+                    4,
+                    2,
+                    &[0xbb; 32],
+                    &second
+                )
+                .is_err()
+        );
+        // An unsigned claim can be released; it then no longer blocks.
+        journal.release_unsigned_mldsa44_claim(&current, "expired before signing", 13).unwrap();
+        journal
+            .begin_controller_epoch_change(account, id, deployment, 4, 4, 2, &[0xbb; 32], &second)
+            .unwrap();
+        // An interrupted holder's fence is lifted only by explicit recovery.
+        journal.end_controller_epoch_change(account, id, deployment, 4, 4, None).unwrap();
+    }
+
+    #[test]
+    fn an_already_staged_install_leaves_a_second_installs_fence_held() {
+        let directory = tempfile::tempdir().unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let journal =
+            AgentAccountCustodyJournal::open(directory.path().canonicalize().unwrap()).unwrap();
+        let action = mldsa_claim(3);
+        let (account, id, deployment) =
+            (&action.account, action.network_global_id, &action.deployment_id);
+        use crate::agent_account_auth::{AUTH_MODE_STAGED, AgentAuthState};
+        let staged = |epoch, module| AgentAuthState {
+            mode: AUTH_MODE_STAGED,
+            epoch,
+            nonce: 0,
+            module_hash: [module; 32],
+        };
+        // Module A (0xaa) is staged at auth epoch 1, counters (3, 3). Install
+        // B fences the account to stage module 0xbb from auth epoch 1 and has
+        // not sent its stage yet.
+        journal
+            .begin_controller_epoch_change(
+                account,
+                id,
+                deployment,
+                3,
+                3,
+                1,
+                &[0xbb; 32],
+                &"b".repeat(64),
+            )
+            .unwrap();
+        // An install of A sees "already staged" in the same state: B's fence
+        // stays, so no send can claim the sequence B's stage will move.
+        assert!(
+            !journal
+                .finish_landed_controller_epoch_change(
+                    account,
+                    id,
+                    deployment,
+                    3,
+                    3,
+                    &staged(1, 0xaa)
+                )
+                .unwrap()
+        );
+        // An owner rotate-controller moves the controller counters and leaves
+        // the auth state: still not B's stage, the fence stays.
+        assert!(
+            !journal
+                .finish_landed_controller_epoch_change(
+                    account,
+                    id,
+                    deployment,
+                    4,
+                    4,
+                    &staged(1, 0xaa)
+                )
+                .unwrap()
+        );
+        assert_eq!(journal.controller_epoch_change(account, id, deployment).unwrap(), Some((3, 3)));
+        assert!(journal.claim_primary(action.clone(), 10).is_err());
+        // Another module at the next auth epoch is not B's stage either.
+        assert!(
+            !journal
+                .finish_landed_controller_epoch_change(
+                    account,
+                    id,
+                    deployment,
+                    5,
+                    5,
+                    &staged(2, 0xaa)
+                )
+                .unwrap()
+        );
+        // B's own transition (staged, epoch 2, module B) finishes the fence.
+        assert!(
+            journal
+                .finish_landed_controller_epoch_change(
+                    account,
+                    id,
+                    deployment,
+                    5,
+                    5,
+                    &staged(2, 0xbb)
+                )
+                .unwrap()
+        );
+        assert_eq!(journal.controller_epoch_change(account, id, deployment).unwrap(), None);
+        // Without a fence it is a no-op.
+        assert!(
+            !journal
+                .finish_landed_controller_epoch_change(
+                    account,
+                    id,
+                    deployment,
+                    5,
+                    5,
+                    &staged(2, 0xbb)
+                )
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn an_interrupted_fence_survives_a_rotation_and_is_recovered_explicitly() {
+        use crate::agent_account_auth::{AUTH_MODE_STAGED, AgentAuthState};
+        let directory = tempfile::tempdir().unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let journal =
+            AgentAccountCustodyJournal::open(directory.path().canonicalize().unwrap()).unwrap();
+        let action = mldsa_claim(3);
+        let (account, id, deployment) =
+            (&action.account, action.network_global_id, &action.deployment_id);
+        let a_staged =
+            AgentAuthState { mode: AUTH_MODE_STAGED, epoch: 1, nonce: 0, module_hash: [0xaa; 32] };
+        // Install B fences (3, 3) and is interrupted before sending; an owner
+        // rotation then moves the counters to (4, 4) with the auth state kept.
+        journal
+            .begin_controller_epoch_change(
+                account,
+                id,
+                deployment,
+                3,
+                3,
+                1,
+                &[0xbb; 32],
+                &"b".repeat(64),
+            )
+            .unwrap();
+        assert!(
+            !journal
+                .finish_landed_controller_epoch_change(account, id, deployment, 4, 4, &a_staged)
+                .unwrap()
+        );
+        assert!(
+            journal
+                .claim_primary(ControllerActionClaim { controller_epoch: 4, ..mldsa_claim(4) }, 10)
+                .is_err()
+        );
+        // Explicit recovery at the advanced counters lifts it; the next claim
+        // at those counters is admitted.
+        journal.end_controller_epoch_change(account, id, deployment, 4, 4, None).unwrap();
+        assert_eq!(journal.controller_epoch_change(account, id, deployment).unwrap(), None);
+        assert!(
+            journal
+                .claim_primary(ControllerActionClaim { controller_epoch: 4, ..mldsa_claim(4) }, 11)
+                .unwrap()
+                .1
+        );
+    }
+
+    #[test]
+    fn a_fence_without_its_stage_identity_is_never_lifted_automatically() {
+        // A fence journaled before the stage identity was recorded decodes,
+        // and no auth state can match its empty module hash.
+        let legacy: EpochChangeFence = serde_json::from_value(serde_json::json!({
+            "controller_epoch": 3, "seqno": 3, "owner_token": "b".repeat(64)
+        }))
+        .unwrap();
+        assert_eq!(legacy.staged_module_hash, "");
+        assert_ne!(legacy.staged_module_hash, hex::encode([0u8; 32]));
+    }
+
+    #[test]
+    fn a_signed_mldsa_claim_cannot_be_released_as_unsigned() {
+        let directory = tempfile::tempdir().unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let journal =
+            AgentAccountCustodyJournal::open(directory.path().canonicalize().unwrap()).unwrap();
+        let action = mldsa_claim(3);
+        journal.claim_primary(action.clone(), 10).unwrap();
+        let (boc, digest) = encoded(&mldsa_submission(&action, |_| {}));
+        journal.attach_signed_boc(&action, &boc, &digest, 11).unwrap();
+        assert!(journal.release_unsigned_mldsa44_claim(&action, "test", 12).is_err());
+        assert!(journal.release_unsigned_mldsa44_claim(&claim(4, 'a'), "test", 12).is_err());
     }
 
     fn deploy_claim(seqno: u32) -> (ControllerActionClaim, StateInit, Cell) {
@@ -3641,6 +4372,7 @@ mod tests {
             idempotency_key: "5".repeat(64),
             action_identity: authorization.stable_action_id.clone(),
             valid_until: 2_000_000_050,
+            auth_module: None,
         };
         let directory = tempfile::tempdir().unwrap();
         #[cfg(unix)]

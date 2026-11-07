@@ -1,0 +1,194 @@
+{
+ "schema": "tos.evidence.index.v1",
+ "claim": "Each new check of the tosctl ML-DSA-44 Agent Account route can fail: removing the module's verifier, changing the signing context, dropping the staged-module precondition, accepting an envelope from any sender, or accepting a submission for another account each turns its test red; admitting claims while install fences the account, or counting a delivery whose action phase failed as committed, each also turns its test red; an already-staged install lifting a fence started at the current counters turns its test red; settling moved counters without the unconsumed-nonce proof, lifting a fence on counters alone, relaying a retry to another zero state, failing to decode an older fence, or skipping the install's explicit recovery each turns its test red; applying the current policy before an existing claim is recovered or released turns its test red",
+ "reviewed_commit": "965564e8c",
+ "runner": "test/mldsa-auth/cli_route_mutations.py",
+ "command": "cd <checkout> && FUNC_PATH=<func> FIFT_PATH=<fift> python3 test/mldsa-auth/cli_route_mutations.py <results.json>",
+ "compiler": "FunC/Fift v0.4.6 build 392bc162e095cc34292eb9ea0709273407e06ca7",
+ "result": {
+  "exit": 0,
+  "final_line": "MLDSA44_CLI_ROUTE_CONTROLS_OK"
+ },
+ "module": {
+  "source": "crypto/smartcont/mldsa44-auth-module.fc",
+  "code_hash": "570a064f8cd152c32f2c8a5694e1807c39cfb54efabb7e1147552a3c907cc239"
+ },
+ "results": [
+  {
+   "control": "baseline",
+   "command": "cargo test -p contracts --test agent_account_mldsa44_sandbox --",
+   "exit": 0,
+   "expected": "green",
+   "marker": null,
+   "matched": true
+  },
+  {
+   "control": "baseline",
+   "command": "cargo test -p contracts --lib -- agent_account",
+   "exit": 0,
+   "expected": "green",
+   "marker": null,
+   "matched": true
+  },
+  {
+   "control": "baseline",
+   "command": "cargo test -p commands --lib --no-default-features -- mldsa44",
+   "exit": 0,
+   "expected": "green",
+   "marker": null,
+   "matched": true
+  },
+  {
+   "control": "module-verifier-removed",
+   "command": "python3 scripts/update-auth-contract-code.py",
+   "exit": 0,
+   "expected": "green",
+   "marker": "Updated: tosctl/src/node-control/contracts/src/agent_account_auth.rs",
+   "matched": true
+  },
+  {
+   "control": "module-verifier-removed",
+   "command": "cargo test -p contracts --test agent_account_mldsa44_sandbox -- the_module_refuses_another_key_another_context_and_too_little_funding",
+   "exit": 101,
+   "expected": "red",
+   "marker": "another key",
+   "matched": true
+  },
+  {
+   "control": "context-changed",
+   "command": "cargo test -p contracts --test agent_account_mldsa44_sandbox -- a_staged_module_executes_one_native_send_and_refuses_its_replay",
+   "exit": 101,
+   "expected": "red",
+   "marker": "the module must accept before anything is forwarded",
+   "matched": true
+  },
+  {
+   "control": "staged-module-check-dropped",
+   "command": "cargo test -p contracts --lib -- the_window_and_the_staged_module_are_checked_before_signing",
+   "exit": 101,
+   "expected": "red",
+   "marker": "the_window_and_the_staged_module_are_checked_before_signing",
+   "matched": true
+  },
+  {
+   "control": "classifier-ignores-source",
+   "command": "cargo test -p commands --lib --no-default-features -- account_transactions_are_classified_by_module_envelope",
+   "exit": 101,
+   "expected": "red",
+   "marker": "account_transactions_are_classified_by_module_envelope_commit_and_transfer",
+   "matched": true
+  },
+  {
+   "control": "custody-ignores-account",
+   "command": "cargo test -p contracts --lib -- an_mldsa_submission_is_journaled_only_when_every_layer_matches_the_claim",
+   "exit": 101,
+   "expected": "red",
+   "marker": "an_mldsa_submission_is_journaled_only_when_every_layer_matches_the_claim",
+   "matched": true
+  },
+  {
+   "control": "epoch-change-fence-ignored",
+   "command": "cargo test -p contracts --lib -- an_epoch_change_fence_excludes_claims_until_it_is_lifted",
+   "exit": 101,
+   "expected": "red",
+   "marker": "an_epoch_change_fence_excludes_claims_until_it_is_lifted",
+   "matched": true
+  },
+  {
+   "control": "fence-lifted-on-counters-alone",
+   "command": "cargo test -p contracts --lib -- an_already_staged_install_leaves_a_second_installs_fence_held",
+   "exit": 101,
+   "expected": "red",
+   "marker": "an_already_staged_install_leaves_a_second_installs_fence_held",
+   "matched": true
+  },
+  {
+   "control": "supersession-ignores-auth-nonce",
+   "command": "cargo test -p contracts --test agent_account_mldsa44_sandbox -- a_refusal_after_acceptance_consumes_the_counters_without_a_transfer",
+   "exit": 101,
+   "expected": "red",
+   "marker": "a_refusal_after_acceptance_consumes_the_counters_without_a_transfer",
+   "matched": true
+  },
+  {
+   "control": "supersession-ignores-auth-nonce",
+   "command": "cargo test -p commands --lib --no-default-features -- a_request_whose_sequence_another_action_took_settles_as_superseded",
+   "exit": 101,
+   "expected": "red",
+   "marker": "a_request_whose_sequence_another_action_took_settles_as_superseded",
+   "matched": true
+  },
+  {
+   "control": "resolver-ignores-supersession-proof",
+   "command": "cargo test -p commands --lib --no-default-features -- a_request_whose_sequence_another_action_took_settles_as_superseded",
+   "exit": 101,
+   "expected": "red",
+   "marker": "a_request_whose_sequence_another_action_took_settles_as_superseded",
+   "matched": true
+  },
+  {
+   "control": "rebroadcast-ignores-chain-identity",
+   "command": "cargo test -p commands --lib --no-default-features -- a_retry_is_never_relayed_to_another_chain_with_the_same_global_id",
+   "exit": 101,
+   "expected": "red",
+   "marker": "a_retry_is_never_relayed_to_another_chain_with_the_same_global_id",
+   "matched": true
+  },
+  {
+   "control": "legacy-fence-undecodable",
+   "command": "cargo test -p contracts --lib -- a_fence_without_its_stage_identity_is_never_lifted_automatically",
+   "exit": 101,
+   "expected": "red",
+   "marker": "a_fence_without_its_stage_identity_is_never_lifted_automatically",
+   "matched": true
+  },
+  {
+   "control": "install-skips-interrupted-recovery",
+   "command": "cargo test -p commands --lib --no-default-features -- an_interrupted_install_is_recovered_after_a_rotation",
+   "exit": 101,
+   "expected": "red",
+   "marker": "an_interrupted_install_is_recovered_after_a_rotation_and_the_next_send_claims",
+   "matched": true
+  },
+  {
+   "control": "policy-checked-before-recovery",
+   "command": "cargo test -p commands --lib --no-default-features -- a_lowered_policy_never_strands_a_journaled_claim",
+   "exit": 101,
+   "expected": "red",
+   "marker": "a_lowered_policy_never_strands_a_journaled_claim",
+   "matched": true
+  },
+  {
+   "control": "classifier-ignores-action-rollback",
+   "command": "cargo test -p commands --lib --no-default-features -- account_transactions_are_classified_by_module_envelope",
+   "exit": 101,
+   "expected": "red",
+   "marker": "account_transactions_are_classified_by_module_envelope_commit_and_transfer",
+   "matched": true
+  },
+  {
+   "control": "restored",
+   "command": "cargo test -p contracts --test agent_account_mldsa44_sandbox --",
+   "exit": 0,
+   "expected": "green",
+   "marker": null,
+   "matched": true
+  },
+  {
+   "control": "restored",
+   "command": "cargo test -p contracts --lib -- agent_account",
+   "exit": 0,
+   "expected": "green",
+   "marker": null,
+   "matched": true
+  },
+  {
+   "control": "restored",
+   "command": "cargo test -p commands --lib --no-default-features -- mldsa44",
+   "exit": 0,
+   "expected": "green",
+   "marker": null,
+   "matched": true
+  }
+ ]
+}

@@ -21,6 +21,7 @@
 //! responsibility -- see `examples/agent_sdk_walkthrough.rs` for an
 //! end-to-end construction walkthrough that runs without `tosctl`.
 pub mod agent_account;
+pub mod agent_account_auth;
 pub mod agent_account_custody;
 pub mod attestation;
 pub mod capability_registry;

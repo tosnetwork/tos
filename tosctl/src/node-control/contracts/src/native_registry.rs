@@ -961,11 +961,14 @@ pub const ML_DSA_44_MAX_MESSAGE_BYTES: usize = 8192;
 
 /// The contexts a registry controller key signs under. Each names one use, so
 /// a signature made for one can never be accepted as another.
-pub const CONTROLLER_SIGNATURE_CONTEXTS: [&[u8]; 4] = [
+/// The Agent Account ML-DSA-44 authentication module's context is one of them:
+/// a controller key may also authorize Agent Account requests.
+pub const CONTROLLER_SIGNATURE_CONTEXTS: [&[u8]; 5] = [
     NATIVE_REGISTRY_SIGNATURE_CONTEXT,
     AGENT_PACKET_SIGNATURE_CONTEXT,
     AGENT_CONTACT_SIGNATURE_CONTEXT,
     AGENT_GUARANTOR_SIGNATURE_CONTEXT,
+    crate::agent_account_auth::MLDSA44_AUTH_CONTEXT,
 ];
 
 fn require_controller_context(context: &[u8]) -> Result<()> {
@@ -1127,12 +1130,13 @@ mod context_tests {
     /// The list is pinned by its literal bytes, so dropping or renaming a
     /// context fails here even though the loop above iterates the list.
     #[test]
-    fn controller_contexts_are_exactly_the_four_uses() {
-        let expected: [&[u8]; 4] = [
+    fn controller_contexts_are_exactly_the_five_uses() {
+        let expected: [&[u8]; 5] = [
             b"TOS-NATIVE-REGISTRY",
             b"TOS-AGENT-PACKET-V1",
             b"TOS-AGENT-CONTACT-V1",
             b"TOS-AGENT-GUARANTOR-V1",
+            b"TOS-AUTH-ML-DSA-44-v1",
         ];
         assert_eq!(CONTROLLER_SIGNATURE_CONTEXTS, expected);
         assert_eq!(AGENT_GUARANTOR_SIGNATURE_CONTEXT.len(), 22);

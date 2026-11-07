@@ -984,6 +984,7 @@ impl PredictionPrepareAgentCmd {
             idempotency_key: stable_hex.to_owned(),
             action_identity: authorization.stable_action_id.clone(),
             valid_until: self.valid_until,
+            auth_module: None,
         };
         let (record, _) = journal.claim_prediction_effect(
             claim.clone(),
