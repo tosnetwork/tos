@@ -23,7 +23,7 @@ env = {
 }
 base = [
     "cargo",
-    "+1.97.1",
+    "+1.99.1",
     "test",
     "--locked",
     "--manifest-path",

@@ -1348,8 +1348,12 @@ pub fn success_with(
         let mut missing_fields = vec![];
         let mut gaps = vec![];
         for item in &mut items {
-            merge_unique_bounded(&mut missing_fields, item.missing_fields.drain(..).collect(), 64)?;
-            merge_unique_bounded(&mut gaps, item.gaps.drain(..).collect(), 32)?;
+            merge_unique_bounded(
+                &mut missing_fields,
+                std::mem::take(&mut item.missing_fields),
+                64,
+            )?;
+            merge_unique_bounded(&mut gaps, std::mem::take(&mut item.gaps), 32)?;
         }
         CoverageDto { status: status.into(), missing_fields, gaps, sampling_policy }
     };

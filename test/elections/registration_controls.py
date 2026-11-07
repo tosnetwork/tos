@@ -56,7 +56,7 @@ def main():
     }
     command = [
         "cargo",
-        "+1.97.1",
+        "+1.99.1",
         "test",
         "--manifest-path",
         "tosctl/src/Cargo.toml",

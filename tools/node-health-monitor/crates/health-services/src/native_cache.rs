@@ -35,7 +35,9 @@ impl ProcessProbe {
             SocketAddr::V6(addr) => addr
                 .ip()
                 .octets()
-                .chunks_exact(4)
+                .as_chunks::<4>()
+                .0
+                .iter()
                 .flat_map(|chunk| chunk.iter().rev())
                 .map(|byte| format!("{byte:02X}"))
                 .collect(),

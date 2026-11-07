@@ -186,7 +186,7 @@ pub fn g1_section(bytes: &[u8], points: usize) -> Result<Vec<G1Affine>> {
             bytes.len()
         )));
     }
-    bytes.chunks_exact(96).map(g1_from_uncompressed).collect()
+    bytes.as_chunks::<96>().0.iter().map(|point| g1_from_uncompressed(point)).collect()
 }
 
 pub fn g2_section(bytes: &[u8], points: usize) -> Result<Vec<G2Affine>> {
@@ -197,7 +197,7 @@ pub fn g2_section(bytes: &[u8], points: usize) -> Result<Vec<G2Affine>> {
             bytes.len()
         )));
     }
-    bytes.chunks_exact(192).map(g2_from_uncompressed).collect()
+    bytes.as_chunks::<192>().0.iter().map(|point| g2_from_uncompressed(point)).collect()
 }
 
 /// A point that is on the curve and outside the prime-order subgroup.
