@@ -55,8 +55,7 @@ int main() {
       std::istringstream fields(line);
       std::string key_field, message_hex, context_hex, extra;
       if (!(fields >> key_field >> message_hex >> context_hex) || (fields >> extra)) {
-        throw std::runtime_error(
-            "TEST ONLY: expected '<key 0..255|seed:<64 hex>> <message-hex|-> <context-hex|->'");
+        throw std::runtime_error("TEST ONLY: expected '<key 0..255|seed:<64 hex>> <message-hex|-> <context-hex|->'");
       }
       const auto message = unhex(message_hex, 8192);
       const auto context = unhex(context_hex, 255);
