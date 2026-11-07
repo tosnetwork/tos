@@ -894,7 +894,7 @@ trait RelayEnvironment {
     /// Sends the wallet message and confirms its exact transaction.
     async fn broadcast(
         &self,
-        wallet_message: &Vec<u8>,
+        wallet_message: &[u8],
         wallet: &MsgAddressInt,
         module: &MsgAddressInt,
     ) -> anyhow::Result<()>;
@@ -930,13 +930,13 @@ impl RelayEnvironment for ChainRelayEnvironment {
 
     async fn broadcast(
         &self,
-        wallet_message: &Vec<u8>,
+        wallet_message: &[u8],
         wallet: &MsgAddressInt,
         module: &MsgAddressInt,
     ) -> anyhow::Result<()> {
         confirm_prepared_wallet_message(
             self.rpc_client.clone(),
-            wallet_message,
+            &wallet_message.to_vec(),
             wallet,
             module,
             DEPLOY_TIMEOUT,
@@ -2566,14 +2566,14 @@ mod tests {
 
         async fn broadcast(
             &self,
-            wallet_message: &Vec<u8>,
+            wallet_message: &[u8],
             wallet: &MsgAddressInt,
             module: &MsgAddressInt,
         ) -> anyhow::Result<()> {
             self.sent.lock().unwrap().push((
                 wallet.clone(),
                 module.clone(),
-                wallet_message.clone(),
+                wallet_message.to_vec(),
             ));
             Ok(())
         }
