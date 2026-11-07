@@ -205,6 +205,8 @@ class ServicePositiveEdgesTests(unittest.TestCase):
         heads=None,
         retained=None,
         fees=20_000_000,
+        snapshot=None,
+        expected_snapshot=None,
     ):
         usual = rows()
         wallet = wallet or usual[0]
@@ -225,6 +227,18 @@ class ServicePositiveEdgesTests(unittest.TestCase):
             patch.object(e13, "finalized_mc_header", side_effect=heads or [head(11), head(12)]),
             patch.object(e13, "record_jsonl") as record,
             patch.object(e13, "execution_fees", return_value=fees),
+            # The raw split is tested on its own below; here the receipt rows
+            # carry no raw BOC, so the split returns their payments and the
+            # given snapshot body, if any.
+            patch.object(
+                e13,
+                "split_outputs",
+                side_effect=lambda row: (
+                    row.get("out_msgs") or [],
+                    [] if snapshot is None or row is not service else ["snapshot-body"],
+                ),
+            ),
+            patch.object(e13, "decode_snapshot", return_value=snapshot),
         ):
             asyncio.run(
                 e13.observe_successful_edge(
@@ -238,9 +252,102 @@ class ServicePositiveEdgesTests(unittest.TestCase):
                     expected,
                     expected_inbound,
                     retained=retained,
+                    expected_snapshot=expected_snapshot,
                 )
             )
             return record
+
+    def test_an_accepted_call_emits_exactly_one_bound_snapshot(self):
+        want = {"request_id": 4, "caller": PAYER, "request_hash": "cc" * 32,
+                "terms_hash": "ab" * 32}
+        caller = Mock()
+        caller.to_str.return_value = PAYER
+        snapshot = {**want, "caller": caller}
+        self.run_edge(snapshot=snapshot, expected_snapshot=want)
+        for field, value in (("request_id", 5), ("request_hash", "dd" * 32),
+                             ("terms_hash", "00" * 32)):
+            with (
+                self.subTest(field=field),
+                self.assertRaisesRegex(RuntimeError, "snapshot differs from the accepted call"),
+            ):
+                self.run_edge(snapshot={**snapshot, field: value}, expected_snapshot=want)
+        other = Mock()
+        other.to_str.return_value = "0:other"
+        with self.assertRaisesRegex(RuntimeError, "snapshot differs from the accepted call"):
+            self.run_edge(snapshot={**snapshot, "caller": other}, expected_snapshot=want)
+        with self.assertRaisesRegex(RuntimeError, "exactly one snapshot"):
+            self.run_edge(expected_snapshot=want)
+        with self.assertRaisesRegex(RuntimeError, "unexpected Service Actor external output"):
+            self.run_edge(snapshot=snapshot)
+
+    def test_split_outputs_binds_every_raw_output_and_separates_the_snapshot(self):
+        internal_cls = type("InternalMsgInfo", (), {})
+        external_cls = type("ExternalOutMsgInfo", (), {})
+        payment_info = internal_cls()
+        payment_info.value_coins = 50_000_000
+        pay_hash, ext_hash = b"p" * 32, b"e" * 32
+        tx = types.SimpleNamespace(out_msgs=[
+            types.SimpleNamespace(cell=types.SimpleNamespace(hash=ext_hash), info=external_cls(),
+                                  body="snapshot-body"),
+            types.SimpleNamespace(cell=types.SimpleNamespace(hash=pay_hash), info=payment_info,
+                                  body=None),
+        ])
+        module = types.ModuleType("pytosiq_core.tlb.transaction")
+        module.InternalMsgInfo, module.ExternalOutMsgInfo = internal_cls, external_cls
+        payment = {"hash": base64.b64encode(pay_hash).decode(), "value": "50000000"}
+        external = {"hash": base64.b64encode(ext_hash).decode(), "value": "0"}
+        with (
+            patch.dict(sys.modules, {"pytosiq_core.tlb.transaction": module}),
+            patch.object(e13, "bound_transaction", return_value=tx),
+        ):
+            payments, externals = e13.split_outputs({"out_msgs": [external, payment]})
+            self.assertEqual(payments, [payment])
+            self.assertEqual(externals, ["snapshot-body"])
+            with self.assertRaisesRegex(RuntimeError, "receipt outputs differ"):
+                e13.split_outputs({"out_msgs": [payment]})
+            with self.assertRaisesRegex(RuntimeError, "missing from its receipt"):
+                e13.split_outputs({"out_msgs": [payment, {"hash": "other", "value": "0"}]})
+            with self.assertRaisesRegex(RuntimeError, "raw payments differ"):
+                e13.split_outputs({"out_msgs": [external, {**payment, "value": "49999999"}]})
+            tx.out_msgs[0].info = object()
+            with self.assertRaisesRegex(RuntimeError, "unexpected message kind"):
+                e13.split_outputs({"out_msgs": [external, payment]})
+
+    def test_decode_snapshot_is_strict(self):
+        class FakeSlice:
+            def __init__(self, tag, trailing_bits=0, trailing_refs=0):
+                self.values = [tag, 4, "caller", b"\xcc" * 32, 10, 20]
+                self.trailing = (trailing_bits, trailing_refs)
+
+            def load_uint(self, *_):
+                return self.values.pop(0)
+
+            load_address = load_bytes = load_uint
+
+            def load_ref(self):
+                return types.SimpleNamespace(hash=b"\xab" * 32)
+
+            @property
+            def remaining_bits(self):
+                return self.trailing[0]
+
+            @property
+            def remaining_refs(self):
+                return self.trailing[1]
+
+        def body(**kwargs):
+            return types.SimpleNamespace(begin_parse=lambda: FakeSlice(**kwargs))
+
+        decoded = e13.decode_snapshot(body(tag=e13.SNAPSHOT_TAG))
+        self.assertEqual(decoded["request_id"], 4)
+        self.assertEqual(decoded["request_hash"], "cc" * 32)
+        self.assertEqual(decoded["terms_hash"], "ab" * 32, "terms_hash is the terms cell hash")
+        self.assertEqual((decoded["response_deadline"], decoded["refund_claim_deadline"]), (10, 20))
+        with self.assertRaisesRegex(RuntimeError, "not a request snapshot"):
+            e13.decode_snapshot(body(tag=e13.SNAPSHOT_TAG ^ 1))
+        for trailing in ({"trailing_bits": 1}, {"trailing_refs": 1}):
+            with self.subTest(**trailing), self.assertRaisesRegex(RuntimeError, "trailing"):
+                e13.decode_snapshot(body(tag=e13.SNAPSHOT_TAG, **trailing))
 
     def test_exact_wallet_contract_refund_and_final_heads(self):
         record = self.run_edge()
@@ -291,7 +398,8 @@ class ServicePositiveEdgesTests(unittest.TestCase):
                 self.run_edge(heads=[head(10)])
 
     def test_withdraw_amount_is_derived_from_command_and_requires_edge(self):
-        before = {"address": SERVICE, "price_per_call": "0.02", "storage_fee": "0.2"}
+        before = {"address": SERVICE, "price_per_call": "0.02", "storage_fee": "0.2",
+                  "next_request_id": 7, "terms_hash": "ab" * 32}
         with (
             patch.object(e13, "service_show", new=AsyncMock(return_value=before)),
             patch.object(e13, "wallet_address", new=AsyncMock(return_value=PAYER)),
@@ -317,9 +425,16 @@ class ServicePositiveEdgesTests(unittest.TestCase):
                     "call",
                     "svc-1",
                     "owner",
+                    "--request-hash",
+                    "cc" * 32,
                     "--amount",
                     "0.5",
                 )
+            )
+            self.assertEqual(
+                observe.await_args.kwargs["expected_snapshot"],
+                {"request_id": 7, "caller": PAYER, "request_hash": "cc" * 32,
+                 "terms_hash": "ab" * 32},
             )
             self.assertEqual(observe.await_args.args[-2], 0)
             self.assertEqual(observe.await_args.kwargs["retained"], 220_000_000)
@@ -381,6 +496,9 @@ class ServicePositiveEdgesTests(unittest.TestCase):
     def test_execution_fees_bind_raw_receipt_and_do_not_double_count_action_fees(self):
         tx_hash, in_hash, out_hash = b"t" * 32, b"i" * 32, b"o" * 32
         raw = Mock(hash=tx_hash)
+        internal_cls = type("InternalMsgInfo", (), {})
+        internal_info = internal_cls()
+        internal_info.value_coins = 50_000_000
         tx = types.SimpleNamespace(
             lt=21,
             in_msg=types.SimpleNamespace(
@@ -390,7 +508,7 @@ class ServicePositiveEdgesTests(unittest.TestCase):
             out_msgs=[
                 types.SimpleNamespace(
                     cell=types.SimpleNamespace(hash=out_hash),
-                    info=types.SimpleNamespace(value_coins=50_000_000),
+                    info=internal_info,
                 )
             ],
             description=types.SimpleNamespace(
@@ -405,6 +523,8 @@ class ServicePositiveEdgesTests(unittest.TestCase):
         module = types.ModuleType("pytosiq_core.tlb.transaction")
         module.Transaction = Mock()
         module.Transaction.deserialize.return_value = tx
+        module.InternalMsgInfo = internal_cls
+        module.ExternalOutMsgInfo = type("ExternalOutMsgInfo", (), {})
         row = {
             "data": base64.b64encode(b"boc").decode(),
             "transaction_id": {"lt": "21", "hash": base64.b64encode(tx_hash).decode()},

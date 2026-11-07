@@ -606,8 +606,11 @@ def atomic_tos(value: str) -> int:
     return int(amount)
 
 
-def execution_fees(row: dict) -> int:
-    """Read gas and full forwarding fees from the receipt's bound raw transaction."""
+SNAPSHOT_TAG = 0x53415231  # request_snapshot, "SAR1"
+
+
+def bound_transaction(row: dict):
+    """The raw transaction a receipt row names, refused unless bound to it."""
     from pytosiq_core.tlb.transaction import Transaction
 
     raw = Cell.one_from_boc(base64.b64decode(row["data"], validate=True))
@@ -618,11 +621,63 @@ def execution_fees(row: dict) -> int:
             or tx.in_msg.cell.hash != base64.b64decode(row["in_msg"]["hash"], validate=True)
             or tx.in_msg.info.value_coins != int(row["in_msg"]["value"])):
         raise RuntimeError("Service Actor fee receipt is not bound to its transaction and inbound")
-    raw_payments = [(base64.b64encode(msg.cell.hash).decode(), msg.info.value_coins)
-                    for msg in tx.out_msgs]
-    summary_payments = [(msg["hash"], int(msg["value"])) for msg in row.get("out_msgs") or []]
-    if raw_payments != summary_payments:
-        raise RuntimeError("Service Actor raw payments differ from their receipt")
+    return tx
+
+
+def split_outputs(row: dict) -> tuple[list[dict], list]:
+    """Split a Service Actor transaction's outputs, by the raw transaction.
+
+    Returns the receipt's internal payment entries in output order, each bound
+    to its raw message by hash and value, and the bodies of its external-out
+    messages (the request snapshot). Every receipt entry must be one of the raw
+    outputs, and every raw output must appear in the receipt.
+    """
+    from pytosiq_core.tlb.transaction import ExternalOutMsgInfo, InternalMsgInfo
+
+    tx = bound_transaction(row)
+    summary = row.get("out_msgs") or []
+    by_hash = {msg.get("hash"): msg for msg in summary}
+    if None in by_hash or len(by_hash) != len(summary) or len(summary) != len(tx.out_msgs):
+        raise RuntimeError("Service Actor receipt outputs differ from the raw transaction")
+    payments, externals = [], []
+    for msg in tx.out_msgs:
+        entry = by_hash.get(base64.b64encode(msg.cell.hash).decode())
+        if entry is None:
+            raise RuntimeError("Service Actor raw output is missing from its receipt")
+        if isinstance(msg.info, InternalMsgInfo):
+            if int(entry.get("value", -1)) != msg.info.value_coins:
+                raise RuntimeError("Service Actor raw payments differ from their receipt")
+            payments.append(entry)
+        elif isinstance(msg.info, ExternalOutMsgInfo):
+            externals.append(msg.body)
+        else:
+            raise RuntimeError("Service Actor emitted an unexpected message kind")
+    return payments, externals
+
+
+def decode_snapshot(body) -> dict:
+    """Decode a request snapshot strictly; terms_hash is its terms cell's hash."""
+    cs = body.begin_parse()
+    if cs.load_uint(32) != SNAPSHOT_TAG:
+        raise RuntimeError("Service Actor external output is not a request snapshot")
+    snapshot = {
+        "request_id": cs.load_uint(64),
+        "caller": cs.load_address(),
+        "request_hash": cs.load_bytes(32).hex(),
+        "response_deadline": cs.load_uint(64),
+        "refund_claim_deadline": cs.load_uint(64),
+    }
+    terms = cs.load_ref()
+    if cs.remaining_bits or cs.remaining_refs:
+        raise RuntimeError("request snapshot has trailing data")
+    snapshot["terms_hash"] = terms.hash.hex()
+    return snapshot
+
+
+def execution_fees(row: dict) -> int:
+    """Read gas and full forwarding fees from the receipt's bound raw transaction."""
+    tx = bound_transaction(row)
+    split_outputs(row)
     description = tx.description
     if (description.type_ != "ordinary" or description.aborted
             or description.compute_ph.type_ != "vm" or not description.compute_ph.success
@@ -645,8 +700,13 @@ async def observe_successful_edge(label: str, address: str, payer: str,
                                   expected_inbound: int | None = None, *,
                                   retained: int | None = None,
                                   principal_destination: str | None = None,
-                                  principal_baseline_lt: int | None = None) -> None:
-    """Bind wallet submission, exact principal, fee-derived change and recipient credits."""
+                                  principal_baseline_lt: int | None = None,
+                                  expected_snapshot: dict | None = None) -> None:
+    """Bind wallet submission, exact principal, fee-derived change and recipient credits.
+
+    An accepted call also emits exactly one request snapshot, decoded and bound
+    to the call; every other operation emits no external output.
+    """
     deadline = time.monotonic() + 60
     wallet_tx = contract_tx = None
     recipient_txs = []
@@ -691,7 +751,20 @@ async def observe_successful_edge(label: str, address: str, payer: str,
                 if expected_change < 0:
                     raise RuntimeError(f"{label}: execution fees consumed principal or existing backing")
                 expected_payments.append((payer, expected_change))
-            payments = contract_tx.get("out_msgs") or []
+            payments, externals = split_outputs(contract_tx)
+            if expected_snapshot is None:
+                if externals:
+                    raise RuntimeError(f"{label}: unexpected Service Actor external output")
+            else:
+                if len(externals) != 1:
+                    raise RuntimeError(f"{label}: an accepted call emits exactly one snapshot")
+                snapshot = decode_snapshot(externals[0])
+                if (snapshot["request_id"] != expected_snapshot["request_id"]
+                        or not same_addr(snapshot["caller"].to_str(is_user_friendly=False),
+                                         expected_snapshot["caller"])
+                        or snapshot["request_hash"] != expected_snapshot["request_hash"]
+                        or snapshot["terms_hash"] != expected_snapshot["terms_hash"]):
+                    raise RuntimeError(f"{label}: request snapshot differs from the accepted call")
             if len(payments) != len(expected_payments):
                 raise RuntimeError(f"{label}: unexpected Service Actor payment count")
             expected_hashes = {msg.get("hash") for msg in payments}
@@ -765,7 +838,14 @@ async def successful_operation(operation: str, name: str, frm: str, *extra: str)
     retained = None
     principal_destination = payer
     principal_baseline_lt = None
+    expected_snapshot = None
     if operation == "call":
+        terms = (extra[extra.index("--expected-terms-hash") + 1]
+                 if "--expected-terms-hash" in extra else before["terms_hash"])
+        expected_snapshot = {
+            "request_id": before["next_request_id"], "caller": payer,
+            "request_hash": extra[extra.index("--request-hash") + 1], "terms_hash": terms,
+        }
         due = atomic_tos(str(before["price_per_call"])) + atomic_tos(str(before["storage_fee"]))
         expected_inbound = (atomic_tos(extra[extra.index("--amount") + 1])
                             if "--amount" in extra else due + ADMISSION_GAS_ALLOWANCE)
@@ -795,6 +875,7 @@ async def successful_operation(operation: str, name: str, frm: str, *extra: str)
         f"{name}:{operation}", address, payer, wallet_lt, contract_lt,
         before_head, receipt, expected_payout, expected_inbound, retained=retained,
         principal_destination=principal_destination, principal_baseline_lt=principal_baseline_lt,
+        expected_snapshot=expected_snapshot,
     )
     return receipt
 
@@ -895,9 +976,22 @@ async def run_checks(faucet) -> None:
     call_amount = Decimal("0.05") + Decimal(str(STORAGE_FEE)) + Decimal(ADMISSION_GAS_ALLOWANCE) / NANO
 
     print("\n=== start tosctld HTTP daemon (real query API + indexer, not the sandbox suite) ===")
+    # The full service profile opens a vault and a master wallet. The CLI holds
+    # the shared file vault's lock for every command, so the daemon gets its own
+    # config and its own empty vault, and a throwaway, undeployed master key.
+    # With no node bindings the contracts task only waits for that master to be
+    # funded (standby), so the daemon sends nothing.
+    daemon_config = PRIVATE_DIR / "tosctld-config.json"
+    cfg = json.loads(CONFIG.read_text())
+    cfg["master_wallet"] = {
+        **cfg["wallets"]["owner"],
+        "key": {"type_id": 0, "pvt_key": base64.b64encode(os.urandom(32)).decode()},
+    }
+    daemon_config.write_text(json.dumps(cfg, indent=2))
+    daemon_config.chmod(0o600)
     deployment_mc_seqno = finalized_mc_header()["id"]["seqno"]
     env = dict(os.environ)
-    env["VAULT_URL"] = f"file://{PRIVATE_DIR}/e2e-vault.json?master_key={MASTER_KEY}"
+    env["VAULT_URL"] = f"file://{PRIVATE_DIR}/tosctld-vault.json?master_key={MASTER_KEY}"
     # Redirected to a file, not asyncio.subprocess.PIPE: nothing in this
     # script ever reads a PIPE for this long-lived daemon, and the indexer's
     # own tick logging (tick_interval=2s, for the rest of this section) is
@@ -907,7 +1001,7 @@ async def run_checks(faucet) -> None:
     service_log_path = WORKDIR / "tosctld-service.log"
     service_log = open(service_log_path, "wb")
     service_proc = await asyncio.create_subprocess_exec(
-        TOSCTL, "service", "-c", str(CONFIG),
+        TOSCTL, "service", "-c", str(daemon_config),
         stdout=service_log, stderr=asyncio.subprocess.STDOUT, env=env,
     )
     try:

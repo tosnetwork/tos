@@ -41,7 +41,7 @@ with patch.dict(sys.modules, stubs):
     spec.loader.exec_module(e13)
 
 
-STATE = {"calls_today": 0, "pending_count": 0, "next_request_id": 1}
+STATE = {"calls_today": 0, "pending_count": 0, "next_request_id": 1, "terms_hash": "ab" * 32}
 
 
 def head(seqno):
@@ -102,11 +102,11 @@ class ServiceNegativeTests(unittest.TestCase):
                 patch.object(e13, "last_lt", side_effect=[10, 20, 10, 20]),
                 patch.object(
                     e13,
-                    "send_op",
+                    "send_op_raw",
                     new=AsyncMock(
                         side_effect=RuntimeError(error) if error else None, return_value="submitted"
                     ),
-                ),
+                ) as sent,
                 patch.object(e13, "record_jsonl") as record,
                 patch.object(e13, "check"),
             ):
@@ -119,6 +119,10 @@ class ServiceNegativeTests(unittest.TestCase):
                 else:
                     with self.assertRaises(RuntimeError):
                         asyncio.run(operation)
+                # The refused call still states the quoted terms, so only the
+                # funding preflight can be what refused it.
+                args = sent.call_args.args
+                self.assertEqual(args[args.index("--expected-terms-hash") + 1], STATE["terms_hash"])
 
     def test_cli_funding_refusal_fails_if_wallet_or_service_changed(self):
         for sequence in ([10, 20, 11], [10, 20, 10, 21]):
@@ -128,7 +132,7 @@ class ServiceNegativeTests(unittest.TestCase):
                 patch.object(e13, "last_lt", side_effect=sequence),
                 patch.object(
                     e13,
-                    "send_op",
+                    "send_op_raw",
                     new=AsyncMock(
                         side_effect=RuntimeError(
                             "Service Actor message requires at least 0.2 TOS for execution"
