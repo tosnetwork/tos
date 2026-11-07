@@ -611,21 +611,6 @@ impl AgentAccountMldsa44SendCmd {
         let target = self.target.parse::<MsgAddressInt>().context("invalid target address")?;
         let value = tos_to_nanotos(self.value);
         let ctx = load_context(config_path, &self.wallet, &self.controller).await?;
-        anyhow::ensure!(
-            value <= ctx.data.max_per_tx,
-            "value {} exceeds Agent Account max_per_tx {}",
-            display_tos(value),
-            display_tos(ctx.data.max_per_tx)
-        );
-        require_staged_module(&ctx.auth, &ctx.account, &ctx.module)?;
-        verify_module(&ctx).await?;
-        let (owner_address, owner_info, owner_secret) =
-            wallet_info(ctx.rpc_client.clone(), &ctx.agent_wallet.wallet, ctx.vault.clone())
-                .await?;
-        anyhow::ensure!(
-            owner_info.account_state == AccountState::Active,
-            "the relaying owner wallet is not active"
-        );
         let master = ctx.rpc_client.get_masterchain_info().await?;
         let zero_state = master.init.context("primary RPC omitted the zero-state identity")?;
         let network_domain = RelayNetworkDomainPin {
@@ -637,22 +622,42 @@ impl AgentAccountMldsa44SendCmd {
         };
 
         let journal = open_controller_journal(Path::new(config_path))?;
-        // An action signed before is recovered from the journal before any
-        // admission check: its counters may since have been consumed by this
-        // very submission, and it is never signed again.
-        if let Some(record) = journal.find_action_by_idempotency_key(&self.action_id)? {
-            require_same_terms(
-                &record.claim,
-                &ctx.account,
-                &target,
-                &ctx.module,
+        let existing = journal.find_action_by_idempotency_key(&self.action_id)?;
+        let step = send_step(
+            existing.as_ref(),
+            &SendTerms {
+                account: &ctx.account,
+                target: &target,
+                module: &ctx.module,
                 value,
-                self.valid_until,
-                &network_domain,
-            )?;
-            if record.status == ControllerActionStatus::Resolved {
-                anyhow::bail!("this ML-DSA-44 action is already resolved; nothing to send");
-            }
+                valid_until: self.valid_until,
+                network: &network_domain,
+            },
+            &CurrentAccount {
+                controller_epoch: ctx.data.controller_epoch,
+                seqno: ctx.data.seqno,
+                chain_now: ctx.chain_now,
+                default_task_timeout_secs: ctx.data.default_task_timeout_secs,
+                max_per_tx: ctx.data.max_per_tx,
+            },
+        )?;
+        if let SendStep::ReleaseUnsigned(reason) = step {
+            let record = existing.as_ref().context("released claim has no record")?;
+            journal.release_unsigned_mldsa44_claim(&record.claim, reason, time_format::now())?;
+            anyhow::bail!(
+                "the unsigned claim of this action ID was released ({reason}); send again with a new action ID"
+            );
+        }
+        verify_module(&ctx).await?;
+        let (owner_address, owner_info, owner_secret) =
+            wallet_info(ctx.rpc_client.clone(), &ctx.agent_wallet.wallet, ctx.vault.clone())
+                .await?;
+        anyhow::ensure!(
+            owner_info.account_state == AccountState::Active,
+            "the relaying owner wallet is not active"
+        );
+        if step == SendStep::Relay {
+            let record = existing.as_ref().context("relayed action has no record")?;
             if let Some(existing) = record.exact_signed_boc_base64.clone() {
                 if record.status == ControllerActionStatus::Broadcasting && !self.rebroadcast {
                     anyhow::bail!(
@@ -673,7 +678,7 @@ impl AgentAccountMldsa44SendCmd {
                     &journal,
                     &record.claim,
                     &existing,
-                    record.status,
+                    record.status.clone(),
                     self.relay_amount,
                     &self.wallet,
                     owner_address,
@@ -684,32 +689,9 @@ impl AgentAccountMldsa44SendCmd {
                 .await;
             }
         }
-        // An unsigned claim left by an interrupted run can never execute: it
-        // is released, not kept, when it can no longer be signed as claimed.
-        let unsigned = journal
-            .find_action_by_idempotency_key(&self.action_id)?
-            .filter(|record| record.status == ControllerActionStatus::Claimed);
-        if let Some(record) = &unsigned {
-            let stale = (record.claim.controller_epoch, record.claim.seqno)
-                != (ctx.data.controller_epoch, ctx.data.seqno);
-            let expired = check_auth_window(
-                self.valid_until,
-                ctx.chain_now,
-                ctx.data.default_task_timeout_secs,
-            )
-            .is_err();
-            if stale || expired {
-                journal.release_unsigned_mldsa44_claim(
-                    &record.claim,
-                    if stale { "counters moved before signing" } else { "expired before signing" },
-                    time_format::now(),
-                )?;
-                anyhow::bail!(
-                    "the unsigned claim of this action ID was released ({}); send again with a new action ID",
-                    if stale { "the controller sequence moved" } else { "its window closed" }
-                );
-            }
-        }
+        // A resumable unsigned claim of this action ID, released if the
+        // operator declines below.
+        let unsigned = existing.filter(|_| step == SendStep::ResumeUnsigned);
         // Every check and the confirmation come before anything is claimed:
         // a refused or declined request leaves no reservation behind.
         require_staged_module(&ctx.auth, &ctx.account, &ctx.module)?;
@@ -841,6 +823,98 @@ fn module_hash_of(module: &MsgAddressInt) -> anyhow::Result<[u8; 32]> {
         .get_bytestring(0)
         .try_into()
         .map_err(|_| anyhow::anyhow!("a module address carries a 256-bit account hash"))
+}
+
+/// The terms a send is invoked with.
+struct SendTerms<'a> {
+    account: &'a MsgAddressInt,
+    target: &'a MsgAddressInt,
+    module: &'a MsgAddressInt,
+    value: u64,
+    valid_until: u32,
+    network: &'a RelayNetworkDomainPin,
+}
+
+/// The account's current counters, chain time and policy.
+struct CurrentAccount {
+    controller_epoch: u64,
+    seqno: u32,
+    chain_now: u32,
+    default_task_timeout_secs: u64,
+    max_per_tx: u64,
+}
+
+/// What a send does with its action ID.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SendStep {
+    /// No record: a new claim, admitted under the current policy.
+    Fresh,
+    /// A signed record: relay its exact bytes.
+    Relay,
+    /// An unsigned record that can no longer be signed as claimed.
+    ReleaseUnsigned(&'static str),
+    /// An unsigned record that can still be signed as claimed.
+    ResumeUnsigned,
+}
+
+/// Decides a send's step. An existing record of the action ID is recovered
+/// or released first, judged only against its own journaled terms: a policy
+/// change after the claim (a lower max_per_tx) must not strand it. The
+/// current policy is applied to terms only when they are about to be signed.
+fn send_step(
+    record: Option<&ControllerActionRecord>,
+    terms: &SendTerms,
+    current: &CurrentAccount,
+) -> anyhow::Result<SendStep> {
+    if let Some(record) = record {
+        require_same_terms(
+            &record.claim,
+            terms.account,
+            terms.target,
+            terms.module,
+            terms.value,
+            terms.valid_until,
+            terms.network,
+        )?;
+        match (record.status.clone(), record.exact_signed_boc_base64.is_some()) {
+            (ControllerActionStatus::Resolved, _) => {
+                anyhow::bail!("this ML-DSA-44 action is already resolved; nothing to send")
+            }
+            (ControllerActionStatus::Signed | ControllerActionStatus::Broadcasting, true) => {
+                return Ok(SendStep::Relay);
+            }
+            (ControllerActionStatus::Claimed, false) => {
+                if (record.claim.controller_epoch, record.claim.seqno)
+                    != (current.controller_epoch, current.seqno)
+                {
+                    return Ok(SendStep::ReleaseUnsigned("counters moved before signing"));
+                }
+                if check_auth_window(
+                    terms.valid_until,
+                    current.chain_now,
+                    current.default_task_timeout_secs,
+                )
+                .is_err()
+                {
+                    return Ok(SendStep::ReleaseUnsigned("expired before signing"));
+                }
+                if terms.value > current.max_per_tx {
+                    return Ok(SendStep::ReleaseUnsigned("the current policy refuses its value"));
+                }
+                return Ok(SendStep::ResumeUnsigned);
+            }
+            (status, signed) => anyhow::bail!(
+                "custody record in state {status:?} is inconsistent (exact submission present: {signed})"
+            ),
+        }
+    }
+    anyhow::ensure!(
+        terms.value <= current.max_per_tx,
+        "value {} exceeds Agent Account max_per_tx {}",
+        display_tos(terms.value),
+        display_tos(current.max_per_tx)
+    );
+    Ok(SendStep::Fresh)
 }
 
 /// A journaled action's immutable terms must be the ones supplied again.
@@ -1971,6 +2045,99 @@ mod tests {
             1_000,
         );
         assert!(journal.claim_primary(next, 10).unwrap().1);
+    }
+
+    #[test]
+    fn a_lowered_policy_never_strands_a_journaled_claim() {
+        let directory = tempfile::tempdir().unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let journal =
+            AgentAccountCustodyJournal::open(directory.path().canonicalize().unwrap()).unwrap();
+        let account = address(0, 0x10);
+        let target = address(0, 0x30);
+        let module = address(0, 0x20);
+        let here = pin();
+        let terms = |value, valid_until| SendTerms {
+            account: &account,
+            target: &target,
+            module: &module,
+            value,
+            valid_until,
+            network: &here,
+        };
+        let current = |chain_now, max_per_tx| CurrentAccount {
+            controller_epoch: 2,
+            seqno: 7,
+            chain_now,
+            default_task_timeout_secs: 3_600,
+            max_per_tx,
+        };
+        let sign = |claim: &ControllerActionClaim| {
+            let bytes = write_boc(
+                &sign_submission(&[0x44; 32], claim, &account, &target, &auth(1, &module), 3)
+                    .unwrap(),
+            )
+            .unwrap();
+            let digest = format!("sha256:{}", hex::encode(Sha256::digest(&bytes)));
+            (base64::engine::general_purpose::STANDARD.encode(&bytes), digest)
+        };
+        // A send of 9 claims under max_per_tx 5e9 and is interrupted before
+        // signing; the owner then lowers max_per_tx to 5.
+        let claim = mldsa44_claim(
+            &"a".repeat(64),
+            &account,
+            &target,
+            &module,
+            42,
+            pin(),
+            &data(),
+            9,
+            1_000,
+        );
+        assert_eq!(
+            send_step(None, &terms(9, 1_000), &current(900, 5_000_000_000)).unwrap(),
+            SendStep::Fresh
+        );
+        journal.claim_primary(claim.clone(), 10).unwrap();
+        let record = journal.action_by_idempotency_key(&claim.idempotency_key).unwrap();
+        // The retry reaches release, before or after expiry, instead of being
+        // refused by the current policy.
+        assert_eq!(
+            send_step(Some(&record), &terms(9, 1_000), &current(900, 5)).unwrap(),
+            SendStep::ReleaseUnsigned("the current policy refuses its value")
+        );
+        assert_eq!(
+            send_step(Some(&record), &terms(9, 1_000), &current(1_001, 5)).unwrap(),
+            SendStep::ReleaseUnsigned("expired before signing")
+        );
+        journal.release_unsigned_mldsa44_claim(&claim, "expired before signing", 11).unwrap();
+        // A fresh send under the new policy then claims, signs and journals.
+        assert!(send_step(None, &terms(9, 1_000), &current(1_001, 5)).is_err());
+        assert_eq!(send_step(None, &terms(4, 2_000), &current(1_001, 5)).unwrap(), SendStep::Fresh);
+        let fresh = mldsa44_claim(
+            &"b".repeat(64),
+            &account,
+            &target,
+            &module,
+            42,
+            pin(),
+            &data(),
+            4,
+            2_000,
+        );
+        assert!(journal.claim_primary(fresh.clone(), 12).unwrap().1);
+        let (boc, digest) = sign(&fresh);
+        journal.attach_signed_boc(&fresh, &boc, &digest, 13).unwrap();
+        // A claim signed before the policy change is re-sent, not refused.
+        let signed = journal.action_by_idempotency_key(&fresh.idempotency_key).unwrap();
+        assert_eq!(
+            send_step(Some(&signed), &terms(4, 2_000), &current(1_001, 1)).unwrap(),
+            SendStep::Relay
+        );
     }
 
     #[test]

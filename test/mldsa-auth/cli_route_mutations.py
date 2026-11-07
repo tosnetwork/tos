@@ -34,6 +34,8 @@ mutated file before the next control:
   longer decodes; its unit test must fail.
 - install-skips-interrupted-recovery: --recover-interrupted no longer lifts
   an interrupted fence; the install path's unit test must fail.
+- policy-checked-before-recovery: the current policy is applied before an
+  existing claim is recovered or released; its unit test must fail.
 - classifier-ignores-action-rollback: a delivery whose action phase failed
   is counted as committed; the resolver's unit test must fail.
 
@@ -311,6 +313,25 @@ mutation(
             CARGO_DIR,
             True,
             "an_interrupted_install_is_recovered_after_a_rotation_and_the_next_send_claims",
+        )
+    ],
+)
+mutation(
+    "policy-checked-before-recovery",
+    [
+        (
+            CLI,
+            "    if let Some(record) = record {\n        require_same_terms(\n",
+            '    anyhow::ensure!(terms.value <= current.max_per_tx, "policy first");\n'
+            "    if let Some(record) = record {\n        require_same_terms(\n",
+        )
+    ],
+    [
+        (
+            COMMANDS_LIB + ["a_lowered_policy_never_strands_a_journaled_claim"],
+            CARGO_DIR,
+            True,
+            "a_lowered_policy_never_strands_a_journaled_claim",
         )
     ],
 )
