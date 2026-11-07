@@ -897,6 +897,7 @@ impl AgentAccountCustodyJournal {
     /// or another fence is held; from then on no claim is admitted for it
     /// until the holder of `owner_token` (or an explicit recovery) calls
     /// [`Self::end_controller_epoch_change`].
+    #[allow(clippy::too_many_arguments)]
     pub fn begin_controller_epoch_change(
         &self,
         account: &str,
