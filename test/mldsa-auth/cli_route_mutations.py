@@ -72,6 +72,9 @@ mutated file before the next control:
   strict mode, rebound to another submission, or loaded with a bound
   submission and no expiry; their tests must fail.
 
+- deploy-before-confirmation: mldsa44-rotate deploys the new module before
+  the operator confirms; the strict commands' ordering test must fail.
+
 `--controls a,b` runs only the named mutations (plus baseline and restored).
 
 Exits nonzero when any control behaves otherwise.
@@ -775,6 +778,28 @@ mutation(
             True,
             "the_relay_fee_bound_reads_the_outbound_tariff_of_both_endpoints",
         ),
+    ],
+)
+STRICT_CLI = "tosctl/src/node-control/commands/src/commands/nodectl/agent_cmd/mldsa44/strict.rs"
+mutation(
+    "deploy-before-confirmation",
+    [
+        (
+            STRICT_CLI,
+            "    if !yes && !steps.confirm(summary)? {\n        return Ok(false);\n    }\n",
+            "    if let Reconfiguration::Rotate { module, public_key } = &request.change {\n"
+            "        steps.deploy(module, public_key, deploy_amount.unwrap_or(1.0)).await?;\n"
+            "    }\n"
+            "    if !yes && !steps.confirm(summary)? {\n        return Ok(false);\n    }\n",
+        )
+    ],
+    [
+        (
+            COMMANDS_LIB + ["no_value_moves_before_every_gate_and_confirmation"],
+            CARGO_DIR,
+            True,
+            "no_value_moves_before_every_gate_and_confirmation",
+        )
     ],
 )
 if SELECTED is not None and SELECTED != ran:

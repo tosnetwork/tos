@@ -206,7 +206,7 @@ async fn run_strict(
             Reconfiguration::Rotate { module, public_key }
         }
     };
-    let deploy = rotate_to.map(|(new_controller, amount)| (amount, new_controller));
+    let deploy_amount = rotate_to.map(|(_, amount)| amount);
     let request = ReconfigureRequest {
         change: change.clone(),
         mode: args.mode,
@@ -221,11 +221,10 @@ async fn run_strict(
         query_id: (time_format::now() << 32) | u64::from(ctx.snapshot.seqno),
         owner_token: owner_token(),
     };
-    // The gates run before any prompt or deploy; the orchestration runs them
-    // again against the snapshot it fences from. A held fence is settled by
-    // the orchestration first (an interrupted change that landed is finished,
-    // not refused as already strict), so the state gates wait for it.
-    contracts::agent_account_reconfigure::check_request(&request)?;
+    // A held fence is settled by the orchestration first (an interrupted
+    // change that landed is finished, not refused as already strict), so the
+    // state gates wait for it; the orchestration runs every gate again
+    // against the snapshot it fences from.
     let journal = open_controller_journal(Path::new(config_path))?;
     let fenced = journal
         .controller_epoch_change(
@@ -234,37 +233,36 @@ async fn run_strict(
             &hex::encode(ctx.snapshot.deployment_id),
         )?
         .is_some();
-    if !fenced {
-        contracts::agent_account_reconfigure::check_state(
-            &request,
-            &AccountSnapshot {
-                state: ctx.snapshot,
-                state_time: ctx.state_time,
-                default_task_timeout_secs: ctx.data.default_task_timeout_secs,
-            },
-        )?;
-    }
-    if let (Reconfiguration::Rotate { module, public_key }, Some((deploy_amount, label))) =
-        (&change, deploy)
-    {
-        deploy_module(&ctx, &environment, &relayer, module, public_key, deploy_amount, label)
-            .await?;
-    }
+    let snapshot = AccountSnapshot {
+        state: ctx.snapshot,
+        state_time: ctx.state_time,
+        default_task_timeout_secs: ctx.data.default_task_timeout_secs,
+    };
     let target = match &change {
         Reconfiguration::Cutover => ctx.module.clone(),
         Reconfiguration::Rotate { module, .. } => module.clone(),
     };
-    if !args.yes
-        && !confirm(&format!(
-            "IRREVERSIBLE: set {} to ML-DSA-44-only mode 2 with root {} (current auth mode {}, epoch {}, nonce {}), relayed by wallet '{}'?",
-            ctx.account,
-            target,
-            ctx.snapshot.auth.mode,
-            ctx.snapshot.auth.epoch,
-            ctx.snapshot.auth.nonce,
-            relayer.label
-        ))?
-    {
+    let summary = format!(
+        "IRREVERSIBLE: set {} to ML-DSA-44-only mode 2 with root {} (current auth mode {}, epoch {}, nonce {}), relayed by wallet '{}'?",
+        ctx.account,
+        target,
+        ctx.snapshot.auth.mode,
+        ctx.snapshot.auth.epoch,
+        ctx.snapshot.auth.nonce,
+        relayer.label
+    );
+    let steps = CliStrictSteps { ctx: &ctx, environment: &environment, relayer: &relayer };
+    let proceed = gate_confirm_deploy(
+        &steps,
+        &request,
+        (!fenced).then_some(&snapshot),
+        args.yes,
+        deploy_amount,
+        &summary,
+        &relayer.label,
+    )
+    .await?;
+    if !proceed {
         println!("{}", "Reconfiguration cancelled".yellow());
         return Ok(());
     }
@@ -311,42 +309,107 @@ fn auth_json(state: &AgentAccountState) -> serde_json::Value {
     })
 }
 
-/// Deploys the new root's module from the relaying wallet if it is absent.
-/// Deploying an immutable module grants nothing; the reconfiguration then
-/// verifies its code, network and key before anything is signed.
-async fn deploy_module(
-    ctx: &Mldsa44Context,
-    environment: &ChainRelayEnvironment,
-    relayer: &RelayerSelection,
-    module: &MsgAddressInt,
-    public_key: &[u8],
-    deploy_amount: f64,
-    label: &str,
-) -> anyhow::Result<()> {
-    if ctx.rpc_client.get_address_information(module).await?.state == AccountState::Active {
-        return Ok(());
+/// What the steps before a reconfiguration need from the operator and the chain.
+#[allow(async_fn_in_trait)]
+trait StrictSteps {
+    fn confirm(&self, question: &str) -> anyhow::Result<bool>;
+    async fn module_active(&self, module: &MsgAddressInt) -> anyhow::Result<bool>;
+    /// Deploys the new root's module from the relaying wallet and waits for it.
+    async fn deploy(
+        &self,
+        module: &MsgAddressInt,
+        public_key: &[u8],
+        deploy_amount: f64,
+    ) -> anyhow::Result<()>;
+}
+
+/// Everything that precedes the reconfiguration, in the only safe order: the
+/// gates, then the operator's confirmation, then (a rotation to an undeployed
+/// module only) a separate confirmation of the deployment and the deployment
+/// itself. No value moves before every gate and confirmation has passed.
+/// Returns whether to proceed; `false` when the operator declines.
+async fn gate_confirm_deploy<S: StrictSteps>(
+    steps: &S,
+    request: &ReconfigureRequest,
+    snapshot: Option<&AccountSnapshot>,
+    yes: bool,
+    deploy_amount: Option<f64>,
+    summary: &str,
+    relayer_label: &str,
+) -> anyhow::Result<bool> {
+    contracts::agent_account_reconfigure::check_request(request)?;
+    if let Some(snapshot) = snapshot {
+        contracts::agent_account_reconfigure::check_state(request, snapshot)?;
     }
-    validate_tos_amount("deploy-amount", deploy_amount)?;
-    anyhow::ensure!(deploy_amount > 0.0, "deploy-amount must be greater than zero");
-    let loaded = environment.load_relayer(relayer).await?;
-    anyhow::ensure!(loaded.active, "the relaying wallet '{}' is not active", relayer.label);
-    send_wallet_message_with_state_init(
-        loaded.wallet.as_ref(),
-        ctx.rpc_client.clone(),
-        module.clone(),
-        tos_to_nanotos(deploy_amount),
-        Cell::default(),
-        loaded.seqno,
-        &loaded.address,
-        Mldsa44AuthModule::build_state_init(ctx.global_id, public_key)?,
-    )
-    .await
-    .with_context(|| format!("deploy the ML-DSA-44 module of controller '{label}'"))?;
-    wait_until(DEPLOY_TIMEOUT, || async {
-        Ok(ctx.rpc_client.get_address_information(module).await?.state == AccountState::Active)
-    })
-    .await
-    .context("the new ML-DSA-44 module did not become active")
+    if !yes && !steps.confirm(summary)? {
+        return Ok(false);
+    }
+    if let Reconfiguration::Rotate { module, public_key } = &request.change
+        && !steps.module_active(module).await?
+    {
+        let amount = deploy_amount.context("a rotation names --deploy-amount")?;
+        validate_tos_amount("deploy-amount", amount)?;
+        anyhow::ensure!(amount > 0.0, "deploy-amount must be greater than zero");
+        if !yes
+            && !steps.confirm(&format!(
+                "Deploy the new root's ML-DSA-44 module {module} with {amount} TOS from wallet '{relayer_label}'?"
+            ))?
+        {
+            return Ok(false);
+        }
+        steps.deploy(module, public_key, amount).await?;
+    }
+    Ok(true)
+}
+
+struct CliStrictSteps<'a> {
+    ctx: &'a Mldsa44Context,
+    environment: &'a ChainRelayEnvironment,
+    relayer: &'a RelayerSelection,
+}
+
+impl StrictSteps for CliStrictSteps<'_> {
+    fn confirm(&self, question: &str) -> anyhow::Result<bool> {
+        confirm(question)
+    }
+
+    async fn module_active(&self, module: &MsgAddressInt) -> anyhow::Result<bool> {
+        Ok(self.ctx.rpc_client.get_address_information(module).await?.state == AccountState::Active)
+    }
+
+    /// Deploying an immutable module grants nothing; the reconfiguration
+    /// then verifies its code, network and key before anything is signed.
+    async fn deploy(
+        &self,
+        module: &MsgAddressInt,
+        public_key: &[u8],
+        deploy_amount: f64,
+    ) -> anyhow::Result<()> {
+        let loaded = self.environment.load_relayer(self.relayer).await?;
+        anyhow::ensure!(
+            loaded.active,
+            "the relaying wallet '{}' is not active",
+            self.relayer.label
+        );
+        send_wallet_message_with_state_init(
+            loaded.wallet.as_ref(),
+            self.ctx.rpc_client.clone(),
+            module.clone(),
+            tos_to_nanotos(deploy_amount),
+            Cell::default(),
+            loaded.seqno,
+            &loaded.address,
+            Mldsa44AuthModule::build_state_init(self.ctx.global_id, public_key)?,
+        )
+        .await
+        .context("deploy the new root's ML-DSA-44 module")?;
+        wait_until(DEPLOY_TIMEOUT, || async {
+            Ok(self.ctx.rpc_client.get_address_information(module).await?.state
+                == AccountState::Active)
+        })
+        .await
+        .context("the new ML-DSA-44 module did not become active")
+    }
 }
 
 impl AgentAccountMldsa44CutoverCmd {
@@ -358,5 +421,169 @@ impl AgentAccountMldsa44CutoverCmd {
 impl AgentAccountMldsa44RotateCmd {
     pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
         run_strict(&self.args, config_path, Some((&self.new_controller, self.deploy_amount))).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use contracts::agent_account_auth::{AUTH_MODE_MODULE_ONLY, AUTH_MODE_STAGED, AgentAuthState};
+    use std::cell::RefCell;
+
+    fn address(byte: u8) -> MsgAddressInt {
+        MsgAddressInt::with_standart(None, 0, [byte; 32].into()).unwrap()
+    }
+
+    /// Answers prompts from a script and records every step in order.
+    struct Recorder {
+        answers: RefCell<Vec<bool>>,
+        deployed: bool,
+        steps: RefCell<Vec<String>>,
+    }
+
+    impl Recorder {
+        fn new(answers: &[bool], deployed: bool) -> Self {
+            Self {
+                answers: RefCell::new(answers.iter().rev().copied().collect()),
+                deployed,
+                steps: RefCell::new(Vec::new()),
+            }
+        }
+
+        fn steps(&self) -> Vec<String> {
+            self.steps.borrow().clone()
+        }
+    }
+
+    impl StrictSteps for Recorder {
+        fn confirm(&self, question: &str) -> anyhow::Result<bool> {
+            let kind = if question.starts_with("Deploy") { "deploy-prompt" } else { "prompt" };
+            self.steps.borrow_mut().push(kind.to_owned());
+            self.answers.borrow_mut().pop().context("an unexpected prompt")
+        }
+
+        async fn module_active(&self, _module: &MsgAddressInt) -> anyhow::Result<bool> {
+            Ok(self.deployed)
+        }
+
+        async fn deploy(
+            &self,
+            _module: &MsgAddressInt,
+            _public_key: &[u8],
+            _deploy_amount: f64,
+        ) -> anyhow::Result<()> {
+            self.steps.borrow_mut().push("deploy".to_owned());
+            Ok(())
+        }
+    }
+
+    fn request(change: Reconfiguration) -> ReconfigureRequest {
+        ReconfigureRequest {
+            change,
+            mode: AUTH_MODE_MODULE_ONLY,
+            confirm_account: address(0x10).to_string(),
+            account: address(0x10),
+            global_id: 42,
+            module: address(0x20),
+            public_key: vec![1; 1312],
+            valid_until: 1_600,
+            relay_amount: 2_000_000_000,
+            recover_interrupted: false,
+            query_id: 1,
+            owner_token: "a".repeat(64),
+        }
+    }
+
+    fn rotation() -> ReconfigureRequest {
+        request(Reconfiguration::Rotate { module: address(0x21), public_key: vec![2; 1312] })
+    }
+
+    fn snapshot(mode: u8) -> AccountSnapshot {
+        AccountSnapshot {
+            state: AgentAccountState {
+                deployment_id: [3; 32],
+                controller_epoch: 2,
+                seqno: 5,
+                auth: AgentAuthState { mode, epoch: 4, nonce: 1, module_hash: [0x20; 32] },
+            },
+            state_time: 1_000,
+            default_task_timeout_secs: 3_600,
+        }
+    }
+
+    async fn run(
+        recorder: &Recorder,
+        request: &ReconfigureRequest,
+        mode: u8,
+        yes: bool,
+    ) -> anyhow::Result<bool> {
+        gate_confirm_deploy(recorder, request, Some(&snapshot(mode)), yes, Some(1.0), "?", "r1")
+            .await
+    }
+
+    #[tokio::test]
+    async fn no_value_moves_before_every_gate_and_confirmation() {
+        let strict = AUTH_MODE_MODULE_ONLY;
+        // Declining the irreversible prompt: no deploy prompt, no deploy.
+        let r = Recorder::new(&[false], false);
+        assert!(!run(&r, &rotation(), strict, false).await.unwrap());
+        assert_eq!(r.steps(), vec!["prompt"]);
+        // Accepting it but declining the deployment: no deploy.
+        let r = Recorder::new(&[true, false], false);
+        assert!(!run(&r, &rotation(), strict, false).await.unwrap());
+        assert_eq!(r.steps(), vec!["prompt", "deploy-prompt"]);
+        // Both accepted: one deploy, after both prompts.
+        let r = Recorder::new(&[true, true], false);
+        assert!(run(&r, &rotation(), strict, false).await.unwrap());
+        assert_eq!(r.steps(), vec!["prompt", "deploy-prompt", "deploy"]);
+        // --yes: no prompt, one deploy.
+        let r = Recorder::new(&[], false);
+        assert!(run(&r, &rotation(), strict, true).await.unwrap());
+        assert_eq!(r.steps(), vec!["deploy"]);
+        // An already deployed module: no deploy prompt and no deploy.
+        let r = Recorder::new(&[true], true);
+        assert!(run(&r, &rotation(), strict, false).await.unwrap());
+        assert_eq!(r.steps(), vec!["prompt"]);
+        // A cutover never deploys.
+        let r = Recorder::new(&[true], false);
+        assert!(
+            run(&r, &request(Reconfiguration::Cutover), AUTH_MODE_STAGED, false).await.unwrap()
+        );
+        assert_eq!(r.steps(), vec!["prompt"]);
+    }
+
+    #[tokio::test]
+    async fn a_refused_gate_asks_nothing_and_deploys_nothing() {
+        let strict = AUTH_MODE_MODULE_ONLY;
+        let mistyped =
+            ReconfigureRequest { confirm_account: address(0x11).to_string(), ..rotation() };
+        let hybrid = ReconfigureRequest { mode: 3, ..rotation() };
+        for refused in [mistyped, hybrid] {
+            for yes in [false, true] {
+                let r = Recorder::new(&[true, true], false);
+                assert!(run(&r, &refused, strict, yes).await.is_err());
+                assert!(r.steps().is_empty(), "{:?}", r.steps());
+            }
+        }
+        // A state gate (a rotation from staged mode) refuses before any prompt too.
+        let r = Recorder::new(&[true, true], false);
+        assert!(run(&r, &rotation(), AUTH_MODE_STAGED, true).await.is_err());
+        assert!(r.steps().is_empty());
+        // A bad deploy amount is refused before the deploy.
+        let r = Recorder::new(&[true, true], false);
+        assert!(
+            gate_confirm_deploy(
+                &r,
+                &rotation(),
+                Some(&snapshot(strict)),
+                false,
+                Some(0.0),
+                "?",
+                "r1"
+            )
+            .await
+            .is_err()
+        );
+        assert!(!r.steps().contains(&"deploy".to_owned()));
     }
 }
