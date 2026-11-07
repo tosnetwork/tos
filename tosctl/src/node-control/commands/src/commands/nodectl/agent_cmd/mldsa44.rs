@@ -729,6 +729,7 @@ impl AgentAccountMldsa44SendCmd {
                 let relaying = check_relayer(
                     &environment,
                     &relayer,
+                    &ctx.module,
                     &journaled_relay_body(record)?,
                     relay_amount,
                 )
@@ -776,6 +777,7 @@ impl AgentAccountMldsa44SendCmd {
         let relaying = check_relayer(
             &environment,
             &relayer,
+            &ctx.module,
             &placeholder_submission(&claim, &ctx.account, &target, &ctx.auth)?,
             relay_amount,
         )
@@ -884,11 +886,14 @@ struct LoadedRelayer {
 /// the relay orchestration itself is what the tests run.
 trait RelayEnvironment {
     async fn load_relayer(&self, relayer: &RelayerSelection) -> anyhow::Result<LoadedRelayer>;
-    /// The wallet's own fee bound for sending `body` as one message, and the
-    /// balance it holds, read at one block.
+    /// The wallet's own fee bound for sending `body` as one message to
+    /// `destination`, and the balance it holds, read at one block. The
+    /// outbound message is priced as the action phase prices it, by both
+    /// endpoints' workchains.
     async fn wallet_reserve(
         &self,
         wallet: &MsgAddressInt,
+        destination: &MsgAddressInt,
         body: &Cell,
     ) -> anyhow::Result<(u128, u64)>;
     /// Sends the wallet message and confirms its exact transaction.
@@ -922,10 +927,17 @@ impl RelayEnvironment for ChainRelayEnvironment {
     async fn wallet_reserve(
         &self,
         wallet: &MsgAddressInt,
+        destination: &MsgAddressInt,
         body: &Cell,
     ) -> anyhow::Result<(u128, u64)> {
         let chain = DefaultChainProvider::new(self.rpc_client.clone());
-        super::super::vote_cmd::pinned_wallet_reserve(&chain, wallet, body).await
+        super::super::vote_cmd::pinned_wallet_reserve_to(
+            &chain,
+            wallet,
+            destination.workchain_id(),
+            body,
+        )
+        .await
     }
 
     async fn broadcast(
@@ -965,15 +977,16 @@ fn relayer_can_pay(
     Ok(())
 }
 
-/// Checks the relayer can pay for relaying `body`; returns its address.
+/// Checks the relayer can pay for relaying `body` to `module`; returns its address.
 async fn check_relayer<E: RelayEnvironment>(
     environment: &E,
     relayer: &RelayerSelection,
+    module: &MsgAddressInt,
     body: &Cell,
     relay_amount: u64,
 ) -> anyhow::Result<MsgAddressInt> {
     let loaded = environment.load_relayer(relayer).await?;
-    let (reserve, balance) = environment.wallet_reserve(&loaded.address, body).await?;
+    let (reserve, balance) = environment.wallet_reserve(&loaded.address, module, body).await?;
     relayer_can_pay(&relayer.label, loaded.active, balance, relay_amount, reserve)?;
     Ok(loaded.address)
 }
@@ -1026,7 +1039,7 @@ async fn relay_submission<E: RelayEnvironment>(
         .context("ML-DSA-44 claim has no pinned module")?
         .parse::<MsgAddressInt>()?;
     let loaded = environment.load_relayer(relayer).await?;
-    let (reserve, balance) = environment.wallet_reserve(&loaded.address, &body).await?;
+    let (reserve, balance) = environment.wallet_reserve(&loaded.address, &module, &body).await?;
     relayer_can_pay(&relayer.label, loaded.active, balance, relay_amount, reserve)?;
     if record.status == ControllerActionStatus::Signed {
         journal.begin_broadcast(&record.claim, now)?;
@@ -2523,11 +2536,18 @@ mod tests {
         balance: u64,
         reserve: u128,
         sent: std::sync::Mutex<Vec<(MsgAddressInt, MsgAddressInt, Vec<u8>)>>,
+        /// The destination each fee bound was computed for.
+        reserved_for: std::sync::Mutex<Vec<MsgAddressInt>>,
     }
 
     impl CapturingEnvironment {
         fn new(balance: u64) -> Self {
-            Self { balance, reserve: 50_000_000, sent: std::sync::Mutex::new(Vec::new()) }
+            Self {
+                balance,
+                reserve: 50_000_000,
+                sent: std::sync::Mutex::new(Vec::new()),
+                reserved_for: std::sync::Mutex::new(Vec::new()),
+            }
         }
 
         fn sent(&self) -> Vec<(MsgAddressInt, MsgAddressInt, Vec<u8>)> {
@@ -2559,8 +2579,10 @@ mod tests {
         async fn wallet_reserve(
             &self,
             _wallet: &MsgAddressInt,
+            destination: &MsgAddressInt,
             _body: &Cell,
         ) -> anyhow::Result<(u128, u64)> {
+            self.reserved_for.lock().unwrap().push(destination.clone());
             Ok((self.reserve, self.balance))
         }
 
@@ -2671,6 +2693,17 @@ mod tests {
     }
 
     #[test]
+    fn the_relay_fee_bound_reads_the_outbound_tariff_of_both_endpoints() {
+        use super::super::super::vote_cmd::reserve_price_params;
+        // (gas, import, outbound): the sender's gas and import, the outbound
+        // forwarding by both endpoints.
+        assert_eq!(reserve_price_params(0, -1), (21, 25, 24));
+        assert_eq!(reserve_price_params(-1, 0), (20, 24, 24));
+        assert_eq!(reserve_price_params(-1, -1), (20, 24, 24));
+        assert_eq!(reserve_price_params(0, 0), (21, 25, 25));
+    }
+
+    #[test]
     fn a_relayer_pays_the_relay_amount_and_its_own_fees() {
         relayer_can_pay("r", true, 1_050, 1_000, 50).unwrap();
         assert!(relayer_can_pay("r", true, 1_049, 1_000, 50).is_err(), "fees count");
@@ -2754,6 +2787,8 @@ mod tests {
 
         let sent = environment.sent();
         assert_eq!(sent.len(), 2);
+        // Each relay's fee bound was computed for the module it sends to.
+        assert_eq!(*environment.reserved_for.lock().unwrap(), vec![module.clone(), module.clone()]);
         for ((wallet, destination, message), expected) in
             sent.iter().zip([&first_wallet, &second_wallet])
         {

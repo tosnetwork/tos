@@ -664,19 +664,48 @@ impl ProposalSummary<'_> {
 /// The wallet's own charge for sending `body`, as an upper bound, with the balance it
 /// holds: both read at one masterchain block. The storage it owes is counted from its
 /// last transaction (when it last paid) to shortly after now. The gas, forwarding and
-/// storage tariffs are the ones of the chain the wallet lives on.
+/// storage tariffs are the ones of the chain the wallet lives on; the destination is in
+/// the same workchain.
 pub(crate) async fn pinned_wallet_reserve(
     chain: &contracts::DefaultChainProvider,
     wallet: &chain_block::MsgAddressInt,
     body: &chain_block::Cell,
 ) -> anyhow::Result<(u128, u64)> {
+    pinned_wallet_reserve_to(chain, wallet, wallet.workchain_id(), body).await
+}
+
+/// The ConfigParams a send from `wallet_workchain` to `destination_workchain` is priced
+/// by: (gas, import of the external message, forwarding of the outbound message). Gas
+/// and import follow the sender; the outbound message is priced as the action phase
+/// prices it, by both endpoints.
+pub(crate) fn reserve_price_params(
+    wallet_workchain: i32,
+    destination_workchain: i32,
+) -> (u32, u32, u32) {
+    let (gas, import) = chain_price_params(wallet_workchain);
+    let outbound = contracts::wallet::send_fees::outbound_forward_param(
+        wallet_workchain,
+        destination_workchain,
+    );
+    (gas, import, outbound)
+}
+
+/// [`pinned_wallet_reserve`] for a message to a destination in
+/// `destination_workchain`, whose outbound forwarding is priced by both endpoints.
+pub(crate) async fn pinned_wallet_reserve_to(
+    chain: &contracts::DefaultChainProvider,
+    wallet: &chain_block::MsgAddressInt,
+    destination_workchain: i32,
+    body: &chain_block::Cell,
+) -> anyhow::Result<(u128, u64)> {
     use chain_block::ConfigParamEnum;
     use contracts::ChainProvider;
-    use contracts::wallet::send_fees::{SendFeeInputs, wallet_send_reserve};
+    use contracts::wallet::send_fees::{SendFeeInputs, wallet_send_reserve_to};
     let checkpoint = contracts::chain_provider::latest_checkpoint(chain).await?;
     let account = chain.get_address_info_at_unverified(wallet, &checkpoint).await?;
     let storage = wallet_storage_from_rpc(wallet, &account)?;
-    let (gas_param, forward_param) = chain_price_params(wallet.workchain_id());
+    let (gas_param, forward_param, outbound_param) =
+        reserve_price_params(wallet.workchain_id(), destination_workchain);
     let gas = match chain.get_config_param_at_unverified(gas_param, &checkpoint).await? {
         ConfigParamEnum::ConfigParam20(value) | ConfigParamEnum::ConfigParam21(value) => value,
         other => {
@@ -689,19 +718,28 @@ pub(crate) async fn pinned_wallet_reserve(
             "live ConfigParam {forward_param} has unexpected representation: {other:?}"
         ),
     };
+    let outbound = match chain.get_config_param_at_unverified(outbound_param, &checkpoint).await? {
+        ConfigParamEnum::ConfigParam24(value) | ConfigParamEnum::ConfigParam25(value) => value,
+        other => anyhow::bail!(
+            "live ConfigParam {outbound_param} has unexpected representation: {other:?}"
+        ),
+    };
     let storage_prices = match chain.get_config_param_at_unverified(18, &checkpoint).await? {
         ConfigParamEnum::ConfigParam18(value) => value.prices()?,
         other => anyhow::bail!("live ConfigParam 18 has unexpected representation: {other:?}"),
     };
     let now = u32::try_from(common::time_format::now().saturating_add(SEND_HORIZON_SECS))?;
-    let reserve = wallet_send_reserve(&SendFeeInputs {
-        gas: &gas,
-        forward: &forward,
-        storage_prices: &storage_prices,
-        storage: &storage,
-        now,
-        body,
-    })?;
+    let reserve = wallet_send_reserve_to(
+        &SendFeeInputs {
+            gas: &gas,
+            forward: &forward,
+            storage_prices: &storage_prices,
+            storage: &storage,
+            now,
+            body,
+        },
+        &outbound,
+    )?;
     Ok((reserve, account.balance))
 }
 

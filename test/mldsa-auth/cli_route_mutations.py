@@ -54,6 +54,9 @@ mutated file before the next control:
   sends a rebuilt submission; the CLI relay orchestration test must fail.
 - relayer-fee-check-dropped, relayer-fees-not-counted: a relayer that cannot
   pay the relay amount plus its own fees relays anyway; their tests must fail.
+- relay-fee-ignores-destination-workchain: the relay fee bound prices the
+  outbound message by the sender's workchain only; the basechain-to-masterchain
+  wallet sandbox case and the fee-parameter test must fail.
 
 `--controls a,b` runs only the named mutations (plus baseline and restored).
 
@@ -83,6 +86,8 @@ SANDBOX = ["cargo", "test", "-p", "contracts", "--test", "agent_account_mldsa44_
 CONTRACTS_LIB = ["cargo", "test", "-p", "contracts", "--lib", "--"]
 COMMANDS_LIB = ["cargo", "test", "-p", "commands", "--lib", "--no-default-features", "--"]
 REGENERATE = ["python3", "scripts/update-auth-contract-code.py"]
+SEND_FEES = "tosctl/src/node-control/contracts/src/wallet/send_fees.rs"
+WALLET_SANDBOX = ["cargo", "test", "-p", "contracts", "--test", "wallet_sandbox", "--"]
 
 results = []
 mismatches = []
@@ -581,9 +586,9 @@ mutation(
     [
         (
             CLI,
-            "wallet_reserve(&loaded.address, &body).await?;\n"
+            "wallet_reserve(&loaded.address, &module, &body).await?;\n"
             "    relayer_can_pay(&relayer.label, loaded.active, balance, relay_amount, reserve)?;\n",
-            "wallet_reserve(&loaded.address, &body).await?;\n    let _ = (balance, reserve);\n",
+            "wallet_reserve(&loaded.address, &module, &body).await?;\n    let _ = (balance, reserve);\n",
         )
     ],
     [
@@ -611,6 +616,31 @@ mutation(
             True,
             "a_relayer_pays_the_relay_amount_and_its_own_fees",
         )
+    ],
+)
+mutation(
+    "relay-fee-ignores-destination-workchain",
+    [
+        (
+            SEND_FEES,
+            "    if source_workchain == -1 || destination_workchain == -1 { 24 } else { 25 }",
+            "    if source_workchain == -1 { 24 } else { 25 }",
+        )
+    ],
+    [
+        (
+            WALLET_SANDBOX
+            + ["a_basechain_relay_to_the_masterchain_is_priced_at_the_masterchain_tariff"],
+            CARGO_DIR,
+            True,
+            "a_basechain_relay_to_the_masterchain_is_priced_at_the_masterchain_tariff",
+        ),
+        (
+            COMMANDS_LIB + ["the_relay_fee_bound_reads_the_outbound_tariff_of_both_endpoints"],
+            CARGO_DIR,
+            True,
+            "the_relay_fee_bound_reads_the_outbound_tariff_of_both_endpoints",
+        ),
     ],
 )
 if SELECTED is not None and SELECTED != ran:

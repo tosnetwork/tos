@@ -225,21 +225,37 @@ pub struct SendFeeInputs<'a> {
     pub body: &'a Cell,
 }
 
-/// The wallet's own charge for sending `body` as one message, as an upper bound.
+/// The wallet's own charge for sending `body` as one message, as an upper bound,
+/// when the destination is in the wallet's own workchain.
 pub fn wallet_send_reserve(inputs: &SendFeeInputs<'_>) -> anyhow::Result<u128> {
+    wallet_send_reserve_to(inputs, inputs.forward)
+}
+
+/// The forwarding-price ConfigParam the action phase applies to an outbound
+/// message: the masterchain's (24) when the sender or the destination is on
+/// the masterchain, the basechain's (25) otherwise.
+pub fn outbound_forward_param(source_workchain: i32, destination_workchain: i32) -> u32 {
+    if source_workchain == -1 || destination_workchain == -1 { 24 } else { 25 }
+}
+
+/// [`wallet_send_reserve`] for a destination priced by `outbound_forward`
+/// (chosen with [`outbound_forward_param`]). Computation, storage and the
+/// import of the external message keep the sender's own tariffs.
+pub fn wallet_send_reserve_to(
+    inputs: &SendFeeInputs<'_>,
+    outbound_forward: &MsgForwardPrices,
+) -> anyhow::Result<u128> {
     let overflow = || anyhow::anyhow!("fee reserve overflows");
     let (cells, bits) = tree_size(&[inputs.body])?;
-    let message_fee = forward_fee(
-        inputs.forward,
-        bits.checked_add(ENVELOPE_BITS).ok_or_else(overflow)?,
-        cells.checked_add(ENVELOPE_CELLS).ok_or_else(overflow)?,
-    )?;
+    let envelope_bits = bits.checked_add(ENVELOPE_BITS).ok_or_else(overflow)?;
+    let envelope_cells = cells.checked_add(ENVELOPE_CELLS).ok_or_else(overflow)?;
+    let import_fee = forward_fee(inputs.forward, envelope_bits, envelope_cells)?;
+    let outbound_fee = forward_fee(outbound_forward, envelope_bits, envelope_cells)?;
     let compute = gas_fee(inputs.gas, WALLET_SEND_GAS_BOUND)?;
     let storage = storage_due(inputs.storage_prices, inputs.storage, inputs.now)?;
-    // The external message is imported and the outbound one forwarded: two envelopes.
     compute
-        .checked_add(message_fee)
-        .and_then(|sum| sum.checked_add(message_fee))
+        .checked_add(import_fee)
+        .and_then(|sum| sum.checked_add(outbound_fee))
         .and_then(|sum| sum.checked_add(storage))
         .ok_or_else(overflow)
 }
@@ -339,6 +355,59 @@ mod tests {
         // bits), the proposal (42 bits) and the message (129 bits) plus the envelope.
         let envelope = 1 + (1026 + 2 + 1024 * 32 + 42 + 129 + ENVELOPE_BITS as u128);
         assert_eq!(reserve, 20_000 + 2 * envelope);
+    }
+
+    #[test]
+    fn the_outbound_envelope_is_priced_by_both_endpoints() {
+        assert_eq!(outbound_forward_param(0, -1), 24);
+        assert_eq!(outbound_forward_param(-1, 0), 24);
+        assert_eq!(outbound_forward_param(-1, -1), 24);
+        assert_eq!(outbound_forward_param(0, 0), 25);
+        let mut body = BuilderData::new();
+        body.append_u32(7).unwrap();
+        let body = body.into_cell().unwrap();
+        let gas = GasLimitsPrices { gas_price: 65_536, ..Default::default() };
+        let sender = MsgForwardPrices {
+            lump_price: 10,
+            bit_price: 65_536,
+            cell_price: 65_536,
+            ..Default::default()
+        };
+        let other = MsgForwardPrices {
+            lump_price: 1_000,
+            bit_price: 10 * 65_536,
+            cell_price: 10 * 65_536,
+            ..Default::default()
+        };
+        let storage = AccountStorage {
+            cells: 3,
+            bits: 100,
+            last_paid: 1,
+            due_payment: 0,
+            masterchain: false,
+        };
+        let inputs = SendFeeInputs {
+            gas: &gas,
+            forward: &sender,
+            storage_prices: &[],
+            storage: &storage,
+            now: 2,
+            body: &body,
+        };
+        let bits = 32 + ENVELOPE_BITS;
+        let cells = 1 + ENVELOPE_CELLS;
+        // Computation and import at the sender's tariff, the outbound envelope at the other.
+        assert_eq!(
+            wallet_send_reserve_to(&inputs, &other).unwrap(),
+            gas_fee(&gas, WALLET_SEND_GAS_BOUND).unwrap()
+                + forward_fee(&sender, bits, cells).unwrap()
+                + forward_fee(&other, bits, cells).unwrap()
+        );
+        // Within one workchain nothing changes.
+        assert_eq!(
+            wallet_send_reserve_to(&inputs, &sender).unwrap(),
+            wallet_send_reserve(&inputs).unwrap()
+        );
     }
 
     #[test]
