@@ -4146,11 +4146,13 @@ mod protocol_vectors {
             },
         });
         // The full protocol-format vector file (tos-service-protocol
-        // pkg/nativecore/testdata and tos-service-spec test-vectors), every value
-        // taken from this contract-executed run. The negative mutations are the
-        // protocol's own client checks, refused with the contract's error codes;
-        // they are listed here so the file is produced in one place.
-        if let Ok(path) = std::env::var("NATIVE_REGISTRY_PROTOCOL_VECTORS_OUT") {
+        // pkg/nativecore/testdata and tos-service-spec test-vectors). Every
+        // positive value is taken from this contract-executed run. The negative
+        // mutations are not executed here: they are the protocol's own
+        // client-side checks, listed with the contract error code each must
+        // map to, so the file is produced in one place. The document is built
+        // and checked on every run; it is written only when requested.
+        {
             let code_boc: String = NATIVE_REGISTRY_RELEASE_CODE_B64.split_whitespace().collect();
             let mutation = |registration: &str, mutation: &str, code: i32| {
                 serde_json::json!({"registration": registration, "mutation": mutation,
@@ -4232,8 +4234,34 @@ mod protocol_vectors {
                     mutation("capability", "registration_sequence_two", 2205),
                 ],
             });
-            std::fs::write(&path, serde_json::to_string_pretty(&full).expect("json") + "\n")
-                .expect("write protocol vectors");
+            let released = chain_block::read_single_root_boc(
+                chain_block::base64_decode(&code_boc).expect("code base64"),
+            )
+            .expect("code BOC");
+            assert_eq!(
+                full["contract_code_hash"],
+                serde_json::json!(format!(
+                    "tvm-cell-sha256:{}",
+                    hex::encode(released.repr_hash().as_slice())
+                )),
+                "the exported code BOC is the code this run executed"
+            );
+            let negatives = full["negative_mutations"].as_array().expect("negative mutations");
+            assert_eq!(negatives.len(), 18, "every client-side negative check is listed");
+            let mut seen = std::collections::BTreeSet::new();
+            for entry in negatives {
+                let key = (entry["registration"].to_string(), entry["mutation"].to_string());
+                assert!(seen.insert(key), "duplicate negative check {entry}");
+                let code = entry["expected_code"].as_i64().expect("expected code");
+                assert!((2200..=2215).contains(&code), "{entry} maps outside the registry codes");
+            }
+            for registration in ["agent_registration", "capability_registration"] {
+                assert!(full[registration].is_object(), "{registration} is exported");
+            }
+            if let Ok(path) = std::env::var("NATIVE_REGISTRY_PROTOCOL_VECTORS_OUT") {
+                std::fs::write(&path, serde_json::to_string_pretty(&full).expect("json") + "\n")
+                    .expect("write protocol vectors");
+            }
         }
         if let Ok(path) = std::env::var("NATIVE_REGISTRY_VECTORS_OUT") {
             std::fs::write(&path, serde_json::to_string_pretty(&actual).expect("json") + "\n")

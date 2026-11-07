@@ -575,8 +575,18 @@ fn signed_message(
     }
 }
 
-/// `sign`: a controller signature for one use. A registry signature is made
-/// only over a registry action cell, never over a bare hash.
+/// `sign`: an offline ML-DSA-44 controller signature for exactly one use, each
+/// under its own context so a signature for one use never verifies for another:
+/// `registry` (TOS-NATIVE-REGISTRY, over the hash of a complete canonical
+/// registry action cell, never over a bare hash), `agent-packet`
+/// (TOS-AGENT-PACKET-V1) and `agent-contact` (TOS-AGENT-CONTACT-V1), both over
+/// the given message bytes.
+///
+/// It reads no chain state. A signature it makes proves only that this
+/// controller signed these bytes: it is not authorization. Whether a registry
+/// action is authorized is decided by the contract against the live policy
+/// when the action executes, and a packet or contact card is trusted only
+/// after its key is checked against the sender's finalized policy.
 #[derive(clap::Args, Clone)]
 struct SignCmd {
     #[arg(long, help = "Registry controller (vault secret native-registry-<name>)")]
@@ -617,8 +627,10 @@ fn signature_view(
     }))
 }
 
-/// `verify`: checks a controller signature; exits non-zero when it does not
-/// verify. Needs no configuration or vault.
+/// `verify`: checks one ML-DSA-44 signature under the context of `--for`;
+/// exits non-zero when it does not verify. Needs no configuration or vault.
+/// Like `sign` it is offline: a valid signature says nothing about whether the
+/// key belongs to a current policy or about any on-chain outcome.
 #[derive(clap::Args, Clone)]
 struct VerifyCmd {
     #[arg(long = "for", value_enum, help = "What the signature is for")]
