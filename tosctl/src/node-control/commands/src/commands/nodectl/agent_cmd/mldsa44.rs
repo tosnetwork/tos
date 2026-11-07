@@ -413,16 +413,23 @@ impl AgentAccountMldsa44InstallCmd {
         let interrupted =
             journal.controller_epoch_change(&account_text, ctx.global_id, &deployment_id)?;
         if decision == StageDecision::AlreadyStaged {
-            // The stage of an interrupted run landed: its fence is finished
-            // here, since nothing of it can still arrive.
-            journal.end_controller_epoch_change(
+            // A fence is finished here only if its stage visibly landed (the
+            // counters moved past its start). A fence started at the current
+            // counters may belong to another install still about to stage,
+            // and stays held.
+            let lifted = journal.finish_landed_controller_epoch_change(
                 &account_text,
                 ctx.global_id,
                 &deployment_id,
                 ctx.data.controller_epoch,
                 ctx.data.seqno,
-                None,
             )?;
+            if interrupted.is_some() && !lifted {
+                println!(
+                    "{} another authentication change of this account is still fenced in the custody journal; it is left held",
+                    "NOTE".yellow().bold()
+                );
+            }
             println!("{} module already staged on {}", "OK".green().bold(), ctx.account);
             return Ok(());
         }

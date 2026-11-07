@@ -1041,6 +1041,42 @@ impl AgentAccountCustodyJournal {
         })
     }
 
+    /// Lifts a fence only when the finalized counters show its change landed:
+    /// they are strictly newer than the counters the fence started from. A
+    /// fence whose start equals the current counters belongs to a change that
+    /// may still be sent or arrive (for example a second install about to
+    /// replace the module) and stays held. Compared and removed under one
+    /// lock. Returns whether a fence was lifted.
+    pub fn finish_landed_controller_epoch_change(
+        &self,
+        account: &str,
+        network_global_id: i32,
+        deployment_id: &str,
+        finalized_controller_epoch: u64,
+        finalized_seqno: u32,
+    ) -> anyhow::Result<bool> {
+        validate_generation(account, network_global_id, deployment_id)?;
+        let generation = generation_key_parts(account, network_global_id, deployment_id);
+        self.with_document(|document| {
+            let Some(start) = document.epoch_change_fences.get(&generation).cloned() else {
+                return Ok(false);
+            };
+            let finalized = (finalized_controller_epoch, finalized_seqno);
+            if finalized <= (start.controller_epoch, start.seqno) {
+                return Ok(false);
+            }
+            document.epoch_change_fences.remove(&generation);
+            let high = document.high_water.entry(generation).or_default();
+            if finalized > (high.controller_epoch, high.seqno) {
+                *high = FinalizedHighWater {
+                    controller_epoch: finalized_controller_epoch,
+                    seqno: finalized_seqno,
+                };
+            }
+            Ok(true)
+        })
+    }
+
     /// Find one economic payment by the owner-wide stable action identity.
     /// This supports crash recovery after chain finalization without requiring
     /// a live RPC or current Provider account merely to rediscover the frozen
@@ -3771,6 +3807,42 @@ mod tests {
         journal.begin_controller_epoch_change(account, id, deployment, 4, 4, &second).unwrap();
         // An interrupted holder's fence is lifted only by explicit recovery.
         journal.end_controller_epoch_change(account, id, deployment, 4, 4, None).unwrap();
+    }
+
+    #[test]
+    fn an_already_staged_install_leaves_a_second_installs_fence_held() {
+        let directory = tempfile::tempdir().unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let journal =
+            AgentAccountCustodyJournal::open(directory.path().canonicalize().unwrap()).unwrap();
+        let action = mldsa_claim(3);
+        let (account, id, deployment) =
+            (&action.account, action.network_global_id, &action.deployment_id);
+        // Module A is staged at counters (3, 3). Install B, replacing it,
+        // fences the account at those counters and has not sent its stage.
+        journal
+            .begin_controller_epoch_change(account, id, deployment, 3, 3, &"b".repeat(64))
+            .unwrap();
+        // An install of A sees "already staged" at the same counters: B's
+        // fence must stay, so no send can claim the sequence B will move.
+        assert!(
+            !journal.finish_landed_controller_epoch_change(account, id, deployment, 3, 3).unwrap()
+        );
+        assert_eq!(journal.controller_epoch_change(account, id, deployment).unwrap(), Some((3, 3)));
+        assert!(journal.claim_primary(action.clone(), 10).is_err());
+        // Once B's stage lands the counters advance and the fence is finished.
+        assert!(
+            journal.finish_landed_controller_epoch_change(account, id, deployment, 4, 4).unwrap()
+        );
+        assert_eq!(journal.controller_epoch_change(account, id, deployment).unwrap(), None);
+        // Without a fence it is a no-op.
+        assert!(
+            !journal.finish_landed_controller_epoch_change(account, id, deployment, 4, 4).unwrap()
+        );
     }
 
     #[test]

@@ -20,6 +20,9 @@ mutated file before the next control:
   account; its unit test must fail.
 - epoch-change-fence-ignored: the journal admits claims while install has
   fenced the account; its unit test must fail.
+- already-staged-lifts-any-fence: an install that finds its module already
+  staged lifts a fence started at the current counters (a second install
+  about to replace the module); its unit test must fail.
 - classifier-ignores-action-rollback: a delivery whose action phase failed
   is counted as committed; the resolver's unit test must fail.
 
@@ -185,6 +188,24 @@ mutation(
             CARGO_DIR,
             True,
             "an_epoch_change_fence_excludes_claims_until_it_is_lifted",
+        )
+    ],
+)
+mutation(
+    "already-staged-lifts-any-fence",
+    [
+        (
+            CUSTODY,
+            "            if finalized <= (start.controller_epoch, start.seqno) {",
+            "            if false && finalized <= (start.controller_epoch, start.seqno) {",
+        )
+    ],
+    [
+        (
+            CONTRACTS_LIB + ["an_already_staged_install_leaves_a_second_installs_fence_held"],
+            CARGO_DIR,
+            True,
+            "an_already_staged_install_leaves_a_second_installs_fence_held",
         )
     ],
 )
