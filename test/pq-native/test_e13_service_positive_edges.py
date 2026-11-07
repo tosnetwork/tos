@@ -258,14 +258,21 @@ class ServicePositiveEdgesTests(unittest.TestCase):
             return record
 
     def test_an_accepted_call_emits_exactly_one_bound_snapshot(self):
-        want = {"request_id": 4, "caller": PAYER, "request_hash": "cc" * 32,
-                "terms_hash": "ab" * 32}
+        want = {
+            "request_id": 4,
+            "caller": PAYER,
+            "request_hash": "cc" * 32,
+            "terms_hash": "ab" * 32,
+        }
         caller = Mock()
         caller.to_str.return_value = PAYER
         snapshot = {**want, "caller": caller}
         self.run_edge(snapshot=snapshot, expected_snapshot=want)
-        for field, value in (("request_id", 5), ("request_hash", "dd" * 32),
-                             ("terms_hash", "00" * 32)):
+        for field, value in (
+            ("request_id", 5),
+            ("request_hash", "dd" * 32),
+            ("terms_hash", "00" * 32),
+        ):
             with (
                 self.subTest(field=field),
                 self.assertRaisesRegex(RuntimeError, "snapshot differs from the accepted call"),
@@ -286,12 +293,18 @@ class ServicePositiveEdgesTests(unittest.TestCase):
         payment_info = internal_cls()
         payment_info.value_coins = 50_000_000
         pay_hash, ext_hash = b"p" * 32, b"e" * 32
-        tx = types.SimpleNamespace(out_msgs=[
-            types.SimpleNamespace(cell=types.SimpleNamespace(hash=ext_hash), info=external_cls(),
-                                  body="snapshot-body"),
-            types.SimpleNamespace(cell=types.SimpleNamespace(hash=pay_hash), info=payment_info,
-                                  body=None),
-        ])
+        tx = types.SimpleNamespace(
+            out_msgs=[
+                types.SimpleNamespace(
+                    cell=types.SimpleNamespace(hash=ext_hash),
+                    info=external_cls(),
+                    body="snapshot-body",
+                ),
+                types.SimpleNamespace(
+                    cell=types.SimpleNamespace(hash=pay_hash), info=payment_info, body=None
+                ),
+            ]
+        )
         module = types.ModuleType("pytosiq_core.tlb.transaction")
         module.InternalMsgInfo, module.ExternalOutMsgInfo = internal_cls, external_cls
         payment = {"hash": base64.b64encode(pay_hash).decode(), "value": "50000000"}
@@ -398,8 +411,13 @@ class ServicePositiveEdgesTests(unittest.TestCase):
                 self.run_edge(heads=[head(10)])
 
     def test_withdraw_amount_is_derived_from_command_and_requires_edge(self):
-        before = {"address": SERVICE, "price_per_call": "0.02", "storage_fee": "0.2",
-                  "next_request_id": 7, "terms_hash": "ab" * 32}
+        before = {
+            "address": SERVICE,
+            "price_per_call": "0.02",
+            "storage_fee": "0.2",
+            "next_request_id": 7,
+            "terms_hash": "ab" * 32,
+        }
         with (
             patch.object(e13, "service_show", new=AsyncMock(return_value=before)),
             patch.object(e13, "wallet_address", new=AsyncMock(return_value=PAYER)),
@@ -433,8 +451,12 @@ class ServicePositiveEdgesTests(unittest.TestCase):
             )
             self.assertEqual(
                 observe.await_args.kwargs["expected_snapshot"],
-                {"request_id": 7, "caller": PAYER, "request_hash": "cc" * 32,
-                 "terms_hash": "ab" * 32},
+                {
+                    "request_id": 7,
+                    "caller": PAYER,
+                    "request_hash": "cc" * 32,
+                    "terms_hash": "ab" * 32,
+                },
             )
             self.assertEqual(observe.await_args.args[-2], 0)
             self.assertEqual(observe.await_args.kwargs["retained"], 220_000_000)
