@@ -3665,3 +3665,129 @@ fn solvency_change_does_not_transfer_preexisting_extra_currencies() {
         })
         .unwrap();
 }
+
+// ---------------------------------------------------------------------------
+// Cross-language conformance vectors
+// ---------------------------------------------------------------------------
+
+/// Every value here comes from executing the shipped code: the deployed data,
+/// an accepted call's body, the snapshot it emitted, the terms preimage it
+/// carries, the account data after admission and the response domain the
+/// attestor signs. Other implementations reproduce these bytes. Set
+/// SERVICE_ACTOR_VECTORS_OUT to rewrite the fixture deliberately.
+#[test]
+fn conformance_vectors_come_from_contract_execution() {
+    use chain_block::{base64_encode, write_boc};
+    use sha2::{Digest, Sha256};
+    const FIXTURE: &str = include_str!("fixtures/service_actor/conformance-vectors.json");
+    let b64 = |cell: &Cell| base64_encode(write_boc(cell).expect("BOC"));
+    let hex32 = |bytes: &[u8]| hex::encode(bytes);
+
+    let seed = [0x5a; 32];
+    let attestor = Attestor::from_bytes(&seed);
+    let mut f = Fixture::with_attestor(attestor.public_key());
+    let now = f.bc.now();
+    let caller = f.caller.address().clone();
+    let deploy_data = f.bc.get_account(&f.service).unwrap().get_data().unwrap();
+    let request_hash = [0xA7; 32];
+    let terms_hash = f.terms();
+    let call_body = ServiceActorContract::call(41, request_hash, terms_hash).unwrap();
+    let result = f.call(&caller, 41, request_hash);
+    result.expect_success();
+
+    let mut bodies = Vec::new();
+    result
+        .first_transaction()
+        .unwrap()
+        .iterate_out_msgs(|message| {
+            if message.int_header().is_none() {
+                bodies.push(message.body().unwrap().clone().into_cell().unwrap());
+            }
+            Ok(true)
+        })
+        .unwrap();
+    assert_eq!(bodies.len(), 1, "one snapshot");
+    let snapshot_body = bodies.remove(0);
+    let snapshot = decode_request_snapshot(&snapshot_body).unwrap();
+    let terms_cell = snapshot_body.reference(0).unwrap();
+    assert_eq!(terms_cell.repr_hash().inner(), terms_hash, "the terms cell opens terms_hash");
+    let data_after = f.bc.get_account(&f.service).unwrap().get_data().unwrap();
+
+    let response_hash = [0xB8; 32];
+    let global_id = sandbox_global_id(&f.bc);
+    let domain = contracts::service_respond_domain_hash(
+        global_id,
+        &f.service,
+        &caller,
+        snapshot.request_id,
+        &request_hash,
+        &response_hash,
+        &terms_hash,
+        u64::try_from(snapshot.price).unwrap(),
+        snapshot.response_deadline,
+        snapshot.refund_claim_deadline,
+    )
+    .unwrap();
+    // The attestor signature over that domain verifies, and a response made
+    // with it is accepted by the contract.
+    let signature = attestor.sign(&domain);
+    let respond =
+        ServiceActorContract::respond_signed(42, snapshot.request_id, response_hash, &signature)
+            .unwrap();
+    f.send_from(&f.owner.address().clone(), respond).expect_success();
+
+    let code = ServiceActorContract::code().unwrap();
+    let actual = serde_json::json!({
+        "schema": "tos.service.actor.v1.vectors",
+        "contract_code_hash": format!("tvm-cell-sha256:{}", hex32(code.repr_hash().as_slice())),
+        "contract_code_boc_base64": b64(&code),
+        "global_id": global_id,
+        "actor": f.service.to_string(),
+        "init": {
+            "owner": f.init.owner.to_string(),
+            "open_access": f.init.open_access,
+            "price_per_call": f.init.price_per_call.to_string(),
+            "storage_fee": f.init.storage_fee.to_string(),
+            "cleanup_bounty": f.init.cleanup_bounty.to_string(),
+            "rate_limit_per_day": f.init.rate_limit_per_day,
+            "response_sla": f.init.response_sla,
+            "refund_claim_window": f.init.refund_claim_window,
+            "metadata_hash": hex32(&f.init.metadata_hash),
+            "proof_scheme_hash": hex32(&f.init.proof_scheme_hash),
+            "attestor_seed_hex": hex32(&seed),
+            "attestor_public_key_sha256": hex32(&Sha256::digest(attestor.public_key())),
+            "attestor_key_id": hex32(&attestor.key_id()),
+        },
+        "deploy_data_boc_base64": b64(&deploy_data),
+        "call": {
+            "now": now,
+            "caller": caller.to_string(),
+            "query_id": 41,
+            "request_hash": hex32(&request_hash),
+            "body_boc_base64": b64(&call_body),
+            "terms_hash": hex32(&terms_hash),
+            "terms_cell_boc_base64": b64(&terms_cell),
+            "snapshot_body_boc_base64": b64(&snapshot_body),
+            "snapshot": {
+                "request_id": snapshot.request_id,
+                "response_deadline": snapshot.response_deadline,
+                "refund_claim_deadline": snapshot.refund_claim_deadline,
+                "policy_version": snapshot.policy_version,
+                "price": snapshot.price.to_string(),
+                "attestor_key_id": snapshot.attestor_key_id.map(|id| hex32(&id)),
+            },
+            "data_after_boc_base64": b64(&data_after),
+        },
+        "respond": {
+            "response_hash": hex32(&response_hash),
+            "domain_hash": hex32(&domain),
+            "signature_context": String::from_utf8_lossy(contracts::service_actor::SERVICE_ACTOR_RESPOND_CONTEXT),
+        },
+    });
+    if let Ok(path) = std::env::var("SERVICE_ACTOR_VECTORS_OUT") {
+        std::fs::write(&path, serde_json::to_string_pretty(&actual).unwrap() + "\n").unwrap();
+        return;
+    }
+    let expected: serde_json::Value = serde_json::from_str(FIXTURE).expect("fixture");
+    assert_eq!(actual, expected, "conformance vectors moved; regenerate deliberately");
+}
