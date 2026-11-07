@@ -596,6 +596,16 @@ cell caller_live_decr(cell caller_live_counts, slice caller) inline {
       (cleanup_bounty >= MINIMUM_CLEANUP_BOUNTY) & (cleanup_bounty <= MAXIMUM_CLEANUP_BOUNTY));
     throw_unless(err::insufficient_storage_fee,
       storage_fee >= checked_add_amount(MINIMUM_STORAGE_FEE, cleanup_bounty));
+    ;; An attestor key placed in the deploy StateInit is checked the same way: the
+    ;; key a request snapshots must be the key its published key id names, and a
+    ;; disabled attestor carries neither a key nor a key id.
+    if (has_attestor) {
+      throw_unless(err::bad_attestor_key, ~ null?(attestor_key));
+      throw_unless(err::bad_attestor_key,
+        pq::key_id(pq::algorithm::mldsa44, attestor_key) == attestor_key_id);
+    } else {
+      throw_unless(err::bad_attestor_key, null?(attestor_key) & (attestor_key_id == 0));
+    }
     ;; Ported unchanged from the single-slot Service Actor: open access, or
     ;; the single authorized caller.
     throw_unless(err::not_authorized,
@@ -941,10 +951,12 @@ cell caller_live_decr(cell caller_live_counts, slice caller) inline {
   if (op == op::revoke_attestor) {
     throw_unless(err::not_owner, equal_slice_bits(sender, owner));
     in_msg.end_parse();
+    ;; Revocation clears the key and its id: "no attestor" has one encoding.
+    attestor_key = null();
     save_state(owner, active, next_request_id, pending_count, live_count, policy_version,
       price_per_call, storage_fee, cleanup_bounty, response_sla, refund_claim_window, open_access,
       has_authorized_caller, authorized_caller, rate_limit_per_day, metadata_hash,
-      proof_scheme_hash, 0, attestor_key_id, withdrawable_revenue, locked_storage_fees,
+      proof_scheme_hash, 0, 0, withdrawable_revenue, locked_storage_fees,
       pending_liability, refundable_liability, call_day, calls_today, pending_requests, refunds,
       caller_live_counts);
     return ();

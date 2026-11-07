@@ -47,6 +47,7 @@ const MIN_STORAGE_FEE: u64 = 100_000_000;
 const MIN_CLEANUP_BOUNTY: u64 = 100_000_000;
 const MAX_CLEANUP_BOUNTY: u64 = 1_000_000_000;
 const ERR_TERMS_MISMATCH: i32 = 1926;
+const ERR_BAD_ATTESTOR_KEY: i32 = 1925;
 const ERR_INSUFFICIENT_REVENUE: i32 = 1922;
 
 const ERR_NOT_OWNER: i32 = 1900;
@@ -126,6 +127,12 @@ impl Fixture {
     }
 
     fn build(attestor_pubkey: Option<Vec<u8>>) -> Self {
+        Self::build_with_data(attestor_pubkey, |data| data)
+    }
+
+    /// Deploy with account data rewritten by `rewrite`, as a deployer controlling
+    /// its own StateInit can; the address follows the rewritten StateInit.
+    fn build_with_data(attestor_pubkey: Option<Vec<u8>>, rewrite: impl FnOnce(Cell) -> Cell) -> Self {
         let mut bc =
             Blockchain::with_global_version(current_network::global_version()).expect("blockchain");
         // The sandbox config has no basechain workchain descriptor, so run
@@ -149,8 +156,14 @@ impl Fixture {
             proof_scheme_hash: [0x22; 32],
             attestor_pubkey,
         };
-        let service = ServiceActorContract::calculate_address(-1, &init).expect("address");
-        let state_init = ServiceActorContract::build_state_init(&init).expect("state init");
+        let mut state_init = ServiceActorContract::build_state_init(&init).expect("state init");
+        let data = state_init.data.clone().expect("service data");
+        state_init.set_data(rewrite(data));
+        let service = MsgAddressInt::with_params(
+            -1,
+            state_init.write_to_new_cell().unwrap().into_cell().unwrap().hash(0),
+        )
+        .expect("address");
         // Generous: MINIMUM_OPERATING_RESERVE (1 TOS) plus headroom for many
         // sequential value-moving ops across a whole test.
         let deploy = MessageBuilder::internal(owner.address(), &service, 20 * TOS)
@@ -246,6 +259,23 @@ impl Fixture {
             stack_to_entries(&stack),
         ))
         .expect("decode_data")
+    }
+
+    /// The stored attestor key cell, or `None` when no key is kept.
+    fn attestor_key(&self) -> Option<Cell> {
+        let stack = self
+            .bc
+            .run_get_method(&self.service, "get_attestor_key", vec![])
+            .expect("get_attestor_key")
+            .expect_success()
+            .stack
+            .clone();
+        assert_eq!(stack.len(), 1, "one result");
+        match &stack[0] {
+            StackItem::None => None,
+            StackItem::Cell(cell) => Some(cell.clone()),
+            other => panic!("get_attestor_key returned {other:?}"),
+        }
     }
 
     fn request(&self, request_id: u64) -> Option<contracts::PendingRequestData> {
@@ -1388,6 +1418,100 @@ fn update_policy_and_attestor_rotation_never_alter_already_snapshotted_requests(
     .unwrap();
     let new_key_signature = new_attestor.sign(&domain_1);
     f.respond_signed(7, 1, response_hash, &new_key_signature).expect_success();
+}
+
+/// Rebuild `root` with every occurrence of the ordinary cell `target` replaced.
+fn replace_subtree(root: &Cell, target: &Cell, replacement: &Cell) -> Cell {
+    if root.repr_hash() == target.repr_hash() {
+        return replacement.clone();
+    }
+    let mut builder = BuilderData::new();
+    builder.append_raw(root.data(), root.bit_length()).unwrap();
+    for index in 0..root.references_count() {
+        let child = root.reference(index).unwrap();
+        builder.checked_append_reference(replace_subtree(&child, target, replacement)).unwrap();
+    }
+    builder.into_cell().unwrap()
+}
+
+/// A deployer controls its StateInit, so the key it stores may differ from the
+/// key id it publishes. No request may be admitted under such a key.
+#[test]
+fn a_deployed_attestor_key_must_match_its_published_key_id() {
+    let published = Attestor::from_bytes(&[0x31; 32]);
+    let stored = Attestor::from_bytes(&[0x32; 32]);
+    let swapped = |data: Cell| {
+        let from = contracts::native_registry::stored_bytes(&published.public_key()).unwrap();
+        let to = contracts::native_registry::stored_bytes(&stored.public_key()).unwrap();
+        replace_subtree(&data, &from, &to)
+    };
+    let mut f = Fixture::build_with_data(Some(published.public_key()), swapped);
+    assert_eq!(f.data().attestor_key_id, Some(published.key_id()), "the id is published");
+    let caller = f.caller.address().clone();
+    let before = f.state_hash();
+    f.call(&caller, 1, [0xAA; 32]).expect_aborted().expect_exit_code(ERR_BAD_ATTESTOR_KEY);
+    assert_eq!(f.state_hash(), before, "no request is admitted under a mismatched key");
+
+}
+
+/// A disabled attestor has exactly one encoding: no key id and no key. A
+/// StateInit that keeps either while the flag is clear admits no request.
+#[test]
+fn a_disabled_attestor_carries_neither_a_key_nor_a_key_id() {
+    let leftover = Attestor::from_bytes(&[0x33; 32]);
+    // The commitments cell exactly as the SDK writes it for the fixture's
+    // metadata and proof scheme hashes with no attestor.
+    let commitments = |key_id: [u8; 32], key: Option<Cell>| {
+        let mut builder = BuilderData::new();
+        builder.append_u256(&[0x11; 32]).unwrap();
+        builder.append_u256(&[0x22; 32]).unwrap();
+        builder.append_bit_zero().unwrap();
+        builder.append_u256(&key_id).unwrap();
+        match key {
+            Some(key) => {
+                builder.append_bit_one().unwrap();
+                builder.checked_append_reference(key).unwrap();
+            }
+            None => {
+                builder.append_bit_zero().unwrap();
+            }
+        }
+        builder.into_cell().unwrap()
+    };
+    let canonical = commitments([0; 32], None);
+    let key = contracts::native_registry::stored_bytes(&leftover.public_key()).unwrap();
+    for (name, bad) in [
+        ("kept key", commitments([0; 32], Some(key.clone()))),
+        ("kept key id", commitments(leftover.key_id(), None)),
+        ("kept both", commitments(leftover.key_id(), Some(key.clone()))),
+    ] {
+        let mut replaced = false;
+        let mut f = Fixture::build_with_data(None, |data| {
+            let rewritten = replace_subtree(&data, &canonical, &bad);
+            replaced = rewritten.repr_hash() != data.repr_hash();
+            rewritten
+        });
+        assert!(replaced, "{name}: the canonical commitments cell was found");
+        let caller = f.caller.address().clone();
+        let before = f.state_hash();
+        f.call(&caller, 1, [0xAA; 32]).expect_aborted().expect_exit_code(ERR_BAD_ATTESTOR_KEY);
+        assert_eq!(f.state_hash(), before, "{name}: no request is admitted");
+    }
+}
+
+/// Revocation leaves the canonical "no attestor" state: no key id, no key.
+#[test]
+fn revoking_the_attestor_clears_its_key() {
+    let attestor = Attestor::from_bytes(&[0x41; 32]);
+    let mut f = Fixture::with_attestor(attestor.public_key());
+    let owner = f.owner.address().clone();
+    let caller = f.caller.address().clone();
+    f.send_from(&owner, ServiceActorContract::revoke_attestor(1).unwrap()).expect_success();
+    assert_eq!(f.data().attestor_key_id, None);
+    assert!(f.attestor_key().is_none(), "the revoked key is not kept");
+    f.call(&caller, 2, [0xAA; 32]).expect_success();
+    assert_eq!(f.request(0).unwrap().attestor_key_id, None);
+    f.respond(3, 0, [0xBB; 32]).expect_success();
 }
 
 #[test]
