@@ -58,6 +58,23 @@ mutated file before the next control:
   outbound message by the sender's workchain only; the basechain-to-masterchain
   wallet sandbox case and the fee-parameter test must fail.
 
+- strict-mode-gate-removed, confirm-account-gate-removed,
+  relayer-precheck-dropped, rotation-from-staged-admitted,
+  unused-staged-module-admitted, already-strict-admitted,
+  same-root-rotation-admitted, new-root-unverified: one gate of the strict
+  reconfiguration is removed; the sandbox test that runs the orchestration
+  against it must fail.
+- release-before-bind-dropped, recovery-ignores-expiry,
+  operator-recovery-of-a-bound-fence, fence-landing-ignores-target-mode,
+  bind-accepts-a-second-submission, fence-load-accepts-unbound-expiry: the
+  reconfiguration fence is left after a failure before signing, lifted before
+  its expiry, lifted on the operator's word once bound, not seen to land in
+  strict mode, rebound to another submission, or loaded with a bound
+  submission and no expiry; their tests must fail.
+
+- deploy-before-confirmation: mldsa44-rotate deploys the new module before
+  the operator confirms; the strict commands' ordering test must fail.
+
 `--controls a,b` runs only the named mutations (plus baseline and restored).
 
 Exits nonzero when any control behaves otherwise.
@@ -86,6 +103,16 @@ SANDBOX = ["cargo", "test", "-p", "contracts", "--test", "agent_account_mldsa44_
 CONTRACTS_LIB = ["cargo", "test", "-p", "contracts", "--lib", "--"]
 COMMANDS_LIB = ["cargo", "test", "-p", "commands", "--lib", "--no-default-features", "--"]
 REGENERATE = ["python3", "scripts/update-auth-contract-code.py"]
+RECONFIGURE = "tosctl/src/node-control/contracts/src/agent_account_reconfigure.rs"
+STRICT = [
+    "cargo",
+    "test",
+    "-p",
+    "contracts",
+    "--test",
+    "agent_account_mldsa44_strict_sandbox",
+    "--",
+]
 SEND_FEES = "tosctl/src/node-control/contracts/src/wallet/send_fees.rs"
 WALLET_SANDBOX = ["cargo", "test", "-p", "contracts", "--test", "wallet_sandbox", "--"]
 
@@ -143,7 +170,7 @@ def mutation(name, edits, steps):
             (ROOT / path).write_bytes(content)
 
 
-for command in (SANDBOX, CONTRACTS_LIB + ["agent_account"], COMMANDS_LIB + ["mldsa44"]):
+for command in (SANDBOX, STRICT, CONTRACTS_LIB + ["agent_account"], COMMANDS_LIB + ["mldsa44"]):
     check("baseline", command, CARGO_DIR, False, None)
 
 mutation(
@@ -243,8 +270,8 @@ mutation(
     [
         (
             CUSTODY,
-            "            let landed = auth.mode == crate::agent_account_auth::AUTH_MODE_STAGED",
-            "            let landed = true || auth.mode == crate::agent_account_auth::AUTH_MODE_STAGED",
+            "    auth.mode == fence.target_mode\n        && fence.start_auth_epoch",
+            "    true || auth.mode == fence.target_mode\n        && fence.start_auth_epoch",
         ),
         (
             CUSTODY,
@@ -618,6 +645,116 @@ mutation(
         )
     ],
 )
+
+
+def strict_control(name, path, old, new, test, runner=STRICT):
+    mutation(name, [(path, old, new)], [(runner + [test], CARGO_DIR, True, test)])
+
+
+GATES = "every_gate_refuses_before_anything_is_fenced_signed_or_relayed"
+UNUSED = "a_legacy_account_or_an_unused_staged_module_is_refused"
+strict_control(
+    "strict-mode-gate-removed",
+    RECONFIGURE,
+    "        request.mode == STRICT_TARGET_MODE,",
+    "        true || request.mode == STRICT_TARGET_MODE,",
+    GATES,
+)
+strict_control(
+    "confirm-account-gate-removed",
+    RECONFIGURE,
+    "        request.confirm_account == request.account.to_string(),",
+    "        true || request.confirm_account == request.account.to_string(),",
+    GATES,
+)
+strict_control(
+    "relayer-precheck-dropped",
+    RECONFIGURE,
+    "    chain.check_relayer(&request.module, &placeholder, request.relay_amount).await?;\n",
+    "    let _ = &placeholder;\n",
+    GATES,
+)
+strict_control(
+    "rotation-from-staged-admitted",
+    RECONFIGURE,
+    "                AUTH_MODE_MODULE_ONLY => {}\n",
+    "                AUTH_MODE_MODULE_ONLY | AUTH_MODE_STAGED => {}\n",
+    GATES,
+)
+strict_control(
+    "unused-staged-module-admitted",
+    RECONFIGURE,
+    "                auth.nonce >= 1,",
+    "                true || auth.nonce >= 1,",
+    UNUSED,
+)
+strict_control(
+    "already-strict-admitted",
+    RECONFIGURE,
+    "                strict => {\n"
+    '                    bail!("the Agent Account is already in strict authentication mode {strict}")\n'
+    "                }",
+    "                _ => {}",
+    UNUSED,
+)
+strict_control(
+    "same-root-rotation-admitted",
+    RECONFIGURE,
+    '        ensure!(module != &request.module, "the rotation installs the root already installed");',
+    "",
+    UNUSED,
+)
+strict_control(
+    "new-root-unverified",
+    RECONFIGURE,
+    "        check_module(&chain.module(module).await?, request.global_id, public_key)?;\n",
+    "",
+    UNUSED,
+)
+strict_control(
+    "release-before-bind-dropped",
+    RECONFIGURE,
+    "        Err(error) => {\n            release((snapshot.state.controller_epoch, snapshot.state.seqno))?;\n            return Err(error);\n        }\n    };",
+    "        Err(error) => return Err(error),\n    };",
+    "a_failure_before_the_bind_releases_the_fence_and_nothing_was_signed",
+)
+strict_control(
+    "recovery-ignores-expiry",
+    CUSTODY,
+    "            if !start.submission_digest.is_empty() && state_time <= start.valid_until {",
+    "            if false && !start.submission_digest.is_empty() && state_time <= start.valid_until {",
+    "a_bound_fence_holds_until_expiry_and_is_never_lifted_early",
+)
+strict_control(
+    "operator-recovery-of-a-bound-fence",
+    CUSTODY,
+    "            if owner_token.is_none() && !start.submission_digest.is_empty() {",
+    "            if false && owner_token.is_none() && !start.submission_digest.is_empty() {",
+    "a_bound_fence_holds_until_expiry_and_is_never_lifted_early",
+)
+strict_control(
+    "fence-landing-ignores-target-mode",
+    CUSTODY,
+    "    auth.mode == fence.target_mode\n",
+    "    auth.mode == crate::agent_account_auth::AUTH_MODE_STAGED\n",
+    "a_change_that_landed_unobserved_is_finished_without_a_resend",
+)
+strict_control(
+    "bind-accepts-a-second-submission",
+    CUSTODY,
+    "                if fence.submission_digest != submission_digest || fence.valid_until != valid_until\n",
+    "                if false\n",
+    "a_reconfiguration_fence_binds_one_submission_and_one_relay",
+    runner=CONTRACTS_LIB,
+)
+strict_control(
+    "fence-load-accepts-unbound-expiry",
+    CUSTODY,
+    "        || (bound && (!valid_digest(&fence.submission_digest) || fence.valid_until == 0))\n",
+    "",
+    "a_malformed_reconfiguration_fence_is_refused_on_load",
+    runner=CONTRACTS_LIB,
+)
 mutation(
     "relay-fee-ignores-destination-workchain",
     [
@@ -643,9 +780,31 @@ mutation(
         ),
     ],
 )
+STRICT_CLI = "tosctl/src/node-control/commands/src/commands/nodectl/agent_cmd/mldsa44/strict.rs"
+mutation(
+    "deploy-before-confirmation",
+    [
+        (
+            STRICT_CLI,
+            "    if !yes && !steps.confirm(summary)? {\n        return Ok(false);\n    }\n",
+            "    if let Reconfiguration::Rotate { module, public_key } = &request.change {\n"
+            "        steps.deploy(module, public_key, deploy_amount.unwrap_or(1.0)).await?;\n"
+            "    }\n"
+            "    if !yes && !steps.confirm(summary)? {\n        return Ok(false);\n    }\n",
+        )
+    ],
+    [
+        (
+            COMMANDS_LIB + ["no_value_moves_before_every_gate_and_confirmation"],
+            CARGO_DIR,
+            True,
+            "no_value_moves_before_every_gate_and_confirmation",
+        )
+    ],
+)
 if SELECTED is not None and SELECTED != ran:
     raise SystemExit(f"unknown controls: {sorted(SELECTED - ran)}")
-for command in (SANDBOX, CONTRACTS_LIB + ["agent_account"], COMMANDS_LIB + ["mldsa44"]):
+for command in (SANDBOX, STRICT, CONTRACTS_LIB + ["agent_account"], COMMANDS_LIB + ["mldsa44"]):
     check("restored", command, CARGO_DIR, False, None)
 
 OUTPUT.write_text(json.dumps(results, indent=1) + "\n")

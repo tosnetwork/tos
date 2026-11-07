@@ -1,0 +1,50 @@
+{
+ "schema": "tos.evidence.index.v1",
+ "claim": "On an isolated local chain, tosctl installs an ML-DSA-44 root, refuses the cutover while the staged module has authenticated nothing, relays a send from a non-owner wallet and rebroadcasts it byte for byte through another, resolves it by three RPC views and finds the target credited by exactly the resolved transfer message, refuses cutovers to mode 3, mode 1 and a mistyped address, cuts over to mode 2, refuses a second cutover, rotates the root in strict mode, refuses the old root (in tosctl, and on chain with exit 1800 for a submission the old root signed earlier), sends with the new root, and the node refuses the Ed25519 controller (1807)",
+ "reviewed_commit": "12f7c879a46bbaaf622373e0b48021170ee13c39",
+ "tree": "25368dfff92c49172670903dae8bf62b6be1080e",
+ "runner": "scripts/agent-account-mldsa44-strict-rehearsal.py",
+ "command": "TOSCTL=<tosctl of the commit> TOS_BUILD_DIR=/tos/build/pr371-rerun/build TOS_SOURCE_DIR=<checkout> REHEARSAL_DIR=<private empty dir> PYTHONPATH=test/tostester/src uv run --frozen python scripts/agent-account-mldsa44-strict-rehearsal.py",
+ "result": {
+  "exit": 0,
+  "final_line": "=== RESULT: ALL PASS ===",
+  "checks_passed": 37,
+  "self_test": "REHEARSAL_SELF_TEST_OK"
+ },
+ "binaries": {
+  "tosctl": "sha256:b3ffd22445bf54176dd2b39ea39bce0a37fb1b0612cea87787e277653fa03cb2",
+  "validator-engine": "sha256:4c458976a2a31fb0b7e5b522562ccaabfa9301273340bc86b8bb0a7c6e5048a9",
+  "dht-server": "sha256:5936f5c53f97f7daa9347d6a04160f6d856f9968853d755c13085e6c24dd2e56",
+  "create-state": "sha256:be196cce76b2c87b1f61c95045bb485053f197a6f2826934a080b6557acc9dff",
+  "generate-random-id": "sha256:8fcd7aa1b665980608510f4651934dc6e94f3b425c99cc640e0432c2e665fec8",
+  "tos-pq-consensus-key": "sha256:774ff75f8690ea717919c36e89091688dba08aeabf53bbef11711ad5278f26d7",
+  "validator-engine-console": "sha256:f0a50db9d061178d4949e5aad8a6d558ebbcaad054fcf70ca7a35228d723f0ce",
+  "lite-client": "sha256:2ce91d9362c93c535c39eba3336cd30fcecdb9a46c33ebe1044b59dec56ea395",
+  "libtoslibjson": "sha256:f6a12f2bc9d8edbf3ce215f3c8f5b2cfaf9c2e762fcd430978541441bafb7d0b"
+ },
+ "embedded_code": {
+  "agent_account": {
+   "boc_sha256": "34b9bd48ee3a71513ddcf9d1738c4630a93d453f8d55ad639793f746aa3a78f7",
+   "code_hash": "53600f89a4849412001f3c075b8f02fe2845ff6de60866fb65dc2b6b98fa1dd1"
+  },
+  "mldsa44_module": {
+   "boc_sha256": "12ac19c839b2a13304e921b0a0b1bf799a6549b906898c9080e3dc950ae680b2",
+   "code_hash": "570a064f8cd152c32f2c8a5694e1807c39cfb54efabb7e1147552a3c907cc239"
+  }
+ },
+ "deployed_code_hashes": {
+  "agent_account": "53600f89a4849412001f3c075b8f02fe2845ff6de60866fb65dc2b6b98fa1dd1",
+  "old_module": "570a064f8cd152c32f2c8a5694e1807c39cfb54efabb7e1147552a3c907cc239",
+  "new_module": "570a064f8cd152c32f2c8a5694e1807c39cfb54efabb7e1147552a3c907cc239"
+ },
+ "zerostate": {
+  "root": "6d3cdd64e99a2b242550b640aca0b04a5d7c13eaae2a71dceae38d449cc59551",
+  "file": "4bda6f9be04ab5b7a06c2bf849fc2386ad13ba7f02084d5e953a4e081b5f22f2"
+ },
+ "raw_evidence": {
+  "path": "/tos/build/aa-followup-rehearsal-root/run/evidence.json",
+  "sha256": "7d046a3271c18abb1659403ca5f8d6c25b779290918161411cf7ef025c4ab716",
+  "size": 71052,
+  "retention": "kept until both stacked pull requests merge"
+ }
+}

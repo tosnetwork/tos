@@ -55,6 +55,9 @@ const MLDSA44_FINALIZED_SCHEMA: &str = "tos.agent-account.mldsa44-native-send-fi
 const MLDSA44_EXPIRED_SCHEMA: &str = "tos.agent-account.mldsa44-native-send-expired.v1";
 const MLDSA44_SUPERSEDED_SCHEMA: &str = "tos.agent-account.mldsa44-native-send-superseded.v1";
 
+mod strict;
+pub use strict::{AgentAccountMldsa44CutoverCmd, AgentAccountMldsa44RotateCmd};
+
 #[derive(clap::Args, Clone)]
 #[command(
     about = "Deploy and verify this controller's ML-DSA-44 authentication module and stage it on the Agent Account (legacy authentication stays enabled)"
@@ -155,6 +158,22 @@ struct Mldsa44Context {
     public_key: Vec<u8>,
     module: MsgAddressInt,
     chain_now: u32,
+    /// The account's raw data as one proven snapshot, and the time of the
+    /// state it was read at: what fence recovery is judged against.
+    snapshot: AgentAccountState,
+    state_time: u32,
+}
+
+/// One proven account snapshot: the parsed raw data and its state time.
+async fn account_snapshot(
+    rpc_client: &ClientJsonRpc,
+    account: &MsgAddressInt,
+) -> anyhow::Result<(AgentAccountState, u32)> {
+    let info = rpc_client.get_address_information(account).await?;
+    anyhow::ensure!(info.state == AccountState::Active, "Agent Account is not active");
+    let data = read_single_root_boc(info.data.as_ref().context("account state has no data")?)?;
+    let state_time = u32::try_from(info.sync_utime).context("account state time exceeds uint32")?;
+    Ok((AgentAccountState::parse(&data)?, state_time))
 }
 
 async fn chain_now(rpc_client: &ClientJsonRpc) -> anyhow::Result<u32> {
@@ -202,6 +221,7 @@ async fn load_context(
     let module =
         Mldsa44AuthModule::calculate_address(account.workchain_id(), global_id, &public_key)?;
     let chain_now = chain_now(&rpc_client).await?;
+    let (snapshot, state_time) = account_snapshot(&rpc_client, &account).await?;
     Ok(Mldsa44Context {
         rpc_client,
         wallets: config.wallets.clone(),
@@ -216,6 +236,8 @@ async fn load_context(
         public_key,
         module,
         chain_now,
+        snapshot,
+        state_time,
     })
 }
 
@@ -477,7 +499,8 @@ impl AgentAccountMldsa44InstallCmd {
             &account_text,
             ctx.global_id,
             &deployment_id,
-            (ctx.data.controller_epoch, ctx.data.seqno),
+            &ctx.snapshot,
+            ctx.state_time,
             self.recover_interrupted,
         )?;
         if decision == StageDecision::AlreadyStaged {
@@ -1097,13 +1120,17 @@ fn print_relayed(action_id: &str, claim: &ControllerActionClaim, relayed: &Relay
 /// or can no longer be accepted; it is handled before any other install
 /// decision, so a fence stays recoverable whichever module is staged now and
 /// after an owner rotation moved the counters (the journal still refuses
-/// counters older than the fence's start). Returns the fence still held.
+/// counters older than the fence's start). The recovery is the journal's,
+/// judged against the account snapshot: a signed reconfiguration's fence is
+/// refused until the snapshot is past its expiry. Returns the fence still held.
+#[allow(clippy::too_many_arguments)]
 fn recover_interrupted_fence(
     journal: &AgentAccountCustodyJournal,
     account: &str,
     global_id: i32,
     deployment_id: &str,
-    counters: (u64, u32),
+    snapshot: &AgentAccountState,
+    state_time: u32,
     recover: bool,
 ) -> anyhow::Result<Option<(u64, u32)>> {
     let interrupted = journal.controller_epoch_change(account, global_id, deployment_id)?;
@@ -1113,17 +1140,17 @@ fn recover_interrupted_fence(
     if !recover {
         return Ok(Some(start));
     }
-    journal.end_controller_epoch_change(
+    let recovery = journal.recover_controller_epoch_change(
         account,
         global_id,
         deployment_id,
-        counters.0,
-        counters.1,
-        None,
+        snapshot,
+        state_time,
     )?;
     println!(
-        "{} lifted the fence of an interrupted install started at controller epoch {}, seqno {}",
+        "{} {:?} the fence of an interrupted authentication change started at controller epoch {}, seqno {}",
         "NOTE".yellow().bold(),
+        recovery,
         start.0,
         start.1
     );
@@ -2270,14 +2297,22 @@ mod tests {
             stage_decision(&auth(AUTH_MODE_STAGED, &module), &data(), &account, &module).unwrap(),
             StageDecision::AlreadyStaged
         );
+        let snapshot = AgentAccountState {
+            deployment_id: data().deployment_id,
+            controller_epoch: 3,
+            seqno: 8,
+            auth: auth(AUTH_MODE_STAGED, &module),
+        };
         // Without the operator's statement the fence stays.
         assert_eq!(
-            recover_interrupted_fence(&journal, &text, 42, &deployment, (3, 8), false).unwrap(),
+            recover_interrupted_fence(&journal, &text, 42, &deployment, &snapshot, 900, false)
+                .unwrap(),
             Some((2, 7))
         );
         // With it the fence is lifted at the advanced counters.
         assert_eq!(
-            recover_interrupted_fence(&journal, &text, 42, &deployment, (3, 8), true).unwrap(),
+            recover_interrupted_fence(&journal, &text, 42, &deployment, &snapshot, 900, true)
+                .unwrap(),
             None
         );
         let rotated = AgentAccountData { controller_epoch: 3, seqno: 8, ..data() };
