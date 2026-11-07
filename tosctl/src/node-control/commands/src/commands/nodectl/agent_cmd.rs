@@ -70,6 +70,7 @@ use std::{
 };
 
 mod dual_absence;
+mod mldsa44;
 mod prediction_relay;
 use dual_absence::{
     AgentAccountEconomicPaymentRelayTransactionComponentAbsenceCmd,
@@ -79,6 +80,9 @@ use dual_absence::{
     AgentAccountEconomicPaymentSponsorshipDualAbsenceCapabilityCmd,
     AgentAccountEconomicPaymentSponsorshipDualAbsenceCmd,
     AgentAccountEconomicPaymentSponsorshipDualAbsenceProofVerifyCmd,
+};
+use mldsa44::{
+    AgentAccountMldsa44InstallCmd, AgentAccountMldsa44ResolveCmd, AgentAccountMldsa44SendCmd,
 };
 use prediction_relay::{
     AgentAccountPredictionRelayBounceCreditResolveCmd,
@@ -668,6 +672,12 @@ pub enum AgentAccountAction {
     PredictionRelayBounceCreditResolve(AgentAccountPredictionRelayBounceCreditResolveCmd),
     /// Prepare one owner-authorized cancellation for an existing controller action
     CancelPrepare(AgentAccountCancelPrepareCmd),
+    /// Deploy, verify and stage this controller's ML-DSA-44 authentication module
+    Mldsa44Install(AgentAccountMldsa44InstallCmd),
+    /// Journal and relay one ML-DSA-44-authorized native transfer
+    Mldsa44Send(AgentAccountMldsa44SendCmd),
+    /// Resolve an ML-DSA-44 native transfer from three RPC views
+    Mldsa44Resolve(AgentAccountMldsa44ResolveCmd),
 }
 
 #[derive(clap::Args, Clone)]
@@ -1709,6 +1719,9 @@ impl AgentAccountCmd {
                 cmd.run(config_path).await
             }
             AgentAccountAction::CancelPrepare(cmd) => cmd.run(config_path).await,
+            AgentAccountAction::Mldsa44Install(cmd) => cmd.run(config_path).await,
+            AgentAccountAction::Mldsa44Send(cmd) => cmd.run(config_path).await,
+            AgentAccountAction::Mldsa44Resolve(cmd) => cmd.run(config_path).await,
         }
     }
 }
@@ -3109,6 +3122,7 @@ impl AgentTaskCreateCmd {
                 idempotency_key: action_id.to_owned(),
                 action_identity: format!("sha256:{}", hex::encode(identity.finalize())),
                 valid_until,
+                auth_module: None,
             };
             if !self.yes
                 && !confirm(&format!(
@@ -4383,6 +4397,7 @@ fn task_send_claim(draft: &TaskSendDraft) -> anyhow::Result<(ControllerActionCla
         idempotency_key: draft.action_id.clone(),
         action_identity: format!("sha256:{}", hex::encode(identity.finalize())),
         valid_until: draft.valid_until,
+        auth_module: None,
     };
     Ok((claim, payload))
 }
@@ -5443,6 +5458,7 @@ impl AgentAccountNativePrepareCmd {
             idempotency_key: self.action_id.clone(),
             action_identity: format!("sha256:{}", hex::encode(identity.finalize())),
             valid_until: self.valid_until,
+            auth_module: None,
         };
         if !self.yes
             && !confirm(&format!(
@@ -5873,6 +5889,7 @@ impl AgentAccountEconomicPaymentPrepareCmd {
             idempotency_key: stable_hex,
             action_identity: authorization.stable_action_id.clone(),
             valid_until: self.valid_until,
+            auth_module: None,
         };
         if !self.yes
             && !confirm(&format!(
@@ -6126,6 +6143,7 @@ impl AgentAccountEconomicEffectPrepareCmd {
             idempotency_key: stable_hex,
             action_identity: authorization.stable_action_id.clone(),
             valid_until: self.valid_until,
+            auth_module: None,
         };
         if !self.yes
             && !confirm(&format!(
@@ -12522,6 +12540,7 @@ mod tests {
                 idempotency_key: "6".repeat(64),
                 action_identity: format!("sha256:{}", "7".repeat(64)),
                 valid_until: 1_900_000_000,
+                auth_module: None,
             },
             status: ControllerActionStatus::Broadcasting,
             exact_signed_boc_base64: None,
@@ -14771,6 +14790,7 @@ mod tests {
             idempotency_key: action[7..].into(),
             action_identity: action.into(),
             valid_until: 1_800_000_100,
+            auth_module: None,
         };
         let authorization = EconomicActionAuthorization {
             schema_version: 3,
