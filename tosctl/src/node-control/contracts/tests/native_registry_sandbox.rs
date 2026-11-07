@@ -4145,6 +4145,124 @@ mod protocol_vectors {
                 "submission_body_hash": format!("tvm-cell-sha256:{}", capability_body_hash),
             },
         });
+        // The full protocol-format vector file (tos-service-protocol
+        // pkg/nativecore/testdata and tos-service-spec test-vectors). Every
+        // positive value is taken from this contract-executed run. The negative
+        // mutations are not executed here: they are the protocol's own
+        // client-side checks, listed with the contract error code each must
+        // map to, so the file is produced in one place. The document is built
+        // and checked on every run; it is written only when requested.
+        {
+            let code_boc: String = NATIVE_REGISTRY_RELEASE_CODE_B64.split_whitespace().collect();
+            let mutation = |registration: &str, mutation: &str, code: i32| {
+                serde_json::json!({"registration": registration, "mutation": mutation,
+                    "expected_code": code})
+            };
+            let full = serde_json::json!({
+                "schema": "tos.service.registry.v1.vectors",
+                "protocol": "tos_service_v1",
+                "contract_code_hash": actual["contract_code_hash"],
+                "contract_code_boc_base64": code_boc,
+                "network": {
+                    "network_id": "tos-testnet",
+                    "genesis_root_hash": format!("sha256:{}", hex::encode([0x11; 32])),
+                    "genesis_file_hash": format!("sha256:{}", hex::encode([0x22; 32])),
+                },
+                "signature": {
+                    "suite": "ML-DSA-44",
+                    "context": String::from_utf8_lossy(NATIVE_REGISTRY_SIGNATURE_CONTEXT),
+                    "signing": "FIPS 204 deterministic variant (rnd = 0^32) over the 32-byte action hash",
+                },
+                "agent_registration": {
+                    "private_seed_hex": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+                    "object_nonce_hex": hex::encode([0x6f; 32]),
+                    "action_nonce_hex": hex::encode([0x61; 32]),
+                    "policy": {
+                        "threshold": 1,
+                        "recovery_threshold": 1,
+                        "recovery_timelock_seconds": 86_400,
+                        "controllers": [{
+                            "public_key_hex": hex::encode(&key.public_key),
+                            "key_id": format!("mldsa44:{}", hex::encode(key_id)),
+                            "weight": 1,
+                            "purpose_mask": 15,
+                            "recovery": true,
+                        }],
+                    },
+                    "expected": {
+                        "object_id": actual["agent_registration"]["object_id"],
+                        "contract_address": actual["agent_registration"]["contract_address"],
+                        "action_hash": actual["agent_registration"]["action_hash"],
+                        "action_boc_base64": actual["agent_registration"]["action_boc_base64"],
+                        "signature_hex": hex::encode(&agent_signature.signature),
+                        "submission_body_hash": actual["agent_registration"]["submission_body_hash"],
+                    },
+                },
+                "capability_registration": {
+                    "owner_agent_id": actual["agent_registration"]["object_id"],
+                    "object_nonce_hex": hex::encode([0x63; 32]),
+                    "action_nonce_hex": hex::encode([0x62; 32]),
+                    "version": "1.0.0",
+                    "manifest_digest": format!("sha256:{}", hex::encode([0x55; 32])),
+                    "expected": {
+                        "object_id": actual["capability_registration"]["object_id"],
+                        "contract_address": actual["capability_registration"]["contract_address"],
+                        "action_hash": actual["capability_registration"]["action_hash"],
+                        "action_boc_base64": actual["capability_registration"]["action_boc_base64"],
+                        "signature_hex": hex::encode(&capability_signature.signature),
+                        "submission_body_hash": actual["capability_registration"]["submission_body_hash"],
+                    },
+                },
+                "negative_mutations": [
+                    mutation("agent", "wrong_protocol", 2200),
+                    mutation("agent", "empty_network_id", 2201),
+                    mutation("agent", "zero_genesis_root", 2201),
+                    mutation("agent", "wrong_contract_hash", 2202),
+                    mutation("agent", "zero_action_nonce", 2203),
+                    mutation("agent", "zero_target_id", 2203),
+                    mutation("agent", "zero_object_nonce", 2203),
+                    mutation("agent", "unattainable_policy", 2207),
+                    mutation("agent", "caller_selected_id", 2210),
+                    mutation("agent", "generation_zero", 2205),
+                    mutation("agent", "registration_generation_two", 2205),
+                    mutation("capability", "wrong_owner_kind", 2203),
+                    mutation("capability", "zero_object_nonce", 2203),
+                    mutation("capability", "revoked_initial_version", 2203),
+                    mutation("capability", "version_too_long", 2203),
+                    mutation("capability", "version_non_printable", 2203),
+                    mutation("capability", "caller_selected_id", 2210),
+                    mutation("capability", "registration_sequence_two", 2205),
+                ],
+            });
+            let released = chain_block::read_single_root_boc(
+                chain_block::base64_decode(&code_boc).expect("code base64"),
+            )
+            .expect("code BOC");
+            assert_eq!(
+                full["contract_code_hash"],
+                serde_json::json!(format!(
+                    "tvm-cell-sha256:{}",
+                    hex::encode(released.repr_hash().as_slice())
+                )),
+                "the exported code BOC is the code this run executed"
+            );
+            let negatives = full["negative_mutations"].as_array().expect("negative mutations");
+            assert_eq!(negatives.len(), 18, "every client-side negative check is listed");
+            let mut seen = std::collections::BTreeSet::new();
+            for entry in negatives {
+                let key = (entry["registration"].to_string(), entry["mutation"].to_string());
+                assert!(seen.insert(key), "duplicate negative check {entry}");
+                let code = entry["expected_code"].as_i64().expect("expected code");
+                assert!((2200..=2215).contains(&code), "{entry} maps outside the registry codes");
+            }
+            for registration in ["agent_registration", "capability_registration"] {
+                assert!(full[registration].is_object(), "{registration} is exported");
+            }
+            if let Ok(path) = std::env::var("NATIVE_REGISTRY_PROTOCOL_VECTORS_OUT") {
+                std::fs::write(&path, serde_json::to_string_pretty(&full).expect("json") + "\n")
+                    .expect("write protocol vectors");
+            }
+        }
         if let Ok(path) = std::env::var("NATIVE_REGISTRY_VECTORS_OUT") {
             std::fs::write(&path, serde_json::to_string_pretty(&actual).expect("json") + "\n")
                 .expect("write vectors");
