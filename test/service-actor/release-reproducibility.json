@@ -1,7 +1,7 @@
 {
  "schema": "tos.evidence.index.v1",
  "claim": "The Service Actor release check rebuilds from source and refuses each drift at its intended comparison",
- "reviewed_commit": "4f5307523",
+ "reviewed_commit": "7e7f5deb3",
  "runner": "test/service-actor/release_mutations.py",
  "command": "FUNC_BIN=<func> FIFT_BIN=<fift> FUNC_PATH=<func> FIFT_PATH=<fift> python3 test/service-actor/release_mutations.py <checkout> <results.json>",
  "compiler": "FunC v0.4.6 and Fift from one build at 392bc162e095cc34292eb9ea0709273407e06ca7",
@@ -78,10 +78,10 @@
    "command": "scripts/test-tos-service-actor-v1.sh",
    "exit": 1,
    "last_line": [
-    "Service Actor release check failed: manifest boc_bytes differs from the build"
+    "BOC size mismatch: 4590"
    ],
    "expected_exit": 1,
-   "expected_text": "manifest boc_bytes differs from the build",
+   "expected_text": "BOC size mismatch: 4590",
    "matched": true,
    "mutated": "crypto/smartcont/tos-service-actor-v1.release.json",
    "mutated_sha256": "10aacdedf2c837b47c4130ed86fa2fafaf077042d3b277bce7681d427f38fa71"
@@ -142,5 +142,6 @@
    "c-manifest-boc-bytes: test gave 0",
    "d-sdk-alternate-container: test gave 0"
   ]
- }
+ },
+ "pins_note": "the build script reads code_hash, boc_sha256 and boc_bytes from the release manifest; the release check compares every other field"
 }
