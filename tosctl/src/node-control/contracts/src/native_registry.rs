@@ -1217,6 +1217,239 @@ mod context_tests {
     }
 }
 
+/// The Agent Guarantor signature vector shared with tosnetwork/tos-service-protocol
+/// (`pkg/agentguarantor/testdata/agent-guarantor-signature-vector.json`). The
+/// controller key comes from a fixed public seed and every signature uses the
+/// FIPS 204 deterministic variant (all-zero randomness), so any implementation
+/// reproduces the bytes. The refusal signatures are each valid in their own
+/// mode, context and message, and none is valid as a Guarantor authorization
+/// over the vector message. `AGENT_GUARANTOR_VECTOR_OUT=<path>` writes the
+/// vector instead of comparing it.
+#[cfg(test)]
+mod agent_guarantor_vector {
+    use super::*;
+    use fips204::Ph;
+    use fips204::ml_dsa_44;
+    use fips204::traits::{KeyGen, SerDes, Signer, Verifier};
+
+    const FIXTURE: &str =
+        include_str!("../tests/fixtures/native_registry/agent-guarantor-signature-vector.json");
+    const SEED: [u8; 32] = [0x47; 32];
+    const ZERO_RANDOMNESS: [u8; 32] = [0; 32];
+    /// The canonical CBOR of the authorization statement
+    /// {schema_version: 1, authority_subject: agent_5a..5a, profile_uri:
+    /// tos.agent-service.guarantor.v1, profile_version: 1, profile_digest:
+    /// sha256:11..11, authorized_object_kind: quote-request,
+    /// authorized_body_digest: sha256:22..22, validation_time_unix: 1767225600}.
+    const STATEMENT_CBOR_HEX: &str = concat!(
+        "a86b70726f66696c655f757269781e746f732e6167656e742d736572766963652e",
+        "67756172616e746f722e76316e70726f66696c655f646967657374784773686132",
+        "35363a313131313131313131313131313131313131313131313131313131313131",
+        "313131313131313131313131313131313131313131313131313131313131313131",
+        "316e736368656d615f76657273696f6e016f70726f66696c655f76657273696f6e",
+        "0171617574686f726974795f7375626a65637478466167656e745f356135613561",
+        "356135613561356135613561356135613561356135613561356135613561356135",
+        "613561356135613561356135613561356135613561356135617476616c69646174",
+        "696f6e5f74696d655f756e69781a6955b90076617574686f72697a65645f626f64",
+        "795f64696765737478477368613235363a32323232323232323232323232323232",
+        "323232323232323232323232323232323232323232323232323232323232323232",
+        "32323232323232323232323232323276617574686f72697a65645f6f626a656374",
+        "5f6b696e646d71756f74652d72657175657374",
+    );
+    /// The section 9 message of that statement under the quote-request domain,
+    /// computed independently of this crate.
+    const EXPECTED_MESSAGE_HEX: &str =
+        "be1fe88332d0103a1a2b2209bdf3d7ea1cad3fd555fff895b81b92fbb5a94582";
+    const QUOTE_REQUEST_DOMAIN: &str = "tos.service.agent-guarantor-quote-request-signature.v1";
+    const FIRM_OFFER_DOMAIN: &str = "tos.service.agent-guarantor-firm-offer-signature.v1";
+
+    /// SHA-256(domain || 0x00 || uint32_be(len(statement)) || statement).
+    fn guarantor_message(domain: &str, statement: &[u8]) -> Vec<u8> {
+        let length = u32::try_from(statement.len()).expect("statement length");
+        let mut hash = Sha256::new();
+        hash.update(domain.as_bytes());
+        hash.update([0u8]);
+        hash.update(length.to_be_bytes());
+        hash.update(statement);
+        hash.finalize().to_vec()
+    }
+
+    #[derive(Clone, Copy)]
+    enum Mode {
+        Pure,
+        HashSha256,
+    }
+
+    struct Refusal {
+        name: &'static str,
+        mode: Mode,
+        context: &'static [u8],
+        domain: &'static str,
+    }
+
+    const REFUSALS: [Refusal; 7] = [
+        Refusal {
+            name: "hash-ml-dsa-sha256",
+            mode: Mode::HashSha256,
+            context: AGENT_GUARANTOR_SIGNATURE_CONTEXT,
+            domain: QUOTE_REQUEST_DOMAIN,
+        },
+        Refusal {
+            name: "empty-context",
+            mode: Mode::Pure,
+            context: b"",
+            domain: QUOTE_REQUEST_DOMAIN,
+        },
+        Refusal {
+            name: "registry-context",
+            mode: Mode::Pure,
+            context: NATIVE_REGISTRY_SIGNATURE_CONTEXT,
+            domain: QUOTE_REQUEST_DOMAIN,
+        },
+        Refusal {
+            name: "agent-packet-context",
+            mode: Mode::Pure,
+            context: AGENT_PACKET_SIGNATURE_CONTEXT,
+            domain: QUOTE_REQUEST_DOMAIN,
+        },
+        Refusal {
+            name: "agent-contact-context",
+            mode: Mode::Pure,
+            context: AGENT_CONTACT_SIGNATURE_CONTEXT,
+            domain: QUOTE_REQUEST_DOMAIN,
+        },
+        Refusal {
+            name: "service-actor-context",
+            mode: Mode::Pure,
+            context: crate::service_actor::SERVICE_ACTOR_RESPOND_CONTEXT,
+            domain: QUOTE_REQUEST_DOMAIN,
+        },
+        Refusal {
+            name: "firm-offer-domain",
+            mode: Mode::Pure,
+            context: AGENT_GUARANTOR_SIGNATURE_CONTEXT,
+            domain: FIRM_OFFER_DOMAIN,
+        },
+    ];
+
+    fn sign(secret: &ml_dsa_44::PrivateKey, mode: Mode, message: &[u8], context: &[u8]) -> Vec<u8> {
+        match mode {
+            Mode::Pure => secret.try_sign_with_seed(&ZERO_RANDOMNESS, message, context),
+            Mode::HashSha256 => {
+                secret.try_hash_sign_with_seed(&ZERO_RANDOMNESS, message, context, &Ph::SHA256)
+            }
+        }
+        .expect("deterministic signature")
+        .to_vec()
+    }
+
+    fn verifies_in_own_mode(
+        public_key: &ml_dsa_44::PublicKey,
+        mode: Mode,
+        message: &[u8],
+        context: &[u8],
+        signature: &[u8],
+    ) -> bool {
+        let Ok(signature) = <[u8; NATIVE_REGISTRY_SIGNATURE_BYTES]>::try_from(signature) else {
+            return false;
+        };
+        match mode {
+            Mode::Pure => public_key.verify(message, &signature, context),
+            Mode::HashSha256 => public_key.hash_verify(message, &signature, context, &Ph::SHA256),
+        }
+    }
+
+    fn build() -> serde_json::Value {
+        let statement = hex::decode(STATEMENT_CBOR_HEX).expect("statement hex");
+        let message = guarantor_message(QUOTE_REQUEST_DOMAIN, &statement);
+        let (public_key, secret) = ml_dsa_44::KG::keygen_from_seed(&SEED);
+        let public_bytes = public_key.into_bytes().to_vec();
+        let signature = sign(&secret, Mode::Pure, &message, AGENT_GUARANTOR_SIGNATURE_CONTEXT);
+        let refusals: Vec<serde_json::Value> = REFUSALS
+            .iter()
+            .map(|refusal| {
+                let refused_message = guarantor_message(refusal.domain, &statement);
+                serde_json::json!({
+                    "name": refusal.name,
+                    "mode": match refusal.mode { Mode::Pure => "pure", Mode::HashSha256 => "hash-sha256" },
+                    "context": String::from_utf8_lossy(refusal.context),
+                    "signature_domain": refusal.domain,
+                    "message_hex": hex::encode(&refused_message),
+                    "signature_hex": hex::encode(sign(&secret, refusal.mode, &refused_message, refusal.context)),
+                })
+            })
+            .collect();
+        serde_json::json!({
+            "schema": "tos.agent-guarantor-signature-vector.v1",
+            "seed_hex": hex::encode(SEED),
+            "context": String::from_utf8_lossy(AGENT_GUARANTOR_SIGNATURE_CONTEXT),
+            "statement_cbor_hex": STATEMENT_CBOR_HEX,
+            "signature_domain": QUOTE_REQUEST_DOMAIN,
+            "message_hex": hex::encode(&message),
+            "public_key_hex": hex::encode(&public_bytes),
+            "key_id_hex": hex::encode(controller_key_id(&public_bytes).expect("key id")),
+            "signature_hex": hex::encode(signature),
+            "refusals": refusals,
+        })
+    }
+
+    #[test]
+    fn agent_guarantor_vector_reproduces_and_refuses_every_other_use() -> Result<()> {
+        let built = build();
+        if let Ok(path) = std::env::var("AGENT_GUARANTOR_VECTOR_OUT") {
+            let mut text = serde_json::to_string_pretty(&built)?;
+            text.push('\n');
+            std::fs::write(&path, text)?;
+            return Ok(());
+        }
+        let fixture: serde_json::Value = serde_json::from_str(FIXTURE)?;
+        assert_eq!(fixture, built, "the committed vector differs from the one the seed produces");
+
+        let field = |value: &serde_json::Value, name: &str| -> Vec<u8> {
+            hex::decode(value[name].as_str().expect(name)).expect(name)
+        };
+        let message = field(&fixture, "message_hex");
+        assert_eq!(message.len(), AGENT_GUARANTOR_MESSAGE_BYTES);
+        assert_eq!(hex::encode(&message), EXPECTED_MESSAGE_HEX);
+        let public_bytes = field(&fixture, "public_key_hex");
+        let signature = field(&fixture, "signature_hex");
+        verify_ml_dsa_44(&public_bytes, &signature, &message, AGENT_GUARANTOR_SIGNATURE_CONTEXT)?;
+        for other in CONTROLLER_SIGNATURE_CONTEXTS {
+            if other != AGENT_GUARANTOR_SIGNATURE_CONTEXT {
+                assert!(verify_ml_dsa_44(&public_bytes, &signature, &message, other).is_err());
+            }
+        }
+        let key = ml_dsa_44::PublicKey::try_from_bytes(
+            <[u8; NATIVE_REGISTRY_PUBLIC_KEY_BYTES]>::try_from(public_bytes.as_slice())
+                .map_err(|_| anyhow!("public key width"))?,
+        )
+        .map_err(|e| anyhow!("public key: {e}"))?;
+        let refusals = fixture["refusals"].as_array().expect("refusals");
+        assert_eq!(refusals.len(), REFUSALS.len());
+        for (refusal, entry) in REFUSALS.iter().zip(refusals) {
+            let own_message = field(entry, "message_hex");
+            let refused = field(entry, "signature_hex");
+            assert!(
+                verifies_in_own_mode(&key, refusal.mode, &own_message, refusal.context, &refused),
+                "{} is not a valid signature in its own mode",
+                refusal.name
+            );
+            assert!(
+                verify_ml_dsa_44(
+                    &public_bytes,
+                    &refused,
+                    &message,
+                    AGENT_GUARANTOR_SIGNATURE_CONTEXT
+                )
+                .is_err(),
+                "{} verified as a Guarantor authorization",
+                refusal.name
+            );
+        }
+        Ok(())
+    }
+}
+
 pub(crate) fn native_signature_chain(
     action: &Cell,
     signatures: &[NativeControllerSignature],
