@@ -955,6 +955,7 @@ dependencies = [
  "control-client",
  "ed25519-dalek",
  "errno",
+ "fips204",
  "fs2",
  "hex",
  "libc",
