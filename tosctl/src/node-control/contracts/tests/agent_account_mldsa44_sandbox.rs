@@ -400,6 +400,8 @@ fn a_refusal_after_acceptance_consumes_the_counters_without_a_transfer() {
     let refused = f.deliver(&relayed, &envelope);
     assert_eq!(refused.exit_code, Some(ERR_INSUFFICIENT_BALANCE), "{refused:?}");
     assert!(refused.committed, "the refusal comes after commit(): the state is committed");
+    assert!(!refused.aborted, "an empty action phase succeeds, so the transaction is not aborted");
+    assert!(refused.outbound.is_empty(), "no bounce: the forwarded value stays in the account");
     assert!(f.transfers_to_target(&refused).is_empty(), "{refused:?}");
     assert_eq!(f.counters().1, seqno.checked_add(1).unwrap(), "the seqno was committed");
     assert_eq!(f.auth().nonce, 1, "the auth nonce was committed");

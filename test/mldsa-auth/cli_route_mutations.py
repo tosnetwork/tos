@@ -18,6 +18,10 @@ mutated file before the next control:
   sender; its unit test must fail.
 - custody-ignores-account: the journal accepts a submission for another
   account; its unit test must fail.
+- epoch-change-fence-ignored: the journal admits claims while install has
+  fenced the account; its unit test must fail.
+- classifier-ignores-action-rollback: a delivery whose action phase failed
+  is counted as committed; the resolver's unit test must fail.
 
 Exits nonzero when any control behaves otherwise.
 """
@@ -163,6 +167,42 @@ mutation(
             CARGO_DIR,
             True,
             "an_mldsa_submission_is_journaled_only_when_every_layer_matches_the_claim",
+        )
+    ],
+)
+mutation(
+    "epoch-change-fence-ignored",
+    [
+        (
+            CUSTODY,
+            "    if document.epoch_change_fences.contains_key(&generation) {",
+            "    if false && document.epoch_change_fences.contains_key(&generation) {",
+        )
+    ],
+    [
+        (
+            CONTRACTS_LIB + ["an_epoch_change_fence_excludes_claims_until_it_is_lifted"],
+            CARGO_DIR,
+            True,
+            "an_epoch_change_fence_excludes_claims_until_it_is_lifted",
+        )
+    ],
+)
+mutation(
+    "classifier-ignores-action-rollback",
+    [
+        (
+            CLI,
+            "    let committed = !description.aborted\n        && matches!",
+            "    let committed = matches!",
+        )
+    ],
+    [
+        (
+            COMMANDS_LIB + ["account_transactions_are_classified_by_module_envelope"],
+            CARGO_DIR,
+            True,
+            "account_transactions_are_classified_by_module_envelope_commit_and_transfer",
         )
     ],
 )

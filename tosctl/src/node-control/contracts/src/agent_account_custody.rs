@@ -278,6 +278,11 @@ struct JournalDocument {
     high_water: std::collections::BTreeMap<String, FinalizedHighWater>,
     #[serde(default)]
     economic_authority_high_water: std::collections::BTreeMap<String, EconomicAuthorityHighWater>,
+    /// Generations whose controller epoch an owner operation (staging an
+    /// authentication module) is about to advance. No claim is admitted for
+    /// them until the operation is finished, so none can be stranded by it.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    epoch_change_fences: std::collections::BTreeMap<String, FinalizedHighWater>,
     records: Vec<ControllerActionRecord>,
 }
 
@@ -869,6 +874,88 @@ impl AgentAccountCustodyJournal {
                         && record.status != ControllerActionStatus::Resolved
                 })
                 .count())
+        })
+    }
+
+    /// Fences one account generation before an owner operation that advances
+    /// its controller epoch from the finalized `(controller_epoch, seqno)`.
+    /// Under the journal lock: refused while any of its actions is unresolved;
+    /// from then on no claim is admitted for it until
+    /// [`Self::end_controller_epoch_change`]. Re-entering with the same
+    /// counters resumes an unfinished change; other counters are refused.
+    pub fn begin_controller_epoch_change(
+        &self,
+        account: &str,
+        network_global_id: i32,
+        deployment_id: &str,
+        controller_epoch: u64,
+        seqno: u32,
+    ) -> anyhow::Result<()> {
+        validate_generation(account, network_global_id, deployment_id)?;
+        let generation = generation_key_parts(account, network_global_id, deployment_id);
+        let start = FinalizedHighWater { controller_epoch, seqno };
+        self.with_document(|document| {
+            let unresolved = document
+                .records
+                .iter()
+                .filter(|record| {
+                    generation_key(&record.claim) == generation
+                        && record.status != ControllerActionStatus::Resolved
+                })
+                .count();
+            if unresolved != 0 {
+                anyhow::bail!(
+                    "{unresolved} custody action(s) of this Agent Account are unresolved; resolve them before an operation that advances the controller epoch"
+                );
+            }
+            if let Some(high) = document.high_water.get(&generation)
+                && (controller_epoch, seqno) < (high.controller_epoch, high.seqno)
+            {
+                anyhow::bail!("Agent Account finalized controller epoch/seqno rolled back");
+            }
+            match document.epoch_change_fences.get(&generation) {
+                Some(existing) if *existing != start => anyhow::bail!(
+                    "an unfinished authentication change started from other counters; finish it first"
+                ),
+                Some(_) => {}
+                None => {
+                    document.epoch_change_fences.insert(generation.clone(), start);
+                }
+            }
+            Ok(())
+        })
+    }
+
+    /// Lifts the fence once the finalized state is known: the change landed
+    /// (counters advanced) or was never sent (counters unchanged). A
+    /// generation without a fence is left as it is.
+    pub fn end_controller_epoch_change(
+        &self,
+        account: &str,
+        network_global_id: i32,
+        deployment_id: &str,
+        finalized_controller_epoch: u64,
+        finalized_seqno: u32,
+    ) -> anyhow::Result<()> {
+        validate_generation(account, network_global_id, deployment_id)?;
+        let generation = generation_key_parts(account, network_global_id, deployment_id);
+        self.with_document(|document| {
+            let Some(start) = document.epoch_change_fences.get(&generation).copied() else {
+                return Ok(());
+            };
+            let finalized = (finalized_controller_epoch, finalized_seqno);
+            if finalized < (start.controller_epoch, start.seqno) {
+                anyhow::bail!("finalized counters are older than the authentication change");
+            }
+            document.epoch_change_fences.remove(&generation);
+            let high = document.high_water.entry(generation).or_default();
+            if finalized > (high.controller_epoch, high.seqno) {
+                *high = FinalizedHighWater {
+                    controller_epoch: finalized_controller_epoch,
+                    seqno: finalized_seqno,
+                };
+            }
+            Ok(())
         })
     }
 
@@ -2303,6 +2390,11 @@ fn admit_claim(
     now: u64,
 ) -> anyhow::Result<(ControllerActionRecord, bool)> {
     let generation = generation_key(&claim);
+    if document.epoch_change_fences.contains_key(&generation) {
+        anyhow::bail!(
+            "an authentication change of this Agent Account is in progress; finish it (mldsa44-install) before claiming actions"
+        );
+    }
     if document.records.iter().any(|record| {
         record.claim.account == claim.account
             && record.claim.network_global_id == claim.network_global_id
@@ -3547,6 +3639,36 @@ mod tests {
         assert_eq!(record.exact_signed_boc_base64.as_deref(), Some(boc.as_str()));
         journal.begin_broadcast(&action, 13).unwrap();
         assert_eq!(journal.unresolved_count(generation.0, generation.1, generation.2).unwrap(), 1);
+    }
+
+    #[test]
+    fn an_epoch_change_fence_excludes_claims_until_it_is_lifted() {
+        let directory = tempfile::tempdir().unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let journal =
+            AgentAccountCustodyJournal::open(directory.path().canonicalize().unwrap()).unwrap();
+        let action = mldsa_claim(3);
+        let (account, id, deployment) =
+            (&action.account, action.network_global_id, &action.deployment_id);
+        journal.begin_controller_epoch_change(account, id, deployment, 3, 3).unwrap();
+        // Resuming the same change is allowed; another starting point is not.
+        journal.begin_controller_epoch_change(account, id, deployment, 3, 3).unwrap();
+        assert!(journal.begin_controller_epoch_change(account, id, deployment, 3, 4).is_err());
+        // No claim is admitted while the change is in progress.
+        assert!(journal.claim_primary(action.clone(), 10).is_err());
+        assert!(journal.end_controller_epoch_change(account, id, deployment, 3, 2).is_err());
+        journal.end_controller_epoch_change(account, id, deployment, 4, 4).unwrap();
+        // Lifting twice is a no-op; the high-water mark moved to the new counters.
+        journal.end_controller_epoch_change(account, id, deployment, 4, 4).unwrap();
+        assert!(journal.claim_primary(action.clone(), 11).is_err(), "rolled-back counters");
+        let current = ControllerActionClaim { controller_epoch: 4, ..mldsa_claim(4) };
+        assert!(journal.claim_primary(current.clone(), 12).unwrap().1);
+        // An unresolved action blocks the next change.
+        assert!(journal.begin_controller_epoch_change(account, id, deployment, 4, 4).is_err());
     }
 
     fn deploy_claim(seqno: u32) -> (ControllerActionClaim, StateInit, Cell) {
