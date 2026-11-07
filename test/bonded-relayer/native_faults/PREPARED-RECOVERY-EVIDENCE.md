@@ -85,6 +85,6 @@ python3 test/bonded-relayer/native_faults/prepared_controls.py --out /new/python
 python3 test/bonded-relayer/native_faults/prepared_native_controls.py --checkout "$PWD" --custody /retained/local-operator --inactive-unit LOCAL.service --out /new/native-controls
 ```
 
-The native runner requires CARGO_TARGET_DIR and Rust1.97.1, builds before every runtime check and restores exact prepared.rs bytes in finally. Setup/compilation failures are never RED evidence. The historical fixture driver accepts global-id3 only; it emits sanitized hashes, not signed payloads, seeds, tokens or SQL snapshots. Fresh end-to-end lost-reply execution is not claimed by these historical lookups.
+The native runner requires CARGO_TARGET_DIR and Rust1.99.1, builds before every runtime check and restores exact prepared.rs bytes in finally. Setup/compilation failures are never RED evidence. The historical fixture driver accepts global-id3 only; it emits sanitized hashes, not signed payloads, seeds, tokens or SQL snapshots. Fresh end-to-end lost-reply execution is not claimed by these historical lookups.
 
 Upstream comparison: BR1 Rust/Python paths absent at upstream857b8a57a178e6ae0fe7fa86e7d81c5233de8560; base bb2b07a40d838940bc16efa6cf72d24bc343c148. No inherited core change.

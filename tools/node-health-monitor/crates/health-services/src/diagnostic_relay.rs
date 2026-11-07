@@ -57,7 +57,7 @@ impl Stats {
     }
     fn add(&self, counter: &AtomicU64, n: u64) {
         if counter
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |old| old.checked_add(n))
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |old| old.checked_add(n))
             .is_err()
         {
             self.counter_complete.store(false, Ordering::Relaxed);
