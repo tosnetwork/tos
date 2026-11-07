@@ -1,14 +1,15 @@
 {
  "schema": "tos.evidence.index.v1",
- "claim": "On an isolated local chain, tosctl installs an ML-DSA-44 root, refuses the cutover while the staged module has authenticated nothing, relays a send from a non-owner wallet and rebroadcasts it byte for byte through another, resolves it by three RPC views, refuses cutovers to mode 3, mode 1 and a mistyped address, cuts over to mode 2, refuses a second cutover, rotates the root in strict mode, refuses the old root (in tosctl, and on chain with exit 1800 for a submission the old root signed earlier), sends with the new root, and the node refuses the Ed25519 controller (1807)",
- "reviewed_commit": "a42c87d89fc42d6e66d9564107a6d8c71df07f1d",
- "tree": "5ae45f989e61558bb918e361df1cdb91ce557b49",
+ "claim": "On an isolated local chain, tosctl installs an ML-DSA-44 root, refuses the cutover while the staged module has authenticated nothing, relays a send from a non-owner wallet and rebroadcasts it byte for byte through another, resolves it by three RPC views and finds the target credited by exactly the resolved transfer message, refuses cutovers to mode 3, mode 1 and a mistyped address, cuts over to mode 2, refuses a second cutover, rotates the root in strict mode, refuses the old root (in tosctl, and on chain with exit 1800 for a submission the old root signed earlier), sends with the new root, and the node refuses the Ed25519 controller (1807)",
+ "reviewed_commit": "12f7c879a46bbaaf622373e0b48021170ee13c39",
+ "tree": "25368dfff92c49172670903dae8bf62b6be1080e",
  "runner": "scripts/agent-account-mldsa44-strict-rehearsal.py",
  "command": "TOSCTL=<tosctl of the commit> TOS_BUILD_DIR=/tos/build/pr371-rerun/build TOS_SOURCE_DIR=<checkout> REHEARSAL_DIR=<private empty dir> PYTHONPATH=test/tostester/src uv run --frozen python scripts/agent-account-mldsa44-strict-rehearsal.py",
  "result": {
   "exit": 0,
   "final_line": "=== RESULT: ALL PASS ===",
-  "checks_passed": 35
+  "checks_passed": 37,
+  "self_test": "REHEARSAL_SELF_TEST_OK"
  },
  "binaries": {
   "tosctl": "sha256:b3ffd22445bf54176dd2b39ea39bce0a37fb1b0612cea87787e277653fa03cb2",
@@ -37,13 +38,13 @@
   "new_module": "570a064f8cd152c32f2c8a5694e1807c39cfb54efabb7e1147552a3c907cc239"
  },
  "zerostate": {
-  "root": "d9f945e344e0d9417c6fd4b52b4eb85f1afca2b369dacf9151f5c78322a60c78",
-  "file": "9c7a57fbcd21fe404ad6ef8ff49ab60ec13e53b176f1f84a30657ca51cf83045"
+  "root": "6d3cdd64e99a2b242550b640aca0b04a5d7c13eaae2a71dceae38d449cc59551",
+  "file": "4bda6f9be04ab5b7a06c2bf849fc2386ad13ba7f02084d5e953a4e081b5f22f2"
  },
  "raw_evidence": {
   "path": "/tos/build/aa-followup-rehearsal-root/run/evidence.json",
-  "sha256": "f51860597de5b2a60d352d5f6df2cc720529d9e241cad6ba9514e63cfc3f2451",
-  "size": 70520,
+  "sha256": "7d046a3271c18abb1659403ca5f8d6c25b779290918161411cf7ef025c4ab716",
+  "size": 71052,
   "retention": "kept until both stacked pull requests merge"
  }
 }
