@@ -380,6 +380,20 @@ def agent_identity(
     )
 
 
+def capability_registration_payload(
+    nonce: bytes, owner: bytes, version: bytes, manifest: bytes
+) -> Cell:
+    """`object_nonce owner ^(version_hash manifest ^version_name)` of a capability registration."""
+    details = (
+        Builder()
+        .store_bytes(hashlib.sha256(version).digest())
+        .store_bytes(manifest)
+        .store_ref(Builder().store_bytes(version).end_cell())
+        .end_cell()
+    )
+    return Builder().store_bytes(nonce).store_bytes(owner).store_ref(details).end_cell()
+
+
 def capability_identity(
     root: bytes,
     file: bytes,
@@ -607,14 +621,7 @@ def main() -> int:
     cap_id = capability_identity(root, file, network, nonce_cap, id_a, version_100, manifest_100)
     cap_init = state_init(code, config, 2, cap_id)
     cap_addr = address_of(workchain, cap_init)
-    details = (
-        Builder()
-        .store_bytes(hashlib.sha256(version_100).digest())
-        .store_bytes(manifest_100)
-        .store_ref(Builder().store_bytes(version_100).end_cell())
-        .end_cell()
-    )
-    payload = Builder().store_bytes(nonce_cap).store_bytes(id_a).store_ref(details).end_cell()
+    payload = capability_registration_payload(nonce_cap, id_a, version_100, manifest_100)
     act = action(REGISTER_CAPABILITY, 2, 1, 1, cap_id, bytes(32), query, signed_domain, payload)
     send_wallet_message(
         config_path,

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import importlib.util
 import json
 import sys
 import unittest
@@ -33,95 +34,52 @@ VECTORS = json.loads(
         / "tosctl/src/node-control/contracts/tests/fixtures/native_registry/protocol-vectors.json"
     ).read_text()
 )
-MAGIC_ACTION = 0x4E564131
-MAGIC_IDENTITY = 0x4E564931
-OP_SUBMIT = 0x4E560001
-OP_AUTHORIZE_CAPABILITY = 0x4E560002
 GENESIS_ROOT = bytes([0x11]) * 32
 GENESIS_FILE = bytes([0x22]) * 32
 NETWORK = "tos-testnet"
+
+
+def load_gate():
+    """Gate C itself, so that its own builders are what is checked."""
+    spec = importlib.util.spec_from_file_location(
+        "gate_c", ROOT / "scripts/tos-service-native-registry-local-gate-c.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+gate = load_gate()
 
 
 def hex_of(tagged: str) -> str:
     return tagged.split(":", 1)[1]
 
 
-def code_hash() -> bytes:
-    return bytes.fromhex(hex_of(VECTORS["contract_code_hash"]))
-
-
-def identity_domain() -> Cell:
-    return (
-        Builder()
-        .store_bytes(GENESIS_ROOT)
-        .store_bytes(GENESIS_FILE)
-        .store_bytes(hashlib.sha256(NETWORK.encode()).digest())
-        .end_cell()
-    )
-
-
-def signed_domain() -> Cell:
-    return (
-        Builder()
-        .store_bytes(GENESIS_ROOT)
-        .store_bytes(GENESIS_FILE)
-        .store_bytes(hashlib.sha256(NETWORK.encode()).digest())
-        .store_ref(Builder().store_bytes(code_hash()).end_cell())
-        .end_cell()
-    )
-
-
-def action(kind: int, target_kind: int, object_id: bytes, nonce: int, payload: Cell) -> Cell:
-    return (
-        Builder()
-        .store_uint(MAGIC_ACTION, 32)
-        .store_uint(1, 16)
-        .store_uint(kind, 8)
-        .store_uint(target_kind, 8)
-        .store_uint(1, 64)
-        .store_uint(1, 64)
-        .store_bytes(object_id)
-        .store_bytes(bytes(32))
-        .store_bytes(bytes([nonce]) * 32)
-        .store_ref(signed_domain())
-        .store_ref(payload)
-        .end_cell()
-    )
-
-
-def body(opcode: int, action_cell: Cell, authority: Cell) -> Cell:
-    return (
-        Builder()
-        .store_uint(opcode, 32)
-        .store_uint(1, 64)
-        .store_ref(action_cell)
-        .store_ref(authority)
-        .store_ref(registry_pq.signature_set([]))
-        .end_cell()
-    )
-
-
 def frozen_action(entry: str) -> Cell:
     return Cell.one_from_boc(base64.b64decode(VECTORS[entry]["action_boc_base64"]))
 
 
+def signed_domain() -> Cell:
+    code_hash = bytes.fromhex(hex_of(VECTORS["contract_code_hash"]))
+    return gate.domain_cell(GENESIS_ROOT, GENESIS_FILE, NETWORK, code_hash)
+
+
 class VectorController(unittest.TestCase):
-    """The vector controller is the ML-DSA-44 key of the fixed seed 0102..20."""
+    """The vector controller is the ML-DSA-44 key of the fixed seed 0102..20. Every cell
+    below is rebuilt with Gate C's own builders and compared with the frozen vector."""
 
     @classmethod
     def setUpClass(cls):
         cls.controller = registry_pq.Controller(bytes(range(1, 33)))
         cls.policy = registry_pq.single_controller_policy(cls.controller, timelock=86_400)
-        cls.agent_id = (
-            Builder()
-            .store_uint(MAGIC_IDENTITY, 32)
-            .store_uint(1, 8)
-            .store_bytes(bytes([0x6F]) * 32)
-            .store_bytes(cls.policy.hash)
-            .store_ref(identity_domain())
-            .end_cell()
-            .hash
+        cls.agent_id = gate.agent_identity(
+            GENESIS_ROOT, GENESIS_FILE, NETWORK, bytes([0x6F]) * 32, cls.policy
         )
+
+    def submission(self, opcode: int, act: Cell) -> Cell:
+        authority = registry_pq.signed_by([self.controller], act)
+        return gate.body(opcode, 1, act, authority, registry_pq.signature_set([]))
 
     def test_key_generation_and_key_id_match_the_contract_vectors(self):
         controller = VECTORS["controller"]
@@ -138,33 +96,62 @@ class VectorController(unittest.TestCase):
 
     def test_agent_registration_action_signature_and_body_are_byte_exact(self):
         payload = Builder().store_bytes(bytes([0x6F]) * 32).store_ref(self.policy).end_cell()
-        built = action(1, 1, self.agent_id, 0x61, payload)
-        frozen = frozen_action("agent_registration")
-        self.assertEqual(built.hash, frozen.hash)
+        built = gate.action(
+            gate.REGISTER_AGENT, 1, 1, 1, self.agent_id, bytes(32), 0x61, signed_domain(), payload
+        )
+        self.assertEqual(built.hash, frozen_action("agent_registration").hash)
         self.assertEqual(built.hash.hex(), hex_of(VECTORS["agent_registration"]["action_hash"]))
-        signature = self.controller.sign(built)
         self.assertEqual(
-            hashlib.sha256(signature).hexdigest(),
+            hashlib.sha256(self.controller.sign(built)).hexdigest(),
             hex_of(VECTORS["agent_registration"]["signature_sha256"]),
         )
-        submission = body(OP_SUBMIT, built, registry_pq.signed_by([self.controller], built))
         self.assertEqual(
-            submission.hash.hex(),
+            self.submission(gate.OP_SUBMIT, built).hash.hex(),
             hex_of(VECTORS["agent_registration"]["submission_body_hash"]),
         )
 
-    def test_capability_registration_body_is_byte_exact(self):
-        frozen = frozen_action("capability_registration")
-        self.assertEqual(
-            frozen.hash.hex(), hex_of(VECTORS["capability_registration"]["action_hash"])
-        )
-        submission = body(
-            OP_AUTHORIZE_CAPABILITY, frozen, registry_pq.signed_by([self.controller], frozen)
+    def test_capability_registration_identity_action_and_body_are_byte_exact(self):
+        nonce, version, manifest = bytes([0x63]) * 32, b"1.0.0", bytes([0x55]) * 32
+        capability_id = gate.capability_identity(
+            GENESIS_ROOT, GENESIS_FILE, NETWORK, nonce, self.agent_id, version, manifest
         )
         self.assertEqual(
-            submission.hash.hex(),
+            "cap_" + capability_id.hex(), VECTORS["capability_registration"]["object_id"]
+        )
+        payload = gate.capability_registration_payload(nonce, self.agent_id, version, manifest)
+        built = gate.action(
+            gate.REGISTER_CAPABILITY,
+            2,
+            1,
+            1,
+            capability_id,
+            bytes(32),
+            0x62,
+            signed_domain(),
+            payload,
+        )
+        self.assertEqual(built.hash, frozen_action("capability_registration").hash)
+        self.assertEqual(
+            hashlib.sha256(self.controller.sign(built)).hexdigest(),
+            hex_of(VECTORS["capability_registration"]["signature_sha256"]),
+        )
+        self.assertEqual(
+            self.submission(gate.OP_AUTHORIZE_CAPABILITY, built).hash.hex(),
             hex_of(VECTORS["capability_registration"]["submission_body_hash"]),
         )
+
+    def test_gate_policy_and_signature_set_use_the_identity_controller(self):
+        identity_seed = bytes([0x2A]) * 32
+        controller = registry_pq.controller_for(identity_seed)
+        self.assertEqual(
+            gate.policy(identity_seed).hash, registry_pq.single_controller_policy(controller).hash
+        )
+        act = frozen_action("agent_registration")
+        self.assertEqual(
+            gate.signature_set(identity_seed, act).hash,
+            registry_pq.signed_by([controller], act).hash,
+        )
+        self.assertEqual(gate.signature_set(None, act).hash, registry_pq.signature_set([]).hash)
 
 
 class Encoders(unittest.TestCase):
