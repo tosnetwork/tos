@@ -38,6 +38,27 @@ mutated file before the next control:
   existing claim is recovered or released; its unit test must fail.
 - classifier-ignores-action-rollback: a delivery whose action phase failed
   is counted as committed; the resolver's unit test must fail.
+- relay-signed-field-unverified: the module's PQCHECKSIG refusal is deleted;
+  the sandbox test that a relayer cannot change any signed field must fail.
+- relay-body-digest-ignored: the SDK relays bytes that are not the journaled
+  digest's; its unit test must fail.
+- relay-not-bounceable: the relay wallet message is not bounceable; the
+  refused-relay bounce sandbox case and the CLI relay test must fail.
+- journal-relay-ignores-digest, journal-relay-ignores-kind-and-status,
+  journal-relay-cap-removed, journal-load-accepts-misplaced-relays: the
+  custody journal records a relay of other bytes, of another action kind or
+  state, past the cap, or loads misplaced relay history; their tests must fail.
+- relayer-forced-to-owner, send-ignores-relayer-argument,
+  relay-rebuilds-submission: the relay goes from the owner wallet whatever
+  --relayer names (in the resolver, or at the command's own selection), or
+  sends a rebuilt submission; the CLI relay orchestration test must fail.
+- relayer-fee-check-dropped, relayer-fees-not-counted: a relayer that cannot
+  pay the relay amount plus its own fees relays anyway; their tests must fail.
+- relay-fee-ignores-destination-workchain: the relay fee bound prices the
+  outbound message by the sender's workchain only; the basechain-to-masterchain
+  wallet sandbox case and the fee-parameter test must fail.
+
+`--controls a,b` runs only the named mutations (plus baseline and restored).
 
 Exits nonzero when any control behaves otherwise.
 """
@@ -50,6 +71,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 CARGO_DIR = ROOT / "tosctl/src"
 OUTPUT = Path(sys.argv[1])
+# Optional "--controls a,b": run only these mutations (the baseline and the
+# restored checks always run). The results name every control that ran.
+SELECTED = None
+if len(sys.argv) == 4 and sys.argv[2] == "--controls":
+    SELECTED = set(sys.argv[3].split(","))
+elif len(sys.argv) != 2:
+    raise SystemExit("usage: cli_route_mutations.py <results.json> [--controls a,b]")
 MODULE_SOURCE = "crypto/smartcont/mldsa44-auth-module.fc"
 SDK = "tosctl/src/node-control/contracts/src/agent_account_auth.rs"
 CLI = "tosctl/src/node-control/commands/src/commands/nodectl/agent_cmd/mldsa44.rs"
@@ -58,9 +86,12 @@ SANDBOX = ["cargo", "test", "-p", "contracts", "--test", "agent_account_mldsa44_
 CONTRACTS_LIB = ["cargo", "test", "-p", "contracts", "--lib", "--"]
 COMMANDS_LIB = ["cargo", "test", "-p", "commands", "--lib", "--no-default-features", "--"]
 REGENERATE = ["python3", "scripts/update-auth-contract-code.py"]
+SEND_FEES = "tosctl/src/node-control/contracts/src/wallet/send_fees.rs"
+WALLET_SANDBOX = ["cargo", "test", "-p", "contracts", "--test", "wallet_sandbox", "--"]
 
 results = []
 mismatches = []
+ran = set()
 
 
 def run(command, cwd):
@@ -97,6 +128,9 @@ def replace_once(path, old, new):
 
 
 def mutation(name, edits, steps):
+    if SELECTED is not None and name not in SELECTED:
+        return
+    ran.add(name)
     originals = {path: (ROOT / path).read_bytes() for path, _, _ in edits}
     originals[SDK] = (ROOT / SDK).read_bytes()
     try:
@@ -353,6 +387,264 @@ mutation(
         )
     ],
 )
+mutation(
+    "relay-signed-field-unverified",
+    [
+        (
+            MODULE_SOURCE,
+            "  throw_unless(auth::bad_signature, pq_check_mldsa44(message, context, signature, public_key));\n",
+            "",
+        )
+    ],
+    [
+        (REGENERATE, ROOT, False, "Updated: " + SDK),
+        (
+            SANDBOX + ["a_relayer_cannot_change_any_signed_field"],
+            CARGO_DIR,
+            True,
+            "a_relayer_cannot_change_any_signed_field",
+        ),
+    ],
+)
+mutation(
+    "relay-body-digest-ignored",
+    [
+        (
+            SDK,
+            "    ensure!(\n        digest == expected_digest,",
+            "    ensure!(\n        true || digest == expected_digest,",
+        )
+    ],
+    [
+        (
+            CONTRACTS_LIB + ["a_relay_body_is_exactly_the_journaled_bytes"],
+            CARGO_DIR,
+            True,
+            "a_relay_body_is_exactly_the_journaled_bytes",
+        )
+    ],
+)
+mutation(
+    "relay-not-bounceable",
+    [
+        (
+            SDK,
+            "wallet.build_message(module.clone(), amount, body, true, seqno, None, None)",
+            "wallet.build_message(module.clone(), amount, body, false, seqno, None, None)",
+        )
+    ],
+    [
+        (
+            SANDBOX + ["a_relay_the_module_refuses_bounces_to_its_relayer"],
+            CARGO_DIR,
+            True,
+            "a_relay_the_module_refuses_bounces_to_its_relayer",
+        ),
+        (
+            COMMANDS_LIB + ["a_send_and_its_rebroadcast_relay_the_journaled_bytes"],
+            CARGO_DIR,
+            True,
+            "a_send_and_its_rebroadcast_relay_the_journaled_bytes_from_the_chosen_wallets",
+        ),
+    ],
+)
+mutation(
+    "journal-relay-ignores-digest",
+    [
+        (
+            CUSTODY,
+            "            if record.exact_signed_boc_digest.as_deref() != Some(exact_submission_digest) {",
+            "            if false && record.exact_signed_boc_digest.as_deref() != Some(exact_submission_digest) {",
+        )
+    ],
+    [
+        (
+            CONTRACTS_LIB + ["relays_are_journaled_only_for_a_broadcasting_mldsa_submission"],
+            CARGO_DIR,
+            True,
+            "relays_are_journaled_only_for_a_broadcasting_mldsa_submission",
+        ),
+        (
+            COMMANDS_LIB + ["a_relay_never_sends_bytes_other_than_the_journaled_ones"],
+            CARGO_DIR,
+            True,
+            "a_relay_never_sends_bytes_other_than_the_journaled_ones",
+        ),
+    ],
+)
+mutation(
+    "journal-relay-ignores-kind-and-status",
+    [
+        (
+            CUSTODY,
+            '            if record.claim.action_kind != MLDSA44_NATIVE_SEND_ACTION_KIND {\n                anyhow::bail!("only an ML-DSA-44 native send is relayed");',
+            '            if false {\n                anyhow::bail!("only an ML-DSA-44 native send is relayed");',
+        ),
+        (
+            CUSTODY,
+            "            if record.status != ControllerActionStatus::Broadcasting\n                || record.exact_signed_boc_base64.is_none()\n            {",
+            "            if false {",
+        ),
+    ],
+    [
+        (
+            CONTRACTS_LIB + ["relays_are_journaled_only_for_a_broadcasting_mldsa_submission"],
+            CARGO_DIR,
+            True,
+            "relays_are_journaled_only_for_a_broadcasting_mldsa_submission",
+        )
+    ],
+)
+mutation(
+    "journal-relay-cap-removed",
+    [
+        (
+            CUSTODY,
+            "            if record.mldsa44_relays.len() >= MAX_MLDSA44_RELAY_ATTEMPTS {",
+            "            if false {",
+        )
+    ],
+    [
+        (
+            CONTRACTS_LIB + ["relays_stop_at_the_cap_and_survive_resolution_and_reopening"],
+            CARGO_DIR,
+            True,
+            "relays_stop_at_the_cap_and_survive_resolution_and_reopening",
+        )
+    ],
+)
+mutation(
+    "journal-load-accepts-misplaced-relays",
+    [(CUSTODY, "            if !relayed {", "            if false && !relayed {")],
+    [
+        (
+            CONTRACTS_LIB + ["a_journal_with_misplaced_relay_attempts_is_refused"],
+            CARGO_DIR,
+            True,
+            "a_journal_with_misplaced_relay_attempts_is_refused",
+        )
+    ],
+)
+mutation(
+    "relayer-forced-to-owner",
+    [
+        (
+            CLI,
+            "    match relayer {\n        None => Ok(",
+            "    match None::<&str> {\n        None => Ok(",
+        )
+    ],
+    [
+        (
+            COMMANDS_LIB + ["a_send_and_its_rebroadcast_relay_the_journaled_bytes"],
+            CARGO_DIR,
+            True,
+            "a_send_and_its_rebroadcast_relay_the_journaled_bytes_from_the_chosen_wallets",
+        )
+    ],
+)
+mutation(
+    "send-ignores-relayer-argument",
+    [
+        (
+            CLI,
+            "        resolve_relayer(self.relayer.as_deref(), wallets, master_wallet, owner)",
+            "        resolve_relayer(None, wallets, master_wallet, owner)",
+        )
+    ],
+    [
+        (
+            COMMANDS_LIB + ["a_send_and_its_rebroadcast_relay_the_journaled_bytes"],
+            CARGO_DIR,
+            True,
+            "a_send_and_its_rebroadcast_relay_the_journaled_bytes_from_the_chosen_wallets",
+        )
+    ],
+)
+mutation(
+    "relay-rebuilds-submission",
+    [
+        (
+            CLI,
+            "    let body = journaled_relay_body(record)?;\n    let submission_digest",
+            "    let body = {\n        let parsed = parse_mldsa44_submit(&journaled_relay_body(record)?)?;\n"
+            "        build_mldsa44_submit(parsed.query_id.wrapping_add(1), &parsed.envelope, &parsed.signature)?\n"
+            "    };\n    let submission_digest",
+        )
+    ],
+    [
+        (
+            COMMANDS_LIB + ["a_send_and_its_rebroadcast_relay_the_journaled_bytes"],
+            CARGO_DIR,
+            True,
+            "a_send_and_its_rebroadcast_relay_the_journaled_bytes_from_the_chosen_wallets",
+        )
+    ],
+)
+mutation(
+    "relayer-fee-check-dropped",
+    [
+        (
+            CLI,
+            "wallet_reserve(&loaded.address, &module, &body).await?;\n"
+            "    relayer_can_pay(&relayer.label, loaded.active, balance, relay_amount, reserve)?;\n",
+            "wallet_reserve(&loaded.address, &module, &body).await?;\n    let _ = (balance, reserve);\n",
+        )
+    ],
+    [
+        (
+            COMMANDS_LIB + ["a_relayer_that_cannot_pay_sends_and_journals_nothing"],
+            CARGO_DIR,
+            True,
+            "a_relayer_that_cannot_pay_sends_and_journals_nothing",
+        )
+    ],
+)
+mutation(
+    "relayer-fees-not-counted",
+    [
+        (
+            CLI,
+            '        .checked_add(reserve)\n        .context("the relay amount plus fees overflows")?;',
+            '        .checked_add(0)\n        .context("the relay amount plus fees overflows")?;',
+        )
+    ],
+    [
+        (
+            COMMANDS_LIB + ["a_relayer_pays_the_relay_amount_and_its_own_fees"],
+            CARGO_DIR,
+            True,
+            "a_relayer_pays_the_relay_amount_and_its_own_fees",
+        )
+    ],
+)
+mutation(
+    "relay-fee-ignores-destination-workchain",
+    [
+        (
+            SEND_FEES,
+            "    if source_workchain == -1 || destination_workchain == -1 { 24 } else { 25 }",
+            "    if source_workchain == -1 { 24 } else { 25 }",
+        )
+    ],
+    [
+        (
+            WALLET_SANDBOX
+            + ["a_basechain_relay_to_the_masterchain_is_priced_at_the_masterchain_tariff"],
+            CARGO_DIR,
+            True,
+            "a_basechain_relay_to_the_masterchain_is_priced_at_the_masterchain_tariff",
+        ),
+        (
+            COMMANDS_LIB + ["the_relay_fee_bound_reads_the_outbound_tariff_of_both_endpoints"],
+            CARGO_DIR,
+            True,
+            "the_relay_fee_bound_reads_the_outbound_tariff_of_both_endpoints",
+        ),
+    ],
+)
+if SELECTED is not None and SELECTED != ran:
+    raise SystemExit(f"unknown controls: {sorted(SELECTED - ran)}")
 for command in (SANDBOX, CONTRACTS_LIB + ["agent_account"], COMMANDS_LIB + ["mldsa44"]):
     check("restored", command, CARGO_DIR, False, None)
 

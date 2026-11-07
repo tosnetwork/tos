@@ -10,20 +10,27 @@
 //! signature, and every hop executed as its own transaction so each refusal is
 //! observed where it happens (relayer -> module -> account -> target).
 
+use chain_block::{BuilderData, Deserializable, IBitstring, Serializable, write_boc};
 use chain_block::{
     CurrencyCollection, Message, MsgAddressInt, SliceData, TrComputePhase, Transaction,
     TransactionDescr, ed25519_create_private_key,
 };
+use common::{WalletVersion, signer::Signer, tvm_stack_parser::TvmStackParser};
 use contracts::agent_account_auth::{
     AUTH_KIND_EXECUTE, AUTH_MODE_LEGACY, AUTH_MODE_STAGED, AgentAccountState, AgentAuthState,
     AuthRequest, Mldsa44AuthModule, auth_request_commitment, build_auth_envelope,
-    build_mldsa44_submit, build_stage_auth_message, read_byte_chain, request_superseded,
-    sign_auth_request,
+    build_mldsa44_relay_wallet_message, build_mldsa44_submit, build_stage_auth_message,
+    mldsa44_relay_body, read_byte_chain, request_superseded, sign_auth_request,
 };
 use contracts::native_registry::{
     NATIVE_REGISTRY_SIGNATURE_CONTEXT, native_public_key_from_seed, sign_ml_dsa_44,
 };
-use contracts::{AgentAccountContract, AgentAccountInit};
+use contracts::{
+    AgentAccountContract, AgentAccountInit, ContractProvider, SmartContract, Wallet, WalletContract,
+};
+use ed25519_dalek::Signer as _;
+use sha2::Digest as _;
+use std::sync::Arc;
 use tos_sandbox::{Blockchain, MessageBuilder, Treasury};
 
 #[path = "fixtures/current_network.rs"]
@@ -472,4 +479,411 @@ fn a_refusal_after_acceptance_consumes_the_counters_without_a_transfer() {
     // the request was applied.
     let epoch = f.counters().0;
     assert!(!request_superseded(&account_state(&f), epoch, seqno, f.auth().epoch, 0));
+}
+
+/// Deterministic in-process signer standing in for the vault-backed one.
+struct TestSigner(ed25519_dalek::SigningKey);
+
+#[async_trait::async_trait]
+impl Signer for TestSigner {
+    async fn public_key(&self) -> anyhow::Result<Vec<u8>> {
+        Ok(self.0.verifying_key().to_bytes().to_vec())
+    }
+
+    async fn sign(&self, message: &[u8]) -> anyhow::Result<Vec<u8>> {
+        Ok(self.0.sign(message).to_bytes().to_vec())
+    }
+}
+
+/// The sandbox has no RPC surface; every wallet message passes its seqno.
+struct NoProvider;
+
+#[async_trait::async_trait]
+impl ContractProvider for NoProvider {
+    async fn get_method(
+        &self,
+        _address: String,
+        method: &str,
+        _stack: Vec<tl_api::tos::tvm::StackEntry>,
+    ) -> anyhow::Result<TvmStackParser> {
+        anyhow::bail!("sandbox relays must not query get-method {method} through RPC")
+    }
+
+    async fn balance(&self, _address: &MsgAddressInt) -> anyhow::Result<u64> {
+        anyhow::bail!("sandbox relays must not query a balance through RPC")
+    }
+}
+
+/// A deployed V5 wallet that relays; it is never the Agent Account owner.
+struct RelayWallet {
+    wallet: WalletContract,
+    seqno: u32,
+}
+
+impl RelayWallet {
+    fn address(&self) -> MsgAddressInt {
+        self.wallet.address()
+    }
+}
+
+/// The relay as it reached the module: the wallet's transaction and the one
+/// message it sent there.
+struct WalletRelay {
+    wallet: Outcome,
+    to_module: Message,
+}
+
+/// What the custody journal holds for a signed submission: exact bytes and digest.
+fn journaled(body: &chain_block::Cell) -> (Vec<u8>, String) {
+    let bytes = write_boc(body).expect("boc");
+    let digest = format!("sha256:{}", hex::encode(sha2::Sha256::digest(&bytes)));
+    (bytes, digest)
+}
+
+impl Fixture {
+    /// Deploys a funded V5 wallet controlled by `secret` with one signed
+    /// transfer, as a relaying operator's wallet would exist on chain.
+    async fn relay_wallet(&mut self, secret: [u8; 32]) -> RelayWallet {
+        let wallet = WalletContract::new(
+            Box::new(TestSigner(ed25519_dalek::SigningKey::from_bytes(&secret))),
+            WalletVersion::V5R1,
+            0x2a,
+            -1,
+            self.global_id,
+            Arc::new(NoProvider),
+        )
+        .await
+        .expect("wallet");
+        let address = wallet.address();
+        assert_ne!(&address, self.owner.address(), "a relaying wallet is not the owner");
+        let fund = self.owner.build_message(&address, 50 * TOS, false, None);
+        self.bc.send_message(fund).expect("fund relaying wallet");
+        let deploy = wallet
+            .build_message(
+                self.target.address().clone(),
+                TOS / 100,
+                chain_block::Cell::default(),
+                false,
+                Some(0),
+                Some(wallet.state_init().await.expect("state init")),
+                None,
+            )
+            .await
+            .expect("deploy message");
+        self.bc
+            .send_message(Message::construct_from_cell(deploy).expect("external"))
+            .expect("deploy relaying wallet")
+            .expect_success();
+        RelayWallet { wallet, seqno: 1 }
+    }
+
+    /// The relayer's signed wallet message for the journaled bytes, built by
+    /// the same SDK calls the CLI makes, without sending it.
+    async fn relay_message(
+        &self,
+        relayer: &RelayWallet,
+        bytes: &[u8],
+        digest: &str,
+        value: u64,
+    ) -> Message {
+        let body = mldsa44_relay_body(bytes, digest).expect("journaled relay body");
+        let boc = build_mldsa44_relay_wallet_message(
+            &relayer.wallet,
+            &self.module,
+            value,
+            body,
+            Some(relayer.seqno),
+        )
+        .await
+        .expect("relay wallet message");
+        Message::construct_from_cell(chain_block::read_single_root_boc(&boc).expect("boc"))
+            .expect("external message")
+    }
+
+    /// Executes a relay wallet message and returns the message it sent to the module.
+    fn execute_wallet_relay(&mut self, relayer: &mut RelayWallet, message: Message) -> WalletRelay {
+        let (address, transaction, outbound) = self.bc.execute_one(message).expect("wallet");
+        assert_eq!(address, relayer.address());
+        let wallet = outcome(&transaction, outbound);
+        assert!(!wallet.aborted && wallet.committed, "{wallet:?}");
+        relayer.seqno = relayer.seqno.checked_add(1).unwrap();
+        let to_module: Vec<_> = wallet
+            .outbound
+            .iter()
+            .filter(|message| message.dst().as_ref() == Some(&self.module))
+            .cloned()
+            .collect();
+        assert_eq!(to_module.len(), 1, "the wallet sends exactly one relay");
+        let to_module = to_module[0].clone();
+        let header = to_module.int_header().expect("internal relay");
+        assert_eq!(&header.src_ref().cloned(), &Some(relayer.address()), "from the relayer");
+        assert!(header.bounce, "the relay is bounceable");
+        WalletRelay { wallet, to_module }
+    }
+
+    /// Executes the module's transaction for a relay message.
+    fn module_transaction(&mut self, message: Message) -> Outcome {
+        let (address, transaction, outbound) = self.bc.execute_one(message).expect("module");
+        assert_eq!(address, self.module);
+        outcome(&transaction, outbound)
+    }
+}
+
+fn body_bytes(message: &Message) -> Vec<u8> {
+    write_boc(&message.body().cloned().expect("body").into_cell().expect("body cell")).expect("boc")
+}
+
+#[tokio::test]
+async fn a_send_relayed_by_a_non_owner_wallet_applies() {
+    let mut f = Fixture::new();
+    f.stage();
+    let mut relayer = f.relay_wallet([0x61; 32]).await;
+    let (submission, envelope) = f.submission(TOS);
+    let (bytes, digest) = journaled(&submission);
+    let owner_before = f.balance(f.owner.address());
+    let relayer_before = f.balance(&relayer.address());
+    let target_before = f.balance(f.target.address());
+
+    let message = f.relay_message(&relayer, &bytes, &digest, RELAY).await;
+    let relay = f.execute_wallet_relay(&mut relayer, message);
+    assert_eq!(body_bytes(&relay.to_module), bytes, "the module receives the journaled bytes");
+    let relayed = f.module_transaction(relay.to_module);
+    let delivered = f.deliver(&relayed, &envelope);
+    assert!(!delivered.aborted, "{delivered:?}");
+    assert_eq!(f.transfers_to_target(&delivered), vec![TOS], "exactly the signed transfer");
+    f.bc.execute_one(delivered.outbound[0].clone()).expect("transfer arrives");
+    assert!(f.balance(f.target.address()) > target_before);
+    assert_eq!(f.auth().nonce, 1);
+
+    // The relayer paid the relay value and its own fees; the owner nothing.
+    let spent = relayer_before.checked_sub(f.balance(&relayer.address())).unwrap();
+    assert!(spent > RELAY, "the relayer pays the relay and its fees: {spent}");
+    assert!(relay.wallet.committed);
+    assert_eq!(f.balance(f.owner.address()), owner_before, "the owner pays nothing");
+}
+
+#[tokio::test]
+async fn a_rebroadcast_through_another_relayer_sends_identical_bytes() {
+    let mut f = Fixture::new();
+    f.stage();
+    let mut first = f.relay_wallet([0x61; 32]).await;
+    let mut second = f.relay_wallet([0x62; 32]).await;
+    assert_ne!(first.address(), second.address());
+    let (submission, envelope) = f.submission(TOS);
+    let (bytes, digest) = journaled(&submission);
+
+    // The first relayer's message is built and withheld.
+    let withheld = f.relay_message(&first, &bytes, &digest, RELAY).await;
+    // The second relayer relays the same journaled bytes, and they apply.
+    let message = f.relay_message(&second, &bytes, &digest, RELAY).await;
+    let relay = f.execute_wallet_relay(&mut second, message);
+    let second_body = body_bytes(&relay.to_module);
+    assert_eq!(second_body, bytes);
+    let relayed = f.module_transaction(relay.to_module);
+    let delivered = f.deliver(&relayed, &envelope);
+    assert!(!delivered.aborted, "{delivered:?}");
+    assert_eq!(f.transfers_to_target(&delivered), vec![TOS]);
+    let (_, seqno) = f.counters();
+
+    // The withheld message, sent late, carries byte-identical bytes; the
+    // module verifies them again and the account refuses the consumed nonce.
+    let relay = f.execute_wallet_relay(&mut first, withheld);
+    assert_eq!(body_bytes(&relay.to_module), second_body, "byte-identical submission");
+    let replayed = f.module_transaction(relay.to_module);
+    let refused = f.deliver(&replayed, &envelope);
+    assert!(refused.aborted && !refused.committed, "{refused:?}");
+    assert_eq!(refused.exit_code, Some(ERR_BAD_NONCE));
+    assert!(f.transfers_to_target(&refused).is_empty());
+    assert_eq!(f.auth().nonce, 1);
+    assert_eq!(f.counters().1, seqno);
+}
+
+#[tokio::test]
+async fn a_relay_the_module_refuses_bounces_to_its_relayer() {
+    let mut f = Fixture::new();
+    f.stage();
+    let mut relayer = f.relay_wallet([0x63; 32]).await;
+    // Well funded but signed with another key: verification runs to the end
+    // and refuses, and what it did not spend returns to the relaying wallet.
+    let valid_until = f.bc.now().checked_add(600).unwrap();
+    let (request, envelope) = f.request(TOS, valid_until);
+    let forged = sign_auth_request(&OTHER_MLDSA_SEED, &request).unwrap();
+    let (bytes, digest) = journaled(&build_mldsa44_submit(9, &envelope, &forged).unwrap());
+    let message = f.relay_message(&relayer, &bytes, &digest, RELAY).await;
+    let relay = f.execute_wallet_relay(&mut relayer, message);
+    let refused = f.module_transaction(relay.to_module);
+    assert!(refused.aborted, "{refused:?}");
+    assert_eq!(refused.exit_code, Some(ERR_BAD_SIGNATURE));
+    assert!(refused.outbound.iter().all(|m| m.dst().as_ref() != Some(&f.account)));
+    let bounces: Vec<_> = refused
+        .outbound
+        .iter()
+        .filter(|m| m.int_header().is_some_and(|header| header.bounced))
+        .cloned()
+        .collect();
+    assert_eq!(bounces.len(), 1, "{refused:?}");
+    assert_eq!(bounces[0].dst(), Some(relayer.address()), "the remainder returns to the relayer");
+    let returned = bounces[0].int_header().unwrap().value.coins.as_u64().unwrap();
+    assert!(returned > 0 && returned < RELAY, "{returned}");
+    let before = f.balance(&relayer.address());
+    f.bc.execute_one(bounces[0].clone()).expect("bounce arrives");
+    assert!(f.balance(&relayer.address()) > before, "the relaying wallet is credited");
+    assert_eq!(f.auth().nonce, 0);
+
+    // Funding that runs out during verification leaves nothing to return.
+    let (submission, _) = f.submission(TOS);
+    let (bytes, digest) = journaled(&submission);
+    let message = f.relay_message(&relayer, &bytes, &digest, TOS / 1_000).await;
+    let relay = f.execute_wallet_relay(&mut relayer, message);
+    let starved = f.module_transaction(relay.to_module);
+    assert!(starved.aborted, "{starved:?}");
+    assert!(starved.outbound.is_empty(), "{starved:?}");
+    assert_eq!(f.auth().nonce, 0);
+}
+
+/// `request$_ global_id account epoch nonce valid_until kind payload`, built
+/// raw so a field can take any structurally valid value, kinds 1 and 2 included.
+struct RawRequest {
+    global_id: i32,
+    account: MsgAddressInt,
+    epoch: u64,
+    nonce: u64,
+    valid_until: u32,
+    kind: u8,
+    payload: chain_block::Cell,
+}
+
+impl RawRequest {
+    fn cell(&self) -> chain_block::Cell {
+        let mut request = BuilderData::new();
+        request.append_i32(self.global_id).unwrap();
+        self.account.write_to(&mut request).unwrap();
+        request.append_u64(self.epoch).unwrap();
+        request.append_u64(self.nonce).unwrap();
+        request.append_u32(self.valid_until).unwrap();
+        request.append_u8(self.kind).unwrap();
+        request.checked_append_reference(self.payload.clone()).unwrap();
+        request.into_cell().unwrap()
+    }
+}
+
+#[test]
+fn a_relayer_cannot_change_any_signed_field() {
+    let mut f = Fixture::new();
+    f.stage();
+    let auth = f.auth();
+    let (epoch, seqno) = f.counters();
+    let valid_until = f.bc.now().checked_add(600).unwrap();
+    let payload = |value: u64, target: &MsgAddressInt, seqno: u32| {
+        AgentAccountContract::build_native_send_payload(
+            f.global_id,
+            epoch,
+            seqno,
+            valid_until,
+            target,
+            value,
+        )
+        .unwrap()
+    };
+    let original = RawRequest {
+        global_id: f.global_id,
+        account: f.account.clone(),
+        epoch: auth.epoch,
+        nonce: auth.nonce,
+        valid_until,
+        kind: AUTH_KIND_EXECUTE,
+        payload: payload(TOS, f.target.address(), seqno),
+    };
+    let signature = sign_auth_request(&MLDSA_SEED, &original.cell()).unwrap();
+    let other_target = f.relayer.address().clone();
+    let altered = |change: &dyn Fn(&mut RawRequest)| {
+        let mut request = original.clone_fields();
+        change(&mut request);
+        request.cell()
+    };
+    let cases: Vec<(&str, chain_block::Cell, i32)> = vec![
+        ("global_id", altered(&|r| r.global_id = r.global_id.wrapping_add(1)), 1801),
+        ("account", altered(&|r| r.account = other_target.clone()), ERR_BAD_SIGNATURE),
+        ("epoch", altered(&|r| r.epoch = r.epoch.checked_add(1).unwrap()), ERR_BAD_SIGNATURE),
+        ("nonce", altered(&|r| r.nonce = r.nonce.checked_add(1).unwrap()), ERR_BAD_SIGNATURE),
+        (
+            "valid_until",
+            altered(&|r| r.valid_until = r.valid_until.checked_sub(1).unwrap()),
+            ERR_BAD_SIGNATURE,
+        ),
+        ("kind 1", altered(&|r| r.kind = 1), ERR_BAD_SIGNATURE),
+        ("kind 2", altered(&|r| r.kind = 2), ERR_BAD_SIGNATURE),
+        (
+            "payload value",
+            altered(&|r| {
+                r.payload = payload(TOS.checked_add(1).unwrap(), f.target.address(), seqno)
+            }),
+            ERR_BAD_SIGNATURE,
+        ),
+        (
+            "payload target",
+            altered(&|r| r.payload = payload(TOS, &other_target, seqno)),
+            ERR_BAD_SIGNATURE,
+        ),
+        (
+            "payload seqno",
+            altered(&|r| {
+                r.payload = payload(TOS, f.target.address(), seqno.checked_add(1).unwrap())
+            }),
+            ERR_BAD_SIGNATURE,
+        ),
+    ];
+    for (label, request, exit_code) in cases {
+        let body =
+            build_mldsa44_submit(9, &build_auth_envelope(&request).unwrap(), &signature).unwrap();
+        let refused = f.relay(body, RELAY);
+        assert!(refused.aborted, "{label}: {refused:?}");
+        assert_eq!(refused.exit_code, Some(exit_code), "{label}");
+        assert!(
+            refused.outbound.iter().all(|m| m.dst().as_ref() != Some(&f.account)),
+            "{label}: nothing reaches the account"
+        );
+        assert_eq!(f.auth(), auth, "{label}: auth state unchanged");
+        assert_eq!(f.counters(), (epoch, seqno), "{label}: counters unchanged");
+    }
+
+    // A cosignature is not covered by the ML-DSA-44 signature: the module
+    // verifies the request and forwards, and the account refuses it outside
+    // mode 3.
+    let request = original.cell();
+    let mut cosigned = BuilderData::new();
+    cosigned.append_u32(0x4155_5448).unwrap();
+    cosigned.checked_append_reference(request.clone()).unwrap();
+    cosigned.append_bit_one().unwrap();
+    let mut cosignature = BuilderData::new();
+    cosignature.append_raw(&[0x5a; 64], 512).unwrap();
+    cosigned.checked_append_reference(cosignature.into_cell().unwrap()).unwrap();
+    let cosigned = cosigned.into_cell().unwrap();
+    let relayed = f.relay(build_mldsa44_submit(9, &cosigned, &signature).unwrap(), RELAY);
+    let refused = f.deliver(&relayed, &cosigned);
+    assert!(refused.aborted && !refused.committed, "{refused:?}");
+    assert_eq!(refused.exit_code, Some(ERR_BAD_SIGNATURE));
+    assert!(f.transfers_to_target(&refused).is_empty());
+    assert_eq!(f.auth(), auth);
+
+    // Positive control: the unsigned query_id is the relayer's to choose.
+    let envelope = build_auth_envelope(&request).unwrap();
+    let relayed = f.relay(build_mldsa44_submit(0xfeed, &envelope, &signature).unwrap(), RELAY);
+    let delivered = f.deliver(&relayed, &envelope);
+    assert!(!delivered.aborted, "{delivered:?}");
+    assert_eq!(f.transfers_to_target(&delivered), vec![TOS]);
+}
+
+impl RawRequest {
+    fn clone_fields(&self) -> Self {
+        Self {
+            global_id: self.global_id,
+            account: self.account.clone(),
+            epoch: self.epoch,
+            nonce: self.nonce,
+            valid_until: self.valid_until,
+            kind: self.kind,
+            payload: self.payload.clone(),
+        }
+    }
 }

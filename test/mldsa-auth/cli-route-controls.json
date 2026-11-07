@@ -190,5 +190,264 @@
    "marker": null,
    "matched": true
   }
- ]
+ ],
+ "relay_controls": {
+  "claim": "Each new check of the any-wallet relay can fail: removing the module verifier under the signed-field test, relaying bytes other than the journaled digest's, sending the relay non-bounceable, journaling a relay of other bytes, of another action kind or state, past the cap, or loading misplaced relay history, relaying from the owner whatever --relayer names (in the resolver or at the command's own selection), sending a rebuilt submission, or relaying from a wallet that cannot pay the amount plus its own fees each turns its test red",
+  "runner": "test/mldsa-auth/cli_route_mutations.py",
+  "runs": [
+   {
+    "reviewed_commit": "9efeb1e0c",
+    "command": "cd <checkout> && FUNC_PATH=<func> FIFT_PATH=<fift> python3 test/mldsa-auth/cli_route_mutations.py <results.json> --controls relay-signed-field-unverified,relay-body-digest-ignored,relay-not-bounceable,journal-relay-ignores-digest,journal-relay-ignores-kind-and-status,journal-relay-cap-removed,journal-load-accepts-misplaced-relays,relayer-forced-to-owner,relay-rebuilds-submission,relayer-fee-check-dropped,relayer-fees-not-counted",
+    "result": {
+     "exit": 0,
+     "final_line": "MLDSA44_CLI_ROUTE_CONTROLS_OK"
+    },
+    "results": [
+     {
+      "control": "baseline",
+      "command": "cargo test -p contracts --test agent_account_mldsa44_sandbox --",
+      "exit": 0,
+      "expected": "green",
+      "marker": null,
+      "matched": true
+     },
+     {
+      "control": "baseline",
+      "command": "cargo test -p contracts --lib -- agent_account",
+      "exit": 0,
+      "expected": "green",
+      "marker": null,
+      "matched": true
+     },
+     {
+      "control": "baseline",
+      "command": "cargo test -p commands --lib --no-default-features -- mldsa44",
+      "exit": 0,
+      "expected": "green",
+      "marker": null,
+      "matched": true
+     },
+     {
+      "control": "relay-signed-field-unverified",
+      "command": "python3 scripts/update-auth-contract-code.py",
+      "exit": 0,
+      "expected": "green",
+      "marker": "Updated: tosctl/src/node-control/contracts/src/agent_account_auth.rs",
+      "matched": true
+     },
+     {
+      "control": "relay-signed-field-unverified",
+      "command": "cargo test -p contracts --test agent_account_mldsa44_sandbox -- a_relayer_cannot_change_any_signed_field",
+      "exit": 101,
+      "expected": "red",
+      "marker": "a_relayer_cannot_change_any_signed_field",
+      "matched": true
+     },
+     {
+      "control": "relay-body-digest-ignored",
+      "command": "cargo test -p contracts --lib -- a_relay_body_is_exactly_the_journaled_bytes",
+      "exit": 101,
+      "expected": "red",
+      "marker": "a_relay_body_is_exactly_the_journaled_bytes",
+      "matched": true
+     },
+     {
+      "control": "relay-not-bounceable",
+      "command": "cargo test -p contracts --test agent_account_mldsa44_sandbox -- a_relay_the_module_refuses_bounces_to_its_relayer",
+      "exit": 101,
+      "expected": "red",
+      "marker": "a_relay_the_module_refuses_bounces_to_its_relayer",
+      "matched": true
+     },
+     {
+      "control": "relay-not-bounceable",
+      "command": "cargo test -p commands --lib --no-default-features -- a_send_and_its_rebroadcast_relay_the_journaled_bytes",
+      "exit": 101,
+      "expected": "red",
+      "marker": "a_send_and_its_rebroadcast_relay_the_journaled_bytes_from_the_chosen_wallets",
+      "matched": true
+     },
+     {
+      "control": "journal-relay-ignores-digest",
+      "command": "cargo test -p contracts --lib -- relays_are_journaled_only_for_a_broadcasting_mldsa_submission",
+      "exit": 101,
+      "expected": "red",
+      "marker": "relays_are_journaled_only_for_a_broadcasting_mldsa_submission",
+      "matched": true
+     },
+     {
+      "control": "journal-relay-ignores-digest",
+      "command": "cargo test -p commands --lib --no-default-features -- a_relay_never_sends_bytes_other_than_the_journaled_ones",
+      "exit": 101,
+      "expected": "red",
+      "marker": "a_relay_never_sends_bytes_other_than_the_journaled_ones",
+      "matched": true
+     },
+     {
+      "control": "journal-relay-ignores-kind-and-status",
+      "command": "cargo test -p contracts --lib -- relays_are_journaled_only_for_a_broadcasting_mldsa_submission",
+      "exit": 101,
+      "expected": "red",
+      "marker": "relays_are_journaled_only_for_a_broadcasting_mldsa_submission",
+      "matched": true
+     },
+     {
+      "control": "journal-relay-cap-removed",
+      "command": "cargo test -p contracts --lib -- relays_stop_at_the_cap_and_survive_resolution_and_reopening",
+      "exit": 101,
+      "expected": "red",
+      "marker": "relays_stop_at_the_cap_and_survive_resolution_and_reopening",
+      "matched": true
+     },
+     {
+      "control": "journal-load-accepts-misplaced-relays",
+      "command": "cargo test -p contracts --lib -- a_journal_with_misplaced_relay_attempts_is_refused",
+      "exit": 101,
+      "expected": "red",
+      "marker": "a_journal_with_misplaced_relay_attempts_is_refused",
+      "matched": true
+     },
+     {
+      "control": "relayer-forced-to-owner",
+      "command": "cargo test -p commands --lib --no-default-features -- a_send_and_its_rebroadcast_relay_the_journaled_bytes",
+      "exit": 101,
+      "expected": "red",
+      "marker": "a_send_and_its_rebroadcast_relay_the_journaled_bytes_from_the_chosen_wallets",
+      "matched": true
+     },
+     {
+      "control": "relay-rebuilds-submission",
+      "command": "cargo test -p commands --lib --no-default-features -- a_send_and_its_rebroadcast_relay_the_journaled_bytes",
+      "exit": 101,
+      "expected": "red",
+      "marker": "a_send_and_its_rebroadcast_relay_the_journaled_bytes_from_the_chosen_wallets",
+      "matched": true
+     },
+     {
+      "control": "relayer-fee-check-dropped",
+      "command": "cargo test -p commands --lib --no-default-features -- a_relayer_that_cannot_pay_sends_and_journals_nothing",
+      "exit": 101,
+      "expected": "red",
+      "marker": "a_relayer_that_cannot_pay_sends_and_journals_nothing",
+      "matched": true
+     },
+     {
+      "control": "relayer-fees-not-counted",
+      "command": "cargo test -p commands --lib --no-default-features -- a_relayer_pays_the_relay_amount_and_its_own_fees",
+      "exit": 101,
+      "expected": "red",
+      "marker": "a_relayer_pays_the_relay_amount_and_its_own_fees",
+      "matched": true
+     },
+     {
+      "control": "restored",
+      "command": "cargo test -p contracts --test agent_account_mldsa44_sandbox --",
+      "exit": 0,
+      "expected": "green",
+      "marker": null,
+      "matched": true
+     },
+     {
+      "control": "restored",
+      "command": "cargo test -p contracts --lib -- agent_account",
+      "exit": 0,
+      "expected": "green",
+      "marker": null,
+      "matched": true
+     },
+     {
+      "control": "restored",
+      "command": "cargo test -p commands --lib --no-default-features -- mldsa44",
+      "exit": 0,
+      "expected": "green",
+      "marker": null,
+      "matched": true
+     }
+    ]
+   },
+   {
+    "reviewed_commit": "fef42d6cb",
+    "note": "fef42d6cb differs from 9efeb1e0c only in the command's relayer selection, its test and its new red control; the selection controls ran again",
+    "command": "cd <checkout> && FUNC_PATH=<func> FIFT_PATH=<fift> python3 test/mldsa-auth/cli_route_mutations.py <results.json> --controls send-ignores-relayer-argument,relayer-forced-to-owner,relay-rebuilds-submission",
+    "result": {
+     "exit": 0,
+     "final_line": "MLDSA44_CLI_ROUTE_CONTROLS_OK"
+    },
+    "results": [
+     {
+      "control": "baseline",
+      "command": "cargo test -p contracts --test agent_account_mldsa44_sandbox --",
+      "exit": 0,
+      "expected": "green",
+      "marker": null,
+      "matched": true
+     },
+     {
+      "control": "baseline",
+      "command": "cargo test -p contracts --lib -- agent_account",
+      "exit": 0,
+      "expected": "green",
+      "marker": null,
+      "matched": true
+     },
+     {
+      "control": "baseline",
+      "command": "cargo test -p commands --lib --no-default-features -- mldsa44",
+      "exit": 0,
+      "expected": "green",
+      "marker": null,
+      "matched": true
+     },
+     {
+      "control": "relayer-forced-to-owner",
+      "command": "cargo test -p commands --lib --no-default-features -- a_send_and_its_rebroadcast_relay_the_journaled_bytes",
+      "exit": 101,
+      "expected": "red",
+      "marker": "a_send_and_its_rebroadcast_relay_the_journaled_bytes_from_the_chosen_wallets",
+      "matched": true
+     },
+     {
+      "control": "send-ignores-relayer-argument",
+      "command": "cargo test -p commands --lib --no-default-features -- a_send_and_its_rebroadcast_relay_the_journaled_bytes",
+      "exit": 101,
+      "expected": "red",
+      "marker": "a_send_and_its_rebroadcast_relay_the_journaled_bytes_from_the_chosen_wallets",
+      "matched": true
+     },
+     {
+      "control": "relay-rebuilds-submission",
+      "command": "cargo test -p commands --lib --no-default-features -- a_send_and_its_rebroadcast_relay_the_journaled_bytes",
+      "exit": 101,
+      "expected": "red",
+      "marker": "a_send_and_its_rebroadcast_relay_the_journaled_bytes_from_the_chosen_wallets",
+      "matched": true
+     },
+     {
+      "control": "restored",
+      "command": "cargo test -p contracts --test agent_account_mldsa44_sandbox --",
+      "exit": 0,
+      "expected": "green",
+      "marker": null,
+      "matched": true
+     },
+     {
+      "control": "restored",
+      "command": "cargo test -p contracts --lib -- agent_account",
+      "exit": 0,
+      "expected": "green",
+      "marker": null,
+      "matched": true
+     },
+     {
+      "control": "restored",
+      "command": "cargo test -p commands --lib --no-default-features -- mldsa44",
+      "exit": 0,
+      "expected": "green",
+      "marker": null,
+      "matched": true
+     }
+    ]
+   }
+  ]
+ }
 }

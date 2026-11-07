@@ -12551,6 +12551,7 @@ mod tests {
             economic_effect_authorization: None,
             prediction_relay_recovery_boundary: None,
             exact_winner_resolution: None,
+            mldsa44_relays: Vec::new(),
             created_at_unix: 1,
             updated_at_unix: 2,
         }
@@ -14832,6 +14833,7 @@ mod tests {
             economic_effect_authorization: None,
             prediction_relay_recovery_boundary: None,
             exact_winner_resolution: None,
+            mldsa44_relays: Vec::new(),
             created_at_unix: 1,
             updated_at_unix: 1,
         };

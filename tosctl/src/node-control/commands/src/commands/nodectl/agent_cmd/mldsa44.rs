@@ -11,12 +11,21 @@
 //! stage) and send one ML-DSA-44-authorized native transfer, journaled in the
 //! controller custody journal and resolved from three RPC views.
 //!
+//! Any wallet may relay a signed submission (`--relayer`, by default the
+//! Agent Wallet's owner wallet). The relayer carries no authority: every
+//! authorizing field is inside the ML-DSA-44-signed request, the relay
+//! resends exactly the journaled bytes, and the worst a relayer can do is
+//! withhold them until they expire, which another relayer remedies. The
+//! relaying wallet signs and pays for its own message and attaches the relay
+//! value.
+//!
 //! The relay value pays the module's verification of the 2,420-byte signature
 //! it receives, the forwarding of the AUTH envelope (the module does not
 //! forward the signature) and the account's execution. Outcomes of a relayed
 //! submission, as each command reports them:
 //! - module compute failure (bad signature, too little funding): nothing is
-//!   forwarded; the bounceable relay message returns its remainder;
+//!   forwarded; the bounceable relay message returns what verification left
+//!   to the relaying wallet (nothing when the funding ran out during it);
 //! - module action failure (verified, forward failed): the value stays in the
 //!   immutable module; nothing reaches the account;
 //! - account abort before commit (stale nonce, consumed seqno, expiry): the
@@ -32,12 +41,15 @@ use super::super::native_registry_cmd::read_controller_seed;
 use super::*;
 use contracts::agent_account_auth::{
     AUTH_KIND_EXECUTE, AUTH_MODE_MODULE_ONLY, AUTH_MODE_STAGED, AgentAccountState, AgentAuthState,
-    AuthRequest, Mldsa44AuthConfig, Mldsa44AuthModule, build_auth_envelope, build_mldsa44_submit,
-    build_stage_auth_message, check_auth_window, parse_mldsa44_submit, request_superseded,
+    AuthRequest, Mldsa44AuthConfig, Mldsa44AuthModule, build_auth_envelope,
+    build_mldsa44_relay_wallet_message, build_mldsa44_submit, build_stage_auth_message,
+    check_auth_window, mldsa44_relay_body, parse_mldsa44_submit, request_superseded,
     require_staged_module, sign_auth_request,
 };
 use contracts::agent_account_custody::MLDSA44_NATIVE_SEND_ACTION_KIND;
-use contracts::native_registry::native_public_key_from_seed;
+use contracts::native_registry::{NATIVE_REGISTRY_SIGNATURE_BYTES, native_public_key_from_seed};
+use contracts::{DefaultChainProvider, Mldsa44RelayAttempt};
+use std::collections::HashMap;
 
 const MLDSA44_FINALIZED_SCHEMA: &str = "tos.agent-account.mldsa44-native-send-finalized.v1";
 const MLDSA44_EXPIRED_SCHEMA: &str = "tos.agent-account.mldsa44-native-send-expired.v1";
@@ -70,7 +82,7 @@ pub struct AgentAccountMldsa44InstallCmd {
 
 #[derive(clap::Args, Clone)]
 #[command(
-    about = "Sign one native transfer with the ML-DSA-44 controller, journal it, and relay it through the staged module from the owner wallet; resolve it with mldsa44-resolve"
+    about = "Sign one native transfer with the ML-DSA-44 controller, journal it, and relay it through the account's module from any relaying wallet (default: the owner wallet); resolve it with mldsa44-resolve"
 )]
 pub struct AgentAccountMldsa44SendCmd {
     #[arg(short = 'n', long = "wallet", help = "Agent Wallet profile name")]
@@ -90,12 +102,17 @@ pub struct AgentAccountMldsa44SendCmd {
     action_id: String,
     #[arg(
         long,
-        help = "TOS the owner wallet attaches: it pays the module's verification of the 2,420-byte signature, the forwarding of the envelope and the account's execution; after an account abort the remainder stays in the module, after a committed refusal in the Agent Account"
+        help = "TOS the relaying wallet attaches: it pays the module's verification of the 2,420-byte signature, the forwarding of the envelope and the account's execution; if the module refuses the submission what verification left bounces to the relaying wallet, after an account abort it stays in the module, after success or a committed refusal in the Agent Account"
     )]
     relay_amount: f64,
     #[arg(
         long,
-        help = "Relay the journaled submission again although it was already broadcast; it can never pay twice, the account refuses a consumed nonce"
+        help = "Wallet profile (or master_wallet) that relays the signed submission and pays its own fees and the relay amount; default: the Agent Wallet's owner wallet. It carries no authority and may differ between a send and its rebroadcast"
+    )]
+    relayer: Option<String>,
+    #[arg(
+        long,
+        help = "Relay the journaled submission again although it was already broadcast, byte for byte, through --relayer; it can never pay twice, the account refuses a consumed nonce"
     )]
     rebroadcast: bool,
     #[arg(long, help = "Skip confirmation prompt")]
@@ -125,6 +142,9 @@ pub struct AgentAccountMldsa44ResolveCmd {
 /// Everything the commands read before acting.
 struct Mldsa44Context {
     rpc_client: Arc<ClientJsonRpc>,
+    /// Wallet profiles a relayer may be chosen from.
+    wallets: HashMap<String, WalletConfig>,
+    master_wallet: Option<WalletConfig>,
     agent_wallet: AgentWalletConfig,
     vault: Arc<SecretVault>,
     account: MsgAddressInt,
@@ -184,6 +204,8 @@ async fn load_context(
     let chain_now = chain_now(&rpc_client).await?;
     Ok(Mldsa44Context {
         rpc_client,
+        wallets: config.wallets.clone(),
+        master_wallet: config.master_wallet.clone(),
         agent_wallet,
         vault,
         account,
@@ -322,6 +344,35 @@ fn sign_submission(
     auth: &AgentAuthState,
     query_id: u64,
 ) -> anyhow::Result<Cell> {
+    let request = submission_request(claim, account, target, auth)?;
+    let signature = sign_auth_request(seed, &request)?;
+    build_mldsa44_submit(query_id, &build_auth_envelope(&request)?, &signature)
+}
+
+/// A submission of exactly the size `sign_submission` produces for `claim`,
+/// with an all-zero signature: what the relayer's fees are bounded over
+/// before anything is claimed or signed.
+fn placeholder_submission(
+    claim: &ControllerActionClaim,
+    account: &MsgAddressInt,
+    target: &MsgAddressInt,
+    auth: &AgentAuthState,
+) -> anyhow::Result<Cell> {
+    let request = submission_request(claim, account, target, auth)?;
+    build_mldsa44_submit(
+        u64::MAX,
+        &build_auth_envelope(&request)?,
+        &[0u8; NATIVE_REGISTRY_SIGNATURE_BYTES],
+    )
+}
+
+/// The kind-0 AUTH request for `claim` under the current auth counters.
+fn submission_request(
+    claim: &ControllerActionClaim,
+    account: &MsgAddressInt,
+    target: &MsgAddressInt,
+    auth: &AgentAuthState,
+) -> anyhow::Result<Cell> {
     let payload = AgentAccountContract::build_native_send_payload(
         claim.network_global_id,
         claim.controller_epoch,
@@ -330,7 +381,7 @@ fn sign_submission(
         target,
         claim.value_atomic,
     )?;
-    let request = AuthRequest {
+    AuthRequest {
         global_id: claim.network_global_id,
         account: account.clone(),
         epoch: auth.epoch,
@@ -339,9 +390,7 @@ fn sign_submission(
         kind: AUTH_KIND_EXECUTE,
         payload,
     }
-    .to_cell()?;
-    let signature = sign_auth_request(seed, &request)?;
-    build_mldsa44_submit(query_id, &build_auth_envelope(&request)?, &signature)
+    .to_cell()
 }
 
 impl AgentAccountMldsa44InstallCmd {
@@ -600,6 +649,18 @@ where
 }
 
 impl AgentAccountMldsa44SendCmd {
+    /// The wallet this invocation relays from: `--relayer`, or the owner
+    /// wallet when it is omitted. The one selection both the first relay and
+    /// `--rebroadcast` use.
+    fn relayer_selection(
+        &self,
+        wallets: &HashMap<String, WalletConfig>,
+        master_wallet: Option<&WalletConfig>,
+        owner: &WalletConfig,
+    ) -> anyhow::Result<RelayerSelection> {
+        resolve_relayer(self.relayer.as_deref(), wallets, master_wallet, owner)
+    }
+
     pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
         validate_controller_action_id(&self.action_id)?;
         validate_tos_amount("value", self.value)?;
@@ -649,44 +710,50 @@ impl AgentAccountMldsa44SendCmd {
             );
         }
         verify_module(&ctx).await?;
-        let (owner_address, owner_info, owner_secret) =
-            wallet_info(ctx.rpc_client.clone(), &ctx.agent_wallet.wallet, ctx.vault.clone())
-                .await?;
-        anyhow::ensure!(
-            owner_info.account_state == AccountState::Active,
-            "the relaying owner wallet is not active"
-        );
+        let relayer = self.relayer_selection(
+            &ctx.wallets,
+            ctx.master_wallet.as_ref(),
+            &ctx.agent_wallet.wallet,
+        )?;
+        let environment =
+            ChainRelayEnvironment { rpc_client: ctx.rpc_client.clone(), vault: ctx.vault.clone() };
+        let relay_amount = tos_to_nanotos(self.relay_amount);
         if step == SendStep::Relay {
             let record = existing.as_ref().context("relayed action has no record")?;
-            if let Some(existing) = record.exact_signed_boc_base64.clone() {
+            if record.exact_signed_boc_base64.is_some() {
                 if record.status == ControllerActionStatus::Broadcasting && !self.rebroadcast {
                     anyhow::bail!(
                         "this ML-DSA-44 action was already broadcast; resolve it with mldsa44-resolve, or pass --rebroadcast to relay the same submission again"
                     );
                 }
+                let relaying = check_relayer(
+                    &environment,
+                    &relayer,
+                    &ctx.module,
+                    &journaled_relay_body(record)?,
+                    relay_amount,
+                )
+                .await?;
                 if !self.yes
                     && !confirm(&format!(
-                        "Relay the journaled ML-DSA-44 submission {} (seqno {}, valid_until {}) from the owner wallet?",
-                        self.action_id, record.claim.seqno, record.claim.valid_until
+                        "Relay the journaled ML-DSA-44 submission {} (seqno {}, valid_until {}) from wallet '{}' ({relaying})?",
+                        self.action_id, record.claim.seqno, record.claim.valid_until, relayer.label
                     ))?
                 {
                     println!("{}", "ML-DSA-44 send cancelled".yellow());
                     return Ok(());
                 }
-                return relay_submission(
-                    &ctx,
+                let relayed = relay_submission(
+                    &environment,
                     &journal,
-                    &record.claim,
-                    &existing,
-                    record.status.clone(),
-                    self.relay_amount,
-                    &self.wallet,
-                    owner_address,
-                    owner_info.seqno,
-                    owner_secret,
-                    &self.action_id,
+                    record,
+                    &relayer,
+                    relay_amount,
+                    time_format::now(),
                 )
-                .await;
+                .await?;
+                print_relayed(&self.action_id, &record.claim, &relayed);
+                return Ok(());
             }
         }
         // A resumable unsigned claim of this action ID, released if the
@@ -696,15 +763,35 @@ impl AgentAccountMldsa44SendCmd {
         // a refused or declined request leaves no reservation behind.
         require_staged_module(&ctx.auth, &ctx.account, &ctx.module)?;
         check_auth_window(self.valid_until, ctx.chain_now, ctx.data.default_task_timeout_secs)?;
+        let claim = mldsa44_claim(
+            &self.action_id,
+            &ctx.account,
+            &target,
+            &ctx.module,
+            ctx.global_id,
+            network_domain,
+            &ctx.data,
+            value,
+            self.valid_until,
+        );
+        let relaying = check_relayer(
+            &environment,
+            &relayer,
+            &ctx.module,
+            &placeholder_submission(&claim, &ctx.account, &target, &ctx.auth)?,
+            relay_amount,
+        )
+        .await?;
         if !self.yes
             && !confirm(&format!(
-                "Authorize {} from {} to {} with ML-DSA-44 controller '{}', seqno {}, valid_until {}?",
+                "Authorize {} from {} to {} with ML-DSA-44 controller '{}', seqno {}, valid_until {}, relayed by wallet '{}' ({relaying})?",
                 display_tos(value),
                 ctx.account,
                 target,
                 self.controller,
                 ctx.data.seqno,
-                self.valid_until
+                self.valid_until,
+                relayer.label
             ))?
         {
             if let Some(record) = &unsigned {
@@ -726,19 +813,8 @@ impl AgentAccountMldsa44SendCmd {
             ctx.data.seqno,
             time_format::now(),
         )?;
-        let claim = mldsa44_claim(
-            &self.action_id,
-            &ctx.account,
-            &target,
-            &ctx.module,
-            ctx.global_id,
-            network_domain,
-            &ctx.data,
-            value,
-            self.valid_until,
-        );
         let (record, _) = journal.claim_primary(claim.clone(), time_format::now())?;
-        let (boc_base64, status) = match (record.exact_signed_boc_base64.clone(), record.status) {
+        let signed = match (record.exact_signed_boc_base64.clone(), record.status) {
             (None, ControllerActionStatus::Claimed) => {
                 let submission = sign_submission(
                     &ctx.seed,
@@ -751,8 +827,7 @@ impl AgentAccountMldsa44SendCmd {
                 let bytes = write_boc(&submission)?;
                 let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
                 let digest = format!("sha256:{}", hex::encode(Sha256::digest(&bytes)));
-                journal.attach_signed_boc(&claim, &encoded, &digest, time_format::now())?;
-                (encoded, ControllerActionStatus::Signed)
+                journal.attach_signed_boc(&claim, &encoded, &digest, time_format::now())?
             }
             (_, status) => {
                 // claim_primary returned a record this run did not sign; it
@@ -760,21 +835,261 @@ impl AgentAccountMldsa44SendCmd {
                 anyhow::bail!("custody record in state {status:?} was not created by this run")
             }
         };
-        relay_submission(
-            &ctx,
+        let relayed = relay_submission(
+            &environment,
             &journal,
-            &claim,
-            &boc_base64,
-            status,
-            self.relay_amount,
-            &self.wallet,
-            owner_address,
-            owner_info.seqno,
-            owner_secret,
-            &self.action_id,
+            &signed,
+            &relayer,
+            relay_amount,
+            time_format::now(),
+        )
+        .await?;
+        print_relayed(&self.action_id, &claim, &relayed);
+        Ok(())
+    }
+}
+
+/// The wallet that relays: a named wallet profile (or `master_wallet`), or
+/// the Agent Wallet's owner wallet when none is named.
+#[derive(Clone)]
+struct RelayerSelection {
+    label: String,
+    wallet: WalletConfig,
+}
+
+fn resolve_relayer(
+    relayer: Option<&str>,
+    wallets: &HashMap<String, WalletConfig>,
+    master_wallet: Option<&WalletConfig>,
+    owner: &WalletConfig,
+) -> anyhow::Result<RelayerSelection> {
+    match relayer {
+        None => Ok(RelayerSelection { label: "owner".to_owned(), wallet: owner.clone() }),
+        Some(name) => {
+            anyhow::ensure!(!name.is_empty(), "--relayer names a wallet profile");
+            let wallet = get_wallet_config(name, wallets, master_wallet)
+                .context("--relayer names no configured wallet profile")?;
+            Ok(RelayerSelection { label: name.to_owned(), wallet: wallet.clone() })
+        }
+    }
+}
+
+/// A relaying wallet as the chain shows it, with a signer.
+struct LoadedRelayer {
+    address: MsgAddressInt,
+    active: bool,
+    seqno: Option<u32>,
+    wallet: Box<dyn Wallet>,
+}
+
+/// What a relay reads from the chain and the vault and where it sends, so
+/// the relay orchestration itself is what the tests run.
+trait RelayEnvironment {
+    async fn load_relayer(&self, relayer: &RelayerSelection) -> anyhow::Result<LoadedRelayer>;
+    /// The wallet's own fee bound for sending `body` as one message to
+    /// `destination`, and the balance it holds, read at one block. The
+    /// outbound message is priced as the action phase prices it, by both
+    /// endpoints' workchains.
+    async fn wallet_reserve(
+        &self,
+        wallet: &MsgAddressInt,
+        destination: &MsgAddressInt,
+        body: &Cell,
+    ) -> anyhow::Result<(u128, u64)>;
+    /// Sends the wallet message and confirms its exact transaction.
+    async fn broadcast(
+        &self,
+        wallet_message: &[u8],
+        wallet: &MsgAddressInt,
+        module: &MsgAddressInt,
+    ) -> anyhow::Result<()>;
+}
+
+struct ChainRelayEnvironment {
+    rpc_client: Arc<ClientJsonRpc>,
+    vault: Arc<SecretVault>,
+}
+
+impl RelayEnvironment for ChainRelayEnvironment {
+    async fn load_relayer(&self, relayer: &RelayerSelection) -> anyhow::Result<LoadedRelayer> {
+        let (address, info, secret) =
+            wallet_info(self.rpc_client.clone(), &relayer.wallet, self.vault.clone()).await?;
+        let wallet =
+            make_wallet(self.rpc_client.clone(), &relayer.wallet, secret, &relayer.label).await?;
+        Ok(LoadedRelayer {
+            address,
+            active: info.account_state == AccountState::Active,
+            seqno: info.seqno,
+            wallet: Box::new(wallet),
+        })
+    }
+
+    async fn wallet_reserve(
+        &self,
+        wallet: &MsgAddressInt,
+        destination: &MsgAddressInt,
+        body: &Cell,
+    ) -> anyhow::Result<(u128, u64)> {
+        let chain = DefaultChainProvider::new(self.rpc_client.clone());
+        super::super::vote_cmd::pinned_wallet_reserve_to(
+            &chain,
+            wallet,
+            destination.workchain_id(),
+            body,
         )
         .await
     }
+
+    async fn broadcast(
+        &self,
+        wallet_message: &[u8],
+        wallet: &MsgAddressInt,
+        module: &MsgAddressInt,
+    ) -> anyhow::Result<()> {
+        confirm_prepared_wallet_message(
+            self.rpc_client.clone(),
+            &wallet_message.to_vec(),
+            wallet,
+            module,
+            DEPLOY_TIMEOUT,
+        )
+        .await
+    }
+}
+
+/// The relaying wallet must be active and hold the relay amount plus its own
+/// fees for sending `body`.
+fn relayer_can_pay(
+    label: &str,
+    active: bool,
+    balance: u64,
+    relay_amount: u64,
+    reserve: u128,
+) -> anyhow::Result<()> {
+    anyhow::ensure!(active, "the relaying wallet '{label}' is not active");
+    let needed = u128::from(relay_amount)
+        .checked_add(reserve)
+        .context("the relay amount plus fees overflows")?;
+    anyhow::ensure!(
+        u128::from(balance) >= needed,
+        "the relaying wallet '{label}' holds {balance} nanoTOS; the relay needs {relay_amount} plus about {reserve} in the wallet's own fees ({needed} in all)"
+    );
+    Ok(())
+}
+
+/// Checks the relayer can pay for relaying `body` to `module`; returns its address.
+async fn check_relayer<E: RelayEnvironment>(
+    environment: &E,
+    relayer: &RelayerSelection,
+    module: &MsgAddressInt,
+    body: &Cell,
+    relay_amount: u64,
+) -> anyhow::Result<MsgAddressInt> {
+    let loaded = environment.load_relayer(relayer).await?;
+    let (reserve, balance) = environment.wallet_reserve(&loaded.address, module, body).await?;
+    relayer_can_pay(&relayer.label, loaded.active, balance, relay_amount, reserve)?;
+    Ok(loaded.address)
+}
+
+/// The exact journaled submission of a signed record, as its relay body.
+fn journaled_relay_body(record: &ControllerActionRecord) -> anyhow::Result<Cell> {
+    let encoded = record
+        .exact_signed_boc_base64
+        .as_deref()
+        .context("the ML-DSA-44 action has no journaled submission")?;
+    let digest = record
+        .exact_signed_boc_digest
+        .as_deref()
+        .context("the ML-DSA-44 action has no submission digest")?;
+    mldsa44_relay_body(&base64::engine::general_purpose::STANDARD.decode(encoded)?, digest)
+}
+
+/// What one relay sent.
+#[derive(Debug)]
+struct RelayedSubmission {
+    relayer: MsgAddressInt,
+    module: MsgAddressInt,
+    submission_digest: String,
+    wallet_message_digest: String,
+}
+
+/// Relays the exact journaled submission of `record` from the `relayer`
+/// wallet. The body is the journaled bytes, read back and checked against
+/// their digest, never rebuilt. The relayer is checked, a Signed record
+/// moves to Broadcasting (so an interrupted run is never mistaken for an
+/// unsent one), and the relay is journaled with its wallet message before
+/// anything is sent.
+async fn relay_submission<E: RelayEnvironment>(
+    environment: &E,
+    journal: &AgentAccountCustodyJournal,
+    record: &ControllerActionRecord,
+    relayer: &RelayerSelection,
+    relay_amount: u64,
+    now: u64,
+) -> anyhow::Result<RelayedSubmission> {
+    let body = journaled_relay_body(record)?;
+    let submission_digest = record
+        .exact_signed_boc_digest
+        .clone()
+        .context("the ML-DSA-44 action has no submission digest")?;
+    let module = record
+        .claim
+        .auth_module
+        .as_ref()
+        .context("ML-DSA-44 claim has no pinned module")?
+        .parse::<MsgAddressInt>()?;
+    let loaded = environment.load_relayer(relayer).await?;
+    let (reserve, balance) = environment.wallet_reserve(&loaded.address, &module, &body).await?;
+    relayer_can_pay(&relayer.label, loaded.active, balance, relay_amount, reserve)?;
+    if record.status == ControllerActionStatus::Signed {
+        journal.begin_broadcast(&record.claim, now)?;
+    }
+    let message = build_mldsa44_relay_wallet_message(
+        loaded.wallet.as_ref(),
+        &module,
+        relay_amount,
+        body,
+        loaded.seqno,
+    )
+    .await?;
+    let wallet_message_digest = format!("sha256:{}", hex::encode(Sha256::digest(&message)));
+    journal.record_mldsa44_relay(
+        &record.claim,
+        &submission_digest,
+        Mldsa44RelayAttempt {
+            relayer: loaded.address.to_string(),
+            wallet_message_digest: wallet_message_digest.clone(),
+            relay_amount_atomic: relay_amount,
+            at_unix: now,
+        },
+    )?;
+    environment.broadcast(&message, &loaded.address, &module).await?;
+    Ok(RelayedSubmission {
+        relayer: loaded.address,
+        module,
+        submission_digest,
+        wallet_message_digest,
+    })
+}
+
+fn print_relayed(action_id: &str, claim: &ControllerActionClaim, relayed: &RelayedSubmission) {
+    println!(
+        "{}",
+        serde_json::json!({
+            "schema": "tosctl.agent-account.mldsa44-send.v1",
+            "action_id": action_id,
+            "account": claim.account,
+            "module": relayed.module.to_string(),
+            "relayer": relayed.relayer.to_string(),
+            "controller_epoch": claim.controller_epoch,
+            "seqno": claim.seqno,
+            "valid_until": claim.valid_until,
+            "exact_submission_digest": relayed.submission_digest,
+            "wallet_message_digest": relayed.wallet_message_digest,
+            "state": "broadcasting",
+            "next": "tosctl agent account mldsa44-resolve --action-id <id> --quorum-config <a> <b>",
+        })
+    );
 }
 
 /// The fence an interrupted install left, after explicit recovery if the
@@ -941,74 +1256,6 @@ fn require_same_terms(
             && claim.value_atomic == value
             && claim.valid_until == valid_until,
         "action ID already names a different custody action; reuse it only with its original terms"
-    );
-    Ok(())
-}
-
-/// Relays the exact journaled submission from the owner wallet: Signed moves
-/// to Broadcasting first, so an interrupted run is never mistaken for an
-/// unsent one.
-#[allow(clippy::too_many_arguments)]
-async fn relay_submission(
-    ctx: &Mldsa44Context,
-    journal: &AgentAccountCustodyJournal,
-    claim: &ControllerActionClaim,
-    boc_base64: &str,
-    status: ControllerActionStatus,
-    relay_amount: f64,
-    wallet_name: &str,
-    owner_address: MsgAddressInt,
-    owner_seqno: Option<u32>,
-    owner_secret: Secret,
-    action_id: &str,
-) -> anyhow::Result<()> {
-    let submission_bytes = base64::engine::general_purpose::STANDARD.decode(boc_base64)?;
-    let submission_digest = format!("sha256:{}", hex::encode(Sha256::digest(&submission_bytes)));
-    let submission = read_single_root_boc(&submission_bytes)?;
-    // The journaled bytes are re-read, never rebuilt.
-    parse_mldsa44_submit(&submission)?;
-    if status == ControllerActionStatus::Signed {
-        journal.begin_broadcast(claim, time_format::now())?;
-    }
-    let module = claim
-        .auth_module
-        .as_ref()
-        .context("ML-DSA-44 claim has no pinned module")?
-        .parse::<MsgAddressInt>()?;
-    let wallet =
-        make_wallet(ctx.rpc_client.clone(), &ctx.agent_wallet.wallet, owner_secret, wallet_name)
-            .await?;
-    let boc = build_wallet_message_boc(
-        &wallet,
-        module.clone(),
-        tos_to_nanotos(relay_amount),
-        submission,
-        true,
-        owner_seqno,
-    )
-    .await?;
-    confirm_prepared_wallet_message(
-        ctx.rpc_client.clone(),
-        &boc,
-        &owner_address,
-        &module,
-        DEPLOY_TIMEOUT,
-    )
-    .await?;
-    println!(
-        "{}",
-        serde_json::json!({
-            "schema": "tosctl.agent-account.mldsa44-send.v1",
-            "action_id": action_id,
-            "account": claim.account,
-            "module": module.to_string(),
-            "controller_epoch": claim.controller_epoch,
-            "seqno": claim.seqno,
-            "valid_until": claim.valid_until,
-            "exact_submission_digest": submission_digest,
-            "state": "broadcasting",
-            "next": "tosctl agent account mldsa44-resolve --action-id <id> --quorum-config <a> <b>",
-        })
     );
     Ok(())
 }
@@ -1519,6 +1766,7 @@ mod tests {
     use chain_block::{
         CurrencyCollection, InternalMessageHeader, SliceData, TransactionDescrOrdinary,
     };
+    use contracts::SmartContract;
 
     fn address(workchain: i32, byte: u8) -> MsgAddressInt {
         MsgAddressInt::with_standart(None, workchain as i8, [byte; 32].into()).unwrap()
@@ -2230,6 +2478,411 @@ mod tests {
         assert_eq!(settle_history::<u8>(vec![]).unwrap(), ("not-committed", None));
         assert!(settle_history(vec![(Transferred, 1), (Transferred, 2)]).is_err());
         assert!(settle_history(vec![(Aborted, 1)]).is_err());
+    }
+
+    fn profile(name: &str, subwallet_id: u32) -> WalletConfig {
+        WalletConfig {
+            key: KeyConfig::VaultKey { name: name.to_owned() },
+            version: WalletVersion::V5R1,
+            subwallet_id,
+            workchain: 0,
+        }
+    }
+
+    fn profile_seed(wallet: &WalletConfig) -> [u8; 32] {
+        let KeyConfig::VaultKey { name } = &wallet.key else { panic!("test profiles are named") };
+        let mut seed = [0u8; 32];
+        for (slot, byte) in seed.iter_mut().zip(name.bytes().cycle()) {
+            *slot = byte;
+        }
+        seed
+    }
+
+    struct TestSigner(ed25519_dalek::SigningKey);
+
+    #[async_trait::async_trait]
+    impl common::signer::Signer for TestSigner {
+        async fn public_key(&self) -> anyhow::Result<Vec<u8>> {
+            Ok(self.0.verifying_key().to_bytes().to_vec())
+        }
+
+        async fn sign(&self, message: &[u8]) -> anyhow::Result<Vec<u8>> {
+            use ed25519_dalek::Signer as _;
+            Ok(self.0.sign(message).to_bytes().to_vec())
+        }
+    }
+
+    /// Every query is refused: the relay passes the seqno it read.
+    struct NoProvider;
+
+    #[async_trait::async_trait]
+    impl contracts::ContractProvider for NoProvider {
+        async fn get_method(
+            &self,
+            _address: String,
+            method: &str,
+            _stack: Vec<tl_api::tos::tvm::StackEntry>,
+        ) -> anyhow::Result<common::tvm_stack_parser::TvmStackParser> {
+            anyhow::bail!("the relay must not query get-method {method}")
+        }
+
+        async fn balance(&self, _address: &MsgAddressInt) -> anyhow::Result<u64> {
+            anyhow::bail!("the relay must not query a balance")
+        }
+    }
+
+    /// Real wallets over in-process signers; broadcasts are captured.
+    struct CapturingEnvironment {
+        balance: u64,
+        reserve: u128,
+        sent: std::sync::Mutex<Vec<(MsgAddressInt, MsgAddressInt, Vec<u8>)>>,
+        /// The destination each fee bound was computed for.
+        reserved_for: std::sync::Mutex<Vec<MsgAddressInt>>,
+    }
+
+    impl CapturingEnvironment {
+        fn new(balance: u64) -> Self {
+            Self {
+                balance,
+                reserve: 50_000_000,
+                sent: std::sync::Mutex::new(Vec::new()),
+                reserved_for: std::sync::Mutex::new(Vec::new()),
+            }
+        }
+
+        fn sent(&self) -> Vec<(MsgAddressInt, MsgAddressInt, Vec<u8>)> {
+            self.sent.lock().unwrap().clone()
+        }
+    }
+
+    impl RelayEnvironment for CapturingEnvironment {
+        async fn load_relayer(&self, relayer: &RelayerSelection) -> anyhow::Result<LoadedRelayer> {
+            let signer =
+                TestSigner(ed25519_dalek::SigningKey::from_bytes(&profile_seed(&relayer.wallet)));
+            let wallet = contracts::WalletContract::new(
+                Box::new(signer),
+                relayer.wallet.version,
+                relayer.wallet.subwallet_id,
+                relayer.wallet.workchain,
+                42,
+                Arc::new(NoProvider),
+            )
+            .await?;
+            Ok(LoadedRelayer {
+                address: wallet.address(),
+                active: true,
+                seqno: Some(3),
+                wallet: Box::new(wallet),
+            })
+        }
+
+        async fn wallet_reserve(
+            &self,
+            _wallet: &MsgAddressInt,
+            destination: &MsgAddressInt,
+            _body: &Cell,
+        ) -> anyhow::Result<(u128, u64)> {
+            self.reserved_for.lock().unwrap().push(destination.clone());
+            Ok((self.reserve, self.balance))
+        }
+
+        async fn broadcast(
+            &self,
+            wallet_message: &[u8],
+            wallet: &MsgAddressInt,
+            module: &MsgAddressInt,
+        ) -> anyhow::Result<()> {
+            self.sent.lock().unwrap().push((
+                wallet.clone(),
+                module.clone(),
+                wallet_message.to_vec(),
+            ));
+            Ok(())
+        }
+    }
+
+    /// The external wallet message's destination wallet and the body of the
+    /// one internal message it carries to `module`.
+    fn decode_relay(wallet_message: &[u8], module: &MsgAddressInt) -> (MsgAddressInt, Vec<u8>) {
+        let root = read_single_root_boc(wallet_message).unwrap();
+        let external = Message::construct_from_cell(root.clone()).unwrap();
+        let wallet = external.ext_in_header().unwrap().dst.clone();
+        let mut bodies = Vec::new();
+        let mut stack = vec![root];
+        while let Some(cell) = stack.pop() {
+            for index in 0..cell.references_count() {
+                stack.push(cell.reference(index).unwrap());
+            }
+            let Ok(message) = Message::construct_from_cell(cell) else { continue };
+            let Some(header) = message.int_header() else { continue };
+            if header.dst != *module {
+                continue;
+            }
+            assert!(header.bounce, "a relay is bounceable, so a module refusal returns to it");
+            let body = message.body().cloned().unwrap().into_cell().unwrap();
+            bodies.push(write_boc(&body).unwrap());
+        }
+        assert_eq!(bodies.len(), 1, "the wallet message carries exactly one relay");
+        (wallet, bodies.pop().unwrap())
+    }
+
+    /// A journal holding one signed ML-DSA-44 action, and its exact bytes.
+    fn signed_record()
+    -> (tempfile::TempDir, AgentAccountCustodyJournal, ControllerActionRecord, Vec<u8>) {
+        let directory = tempfile::tempdir().unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let journal =
+            AgentAccountCustodyJournal::open(directory.path().canonicalize().unwrap()).unwrap();
+        let account = address(0, 0x10);
+        let target = address(0, 0x30);
+        let module = address(0, 0x20);
+        let claim = mldsa44_claim(
+            &"a".repeat(64),
+            &account,
+            &target,
+            &module,
+            42,
+            pin(),
+            &data(),
+            9,
+            1_000,
+        );
+        journal.claim_primary(claim.clone(), 10).unwrap();
+        let bytes = write_boc(
+            &sign_submission(&[0x44; 32], &claim, &account, &target, &auth(1, &module), 3).unwrap(),
+        )
+        .unwrap();
+        let record = journal
+            .attach_signed_boc(
+                &claim,
+                &base64::engine::general_purpose::STANDARD.encode(&bytes),
+                &format!("sha256:{}", hex::encode(Sha256::digest(&bytes))),
+                11,
+            )
+            .unwrap();
+        (directory, journal, record, bytes)
+    }
+
+    #[test]
+    fn the_relayer_is_the_named_profile_or_the_owner() {
+        let owner = profile("owner-key", 1);
+        let wallets = HashMap::from([("relay-a".to_owned(), profile("relay-a-key", 2))]);
+        let master = profile("master-key", 3);
+        let picked = |selection: RelayerSelection| (selection.label, selection.wallet.subwallet_id);
+        assert_eq!(
+            picked(resolve_relayer(None, &wallets, Some(&master), &owner).unwrap()),
+            ("owner".to_owned(), 1)
+        );
+        assert_eq!(
+            picked(resolve_relayer(Some("relay-a"), &wallets, Some(&master), &owner).unwrap()),
+            ("relay-a".to_owned(), 2)
+        );
+        assert_eq!(
+            picked(
+                resolve_relayer(Some("master_wallet"), &wallets, Some(&master), &owner).unwrap()
+            ),
+            ("master_wallet".to_owned(), 3)
+        );
+        assert!(resolve_relayer(Some("unknown"), &wallets, Some(&master), &owner).is_err());
+        assert!(resolve_relayer(Some(""), &wallets, Some(&master), &owner).is_err());
+        assert!(resolve_relayer(Some("master_wallet"), &wallets, None, &owner).is_err());
+    }
+
+    #[test]
+    fn the_relay_fee_bound_reads_the_outbound_tariff_of_both_endpoints() {
+        use super::super::super::vote_cmd::reserve_price_params;
+        // (gas, import, outbound): the sender's gas and import, the outbound
+        // forwarding by both endpoints.
+        assert_eq!(reserve_price_params(0, -1), (21, 25, 24));
+        assert_eq!(reserve_price_params(-1, 0), (20, 24, 24));
+        assert_eq!(reserve_price_params(-1, -1), (20, 24, 24));
+        assert_eq!(reserve_price_params(0, 0), (21, 25, 25));
+    }
+
+    #[test]
+    fn a_relayer_pays_the_relay_amount_and_its_own_fees() {
+        relayer_can_pay("r", true, 1_050, 1_000, 50).unwrap();
+        assert!(relayer_can_pay("r", true, 1_049, 1_000, 50).is_err(), "fees count");
+        assert!(relayer_can_pay("r", true, 999, 1_000, 0).is_err(), "the amount counts");
+        assert!(relayer_can_pay("r", false, u64::MAX, 1, 0).is_err(), "inactive");
+        assert!(relayer_can_pay("r", true, u64::MAX, u64::MAX, u128::MAX).is_err(), "overflow");
+    }
+
+    #[derive(clap::Parser)]
+    struct SendCli {
+        #[command(flatten)]
+        send: AgentAccountMldsa44SendCmd,
+    }
+
+    /// An `mldsa44-send` invocation as clap parses it, with `extra` arguments.
+    fn send_command(extra: &[&str]) -> AgentAccountMldsa44SendCmd {
+        use clap::Parser as _;
+        let target = address(0, 0x30).to_string();
+        let action_id = "a".repeat(64);
+        let mut args = vec![
+            "mldsa44-send",
+            "-n",
+            "agent",
+            "--controller",
+            "c1",
+            "--target",
+            target.as_str(),
+            "--value",
+            "1",
+            "--valid-until",
+            "1000",
+            "--action-id",
+            action_id.as_str(),
+            "--relay-amount",
+            "2",
+        ];
+        args.extend_from_slice(extra);
+        SendCli::try_parse_from(args).unwrap().send
+    }
+
+    #[tokio::test]
+    async fn a_send_and_its_rebroadcast_relay_the_journaled_bytes_from_the_chosen_wallets() {
+        let (_directory, journal, record, bytes) = signed_record();
+        let module = address(0, 0x20);
+        let owner = profile("owner-key", 1);
+        let wallets = HashMap::from([
+            ("relay-a".to_owned(), profile("relay-a-key", 2)),
+            ("relay-b".to_owned(), profile("relay-b-key", 7)),
+        ]);
+        let environment = CapturingEnvironment::new(10_000_000_000);
+        let owner_wallet = environment
+            .load_relayer(&resolve_relayer(None, &wallets, None, &owner).unwrap())
+            .await
+            .unwrap()
+            .address;
+        // What each profile's wallet is, independently of the command.
+        let wallet_of = |name: &str| resolve_relayer(Some(name), &wallets, None, &owner).unwrap();
+        let first_wallet = environment.load_relayer(&wallet_of("relay-a")).await.unwrap().address;
+        // The selection is the command's own, from its parsed arguments.
+        let first = send_command(&["--relayer", "relay-a"])
+            .relayer_selection(&wallets, None, &owner)
+            .unwrap();
+        let defaulted = send_command(&[]).relayer_selection(&wallets, None, &owner).unwrap();
+        assert_eq!(environment.load_relayer(&defaulted).await.unwrap().address, owner_wallet);
+        let relayed = relay_submission(&environment, &journal, &record, &first, 2_000_000_000, 20)
+            .await
+            .unwrap();
+        assert_eq!(relayed.relayer, first_wallet);
+        let record = journal.action_by_idempotency_key(&record.claim.idempotency_key).unwrap();
+        assert_eq!(record.status, ControllerActionStatus::Broadcasting);
+
+        // The rebroadcast goes through another relayer.
+        let second = send_command(&["--rebroadcast", "--relayer", "relay-b"])
+            .relayer_selection(&wallets, None, &owner)
+            .unwrap();
+        let second_wallet = environment.load_relayer(&wallet_of("relay-b")).await.unwrap().address;
+        assert_ne!(first_wallet, second_wallet);
+        relay_submission(&environment, &journal, &record, &second, 3_000_000_000, 21)
+            .await
+            .unwrap();
+
+        let sent = environment.sent();
+        assert_eq!(sent.len(), 2);
+        // Each relay's fee bound was computed for the module it sends to.
+        assert_eq!(*environment.reserved_for.lock().unwrap(), vec![module.clone(), module.clone()]);
+        for ((wallet, destination, message), expected) in
+            sent.iter().zip([&first_wallet, &second_wallet])
+        {
+            assert_eq!(wallet, expected, "sent from the selected relayer");
+            assert_ne!(wallet, &owner_wallet, "never from the owner unless chosen");
+            assert_eq!(destination, &module);
+            let (signed_by, body) = decode_relay(message, &module);
+            assert_eq!(&signed_by, expected, "the selected relayer's wallet signed it");
+            assert_eq!(body, bytes, "exactly the journaled submission");
+        }
+        assert_ne!(sent[0].2, sent[1].2, "two different wallet messages");
+        let record = journal.action_by_idempotency_key(&record.claim.idempotency_key).unwrap();
+        let journaled: Vec<_> =
+            record.mldsa44_relays.iter().map(|attempt| attempt.relayer.clone()).collect();
+        assert_eq!(journaled, vec![first_wallet.to_string(), second_wallet.to_string()]);
+        for (attempt, (_, _, message)) in record.mldsa44_relays.iter().zip(&sent) {
+            assert_eq!(
+                attempt.wallet_message_digest,
+                format!("sha256:{}", hex::encode(Sha256::digest(message)))
+            );
+        }
+        assert_eq!(record.mldsa44_relays[1].relay_amount_atomic, 3_000_000_000);
+    }
+
+    #[tokio::test]
+    async fn a_relayer_that_cannot_pay_sends_and_journals_nothing() {
+        let (_directory, journal, record, _) = signed_record();
+        let owner = profile("owner-key", 1);
+        // Holds the amount but not its own fees on top.
+        let environment = CapturingEnvironment::new(2_000_000_000);
+        let relayer = resolve_relayer(None, &HashMap::new(), None, &owner).unwrap();
+        assert!(
+            relay_submission(&environment, &journal, &record, &relayer, 2_000_000_000, 20)
+                .await
+                .is_err()
+        );
+        assert!(environment.sent().is_empty());
+        let record = journal.action_by_idempotency_key(&record.claim.idempotency_key).unwrap();
+        assert_eq!(record.status, ControllerActionStatus::Signed, "nothing moved to broadcasting");
+        assert!(record.mldsa44_relays.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_relay_never_sends_bytes_other_than_the_journaled_ones() {
+        let (_directory, journal, mut record, _) = signed_record();
+        let owner = profile("owner-key", 1);
+        let environment = CapturingEnvironment::new(10_000_000_000);
+        let relayer = resolve_relayer(None, &HashMap::new(), None, &owner).unwrap();
+        // Another valid submission of the same action, under its own digest,
+        // is not the journaled one: the journal refuses to relay it.
+        let account = address(0, 0x10);
+        let target = address(0, 0x30);
+        let module = address(0, 0x20);
+        let other = write_boc(
+            &sign_submission(&[0x44; 32], &record.claim, &account, &target, &auth(1, &module), 4)
+                .unwrap(),
+        )
+        .unwrap();
+        record.exact_signed_boc_base64 =
+            Some(base64::engine::general_purpose::STANDARD.encode(&other));
+        record.exact_signed_boc_digest =
+            Some(format!("sha256:{}", hex::encode(Sha256::digest(&other))));
+        assert!(
+            relay_submission(&environment, &journal, &record, &relayer, 2_000_000_000, 20)
+                .await
+                .is_err()
+        );
+        assert!(environment.sent().is_empty());
+    }
+
+    #[test]
+    fn the_fee_placeholder_has_the_signed_submission_size() {
+        let account = address(0, 0x10);
+        let target = address(0, 0x30);
+        let module = address(0, 0x20);
+        let claim = mldsa44_claim(
+            &"a".repeat(64),
+            &account,
+            &target,
+            &module,
+            42,
+            pin(),
+            &data(),
+            9,
+            1_000,
+        );
+        let signed =
+            sign_submission(&[0x44; 32], &claim, &account, &target, &auth(1, &module), 3).unwrap();
+        let placeholder =
+            placeholder_submission(&claim, &account, &target, &auth(1, &module)).unwrap();
+        assert_eq!(
+            contracts::wallet::send_fees::tree_size(&[&placeholder]).unwrap(),
+            contracts::wallet::send_fees::tree_size(&[&signed]).unwrap()
+        );
     }
 
     #[test]
