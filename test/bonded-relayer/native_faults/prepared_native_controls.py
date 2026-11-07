@@ -47,7 +47,7 @@ def main():
             name + "-build",
             [
                 "cargo",
-                "+1.97.1",
+                "+1.99.1",
                 "build",
                 "--manifest-path",
                 str(manifest),
@@ -127,7 +127,7 @@ def main():
             "unsigned-cancellation-build",
             [
                 "cargo",
-                "+1.97.1",
+                "+1.99.1",
                 "test",
                 "--manifest-path",
                 str(manifest),

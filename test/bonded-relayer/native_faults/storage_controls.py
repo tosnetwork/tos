@@ -25,7 +25,7 @@ def main():
     rows = []
     command = [
         "cargo",
-        "+1.97.1",
+        "+1.99.1",
         "test",
         "--manifest-path",
         str(manifest),

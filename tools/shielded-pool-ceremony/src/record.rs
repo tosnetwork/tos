@@ -259,7 +259,12 @@ impl Directory {
                 bytes.len()
             )));
         }
-        bytes.chunks_exact(CONTRIBUTION_BYTES).map(Contribution::from_bytes).collect()
+        bytes
+            .as_chunks::<CONTRIBUTION_BYTES>()
+            .0
+            .iter()
+            .map(|contribution| Contribution::from_bytes(contribution))
+            .collect()
     }
 
     pub fn write_contributions(&self, contributions: &[Contribution]) -> Result<()> {

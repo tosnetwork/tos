@@ -120,7 +120,7 @@ cd tosctl/src
 cargo build
 ```
 
-The repository pins Rust 1.97.1, including rustfmt and Clippy. The root-level
+The repository pins Rust 1.99.1, including rustfmt and Clippy. The root-level
 file applies even when Cargo is invoked with `--manifest-path`. Do not override
 it with `+stable`, `+nightly`, or an IDE-specific toolchain. Use the canonical
 formatting targets:
