@@ -423,32 +423,14 @@ impl AgentAccountMldsa44InstallCmd {
             ctx.data.seqno,
             &ctx.auth,
         )?;
-        let mut interrupted =
-            journal.controller_epoch_change(&account_text, ctx.global_id, &deployment_id)?;
-        if let Some(start) = interrupted
-            && self.recover_interrupted
-        {
-            // The operator states the fenced stage was never sent or can no
-            // longer be accepted. Handled before any other decision, so a
-            // fence stays recoverable whichever module is staged now and
-            // after an owner rotation moved the counters (the journal still
-            // refuses counters older than the fence's start).
-            journal.end_controller_epoch_change(
-                &account_text,
-                ctx.global_id,
-                &deployment_id,
-                ctx.data.controller_epoch,
-                ctx.data.seqno,
-                None,
-            )?;
-            println!(
-                "{} lifted the fence of an interrupted install started at controller epoch {}, seqno {}",
-                "NOTE".yellow().bold(),
-                start.0,
-                start.1
-            );
-            interrupted = None;
-        }
+        let interrupted = recover_interrupted_fence(
+            &journal,
+            &account_text,
+            ctx.global_id,
+            &deployment_id,
+            (ctx.data.controller_epoch, ctx.data.seqno),
+            self.recover_interrupted,
+        )?;
         if decision == StageDecision::AlreadyStaged {
             if interrupted.is_some() {
                 println!(
@@ -811,6 +793,44 @@ impl AgentAccountMldsa44SendCmd {
         )
         .await
     }
+}
+
+/// The fence an interrupted install left, after explicit recovery if the
+/// operator asked for it. The operator states the fenced stage was never sent
+/// or can no longer be accepted; it is handled before any other install
+/// decision, so a fence stays recoverable whichever module is staged now and
+/// after an owner rotation moved the counters (the journal still refuses
+/// counters older than the fence's start). Returns the fence still held.
+fn recover_interrupted_fence(
+    journal: &AgentAccountCustodyJournal,
+    account: &str,
+    global_id: i32,
+    deployment_id: &str,
+    counters: (u64, u32),
+    recover: bool,
+) -> anyhow::Result<Option<(u64, u32)>> {
+    let interrupted = journal.controller_epoch_change(account, global_id, deployment_id)?;
+    let Some(start) = interrupted else {
+        return Ok(None);
+    };
+    if !recover {
+        return Ok(Some(start));
+    }
+    journal.end_controller_epoch_change(
+        account,
+        global_id,
+        deployment_id,
+        counters.0,
+        counters.1,
+        None,
+    )?;
+    println!(
+        "{} lifted the fence of an interrupted install started at controller epoch {}, seqno {}",
+        "NOTE".yellow().bold(),
+        start.0,
+        start.1
+    );
+    Ok(None)
 }
 
 /// The 256-bit account hash of a standard module address, as the account
@@ -1892,6 +1912,65 @@ mod tests {
             ([0x03; 32], 0, 0, 0)
         );
         assert!(AgentAccountState::parse(&Cell::default()).is_err());
+    }
+
+    #[test]
+    fn an_interrupted_install_is_recovered_after_a_rotation_and_the_next_send_claims() {
+        let directory = tempfile::tempdir().unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let journal =
+            AgentAccountCustodyJournal::open(directory.path().canonicalize().unwrap()).unwrap();
+        let account = address(0, 0x10);
+        let target = address(0, 0x30);
+        let module = address(0, 0x20);
+        let text = account.to_string();
+        let deployment = hex::encode(data().deployment_id);
+        // Install B fenced (2, 7) to stage another module and was interrupted;
+        // an owner rotation moved the counters to (3, 8). Module A is still
+        // staged, so a run of A's install takes the already-staged path.
+        journal
+            .begin_controller_epoch_change(
+                &text,
+                42,
+                &deployment,
+                2,
+                7,
+                4,
+                &[0x21; 32],
+                &"c".repeat(64),
+            )
+            .unwrap();
+        assert_eq!(
+            stage_decision(&auth(AUTH_MODE_STAGED, &module), &data(), &account, &module).unwrap(),
+            StageDecision::AlreadyStaged
+        );
+        // Without the operator's statement the fence stays.
+        assert_eq!(
+            recover_interrupted_fence(&journal, &text, 42, &deployment, (3, 8), false).unwrap(),
+            Some((2, 7))
+        );
+        // With it the fence is lifted at the advanced counters.
+        assert_eq!(
+            recover_interrupted_fence(&journal, &text, 42, &deployment, (3, 8), true).unwrap(),
+            None
+        );
+        let rotated = AgentAccountData { controller_epoch: 3, seqno: 8, ..data() };
+        let next = mldsa44_claim(
+            &"a".repeat(64),
+            &account,
+            &target,
+            &module,
+            42,
+            pin(),
+            &rotated,
+            9,
+            1_000,
+        );
+        assert!(journal.claim_primary(next, 10).unwrap().1);
     }
 
     #[test]

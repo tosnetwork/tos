@@ -32,6 +32,8 @@ mutated file before the next control:
   chain with the same global id but another zero state; its test must fail.
 - legacy-fence-undecodable: a fence journaled without its stage identity no
   longer decodes; its unit test must fail.
+- install-skips-interrupted-recovery: --recover-interrupted no longer lifts
+  an interrupted fence; the install path's unit test must fail.
 - classifier-ignores-action-rollback: a delivery whose action phase failed
   is counted as committed; the resolver's unit test must fail.
 
@@ -297,6 +299,18 @@ mutation(
             CARGO_DIR,
             True,
             "a_fence_without_its_stage_identity_is_never_lifted_automatically",
+        )
+    ],
+)
+mutation(
+    "install-skips-interrupted-recovery",
+    [(CLI, "    if !recover {", "    if true || !recover {")],
+    [
+        (
+            COMMANDS_LIB + ["an_interrupted_install_is_recovered_after_a_rotation"],
+            CARGO_DIR,
+            True,
+            "an_interrupted_install_is_recovered_after_a_rotation_and_the_next_send_claims",
         )
     ],
 )
