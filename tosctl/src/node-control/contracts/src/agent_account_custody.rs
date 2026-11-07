@@ -259,8 +259,30 @@ pub struct ControllerActionRecord {
     /// exact claim and signed BOC and rejects any conflicting winner.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exact_winner_resolution: Option<ControllerActionResolutionEvidence>,
+    /// Each relay of an ML-DSA-44 submission, in order: which wallet sent the
+    /// exact journaled bytes, in which wallet message. A relayer carries no
+    /// authority, so this is accounting, never an input to resolution.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mldsa44_relays: Vec<Mldsa44RelayAttempt>,
     pub created_at_unix: u64,
     pub updated_at_unix: u64,
+}
+
+/// At most this many relays are journaled per ML-DSA-44 action; past it the
+/// action is resolved rather than relayed again.
+pub const MAX_MLDSA44_RELAY_ATTEMPTS: usize = 16;
+
+/// One relay of an ML-DSA-44 submission.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Mldsa44RelayAttempt {
+    /// The relaying wallet's address: it signs and pays for its own message.
+    pub relayer: String,
+    /// `sha256:<hex>` of the relayer's external wallet message BOC.
+    pub wallet_message_digest: String,
+    /// The value the relayer attached to the module message.
+    pub relay_amount_atomic: u64,
+    pub at_unix: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1341,6 +1363,41 @@ impl AgentAccountCustodyJournal {
             }
             record.status = ControllerActionStatus::Broadcasting;
             record.updated_at_unix = now;
+            Ok(())
+        })
+    }
+
+    /// Journals one relay of a broadcasting ML-DSA-44 submission before its
+    /// wallet message is sent: which wallet relays it and in which exact
+    /// message. Refused for any other action, for a record whose exact
+    /// submission is not `exact_submission_digest`, and once
+    /// [`MAX_MLDSA44_RELAY_ATTEMPTS`] relays are on record.
+    pub fn record_mldsa44_relay(
+        &self,
+        claim: &ControllerActionClaim,
+        exact_submission_digest: &str,
+        attempt: Mldsa44RelayAttempt,
+    ) -> anyhow::Result<ControllerActionRecord> {
+        validate_mldsa44_relay_attempt(&attempt)?;
+        self.mutate_exact(claim, |record| {
+            if record.claim.action_kind != MLDSA44_NATIVE_SEND_ACTION_KIND {
+                anyhow::bail!("only an ML-DSA-44 native send is relayed");
+            }
+            if record.status != ControllerActionStatus::Broadcasting
+                || record.exact_signed_boc_base64.is_none()
+            {
+                anyhow::bail!("only a broadcasting ML-DSA-44 submission is relayed");
+            }
+            if record.exact_signed_boc_digest.as_deref() != Some(exact_submission_digest) {
+                anyhow::bail!("the relayed bytes are not the journaled ML-DSA-44 submission");
+            }
+            if record.mldsa44_relays.len() >= MAX_MLDSA44_RELAY_ATTEMPTS {
+                anyhow::bail!(
+                    "this ML-DSA-44 action was relayed {MAX_MLDSA44_RELAY_ATTEMPTS} times; resolve it with mldsa44-resolve instead of relaying again"
+                );
+            }
+            record.updated_at_unix = attempt.at_unix;
+            record.mldsa44_relays.push(attempt);
             Ok(())
         })
     }
@@ -2597,6 +2654,7 @@ fn admit_claim(
         economic_effect_authorization: None,
         prediction_relay_recovery_boundary: None,
         exact_winner_resolution: None,
+        mldsa44_relays: Vec::new(),
         created_at_unix: now,
         updated_at_unix: now,
     };
@@ -3383,6 +3441,28 @@ fn validate_document(document: &JournalDocument) -> anyhow::Result<()> {
             (None, Some(_)) if record.status == ControllerActionStatus::Resolved => {}
             _ => anyhow::bail!("incomplete signed BOC fields in Agent Account custody journal"),
         }
+        if !record.mldsa44_relays.is_empty() {
+            if record.claim.action_kind != MLDSA44_NATIVE_SEND_ACTION_KIND
+                || record.mldsa44_relays.len() > MAX_MLDSA44_RELAY_ATTEMPTS
+            {
+                anyhow::bail!("relay attempts belong only to an ML-DSA-44 native send");
+            }
+            // A resolved record may have had its bytes compacted away; its
+            // digest is retained, and every relay sent exactly those bytes.
+            let relayed = match record.status {
+                ControllerActionStatus::Broadcasting => record.exact_signed_boc_base64.is_some(),
+                ControllerActionStatus::Resolved => record.exact_signed_boc_digest.is_some(),
+                ControllerActionStatus::Claimed | ControllerActionStatus::Signed => false,
+            };
+            if !relayed {
+                anyhow::bail!(
+                    "relay attempts are journaled for an action that was never broadcast"
+                );
+            }
+            for attempt in &record.mldsa44_relays {
+                validate_mldsa44_relay_attempt(attempt)?;
+            }
+        }
         if let Some(boc) = &record.cancellation_boc_base64 {
             if record.cancellation_identity.is_none() {
                 anyhow::bail!("cancellation BOC is missing its authorization identity");
@@ -3452,6 +3532,24 @@ fn validate_private_regular_file(
         || (!allow_empty && metadata.len() == 0)
     {
         anyhow::bail!("invalid private Agent Account custody file: {label}");
+    }
+    Ok(())
+}
+
+/// A relay attempt names a standard relayer address, its exact wallet
+/// message and a nonzero attached value.
+fn validate_mldsa44_relay_attempt(attempt: &Mldsa44RelayAttempt) -> anyhow::Result<()> {
+    let relayer = attempt
+        .relayer
+        .parse::<MsgAddressInt>()
+        .context("an ML-DSA-44 relayer address is invalid")?;
+    if !matches!(&relayer, MsgAddressInt::AddrStd(std) if std.anycast.is_none())
+        || relayer.to_string() != attempt.relayer
+        || !valid_digest(&attempt.wallet_message_digest)
+        || attempt.relay_amount_atomic == 0
+        || attempt.at_unix == 0
+    {
+        anyhow::bail!("invalid ML-DSA-44 relay attempt");
     }
     Ok(())
 }
@@ -3786,6 +3884,170 @@ mod tests {
         assert_eq!(record.exact_signed_boc_base64.as_deref(), Some(boc.as_str()));
         journal.begin_broadcast(&action, 13).unwrap();
         assert_eq!(journal.unresolved_count(generation.0, generation.1, generation.2).unwrap(), 1);
+    }
+
+    fn relay_attempt(byte: u8, at_unix: u64) -> Mldsa44RelayAttempt {
+        Mldsa44RelayAttempt {
+            relayer: MsgAddressInt::with_standart(None, 0, [byte; 32].into()).unwrap().to_string(),
+            wallet_message_digest: format!("sha256:{}", hex::encode([byte; 32])),
+            relay_amount_atomic: 2_000_000_000,
+            at_unix,
+        }
+    }
+
+    #[test]
+    fn relays_are_journaled_only_for_a_broadcasting_mldsa_submission() {
+        let directory = tempfile::tempdir().unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let path = directory.path().canonicalize().unwrap();
+        let journal = AgentAccountCustodyJournal::open(&path).unwrap();
+        let action = mldsa_claim(3);
+        journal.claim_primary(action.clone(), 10).unwrap();
+        let (boc, digest) = encoded(&mldsa_submission(&action, |_| {}));
+        // Not before the submission is attached and broadcasting.
+        assert!(journal.record_mldsa44_relay(&action, &digest, relay_attempt(1, 11)).is_err());
+        journal.attach_signed_boc(&action, &boc, &digest, 12).unwrap();
+        assert!(journal.record_mldsa44_relay(&action, &digest, relay_attempt(1, 13)).is_err());
+        journal.begin_broadcast(&action, 14).unwrap();
+        // Only under the journaled submission's digest.
+        let other = format!("sha256:{}", "f".repeat(64));
+        assert!(journal.record_mldsa44_relay(&action, &other, relay_attempt(1, 15)).is_err());
+        // Malformed attempts are refused.
+        for bad in [
+            Mldsa44RelayAttempt { relayer: "not an address".into(), ..relay_attempt(1, 15) },
+            Mldsa44RelayAttempt {
+                wallet_message_digest: "sha256:00".into(),
+                ..relay_attempt(1, 15)
+            },
+            Mldsa44RelayAttempt { relay_amount_atomic: 0, ..relay_attempt(1, 15) },
+            Mldsa44RelayAttempt { at_unix: 0, ..relay_attempt(1, 15) },
+        ] {
+            assert!(journal.record_mldsa44_relay(&action, &digest, bad).is_err());
+        }
+        // Two different relayers of the same bytes are both on record, in order.
+        journal.record_mldsa44_relay(&action, &digest, relay_attempt(1, 15)).unwrap();
+        let record = journal.record_mldsa44_relay(&action, &digest, relay_attempt(2, 16)).unwrap();
+        assert_eq!(record.mldsa44_relays, vec![relay_attempt(1, 15), relay_attempt(2, 16)]);
+        assert_eq!(record.exact_signed_boc_digest.as_deref(), Some(digest.as_str()));
+        // A broadcasting Ed25519 action never takes a relay attempt, even
+        // under its own exact digest.
+        let other_directory = tempfile::tempdir().unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(other_directory.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let other_journal =
+            AgentAccountCustodyJournal::open(other_directory.path().canonicalize().unwrap())
+                .unwrap();
+        let ed25519 = claim(3, 'a');
+        other_journal.claim_primary(ed25519.clone(), 17).unwrap();
+        let (ed_boc, ed_digest) = signed_boc(&ed25519, false);
+        other_journal.attach_signed_boc(&ed25519, &ed_boc, &ed_digest, 18).unwrap();
+        other_journal.begin_broadcast(&ed25519, 19).unwrap();
+        assert!(
+            other_journal.record_mldsa44_relay(&ed25519, &ed_digest, relay_attempt(3, 20)).is_err()
+        );
+    }
+
+    #[test]
+    fn relays_stop_at_the_cap_and_survive_resolution_and_reopening() {
+        let directory = tempfile::tempdir().unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let path = directory.path().canonicalize().unwrap();
+        let journal = AgentAccountCustodyJournal::open(&path).unwrap();
+        let action = mldsa_claim(3);
+        journal.claim_primary(action.clone(), 10).unwrap();
+        let (boc, digest) = encoded(&mldsa_submission(&action, |_| {}));
+        journal.attach_signed_boc(&action, &boc, &digest, 11).unwrap();
+        journal.begin_broadcast(&action, 12).unwrap();
+        for index in 0..MAX_MLDSA44_RELAY_ATTEMPTS {
+            let byte = u8::try_from(index).unwrap().checked_add(1).unwrap();
+            journal.record_mldsa44_relay(&action, &digest, relay_attempt(byte, 20)).unwrap();
+        }
+        assert!(journal.record_mldsa44_relay(&action, &digest, relay_attempt(0x7f, 21)).is_err());
+        // Resolution compacts the bytes away; the history stays valid on reopen.
+        let evidence = serde_json::json!({"state": "transferred"});
+        let resolution = ControllerActionResolutionEvidence {
+            evidence_kind: "tos.agent-account.mldsa44-native-send-finalized.v1".into(),
+            evidence_digest: controller_resolution_evidence_digest(
+                "tos.agent-account.mldsa44-native-send-finalized.v1",
+                &evidence,
+            )
+            .unwrap(),
+            evidence,
+        };
+        journal.resolve_exact_winner(&action, &digest, 3, 4, resolution, 22).unwrap();
+        drop(journal);
+        let reopened = AgentAccountCustodyJournal::open(&path).unwrap();
+        let record = reopened.action_by_idempotency_key(&action.idempotency_key).unwrap();
+        assert_eq!(record.status, ControllerActionStatus::Resolved);
+        assert!(record.exact_signed_boc_base64.is_none());
+        assert_eq!(record.mldsa44_relays.len(), MAX_MLDSA44_RELAY_ATTEMPTS);
+        // And the next action of the account is admitted.
+        let next = ControllerActionClaim {
+            idempotency_key: "3".repeat(64),
+            action_identity: format!("sha256:{}", "3".repeat(64)),
+            ..mldsa_claim(4)
+        };
+        assert!(reopened.claim_primary(next, 23).unwrap().1);
+    }
+
+    #[test]
+    fn a_journal_with_misplaced_relay_attempts_is_refused() {
+        let action = mldsa_claim(3);
+        let (boc, digest) = encoded(&mldsa_submission(&action, |_| {}));
+        let mut record = ControllerActionRecord {
+            claim: action.clone(),
+            status: ControllerActionStatus::Broadcasting,
+            exact_signed_boc_base64: Some(boc),
+            exact_signed_boc_digest: Some(digest),
+            cancellation_identity: None,
+            cancellation_boc_base64: None,
+            economic_authorization: None,
+            economic_effect_authorization: None,
+            prediction_relay_recovery_boundary: None,
+            exact_winner_resolution: None,
+            mldsa44_relays: vec![relay_attempt(1, 11)],
+            created_at_unix: 10,
+            updated_at_unix: 11,
+        };
+        let document = |record: &ControllerActionRecord| JournalDocument {
+            schema: SCHEMA.to_owned(),
+            records: vec![record.clone()],
+            ..Default::default()
+        };
+        validate_document(&document(&record)).unwrap();
+        // Over the cap.
+        let mut full = record.clone();
+        full.mldsa44_relays = (0..=MAX_MLDSA44_RELAY_ATTEMPTS)
+            .map(|index| relay_attempt(u8::try_from(index).unwrap().checked_add(1).unwrap(), 11))
+            .collect();
+        assert!(validate_document(&document(&full)).is_err());
+        // Malformed.
+        let mut malformed = record.clone();
+        malformed.mldsa44_relays[0].relay_amount_atomic = 0;
+        assert!(validate_document(&document(&malformed)).is_err());
+        // Never broadcast.
+        record.status = ControllerActionStatus::Signed;
+        assert!(validate_document(&document(&record)).is_err());
+        // On an Ed25519 action.
+        let ed25519 = ControllerActionRecord {
+            claim: claim(3, 'a'),
+            status: ControllerActionStatus::Claimed,
+            exact_signed_boc_base64: None,
+            exact_signed_boc_digest: None,
+            ..record.clone()
+        };
+        assert!(validate_document(&document(&ed25519)).is_err());
     }
 
     #[test]
@@ -5481,6 +5743,7 @@ mod tests {
                         economic_effect_authorization: None,
                         prediction_relay_recovery_boundary: None,
                         exact_winner_resolution: None,
+                        mldsa44_relays: Vec::new(),
                         created_at_unix: 100 + u64::try_from(index).unwrap(),
                         updated_at_unix: 100 + u64::try_from(index).unwrap(),
                     });

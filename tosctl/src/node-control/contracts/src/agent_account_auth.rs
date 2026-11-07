@@ -406,6 +406,43 @@ pub fn build_mldsa44_submit(
     body.into_cell()
 }
 
+/// The relay body of a journaled submission: exactly the journaled bytes, read
+/// back and never rebuilt. Refused unless the bytes hash to `expected_digest`
+/// (`sha256:<hex>`), form one canonical BOC, and parse as a complete
+/// submission. Whoever relays it only chooses the wallet, the attached value
+/// and when to send; every authorizing field is inside the signed request.
+pub fn mldsa44_relay_body(exact_boc: &[u8], expected_digest: &str) -> anyhow::Result<Cell> {
+    use sha2::Digest as _;
+    let digest = format!("sha256:{}", hex::encode(sha2::Sha256::digest(exact_boc)));
+    ensure!(
+        digest == expected_digest,
+        "the journaled ML-DSA-44 submission does not match its recorded digest"
+    );
+    let root = read_single_root_boc(exact_boc)?;
+    ensure!(
+        chain_block::write_boc(&root)? == exact_boc,
+        "the journaled ML-DSA-44 submission is not a canonical BOC"
+    );
+    parse_mldsa44_submit(&root)?;
+    Ok(root)
+}
+
+/// The relayer's signed external wallet message carrying `body` to `module`.
+/// Bounceable: when the module refuses the submission, what verification left
+/// returns to the relaying wallet, the only refund path of the immutable module.
+pub async fn build_mldsa44_relay_wallet_message(
+    wallet: &dyn crate::Wallet,
+    module: &MsgAddressInt,
+    amount: u64,
+    body: Cell,
+    seqno: Option<u32>,
+) -> anyhow::Result<Vec<u8>> {
+    ensure!(amount > 0, "a relay must attach a nonzero value");
+    let message =
+        wallet.build_message(module.clone(), amount, body, true, seqno, None, None).await?;
+    chain_block::write_boc(&message)
+}
+
 /// A submission read back in full: every layer canonical, no trailing data,
 /// no cosignature, an execute request.
 #[derive(Clone, Debug)]
@@ -601,6 +638,31 @@ mod tests {
         let mut trailing = BuilderData::from_cell(&body).unwrap();
         trailing.append_bit_zero().unwrap();
         assert!(parse_mldsa44_submit(&trailing.into_cell().unwrap()).is_err());
+    }
+
+    #[test]
+    fn a_relay_body_is_exactly_the_journaled_bytes() {
+        use sha2::Digest as _;
+        let cell = request().to_cell().unwrap();
+        let envelope = build_auth_envelope(&cell).unwrap();
+        let signature = sign_auth_request(&[9; 32], &cell).unwrap();
+        let body = build_mldsa44_submit(5, &envelope, &signature).unwrap();
+        let bytes = chain_block::write_boc(&body).unwrap();
+        let digest = |bytes: &[u8]| format!("sha256:{}", hex::encode(sha2::Sha256::digest(bytes)));
+        let relayed = mldsa44_relay_body(&bytes, &digest(&bytes)).unwrap();
+        assert_eq!(chain_block::write_boc(&relayed).unwrap(), bytes);
+        // Another valid submission under the recorded digest is refused.
+        let other =
+            chain_block::write_boc(&build_mldsa44_submit(6, &envelope, &signature).unwrap())
+                .unwrap();
+        assert!(mldsa44_relay_body(&other, &digest(&bytes)).is_err());
+        // A cell that is not a submission is refused even under its own digest.
+        let not_submission = chain_block::write_boc(&envelope).unwrap();
+        assert!(mldsa44_relay_body(&not_submission, &digest(&not_submission)).is_err());
+        // Bytes that are not one BOC are refused.
+        let mut garbage = bytes.clone();
+        garbage.push(0);
+        assert!(mldsa44_relay_body(&garbage, &digest(&garbage)).is_err());
     }
 
     #[test]
