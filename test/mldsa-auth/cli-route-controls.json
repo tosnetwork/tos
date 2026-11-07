@@ -1,7 +1,7 @@
 {
  "schema": "tos.evidence.index.v1",
- "claim": "Each new check of the tosctl ML-DSA-44 Agent Account route can fail: removing the module's verifier, changing the signing context, dropping the staged-module precondition, accepting an envelope from any sender, or accepting a submission for another account each turns its test red; admitting claims while install fences the account, or counting a delivery whose action phase failed as committed, each also turns its test red; an already-staged install lifting a fence started at the current counters turns its test red",
- "reviewed_commit": "5995e5626",
+ "claim": "Each new check of the tosctl ML-DSA-44 Agent Account route can fail: removing the module's verifier, changing the signing context, dropping the staged-module precondition, accepting an envelope from any sender, or accepting a submission for another account each turns its test red; admitting claims while install fences the account, or counting a delivery whose action phase failed as committed, each also turns its test red; an already-staged install lifting a fence started at the current counters turns its test red; settling moved counters without the unconsumed-nonce proof, lifting a fence on counters alone, relaying a retry to another zero state, failing to decode an older fence, or skipping the install's explicit recovery each turns its test red",
+ "reviewed_commit": "08d1e63d0",
  "runner": "test/mldsa-auth/cli_route_mutations.py",
  "command": "cd <checkout> && FUNC_PATH=<func> FIFT_PATH=<fift> python3 test/mldsa-auth/cli_route_mutations.py <results.json>",
  "compiler": "FunC/Fift v0.4.6 build 392bc162e095cc34292eb9ea0709273407e06ca7",
@@ -95,11 +95,59 @@
    "matched": true
   },
   {
-   "control": "already-staged-lifts-any-fence",
+   "control": "fence-lifted-on-counters-alone",
    "command": "cargo test -p contracts --lib -- an_already_staged_install_leaves_a_second_installs_fence_held",
    "exit": 101,
    "expected": "red",
    "marker": "an_already_staged_install_leaves_a_second_installs_fence_held",
+   "matched": true
+  },
+  {
+   "control": "supersession-ignores-auth-nonce",
+   "command": "cargo test -p contracts --test agent_account_mldsa44_sandbox -- a_refusal_after_acceptance_consumes_the_counters_without_a_transfer",
+   "exit": 101,
+   "expected": "red",
+   "marker": "a_refusal_after_acceptance_consumes_the_counters_without_a_transfer",
+   "matched": true
+  },
+  {
+   "control": "supersession-ignores-auth-nonce",
+   "command": "cargo test -p commands --lib --no-default-features -- a_request_whose_sequence_another_action_took_settles_as_superseded",
+   "exit": 101,
+   "expected": "red",
+   "marker": "a_request_whose_sequence_another_action_took_settles_as_superseded",
+   "matched": true
+  },
+  {
+   "control": "resolver-ignores-supersession-proof",
+   "command": "cargo test -p commands --lib --no-default-features -- a_request_whose_sequence_another_action_took_settles_as_superseded",
+   "exit": 101,
+   "expected": "red",
+   "marker": "a_request_whose_sequence_another_action_took_settles_as_superseded",
+   "matched": true
+  },
+  {
+   "control": "rebroadcast-ignores-chain-identity",
+   "command": "cargo test -p commands --lib --no-default-features -- a_retry_is_never_relayed_to_another_chain_with_the_same_global_id",
+   "exit": 101,
+   "expected": "red",
+   "marker": "a_retry_is_never_relayed_to_another_chain_with_the_same_global_id",
+   "matched": true
+  },
+  {
+   "control": "legacy-fence-undecodable",
+   "command": "cargo test -p contracts --lib -- a_fence_without_its_stage_identity_is_never_lifted_automatically",
+   "exit": 101,
+   "expected": "red",
+   "marker": "a_fence_without_its_stage_identity_is_never_lifted_automatically",
+   "matched": true
+  },
+  {
+   "control": "install-skips-interrupted-recovery",
+   "command": "cargo test -p commands --lib --no-default-features -- an_interrupted_install_is_recovered_after_a_rotation",
+   "exit": 101,
+   "expected": "red",
+   "marker": "an_interrupted_install_is_recovered_after_a_rotation_and_the_next_send_claims",
    "matched": true
   },
   {
