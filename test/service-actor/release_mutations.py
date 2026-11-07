@@ -8,8 +8,8 @@ Starts from a passing baseline, applies one mutation at a time and restores
 the mutated file before the next control. Every run carries its expected exit
 status and the diagnostic it must print: (a) a flipped artifact byte fails
 both the release test and the bytecode checker; (b) a changed source constant
-fails on the code hash; (c) a wrong manifest size fails the manifest
-comparison; (d) the same root cell in another BOC container fails the release
+fails on the code hash; (c) a wrong manifest size fails the build script,
+which reads its pins from the manifest; (d) the same root cell in another BOC container fails the release
 test's byte comparison while the root-hash checker alone still passes. The
 runner exits nonzero when any run differs from its expectation, so a check
 that stops refusing is reported as a failure, not recorded as data.
@@ -128,7 +128,8 @@ control(
     "c-manifest-boc-bytes",
     "crypto/smartcont/tos-service-actor-v1.release.json",
     lambda raw: raw.replace(b'"boc_bytes": 4590', b'"boc_bytes": 4591', 1),
-    [(TEST, (1, "manifest boc_bytes differs from the build"))],
+    # The build script reads its pins from the manifest, so it refuses first.
+    [(TEST, (1, "BOC size mismatch: 4590"))],
 )
 embedded = base64.b64decode(
     re.search(r'SERVICE_ACTOR_CODE_B64: &str = "([^"]+)"', (CHECKOUT / SDK).read_text())[1]
