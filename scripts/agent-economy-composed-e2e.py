@@ -556,8 +556,12 @@ async def run_checks(faucet) -> None:
     check("worker Agent Account deployed", await poll_predicate(
         lambda: rpc_call("getAddressState", address=worker_account).get("result") == "active"))
 
-    for key_name in ("task-attestor-key", "service-attestor-key", "dispute-attestor-key"):
+    for key_name in ("task-attestor-key", "dispute-attestor-key"):
         await tosctl("key", "add", "--name", key_name)
+    # The Service Actor attestor is an ML-DSA-44 controller held in the vault.
+    service_attestor = json.loads(await tosctl(
+        "agent", "native-registry", "new-controller", "--name", "service-attestor-key",
+        "--format", "json"))
 
     print("\n=== capability advertisement + attested Service Actor ===")
     registry_deploy = await tosctl_json(
@@ -587,14 +591,16 @@ async def run_checks(faucet) -> None:
         "--rate-limit-per-day", "1000",
         "--metadata-hash", SERVICE_METADATA_HASH,
         "--proof-scheme-hash", SERVICE_PROOF_SCHEME_HASH,
-        "--signer-vault-key", "service-attestor-key",
+        "--attestor-controller", "service-attestor-key",
         "--from", "model-provider", "--amount", "2", "-w", "0", "--yes",
     )
     service_address = service_deploy["address"]
     check("service actor deployed and active", await poll_predicate(
         lambda: rpc_call("getAddressState", address=service_address).get("result") == "active"))
     service_data = await tosctl_json("agent", "service", "show", "--name", "model-provider-service")
-    check("service actor is attested", bool(service_data.get("attestor_pubkey")), str(service_data))
+    check("service actor is attested",
+          service_data.get("attestor_key_id") == "mldsa44:" + service_attestor["key_id"],
+          str(service_data))
 
     async def worker_calls_and_gets_response(response_hash: str) -> int:
         # request_id is contract-assigned; predicting it as next_request_id
@@ -608,13 +614,14 @@ async def run_checks(faucet) -> None:
         await tosctl(
             "agent", "service", "send", "--operation", "call", "--name", "model-provider-service",
             "--from", "worker-owner", "--request-hash", REQUEST_HASH,
+            "--expected-terms-hash", pre_call["terms_hash"],
             "--yes",
         )
         await tosctl(
             "agent", "service", "send", "--operation", "respond", "--name",
             "model-provider-service", "--from", "model-provider",
             "--request-id", str(request_id),
-            "--response-hash", response_hash, "--signer-vault-key", "service-attestor-key",
+            "--response-hash", response_hash, "--attestor-controller", "service-attestor-key",
             "--yes",
         )
         return request_id

@@ -28,7 +28,13 @@ def main():
         "    require_backing(remaining, pending_liability, remaining_refundable, remaining_locked,\n"
         "      0, err::insufficient_balance);"
     )
-    admission_settlement = "    raw_reserve(retained, 0);\n    send_value(sender, 0, 128);"
+    admission_snapshot = (
+        "    emit_request_snapshot(request_id, sender, request_hash, response_deadline,\n"
+        "      refund_claim_deadline, terms);\n"
+    )
+    admission_settlement = (
+        "    raw_reserve(retained, 0);\n" + admission_snapshot + "    send_value(sender, 0, 128);"
+    )
     cases = [
         (
             "admission operating reserve",
@@ -56,14 +62,15 @@ def main():
             "admission_preserves_operator_excess",
             admission_settlement,
             "    raw_reserve(checked_add_amount(checked_add_amount(checked_add_amount(admitted_pending, refundable_liability), admitted_locked), MINIMUM_OPERATING_RESERVE), 0);\n"
-            "    send_value(sender, execution_payment, 1);",
+            + admission_snapshot
+            + "    send_value(sender, execution_payment, 1);",
             "successful admission spent preexisting backing",
         ),
         (
             "admission action reserve",
             "admission_preserves_operator_excess",
             admission_settlement,
-            "    send_value(sender, 0, 128);",
+            admission_snapshot + "    send_value(sender, 0, 128);",
             "successful admission spent preexisting backing",
         ),
         (
@@ -97,9 +104,32 @@ def main():
         (
             "sweep action reserve",
             "sweep_after_real_rent_preserves_other_entries",
-            "    pay_with_change(sender, sender, backing, req_cleanup_bounty);",
-            "    send_value(sender, req_cleanup_bounty, 1);\n    send_value(sender, 0, 128);",
+            "    raw_reserve(remaining_after_payouts(backing, req_cleanup_bounty, price), 0);\n",
+            "",
             "only this operation's execution and forwarding fees reduce change",
+        ),
+        (
+            "sweep reserve before principal",
+            "sweep_pays_principal_before_the_operating_reserve",
+            "    require_backing(remaining, remaining_pending, remaining_refundable, remaining_locked,\n"
+            "      0, err::insufficient_balance);",
+            "    require_backing(remaining, remaining_pending, remaining_refundable, remaining_locked,\n"
+            "      MINIMUM_OPERATING_RESERVE, err::insufficient_balance);",
+            "expected first transaction to succeed, but it was aborted",
+        ),
+        (
+            "sweep keeps the caller's price",
+            "sweep_after_real_rent_preserves_other_entries",
+            "    if (price > 0) {\n      send_value(caller, price, 1);\n    }\n",
+            "",
+            "price, bounty and change have distinct messages",
+        ),
+        (
+            "admission without a request snapshot",
+            "admission_requires_execution_budget",
+            admission_snapshot,
+            "",
+            "expected 2 outbound messages, got 1",
         ),
         (
             "exact principal instead of carry-all haircut",
