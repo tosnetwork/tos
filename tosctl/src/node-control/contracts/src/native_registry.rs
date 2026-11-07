@@ -1217,9 +1217,9 @@ mod context_tests {
     }
 }
 
-/// The Agent Guarantor signature vector shared with tosnetwork/tos-service-protocol
-/// (`pkg/agentguarantor/testdata/agent-guarantor-signature-vector.json`). The
-/// controller key comes from a fixed public seed and every signature uses the
+/// The Agent Guarantor signature vector. The same file is checked by the
+/// service protocol implementation, so both sides agree on the message, the
+/// context and the signature bytes. The controller key comes from a fixed public seed and every signature uses the
 /// FIPS 204 deterministic variant (all-zero randomness), so any implementation
 /// reproduces the bytes. The refusal signatures are each valid in their own
 /// mode, context and message, and none is valid as a Guarantor authorization
