@@ -15,7 +15,7 @@ use chain_block::{
 };
 use common::tvm_stack_parser::TvmStackParser;
 
-pub const SERVICE_ACTOR_CODE_B64: &str = "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Ib6w8ueHoXD7AijCAJIwN+MNIMIAkTDjDREbcDM0NQAuUAhxcIAQyMsFUATPFlj6AhLLaskB+wAAMFYcAXFwgBDIywVQBM8WWPoCEstqyQH7AAHSgwZwgBDIywVQBM8WWPoCEstqyQH7ABETpREXERsRFxEWERoRFhEVERkRFREVERgRFREXERIRFhESERERFRERERARFBEQDxETDw4REg4NERENDBEQDBC/EK4QnRCMEHsQahBZRxgQNkBUPAGq8udyERKkERcRGxEXBhEaBhEVERkRFREUERgRFBETERcRExEWCxEVCwoRFAoJERMJCBESCAcREQcFERAFEE8QPhAtEIwbEHoQWRBIEDcQJhBFEDQQIzwB1jk5VxtXHBEaVhfHBfLnbBEX0W34YXAgERcRGxEXERYRGhEWERURGREVERQRGBEUERMRFxETERIRFhESERERFRERERARFBEQDxETDw4REg4NERENDBEQDBC/EK4QnRCMEHtQqRBIEDdAZgQFPAEighBTVkMJuuMCXw9fDzDyx3Y5AfxWHVYbxwXy52wRG/oA0VYegQeC+CdvEFMCvhLy9AEgwv9TIb6w8ueHoVRwBr7y54InIML/UyG+sPLnh6FTBr7y54ImIML/UyG+sPLnh6FTCL7y54IoIML/UyG+sPLnh6EgghA7msoAvvLngoIQO5rKACDC/1MhvrDy54ehUpA6Afy2CFIgu/LnghEfghAL68IAvvLniVYaAgERHgERH1YeZiDC/1MhvrDy54ehcPsCIMIAjhYScXCAEMjLBVAEzxZY+gISy2rJAfsAkjAx4nCDBnCAEMjLBVAEzxZY+gISy2rJAfsAERsVIML/UyG+sPLnh6ERFxEbERcRFhEaERY7AZIRFREZERURFBEYERQRExEXERMREhEWERIREREVEREREBEUERAPERMPDhESDg0REQ0MERAMEL8QrhCdEIwQexBqEFkIEDdGUEMAPADq+EENyMv/HMv/GssAGMv/GvQAyRETyMsfARES+gIBERD6AlAO+gIcyx8ayx8YywAWywBQBM8WEssfGszJyFAF+gJQBfoCUAX6AlAF+gIVyx8Vyx/JAsj0APQAE/QAychQCM8WFssAFMs/Essfyx8SzMzMye1UAJlX+RII5AItc58n8g10kh10ohd7DyfyDCAfJ/AasCUwS88n8BwAGYNCPAf/K/1DCOEGwhIMIAIYEAgLmw8r8CcAHiUCOhAegwMcAA8r+AIBID9AAEEIcAB8r3XOfJ/0x/U0QLAAZOBBSCRcOJSELryvlzwBQGAAMQBwAHyvdc58n/TH9TRIYEJdLryvlIC8AWDHFItz";
+pub const SERVICE_ACTOR_CODE_B64: &str = "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kTDjDREbcDM0NQAuUAhxcIAQyMsFUATPFlj6AhLLaskB+wAAMFYcAXFwgBDIywVQBM8WWPoCEstqyQH7AAHSgwZwgBDIywVQBM8WWPoCEstqyQH7ABETpREXERsRFxEWERoRFhEVERkRFREVERgRFREXERIRFhESERERFRERERARFBEQDxETDw4REg4NERENDBEQDBC/EK4QnRCMEHsQahBZRxgQNkBUPAGq8udyERKkERcRGxEXBhEaBhEVERkRFREUERgRFBETERcRExEWCxEVCwoRFAoJERMJCBESCAcREQcFERAFEE8QPhAtEIwbEHoQWRBIEDcQJhBFEDQQIzwB1jk5VxtXHBEaVhfHBfLnbBEX0W34YXAgERcRGxEXERYRGhEWERURGREVERQRGBEUERMRFxETERIRFhESERERFRERERARFBEQDxETDw4REg4NERENDBEQDBC/EK4QnRCMEHtQqRBIEDdAZgQFPAEighBTVkMJuuMCXw9fDzDyx3Y5AfxWHVYbxwXy52wRG/oA0VYegQeC+CdvEFMCvhLy9AEgwv9TIb6w8ueHoVRwBr7y54InIML/UyG+sPLnh6FTBr7y54ImIML/UyG+sPLnh6FTCL7y54IoIML/UyG+sPLnh6EgghA7msoAvvLngoIQO5rKACDC/1MhvrDy54ehUpA6Afy2CFIgu/LnghEfghAL68IAvvLniVYaAgERHgERH1YeZiDC/1MhvrDy54ehcPsCIMIAjhYScXCAEMjLBVAEzxZY+gISy2rJAfsAkjAx4nCDBnCAEMjLBVAEzxZY+gISy2rJAfsAERsVIML/UyG+sPLnh6ERFxEbERcRFhEaERY7AZIRFREZERURFBEYERQRExEXERMREhEWERIREREVEREREBEUERAPERMPDhESDg0REQ0MERAMEL8QrhCdEIwQexBqEFkIEDdGUEMAPADq+EENyMv/HMv/GssAGMv/GvQAyRETyMsfARES+gIBERD6AlAO+gIcyx8ayx8YywAWywBQBM8WEssfGszJyFAF+gJQBfoCUAX6AlAF+gIVyx8Vyx/JAsj0APQAE/QAychQCM8WFssAFMs/Essfyx8SzMzMye1UAJlX+RII5AItc58n8g10kh10ohd7DyfyDCAfJ/AasCUwS88n8BwAGYNCPAf/K/1DCOEGwhIMIAIYEAgLmw8r8CcAHiUCOhAegwMcAA8r+AIBID9AAEEIcAB8r3XOfJ/0x/U0QLAAZOBBSCRcOJSELryvlzwBQGAAMQBwAHyvdc58n/TH9TRIYEJdLryvlIC8AWAnzgeT";
 
 pub const SVC_CALL_OPCODE: u32 = 0x5356_4301;
 pub const SVC_RESPOND_OPCODE: u32 = 0x5356_4302;
@@ -593,23 +593,33 @@ impl ServiceActorContract {
 }
 
 /// Decoded `request_snapshot#53415231` external-out event, emitted once by
-/// every accepted `call`. It carries the terms a buyer accepted so an index can
-/// be rebuilt from transactions alone; the contract state stays authoritative.
+/// every accepted `call`. It carries the exact terms preimage the request
+/// committed to (its cell hash is `terms_hash`), so an index can be rebuilt
+/// from transactions alone; the contract state stays authoritative.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RequestSnapshot {
     pub request_id: u64,
     pub caller: MsgAddressInt,
     pub request_hash: [u8; 32],
-    pub terms_hash: [u8; 32],
-    pub price: u128,
     pub response_deadline: u64,
     pub refund_claim_deadline: u64,
+    /// Cell hash of the terms preimage below.
+    pub terms_hash: [u8; 32],
+    pub policy_version: u32,
+    pub price: u128,
+    pub storage_fee: u128,
+    pub cleanup_bounty: u128,
+    pub response_sla: u32,
+    pub refund_claim_window: u32,
+    pub metadata_hash: [u8; 32],
+    pub proof_scheme_hash: [u8; 32],
     /// Key id of the attestor key the request snapshotted, if any.
     pub attestor_key_id: Option<[u8; 32]>,
 }
 
 /// Decode a request snapshot event body, refusing any other tag, a missing or
-/// extra field, and trailing bits or references in either cell.
+/// extra field, trailing bits or references in any cell, an attestor flag that
+/// disagrees with its key id, and deadlines that disagree with the window.
 pub fn decode_request_snapshot(body: &chain_block::Cell) -> anyhow::Result<RequestSnapshot> {
     let mut slice = chain_block::SliceData::load_cell_ref(body)?;
     let tag = slice.get_next_u32()?;
@@ -619,33 +629,53 @@ pub fn decode_request_snapshot(body: &chain_block::Cell) -> anyhow::Result<Reque
     let request_id = slice.get_next_u64()?;
     let caller = MsgAddressInt::construct_from(&mut slice)?;
     let request_hash = next_hash(&mut slice)?;
-    let terms_hash = next_hash(&mut slice)?;
-    let tail_cell = slice.checked_drain_reference()?;
+    let response_deadline = slice.get_next_u64()?;
+    let refund_claim_deadline = slice.get_next_u64()?;
+    let terms_cell = slice.checked_drain_reference()?;
     exhausted(&slice, "request snapshot")?;
-    let mut tail = chain_block::SliceData::load_cell(tail_cell)?;
-    let price = Coins::construct_from(&mut tail)?.as_u128();
-    let response_deadline = tail.get_next_u64()?;
-    let refund_claim_deadline = tail.get_next_u64()?;
-    let has_attestor = tail.get_next_bit()?;
-    let key_id = next_hash(&mut tail)?;
-    exhausted(&tail, "request snapshot terms")?;
+
+    let terms_hash = terms_cell.repr_hash().inner();
+    let mut terms = chain_block::SliceData::load_cell(terms_cell)?;
+    let policy_version = terms.get_next_u32()?;
+    let price = Coins::construct_from(&mut terms)?.as_u128();
+    let storage_fee = Coins::construct_from(&mut terms)?.as_u128();
+    let cleanup_bounty = Coins::construct_from(&mut terms)?.as_u128();
+    let response_sla = terms.get_next_u32()?;
+    let refund_claim_window = terms.get_next_u32()?;
+    let commitments_cell = terms.checked_drain_reference()?;
+    exhausted(&terms, "request snapshot terms")?;
+    let mut commitments = chain_block::SliceData::load_cell(commitments_cell)?;
+    let metadata_hash = next_hash(&mut commitments)?;
+    let proof_scheme_hash = next_hash(&mut commitments)?;
+    let has_attestor = commitments.get_next_bit()?;
+    let key_id = next_hash(&mut commitments)?;
+    exhausted(&commitments, "request snapshot commitments")?;
+
     let attestor_key_id = match (has_attestor, key_id == [0u8; 32]) {
         (true, false) => Some(key_id),
         (false, true) => None,
         (true, true) => anyhow::bail!("request snapshot names an attestor with a zero key id"),
         (false, false) => anyhow::bail!("request snapshot carries a key id without an attestor"),
     };
-    if refund_claim_deadline <= response_deadline {
-        anyhow::bail!("request snapshot refund deadline does not follow the response deadline");
+    if response_deadline.checked_add(u64::from(refund_claim_window)) != Some(refund_claim_deadline)
+    {
+        anyhow::bail!("request snapshot deadlines disagree with its refund claim window");
     }
     Ok(RequestSnapshot {
         request_id,
         caller,
         request_hash,
-        terms_hash,
-        price,
         response_deadline,
         refund_claim_deadline,
+        terms_hash,
+        policy_version,
+        price,
+        storage_fee,
+        cleanup_bounty,
+        response_sla,
+        refund_claim_window,
+        metadata_hash,
+        proof_scheme_hash,
         attestor_key_id,
     })
 }
@@ -692,54 +722,89 @@ mod tests {
         stackentry::{StackEntryNumber, StackEntrySlice},
     };
 
-    fn snapshot_body(
+    struct SnapshotCase {
         tag: u32,
         has_attestor: bool,
         key_id: [u8; 32],
         deadlines: (u64, u64),
+        window: u32,
         trailing: bool,
-    ) -> chain_block::Cell {
-        let mut tail = BuilderData::new();
-        Coins::from(7_u64).write_to(&mut tail).unwrap();
-        tail.append_u64(deadlines.0).unwrap();
-        tail.append_u64(deadlines.1).unwrap();
-        tail.append_bit_bool(has_attestor).unwrap();
-        tail.append_raw(&key_id, 256).unwrap();
-        if trailing {
-            tail.append_bit_one().unwrap();
+    }
+
+    impl Default for SnapshotCase {
+        fn default() -> Self {
+            Self {
+                tag: SERVICE_ACTOR_REQUEST_SNAPSHOT_TAG,
+                has_attestor: true,
+                key_id: [9; 32],
+                deadlines: (10, 20),
+                window: 10,
+                trailing: false,
+            }
         }
+    }
+
+    fn snapshot_body(case: &SnapshotCase) -> (chain_block::Cell, [u8; 32]) {
+        let mut commitments = BuilderData::new();
+        commitments.append_raw(&[0x66; 32], 256).unwrap();
+        commitments.append_raw(&[0x77; 32], 256).unwrap();
+        commitments.append_bit_bool(case.has_attestor).unwrap();
+        commitments.append_raw(&case.key_id, 256).unwrap();
+        let mut terms = BuilderData::new();
+        terms.append_u32(3).unwrap();
+        Coins::from(7_u64).write_to(&mut terms).unwrap();
+        Coins::from(8_u64).write_to(&mut terms).unwrap();
+        Coins::from(2_u64).write_to(&mut terms).unwrap();
+        terms.append_u32(3_600).unwrap();
+        terms.append_u32(case.window).unwrap();
+        if case.trailing {
+            terms.append_bit_one().unwrap();
+        }
+        terms.checked_append_reference(commitments.into_cell().unwrap()).unwrap();
+        let terms = terms.into_cell().unwrap();
+        let terms_hash = terms.repr_hash().inner();
         let mut body = BuilderData::new();
-        body.append_u32(tag).unwrap();
+        body.append_u32(case.tag).unwrap();
         body.append_u64(5).unwrap();
         MsgAddressInt::standard(0, [0x33; 32]).write_to(&mut body).unwrap();
         body.append_raw(&[0x44; 32], 256).unwrap();
-        body.append_raw(&[0x55; 32], 256).unwrap();
-        body.checked_append_reference(tail.into_cell().unwrap()).unwrap();
-        body.into_cell().unwrap()
+        body.append_u64(case.deadlines.0).unwrap();
+        body.append_u64(case.deadlines.1).unwrap();
+        body.checked_append_reference(terms).unwrap();
+        (body.into_cell().unwrap(), terms_hash)
     }
 
     #[test]
     fn request_snapshots_decode_exactly_and_refuse_every_inconsistency() {
-        let tag = SERVICE_ACTOR_REQUEST_SNAPSHOT_TAG;
-        let ok =
-            decode_request_snapshot(&snapshot_body(tag, true, [9; 32], (10, 20), false)).unwrap();
+        let (body, terms_hash) = snapshot_body(&SnapshotCase::default());
+        let ok = decode_request_snapshot(&body).unwrap();
         assert_eq!(ok.request_id, 5);
         assert_eq!(ok.caller, MsgAddressInt::standard(0, [0x33; 32]));
-        assert_eq!((ok.request_hash, ok.terms_hash), ([0x44; 32], [0x55; 32]));
-        assert_eq!((ok.price, ok.response_deadline, ok.refund_claim_deadline), (7, 10, 20));
+        assert_eq!(ok.request_hash, [0x44; 32]);
+        assert_eq!(ok.terms_hash, terms_hash, "terms_hash is the preimage's cell hash");
+        assert_eq!((ok.policy_version, ok.price, ok.storage_fee, ok.cleanup_bounty), (3, 7, 8, 2));
+        assert_eq!((ok.response_sla, ok.refund_claim_window), (3_600, 10));
+        assert_eq!((ok.metadata_hash, ok.proof_scheme_hash), ([0x66; 32], [0x77; 32]));
+        assert_eq!((ok.response_deadline, ok.refund_claim_deadline), (10, 20));
         assert_eq!(ok.attestor_key_id, Some([9; 32]));
-        let open =
-            decode_request_snapshot(&snapshot_body(tag, false, [0; 32], (10, 20), false)).unwrap();
-        assert_eq!(open.attestor_key_id, None);
+        let open = SnapshotCase { has_attestor: false, key_id: [0; 32], ..Default::default() };
+        assert_eq!(decode_request_snapshot(&snapshot_body(&open).0).unwrap().attestor_key_id, None);
 
-        for (name, body) in [
-            ("tag", snapshot_body(tag ^ 1, false, [0; 32], (10, 20), false)),
-            ("trailing", snapshot_body(tag, false, [0; 32], (10, 20), true)),
-            ("zero key", snapshot_body(tag, true, [0; 32], (10, 20), false)),
-            ("orphan key", snapshot_body(tag, false, [9; 32], (10, 20), false)),
-            ("deadlines", snapshot_body(tag, false, [0; 32], (20, 20), false)),
+        for (name, case) in [
+            (
+                "tag",
+                SnapshotCase { tag: SERVICE_ACTOR_REQUEST_SNAPSHOT_TAG ^ 1, ..Default::default() },
+            ),
+            ("trailing", SnapshotCase { trailing: true, ..Default::default() }),
+            ("zero key", SnapshotCase { key_id: [0; 32], ..Default::default() }),
+            ("orphan key", SnapshotCase { has_attestor: false, ..Default::default() }),
+            ("deadlines", SnapshotCase { deadlines: (10, 21), ..Default::default() }),
+            ("window", SnapshotCase { window: 11, ..Default::default() }),
         ] {
-            assert!(decode_request_snapshot(&body).is_err(), "{name} was accepted");
+            assert!(
+                decode_request_snapshot(&snapshot_body(&case).0).is_err(),
+                "{name} was accepted"
+            );
         }
     }
 

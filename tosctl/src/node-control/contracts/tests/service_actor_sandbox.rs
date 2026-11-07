@@ -1085,8 +1085,15 @@ fn every_admission_emits_a_snapshot_matching_the_stored_request() {
             assert_eq!(snapshot.request_hash, request_hash);
             assert_eq!(snapshot.request_hash, stored.request_hash);
             assert_eq!(snapshot.terms_hash, stored.terms_hash);
-            assert_eq!(snapshot.terms_hash, f.terms());
+            assert_eq!(snapshot.terms_hash, f.terms(), "the carried preimage opens terms_hash");
             assert_eq!(snapshot.price, u128::from(stored.price));
+            assert_eq!(snapshot.storage_fee, u128::from(stored.storage_fee));
+            assert_eq!(snapshot.cleanup_bounty, u128::from(stored.cleanup_bounty));
+            assert_eq!(snapshot.policy_version, stored.policy_version);
+            assert_eq!(snapshot.response_sla, f.init.response_sla);
+            assert_eq!(snapshot.refund_claim_window, f.init.refund_claim_window);
+            assert_eq!(snapshot.metadata_hash, f.init.metadata_hash);
+            assert_eq!(snapshot.proof_scheme_hash, f.init.proof_scheme_hash);
             assert_eq!(snapshot.response_deadline, stored.response_deadline);
             assert_eq!(snapshot.refund_claim_deadline, stored.refund_claim_deadline);
             assert_eq!(snapshot.attestor_key_id, stored.attestor_key_id);

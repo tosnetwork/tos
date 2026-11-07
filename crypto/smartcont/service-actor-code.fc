@@ -33,7 +33,7 @@
 ;; service-level configuration, not part of any individual request, so they
 ;; live in Policy/Accounting state, not in `PendingRequest`/`Refund`, and are
 ;; deliberately excluded from `terms_hash` and the attestation response
-;; domain (see compute_terms_hash/compute_response_domain_hash below): they
+;; domain (see terms_cell/compute_response_domain_hash below): they
 ;; govern whether a request was ever accepted, not what a valid response to
 ;; an already-accepted request has to satisfy.
 ;;
@@ -67,14 +67,15 @@
 ;;                authorized_caller:MsgAddress rate_limit_per_day:uint32
 ;;                ^[metadata_hash:uint256 proof_scheme_hash:uint256] = InternalMsgBody;
 ;;   rotate_attestor_key#53564307 query_id:uint64 attestor_key:^StoredKey = InternalMsgBody;
+;;   revoke_attestor#53564308 query_id:uint64 = InternalMsgBody;
+;;   withdraw_revenue#53564309 query_id:uint64 amount:Coins = InternalMsgBody;
 ;;
 ;; External out-messages:
 ;;   request_snapshot#53415231 request_id:uint64 caller:MsgAddressInt request_hash:uint256
-;;     terms_hash:uint256 ^[price:Coins response_deadline:uint64 refund_claim_deadline:uint64
-;;     has_attestor:uint1 attestor_key_id:uint256] -- emitted by every accepted call, so a
-;;     resolver can read what the request snapshotted from the call transaction itself
-;;   revoke_attestor#53564308 query_id:uint64 = InternalMsgBody;
-;;   withdraw_revenue#53564309 query_id:uint64 amount:Coins = InternalMsgBody;
+;;     response_deadline:uint64 refund_claim_deadline:uint64 terms:^Terms -- emitted by every
+;;     accepted call. `terms` is the exact terms_hash preimage (its cell hash is the request's
+;;     terms_hash), so a resolver reads every term the request committed to from the call
+;;     transaction itself.
 
 #include "signing-domain.fc";
 #include "pq.fc";
@@ -259,14 +260,15 @@ int remaining_after_payouts(int backing, int first, int second) inline {
 ;; whether the service is later opened up, restricted, or rate-limited
 ;; differently -- see the header comment above.
 
+;; The terms preimage; terms_hash is its cell hash, and the request snapshot carries it.
 ;; Split across a root + one ref cell: fixed+variable fields at the root
 ;; alone would exceed 1023 bits (32 + 3*124 + 32 + 32 = up to 468, fine, but
 ;; adding the 769-bit commitment fields directly would overflow). Must match
 ;; `contracts::service_actor_terms_hash` in the Rust SDK byte-for-byte.
-int compute_terms_hash(int policy_version, int price_per_call, int storage_fee,
-                        int cleanup_bounty, int response_sla, int refund_claim_window,
-                        int metadata_hash, int proof_scheme_hash, int has_attestor,
-                        int attestor_key_id) inline {
+cell terms_cell(int policy_version, int price_per_call, int storage_fee,
+                int cleanup_bounty, int response_sla, int refund_claim_window,
+                int metadata_hash, int proof_scheme_hash, int has_attestor,
+                int attestor_key_id) inline {
   ;; Canonicalize the unused pubkey to zero so semantically-identical
   ;; no-attestor policies always hash the same, regardless of leftover bits
   ;; from a since-revoked key.
@@ -277,7 +279,7 @@ int compute_terms_hash(int policy_version, int price_per_call, int storage_fee,
     .store_uint(has_attestor, 1)
     .store_uint(canonical_attestor_key_id, 256)
   .end_cell();
-  return cell_hash(begin_cell()
+  return begin_cell()
     .store_uint(policy_version, 32)
     .store_tomis(price_per_call)
     .store_tomis(storage_fee)
@@ -285,7 +287,7 @@ int compute_terms_hash(int policy_version, int price_per_call, int storage_fee,
     .store_uint(response_sla, 32)
     .store_uint(refund_claim_window, 32)
     .store_ref(tail)
-  .end_cell());
+  .end_cell();
 }
 
 ;; Split across a root + one ref cell for the same 1023-bit reason. Must
@@ -475,23 +477,17 @@ cell pending_attestor_key(cell c) inline {
 
 ;; The request snapshot a call emits as an external out-message (no destination, no
 ;; value): what a resolver needs to verify the request after it has left state.
-() emit_request_snapshot(int request_id, slice caller, int request_hash, int terms_hash,
-                         int price, int response_deadline, int refund_claim_deadline,
-                         int has_attestor, int attestor_key_id) impure inline {
-  cell tail = begin_cell()
-    .store_tomis(price)
-    .store_uint(response_deadline, 64)
-    .store_uint(refund_claim_deadline, 64)
-    .store_uint(has_attestor, 1)
-    .store_uint(attestor_key_id, 256)
-  .end_cell();
+() emit_request_snapshot(int request_id, slice caller, int request_hash,
+                         int response_deadline, int refund_claim_deadline,
+                         cell terms) impure inline {
   cell body = begin_cell()
     .store_uint(log::request_snapshot, 32)
     .store_uint(request_id, 64)
     .store_slice(caller)
     .store_uint(request_hash, 256)
-    .store_uint(terms_hash, 256)
-    .store_ref(tail)
+    .store_uint(response_deadline, 64)
+    .store_uint(refund_claim_deadline, 64)
+    .store_ref(terms)
   .end_cell();
   ;; ext_out_msg_info$11 src:addr_none dest:addr_none created_lt created_at, no init,
   ;; body by reference.
@@ -642,9 +638,10 @@ cell caller_live_decr(cell caller_live_counts, slice caller) inline {
     int request_id = next_request_id;
     int response_deadline = now() + response_sla;
     int refund_claim_deadline = response_deadline + refund_claim_window;
-    int terms_hash = compute_terms_hash(policy_version, price_per_call, storage_fee,
+    cell terms = terms_cell(policy_version, price_per_call, storage_fee,
       cleanup_bounty, response_sla, refund_claim_window, metadata_hash, proof_scheme_hash,
       has_attestor, attestor_key_id);
+    int terms_hash = cell_hash(terms);
     ;; The caller commits to the terms it was quoted. A policy or attestor change that
     ;; lands between the quote and the call fails here, before any state moves, instead
     ;; of admitting the request under terms the caller never saw.
@@ -667,8 +664,8 @@ cell caller_live_decr(cell caller_live_counts, slice caller) inline {
       MINIMUM_OPERATING_RESERVE, err::operating_reserve_unfunded);
     int retained = checked_add_amount(checked_add_amount(backing, price_per_call), storage_fee);
     raw_reserve(retained, 0);
-    emit_request_snapshot(request_id, sender, request_hash, terms_hash, price_per_call,
-      response_deadline, refund_claim_deadline, has_attestor, has_attestor ? attestor_key_id : 0);
+    emit_request_snapshot(request_id, sender, request_hash, response_deadline,
+      refund_claim_deadline, terms);
     send_value(sender, 0, 128);
 
     save_state(owner, active, next_request_id + 1, pending_count + 1, live_count + 1,
@@ -918,7 +915,7 @@ cell caller_live_decr(cell caller_live_counts, slice caller) inline {
     throw_unless(err::insufficient_storage_fee,
       new_storage_fee >= checked_add_amount(MINIMUM_STORAGE_FEE, new_cleanup_bounty));
 
-    ;; Per-request policy/attestor snapshots (see call()/compute_terms_hash)
+    ;; Per-request policy/attestor snapshots (see call()/terms_cell)
     ;; mean already-outstanding requests are entirely unaffected by this --
     ;; unlike the single-slot predecessor, update_policy never needs to
     ;; freeze while requests are pending. (open_access/authorized_caller/

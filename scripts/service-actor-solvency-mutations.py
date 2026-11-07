@@ -29,8 +29,8 @@ def main():
         "      0, err::insufficient_balance);"
     )
     admission_snapshot = (
-        "    emit_request_snapshot(request_id, sender, request_hash, terms_hash, price_per_call,\n"
-        "      response_deadline, refund_claim_deadline, has_attestor, has_attestor ? attestor_key_id : 0);\n"
+        "    emit_request_snapshot(request_id, sender, request_hash, response_deadline,\n"
+        "      refund_claim_deadline, terms);\n"
     )
     admission_settlement = (
         "    raw_reserve(retained, 0);\n" + admission_snapshot + "    send_value(sender, 0, 128);"
