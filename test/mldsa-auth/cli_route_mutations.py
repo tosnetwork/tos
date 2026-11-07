@@ -472,8 +472,8 @@ mutation(
     [
         (
             CUSTODY,
-            "            if record.claim.action_kind != MLDSA44_NATIVE_SEND_ACTION_KIND {\n                anyhow::bail!(\"only an ML-DSA-44 native send is relayed\");",
-            "            if false {\n                anyhow::bail!(\"only an ML-DSA-44 native send is relayed\");",
+            '            if record.claim.action_kind != MLDSA44_NATIVE_SEND_ACTION_KIND {\n                anyhow::bail!("only an ML-DSA-44 native send is relayed");',
+            '            if false {\n                anyhow::bail!("only an ML-DSA-44 native send is relayed");',
         ),
         (
             CUSTODY,
@@ -522,7 +522,13 @@ mutation(
 )
 mutation(
     "relayer-forced-to-owner",
-    [(CLI, "    match relayer {\n        None => Ok(", "    match None::<&str> {\n        None => Ok(")],
+    [
+        (
+            CLI,
+            "    match relayer {\n        None => Ok(",
+            "    match None::<&str> {\n        None => Ok(",
+        )
+    ],
     [
         (
             COMMANDS_LIB + ["a_send_and_its_rebroadcast_relay_the_journaled_bytes"],
@@ -577,8 +583,7 @@ mutation(
             CLI,
             "wallet_reserve(&loaded.address, &body).await?;\n"
             "    relayer_can_pay(&relayer.label, loaded.active, balance, relay_amount, reserve)?;\n",
-            "wallet_reserve(&loaded.address, &body).await?;\n"
-            "    let _ = (balance, reserve);\n",
+            "wallet_reserve(&loaded.address, &body).await?;\n    let _ = (balance, reserve);\n",
         )
     ],
     [
@@ -592,7 +597,13 @@ mutation(
 )
 mutation(
     "relayer-fees-not-counted",
-    [(CLI, "        .checked_add(reserve)\n        .context(\"the relay amount plus fees overflows\")?;", "        .checked_add(0)\n        .context(\"the relay amount plus fees overflows\")?;")],
+    [
+        (
+            CLI,
+            '        .checked_add(reserve)\n        .context("the relay amount plus fees overflows")?;',
+            '        .checked_add(0)\n        .context("the relay amount plus fees overflows")?;',
+        )
+    ],
     [
         (
             COMMANDS_LIB + ["a_relayer_pays_the_relay_amount_and_its_own_fees"],
