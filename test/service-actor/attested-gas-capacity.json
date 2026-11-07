@@ -1,0 +1,209 @@
+{
+ "schema": "tos.evidence.index.v1",
+ "claim": "At 100,000 live entries under a stored ML-DSA-44 attestor key, attested admission, a really verified ML-DSA-44 response and the four payouts each leave at least 25% of their 0.2 TOS allowance",
+ "qualification": "Synthetic stress state: 99,999 seeded entries (sparse ids near 2^64, 99,001 callers, wide coin values) with the account-cell cap lifted only for this account; real gas, storage and forwarding prices. It does not show that production account limits admit 100,000 requests. respond enforces no allowance and returns no change; it is held to PAYOUT_GAS_ALLOWANCE as a test budget.",
+ "measured_commit": "135533e8c96208f11e8a1af7dba7c9166759c119",
+ "base": "fc5e7723e5dfb04890902abdd456aa41b4655a10",
+ "rule": "execution_cost = gas fee + total forwarding fee (which already contains the action-fee component); assert 4*cost <= 3*allowance",
+ "command": "cd tosctl/src && FUNC_PATH=<func> FIFT_PATH=<fift> cargo test -p contracts --test service_actor_sandbox -- --test-threads=1 --nocapture gas_at_capacity",
+ "compiler": "FunC/Fift v0.4.6 build 392bc162e095cc34292eb9ea0709273407e06ca7 (the solvency fixture compiles crypto/smartcont/service-actor-code.fc)",
+ "result": {
+  "exit": 0,
+  "tests": "4 passed (2 attested, 2 unattested)"
+ },
+ "full_suite": {
+  "command": "cargo test -p contracts --test service_actor_sandbox -- --test-threads=1",
+  "exit": 0,
+  "tests": "66 passed"
+ },
+ "measurements": [
+  {
+   "operation": "admit/new-caller",
+   "gas_used": 77237,
+   "gas_fee_nanotos": 38618500,
+   "forwarding_nanotos": 2010000,
+   "execution_cost_nanotos": 40628500,
+   "allowance_nanotos": 200000000,
+   "cost_percent_of_allowance": 20.31,
+   "storage_rent_nanotos": 13399677820116
+  },
+  {
+   "operation": "admit/existing-caller",
+   "gas_used": 76903,
+   "gas_fee_nanotos": 38451500,
+   "forwarding_nanotos": 2010000,
+   "execution_cost_nanotos": 40461500,
+   "allowance_nanotos": 200000000,
+   "cost_percent_of_allowance": 20.23,
+   "storage_rent_nanotos": 13399677820116
+  },
+  {
+   "operation": "admit-attested/new-caller",
+   "gas_used": 89935,
+   "gas_fee_nanotos": 44967500,
+   "forwarding_nanotos": 2010000,
+   "execution_cost_nanotos": 46977500,
+   "allowance_nanotos": 200000000,
+   "cost_percent_of_allowance": 23.49,
+   "storage_rent_nanotos": 13400331515176
+  },
+  {
+   "operation": "respond-attested/new-caller",
+   "gas_used": 98249,
+   "gas_fee_nanotos": 49124500,
+   "forwarding_nanotos": 0,
+   "execution_cost_nanotos": 49124500,
+   "allowance_nanotos": 200000000,
+   "cost_percent_of_allowance": 24.56,
+   "storage_rent_nanotos": 0
+  },
+  {
+   "operation": "admit-attested/existing-caller",
+   "gas_used": 89601,
+   "gas_fee_nanotos": 44800500,
+   "forwarding_nanotos": 2010000,
+   "execution_cost_nanotos": 46810500,
+   "allowance_nanotos": 200000000,
+   "cost_percent_of_allowance": 23.41,
+   "storage_rent_nanotos": 13400331515176
+  },
+  {
+   "operation": "respond-attested/existing-caller",
+   "gas_used": 98693,
+   "gas_fee_nanotos": 49346500,
+   "forwarding_nanotos": 0,
+   "execution_cost_nanotos": 49346500,
+   "allowance_nanotos": 200000000,
+   "cost_percent_of_allowance": 24.67,
+   "storage_rent_nanotos": 0
+  },
+  {
+   "operation": "refund-attested",
+   "gas_used": 69230,
+   "gas_fee_nanotos": 34615000,
+   "forwarding_nanotos": 1000000,
+   "execution_cost_nanotos": 35615000,
+   "allowance_nanotos": 200000000,
+   "cost_percent_of_allowance": 17.81,
+   "storage_rent_nanotos": 13400331515176
+  },
+  {
+   "operation": "sweep-pending-attested",
+   "gas_used": 78884,
+   "gas_fee_nanotos": 39442000,
+   "forwarding_nanotos": 1500000,
+   "execution_cost_nanotos": 40942000,
+   "allowance_nanotos": 200000000,
+   "cost_percent_of_allowance": 20.47,
+   "storage_rent_nanotos": 13400336685059
+  },
+  {
+   "operation": "sweep-refund-attested",
+   "gas_used": 78013,
+   "gas_fee_nanotos": 39006500,
+   "forwarding_nanotos": 1500000,
+   "execution_cost_nanotos": 40506500,
+   "allowance_nanotos": 200000000,
+   "cost_percent_of_allowance": 20.25,
+   "storage_rent_nanotos": 13400336685059
+  },
+  {
+   "operation": "withdraw-attested",
+   "gas_used": 16507,
+   "gas_fee_nanotos": 8253500,
+   "forwarding_nanotos": 1000000,
+   "execution_cost_nanotos": 9253500,
+   "allowance_nanotos": 200000000,
+   "cost_percent_of_allowance": 4.63,
+   "storage_rent_nanotos": 13400336685059
+  },
+  {
+   "operation": "refund",
+   "gas_used": 69228,
+   "gas_fee_nanotos": 34614000,
+   "forwarding_nanotos": 1000000,
+   "execution_cost_nanotos": 35614000,
+   "allowance_nanotos": 200000000,
+   "cost_percent_of_allowance": 17.81,
+   "storage_rent_nanotos": 13399677820116
+  },
+  {
+   "operation": "sweep-pending",
+   "gas_used": 78882,
+   "gas_fee_nanotos": 39441000,
+   "forwarding_nanotos": 1500000,
+   "execution_cost_nanotos": 40941000,
+   "allowance_nanotos": 200000000,
+   "cost_percent_of_allowance": 20.47,
+   "storage_rent_nanotos": 13399682989747
+  },
+  {
+   "operation": "sweep-refund",
+   "gas_used": 78011,
+   "gas_fee_nanotos": 39005500,
+   "forwarding_nanotos": 1500000,
+   "execution_cost_nanotos": 40505500,
+   "allowance_nanotos": 200000000,
+   "cost_percent_of_allowance": 20.25,
+   "storage_rent_nanotos": 13399682989747
+  },
+  {
+   "operation": "withdraw",
+   "gas_used": 16505,
+   "gas_fee_nanotos": 8252500,
+   "forwarding_nanotos": 1000000,
+   "execution_cost_nanotos": 9252500,
+   "allowance_nanotos": 200000000,
+   "cost_percent_of_allowance": 4.63,
+   "storage_rent_nanotos": 13399682989747
+  }
+ ],
+ "red_green": {
+  "method": "scratch patch on 135533e8c (never committed): env-selected shrink of the asserted allowance for one labelled measurement, and an env-selected swap of the negative-control signer; one build, five runs, file restored with git checkout",
+  "patch_sha256": "2d34b1695809f72297bafd7d64efd0cef0ddd3980dbf1ccf05072e58fe8e1a82",
+  "runs": [
+   {
+    "run": "control (no env)",
+    "exit": 0
+   },
+   {
+    "run": "admit-attested allowance 62,000,000",
+    "exit": 101,
+    "failure": "admit-attested/new-caller: measured execution cost must leave at least 25% allowance headroom"
+   },
+   {
+    "run": "respond-attested allowance 65,000,000",
+    "exit": 101,
+    "failure": "respond-attested/new-caller: measured execution cost must leave at least 25% allowance headroom"
+   },
+   {
+    "run": "refund-attested allowance 47,000,000",
+    "exit": 101,
+    "failure": "refund-attested: measured execution cost must leave at least 25% allowance headroom"
+   },
+   {
+    "run": "negative control signed by the attestor itself",
+    "exit": 101,
+    "failure": "expected first transaction to be aborted, but it succeeded"
+   }
+  ]
+ },
+ "native_replay": {
+  "command": "SERVICE_ACTOR_TRACE_DIR=<dir> cargo test ... --exact solvency_attested_gas_at_capacity_with_sparse_ids_and_wide_accounting solvency_attested_payout_gas_at_capacity_with_sparse_ids_and_wide_coins; python3 scripts/replay-token-bridge-trace.py <dir> --emulator <libemulator.so>",
+  "population_check": "exactly 6 records (2 callers x admission, refused response, accepted response) and 4 payout records, and no other file in the directory",
+  "result": "replayed 10 transactions in the native engine; 0 differ",
+  "emulator": {
+   "path": "<tos checkout>/build/emulator/libemulator.so",
+   "sha256": "cc9af380058bfa2a0f874a3c514e7ff659a5931aa146d20201a3cad85680219d",
+   "built": "2026-10-24 (checkout HEAD f58402109959aac7af8c3d7e93ec66d7468cd9b4 when replayed)"
+  },
+  "retained_traces": {
+   "location": "/tos/build/sa-attested-gas/trace-20261107T090513Z (owner host)",
+   "files": 10,
+   "bytes": 380445420,
+   "manifest": "trace-20261107T090513Z.manifest.sha256 (sha256 of each record, sorted)",
+   "manifest_sha256": "0df3eac52b443c89c0fb17266b12d94cc49228673fd7ce660d2d7e5f5284bd4f",
+   "retention_days": 90
+  }
+ }
+}
