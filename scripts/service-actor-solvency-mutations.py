@@ -109,6 +109,15 @@ def main():
             "only this operation's execution and forwarding fees reduce change",
         ),
         (
+            "sweep reserve before principal",
+            "sweep_pays_principal_before_the_operating_reserve",
+            "    require_backing(remaining, remaining_pending, remaining_refundable, remaining_locked,\n"
+            "      0, err::insufficient_balance);",
+            "    require_backing(remaining, remaining_pending, remaining_refundable, remaining_locked,\n"
+            "      MINIMUM_OPERATING_RESERVE, err::insufficient_balance);",
+            "expected first transaction to succeed, but it was aborted",
+        ),
+        (
             "sweep keeps the caller's price",
             "sweep_after_real_rent_preserves_other_entries",
             "    if (price > 0) {\n      send_value(caller, price, 1);\n    }\n",

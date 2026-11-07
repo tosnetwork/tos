@@ -316,7 +316,7 @@ int compute_response_domain_hash(slice caller, int request_id, int request_hash,
 
 ;; ---- persistent state -----------------------------------------------------
 
-(slice, int, int, int, int, int, int, int, int, int, int, int, int, slice, int, int, int, int, int, int, int, int, int, int, int, cell, cell, cell) load_state() inline {
+(slice, int, int, int, int, int, int, int, int, int, int, int, int, slice, int, int, int, int, int, int, int, int, int, int, int, cell, cell, cell) load_state() impure inline {
   slice ds = get_data().begin_parse();
   slice owner = ds~load_msg_addr();
   int active = ds~load_uint(1);
@@ -832,8 +832,9 @@ cell caller_live_decr(cell caller_live_counts, slice caller) inline {
     ;; afford it. A later destination-side failure does not reopen the
     ;; deleted entry -- sweepers should call from an address that can
     ;; receive value reliably.
-    ;; What the bounty leaves behind must still cover every other live entry's price and
-    ;; locked storage fee, plus the operating reserve. The entry's own price and fee leave
+    ;; What the payouts leave behind must still cover every other live entry's price and
+    ;; locked storage fee. The swept price is a customer's principal, so like a refund it
+    ;; takes priority over the operating reserve: a rent-eroded reserve never strands it. The entry's own price and fee leave
     ;; their liabilities first, and the remaining obligations are then subtracted from the
     ;; balance one at a time, so no intermediate sum is formed that the final state would
     ;; not hold, and an unaffordable sweep is refused as insufficient balance.
@@ -853,7 +854,7 @@ cell caller_live_decr(cell caller_live_counts, slice caller) inline {
     }
     int remaining_locked = checked_sub_amount(locked_storage_fees, req_storage_fee);
     require_backing(remaining, remaining_pending, remaining_refundable, remaining_locked,
-      MINIMUM_OPERATING_RESERVE, err::insufficient_balance);
+      0, err::insufficient_balance);
     throw_unless(err::insufficient_execution_payment, msg_value >= PAYOUT_GAS_ALLOWANCE);
 
     if (came_from_pending) {

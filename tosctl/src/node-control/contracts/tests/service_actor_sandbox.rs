@@ -132,7 +132,10 @@ impl Fixture {
 
     /// Deploy with account data rewritten by `rewrite`, as a deployer controlling
     /// its own StateInit can; the address follows the rewritten StateInit.
-    fn build_with_data(attestor_pubkey: Option<Vec<u8>>, rewrite: impl FnOnce(Cell) -> Cell) -> Self {
+    fn build_with_data(
+        attestor_pubkey: Option<Vec<u8>>,
+        rewrite: impl FnOnce(Cell) -> Cell,
+    ) -> Self {
         let mut bc =
             Blockchain::with_global_version(current_network::global_version()).expect("blockchain");
         // The sandbox config has no basechain workchain descriptor, so run
@@ -1451,7 +1454,6 @@ fn a_deployed_attestor_key_must_match_its_published_key_id() {
     let before = f.state_hash();
     f.call(&caller, 1, [0xAA; 32]).expect_aborted().expect_exit_code(ERR_BAD_ATTESTOR_KEY);
     assert_eq!(f.state_hash(), before, "no request is admitted under a mismatched key");
-
 }
 
 /// A disabled attestor has exactly one encoding: no key id and no key. A
@@ -1506,6 +1508,12 @@ fn revoking_the_attestor_clears_its_key() {
     let mut f = Fixture::with_attestor(attestor.public_key());
     let owner = f.owner.address().clone();
     let caller = f.caller.address().clone();
+    let published = contracts::native_registry::stored_bytes(&attestor.public_key()).unwrap();
+    assert_eq!(
+        f.attestor_key().map(|key| key.repr_hash()),
+        Some(published.repr_hash()),
+        "the getter returns the published key"
+    );
     f.send_from(&owner, ServiceActorContract::revoke_attestor(1).unwrap()).expect_success();
     assert_eq!(f.data().attestor_key_id, None);
     assert!(f.attestor_key().is_none(), "the revoked key is not kept");
@@ -3082,8 +3090,10 @@ fn solvency_sweep_after_real_rent_preserves_other_entries() {
         f.send_from(&caller, ServiceActorContract::expire(4, 1).unwrap()).expect_success();
         let target = if refund { 1 } else { 0 };
         let floor_after = f.floor() - f.init.price_per_call - f.init.storage_fee;
-        // The sweep pays the bounty and returns the entry's price to its caller.
-        let cap = floor_after + f.init.cleanup_bounty + f.init.price_per_call;
+        // The sweep pays the bounty and returns the entry's price to its caller;
+        // like a refund, that principal outranks the operating reserve.
+        let cap =
+            floor_after - MINIMUM_OPERATING_RESERVE + f.init.cleanup_bounty + f.init.price_per_call;
         let before = f.state_hash();
         // Real storage-phase charges, with all three entries still in storage.
         let mut day = 0;
@@ -3126,8 +3136,55 @@ fn solvency_sweep_after_real_rent_preserves_other_entries() {
         );
         assert_eq!(f.data().live_count, 2);
         assert!(f.request(2).is_some());
-        assert!(f.balance(&f.service) >= f.floor());
+        assert!(
+            f.balance(&f.service) >= f.floor() - MINIMUM_OPERATING_RESERVE,
+            "every other customer's backing survives"
+        );
     }
+}
+
+#[test]
+fn solvency_sweep_pays_principal_before_the_operating_reserve() {
+    let mut f = Fixture::solvency();
+    let caller = f.caller.address().clone();
+    let sweeper = f.outsider.address().clone();
+    for id in 0..3 {
+        f.call(&caller, id, [1; 32]).expect_success();
+    }
+    f.bc.set_now(f.request(0).unwrap().response_deadline as u32);
+    for id in 0..2 {
+        f.send_from(&caller, ServiceActorContract::expire(10 + id, id).unwrap()).expect_success();
+    }
+    f.bc.set_now(f.refund(0).unwrap().refund_claim_deadline as u32);
+    let price = f.init.price_per_call;
+    let bounty = f.init.cleanup_bounty;
+    let floor_after = f
+        .floor()
+        .checked_sub(MINIMUM_OPERATING_RESERVE)
+        .unwrap()
+        .checked_sub(price)
+        .unwrap()
+        .checked_sub(f.init.storage_fee)
+        .unwrap();
+    let due = floor_after.checked_add(price).unwrap().checked_add(bounty).unwrap();
+    let body = ServiceActorContract::sweep_expired_request(20, 0).unwrap();
+    let before = f.state_hash();
+    // One unit short of the payouts plus every other customer's backing.
+    f.set_balance(due.checked_sub(1).unwrap());
+    f.send_from_with_value(&sweeper, body.clone(), TOS)
+        .expect_aborted()
+        .expect_exit_code(ERR_INSUFFICIENT_BALANCE);
+    assert_eq!(f.state_hash(), before);
+    // Customer obligations fully backed, with no operator buffer at all: the
+    // expired entry is still swept and its price returned.
+    f.set_balance(due);
+    let result = f.no_bounce(&sweeper, PAYOUT_GAS_ALLOWANCE, body);
+    expect_sweep(&result, &caller, price, &sweeper, bounty, PAYOUT_GAS_ALLOWANCE);
+    assert_eq!(f.balance(&f.service), floor_after, "sweep spent another customer's backing");
+    assert!(f.refund(0).is_none());
+    assert!(f.refund(1).is_some());
+    assert!(f.request(2).is_some());
+    assert_eq!(f.caller_live_count(&caller), 2);
 }
 // This measures deliberately large, coherent stress states. It is not a proof
 // that the production account-cell limits admit 100,000 independent requests.
