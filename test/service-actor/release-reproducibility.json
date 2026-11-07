@@ -18,7 +18,10 @@
    "exit": 0,
    "last_line": [
     "TOS Service Actor v1 reproducible build: PASS"
-   ]
+   ],
+   "expected_exit": 0,
+   "expected_text": "TOS Service Actor v1 reproducible build: PASS",
+   "matched": true
   },
   {
    "control": "baseline",
@@ -26,7 +29,10 @@
    "exit": 0,
    "last_line": [
     "Service Actor bytecode synchronized (repr_hash=2524780603972805557568569646225189296421374677395663300967041360291069864460)"
-   ]
+   ],
+   "expected_exit": 0,
+   "expected_text": "Service Actor bytecode synchronized (repr_hash=",
+   "matched": true
   },
   {
    "control": "a-artifact-byte",
@@ -35,6 +41,9 @@
    "last_line": [
     "Service Actor release check failed: frozen artifact differs from the rebuild"
    ],
+   "expected_exit": 1,
+   "expected_text": "frozen artifact differs from the rebuild",
+   "matched": true,
    "mutated": "crypto/smartcont/tos-service-actor-v1.boc.base64",
    "mutated_sha256": "5a262c16ffc9ba1c855e3876203b0a856bde8487717d1794adbc466eb5f2dff3"
   },
@@ -45,6 +54,9 @@
    "last_line": [
     "Service Actor release artifact is stale: the frozen artifact differs from the rebuild (generated 4590 bytes, frozen 4590 bytes)"
    ],
+   "expected_exit": 1,
+   "expected_text": "Service Actor release artifact is stale",
+   "matched": true,
    "mutated": "crypto/smartcont/tos-service-actor-v1.boc.base64",
    "mutated_sha256": "5a262c16ffc9ba1c855e3876203b0a856bde8487717d1794adbc466eb5f2dff3"
   },
@@ -55,6 +67,9 @@
    "last_line": [
     "code hash mismatch: f01f6035405223a7757374c4c0a700f718fe4f61903041bad6b1c3dc954b3591"
    ],
+   "expected_exit": 1,
+   "expected_text": "code hash mismatch",
+   "matched": true,
    "mutated": "crypto/smartcont/service-actor-code.fc",
    "mutated_sha256": "6c973383f6e82e7fed930e0215efdef93c65a786507782eb0195166b2846283e"
   },
@@ -65,6 +80,9 @@
    "last_line": [
     "Service Actor release check failed: manifest boc_bytes differs from the build"
    ],
+   "expected_exit": 1,
+   "expected_text": "manifest boc_bytes differs from the build",
+   "matched": true,
    "mutated": "crypto/smartcont/tos-service-actor-v1.release.json",
    "mutated_sha256": "10aacdedf2c837b47c4130ed86fa2fafaf077042d3b277bce7681d427f38fa71"
   },
@@ -81,6 +99,9 @@
    "last_line": [
     "Service Actor release check failed: SDK SERVICE_ACTOR_CODE_B64 differs from the rebuild"
    ],
+   "expected_exit": 1,
+   "expected_text": "SDK SERVICE_ACTOR_CODE_B64 differs from the rebuild",
+   "matched": true,
    "mutated": "tosctl/src/node-control/contracts/src/service_actor.rs",
    "mutated_sha256": "55f63e3511331add940eede639e72f84d1b1b36658eda0c660b1e6e2dc125b24"
   },
@@ -91,6 +112,9 @@
    "last_line": [
     "Service Actor bytecode synchronized (repr_hash=2524780603972805557568569646225189296421374677395663300967041360291069864460)"
    ],
+   "expected_exit": 0,
+   "expected_text": "Service Actor bytecode synchronized (repr_hash=",
+   "matched": true,
    "mutated": "tosctl/src/node-control/contracts/src/service_actor.rs",
    "mutated_sha256": "55f63e3511331add940eede639e72f84d1b1b36658eda0c660b1e6e2dc125b24"
   },
@@ -100,7 +124,23 @@
    "exit": 0,
    "last_line": [
     "TOS Service Actor v1 reproducible build: PASS"
-   ]
+   ],
+   "expected_exit": 0,
+   "expected_text": "TOS Service Actor v1 reproducible build: PASS",
+   "matched": true
   }
- ]
+ ],
+ "runner_exit": {
+  "status": 0,
+  "final_line": "SERVICE_ACTOR_RELEASE_CONTROLS_OK"
+ },
+ "runner_sensitivity": {
+  "mutation": "scripts/tos_service_actor_release.py main() returns 0 before any check (scratch worktree at 2aec511a0 with this runner)",
+  "runner_exit": 1,
+  "mismatches": [
+   "a-artifact-byte: test gave 0",
+   "c-manifest-boc-bytes: test gave 0",
+   "d-sdk-alternate-container: test gave 0"
+  ]
+ }
 }
