@@ -201,9 +201,12 @@ def outgoing(tx: Cell) -> list[dict]:
         else:
             assert m.uint(1) == 1, "an outgoing external message"
             read_int_address(m)
-            assert m.uint(2) == 1, "an external destination"
-            length = m.uint(9)
-            topic = f"{m.uint(length):0{length // 4}x}"
+            destination = m.uint(2)
+            assert destination in (0, 1), "an external or absent destination"
+            topic = None
+            if destination == 1:
+                length = m.uint(9)
+                topic = f"{m.uint(length):0{length // 4}x}"
             m.uint(64)
             m.uint(32)
             skip_init(m)
