@@ -4117,6 +4117,96 @@ mod protocol_vectors {
             *capability_action.repr_hash().as_array()
         );
 
+        // Revocations, executed in order on the registered objects with the same
+        // deterministic controller: one version, then the Capability, then the
+        // Agent. For each, the vector records the inbound body the revoked
+        // object's own account received, so a client decoding transitions from
+        // account history reproduces exactly what the contract applied.
+        let inbound_body = |result: &tos_sandbox::SendResult, address: &MsgAddressInt| -> Cell {
+            let txs = result.transactions_for(address);
+            assert_eq!(txs.len(), 1, "one transaction on the revoked object");
+            let message = txs[0].read_in_msg().expect("in_msg").expect("inbound");
+            message.body().expect("body").clone().into_cell().expect("body cell")
+        };
+        let mut revocations = Vec::new();
+        let steps: [(&str, u8, &MsgAddressInt, [u8; 32], Cell); 3] = [
+            (
+                "revoke_version",
+                NATIVE_KIND_REVOKE_CAPABILITY,
+                &capability_address,
+                [0x64; 32],
+                build_native_revoke_capability_payload(agent.object_id, Some(b"1.0.0"))
+                    .expect("payload"),
+            ),
+            (
+                "revoke_capability",
+                NATIVE_KIND_REVOKE_CAPABILITY,
+                &capability_address,
+                [0x65; 32],
+                build_native_revoke_capability_payload(agent.object_id, None).expect("payload"),
+            ),
+            (
+                "revoke_agent",
+                NATIVE_KIND_REVOKE_AGENT,
+                &agent_address,
+                [0x66; 32],
+                build_native_revoke_agent_payload().expect("payload"),
+            ),
+        ];
+        for (name, kind, target, nonce, payload) in steps {
+            let before = data_state(&bc, target);
+            let (generation, sequence, predecessor) =
+                next_native_position(Some(&before), kind).expect("position");
+            let object_id =
+                if *target == agent_address { agent.object_id } else { capability.object_id };
+            let action = build_native_action(
+                &domain,
+                &NativeRegistryAction {
+                    kind,
+                    generation,
+                    sequence,
+                    object_id,
+                    predecessor,
+                    nonce,
+                    payload,
+                },
+            )
+            .expect("revocation action");
+            let signature = key.sign(&action);
+            let body = build_native_submission(&domain, &action, 1, &[signature.clone()], &[])
+                .expect("revocation body");
+            let body_hash = hex::encode(body.repr_hash().as_slice());
+            let result = bc
+                .send_message(
+                    MessageBuilder::internal(relayer.address(), &agent_address, TOS)
+                        .body(body)
+                        .build(),
+                )
+                .expect(name);
+            assert_address_success(&result, target);
+            let received = inbound_body(&result, target);
+            let after = data_state(&bc, target);
+            assert_eq!(after.last_action, *action.repr_hash().as_array(), "{name} applied");
+            let mut opcode =
+                chain_block::SliceData::load_cell(received.clone()).expect("received body");
+            revocations.push(serde_json::json!({
+                "name": name,
+                "object_id": hex::encode(object_id),
+                "contract_address": target.to_string(),
+                "generation": generation,
+                "sequence": sequence,
+                "predecessor": hex::encode(predecessor),
+                "action_hash": format!("sha256:{}", hex::encode(action.repr_hash().as_slice())),
+                "action_boc_base64": b64(&action),
+                "signature_sha256": format!("sha256:{}", hex::encode(Sha256::digest(&signature.signature))),
+                "submission_body_hash": format!("tvm-cell-sha256:{}", body_hash),
+                "object_inbound_opcode": format!("0x{:08x}", opcode.get_next_u32().expect("opcode")),
+                "object_inbound_body_boc_base64": b64(&received),
+                "state_hash_after": hex::encode(after.state_hash),
+                "tombstone_after": after.tombstone,
+            }));
+        }
+
         let address_text = |a: &MsgAddressInt| a.to_string();
         let actual = serde_json::json!({
             "contract_code_hash": format!("tvm-cell-sha256:{}", hex::encode(code.repr_hash().as_slice())),
@@ -4144,6 +4234,7 @@ mod protocol_vectors {
                 "signature_sha256": format!("sha256:{}", hex::encode(Sha256::digest(&capability_signature.signature))),
                 "submission_body_hash": format!("tvm-cell-sha256:{}", capability_body_hash),
             },
+            "revocations": revocations,
         });
         // The full protocol-format vector file (tos-service-protocol
         // pkg/nativecore/testdata and tos-service-spec test-vectors). Every
@@ -4213,6 +4304,7 @@ mod protocol_vectors {
                         "submission_body_hash": actual["capability_registration"]["submission_body_hash"],
                     },
                 },
+                "revocations": actual["revocations"],
                 "negative_mutations": [
                     mutation("agent", "wrong_protocol", 2200),
                     mutation("agent", "empty_network_id", 2201),
