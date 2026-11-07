@@ -208,6 +208,82 @@ impl AgentAuthState {
     }
 }
 
+/// The counters and authentication state of a raw Agent Account data cell:
+/// `owner controller_pubkey deployment_id controller_epoch:uint64
+/// seqno:uint32 spend_day:uint32 spent_today:Coins ^policy [^auth]`, the
+/// trailing auth reference being `mode:uint2 epoch:uint64 nonce:uint64
+/// module_hash:uint256` (absent: legacy, all zero).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AgentAccountState {
+    pub deployment_id: [u8; 32],
+    pub controller_epoch: u64,
+    pub seqno: u32,
+    pub auth: AgentAuthState,
+}
+
+impl AgentAccountState {
+    pub fn parse(data: &Cell) -> anyhow::Result<Self> {
+        let mut s = SliceData::load_cell(data.clone())?;
+        MsgAddressInt::construct_from(&mut s).context("Agent Account data owner")?;
+        s.move_by(256).context("Agent Account data controller key")?;
+        let deployment_id: [u8; 32] = s
+            .get_next_bytes(32)?
+            .try_into()
+            .map_err(|_| anyhow!("Agent Account deployment id is not 32 bytes"))?;
+        let controller_epoch = s.get_next_u64()?;
+        let seqno = s.get_next_u32()?;
+        s.get_next_u32()?;
+        chain_block::Coins::construct_from(&mut s).context("Agent Account spent_today")?;
+        s.checked_drain_reference().context("Agent Account policy")?;
+        let auth = match s.remaining_references() {
+            0 => {
+                AgentAuthState { mode: AUTH_MODE_LEGACY, epoch: 0, nonce: 0, module_hash: [0; 32] }
+            }
+            1 => {
+                let mut a = SliceData::load_cell(s.checked_drain_reference()?)?;
+                let mode = u8::try_from(a.get_next_int(2)?).context("auth mode")?;
+                let epoch = a.get_next_u64()?;
+                let nonce = a.get_next_u64()?;
+                let module_hash: [u8; 32] = a
+                    .get_next_bytes(32)?
+                    .try_into()
+                    .map_err(|_| anyhow!("auth module hash is not 32 bytes"))?;
+                ensure!(
+                    a.remaining_bits() == 0 && a.remaining_references() == 0,
+                    "Agent Account auth state has trailing data"
+                );
+                ensure!(
+                    (AUTH_MODE_STAGED..=AUTH_MODE_HYBRID).contains(&mode),
+                    "unknown Agent Account auth mode {mode}"
+                );
+                AgentAuthState { mode, epoch, nonce, module_hash }
+            }
+            _ => bail!("Agent Account data has more than one trailing reference"),
+        };
+        ensure!(s.remaining_bits() == 0, "Agent Account data has trailing bits");
+        Ok(Self { deployment_id, controller_epoch, seqno, auth })
+    }
+}
+
+/// Whether a request signed for controller `(epoch, seqno)` under auth
+/// `(auth_epoch, auth_nonce)` can be settled as superseded: the account moved
+/// its controller counters past the request, so it can never be accepted,
+/// while its auth nonce is still unconsumed in the same auth epoch, so it was
+/// never applied (any committing application, including a refusal after
+/// commit, advances the nonce, and the nonce only grows within an auth
+/// epoch). After an auth epoch change no such conclusion is drawn.
+pub fn request_superseded(
+    state: &AgentAccountState,
+    controller_epoch: u64,
+    seqno: u32,
+    auth_epoch: u64,
+    auth_nonce: u64,
+) -> bool {
+    (state.controller_epoch, state.seqno) > (controller_epoch, seqno)
+        && state.auth.epoch == auth_epoch
+        && state.auth.nonce == auth_nonce
+}
+
 /// The owner message that stages `module` while the account is still in
 /// legacy or staged mode. The contract then advances `controller_epoch` and
 /// `seqno`, starts a new auth epoch and resets the auth nonce.

@@ -292,6 +292,12 @@ struct EpochChangeFence {
     seqno: u32,
     /// Random per invocation: only the invocation holding it lifts the fence.
     owner_token: String,
+    /// The auth epoch the fenced stage expects, and the module it stages: the
+    /// stage is seen to land only as the transition to (staged, this epoch +
+    /// 1, this module). Controller counters alone never show it, since an
+    /// owner rotate-controller advances them too.
+    start_auth_epoch: u64,
+    staged_module_hash: String,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -898,6 +904,8 @@ impl AgentAccountCustodyJournal {
         deployment_id: &str,
         controller_epoch: u64,
         seqno: u32,
+        start_auth_epoch: u64,
+        staged_module_hash: &[u8; 32],
         owner_token: &str,
     ) -> anyhow::Result<()> {
         validate_generation(account, network_global_id, deployment_id)?;
@@ -905,8 +913,13 @@ impl AgentAccountCustodyJournal {
             anyhow::bail!("an epoch-change owner token is 64 lowercase hex characters");
         }
         let generation = generation_key_parts(account, network_global_id, deployment_id);
-        let start =
-            EpochChangeFence { controller_epoch, seqno, owner_token: owner_token.to_owned() };
+        let start = EpochChangeFence {
+            controller_epoch,
+            seqno,
+            owner_token: owner_token.to_owned(),
+            start_auth_epoch,
+            staged_module_hash: hex::encode(staged_module_hash),
+        };
         self.with_document(|document| {
             let unresolved = document
                 .records
@@ -1041,12 +1054,13 @@ impl AgentAccountCustodyJournal {
         })
     }
 
-    /// Lifts a fence only when the finalized counters show its change landed:
-    /// they are strictly newer than the counters the fence started from. A
-    /// fence whose start equals the current counters belongs to a change that
-    /// may still be sent or arrive (for example a second install about to
-    /// replace the module) and stays held. Compared and removed under one
-    /// lock. Returns whether a fence was lifted.
+    /// Lifts a fence only when the finalized account state shows its own
+    /// stage landed: auth mode staged, auth epoch one past the epoch the stage
+    /// expected, and the module it staged. Any other state keeps the fence:
+    /// a second install about to replace the module, or an owner
+    /// rotate-controller that moved the controller counters but not the auth
+    /// state. Compared and removed under one lock. Returns whether a fence
+    /// was lifted.
     pub fn finish_landed_controller_epoch_change(
         &self,
         account: &str,
@@ -1054,6 +1068,7 @@ impl AgentAccountCustodyJournal {
         deployment_id: &str,
         finalized_controller_epoch: u64,
         finalized_seqno: u32,
+        auth: &crate::agent_account_auth::AgentAuthState,
     ) -> anyhow::Result<bool> {
         validate_generation(account, network_global_id, deployment_id)?;
         let generation = generation_key_parts(account, network_global_id, deployment_id);
@@ -1061,9 +1076,15 @@ impl AgentAccountCustodyJournal {
             let Some(start) = document.epoch_change_fences.get(&generation).cloned() else {
                 return Ok(false);
             };
+            let landed = auth.mode == crate::agent_account_auth::AUTH_MODE_STAGED
+                && start.start_auth_epoch.checked_add(1) == Some(auth.epoch)
+                && hex::encode(auth.module_hash) == start.staged_module_hash;
+            if !landed {
+                return Ok(false);
+            }
             let finalized = (finalized_controller_epoch, finalized_seqno);
             if finalized <= (start.controller_epoch, start.seqno) {
-                return Ok(false);
+                anyhow::bail!("the stage landed but the controller counters did not advance");
             }
             document.epoch_change_fences.remove(&generation);
             let high = document.high_water.entry(generation).or_default();
@@ -1484,8 +1505,10 @@ impl AgentAccountCustodyJournal {
         })
     }
 
-    /// Atomically terminalize one exact signed economic action after an
-    /// independently verified, expiry-mature absence proof. Unlike
+    /// Atomically terminalize one exact signed action after an independently
+    /// verified absence proof: expiry-mature with the sequence unconsumed, or
+    /// (for an ML-DSA-44 action) superseded, the counters past it while its
+    /// auth nonce was never consumed, at the observed checkpoint. Unlike
     /// `resolve_exact_winner`, the checkpoint is allowed to retain the signed
     /// sequence because the exact message was not included. The proof bytes
     /// and digest are persisted before caller output for crash-safe replay.
@@ -3773,11 +3796,24 @@ mod tests {
         let (account, id, deployment) =
             (&action.account, action.network_global_id, &action.deployment_id);
         let (first, second) = ("a".repeat(64), "b".repeat(64));
-        journal.begin_controller_epoch_change(account, id, deployment, 3, 3, &first).unwrap();
+        journal
+            .begin_controller_epoch_change(account, id, deployment, 3, 3, 1, &[0xbb; 32], &first)
+            .unwrap();
         assert_eq!(journal.controller_epoch_change(account, id, deployment).unwrap(), Some((3, 3)));
         // A second invocation can neither enter nor lift the held fence.
         assert!(
-            journal.begin_controller_epoch_change(account, id, deployment, 3, 3, &second).is_err()
+            journal
+                .begin_controller_epoch_change(
+                    account,
+                    id,
+                    deployment,
+                    3,
+                    3,
+                    1,
+                    &[0xbb; 32],
+                    &second
+                )
+                .is_err()
         );
         assert!(
             journal
@@ -3800,11 +3836,24 @@ mod tests {
         assert!(journal.claim_primary(current.clone(), 12).unwrap().1);
         // An unresolved action blocks the next change.
         assert!(
-            journal.begin_controller_epoch_change(account, id, deployment, 4, 4, &second).is_err()
+            journal
+                .begin_controller_epoch_change(
+                    account,
+                    id,
+                    deployment,
+                    4,
+                    4,
+                    2,
+                    &[0xbb; 32],
+                    &second
+                )
+                .is_err()
         );
         // An unsigned claim can be released; it then no longer blocks.
         journal.release_unsigned_mldsa44_claim(&current, "expired before signing", 13).unwrap();
-        journal.begin_controller_epoch_change(account, id, deployment, 4, 4, &second).unwrap();
+        journal
+            .begin_controller_epoch_change(account, id, deployment, 4, 4, 2, &[0xbb; 32], &second)
+            .unwrap();
         // An interrupted holder's fence is lifted only by explicit recovery.
         journal.end_controller_epoch_change(account, id, deployment, 4, 4, None).unwrap();
     }
@@ -3822,26 +3871,97 @@ mod tests {
         let action = mldsa_claim(3);
         let (account, id, deployment) =
             (&action.account, action.network_global_id, &action.deployment_id);
-        // Module A is staged at counters (3, 3). Install B, replacing it,
-        // fences the account at those counters and has not sent its stage.
+        use crate::agent_account_auth::{AUTH_MODE_STAGED, AgentAuthState};
+        let staged = |epoch, module| AgentAuthState {
+            mode: AUTH_MODE_STAGED,
+            epoch,
+            nonce: 0,
+            module_hash: [module; 32],
+        };
+        // Module A (0xaa) is staged at auth epoch 1, counters (3, 3). Install
+        // B fences the account to stage module 0xbb from auth epoch 1 and has
+        // not sent its stage yet.
         journal
-            .begin_controller_epoch_change(account, id, deployment, 3, 3, &"b".repeat(64))
+            .begin_controller_epoch_change(
+                account,
+                id,
+                deployment,
+                3,
+                3,
+                1,
+                &[0xbb; 32],
+                &"b".repeat(64),
+            )
             .unwrap();
-        // An install of A sees "already staged" at the same counters: B's
-        // fence must stay, so no send can claim the sequence B will move.
+        // An install of A sees "already staged" in the same state: B's fence
+        // stays, so no send can claim the sequence B's stage will move.
         assert!(
-            !journal.finish_landed_controller_epoch_change(account, id, deployment, 3, 3).unwrap()
+            !journal
+                .finish_landed_controller_epoch_change(
+                    account,
+                    id,
+                    deployment,
+                    3,
+                    3,
+                    &staged(1, 0xaa)
+                )
+                .unwrap()
+        );
+        // An owner rotate-controller moves the controller counters and leaves
+        // the auth state: still not B's stage, the fence stays.
+        assert!(
+            !journal
+                .finish_landed_controller_epoch_change(
+                    account,
+                    id,
+                    deployment,
+                    4,
+                    4,
+                    &staged(1, 0xaa)
+                )
+                .unwrap()
         );
         assert_eq!(journal.controller_epoch_change(account, id, deployment).unwrap(), Some((3, 3)));
         assert!(journal.claim_primary(action.clone(), 10).is_err());
-        // Once B's stage lands the counters advance and the fence is finished.
+        // Another module at the next auth epoch is not B's stage either.
         assert!(
-            journal.finish_landed_controller_epoch_change(account, id, deployment, 4, 4).unwrap()
+            !journal
+                .finish_landed_controller_epoch_change(
+                    account,
+                    id,
+                    deployment,
+                    5,
+                    5,
+                    &staged(2, 0xaa)
+                )
+                .unwrap()
+        );
+        // B's own transition (staged, epoch 2, module B) finishes the fence.
+        assert!(
+            journal
+                .finish_landed_controller_epoch_change(
+                    account,
+                    id,
+                    deployment,
+                    5,
+                    5,
+                    &staged(2, 0xbb)
+                )
+                .unwrap()
         );
         assert_eq!(journal.controller_epoch_change(account, id, deployment).unwrap(), None);
         // Without a fence it is a no-op.
         assert!(
-            !journal.finish_landed_controller_epoch_change(account, id, deployment, 4, 4).unwrap()
+            !journal
+                .finish_landed_controller_epoch_change(
+                    account,
+                    id,
+                    deployment,
+                    5,
+                    5,
+                    &staged(2, 0xbb)
+                )
+                .unwrap()
         );
     }
 

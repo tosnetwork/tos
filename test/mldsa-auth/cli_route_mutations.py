@@ -20,9 +20,16 @@ mutated file before the next control:
   account; its unit test must fail.
 - epoch-change-fence-ignored: the journal admits claims while install has
   fenced the account; its unit test must fail.
-- already-staged-lifts-any-fence: an install that finds its module already
-  staged lifts a fence started at the current counters (a second install
-  about to replace the module); its unit test must fail.
+- fence-lifted-on-counters-alone: a fence is lifted when the controller
+  counters move without its own auth transition (another install pending,
+  an owner rotate-controller); its unit test must fail.
+- supersession-ignores-auth-nonce: moved counters alone count as
+  supersession; the committed-refusal sandbox case and the resolver's unit
+  test must fail.
+- resolver-ignores-supersession-proof: the resolver settles moved counters
+  without the snapshot proof; its unit test must fail.
+- rebroadcast-ignores-chain-identity: a journaled submission is relayed to a
+  chain with the same global id but another zero state; its test must fail.
 - classifier-ignores-action-rollback: a delivery whose action phase failed
   is counted as committed; the resolver's unit test must fail.
 
@@ -192,13 +199,18 @@ mutation(
     ],
 )
 mutation(
-    "already-staged-lifts-any-fence",
+    "fence-lifted-on-counters-alone",
     [
         (
             CUSTODY,
-            "            if finalized <= (start.controller_epoch, start.seqno) {",
-            "            if false && finalized <= (start.controller_epoch, start.seqno) {",
-        )
+            "            let landed = auth.mode == crate::agent_account_auth::AUTH_MODE_STAGED",
+            "            let landed = true || auth.mode == crate::agent_account_auth::AUTH_MODE_STAGED",
+        ),
+        (
+            CUSTODY,
+            '                anyhow::bail!("the stage landed but the controller counters did not advance");',
+            "                return Ok(false);",
+        ),
     ],
     [
         (
@@ -206,6 +218,60 @@ mutation(
             CARGO_DIR,
             True,
             "an_already_staged_install_leaves_a_second_installs_fence_held",
+        )
+    ],
+)
+mutation(
+    "supersession-ignores-auth-nonce",
+    [(SDK, "        && state.auth.nonce == auth_nonce\n", "")],
+    [
+        (
+            SANDBOX + ["a_refusal_after_acceptance_consumes_the_counters_without_a_transfer"],
+            CARGO_DIR,
+            True,
+            "a_refusal_after_acceptance_consumes_the_counters_without_a_transfer",
+        ),
+        (
+            COMMANDS_LIB + ["a_request_whose_sequence_another_action_took_settles_as_superseded"],
+            CARGO_DIR,
+            True,
+            "a_request_whose_sequence_another_action_took_settles_as_superseded",
+        ),
+    ],
+)
+mutation(
+    "resolver-ignores-supersession-proof",
+    [
+        (
+            CLI,
+            "            anyhow::ensure!(\n                observation.superseded,",
+            "            anyhow::ensure!(\n                true || observation.superseded,",
+        )
+    ],
+    [
+        (
+            COMMANDS_LIB + ["a_request_whose_sequence_another_action_took_settles_as_superseded"],
+            CARGO_DIR,
+            True,
+            "a_request_whose_sequence_another_action_took_settles_as_superseded",
+        )
+    ],
+)
+mutation(
+    "rebroadcast-ignores-chain-identity",
+    [
+        (
+            CLI,
+            "        claim.network_domain.as_ref() == Some(network),",
+            "        true || claim.network_domain.as_ref() == Some(network),",
+        )
+    ],
+    [
+        (
+            COMMANDS_LIB + ["a_retry_is_never_relayed_to_another_chain_with_the_same_global_id"],
+            CARGO_DIR,
+            True,
+            "a_retry_is_never_relayed_to_another_chain_with_the_same_global_id",
         )
     ],
 )

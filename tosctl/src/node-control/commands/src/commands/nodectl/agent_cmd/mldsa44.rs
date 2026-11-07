@@ -31,16 +31,17 @@
 use super::super::native_registry_cmd::read_controller_seed;
 use super::*;
 use contracts::agent_account_auth::{
-    AUTH_KIND_EXECUTE, AUTH_MODE_MODULE_ONLY, AUTH_MODE_STAGED, AgentAuthState, AuthRequest,
-    Mldsa44AuthConfig, Mldsa44AuthModule, build_auth_envelope, build_mldsa44_submit,
-    build_stage_auth_message, check_auth_window, parse_mldsa44_submit, require_staged_module,
-    sign_auth_request,
+    AUTH_KIND_EXECUTE, AUTH_MODE_MODULE_ONLY, AUTH_MODE_STAGED, AgentAccountState, AgentAuthState,
+    AuthRequest, Mldsa44AuthConfig, Mldsa44AuthModule, build_auth_envelope, build_mldsa44_submit,
+    build_stage_auth_message, check_auth_window, parse_mldsa44_submit, request_superseded,
+    require_staged_module, sign_auth_request,
 };
 use contracts::agent_account_custody::MLDSA44_NATIVE_SEND_ACTION_KIND;
 use contracts::native_registry::native_public_key_from_seed;
 
 const MLDSA44_FINALIZED_SCHEMA: &str = "tos.agent-account.mldsa44-native-send-finalized.v1";
 const MLDSA44_EXPIRED_SCHEMA: &str = "tos.agent-account.mldsa44-native-send-expired.v1";
+const MLDSA44_SUPERSEDED_SCHEMA: &str = "tos.agent-account.mldsa44-native-send-superseded.v1";
 
 #[derive(clap::Args, Clone)]
 #[command(
@@ -410,21 +411,22 @@ impl AgentAccountMldsa44InstallCmd {
         let journal = open_controller_journal(Path::new(config_path))?;
         let deployment_id = hex::encode(ctx.data.deployment_id);
         let account_text = ctx.account.to_string();
+        // A fence is finished only when the account shows its own stage
+        // landed: staged, at the auth epoch after the one it expected, with
+        // the module it staged; whichever module this run installs. Moved
+        // controller counters alone (an owner rotate-controller) never lift it.
+        journal.finish_landed_controller_epoch_change(
+            &account_text,
+            ctx.global_id,
+            &deployment_id,
+            ctx.data.controller_epoch,
+            ctx.data.seqno,
+            &ctx.auth,
+        )?;
         let interrupted =
             journal.controller_epoch_change(&account_text, ctx.global_id, &deployment_id)?;
         if decision == StageDecision::AlreadyStaged {
-            // A fence is finished here only if its stage visibly landed (the
-            // counters moved past its start). A fence started at the current
-            // counters may belong to another install still about to stage,
-            // and stays held.
-            let lifted = journal.finish_landed_controller_epoch_change(
-                &account_text,
-                ctx.global_id,
-                &deployment_id,
-                ctx.data.controller_epoch,
-                ctx.data.seqno,
-            )?;
-            if interrupted.is_some() && !lifted {
+            if interrupted.is_some() {
                 println!(
                     "{} another authentication change of this account is still fenced in the custody journal; it is left held",
                     "NOTE".yellow().bold()
@@ -489,6 +491,8 @@ impl AgentAccountMldsa44InstallCmd {
             &deployment_id,
             ctx.data.controller_epoch,
             ctx.data.seqno,
+            ctx.auth.epoch,
+            &module_hash_of(&ctx.module)?,
             &token,
         )?;
         let provider = contracts::contract_provider!(ctx.rpc_client.clone());
@@ -651,6 +655,7 @@ impl AgentAccountMldsa44SendCmd {
                 &ctx.module,
                 value,
                 self.valid_until,
+                &network_domain,
             )?;
             if record.status == ControllerActionStatus::Resolved {
                 anyhow::bail!("this ML-DSA-44 action is already resolved; nothing to send");
@@ -797,6 +802,16 @@ impl AgentAccountMldsa44SendCmd {
     }
 }
 
+/// The 256-bit account hash of a standard module address, as the account
+/// stores it in its auth state.
+fn module_hash_of(module: &MsgAddressInt) -> anyhow::Result<[u8; 32]> {
+    module
+        .address()
+        .get_bytestring(0)
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("a module address carries a 256-bit account hash"))
+}
+
 /// A journaled action's immutable terms must be the ones supplied again.
 fn require_same_terms(
     claim: &ControllerActionClaim,
@@ -805,7 +820,14 @@ fn require_same_terms(
     module: &MsgAddressInt,
     value: u64,
     valid_until: u32,
+    network: &RelayNetworkDomainPin,
 ) -> anyhow::Result<()> {
+    // The journaled bytes are relayed only to the chain they were signed
+    // for: the same global id over another zero state is another chain.
+    anyhow::ensure!(
+        claim.network_domain.as_ref() == Some(network),
+        "the configured RPC serves another chain than the one this action was journaled for"
+    );
     anyhow::ensure!(
         claim.action_kind == MLDSA44_NATIVE_SEND_ACTION_KIND
             && claim.account == account.to_string()
@@ -958,19 +980,30 @@ struct Mldsa44Observation {
     chain_now: u32,
     /// The chain time this view read is past the action's valid_until.
     expired: bool,
+    /// The account's auth epoch and nonce in the same snapshot.
+    auth_epoch: u64,
+    auth_nonce: u64,
+    /// The snapshot proves the request superseded: counters past it, its
+    /// auth nonce never consumed (`request_superseded`).
+    superseded: bool,
 }
 
 impl Mldsa44Observation {
-    /// Views agree only on the same outcome, transaction, counters and expiry
-    /// maturity, so an unexpired view never supports an expiry verdict.
+    /// Views agree only on the same outcome, transaction, counters, auth
+    /// state and expiry maturity, so an unexpired view never supports an
+    /// expiry verdict and a view without the supersession proof never
+    /// supports a superseded one.
     fn quorum_key(&self) -> String {
         format!(
-            "{}:{}:{}:{}:{}",
+            "{}:{}:{}:{}:{}:{}:{}:{}",
             self.outcome,
             self.transaction.as_ref().map(|t| t.quorum_key()).unwrap_or_default(),
             self.finalized_controller_epoch,
             self.finalized_seqno,
-            self.expired
+            self.expired,
+            self.auth_epoch,
+            self.auth_nonce,
+            self.superseded
         )
     }
 }
@@ -1008,7 +1041,14 @@ async fn observe_mldsa44_action(
     let info = rpc_client.get_address_information(account).await?;
     let now = u32::try_from(info.sync_utime).context("account state time exceeds uint32")?;
     let state = read_single_root_boc(info.data.as_ref().context("account state has no data")?)?;
-    let data = agent_counters(&state)?;
+    let data = AgentAccountState::parse(&state)?;
+    let superseded = request_superseded(
+        &data,
+        record.claim.controller_epoch,
+        record.claim.seqno,
+        submission.request.epoch,
+        submission.request.nonce,
+    );
     anyhow::ensure!(
         hex::encode(data.deployment_id) == record.claim.deployment_id,
         "the account's deployment differs from the custody claim"
@@ -1102,30 +1142,9 @@ async fn observe_mldsa44_action(
         finalized_seqno: data.seqno,
         chain_now: now,
         expired: now > record.claim.valid_until,
-    })
-}
-
-/// The counters of a raw Agent Account data cell: `owner controller_pubkey
-/// deployment_id controller_epoch:uint64 seqno:uint32 ...`.
-#[derive(Debug, PartialEq, Eq)]
-struct AgentCounters {
-    deployment_id: [u8; 32],
-    controller_epoch: u64,
-    seqno: u32,
-}
-
-fn agent_counters(data: &Cell) -> anyhow::Result<AgentCounters> {
-    let mut s = chain_block::SliceData::load_cell(data.clone())?;
-    MsgAddressInt::construct_from(&mut s).context("Agent Account data owner")?;
-    s.move_by(256).context("Agent Account data controller key")?;
-    let deployment_id: [u8; 32] = s
-        .get_next_bytes(32)?
-        .try_into()
-        .map_err(|_| anyhow::anyhow!("Agent Account deployment id is not 32 bytes"))?;
-    Ok(AgentCounters {
-        deployment_id,
-        controller_epoch: s.get_next_u64()?,
-        seqno: s.get_next_u32()?,
+        auth_epoch: data.auth.epoch,
+        auth_nonce: data.auth.nonce,
+        superseded,
     })
 }
 
@@ -1157,6 +1176,10 @@ enum Mldsa44Resolution {
     Winner,
     /// Expired with the sequence still unconsumed: it can never execute.
     Expired,
+    /// Superseded: another action or an owner rotation moved the controller
+    /// counters past it while its auth nonce stayed unconsumed, so it was
+    /// never applied and never can be.
+    Superseded,
 }
 
 fn mldsa44_resolution(
@@ -1172,6 +1195,15 @@ fn mldsa44_resolution(
                 "finalized Agent Account state has not consumed the claimed sequence"
             );
             Ok(Mldsa44Resolution::Winner)
+        }
+        "not-committed" if finalized > claimed => {
+            // A bounded search finding nothing proves nothing by itself; the
+            // snapshot's unconsumed auth nonce with moved counters does.
+            anyhow::ensure!(
+                observation.superseded,
+                "the claimed sequence was consumed but no committing transaction was found in the bounded history and the account state does not prove the request was superseded; widen --max-transactions"
+            );
+            Ok(Mldsa44Resolution::Superseded)
         }
         "not-committed" => {
             anyhow::ensure!(
@@ -1293,6 +1325,13 @@ impl AgentAccountMldsa44ResolveCmd {
                         let schema = match kind {
                             Mldsa44Resolution::Winner => MLDSA44_FINALIZED_SCHEMA,
                             Mldsa44Resolution::Expired => MLDSA44_EXPIRED_SCHEMA,
+                            Mldsa44Resolution::Superseded => MLDSA44_SUPERSEDED_SCHEMA,
+                        };
+                        let state = match kind {
+                            Mldsa44Resolution::Superseded => "superseded",
+                            Mldsa44Resolution::Winner | Mldsa44Resolution::Expired => {
+                                observation.outcome.as_str()
+                            }
                         };
                         let output = serde_json::json!({
                             "schema": schema,
@@ -1306,7 +1345,7 @@ impl AgentAccountMldsa44ResolveCmd {
                             "network_domain": expected_network,
                             "quorum": {"members": members.len(), "threshold": threshold, "agreeing": winner.len()},
                             "observation": observation,
-                            "state": observation.outcome,
+                            "state": state,
                         });
                         let resolution = ControllerActionResolutionEvidence {
                             evidence_kind: schema.to_owned(),
@@ -1338,6 +1377,16 @@ impl AgentAccountMldsa44ResolveCmd {
                                 digest,
                                 record.claim.controller_epoch,
                                 record.claim.seqno,
+                                resolution,
+                                time_format::now(),
+                            )?,
+                            // Never applied: an absence at the observed,
+                            // advanced counters, which become the high-water.
+                            Mldsa44Resolution::Superseded => journal.resolve_exact_absence(
+                                &record.claim,
+                                digest,
+                                observation.finalized_controller_epoch,
+                                observation.finalized_seqno,
                                 resolution,
                                 time_format::now(),
                             )?,
@@ -1657,7 +1706,122 @@ mod tests {
             finalized_seqno: seqno,
             chain_now: now,
             expired: now > 1_000,
+            auth_epoch: 1,
+            auth_nonce: 0,
+            superseded: false,
         }
+    }
+
+    #[test]
+    fn a_request_whose_sequence_another_action_took_settles_as_superseded() {
+        let claim = mldsa44_claim(
+            &"a".repeat(64),
+            &address(0, 0x10),
+            &address(0, 0x30),
+            &address(0, 0x20),
+            42,
+            pin(),
+            &data(),
+            9,
+            1_000,
+        );
+        // The verdict follows the snapshot proof, before or after expiry.
+        for now in [900, 1_001] {
+            let proven =
+                Mldsa44Observation { superseded: true, ..observation("not-committed", 2, 8, now) };
+            assert_eq!(mldsa44_resolution(&claim, &proven).unwrap(), Mldsa44Resolution::Superseded);
+            // Moved counters without the proof stay unresolved.
+            assert!(mldsa44_resolution(&claim, &observation("not-committed", 2, 8, now)).is_err());
+        }
+        // The proof itself: counters moved, auth nonce unconsumed, same auth epoch.
+        let state = |epoch, seqno, auth_epoch, nonce| AgentAccountState {
+            deployment_id: [0x03; 32],
+            controller_epoch: epoch,
+            seqno,
+            auth: AgentAuthState {
+                mode: AUTH_MODE_STAGED,
+                epoch: auth_epoch,
+                nonce,
+                module_hash: [0; 32],
+            },
+        };
+        assert!(request_superseded(&state(2, 8, 1, 0), 2, 7, 1, 0)); // controller took the seqno
+        assert!(request_superseded(&state(3, 8, 1, 0), 2, 7, 1, 0)); // owner rotation
+        assert!(!request_superseded(&state(2, 8, 1, 1), 2, 7, 1, 0)); // this request committed
+        assert!(!request_superseded(&state(3, 8, 2, 0), 2, 7, 1, 0)); // auth epoch moved
+        assert!(!request_superseded(&state(2, 7, 1, 0), 2, 7, 1, 0)); // counters unchanged
+        // A view without the proof never votes with one that has it.
+        assert_ne!(
+            observation("not-committed", 2, 8, 900).quorum_key(),
+            Mldsa44Observation { superseded: true, ..observation("not-committed", 2, 8, 900) }
+                .quorum_key()
+        );
+    }
+
+    #[test]
+    fn a_superseded_action_releases_custody_for_the_next_send() {
+        let directory = tempfile::tempdir().unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let journal =
+            AgentAccountCustodyJournal::open(directory.path().canonicalize().unwrap()).unwrap();
+        let account = address(0, 0x10);
+        let target = address(0, 0x30);
+        let module = address(0, 0x20);
+        let claim = mldsa44_claim(
+            &"a".repeat(64),
+            &account,
+            &target,
+            &module,
+            42,
+            pin(),
+            &data(),
+            9,
+            1_000,
+        );
+        journal.claim_primary(claim.clone(), 10).unwrap();
+        let signed = |claim: &ControllerActionClaim| {
+            let bytes = write_boc(
+                &sign_submission(&[0x44; 32], claim, &account, &target, &auth(1, &module), 3)
+                    .unwrap(),
+            )
+            .unwrap();
+            let digest = format!("sha256:{}", hex::encode(Sha256::digest(&bytes)));
+            (base64::engine::general_purpose::STANDARD.encode(&bytes), digest)
+        };
+        let (boc, digest) = signed(&claim);
+        journal.attach_signed_boc(&claim, &boc, &digest, 11).unwrap();
+        journal.begin_broadcast(&claim, 12).unwrap();
+        let deployment = hex::encode(data().deployment_id);
+        // A controller action took seqno 7: the record blocks the next claim.
+        let moved = AgentAccountData { seqno: 8, ..data() };
+        assert!(
+            journal
+                .reconcile_finalized_state(&account.to_string(), 42, &deployment, 2, 8, 13)
+                .is_err()
+        );
+        let evidence = serde_json::json!({"state": "superseded"});
+        let resolution = ControllerActionResolutionEvidence {
+            evidence_kind: MLDSA44_SUPERSEDED_SCHEMA.to_owned(),
+            evidence_digest: controller_resolution_evidence_digest(
+                MLDSA44_SUPERSEDED_SCHEMA,
+                &evidence,
+            )
+            .unwrap(),
+            evidence,
+        };
+        journal.resolve_exact_absence(&claim, &digest, 2, 8, resolution, 14).unwrap();
+        // The next operation is claimed, signed and journaled at the new counters.
+        journal.reconcile_finalized_state(&account.to_string(), 42, &deployment, 2, 8, 15).unwrap();
+        let next =
+            mldsa44_claim(&"b".repeat(64), &account, &target, &module, 42, pin(), &moved, 9, 1_000);
+        assert!(journal.claim_primary(next.clone(), 16).unwrap().1);
+        let (boc, digest) = signed(&next);
+        journal.attach_signed_boc(&next, &boc, &digest, 17).unwrap();
+        journal.begin_broadcast(&next, 18).unwrap();
     }
 
     #[test]
@@ -1711,11 +1875,12 @@ mod tests {
             service_endpoint_hash: None,
         };
         let data = AgentAccountContract::build_data(&init).unwrap();
+        let state = AgentAccountState::parse(&data).unwrap();
         assert_eq!(
-            agent_counters(&data).unwrap(),
-            AgentCounters { deployment_id: [0x03; 32], controller_epoch: 0, seqno: 0 }
+            (state.deployment_id, state.controller_epoch, state.seqno, state.auth.mode),
+            ([0x03; 32], 0, 0, 0)
         );
-        assert!(agent_counters(&Cell::default()).is_err());
+        assert!(AgentAccountState::parse(&Cell::default()).is_err());
     }
 
     #[test]
@@ -1734,10 +1899,11 @@ mod tests {
             9,
             1_000,
         );
-        require_same_terms(&claim, &account, &target, &module, 9, 1_000).unwrap();
+        let here = pin();
+        require_same_terms(&claim, &account, &target, &module, 9, 1_000, &here).unwrap();
         // Counters are not terms: a consumed sequence does not block recovery.
         let consumed = ControllerActionClaim { seqno: 8, ..claim.clone() };
-        require_same_terms(&consumed, &account, &target, &module, 9, 1_000).unwrap();
+        require_same_terms(&consumed, &account, &target, &module, 9, 1_000, &here).unwrap();
         for (target, module, value, valid_until) in [
             (address(0, 0x31), module.clone(), 9, 1_000),
             (target.clone(), address(0, 0x21), 9, 1_000),
@@ -1745,15 +1911,53 @@ mod tests {
             (target.clone(), module.clone(), 9, 1_001),
         ] {
             assert!(
-                require_same_terms(&claim, &account, &target, &module, value, valid_until).is_err()
+                require_same_terms(&claim, &account, &target, &module, value, valid_until, &here)
+                    .is_err()
             );
         }
         let ed25519 = ControllerActionClaim {
             action_kind: "agent-native-send".into(),
             auth_module: None,
-            ..claim
+            ..claim.clone()
         };
-        assert!(require_same_terms(&ed25519, &account, &target, &module, 9, 1_000).is_err());
+        assert!(require_same_terms(&ed25519, &account, &target, &module, 9, 1_000, &here).is_err());
+    }
+
+    #[test]
+    fn a_retry_is_never_relayed_to_another_chain_with_the_same_global_id() {
+        let account = address(0, 0x10);
+        let target = address(0, 0x30);
+        let module = address(0, 0x20);
+        let claim = mldsa44_claim(
+            &"a".repeat(64),
+            &account,
+            &target,
+            &module,
+            42,
+            pin(),
+            &data(),
+            9,
+            1_000,
+        );
+        for other in [
+            RelayNetworkDomainPin {
+                zero_state_root_hash: format!("sha256:{}", "c".repeat(64)),
+                ..pin()
+            },
+            RelayNetworkDomainPin {
+                zero_state_file_hash: format!("sha256:{}", "d".repeat(64)),
+                ..pin()
+            },
+        ] {
+            assert_eq!(other.global_id, claim.network_global_id);
+            assert!(
+                require_same_terms(&claim, &account, &target, &module, 9, 1_000, &other).is_err()
+            );
+        }
+        let unpinned = ControllerActionClaim { network_domain: None, ..claim };
+        assert!(
+            require_same_terms(&unpinned, &account, &target, &module, 9, 1_000, &pin()).is_err()
+        );
     }
 
     #[test]
@@ -1799,7 +2003,16 @@ mod tests {
         // Install's fence is refused while the claimed action is unresolved.
         assert!(
             journal
-                .begin_controller_epoch_change(&text, 42, &deployment, 2, 7, &"c".repeat(64))
+                .begin_controller_epoch_change(
+                    &text,
+                    42,
+                    &deployment,
+                    2,
+                    7,
+                    4,
+                    &[0x20; 32],
+                    &"c".repeat(64)
+                )
                 .is_err()
         );
         // And a fence taken first keeps a later send from claiming the sequence.
@@ -1812,7 +2025,16 @@ mod tests {
         let fenced =
             AgentAccountCustodyJournal::open(other.path().canonicalize().unwrap()).unwrap();
         fenced
-            .begin_controller_epoch_change(&text, 42, &deployment, 2, 7, &"c".repeat(64))
+            .begin_controller_epoch_change(
+                &text,
+                42,
+                &deployment,
+                2,
+                7,
+                4,
+                &[0x20; 32],
+                &"c".repeat(64),
+            )
             .unwrap();
         assert!(fenced.claim_primary(claim, 11).is_err());
     }

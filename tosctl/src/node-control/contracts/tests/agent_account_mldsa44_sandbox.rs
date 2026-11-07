@@ -15,9 +15,10 @@ use chain_block::{
     TransactionDescr, ed25519_create_private_key,
 };
 use contracts::agent_account_auth::{
-    AUTH_KIND_EXECUTE, AUTH_MODE_LEGACY, AUTH_MODE_STAGED, AgentAuthState, AuthRequest,
-    Mldsa44AuthModule, auth_request_commitment, build_auth_envelope, build_mldsa44_submit,
-    build_stage_auth_message, read_byte_chain, sign_auth_request,
+    AUTH_KIND_EXECUTE, AUTH_MODE_LEGACY, AUTH_MODE_STAGED, AgentAccountState, AgentAuthState,
+    AuthRequest, Mldsa44AuthModule, auth_request_commitment, build_auth_envelope,
+    build_mldsa44_submit, build_stage_auth_message, read_byte_chain, request_superseded,
+    sign_auth_request,
 };
 use contracts::native_registry::{
     NATIVE_REGISTRY_SIGNATURE_CONTEXT, native_public_key_from_seed, sign_ml_dsa_44,
@@ -380,6 +381,67 @@ fn a_controller_action_that_takes_the_sequence_first_wins() {
     assert_eq!(f.auth().nonce, 0, "a refused request leaves the auth nonce unspent");
 }
 
+/// The raw account data, parsed as the resolver reads it from a proven snapshot.
+fn account_state(f: &Fixture) -> AgentAccountState {
+    let data = f.bc.get_account(&f.account).unwrap().get_data().unwrap();
+    AgentAccountState::parse(&data).expect("account state")
+}
+
+/// Supersession, proven from the real account state: the controller takes the
+/// request's sequence first, or an owner rotation advances the epoch. The old
+/// envelope is refused if delivered afterwards, and a fresh request at the new
+/// counters executes.
+#[test]
+fn a_superseded_request_is_proven_from_state_and_a_fresh_one_executes() {
+    for rotation in [false, true] {
+        let mut f = Fixture::new();
+        f.stage();
+        let signed_at = f.counters();
+        let signed_auth = f.auth();
+        let (body, envelope) = f.submission(TOS);
+        let before = account_state(&f);
+        assert!(!request_superseded(&before, signed_at.0, signed_at.1, signed_auth.epoch, 0));
+        if rotation {
+            let rotate = AgentAccountContract::build_rotate_controller_message(
+                5,
+                ed25519_create_private_key(&CONTROLLER_SECRET).unwrap().verifying_key(),
+            )
+            .unwrap();
+            let message = MessageBuilder::internal(f.owner.address(), &f.account, TOS / 2)
+                .body(rotate)
+                .build();
+            f.bc.send_message(message).expect("rotate").expect_success();
+        } else {
+            f.ed25519_native_send(TOS / 10);
+        }
+        let after = account_state(&f);
+        assert_eq!(after.auth, f.auth(), "the parser agrees with get_auth_state");
+        assert_eq!((after.controller_epoch, after.seqno), f.counters());
+        assert!(
+            request_superseded(&after, signed_at.0, signed_at.1, signed_auth.epoch, 0),
+            "rotation={rotation}: counters moved, auth nonce unconsumed"
+        );
+        // The old envelope can never apply after supersession.
+        let relayed = f.relay(body, RELAY);
+        let refused = f.deliver(&relayed, &envelope);
+        assert!(refused.aborted && !refused.committed, "{refused:?}");
+        assert!(f.transfers_to_target(&refused).is_empty());
+        assert!(request_superseded(
+            &account_state(&f),
+            signed_at.0,
+            signed_at.1,
+            signed_auth.epoch,
+            0
+        ));
+        // A fresh request at the new counters executes.
+        let (fresh, fresh_envelope) = f.submission(TOS);
+        let relayed = f.relay(fresh, RELAY);
+        let delivered = f.deliver(&relayed, &fresh_envelope);
+        assert!(!delivered.aborted, "{delivered:?}");
+        assert_eq!(f.transfers_to_target(&delivered), vec![TOS]);
+    }
+}
+
 #[test]
 fn a_refusal_after_acceptance_consumes_the_counters_without_a_transfer() {
     let mut f = Fixture::new();
@@ -405,4 +467,9 @@ fn a_refusal_after_acceptance_consumes_the_counters_without_a_transfer() {
     assert!(f.transfers_to_target(&refused).is_empty(), "{refused:?}");
     assert_eq!(f.counters().1, seqno.checked_add(1).unwrap(), "the seqno was committed");
     assert_eq!(f.auth().nonce, 1, "the auth nonce was committed");
+    // Even if this transaction were outside the history read, the moved
+    // counters cannot be taken for supersession: the consumed nonce shows
+    // the request was applied.
+    let epoch = f.counters().0;
+    assert!(!request_superseded(&account_state(&f), epoch, seqno, f.auth().epoch, 0));
 }
