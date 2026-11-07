@@ -27,7 +27,8 @@
   "revocations": [
     {
       "name": "revoke_version",
-      "object_id": "a10fd052910ce61f6d140679420e8a7a111335e11a31602365addb02a300665b",
+      "object_id": "cap_a10fd052910ce61f6d140679420e8a7a111335e11a31602365addb02a300665b",
+      "nonce": "6464646464646464646464646464646464646464646464646464646464646464",
       "contract_address": "0:577e62c2db275ab8f6143e40576ddc5922592d82fc66cdafcdbb72300b6b1039",
       "generation": 1,
       "sequence": 2,
@@ -43,7 +44,8 @@
     },
     {
       "name": "revoke_capability",
-      "object_id": "a10fd052910ce61f6d140679420e8a7a111335e11a31602365addb02a300665b",
+      "object_id": "cap_a10fd052910ce61f6d140679420e8a7a111335e11a31602365addb02a300665b",
+      "nonce": "6565656565656565656565656565656565656565656565656565656565656565",
       "contract_address": "0:577e62c2db275ab8f6143e40576ddc5922592d82fc66cdafcdbb72300b6b1039",
       "generation": 1,
       "sequence": 3,
@@ -59,7 +61,8 @@
     },
     {
       "name": "revoke_agent",
-      "object_id": "30eb18368d7c34cc1d026d544da0241c2648d6eb47bed4b89d08971eb337f7da",
+      "object_id": "agent_30eb18368d7c34cc1d026d544da0241c2648d6eb47bed4b89d08971eb337f7da",
+      "nonce": "6666666666666666666666666666666666666666666666666666666666666666",
       "contract_address": "0:7045d20ea3283f6008323648fadd49ec397c4e9986338feb31cde9d991469a2c",
       "generation": 1,
       "sequence": 2,

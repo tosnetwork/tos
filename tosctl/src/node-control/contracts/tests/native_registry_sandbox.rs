@@ -4191,7 +4191,12 @@ mod protocol_vectors {
                 chain_block::SliceData::load_cell(received.clone()).expect("received body");
             revocations.push(serde_json::json!({
                 "name": name,
-                "object_id": hex::encode(object_id),
+                "object_id": format!(
+                    "{}_{}",
+                    if *target == agent_address { "agent" } else { "cap" },
+                    hex::encode(object_id)
+                ),
+                "nonce": hex::encode(nonce),
                 "contract_address": target.to_string(),
                 "generation": generation,
                 "sequence": sequence,
