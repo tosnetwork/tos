@@ -175,8 +175,8 @@ mutation(
     [
         (
             CUSTODY,
-            "    if document.epoch_change_fences.contains_key(&generation) {",
-            "    if false && document.epoch_change_fences.contains_key(&generation) {",
+            "\n    if document.epoch_change_fences.contains_key(&generation) {",
+            "\n    if false && document.epoch_change_fences.contains_key(&generation) {",
         )
     ],
     [

@@ -58,6 +58,11 @@ pub struct AgentAccountMldsa44InstallCmd {
     deploy_amount: f64,
     #[arg(long, help = "TOS carried by the owner's stage_auth message")]
     amount: f64,
+    #[arg(
+        long,
+        help = "Lift the custody fence of an earlier install that did not finish; use only when its stage message was never sent or its wallet message has expired"
+    )]
+    recover_interrupted: bool,
     #[arg(long, help = "Skip confirmation prompts")]
     yes: bool,
 }
@@ -405,17 +410,44 @@ impl AgentAccountMldsa44InstallCmd {
         let journal = open_controller_journal(Path::new(config_path))?;
         let deployment_id = hex::encode(ctx.data.deployment_id);
         let account_text = ctx.account.to_string();
+        let interrupted =
+            journal.controller_epoch_change(&account_text, ctx.global_id, &deployment_id)?;
         if decision == StageDecision::AlreadyStaged {
-            // A stage that landed before an interrupted run is finished here.
+            // The stage of an interrupted run landed: its fence is finished
+            // here, since nothing of it can still arrive.
             journal.end_controller_epoch_change(
                 &account_text,
                 ctx.global_id,
                 &deployment_id,
                 ctx.data.controller_epoch,
                 ctx.data.seqno,
+                None,
             )?;
             println!("{} module already staged on {}", "OK".green().bold(), ctx.account);
             return Ok(());
+        }
+        if let Some(start) = interrupted {
+            // An earlier run fenced the account and did not see its stage
+            // land. Its stage message may still arrive; only the operator can
+            // say it was never sent or can no longer be accepted.
+            anyhow::ensure!(
+                self.recover_interrupted,
+                "an earlier mldsa44-install of this account did not finish (fenced at controller epoch {}, seqno {}); if its stage message was never sent or its wallet message has expired, run again with --recover-interrupted",
+                start.0,
+                start.1
+            );
+            anyhow::ensure!(
+                start == (ctx.data.controller_epoch, ctx.data.seqno),
+                "the account's counters moved since the interrupted install; inspect it before recovering"
+            );
+            journal.end_controller_epoch_change(
+                &account_text,
+                ctx.global_id,
+                &deployment_id,
+                ctx.data.controller_epoch,
+                ctx.data.seqno,
+                None,
+            )?;
         }
         journal.reconcile_finalized_state(
             &account_text,
@@ -425,31 +457,6 @@ impl AgentAccountMldsa44InstallCmd {
             ctx.data.seqno,
             time_format::now(),
         )?;
-        // Staging advances the controller epoch. Fence the account first: the
-        // journal refuses this while any action is unresolved, and admits no
-        // claim from now until the stage is finished, so none can be stranded.
-        journal.begin_controller_epoch_change(
-            &account_text,
-            ctx.global_id,
-            &deployment_id,
-            ctx.data.controller_epoch,
-            ctx.data.seqno,
-        )?;
-        let provider = contracts::contract_provider!(ctx.rpc_client.clone());
-        let fresh = AgentAccountContract::get_data(provider.as_ref(), &ctx.account).await?;
-        let fresh_auth = AgentAuthState::get(provider.as_ref(), &ctx.account).await?;
-        if (fresh.controller_epoch, fresh.seqno) != (ctx.data.controller_epoch, ctx.data.seqno)
-            || fresh_auth != ctx.auth
-        {
-            journal.end_controller_epoch_change(
-                &account_text,
-                ctx.global_id,
-                &deployment_id,
-                fresh.controller_epoch,
-                fresh.seqno,
-            )?;
-            anyhow::bail!("the Agent Account changed while installing; run mldsa44-install again");
-        }
         if !self.yes
             && !confirm(&format!(
                 "Stage module {} on {} (auth epoch {} -> {})?",
@@ -459,16 +466,40 @@ impl AgentAccountMldsa44InstallCmd {
                 ctx.auth.epoch.saturating_add(1)
             ))?
         {
-            // Nothing was sent: lift the fence at the unchanged counters.
+            println!("{}", "Install cancelled".yellow());
+            return Ok(());
+        }
+        // Staging advances the controller epoch. Fence the account first: the
+        // journal refuses this while any action is unresolved or another
+        // install holds a fence, and admits no claim from now until this
+        // invocation sees its stage land, so none can be stranded.
+        let mut token_bytes = [0u8; 32];
+        rand::rngs::OsRng.fill_bytes(&mut token_bytes);
+        let token = hex::encode(token_bytes);
+        journal.begin_controller_epoch_change(
+            &account_text,
+            ctx.global_id,
+            &deployment_id,
+            ctx.data.controller_epoch,
+            ctx.data.seqno,
+            &token,
+        )?;
+        let provider = contracts::contract_provider!(ctx.rpc_client.clone());
+        let fresh = AgentAccountContract::get_data(provider.as_ref(), &ctx.account).await?;
+        let fresh_auth = AgentAuthState::get(provider.as_ref(), &ctx.account).await?;
+        if (fresh.controller_epoch, fresh.seqno) != (ctx.data.controller_epoch, ctx.data.seqno)
+            || fresh_auth != ctx.auth
+        {
+            // Nothing was sent by this invocation.
             journal.end_controller_epoch_change(
                 &account_text,
                 ctx.global_id,
                 &deployment_id,
-                ctx.data.controller_epoch,
-                ctx.data.seqno,
+                fresh.controller_epoch,
+                fresh.seqno,
+                Some(&token),
             )?;
-            println!("{}", "Install cancelled".yellow());
-            return Ok(());
+            anyhow::bail!("the Agent Account changed while installing; run mldsa44-install again");
         }
         let (_, owner_info, owner_secret) =
             wallet_info(ctx.rpc_client.clone(), &ctx.agent_wallet.wallet, ctx.vault.clone())
@@ -524,6 +555,7 @@ impl AgentAccountMldsa44InstallCmd {
             &deployment_id,
             expected_counters.0,
             expected_counters.1,
+            Some(&token),
         )?;
         println!(
             "{} module {} staged on {} (auth epoch {}, controller epoch {}, seqno {})",
@@ -647,7 +679,57 @@ impl AgentAccountMldsa44SendCmd {
                 .await;
             }
         }
+        // An unsigned claim left by an interrupted run can never execute: it
+        // is released, not kept, when it can no longer be signed as claimed.
+        let unsigned = journal
+            .find_action_by_idempotency_key(&self.action_id)?
+            .filter(|record| record.status == ControllerActionStatus::Claimed);
+        if let Some(record) = &unsigned {
+            let stale = (record.claim.controller_epoch, record.claim.seqno)
+                != (ctx.data.controller_epoch, ctx.data.seqno);
+            let expired = check_auth_window(
+                self.valid_until,
+                ctx.chain_now,
+                ctx.data.default_task_timeout_secs,
+            )
+            .is_err();
+            if stale || expired {
+                journal.release_unsigned_mldsa44_claim(
+                    &record.claim,
+                    if stale { "counters moved before signing" } else { "expired before signing" },
+                    time_format::now(),
+                )?;
+                anyhow::bail!(
+                    "the unsigned claim of this action ID was released ({}); send again with a new action ID",
+                    if stale { "the controller sequence moved" } else { "its window closed" }
+                );
+            }
+        }
+        // Every check and the confirmation come before anything is claimed:
+        // a refused or declined request leaves no reservation behind.
         require_staged_module(&ctx.auth, &ctx.account, &ctx.module)?;
+        check_auth_window(self.valid_until, ctx.chain_now, ctx.data.default_task_timeout_secs)?;
+        if !self.yes
+            && !confirm(&format!(
+                "Authorize {} from {} to {} with ML-DSA-44 controller '{}', seqno {}, valid_until {}?",
+                display_tos(value),
+                ctx.account,
+                target,
+                self.controller,
+                ctx.data.seqno,
+                self.valid_until
+            ))?
+        {
+            if let Some(record) = &unsigned {
+                journal.release_unsigned_mldsa44_claim(
+                    &record.claim,
+                    "declined before signing",
+                    time_format::now(),
+                )?;
+            }
+            println!("{}", "ML-DSA-44 send cancelled".yellow());
+            return Ok(());
+        }
         let deployment_id = hex::encode(ctx.data.deployment_id);
         journal.reconcile_finalized_state(
             &ctx.account.to_string(),
@@ -671,27 +753,6 @@ impl AgentAccountMldsa44SendCmd {
         let (record, _) = journal.claim_primary(claim.clone(), time_format::now())?;
         let (boc_base64, status) = match (record.exact_signed_boc_base64.clone(), record.status) {
             (None, ControllerActionStatus::Claimed) => {
-                // Only a fresh signature checks the window: journaled bytes
-                // are relayed as they are and the chain judges their expiry.
-                check_auth_window(
-                    self.valid_until,
-                    ctx.chain_now,
-                    ctx.data.default_task_timeout_secs,
-                )?;
-                if !self.yes
-                    && !confirm(&format!(
-                        "Authorize {} from {} to {} with ML-DSA-44 controller '{}', seqno {}, valid_until {}?",
-                        display_tos(value),
-                        ctx.account,
-                        target,
-                        self.controller,
-                        ctx.data.seqno,
-                        self.valid_until
-                    ))?
-                {
-                    println!("{}", "ML-DSA-44 send cancelled".yellow());
-                    return Ok(());
-                }
                 let submission = sign_submission(
                     &ctx.seed,
                     &claim,
@@ -933,20 +994,28 @@ async fn observe_mldsa44_action(
         .context("ML-DSA-44 record has no pinned module")?
         .parse::<MsgAddressInt>()?;
     let target = record.claim.target.parse::<MsgAddressInt>()?;
-    // Chain time first, then the counters: the counters this view returns are
-    // then at least as recent as that time, so "unconsumed after expiry"
-    // cannot pair an old state with a later clock.
-    let now = chain_now(&rpc_client).await?;
-    let provider = contracts::contract_provider!(rpc_client.clone());
-    let data = AgentAccountContract::get_data(provider.as_ref(), account).await?;
-
+    // One proven account snapshot supplies the counters, the time of the
+    // account-shard state they belong to, and the start of the history:
+    // "unconsumed after expiry" then speaks of one state, never of an old
+    // shard state paired with a later masterchain clock.
     let info = rpc_client.get_address_information(account).await?;
+    let now = u32::try_from(info.sync_utime).context("account state time exceeds uint32")?;
+    let state = read_single_root_boc(info.data.as_ref().context("account state has no data")?)?;
+    let data = agent_counters(&state)?;
+    anyhow::ensure!(
+        hex::encode(data.deployment_id) == record.claim.deployment_id,
+        "the account's deployment differs from the custody claim"
+    );
+
     let mut cursor_lt = info.last_transaction_id.lt;
     let mut cursor_hash =
         base64::engine::general_purpose::STANDARD.encode(&info.last_transaction_id.hash);
     let mut inspected = 0u32;
     let mut aborted = 0u32;
     let mut committed = Vec::new();
+    // A page starts at its cursor transaction, which ended the previous page:
+    // each transaction is classified once, by its hash.
+    let mut seen = BTreeSet::new();
     let bounded = max_transactions.clamp(1, 10_000);
     while cursor_lt != 0 && inspected < bounded {
         let page = rpc_client
@@ -964,6 +1033,9 @@ async fn observe_mldsa44_action(
             }
             let transaction_boc = base64::engine::general_purpose::STANDARD.decode(&raw.data)?;
             let transaction_root = read_single_root_boc(&transaction_boc)?;
+            if !seen.insert(transaction_root.repr_hash()) {
+                continue;
+            }
             let transaction = Transaction::construct_from_cell(transaction_root.clone())?;
             let outcome = classify_account_transaction(
                 &transaction,
@@ -1023,6 +1095,30 @@ async fn observe_mldsa44_action(
         finalized_seqno: data.seqno,
         chain_now: now,
         expired: now > record.claim.valid_until,
+    })
+}
+
+/// The counters of a raw Agent Account data cell: `owner controller_pubkey
+/// deployment_id controller_epoch:uint64 seqno:uint32 ...`.
+#[derive(Debug, PartialEq, Eq)]
+struct AgentCounters {
+    deployment_id: [u8; 32],
+    controller_epoch: u64,
+    seqno: u32,
+}
+
+fn agent_counters(data: &Cell) -> anyhow::Result<AgentCounters> {
+    let mut s = chain_block::SliceData::load_cell(data.clone())?;
+    MsgAddressInt::construct_from(&mut s).context("Agent Account data owner")?;
+    s.move_by(256).context("Agent Account data controller key")?;
+    let deployment_id: [u8; 32] = s
+        .get_next_bytes(32)?
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("Agent Account deployment id is not 32 bytes"))?;
+    Ok(AgentCounters {
+        deployment_id,
+        controller_epoch: s.get_next_u64()?,
+        seqno: s.get_next_u32()?,
     })
 }
 
@@ -1594,6 +1690,28 @@ mod tests {
     }
 
     #[test]
+    fn the_counters_come_from_the_raw_account_data() {
+        let init = AgentAccountInit {
+            owner: address(0, 0x01),
+            controller_pubkey: ed25519_dalek::SigningKey::from_bytes(&[0x42; 32])
+                .verifying_key()
+                .to_bytes(),
+            deployment_id: [0x03; 32],
+            max_per_tx: 5_000_000_000,
+            daily_limit: 50_000_000_000,
+            default_task_timeout_secs: 3_600,
+            metadata_hash: None,
+            service_endpoint_hash: None,
+        };
+        let data = AgentAccountContract::build_data(&init).unwrap();
+        assert_eq!(
+            agent_counters(&data).unwrap(),
+            AgentCounters { deployment_id: [0x03; 32], controller_epoch: 0, seqno: 0 }
+        );
+        assert!(agent_counters(&Cell::default()).is_err());
+    }
+
+    #[test]
     fn a_retry_must_repeat_the_journaled_terms() {
         let account = address(0, 0x10);
         let target = address(0, 0x30);
@@ -1672,7 +1790,11 @@ mod tests {
         );
         journal.claim_primary(claim.clone(), 10).unwrap();
         // Install's fence is refused while the claimed action is unresolved.
-        assert!(journal.begin_controller_epoch_change(&text, 42, &deployment, 2, 7).is_err());
+        assert!(
+            journal
+                .begin_controller_epoch_change(&text, 42, &deployment, 2, 7, &"c".repeat(64))
+                .is_err()
+        );
         // And a fence taken first keeps a later send from claiming the sequence.
         let other = tempfile::tempdir().unwrap();
         #[cfg(unix)]
@@ -1682,7 +1804,9 @@ mod tests {
         }
         let fenced =
             AgentAccountCustodyJournal::open(other.path().canonicalize().unwrap()).unwrap();
-        fenced.begin_controller_epoch_change(&text, 42, &deployment, 2, 7).unwrap();
+        fenced
+            .begin_controller_epoch_change(&text, 42, &deployment, 2, 7, &"c".repeat(64))
+            .unwrap();
         assert!(fenced.claim_primary(claim, 11).is_err());
     }
 }

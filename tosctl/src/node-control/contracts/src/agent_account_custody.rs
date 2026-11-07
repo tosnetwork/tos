@@ -282,8 +282,16 @@ struct JournalDocument {
     /// authentication module) is about to advance. No claim is admitted for
     /// them until the operation is finished, so none can be stranded by it.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
-    epoch_change_fences: std::collections::BTreeMap<String, FinalizedHighWater>,
+    epoch_change_fences: std::collections::BTreeMap<String, EpochChangeFence>,
     records: Vec<ControllerActionRecord>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+struct EpochChangeFence {
+    controller_epoch: u64,
+    seqno: u32,
+    /// Random per invocation: only the invocation holding it lifts the fence.
+    owner_token: String,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -879,10 +887,10 @@ impl AgentAccountCustodyJournal {
 
     /// Fences one account generation before an owner operation that advances
     /// its controller epoch from the finalized `(controller_epoch, seqno)`.
-    /// Under the journal lock: refused while any of its actions is unresolved;
-    /// from then on no claim is admitted for it until
-    /// [`Self::end_controller_epoch_change`]. Re-entering with the same
-    /// counters resumes an unfinished change; other counters are refused.
+    /// Under the journal lock: refused while any of its actions is unresolved
+    /// or another fence is held; from then on no claim is admitted for it
+    /// until the holder of `owner_token` (or an explicit recovery) calls
+    /// [`Self::end_controller_epoch_change`].
     pub fn begin_controller_epoch_change(
         &self,
         account: &str,
@@ -890,10 +898,15 @@ impl AgentAccountCustodyJournal {
         deployment_id: &str,
         controller_epoch: u64,
         seqno: u32,
+        owner_token: &str,
     ) -> anyhow::Result<()> {
         validate_generation(account, network_global_id, deployment_id)?;
+        if !valid_idempotency_key(owner_token) {
+            anyhow::bail!("an epoch-change owner token is 64 lowercase hex characters");
+        }
         let generation = generation_key_parts(account, network_global_id, deployment_id);
-        let start = FinalizedHighWater { controller_epoch, seqno };
+        let start =
+            EpochChangeFence { controller_epoch, seqno, owner_token: owner_token.to_owned() };
         self.with_document(|document| {
             let unresolved = document
                 .records
@@ -913,22 +926,87 @@ impl AgentAccountCustodyJournal {
             {
                 anyhow::bail!("Agent Account finalized controller epoch/seqno rolled back");
             }
-            match document.epoch_change_fences.get(&generation) {
-                Some(existing) if *existing != start => anyhow::bail!(
-                    "an unfinished authentication change started from other counters; finish it first"
-                ),
-                Some(_) => {}
-                None => {
-                    document.epoch_change_fences.insert(generation.clone(), start);
-                }
+            if document.epoch_change_fences.contains_key(&generation) {
+                anyhow::bail!(
+                    "another authentication change of this Agent Account is in progress or was interrupted"
+                );
             }
+            document.epoch_change_fences.insert(generation.clone(), start);
             Ok(())
         })
     }
 
+    /// Terminalizes an ML-DSA-44 claim that was never signed: no submission
+    /// exists, so nothing can ever execute under it, and its reserved
+    /// sequence is released. Refused once a submission is attached.
+    pub fn release_unsigned_mldsa44_claim(
+        &self,
+        claim: &ControllerActionClaim,
+        reason: &str,
+        now: u64,
+    ) -> anyhow::Result<ControllerActionRecord> {
+        validate_claim(claim)?;
+        if claim.action_kind != MLDSA44_NATIVE_SEND_ACTION_KIND || now == 0 {
+            anyhow::bail!("only an unsigned ML-DSA-44 claim can be released");
+        }
+        let evidence_kind = "tos.agent-account.unsigned-claim-released.v1";
+        let evidence = serde_json::json!({
+            "schema": evidence_kind,
+            "account": claim.account,
+            "action_id": claim.idempotency_key,
+            "controller_epoch": claim.controller_epoch,
+            "seqno": claim.seqno,
+            "reason": reason,
+        });
+        let resolution = ControllerActionResolutionEvidence {
+            evidence_kind: evidence_kind.to_owned(),
+            evidence_digest: controller_resolution_evidence_digest(evidence_kind, &evidence)?,
+            evidence,
+        };
+        self.with_document(|document| {
+            let record = document
+                .records
+                .iter_mut()
+                .find(|record| record.claim == *claim)
+                .context("the unsigned claim was not found")?;
+            if record.status != ControllerActionStatus::Claimed
+                || record.exact_signed_boc_base64.is_some()
+                || record.exact_signed_boc_digest.is_some()
+            {
+                anyhow::bail!("a signed or broadcast action cannot be released unsigned");
+            }
+            record.status = ControllerActionStatus::Resolved;
+            record.exact_winner_resolution = Some(resolution);
+            record.updated_at_unix = now;
+            let output = record.clone();
+            compact_records(document);
+            Ok(output)
+        })
+    }
+
+    /// The counters an unfinished fence started from, if one is held.
+    pub fn controller_epoch_change(
+        &self,
+        account: &str,
+        network_global_id: i32,
+        deployment_id: &str,
+    ) -> anyhow::Result<Option<(u64, u32)>> {
+        validate_generation(account, network_global_id, deployment_id)?;
+        let generation = generation_key_parts(account, network_global_id, deployment_id);
+        self.with_document(|document| {
+            Ok(document
+                .epoch_change_fences
+                .get(&generation)
+                .map(|fence| (fence.controller_epoch, fence.seqno)))
+        })
+    }
+
     /// Lifts the fence once the finalized state is known: the change landed
-    /// (counters advanced) or was never sent (counters unchanged). A
-    /// generation without a fence is left as it is.
+    /// (counters advanced) or was never sent (counters unchanged). Only the
+    /// holder's `owner_token` lifts it; `None` is the explicit recovery of an
+    /// interrupted holder, which the caller may use only when it knows the
+    /// change landed or can no longer land. A generation without a fence is
+    /// left as it is.
     pub fn end_controller_epoch_change(
         &self,
         account: &str,
@@ -936,13 +1014,17 @@ impl AgentAccountCustodyJournal {
         deployment_id: &str,
         finalized_controller_epoch: u64,
         finalized_seqno: u32,
+        owner_token: Option<&str>,
     ) -> anyhow::Result<()> {
         validate_generation(account, network_global_id, deployment_id)?;
         let generation = generation_key_parts(account, network_global_id, deployment_id);
         self.with_document(|document| {
-            let Some(start) = document.epoch_change_fences.get(&generation).copied() else {
+            let Some(start) = document.epoch_change_fences.get(&generation).cloned() else {
                 return Ok(());
             };
+            if owner_token.is_some_and(|token| token != start.owner_token) {
+                anyhow::bail!("this authentication change is held by another invocation");
+            }
             let finalized = (finalized_controller_epoch, finalized_seqno);
             if finalized < (start.controller_epoch, start.seqno) {
                 anyhow::bail!("finalized counters are older than the authentication change");
@@ -3654,21 +3736,59 @@ mod tests {
         let action = mldsa_claim(3);
         let (account, id, deployment) =
             (&action.account, action.network_global_id, &action.deployment_id);
-        journal.begin_controller_epoch_change(account, id, deployment, 3, 3).unwrap();
-        // Resuming the same change is allowed; another starting point is not.
-        journal.begin_controller_epoch_change(account, id, deployment, 3, 3).unwrap();
-        assert!(journal.begin_controller_epoch_change(account, id, deployment, 3, 4).is_err());
+        let (first, second) = ("a".repeat(64), "b".repeat(64));
+        journal.begin_controller_epoch_change(account, id, deployment, 3, 3, &first).unwrap();
+        assert_eq!(journal.controller_epoch_change(account, id, deployment).unwrap(), Some((3, 3)));
+        // A second invocation can neither enter nor lift the held fence.
+        assert!(
+            journal.begin_controller_epoch_change(account, id, deployment, 3, 3, &second).is_err()
+        );
+        assert!(
+            journal
+                .end_controller_epoch_change(account, id, deployment, 3, 3, Some(&second))
+                .is_err()
+        );
         // No claim is admitted while the change is in progress.
         assert!(journal.claim_primary(action.clone(), 10).is_err());
-        assert!(journal.end_controller_epoch_change(account, id, deployment, 3, 2).is_err());
-        journal.end_controller_epoch_change(account, id, deployment, 4, 4).unwrap();
+        assert!(
+            journal
+                .end_controller_epoch_change(account, id, deployment, 3, 2, Some(&first))
+                .is_err()
+        );
+        journal.end_controller_epoch_change(account, id, deployment, 4, 4, Some(&first)).unwrap();
         // Lifting twice is a no-op; the high-water mark moved to the new counters.
-        journal.end_controller_epoch_change(account, id, deployment, 4, 4).unwrap();
+        journal.end_controller_epoch_change(account, id, deployment, 4, 4, Some(&first)).unwrap();
+        assert_eq!(journal.controller_epoch_change(account, id, deployment).unwrap(), None);
         assert!(journal.claim_primary(action.clone(), 11).is_err(), "rolled-back counters");
         let current = ControllerActionClaim { controller_epoch: 4, ..mldsa_claim(4) };
         assert!(journal.claim_primary(current.clone(), 12).unwrap().1);
         // An unresolved action blocks the next change.
-        assert!(journal.begin_controller_epoch_change(account, id, deployment, 4, 4).is_err());
+        assert!(
+            journal.begin_controller_epoch_change(account, id, deployment, 4, 4, &second).is_err()
+        );
+        // An unsigned claim can be released; it then no longer blocks.
+        journal.release_unsigned_mldsa44_claim(&current, "expired before signing", 13).unwrap();
+        journal.begin_controller_epoch_change(account, id, deployment, 4, 4, &second).unwrap();
+        // An interrupted holder's fence is lifted only by explicit recovery.
+        journal.end_controller_epoch_change(account, id, deployment, 4, 4, None).unwrap();
+    }
+
+    #[test]
+    fn a_signed_mldsa_claim_cannot_be_released_as_unsigned() {
+        let directory = tempfile::tempdir().unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let journal =
+            AgentAccountCustodyJournal::open(directory.path().canonicalize().unwrap()).unwrap();
+        let action = mldsa_claim(3);
+        journal.claim_primary(action.clone(), 10).unwrap();
+        let (boc, digest) = encoded(&mldsa_submission(&action, |_| {}));
+        journal.attach_signed_boc(&action, &boc, &digest, 11).unwrap();
+        assert!(journal.release_unsigned_mldsa44_claim(&action, "test", 12).is_err());
+        assert!(journal.release_unsigned_mldsa44_claim(&claim(4, 'a'), "test", 12).is_err());
     }
 
     fn deploy_claim(seqno: u32) -> (ControllerActionClaim, StateInit, Cell) {
