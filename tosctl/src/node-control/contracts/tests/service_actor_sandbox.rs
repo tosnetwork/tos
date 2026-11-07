@@ -281,6 +281,27 @@ impl Fixture {
         }
     }
 
+    /// The attestor key a pending request snapshotted, or `None` when it has none.
+    fn request_attestor_key(&self, request_id: u64) -> Option<Cell> {
+        let stack = self
+            .bc
+            .run_get_method(
+                &self.service,
+                "get_request_attestor_key",
+                vec![StackItem::int(request_id)],
+            )
+            .expect("get_request_attestor_key")
+            .expect_success()
+            .stack
+            .clone();
+        assert_eq!(stack.len(), 1, "one result");
+        match &stack[0] {
+            StackItem::None => None,
+            StackItem::Cell(cell) => Some(cell.clone()),
+            other => panic!("get_request_attestor_key returned {other:?}"),
+        }
+    }
+
     fn request(&self, request_id: u64) -> Option<contracts::PendingRequestData> {
         let stack = self
             .bc
@@ -2690,11 +2711,19 @@ fn solvency_code() -> Cell {
 
 impl Fixture {
     fn solvency() -> Self {
-        let mut f = Self::new();
-        let mut account = f.bc.get_account(&f.service).unwrap().clone();
+        Self::new().with_solvency_code()
+    }
+
+    fn solvency_with_attestor(attestor_pubkey: Vec<u8>) -> Self {
+        Self::with_attestor(attestor_pubkey).with_solvency_code()
+    }
+
+    /// Runs the source under review instead of the SDK's frozen bytecode.
+    fn with_solvency_code(mut self) -> Self {
+        let mut account = self.bc.get_account(&self.service).unwrap().clone();
         assert!(account.set_code(solvency_code()));
-        f.bc.set_account(f.service.clone(), account);
-        f
+        self.bc.set_account(self.service.clone(), account);
+        self
     }
 
     fn set_balance(&mut self, balance: u64) {
@@ -3195,8 +3224,12 @@ fn solvency_sweep_pays_principal_before_the_operating_reserve() {
 }
 // This measures deliberately large, coherent stress states. It is not a proof
 // that the production account-cell limits admit 100,000 independent requests.
+// The attested variant is the same synthetic state under a stored ML-DSA-44
+// attestor key that every seeded pending entry snapshots by reference.
 
 const GAS_STRESS_LIVE: u32 = 99_999;
+/// The one attestor the attested stress seed is ever built with.
+const GAS_STRESS_ATTESTOR_SEED: [u8; 32] = [0x6b; 32];
 const GAS_STRESS_PRICE: u128 = 1_u128 << 100;
 const GAS_STRESS_STORAGE: u128 = 1_u128 << 99;
 const GAS_STRESS_SPARE: u128 = 1_u128 << 110;
@@ -3220,12 +3253,16 @@ fn gas_stress_terms(
     storage: u128,
     sla: u32,
     window: u32,
+    attestor_key_id: Option<[u8; 32]>,
 ) -> [u8; 32] {
     let mut tail = BuilderData::new();
     tail.append_u256(&init.metadata_hash).unwrap();
     tail.append_u256(&init.proof_scheme_hash).unwrap();
-    tail.append_bit_zero().unwrap();
-    tail.append_u256(&[0; 32]).unwrap();
+    // terms_cell: has_attestor, then the key id (zero when there is none).
+    match attestor_key_id {
+        Some(key_id) => tail.append_bit_one().unwrap().append_u256(&key_id).unwrap(),
+        None => tail.append_bit_zero().unwrap().append_u256(&[0; 32]).unwrap(),
+    };
     let mut root = BuilderData::new();
     root.append_u32(version).unwrap();
     coins(price).write_to(&mut root).unwrap();
@@ -3243,10 +3280,32 @@ fn gas_stress_key(id: u64) -> SliceData {
     SliceData::load_builder(key).unwrap()
 }
 
-fn gas_stress_seed(f: &Fixture) -> &'static GasStressSeed {
+/// The policy's stored attestor key cell (`Maybe ^StoredKey` in the policy
+/// commitments), or `None` when the policy has no attestor.
+fn policy_attestor_key(data: &Cell) -> Option<Cell> {
+    let policy = data.reference(0).unwrap();
+    let mut commitments = SliceData::load_cell(policy.reference(0).unwrap()).unwrap();
+    commitments.move_by(256 + 256 + 1 + 256).unwrap();
+    commitments.get_next_bit().unwrap().then(|| commitments.checked_drain_reference().unwrap())
+}
+
+fn gas_stress_seed(f: &Fixture, attested: bool) -> &'static GasStressSeed {
     use chain_block::{HashmapE, HashmapType};
-    static SEED: std::sync::OnceLock<GasStressSeed> = std::sync::OnceLock::new();
-    SEED.get_or_init(|| {
+    static PLAIN: std::sync::OnceLock<GasStressSeed> = std::sync::OnceLock::new();
+    static ATTESTED: std::sync::OnceLock<GasStressSeed> = std::sync::OnceLock::new();
+    let expected_key =
+        attested.then(|| Attestor::from_bytes(&GAS_STRESS_ATTESTOR_SEED).public_key());
+    assert_eq!(
+        f.init.attestor_pubkey, expected_key,
+        "each stress seed is built with exactly one attestor configuration"
+    );
+    let seed = if attested { &ATTESTED } else { &PLAIN };
+    seed.get_or_init(|| {
+        let original = ServiceActorContract::build_data(&f.init).unwrap();
+        // The attested seed snapshots the policy's own stored key cell.
+        let stored_key = policy_attestor_key(&original);
+        assert_eq!(stored_key.is_some(), attested);
+        let key_id = f.init.attestor_key_id().unwrap();
         let created_at = f.bc.now();
         // These requests were admitted one maximum SLA before the snapshot.
         // Refund entries have just expired; pending entries may still await
@@ -3260,6 +3319,7 @@ fn gas_stress_seed(f: &Fixture) -> &'static GasStressSeed {
             GAS_STRESS_STORAGE,
             GAS_STRESS_PERIOD,
             GAS_STRESS_PERIOD,
+            key_id,
         );
         let current_terms = gas_stress_terms(
             &f.init,
@@ -3268,14 +3328,28 @@ fn gas_stress_seed(f: &Fixture) -> &'static GasStressSeed {
             u128::from(f.init.storage_fee),
             f.init.response_sla,
             f.init.refund_claim_window,
+            key_id,
         );
+        // pack_pending_request: has_attestor, the key id, and the snapshotted
+        // key by reference -- the same cell the policy holds, as call() stores.
         let mut commitments = BuilderData::new();
         commitments.append_u256(&[0x79; 32]).unwrap();
         commitments.append_u256(&old_terms).unwrap();
-        commitments.append_bit_zero().unwrap();
-        commitments.append_u256(&[0; 32]).unwrap();
-        // No attestor: the snapshotted key reference is absent.
-        commitments.append_bit_zero().unwrap();
+        match (key_id, stored_key) {
+            (Some(key_id), Some(stored_key)) => {
+                commitments.append_bit_one().unwrap();
+                commitments.append_u256(&key_id).unwrap();
+                commitments.append_bit_one().unwrap();
+                commitments.checked_append_reference(stored_key).unwrap();
+            }
+            (None, None) => {
+                commitments.append_bit_zero().unwrap();
+                commitments.append_u256(&[0; 32]).unwrap();
+                // No attestor: the snapshotted key reference is absent.
+                commitments.append_bit_zero().unwrap();
+            }
+            (Some(_), None) | (None, Some(_)) => panic!("the policy key and its id disagree"),
+        }
         let commitments = commitments.into_cell().unwrap();
 
         // Each populated trie has a long path near the uint64 limit, modeling
@@ -3384,7 +3458,6 @@ fn gas_stress_seed(f: &Fixture) -> &'static GasStressSeed {
 
         // Version 0 was the wide-valued historical policy; version 1 is the
         // current ordinary policy. Preserve every other policy field/ref.
-        let original = ServiceActorContract::build_data(&f.init).unwrap();
         let mut policy = SliceData::load_cell(original.reference(0).unwrap()).unwrap();
         assert_eq!(policy.get_next_u32().unwrap(), 0);
         let mut updated_policy = BuilderData::new();
@@ -3409,9 +3482,15 @@ fn gas_stress_seed(f: &Fixture) -> &'static GasStressSeed {
     })
 }
 
-fn gas_stress_fixture() -> (Fixture, &'static GasStressSeed) {
-    let mut f = Fixture::solvency();
-    let seed = gas_stress_seed(&f);
+fn gas_stress_fixture(attested: bool) -> (Fixture, &'static GasStressSeed) {
+    let mut f = if attested {
+        Fixture::solvency_with_attestor(
+            Attestor::from_bytes(&GAS_STRESS_ATTESTOR_SEED).public_key(),
+        )
+    } else {
+        Fixture::solvency()
+    };
+    let seed = gas_stress_seed(&f, attested);
     assert_eq!(f.bc.now(), seed.created_at, "stress seed uses deterministic sandbox time");
     let mut account = f.bc.get_account(&f.service).unwrap().clone();
     assert!(account.set_data(seed.data.clone()));
@@ -3435,7 +3514,7 @@ fn gas_stress_fixture() -> (Fixture, &'static GasStressSeed) {
     limits.max_mc_acc_state_cells = limits.max_mc_acc_state_cells.max(stress_cap);
     f.bc.set_size_limits_config(limits).unwrap();
     eprintln!(
-        "service gas stress: live={GAS_STRESS_LIVE}, callers=99001, unique_cells={cell_count}, test_state_cap={stress_cap}"
+        "service gas stress: attested={attested}, live={GAS_STRESS_LIVE}, callers=99001, unique_cells={cell_count}, test_state_cap={stress_cap}"
     );
     f.bc.set_account(f.service.clone(), account);
     assert_eq!(f.live_count(), u64::from(GAS_STRESS_LIVE));
@@ -3486,50 +3565,180 @@ fn gas_stress_measure(label: &str, result: &SendResult, allowance: u64) -> (u128
     (cost, rent)
 }
 
+/// One admission at 99,999 live entries, measured against the admission
+/// allowance; returns the caller and the emitted snapshot. Entries are almost
+/// their full permitted 60-day age, so storage rent is actually charged using
+/// their initialized storage statistics.
+fn gas_stress_admit(
+    f: &mut Fixture,
+    seed: &GasStressSeed,
+    existing: bool,
+    label: &str,
+) -> (MsgAddressInt, RequestSnapshot) {
+    f.bc.set_now(seed.deadline.checked_sub(1).unwrap());
+    let caller = if existing { f.caller.address() } else { f.caller2.address() }.clone();
+    let before = gas_stress_balance(f);
+    let principal = f.init.price_per_call.checked_add(f.init.storage_fee).unwrap();
+    let value = principal.checked_add(ADMISSION_GAS_ALLOWANCE).unwrap();
+    let result = f.no_bounce(
+        &caller,
+        value,
+        ServiceActorContract::call(77, [0x77; 32], seed.current_terms).unwrap(),
+    );
+    let label = format!("{label}/{}", if existing { "existing-caller" } else { "new-caller" });
+    let (cost, rent) = gas_stress_measure(&label, &result, ADMISSION_GAS_ALLOWANCE);
+    result.expect_out_msgs(2);
+    let mut snapshots = request_snapshots(&result);
+    assert_eq!(snapshots.len(), 1, "an admission at capacity still emits its snapshot");
+    let snapshot = snapshots.remove(0);
+    assert_eq!(snapshot.request_id, GAS_STRESS_NEXT_ID);
+    assert_eq!(snapshot.caller, caller);
+    assert_eq!(f.live_count(), 100_000);
+    assert_eq!(f.caller_live_count(&caller), if existing { 1000 } else { 1 });
+    assert_eq!(
+        gas_stress_balance(f),
+        before.checked_sub(rent).unwrap().checked_add(u128::from(principal)).unwrap(),
+        "successful admission cannot spend preexisting backing on execution"
+    );
+    // The snapshot is emitted first; the change is the second output.
+    let outgoing = result.first_transaction().unwrap().get_out_msg(1).unwrap().unwrap();
+    assert_eq!(
+        outgoing.int_header().unwrap().value.coins.as_u128(),
+        u128::from(ADMISSION_GAS_ALLOWANCE).checked_sub(cost).unwrap()
+    );
+    (caller, snapshot)
+}
+
 #[test]
 fn solvency_admission_gas_at_capacity_with_sparse_ids_and_wide_accounting() {
-    use contracts::service_actor::protocol_constants::ADMISSION_GAS_ALLOWANCE;
     for existing in [false, true] {
-        let (mut f, seed) = gas_stress_fixture();
-        // Entries are almost their full permitted 60-day age; storage rent is
-        // actually charged using their initialized storage statistics.
-        f.bc.set_now(seed.deadline.checked_sub(1).unwrap());
-        let caller = if existing { f.caller.address() } else { f.caller2.address() }.clone();
-        let before = gas_stress_balance(&f);
-        let principal = f.init.price_per_call.checked_add(f.init.storage_fee).unwrap();
-        let value = principal.checked_add(ADMISSION_GAS_ALLOWANCE).unwrap();
-        let result = f.no_bounce(
-            &caller,
-            value,
-            ServiceActorContract::call(77, [0x77; 32], seed.current_terms).unwrap(),
+        let (mut f, seed) = gas_stress_fixture(false);
+        gas_stress_admit(&mut f, seed, existing, "admit");
+    }
+}
+
+/// The attested case at capacity: admission re-derives the stored key's id on
+/// every call, and the response carries a real ML-DSA-44 signature that the
+/// contract verifies against the key the request snapshotted. respond enforces
+/// no execution allowance and returns no change, so the test holds it to
+/// PAYOUT_GAS_ALLOWANCE as the budget a responder attaches.
+#[test]
+fn solvency_attested_gas_at_capacity_with_sparse_ids_and_wide_accounting() {
+    let attestor = Attestor::from_bytes(&GAS_STRESS_ATTESTOR_SEED);
+    let other = Attestor::from_bytes(&[0x6c; 32]);
+    for existing in [false, true] {
+        let (mut f, seed) = gas_stress_fixture(true);
+        let policy_key = f.attestor_key().expect("the policy keeps the attestor key");
+        assert_eq!(
+            policy_key.repr_hash(),
+            contracts::native_registry::stored_bytes(&attestor.public_key()).unwrap().repr_hash()
         );
-        let label = if existing { "admit/existing-caller" } else { "admit/new-caller" };
-        let (cost, rent) = gas_stress_measure(label, &result, ADMISSION_GAS_ALLOWANCE);
-        result.expect_out_msgs(2);
-        let snapshots = request_snapshots(&result);
-        assert_eq!(snapshots.len(), 1, "an admission at capacity still emits its snapshot");
-        assert_eq!(snapshots[0].request_id, GAS_STRESS_NEXT_ID);
-        assert_eq!(snapshots[0].caller, caller);
+        // A seeded historical entry snapshots the policy's key cell.
+        assert_eq!(
+            f.request_attestor_key(GAS_STRESS_PENDING_ID).map(|key| key.repr_hash()),
+            Some(policy_key.repr_hash())
+        );
+
+        let (caller, snapshot) = gas_stress_admit(&mut f, seed, existing, "admit-attested");
+        assert_eq!(snapshot.attestor_key_id, Some(attestor.key_id()));
+        let request = f.request(GAS_STRESS_NEXT_ID).expect("the admitted request is pending");
+        assert_eq!(request.attestor_key_id, Some(attestor.key_id()));
+        assert_eq!(request.caller, caller);
+        assert_eq!(
+            f.request_attestor_key(GAS_STRESS_NEXT_ID).map(|key| key.repr_hash()),
+            Some(policy_key.repr_hash()),
+            "the request snapshots the stored key by reference"
+        );
+
+        let response_hash = [0x78; 32];
+        let domain_hash = contracts::service_respond_domain_hash(
+            sandbox_global_id(&f.bc),
+            &f.service,
+            &request.caller,
+            GAS_STRESS_NEXT_ID,
+            &request.request_hash,
+            &response_hash,
+            &request.terms_hash,
+            request.price,
+            request.response_deadline,
+            request.refund_claim_deadline,
+        )
+        .unwrap();
+        let owner = f.owner.address().clone();
+        let mode = if existing { "existing-caller" } else { "new-caller" };
+
+        // Negative control at capacity: a valid signature by another key is
+        // refused by PQCHECKSIG, so the verifier really runs on this path.
+        let data_before = f.state_hash();
+        let refused = f.no_bounce(
+            &owner,
+            PAYOUT_GAS_ALLOWANCE,
+            ServiceActorContract::respond_signed(
+                78,
+                GAS_STRESS_NEXT_ID,
+                response_hash,
+                &other.sign(&domain_hash),
+            )
+            .unwrap(),
+        );
+        refused.expect_aborted().expect_exit_code(ERR_BAD_RESPONSE_SIGNATURE).expect_out_msgs(0);
+        assert_eq!(f.state_hash(), data_before, "a refused response changes no state");
         assert_eq!(f.live_count(), 100_000);
-        assert_eq!(f.caller_live_count(&caller), if existing { 1000 } else { 1 });
+
+        // The rejected transaction kept part of its value; measure from here.
+        let before = gas_stress_balance(&f);
+        let result = f.no_bounce(
+            &owner,
+            PAYOUT_GAS_ALLOWANCE,
+            ServiceActorContract::respond_signed(
+                79,
+                GAS_STRESS_NEXT_ID,
+                response_hash,
+                &attestor.sign(&domain_hash),
+            )
+            .unwrap(),
+        );
+        let (cost, rent) =
+            gas_stress_measure(&format!("respond-attested/{mode}"), &result, PAYOUT_GAS_ALLOWANCE);
+        result.expect_out_msgs(0);
+        assert!(f.request(GAS_STRESS_NEXT_ID).is_none(), "the response settles the request");
+        assert_eq!(f.live_count(), u64::from(GAS_STRESS_LIVE));
+        assert_eq!(f.caller_live_count(&caller), if existing { 999 } else { 0 });
+        // respond returns no change: what the responder attached beyond the
+        // execution cost stays with the contract as operator excess.
         assert_eq!(
             gas_stress_balance(&f),
-            before.checked_sub(rent).unwrap().checked_add(u128::from(principal)).unwrap(),
-            "successful admission cannot spend preexisting backing on execution"
-        );
-        // The snapshot is emitted first; the change is the second output.
-        let outgoing = result.first_transaction().unwrap().get_out_msg(1).unwrap().unwrap();
-        assert_eq!(
-            outgoing.int_header().unwrap().value.coins.as_u128(),
-            u128::from(ADMISSION_GAS_ALLOWANCE).checked_sub(cost).unwrap()
+            before
+                .checked_sub(rent)
+                .unwrap()
+                .checked_add(u128::from(PAYOUT_GAS_ALLOWANCE))
+                .unwrap()
+                .checked_sub(cost)
+                .unwrap()
         );
     }
 }
 
 #[test]
 fn solvency_payout_gas_at_capacity_with_sparse_ids_and_wide_coins() {
-    use contracts::service_actor::protocol_constants::PAYOUT_GAS_ALLOWANCE;
-    let (mut f, seed) = gas_stress_fixture();
+    gas_stress_payouts(false);
+}
+
+/// The four payouts against the attested seed: the swept pending entry
+/// snapshots the attestor key by reference.
+#[test]
+fn solvency_attested_payout_gas_at_capacity_with_sparse_ids_and_wide_coins() {
+    gas_stress_payouts(true);
+}
+
+fn gas_stress_payouts(attested: bool) {
+    let (mut f, seed) = gas_stress_fixture(attested);
+    assert_eq!(
+        f.request_attestor_key(GAS_STRESS_PENDING_ID).map(|key| key.repr_hash()),
+        f.attestor_key().map(|key| key.repr_hash()),
+        "the swept pending entry snapshots exactly the policy's key, or none"
+    );
+    assert_eq!(f.attestor_key().is_some(), attested);
     let snapshot = f.bc.get_account(&f.service).unwrap().clone();
     for operation in ["refund", "sweep-pending", "sweep-refund", "withdraw"] {
         f.bc.set_account(f.service.clone(), snapshot.clone());
@@ -3564,7 +3773,8 @@ fn solvency_payout_gas_at_capacity_with_sparse_ids_and_wide_coins() {
         };
         let before = gas_stress_balance(&f);
         let result = f.no_bounce(&sender, PAYOUT_GAS_ALLOWANCE, body);
-        let (cost, rent) = gas_stress_measure(operation, &result, PAYOUT_GAS_ALLOWANCE);
+        let label = if attested { format!("{operation}-attested") } else { operation.to_owned() };
+        let (cost, rent) = gas_stress_measure(&label, &result, PAYOUT_GAS_ALLOWANCE);
         // A sweep also returns the swept entry's price to its caller, first.
         let returned = if operation.starts_with("sweep") { GAS_STRESS_PRICE } else { 0 };
         let principals: Vec<u128> = [returned, amount].into_iter().filter(|v| *v > 0).collect();
