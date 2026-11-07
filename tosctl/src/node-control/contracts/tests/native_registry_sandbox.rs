@@ -4049,6 +4049,7 @@ mod protocol_vectors {
         let body =
             build_native_submission(&domain, &agent_action, 1, &[agent_signature.clone()], &[])
                 .expect("agent body");
+        let agent_body_hash = hex::encode(body.repr_hash().as_slice());
         let result = bc
             .send_message(
                 MessageBuilder::internal(relayer.address(), &agent_address, TOS)
@@ -4104,6 +4105,7 @@ mod protocol_vectors {
             &[],
         )
         .expect("capability body");
+        let capability_body_hash = hex::encode(body.repr_hash().as_slice());
         let result = bc
             .send_message(
                 MessageBuilder::internal(relayer.address(), &agent_address, TOS).body(body).build(),
@@ -4132,6 +4134,7 @@ mod protocol_vectors {
                 "action_hash": format!("sha256:{}", hex::encode(agent_action.repr_hash().as_slice())),
                 "action_boc_base64": b64(&agent_action),
                 "signature_sha256": format!("sha256:{}", hex::encode(Sha256::digest(&agent_signature.signature))),
+                "submission_body_hash": format!("tvm-cell-sha256:{}", agent_body_hash),
             },
             "capability_registration": {
                 "object_id": format!("cap_{}", hex::encode(capability.object_id)),
@@ -4139,6 +4142,7 @@ mod protocol_vectors {
                 "action_hash": format!("sha256:{}", hex::encode(capability_action.repr_hash().as_slice())),
                 "action_boc_base64": b64(&capability_action),
                 "signature_sha256": format!("sha256:{}", hex::encode(Sha256::digest(&capability_signature.signature))),
+                "submission_body_hash": format!("tvm-cell-sha256:{}", capability_body_hash),
             },
         });
         if let Ok(path) = std::env::var("NATIVE_REGISTRY_VECTORS_OUT") {
