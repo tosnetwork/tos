@@ -1,7 +1,7 @@
 {
  "schema": "tos.evidence.index.v1",
- "claim": "Each new check of the tosctl ML-DSA-44 Agent Account route can fail: removing the module's verifier, changing the signing context, dropping the staged-module precondition, accepting an envelope from any sender, or accepting a submission for another account each turns its test red; admitting claims while install fences the account, or counting a delivery whose action phase failed as committed, each also turns its test red; an already-staged install lifting a fence started at the current counters turns its test red; settling moved counters without the unconsumed-nonce proof, lifting a fence on counters alone, relaying a retry to another zero state, failing to decode an older fence, or skipping the install's explicit recovery each turns its test red",
- "reviewed_commit": "08d1e63d0",
+ "claim": "Each new check of the tosctl ML-DSA-44 Agent Account route can fail: removing the module's verifier, changing the signing context, dropping the staged-module precondition, accepting an envelope from any sender, or accepting a submission for another account each turns its test red; admitting claims while install fences the account, or counting a delivery whose action phase failed as committed, each also turns its test red; an already-staged install lifting a fence started at the current counters turns its test red; settling moved counters without the unconsumed-nonce proof, lifting a fence on counters alone, relaying a retry to another zero state, failing to decode an older fence, or skipping the install's explicit recovery each turns its test red; applying the current policy before an existing claim is recovered or released turns its test red",
+ "reviewed_commit": "965564e8c",
  "runner": "test/mldsa-auth/cli_route_mutations.py",
  "command": "cd <checkout> && FUNC_PATH=<func> FIFT_PATH=<fift> python3 test/mldsa-auth/cli_route_mutations.py <results.json>",
  "compiler": "FunC/Fift v0.4.6 build 392bc162e095cc34292eb9ea0709273407e06ca7",
@@ -148,6 +148,14 @@
    "exit": 101,
    "expected": "red",
    "marker": "an_interrupted_install_is_recovered_after_a_rotation_and_the_next_send_claims",
+   "matched": true
+  },
+  {
+   "control": "policy-checked-before-recovery",
+   "command": "cargo test -p commands --lib --no-default-features -- a_lowered_policy_never_strands_a_journaled_claim",
+   "exit": 101,
+   "expected": "red",
+   "marker": "a_lowered_policy_never_strands_a_journaled_claim",
    "matched": true
   },
   {
