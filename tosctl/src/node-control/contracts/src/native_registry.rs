@@ -952,10 +952,13 @@ pub const ML_DSA_44_MAX_MESSAGE_BYTES: usize = 8192;
 
 /// The contexts a registry controller key signs under. Each names one use, so
 /// a signature made for one can never be accepted as another.
-pub const CONTROLLER_SIGNATURE_CONTEXTS: [&[u8]; 3] = [
+/// The Agent Account ML-DSA-44 authentication module's context is one of them:
+/// a controller key may also authorize Agent Account requests.
+pub const CONTROLLER_SIGNATURE_CONTEXTS: [&[u8]; 4] = [
     NATIVE_REGISTRY_SIGNATURE_CONTEXT,
     AGENT_PACKET_SIGNATURE_CONTEXT,
     AGENT_CONTACT_SIGNATURE_CONTEXT,
+    crate::agent_account_auth::MLDSA44_AUTH_CONTEXT,
 ];
 
 fn require_controller_context(context: &[u8]) -> Result<()> {

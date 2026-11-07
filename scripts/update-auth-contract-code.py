@@ -34,6 +34,7 @@ def main():
         outputs = {}
         for name, source in [
             ("agent", "agent-account-code.fc"),
+            ("mldsa44_module", "mldsa44-auth-module.fc"),
             ("wallet", "wallet-v5-code.fc"),
             ("wallet3", "wallet3-code.fc"),
             ("wallet4", "wallet-v4-code.fc"),
@@ -47,6 +48,11 @@ def main():
                 "tosctl/src/node-control/contracts/src/agent_account.rs",
                 r'(pub const AGENT_ACCOUNT_CODE_B64: &str =\s*")[^"]*(";)',
                 base64.b64encode(outputs["agent"]).decode(),
+            ),
+            (
+                "tosctl/src/node-control/contracts/src/agent_account_auth.rs",
+                r'(pub const MLDSA44_AUTH_MODULE_CODE_B64: &str =\s*")[^"]*(";)',
+                base64.b64encode(outputs["mldsa44_module"]).decode(),
             ),
             (
                 "tosctl/src/node-control/contracts/src/wallet/wallet_contract.rs",

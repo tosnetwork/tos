@@ -8,7 +8,7 @@ use std::{
 
 use anyhow::Context;
 use chain_block::{
-    Cell, Coins, Deserializable, Message, MsgAddressInt, base64_decode, base64_encode,
+    Cell, Coins, Deserializable, Message, MsgAddressInt, SliceData, base64_decode, base64_encode,
     read_single_root_boc, write_boc,
 };
 use chain_rpc_client::v2::{
@@ -27,6 +27,10 @@ use crate::agent_account::{
 };
 
 const PREDICTION_CUSTODY_EFFECT_PROFILE_V1: &str = "tos.prediction.checked-call.v1";
+
+/// A native send authorized through the account's ML-DSA-44 module. Its exact
+/// artifact is the module submission, not an external message to the account.
+pub const MLDSA44_NATIVE_SEND_ACTION_KIND: &str = "agent-mldsa44-native-send";
 
 const SCHEMA: &str = "tos.agent-account.controller-journal.v2";
 const JOURNAL_FILE: &str = "controller-actions.json";
@@ -87,6 +91,12 @@ pub struct ControllerActionClaim {
     pub idempotency_key: String,
     pub action_identity: String,
     pub valid_until: u32,
+    /// The ML-DSA-44 module the action was submitted through, verified before
+    /// signing. Present exactly for [`MLDSA44_NATIVE_SEND_ACTION_KIND`]; the
+    /// resolver matches the account's inbound message against it, never
+    /// against whatever module the account names later.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_module: Option<String>,
 }
 
 /// The authenticated history boundary captured immediately before a
@@ -835,6 +845,30 @@ impl AgentAccountCustodyJournal {
                         && record.claim.idempotency_key == idempotency_key
                 })
                 .cloned())
+        })
+    }
+
+    /// How many actions of one account generation are not yet resolved, read
+    /// under the journal lock. An operation that advances the controller
+    /// epoch (such as staging an authentication module) refuses to run while
+    /// any exist, since it would strand them.
+    pub fn unresolved_count(
+        &self,
+        account: &str,
+        network_global_id: i32,
+        deployment_id: &str,
+    ) -> anyhow::Result<usize> {
+        validate_generation(account, network_global_id, deployment_id)?;
+        let generation = generation_key_parts(account, network_global_id, deployment_id);
+        self.with_document(|document| {
+            Ok(document
+                .records
+                .iter()
+                .filter(|record| {
+                    generation_key(&record.claim) == generation
+                        && record.status != ControllerActionStatus::Resolved
+                })
+                .count())
         })
     }
 
@@ -2218,6 +2252,7 @@ fn validate_claim(claim: &ControllerActionClaim) -> anyhow::Result<()> {
         || !matches!(
             claim.action_kind.as_str(),
             "agent-native-send"
+                | MLDSA44_NATIVE_SEND_ACTION_KIND
                 | "agent-task-send"
                 | "agent-deploy-send"
                 | "agent-checked-contract-call-v2"
@@ -2230,8 +2265,9 @@ fn validate_claim(claim: &ControllerActionClaim) -> anyhow::Result<()> {
         || claim.valid_until == 0
         || claim.body_hash.as_ref().is_some_and(|value| !valid_cell_digest(value))
         || claim.state_init_hash.as_ref().is_some_and(|value| !valid_cell_digest(value))
-        || (claim.action_kind == "agent-native-send" && claim.body_hash.is_some())
-        || (claim.action_kind == "agent-native-send" && claim.state_init_hash.is_some())
+        || (is_native_send_kind(&claim.action_kind) && claim.body_hash.is_some())
+        || (is_native_send_kind(&claim.action_kind) && claim.state_init_hash.is_some())
+        || (claim.action_kind == MLDSA44_NATIVE_SEND_ACTION_KIND) != claim.auth_module.is_some()
         || (claim.action_kind == "agent-task-send"
             && (claim.body_hash.is_none() || claim.state_init_hash.is_some()))
         || (claim.action_kind == "agent-checked-contract-call-v2"
@@ -2241,7 +2277,23 @@ fn validate_claim(claim: &ControllerActionClaim) -> anyhow::Result<()> {
     {
         anyhow::bail!("invalid controller action claim");
     }
+    if let Some(module) = &claim.auth_module {
+        let module = module
+            .parse::<MsgAddressInt>()
+            .context("controller claim authentication module is invalid")?;
+        let account = claim
+            .account
+            .parse::<MsgAddressInt>()
+            .context("controller claim source account is invalid")?;
+        crate::agent_account_auth::check_module_address(&module, &account)?;
+    }
     Ok(())
+}
+
+/// A bodyless single native transfer, authorized by the Ed25519 controller or
+/// through the ML-DSA-44 module.
+fn is_native_send_kind(kind: &str) -> bool {
+    kind == "agent-native-send" || kind == MLDSA44_NATIVE_SEND_ACTION_KIND
 }
 
 fn admit_claim(
@@ -2884,6 +2936,25 @@ fn validate_signed_boc(
     if write_boc(&root)? != bytes {
         anyhow::bail!("signed Agent Account BOC uses non-canonical serialization");
     }
+    if claim.action_kind == MLDSA44_NATIVE_SEND_ACTION_KIND {
+        // The exact artifact is the module submission. Every layer is read
+        // back in full; the payload passes the same checks as an Ed25519 one.
+        if !matches!(expected_action, ExpectedAction::Primary) {
+            anyhow::bail!("an ML-DSA-44 module action has no cancellation message");
+        }
+        let submission = crate::agent_account_auth::parse_mldsa44_submit(&root)
+            .context("stored ML-DSA-44 submission is malformed")?;
+        let request = &submission.request;
+        if request.global_id != claim.network_global_id
+            || request.account.to_string() != claim.account
+            || request.valid_until != claim.valid_until
+        {
+            anyhow::bail!("stored ML-DSA-44 request does not match custody claim");
+        }
+        let payload = SliceData::load_cell(request.payload.clone())
+            .context("stored ML-DSA-44 request payload is not an ordinary cell")?;
+        return check_controller_payload(claim, payload, expected_action);
+    }
     let message =
         Message::construct_from_cell(root).context("parse external Agent Account message")?;
     let header = message
@@ -2894,6 +2965,16 @@ fn validate_signed_boc(
     }
     let mut body = message.body().cloned().context("stored Agent Account BOC has no body")?;
     body.move_by(512).context("stored Agent Account BOC has a truncated signature")?;
+    check_controller_payload(claim, body, expected_action)
+}
+
+/// The unsigned controller-action body a claim names: opcode, network,
+/// controller counters, expiry, target, value and the kind's references.
+fn check_controller_payload(
+    claim: &ControllerActionClaim,
+    mut body: SliceData,
+    expected_action: ExpectedAction,
+) -> anyhow::Result<()> {
     let opcode = body.get_next_u32()?;
     let expected_opcode = match expected_action {
         ExpectedAction::Cancellation => AGENT_CANCEL_SEQNO_OPCODE,
@@ -2901,7 +2982,7 @@ fn validate_signed_boc(
         ExpectedAction::Primary if claim.action_kind == "agent-deploy-send" => {
             AGENT_DEPLOY_SEND_OPCODE
         }
-        ExpectedAction::Primary if claim.action_kind == "agent-native-send" => {
+        ExpectedAction::Primary if is_native_send_kind(&claim.action_kind) => {
             AGENT_NATIVE_SEND_OPCODE
         }
         ExpectedAction::Primary if claim.action_kind == "agent-checked-contract-call-v2" => {
@@ -3200,6 +3281,7 @@ mod tests {
             idempotency_key: "1".repeat(64),
             action_identity: format!("sha256:{}", marker.to_string().repeat(64)),
             valid_until: 2000,
+            auth_module: None,
         }
     }
 
@@ -3320,6 +3402,151 @@ mod tests {
         let bytes = write_boc(&message).unwrap();
         let digest = format!("sha256:{}", hex::encode(Sha256::digest(&bytes)));
         (base64_encode(bytes), digest)
+    }
+
+    fn mldsa_claim(seqno: u32) -> ControllerActionClaim {
+        ControllerActionClaim {
+            action_kind: MLDSA44_NATIVE_SEND_ACTION_KIND.into(),
+            auth_module: Some(
+                MsgAddressInt::with_standart(None, -1, [0x66; 32].into()).unwrap().to_string(),
+            ),
+            ..claim(seqno, 'e')
+        }
+    }
+
+    /// The exact submission for `claim`, with `request` free to differ from it.
+    fn mldsa_submission(
+        claim: &ControllerActionClaim,
+        request: impl FnOnce(&mut crate::agent_account_auth::AuthRequest),
+    ) -> Cell {
+        use crate::agent_account_auth::*;
+        let payload = crate::AgentAccountContract::build_native_send_payload(
+            claim.network_global_id,
+            claim.controller_epoch,
+            claim.seqno,
+            claim.valid_until,
+            &claim.target.parse::<MsgAddressInt>().unwrap(),
+            claim.value_atomic,
+        )
+        .unwrap();
+        let mut auth = AuthRequest {
+            global_id: claim.network_global_id,
+            account: claim.account.parse().unwrap(),
+            epoch: 1,
+            nonce: 0,
+            valid_until: claim.valid_until,
+            kind: AUTH_KIND_EXECUTE,
+            payload,
+        };
+        request(&mut auth);
+        let cell = auth.to_cell().unwrap();
+        let signature = sign_auth_request(&[0x21; 32], &cell).unwrap();
+        build_mldsa44_submit(7, &build_auth_envelope(&cell).unwrap(), &signature).unwrap()
+    }
+
+    fn encoded(cell: &Cell) -> (String, String) {
+        let bytes = write_boc(cell).unwrap();
+        let digest = format!("sha256:{}", hex::encode(Sha256::digest(&bytes)));
+        (base64_encode(bytes), digest)
+    }
+
+    #[test]
+    fn an_mldsa_claim_names_exactly_one_module_in_the_account_workchain() {
+        validate_claim(&mldsa_claim(3)).unwrap();
+        let without = ControllerActionClaim { auth_module: None, ..mldsa_claim(3) };
+        assert!(validate_claim(&without).is_err());
+        let ed25519_with_module =
+            ControllerActionClaim { auth_module: mldsa_claim(3).auth_module, ..claim(3, 'a') };
+        assert!(validate_claim(&ed25519_with_module).is_err());
+        let basechain = ControllerActionClaim {
+            auth_module: Some(
+                MsgAddressInt::with_standart(None, 0, [0x66; 32].into()).unwrap().to_string(),
+            ),
+            ..mldsa_claim(3)
+        };
+        assert!(validate_claim(&basechain).is_err());
+        let itself =
+            ControllerActionClaim { auth_module: Some(mldsa_claim(3).account), ..mldsa_claim(3) };
+        assert!(validate_claim(&itself).is_err());
+        let with_body = ControllerActionClaim {
+            body_hash: Some(agent_account_task_body_hash(&Cell::default())),
+            ..mldsa_claim(3)
+        };
+        assert!(validate_claim(&with_body).is_err());
+    }
+
+    #[test]
+    fn an_mldsa_submission_is_journaled_only_when_every_layer_matches_the_claim() {
+        let action = mldsa_claim(3);
+        let (exact, _) = encoded(&mldsa_submission(&action, |_| {}));
+        validate_signed_boc(&action, &exact, None, ExpectedAction::Primary).unwrap();
+        // No cancellation message exists for a module action.
+        assert!(validate_signed_boc(&action, &exact, None, ExpectedAction::Cancellation).is_err());
+        // An Ed25519 native-send claim does not accept a module submission.
+        assert!(
+            validate_signed_boc(&claim(3, 'a'), &exact, None, ExpectedAction::Primary).is_err()
+        );
+
+        let other_account = MsgAddressInt::with_standart(None, -1, [0x12; 32].into()).unwrap();
+        let refused: Vec<Box<dyn FnOnce(&mut crate::agent_account_auth::AuthRequest)>> = vec![
+            Box::new(move |r| r.account = other_account),
+            Box::new(|r| r.global_id = 43),
+            Box::new(|r| r.valid_until = 2001),
+        ];
+        for alter in refused {
+            let (altered, _) = encoded(&mldsa_submission(&action, alter));
+            assert!(validate_signed_boc(&action, &altered, None, ExpectedAction::Primary).is_err());
+        }
+        // The payload is checked like an Ed25519 one: seqno, target, value.
+        for other in [
+            ControllerActionClaim { seqno: 4, ..action.clone() },
+            ControllerActionClaim { value_atomic: 2, ..action.clone() },
+            ControllerActionClaim {
+                target: MsgAddressInt::with_standart(None, 0, [0x23; 32].into())
+                    .unwrap()
+                    .to_string(),
+                ..action.clone()
+            },
+        ] {
+            let (signed_for_other, _) = encoded(&mldsa_submission(&other, |_| {}));
+            assert!(
+                validate_signed_boc(&action, &signed_for_other, None, ExpectedAction::Primary)
+                    .is_err()
+            );
+        }
+        // Trailing data after the submission is refused.
+        let mut trailing =
+            chain_block::BuilderData::from_cell(&mldsa_submission(&action, |_| {})).unwrap();
+        trailing.append_bit_one().unwrap();
+        let (trailing, _) = encoded(&trailing.into_cell().unwrap());
+        assert!(validate_signed_boc(&action, &trailing, None, ExpectedAction::Primary).is_err());
+    }
+
+    #[test]
+    fn an_mldsa_action_reserves_the_sequence_and_counts_as_unresolved() {
+        let directory = tempfile::tempdir().unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let journal =
+            AgentAccountCustodyJournal::open(directory.path().canonicalize().unwrap()).unwrap();
+        let action = mldsa_claim(3);
+        let generation = (&action.account, action.network_global_id, &action.deployment_id);
+        assert_eq!(journal.unresolved_count(generation.0, generation.1, generation.2).unwrap(), 0);
+        assert!(journal.claim_primary(action.clone(), 10).unwrap().1);
+        // An Ed25519 action cannot take the same controller sequence.
+        let mut competing = claim(3, 'c');
+        competing.idempotency_key = "2".repeat(64);
+        assert!(journal.claim_primary(competing, 11).is_err());
+        let (boc, digest) = encoded(&mldsa_submission(&action, |_| {}));
+        journal.attach_signed_boc(&action, &boc, &digest, 12).unwrap();
+        // A retry reuses the exact journaled bytes.
+        let record = journal.action_by_idempotency_key(&action.idempotency_key).unwrap();
+        assert_eq!(record.exact_signed_boc_base64.as_deref(), Some(boc.as_str()));
+        journal.begin_broadcast(&action, 13).unwrap();
+        assert_eq!(journal.unresolved_count(generation.0, generation.1, generation.2).unwrap(), 1);
     }
 
     fn deploy_claim(seqno: u32) -> (ControllerActionClaim, StateInit, Cell) {
@@ -3641,6 +3868,7 @@ mod tests {
             idempotency_key: "5".repeat(64),
             action_identity: authorization.stable_action_id.clone(),
             valid_until: 2_000_000_050,
+            auth_module: None,
         };
         let directory = tempfile::tempdir().unwrap();
         #[cfg(unix)]
