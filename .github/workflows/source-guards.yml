@@ -97,3 +97,16 @@ jobs:
         run: >-
           uv run --frozen pytest -q -p no:cacheprovider
           test/pq-native/test_x02_config34_proof.py
+
+      - name: Build the TEST ONLY post-quantum signer
+        run: |
+          cmake -S test/pq-contracts -B build-pq-signer -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-pq-signer -j"$(nproc)"
+
+      # The local-network registry scripts' encoders and signer reproduce the
+      # contract-executed protocol vectors byte for byte.
+      - name: Local Native Registry scripts encode what the contract accepts
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+          PQ_TEST_SIGNER: ${{ github.workspace }}/build-pq-signer/test-pq-contracts-sign
+        run: uv run --frozen python scripts/test_tos_service_native_registry_pq.py

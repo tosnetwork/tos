@@ -18,29 +18,25 @@ Needs FUNC_PATH, FIFT_PATH and EMULATOR_PATH (see test/auth-extensions) and the
 # Repository-local imports require the explicit path bootstrap below.
 # ruff: noqa: E402
 
-import base64
 import hashlib
 import shutil
 import sys
 import tempfile
 import unittest
-from itertools import product
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "test/auth-extensions"))
-from cells import Cell, from_boc, make_dict
+from cells import Cell, make_dict
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from native import (
-    CURRENT_GLOBAL_VERSION,
     GLOBAL_ID,
     NOW,
     Emulator,
     active_account,
     compile_contract,
     external,
-    internal,
     state_init,
 )
 
@@ -83,143 +79,6 @@ def send(emulator, shard, message):
     return result.get("vm_exit_code"), result
 
 
-# --- Native Service Registry -------------------------------------------------------------
-
-REGISTRY_GUARD = "    throw_if(err::weak_key, weak_ed25519_key?(public_key));"
-REG_MAGIC_DATA, REG_MAGIC_ACTION, REG_MAGIC_STATE, REG_MAGIC_POLICY = (
-    0x4E564431,
-    0x4E564131,
-    0x4E565331,
-    0x4E565031,
-)
-REG_OP_SUBMIT, REG_DELEGATE, REG_ERR_WEAK_KEY = 0x4E560001, 3, 2214
-GENESIS = (0x11 * (2**256 - 1) // 255, 0x22 * (2**256 - 1) // 255, 0x33 * (2**256 - 1) // 255)
-OBJECT_ID = 0x44 * (2**256 - 1) // 255
-
-
-def registry_code():
-    encoded = (ROOT / "crypto/smartcont/tos-service-native-registry-v1.boc.base64").read_text()
-    return from_boc(base64.b64decode("".join(encoded.split())))
-
-
-def registry_policy(controllers, threshold):
-    """controllers: (public key bytes, weight); all purposes, recovery-capable."""
-    nxt = None
-    for public, weight in sorted(controllers, reverse=True):
-        key = int.from_bytes(public, "big")
-        c = Cell().uint(key, 256).uint(key, 256).uint(weight, 32).uint(0x0F, 16).uint(1, 1)
-        if nxt is not None:
-            c.ref(nxt)
-        nxt = c
-    return (
-        Cell()
-        .uint(REG_MAGIC_POLICY, 32)
-        .uint(1, 16)
-        .uint(threshold, 32)
-        .uint(1, 32)
-        .uint(10, 64)
-        .uint(len(controllers), 8)
-        .ref(nxt)
-    )
-
-
-class Registry:
-    """An agent whose stored policy was placed in its data directly, as a hand-built
-    account state could carry it."""
-
-    def __init__(self, code, policy):
-        runtime = (
-            Cell()
-            .sint(0, 32)
-            .uint(int.from_bytes(code.hash, "big"), 256)
-            .ref(Cell().raw(b"tos-testnet"))
-            .ref(code)
-        )
-        self.code_hash = int.from_bytes(code.hash, "big")
-        self.config = (
-            Cell().uint(GENESIS[0], 256).uint(GENESIS[1], 256).uint(GENESIS[2], 256).ref(runtime)
-        )
-        initial = (
-            Cell()
-            .uint(REG_MAGIC_DATA, 32)
-            .uint(1, 16)
-            .uint(1, 8)
-            .uint(OBJECT_ID, 256)
-            .ref(self.config)
-            .uint(0, 1)
-        )
-        init = Cell().uint(0, 1).uint(0, 1).uint(1, 1).ref(code).uint(1, 1).ref(initial).uint(0, 1)
-        self.address = (0, int.from_bytes(init.hash, "big"))
-        self.state = (
-            Cell()
-            .uint(REG_MAGIC_STATE, 32)
-            .uint(1, 16)
-            .uint(1, 8)
-            .uint(0, 1)
-            .uint(1, 64)
-            .uint(1, 64)
-            .uint(1, 256)
-            .ref(policy)
-            .ref(Cell().uint(0, 16).uint(0, 1))
-            .ref(Cell().uint(0, 1))
-        )
-        data = (
-            Cell()
-            .uint(REG_MAGIC_DATA, 32)
-            .uint(1, 16)
-            .uint(1, 8)
-            .uint(OBJECT_ID, 256)
-            .ref(self.config)
-            .uint(1, 1)
-            .ref(self.state)
-        )
-        self.shard = active_account(self.address, code, data)
-
-    def delegate(self, nonce):
-        domain = (
-            Cell()
-            .uint(GENESIS[0], 256)
-            .uint(GENESIS[1], 256)
-            .uint(GENESIS[2], 256)
-            .ref(Cell().uint(self.code_hash, 256))
-        )
-        return (
-            Cell()
-            .uint(REG_MAGIC_ACTION, 32)
-            .uint(1, 16)
-            .uint(REG_DELEGATE, 8)
-            .uint(1, 8)
-            .uint(1, 64)
-            .uint(2, 64)
-            .uint(OBJECT_ID, 256)
-            .uint(int.from_bytes(self.state.hash, "big"), 256)
-            .uint(nonce, 256)
-            .ref(domain)
-            .ref(Cell().uint(nonce, 256))
-        )
-
-    @staticmethod
-    def signatures(entries):
-        nxt = None
-        for public, signature in sorted(entries, reverse=True):
-            c = Cell().uint(int.from_bytes(public, "big"), 256).raw(signature)
-            if nxt is not None:
-                c.ref(nxt)
-            nxt = c
-        return Cell().uint(len(entries), 8).ref(nxt)
-
-    def submit(self, action, authority):
-        body = (
-            Cell()
-            .uint(REG_OP_SUBMIT, 32)
-            .uint(1, 64)
-            .ref(action)
-            .ref(authority)
-            .ref(Cell().uint(0, 8))
-        )
-        return internal(SENDER, self.address, body)
-
-
 # --- k-of-n multisig (crypto/smartcont/multisig-code.fc) ----------------------------------
 
 MULTISIG_GUARD = "  require_strong_owner_key(public_key);"  # the root check
@@ -259,35 +118,6 @@ def multisig_root_query(root, query_id, sign):
 
 
 class ForgedAliasTests(unittest.TestCase):
-    def test_registry_stored_alias_does_not_complete_a_threshold(self):
-        strong_key, strong = signer(0x71)
-        shipped = registry_code()
-        mutant = compile_without("native-registry-code.fc", REGISTRY_GUARD)
-        for alias in (IDENTITY_ALIAS, ORDER2_ALIAS):
-            for (code, expected), version in product(
-                ((shipped, REG_ERR_WEAK_KEY), (mutant, 0)), (14, CURRENT_GLOBAL_VERSION)
-            ):
-                with self.subTest(alias=alias.hex()[:4], guarded=expected != 0, version=version):
-                    agent = Registry(code, registry_policy([(strong, 1), (alias, 1)], 2))
-                    for nonce in range(1, 64):
-                        action = agent.delegate(nonce)
-                        forged = forge(alias, action.hash)
-                        if forged:
-                            break
-                    else:
-                        self.fail("no forgeable nonce")
-                    authority = Registry.signatures(
-                        [(strong, strong_key.sign(action.hash)), (alias, forged)]
-                    )
-                    emulator = Emulator(global_version=version)
-                    try:
-                        exit_code, result = send(
-                            emulator, agent.shard, agent.submit(action, authority)
-                        )
-                    finally:
-                        emulator.close()
-                    self.assertEqual(exit_code, expected, str(result.get("details", result))[:400])
-
     def test_multisig_stored_alias_cannot_sign_as_root(self):
         _, first = signer(0x72)
         _, second = signer(0x73)

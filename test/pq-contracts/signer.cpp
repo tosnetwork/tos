@@ -2,12 +2,15 @@
 /* TEST ONLY deterministic ML-DSA-44 keys 0..255. The seeds are public: never use them for
    real funds. Reads lines "<key> <message-hex> <context-hex>" on stdin (an empty hex field
    is "-") and writes "<public-key-hex> <signature-hex>" for each, after checking that the
-   signature verifies. */
+   signature verifies. <key> is an index 0..255, or "seed:<64 hex>" for the key a local test
+   fixture derives from its own 32-byte key-generation seed. Signing is the FIPS 204
+   deterministic variant (all-zero randomness) in either case. */
 #include "mldsa_native.h"
 // The public header undefines its namespace-prefix macro at the end, so name the fixed
 // symbols this build configuration declares. Keep in step with signer-config.h; a mismatch
 // fails to link rather than silently.
 #define PQ_SIGNER_SYM(sym) tos_pq_contracts_test_##sym
+#include <algorithm>
 #include <array>
 #include <iostream>
 #include <sstream>
@@ -50,16 +53,32 @@ int main() {
     std::string line;
     while (std::getline(std::cin, line)) {
       std::istringstream fields(line);
-      int key = -1;
-      std::string message_hex, context_hex;
-      if (!(fields >> key >> message_hex >> context_hex) || key < 0 || key > 255) {
-        throw std::runtime_error("TEST ONLY: expected '<key 0..255> <message-hex|-> <context-hex|->'");
+      std::string key_field, message_hex, context_hex, extra;
+      if (!(fields >> key_field >> message_hex >> context_hex) || (fields >> extra)) {
+        throw std::runtime_error("TEST ONLY: expected '<key 0..255|seed:<64 hex>> <message-hex|-> <context-hex|->'");
       }
       const auto message = unhex(message_hex, 8192);
       const auto context = unhex(context_hex, 255);
       std::array<uint8_t, MLDSA_SEEDBYTES> seed{};
-      seed.fill(static_cast<uint8_t>(key));
-      seed[0] = 0x5a;  // keeps these keys apart from the auth-module test keys
+      static const std::string seed_prefix = "seed:";
+      if (key_field.compare(0, seed_prefix.size(), seed_prefix) == 0) {
+        const auto given = unhex(key_field.substr(seed_prefix.size()), MLDSA_SEEDBYTES);
+        if (given.size() != MLDSA_SEEDBYTES) {
+          throw std::runtime_error("TEST ONLY: a seed key is exactly 32 bytes of hex");
+        }
+        std::copy(given.begin(), given.end(), seed.begin());
+      } else {
+        if (key_field.empty() || key_field.size() > 3 ||
+            key_field.find_first_not_of("0123456789") != std::string::npos) {
+          throw std::runtime_error("TEST ONLY: a key index is a decimal 0..255");
+        }
+        const int key = std::stoi(key_field);
+        if (key > 255) {
+          throw std::runtime_error("TEST ONLY: a key index is a decimal 0..255");
+        }
+        seed.fill(static_cast<uint8_t>(key));
+        seed[0] = 0x5a;  // keeps these keys apart from the auth-module test keys
+      }
       std::array<uint8_t, MLDSA44_PUBLICKEYBYTES> pk{};
       std::array<uint8_t, MLDSA44_SECRETKEYBYTES> sk{};
       std::array<uint8_t, MLDSA44_BYTES> sig{};

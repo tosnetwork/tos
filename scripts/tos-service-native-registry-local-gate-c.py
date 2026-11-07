@@ -5,6 +5,10 @@ This is node-backed Gate C rehearsal evidence, not public-testnet acceptance.
 It sends every action through the genesis wallet and verifies committed account
 data through each configured liteserver. Controller keys come from a tosctl
 test-only identity fixture and are never written to the evidence file.
+
+Controllers are ML-DSA-44 keys derived from those identities and signed with by the
+test-only signer `PQ_TEST_SIGNER` names (scripts/tos_service_native_registry_pq.py);
+the genesis wallet that carries the messages stays an Ed25519 wallet.
 """
 
 import argparse
@@ -23,6 +27,7 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "test/tostester/src"))
 
 import nacl.signing  # noqa: E402
+import tos_service_native_registry_pq as registry_pq  # noqa: E402
 from pytosiq_core import (  # noqa: E402
     Address,
     Builder,
@@ -43,7 +48,6 @@ from tos_service_test_identities import load_test_identity  # noqa: E402
 MAGIC_DATA = 0x4E564431
 MAGIC_ACTION = 0x4E564131
 MAGIC_STATE = 0x4E565331
-MAGIC_POLICY = 0x4E565031
 MAGIC_IDENTITY = 0x4E564931
 OP_SUBMIT = 0x4E560001
 OP_AUTHORIZE_CAPABILITY = 0x4E560002
@@ -90,6 +94,19 @@ def seqno(config: Path, address: str) -> int:
     match = re.search(r"result:\s*\[\s*(\d+)\s*\]", output)
     if not match:
         raise RuntimeError(f"cannot read wallet seqno: {output}")
+    return int(match.group(1))
+
+
+# The registry verifies controller signatures with PQCHECKSIG_MLDSA44.
+REQUIRED_GLOBAL_VERSION = 16
+
+
+def global_version(config: Path) -> int:
+    """The network's global version (ConfigParam 8), as the liteserver reports it."""
+    output = lite(config, "time", "getconfig 8")
+    match = re.search(r"version:(\d+)", output)
+    if not match:
+        raise RuntimeError(f"cannot read ConfigParam 8: {output}")
     return int(match.group(1))
 
 
@@ -178,35 +195,15 @@ def state_view(data: Cell) -> dict:
 
 
 def policy(key: nacl.signing.SigningKey) -> Cell:
-    public = bytes(key.verify_key)
-    controller = (
-        Builder()
-        .store_bytes(public)
-        .store_bytes(public)
-        .store_uint(1, 32)
-        .store_uint(0x0F, 16)
-        .store_bit(1)
-        .end_cell()
-    )
-    return (
-        Builder()
-        .store_uint(MAGIC_POLICY, 32)
-        .store_uint(1, 16)
-        .store_uint(1, 32)
-        .store_uint(1, 32)
-        .store_uint(10, 64)
-        .store_uint(1, 8)
-        .store_ref(controller)
-        .end_cell()
-    )
+    """A one-controller policy for the ML-DSA-44 controller of test identity `key`."""
+    return registry_pq.single_controller_policy(registry_pq.controller_for(key))
 
 
 def signature_set(key: nacl.signing.SigningKey | None, action: Cell) -> Cell:
+    """The signature set of test identity `key`'s controller over `action`; empty for None."""
     if key is None:
-        return Builder().store_uint(0, 8).end_cell()
-    public = bytes(key.verify_key)
-    entry = Builder().store_bytes(public).store_bytes(key.sign(action.hash).signature).end_cell()
-    return Builder().store_uint(1, 8).store_ref(entry).end_cell()
+        return registry_pq.signature_set([])
+    return registry_pq.signed_by([registry_pq.controller_for(key)], action)
 
 
 def domain_cell(root: bytes, file: bytes, network: str, code_hash: bytes) -> Cell:
@@ -383,6 +380,20 @@ def agent_identity(
     )
 
 
+def capability_registration_payload(
+    nonce: bytes, owner: bytes, version: bytes, manifest: bytes
+) -> Cell:
+    """`object_nonce owner ^(version_hash manifest ^version_name)` of a capability registration."""
+    details = (
+        Builder()
+        .store_bytes(hashlib.sha256(version).digest())
+        .store_bytes(manifest)
+        .store_ref(Builder().store_bytes(version).end_cell())
+        .end_cell()
+    )
+    return Builder().store_bytes(nonce).store_bytes(owner).store_ref(details).end_cell()
+
+
 def capability_identity(
     root: bytes,
     file: bytes,
@@ -450,6 +461,12 @@ def main() -> int:
     )
     code = Cell.one_from_boc(code_bytes)
     require_code_hash(code.hash.hex(), CODE_HASH)
+    version = global_version(config_path)
+    if version < REQUIRED_GLOBAL_VERSION:
+        raise RuntimeError(
+            f"the network runs global version {version}; the registry needs "
+            f"{REQUIRED_GLOBAL_VERSION} for PQCHECKSIG_MLDSA44"
+        )
     config = registry_config(root, file, network, workchain, code)
     signed_domain = domain_cell(root, file, network, code.hash)
 
@@ -482,7 +499,7 @@ def main() -> int:
             "global_id": 3,
             "genesis_root_hash": root.hex(),
             "genesis_file_hash": file.hex(),
-            "config_param_8_version": 14,
+            "config_param_8_version": version,
             "genesis_validators": 4,
             "online_validators": 3,
             "liteserver_ports": [entry["port"] for entry in global_config["liteservers"]],
@@ -604,14 +621,7 @@ def main() -> int:
     cap_id = capability_identity(root, file, network, nonce_cap, id_a, version_100, manifest_100)
     cap_init = state_init(code, config, 2, cap_id)
     cap_addr = address_of(workchain, cap_init)
-    details = (
-        Builder()
-        .store_bytes(hashlib.sha256(version_100).digest())
-        .store_bytes(manifest_100)
-        .store_ref(Builder().store_bytes(version_100).end_cell())
-        .end_cell()
-    )
-    payload = Builder().store_bytes(nonce_cap).store_bytes(id_a).store_ref(details).end_cell()
+    payload = capability_registration_payload(nonce_cap, id_a, version_100, manifest_100)
     act = action(REGISTER_CAPABILITY, 2, 1, 1, cap_id, bytes(32), query, signed_domain, payload)
     send_wallet_message(
         config_path,

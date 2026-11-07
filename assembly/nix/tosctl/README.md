@@ -148,7 +148,7 @@ Importing it is the operator's decision; the package itself does not configure
 Tor. The derivation runs the unit tests of both crates with the feature on,
 the shield audit test against the packaged material; the shield tests that open
 an instance on disk are skipped in the sandbox for the same private-directory
-reason as the standard variant's five, and run in the repository's Rust CI. The
+reason as the standard variant's seven, and run in the repository's Rust CI. The
 install check requires the shield commands and their arguments to be present
 and the wrapper to default, not force, the material.
 
