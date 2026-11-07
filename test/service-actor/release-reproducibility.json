@@ -1,0 +1,106 @@
+{
+ "schema": "tos.evidence.index.v1",
+ "claim": "The Service Actor release check rebuilds from source and refuses each drift at its intended comparison",
+ "reviewed_commit": "4f5307523",
+ "runner": "test/service-actor/release_mutations.py",
+ "command": "FUNC_BIN=<func> FIFT_BIN=<fift> FUNC_PATH=<func> FIFT_PATH=<fift> python3 test/service-actor/release_mutations.py <checkout> <results.json>",
+ "compiler": "FunC v0.4.6 and Fift from one build at 392bc162e095cc34292eb9ea0709273407e06ca7",
+ "released": {
+  "code_hash": "tvm-cell-sha256:0594f9a5743440f9c5f63913ab790c0ea6f4fd5c627d9962d63e09428e42aa0c",
+  "boc_sha256": "sha256:21f1ea22576fce66ec3b218513adf037710b078ea12a8d84929eda970d62d5a8",
+  "boc_bytes": 4590
+ },
+ "flags_note": "check-service-actor-bytecode.py compiles with -APS, the release build with -A -P; the baseline checker run compares its rebuild with the -A -P artifact byte for byte and passes, so both produce identical BOCs",
+ "results": [
+  {
+   "control": "baseline",
+   "command": "scripts/test-tos-service-actor-v1.sh",
+   "exit": 0,
+   "last_line": [
+    "TOS Service Actor v1 reproducible build: PASS"
+   ]
+  },
+  {
+   "control": "baseline",
+   "command": "python3 scripts/check-service-actor-bytecode.py",
+   "exit": 0,
+   "last_line": [
+    "Service Actor bytecode synchronized (repr_hash=2524780603972805557568569646225189296421374677395663300967041360291069864460)"
+   ]
+  },
+  {
+   "control": "a-artifact-byte",
+   "command": "scripts/test-tos-service-actor-v1.sh",
+   "exit": 1,
+   "last_line": [
+    "Service Actor release check failed: frozen artifact differs from the rebuild"
+   ],
+   "mutated": "crypto/smartcont/tos-service-actor-v1.boc.base64",
+   "mutated_sha256": "5a262c16ffc9ba1c855e3876203b0a856bde8487717d1794adbc466eb5f2dff3"
+  },
+  {
+   "control": "a-artifact-byte",
+   "command": "python3 scripts/check-service-actor-bytecode.py",
+   "exit": 1,
+   "last_line": [
+    "Service Actor release artifact is stale: the frozen artifact differs from the rebuild (generated 4590 bytes, frozen 4590 bytes)"
+   ],
+   "mutated": "crypto/smartcont/tos-service-actor-v1.boc.base64",
+   "mutated_sha256": "5a262c16ffc9ba1c855e3876203b0a856bde8487717d1794adbc466eb5f2dff3"
+  },
+  {
+   "control": "b-source-constant",
+   "command": "scripts/test-tos-service-actor-v1.sh",
+   "exit": 1,
+   "last_line": [
+    "code hash mismatch: f01f6035405223a7757374c4c0a700f718fe4f61903041bad6b1c3dc954b3591"
+   ],
+   "mutated": "crypto/smartcont/service-actor-code.fc",
+   "mutated_sha256": "6c973383f6e82e7fed930e0215efdef93c65a786507782eb0195166b2846283e"
+  },
+  {
+   "control": "c-manifest-boc-bytes",
+   "command": "scripts/test-tos-service-actor-v1.sh",
+   "exit": 1,
+   "last_line": [
+    "Service Actor release check failed: manifest boc_bytes differs from the build"
+   ],
+   "mutated": "crypto/smartcont/tos-service-actor-v1.release.json",
+   "mutated_sha256": "10aacdedf2c837b47c4130ed86fa2fafaf077042d3b277bce7681d427f38fa71"
+  },
+  {
+   "control": "d-alternate-container",
+   "embedded_sha256": "21f1ea22576fce66ec3b218513adf037710b078ea12a8d84929eda970d62d5a8",
+   "alternate_sha256": "426805b45b604a0c15d3da76288e80b5c72518d9987d9d068e2e934e261c0553",
+   "alternate_bytes": 4586
+  },
+  {
+   "control": "d-sdk-alternate-container",
+   "command": "scripts/test-tos-service-actor-v1.sh",
+   "exit": 1,
+   "last_line": [
+    "Service Actor release check failed: SDK SERVICE_ACTOR_CODE_B64 differs from the rebuild"
+   ],
+   "mutated": "tosctl/src/node-control/contracts/src/service_actor.rs",
+   "mutated_sha256": "55f63e3511331add940eede639e72f84d1b1b36658eda0c660b1e6e2dc125b24"
+  },
+  {
+   "control": "d-sdk-alternate-container",
+   "command": "python3 scripts/check-service-actor-bytecode.py",
+   "exit": 0,
+   "last_line": [
+    "Service Actor bytecode synchronized (repr_hash=2524780603972805557568569646225189296421374677395663300967041360291069864460)"
+   ],
+   "mutated": "tosctl/src/node-control/contracts/src/service_actor.rs",
+   "mutated_sha256": "55f63e3511331add940eede639e72f84d1b1b36658eda0c660b1e6e2dc125b24"
+  },
+  {
+   "control": "restored",
+   "command": "scripts/test-tos-service-actor-v1.sh",
+   "exit": 0,
+   "last_line": [
+    "TOS Service Actor v1 reproducible build: PASS"
+   ]
+  }
+ ]
+}
