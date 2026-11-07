@@ -1058,22 +1058,38 @@ pub fn sign_native_action(seed: &[u8; 32], action: &Cell) -> Result<NativeContro
     sign_ml_dsa_44(seed, action.repr_hash().as_slice(), NATIVE_REGISTRY_SIGNATURE_CONTEXT)
 }
 
-/// Checks that `action` is a registry action cell (`NVA1`, schema 1) and
-/// returns its hash, the bytes a registry signature covers.
+/// Checks that `action` is a complete, canonical registry action and returns
+/// its hash, the bytes a registry signature covers. The domain is read from the
+/// action's own domain reference and the action is rebuilt from its fields
+/// with [`build_native_action`]; anything that does not rebuild to the
+/// identical cell -- a truncated header, trailing data, a missing or extra
+/// reference, a malformed domain -- is refused.
 pub fn native_action_hash(action: &Cell) -> Result<[u8; 32]> {
-    use anyhow::ensure;
+    use anyhow::{Context, ensure};
     use chain_block::{CellType, SliceData};
     ensure!(
         action.cell_type() == CellType::Ordinary && action.level() == 0,
         "ordinary native registry action required"
     );
-    let mut s = SliceData::load_cell(action.clone())?;
+    ensure!(action.references_count() == 2, "a native registry action has two references");
+    let domain_cell = action.reference(0)?;
+    let mut d = SliceData::load_cell(domain_cell)?;
+    let genesis_root = d.get_next_bytes(32)?.try_into().ok().context("genesis root width")?;
+    let genesis_file = d.get_next_bytes(32)?.try_into().ok().context("genesis file width")?;
+    let network_tag = d.get_next_bytes(32)?.try_into().ok().context("network tag width")?;
+    let mut code = SliceData::load_cell(d.checked_drain_reference()?)?;
     ensure!(
-        s.get_next_u32()? == 0x4e56_4131 && s.get_next_u16()? == 1,
-        "native registry action tag or schema"
+        d.remaining_bits() == 0 && d.remaining_references() == 0,
+        "native registry action domain trailing data"
     );
-    let kind = s.get_next_byte()?;
-    ensure!((1..=10).contains(&kind), "unknown native registry action kind {kind}");
+    let runtime_code_hash = code.get_next_bytes(32)?.try_into().ok().context("code hash width")?;
+    ensure!(
+        code.remaining_bits() == 0 && code.remaining_references() == 0,
+        "native registry action code hash trailing data"
+    );
+    let domain =
+        NativeRegistryDomain { genesis_root, genesis_file, network_tag, runtime_code_hash };
+    check_native_action_domain(action, &domain)?;
     Ok(*action.repr_hash().as_array())
 }
 
@@ -1144,6 +1160,31 @@ mod context_tests {
         let mut other = BuilderData::new();
         other.append_u32(0x1234_5678)?;
         assert!(native_action_hash(&other.into_cell()?).is_err());
+        // Only the leading tag, schema and kind: a truncated header.
+        let mut header = BuilderData::new();
+        header.append_u32(0x4e56_4131)?.append_u16(1)?.append_u8(3)?;
+        assert!(native_action_hash(&header.into_cell()?).is_err());
+        // The real action's fields with one trailing bit, or without its payload.
+        let mut s = chain_block::SliceData::load_cell(action.clone())?;
+        let bits = s.remaining_bits();
+        let fields = s.get_next_bits(bits)?;
+        let domain_ref = s.checked_drain_reference()?;
+        let payload_ref = s.checked_drain_reference()?;
+        let rebuild = |extra_bit: bool, with_payload: bool| -> Result<Cell> {
+            let mut b = BuilderData::new();
+            b.append_raw(&fields, bits)?;
+            if extra_bit {
+                b.append_bit_one()?;
+            }
+            b.checked_append_reference(domain_ref.clone())?;
+            if with_payload {
+                b.checked_append_reference(payload_ref.clone())?;
+            }
+            Ok(b.into_cell()?)
+        };
+        assert_eq!(native_action_hash(&rebuild(false, true)?)?, *action.repr_hash().as_array());
+        assert!(native_action_hash(&rebuild(true, true)?).is_err());
+        assert!(native_action_hash(&rebuild(false, false)?).is_err());
         Ok(())
     }
 }
