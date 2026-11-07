@@ -449,5 +449,209 @@
     ]
    }
   ]
+ },
+ "strict_reconfiguration_controls": {
+  "claim": "Each gate and fence rule of the strict reconfiguration can fail: accepting a mode other than 2, a mistyped account address, a relayer that cannot pay, a rotation from staged mode, a cutover before the staged module authenticated a request or of an account already strict, a rotation to the installed root or to an unverified module each turns its sandbox test red; leaving the fence after a failure before signing, lifting a signed fence before its expiry or on the operator's word, not seeing a strict landing, rebinding another submission, or loading a bound fence without expiry each turns its test red; the existing fence controls stay red after the fence learned its target mode",
+  "reviewed_commit": "a42c87d89",
+  "runner": "test/mldsa-auth/cli_route_mutations.py",
+  "command": "cd <checkout> && FUNC_PATH=<func> FIFT_PATH=<fift> python3 test/mldsa-auth/cli_route_mutations.py <results.json> --controls fence-lifted-on-counters-alone,install-skips-interrupted-recovery,strict-mode-gate-removed,confirm-account-gate-removed,relayer-precheck-dropped,rotation-from-staged-admitted,unused-staged-module-admitted,already-strict-admitted,same-root-rotation-admitted,new-root-unverified,release-before-bind-dropped,recovery-ignores-expiry,operator-recovery-of-a-bound-fence,fence-landing-ignores-target-mode,bind-accepts-a-second-submission,fence-load-accepts-unbound-expiry",
+  "result": {
+   "exit": 0,
+   "final_line": "MLDSA44_CLI_ROUTE_CONTROLS_OK"
+  },
+  "results": [
+   {
+    "control": "baseline",
+    "command": "cargo test -p contracts --test agent_account_mldsa44_sandbox --",
+    "exit": 0,
+    "expected": "green",
+    "marker": null,
+    "matched": true
+   },
+   {
+    "control": "baseline",
+    "command": "cargo test -p contracts --test agent_account_mldsa44_strict_sandbox --",
+    "exit": 0,
+    "expected": "green",
+    "marker": null,
+    "matched": true
+   },
+   {
+    "control": "baseline",
+    "command": "cargo test -p contracts --lib -- agent_account",
+    "exit": 0,
+    "expected": "green",
+    "marker": null,
+    "matched": true
+   },
+   {
+    "control": "baseline",
+    "command": "cargo test -p commands --lib --no-default-features -- mldsa44",
+    "exit": 0,
+    "expected": "green",
+    "marker": null,
+    "matched": true
+   },
+   {
+    "control": "fence-lifted-on-counters-alone",
+    "command": "cargo test -p contracts --lib -- an_already_staged_install_leaves_a_second_installs_fence_held",
+    "exit": 101,
+    "expected": "red",
+    "marker": "an_already_staged_install_leaves_a_second_installs_fence_held",
+    "matched": true
+   },
+   {
+    "control": "install-skips-interrupted-recovery",
+    "command": "cargo test -p commands --lib --no-default-features -- an_interrupted_install_is_recovered_after_a_rotation",
+    "exit": 101,
+    "expected": "red",
+    "marker": "an_interrupted_install_is_recovered_after_a_rotation_and_the_next_send_claims",
+    "matched": true
+   },
+   {
+    "control": "strict-mode-gate-removed",
+    "command": "cargo test -p contracts --test agent_account_mldsa44_strict_sandbox -- every_gate_refuses_before_anything_is_fenced_signed_or_relayed",
+    "exit": 101,
+    "expected": "red",
+    "marker": "every_gate_refuses_before_anything_is_fenced_signed_or_relayed",
+    "matched": true
+   },
+   {
+    "control": "confirm-account-gate-removed",
+    "command": "cargo test -p contracts --test agent_account_mldsa44_strict_sandbox -- every_gate_refuses_before_anything_is_fenced_signed_or_relayed",
+    "exit": 101,
+    "expected": "red",
+    "marker": "every_gate_refuses_before_anything_is_fenced_signed_or_relayed",
+    "matched": true
+   },
+   {
+    "control": "relayer-precheck-dropped",
+    "command": "cargo test -p contracts --test agent_account_mldsa44_strict_sandbox -- every_gate_refuses_before_anything_is_fenced_signed_or_relayed",
+    "exit": 101,
+    "expected": "red",
+    "marker": "every_gate_refuses_before_anything_is_fenced_signed_or_relayed",
+    "matched": true
+   },
+   {
+    "control": "rotation-from-staged-admitted",
+    "command": "cargo test -p contracts --test agent_account_mldsa44_strict_sandbox -- every_gate_refuses_before_anything_is_fenced_signed_or_relayed",
+    "exit": 101,
+    "expected": "red",
+    "marker": "every_gate_refuses_before_anything_is_fenced_signed_or_relayed",
+    "matched": true
+   },
+   {
+    "control": "unused-staged-module-admitted",
+    "command": "cargo test -p contracts --test agent_account_mldsa44_strict_sandbox -- a_legacy_account_or_an_unused_staged_module_is_refused",
+    "exit": 101,
+    "expected": "red",
+    "marker": "a_legacy_account_or_an_unused_staged_module_is_refused",
+    "matched": true
+   },
+   {
+    "control": "already-strict-admitted",
+    "command": "cargo test -p contracts --test agent_account_mldsa44_strict_sandbox -- a_legacy_account_or_an_unused_staged_module_is_refused",
+    "exit": 101,
+    "expected": "red",
+    "marker": "a_legacy_account_or_an_unused_staged_module_is_refused",
+    "matched": true
+   },
+   {
+    "control": "same-root-rotation-admitted",
+    "command": "cargo test -p contracts --test agent_account_mldsa44_strict_sandbox -- a_legacy_account_or_an_unused_staged_module_is_refused",
+    "exit": 101,
+    "expected": "red",
+    "marker": "a_legacy_account_or_an_unused_staged_module_is_refused",
+    "matched": true
+   },
+   {
+    "control": "new-root-unverified",
+    "command": "cargo test -p contracts --test agent_account_mldsa44_strict_sandbox -- a_legacy_account_or_an_unused_staged_module_is_refused",
+    "exit": 101,
+    "expected": "red",
+    "marker": "a_legacy_account_or_an_unused_staged_module_is_refused",
+    "matched": true
+   },
+   {
+    "control": "release-before-bind-dropped",
+    "command": "cargo test -p contracts --test agent_account_mldsa44_strict_sandbox -- a_failure_before_the_bind_releases_the_fence_and_nothing_was_signed",
+    "exit": 101,
+    "expected": "red",
+    "marker": "a_failure_before_the_bind_releases_the_fence_and_nothing_was_signed",
+    "matched": true
+   },
+   {
+    "control": "recovery-ignores-expiry",
+    "command": "cargo test -p contracts --test agent_account_mldsa44_strict_sandbox -- a_bound_fence_holds_until_expiry_and_is_never_lifted_early",
+    "exit": 101,
+    "expected": "red",
+    "marker": "a_bound_fence_holds_until_expiry_and_is_never_lifted_early",
+    "matched": true
+   },
+   {
+    "control": "operator-recovery-of-a-bound-fence",
+    "command": "cargo test -p contracts --test agent_account_mldsa44_strict_sandbox -- a_bound_fence_holds_until_expiry_and_is_never_lifted_early",
+    "exit": 101,
+    "expected": "red",
+    "marker": "a_bound_fence_holds_until_expiry_and_is_never_lifted_early",
+    "matched": true
+   },
+   {
+    "control": "fence-landing-ignores-target-mode",
+    "command": "cargo test -p contracts --test agent_account_mldsa44_strict_sandbox -- a_change_that_landed_unobserved_is_finished_without_a_resend",
+    "exit": 101,
+    "expected": "red",
+    "marker": "a_change_that_landed_unobserved_is_finished_without_a_resend",
+    "matched": true
+   },
+   {
+    "control": "bind-accepts-a-second-submission",
+    "command": "cargo test -p contracts --lib -- a_reconfiguration_fence_binds_one_submission_and_one_relay",
+    "exit": 101,
+    "expected": "red",
+    "marker": "a_reconfiguration_fence_binds_one_submission_and_one_relay",
+    "matched": true
+   },
+   {
+    "control": "fence-load-accepts-unbound-expiry",
+    "command": "cargo test -p contracts --lib -- a_malformed_reconfiguration_fence_is_refused_on_load",
+    "exit": 101,
+    "expected": "red",
+    "marker": "a_malformed_reconfiguration_fence_is_refused_on_load",
+    "matched": true
+   },
+   {
+    "control": "restored",
+    "command": "cargo test -p contracts --test agent_account_mldsa44_sandbox --",
+    "exit": 0,
+    "expected": "green",
+    "marker": null,
+    "matched": true
+   },
+   {
+    "control": "restored",
+    "command": "cargo test -p contracts --test agent_account_mldsa44_strict_sandbox --",
+    "exit": 0,
+    "expected": "green",
+    "marker": null,
+    "matched": true
+   },
+   {
+    "control": "restored",
+    "command": "cargo test -p contracts --lib -- agent_account",
+    "exit": 0,
+    "expected": "green",
+    "marker": null,
+    "matched": true
+   },
+   {
+    "control": "restored",
+    "command": "cargo test -p commands --lib --no-default-features -- mldsa44",
+    "exit": 0,
+    "expected": "green",
+    "marker": null,
+    "matched": true
+   }
+  ]
  }
 }
