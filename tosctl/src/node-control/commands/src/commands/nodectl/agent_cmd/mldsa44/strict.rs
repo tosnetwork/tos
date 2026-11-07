@@ -121,8 +121,13 @@ impl ReconfigureChain for CliReconfigureChain<'_> {
         Ok(ModuleView { active, code_hash, config })
     }
 
-    async fn check_relayer(&self, body: &Cell, amount: u64) -> anyhow::Result<MsgAddressInt> {
-        check_relayer(&self.environment, &self.relayer, body, amount).await
+    async fn check_relayer(
+        &self,
+        module: &MsgAddressInt,
+        body: &Cell,
+        amount: u64,
+    ) -> anyhow::Result<MsgAddressInt> {
+        check_relayer(&self.environment, &self.relayer, module, body, amount).await
     }
 
     async fn sign(&self, request: &Cell) -> anyhow::Result<Vec<u8>> {
@@ -136,7 +141,8 @@ impl ReconfigureChain for CliReconfigureChain<'_> {
         body: Cell,
     ) -> anyhow::Result<PreparedRelay> {
         let loaded = self.environment.load_relayer(&self.relayer).await?;
-        let (reserve, balance) = self.environment.wallet_reserve(&loaded.address, &body).await?;
+        let (reserve, balance) =
+            self.environment.wallet_reserve(&loaded.address, module, &body).await?;
         relayer_can_pay(&self.relayer.label, loaded.active, balance, amount, reserve)?;
         let wallet_message = build_mldsa44_relay_wallet_message(
             loaded.wallet.as_ref(),

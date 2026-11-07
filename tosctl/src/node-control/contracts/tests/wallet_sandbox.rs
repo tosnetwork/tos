@@ -540,3 +540,153 @@ fn v4_body_that_fails_after_accept_cannot_be_replayed() {
     assert_eq!(seqno(&bc), 1);
     assert_eq!(balance(&bc, target.address()), target_before, "the failed body sent nothing");
 }
+
+#[path = "fixtures/current_network.rs"]
+mod current_network;
+
+/// A V5 wallet in `sender` workchain relays a body of ML-DSA-44 submission
+/// size to a treasury in `destination` workchain with the balance left at
+/// exactly value + reserve, on a chain whose basechain is enabled. The reserve
+/// prices the outbound message by both endpoints, as the action phase does:
+/// the forward fee it charged equals the fee at the chosen tariff for the
+/// emitted message, the send is delivered, and the whole charge is covered.
+async fn a_relay_reserve_covers_a_cross_workchain_send(sender: i32, destination: i32) {
+    use contracts::wallet::send_fees::{
+        AccountStorage, SendFeeInputs, forward_fee, outbound_forward_param, tree_size,
+        wallet_send_reserve, wallet_send_reserve_to,
+    };
+    let label = format!("{sender} -> {destination}");
+    let mut bc =
+        Blockchain::with_global_version_and_base_workchain(current_network::global_version())
+            .expect("blockchain");
+    let global_id = match bc.config_params().config(19).expect("parameter 19") {
+        Some(chain_block::ConfigParamEnum::ConfigParam19(id)) => id as i32,
+        other => panic!("parameter 19 is not the global id: {other:?}"),
+    };
+    bc.set_workchain(destination as i8);
+    let funder = bc.treasury("funder", 1_000 * TOS).expect("funder");
+    let target = bc.treasury("target", 1_000 * TOS).expect("target");
+    let secret = [0x43; 32];
+    let wallet = WalletContract::new(
+        Box::new(TestSigner(SigningKey::from_bytes(&secret))),
+        WalletVersion::V5R1,
+        SUBWALLET_ID,
+        sender,
+        global_id,
+        Arc::new(NoProvider),
+    )
+    .await
+    .expect("wallet");
+    let address = wallet.address();
+    bc.send_message(funder.build_message(&address, 50 * TOS, false, None)).expect("fund");
+    let deploy = wallet
+        .build_message(
+            funder.address().clone(),
+            TOS / 100,
+            Cell::default(),
+            false,
+            Some(0),
+            Some(wallet.state_init().await.expect("state init")),
+            None,
+        )
+        .await
+        .expect("deploy");
+    bc.send_message(Message::construct_from_cell(deploy).expect("external"))
+        .expect("deploy wallet")
+        .expect_success();
+
+    // A body the size of a relayed submission: the 2,420-byte signature chain.
+    let body = contracts::agent_account_auth::byte_chain(&[0x5a; 2_420]).expect("body");
+    let config = bc.config_params();
+    let gas = config.gas_prices(sender == -1).expect("gas prices");
+    let import = config.fwd_prices(sender == -1).expect("sender forward prices");
+    let outbound =
+        config.fwd_prices(outbound_forward_param(sender, destination) == 24).expect("outbound");
+    let storage_prices = config.storage_prices().expect("storage").prices().expect("prices");
+    let account = bc.get_account(&address).expect("deployed").clone();
+    let storage = AccountStorage::from_account(&account).expect("storage");
+    let inputs = SendFeeInputs {
+        gas: &gas,
+        forward: &import,
+        storage_prices: &storage_prices,
+        storage: &storage,
+        now: bc.now(),
+        body: &body,
+    };
+    let reserve = wallet_send_reserve_to(&inputs, &outbound).expect("reserve");
+    let wallet_only = wallet_send_reserve(&inputs).expect("wallet-only reserve");
+    if sender == destination {
+        assert_eq!(reserve, wallet_only, "{label}: one workchain is priced as before");
+    }
+
+    let balance = account.balance().and_then(|b| b.coins.as_u64()).expect("balance");
+    let value = balance - u64::try_from(reserve).expect("reserve fits");
+    let target_before = bc.get_account(target.address()).unwrap().balance().unwrap().coins.as_u64();
+    let message = wallet
+        .build_message(target.address().clone(), value, body, true, Some(1), None, None)
+        .await
+        .expect("relay message");
+    let result =
+        bc.send_message(Message::construct_from_cell(message).expect("external")).expect("relay");
+    let (_, transaction) = result
+        .transactions
+        .iter()
+        .find(|(at, _)| at == &address)
+        .expect("the wallet transaction")
+        .clone();
+    let chain_block::TransactionDescr::Ordinary(description) =
+        transaction.read_description().expect("description")
+    else {
+        panic!("ordinary transaction expected");
+    };
+    let action = description.action.expect("action phase");
+    assert!(action.success && action.msgs_created == 1, "{label}: {action:?}");
+    let mut emitted = Vec::new();
+    transaction
+        .iterate_out_msgs(|message| {
+            emitted.push(message);
+            Ok(true)
+        })
+        .expect("out messages");
+    assert_eq!(emitted.len(), 1, "{label}");
+    // The action phase charges the lump for the root and the per-bit and
+    // per-cell prices for the tree below it.
+    let root = emitted[0].serialize().expect("message cell");
+    let refs: Vec<Cell> =
+        (0..root.references_count()).map(|i| root.reference(i).expect("ref")).collect();
+    let refs: Vec<&Cell> = refs.iter().collect();
+    let (cells, bits) = tree_size(&refs).expect("size");
+    let charged = action.total_fwd_fees.expect("forward fees").as_u128();
+    assert_eq!(
+        forward_fee(&outbound, bits, cells).expect("fee"),
+        charged,
+        "{label}: the action phase charged the tariff the reserve chose"
+    );
+    if sender != -1 && destination == -1 {
+        assert_ne!(
+            forward_fee(&import, bits, cells).expect("fee"),
+            charged,
+            "{label}: the sender's own tariff is not what the action phase charged"
+        );
+    }
+    let target_after = bc.get_account(target.address()).unwrap().balance().unwrap().coins.as_u64();
+    assert!(target_after > target_before, "{label}: the relay was delivered");
+    let left = bc.get_account(&address).unwrap().balance().unwrap().coins.as_u64().unwrap();
+    let charge = balance - value - left;
+    assert!(u128::from(charge) <= reserve, "{label}: charge {charge} exceeds reserve {reserve}");
+}
+
+#[tokio::test]
+async fn a_basechain_relay_to_the_masterchain_is_priced_at_the_masterchain_tariff() {
+    a_relay_reserve_covers_a_cross_workchain_send(0, -1).await;
+}
+
+#[tokio::test]
+async fn a_masterchain_relay_to_the_basechain_is_priced_at_the_masterchain_tariff() {
+    a_relay_reserve_covers_a_cross_workchain_send(-1, 0).await;
+}
+
+#[tokio::test]
+async fn a_relay_within_the_basechain_is_priced_as_before() {
+    a_relay_reserve_covers_a_cross_workchain_send(0, 0).await;
+}

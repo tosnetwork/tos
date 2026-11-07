@@ -18,7 +18,7 @@ TARGETS = {
     "x86": ("i686-linux-android", "i686-linux-android"),
     "x86_64": ("x86_64-linux-android", "x86_64-linux-android"),
 }
-TOOLCHAIN = "1.97.1"
+TOOLCHAIN = "1.99.1"
 
 
 def run(args, **kwargs):

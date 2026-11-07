@@ -54,6 +54,9 @@ mutated file before the next control:
   sends a rebuilt submission; the CLI relay orchestration test must fail.
 - relayer-fee-check-dropped, relayer-fees-not-counted: a relayer that cannot
   pay the relay amount plus its own fees relays anyway; their tests must fail.
+- relay-fee-ignores-destination-workchain: the relay fee bound prices the
+  outbound message by the sender's workchain only; the basechain-to-masterchain
+  wallet sandbox case and the fee-parameter test must fail.
 
 - strict-mode-gate-removed, confirm-account-gate-removed,
   relayer-precheck-dropped, rotation-from-staged-admitted,
@@ -107,6 +110,8 @@ STRICT = [
     "agent_account_mldsa44_strict_sandbox",
     "--",
 ]
+SEND_FEES = "tosctl/src/node-control/contracts/src/wallet/send_fees.rs"
+WALLET_SANDBOX = ["cargo", "test", "-p", "contracts", "--test", "wallet_sandbox", "--"]
 
 results = []
 mismatches = []
@@ -605,9 +610,9 @@ mutation(
     [
         (
             CLI,
-            "wallet_reserve(&loaded.address, &body).await?;\n"
+            "wallet_reserve(&loaded.address, &module, &body).await?;\n"
             "    relayer_can_pay(&relayer.label, loaded.active, balance, relay_amount, reserve)?;\n",
-            "wallet_reserve(&loaded.address, &body).await?;\n    let _ = (balance, reserve);\n",
+            "wallet_reserve(&loaded.address, &module, &body).await?;\n    let _ = (balance, reserve);\n",
         )
     ],
     [
@@ -662,7 +667,7 @@ strict_control(
 strict_control(
     "relayer-precheck-dropped",
     RECONFIGURE,
-    "    chain.check_relayer(&placeholder, request.relay_amount).await?;\n",
+    "    chain.check_relayer(&request.module, &placeholder, request.relay_amount).await?;\n",
     "    let _ = &placeholder;\n",
     GATES,
 )
@@ -746,6 +751,31 @@ strict_control(
     "",
     "a_malformed_reconfiguration_fence_is_refused_on_load",
     runner=CONTRACTS_LIB,
+)
+mutation(
+    "relay-fee-ignores-destination-workchain",
+    [
+        (
+            SEND_FEES,
+            "    if source_workchain == -1 || destination_workchain == -1 { 24 } else { 25 }",
+            "    if source_workchain == -1 { 24 } else { 25 }",
+        )
+    ],
+    [
+        (
+            WALLET_SANDBOX
+            + ["a_basechain_relay_to_the_masterchain_is_priced_at_the_masterchain_tariff"],
+            CARGO_DIR,
+            True,
+            "a_basechain_relay_to_the_masterchain_is_priced_at_the_masterchain_tariff",
+        ),
+        (
+            COMMANDS_LIB + ["the_relay_fee_bound_reads_the_outbound_tariff_of_both_endpoints"],
+            CARGO_DIR,
+            True,
+            "the_relay_fee_bound_reads_the_outbound_tariff_of_both_endpoints",
+        ),
+    ],
 )
 if SELECTED is not None and SELECTED != ran:
     raise SystemExit(f"unknown controls: {sorted(SELECTED - ran)}")

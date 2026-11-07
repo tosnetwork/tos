@@ -284,7 +284,12 @@ impl ReconfigureChain for SandboxChain {
         Ok(ModuleView { active: true, code_hash, config: Some(config) })
     }
 
-    async fn check_relayer(&self, _body: &Cell, _amount: u64) -> anyhow::Result<MsgAddressInt> {
+    async fn check_relayer(
+        &self,
+        _module: &MsgAddressInt,
+        _body: &Cell,
+        _amount: u64,
+    ) -> anyhow::Result<MsgAddressInt> {
         anyhow::ensure!(self.relayer_can_pay.get(), "the relaying wallet cannot pay");
         Ok(self.sandbox.borrow().relayer.address().clone())
     }

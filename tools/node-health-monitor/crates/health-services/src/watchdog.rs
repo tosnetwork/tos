@@ -64,7 +64,7 @@ impl WatchdogState {
     }
     pub fn completed_tick(&self) -> Result<u64, String> {
         self.own_sequence
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |previous| previous.checked_add(1))
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |previous| previous.checked_add(1))
             .map(|previous| previous + 1)
             .map_err(|_| "observer heartbeat sequence exhausted".into())
     }

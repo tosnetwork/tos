@@ -109,8 +109,13 @@ pub trait ReconfigureChain {
     async fn account(&self, account: &MsgAddressInt) -> anyhow::Result<AccountSnapshot>;
     async fn module(&self, module: &MsgAddressInt) -> anyhow::Result<ModuleView>;
     /// Refuses unless the relaying wallet can pay `amount` plus its own fees
-    /// for relaying `body`; returns its address.
-    async fn check_relayer(&self, body: &Cell, amount: u64) -> anyhow::Result<MsgAddressInt>;
+    /// for relaying `body` to `module`; returns its address.
+    async fn check_relayer(
+        &self,
+        module: &MsgAddressInt,
+        body: &Cell,
+        amount: u64,
+    ) -> anyhow::Result<MsgAddressInt>;
     /// Signs `request` with the current root's ML-DSA-44 key.
     async fn sign(&self, request: &Cell) -> anyhow::Result<Vec<u8>>;
     /// Builds, without sending, the relaying wallet's message of `body`.
@@ -304,7 +309,7 @@ pub async fn reconfigure<C: ReconfigureChain>(
     let envelope = build_auth_envelope(&request_cell)?;
     let placeholder =
         build_mldsa44_submit(request.query_id, &envelope, &[0u8; NATIVE_REGISTRY_SIGNATURE_BYTES])?;
-    chain.check_relayer(&placeholder, request.relay_amount).await?;
+    chain.check_relayer(&request.module, &placeholder, request.relay_amount).await?;
 
     journal.begin_auth_reconfiguration(
         &account_text,

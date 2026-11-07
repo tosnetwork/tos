@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "rust": "1.97.1",
-  "rust_toolchain_sha256": "279d77167cec5426fa80f457cd066dc74a360fbe4e2816f4f3fa01487a918fdc",
+  "rust": "1.99.1",
+  "rust_toolchain_sha256": "c979a7d4d66b770a4d59d6d56e3c078aeab1993af658480bfd1f89f90220457d",
   "cargo_lock_sha256": "9d7e1aaadabf852a87b35d27b06f271ec69e033a3e57521533c14ee9de0a5509",
   "contract_python": {
     "version": "3.14.4",
