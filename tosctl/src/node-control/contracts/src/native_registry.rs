@@ -940,15 +940,54 @@ impl NativeControllerSignature {
     }
 }
 
-/// Verifies a registry signature over `action_hash` exactly as
-/// PQCHECKSIG_MLDSA44 will: Pure ML-DSA-44 under the registry context.
-pub fn verify_native_signature(
+/// The ML-DSA-44 context of an Agent Packet signature (AGENT_PACKET_V1.md).
+pub const AGENT_PACKET_SIGNATURE_CONTEXT: &[u8] = b"TOS-AGENT-PACKET-V1";
+
+/// The ML-DSA-44 context of an Agent contact card signature (AGENT_PACKET_V1.md).
+pub const AGENT_CONTACT_SIGNATURE_CONTEXT: &[u8] = b"TOS-AGENT-CONTACT-V1";
+
+/// The longest message an ML-DSA-44 controller signs here, the bound
+/// PQCHECKSIG_MLDSA44 applies on chain.
+pub const ML_DSA_44_MAX_MESSAGE_BYTES: usize = 8192;
+
+/// The contexts a registry controller key signs under. Each names one use, so
+/// a signature made for one can never be accepted as another.
+pub const CONTROLLER_SIGNATURE_CONTEXTS: [&[u8]; 3] = [
+    NATIVE_REGISTRY_SIGNATURE_CONTEXT,
+    AGENT_PACKET_SIGNATURE_CONTEXT,
+    AGENT_CONTACT_SIGNATURE_CONTEXT,
+];
+
+fn require_controller_context(context: &[u8]) -> Result<()> {
+    anyhow::ensure!(
+        CONTROLLER_SIGNATURE_CONTEXTS.contains(&context),
+        "unknown controller signature context {:?}",
+        String::from_utf8_lossy(context)
+    );
+    Ok(())
+}
+
+fn require_message_bounds(message: &[u8]) -> Result<()> {
+    anyhow::ensure!(
+        message.len() <= ML_DSA_44_MAX_MESSAGE_BYTES,
+        "an ML-DSA-44 controller message is at most {ML_DSA_44_MAX_MESSAGE_BYTES} bytes, not {}",
+        message.len()
+    );
+    Ok(())
+}
+
+/// Verifies a Pure ML-DSA-44 signature by a controller key over `message`
+/// under one of [`CONTROLLER_SIGNATURE_CONTEXTS`].
+pub fn verify_ml_dsa_44(
     public_key: &[u8],
     signature: &[u8],
-    action_hash: &[u8; 32],
+    message: &[u8],
+    context: &[u8],
 ) -> Result<()> {
     use fips204::ml_dsa_44;
     use fips204::traits::{SerDes, Verifier};
+    require_controller_context(context)?;
+    require_message_bounds(message)?;
     let key: [u8; NATIVE_REGISTRY_PUBLIC_KEY_BYTES] = public_key.try_into().map_err(|_| {
         anyhow!(
             "a native registry key is {NATIVE_REGISTRY_PUBLIC_KEY_BYTES} bytes, not {}",
@@ -964,10 +1003,43 @@ pub fn verify_native_signature(
     let key = ml_dsa_44::PublicKey::try_from_bytes(key)
         .map_err(|e| anyhow!("native registry signature key: {e}"))?;
     anyhow::ensure!(
-        key.verify(action_hash, &signature, NATIVE_REGISTRY_SIGNATURE_CONTEXT),
+        key.verify(message, &signature, context),
         "native registry signature verification failed"
     );
     Ok(())
+}
+
+/// Signs `message` with the ML-DSA-44 controller whose key-generation seed is
+/// `seed`, hedged, under one of [`CONTROLLER_SIGNATURE_CONTEXTS`]. The derived
+/// private key is wiped when it goes out of scope; the seed is the caller's to
+/// protect.
+pub fn sign_ml_dsa_44(
+    seed: &[u8; 32],
+    message: &[u8],
+    context: &[u8],
+) -> Result<NativeControllerSignature> {
+    use fips204::ml_dsa_44;
+    use fips204::traits::{KeyGen, SerDes, Signer};
+    require_controller_context(context)?;
+    require_message_bounds(message)?;
+    let (public_key, secret) = ml_dsa_44::KG::keygen_from_seed(seed);
+    let signature = secret
+        .try_sign(message, context)
+        .map_err(|e| anyhow!("native registry signing failed: {e}"))?;
+    Ok(NativeControllerSignature {
+        public_key: public_key.into_bytes().to_vec(),
+        signature: signature.to_vec(),
+    })
+}
+
+/// Verifies a registry signature over `action_hash` exactly as
+/// PQCHECKSIG_MLDSA44 will: Pure ML-DSA-44 under the registry context.
+pub fn verify_native_signature(
+    public_key: &[u8],
+    signature: &[u8],
+    action_hash: &[u8; 32],
+) -> Result<()> {
+    verify_ml_dsa_44(public_key, signature, action_hash, NATIVE_REGISTRY_SIGNATURE_CONTEXT)
 }
 
 /// The ML-DSA-44 public key of the controller whose key-generation seed is
@@ -981,19 +1053,99 @@ pub fn native_public_key_from_seed(seed: &[u8; 32]) -> Vec<u8> {
 
 /// Signs `action` with the ML-DSA-44 controller whose key-generation seed is
 /// `seed`: hedged Pure ML-DSA-44 over the 32 bytes of the action hash under
-/// the registry context. The derived private key is wiped when it goes out of
-/// scope; the seed is the caller's to protect.
+/// the registry context.
 pub fn sign_native_action(seed: &[u8; 32], action: &Cell) -> Result<NativeControllerSignature> {
-    use fips204::ml_dsa_44;
-    use fips204::traits::{KeyGen, SerDes, Signer};
-    let (public_key, secret) = ml_dsa_44::KG::keygen_from_seed(seed);
-    let signature = secret
-        .try_sign(action.repr_hash().as_slice(), NATIVE_REGISTRY_SIGNATURE_CONTEXT)
-        .map_err(|e| anyhow!("native registry signing failed: {e}"))?;
-    Ok(NativeControllerSignature {
-        public_key: public_key.into_bytes().to_vec(),
-        signature: signature.to_vec(),
-    })
+    sign_ml_dsa_44(seed, action.repr_hash().as_slice(), NATIVE_REGISTRY_SIGNATURE_CONTEXT)
+}
+
+/// Checks that `action` is a registry action cell (`NVA1`, schema 1) and
+/// returns its hash, the bytes a registry signature covers.
+pub fn native_action_hash(action: &Cell) -> Result<[u8; 32]> {
+    use anyhow::ensure;
+    use chain_block::{CellType, SliceData};
+    ensure!(
+        action.cell_type() == CellType::Ordinary && action.level() == 0,
+        "ordinary native registry action required"
+    );
+    let mut s = SliceData::load_cell(action.clone())?;
+    ensure!(
+        s.get_next_u32()? == 0x4e56_4131 && s.get_next_u16()? == 1,
+        "native registry action tag or schema"
+    );
+    let kind = s.get_next_byte()?;
+    ensure!((1..=10).contains(&kind), "unknown native registry action kind {kind}");
+    Ok(*action.repr_hash().as_array())
+}
+
+#[cfg(test)]
+mod context_tests {
+    use super::*;
+
+    #[test]
+    fn each_context_verifies_only_its_own_signatures() -> Result<()> {
+        let message = [0x5a; 32];
+        let key = native_public_key_from_seed(&[7; 32]);
+        for (i, context) in CONTROLLER_SIGNATURE_CONTEXTS.iter().enumerate() {
+            let signed = sign_ml_dsa_44(&[7; 32], &message, context)?;
+            assert_eq!(signed.public_key, key);
+            verify_ml_dsa_44(&key, &signed.signature, &message, context)?;
+            for (j, other) in CONTROLLER_SIGNATURE_CONTEXTS.iter().enumerate() {
+                if i != j {
+                    assert!(verify_ml_dsa_44(&key, &signed.signature, &message, other).is_err());
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn unknown_contexts_and_oversized_messages_are_refused() {
+        assert!(sign_ml_dsa_44(&[7; 32], &[0; 32], b"").is_err());
+        assert!(sign_ml_dsa_44(&[7; 32], &[0; 32], b"TOS-NATIVE-REGISTRY-v2").is_err());
+        assert!(
+            sign_ml_dsa_44(
+                &[7; 32],
+                &vec![0; ML_DSA_44_MAX_MESSAGE_BYTES + 1],
+                AGENT_PACKET_SIGNATURE_CONTEXT
+            )
+            .is_err()
+        );
+        assert!(
+            sign_ml_dsa_44(
+                &[7; 32],
+                &vec![0; ML_DSA_44_MAX_MESSAGE_BYTES],
+                AGENT_PACKET_SIGNATURE_CONTEXT
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn only_registry_action_cells_have_an_action_hash() -> Result<()> {
+        let d = NativeRegistryDomain {
+            genesis_root: [1; 32],
+            genesis_file: [2; 32],
+            network_tag: [3; 32],
+            runtime_code_hash: [4; 32],
+        };
+        let action = build_native_action(
+            &d,
+            &NativeRegistryAction {
+                kind: 3,
+                generation: 1,
+                sequence: 2,
+                object_id: [5; 32],
+                predecessor: [6; 32],
+                nonce: [7; 32],
+                payload: Cell::default(),
+            },
+        )?;
+        assert_eq!(native_action_hash(&action)?, *action.repr_hash().as_array());
+        let mut other = BuilderData::new();
+        other.append_u32(0x1234_5678)?;
+        assert!(native_action_hash(&other.into_cell()?).is_err());
+        Ok(())
+    }
 }
 
 pub(crate) fn native_signature_chain(

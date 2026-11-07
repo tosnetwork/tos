@@ -81,6 +81,10 @@ enum NativeRegistrySubcommand {
     NewController(NewControllerCmd),
     /// Print a registry controller's public key and key id
     Controller(ControllerCmd),
+    /// Sign a registry action or an Agent packet / contact card with a controller
+    Sign(SignCmd),
+    /// Verify an ML-DSA-44 controller signature under a named context
+    Verify(VerifyCmd),
 }
 
 impl NativeRegistryCmd {
@@ -92,6 +96,8 @@ impl NativeRegistryCmd {
             NativeRegistrySubcommand::Show(cmd) => cmd.run(config_path).await,
             NativeRegistrySubcommand::NewController(cmd) => cmd.run(config_path).await,
             NativeRegistrySubcommand::Controller(cmd) => cmd.run(config_path).await,
+            NativeRegistrySubcommand::Sign(cmd) => cmd.run(config_path).await,
+            NativeRegistrySubcommand::Verify(cmd) => cmd.run(),
         }
     }
 }
@@ -511,6 +517,140 @@ impl ControllerCmd {
         let (_, vault) = super::utils::load_config_vault(Path::new(config_path)).await?;
         let seed = read_controller_seed(&vault, &self.name).await?;
         print_view(&controller_view(&self.name, &seed)?, &self.format)
+    }
+}
+
+/// The use a controller signature is made for; each has its own ML-DSA-44
+/// context, so a signature for one is never valid as another.
+#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+enum SignatureUse {
+    /// A Native Registry action (signs the action hash)
+    Registry,
+    /// An Agent Packet preimage
+    AgentPacket,
+    /// An Agent contact card preimage
+    AgentContact,
+}
+
+impl SignatureUse {
+    fn context(self) -> &'static [u8] {
+        match self {
+            Self::Registry => NATIVE_REGISTRY_SIGNATURE_CONTEXT,
+            Self::AgentPacket => AGENT_PACKET_SIGNATURE_CONTEXT,
+            Self::AgentContact => AGENT_CONTACT_SIGNATURE_CONTEXT,
+        }
+    }
+}
+
+/// Largest action BOC `sign` and `verify` read.
+const MAX_ACTION_BOC_BYTES: u64 = 64 << 10;
+
+/// The bytes a signature for `usage` covers: the hash of a registry action
+/// read from `action_boc`, or the message given in hex for the other uses.
+fn signed_message(
+    usage: SignatureUse,
+    action_boc: Option<&Path>,
+    message_hex: Option<&str>,
+) -> anyhow::Result<Vec<u8>> {
+    match (usage, action_boc, message_hex) {
+        (SignatureUse::Registry, Some(path), None) => {
+            let bytes = read_bounded(path, MAX_ACTION_BOC_BYTES, "action BOC")?;
+            let action = read_single_root_boc(bytes).context("action BOC")?;
+            Ok(native_action_hash(&action)?.to_vec())
+        }
+        (SignatureUse::Registry, _, _) => {
+            anyhow::bail!(
+                "a registry signature covers an action: pass --action-boc and no --message-hex"
+            )
+        }
+        (_, None, Some(text)) => {
+            let message =
+                hex::decode(text.strip_prefix("0x").unwrap_or(text)).context("--message-hex")?;
+            anyhow::ensure!(!message.is_empty(), "--message-hex must not be empty");
+            Ok(message)
+        }
+        _ => anyhow::bail!(
+            "an Agent packet or contact signature covers --message-hex, not an action"
+        ),
+    }
+}
+
+/// `sign`: a controller signature for one use. A registry signature is made
+/// only over a registry action cell, never over a bare hash.
+#[derive(clap::Args, Clone)]
+struct SignCmd {
+    #[arg(long, help = "Registry controller (vault secret native-registry-<name>)")]
+    controller: String,
+    #[arg(long = "for", value_enum, help = "What the signature is for")]
+    usage: SignatureUse,
+    #[arg(long, help = "Action BOC file (registry signatures)")]
+    action_boc: Option<PathBuf>,
+    #[arg(long, help = "Message in hex (Agent packet or contact signatures)")]
+    message_hex: Option<String>,
+    #[arg(short, long, default_value = "json")]
+    format: OutputFormat,
+}
+
+impl SignCmd {
+    async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+        let message =
+            signed_message(self.usage, self.action_boc.as_deref(), self.message_hex.as_deref())?;
+        let (_, vault) = super::utils::load_config_vault(Path::new(config_path)).await?;
+        let seed = read_controller_seed(&vault, &self.controller).await?;
+        let signed = sign_ml_dsa_44(&seed, &message, self.usage.context())?;
+        print_view(&signature_view(self.usage, &message, &signed)?, &self.format)
+    }
+}
+
+fn signature_view(
+    usage: SignatureUse,
+    message: &[u8],
+    signed: &NativeControllerSignature,
+) -> anyhow::Result<serde_json::Value> {
+    Ok(serde_json::json!({
+        "suite": "ML-DSA-44",
+        "context": String::from_utf8_lossy(usage.context()),
+        "message_hex": hex::encode(message),
+        "key_id": hex::encode(signed.key_id()?),
+        "public_key": hex::encode(&signed.public_key),
+        "signature": hex::encode(&signed.signature),
+    }))
+}
+
+/// `verify`: checks a controller signature; exits non-zero when it does not
+/// verify. Needs no configuration or vault.
+#[derive(clap::Args, Clone)]
+struct VerifyCmd {
+    #[arg(long = "for", value_enum, help = "What the signature is for")]
+    usage: SignatureUse,
+    #[arg(long, help = "Action BOC file (registry signatures)")]
+    action_boc: Option<PathBuf>,
+    #[arg(long, help = "Message in hex (Agent packet or contact signatures)")]
+    message_hex: Option<String>,
+    #[arg(long, help = "1,312-byte ML-DSA-44 public key in hex")]
+    public_key_hex: String,
+    #[arg(long, help = "2,420-byte ML-DSA-44 signature in hex")]
+    signature_hex: String,
+    #[arg(short, long, default_value = "json")]
+    format: OutputFormat,
+}
+
+impl VerifyCmd {
+    fn run(&self) -> anyhow::Result<()> {
+        let message =
+            signed_message(self.usage, self.action_boc.as_deref(), self.message_hex.as_deref())?;
+        let public_key = hex::decode(&self.public_key_hex).context("--public-key-hex")?;
+        let signature = hex::decode(&self.signature_hex).context("--signature-hex")?;
+        verify_ml_dsa_44(&public_key, &signature, &message, self.usage.context())?;
+        print_view(
+            &serde_json::json!({
+                "valid": true,
+                "suite": "ML-DSA-44",
+                "context": String::from_utf8_lossy(self.usage.context()),
+                "key_id": hex::encode(controller_key_id(&public_key)?),
+            }),
+            &self.format,
+        )
     }
 }
 
@@ -1332,6 +1472,52 @@ mod tests {
         let signers: Vec<_> = signers.iter().map(|&s| key(s)).collect();
         let counter: Vec<_> = counter.iter().map(|&s| key(s)).collect();
         plan_action(&loaded(), kind, &input, objects, &signers, &counter, [0x77; 32], now)
+    }
+
+    /// A registry signature covers the action hash and is made only from an
+    /// action; packet and contact signatures cover their message; each is
+    /// refused under the other contexts.
+    #[test]
+    fn signatures_are_bound_to_their_use() {
+        let dir = tempfile::tempdir().expect("dir");
+        let action = build_native_action(
+            &loaded().domain,
+            &NativeRegistryAction {
+                kind: NATIVE_KIND_DELEGATE_AGENT,
+                generation: 1,
+                sequence: 2,
+                object_id: [5; 32],
+                predecessor: [6; 32],
+                nonce: [7; 32],
+                payload: build_native_delegate_payload([8; 32]).expect("payload"),
+            },
+        )
+        .expect("action");
+        let path = dir.path().join("action.boc");
+        std::fs::write(&path, chain_block::write_boc(&action).expect("boc")).expect("write");
+        let hash = signed_message(SignatureUse::Registry, Some(&path), None).expect("hash");
+        assert_eq!(hash, action.repr_hash().as_slice());
+        assert!(signed_message(SignatureUse::Registry, None, Some("00")).is_err());
+        assert!(signed_message(SignatureUse::Registry, Some(&path), Some("00")).is_err());
+        assert!(signed_message(SignatureUse::AgentPacket, Some(&path), None).is_err());
+        assert!(signed_message(SignatureUse::AgentPacket, None, Some("")).is_err());
+        let packet =
+            signed_message(SignatureUse::AgentPacket, None, Some("0xabcd")).expect("message");
+        assert_eq!(packet, vec![0xab, 0xcd]);
+
+        let signed =
+            sign_ml_dsa_44(&[9; 32], &hash, SignatureUse::Registry.context()).expect("sign");
+        let view = signature_view(SignatureUse::Registry, &hash, &signed).expect("view");
+        assert_eq!(view["context"], "TOS-NATIVE-REGISTRY");
+        let verify = |usage: SignatureUse, message: &[u8]| {
+            verify_ml_dsa_44(&signed.public_key, &signed.signature, message, usage.context())
+        };
+        assert!(verify(SignatureUse::Registry, &hash).is_ok());
+        assert!(verify(SignatureUse::AgentPacket, &hash).is_err());
+        assert!(verify(SignatureUse::AgentContact, &hash).is_err());
+        let mut other = hash.clone();
+        other[0] ^= 1;
+        assert!(verify(SignatureUse::Registry, &other).is_err());
     }
 
     /// A controller created in a real file vault reads back as the same key,
