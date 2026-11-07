@@ -946,16 +946,26 @@ pub const AGENT_PACKET_SIGNATURE_CONTEXT: &[u8] = b"TOS-AGENT-PACKET-V1";
 /// The ML-DSA-44 context of an Agent contact card signature (AGENT_PACKET_V1.md).
 pub const AGENT_CONTACT_SIGNATURE_CONTEXT: &[u8] = b"TOS-AGENT-CONTACT-V1";
 
+/// The ML-DSA-44 context of an Agent Guarantor object authorization
+/// (AGENT_GUARANTOR_SERVICE_V1.md section 9).
+pub const AGENT_GUARANTOR_SIGNATURE_CONTEXT: &[u8] = b"TOS-AGENT-GUARANTOR-V1";
+
+/// The exact length of the message an Agent Guarantor signature covers: the
+/// 32-byte SHA-256 digest of the signature domain and canonical authorization
+/// statement. The object kind is separated inside that digest, never here.
+pub const AGENT_GUARANTOR_MESSAGE_BYTES: usize = 32;
+
 /// The longest message an ML-DSA-44 controller signs here, the bound
 /// PQCHECKSIG_MLDSA44 applies on chain.
 pub const ML_DSA_44_MAX_MESSAGE_BYTES: usize = 8192;
 
 /// The contexts a registry controller key signs under. Each names one use, so
 /// a signature made for one can never be accepted as another.
-pub const CONTROLLER_SIGNATURE_CONTEXTS: [&[u8]; 3] = [
+pub const CONTROLLER_SIGNATURE_CONTEXTS: [&[u8]; 4] = [
     NATIVE_REGISTRY_SIGNATURE_CONTEXT,
     AGENT_PACKET_SIGNATURE_CONTEXT,
     AGENT_CONTACT_SIGNATURE_CONTEXT,
+    AGENT_GUARANTOR_SIGNATURE_CONTEXT,
 ];
 
 fn require_controller_context(context: &[u8]) -> Result<()> {
@@ -1112,6 +1122,24 @@ mod context_tests {
             }
         }
         Ok(())
+    }
+
+    /// The list is pinned by its literal bytes, so dropping or renaming a
+    /// context fails here even though the loop above iterates the list.
+    #[test]
+    fn controller_contexts_are_exactly_the_four_uses() {
+        let expected: [&[u8]; 4] = [
+            b"TOS-NATIVE-REGISTRY",
+            b"TOS-AGENT-PACKET-V1",
+            b"TOS-AGENT-CONTACT-V1",
+            b"TOS-AGENT-GUARANTOR-V1",
+        ];
+        assert_eq!(CONTROLLER_SIGNATURE_CONTEXTS, expected);
+        assert_eq!(AGENT_GUARANTOR_SIGNATURE_CONTEXT.len(), 22);
+        assert!(
+            !CONTROLLER_SIGNATURE_CONTEXTS
+                .contains(&crate::service_actor::SERVICE_ACTOR_RESPOND_CONTEXT)
+        );
     }
 
     #[test]

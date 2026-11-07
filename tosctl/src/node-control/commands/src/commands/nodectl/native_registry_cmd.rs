@@ -81,7 +81,8 @@ enum NativeRegistrySubcommand {
     NewController(NewControllerCmd),
     /// Print a registry controller's public key and key id
     Controller(ControllerCmd),
-    /// Sign a registry action or an Agent packet / contact card with a controller
+    /// Sign a registry action, an Agent packet / contact card or a Guarantor
+    /// authorization with a controller
     Sign(SignCmd),
     /// Verify an ML-DSA-44 controller signature under a named context
     Verify(VerifyCmd),
@@ -530,6 +531,8 @@ enum SignatureUse {
     AgentPacket,
     /// An Agent contact card preimage
     AgentContact,
+    /// An Agent Guarantor object authorization (its 32-byte message digest)
+    AgentGuarantor,
 }
 
 impl SignatureUse {
@@ -538,6 +541,7 @@ impl SignatureUse {
             Self::Registry => NATIVE_REGISTRY_SIGNATURE_CONTEXT,
             Self::AgentPacket => AGENT_PACKET_SIGNATURE_CONTEXT,
             Self::AgentContact => AGENT_CONTACT_SIGNATURE_CONTEXT,
+            Self::AgentGuarantor => AGENT_GUARANTOR_SIGNATURE_CONTEXT,
         }
     }
 }
@@ -546,7 +550,8 @@ impl SignatureUse {
 const MAX_ACTION_BOC_BYTES: u64 = 64 << 10;
 
 /// The bytes a signature for `usage` covers: the hash of a registry action
-/// read from `action_boc`, or the message given in hex for the other uses.
+/// read from `action_boc`, or the message given in hex for the other uses. An
+/// Agent Guarantor message is exactly the 32-byte section 9 digest.
 fn signed_message(
     usage: SignatureUse,
     action_boc: Option<&Path>,
@@ -567,10 +572,16 @@ fn signed_message(
             let message =
                 hex::decode(text.strip_prefix("0x").unwrap_or(text)).context("--message-hex")?;
             anyhow::ensure!(!message.is_empty(), "--message-hex must not be empty");
+            anyhow::ensure!(
+                usage != SignatureUse::AgentGuarantor
+                    || message.len() == AGENT_GUARANTOR_MESSAGE_BYTES,
+                "an Agent Guarantor signature covers its {AGENT_GUARANTOR_MESSAGE_BYTES}-byte message digest, not {} bytes",
+                message.len()
+            );
             Ok(message)
         }
         _ => anyhow::bail!(
-            "an Agent packet or contact signature covers --message-hex, not an action"
+            "an Agent packet, contact or Guarantor signature covers --message-hex, not an action"
         ),
     }
 }
@@ -580,13 +591,15 @@ fn signed_message(
 /// `registry` (TOS-NATIVE-REGISTRY, over the hash of a complete canonical
 /// registry action cell, never over a bare hash), `agent-packet`
 /// (TOS-AGENT-PACKET-V1) and `agent-contact` (TOS-AGENT-CONTACT-V1), both over
-/// the given message bytes.
+/// the given message bytes, and `agent-guarantor` (TOS-AGENT-GUARANTOR-V1),
+/// over exactly the 32-byte digest of a Guarantor authorization statement.
 ///
 /// It reads no chain state. A signature it makes proves only that this
 /// controller signed these bytes: it is not authorization. Whether a registry
 /// action is authorized is decided by the contract against the live policy
-/// when the action executes, and a packet or contact card is trusted only
-/// after its key is checked against the sender's finalized policy.
+/// when the action executes, and a packet, contact card or Guarantor object is
+/// trusted only after its key is checked against the signer's finalized
+/// policy.
 #[derive(clap::Args, Clone)]
 struct SignCmd {
     #[arg(long, help = "Registry controller (vault secret native-registry-<name>)")]
@@ -595,7 +608,10 @@ struct SignCmd {
     usage: SignatureUse,
     #[arg(long, help = "Action BOC file (registry signatures)")]
     action_boc: Option<PathBuf>,
-    #[arg(long, help = "Message in hex (Agent packet or contact signatures)")]
+    #[arg(
+        long,
+        help = "Message in hex (Agent packet or contact signatures; the 32-byte digest for agent-guarantor)"
+    )]
     message_hex: Option<String>,
     #[arg(short, long, default_value = "json")]
     format: OutputFormat,
@@ -603,12 +619,18 @@ struct SignCmd {
 
 impl SignCmd {
     async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+        // The message is checked before the vault is opened.
+        signed_message(self.usage, self.action_boc.as_deref(), self.message_hex.as_deref())?;
+        let (_, vault) = super::utils::load_config_vault(Path::new(config_path)).await?;
+        print_view(&self.sign_in(&vault).await?, &self.format)
+    }
+
+    async fn sign_in(&self, vault: &SecretVault) -> anyhow::Result<serde_json::Value> {
         let message =
             signed_message(self.usage, self.action_boc.as_deref(), self.message_hex.as_deref())?;
-        let (_, vault) = super::utils::load_config_vault(Path::new(config_path)).await?;
-        let seed = read_controller_seed(&vault, &self.controller).await?;
+        let seed = read_controller_seed(vault, &self.controller).await?;
         let signed = sign_ml_dsa_44(&seed, &message, self.usage.context())?;
-        print_view(&signature_view(self.usage, &message, &signed)?, &self.format)
+        signature_view(self.usage, &message, &signed)
     }
 }
 
@@ -637,7 +659,10 @@ struct VerifyCmd {
     usage: SignatureUse,
     #[arg(long, help = "Action BOC file (registry signatures)")]
     action_boc: Option<PathBuf>,
-    #[arg(long, help = "Message in hex (Agent packet or contact signatures)")]
+    #[arg(
+        long,
+        help = "Message in hex (Agent packet or contact signatures; the 32-byte digest for agent-guarantor)"
+    )]
     message_hex: Option<String>,
     #[arg(long, help = "1,312-byte ML-DSA-44 public key in hex")]
     public_key_hex: String,
@@ -1527,9 +1552,192 @@ mod tests {
         assert!(verify(SignatureUse::Registry, &hash).is_ok());
         assert!(verify(SignatureUse::AgentPacket, &hash).is_err());
         assert!(verify(SignatureUse::AgentContact, &hash).is_err());
+        assert!(verify(SignatureUse::AgentGuarantor, &hash).is_err());
         let mut other = hash.clone();
         other[0] ^= 1;
         assert!(verify(SignatureUse::Registry, &other).is_err());
+    }
+
+    const ALL_USES: [SignatureUse; 4] = [
+        SignatureUse::Registry,
+        SignatureUse::AgentPacket,
+        SignatureUse::AgentContact,
+        SignatureUse::AgentGuarantor,
+    ];
+
+    /// A signature made for any one use verifies under that use and is refused
+    /// under each of the other three, in both directions.
+    #[test]
+    fn every_use_refuses_every_other_uses_signature() {
+        let message = [0x3c; 32];
+        for (i, usage) in ALL_USES.iter().enumerate() {
+            let signed = sign_ml_dsa_44(&[11; 32], &message, usage.context()).expect("sign");
+            for (j, other) in ALL_USES.iter().enumerate() {
+                let result = verify_ml_dsa_44(
+                    &signed.public_key,
+                    &signed.signature,
+                    &message,
+                    other.context(),
+                );
+                assert_eq!(result.is_ok(), i == j, "{usage:?} signature checked as {other:?}");
+            }
+        }
+    }
+
+    /// An Agent Guarantor signature covers exactly one 32-byte message digest,
+    /// given in hex, and never an action.
+    #[test]
+    fn agent_guarantor_messages_are_exactly_32_bytes() {
+        let dir = tempfile::tempdir().expect("dir");
+        let path = dir.path().join("action.boc");
+        std::fs::write(&path, chain_block::write_boc(&Cell::default()).expect("boc"))
+            .expect("write");
+        let digest = "ab".repeat(32);
+        let message = signed_message(SignatureUse::AgentGuarantor, None, Some(&digest))
+            .expect("a 32-byte digest");
+        assert_eq!(message, vec![0xab; 32]);
+        assert!(
+            signed_message(SignatureUse::AgentGuarantor, None, Some(&format!("0x{digest}")))
+                .is_ok()
+        );
+        for refused in ["", "ab", &"ab".repeat(31), &"ab".repeat(33), &"zz".repeat(32)] {
+            assert!(
+                signed_message(SignatureUse::AgentGuarantor, None, Some(refused)).is_err(),
+                "{refused:?} accepted"
+            );
+        }
+        assert!(signed_message(SignatureUse::AgentGuarantor, Some(&path), None).is_err());
+        assert!(signed_message(SignatureUse::AgentGuarantor, Some(&path), Some(&digest)).is_err());
+        assert!(signed_message(SignatureUse::AgentGuarantor, None, None).is_err());
+        // The packet and contact uses keep their variable-length messages.
+        assert!(signed_message(SignatureUse::AgentPacket, None, Some(&"ab".repeat(33))).is_ok());
+        assert!(signed_message(SignatureUse::AgentContact, None, Some("ab")).is_ok());
+    }
+
+    #[derive(clap::Parser)]
+    struct TestCli {
+        #[command(subcommand)]
+        command: NativeRegistrySubcommand,
+    }
+
+    fn parse(args: &[&str]) -> Result<NativeRegistrySubcommand, clap::Error> {
+        use clap::Parser;
+        TestCli::try_parse_from(std::iter::once("native-registry").chain(args.iter().copied()))
+            .map(|cli| cli.command)
+    }
+
+    fn verify_with(
+        usage: &str,
+        message: &str,
+        public_key: &str,
+        signature: &str,
+    ) -> anyhow::Result<()> {
+        match parse(&[
+            "verify",
+            "--for",
+            usage,
+            "--message-hex",
+            message,
+            "--public-key-hex",
+            public_key,
+            "--signature-hex",
+            signature,
+        ])? {
+            NativeRegistrySubcommand::Verify(cmd) => cmd.run(),
+            _ => anyhow::bail!("not a verify command"),
+        }
+    }
+
+    /// `sign --for agent-guarantor` and `verify --for agent-guarantor` parse
+    /// through clap and run the real command code: a vault controller signs a
+    /// 32-byte digest, the signature verifies only as agent-guarantor and only
+    /// over that digest, and malformed requests are refused.
+    #[tokio::test]
+    async fn agent_guarantor_sign_and_verify_run_through_the_commands() {
+        let vault = super::super::utils::test_vault::with_ed25519_keys(&[]).await;
+        let vault = vault.open().await;
+        store_new_controller(&vault, "alice").await.expect("create controller");
+        let digest = "5e".repeat(32);
+        let sign = match parse(&[
+            "sign",
+            "--controller",
+            "alice",
+            "--for",
+            "agent-guarantor",
+            "--message-hex",
+            &digest,
+        ])
+        .expect("parse sign")
+        {
+            NativeRegistrySubcommand::Sign(cmd) => cmd,
+            _ => panic!("not a sign command"),
+        };
+        let view = sign.sign_in(&vault).await.expect("sign");
+        assert_eq!(view["context"], "TOS-AGENT-GUARANTOR-V1");
+        assert_eq!(view["message_hex"], digest.as_str());
+        let public_key = view["public_key"].as_str().expect("public key").to_owned();
+        let signature = view["signature"].as_str().expect("signature").to_owned();
+        verify_with("agent-guarantor", &digest, &public_key, &signature).expect("verifies");
+        for other in ["registry", "agent-packet", "agent-contact"] {
+            assert!(verify_with(other, &digest, &public_key, &signature).is_err(), "{other}");
+        }
+        let mut flipped = digest.clone();
+        flipped.replace_range(0..2, "5f");
+        assert!(verify_with("agent-guarantor", &flipped, &public_key, &signature).is_err());
+        for wrong in ["5e".repeat(31), "5e".repeat(33)] {
+            assert!(verify_with("agent-guarantor", &wrong, &public_key, &signature).is_err());
+        }
+        assert!(
+            parse(&[
+                "verify",
+                "--for",
+                "agent-guarantor-v2",
+                "--message-hex",
+                &digest,
+                "--public-key-hex",
+                &public_key,
+                "--signature-hex",
+                &signature
+            ])
+            .is_err()
+        );
+        for short in ["5e".repeat(31), "5e".repeat(33)] {
+            let refused = match parse(&[
+                "sign",
+                "--controller",
+                "alice",
+                "--for",
+                "agent-guarantor",
+                "--message-hex",
+                &short,
+            ])
+            .expect("parse sign")
+            {
+                NativeRegistrySubcommand::Sign(cmd) => cmd,
+                _ => panic!("not a sign command"),
+            };
+            assert!(refused.sign_in(&vault).await.is_err());
+        }
+        let dir = tempfile::tempdir().expect("dir");
+        let path = dir.path().join("action.boc");
+        std::fs::write(&path, chain_block::write_boc(&Cell::default()).expect("boc"))
+            .expect("write");
+        let path_text = path.to_str().expect("utf-8 path");
+        let with_action = match parse(&[
+            "sign",
+            "--controller",
+            "alice",
+            "--for",
+            "agent-guarantor",
+            "--action-boc",
+            path_text,
+        ])
+        .expect("parse sign")
+        {
+            NativeRegistrySubcommand::Sign(cmd) => cmd,
+            _ => panic!("not a sign command"),
+        };
+        assert!(with_action.sign_in(&vault).await.is_err());
     }
 
     /// A controller created in a real file vault reads back as the same key,
