@@ -37,6 +37,10 @@ jobs:
         run: scripts/test-tos-service-native-registry-v1.sh
       - name: Deployment entry points pin the released registry hash
         run: python3 scripts/test_tos_service_native_registry_release.py
+      - name: Reproduce the frozen Service Actor release
+        run: scripts/test-tos-service-actor-v1.sh
+      - name: Service Actor release check controls
+        run: python3 scripts/test_tos_service_actor_release.py
       - name: Verify the nominator pool code lock
         run: scripts/check-nominator-pool-code-lock.sh
       - name: Verify the single-nominator code lock

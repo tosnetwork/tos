@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Rebuild Service Actor; check or explicitly update the SDK's frozen bytecode."""
+"""Rebuild Service Actor; check or explicitly update the SDK's frozen bytecode.
+
+Two frozen copies are checked: the SDK constant SERVICE_ACTOR_CODE_B64 (by root
+cell hash) and the release artifact named by tos-service-actor-v1.release.json
+(byte for byte). --write refreshes both; the release manifest is refreshed by
+hand, and scripts/test-tos-service-actor-v1.sh refuses any drift between them.
+"""
 
 import argparse
 import base64
@@ -15,6 +21,13 @@ FIFT = Path(os.environ.get("FIFT_PATH", ROOT / "build/crypto/fift"))
 SOURCE = ROOT / "crypto/smartcont/service-actor-code.fc"
 STDLIB = ROOT / "crypto/smartcont/stdlib.fc"
 RUST = ROOT / "tosctl/src/node-control/contracts/src/service_actor.rs"
+ARTIFACT = ROOT / "crypto/smartcont/tos-service-actor-v1.boc.base64"
+
+
+def encode_artifact(boc: bytes) -> str:
+    """The artifact's line format: base64 wrapped at 76 columns, newline-terminated."""
+    text = base64.b64encode(boc).decode("ascii")
+    return "".join(text[i : i + 76] + "\n" for i in range(0, len(text), 76))
 
 
 def main() -> None:
@@ -64,6 +77,7 @@ def main() -> None:
     if args.write:
         encoded = base64.b64encode(generated).decode("ascii")
         RUST.write_text(rust_source[: match.start(1)] + encoded + rust_source[match.end(1) :])
+        ARTIFACT.write_text(encode_artifact(generated))
         print(f"Service Actor bytecode updated (repr_hash={hashes[0]})")
         return
 
@@ -73,6 +87,15 @@ def main() -> None:
         raise SystemExit(
             "Service Actor bytecode is stale: rebuild SERVICE_ACTOR_CODE_B64 "
             f"(generated {len(generated)} bytes, embedded {len(embedded)} bytes)"
+        )
+    # The release artifact is what the manifest pins, so its exact bytes count.
+    if not ARTIFACT.is_file():
+        raise SystemExit(f"Service Actor release artifact is missing: {ARTIFACT}")
+    frozen = base64.b64decode(b"".join(ARTIFACT.read_bytes().split()), validate=True)
+    if frozen != generated:
+        raise SystemExit(
+            "Service Actor release artifact is stale: the frozen artifact differs from the "
+            f"rebuild (generated {len(generated)} bytes, frozen {len(frozen)} bytes)"
         )
     print(f"Service Actor bytecode synchronized (repr_hash={hashes[0]})")
 
