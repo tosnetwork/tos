@@ -1,7 +1,7 @@
 {
  "schema": "tos.evidence.index.v1",
- "claim": "Each new check of the tosctl ML-DSA-44 Agent Account route can fail: removing the module's verifier, changing the signing context, dropping the staged-module precondition, accepting an envelope from any sender, or accepting a submission for another account each turns its test red",
- "reviewed_commit": "4477114d2",
+ "claim": "Each new check of the tosctl ML-DSA-44 Agent Account route can fail: removing the module's verifier, changing the signing context, dropping the staged-module precondition, accepting an envelope from any sender, or accepting a submission for another account each turns its test red; admitting claims while install fences the account, or counting a delivery whose action phase failed as committed, each also turns its test red",
+ "reviewed_commit": "f808068c1",
  "runner": "test/mldsa-auth/cli_route_mutations.py",
  "command": "cd <checkout> && FUNC_PATH=<func> FIFT_PATH=<fift> python3 test/mldsa-auth/cli_route_mutations.py <results.json>",
  "compiler": "FunC/Fift v0.4.6 build 392bc162e095cc34292eb9ea0709273407e06ca7",
@@ -84,6 +84,22 @@
    "exit": 101,
    "expected": "red",
    "marker": "an_mldsa_submission_is_journaled_only_when_every_layer_matches_the_claim",
+   "matched": true
+  },
+  {
+   "control": "epoch-change-fence-ignored",
+   "command": "cargo test -p contracts --lib -- an_epoch_change_fence_excludes_claims_until_it_is_lifted",
+   "exit": 101,
+   "expected": "red",
+   "marker": "an_epoch_change_fence_excludes_claims_until_it_is_lifted",
+   "matched": true
+  },
+  {
+   "control": "classifier-ignores-action-rollback",
+   "command": "cargo test -p commands --lib --no-default-features -- account_transactions_are_classified_by_module_envelope",
+   "exit": 101,
+   "expected": "red",
+   "marker": "account_transactions_are_classified_by_module_envelope_commit_and_transfer",
    "matched": true
   },
   {
