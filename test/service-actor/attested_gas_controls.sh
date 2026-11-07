@@ -64,6 +64,9 @@ case "${1:-}" in
     trace=${2:?empty trace directory}
     emulator=${3:?path to libemulator.so}
     mkdir -p "$trace"
+    # The tests run from tosctl/src: resolve the directory once, so recording,
+    # the emptiness check and the population check all name the same place.
+    trace=$(cd "$trace" && pwd)
     [[ -z "$(ls -A "$trace")" ]] || { echo "$trace is not empty" >&2; exit 1; }
     run_attested SERVICE_ACTOR_TRACE_DIR="$trace"
     python3 - "$trace" "$ADMISSION" "$PAYOUTS" <<'PY'
