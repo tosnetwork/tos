@@ -640,11 +640,11 @@ untriple make-block-limits 23 config!"""
 _PRODUCTION_BLOCK_LIMITS = """128 *Ki 512 *Ki 1 *Mi triple      // masterchain bytes: underload soft hard
 500000 1000000 2500000 triple     // masterchain gas
 1000 5000 10000 triple            // masterchain lt
-untriple make-block-limits 22 config!
+triple untriple make-block-limits 22 config!
 256 *Ki 1 *Mi 2 *Mi triple        // basechain bytes: underload soft hard
 2000000 10000000 20000000 triple  // basechain gas
 1000 5000 10000 triple            // basechain lt
-untriple make-block-limits 23 config!"""
+triple untriple make-block-limits 23 config!"""
 
 
 def _block_limits_fift(config: "NetworkConfig") -> str:

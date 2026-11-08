@@ -24,7 +24,8 @@ def test_production_profile_matches_the_canonical_genesis():
     assert "128 *Ki 512 *Ki 1 *Mi triple" in mc and "500000 1000000 2500000 triple" in mc
     assert "256 *Ki 1 *Mi 2 *Mi triple" in base and "2000000 10000000 20000000 triple" in base
     assert mc.count("1000 5000 10000 triple") == 1 and base.count("1000 5000 10000 triple") == 1
-    assert base.strip().endswith("make-block-limits 23 config!")
+    assert base.strip().endswith("triple untriple make-block-limits 23 config!")
+    assert mc.strip().endswith("triple untriple make-block-limits")
 
 
 def test_production_profile_refuses_a_multiplier():
