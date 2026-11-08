@@ -29,6 +29,7 @@ line-length = 100
 # older interpreters parse (for example parenthesised multi-type except clauses).
 target-version = "py312"
 include = [
+    "bench/**/*.py",
     "test/integration/**/*.py",
     "test/tostester/**/*.py",
     "test/shielded-pool/localnet/**/*.py",
@@ -109,7 +110,7 @@ ignore = [
 "scripts/x02_stage_a_child.py" = ["F821"]
 
 [tool.pyright]
-include = ["test/integration", "test/tostester", "test/shielded-pool/localnet"]
+include = ["bench", "test/integration", "test/tostester", "test/shielded-pool/localnet"]
 # The cell codec deliberately imports its mutually recursive representations
 # inside methods. Keep cycle diagnostics visible; runtime import and codec tests
 # check these deferred edges. Type and nullability errors remain blocking.
@@ -121,6 +122,12 @@ failOnWarnings = false
 # The local end-to-end tooling runs as scripts from its own directory and
 # borrows the test-only SOCKS peer from the relayer tests and the wallet
 # helpers from tostester, so those directories are its import roots.
+# The bench runs as scripts from its own directory and imports the tostester
+# client types, plus the public self-pay fixture generator in its tests.
+[[tool.pyright.executionEnvironments]]
+root = "bench"
+extraPaths = ["bench", "test/tostester/src", "scripts"]
+
 [[tool.pyright.executionEnvironments]]
 root = "test/shielded-pool/localnet"
 extraPaths = ["test/bonded-relayer", "tools/bonded-relayer", "test/tostester/src"]

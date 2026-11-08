@@ -1,0 +1,145 @@
+{
+  "run": "q-prod4",
+  "retention": "raw run directory q-prod4 retained on the bench host until at least 2027-02-08",
+  "command": "bench/run_local_bench.py --out q-prod4 --wallets 10000 --rates 50,100,200,300,400,500 --duration 300 --warmup 30 --drain 60 --max-senders 224 (all CPUs, no thermal guard)",
+  "exit_status": 0,
+  "source_commit": "015ea56694e37594edcdb20fbcdbf3ad5f241380",
+  "results_json_sha256": "a8d3edfa4283689b1cdf6a05a134db28c675b473cbe60ea860d8ffd7b2ac4ceb",
+  "chain_config_hashes": {
+    "20": "1fc56816279646db2089f77b406ffa09198c91a9629434e2064100fcf855eaba",
+    "21": "f234321cd45598123049a923f2990baf3deee03b197912e02c6fd5e1983b019d",
+    "22": "c7c618e3419b0d556df4caf5f5b818e56ca42ed15aa98d46ab3580235fa340fe",
+    "23": "3fd7dd5f1b3f17a44fa38fd629c62f5e37e73eb16c1ea90b2211beb2368e390d",
+    "24": "3a6491d7abd1d5412f66b27a16f9455849b2b8d268feb982a61d6f1a24780ff2",
+    "25": "3a6491d7abd1d5412f66b27a16f9455849b2b8d268feb982a61d6f1a24780ff2"
+  },
+  "raw_files": [
+    {
+      "path": "bench.log",
+      "sha256": "6b81fbbe221caf02906f4fcba2ae196e111a4ce6da782249c079d031848e81b4",
+      "bytes": 21021
+    },
+    {
+      "path": "stage-quantum-100/blocks.csv",
+      "sha256": "53356905c92980efb00e9d0ffe4ab83beea3a90bfed553ba1be046f59c52fd94",
+      "bytes": 40083
+    },
+    {
+      "path": "stage-quantum-200/blocks.csv",
+      "sha256": "6a554e3316da8c04e52b27d33e66cded601a65ad093db6b9ef9802e22578c597",
+      "bytes": 40286
+    },
+    {
+      "path": "stage-quantum-300/blocks.csv",
+      "sha256": "92d8c20fc9f0a30e9ba330e555d812a0c29531384d08d219ce32c285dfc0f6cb",
+      "bytes": 40593
+    },
+    {
+      "path": "stage-quantum-400/blocks.csv",
+      "sha256": "3782bae18ebb00b4e842c9ee4dbaf7aef5e9f199b62a4f433bb9bd246116300d",
+      "bytes": 41300
+    },
+    {
+      "path": "stage-quantum-50/blocks.csv",
+      "sha256": "e627f63145c3b293c5a759fa804236c03ea184d1b05e9fbbd9c315cd3db6cbda",
+      "bytes": 37963
+    },
+    {
+      "path": "stage-quantum-500/blocks.csv",
+      "sha256": "ecc67e76ce4427f41a13dfffb829b69ad10d7a38d2cf2be3e515801c39afb741",
+      "bytes": 41122
+    },
+    {
+      "path": "stage-quantum-100/timeline.csv",
+      "sha256": "787096126da5a78f908da4322825411f4f2b7e4f13278e4335ac9a13d83f571f",
+      "bytes": 6259
+    },
+    {
+      "path": "stage-quantum-200/timeline.csv",
+      "sha256": "88a61defc95f107ca66d0d1e9ae3555c36e2c5f8bbe78f5995b23f01679404ee",
+      "bytes": 6308
+    },
+    {
+      "path": "stage-quantum-300/timeline.csv",
+      "sha256": "2604ee6c05dae597e489331ae11f234908fe8167e6b42e6c7e0cba9a623c178c",
+      "bytes": 6371
+    },
+    {
+      "path": "stage-quantum-400/timeline.csv",
+      "sha256": "3454c7b82fe99a664c11d8ef9b4f62daa917ca23815a443ed7ea6f404ea6a3a7",
+      "bytes": 6534
+    },
+    {
+      "path": "stage-quantum-50/timeline.csv",
+      "sha256": "3bb2feb13eb159dac8f994c1591c687ab252ff5810962a5475f81cfb533438ee",
+      "bytes": 5724
+    },
+    {
+      "path": "stage-quantum-500/timeline.csv",
+      "sha256": "29be2492bd1e6c7c54e8af54f7eb2877e02894b1d7bf8bd54f479c5529c6cac0",
+      "bytes": 6663
+    },
+    {
+      "path": "stage-quantum-100/result.json",
+      "sha256": "f6f8a5b04b021538f75819cf1aa5c70c75aac74fd199b0ad0de753e48df60104",
+      "bytes": 2420
+    },
+    {
+      "path": "stage-quantum-200/result.json",
+      "sha256": "77616f0c921940564e5e6768b932ab56603ad4218a789360edf383a4351253c3",
+      "bytes": 2453
+    },
+    {
+      "path": "stage-quantum-300/result.json",
+      "sha256": "d7191d6e30e34bbceb4696a1e6256e2306a228cc9282d3580606555b50d57767",
+      "bytes": 2991
+    },
+    {
+      "path": "stage-quantum-400/result.json",
+      "sha256": "ddb50c36e7a2d1ad28679b9225a3c61423452360e1ae97f33964f61497d0c8c2",
+      "bytes": 2996
+    },
+    {
+      "path": "stage-quantum-50/result.json",
+      "sha256": "c5d1f6ff57921bbdb9d5ab7f44e1bab5c22e7ad7a176af62d3c0732ef7cde5b8",
+      "bytes": 2415
+    },
+    {
+      "path": "stage-quantum-500/result.json",
+      "sha256": "6b77ae5ae8e686ffae4d09e27e7f18f93d6839dbbd819aac6622f2a8f240ad68",
+      "bytes": 3039
+    },
+    {
+      "path": "contracts/quantum.boc",
+      "sha256": "adf93fa2da67f97dfd8c30610a0ee029aa12c400a0111b49db363462bd8e8a63",
+      "bytes": 1596
+    },
+    {
+      "path": "contracts/contracts.json",
+      "sha256": "b2166b6fe88bb6dfab1ad0f11eac1176ebe32acef0c16b8434882b021df8ff5f",
+      "bytes": 254
+    },
+    {
+      "path": "network/node1/session-logs",
+      "sha256": "4fea059db32df92956f4842f327d2df5374e59f8534b35f87b7ae6c021f3bb86",
+      "bytes": 108263390
+    },
+    {
+      "path": "network/node2/session-logs",
+      "sha256": "854fec7199d611fa5834405326cc9445ac3279a059ee49d81e3bfc3696e08374",
+      "bytes": 108479156
+    },
+    {
+      "path": "network/node3/session-logs",
+      "sha256": "6af73d064e346bdc9c6d92ddc9c7de645411f2f9154dc97d34e9fb8918bc78f1",
+      "bytes": 108428264
+    },
+    {
+      "path": "network/node4/session-logs",
+      "sha256": "40859e8b85dcb444e3a60821500e7035c997f8409afca04af7d75bd3f6919978",
+      "bytes": 108324512
+    }
+  ],
+  "source_note": "measured at 015ea5669; later commits (2829f26bd onward) add ingress full nodes and chunked wallet derivation and change the stage classifier, not this run's measurement",
+  "console_output_note": "the console capture of this run was overwritten by a second launcher invocation after results.json was written; bench.log (indexed) holds the full progress log"
+}

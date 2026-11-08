@@ -1,0 +1,885 @@
+{
+  "scope": "LOCAL_ENGINEERING_EVIDENCE_ONLY: one host, co-located validators; not public capacity",
+  "workload": "self-pay Quantum wallet, ML-DSA-44 PRIMARY, one external per transfer",
+  "source_commit": "015ea56694e37594edcdb20fbcdbf3ad5f241380",
+  "host": {
+    "platform": "Linux-6.8.0-138-generic-x86_64-with-glibc2.35",
+    "cpus": 192,
+    "affinity": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24,
+      25,
+      26,
+      27,
+      28,
+      29,
+      30,
+      31,
+      32,
+      33,
+      34,
+      35,
+      36,
+      37,
+      38,
+      39,
+      40,
+      41,
+      42,
+      43,
+      44,
+      45,
+      46,
+      47,
+      48,
+      49,
+      50,
+      51,
+      52,
+      53,
+      54,
+      55,
+      56,
+      57,
+      58,
+      59,
+      60,
+      61,
+      62,
+      63,
+      64,
+      65,
+      66,
+      67,
+      68,
+      69,
+      70,
+      71,
+      72,
+      73,
+      74,
+      75,
+      76,
+      77,
+      78,
+      79,
+      80,
+      81,
+      82,
+      83,
+      84,
+      85,
+      86,
+      87,
+      88,
+      89,
+      90,
+      91,
+      92,
+      93,
+      94,
+      95,
+      96,
+      97,
+      98,
+      99,
+      100,
+      101,
+      102,
+      103,
+      104,
+      105,
+      106,
+      107,
+      108,
+      109,
+      110,
+      111,
+      112,
+      113,
+      114,
+      115,
+      116,
+      117,
+      118,
+      119,
+      120,
+      121,
+      122,
+      123,
+      124,
+      125,
+      126,
+      127,
+      128,
+      129,
+      130,
+      131,
+      132,
+      133,
+      134,
+      135,
+      136,
+      137,
+      138,
+      139,
+      140,
+      141,
+      142,
+      143,
+      144,
+      145,
+      146,
+      147,
+      148,
+      149,
+      150,
+      151,
+      152,
+      153,
+      154,
+      155,
+      156,
+      157,
+      158,
+      159,
+      160,
+      161,
+      162,
+      163,
+      164,
+      165,
+      166,
+      167,
+      168,
+      169,
+      170,
+      171,
+      172,
+      173,
+      174,
+      175,
+      176,
+      177,
+      178,
+      179,
+      180,
+      181,
+      182,
+      183,
+      184,
+      185,
+      186,
+      187,
+      188,
+      189,
+      190,
+      191
+    ]
+  },
+  "validators": 4,
+  "global_id": 3,
+  "block_limits": "production",
+  "block_limit_mul": 1,
+  "limits_profile": "production: ConfigParams 22/23 as the canonical genesis; see chain_config for the exact parameters",
+  "chain_config": {
+    "20": {
+      "hash": "1fc56816279646db2089f77b406ffa09198c91a9629434e2064100fcf855eaba",
+      "boc": "b5ee9c7201010101004c000094d1000000000000006400000000000003e8de00000000000a000000000000000f42400000000001312d000000000000002710000000003b9aca000000000005f5e100000000003b9aca00"
+    },
+    "21": {
+      "hash": "f234321cd45598123049a923f2990baf3deee03b197912e02c6fd5e1983b019d",
+      "boc": "b5ee9c7201010101004c000094d1000000000000006400000000000003e8de00000000000a000000000000000f424000000000000f42400000000000004e20000000003b9aca000000000005f5e100000000003b9aca00"
+    },
+    "22": {
+      "hash": "c7c618e3419b0d556df4caf5f5b818e56ca42ed15aa98d46ab3580235fa340fe",
+      "boc": "b5ee9c7201010101002a0000505dc3000200000008000000100000c30007a120000f4240002625a0c3000003e80000138800002710"
+    },
+    "23": {
+      "hash": "3fd7dd5f1b3f17a44fa38fd629c62f5e37e73eb16c1ea90b2211beb2368e390d",
+      "boc": "b5ee9c7201010101002a0000505dc3000400000010000000200000c3001e84800098968001312d00c3000003e80000138800002710"
+    },
+    "24": {
+      "hash": "3a6491d7abd1d5412f66b27a16f9455849b2b8d268feb982a61d6f1a24780ff2",
+      "boc": "b5ee9c72010101010023000042ea000000000000006400000000000a000000000000000a00000001800055555555"
+    },
+    "25": {
+      "hash": "3a6491d7abd1d5412f66b27a16f9455849b2b8d268feb982a61d6f1a24780ff2",
+      "boc": "b5ee9c72010101010023000042ea000000000000006400000000000a000000000000000a00000001800055555555"
+    }
+  },
+  "wallets": 10000,
+  "max_senders": 224,
+  "deployed_accounts": 10000,
+  "deploy_seconds": 64.8,
+  "wall_seconds": 2982.0,
+  "read_retries": 63532,
+  "stages": [
+    {
+      "workload": "quantum",
+      "offered_rate": 50.0,
+      "transfers_planned": 15000,
+      "messages_sent": 15000,
+      "messages_accepted_by_node": 15000,
+      "messages_refused_by_node": 0,
+      "refusal_reasons": {},
+      "transfers_executed": 15000,
+      "transfers_unaccounted": 0,
+      "executed_fraction": 1.0,
+      "send_seconds": 300.12,
+      "sign_seconds": 8.1,
+      "max_send_lag_s": 0.101,
+      "completed_transfer_rate": 49.98,
+      "steady_transfer_tps": 50.02,
+      "steady_total_tx_tps": 100.04,
+      "inclusion_latency_s": {
+        "p50": 1.464,
+        "p90": 4.83,
+        "p99": 5.611,
+        "max": 5.787,
+        "samples": 15000
+      },
+      "blocks": 977,
+      "max_tx_per_block": 156,
+      "steady_blocks": 676,
+      "steady_blocks_per_second": 2.503,
+      "mean_block_interval_s": 0.4,
+      "client_network_failures": 0,
+      "observer_late_blocks": 0,
+      "ingress": {
+        "connections": 30,
+        "max_sends_per_connection_per_10s": 17,
+        "connections_with_rate_limit_refusals": 0,
+        "admission_window": "30 externals per 10 s per client identity"
+      },
+      "admission_refusals": 0,
+      "below_offered_rate": false,
+      "non_chain_bottlenecks": [],
+      "saturated": false,
+      "requests_accepted": 15000,
+      "requests_accepted_but_not_delivered": 0,
+      "sink_value_gained_nanotos": 14999985952,
+      "sender_connections": 30,
+      "block_limits_evidence": {
+        "collations": 675,
+        "external_stop_reasons": {
+          "none (queue drained)": 658,
+          "timeout": 17
+        },
+        "transactions": {
+          "median": 16,
+          "max": 156
+        },
+        "bytes": {
+          "median": 50296,
+          "max": 433299
+        },
+        "estimated_bytes": {
+          "median": 49393,
+          "max": 462414
+        },
+        "gas": {
+          "median": 133752,
+          "max": 1304082
+        },
+        "lt_delta": {
+          "median": 14,
+          "max": 42
+        },
+        "cpu_seconds": {
+          "median": 0.011106,
+          "max": 0.090645
+        },
+        "soft_limits": {
+          "bytes": 1048576,
+          "gas": 10000000,
+          "lt_delta": 5000
+        },
+        "note": "bytes is the collated block's serialized size; the byte limits apply to the collator's estimate (estimated_bytes); records are per collation attempt and node"
+      },
+      "gas_sample": {
+        "quantum-wallet": {
+          "transactions": 24,
+          "gas_min": 509,
+          "gas_median": 16719,
+          "gas_max": 16719,
+          "fee_median_nanotos": 378892,
+          "aborted": 0
+        }
+      },
+      "cpu_package_celsius_end": [
+        76.0,
+        73.0
+      ],
+      "thermal_guard_events": [],
+      "thermal_guard": "none",
+      "valid": null
+    },
+    {
+      "workload": "quantum",
+      "offered_rate": 100.0,
+      "transfers_planned": 30000,
+      "messages_sent": 30000,
+      "messages_accepted_by_node": 30000,
+      "messages_refused_by_node": 0,
+      "refusal_reasons": {},
+      "transfers_executed": 30000,
+      "transfers_unaccounted": 0,
+      "executed_fraction": 1.0,
+      "send_seconds": 300.15,
+      "sign_seconds": 14.76,
+      "max_send_lag_s": 0.091,
+      "completed_transfer_rate": 99.95,
+      "steady_transfer_tps": 100.08,
+      "steady_total_tx_tps": 200.15,
+      "inclusion_latency_s": {
+        "p50": 2.19,
+        "p90": 4.976,
+        "p99": 5.611,
+        "max": 5.78,
+        "samples": 30000
+      },
+      "blocks": 980,
+      "max_tx_per_block": 312,
+      "steady_blocks": 676,
+      "steady_blocks_per_second": 2.502,
+      "mean_block_interval_s": 0.4,
+      "client_network_failures": 0,
+      "observer_late_blocks": 0,
+      "ingress": {
+        "connections": 60,
+        "max_sends_per_connection_per_10s": 17,
+        "connections_with_rate_limit_refusals": 0,
+        "admission_window": "30 externals per 10 s per client identity"
+      },
+      "admission_refusals": 0,
+      "below_offered_rate": false,
+      "non_chain_bottlenecks": [],
+      "saturated": false,
+      "requests_accepted": 30000,
+      "requests_accepted_but_not_delivered": 0,
+      "sink_value_gained_nanotos": 29999982062,
+      "sender_connections": 60,
+      "block_limits_evidence": {
+        "collations": 675,
+        "external_stop_reasons": {
+          "none (queue drained)": 646,
+          "timeout": 29
+        },
+        "transactions": {
+          "median": 20,
+          "max": 312
+        },
+        "bytes": {
+          "median": 61853,
+          "max": 811580
+        },
+        "estimated_bytes": {
+          "median": 61075,
+          "max": 911049
+        },
+        "gas": {
+          "median": 167190,
+          "max": 2608164
+        },
+        "lt_delta": {
+          "median": 22,
+          "max": 83
+        },
+        "cpu_seconds": {
+          "median": 0.011463,
+          "max": 0.125783
+        },
+        "soft_limits": {
+          "bytes": 1048576,
+          "gas": 10000000,
+          "lt_delta": 5000
+        },
+        "note": "bytes is the collated block's serialized size; the byte limits apply to the collator's estimate (estimated_bytes); records are per collation attempt and node"
+      },
+      "gas_sample": {
+        "quantum-wallet": {
+          "transactions": 32,
+          "gas_min": 16719,
+          "gas_median": 16719,
+          "gas_max": 16719,
+          "fee_median_nanotos": 378898,
+          "aborted": 0
+        }
+      },
+      "cpu_package_celsius_end": [
+        78.0,
+        88.0
+      ],
+      "thermal_guard_events": [],
+      "thermal_guard": "none",
+      "valid": null
+    },
+    {
+      "workload": "quantum",
+      "offered_rate": 200.0,
+      "transfers_planned": 60000,
+      "messages_sent": 60000,
+      "messages_accepted_by_node": 60000,
+      "messages_refused_by_node": 0,
+      "refusal_reasons": {},
+      "transfers_executed": 60000,
+      "transfers_unaccounted": 0,
+      "executed_fraction": 1.0,
+      "send_seconds": 300.21,
+      "sign_seconds": 27.22,
+      "max_send_lag_s": 0.101,
+      "completed_transfer_rate": 199.86,
+      "steady_transfer_tps": 200.02,
+      "steady_total_tx_tps": 399.08,
+      "inclusion_latency_s": {
+        "p50": 2.542,
+        "p90": 5.135,
+        "p99": 5.827,
+        "max": 6.212,
+        "samples": 60000
+      },
+      "blocks": 984,
+      "max_tx_per_block": 386,
+      "steady_blocks": 675,
+      "steady_blocks_per_second": 2.498,
+      "mean_block_interval_s": 0.4,
+      "client_network_failures": 0,
+      "observer_late_blocks": 0,
+      "ingress": {
+        "connections": 120,
+        "max_sends_per_connection_per_10s": 17,
+        "connections_with_rate_limit_refusals": 0,
+        "admission_window": "30 externals per 10 s per client identity"
+      },
+      "admission_refusals": 0,
+      "below_offered_rate": false,
+      "non_chain_bottlenecks": [],
+      "saturated": false,
+      "requests_accepted": 60000,
+      "requests_accepted_but_not_delivered": 0,
+      "sink_value_gained_nanotos": 59999982655,
+      "sender_connections": 120,
+      "block_limits_evidence": {
+        "collations": 676,
+        "external_stop_reasons": {
+          "none (queue drained)": 647,
+          "timeout": 29
+        },
+        "transactions": {
+          "median": 181.5,
+          "max": 386
+        },
+        "bytes": {
+          "median": 269958.5,
+          "max": 1313315
+        },
+        "estimated_bytes": {
+          "median": 389496.5,
+          "max": 1449685
+        },
+        "gas": {
+          "median": 334380.0,
+          "max": 4798353
+        },
+        "lt_delta": {
+          "median": 40.0,
+          "max": 116
+        },
+        "cpu_seconds": {
+          "median": 0.038016999999999995,
+          "max": 0.205212
+        },
+        "soft_limits": {
+          "bytes": 1048576,
+          "gas": 10000000,
+          "lt_delta": 5000
+        },
+        "note": "bytes is the collated block's serialized size; the byte limits apply to the collator's estimate (estimated_bytes); records are per collation attempt and node"
+      },
+      "gas_sample": {
+        "quantum-wallet": {
+          "transactions": 32,
+          "gas_min": 16719,
+          "gas_median": 16719,
+          "gas_max": 16719,
+          "fee_median_nanotos": 378885,
+          "aborted": 0
+        }
+      },
+      "cpu_package_celsius_end": [
+        79.0,
+        76.0
+      ],
+      "thermal_guard_events": [],
+      "thermal_guard": "none",
+      "valid": null
+    },
+    {
+      "workload": "quantum",
+      "offered_rate": 300.0,
+      "transfers_planned": 90000,
+      "messages_sent": 90000,
+      "messages_accepted_by_node": 89469,
+      "messages_refused_by_node": 531,
+      "refusal_reasons": {
+        "LITE_SERVER_UNKNOWN: cannot apply external message to current state : inbound external message rejected (1804)": 472,
+        "LITE_SERVER_NOTREADY: cannot apply external message to current state : external message source rate limit exceeded": 59
+      },
+      "transfers_executed": 89469,
+      "transfers_unaccounted": 531,
+      "executed_fraction": 0.9941,
+      "send_seconds": 300.28,
+      "sign_seconds": 43.18,
+      "max_send_lag_s": 0.101,
+      "completed_transfer_rate": 297.95,
+      "steady_transfer_tps": 298.19,
+      "steady_total_tx_tps": 596.37,
+      "inclusion_latency_s": {
+        "p50": 2.791,
+        "p90": 5.356,
+        "p99": 6.009,
+        "max": 6.618,
+        "samples": 89469
+      },
+      "blocks": 990,
+      "max_tx_per_block": 576,
+      "steady_blocks": 675,
+      "steady_blocks_per_second": 2.497,
+      "mean_block_interval_s": 0.4,
+      "client_network_failures": 0,
+      "observer_late_blocks": 0,
+      "ingress": {
+        "connections": 180,
+        "max_sends_per_connection_per_10s": 17,
+        "connections_with_rate_limit_refusals": 59,
+        "admission_window": "30 externals per 10 s per client identity"
+      },
+      "admission_refusals": 59,
+      "below_offered_rate": false,
+      "non_chain_bottlenecks": [
+        "node admission refusals"
+      ],
+      "saturated": false,
+      "requests_accepted": 89469,
+      "requests_accepted_but_not_delivered": 0,
+      "sink_value_gained_nanotos": 89468969323,
+      "sender_connections": 180,
+      "block_limits_evidence": {
+        "collations": 675,
+        "external_stop_reasons": {
+          "block_full bytes": 168,
+          "none (queue drained)": 474,
+          "timeout": 33
+        },
+        "transactions": {
+          "median": 64,
+          "max": 539
+        },
+        "bytes": {
+          "median": 187416,
+          "max": 1472959
+        },
+        "estimated_bytes": {
+          "median": 192545,
+          "max": 1638410
+        },
+        "gas": {
+          "median": 535008,
+          "max": 5400237
+        },
+        "lt_delta": {
+          "median": 54,
+          "max": 64
+        },
+        "cpu_seconds": {
+          "median": 0.034115,
+          "max": 0.26284
+        },
+        "full_blocks": {
+          "count": 168,
+          "transactions_median": 322.0,
+          "bytes_median": 1466834.5,
+          "estimated_bytes_median": 1634876.5,
+          "gas_median": 5383518.0,
+          "cpu_seconds_median": 0.18672450000000002
+        },
+        "soft_limits": {
+          "bytes": 1048576,
+          "gas": 10000000,
+          "lt_delta": 5000
+        },
+        "note": "bytes is the collated block's serialized size; the byte limits apply to the collator's estimate (estimated_bytes); records are per collation attempt and node"
+      },
+      "gas_sample": {
+        "quantum-wallet": {
+          "transactions": 32,
+          "gas_min": 16719,
+          "gas_median": 16719,
+          "gas_max": 16719,
+          "fee_median_nanotos": 378883,
+          "aborted": 0
+        }
+      },
+      "cpu_package_celsius_end": [
+        76.0,
+        75.0
+      ],
+      "thermal_guard_events": [],
+      "thermal_guard": "none",
+      "valid": null
+    },
+    {
+      "workload": "quantum",
+      "offered_rate": 400.0,
+      "transfers_planned": 120000,
+      "messages_sent": 120000,
+      "messages_accepted_by_node": 118764,
+      "messages_refused_by_node": 1236,
+      "refusal_reasons": {
+        "LITE_SERVER_UNKNOWN: cannot apply external message to current state : inbound external message rejected (1804)": 1133,
+        "LITE_SERVER_NOTREADY: cannot apply external message to current state : external message source rate limit exceeded": 103
+      },
+      "transfers_executed": 118764,
+      "transfers_unaccounted": 1236,
+      "executed_fraction": 0.9897,
+      "send_seconds": 300.31,
+      "sign_seconds": 69.98,
+      "max_send_lag_s": 0.101,
+      "completed_transfer_rate": 395.47,
+      "steady_transfer_tps": 395.96,
+      "steady_total_tx_tps": 791.07,
+      "inclusion_latency_s": {
+        "p50": 2.804,
+        "p90": 5.363,
+        "p99": 6.203,
+        "max": 6.874,
+        "samples": 118764
+      },
+      "blocks": 996,
+      "max_tx_per_block": 556,
+      "steady_blocks": 675,
+      "steady_blocks_per_second": 2.497,
+      "mean_block_interval_s": 0.4,
+      "client_network_failures": 0,
+      "observer_late_blocks": 0,
+      "ingress": {
+        "connections": 224,
+        "max_sends_per_connection_per_10s": 19,
+        "connections_with_rate_limit_refusals": 103,
+        "admission_window": "30 externals per 10 s per client identity"
+      },
+      "admission_refusals": 103,
+      "below_offered_rate": false,
+      "non_chain_bottlenecks": [
+        "node admission refusals"
+      ],
+      "saturated": false,
+      "requests_accepted": 118764,
+      "requests_accepted_but_not_delivered": 0,
+      "sink_value_gained_nanotos": 118763939508,
+      "sender_connections": 224,
+      "block_limits_evidence": {
+        "collations": 675,
+        "external_stop_reasons": {
+          "block_full bytes": 268,
+          "none (queue drained)": 392,
+          "timeout": 15
+        },
+        "transactions": {
+          "median": 322,
+          "max": 555
+        },
+        "bytes": {
+          "median": 540765,
+          "max": 1473134
+        },
+        "estimated_bytes": {
+          "median": 687689,
+          "max": 1641288
+        },
+        "gas": {
+          "median": 1019859,
+          "max": 5400237
+        },
+        "lt_delta": {
+          "median": 18,
+          "max": 80
+        },
+        "cpu_seconds": {
+          "median": 0.099838,
+          "max": 0.274085
+        },
+        "full_blocks": {
+          "count": 268,
+          "transactions_median": 322.0,
+          "bytes_median": 1465087.0,
+          "estimated_bytes_median": 1635339.5,
+          "gas_median": 5366799.0,
+          "cpu_seconds_median": 0.188683
+        },
+        "soft_limits": {
+          "bytes": 1048576,
+          "gas": 10000000,
+          "lt_delta": 5000
+        },
+        "note": "bytes is the collated block's serialized size; the byte limits apply to the collator's estimate (estimated_bytes); records are per collation attempt and node"
+      },
+      "gas_sample": {
+        "quantum-wallet": {
+          "transactions": 32,
+          "gas_min": 16719,
+          "gas_median": 16719,
+          "gas_max": 16719,
+          "fee_median_nanotos": 378883,
+          "aborted": 0
+        }
+      },
+      "cpu_package_celsius_end": [
+        76.0,
+        83.0
+      ],
+      "thermal_guard_events": [],
+      "thermal_guard": "none",
+      "valid": null
+    },
+    {
+      "workload": "quantum",
+      "offered_rate": 500.0,
+      "transfers_planned": 150000,
+      "messages_sent": 150000,
+      "messages_accepted_by_node": 147573,
+      "messages_refused_by_node": 2427,
+      "refusal_reasons": {
+        "LITE_SERVER_UNKNOWN: cannot apply external message to current state : inbound external message rejected (1804)": 2323,
+        "LITE_SERVER_NOTREADY: cannot apply external message to current state : external message source rate limit exceeded": 104
+      },
+      "transfers_executed": 147573,
+      "transfers_unaccounted": 2427,
+      "executed_fraction": 0.9838,
+      "send_seconds": 300.3,
+      "sign_seconds": 66.54,
+      "max_send_lag_s": 0.101,
+      "completed_transfer_rate": 491.42,
+      "steady_transfer_tps": 480.91,
+      "steady_total_tx_tps": 960.79,
+      "inclusion_latency_s": {
+        "p50": 3.128,
+        "p90": 5.937,
+        "p99": 19.343,
+        "max": 36.522,
+        "samples": 147573
+      },
+      "blocks": 979,
+      "max_tx_per_block": 562,
+      "steady_blocks": 654,
+      "steady_blocks_per_second": 2.42,
+      "mean_block_interval_s": 0.413,
+      "client_network_failures": 0,
+      "observer_late_blocks": 7,
+      "ingress": {
+        "connections": 224,
+        "max_sends_per_connection_per_10s": 23,
+        "connections_with_rate_limit_refusals": 104,
+        "admission_window": "30 externals per 10 s per client identity"
+      },
+      "admission_refusals": 104,
+      "below_offered_rate": false,
+      "non_chain_bottlenecks": [
+        "node admission refusals",
+        "block scanner lagged the chain"
+      ],
+      "saturated": false,
+      "requests_accepted": 147573,
+      "requests_accepted_but_not_delivered": 0,
+      "sink_value_gained_nanotos": 147572934073,
+      "sender_connections": 224,
+      "block_limits_evidence": {
+        "collations": 662,
+        "external_stop_reasons": {
+          "block_full bytes": 337,
+          "none (queue drained)": 283,
+          "timeout": 42
+        },
+        "transactions": {
+          "median": 428.0,
+          "max": 561
+        },
+        "bytes": {
+          "median": 1360847.5,
+          "max": 1471514
+        },
+        "estimated_bytes": {
+          "median": 1632391.5,
+          "max": 1682150
+        },
+        "gas": {
+          "median": 3962403.0,
+          "max": 5400237
+        },
+        "lt_delta": {
+          "median": 5.0,
+          "max": 94
+        },
+        "cpu_seconds": {
+          "median": 0.173342,
+          "max": 0.283622
+        },
+        "full_blocks": {
+          "count": 337,
+          "transactions_median": 510,
+          "bytes_median": 1395930,
+          "estimated_bytes_median": 1662919,
+          "gas_median": 4313502,
+          "cpu_seconds_median": 0.197811
+        },
+        "soft_limits": {
+          "bytes": 1048576,
+          "gas": 10000000,
+          "lt_delta": 5000
+        },
+        "note": "bytes is the collated block's serialized size; the byte limits apply to the collator's estimate (estimated_bytes); records are per collation attempt and node"
+      },
+      "gas_sample": {
+        "quantum-wallet": {
+          "transactions": 32,
+          "gas_min": 16719,
+          "gas_median": 16719,
+          "gas_max": 16719,
+          "fee_median_nanotos": 378882,
+          "aborted": 0
+        }
+      },
+      "cpu_package_celsius_end": [
+        78.0,
+        88.0
+      ],
+      "thermal_guard_events": [],
+      "thermal_guard": "none",
+      "valid": null
+    }
+  ]
+}
