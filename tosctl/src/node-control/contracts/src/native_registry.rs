@@ -955,6 +955,17 @@ pub const AGENT_GUARANTOR_SIGNATURE_CONTEXT: &[u8] = b"TOS-AGENT-GUARANTOR-V1";
 /// statement. The object kind is separated inside that digest, never here.
 pub const AGENT_GUARANTOR_MESSAGE_BYTES: usize = 32;
 
+/// The ML-DSA-44 context of every Action Authority signature: an
+/// AuthorizedActionV1 proof, a WriterFenceV1 proof, a relay side-effect
+/// admission receipt and a Guarantor stage-action admission
+/// (SEMANTIC_ACTION_IDENTITY_V1.md section 9). The object kind is separated
+/// inside the 32-byte message digest, never by the context.
+pub const ACTION_AUTHORITY_SIGNATURE_CONTEXT: &[u8] = b"TOS-ACTION-AUTHORITY-V1";
+
+/// The exact length of the message an Action Authority signature covers: the
+/// 32-byte framed SHA-256 digest of its domain and canonical object.
+pub const ACTION_AUTHORITY_MESSAGE_BYTES: usize = 32;
+
 /// The longest message an ML-DSA-44 controller signs here, the bound
 /// PQCHECKSIG_MLDSA44 applies on chain.
 pub const ML_DSA_44_MAX_MESSAGE_BYTES: usize = 8192;
@@ -963,12 +974,13 @@ pub const ML_DSA_44_MAX_MESSAGE_BYTES: usize = 8192;
 /// a signature made for one can never be accepted as another.
 /// The Agent Account ML-DSA-44 authentication module's context is one of them:
 /// a controller key may also authorize Agent Account requests.
-pub const CONTROLLER_SIGNATURE_CONTEXTS: [&[u8]; 5] = [
+pub const CONTROLLER_SIGNATURE_CONTEXTS: [&[u8]; 6] = [
     NATIVE_REGISTRY_SIGNATURE_CONTEXT,
     AGENT_PACKET_SIGNATURE_CONTEXT,
     AGENT_CONTACT_SIGNATURE_CONTEXT,
     AGENT_GUARANTOR_SIGNATURE_CONTEXT,
     crate::agent_account_auth::MLDSA44_AUTH_CONTEXT,
+    ACTION_AUTHORITY_SIGNATURE_CONTEXT,
 ];
 
 fn require_controller_context(context: &[u8]) -> Result<()> {
@@ -1130,16 +1142,18 @@ mod context_tests {
     /// The list is pinned by its literal bytes, so dropping or renaming a
     /// context fails here even though the loop above iterates the list.
     #[test]
-    fn controller_contexts_are_exactly_the_five_uses() {
-        let expected: [&[u8]; 5] = [
+    fn controller_contexts_are_exactly_the_six_uses() {
+        let expected: [&[u8]; 6] = [
             b"TOS-NATIVE-REGISTRY",
             b"TOS-AGENT-PACKET-V1",
             b"TOS-AGENT-CONTACT-V1",
             b"TOS-AGENT-GUARANTOR-V1",
             b"TOS-AUTH-ML-DSA-44-v1",
+            b"TOS-ACTION-AUTHORITY-V1",
         ];
         assert_eq!(CONTROLLER_SIGNATURE_CONTEXTS, expected);
         assert_eq!(AGENT_GUARANTOR_SIGNATURE_CONTEXT.len(), 22);
+        assert_eq!(ACTION_AUTHORITY_SIGNATURE_CONTEXT.len(), 23);
         assert!(
             !CONTROLLER_SIGNATURE_CONTEXTS
                 .contains(&crate::service_actor::SERVICE_ACTOR_RESPOND_CONTEXT)
@@ -1448,6 +1462,316 @@ mod agent_guarantor_vector {
                 .is_err(),
                 "{} verified as a Guarantor authorization",
                 refusal.name
+            );
+        }
+        Ok(())
+    }
+}
+
+/// The Action Authority signature vector, shared with the service protocol
+/// implementation and the independent reference verifier. The key comes from a
+/// fixed public seed and every signature uses the FIPS 204 deterministic
+/// variant (all-zero randomness), so any implementation reproduces the bytes.
+///
+/// The committed file records every input: the canonical CBOR and domain of
+/// each signed object, from which the 32-byte message is the framed SHA-256
+/// `SHA-256(domain || 0x00 || uint32_be(len) || canonical)`. The check mode
+/// rebuilds the whole file from those inputs and the seed. With
+/// `ACTION_AUTHORITY_VECTOR_INPUTS=<inputs.json>` and
+/// `ACTION_AUTHORITY_VECTOR_OUT=<path>` the test writes a new vector for the
+/// given inputs instead of comparing.
+#[cfg(test)]
+mod action_authority_vector {
+    use super::*;
+    use fips204::Ph;
+    use fips204::ml_dsa_44;
+    use fips204::traits::{KeyGen, SerDes, Signer, Verifier};
+
+    const FIXTURE: &str =
+        include_str!("../tests/fixtures/native_registry/action-authority-signature-vector.json");
+    const SCHEMA: &str = "tos.action-authority-signature-vector.v1";
+    const SEED: [u8; 32] = [0x41; 32];
+    const ZERO_RANDOMNESS: [u8; 32] = [0; 32];
+    /// The four Action Authority signature domains (without the trailing NUL).
+    const DOMAINS: [&str; 4] = [
+        "tos.writer-fence.v1",
+        "tos.authorized-action-proof.v1",
+        "tos.agent-relay-side-effect-admission-receipt-signature.v1",
+        "tos.service.agent-guarantor-stage-action-admission-signature.v1",
+    ];
+    const DIFFERENTIAL_DOMAIN: &[u8] = b"tos.mldsa44-differential.v1";
+    const DIFFERENTIAL_LENGTHS: [usize; 6] = [0, 1, 32, 33, 1000, 8192];
+
+    #[derive(Clone, Copy, PartialEq)]
+    enum Mode {
+        Pure,
+        HashSha256,
+    }
+
+    fn framed_message(domain: &str, canonical: &[u8]) -> Vec<u8> {
+        let length = u32::try_from(canonical.len()).expect("canonical length");
+        let mut hash = Sha256::new();
+        hash.update(domain.as_bytes());
+        hash.update([0u8]);
+        hash.update(length.to_be_bytes());
+        hash.update(canonical);
+        hash.finalize().to_vec()
+    }
+
+    /// SHA-256 counter-mode bytes of the differential message for a seed and length.
+    fn differential_message(seed: &[u8; 32], length: usize) -> Vec<u8> {
+        let mut out = Vec::with_capacity(length + 32);
+        let mut counter: u32 = 0;
+        while out.len() < length {
+            let mut hash = Sha256::new();
+            hash.update(DIFFERENTIAL_DOMAIN);
+            hash.update(seed);
+            hash.update(u32::try_from(length).expect("length").to_be_bytes());
+            hash.update(counter.to_be_bytes());
+            out.extend_from_slice(&hash.finalize());
+            counter += 1;
+        }
+        out.truncate(length);
+        out
+    }
+
+    fn sign(secret: &ml_dsa_44::PrivateKey, mode: Mode, message: &[u8], context: &[u8]) -> Vec<u8> {
+        match mode {
+            Mode::Pure => secret.try_sign_with_seed(&ZERO_RANDOMNESS, message, context),
+            Mode::HashSha256 => {
+                secret.try_hash_sign_with_seed(&ZERO_RANDOMNESS, message, context, &Ph::SHA256)
+            }
+        }
+        .expect("deterministic signature")
+        .to_vec()
+    }
+
+    fn mode_name(mode: Mode) -> &'static str {
+        match mode {
+            Mode::Pure => "pure",
+            Mode::HashSha256 => "hash-sha256",
+        }
+    }
+
+    fn sha256_hex(bytes: &[u8]) -> String {
+        hex::encode(Sha256::digest(bytes))
+    }
+
+    /// (name, domain, canonical CBOR) of each signed object, in file order.
+    fn inputs(value: &serde_json::Value) -> Vec<(String, String, Vec<u8>)> {
+        value["messages"]
+            .as_array()
+            .expect("messages")
+            .iter()
+            .map(|entry| {
+                (
+                    entry["name"].as_str().expect("name").to_owned(),
+                    entry["signature_domain"].as_str().expect("signature_domain").to_owned(),
+                    hex::decode(entry["canonical_cbor_hex"].as_str().expect("canonical_cbor_hex"))
+                        .expect("canonical hex"),
+                )
+            })
+            .collect()
+    }
+
+    fn build(objects: &[(String, String, Vec<u8>)]) -> serde_json::Value {
+        assert_eq!(objects.len(), DOMAINS.len(), "one signed object per Action Authority domain");
+        for (index, (_, domain, _)) in objects.iter().enumerate() {
+            assert_eq!(domain, DOMAINS[index], "objects follow the domain order");
+        }
+        let (public_key, secret) = ml_dsa_44::KG::keygen_from_seed(&SEED);
+        let public_bytes = public_key.into_bytes().to_vec();
+        let messages: Vec<serde_json::Value> = objects
+            .iter()
+            .map(|(name, domain, canonical)| {
+                let message = framed_message(domain, canonical);
+                serde_json::json!({
+                    "name": name,
+                    "signature_domain": domain,
+                    "canonical_cbor_hex": hex::encode(canonical),
+                    "message_hex": hex::encode(&message),
+                    "signature_hex": hex::encode(sign(&secret, Mode::Pure, &message, ACTION_AUTHORITY_SIGNATURE_CONTEXT)),
+                })
+            })
+            .collect();
+        let (_, primary_domain, primary_canonical) = &objects[0];
+        let mut refusals = vec![(
+            "hash-ml-dsa-sha256".to_owned(),
+            Mode::HashSha256,
+            ACTION_AUTHORITY_SIGNATURE_CONTEXT,
+            primary_domain.clone(),
+        )];
+        let other_contexts: [(&str, &[u8]); 7] = [
+            ("empty-context", b""),
+            ("registry-context", NATIVE_REGISTRY_SIGNATURE_CONTEXT),
+            ("agent-packet-context", AGENT_PACKET_SIGNATURE_CONTEXT),
+            ("agent-contact-context", AGENT_CONTACT_SIGNATURE_CONTEXT),
+            ("agent-guarantor-context", AGENT_GUARANTOR_SIGNATURE_CONTEXT),
+            ("agent-account-auth-context", crate::agent_account_auth::MLDSA44_AUTH_CONTEXT),
+            ("service-actor-context", crate::service_actor::SERVICE_ACTOR_RESPOND_CONTEXT),
+        ];
+        for (name, context) in other_contexts {
+            refusals.push((name.to_owned(), Mode::Pure, context, primary_domain.clone()));
+        }
+        for domain in DOMAINS.iter().skip(1) {
+            refusals.push((
+                format!("domain-{domain}"),
+                Mode::Pure,
+                ACTION_AUTHORITY_SIGNATURE_CONTEXT,
+                (*domain).to_owned(),
+            ));
+        }
+        let refusals: Vec<serde_json::Value> = refusals
+            .iter()
+            .map(|(name, mode, context, domain)| {
+                let message = framed_message(domain, primary_canonical);
+                serde_json::json!({
+                    "name": name,
+                    "mode": mode_name(*mode),
+                    "context": String::from_utf8_lossy(context),
+                    "signature_domain": domain,
+                    "message_hex": hex::encode(&message),
+                    "signature_hex": hex::encode(sign(&secret, *mode, &message, context)),
+                })
+            })
+            .collect();
+        let long_context = vec![b'x'; 255];
+        let contexts: [&[u8]; 4] = [
+            ACTION_AUTHORITY_SIGNATURE_CONTEXT,
+            AGENT_GUARANTOR_SIGNATURE_CONTEXT,
+            b"",
+            &long_context,
+        ];
+        let mut differential = Vec::new();
+        for seed_byte in 0u8..16 {
+            let seed = [seed_byte; 32];
+            let (key, signing) = ml_dsa_44::KG::keygen_from_seed(&seed);
+            let key_bytes = key.into_bytes().to_vec();
+            for length in DIFFERENTIAL_LENGTHS {
+                let message = differential_message(&seed, length);
+                for context in contexts {
+                    differential.push(serde_json::json!({
+                        "seed_hex": hex::encode(seed),
+                        "mode": "pure",
+                        "context": String::from_utf8_lossy(context),
+                        "message_length": length,
+                        "public_key_sha256": sha256_hex(&key_bytes),
+                        "signature_sha256": sha256_hex(&sign(&signing, Mode::Pure, &message, context)),
+                    }));
+                }
+            }
+            if seed_byte < 4 {
+                let message = differential_message(&seed, 33);
+                differential.push(serde_json::json!({
+                    "seed_hex": hex::encode(seed),
+                    "mode": "hash-sha256",
+                    "context": String::from_utf8_lossy(ACTION_AUTHORITY_SIGNATURE_CONTEXT),
+                    "message_length": 33,
+                    "public_key_sha256": sha256_hex(&key_bytes),
+                    "signature_sha256": sha256_hex(&sign(&signing, Mode::HashSha256, &message,
+                        ACTION_AUTHORITY_SIGNATURE_CONTEXT)),
+                }));
+            }
+        }
+        serde_json::json!({
+            "schema": SCHEMA,
+            "seed_hex": hex::encode(SEED),
+            "context": String::from_utf8_lossy(ACTION_AUTHORITY_SIGNATURE_CONTEXT),
+            "public_key_hex": hex::encode(&public_bytes),
+            "key_id_hex": hex::encode(controller_key_id(&public_bytes).expect("key id")),
+            "messages": messages,
+            "refusals": refusals,
+            "differential": {
+                "message_rule": "SHA-256 counter mode: concatenate SHA-256(\"tos.mldsa44-differential.v1\" || seed || uint32_be(length) || uint32_be(counter)) for counter = 0, 1, ... and truncate to length",
+                "entries": differential,
+            },
+        })
+    }
+
+    #[test]
+    fn action_authority_vector_reproduces_and_refuses_every_other_use() -> Result<()> {
+        if let Ok(path) = std::env::var("ACTION_AUTHORITY_VECTOR_INPUTS") {
+            let given: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(path)?)?;
+            let built = build(&inputs(&given));
+            let out = std::env::var("ACTION_AUTHORITY_VECTOR_OUT")
+                .map_err(|_| anyhow!("ACTION_AUTHORITY_VECTOR_OUT names the output"))?;
+            let mut text = serde_json::to_string_pretty(&built)?;
+            text.push('\n');
+            std::fs::write(&out, text)?;
+            return Ok(());
+        }
+        let fixture: serde_json::Value = serde_json::from_str(FIXTURE)?;
+        assert_eq!(fixture["schema"], SCHEMA);
+        let built = build(&inputs(&fixture));
+        assert_eq!(
+            fixture, built,
+            "the committed vector differs from the one its inputs and seed produce"
+        );
+
+        let field = |value: &serde_json::Value, name: &str| -> Vec<u8> {
+            hex::decode(value[name].as_str().expect(name)).expect(name)
+        };
+        let public_bytes = field(&fixture, "public_key_hex");
+        let key = ml_dsa_44::PublicKey::try_from_bytes(
+            <[u8; NATIVE_REGISTRY_PUBLIC_KEY_BYTES]>::try_from(public_bytes.as_slice())
+                .map_err(|_| anyhow!("public key width"))?,
+        )
+        .map_err(|e| anyhow!("public key: {e}"))?;
+        let messages = fixture["messages"].as_array().expect("messages");
+        for (index, entry) in messages.iter().enumerate() {
+            let message = field(entry, "message_hex");
+            assert_eq!(message.len(), ACTION_AUTHORITY_MESSAGE_BYTES);
+            let signature = field(entry, "signature_hex");
+            verify_ml_dsa_44(
+                &public_bytes,
+                &signature,
+                &message,
+                ACTION_AUTHORITY_SIGNATURE_CONTEXT,
+            )?;
+            for other in CONTROLLER_SIGNATURE_CONTEXTS {
+                if other != ACTION_AUTHORITY_SIGNATURE_CONTEXT {
+                    assert!(verify_ml_dsa_44(&public_bytes, &signature, &message, other).is_err());
+                }
+            }
+            // A signature for one object kind never verifies as another.
+            for (other_index, other) in messages.iter().enumerate() {
+                if other_index != index {
+                    let other_message = field(other, "message_hex");
+                    assert!(
+                        verify_ml_dsa_44(
+                            &public_bytes,
+                            &signature,
+                            &other_message,
+                            ACTION_AUTHORITY_SIGNATURE_CONTEXT
+                        )
+                        .is_err()
+                    );
+                }
+            }
+        }
+        let primary = field(&messages[0], "message_hex");
+        for entry in fixture["refusals"].as_array().expect("refusals") {
+            let own_message = field(entry, "message_hex");
+            let refused = field(entry, "signature_hex");
+            let context = entry["context"].as_str().expect("context").as_bytes();
+            let signature = <[u8; NATIVE_REGISTRY_SIGNATURE_BYTES]>::try_from(refused.as_slice())
+                .map_err(|_| anyhow!("signature width"))?;
+            let own_valid = match entry["mode"].as_str().expect("mode") {
+                "pure" => key.verify(&own_message, &signature, context),
+                "hash-sha256" => key.hash_verify(&own_message, &signature, context, &Ph::SHA256),
+                other => bail!("unknown refusal mode {other}"),
+            };
+            assert!(own_valid, "{} is not a valid signature in its own mode", entry["name"]);
+            assert!(
+                verify_ml_dsa_44(
+                    &public_bytes,
+                    &refused,
+                    &primary,
+                    ACTION_AUTHORITY_SIGNATURE_CONTEXT
+                )
+                .is_err(),
+                "{} verified as the primary Action Authority signature",
+                entry["name"]
             );
         }
         Ok(())
