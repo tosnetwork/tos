@@ -11,11 +11,12 @@ import asyncio
 import base64
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 
+from contract import WalletV5State
 from pytosiq_core import Address, Cell, MessageAny
 from tosapi import toslib_api
 
-from contract import WalletV5State
 from toslib import ToslibClient
 
 BASECHAIN_SHARD = -(2**63)
@@ -30,14 +31,24 @@ SOURCE_SEND_RATE = 2.5
 # leave room for each node's read, deployment and scanner connections.
 SENDERS_PER_NODE = 56
 READ_ATTEMPTS = 8
-TRANSIENT_READ_ERRORS = ("admission limit exceeded", "NETWORKCancelled", "LITE_SERVER_NETWORK", "timeout")
+TRANSIENT_READ_ERRORS = (
+    "admission limit exceeded",
+    "NETWORKCancelled",
+    "LITE_SERVER_NETWORK",
+    "timeout",
+)
 
 
 class PacedClient:
     """A toslib client that never exceeds one liteserver connection's admission budget."""
 
-    def __init__(self, client: ToslibClient, name: str, qps: float = CONNECTION_QPS,
-                 inflight: int = CONNECTION_INFLIGHT):
+    def __init__(
+        self,
+        client: ToslibClient,
+        name: str,
+        qps: float = CONNECTION_QPS,
+        inflight: int = CONNECTION_INFLIGHT,
+    ):
         self.client, self.name, self.qps = client, name, qps
         self._gate = asyncio.Semaphore(inflight)
         self._next = 0.0
@@ -61,7 +72,9 @@ class PacedClient:
                 async with self._gate:
                     return await getattr(self.client, method)(*args)
             except Exception as error:
-                if attempt + 1 == attempts or not any(m in str(error) for m in TRANSIENT_READ_ERRORS):
+                if attempt + 1 == attempts or not any(
+                    m in str(error) for m in TRANSIENT_READ_ERRORS
+                ):
                     raise
                 self.retries += 1
                 await asyncio.sleep(min(5.0, 0.2 * 2**attempt))
@@ -122,6 +135,7 @@ class BlockRow:
     observed: float
     total: int
     by_class: dict[str, int]
+    block: object = None  # the block id, kept so a stage can measure sampled blocks
 
 
 @dataclass
@@ -153,7 +167,9 @@ class Scanner:
             by_class[name] = by_class.get(name, 0) + 1
             if key in self.track:
                 self.first_seen.setdefault(key, []).append(observed)
-        self.rows.append(BlockRow(seqno, int(header.gen_utime), observed, len(txs), by_class))
+        self.rows.append(
+            BlockRow(seqno, int(header.gen_utime), observed, len(txs), by_class, block)
+        )
 
     async def start_position(self) -> None:
         self.last_seqno = (await self._shard_head()).seqno
@@ -184,6 +200,7 @@ class SendRecord:
     sent: float
     ok: bool
     error: str | None
+    connection: str = ""
 
 
 async def paced_send(
@@ -248,7 +265,9 @@ async def account_active(pool: ClientPool, addresses: list[Address]) -> dict[byt
     return out
 
 
-async def config_snapshot(pool: ClientPool, params=(20, 21, 22, 23, 24, 25)) -> dict[str, dict]:
+async def config_snapshot(
+    pool: ClientPool, params=(20, 21, 22, 23, 24, 25)
+) -> dict[str, dict[str, str]]:
     """The live gas price, block limit and forwarding parameters every stage ran under."""
     out = {}
     for p in params:
@@ -257,7 +276,9 @@ async def config_snapshot(pool: ClientPool, params=(20, 21, 22, 23, 24, 25)) -> 
     return out
 
 
-async def gas_sample(pool: ClientPool, accounts: dict[str, list[Address]], per_class: int = 8) -> dict:
+async def gas_sample(
+    pool: ClientPool, accounts: dict[str, list[Address]], per_class: int = 8
+) -> dict[str, dict[str, int]]:
     """Measured compute gas and total fees of recent ordinary transactions, per account class."""
     from pytosiq_core import Transaction
 
@@ -292,7 +313,9 @@ async def gas_sample(pool: ClientPool, accounts: dict[str, list[Address]], per_c
     return report
 
 
-async def action_report(pool: ClientPool, address: Address, limit: int = 16) -> list[dict]:
+async def action_report(
+    pool: ClientPool, address: Address, limit: int = 16
+) -> list[dict[str, int | bool]]:
     """Action-phase outcome of an account's recent transactions (why an action was skipped)."""
     from pytosiq_core import Transaction
 
@@ -307,17 +330,19 @@ async def action_report(pool: ClientPool, address: Address, limit: int = 16) -> 
         action = getattr(parsed.description, "action", None)
         if action is None:
             continue
-        rows.append({
-            "lt": int(tx.transaction_id.lt),
-            "success": bool(action.success),
-            "result_code": int(action.result_code),
-            "no_funds": bool(action.no_funds),
-            "tot_actions": int(action.tot_actions),
-            "skipped_actions": int(action.skipped_actions),
-            "msgs_created": int(action.msgs_created),
-            "total_fwd_fees": int(action.total_fwd_fees or 0),
-            "balance_after": int(state.balance),
-        })
+        rows.append(
+            {
+                "lt": int(tx.transaction_id.lt),
+                "success": bool(action.success),
+                "result_code": int(action.result_code),
+                "no_funds": bool(action.no_funds),
+                "tot_actions": int(action.tot_actions),
+                "skipped_actions": int(action.skipped_actions),
+                "msgs_created": int(action.msgs_created),
+                "total_fwd_fees": int(action.total_fwd_fees or 0),
+                "balance_after": int(state.balance),
+            }
+        )
     return rows
 
 
@@ -330,3 +355,82 @@ async def read_data(pool: ClientPool, addresses: list[Address]) -> dict[bytes, C
 
     await asyncio.gather(*(one(a) for a in addresses))
     return out
+
+
+def _block_id_text(block) -> str:
+    """A block id in lite-client syntax: (wc,shard,seqno):ROOT:FILE."""
+    import base64 as b64
+
+    shard = block.shard & 0xFFFFFFFFFFFFFFFF
+    root = b64.b64decode(block.root_hash).hex().upper()
+    file = b64.b64decode(block.file_hash).hex().upper()
+    return f"({block.workchain},{shard:016x},{block.seqno}):{root}:{file}"
+
+
+async def block_bytes(lite_client: Path, config: Path, block) -> int:
+    """The block's serialized size, as the liteserver returns it (checked against its file hash)."""
+    import re
+
+    process = await asyncio.create_subprocess_exec(
+        str(lite_client),
+        "-C",
+        str(config),
+        "-v",
+        "3",
+        "-c",
+        f"getblock {_block_id_text(block)}",
+        "-c",
+        "quit",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+    )
+    out, _ = await asyncio.wait_for(process.communicate(), 60)
+    text = out.decode(errors="replace")
+    if "file hash mismatch" in text:
+        raise RuntimeError("liteserver returned a block whose file hash does not match")
+    match = re.search(r"obtained (\d+) data bytes for block", text)
+    if match is None:
+        raise RuntimeError("lite-client did not report the block size: " + text[-300:])
+    return int(match.group(1))
+
+
+async def block_gas(pool: ClientPool, block) -> tuple[int, int]:
+    """(transactions, total compute gas) of one block, from its full transaction list."""
+    from pytosiq_core import Transaction
+
+    gas = count = 0
+    after = None
+    while True:
+        mode = 7 + (128 if after is not None else 0)
+        request = toslib_api.Blocks_getTransactionsExtRequest(
+            id=block, mode=mode, count=256, after=after
+        )
+        reader = pool.pick()
+        await reader._slot(2)
+        async with reader._gate:
+            assert reader.client._toslib_wrapper is not None
+            result = request.parse_result(await reader.client._toslib_wrapper.execute(request))
+        for tx in result.transactions:
+            parsed = Transaction.deserialize(Cell.one_from_boc(tx.data).begin_parse())
+            used = getattr(getattr(parsed.description, "compute_ph", None), "gas_used", None)
+            gas += int(used or 0)
+            count += 1
+        if not result.incomplete:
+            return count, gas
+        last = result.transactions[-1]
+        after = toslib_api.Blocks_accountTransactionId(
+            account=Address(last.address.account_address).hash_part, lt=int(last.transaction_id.lt)
+        )
+
+
+def basechain_soft_limits(chain_config: dict[str, dict[str, str]]) -> tuple[int, int]:
+    """(bytes, gas) soft limits of the basechain from a ConfigParam 23 snapshot."""
+    s = Cell.one_from_boc(bytes.fromhex(chain_config["23"]["boc"])).begin_parse()
+    s.skip_bits(8)  # block_limits tag
+
+    def tiers():
+        s.skip_bits(8)
+        return s.load_uint(32), s.load_uint(32), s.load_uint(32)
+
+    byte_tiers, gas_tiers = tiers(), tiers()
+    return byte_tiers[1], gas_tiers[1]

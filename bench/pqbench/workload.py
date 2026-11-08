@@ -12,9 +12,8 @@ Keys are public test material derived from a public run seed.
 import hashlib
 from dataclasses import dataclass
 
-from pytosiq_core import Address, Builder, Cell, ExternalMsgInfo, MessageAny, StateInit
-
 from contract.pq_auth import transfer_message
+from pytosiq_core import Address, Builder, Cell, ExternalMsgInfo, MessageAny, StateInit
 
 ACTION_SEND_MSG = 0x0EC3C86D
 MAX_ACTIONS = 255
@@ -78,8 +77,18 @@ class QuantumWallet:
     network: bytes
 
     @classmethod
-    def derive(cls, code: Cell, global_id: int, network: bytes, run_seed: bytes, tag: str,
-               index: int, public_key: bytes, pq_seed: bytes, rescue: bytes | None = None):
+    def derive(
+        cls,
+        code: Cell,
+        global_id: int,
+        network: bytes,
+        run_seed: bytes,
+        tag: str,
+        index: int,
+        public_key: bytes,
+        pq_seed: bytes,
+        rescue: bytes | None = None,
+    ):
         if len(public_key) != PUBLIC_KEY_BYTES or len(network) != 32:
             raise ValueError("ML-DSA-44 public key and 32-byte AUTH namespace required")
         if type(global_id) is not int or not -(1 << 31) <= global_id < (1 << 31):
@@ -131,7 +140,11 @@ class QuantumWallet:
         return transfer_message(sender, self.address, value, init=self.state_init, bounce=False)
 
     def request(self, nonce: int, actions: list[MessageAny], deadline: int, epoch: int = 0) -> Cell:
-        for name, value, bits in (("nonce", nonce, 64), ("deadline", deadline, 32), ("epoch", epoch, 64)):
+        for name, value, bits in (
+            ("nonce", nonce, 64),
+            ("deadline", deadline, 32),
+            ("epoch", epoch, 64),
+        ):
             if type(value) is not int or not 0 <= value < (1 << bits):
                 raise ValueError(f"{name} must fit uint{bits}")
         payload = Builder().store_uint(QSP_EXECUTE_TAG, 32).store_ref(out_list(actions)).end_cell()

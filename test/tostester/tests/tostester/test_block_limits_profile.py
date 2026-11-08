@@ -38,3 +38,40 @@ def test_production_profile_refuses_a_multiplier():
         )
     with pytest.raises(ValueError):
         _ = _block_limits_fift(NetworkConfig(auth_network_tag=bytes(32), block_limit_mul=0))
+
+
+def _triples(fift: str) -> list[list[int]]:
+    """Numeric (underload, soft, hard) triples in Fift text, with *Ki / *Mi expanded."""
+    import re
+
+    scale = {"*Ki": 1 << 10, "*Mi": 1 << 20}
+    out = []
+    for line in fift.splitlines():
+        code = line.split("//", 1)[0]
+        if not code.strip().endswith("triple") or "untriple" in code:
+            continue
+        tokens = code.split()[:-1]
+        values: list[int] = []
+        for token in tokens:
+            if token in scale:
+                values[-1] *= scale[token]
+            elif re.fullmatch(r"\d+", token):
+                values.append(int(token))
+        if len(values) == 3:
+            out.append(values)
+    return out
+
+
+def test_production_profile_equals_gen_zerostate():
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[4]
+    canonical = (root / "crypto/smartcont/gen-zerostate.fif").read_text()
+    start = canonical.index("// masterchain block limits")
+    end = canonical.index("config.block_limits!", start)
+    expected = _triples(canonical[start:end])
+    profile = _block_limits_fift(
+        NetworkConfig(auth_network_tag=bytes(32), production_block_limits=True)
+    )
+    assert len(expected) == 6
+    assert _triples(profile) == expected

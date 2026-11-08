@@ -12,7 +12,6 @@
 //
 // Output lines are in input order. Any malformed line or failed self-check
 // aborts the whole batch with a non-zero exit and no partial output.
-#include "mldsa_native.h"
 #include <array>
 #include <atomic>
 #include <cstdint>
@@ -23,6 +22,8 @@
 #include <thread>
 #include <vector>
 
+#include "mldsa_native.h"
+
 namespace {
 
 constexpr std::size_t kMaxMessage = 8192;
@@ -31,14 +32,18 @@ constexpr std::size_t kMaxLines = 10'000'000;
 constexpr unsigned kMaxThreads = 256;
 
 int nibble(char c) {
-  if (c >= '0' && c <= '9') return c - '0';
-  if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-  if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+  if (c >= '0' && c <= '9')
+    return c - '0';
+  if (c >= 'a' && c <= 'f')
+    return c - 'a' + 10;
+  if (c >= 'A' && c <= 'F')
+    return c - 'A' + 10;
   throw std::runtime_error("bad hex digit");
 }
 
 std::vector<uint8_t> unhex(const std::string& s, std::size_t limit) {
-  if (s.size() % 2 != 0 || s.size() / 2 > limit) throw std::runtime_error("bad hex length");
+  if (s.size() % 2 != 0 || s.size() / 2 > limit)
+    throw std::runtime_error("bad hex length");
   std::vector<uint8_t> out(s.size() / 2);
   for (std::size_t i = 0; i < out.size(); ++i) {
     out[i] = static_cast<uint8_t>(nibble(s[2 * i]) * 16 + nibble(s[2 * i + 1]));
@@ -67,7 +72,8 @@ Job parse_line(const std::string& line, bool with_message) {
   std::string message_hex;
   auto space = line.find(' ');
   if (with_message) {
-    if (space == std::string::npos) throw std::runtime_error("sign line needs SEED_HEX MESSAGE_HEX");
+    if (space == std::string::npos)
+      throw std::runtime_error("sign line needs SEED_HEX MESSAGE_HEX");
     seed_hex = line.substr(0, space);
     message_hex = line.substr(space + 1);
     if (message_hex.empty() || message_hex.find(' ') != std::string::npos) {
@@ -77,18 +83,21 @@ Job parse_line(const std::string& line, bool with_message) {
     throw std::runtime_error("public line needs exactly one field");
   }
   auto seed = unhex(seed_hex, MLDSA_SEEDBYTES);
-  if (seed.size() != MLDSA_SEEDBYTES) throw std::runtime_error("seed must be 32 bytes");
+  if (seed.size() != MLDSA_SEEDBYTES)
+    throw std::runtime_error("seed must be 32 bytes");
   std::copy(seed.begin(), seed.end(), job.seed.begin());
   if (with_message) {
     job.message = unhex(message_hex, kMaxMessage);
-    if (job.message.empty()) throw std::runtime_error("empty message");
+    if (job.message.empty())
+      throw std::runtime_error("empty message");
   }
   return job;
 }
 
 unsigned parse_threads(int argc, char** argv, int first) {
   unsigned threads = std::thread::hardware_concurrency();
-  if (threads == 0) threads = 1;
+  if (threads == 0)
+    threads = 1;
   for (int i = first; i < argc; ++i) {
     std::string arg(argv[i]);
     if (arg == "--threads" && i + 1 < argc) {
@@ -97,7 +106,8 @@ unsigned parse_threads(int argc, char** argv, int first) {
         throw std::runtime_error("--threads must be 1..256");
       }
       threads = static_cast<unsigned>(std::stoul(value));
-      if (threads == 0 || threads > kMaxThreads) throw std::runtime_error("--threads must be 1..256");
+      if (threads == 0 || threads > kMaxThreads)
+        throw std::runtime_error("--threads must be 1..256");
     } else {
       throw std::runtime_error("unexpected argument: " + arg);
     }
@@ -114,11 +124,13 @@ int main(int argc, char** argv) {
     }
     std::string command(argv[1]);
     bool sign = command == "sign";
-    if (!sign && command != "public") throw std::runtime_error("unknown command: " + command);
+    if (!sign && command != "public")
+      throw std::runtime_error("unknown command: " + command);
     std::vector<uint8_t> context;
     int first_option = 2;
     if (sign) {
-      if (argc < 3) throw std::runtime_error("sign needs CONTEXT_HEX");
+      if (argc < 3)
+        throw std::runtime_error("sign needs CONTEXT_HEX");
       context = unhex(argv[2], kMaxContext);
       first_option = 3;
     }
@@ -127,12 +139,16 @@ int main(int argc, char** argv) {
     std::vector<Job> jobs;
     std::string line;
     while (std::getline(std::cin, line)) {
-      if (!line.empty() && line.back() == '\r') line.pop_back();
-      if (line.empty()) throw std::runtime_error("empty input line");
-      if (jobs.size() >= kMaxLines) throw std::runtime_error("too many input lines");
+      if (!line.empty() && line.back() == '\r')
+        line.pop_back();
+      if (line.empty())
+        throw std::runtime_error("empty input line");
+      if (jobs.size() >= kMaxLines)
+        throw std::runtime_error("too many input lines");
       jobs.push_back(parse_line(line, sign));
     }
-    if (jobs.empty()) throw std::runtime_error("no input lines");
+    if (jobs.empty())
+      throw std::runtime_error("no input lines");
 
     std::vector<uint8_t> prefix{0, static_cast<uint8_t>(context.size())};
     prefix.insert(prefix.end(), context.begin(), context.end());
@@ -146,7 +162,8 @@ int main(int argc, char** argv) {
       const std::array<uint8_t, MLDSA_RNDBYTES> zero_rnd{};
       for (;;) {
         std::size_t index = next.fetch_add(1);
-        if (index >= jobs.size() || failed.load()) return;
+        if (index >= jobs.size() || failed.load())
+          return;
         const Job& job = jobs[index];
         if (tos_pq_tool_keypair_internal(pk.data(), sk.data(), job.seed.data()) != 0) {
           failed = true;
@@ -166,13 +183,18 @@ int main(int argc, char** argv) {
         out[index] = hex(sig.data(), sig.size());
       }
     };
-    if (threads > jobs.size()) threads = static_cast<unsigned>(jobs.size());
+    if (threads > jobs.size())
+      threads = static_cast<unsigned>(jobs.size());
     std::vector<std::thread> pool;
     pool.reserve(threads);
-    for (unsigned i = 0; i < threads; ++i) pool.emplace_back(worker);
-    for (auto& t : pool) t.join();
-    if (failed.load()) throw std::runtime_error("key derivation or sign/verify self-check failed");
-    for (const auto& s : out) std::fwrite((s + "\n").data(), 1, s.size() + 1, stdout);
+    for (unsigned i = 0; i < threads; ++i)
+      pool.emplace_back(worker);
+    for (auto& t : pool)
+      t.join();
+    if (failed.load())
+      throw std::runtime_error("key derivation or sign/verify self-check failed");
+    for (const auto& s : out)
+      std::fwrite((s + "\n").data(), 1, s.size() + 1, stdout);
     return std::fflush(stdout) == 0 ? 0 : 1;
   } catch (const std::exception& e) {
     std::cerr << e.what() << '\n';

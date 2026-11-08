@@ -9,12 +9,13 @@ times, never retries a send, and returns one record per message.
 
 import asyncio
 import multiprocessing
+import multiprocessing.pool
 import sys
 import time
 from pathlib import Path
 
 PER_WORKER_CONNECTIONS = 100
-_active_pools: list = []
+_active_pools: list["multiprocessing.pool.Pool"] = []
 
 
 def terminate_active() -> None:
@@ -23,52 +24,52 @@ def terminate_active() -> None:
         _active_pools.pop().terminate()
 
 
-class _Config:
-    """The liteserver config as the JSON toslib consumes (the TL object does not pickle)."""
-
-    def __init__(self, text: str):
-        self._text = text
-
-    def to_json(self) -> str:
-        return self._text
-
-
-def _worker(args) -> list[tuple[int, float, float, bool, str | None]]:
-    root, build, configs, connections, rate, items = args
+def _worker(args) -> list[tuple[int, float, float, bool, str | None, str]]:
+    root, build, configs, connections, rate, items, worker_id = args
     sys.path[:0] = [str(Path(root) / "bench"), str(Path(root) / "test/tostester/src")]
-    return asyncio.run(_run(Path(build), configs, connections, rate, items))
+    return asyncio.run(_run(Path(build), configs, connections, rate, items, worker_id))
 
 
-async def _run(build: Path, configs: list[str], connections: int, rate: float, items):
+async def _run(
+    build: Path, configs: list[str], connections: int, rate: float, items, worker_id: int
+):
+    from tosapi.tos_api import Liteclient_config_global
+    from toslib.toslib_cdll import ToslibCDLL
+
     from pqbench.chain import PacedClient
     from toslib import ToslibClient
-    from toslib.toslib_cdll import ToslibCDLL
 
     library = ToslibCDLL(build / "toslib/libtoslibjson.so")
     library.client_set_verbosity_level(1)
     clients = []
     try:
         for k in range(connections):
-            c = ToslibClient(_Config(configs[k % len(configs)]), library)
+            c = ToslibClient(Liteclient_config_global.from_json(configs[k % len(configs)]), library)
             await c.init()
-            clients.append(PacedClient(c, f"send{k}", qps=rate, inflight=4))
+            clients.append(PacedClient(c, f"w{worker_id}/send{k}", qps=rate, inflight=4))
         out = []
         rr = 0
 
         async def one(index, scheduled, boc, client):
-            sent = time.time()
-            try:
-                await client.call("raw_send_message", boc)
-                out.append((index, scheduled, sent, True, None))
-            except Exception as error:  # admission refusals are results, not crashes
-                out.append((index, scheduled, sent, False, str(error)[:200]))
+            # The send time is taken after the connection's pacing slot, when the
+            # message actually leaves, so lag and per-window counts are honest.
+            await client._slot(1)
+            async with client._gate:
+                sent = time.time()
+                try:
+                    await client.client.raw_send_message(boc)
+                    out.append((index, scheduled, sent, True, None, client.name))
+                except Exception as error:  # admission refusals are results, not crashes
+                    out.append((index, scheduled, sent, False, str(error)[:200], client.name))
 
         tasks = []
         for index, scheduled, boc in items:
             delay = scheduled - time.time()
             if delay > 0:
                 await asyncio.sleep(delay)
-            tasks.append(asyncio.create_task(one(index, scheduled, boc, clients[rr % len(clients)])))
+            tasks.append(
+                asyncio.create_task(one(index, scheduled, boc, clients[rr % len(clients)]))
+            )
             rr += 1
         await asyncio.gather(*tasks)
         return out
@@ -77,8 +78,16 @@ async def _run(build: Path, configs: list[str], connections: int, rate: float, i
             await c.client.aclose()
 
 
-def distributed_send(root: Path, build: Path, configs: list[str], bocs: list[bytes], rate: float,
-                     senders: int, per_connection_rate: float, start_delay: float):
+def distributed_send(
+    root: Path,
+    build: Path,
+    configs: list[str],
+    bocs: list[bytes],
+    rate: float,
+    senders: int,
+    per_connection_rate: float,
+    start_delay: float,
+):
     """Send bocs at `rate` over `senders` identities in worker processes.
 
     Returns the schedule start (after workers have had `start_delay` seconds to
@@ -89,14 +98,19 @@ def distributed_send(root: Path, build: Path, configs: list[str], bocs: list[byt
     if rate <= 0 or senders < 1:
         raise ValueError("positive rate and at least one sender required")
     if rate > senders * per_connection_rate * 1.0001:
-        raise ValueError(f"offered {rate:g}/s exceeds {senders} senders x {per_connection_rate:g}/s")
+        raise ValueError(
+            f"offered {rate:g}/s exceeds {senders} senders x {per_connection_rate:g}/s"
+        )
     workers = max(1, -(-senders // PER_WORKER_CONNECTIONS))
     start = time.time() + start_delay
-    shares: list[list] = [[] for _ in range(workers)]
+    shares: list[list[tuple[int, float, bytes]]] = [[] for _ in range(workers)]
     for i, boc in enumerate(bocs):
         shares[i % workers].append((i, start + i / rate, boc))
     counts = [senders // workers + (1 if w < senders % workers else 0) for w in range(workers)]
-    jobs = [(str(root), str(build), configs, counts[w], per_connection_rate, shares[w]) for w in range(workers)]
+    jobs = [
+        (str(root), str(build), configs, counts[w], per_connection_rate, shares[w], w)
+        for w in range(workers)
+    ]
     pool = multiprocessing.get_context("spawn").Pool(workers)
     _active_pools.append(pool)
     try:

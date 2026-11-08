@@ -25,8 +25,16 @@ def build(build_dir: Path, out: Path) -> dict[str, Cell]:
         source = ROOT / "crypto/smartcont" / source_name
         asm, boc = out / f"{name}.fif", out / f"{name}.boc"
         subprocess.run(
-            [str(func), "-SPA", "-o", str(asm), str(ROOT / "crypto/smartcont/stdlib.fc"), str(source)],
-            env=env, check=True,
+            [
+                str(func),
+                "-SPA",
+                "-o",
+                str(asm),
+                str(ROOT / "crypto/smartcont/stdlib.fc"),
+                str(source),
+            ],
+            env=env,
+            check=True,
         )
         script = out / f"{name}.run.fif"
         script.write_text(f'"PQ.fif" include\n"{asm}" include\n2 boc+>B "{boc}" B>file\n')

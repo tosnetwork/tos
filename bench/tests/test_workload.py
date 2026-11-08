@@ -14,8 +14,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT / "bench"), str(ROOT / "test/tostester/src"), str(ROOT / "scripts")]
 
-from pytosiq_core import Address, Builder  # noqa: E402
-
 from pqbench.signer import BatchSigner  # noqa: E402
 from pqbench.workload import (  # noqa: E402
     QSP_EXECUTE_TAG,
@@ -29,6 +27,7 @@ from pqbench.workload import (  # noqa: E402
     quantum_seed,
     sinks,
 )
+from pytosiq_core import Address, Builder  # noqa: E402
 
 _parser = argparse.ArgumentParser(add_help=False)
 _parser.add_argument("--signer")
@@ -41,7 +40,9 @@ KEY = bytes(range(256)) * 5 + bytes(32)
 
 
 def wallet(index=0, **kw):
-    return QuantumWallet.derive(CODE, 1, NETWORK, SEED, "t", index, KEY, quantum_seed(SEED, "t", index), **kw)
+    return QuantumWallet.derive(
+        CODE, 1, NETWORK, SEED, "t", index, KEY, quantum_seed(SEED, "t", index), **kw
+    )
 
 
 class WorkloadTests(unittest.TestCase):
@@ -76,8 +77,10 @@ class WorkloadTests(unittest.TestCase):
         self.assertEqual(s.load_bytes(32), NETWORK)
         self.assertEqual(s.load_address(), w.address)
         self.assertEqual(s.load_bytes(32), w.authority.hash)
-        self.assertEqual((s.load_uint(8), s.load_uint(64), s.load_uint(64), s.load_uint(32), s.load_uint(8)),
-                         (1, 0, 7, 1234, 0))
+        self.assertEqual(
+            (s.load_uint(8), s.load_uint(64), s.load_uint(64), s.load_uint(32), s.load_uint(8)),
+            (1, 0, 7, 1234, 0),
+        )
         payload = s.load_ref().begin_parse()
         self.assertEqual(payload.load_uint(32), QSP_EXECUTE_TAG)
         self.assertEqual(payload.load_ref().hash, out_list([w.transfer(dest, 5)]).hash)
@@ -119,7 +122,8 @@ class WorkloadTests(unittest.TestCase):
 
 @unittest.skipUnless(ARGS.signer, "needs --signer")
 class SignerTests(unittest.TestCase):
-    def setUp(self):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
         self.signer = BatchSigner(Path(ARGS.signer), 4)
 
     def test_deterministic_batch_in_order(self):
@@ -137,8 +141,12 @@ class SignerTests(unittest.TestCase):
             self.signer.sign([(b"short", b"x")], QSP_PRIMARY_CONTEXT)
         with self.assertRaises(ValueError):
             self.signer.sign([(SEED, b"")], QSP_PRIMARY_CONTEXT)
-        result = subprocess.run([str(ARGS.signer), "sign", QSP_PRIMARY_CONTEXT.hex()], input="zz 00\n",
-                                capture_output=True, text=True)
+        result = subprocess.run(
+            [str(ARGS.signer), "sign", QSP_PRIMARY_CONTEXT.hex()],
+            input="zz 00\n",
+            capture_output=True,
+            text=True,
+        )
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(result.stdout, "")
 
@@ -149,8 +157,12 @@ class SignerTests(unittest.TestCase):
             fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             os.write(fd, SEED)
             os.close(fd)
-            reference = subprocess.run([str(ARGS.key_tool), "public", str(path)], check=True,
-                                       capture_output=True, text=True).stdout.strip()
+            reference = subprocess.run(
+                [str(ARGS.key_tool), "public", str(path)],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
         self.assertEqual(self.signer.public_keys([SEED])[0].hex(), reference)
 
 
