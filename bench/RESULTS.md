@@ -1,42 +1,46 @@
 # Local PQ bench results
 
-Local engineering evidence only. Four validators run on one host, so there is no network latency and no adversarial load. These are not public capacity numbers.
+Local engineering evidence only. Four validators share one host, so there is no network latency and no adversarial load. These are not public capacity numbers.
 
 ## 2026-11-08: self-pay Quantum wallet under the canonical genesis block limits
 
+Evidence index: [evidence/20261108-production-sweep/INDEX.json](evidence/20261108-production-sweep/INDEX.json). It holds the command, the source commit `015ea5669`, the live ConfigParam 20–25 hashes and the full per-stage records in `results.json`. It also lists SHA-256 and size for each retained raw file: block and timeline CSVs, the bench log, and the validators' collation records.
+
 Setup:
-- Source: `feat/pq-benchmark` at 170b5af9f (bench) on main 080467e8c. Later commits change only tests and docs.
-- Command: `run_local_bench.py --wallets 10000 --rates 50,100,200,300,400,500 --duration 300 --warmup 30 --drain 60 --max-senders 224`.
-- Block limits: `--block-limits production`, i.e. ConfigParams 22/23 exactly as `gen-zerostate.fif` and the public testnet set them. Basechain is 256 KiB / 1 MiB / 2 MiB bytes, 2M / 10M / 20M gas, 1,000 / 5,000 / 10,000 lt.
-- Chain: Simplex at a 400 ms target, one basechain shard.
-- Host: 192 CPUs, all used, no thermal guard.
-- Workload: one ML-DSA-44 PRIMARY-signed external per transfer, 2 transactions per transfer. 10,000 wallets were deployed in 66 s.
+- **Block limits:** `--block-limits production`, i.e. ConfigParams 22/23 exactly as `gen-zerostate.fif` and the public testnet set them. Basechain: bytes 256 KiB / 1 MiB / 2 MiB, gas 2M / 10M / 20M, lt 1,000 / 5,000 / 10,000.
+- **Chain:** Simplex at the 400 ms target, one basechain shard.
+- **Host:** 192 CPUs, all used, no thermal guard.
+- **Load:** 10,000 wallets, each transfer one ML-DSA-44 PRIMARY-signed external (2 transactions per transfer), 300 s per stage.
+- **Accounting:** each transfer is counted from the value its sink received. Accepted requests (consumed nonces) are recorded separately.
 
-| Offered transfers/s | Executed | Steady transfers/s | Transactions/s | Latency p50 / p99 | Max tx per block | Valid |
+| Offered/s | Delivered | Steady transfers/s | tx/s | Latency p50 / p99 | Blocks/s | External processing stopped on |
 |---|---|---|---|---|---|---|
-| 50 | 100% | 49.8 | 99.6 | 1.4 s / 5.6 s | 158 | yes |
-| 100 | 100% | 99.6 | 199.2 | 2.2 s / 5.6 s | 312 | yes |
-| 200 | 100% | 200.1 | 400.3 | 2.6 s / 5.9 s | 420 | yes |
-| 300 | 99.4% | 298.2 | 596.5 | 2.8 s / 6.0 s | 539 | yes |
-| 400 | 99.0% | 394.6 | 790.3 | 2.8 s / 6.2 s | 560 | yes |
-| 500 | 98.8% | 492.4 | 984.7 | 3.1 s / 11.1 s | 561 | yes |
+| 50 | 100% | 50.0 | 100.0 | 1.5 / 5.6 s | 2.50 | queue drained |
+| 100 | 100% | 100.1 | 200.2 | 2.2 / 5.6 s | 2.50 | queue drained |
+| 200 | 100% | 200.0 | 399.1 | 2.5 / 5.8 s | 2.50 | queue drained |
+| 300 | 99.4% | 298.2 | 596.4 | 2.8 / 6.0 s | 2.50 | byte limit in 168 of 675 collations |
+| 400 | 99.0% | 396.0 | 791.1 | 2.8 / 6.2 s | 2.50 | byte limit in 268 of 675 |
+| 500 | 98.4% | 480.9 | 960.8 | 3.1 / 19.3 s | 2.42 | byte limit in 337 of 662 |
 
-Every transfer is accounted for from the wallets' PRIMARY nonces after each stage.
+What the collators recorded for blocks that stopped on the byte limit (`block_full bytes`), medians at 400/s offered:
+- block estimate 1.64 MB (the figure the byte limits apply to);
+- serialized size 1.47 MB, about 5 KB per transfer including the recipient's transaction;
+- 5.37M gas, about half the 10M soft limit;
+- 0.19 s of collation CPU time.
+
+At 500/s the median full block held 510 transactions, 1.40 MB and 4.31M gas.
 
 Measured per transfer:
-- 16,719 gas on the wallet transaction (`gas_sample`, identical in every stage);
-- 2,766 bytes for the external message BOC, of which the ML-DSA-44 signature chain is 2,420 bytes. This was measured from `QuantumWallet.external` at the tested commit.
+- 16,719 gas on the wallet transaction;
+- 2,766 bytes for the external message, of which the ML-DSA-44 signature chain is 2,420.
 
-Derived, not measured directly: about 3.6 KB of block data per transfer, i.e. 1 MiB soft limit / about 290 transfers per full block. That figure includes the recipient's transaction and the block's own structure.
+Reading it:
+- **The byte limit binds first.** From 300/s up, a growing share of blocks stop on it while gas stays near half its soft limit and lt delta stays small. At 500/s the block rate slips to 2.42/s and p99 latency rises to 19 s, so the chain is close to its byte-bound ceiling there. The full blocks imply about 280–290 transfers per block, roughly 700 transfers/s per shard at 2.5 blocks/s.
+- **The 0.6–1.6% not delivered were refused at ingress.** At 300, 400 and 500/s, 59, 103 and 104 sends were refused by a node's external admission ("source rate limit exceeded"). Each refusal breaks that wallet's nonce chain for the rest of the stage, so its later transfers are refused with 1804.
+  - Per-connection accounting shows the refusing connections sent at most 17–23 externals in any 10 s window, below the documented 30. So the admission window is tighter than one connection's own count, and the cascade is an artifact of one host sending everything, not of the chain.
+  - No accepted request went undelivered (`requests_accepted_but_not_delivered` is 0 in every stage).
+- **No observer or thermal confounders.** The scanner saw no late block except 7 at 500/s; no thermal guard was attached (validity n/a).
 
-Package temperatures stayed between 65 and 85 °C.
-
-Reading the table:
-- **No stage saturated the chain.** The steady rate tracked the offered rate up to 500/s.
-- The 0.6–1.2% of transfers that did not execute trace back to the host's own ingress. A node admits 30 externals per 10 s from one client identity: 60 to 104 sends per stage were refused that way, and each refused send broke its wallet's nonce chain, so later transfers of that wallet were refused with 1804.
-- **500/s is close to the bench's ceiling on one host.** A liteserver admits 64 connections per source IP, which caps one host at about 560 externals/s to four nodes. The chain's own ceiling was not reached.
-- **Block bytes are the binding chain limit.** At 500/s, blocks reached 561 transactions, about 280 transfers. That is the 1 MiB soft byte limit at about 3.6 KB per transfer (the 2,420-byte ML-DSA-44 signature dominates). Gas stays near 4.7M of the 10M soft limit, and the p99 latency begins to rise. The byte limit implies a per-shard ceiling of roughly 700 transfers/s at the 400 ms target.
-
-Comparisons (same host and workload, 120 s stages):
-- Test-harness profile, with half the block bytes (512 KiB soft): blocks held at most 283–294 transactions whatever the offered rate. Throughput plateaued at about 300–320 transfers/s, and at 400/s latency rose to tens of seconds.
-- Test-harness bytes ×4 (2 MiB soft): 391.5 transfers/s at 400/s offered, with blocks up to 780 transactions.
+Comparisons (same host and workload, 120 s stages, earlier tooling):
+- Test-harness profile with half the block bytes (512 KiB soft): blocks held at most 283–294 transactions and throughput plateaued at about 300–320 transfers/s.
+- The same profile with four times the bytes (2 MiB soft): 391.5 transfers/s at 400/s offered, with blocks of up to 780 transactions.
