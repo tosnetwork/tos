@@ -1413,7 +1413,7 @@ pub struct AgentWalletBindRuntimeCmd {
     #[arg(
         long = "economic-authority-public-key",
         requires = "economic_authority_id",
-        help = "Pinned 32-byte Ed25519 public key in lowercase hex"
+        help = "Pinned 1,312-byte ML-DSA-44 custody authorization public key in lowercase hex"
     )]
     economic_authority_public_key: Option<String>,
 
@@ -5780,10 +5780,9 @@ impl AgentAccountEconomicPaymentPrepareCmd {
             .economic_authority_public_key_hex
             .as_deref()
             .context("runtime has no economic_authority_public_key")?;
-        let expected_key: [u8; 32] = hex::decode(expected_key_text)
-            .context("decode pinned economic authority key")?
-            .try_into()
-            .map_err(|_| anyhow::anyhow!("pinned economic authority key must be 32 bytes"))?;
+        let (expected_key, _) =
+            contracts::agent_account_custody::custody_authorization_pin(expected_key_text)
+                .context("owner-pinned custody authorization key")?;
         let account = agent_wallet
             .agent_account_address
             .as_ref()
@@ -5923,7 +5922,7 @@ impl AgentAccountEconomicPaymentPrepareCmd {
             claim.clone(),
             authorization.clone(),
             expected_authority_id,
-            expected_key,
+            &expected_key,
             now,
         )?;
         if record.status == ControllerActionStatus::Resolved {
@@ -6049,14 +6048,13 @@ impl AgentAccountEconomicEffectPrepareCmd {
             .economic_authority_id
             .as_deref()
             .context("runtime has no economic_authority_id")?;
-        let expected_key: [u8; 32] = hex::decode(
+        let (expected_key, _) = contracts::agent_account_custody::custody_authorization_pin(
             runtime
                 .economic_authority_public_key_hex
                 .as_deref()
                 .context("runtime has no economic_authority_public_key")?,
-        )?
-        .try_into()
-        .map_err(|_| anyhow::anyhow!("pinned economic authority key must be 32 bytes"))?;
+        )
+        .context("owner-pinned custody authorization key")?;
         let account = agent_wallet
             .agent_account_address
             .as_ref()
@@ -6177,7 +6175,7 @@ impl AgentAccountEconomicEffectPrepareCmd {
             claim.clone(),
             authorization.clone(),
             expected_authority_id,
-            expected_key,
+            &expected_key,
             now,
         )?;
         if record.status == ControllerActionStatus::Resolved {
@@ -6257,10 +6255,13 @@ impl AgentAccountEconomicPaymentBroadcastCmd {
             .economic_authority_id
             .as_deref()
             .context("runtime has no economic_authority_id")?;
-        let expected_key = runtime
-            .economic_authority_public_key_hex
-            .as_deref()
-            .context("runtime has no economic_authority_public_key")?;
+        let (_, expected_key_id) = contracts::agent_account_custody::custody_authorization_pin(
+            runtime
+                .economic_authority_public_key_hex
+                .as_deref()
+                .context("runtime has no economic_authority_public_key")?,
+        )
+        .context("owner-pinned custody authorization key")?;
         let account = agent_wallet
             .agent_account_address
             .as_ref()
@@ -6300,7 +6301,7 @@ impl AgentAccountEconomicPaymentBroadcastCmd {
             .context("custody record is not an economic payment")?;
         if authorization.stable_action_id != self.stable_action_id
             || authorization.authority_id != expected_authority_id
-            || authorization.public_key != format!("ed25519:{expected_key}")
+            || authorization.key_id != expected_key_id
         {
             anyhow::bail!("prepared payment differs from the currently owner-pinned authority");
         }
@@ -6380,10 +6381,13 @@ impl AgentAccountEconomicEffectBroadcastCmd {
             .economic_authority_id
             .as_deref()
             .context("runtime has no economic_authority_id")?;
-        let expected_key = runtime
-            .economic_authority_public_key_hex
-            .as_deref()
-            .context("runtime has no economic_authority_public_key")?;
+        let (_, expected_key_id) = contracts::agent_account_custody::custody_authorization_pin(
+            runtime
+                .economic_authority_public_key_hex
+                .as_deref()
+                .context("runtime has no economic_authority_public_key")?,
+        )
+        .context("owner-pinned custody authorization key")?;
         let account = agent_wallet
             .agent_account_address
             .as_ref()
@@ -6423,7 +6427,7 @@ impl AgentAccountEconomicEffectBroadcastCmd {
             .context("custody record is not an economic effect")?;
         if authorization.stable_action_id != self.stable_action_id
             || authorization.authority_id != expected_authority_id
-            || authorization.public_key != format!("ed25519:{expected_key}")
+            || authorization.key_id != expected_key_id
         {
             anyhow::bail!("prepared effect differs from the currently owner-pinned authority");
         }
@@ -11268,11 +11272,8 @@ impl AgentWalletBindRuntimeCmd {
             validate_non_empty("economic-authority-id", authority_id)?;
         }
         if let Some(key) = &self.economic_authority_public_key {
-            if key.len() != 64
-                || !key.bytes().all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
-            {
-                anyhow::bail!("economic-authority-public-key must be 32 lowercase-hex bytes");
-            }
+            contracts::agent_account_custody::custody_authorization_pin(key)
+                .context("economic-authority-public-key")?;
         }
         let economic_custody_journal_directory = self
             .economic_custody_journal_directory
@@ -12262,6 +12263,35 @@ mod tests {
         path::{Path, PathBuf},
         sync::atomic::{AtomicU64, Ordering},
     };
+
+    /// `bind-runtime` pins only an ML-DSA-44 custody authorization key: an
+    /// Ed25519-length key, uppercase hex and a truncated key are refused before
+    /// any configuration is read.
+    #[tokio::test]
+    async fn bind_runtime_refuses_an_ed25519_custody_authorization_key() {
+        let bind = |key: String| super::AgentWalletBindRuntimeCmd {
+            name: "wallet".into(),
+            runner_id: "runner".into(),
+            endpoint: "local://runner".into(),
+            attestation_hash: None,
+            economic_authority_id: Some("authority:owner".into()),
+            economic_authority_public_key: Some(key),
+            economic_custody_journal_directory: None,
+            format: super::OutputFormat::Json,
+        };
+        let missing_config = "/nonexistent/tosctl-config-for-a-refusal-test.json";
+        let error = bind("ab".repeat(32)).run(missing_config).await.unwrap_err();
+        assert!(format!("{error:#}").contains("Ed25519"), "{error:#}");
+        let key = contracts::native_registry::native_public_key_from_seed(&[0x44; 32]);
+        for refused in [hex::encode(&key).to_uppercase(), hex::encode(&key[1..])] {
+            let error = bind(refused).run(missing_config).await.unwrap_err();
+            assert!(format!("{error:#}").contains("economic-authority-public-key"), "{error:#}");
+        }
+        // A valid ML-DSA-44 key passes the pin check and fails only on the
+        // missing configuration.
+        let error = bind(hex::encode(&key)).run(missing_config).await.unwrap_err();
+        assert!(!format!("{error:#}").contains("economic-authority-public-key"), "{error:#}");
+    }
 
     static TEMPORARY_DIRECTORY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -14826,8 +14856,8 @@ mod tests {
             destination,
             amount_atomic: 50,
             expires_at_unix: request.expires_at_unix,
-            public_key: format!("ed25519:{}", "6".repeat(64)),
-            proof: format!("ed25519:{}", "7".repeat(128)),
+            key_id: format!("mldsa44:{}", "6".repeat(64)),
+            proof: format!("mldsa44:{}", "A".repeat(3227)),
         };
         let record = ControllerActionRecord {
             claim,
