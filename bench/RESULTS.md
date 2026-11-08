@@ -23,7 +23,13 @@ Setup:
 
 Every transfer is accounted for from the wallets' PRIMARY nonces after each stage.
 
-Measured gas is 16,719 per transfer. Package temperatures stayed between 65 and 85 °C.
+Measured per transfer:
+- 16,719 gas on the wallet transaction (`gas_sample`, identical in every stage);
+- 2,766 bytes for the external message BOC, of which the ML-DSA-44 signature chain is 2,420 bytes. This was measured from `QuantumWallet.external` at the tested commit.
+
+Derived, not measured directly: about 3.6 KB of block data per transfer, i.e. 1 MiB soft limit / about 290 transfers per full block. That figure includes the recipient's transaction and the block's own structure.
+
+Package temperatures stayed between 65 and 85 °C.
 
 Reading the table:
 - **No stage saturated the chain.** The steady rate tracked the offered rate up to 500/s.
