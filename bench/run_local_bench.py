@@ -77,6 +77,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--wallet-funding", type=float, default=2.0, help="TOS per load wallet")
     p.add_argument("--module-funding", type=float, default=0.5, help="TOS per ML-DSA-44 module")
     p.add_argument("--sinks", type=int, default=256)
+    p.add_argument("--deployers", type=int, default=8, help="parallel deployment wallets (1..32)")
     p.add_argument("--signer-threads", type=int, default=8,
                    help="ML-DSA-44 signing threads (kept low by default: signing bursts heat the host)")
     p.add_argument("--send-concurrency", type=int, default=256)
@@ -108,6 +109,8 @@ def parse_args() -> argparse.Namespace:
     for name in ("relay_value", "transfer_value", "wallet_funding", "module_funding"):
         if getattr(a, name) <= 0:
             p.error(f"--{name.replace('_', '-')} must be positive")
+    if not 1 <= a.deployers <= 32:
+        p.error("deployers must be 1..32")
     if a.block_limit_mul < 1:
         p.error("block limit multiplier must be >= 1")
     return a
@@ -226,42 +229,10 @@ class Bench:
         main = self.network.zerostate.main_wallet(self.client)
         main_balance = int((await self.client.raw_get_account_state(main.address)).balance)
         relayers = self.relayer_count()
-        per_workload = a.wallets * nano(a.wallet_funding)
-        need = (
-            (per_workload if "classical" in a.workloads else 0)
-            + ((per_workload + a.wallets * nano(a.module_funding)) if "pq-relay" in a.workloads else 0)
-        )
         relayer_funding = 0
         if relayers:
             stages = sum(a.rates) * a.duration
             relayer_funding = math.ceil(stages * nano(a.relay_value) * 1.2 / relayers) + nano(10)
-            need += relayers * relayer_funding
-        planned = relayers + a.wallets * sum(1 if w == "classical" else 2 for w in a.workloads)
-        deployers = max(1, min(32, math.ceil(planned / MAX_ACTIONS / 8)))
-        # Each deployment action also pays forwarding for its StateInit (code
-        # included); send mode 3 skips an action the deployer cannot afford, so
-        # under-funding here would silently drop accounts.
-        deployer_funding = math.ceil(need / deployers) + math.ceil(planned / deployers) * nano(0.25) + nano(50)
-        total = deployers * deployer_funding + nano(10)
-        log.info("genesis wallet %.1f TOS; bench needs %.1f TOS", main_balance / NANO, total / NANO)
-        if total > main_balance:
-            raise SystemExit("the genesis wallet cannot fund this sizing; lower --wallets or funding")
-
-        # The genesis wallet sends one message per external, so it funds only a few deployers.
-        self.deployers = [
-            ClassicalWallet.derive(self.code["wallet"], self.net_id, self.run_seed, "deployer", i)
-            for i in range(deployers)
-        ]
-        seqno = (await main.current).seqno
-        for d in self.deployers:
-            self.classes[d.address.hash_part] = "deployer"
-            await main.deploy(d.blueprint, tos(deployer_funding / NANO), seqno)
-            seqno += 1
-            while (await main.current).seqno < seqno:
-                await asyncio.sleep(0.3)
-        await self.wait_active([d.address for d in self.deployers], "deployers")
-        for d in self.deployers:
-            self.seqnos[d.address.hash_part] = 0
 
         deployments: list[tuple] = []
         self.relayers = [
@@ -296,10 +267,40 @@ class Bench:
                 self.classes[w.address.hash_part] = "pq-wallet"
                 deployments.append((w.module, nano(a.module_funding)))
                 deployments.append((w.wallet, nano(a.wallet_funding)))
+
+        # Each deployer owns a fixed share and is funded for exactly that share:
+        # with a shared queue a fast deployer outruns its funding, and send mode
+        # 3 then skips every action it cannot afford without failing the external.
+        count = max(1, min(a.deployers, math.ceil(len(deployments) / MAX_ACTIONS / 8)))
+        shares = [deployments[i::count] for i in range(count)]
+        # Forwarding a StateInit costs far less than this reserve; it only has to
+        # make an unaffordable action impossible, not be tight.
+        fundings = [sum(v for _, v in share) + len(share) * nano(0.25) + nano(50) for share in shares]
+        total = sum(fundings) + nano(10)
+        log.info("genesis wallet %.1f TOS; bench needs %.1f TOS", main_balance / NANO, total / NANO)
+        if total > main_balance:
+            raise SystemExit("the genesis wallet cannot fund this sizing; lower --wallets or funding")
+
+        # The genesis wallet sends one message per external, so it funds only a few deployers.
+        self.deployers = [
+            ClassicalWallet.derive(self.code["wallet"], self.net_id, self.run_seed, "deployer", i)
+            for i in range(count)
+        ]
+        seqno = (await main.current).seqno
+        for d, funding in zip(self.deployers, fundings):
+            self.classes[d.address.hash_part] = "deployer"
+            await main.deploy(d.blueprint, tos(funding / NANO), seqno)
+            seqno += 1
+            while (await main.current).seqno < seqno:
+                await asyncio.sleep(0.3)
+        await self.wait_active([d.address for d in self.deployers], "deployers")
+        for d in self.deployers:
+            self.seqnos[d.address.hash_part] = 0
+
         t = time.time()
-        await self.send_batches(self.deployers, deployments, "deployment")
-        targets = [r.address for r in self.relayers] + [w.address for w in self.classical]
-        targets += [x for w in self.pq for x in (w.module.address, w.address)]
+        await asyncio.gather(*(self.send_batches([d], share, f"deployment/{i}")
+                               for i, (d, share) in enumerate(zip(self.deployers, shares))))
+        targets = [bp.address for bp, _ in deployments]
         await self.wait_active(targets, "load accounts")
         log.info("deployed %d accounts in %.1fs", len(targets), time.time() - t)
         for r in self.relayers:
@@ -632,7 +633,8 @@ async def run_bench(a, bench, net_id, results, started) -> None:
     report = {
         "scope": "LOCAL_ENGINEERING_EVIDENCE_ONLY: one host, co-located validators; not public capacity",
         "source_commit": source_commit(),
-        "host": {"platform": platform.platform(), "cpus": os.cpu_count()},
+        "host": {"platform": platform.platform(), "cpus": os.cpu_count(),
+                 "affinity": sorted(os.sched_getaffinity(0))},
         "validators": a.validators,
         "global_id": net_id,
         "block_limit_mul": a.block_limit_mul,
