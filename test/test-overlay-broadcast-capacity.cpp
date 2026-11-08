@@ -14,48 +14,21 @@
     Copyright 2025-2026 TOS Blockchain Teams
 */
 
-// The FEC and two-step broadcast receivers each hold an in-flight table of
-// partially assembled broadcasts. These white-box tests pin the properties that
-// keep that table from being a memory-growth or liveness hazard; standing up
-// real FEC decoding plus signatures to drive every public path is
-// disproportionate, so the tests reach the real gc(), the real admission gate,
-// and (for FEC) the real process() through narrow friend accessors and a
-// date-parameterized inject hook.
-//
-//  1. Admission bounds the inbound table: once full, a NEW broadcast is refused
-//     rather than an in-flight one evicted.
-//  2. Admission first reclaims entries past the assembly window, so a table full
-//     only of already-expired slots does not block a new broadcast -- important
-//     on fixed-member overlays whose periodic gc can lag the assembly window.
-//  3. gc keeps fresh, still-assembling broadcasts and marks none delivered: it
-//     evicts only by the assembly-window deadline, never by count (a count
-//     eviction would drop a fresh broadcast and suppress its remaining parts).
-//  4. The FEC production path (process()) actually consults the admission gate,
-//     not just the predicate in isolation.
+// Broadcast admission on the receive path follows the reference implementation:
+// the legacy FEC and two-step receive tables are bounded only by their gc
+// windows, and the per-source broadcast limiters are unconstrained by default.
+// These tests pin that default and the local FEC source check.
 
 #include "adnl/adnl-node-id.hpp"
-#include "common/errorcode.h"
-#include "overlay/broadcast-fec.hpp"
-#include "overlay/broadcast-twostep.hpp"
 #include "overlay/overlay.hpp"
 #include "td/utils/RateLimiterWindow.h"
 #include "td/utils/Time.h"
-#include "td/utils/port/Clocks.h"
 #include "td/utils/tests.h"
-
-#include <cstring>
-#include <vector>
 
 namespace tos::overlay {
 
 class OverlayImplBroadcastCapacityTest {
  public:
-  static BroadcastsFec &fec(OverlayImpl &overlay) {
-    return overlay.broadcasts_fec_;
-  }
-  static BroadcastsTwostep &twostep(OverlayImpl &overlay) {
-    return overlay.broadcasts_twostep_;
-  }
   // The constructor turns two-step sending off without a two-step sender actor; the source check
   // only reads the option, so the test sets it directly.
   static void set_send_twostep(OverlayImpl &overlay, bool value) {
@@ -63,242 +36,7 @@ class OverlayImplBroadcastCapacityTest {
   }
 };
 
-class BroadcastsFecTestAccess {
- public:
-  static void inject(BroadcastsFec &b, Overlay::BroadcastHash hash, td::uint32 date) {
-    b.inject_in_flight_for_test(hash, date);
-  }
-  static size_t count(const BroadcastsFec &b) {
-    return b.in_flight_count_for_test();
-  }
-  static size_t capacity(const BroadcastsFec &b) {
-    return b.capacity_for_test();
-  }
-  static td::Status admit(BroadcastsFec &b, OverlayImpl &overlay, bool is_ours) {
-    return b.ensure_in_flight_capacity(&overlay, is_ours);
-  }
-  static td::Status try_process_fresh(BroadcastsFec &b, OverlayImpl &overlay, Overlay::BroadcastHash hash,
-                                      bool is_ours) {
-    return b.try_process_fresh_for_test(&overlay, hash, is_ours);
-  }
-  static void inject_ready(BroadcastsFec &b, Overlay::BroadcastHash hash, td::uint32 date, td::BufferSlice data) {
-    b.inject_ready_for_test(hash, date, std::move(data));
-  }
-  static td::uint32 symbols_count(const BroadcastsFec &b, Overlay::BroadcastHash hash) {
-    return b.symbols_count_for_test(hash);
-  }
-};
-
-class BroadcastsTwostepTestAccess {
- public:
-  static void inject(BroadcastsTwostep &b, Overlay::BroadcastHash id, td::uint32 date) {
-    b.inject_in_flight_for_test(id, date);
-  }
-  static size_t count(const BroadcastsTwostep &b) {
-    return b.in_flight_count_for_test();
-  }
-  static size_t capacity(const BroadcastsTwostep &b) {
-    return b.capacity_for_test();
-  }
-  static td::Status admit(BroadcastsTwostep &b, OverlayImpl &overlay) {
-    return b.ensure_in_flight_capacity(&overlay);
-  }
-  static td::Status try_admit_fresh(BroadcastsTwostep &b, OverlayImpl &overlay, Overlay::BroadcastHash id) {
-    return b.try_admit_fresh_for_test(&overlay, id);
-  }
-};
-
 }  // namespace tos::overlay
-
-namespace {
-
-// A distinct broadcast hash per index (first 8 bytes carry the index).
-td::Bits256 hash_from_index(size_t i) {
-  td::Bits256 h = td::Bits256::zero();
-  std::memcpy(h.as_slice().data(), &i, sizeof(i));
-  return h;
-}
-
-td::uint32 now_sec() {
-  return static_cast<td::uint32>(td::Clocks::system());
-}
-
-// A date comfortably past both the FEC (60 s) and two-step (25 s) assembly
-// windows, so gc treats the entry as expired.
-td::uint32 expired_sec() {
-  return now_sec() - 120;
-}
-
-// Builds a bare OverlayImpl sufficient for white-box table access. No scheduler
-// or network is needed: the admission gate, gc(), process()'s early admission
-// branch, and is_delivered() touch only in-process state. Mirrors
-// test-overlay-peer-cleanup.
-template <class F>
-void with_overlay(F &&f) {
-  td::Bits256 local_bits;
-  local_bits.as_slice().fill('l');
-  auto local_id = tos::adnl::AdnlNodeIdShort{local_bits};
-
-  tos::overlay::OverlayOptions options;
-  options.max_neighbours_ = 0;
-  options.enable_plumtree_broadcast_ = false;
-  tos::overlay::OverlayImpl overlay(
-      {}, {}, {}, {}, local_id, tos::overlay::OverlayIdFull{td::BufferSlice{"bcast-capacity-test"}},
-      tos::overlay::OverlayType::Public, {}, {}, {}, std::make_unique<tos::overlay::Overlays::Callback>(),
-      tos::overlay::OverlayPrivacyRules{}, "bcast-capacity-test", std::move(options));
-  f(overlay);
-}
-
-}  // namespace
-
-TEST(OverlayBroadcastCapacity, FecRefusesNewBroadcastWhenFull) {
-  using Access = tos::overlay::BroadcastsFecTestAccess;
-  with_overlay([](tos::overlay::OverlayImpl &overlay) {
-    auto &fec = tos::overlay::OverlayImplBroadcastCapacityTest::fec(overlay);
-    const size_t cap = Access::capacity(fec);
-
-    // One short of capacity, all fresh: a new inbound broadcast is still
-    // admitted.
-    for (size_t i = 0; i + 1 < cap; i++) {
-      Access::inject(fec, hash_from_index(i), now_sec());
-    }
-    ASSERT_TRUE(Access::admit(fec, overlay, /*is_ours=*/false).is_ok());
-
-    // At capacity with every entry fresh: reclaiming finds nothing, so a new
-    // inbound broadcast is refused (not evicted in, not marked delivered).
-    Access::inject(fec, hash_from_index(cap - 1), now_sec());
-    ASSERT_EQ(Access::count(fec), cap);
-    ASSERT_TRUE(Access::admit(fec, overlay, /*is_ours=*/false).is_error());
-
-    // Our own broadcasts are locally paced and exempt from the ceiling.
-    ASSERT_TRUE(Access::admit(fec, overlay, /*is_ours=*/true).is_ok());
-  });
-}
-
-TEST(OverlayBroadcastCapacity, FecReclaimsExpiredBeforeRejecting) {
-  using Access = tos::overlay::BroadcastsFecTestAccess;
-  with_overlay([](tos::overlay::OverlayImpl &overlay) {
-    auto &fec = tos::overlay::OverlayImplBroadcastCapacityTest::fec(overlay);
-    const size_t cap = Access::capacity(fec);
-
-    // A full table whose entries are all past the assembly window.
-    for (size_t i = 0; i < cap; i++) {
-      Access::inject(fec, hash_from_index(i), expired_sec());
-    }
-    ASSERT_EQ(Access::count(fec), cap);
-
-    // Admission reclaims the expired slots first, so a new broadcast is not
-    // blocked behind them. Without that reclaim this would report "full".
-    ASSERT_TRUE(Access::admit(fec, overlay, /*is_ours=*/false).is_ok());
-    ASSERT_EQ(Access::count(fec), 0u);
-  });
-}
-
-TEST(OverlayBroadcastCapacity, FecReclaimsExpiredBehindFreshOldestInsertion) {
-  using Access = tos::overlay::BroadcastsFecTestAccess;
-  with_overlay([](tos::overlay::OverlayImpl &overlay) {
-    auto &fec = tos::overlay::OverlayImplBroadcastCapacityTest::fec(overlay);
-    const size_t cap = Access::capacity(fec);
-
-    // A fresh entry inserted FIRST, with expired entries inserted after it. The
-    // accepted date can lag arrival, so an entry inserted later can already be
-    // expired. An insertion-ordered scan stops at this first-inserted fresh
-    // entry and reclaims nothing; ordering reclamation by date drops the expired
-    // entries regardless of insertion order.
-    Access::inject(fec, hash_from_index(0), now_sec());
-    for (size_t i = 1; i < cap; i++) {
-      Access::inject(fec, hash_from_index(i), expired_sec());
-    }
-    ASSERT_EQ(Access::count(fec), cap);
-
-    ASSERT_TRUE(Access::admit(fec, overlay, /*is_ours=*/false).is_ok());
-    ASSERT_EQ(Access::count(fec), 1u);  // only the fresh entry survives
-  });
-}
-
-TEST(OverlayBroadcastCapacity, FecGcKeepsFreshInFlightBroadcasts) {
-  using Access = tos::overlay::BroadcastsFecTestAccess;
-  with_overlay([](tos::overlay::OverlayImpl &overlay) {
-    auto &fec = tos::overlay::OverlayImplBroadcastCapacityTest::fec(overlay);
-    const size_t cap = Access::capacity(fec);
-
-    std::vector<td::Bits256> hashes;
-    hashes.reserve(cap + 1);
-    for (size_t i = 0; i <= cap; i++) {  // one past the ceiling, all fresh
-      auto h = hash_from_index(i);
-      hashes.push_back(h);
-      Access::inject(fec, h, now_sec());
-    }
-    ASSERT_EQ(Access::count(fec), cap + 1);
-
-    fec.gc(&overlay);
-
-    // Every fresh entry survives (gc evicts only past the assembly window), and
-    // none was registered delivered. A count eviction here -- the removed
-    // regression -- would drop at least one fresh broadcast and mark it
-    // delivered, failing both checks.
-    ASSERT_EQ(Access::count(fec), cap + 1);
-    for (const auto &h : hashes) {
-      ASSERT_TRUE(!overlay.is_delivered(h));
-    }
-  });
-}
-
-TEST(OverlayBroadcastCapacity, FecProcessConsultsAdmissionGate) {
-  using Access = tos::overlay::BroadcastsFecTestAccess;
-  with_overlay([](tos::overlay::OverlayImpl &overlay) {
-    auto &fec = tos::overlay::OverlayImplBroadcastCapacityTest::fec(overlay);
-    const size_t cap = Access::capacity(fec);
-
-    for (size_t i = 0; i < cap; i++) {  // fill to capacity with fresh entries
-      Access::inject(fec, hash_from_index(i), now_sec());
-    }
-    ASSERT_EQ(Access::count(fec), cap);
-
-    // Drive the real process() with a minimal part whose hash is new. It must
-    // be refused with notready at the admission gate, before any new entry is
-    // created -- proving the production insertion path consults the gate, not
-    // just that the predicate works in isolation. Removing the gate's call from
-    // process() makes this fail (a different error, or an inserted entry).
-    auto status = Access::try_process_fresh(fec, overlay, hash_from_index(cap), /*is_ours=*/false);
-    ASSERT_TRUE(status.is_error());
-    ASSERT_EQ(status.error().code(), static_cast<int>(tos::ErrorCode::notready));
-    ASSERT_EQ(Access::count(fec), cap);
-  });
-}
-
-// A short part names its symbol by seqno, and the receiver regenerates that symbol from its own
-// encoder before checking anything else about the part. The seqno is bounded the same way as a
-// full part's, so a peer cannot make the receiver encode arbitrary symbols of a finished broadcast.
-TEST(OverlayBroadcastCapacity, FecShortPartSeqnoIsBounded) {
-  using Access = tos::overlay::BroadcastsFecTestAccess;
-  with_overlay([](tos::overlay::OverlayImpl &overlay) {
-    auto &fec = tos::overlay::OverlayImplBroadcastCapacityTest::fec(overlay);
-    auto hash = hash_from_index(1);
-    Access::inject_ready(fec, hash, now_sec(), td::BufferSlice(std::string(4096, 'x')));
-    // Full parts accept seqno < symbols_count * 2 + 4; short parts must use the same bound.
-    auto bound = static_cast<td::int32>(Access::symbols_count(fec, hash) * 2 + 4);
-    ASSERT_TRUE(bound > 4);
-    auto short_part = [&](td::int32 seqno) {
-      return tos::create_tl_object<tos::tos_api::overlay_broadcastFecShort>(
-          tos::PublicKey{tos::pubkeys::Ed25519{td::Bits256::zero()}}.tl(), tos::overlay::Certificate::empty_tl(), hash,
-          td::Bits256::zero(), seqno, td::BufferSlice());
-    };
-    td::Bits256 peer_bits;
-    peer_bits.as_slice().fill('p');
-    auto peer = tos::adnl::AdnlNodeIdShort{peer_bits};
-
-    for (td::int32 seqno : {bound, 1 << 23, -1}) {
-      auto status = fec.process_broadcast(&overlay, peer, short_part(seqno));
-      ASSERT_TRUE(status.is_error());
-      ASSERT_EQ(status.message(), td::Slice("too big seqno"));
-    }
-    // In range, the part reaches the data-hash check instead.
-    auto status = fec.process_broadcast(&overlay, peer, short_part(bound - 1));
-    ASSERT_TRUE(status.is_error());
-    ASSERT_EQ(status.message(), td::Slice("wrong part data hash"));
-  });
-}
 
 // A two-step broadcast is checked by its receivers as coming from a named sender, even when the
 // AnySender flag is set. The local source check before sending must use the same rule, or a source
@@ -339,125 +77,22 @@ TEST(OverlayBroadcastCapacity, FecSenderCheckFollowsTheSelectedPath) {
   ASSERT_TRUE(!overlay.can_send_broadcast_fec(source, 1000, any | no_twostep));
 }
 
-TEST(OverlayBroadcastCapacity, TwostepRefusesNewBroadcastWhenFull) {
-  using Access = tos::overlay::BroadcastsTwostepTestAccess;
-  with_overlay([](tos::overlay::OverlayImpl &overlay) {
-    auto &twostep = tos::overlay::OverlayImplBroadcastCapacityTest::twostep(overlay);
-    const size_t cap = Access::capacity(twostep);
-
-    for (size_t i = 0; i + 1 < cap; i++) {
-      Access::inject(twostep, hash_from_index(i), now_sec());
-    }
-    ASSERT_TRUE(Access::admit(twostep, overlay).is_ok());
-
-    Access::inject(twostep, hash_from_index(cap - 1), now_sec());
-    ASSERT_EQ(Access::count(twostep), cap);
-    ASSERT_TRUE(Access::admit(twostep, overlay).is_error());
-  });
-}
-
-TEST(OverlayBroadcastCapacity, TwostepReclaimsExpiredBeforeRejecting) {
-  using Access = tos::overlay::BroadcastsTwostepTestAccess;
-  with_overlay([](tos::overlay::OverlayImpl &overlay) {
-    auto &twostep = tos::overlay::OverlayImplBroadcastCapacityTest::twostep(overlay);
-    const size_t cap = Access::capacity(twostep);
-
-    for (size_t i = 0; i < cap; i++) {
-      Access::inject(twostep, hash_from_index(i), expired_sec());
-    }
-    ASSERT_EQ(Access::count(twostep), cap);
-
-    ASSERT_TRUE(Access::admit(twostep, overlay).is_ok());
-    ASSERT_EQ(Access::count(twostep), 0u);
-  });
-}
-
-TEST(OverlayBroadcastCapacity, TwostepReclaimsExpiredBehindFreshOldestInsertion) {
-  using Access = tos::overlay::BroadcastsTwostepTestAccess;
-  with_overlay([](tos::overlay::OverlayImpl &overlay) {
-    auto &twostep = tos::overlay::OverlayImplBroadcastCapacityTest::twostep(overlay);
-    const size_t cap = Access::capacity(twostep);
-
-    // A fresh entry inserted first, expired entries after it: reclamation must
-    // follow date order, not insertion order, or the expired slots stay full.
-    Access::inject(twostep, hash_from_index(0), now_sec());
-    for (size_t i = 1; i < cap; i++) {
-      Access::inject(twostep, hash_from_index(i), expired_sec());
-    }
-    ASSERT_EQ(Access::count(twostep), cap);
-
-    ASSERT_TRUE(Access::admit(twostep, overlay).is_ok());
-    ASSERT_EQ(Access::count(twostep), 1u);
-  });
-}
-
-TEST(OverlayBroadcastCapacity, TwostepAdmitAndTrackConsultsGate) {
-  using Access = tos::overlay::BroadcastsTwostepTestAccess;
-  with_overlay([](tos::overlay::OverlayImpl &overlay) {
-    auto &twostep = tos::overlay::OverlayImplBroadcastCapacityTest::twostep(overlay);
-    const size_t cap = Access::capacity(twostep);
-
-    for (size_t i = 0; i < cap; i++) {  // fill to capacity with fresh entries
-      Access::inject(twostep, hash_from_index(i), now_sec());
-    }
-    ASSERT_EQ(Access::count(twostep), cap);
-
-    // Drive the real insertion primitive that process_broadcast commits new
-    // broadcasts through. At capacity it must refuse with notready and insert
-    // nothing -- proving the production insertion gate is applied, not just that
-    // the predicate works. Removing the gate from the primitive makes this
-    // insert a cap+1'th entry (count changes and the status is ok).
-    auto status = Access::try_admit_fresh(twostep, overlay, hash_from_index(cap));
-    ASSERT_TRUE(status.is_error());
-    ASSERT_EQ(status.error().code(), static_cast<int>(tos::ErrorCode::notready));
-    ASSERT_EQ(Access::count(twostep), cap);
-  });
-}
-
-TEST(OverlayBroadcastCapacity, TwostepGcKeepsFreshInFlightBroadcasts) {
-  using Access = tos::overlay::BroadcastsTwostepTestAccess;
-  with_overlay([](tos::overlay::OverlayImpl &overlay) {
-    auto &twostep = tos::overlay::OverlayImplBroadcastCapacityTest::twostep(overlay);
-    const size_t cap = Access::capacity(twostep);
-
-    std::vector<td::Bits256> ids;
-    ids.reserve(cap + 1);
-    for (size_t i = 0; i <= cap; i++) {
-      auto id = hash_from_index(i);
-      ids.push_back(id);
-      Access::inject(twostep, id, now_sec());
-    }
-    ASSERT_EQ(Access::count(twostep), cap + 1);
-
-    twostep.gc(&overlay);
-
-    ASSERT_EQ(Access::count(twostep), cap + 1);
-    for (const auto &id : ids) {
-      ASSERT_TRUE(!overlay.is_delivered(id));
-    }
-  });
-}
-
-// H1: the unauthorized-source broadcast rate limiter must be live by default.
-// Left at {} its window duration is 0 and RateLimiterWindow::check() always
-// returns true, making the precheck_new_broadcast gate a dead guard. This pins
-// that the default window is non-zero and actually rejects once its count limit
-// is exceeded. (Reverting the default to {} makes duration 0 and fails this.)
-TEST(OverlayBroadcastCapacity, UnauthBroadcastRateLimitIsLiveByDefault) {
+// The broadcast limiters are unconstrained unless an overlay configures them: a zero window never
+// refuses. A public relay of many clients' external messages must not be throttled by a default
+// count or byte window.
+TEST(OverlayBroadcastCapacity, BroadcastLimitersAreUnconstrainedByDefault) {
   tos::overlay::OverlayOptions opts;
-  const auto &rate = opts.unauth_broadcast_rate_limit_;
-  ASSERT_TRUE(rate.duration > 0.0);
-  ASSERT_TRUE(rate.limit > 0);
-  ASSERT_TRUE(opts.unauth_broadcast_size_rate_limit_.duration > 0.0);
-  ASSERT_TRUE(opts.unauth_broadcast_size_rate_limit_.limit > 0);
-
-  // The window admits up to `limit` within `duration` and then refuses; a dead
-  // (duration 0) window would admit unboundedly.
-  td::RateLimiterWindow window{rate};
+  const td::RateLimiterWindow::Params *defaults[] = {
+      &opts.auth_broadcast_rate_limit_, &opts.auth_broadcast_size_rate_limit_, &opts.unauth_broadcast_rate_limit_,
+      &opts.unauth_broadcast_size_rate_limit_};
   td::Timestamp now = td::Timestamp::now();
-  for (td::uint64 i = 0; i < rate.limit; i++) {
-    ASSERT_TRUE(window.check(now));
-    window.insert(now);
+  for (const auto *params : defaults) {
+    ASSERT_TRUE(params->duration == 0.0);
+    td::RateLimiterWindow window{*params};
+    // Well past any count or byte window a default could impose, all in one instant.
+    for (int i = 0; i < 20000; i++) {
+      ASSERT_TRUE(window.check(now, 1 << 20));
+      window.insert(now, 1 << 20);
+    }
   }
-  ASSERT_TRUE(!window.check(now));
 }
