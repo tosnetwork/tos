@@ -192,6 +192,18 @@ class Bench:
         self.configs: list[str] = []
         self.soft_limits: tuple[int, int, int] = (1, 1, 1)
 
+    def check_funding(self) -> None:
+        """Refuse a sizing in which a load wallet could run out of funds for its transfers."""
+        transfers = sum(int(rate * self.a.duration) for rate in self.a.rates)
+        per_wallet = math.ceil(transfers / self.a.wallets)
+        # Measured fee per self-pay transfer is about 0.0004 TOS; budget 0.01.
+        need = per_wallet * (nano(self.a.transfer_value) + nano(0.01))
+        if need > nano(self.a.wallet_funding) * 0.9:
+            raise SystemExit(
+                f"each wallet makes up to {per_wallet} transfers needing {need / NANO:.3f} TOS, more than "
+                f"90% of --wallet-funding {self.a.wallet_funding}; raise the funding or --wallets"
+            )
+
     def check_reuse(self) -> None:
         peak = max(self.a.rates)
         if self.a.wallets / peak < self.a.min_reuse:
@@ -361,6 +373,7 @@ class Bench:
         count = int(rate * a.duration)
         wallets, n = self.wallets, len(self.wallets)
         start = await self.counters()
+        sinks_before = await chain.read_balances(self.pool, self.sinks)
         deadline = await self._now() + a.duration + a.drain + 600
         transfer = nano(a.transfer_value)
         t_sign = time.time()
@@ -420,8 +433,19 @@ class Bench:
         scanner.stop()
         await scan_task
         end = await self.counters()
-        executed = sum(end[w.address.hash_part] - start[w.address.hash_part] for w in wallets)
+        sinks_after = await chain.read_balances(self.pool, self.sinks)
+        # A consumed nonce means the wallet accepted and paid for the request, not that the
+        # transfer went out (an unaffordable send action is skipped under send mode 3).
+        # Delivered transfers are what reached the sinks: every transfer carries the same
+        # value, so the sinks' balance gain divided by it, rounded, counts them exactly while
+        # the sinks' own storage charges stay far below one transfer value.
+        consumed = sum(end[w.address.hash_part] - start[w.address.hash_part] for w in wallets)
+        gained = sum(sinks_after[s.hash_part] - sinks_before[s.hash_part] for s in self.sinks)
+        executed = round(gained / transfer)
         result = self.summarize(rate, count, records, scanner, executed, t0, t_sent, sign_seconds)
+        result["requests_accepted"] = consumed
+        result["requests_accepted_but_not_delivered"] = consumed - executed
+        result["sink_value_gained_nanotos"] = gained
         result["sender_connections"] = senders
         result["block_limits_evidence"] = self.block_limits_evidence(t0 + a.warmup, t_sent)
         result["gas_sample"] = await chain.gas_sample(
@@ -761,6 +785,7 @@ async def main(a: argparse.Namespace) -> int:
             bench = Bench(a, network, client, pool, scan, signer, code, net_id, auth_tag)
             bench.configs = [node.liteserver_config.to_json() for node in nodes]
             bench.check_reuse()
+            bench.check_funding()
             chain_config = await chain.config_snapshot(pool)
             bench.soft_limits = chain.basechain_soft_limits(chain_config)
             await bench.deploy()

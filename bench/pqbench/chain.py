@@ -256,6 +256,17 @@ async def read_wallet_states(
     return out
 
 
+async def read_balances(pool: ClientPool, addresses: list[Address]) -> dict[bytes, int]:
+    """Current balances in nanotos; an account that does not exist yet reads as 0."""
+    out: dict[bytes, int] = {}
+
+    async def one(address: Address) -> None:
+        out[address.hash_part] = int((await pool.call("raw_get_account_state", address)).balance)
+
+    await asyncio.gather(*(one(a) for a in addresses))
+    return out
+
+
 async def account_active(pool: ClientPool, addresses: list[Address]) -> dict[bytes, bool]:
     out: dict[bytes, bool] = {}
 
