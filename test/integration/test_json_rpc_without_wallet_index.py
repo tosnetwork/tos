@@ -270,7 +270,7 @@ async def main(args: argparse.Namespace) -> None:
             payer = network.zerostate.main_wallet(RpcProvider())
             payer_seqno = (await payer.current).seqno
             submission_window = time.monotonic()
-            # Different public clients retain independent production mempool source budgets.
+            # Malformed submissions must reach BOC parsing without a per-source quota.
             for attempt in range(31):
                 response = await asyncio.to_thread(
                     call,
@@ -281,8 +281,16 @@ async def main(args: argparse.Namespace) -> None:
                 )
                 limited = "source rate limit exceeded" in json.dumps(response)
                 require(
-                    limited == (attempt == 30),
-                    f"unexpected submission admission {attempt}: {response}",
+                    not limited,
+                    f"source quota still enforced at submission {attempt}: {response}",
+                )
+                error = response.get("error", {})
+                require(
+                    "result" not in response
+                    and error.get("code") == -32603
+                    and "cannot deserialize bag-of-cells: invalid header, error 0"
+                    in str(error.get("message", "")),
+                    f"submission {attempt} did not reach BOC parsing: {response}",
                 )
             victim = await asyncio.to_thread(
                 call,
