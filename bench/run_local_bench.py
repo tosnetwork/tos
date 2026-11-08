@@ -38,7 +38,7 @@ sys.path[:0] = [str(ROOT / "bench"), str(ROOT / "test/tostester/src")]
 from pytosiq_core import Address  # noqa: E402
 
 from contract import tos  # noqa: E402
-from pqbench import chain, contracts  # noqa: E402
+from pqbench import chain, contracts, sender  # noqa: E402
 from pqbench.signer import BatchSigner  # noqa: E402
 from pqbench.workload import (  # noqa: E402
     MAX_ACTIONS,
@@ -56,6 +56,8 @@ NANO = 1_000_000_000
 # The node refuses external messages above 64 KiB; keep headroom.
 EXT_MESSAGE_BUDGET = 60_000
 LOAD_CLASS = "quantum-wallet"
+# Sender workers open their connections before the first scheduled send.
+SENDER_STARTUP_SECONDS = 30
 log = logging.getLogger("bench")
 
 
@@ -78,7 +80,6 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--deployers", type=int, default=8, help="parallel Quantum deployer wallets (1..32)")
     p.add_argument("--signer-threads", type=int, default=8,
                    help="ML-DSA-44 signing threads (kept low by default: signing bursts heat the host)")
-    p.add_argument("--send-concurrency", type=int, default=256)
     p.add_argument("--max-senders", type=int, default=512,
                    help="cap on sending connections; a node admits 30 externals per 10 s from each")
     p.add_argument("--connections-per-node", type=int, default=4,
@@ -254,6 +255,7 @@ class Bench:
         return out
 
     async def stage(self, rate: float) -> dict:
+        """One offered rate: pre-sign, send from worker processes, scan, drain, reconcile."""
         a = self.a
         count = int(rate * a.duration)
         wallets, n = self.wallets, len(self.wallets)
@@ -275,8 +277,11 @@ class Bench:
         scanner.track = {w.address.hash_part for w in wallets}
         await scanner.start_position()
         scan_task = asyncio.create_task(scanner.run())
-        t0 = time.time()
-        records = await chain.paced_send(self.pool, messages, rate, a.send_concurrency)
+        bocs = [m.serialize().to_boc() for m in messages]
+        senders = min(a.max_senders, max(len(self.configs), math.ceil(rate * 1.5 / chain.SOURCE_SEND_RATE)))
+        t0, records = await asyncio.to_thread(
+            sender.distributed_send, ROOT, a.build, self.configs, bocs, rate, senders,
+            chain.SOURCE_SEND_RATE, SENDER_STARTUP_SECONDS)
         t_sent = time.time()
         await asyncio.sleep(a.drain)
         scanner.stop()
@@ -284,6 +289,7 @@ class Bench:
         end = await self.counters()
         executed = sum(end[w.address.hash_part] - start[w.address.hash_part] for w in wallets)
         result = self.summarize(rate, count, records, scanner, executed, t0, t_sent, sign_seconds)
+        result["sender_connections"] = senders
         result["gas_sample"] = await chain.gas_sample(self.pool, {LOAD_CLASS: [w.address for w in wallets]})
         result["cpu_package_celsius_end"] = package_temperatures()
         # A guard pause stops the validators and the generator together; such a
@@ -511,17 +517,16 @@ async def main(a: argparse.Namespace) -> int:
         try:
             readers = [await connect(node, f"{node.name}/{k}") for node in nodes
                        for k in range(a.connections_per_node)]
-            # Enough client identities that the offered external rate stays under
-            # each identity's admission window on every node.
-            sender_count = min(a.max_senders,
-                               max(len(nodes), math.ceil(max(a.rates) * 2.5 / chain.SOURCE_SEND_RATE)))
-            senders = [await connect(nodes[k % len(nodes)], f"send{k}", qps=chain.SOURCE_SEND_RATE, inflight=4)
-                       for k in range(sender_count)]
+            # Deployment senders live here; stage load is sent from worker
+            # processes (bench/pqbench/sender.py), one identity per connection.
+            senders = [await connect(nodes[k % len(nodes)], f"deploy-send{k}", qps=chain.SOURCE_SEND_RATE,
+                                     inflight=4) for k in range(2 * len(nodes))]
             scan = await connect(nodes[-1], "scanner")
             pool = chain.ClientPool(readers, senders)
             log.info("client pool: %d read connections (%.0f queries/s), %d senders (%.0f externals/s)",
                      len(readers), pool.qps, len(senders), pool.send_rate)
             bench = Bench(a, network, client, pool, scan, signer, code, net_id, auth_tag)
+            bench.configs = [node.liteserver_config.to_json() for node in nodes]
             bench.check_reuse()
             chain_config = await chain.config_snapshot(pool)
             await bench.deploy()
@@ -544,7 +549,7 @@ async def main(a: argparse.Namespace) -> int:
                                    " profile is lower); see chain_config for the exact parameters"),
                 "chain_config": chain_config,
                 "wallets": a.wallets,
-                "senders": len(senders),
+                "max_senders": a.max_senders,
                 "deployed_accounts": bench.deployed_accounts,
                 "deploy_seconds": round(bench.deploy_seconds, 1),
                 "wall_seconds": round(time.time() - started, 1),
