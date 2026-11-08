@@ -114,11 +114,9 @@ void ExtMessagePool::init_checkers() {
 
 td::actor::Task<ExtMessagePool::CheckResult> ExtMessagePool::check_add_external_message(
     td::BufferSlice data, int priority, bool add_to_mempool, td::optional<PublicKeyHash> source_peer) {
+  // A relay can aggregate many clients; admission uses the shared resource budgets below.
+  (void)source_peer;
   ++admission_window_.in;
-  if (!admit_source(source_peer, td::Timestamp::now())) {
-    ++admission_window_.rejected;
-    co_return td::Status::Error(ErrorCode::notready, "external message source rate limit exceeded");
-  }
   auto reserved = ExtMessageAdmissionReservation::acquire(admission_budget_, data.size());
   if (reserved.is_error()) {
     ++admission_window_.rejected;
@@ -282,28 +280,6 @@ metrics::ExtMessageAdmissionOutcome ExtMessagePool::finalize_admission(td::Ref<E
   }
   record_admission(outcome);
   return outcome;
-}
-
-bool ExtMessagePool::admit_source(const td::optional<PublicKeyHash> &source_peer, td::Timestamp now) {
-  if (!source_peer) {
-    return true;
-  }
-  auto it = peer_admission_.find(source_peer.value());
-  if (it == peer_admission_.end()) {
-    if (peer_admission_.size() >= MAX_TRACKED_ADMISSION_PEERS) {
-      auto oldest = std::min_element(peer_admission_.begin(), peer_admission_.end(), [](const auto &a, const auto &b) {
-        return a.second.last_seen.at() < b.second.last_seen.at();
-      });
-      peer_admission_.erase(oldest);
-    }
-    it = peer_admission_.emplace(source_peer.value(), PeerAdmission{}).first;
-  }
-  it->second.last_seen = now;
-  if (!it->second.rate.check(now)) {
-    return false;
-  }
-  it->second.rate.insert(now);
-  return true;
 }
 
 void ExtMessagePool::record_admission(metrics::ExtMessageAdmissionOutcome outcome) {
