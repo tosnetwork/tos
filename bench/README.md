@@ -10,18 +10,23 @@ Results are **local engineering evidence only**: co-located validators on one
 host, no network latency and no adversarial load. They are not public or
 release capacity numbers.
 
-## Workloads
+## Workload
 
-| Workload | What one transfer is on chain | Signature checked on chain |
-|---|---|---|
-| `classical` | Wallet V5 external → transfer to a sink (2 transactions) | Ed25519 |
-| `pq-relay` | relayer Wallet V5 external carrying up to `--relay-batch` AUTH submissions → ML-DSA-44 module (verifies the proof) → strict-PQ Wallet V5 executes → sink (3 transactions per transfer, plus 1 relayer transaction per batch) | ML-DSA-44 (FIPS 204, 2,420-byte proofs) |
+Every load account is a strict post-quantum account; there is no Ed25519 load.
 
-`pq-relay` is the production PQ authorization path covered by the
-`test/pq-readiness` live regression: a Wallet V5 whose strict authorization
-root (mode 2) is an `mldsa44-auth-module.fc` instance. Messages are built with
-the same `contract` client types that regression uses. `classical` is the
-baseline that isolates the cost of post-quantum authorization.
+`pq-relay`: a relayer external carries up to `--relay-batch` signed AUTH
+submissions; each goes to the account's ML-DSA-44 module
+(`mldsa44-auth-module.fc`), which verifies the 2,420-byte FIPS 204 proof on
+chain and forwards the envelope; the strict-PQ Wallet V5 (authorization root
+mode 2, classical signing disabled) executes the transfer to a sink. That is 3
+transactions per transfer plus 1 relayer transaction per batch. It is the PQ
+authorization path covered by the `test/pq-readiness` live regression, and the
+messages are built with the same `contract` client types.
+
+The relayer only carries messages onto the chain and pays their fees: neither
+the PQ wallet nor the module accepts external messages, so the carrier's own
+external is Ed25519-signed and authorizes nothing about the transfer. Every
+transfer is authorized solely by its ML-DSA-44 proof.
 
 Destinations are sink addresses outside every bench account set, so a
 transaction on a load wallet is always one executed transfer.
@@ -59,7 +64,7 @@ uv run python bench/run_local_bench.py --out /tmp/bench-sweep \
 uv run python bench/plot_blocks.py /tmp/bench-sweep/stage-pq-relay-250
 ```
 
-Main options: `--workloads classical,pq-relay`, `--validators` (4..21),
+Main options: `--validators` (4..21),
 `--wallets` per workload, `--rates` (offered transfers/s per stage),
 `--duration`/`--warmup`/`--drain` (seconds), `--relay-batch`,
 `--block-limit-mul` (>1 only for deliberately unleashed runs; the default keeps
@@ -70,8 +75,7 @@ material derived from it).
 
 1. Read every load wallet's counter (Wallet V5 seqno, or the AUTH nonce in
    strict PQ mode).
-2. Pre-sign the whole stage: one message per transfer for `classical`; for
-   `pq-relay`, one ML-DSA-44 proof per transfer, then relayer externals carrying
+2. Pre-sign the whole stage: one ML-DSA-44 proof per transfer, then relayer externals carrying
    `--relay-batch` submissions each. Accounts are reused round-robin, never
    faster than `--min-reuse` seconds.
 3. Send at the offered rate through a paced pool of liteserver connections
@@ -108,8 +112,7 @@ generator, observer or validator measures the pause rather than the chain.
 
 * Liteserver admission: each connection admits 64 queries/s with 32 in flight,
   and each node admits 512 medium-class queries/s (including `sendMessage`).
-  The pool keeps each connection at 48 queries/s; raise
-  `--connections-per-node` for higher `classical` rates. Sends are never
+  The pool keeps each connection at 48 queries/s. Sends are never
   retried, so a refusal at the node is reported as a result.
 * External messages are capped at 64 KiB; relayer batches and deployment
   batches are sized under that.

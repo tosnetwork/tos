@@ -5,9 +5,8 @@ One process runs the whole bench so every number comes from one chain and one
 clock:
 
 1. Boot a local PQ validator net through tostester (Simplex, one basechain shard).
-2. Deploy the load accounts from the genesis wallet: relayers, classical Wallet
-   V5 accounts and, for the PQ workload, one ML-DSA-44 module per strict PQ
-   Wallet V5.
+2. Deploy the load accounts from the genesis wallet: relayers and, for every
+   load account, a strict PQ Wallet V5 with its own ML-DSA-44 module.
 3. For each workload and offered rate: pre-sign every message, send at the
    offered rate, keep scanning every basechain block, drain, then read every
    load wallet's counter to account for each message exactly.
@@ -63,7 +62,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--signer", type=Path, default=ROOT / "build/bench-pq-signer/bench-pq-signer")
     p.add_argument("--out", type=Path, required=True, help="new directory for all outputs")
     p.add_argument("--validators", type=int, default=4)
-    p.add_argument("--workloads", default="classical,pq-relay")
+    p.add_argument("--workloads", default="pq-relay")
     p.add_argument("--wallets", type=int, default=2000, help="load wallets per workload")
     p.add_argument("--rates", default="10,50,100,250", help="offered transfers/s per stage")
     p.add_argument("--duration", type=int, default=300, help="seconds of sending per stage")
@@ -242,15 +241,6 @@ class Bench:
         for r in self.relayers:
             self.classes[r.address.hash_part] = "relayer"
             deployments.append((r.blueprint, relayer_funding))
-        self.classical: list[ClassicalWallet] = []
-        if "classical" in a.workloads:
-            self.classical = [
-                ClassicalWallet.derive(self.code["wallet"], self.net_id, self.run_seed, "classical", i)
-                for i in range(a.wallets)
-            ]
-            for w in self.classical:
-                self.classes[w.address.hash_part] = "classical-wallet"
-                deployments.append((w.blueprint, nano(a.wallet_funding)))
         self.pq: list[PqWallet] = []
         if "pq-relay" in a.workloads:
             seeds = [pq_seed(self.run_seed, i) for i in range(a.wallets)]
@@ -313,46 +303,36 @@ class Bench:
     async def stage(self, workload: str, rate: float) -> dict:
         a = self.a
         count = int(rate * a.duration)
-        wallets = self.classical if workload == "classical" else self.pq
+        wallets = self.pq
         n = len(wallets)
         start_states = await chain.read_wallet_states(self.pool, [w.address for w in wallets])
         _, now = await self._now()
         valid_until = now + a.duration + a.drain + 600
         transfer = nano(a.transfer_value)
         t_sign = time.time()
-        if workload == "classical":
-            messages = []
-            for k in range(count):
-                w = wallets[k % n]
-                state = start_states[w.address.hash_part]
-                assert state is not None
-                seqno = state.seqno + k // n
-                messages.append(w.external(seqno, [w.transfer(self.sinks[k % len(self.sinks)], transfer)], valid_until))
-            per_message_offered = 1
-        else:
-            requests = []
-            for k in range(count):
-                w = wallets[k % n]
-                state = start_states[w.address.hash_part]
-                assert state is not None and state.auth is not None
-                requests.append((w, w.request(state.auth.nonce + k // n,
-                                              self.sinks[k % len(self.sinks)], transfer, valid_until)))
-            signatures = self.signer.sign([(w.pq_seed, r.commitment) for w, r in requests])
-            batch = a.relay_batch
-            messages = []
-            for j in range(0, count, batch):
-                relayer = self.relayers[(j // batch) % len(self.relayers)]
-                seqno = self.seqnos[relayer.address.hash_part]
-                self.seqnos[relayer.address.hash_part] = seqno + 1
-                subs = [
-                    submission(relayer.address, w.module.address, r, signatures[j + i], nano(a.relay_value), j + i)
-                    for i, (w, r) in enumerate(requests[j : j + batch])
-                ]
-                ext = relayer.external(seqno, subs, valid_until)
-                if j == 0 and len(ext.serialize().to_boc()) > EXT_MESSAGE_BUDGET:
-                    raise SystemExit(f"--relay-batch {batch} exceeds the external message size limit; lower it")
-                messages.append(ext)
-            per_message_offered = batch
+        requests = []
+        for k in range(count):
+            w = wallets[k % n]
+            state = start_states[w.address.hash_part]
+            assert state is not None and state.auth is not None
+            requests.append((w, w.request(state.auth.nonce + k // n,
+                                          self.sinks[k % len(self.sinks)], transfer, valid_until)))
+        signatures = self.signer.sign([(w.pq_seed, r.commitment) for w, r in requests])
+        batch = a.relay_batch
+        messages = []
+        for j in range(0, count, batch):
+            relayer = self.relayers[(j // batch) % len(self.relayers)]
+            seqno = self.seqnos[relayer.address.hash_part]
+            self.seqnos[relayer.address.hash_part] = seqno + 1
+            subs = [
+                submission(relayer.address, w.module.address, r, signatures[j + i], nano(a.relay_value), j + i)
+                for i, (w, r) in enumerate(requests[j : j + batch])
+            ]
+            ext = relayer.external(seqno, subs, valid_until)
+            if j == 0 and len(ext.serialize().to_boc()) > EXT_MESSAGE_BUDGET:
+                raise SystemExit(f"--relay-batch {batch} exceeds the external message size limit; lower it")
+            messages.append(ext)
+        per_message_offered = batch
         sign_seconds = time.time() - t_sign
         log.info("%s @ %g/s: %d transfers pre-signed in %.1fs", workload, rate, count, sign_seconds)
 
@@ -372,7 +352,7 @@ class Bench:
         for w in wallets:
             s0, s1 = start_states[w.address.hash_part], end_states[w.address.hash_part]
             assert s0 is not None and s1 is not None
-            executed += (s1.seqno - s0.seqno) if workload == "classical" else (s1.auth.nonce - s0.auth.nonce)
+            executed += s1.auth.nonce - s0.auth.nonce
         if workload == "pq-relay":
             relayer_states = await chain.read_wallet_states(self.pool, [r.address for r in self.relayers])
             for r in self.relayers:
@@ -381,11 +361,8 @@ class Bench:
                     self.seqnos[r.address.hash_part] = live.seqno
         result = self.summarize(workload, rate, count, per_message_offered, records, scanner,
                                 executed, t0, t_sent, sign_seconds)
-        if workload == "classical":
-            classes = {"classical-wallet": [w.address for w in wallets]}
-        else:
-            classes = {"module": [w.module.address for w in wallets], "pq-wallet": [w.address for w in wallets],
-                       "relayer": [r.address for r in self.relayers]}
+        classes = {"module": [w.module.address for w in wallets], "pq-wallet": [w.address for w in wallets],
+                   "relayer": [r.address for r in self.relayers]}
         result["gas_sample"] = await chain.gas_sample(self.pool, classes)
         result["cpu_package_celsius_end"] = package_temperatures()
         # A guard pause stops the validators and the generator together; such a
@@ -416,7 +393,7 @@ class Bench:
         for r in records:
             if not r.ok and r.error:
                 errors[r.error] = errors.get(r.error, 0) + 1
-        wallet_class = "classical-wallet" if workload == "classical" else "pq-wallet"
+        wallet_class = "pq-wallet"
         lo, hi = t0 + a.warmup, t_sent
         window = [b for b in scanner.rows if lo <= b.observed <= hi]
         span = max(1e-9, hi - lo)
@@ -427,7 +404,7 @@ class Bench:
         # Inclusion latency: pair each wallet's sends with its observed executions in order.
         latencies = []
         sends_by_wallet: dict[bytes, list[float]] = {}
-        wallets = self.classical if workload == "classical" else self.pq
+        wallets = self.pq
         for r in records:
             for k in range(r.index * per_message, min(count, (r.index + 1) * per_message)):
                 sends_by_wallet.setdefault(wallets[k % len(wallets)].address.hash_part, []).append(r.sent)

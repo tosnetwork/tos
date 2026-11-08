@@ -3,7 +3,6 @@
 Every message is built with the same client types the PQ regression suite uses,
 so the bench measures the production wire format rather than a lookalike:
 
-* ``classical``: a Wallet V5 external signed with Ed25519 (the baseline).
 * ``pq-relay``: a Wallet V5 whose strict authorization root is an ML-DSA-44
   module. A relayer wallet carries signed AUTH submissions to each module, the
   module verifies the ML-DSA-44 proof on chain and forwards the envelope, and the
@@ -29,7 +28,7 @@ from contract.pq_auth import AuthRequest, transfer_message
 
 ACTION_SEND_MSG = 0x0EC3C86D
 MAX_ACTIONS = 255
-WORKLOADS = ("classical", "pq-relay")
+WORKLOADS = ("pq-relay",)
 
 
 def derive_seed(run_seed: bytes, tag: str, index: int) -> bytes:
@@ -59,7 +58,10 @@ def out_list(messages: list[MessageAny], mode: int = 3) -> Cell:
 
 @dataclass(frozen=True)
 class ClassicalWallet:
-    """A Wallet V5 controlled by an Ed25519 key (relayers, funders, baseline load)."""
+    """A Wallet V5 with an Ed25519 key: only the relayers and deployers that put messages on chain.
+
+    No load account uses it; every transfer the bench measures is authorized by ML-DSA-44.
+    """
 
     blueprint: WalletV5Blueprint
     key: nacl.signing.SigningKey
