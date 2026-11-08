@@ -23,6 +23,9 @@ BASECHAIN_SHARD = -(2**63)
 # stay under both so the bench measures the chain, not its own refusals.
 CONNECTION_QPS = 48
 CONNECTION_INFLIGHT = 24
+# A node admits at most 30 external messages per 10 s from one client identity
+# (ext-message-pool PeerAdmission); each liteserver connection is one identity.
+SOURCE_SEND_RATE = 2.5
 READ_ATTEMPTS = 8
 TRANSIENT_READ_ERRORS = ("admission limit exceeded", "NETWORKCancelled", "LITE_SERVER_NETWORK", "timeout")
 
@@ -63,13 +66,30 @@ class PacedClient:
 
 
 class ClientPool:
-    """Round-robin over paced connections spread across every validator's liteserver."""
+    """Round-robin over paced connections spread across every validator's liteserver.
 
-    def __init__(self, clients: list[PacedClient]):
+    Reads use ``clients``; external messages go only through ``senders``, each
+    paced under the per-identity external admission rate.
+    """
+
+    def __init__(self, clients: list[PacedClient], senders: list[PacedClient] | None = None):
         if not clients:
             raise ValueError("a client pool needs at least one connection")
         self.clients = clients
+        self.senders = senders or []
         self._i = 0
+        self._s = 0
+
+    def pick_sender(self) -> PacedClient:
+        if not self.senders:
+            return self.pick()
+        sender = self.senders[self._s % len(self.senders)]
+        self._s += 1
+        return sender
+
+    @property
+    def send_rate(self) -> float:
+        return sum(s.qps for s in self.senders) if self.senders else self.qps
 
     def pick(self) -> PacedClient:
         client = self.clients[self._i % len(self.clients)]
@@ -174,8 +194,8 @@ async def paced_send(
         raise ValueError("rate must be positive")
     if not messages:
         return []
-    if rate > pool.qps:
-        raise ValueError(f"offered {rate:g} messages/s exceeds the pool's {pool.qps:g} queries/s")
+    if rate > pool.send_rate * 1.0001:
+        raise ValueError(f"offered {rate:g} messages/s exceeds the senders' {pool.send_rate:g}/s")
     bocs = [m.serialize().to_boc() for m in messages]
     gate = asyncio.Semaphore(concurrency)
     records: list[SendRecord | None] = [None] * len(bocs)
@@ -185,7 +205,7 @@ async def paced_send(
         async with gate:
             sent = time.time()
             try:
-                await pool.call("raw_send_message", boc)
+                await pool.pick_sender().call("raw_send_message", boc)
                 records[i] = SendRecord(i, scheduled, sent, True, None)
             except Exception as error:  # admission refusals are results, not crashes
                 records[i] = SendRecord(i, scheduled, sent, False, str(error)[:200])
@@ -296,3 +316,14 @@ async def action_report(pool: ClientPool, address: Address, limit: int = 16) -> 
             "balance_after": int(state.balance),
         })
     return rows
+
+
+async def read_data(pool: ClientPool, addresses: list[Address]) -> dict[bytes, Cell | None]:
+    out: dict[bytes, Cell | None] = {}
+
+    async def one(address: Address) -> None:
+        data = (await pool.call("raw_get_account_state", address)).data
+        out[address.hash_part] = Cell.one_from_boc(data) if data else None
+
+    await asyncio.gather(*(one(a) for a in addresses))
+    return out

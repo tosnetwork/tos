@@ -1,4 +1,4 @@
-"""Bench message construction matches the reference client types; the batch signer is sound.
+"""Bench Quantum messages match the self-pay wire format; the batch signer is sound.
 
 Run: uv run python bench/tests/test_workload.py [--signer PATH] [--key-tool PATH]
 """
@@ -12,21 +12,22 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path[:0] = [str(ROOT / "bench"), str(ROOT / "test/tostester/src")]
+sys.path[:0] = [str(ROOT / "bench"), str(ROOT / "test/tostester/src"), str(ROOT / "scripts")]
 
 from pytosiq_core import Address, Builder  # noqa: E402
 
-from contract import WalletV5  # noqa: E402
-from contract.pq_auth import CONTEXT  # noqa: E402
 from pqbench.signer import BatchSigner  # noqa: E402
 from pqbench.workload import (  # noqa: E402
-    ClassicalWallet,
-    PqWallet,
+    QSP_EXECUTE_TAG,
+    QSP_PRIMARY_CONTEXT,
+    QSP_REQUEST,
+    QuantumWallet,
+    byte_chain,
     derive_seed,
     out_list,
-    pq_seed,
+    primary_nonce,
+    quantum_seed,
     sinks,
-    submission,
 )
 
 _parser = argparse.ArgumentParser(add_help=False)
@@ -35,7 +36,12 @@ _parser.add_argument("--key-tool")
 ARGS, _REST = _parser.parse_known_args()
 SEED = bytes(range(32))
 CODE = Builder().store_uint(0xC0DE, 16).end_cell()
-MODULE = Builder().store_uint(0xBEEF, 16).end_cell()
+NETWORK = bytes([0x42]) * 32
+KEY = bytes(range(256)) * 5 + bytes(32)
+
+
+def wallet(index=0, **kw):
+    return QuantumWallet.derive(CODE, 1, NETWORK, SEED, "t", index, KEY, quantum_seed(SEED, "t", index), **kw)
 
 
 class WorkloadTests(unittest.TestCase):
@@ -50,55 +56,65 @@ class WorkloadTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 derive_seed(SEED, "a", bad)
 
-    def test_single_action_list_equals_the_reference_transfer_payload(self):
-        w = ClassicalWallet.derive(CODE, 3, SEED, "t", 0)
+    def test_state_matches_the_public_self_pay_fixture_builder(self):
+        # The genesis fixture generator is the reference for the account layout.
+        import quantum_self_pay_fixture as fixture
+
+        rescue = bytes([0x33]) * 32
+        reference = fixture.accounts(CODE, KEY, rescue)["active"]
+        mine = wallet(0, rescue=rescue)
+        self.assertEqual(mine.data().hash.hex(), reference["data_hash"])
+        self.assertEqual(mine.address.to_str(False).lower(), reference["address"].lower())
+
+    def test_request_layout_binds_identity_nonce_deadline_and_actions(self):
+        w = wallet()
         dest = Address("0:" + "11" * 32)
-        reference = WalletV5(None, w.address, 3, w.key).transfer_payload(dest, 5)
-        self.assertEqual(out_list([w.transfer(dest, 5)]).hash, reference.hash)
+        r = w.request(7, [w.transfer(dest, 5)], 1234)
+        s = r.begin_parse()
+        self.assertEqual(s.load_uint(32), QSP_REQUEST)
+        self.assertEqual(s.load_int(32), 1)
+        self.assertEqual(s.load_bytes(32), NETWORK)
+        self.assertEqual(s.load_address(), w.address)
+        self.assertEqual(s.load_bytes(32), w.authority.hash)
+        self.assertEqual((s.load_uint(8), s.load_uint(64), s.load_uint(64), s.load_uint(32), s.load_uint(8)),
+                         (1, 0, 7, 1234, 0))
+        payload = s.load_ref().begin_parse()
+        self.assertEqual(payload.load_uint(32), QSP_EXECUTE_TAG)
+        self.assertEqual(payload.load_ref().hash, out_list([w.transfer(dest, 5)]).hash)
+        for nonce, deadline in ((-1, 1), (1 << 64, 1), (0, 1 << 32)):
+            with self.assertRaises(ValueError):
+                w.request(nonce, [w.transfer(dest, 1)], deadline)
+
+    def test_external_carries_request_and_signature_chain(self):
+        w = wallet()
+        r = w.request(0, [w.transfer(sinks(1, SEED)[0], 1)], 99)
+        ext = w.external(r, bytes(2420))
+        self.assertEqual(ext.info.dest, w.address)
+        self.assertEqual(ext.body.refs[0].hash, r.hash)
+        self.assertEqual(ext.body.refs[1].hash, byte_chain(bytes(2420)).hash)
+        with self.assertRaises(ValueError):
+            w.external(r, bytes(2419))
+
+    def test_primary_nonce_reads_fresh_state(self):
+        self.assertEqual(primary_nonce(wallet().data()), 0)
 
     def test_action_list_bounds(self):
-        w = ClassicalWallet.derive(CODE, 3, SEED, "t", 0)
+        w = wallet()
         dest = Address("0:" + "11" * 32)
         with self.assertRaises(ValueError):
             out_list([])
         with self.assertRaises(ValueError):
             out_list([w.transfer(dest, 1)] * 256)
-        node = out_list([w.transfer(dest, i + 1) for i in range(3)])
-        depth = 0
-        while node.refs:
-            node = node.refs[0]
-            depth += 1
-        self.assertEqual(depth, 3)
+        self.assertEqual(len(out_list([w.transfer(dest, 1)] * 255).refs), 2)
 
-    def test_classical_external_is_the_reference_signed_body(self):
-        w = ClassicalWallet.derive(CODE, 3, SEED, "t", 0)
-        dest = Address("0:" + "11" * 32)
-        ext = w.external(7, [w.transfer(dest, 9)], 1000)
-        from contract import WalletV5State
-        view = WalletV5(None, w.address, 3, w.key)
-        expected = view.sign(view.transfer_payload(dest, 9), WalletV5State(True, 7, 0, w.key.verify_key.encode()), 1000)
-        self.assertEqual(ext.body.hash, expected.hash)
-        self.assertEqual(ext.info.dest, w.address)
-
-    def test_pq_wallet_binds_its_module_and_request_identity(self):
-        pk = bytes(1312)
-        w = PqWallet.derive(CODE, MODULE, 3, SEED, 0, pk, pq_seed(SEED, 0))
-        from contract import WalletV5State
-        state = WalletV5State.parse(w.wallet.state_init.data)
-        self.assertEqual(state.auth.module_hash, w.module.address.hash_part)
-        self.assertEqual((state.auth.mode, state.auth.epoch, state.auth.nonce), (2, 1, 0))
-        dest = sinks(1, SEED)[0]
-        r = w.request(4, dest, 9, 1234)
-        self.assertEqual((r.account, r.nonce, r.epoch, r.valid_until, r.kind), (w.address, 4, 1, 1234, 0))
-        msg = submission(Address("0:" + "22" * 32), w.module.address, r, bytes(2420), 100, 5)
-        self.assertEqual(msg.info.dest, w.module.address)
-        self.assertEqual(msg.body.hash, r.submission(bytes(2420), None, 5).hash)
-
-    def test_sinks_are_distinct_and_bounded(self):
+    def test_distinct_wallets_and_sinks(self):
+        self.assertNotEqual(wallet(0).address, wallet(1).address)
         s = sinks(64, SEED)
         self.assertEqual(len({a.hash_part for a in s}), 64)
         with self.assertRaises(ValueError):
             sinks(0, SEED)
+        with self.assertRaises(ValueError):
+            QuantumWallet.derive(CODE, 1, NETWORK, SEED, "t", 0, KEY[:-1], SEED)
 
 
 @unittest.skipUnless(ARGS.signer, "needs --signer")
@@ -109,18 +125,19 @@ class SignerTests(unittest.TestCase):
     def test_deterministic_batch_in_order(self):
         seeds = [derive_seed(SEED, "s", i) for i in range(8)]
         jobs = [(s, bytes([i]) * 32) for i, s in enumerate(seeds)]
-        a, b = self.signer.sign(jobs), self.signer.sign(list(reversed(jobs)))
+        a = self.signer.sign(jobs, QSP_PRIMARY_CONTEXT)
+        b = self.signer.sign(list(reversed(jobs)), QSP_PRIMARY_CONTEXT)
         self.assertEqual(a, list(reversed(b)))
         self.assertEqual(len(set(a)), 8)
-        keys = self.signer.public_keys(seeds)
-        self.assertEqual(len(set(keys)), 8)
+        self.assertNotEqual(a[0], self.signer.sign(jobs[:1], b"other-context")[0])
+        self.assertEqual(len(set(self.signer.public_keys(seeds))), 8)
 
     def test_malformed_input_fails_whole_batch(self):
         with self.assertRaises(ValueError):
-            self.signer.sign([(b"short", b"x")])
+            self.signer.sign([(b"short", b"x")], QSP_PRIMARY_CONTEXT)
         with self.assertRaises(ValueError):
-            self.signer.sign([(SEED, b"")])
-        result = subprocess.run([str(ARGS.signer), "sign", CONTEXT.hex()], input="zz 00\n",
+            self.signer.sign([(SEED, b"")], QSP_PRIMARY_CONTEXT)
+        result = subprocess.run([str(ARGS.signer), "sign", QSP_PRIMARY_CONTEXT.hex()], input="zz 00\n",
                                 capture_output=True, text=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(result.stdout, "")

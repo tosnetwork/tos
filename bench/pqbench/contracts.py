@@ -1,4 +1,4 @@
-"""Compile the two contracts the bench deploys, exactly as the PQ regression suite does."""
+"""Compile the self-pay Quantum wallet the bench deploys, with the PQ instruction set."""
 
 import hashlib
 import json
@@ -9,7 +9,7 @@ from pathlib import Path
 from pytosiq_core import Cell
 
 ROOT = Path(__file__).resolve().parents[2]
-SOURCES = {"wallet": "wallet-v5-code.fc", "module": "mldsa44-auth-module.fc"}
+SOURCES = {"quantum": "wallet-quantum-self-pay.fc"}
 
 
 def build(build_dir: Path, out: Path) -> dict[str, Cell]:

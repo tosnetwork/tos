@@ -12,21 +12,20 @@ release capacity numbers.
 
 ## Workload
 
-Every load account is a strict post-quantum account; there is no Ed25519 load.
+Every account the bench creates is a **self-pay Quantum wallet**
+(`crypto/smartcont/wallet-quantum-self-pay.fc`), the Quantum wallet the
+mobile apps use. One transfer is one external message carrying a request
+signed with the account's ML-DSA-44 PRIMARY key (context
+`TOS-QSP-MLDSA44-v1`); the wallet verifies the 2,420-byte FIPS 204 proof on
+chain, pays its own fees and executes the transfer to a sink. That is 2
+transactions per transfer (wallet + sink) and no carrier, relayer or classical
+key anywhere: the deployer wallets that create the load accounts are self-pay
+Quantum wallets too, deploying up to 255 accounts per ML-DSA-44-signed external.
+Only the genesis wallet's initial funding of the deployers is not PQ.
 
-`pq-relay`: a relayer external carries up to `--relay-batch` signed AUTH
-submissions; each goes to the account's ML-DSA-44 module
-(`mldsa44-auth-module.fc`), which verifies the 2,420-byte FIPS 204 proof on
-chain and forwards the envelope; the strict-PQ Wallet V5 (authorization root
-mode 2, classical signing disabled) executes the transfer to a sink. That is 3
-transactions per transfer plus 1 relayer transaction per batch. It is the PQ
-authorization path covered by the `test/pq-readiness` live regression, and the
-messages are built with the same `contract` client types.
-
-The relayer only carries messages onto the chain and pays their fees: neither
-the PQ wallet nor the module accepts external messages, so the carrier's own
-external is Ed25519-signed and authorizes nothing about the transfer. Every
-transfer is authorized solely by its ML-DSA-44 proof.
+The account state and address layout is checked byte for byte against the
+repository's public self-pay fixture generator
+(`scripts/quantum_self_pay_fixture.py`).
 
 Destinations are sink addresses outside every bench account set, so a
 transaction on a load wallet is always one executed transfer.
@@ -51,35 +50,33 @@ uv sync && uv run test/tostester/generate_tl.py
 ## Run
 
 ```bash
-# smoke (about 4 minutes)
+# smoke (about 3 minutes)
 uv run python bench/run_local_bench.py --out /tmp/bench-smoke \
-  --wallets 200 --rates 5,10 --duration 30 --warmup 5 --drain 20
+  --wallets 1200 --rates 10,50 --duration 40 --warmup 10 --drain 20
 
 # rate sweep to saturation
 uv run python bench/run_local_bench.py --out /tmp/bench-sweep \
   --wallets 10000 --rates 10,50,100,250,500,1000 --duration 300 \
-  --connections-per-node 8 --stop-on-saturation
+  --stop-on-saturation
 
 # plot one stage
-uv run python bench/plot_blocks.py /tmp/bench-sweep/stage-pq-relay-250
+uv run python bench/plot_blocks.py /tmp/bench-sweep/stage-quantum-250
 ```
 
 Main options: `--validators` (4..21),
-`--wallets` per workload, `--rates` (offered transfers/s per stage),
-`--duration`/`--warmup`/`--drain` (seconds), `--relay-batch`,
+`--wallets`, `--rates` (offered transfers/s per stage),
+`--duration`/`--warmup`/`--drain` (seconds), `--deployers`, `--max-senders`,
 `--block-limit-mul` (>1 only for deliberately unleashed runs; the default keeps
 the genesis block limits), `--seed` (public run seed; every key is public test
 material derived from it).
 
 ## How a stage is measured
 
-1. Read every load wallet's counter (Wallet V5 seqno, or the AUTH nonce in
-   strict PQ mode).
-2. Pre-sign the whole stage: one ML-DSA-44 proof per transfer, then relayer externals carrying
-   `--relay-batch` submissions each. Accounts are reused round-robin, never
-   faster than `--min-reuse` seconds.
-3. Send at the offered rate through a paced pool of liteserver connections
-   spread over every validator, while a scanner reads every basechain block.
+1. Read every load wallet's PRIMARY nonce.
+2. Pre-sign the whole stage: one ML-DSA-44-signed external per transfer.
+   Wallets are reused round-robin, never faster than `--min-reuse` seconds.
+3. Send at the offered rate through sender connections spread over every
+   validator, while a scanner reads every basechain block.
 4. Drain, then read every counter again: `transfers_executed` is exact, and
    `transfers_unaccounted` is what was planned but never executed (refused,
    expired or blocked behind a failed predecessor).
@@ -98,8 +95,8 @@ generator, observer or validator measures the pause rather than the chain.
 ## Outputs
 
 * `results.json`: run parameters, deployment cost and one record per stage with
-  `steady_transfer_tps`, `steady_total_tx_tps`,
-  `steady_pq_verifications_per_s`, `completed_transfer_rate`, inclusion latency
+  `steady_transfer_tps`, `steady_total_tx_tps`, `completed_transfer_rate`,
+  measured gas per transfer (`gas_sample`), inclusion latency
   percentiles, block counts, refusals and their reasons, and pre-signing time.
 * `stage-<workload>-<rate>/blocks.csv`: every basechain block with its
   transaction count per account class.
@@ -112,12 +109,17 @@ generator, observer or validator measures the pause rather than the chain.
 
 * Liteserver admission: each connection admits 64 queries/s with 32 in flight,
   and each node admits 512 medium-class queries/s (including `sendMessage`).
-  The pool keeps each connection at 48 queries/s. Sends are never
+  Read connections stay at 48 queries/s.
+* External admission: a node admits 30 external messages per 10 s from one
+  client identity. The bench opens enough sender connections (each its own
+  identity, paced at 2.5/s) for the highest offered rate, capped by
+  `--max-senders`; on a public network the equivalent is many independent
+  clients. Sends are never
   retried, so a refusal at the node is reported as a result.
-* External messages are capped at 64 KiB; relayer batches and deployment
-  batches are sized under that.
-* AUTH requests are valid for at most 3,600 s, so `--duration + --drain` must
-  leave room for pre-signing.
+* External messages are capped at 64 KiB; deployment batches are sized under
+  that.
+* Requests are valid for at most 3,600 s, so `--duration + --drain` must leave
+  room for pre-signing.
 
 ## Tests
 
@@ -126,9 +128,10 @@ uv run python bench/tests/test_workload.py \
   --signer build/bench-pq-signer/bench-pq-signer --key-tool build/pq-key-tool/tos-pq-key
 ```
 
-The tests check that bench messages equal the reference client's, that the
-batch signer is deterministic and fails whole batches on bad input, and that
-it derives the same public key as `crypto/pq/tools` for the same seed (build
+The tests check the request, external and state layout (state and address
+against the public self-pay fixture generator), that the batch signer is
+deterministic, context-bound and fails whole batches on bad input, and that it
+derives the same public key as `crypto/pq/tools` for the same seed (build
 that tool with `cmake -S crypto/pq/tools -B build/pq-key-tool`).
 
 ## Not yet covered
@@ -137,4 +140,4 @@ that tool with `cmake -S crypto/pq/tools -B build/pq-key-tool`).
   accounts are deployed on chain, which keeps the code path production-like but
   bounds practical state size.
 * The offline collation benchmark.
-* Token transfers, and the Falcon-512 and SLH-DSA modules.
+* Token transfers and RESCUE (SLH-DSA) spending.
