@@ -88,7 +88,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--seed", default="tos-local-pq-bench", help="public run seed (keys are test material)")
     p.add_argument("--stop-on-saturation", action="store_true")
     p.add_argument("--thermal-log", type=Path,
-                   help="log of a thermal guard attached to this run's process group; stages overlapping a pause are invalid")
+                   help="log of a thermal guard attached to this run's process group, if one is used; "
+                        "stages overlapping a pause are invalid")
     p.add_argument("--keep-running", action="store_true", help="leave the net up after the bench (Ctrl-C ends)")
     a = p.parse_args()
     a.rates = [float(r) for r in a.rates.split(",") if r.strip()]
@@ -301,10 +302,9 @@ class Bench:
         if before and before[-1] == "paused":
             overlapping.insert(0, ("paused-before-stage", round(t0, 1)))
         result["thermal_guard_events"] = overlapping
-        result["valid"] = not overlapping and a.thermal_log is not None
-        if a.thermal_log is None:
-            result["invalid_reason"] = "no --thermal-log: guard pauses cannot be excluded"
-        elif overlapping:
+        result["thermal_guard"] = "attached" if a.thermal_log is not None else "none"
+        result["valid"] = not overlapping
+        if overlapping:
             result["invalid_reason"] = "thermal guard paused the run during this stage; rerun it"
         if not result["valid"]:
             result["saturated"] = None

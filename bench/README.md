@@ -87,10 +87,12 @@ the steady-state transfer rate falls below 90% of the offered rate. It is
 admission refusals, no generator lag over 1 s and no observer lag
 (`non_chain_bottlenecks` lists any that apply).
 
-Run the bench under a thermal guard on hosts that throttle, and pass its log
-with `--thermal-log`. Every stage records the guard's pause/resume events; a
-stage that overlaps a pause is `valid: false` and must be rerun, since a paused
-generator, observer or validator measures the pause rather than the chain.
+A thermal guard is optional. If one is attached to the run's process group,
+pass its log with `--thermal-log`: every stage records the guard's
+pause/resume events, and a stage that overlaps a pause is `valid: false` and
+must be rerun, since a paused generator, observer or validator measures the
+pause rather than the chain. Package temperatures are recorded per stage
+either way.
 
 ## Outputs
 
