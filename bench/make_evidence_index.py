@@ -65,7 +65,7 @@ def main() -> int:
                 )
     report = json.loads(results.read_text())
     index = {
-        "run_directory": str(run),
+        "run": run.name,
         "retention": a.retention,
         "command": a.command,
         "exit_status": 0,

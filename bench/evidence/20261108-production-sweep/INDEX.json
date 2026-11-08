@@ -1,7 +1,7 @@
 {
-  "run_directory": "/tos/build/pq-bench/q-prod4",
-  "retention": "toserver /tos/build/pq-bench/q-prod4, kept until at least 2027-02-08",
-  "command": "bench/run_local_bench.py --out /tos/build/pq-bench/q-prod4 --wallets 10000 --rates 50,100,200,300,400,500 --duration 300 --warmup 30 --drain 60 --max-senders 224 (all CPUs, no thermal guard)",
+  "run": "q-prod4",
+  "retention": "raw run directory q-prod4 retained on the bench host until at least 2027-02-08",
+  "command": "bench/run_local_bench.py --out q-prod4 --wallets 10000 --rates 50,100,200,300,400,500 --duration 300 --warmup 30 --drain 60 --max-senders 224 (all CPUs, no thermal guard)",
   "exit_status": 0,
   "source_commit": "015ea56694e37594edcdb20fbcdbf3ad5f241380",
   "results_json_sha256": "a8d3edfa4283689b1cdf6a05a134db28c675b473cbe60ea860d8ffd7b2ac4ceb",
@@ -139,5 +139,7 @@
       "sha256": "40859e8b85dcb444e3a60821500e7035c997f8409afca04af7d75bd3f6919978",
       "bytes": 108324512
     }
-  ]
+  ],
+  "source_note": "measured at 015ea5669; later commits (2829f26bd onward) add ingress full nodes and chunked wallet derivation and change the stage classifier, not this run's measurement",
+  "console_output_note": "the console capture of this run was overwritten by a second launcher invocation after results.json was written; bench.log (indexed) holds the full progress log"
 }

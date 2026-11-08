@@ -4,7 +4,7 @@ Local engineering evidence only. Four validators share one host, so there is no 
 
 ## 2026-11-08: self-pay Quantum wallet under the canonical genesis block limits
 
-Evidence index: [evidence/20261108-production-sweep/INDEX.json](evidence/20261108-production-sweep/INDEX.json). It holds the command, the source commit `015ea5669`, the live ConfigParam 20–25 hashes and the full per-stage records in `results.json`. It also lists SHA-256 and size for each retained raw file: block and timeline CSVs, the bench log, and the validators' collation records.
+Evidence index: [evidence/20261108-production-sweep/INDEX.json](evidence/20261108-production-sweep/INDEX.json). It holds the command, the source commit `015ea5669`, the live ConfigParam 20–25 hashes and the full per-stage records in `results.json`. Later commits add ingress full nodes and chunked wallet derivation and change the stage classifier; they do not change what this run measured. The backlog attribution below is recomputed from the recorded refusal counts. It also lists SHA-256 and size for each retained raw file: block and timeline CSVs, the bench log, and the validators' collation records.
 
 Setup:
 - **Block limits:** `--block-limits production`, i.e. ConfigParams 22/23 exactly as `gen-zerostate.fif` and the public testnet set them. Basechain: bytes 256 KiB / 1 MiB / 2 MiB, gas 2M / 10M / 20M, lt 1,000 / 5,000 / 10,000.
@@ -22,24 +22,22 @@ Setup:
 | 400 | 99.0% | 396.0 | 791.1 | 2.8 / 6.2 s | 2.50 | byte limit in 268 of 675 |
 | 500 | 98.4% | 480.9 | 960.8 | 3.1 / 19.3 s | 2.42 | byte limit in 337 of 662 |
 
-What the collators recorded for blocks that stopped on the byte limit (`block_full bytes`), medians at 400/s offered:
-- block estimate 1.64 MB (the figure the byte limits apply to);
-- serialized size 1.47 MB, about 5 KB per transfer including the recipient's transaction;
-- 5.37M gas, about half the 10M soft limit;
-- 0.19 s of collation CPU time.
-
-At 500/s the median full block held 510 transactions, 1.40 MB and 4.31M gas.
+What the collators recorded for blocks that stopped on the byte limit (`block_full bytes`):
+- The collator stops taking externals at the medium level, (soft + hard) / 2 = 1,572,864 bytes (`collator.cpp`, `ParamLimits::cl_soft`). It checks after each message, so the median full-block estimate of 1.64 MB is overshoot past that level.
+- At 400/s the median full block holds 322 transactions, 1.47 MB serialized, about 4.55 KB per wallet transaction.
+- At 500/s it holds 510 transactions (about 255 transfers), 1.40 MB serialized, about 5.4 KB per transfer including the recipient's transaction.
+- Both are well under the 2 MiB hard limit. Gas runs 4.3–5.4M, about half the 10M soft limit, with 0.19–0.20 s of collation CPU time.
 
 Measured per transfer:
 - 16,719 gas on the wallet transaction;
 - 2,766 bytes for the external message, of which the ML-DSA-44 signature chain is 2,420.
 
 Reading it:
-- **The byte limit binds first.** From 300/s up, a growing share of blocks stop on it while gas stays near half its soft limit and lt delta stays small. At 500/s the block rate slips to 2.42/s and p99 latency rises to 19 s, so the chain is close to its byte-bound ceiling there. The full blocks imply about 280–290 transfers per block, roughly 700 transfers/s per shard at 2.5 blocks/s.
-- **The 0.6–1.6% not delivered were refused at ingress.** At 300, 400 and 500/s, 59, 103 and 104 sends were refused by a node's external admission ("source rate limit exceeded"). Each refusal breaks that wallet's nonce chain for the rest of the stage, so its later transfers are refused with 1804.
-  - Per-connection accounting shows the refusing connections sent at most 17–23 externals in any 10 s window, below the documented 30. So the admission window is tighter than one connection's own count, and the cascade is an artifact of one host sending everything, not of the chain.
-  - No accepted request went undelivered (`requests_accepted_but_not_delivered` is 0 in every stage).
-- **No observer or thermal confounders.** The scanner saw no late block except 7 at 500/s; no thermal guard was attached (validity n/a).
+- **The byte limit binds first.** From 300/s up, a growing share of blocks stop on it while gas stays near half its soft limit and lt delta stays small. At about 5.4 KB per transfer the medium level holds about 290 transfers, so a shard tops out near **680/s** at the observed 2.4–2.5 blocks/s.
+- **300 and 400/s: every shortfall is ingress.** The node's external admission refused 59 and 103 sends ("source rate limit exceeded"). Each refusal breaks its wallet's nonce chain for the rest of the stage. With 9 and 12 transfers per wallet, that explains at most 59 × 8 = 472 and 103 × 11 = 1,133 later stale-nonce (1804) refusals. Exactly that many were recorded, so none of them is chain backlog.
+- **500/s: chain backlog begins.** With 15 transfers per wallet, 104 ingress refusals explain at most 1,456 stale refusals, but 2,323 were recorded. At least 867 are chain backlog: a wallet's next transfer arrived before its previous one executed, consistent with p99 latency of 19.3 s and a maximum of 36.5 s against the 20 s reuse interval. Blocks/s also slipped to 2.42. The stage classifier now counts stale refusals beyond the ingress cascade bound as saturation.
+- **Per-connection accounting.** The refusing connections sent at most 17–23 externals in any 10 s window, below the documented 30, so the effective admission window is tighter than one connection's own count. No accepted request went undelivered (`requests_accepted_but_not_delivered` is 0 in every stage).
+- **No observer or thermal confounders.** The scanner saw no late block except 7 at 500/s, and no thermal guard was attached (validity n/a).
 
 Comparisons (same host and workload, 120 s stages, earlier tooling):
 - Test-harness profile with half the block bytes (512 KiB soft): blocks held at most 283–294 transactions and throughput plateaued at about 300–320 transfers/s.

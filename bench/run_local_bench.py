@@ -607,10 +607,21 @@ class Bench:
             "connections_with_rate_limit_refusals": len(refused_on),
             "admission_window": "30 externals per 10 s per client identity",
         }
+        # An ingress refusal breaks its wallet's nonce chain, so at most every later
+        # transfer of that wallet in the stage is then refused as stale (exit 1804/133).
+        # Stale refusals beyond that bound can only come from the chain's own backlog,
+        # and a backlog is saturation even when some ingress refusals happened too.
+        per_wallet = math.ceil(count / max(1, len(self.load_addresses)))
+        stale = sum(n for reason, n in errors.items() if "(1804)" in reason or "(133)" in reason)
+        cascade_max = admission * max(0, per_wallet - 1)
+        backlog = max(0, stale - cascade_max)
         result["admission_refusals"] = admission
+        result["stale_nonce_refusals"] = stale
+        result["ingress_cascade_max"] = cascade_max
+        result["chain_backlog_refusals_min"] = backlog
         result["below_offered_rate"] = below
         result["non_chain_bottlenecks"] = bottlenecks
-        result["saturated"] = below and not bottlenecks
+        result["saturated"] = below and (not bottlenecks or backlog > 0)
         stage_dir = a.out / f"stage-quantum-{rate:g}"
         stage_dir.mkdir(parents=True, exist_ok=False)
         classes = sorted({c for b in blocks for c in b.by_class})

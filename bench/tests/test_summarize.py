@@ -106,6 +106,31 @@ class SummarizeTests(unittest.TestCase):
         self.assertEqual(len(r["non_chain_bottlenecks"]), 2)
         self.assertEqual(r["ingress"]["connections_with_rate_limit_refusals"], 1)
 
+    def test_stale_refusals_beyond_the_ingress_cascade_are_chain_backlog(self):
+        t0 = 5000.0
+        # 4 wallets, 80 transfers: 20 per wallet, so one ingress refusal explains at most 19 stale ones.
+        reasons = [RATE_LIMIT] + [STALE] * 30 + [None] * 49
+        records = [
+            SendRecord(i, t0 + i / 10, t0 + i / 10, reasons[i] is None, reasons[i], "c0")
+            for i in range(80)
+        ]
+        r = run(make(self.out), 10.0, 80, records, blocks(t0, 2), 49, t0, t0 + 8)
+        self.assertEqual(r["ingress_cascade_max"], 19)
+        self.assertEqual(r["chain_backlog_refusals_min"], 11)
+        self.assertIn("node admission refusals", r["non_chain_bottlenecks"])
+        self.assertTrue(r["saturated"])
+
+    def test_stale_refusals_within_the_ingress_cascade_are_not_saturation(self):
+        t0 = 6000.0
+        reasons = [RATE_LIMIT] + [STALE] * 19 + [None] * 60
+        records = [
+            SendRecord(i, t0 + i / 10, t0 + i / 10, reasons[i] is None, reasons[i], "c0")
+            for i in range(80)
+        ]
+        r = run(make(self.out), 10.0, 80, records, blocks(t0, 2), 60, t0, t0 + 8)
+        self.assertEqual(r["chain_backlog_refusals_min"], 0)
+        self.assertFalse(r["saturated"])
+
     def test_late_observation_is_an_observer_bottleneck(self):
         t0 = 4000.0
         rows = blocks(t0, 4)
