@@ -129,7 +129,7 @@ jobs:
       run: |
         tool_dir="$(mktemp -d)"
         trap 'rm -rf "$tool_dir"' EXIT
-        curl -fsSL "$(python3 scripts/verify-build-tool.py --url uv-x86_64)" -o "$tool_dir/uv.tar.gz"
+        curl -fsSL --retry 5 --retry-delay 15 --retry-all-errors "$(python3 scripts/verify-build-tool.py --url uv-x86_64)" -o "$tool_dir/uv.tar.gz"
         python3 scripts/verify-build-tool.py uv-x86_64 "$tool_dir/uv.tar.gz"
         tar -xzf "$tool_dir/uv.tar.gz" -C "$tool_dir"
         sudo install -m 0755 "$tool_dir/uv-x86_64-unknown-linux-gnu/uv" /usr/local/bin/uv
