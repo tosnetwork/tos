@@ -24,6 +24,7 @@ BASECHAIN_SHARD = -(2**63)
 CONNECTION_QPS = 48
 CONNECTION_INFLIGHT = 24
 READ_ATTEMPTS = 8
+TRANSIENT_READ_ERRORS = ("admission limit exceeded", "NETWORKCancelled", "LITE_SERVER_NETWORK", "timeout")
 
 
 class PacedClient:
@@ -54,7 +55,7 @@ class PacedClient:
                 async with self._gate:
                     return await getattr(self.client, method)(*args)
             except Exception as error:
-                if attempt + 1 == attempts or "admission limit exceeded" not in str(error):
+                if attempt + 1 == attempts or not any(m in str(error) for m in TRANSIENT_READ_ERRORS):
                     raise
                 self.retries += 1
                 await asyncio.sleep(min(5.0, 0.2 * 2**attempt))
@@ -222,3 +223,47 @@ async def account_active(pool: ClientPool, addresses: list[Address]) -> dict[byt
 
     await asyncio.gather(*(one(a) for a in addresses))
     return out
+
+
+async def config_snapshot(pool: ClientPool, params=(20, 21, 22, 23, 24, 25)) -> dict[str, dict]:
+    """The live gas price, block limit and forwarding parameters every stage ran under."""
+    out = {}
+    for p in params:
+        cell = await pool.call("get_config_param", p)
+        out[str(p)] = {"hash": cell.hash.hex(), "boc": cell.to_boc().hex()}
+    return out
+
+
+async def gas_sample(pool: ClientPool, accounts: dict[str, list[Address]], per_class: int = 8) -> dict:
+    """Measured compute gas and total fees of recent ordinary transactions, per account class."""
+    from pytosiq_core import Transaction
+
+    report = {}
+    for name, addresses in accounts.items():
+        gas, fees, aborted = [], [], 0
+        for address in addresses[:per_class]:
+            state = await pool.call("raw_get_account_state", address)
+            last = state.last_transaction_id
+            if last is None or not int(last.lt):
+                continue
+            txs = await pool.call("raw_get_transactions", address, last)
+            for tx in txs.transactions[:4]:
+                parsed = Transaction.deserialize(Cell.one_from_boc(tx.data).begin_parse())
+                phase = getattr(parsed.description, "compute_ph", None)
+                used = getattr(phase, "gas_used", None)
+                if used is None:
+                    continue
+                gas.append(int(used))
+                fees.append(int(tx.fee))
+                aborted += int(bool(getattr(parsed.description, "aborted", False)))
+        if gas:
+            gas.sort()
+            report[name] = {
+                "transactions": len(gas),
+                "gas_min": gas[0],
+                "gas_median": gas[len(gas) // 2],
+                "gas_max": gas[-1],
+                "fee_median_nanotos": sorted(fees)[len(fees) // 2],
+                "aborted": aborted,
+            }
+    return report

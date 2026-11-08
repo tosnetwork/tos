@@ -84,6 +84,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--block-limit-mul", type=int, default=1, help=">1 raises block limits (unleashed runs only)")
     p.add_argument("--seed", default="tos-local-pq-bench", help="public run seed (keys are test material)")
     p.add_argument("--stop-on-saturation", action="store_true")
+    p.add_argument("--thermal-log", type=Path,
+                   help="log of a thermal guard attached to this run's process group; stages overlapping a pause are invalid")
     p.add_argument("--keep-running", action="store_true", help="leave the net up after the bench (Ctrl-C ends)")
     a = p.parse_args()
     a.workloads = [w.strip() for w in a.workloads.split(",") if w.strip()]
@@ -154,11 +156,16 @@ class Bench:
     async def wait_active(self, addresses: list[Address], what: str, timeout: float = 900):
         deadline = time.time() + timeout
         pending = list(addresses)
+        stalls = 0
         while pending and time.time() < deadline:
             states = {}
             for i in range(0, len(pending), 2000):
                 states.update(await chain.account_active(self.pool, pending[i : i + 2000]))
+            before = len(pending)
             pending = [a for a in pending if not states.get(a.hash_part)]
+            stalls = stalls + 1 if pending and len(pending) == before else 0
+            if stalls >= 5:
+                raise RuntimeError(f"{what}: {len(pending)} accounts stopped activating; a deployment action failed")
             if pending:
                 log.info("%s: %d of %d not active yet", what, len(pending), len(addresses))
                 await asyncio.sleep(2)
@@ -218,7 +225,10 @@ class Bench:
             need += relayers * relayer_funding
         planned = relayers + a.wallets * sum(1 if w == "classical" else 2 for w in a.workloads)
         deployers = max(1, min(32, math.ceil(planned / MAX_ACTIONS / 8)))
-        deployer_funding = math.ceil(need / deployers) + nano(50)
+        # Each deployment action also pays forwarding for its StateInit (code
+        # included); send mode 3 skips an action the deployer cannot afford, so
+        # under-funding here would silently drop accounts.
+        deployer_funding = math.ceil(need / deployers) + math.ceil(planned / deployers) * nano(0.25) + nano(50)
         total = deployers * deployer_funding + nano(10)
         log.info("genesis wallet %.1f TOS; bench needs %.1f TOS", main_balance / NANO, total / NANO)
         if total > main_balance:
@@ -355,8 +365,34 @@ class Bench:
                 live = relayer_states[r.address.hash_part]
                 if live is not None:
                     self.seqnos[r.address.hash_part] = live.seqno
-        return self.summarize(workload, rate, count, per_message_offered, records, scanner,
-                              executed, t0, t_sent, sign_seconds)
+        result = self.summarize(workload, rate, count, per_message_offered, records, scanner,
+                                executed, t0, t_sent, sign_seconds)
+        if workload == "classical":
+            classes = {"classical-wallet": [w.address for w in wallets]}
+        else:
+            classes = {"module": [w.module.address for w in wallets], "pq-wallet": [w.address for w in wallets],
+                       "relayer": [r.address for r in self.relayers]}
+        result["gas_sample"] = await chain.gas_sample(self.pool, classes)
+        result["cpu_package_celsius_end"] = package_temperatures()
+        # A guard pause stops the validators and the generator together; such a
+        # stage measures the pause, not the chain, and must be rerun.
+        stage_end = time.time()
+        overlapping = [(kind, round(t, 1)) for kind, t in guard_events(a.thermal_log)
+                       if t0 - 5 <= t <= stage_end]
+        paused_before = [k for k, t in guard_events(a.thermal_log) if t < t0 - 5]
+        if paused_before and paused_before[-1] == "paused":
+            overlapping.insert(0, ("paused-before-stage", round(t0, 1)))
+        result["thermal_guard_events"] = overlapping
+        result["valid"] = not overlapping and a.thermal_log is not None
+        if a.thermal_log is None:
+            result["invalid_reason"] = "no --thermal-log: guard pauses cannot be excluded"
+        elif overlapping:
+            result["invalid_reason"] = "thermal guard paused the run during this stage; rerun it"
+        if not result["valid"]:
+            result["saturated"] = None
+        stage_dir = a.out / f"stage-{workload}-{rate:g}"
+        (stage_dir / "result.json").write_text(json.dumps(result, indent=2) + "\n")
+        return result
 
     def summarize(self, workload, rate, count, per_message, records, scanner, executed, t0, t_sent, sign_seconds):
         a = self.a
@@ -416,10 +452,22 @@ class Bench:
             "max_tx_per_block": max((b.total for b in blocks), default=0),
             "mean_block_interval_s": round(sum(intervals) / len(intervals), 3) if intervals else None,
         }
-        result["saturated"] = bool(
+        below = bool(
             result["executed_fraction"] is not None
             and (result["executed_fraction"] < 0.95 or steady_transfers < 0.9 * rate)
         )
+        # Saturation means the chain fell behind. A shortfall that the generator,
+        # the node's admission limits or the observer can explain is not that.
+        bottlenecks = []
+        if refused:
+            bottlenecks.append("node admission refusals")
+        if send_lag and max(send_lag) > 1.0:
+            bottlenecks.append("generator fell behind its schedule")
+        if blocks and blocks[-1].observed - blocks[-1].gen_utime > 5:
+            bottlenecks.append("block scanner lagged the chain")
+        result["below_offered_rate"] = below
+        result["non_chain_bottlenecks"] = bottlenecks
+        result["saturated"] = below and not bottlenecks
         stage_dir = a.out / f"stage-{workload}-{rate:g}"
         stage_dir.mkdir(parents=True, exist_ok=False)
         classes = sorted({c for b in blocks for c in b.by_class})
@@ -451,6 +499,44 @@ class Bench:
             "workload", "offered_rate", "transfers_executed", "transfers_planned",
             "steady_transfer_tps", "steady_total_tx_tps", "saturated")}))
         return result
+
+
+def package_temperatures() -> list[float] | None:
+    """CPU package temperatures, so a stage on a throttling host can be recognised."""
+    try:
+        out = subprocess.run(["sensors"], capture_output=True, text=True, timeout=10).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    temps = []
+    for line in out.splitlines():
+        if line.startswith("Package id") and "+" in line:
+            try:
+                temps.append(float(line.split("+", 1)[1].split("°", 1)[0]))
+            except ValueError:
+                continue
+    return temps or None
+
+
+def guard_events(path: Path | None) -> list[tuple[str, float]]:
+    """Pause/resume events from a thermal guard log ("paused at 90C HH:MM:SS", UTC)."""
+    if path is None or not path.is_file():
+        return []
+    import datetime
+
+    today = datetime.datetime.now(datetime.UTC).date()
+    events = []
+    for line in path.read_text(errors="replace").splitlines():
+        parts = line.split()
+        if len(parts) == 4 and parts[0] in ("paused", "resumed") and parts[1] == "at":
+            try:
+                t = datetime.datetime.strptime(parts[3], "%H:%M:%S").time()
+            except ValueError:
+                continue
+            stamp = datetime.datetime.combine(today, t, tzinfo=datetime.UTC).timestamp()
+            if stamp > time.time() + 60:  # the event was before midnight UTC
+                stamp -= 86400
+            events.append((parts[0], stamp))
+    return events
 
 
 def source_commit() -> str:
@@ -521,6 +607,7 @@ async def main(a: argparse.Namespace) -> int:
 
 async def run_bench(a, bench, net_id, results, started) -> None:
     bench.check_reuse()
+    chain_config = await chain.config_snapshot(bench.pool)
     await bench.deploy()
     for workload in a.workloads:
         for rate in a.rates:
@@ -536,6 +623,9 @@ async def run_bench(a, bench, net_id, results, started) -> None:
         "validators": a.validators,
         "global_id": net_id,
         "block_limit_mul": a.block_limit_mul,
+        "limits_profile": ("local test genesis: basechain block gas soft/hard 100M (deployment"
+                           " profile is lower); see chain_config for the exact parameters"),
+        "chain_config": chain_config,
         "wallets_per_workload": a.wallets,
         "relayers": len(bench.relayers),
         "relay_batch": a.relay_batch,
