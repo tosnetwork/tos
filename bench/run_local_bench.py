@@ -123,6 +123,13 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument("--stop-on-saturation", action="store_true")
     p.add_argument(
+        "--node-verbosity",
+        type=int,
+        default=1,
+        choices=range(0, 5),
+        help="validator log verbosity (2 shows collator warnings such as external-message timeouts)",
+    )
+    p.add_argument(
         "--thermal-log",
         type=Path,
         help="log of a thermal guard attached to this run's process group, if one is used; "
@@ -183,8 +190,7 @@ class Bench:
         self.deploy_seconds = 0.0
         self.deployed_accounts = 0
         self.configs: list[str] = []
-        self.lite_configs: list[Path] = []
-        self.soft_limits: tuple[int, int] = (1, 1)
+        self.soft_limits: tuple[int, int, int] = (1, 1, 1)
 
     def check_reuse(self) -> None:
         peak = max(self.a.rates)
@@ -329,41 +335,16 @@ class Bench:
         self.deployed_accounts = len(self.wallets)
         log.info("deployed %d Quantum wallets in %.1fs", len(self.wallets), self.deploy_seconds)
 
-    async def sample_blocks(
-        self, scanner, lo: float, hi: float, largest: int = 8, spread: int = 4
-    ) -> dict[str, Any]:
-        """Measure the serialized size and gas of the largest steady-window blocks and a spread of others."""
-        window = [b for b in scanner.rows if lo <= b.observed <= hi and b.block is not None]
-        if not window:
-            return {"blocks": []}
-        chosen = sorted(window, key=lambda b: -b.total)[:largest]
-        step = max(1, len(window) // (spread + 1))
-        chosen += [b for b in window[step::step][:spread] if b not in chosen]
-        rows = []
-        for b in chosen:
-            size = await chain.block_bytes(
-                self.a.build / "lite-client/lite-client", self.lite_configs[0], b.block
-            )
-            count, gas = await chain.block_gas(self.pool, b.block)
-            rows.append(
-                {
-                    "seqno": b.seqno,
-                    "transactions": count,
-                    "bytes": size,
-                    "gas": gas,
-                    "bytes_per_transaction": round(size / count, 1) if count else None,
-                }
-            )
-        soft_bytes, soft_gas = self.soft_limits
-        top = max(rows, key=lambda r: r["transactions"])
-        return {
-            "soft_limit_bytes": soft_bytes,
-            "soft_limit_gas": soft_gas,
-            "largest_block": top,
-            "largest_block_bytes_fraction_of_soft": round(top["bytes"] / soft_bytes, 3),
-            "largest_block_gas_fraction_of_soft": round(top["gas"] / soft_gas, 3),
-            "blocks": sorted(rows, key=lambda r: r["seqno"]),
-        }
+    def block_limits_evidence(self, lo: float, hi: float) -> dict[str, Any]:
+        """The collators' own per-block records for the steady window, against ConfigParam 23."""
+        soft_bytes, soft_gas, soft_lt = self.soft_limits
+        stats = chain.collation_stats(self.a.out / "network", lo, hi)
+        stats["soft_limits"] = {"bytes": soft_bytes, "gas": soft_gas, "lt_delta": soft_lt}
+        stats["note"] = (
+            "bytes is the collated block's serialized size; the byte limits apply to the "
+            "collator's estimate (estimated_bytes); records are per collation attempt and node"
+        )
+        return stats
 
     async def counters(self) -> dict[bytes, int]:
         data = await chain.read_data(self.pool, [w.address for w in self.wallets])
@@ -442,7 +423,7 @@ class Bench:
         executed = sum(end[w.address.hash_part] - start[w.address.hash_part] for w in wallets)
         result = self.summarize(rate, count, records, scanner, executed, t0, t_sent, sign_seconds)
         result["sender_connections"] = senders
-        result["block_sample"] = await self.sample_blocks(scanner, t0 + a.warmup, t_sent)
+        result["block_limits_evidence"] = self.block_limits_evidence(t0 + a.warmup, t_sent)
         result["gas_sample"] = await chain.gas_sample(
             self.pool, {LOAD_CLASS: [w.address for w in wallets]}
         )
@@ -740,7 +721,7 @@ async def main(a: argparse.Namespace) -> int:
         async with asyncio.TaskGroup() as group:
             group.create_task(dht.run())
             for node in nodes:
-                group.create_task(node.run(StartOptions(verbosity=1)))
+                group.create_task(node.run(StartOptions(verbosity=a.node_verbosity)))
         await network.wait_mc_block(seqno=1)
         await network.wait_block(workchain=0, shard=chain.BASECHAIN_SHARD, seqno=1)
         log.info("net up: %d validators, global id %d", a.validators, net_id)
@@ -779,11 +760,6 @@ async def main(a: argparse.Namespace) -> int:
             )
             bench = Bench(a, network, client, pool, scan, signer, code, net_id, auth_tag)
             bench.configs = [node.liteserver_config.to_json() for node in nodes]
-            bench.lite_configs = []
-            for i, text in enumerate(bench.configs):
-                path = a.out / f"lite-client-{i}.json"
-                path.write_text(text)
-                bench.lite_configs.append(path)
             bench.check_reuse()
             chain_config = await chain.config_snapshot(pool)
             bench.soft_limits = chain.basechain_soft_limits(chain_config)

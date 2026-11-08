@@ -12,6 +12,7 @@ import base64
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from contract import WalletV5State
 from pytosiq_core import Address, Cell, MessageAny
@@ -357,74 +358,93 @@ async def read_data(pool: ClientPool, addresses: list[Address]) -> dict[bytes, C
     return out
 
 
-def _block_id_text(block) -> str:
-    """A block id in lite-client syntax: (wc,shard,seqno):ROOT:FILE."""
-    import base64 as b64
+def collation_stats(network_dir: Path, lo: float, hi: float) -> dict[str, Any]:
+    """Basechain collation records the validators wrote in [lo, hi] (their session-logs files).
 
-    shard = block.shard & 0xFFFFFFFFFFFFFFFF
-    root = b64.b64decode(block.root_hash).hex().upper()
-    file = b64.b64decode(block.file_hash).hex().upper()
-    return f"({block.workchain},{shard:016x},{block.seqno}):{root}:{file}"
+    Each record is the collator's own account of one collated block: its serialized size,
+    the size estimate the byte limits apply to, gas, lt delta, collation CPU time and, when
+    a soft limit stopped it, which one. Records are per collation attempt and per node.
+    """
+    import json
+    import statistics
 
+    rows = []
+    for path in sorted(network_dir.glob("node*/session-logs")):
+        with path.open(errors="replace") as f:
+            for line in f:
+                if '"validatorStats.collatedBlock"' not in line:
+                    continue
+                try:
+                    d = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if d["block_id"]["workchain"] != 0 or not lo <= float(d["collated_at"]) <= hi:
+                    continue
+                limits = d["block_limits"]
+                reason = next(
+                    (
+                        part.split(": ", 1)[1]
+                        for part in limits.get("limits_log", "").split("\n")
+                        if part.startswith("INBOUND_EXT_MESSAGES: ")
+                    ),
+                    "",
+                )
+                rows.append(
+                    {
+                        "transactions": int(d.get("block_stats", {}).get("transactions", 0)),
+                        "bytes": int(d["bytes"]),
+                        "estimated_bytes": int(limits["bytes"]),
+                        "gas": int(limits["gas"]),
+                        "lt_delta": int(limits["lt_delta"]),
+                        "collated_data_bytes": int(d["collated_data_bytes"]),
+                        "cpu_seconds": float(d["cpu_work_time"]),
+                        "stop": reason.split(" ")[0] + " " + reason.split(" ")[1]
+                        if reason.startswith("block_full")
+                        else reason,
+                    }
+                )
+    if not rows:
+        return {"collations": 0}
 
-async def block_bytes(lite_client: Path, config: Path, block) -> int:
-    """The block's serialized size, as the liteserver returns it (checked against its file hash)."""
-    import re
+    def summary(key: str) -> dict[str, float]:
+        values = sorted(r[key] for r in rows)
+        return {"median": statistics.median(values), "max": values[-1]}
 
-    process = await asyncio.create_subprocess_exec(
-        str(lite_client),
-        "-C",
-        str(config),
-        "-v",
-        "3",
-        "-c",
-        f"getblock {_block_id_text(block)}",
-        "-c",
-        "quit",
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,
-    )
-    out, _ = await asyncio.wait_for(process.communicate(), 60)
-    text = out.decode(errors="replace")
-    if "file hash mismatch" in text:
-        raise RuntimeError("liteserver returned a block whose file hash does not match")
-    match = re.search(r"obtained (\d+) data bytes for block", text)
-    if match is None:
-        raise RuntimeError("lite-client did not report the block size: " + text[-300:])
-    return int(match.group(1))
-
-
-async def block_gas(pool: ClientPool, block) -> tuple[int, int]:
-    """(transactions, total compute gas) of one block, from its full transaction list."""
-    from pytosiq_core import Transaction
-
-    gas = count = 0
-    after = None
-    while True:
-        mode = 7 + (128 if after is not None else 0)
-        request = toslib_api.Blocks_getTransactionsExtRequest(
-            id=block, mode=mode, count=256, after=after
+    stops: dict[str, int] = {}
+    for r in rows:
+        stops[r["stop"] or "none (queue drained)"] = (
+            stops.get(r["stop"] or "none (queue drained)", 0) + 1
         )
-        reader = pool.pick()
-        await reader._slot(2)
-        async with reader._gate:
-            assert reader.client._toslib_wrapper is not None
-            result = request.parse_result(await reader.client._toslib_wrapper.execute(request))
-        for tx in result.transactions:
-            parsed = Transaction.deserialize(Cell.one_from_boc(tx.data).begin_parse())
-            used = getattr(getattr(parsed.description, "compute_ph", None), "gas_used", None)
-            gas += int(used or 0)
-            count += 1
-        if not result.incomplete:
-            return count, gas
-        last = result.transactions[-1]
-        after = toslib_api.Blocks_accountTransactionId(
-            account=Address(last.address.account_address).hash_part, lt=int(last.transaction_id.lt)
-        )
+    full = [r for r in rows if r["stop"].startswith("block_full")]
+    out: dict[str, Any] = {
+        "collations": len(rows),
+        "external_stop_reasons": stops,
+        **{
+            key: summary(key)
+            for key in (
+                "transactions",
+                "bytes",
+                "estimated_bytes",
+                "gas",
+                "lt_delta",
+                "cpu_seconds",
+            )
+        },
+    }
+    if full:
+        out["full_blocks"] = {
+            "count": len(full),
+            "transactions_median": statistics.median(r["transactions"] for r in full),
+            "bytes_median": statistics.median(r["bytes"] for r in full),
+            "estimated_bytes_median": statistics.median(r["estimated_bytes"] for r in full),
+            "gas_median": statistics.median(r["gas"] for r in full),
+            "cpu_seconds_median": statistics.median(r["cpu_seconds"] for r in full),
+        }
+    return out
 
 
-def basechain_soft_limits(chain_config: dict[str, dict[str, str]]) -> tuple[int, int]:
-    """(bytes, gas) soft limits of the basechain from a ConfigParam 23 snapshot."""
+def basechain_soft_limits(chain_config: dict[str, dict[str, str]]) -> tuple[int, int, int]:
+    """(bytes, gas, lt delta) soft limits of the basechain from a ConfigParam 23 snapshot."""
     s = Cell.one_from_boc(bytes.fromhex(chain_config["23"]["boc"])).begin_parse()
     s.skip_bits(8)  # block_limits tag
 
@@ -432,5 +452,5 @@ def basechain_soft_limits(chain_config: dict[str, dict[str, str]]) -> tuple[int,
         s.skip_bits(8)
         return s.load_uint(32), s.load_uint(32), s.load_uint(32)
 
-    byte_tiers, gas_tiers = tiers(), tiers()
-    return byte_tiers[1], gas_tiers[1]
+    byte_tiers, gas_tiers, lt_tiers = tiers(), tiers(), tiers()
+    return byte_tiers[1], gas_tiers[1], lt_tiers[1]

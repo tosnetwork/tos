@@ -124,5 +124,61 @@ class SummarizeTests(unittest.TestCase):
         self.assertFalse(r["saturated"])
 
 
+class CollationStatsTests(unittest.TestCase):
+    def test_reads_window_and_stop_reasons(self):
+        import json
+
+        from pqbench.chain import collation_stats
+
+        def record(at, tx, size, est, gas, log, wc=0):
+            return json.dumps(
+                {
+                    "@type": "validatorStats.collatedBlock",
+                    "block_id": {"workchain": wc},
+                    "collated_at": at,
+                    "bytes": size,
+                    "collated_data_bytes": 33,
+                    "cpu_work_time": 0.1,
+                    "block_stats": {"transactions": tx},
+                    "block_limits": {"bytes": est, "gas": gas, "lt_delta": 5, "limits_log": log},
+                }
+            )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            node = Path(tmp) / "node1"
+            node.mkdir()
+            (node / "session-logs").write_text(
+                "\n".join(
+                    [
+                        record(
+                            10,
+                            560,
+                            1_400_000,
+                            1_600_000,
+                            4_000_000,
+                            "INBOUND_EXT_MESSAGES: block_full bytes 1574120\nNEW_MESSAGES: block_full bytes 1\n",
+                        ),
+                        record(11, 100, 200_000, 250_000, 800_000, ""),
+                        record(
+                            12, 50, 100_000, 120_000, 400_000, "INBOUND_EXT_MESSAGES: timeout\n"
+                        ),
+                        record(11, 9, 9, 9, 9, "", wc=-1),
+                        record(99, 1, 1, 1, 1, ""),
+                        "not json",
+                    ]
+                )
+                + "\n"
+            )
+            s = collation_stats(Path(tmp), 5, 20)
+        self.assertEqual(s["collations"], 3)
+        self.assertEqual(
+            s["external_stop_reasons"],
+            {"block_full bytes": 1, "none (queue drained)": 1, "timeout": 1},
+        )
+        self.assertEqual(s["full_blocks"]["count"], 1)
+        self.assertEqual(s["full_blocks"]["bytes_median"], 1_400_000)
+        self.assertEqual(s["bytes"]["max"], 1_400_000)
+
+
 if __name__ == "__main__":
     unittest.main()
