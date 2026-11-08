@@ -267,3 +267,32 @@ async def gas_sample(pool: ClientPool, accounts: dict[str, list[Address]], per_c
                 "aborted": aborted,
             }
     return report
+
+
+async def action_report(pool: ClientPool, address: Address, limit: int = 16) -> list[dict]:
+    """Action-phase outcome of an account's recent transactions (why an action was skipped)."""
+    from pytosiq_core import Transaction
+
+    state = await pool.call("raw_get_account_state", address)
+    last = state.last_transaction_id
+    if last is None or not int(last.lt):
+        return []
+    rows = []
+    txs = await pool.call("raw_get_transactions", address, last)
+    for tx in txs.transactions[:limit]:
+        parsed = Transaction.deserialize(Cell.one_from_boc(tx.data).begin_parse())
+        action = getattr(parsed.description, "action", None)
+        if action is None:
+            continue
+        rows.append({
+            "lt": int(tx.transaction_id.lt),
+            "success": bool(action.success),
+            "result_code": int(action.result_code),
+            "no_funds": bool(action.no_funds),
+            "tot_actions": int(action.tot_actions),
+            "skipped_actions": int(action.skipped_actions),
+            "msgs_created": int(action.msgs_created),
+            "total_fwd_fees": int(action.total_fwd_fees or 0),
+            "balance_after": int(state.balance),
+        })
+    return rows

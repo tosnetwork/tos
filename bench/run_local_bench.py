@@ -77,7 +77,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--wallet-funding", type=float, default=2.0, help="TOS per load wallet")
     p.add_argument("--module-funding", type=float, default=0.5, help="TOS per ML-DSA-44 module")
     p.add_argument("--sinks", type=int, default=256)
-    p.add_argument("--signer-threads", type=int, default=max(1, min(32, (os.cpu_count() or 2) // 2)))
+    p.add_argument("--signer-threads", type=int, default=8,
+                   help="ML-DSA-44 signing threads (kept low by default: signing bursts heat the host)")
     p.add_argument("--send-concurrency", type=int, default=256)
     p.add_argument("--connections-per-node", type=int, default=4,
                    help="liteserver connections per validator (each admits ~48 queries/s here)")
@@ -165,7 +166,17 @@ class Bench:
             pending = [a for a in pending if not states.get(a.hash_part)]
             stalls = stalls + 1 if pending and len(pending) == before else 0
             if stalls >= 5:
-                raise RuntimeError(f"{what}: {len(pending)} accounts stopped activating; a deployment action failed")
+                missing: dict[str, int] = {}
+                for address in pending:
+                    name = self.classes.get(address.hash_part, "other")
+                    missing[name] = missing.get(name, 0) + 1
+                report = {"missing_by_class": missing, "deployers": {}}
+                for d in getattr(self, "deployers", []):
+                    report["deployers"][d.address.to_str(False)] = await chain.action_report(self.pool, d.address)
+                (self.a.out / "deployment-failure.json").write_text(json.dumps(report, indent=2) + "\n")
+                raise RuntimeError(
+                    f"{what}: {len(pending)} accounts stopped activating ({missing}); "
+                    "see deployment-failure.json")
             if pending:
                 log.info("%s: %d of %d not active yet", what, len(pending), len(addresses))
                 await asyncio.sleep(2)
@@ -186,6 +197,8 @@ class Bench:
             while queue:
                 seqno = self.seqnos[payer.address.hash_part]
                 _, now = await self._now()
+                if not queue:  # another payer took the rest while this one waited
+                    break
                 take = min(MAX_ACTIONS, len(queue))
                 while True:
                     chunk = queue[:take]
