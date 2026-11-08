@@ -84,7 +84,11 @@ def parse_args() -> argparse.Namespace:
                    help="cap on sending connections; a node admits 30 externals per 10 s from each")
     p.add_argument("--connections-per-node", type=int, default=4,
                    help="read connections per validator (each admits ~48 queries/s here)")
-    p.add_argument("--block-limit-mul", type=int, default=1, help=">1 raises block limits (unleashed runs only)")
+    p.add_argument("--block-limits", choices=("production", "dev"), default="production",
+                   help="production: ConfigParams 22/23 exactly as the canonical genesis; dev: the test "
+                        "harness profile (half the block bytes, 100M gas), scalable with --block-limit-mul")
+    p.add_argument("--block-limit-mul", type=int, default=1,
+                   help="with --block-limits dev, >1 raises the byte and lt limits (unleashed comparisons only)")
     p.add_argument("--seed", default="tos-local-pq-bench", help="public run seed (keys are test material)")
     p.add_argument("--stop-on-saturation", action="store_true")
     p.add_argument("--thermal-log", type=Path,
@@ -110,6 +114,8 @@ def parse_args() -> argparse.Namespace:
             p.error(f"--{name.replace('_', '-')} must be positive")
     if a.block_limit_mul < 1:
         p.error("block limit multiplier must be >= 1")
+    if a.block_limits == "production" and a.block_limit_mul != 1:
+        p.error("--block-limit-mul applies only to --block-limits dev")
     return a
 
 
@@ -501,6 +507,7 @@ async def main(a: argparse.Namespace) -> int:
         auth_tag = network.config.auth_network_tag
         network.config.shard_validators = a.validators
         network.config.block_limit_mul = a.block_limit_mul
+        network.config.production_block_limits = a.block_limits == "production"
         net_id = network.config.global_id
         dht = network.create_dht_node()
         nodes: list[FullNode] = []
@@ -559,9 +566,12 @@ async def main(a: argparse.Namespace) -> int:
                          "affinity": sorted(os.sched_getaffinity(0))},
                 "validators": a.validators,
                 "global_id": net_id,
+                "block_limits": a.block_limits,
                 "block_limit_mul": a.block_limit_mul,
-                "limits_profile": ("local test genesis: basechain block gas soft/hard 100M (deployment"
-                                   " profile is lower); see chain_config for the exact parameters"),
+                "limits_profile": ("production: ConfigParams 22/23 as the canonical genesis"
+                                   if a.block_limits == "production" else
+                                   "dev: test-harness profile (bytes 128K/512K/1M x mul, gas 100M)")
+                                  + "; see chain_config for the exact parameters",
                 "chain_config": chain_config,
                 "wallets": a.wallets,
                 "max_senders": a.max_senders,
@@ -579,10 +589,16 @@ async def main(a: argparse.Namespace) -> int:
                 log.info("bench done; net stays up (Ctrl-C to stop)")
                 await asyncio.Event().wait()
         finally:
+            sender.terminate_active()
             for c in opened:
                 await c.client.aclose()
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(asyncio.run(main(parse_args())))
+    args = parse_args()
+    try:
+        sys.exit(asyncio.run(main(args)))
+    except KeyboardInterrupt:
+        sender.terminate_active()
+        raise

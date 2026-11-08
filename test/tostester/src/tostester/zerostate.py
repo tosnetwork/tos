@@ -92,6 +92,10 @@ class NetworkConfig:
     # Explicit isolated PQ quorum fixtures; None preserves the existing weight 17.
     pq_validator_weights: tuple[int, ...] | None = None
     block_limit_mul: int = 1
+    # Opt-in: ConfigParams 22/23 exactly as the canonical genesis sets them
+    # (crypto/smartcont/gen-zerostate.fif), instead of the development profile
+    # below. Performance measurements use it; it cannot combine with block_limit_mul.
+    production_block_limits: bool = False
     mc_valgroup_lifetime: int = 100000  # DEV: long lifetime for local testnet stability
     mc_consensus: SimplexConsensusConfig | None = field(
         default_factory=SimplexConsensusConfig
@@ -422,13 +426,7 @@ config.special!
   x{{d3}} s, 200000 32 u, 30 32 u, b>
 }} : make-block-limits-v2
 
-// DEV-SPECIFIC: higher gas limits for tests (production: mc=2.5M, base=20M)
-128 *Ki 512 *Ki {block_limit_mul} * 1 *Mi {block_limit_mul} * triple  // bytes: underload soft hard
-2000000 100000000 100000000 triple  // gas: underload soft hard
-1000 500000 1000000 triple        // lt: underload soft hard
-triple dup
-untriple make-block-limits 22 config!
-untriple make-block-limits 23 config!
+{block_limits}
 
 {masterchain_block_reward} {basechain_block_reward} config.block_create_fees!
 // smc1_addr config.collector_smc!
@@ -628,6 +626,35 @@ def basechain_fixture_balance(encoded: bytes, global_id: int) -> int:
     ):
         raise ValueError("unsupported basechain fixture extras")
     return allocated
+
+
+_DEV_BLOCK_LIMITS = """// DEV-SPECIFIC: higher gas limits for tests (production: mc=2.5M, base=20M)
+128 *Ki 512 *Ki {mul} * 1 *Mi {mul} * triple  // bytes: underload soft hard
+2000000 100000000 100000000 triple  // gas: underload soft hard
+1000 500000 1000000 triple        // lt: underload soft hard
+triple dup
+untriple make-block-limits 22 config!
+untriple make-block-limits 23 config!"""
+
+# The canonical genesis values (gen-zerostate.fif): masterchain, then basechain.
+_PRODUCTION_BLOCK_LIMITS = """128 *Ki 512 *Ki 1 *Mi triple      // masterchain bytes: underload soft hard
+500000 1000000 2500000 triple     // masterchain gas
+1000 5000 10000 triple            // masterchain lt
+untriple make-block-limits 22 config!
+256 *Ki 1 *Mi 2 *Mi triple        // basechain bytes: underload soft hard
+2000000 10000000 20000000 triple  // basechain gas
+1000 5000 10000 triple            // basechain lt
+untriple make-block-limits 23 config!"""
+
+
+def _block_limits_fift(config: "NetworkConfig") -> str:
+    if config.production_block_limits:
+        if config.block_limit_mul != 1:
+            raise ValueError("production block limits cannot be combined with block_limit_mul")
+        return _PRODUCTION_BLOCK_LIMITS
+    if type(config.block_limit_mul) is not int or config.block_limit_mul < 1:
+        raise ValueError("block_limit_mul must be a positive integer")
+    return _DEV_BLOCK_LIMITS.format(mul=config.block_limit_mul)
 
 
 def create_zerostate(
@@ -946,7 +973,7 @@ def create_zerostate(
             global_version=config.global_version,
             auth_policy_param=auth_policy_param,
             auth_policy_membership=auth_policy_membership,
-            block_limit_mul=config.block_limit_mul,
+            block_limits=_block_limits_fift(config),
             validators="\n".join(keys),
             mc_validators=len(keys),
             next_validator_set=next_validator_set,

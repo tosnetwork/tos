@@ -14,6 +14,13 @@ import time
 from pathlib import Path
 
 PER_WORKER_CONNECTIONS = 100
+_active_pools: list = []
+
+
+def terminate_active() -> None:
+    """Stop any running sender pool, so an interrupted bench does not keep sending."""
+    while _active_pools:
+        _active_pools.pop().terminate()
 
 
 class _Config:
@@ -90,8 +97,16 @@ def distributed_send(root: Path, build: Path, configs: list[str], bocs: list[byt
         shares[i % workers].append((i, start + i / rate, boc))
     counts = [senders // workers + (1 if w < senders % workers else 0) for w in range(workers)]
     jobs = [(str(root), str(build), configs, counts[w], per_connection_rate, shares[w]) for w in range(workers)]
-    with multiprocessing.get_context("spawn").Pool(workers) as pool:
+    pool = multiprocessing.get_context("spawn").Pool(workers)
+    _active_pools.append(pool)
+    try:
         results = pool.map(_worker, jobs)
+        pool.close()
+    finally:
+        pool.terminate()
+        pool.join()
+        if pool in _active_pools:
+            _active_pools.remove(pool)
     records = [SendRecord(*row) for rows in results for row in rows]
     records.sort(key=lambda r: r.index)
     if len(records) != len(bocs):

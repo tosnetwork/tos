@@ -66,8 +66,10 @@ uv run python bench/plot_blocks.py /tmp/bench-sweep/stage-quantum-250
 Main options: `--validators` (4..21),
 `--wallets`, `--rates` (offered transfers/s per stage),
 `--duration`/`--warmup`/`--drain` (seconds), `--deployers`, `--max-senders`,
-`--block-limit-mul` (>1 only for deliberately unleashed runs; the default keeps
-the genesis block limits), `--seed` (public run seed; every key is public test
+`--block-limits production|dev` (default production: ConfigParams 22/23 exactly as
+the canonical genesis, basechain bytes 256 KiB/1 MiB/2 MiB and gas 2M/10M/20M;
+dev is the test-harness profile with half the block bytes), `--block-limit-mul`
+(dev only, for deliberately unleashed comparisons), `--seed` (public run seed; every key is public test
 material derived from it).
 
 ## How a stage is measured
