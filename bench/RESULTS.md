@@ -5,7 +5,7 @@ Local engineering evidence only. Four validators run on one host, so there is no
 ## 2026-11-08: self-pay Quantum wallet under the canonical genesis block limits
 
 Setup:
-- Source: `feat/pq-benchmark` at 97cf3577d (bench) on main 080467e8c.
+- Source: `feat/pq-benchmark` at 170b5af9f (bench) on main 080467e8c. Later commits change only tests and docs.
 - Command: `run_local_bench.py --wallets 10000 --rates 50,100,200,300,400,500 --duration 300 --warmup 30 --drain 60 --max-senders 224`.
 - Block limits: `--block-limits production`, i.e. ConfigParams 22/23 exactly as `gen-zerostate.fif` and the public testnet set them. Basechain is 256 KiB / 1 MiB / 2 MiB bytes, 2M / 10M / 20M gas, 1,000 / 5,000 / 10,000 lt.
 - Chain: Simplex at a 400 ms target, one basechain shard.
