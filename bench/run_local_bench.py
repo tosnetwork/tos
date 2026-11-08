@@ -57,6 +57,8 @@ NANO = 1_000_000_000
 # The node refuses external messages above 64 KiB; keep headroom.
 EXT_MESSAGE_BUDGET = 60_000
 LOAD_CLASS = "quantum-wallet"
+# Wallets are derived, deployed and signed this many at a time.
+DEPLOY_CHUNK = 2000
 # Sender workers open their connections before the first scheduled send.
 SENDER_STARTUP_SECONDS = 30
 log = logging.getLogger("bench")
@@ -123,6 +125,12 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument("--stop-on-saturation", action="store_true")
     p.add_argument(
+        "--ingress-nodes",
+        type=int,
+        default=0,
+        help="extra non-validating full nodes the senders also use (each adds 56 sender connections)",
+    )
+    p.add_argument(
         "--node-verbosity",
         type=int,
         default=1,
@@ -185,7 +193,8 @@ class Bench:
         self.sinks = sinks(args.sinks, self.run_seed)
         self.classes: dict[bytes, str] = {s.hash_part: "sink" for s in self.sinks}
         self.nonces: dict[bytes, int] = {}
-        self.wallets: list[QuantumWallet] = []
+        self.load_addresses: list[Address] = []
+        self.deployed_so_far = 0
         self.deployers: list[QuantumWallet] = []
         self.deploy_seconds = 0.0
         self.deployed_accounts = 0
@@ -212,21 +221,16 @@ class Bench:
                 f"(< --min-reuse {self.a.min_reuse}); raise --wallets"
             )
 
-    def derive(self, tag: str, count: int) -> list[QuantumWallet]:
-        seeds = [quantum_seed(self.run_seed, tag, i) for i in range(count)]
-        keys = self.signer.public_keys(seeds)
+    def derive(self, tag: str, indices: "range | list[int]") -> list[QuantumWallet]:
+        """Wallets for the given indices; keys come from the batch signer, nothing is cached."""
+        indices = list(indices)
+        seeds = [quantum_seed(self.run_seed, tag, i) for i in indices]
+        keys = self.signer.public_keys(seeds) if seeds else []
         return [
             QuantumWallet.derive(
-                self.code["quantum"],
-                self.net_id,
-                self.auth_tag,
-                self.run_seed,
-                tag,
-                i,
-                keys[i],
-                seeds[i],
+                self.code["quantum"], self.net_id, self.auth_tag, self.run_seed, tag, i, key, seed
             )
-            for i in range(count)
+            for i, key, seed in zip(indices, keys, seeds)
         ]
 
     async def _now(self) -> int:
@@ -275,60 +279,67 @@ class Bench:
             raise RuntimeError(f"{what}: {len(pending)} accounts never became active")
 
     async def deploy_share(
-        self, deployer: QuantumWallet, share: list[tuple[QuantumWallet, int]], what: str
+        self, deployer: QuantumWallet, indices: list[int], funding: int, what: str
     ) -> None:
-        """Deploy (wallet, funding) items with ML-DSA-44-signed externals sized under the limit."""
-        queue = list(share)
-        while queue:
-            nonce = self.nonces[deployer.address.hash_part]
-            deadline = await self._now() + 600
-            take = min(MAX_ACTIONS, len(queue))
-            while True:
-                actions = [w.deployment_message(deployer.address, v) for w, v in queue[:take]]
-                request = deployer.request(nonce, actions, deadline)
-                size = len(deployer.external(request, bytes(2420)).serialize().to_boc())
-                if size <= EXT_MESSAGE_BUDGET or take == 1:
-                    break
-                take = max(1, take * EXT_MESSAGE_BUDGET // size - 1)
-            [signature] = self.signer.sign([(deployer.pq_seed, request.hash)], QSP_PRIMARY_CONTEXT)
-            ext = deployer.external(request, signature)
-            await self.pool.pick_sender().call("raw_send_message", ext.serialize().to_boc())
-            await self.wait_nonce(deployer, nonce + 1, f"{what} nonce {nonce + 1}")
-            self.nonces[deployer.address.hash_part] = nonce + 1
-            del queue[:take]
-            log.info("%s: %d left", what, len(queue))
+        """Deploy load wallets by index with ML-DSA-44-signed externals sized under the limit.
+
+        Wallets are derived a chunk at a time so a multi-million-account state never has to
+        be held in memory.
+        """
+        for c in range(0, len(indices), DEPLOY_CHUNK):
+            queue = [(w, funding) for w in self.derive("load", indices[c : c + DEPLOY_CHUNK])]
+            while queue:
+                nonce = self.nonces[deployer.address.hash_part]
+                deadline = await self._now() + 600
+                take = min(MAX_ACTIONS, len(queue))
+                while True:
+                    actions = [w.deployment_message(deployer.address, v) for w, v in queue[:take]]
+                    request = deployer.request(nonce, actions, deadline)
+                    size = len(deployer.external(request, bytes(2420)).serialize().to_boc())
+                    if size <= EXT_MESSAGE_BUDGET or take == 1:
+                        break
+                    take = max(1, take * EXT_MESSAGE_BUDGET // size - 1)
+                [signature] = self.signer.sign(
+                    [(deployer.pq_seed, request.hash)], QSP_PRIMARY_CONTEXT
+                )
+                ext = deployer.external(request, signature)
+                await self.pool.pick_sender().call("raw_send_message", ext.serialize().to_boc())
+                await self.wait_nonce(deployer, nonce + 1, f"{what} nonce {nonce + 1}")
+                self.nonces[deployer.address.hash_part] = nonce + 1
+                del queue[:take]
+            self.deployed_so_far += min(DEPLOY_CHUNK, len(indices) - c)
+            log.info("%s: %d of %d deployed", what, self.deployed_so_far, self.a.wallets)
 
     async def deploy(self) -> None:
         a = self.a
         main = self.network.zerostate.main_wallet(self.client)
         main_balance = int((await self.client.raw_get_account_state(main.address)).balance)
         t = time.time()
-        self.wallets = self.derive("load", a.wallets)
-        log.info("derived %d ML-DSA-44 PRIMARY keys in %.1fs", len(self.wallets), time.time() - t)
-        for w in self.wallets:
-            self.classes[w.address.hash_part] = LOAD_CLASS
-        items = [(w, nano(a.wallet_funding)) for w in self.wallets]
+        for c in range(0, a.wallets, DEPLOY_CHUNK):
+            for w in self.derive("load", range(c, min(a.wallets, c + DEPLOY_CHUNK))):
+                self.load_addresses.append(w.address)
+                self.classes[w.address.hash_part] = LOAD_CLASS
+        log.info("derived %d wallet addresses in %.1fs", a.wallets, time.time() - t)
         # Each deployer owns a fixed share and is funded for exactly that share:
         # with a shared queue a fast deployer outruns its funding, and send mode
         # 3 then skips every action it cannot afford without failing the external.
-        count = max(1, min(a.deployers, math.ceil(len(items) / MAX_ACTIONS / 4)))
-        shares = [items[i::count] for i in range(count)]
+        count = max(1, min(a.deployers, math.ceil(a.wallets / MAX_ACTIONS / 4)))
+        shares = [list(range(d, a.wallets, count)) for d in range(count)]
+        funding = nano(a.wallet_funding)
         # The reserve covers forwarding each StateInit plus the deployer's own
         # execution; it only has to make an unaffordable action impossible.
-        fundings = [
-            sum(v for _, v in share) + len(share) * nano(0.25) + nano(50) for share in shares
-        ]
+        fundings = [len(share) * (funding + nano(0.25)) + nano(50) for share in shares]
         total = sum(fundings) + nano(10)
         log.info("genesis wallet %.1f TOS; bench needs %.1f TOS", main_balance / NANO, total / NANO)
         if total > main_balance:
             raise SystemExit(
                 "the genesis wallet cannot fund this sizing; lower --wallets or funding"
             )
-        self.deployers = self.derive("deployer", count)
+        self.deployers = self.derive("deployer", range(count))
         seqno = (await main.current).seqno
-        for d, funding in zip(self.deployers, fundings):
+        for d, amount in zip(self.deployers, fundings):
             self.classes[d.address.hash_part] = "deployer"
-            await main.deploy(_Blueprint(d), tos(funding / NANO), seqno)
+            await main.deploy(_Blueprint(d), tos(amount / NANO), seqno)
             seqno += 1
             while (await main.current).seqno < seqno:
                 await asyncio.sleep(0.3)
@@ -338,14 +349,14 @@ class Bench:
         t = time.time()
         await asyncio.gather(
             *(
-                self.deploy_share(d, share, f"deployment/{i}")
+                self.deploy_share(d, share, funding, f"deployment/{i}")
                 for i, (d, share) in enumerate(zip(self.deployers, shares))
             )
         )
-        await self.wait_active([w.address for w in self.wallets], "load wallets")
+        await self.wait_active(self.load_addresses, "load wallets")
         self.deploy_seconds = time.time() - t
-        self.deployed_accounts = len(self.wallets)
-        log.info("deployed %d Quantum wallets in %.1fs", len(self.wallets), self.deploy_seconds)
+        self.deployed_accounts = a.wallets
+        log.info("deployed %d Quantum wallets in %.1fs", a.wallets, self.deploy_seconds)
 
     def block_limits_evidence(self, lo: float, hi: float) -> dict[str, Any]:
         """The collators' own per-block records for the steady window, against ConfigParam 23."""
@@ -358,8 +369,8 @@ class Bench:
         )
         return stats
 
-    async def counters(self) -> dict[bytes, int]:
-        data = await chain.read_data(self.pool, [w.address for w in self.wallets])
+    async def counters(self, addresses: list[Address]) -> dict[bytes, int]:
+        data = await chain.read_data(self.pool, addresses)
         out = {}
         for key, cell in data.items():
             if cell is None:
@@ -371,37 +382,41 @@ class Bench:
         """One offered rate: pre-sign, send from worker processes, scan, drain, reconcile."""
         a = self.a
         count = int(rate * a.duration)
-        wallets, n = self.wallets, len(self.wallets)
-        start = await self.counters()
+        n = len(self.load_addresses)
+        used = self.load_addresses[: min(count, n)]
+        start = await self.counters(used)
         sinks_before = await chain.read_balances(self.pool, self.sinks)
         deadline = await self._now() + a.duration + a.drain + 600
         transfer = nano(a.transfer_value)
         t_sign = time.time()
-        requests = []
-        for k in range(count):
-            w = wallets[k % n]
-            requests.append(
-                (
-                    w,
-                    w.request(
+        # Transfer k uses wallet k % n with that wallet's (k // n)-th nonce of the stage.
+        # Wallets are derived and signed a chunk at a time, so the stage never holds more
+        # than one chunk of wallet objects; only the serialized externals are kept.
+        bocs: list[bytes] = [b""] * count
+        for c in range(0, len(used), DEPLOY_CHUNK):
+            chunk = self.derive("load", range(c, min(len(used), c + DEPLOY_CHUNK)))
+            jobs = []
+            for offset, w in enumerate(chunk):
+                i = c + offset
+                for k in range(i, count, n):
+                    request = w.request(
                         start[w.address.hash_part] + k // n,
                         [w.transfer(self.sinks[k % len(self.sinks)], transfer)],
                         deadline,
-                    ),
-                )
+                    )
+                    jobs.append((k, w, request))
+            signatures = self.signer.sign(
+                [(w.pq_seed, r.hash) for _, w, r in jobs], QSP_PRIMARY_CONTEXT
             )
-        signatures = self.signer.sign(
-            [(w.pq_seed, r.hash) for w, r in requests], QSP_PRIMARY_CONTEXT
-        )
-        messages = [w.external(r, sig) for (w, r), sig in zip(requests, signatures)]
+            for (k, w, r), sig in zip(jobs, signatures):
+                bocs[k] = w.external(r, sig).serialize().to_boc()
         sign_seconds = time.time() - t_sign
         log.info("quantum @ %g/s: %d transfers pre-signed in %.1fs", rate, count, sign_seconds)
 
         scanner = chain.Scanner(self.scan, self.classes)
-        scanner.track = {w.address.hash_part for w in wallets}
+        scanner.track = {address.hash_part for address in used}
         await scanner.start_position()
         scan_task = asyncio.create_task(scanner.run())
-        bocs = [m.serialize().to_boc() for m in messages]
         senders = min(
             a.max_senders, max(len(self.configs), math.ceil(rate * 1.5 / chain.SOURCE_SEND_RATE))
         )
@@ -432,14 +447,14 @@ class Bench:
         await asyncio.sleep(a.drain)
         scanner.stop()
         await scan_task
-        end = await self.counters()
+        end = await self.counters(used)
         sinks_after = await chain.read_balances(self.pool, self.sinks)
         # A consumed nonce means the wallet accepted and paid for the request, not that the
         # transfer went out (an unaffordable send action is skipped under send mode 3).
         # Delivered transfers are what reached the sinks: every transfer carries the same
         # value, so the sinks' balance gain divided by it, rounded, counts them exactly while
         # the sinks' own storage charges stay far below one transfer value.
-        consumed = sum(end[w.address.hash_part] - start[w.address.hash_part] for w in wallets)
+        consumed = sum(end[x.hash_part] - start[x.hash_part] for x in used)
         gained = sum(sinks_after[s.hash_part] - sinks_before[s.hash_part] for s in self.sinks)
         executed = round(gained / transfer)
         result = self.summarize(rate, count, records, scanner, executed, t0, t_sent, sign_seconds)
@@ -448,9 +463,7 @@ class Bench:
         result["sink_value_gained_nanotos"] = gained
         result["sender_connections"] = senders
         result["block_limits_evidence"] = self.block_limits_evidence(t0 + a.warmup, t_sent)
-        result["gas_sample"] = await chain.gas_sample(
-            self.pool, {LOAD_CLASS: [w.address for w in wallets]}
-        )
+        result["gas_sample"] = await chain.gas_sample(self.pool, {LOAD_CLASS: used})
         result["cpu_package_celsius_end"] = package_temperatures()
         # A guard pause stops the validators and the generator together; such a
         # stage measures the pause, not the chain, and must be rerun.
@@ -498,7 +511,7 @@ class Bench:
         sends_by_wallet: dict[bytes, list[float]] = {}
         for r in records:
             sends_by_wallet.setdefault(
-                self.wallets[r.index % len(self.wallets)].address.hash_part, []
+                self.load_addresses[r.index % len(self.load_addresses)].hash_part, []
             ).append(r.sent)
         latencies = sorted(
             seen - s
@@ -697,6 +710,37 @@ def guard_events(path: Path | None) -> list[tuple[str, float]]:
     return events
 
 
+async def wait_synced(
+    ingress: list[FullNode], reference: FullNode, install: Install, timeout: float = 300
+) -> None:
+    """Wait until every ingress full node serves the validators' current masterchain block."""
+    ref = await reference.toslib_client()
+    clients = []
+    try:
+        for node in ingress:
+            c = ToslibClient(node.liteserver_config, install.toslibjson)
+            await c.init()
+            clients.append(c)
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            last = (await ref.get_masterchain_info()).last
+            target = last.seqno if last is not None else 0
+            heads = []
+            for c in clients:
+                try:
+                    head = (await c.get_masterchain_info()).last
+                    heads.append(head.seqno if head is not None else -1)
+                except Exception:
+                    heads.append(-1)
+            if min(heads) >= target - 2:
+                return
+            await asyncio.sleep(2)
+        raise RuntimeError(f"ingress full nodes did not sync within {timeout:g}s")
+    finally:
+        for c in clients:
+            await c.aclose()
+
+
 def source_commit() -> str:
     return subprocess.run(
         ["git", "rev-parse", "HEAD"], cwd=ROOT, check=True, capture_output=True, text=True
@@ -742,13 +786,31 @@ async def main(a: argparse.Namespace) -> int:
             )
             node.announce_to(dht)
             nodes.append(node)
+        # Non-validating full nodes as extra ingress: one host reaches each liteserver with
+        # at most 64 connections, so more nodes let it offer more externals. They relay
+        # what they admit to the validators, as a public full node does.
+        ingress: list[FullNode] = []
+        for _ in range(a.ingress_nodes):
+            node = network.create_full_node()
+            node.announce_to(dht)
+            ingress.append(node)
         async with asyncio.TaskGroup() as group:
             group.create_task(dht.run())
             for node in nodes:
                 group.create_task(node.run(StartOptions(verbosity=a.node_verbosity)))
         await network.wait_mc_block(seqno=1)
         await network.wait_block(workchain=0, shard=chain.BASECHAIN_SHARD, seqno=1)
-        log.info("net up: %d validators, global id %d", a.validators, net_id)
+        if ingress:
+            async with asyncio.TaskGroup() as group:
+                for node in ingress:
+                    group.create_task(node.run(StartOptions(verbosity=a.node_verbosity)))
+            await wait_synced(ingress, nodes[0], install)
+        log.info(
+            "net up: %d validators, %d ingress full nodes, global id %d",
+            a.validators,
+            len(ingress),
+            net_id,
+        )
         client = await nodes[0].toslib_client()
         opened: list[chain.PacedClient] = []
 
@@ -783,7 +845,7 @@ async def main(a: argparse.Namespace) -> int:
                 pool.send_rate,
             )
             bench = Bench(a, network, client, pool, scan, signer, code, net_id, auth_tag)
-            bench.configs = [node.liteserver_config.to_json() for node in nodes]
+            bench.configs = [node.liteserver_config.to_json() for node in [*nodes, *ingress]]
             bench.check_reuse()
             bench.check_funding()
             chain_config = await chain.config_snapshot(pool)

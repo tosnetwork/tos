@@ -24,14 +24,9 @@ NETWORK = "LITE_SERVER_NETWORKconn not ready"
 
 def make(out: Path, wallets: int = 4):
     a = SimpleNamespace(warmup=1, drain=1, out=out)
-    self = SimpleNamespace(
-        a=a,
-        wallets=[
-            SimpleNamespace(address=SimpleNamespace(hash_part=bytes([i]) * 32))
-            for i in range(wallets)
-        ],
+    return SimpleNamespace(
+        a=a, load_addresses=[SimpleNamespace(hash_part=bytes([i]) * 32) for i in range(wallets)]
     )
-    return self
 
 
 def blocks(t0: float, per_block: int, n: int = 20):
