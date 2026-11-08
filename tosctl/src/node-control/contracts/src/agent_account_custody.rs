@@ -6731,6 +6731,33 @@ mod tests {
             assert!(reopen(&directory).is_err(), "{name}");
         }
 
+        // A high water whose records were compacted away is still checked: a
+        // replaced key there is refused on open.
+        reset(&directory);
+        edit_json(&journal_path(&directory), |value| {
+            value["records"] = serde_json::json!([]);
+            value["economic_authority_high_water"][&high_water_key]["public_key_hex"] =
+                hex::encode(other.public_key()).into();
+        });
+        assert!(reopen(&directory).is_err(), "replaced key in a high water without records");
+
+        // A proof flipped consistently in the hot journal and the tombstone is
+        // refused by re-verification alone.
+        reset(&directory);
+        let flip = |value: &mut serde_json::Value, pointer: &str| {
+            let field = value.pointer_mut(pointer).unwrap();
+            let mut bytes = parse_mldsa44_signature_text(field.as_str().unwrap()).unwrap();
+            bytes[100] ^= 1;
+            *field = crate::native_registry::mldsa44_signature_text(&bytes).unwrap().into();
+        };
+        edit_json(&journal_path(&directory), |value| {
+            flip(value, "/records/0/economic_authorization/proof")
+        });
+        edit_json(&tombstone_path(&directory, &stable), |value| {
+            flip(value, "/record/economic_authorization/proof")
+        });
+        assert!(reopen(&directory).is_err(), "proof flipped in journal and tombstone");
+
         // A tombstone whose key is not the key that admitted the record, or
         // whose schema predates the ML-DSA-44 custody key, is refused when the
         // record is restored, and the journal is left unchanged.
