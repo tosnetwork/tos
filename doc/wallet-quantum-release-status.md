@@ -1,11 +1,58 @@
 # Quantum wallet release status
 
-Updated 2026-10-22. The release gates and evidence below were recorded on the
-pre-merge continuation of 2026-10-06 and keep their source boundaries.
+Updated 2026-11-08. The self-pay section below is current. The sections from
+"Module and fee-vault design (being retired)" onward describe the earlier
+module/fee-vault design; they and their evidence keep their recorded source
+boundaries (pre-merge continuation of 2026-10-06, updated 2026-10-22).
 
-## Current state
+## Direction
 
-The Quantum wallet is **merged into main but not released**.
+The **self-pay Quantum wallet** (`crypto/smartcont/wallet-quantum-self-pay.fc`,
+[self-pay ABI](wallet-quantum-self-pay.md)) is the single Quantum wallet. The
+wallet pays its own fees and there is no fee vault. It accepts PRIMARY
+(ML-DSA-44) and RESCUE (SLH-DSA-SHA2-128s) externals directly, one transaction
+per operation. The module/fee-vault design below is being retired: its only
+external entry, the LMS fee vault, admits RESCUE requests only (PRIMARY is
+refused with 1818) and at most four fee-paid externals per vault per hour, and
+no product depends on it. Its source notes, including the fee vault's
+NOT RELEASE READY note, leave the tree with that code.
+
+## Self-pay wallet: current state
+
+The self-pay wallet is **merged into main and not yet released**.
+
+- **Merged.** PR [302](https://github.com/tosnetwork/tos/pull/302) was merged on
+  2026-10-26 as `6d9271292` after third-party review and CI. PR
+  [312](https://github.com/tosnetwork/tos/pull/312) exposes its public state in
+  the explorer RPC; PR [315](https://github.com/tosnetwork/tos/pull/315) adds
+  transaction receipts.
+- **Clients.** The iOS and Android wallets released as v1.0.4 (2026-11-03) use
+  the self-pay wallet. Their acceptance ran against local chains and
+  simulators, not physical devices or production signing.
+- **Gas.** ML-DSA-44 verification is charged like Ed25519 since PR
+  [283](https://github.com/tosnetwork/tos/pull/283) (`df37dac54`). Local
+  measurements: PRIMARY execute 13,269 gas; RESCUE execute 19,546.
+- **Admission.** Node external-message admission follows the upstream
+  limits (PR [272](https://github.com/tosnetwork/tos/pull/272), `ea95763ec`);
+  the separate work budget stays opt-in and off. The public testnet runs at the
+  20,000 basechain external gas credit.
+
+Open before release:
+
+| Gate | What remains |
+| --- | --- |
+| Independent review | Independent source and cryptography security review of the self-pay contract and its client signing paths. |
+| Mainnet namespace | The production AUTH namespace (ConfigParam 48) for mainnet is not chosen yet. |
+| Operator path | `tosctl wallet pq-*` creates, prepares, restores, inspects and signs offline but does not deploy or broadcast a self-pay wallet; that is planned, not merged. |
+| Live network | A public-testnet acceptance of PRIMARY execute, RESCUE execute, invalid signature, stale nonce or epoch, expired deadline and underfunded wallet has not run yet. |
+| Devices | Physical-device and production-signing acceptance of the mobile clients. |
+| Activation | Explicit approval of the self-pay wallet as the deployed default. |
+
+## Module and fee-vault design (being retired)
+
+### Current state
+
+The module/fee-vault Quantum wallet is **merged into main but not released**.
 
 - **Merged.** PR [138](https://github.com/tosnetwork/tos/pull/138) was merged on
   2026-10-08 as `dac83b644`. The Falcon-512 AUTH module, PR
@@ -44,7 +91,7 @@ not relabel earlier runs as final-head CI. The
 [implementation record](wallet-quantum-implementation.md) retains earlier results
 at their own source boundaries.
 
-## Release gates
+### Release gates
 
 | Gate | Current implementation and evidence | Remaining acceptance boundary |
 | --- | --- | --- |
@@ -54,7 +101,7 @@ at their own source boundaries.
 | R3 | Rust SDK/CLI custody, durable journals, staged deployment, dual POP receipts and migration are implemented. Local native execution covers two consecutive installed-route promotions, encrypted restarts, exact retries and recipient payments. Fourteen guard groups exercise tuple/checkpoint binding, retained journals/history, portable export and capacity preflights. | Complete deployed proof acquisition, funding/readiness/finality, full device-loss acceptance and iOS/Android integration. Local test adapters and public fixture custody do not establish those production workflows. |
 | R4 | PR 138 was merged on 2026-10-08 (`dac83b644`); merging is not release approval. Rescue and admission workflows retain their evidence artifacts. | Relevant final-head CI, independent source/crypto security review, dependency acceptance and explicit deployment/default-switch approval. |
 
-## Configuration and protocol versions
+### Configuration and protocol versions
 
 | Selection | Version | Basechain credit | Masterchain credit | Meaning |
 | --- | --- | --- | --- | --- |
@@ -100,7 +147,7 @@ also use version 16, including mandatory ConfigParam 48 and its explicit AUTH
 namespace. Historical version-18 measurements below remain evidence of the
 original measured configuration; they are not relabelled as version-16 results.
 
-## Selected generated-config transaction evidence
+### Selected generated-config transaction evidence
 
 The unchanged generated ConfigParams BOC is the baseline. Each G−1/G probe is
 explicitly a credit-only variant; the historical control uses 10,000. Other
@@ -132,7 +179,7 @@ SLH module/recipient transaction cost. See the
 [current corpus evidence](../test/wallet-quantum/release-corpus-20261006.json) and
 [G01–G15 coverage ledger](../test/wallet-quantum/RELEASE_CORPUS.md).
 
-## Node admission scope
+### Node admission scope
 
 The real checker sets `stop_on_accept_message=true`; ACCEPT and a successful
 SETGASLIMIT stop that checker execution. Full post-ACCEPT transaction execution
@@ -165,7 +212,7 @@ supported-profile rollout remain open. Local work-budget rejection must remain
 separate from block consensus validity. See
 [admission implementation and controls](../test/wallet-quantum/ADMISSION_WORK.md).
 
-## Design acceptance coverage ledger
+### Design acceptance coverage ledger
 
 All owner design IDs remain in scope. A row lists work that can be reviewed;
 it does not mark the entire requirement passed at this head.
@@ -187,7 +234,7 @@ it does not mark the entire requirement passed at this head.
 | T26–T27 | Real fee/action/bounce, paired preparation, dual POP and staged migration | Complete accepted-failure, reserve/setup, exhaustion and rollover matrix on the frozen profile |
 | T28 | Mnemonic-derived H20 reconstruction, encrypted restore and exact cached retry components | Integrated loss drill with authenticated live state, competing devices, reserve/readiness and purge/fresh-tree handling |
 
-## Evidence and CI interpretation (pre-merge, 2026-10-06)
+### Evidence and CI interpretation (pre-merge, 2026-10-06)
 
 This section records the pre-merge review of PR 138. The completed CI for continuation head
 `18349b79b401d249db0c464d99d81b7218f1f33b` establishes the following source-bound

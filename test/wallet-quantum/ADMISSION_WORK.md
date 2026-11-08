@@ -93,8 +93,10 @@ acceptance remain separate gates.
 
 New canonical and localnet genesis grant basechain ConfigParam 21 credit 20,000;
 masterchain ConfigParam 20 remains at 10,000. The Rust executor defaults agree.
-This does not update existing chains. Public networks must not use the new
-genesis before node admission work protections and release acceptance ship.
+This does not update existing chains. The work-protection prerequisite was
+superseded on 2026-10-21: node admission keeps the upstream external-message
+limits (PR 272), the work budget below stays opt-in and off, and the public
+testnet runs at the 20,000 credit. Wallet release acceptance remains separate.
 
 `quantum-admission-candidate` no longer changes gas credit. It still pins the
 frozen 0x42 AUTH namespace and isolates funded basechain fixtures; the localnet

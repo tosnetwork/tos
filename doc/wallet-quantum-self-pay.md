@@ -1,8 +1,9 @@
 # Quantum self-pay v1 candidate
 
-This is a separate contract and ABI from the module/fee-vault Quantum wallet.
-It is not yet the approved mobile default. Mobile integration, authenticated
-backup restoration, live-network fixtures and release review remain required.
+This is a separate contract and ABI from the module/fee-vault Quantum wallet,
+which is being retired; self-pay is the single Quantum wallet. The iOS and
+Android v1.0.4 wallets use it. It is not released: the open gates are listed in
+the [release status](wallet-quantum-release-status.md).
 
 ## Identity and wire format
 
