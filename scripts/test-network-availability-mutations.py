@@ -129,17 +129,6 @@ CASES = {
         ["trickle-deadline"],
         "partial writes moved the original output deadline",
     ),
-    "adnl-refusal-drain": (
-        "adnl/adnl-ext-connection.cpp",
-        "if (write_shut_ && read_eof_) {",
-        "if (write_shut_) {",
-        "test-adnl-ext-refusal-close",
-        ["half-close-after-surplus"],
-        (
-            "h: the closing connection did not finish discarding the surplus",
-            "the stream ended by reset",
-        ),
-    ),
     "quic-lifetime": (
         "quic/quic-sender.cpp",
         "state.absolute_deadline = td::Timestamp::in(inbound_stream_lifetime_);",

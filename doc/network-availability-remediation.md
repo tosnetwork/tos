@@ -174,7 +174,7 @@ reported as an error. Successful cases report both exit codes.
 | QUIC concurrent returned-slot handoff | `ConcurrentReclaimsPreserveTheReturnedRetrySlot` (eight requesters, 1,000 handoffs) |
 | Abandoned QUIC retry reservation expires | `AbandonedReclaimReservationExpires` |
 | ADNL rollback and complete-drain lifecycle | `source-rollback`; `drain-deadline` |
-| ADNL write half-close precedes complete input drain | `half-close-after-surplus` waits within the original closing deadline and still requires all 64 answers and 512 KiB of discarded input. |
+| ADNL write half-close precedes complete input drain | `half-close-after-surplus` waits within the original closing deadline and still requires all 64 answers and 512 KiB of discarded input. Retired with the liteserver admission limits (#448): its refusal came from the removed per-connection rate window, and no production path starts the ordered refusal close any more. `drain-after-half-close` still covers a half-close known before the close. |
 | JSON-RPC keyless response integrity | `keyless_endpoints_close_even_when_keepalive_is_requested` |
 | Timeout cases execute under CTest/ASAN | All 15 groups and the full `QuicInboundStreamTimeout` filter are required; the old single-case filter fails the inventory check. |
 
@@ -235,7 +235,7 @@ Additional bounded failure receipts (all red exits 1; all restored exits 0):
 | `keyless-success` | Expected `HTTP/1.1 200 OK`, received `HTTP/1.1 401 Unauthorized`. |
 | `adnl-source-rollback` | `global refusal leaked the new source reservation` |
 | `adnl-drain-deadline` | `drained output retained its old deadline` |
-| `adnl-refusal-drain` | `the peer got 26 of the 64 answers queued before the refusal; the stream ended by reset after 34056 bytes of an unfinished frame` |
+| `adnl-refusal-drain` | `the peer got 26 of the 64 answers queued before the refusal; the stream ended by reset after 34056 bytes of an unfinished frame` (retired with #448; no remaining case can trip this mutation, see above) |
 | `quic-concurrent-reclaim` | `extra_reclaims.load() is not equal to 0u (1 != 0)` |
 | `quic-retry-expiry` | `Expectation failed: reservations[0].has_value()!` |
 
