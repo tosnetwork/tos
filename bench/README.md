@@ -116,7 +116,11 @@ either way.
   client identity. The bench opens enough sender connections (each its own
   identity, paced at 2.5/s) for the highest offered rate, capped by
   `--max-senders`; on a public network the equivalent is many independent
-  clients. Sends are never
+  clients.
+* Connections: a liteserver admits 64 connections per source IP. With every
+  bench connection on one host, at most 56 senders per node are used, so one
+  host can offer about 140 externals/s per validator (560/s with four). A
+  higher rate is refused up front rather than measured as a chain shortfall. Sends are never
   retried, so a refusal at the node is reported as a result.
 * External messages are capped at 64 KiB; deployment batches are sized under
   that.

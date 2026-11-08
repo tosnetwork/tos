@@ -280,6 +280,17 @@ class Bench:
         scan_task = asyncio.create_task(scanner.run())
         bocs = [m.serialize().to_boc() for m in messages]
         senders = min(a.max_senders, max(len(self.configs), math.ceil(rate * 1.5 / chain.SOURCE_SEND_RATE)))
+        # A liteserver admits 64 connections per source IP; every bench
+        # connection comes from one host, so the senders per node stay under
+        # that after the read, deployment and scanner connections.
+        cap = len(self.configs) * chain.SENDERS_PER_NODE
+        if senders > cap:
+            if rate > cap * chain.SOURCE_SEND_RATE:
+                raise SystemExit(
+                    f"{rate:g}/s needs more than {cap} sender connections; one host can offer at most "
+                    f"{cap * chain.SOURCE_SEND_RATE:g} externals/s to {len(self.configs)} nodes "
+                    "(64 connections per source IP per node, 30 externals per 10 s per connection)")
+            senders = cap
         t0, records = await asyncio.to_thread(
             sender.distributed_send, ROOT, a.build, self.configs, bocs, rate, senders,
             chain.SOURCE_SEND_RATE, SENDER_STARTUP_SECONDS)
@@ -376,6 +387,10 @@ class Bench:
         bottlenecks = []
         if admission:
             bottlenecks.append("node admission refusals")
+        network = sum(n for reason, n in errors.items() if "LITE_SERVER_NETWORK" in reason)
+        result["client_network_failures"] = network
+        if network:
+            bottlenecks.append("sender connections failed (client side, message never reached a node)")
         if send_lag and max(send_lag) > 1.0:
             bottlenecks.append("generator fell behind its schedule")
         if blocks and blocks[-1].observed - blocks[-1].gen_utime > 5:
