@@ -7056,4 +7056,218 @@ mod tests {
             );
         }
     }
+
+    const GO_SIGNED: &str = include_str!(
+        "../tests/fixtures/agent_account_custody/custody-authorization-go-signed.json"
+    );
+
+    #[allow(clippy::too_many_arguments)]
+    fn go_signed_claim(
+        seqno: u32,
+        action_kind: &str,
+        account: &str,
+        network: &RelayNetworkDomainPin,
+        target: &str,
+        value_atomic: u64,
+        body_hash: Option<String>,
+        action_identity: &str,
+    ) -> ControllerActionClaim {
+        ControllerActionClaim {
+            account: account.to_owned(),
+            network_global_id: network.global_id,
+            network_domain: Some(network.clone()),
+            deployment_id: "55".repeat(32),
+            controller_epoch: 3,
+            seqno,
+            target: target.to_owned(),
+            value_atomic,
+            body_hash,
+            state_init_hash: None,
+            action_kind: action_kind.to_owned(),
+            idempotency_key: action_identity.strip_prefix("sha256:").unwrap().to_owned(),
+            action_identity: action_identity.to_owned(),
+            valid_until: 2_000_000_090,
+            auth_module: None,
+        }
+    }
+
+    /// The custody host admits a payment, a generic effect and a Prediction
+    /// effect that the service protocol signed through a real tosctl vault
+    /// controller, with the controller's key as the owner pin, and refuses
+    /// each of them with a changed key ID, an Ed25519 proof or another pin,
+    /// leaving the journal empty. `CUSTODY_AUTHORIZATION_GO_SIGNED` names a
+    /// freshly generated file instead of the committed one.
+    #[test]
+    fn custody_host_admits_protocol_signed_authorizations() {
+        let raw = match std::env::var("CUSTODY_AUTHORIZATION_GO_SIGNED") {
+            Ok(path) => fs::read_to_string(path).unwrap(),
+            Err(_) => GO_SIGNED.to_owned(),
+        };
+        let fixture: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(fixture["schema"], "tos.custody-authorization-go-signed.v1");
+        let authority_id = fixture["authority_id"].as_str().unwrap();
+        let (pinned, pinned_id) =
+            custody_authorization_pin(fixture["public_key_hex"].as_str().unwrap()).unwrap();
+        assert_eq!(pinned_id, fixture["key_id"].as_str().unwrap());
+        let payment: EconomicActionAuthorization =
+            serde_json::from_value(fixture["payment"].clone()).unwrap();
+        let effect: EconomicEffectAuthorization =
+            serde_json::from_value(fixture["effect"].clone()).unwrap();
+        let prediction: EconomicEffectAuthorization =
+            serde_json::from_value(fixture["prediction"].clone()).unwrap();
+        let network = payment.network_domain.clone().unwrap();
+        let payment_claim = go_signed_claim(
+            0,
+            "agent-native-send",
+            &payment.source_account,
+            &network,
+            &payment.destination,
+            payment.amount_atomic,
+            None,
+            &payment.stable_action_id,
+        );
+        let effect_claim = go_signed_claim(
+            1,
+            "agent-task-send",
+            &effect.source_account,
+            &network,
+            &effect.destination,
+            effect.amount_nanotos,
+            Some(effect.body_hash.clone()),
+            &effect.stable_action_id,
+        );
+        let prediction_claim = go_signed_claim(
+            2,
+            "agent-checked-contract-call-v2",
+            &prediction.source_account,
+            &network,
+            &prediction.destination,
+            prediction.amount_nanotos,
+            Some(prediction.body_hash.clone()),
+            &prediction.stable_action_id,
+        );
+        let now = 2_000_000_000;
+
+        // Refusals first, on a fresh journal that must stay empty.
+        let refused_directory = private_journal_directory();
+        let journal = reopen(&refused_directory).unwrap();
+        let other = CustodyKey::from_seed(&[0x56; 32]);
+        let mut renamed = payment.clone();
+        renamed.key_id = other.key_id();
+        let mut ed25519 = payment.clone();
+        ed25519.proof = format!("ed25519:{}", "ab".repeat(64));
+        let mut foreign_context = payment.clone();
+        let digest = Sha256::digest(economic_authorization_preimage(&payment).unwrap());
+        foreign_context.proof = mldsa44_signature_text_for_context_swap(&digest);
+        for (name, candidate, pin) in [
+            ("renamed key ID", renamed, pinned.clone()),
+            ("Ed25519 proof", ed25519, pinned.clone()),
+            ("another pin", payment.clone(), other.public_key()),
+            ("Action Authority context", foreign_context, pinned.clone()),
+        ] {
+            assert!(
+                journal
+                    .claim_economic_payment(
+                        payment_claim.clone(),
+                        candidate,
+                        authority_id,
+                        &pin,
+                        now
+                    )
+                    .is_err(),
+                "{name}"
+            );
+        }
+        let mut changed_effect = effect.clone();
+        changed_effect.amount_nanotos += 1;
+        assert!(
+            journal
+                .claim_economic_effect(
+                    effect_claim.clone(),
+                    changed_effect,
+                    authority_id,
+                    &pinned,
+                    now
+                )
+                .is_err()
+        );
+        assert!(
+            journal
+                .find_economic_payment_by_stable_action(&payment.stable_action_id)
+                .unwrap()
+                .is_none()
+        );
+        drop(journal);
+        assert!(
+            !journal_path(&refused_directory).exists() || {
+                let value: serde_json::Value =
+                    serde_json::from_slice(&fs::read(journal_path(&refused_directory)).unwrap())
+                        .unwrap();
+                value["records"].as_array().is_none_or(|records| records.is_empty())
+            }
+        );
+
+        // Admission of each in its own journal (one controller sequence per
+        // generation is outstanding at a time), then a reopen that
+        // re-verifies the stored proof with the stored key.
+        let payment_directory = private_journal_directory();
+        assert!(
+            reopen(&payment_directory)
+                .unwrap()
+                .claim_economic_payment(payment_claim, payment.clone(), authority_id, &pinned, now)
+                .unwrap()
+                .1
+        );
+        let effect_directory = private_journal_directory();
+        assert!(
+            reopen(&effect_directory)
+                .unwrap()
+                .claim_economic_effect(effect_claim, effect.clone(), authority_id, &pinned, now)
+                .unwrap()
+                .1
+        );
+        let prediction_directory = private_journal_directory();
+        assert!(
+            reopen(&prediction_directory)
+                .unwrap()
+                .claim_prediction_effect(
+                    prediction_claim,
+                    prediction.clone(),
+                    authority_id,
+                    &pinned,
+                    now
+                )
+                .unwrap()
+                .1
+        );
+        assert!(
+            reopen(&payment_directory)
+                .unwrap()
+                .find_economic_payment_by_stable_action(&payment.stable_action_id)
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            reopen(&effect_directory)
+                .unwrap()
+                .find_economic_effect_by_stable_action(&effect.stable_action_id)
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            reopen(&prediction_directory)
+                .unwrap()
+                .find_economic_effect_by_stable_action(&prediction.stable_action_id)
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    /// A well-formed signature under the Action Authority context, by a key
+    /// that is not the pin either way: the context swap must fail first on the
+    /// key, so the dedicated vector test covers the same-key swap.
+    fn mldsa44_signature_text_for_context_swap(digest: &[u8]) -> String {
+        CustodyKey::from_seed(&[0x57; 32])
+            .sign_under(digest, crate::native_registry::ACTION_AUTHORITY_SIGNATURE_CONTEXT)
+    }
 }
