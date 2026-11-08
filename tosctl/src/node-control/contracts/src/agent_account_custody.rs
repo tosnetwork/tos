@@ -612,7 +612,7 @@ impl AgentAccountCustodyJournal {
                         "economic stable action was already bound to a different source or effect"
                     );
                 }
-                if prior != &authorization {
+                if !same_unsigned_payment(prior, &authorization) {
                     if stored.status == ControllerActionStatus::Resolved
                         || authorization.writer_generation <= prior.writer_generation
                     {
@@ -698,7 +698,7 @@ impl AgentAccountCustodyJournal {
                         "economic stable action was already bound to a different source or effect"
                     );
                 }
-                if prior != &authorization {
+                if !same_unsigned_effect(prior, &authorization) {
                     if stored.status == ControllerActionStatus::Resolved
                         || authorization.writer_generation <= prior.writer_generation
                     {
@@ -719,11 +719,11 @@ impl AgentAccountCustodyJournal {
                     && record.claim.idempotency_key == claim.idempotency_key
             }) {
                 if target.claim == claim
-                    && target.economic_effect_authorization.as_ref() == Some(&authorization)
+                    && target.economic_effect_authorization.as_ref().is_some_and(|prior| same_unsigned_effect(prior, &authorization))
                 {
                     return Ok((target.clone(), false));
                 }
-                if target.economic_effect_authorization.as_ref() == Some(&authorization)
+                if target.economic_effect_authorization.as_ref().is_some_and(|prior| same_unsigned_effect(prior, &authorization))
                     && same_unsigned_claim(&target.claim, &claim)
                 {
                     return Ok((target.clone(), false));
@@ -765,7 +765,7 @@ impl AgentAccountCustodyJournal {
                 .find(|candidate| candidate.claim == record.claim)
                 .context("new economic effect custody record disappeared")?;
             if let Some(existing) = &target.economic_effect_authorization {
-                if existing != &authorization {
+                if !same_unsigned_effect(existing, &authorization) {
                     anyhow::bail!("changed economic effect conflicts with custody journal");
                 }
             } else if target.economic_authorization.is_some() {
@@ -849,7 +849,7 @@ impl AgentAccountCustodyJournal {
                         "prediction stable action was already bound to a different source or effect"
                     );
                 }
-                if prior != &authorization {
+                if !same_unsigned_effect(prior, &authorization) {
                     if stored.status == ControllerActionStatus::Resolved
                         || authorization.writer_generation <= prior.writer_generation
                     {
@@ -870,7 +870,7 @@ impl AgentAccountCustodyJournal {
                     && record.claim.idempotency_key == claim.idempotency_key
             }) {
                 if target.claim == claim
-                    && target.economic_effect_authorization.as_ref() == Some(&authorization)
+                    && target.economic_effect_authorization.as_ref().is_some_and(|prior| same_unsigned_effect(prior, &authorization))
                 {
                     return Ok((target.clone(), false));
                 }
@@ -911,7 +911,7 @@ impl AgentAccountCustodyJournal {
                 .find(|candidate| candidate.claim == record.claim)
                 .context("new prediction custody record disappeared")?;
             if let Some(existing) = &target.economic_effect_authorization {
-                if existing != &authorization {
+                if !same_unsigned_effect(existing, &authorization) {
                     anyhow::bail!("changed prediction effect conflicts with custody journal");
                 }
             } else if target.economic_authorization.is_some() {
@@ -2731,6 +2731,45 @@ fn same_economic_payment(
         && left.key_id == right.key_id
 }
 
+/// Two payment authorizations are the same signed statement when every field
+/// but the proof is equal. ML-DSA-44 signing is hedged, so an unchanged
+/// authorization re-signed for a retry carries another valid proof; the
+/// caller has already verified that proof against the pinned key, and the
+/// journal keeps the proof it first admitted.
+fn same_unsigned_payment(
+    left: &EconomicActionAuthorization,
+    right: &EconomicActionAuthorization,
+) -> bool {
+    let mut left = left.clone();
+    left.proof.clear();
+    let mut right = right.clone();
+    right.proof.clear();
+    left == right
+}
+
+fn same_optional_unsigned_payment(
+    left: Option<&EconomicActionAuthorization>,
+    right: Option<&EconomicActionAuthorization>,
+) -> bool {
+    match (left, right) {
+        (None, None) => true,
+        (Some(left), Some(right)) => same_unsigned_payment(left, right),
+        _ => false,
+    }
+}
+
+/// The effect counterpart of [`same_unsigned_payment`].
+fn same_unsigned_effect(
+    left: &EconomicEffectAuthorization,
+    right: &EconomicEffectAuthorization,
+) -> bool {
+    let mut left = left.clone();
+    left.proof.clear();
+    let mut right = right.clone();
+    right.proof.clear();
+    left == right
+}
+
 fn same_economic_effect(
     left: &EconomicEffectAuthorization,
     right: &EconomicEffectAuthorization,
@@ -2881,7 +2920,12 @@ fn admit_claim(
         generation_key(&record.claim) == generation
             && record.claim.idempotency_key == claim.idempotency_key
     }) {
-        if record.claim != claim || record.economic_authorization != economic_authorization {
+        if record.claim != claim
+            || !same_optional_unsigned_payment(
+                record.economic_authorization.as_ref(),
+                economic_authorization.as_ref(),
+            )
+        {
             anyhow::bail!("controller action identity was reused with different semantics");
         }
         return Ok((record.clone(), false));
@@ -2892,7 +2936,12 @@ fn admit_claim(
         {
             continue;
         }
-        if record.claim == claim && record.economic_authorization == economic_authorization {
+        if record.claim == claim
+            && same_optional_unsigned_payment(
+                record.economic_authorization.as_ref(),
+                economic_authorization.as_ref(),
+            )
+        {
             return Ok((record.clone(), false));
         }
         anyhow::bail!("another primary controller action already owns this Agent Account sequence");
@@ -7296,5 +7345,123 @@ mod tests {
     fn mldsa44_signature_text_for_context_swap(digest: &[u8]) -> String {
         CustodyKey::from_seed(&[0x57; 32])
             .sign_under(digest, crate::native_registry::ACTION_AUTHORITY_SIGNATURE_CONTEXT)
+    }
+
+    /// ML-DSA-44 signing is hedged, so an unchanged authorization re-signed
+    /// for a retry carries a different valid proof. The custody journal treats
+    /// it as the same retry and keeps the proof it first admitted; a changed
+    /// field at the same writer generation, or an invalid proof, is still
+    /// refused.
+    #[test]
+    fn a_re_signed_identical_authorization_is_the_same_retry() {
+        let key = CustodyKey::from_seed(&[0x58; 32]);
+        let pinned = key.public_key();
+        let first = claim(0, '1');
+        let authorization = economic_authorization(&first, 7, &key);
+        let mut re_signed = authorization.clone();
+        resign_payment(&mut re_signed, &key);
+        assert_ne!(re_signed.proof, authorization.proof, "hedged signing gives another proof");
+
+        let directory = private_journal_directory();
+        let journal = reopen(&directory).unwrap();
+        let (admitted, created) = journal
+            .claim_economic_payment(
+                first.clone(),
+                authorization.clone(),
+                "authority:owner",
+                &pinned,
+                10,
+            )
+            .unwrap();
+        assert!(created);
+        let (retried, created) = journal
+            .claim_economic_payment(
+                first.clone(),
+                re_signed.clone(),
+                "authority:owner",
+                &pinned,
+                11,
+            )
+            .unwrap();
+        assert!(!created);
+        assert_eq!(retried, admitted);
+        assert_eq!(retried.economic_authorization.as_ref().unwrap().proof, authorization.proof);
+        drop(journal);
+        // The retry also holds after a reopen, from the tombstone.
+        let journal = reopen(&directory).unwrap();
+        assert!(
+            !journal
+                .claim_economic_payment(
+                    first.clone(),
+                    re_signed.clone(),
+                    "authority:owner",
+                    &pinned,
+                    12
+                )
+                .unwrap()
+                .1
+        );
+
+        let mut changed = authorization.clone();
+        changed.mandate_digest = format!("sha256:{}", "9".repeat(64));
+        resign_payment(&mut changed, &key);
+        assert!(
+            journal
+                .claim_economic_payment(first.clone(), changed, "authority:owner", &pinned, 12)
+                .is_err(),
+            "a changed field at the same writer generation is not a retry"
+        );
+        let mut bad = re_signed.clone();
+        let mut bytes = parse_mldsa44_signature_text(&bad.proof).unwrap();
+        bytes[200] ^= 1;
+        bad.proof = crate::native_registry::mldsa44_signature_text(&bytes).unwrap();
+        assert!(
+            journal.claim_economic_payment(first, bad, "authority:owner", &pinned, 12).is_err(),
+            "a retry with an invalid proof is refused"
+        );
+
+        // The same for a generic effect.
+        let mut effect = claim(0, '8');
+        effect.idempotency_key = "8".repeat(64);
+        effect.action_kind = "agent-task-send".into();
+        effect.body_hash = Some(format!("tvm-cell-sha256:{}", "8".repeat(64)));
+        let effect_authorization = economic_effect_authorization(&effect, 7, &key);
+        let mut effect_re_signed = effect_authorization.clone();
+        let digest =
+            Sha256::digest(economic_effect_authorization_preimage(&effect_re_signed).unwrap());
+        effect_re_signed.proof = key.sign(&digest);
+        assert_ne!(effect_re_signed.proof, effect_authorization.proof);
+        let effect_directory = private_journal_directory();
+        let journal = reopen(&effect_directory).unwrap();
+        assert!(
+            journal
+                .claim_economic_effect(
+                    effect.clone(),
+                    effect_authorization.clone(),
+                    "authority:owner",
+                    &pinned,
+                    10
+                )
+                .unwrap()
+                .1
+        );
+        let (retried, created) = journal
+            .claim_economic_effect(effect.clone(), effect_re_signed, "authority:owner", &pinned, 11)
+            .unwrap();
+        assert!(!created);
+        assert_eq!(
+            retried.economic_effect_authorization.as_ref().unwrap().proof,
+            effect_authorization.proof
+        );
+        let mut effect_changed = effect_authorization;
+        effect_changed.mandate_digest = format!("sha256:{}", "9".repeat(64));
+        let digest =
+            Sha256::digest(economic_effect_authorization_preimage(&effect_changed).unwrap());
+        effect_changed.proof = key.sign(&digest);
+        assert!(
+            journal
+                .claim_economic_effect(effect, effect_changed, "authority:owner", &pinned, 12)
+                .is_err()
+        );
     }
 }
