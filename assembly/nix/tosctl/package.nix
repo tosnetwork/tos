@@ -67,7 +67,7 @@ in rustPlatform.buildRustPackage ({
   # which another user can modify, so these tests cannot pass in any sandbox directory; that is
   # the check working, not a defect. The VM acceptance test exercises the same configuration
   # persistence (private mode, symlink and unsafe-directory refusals) on a real system, and all
-  # nine run in the repository's Rust CI. The receipt counts them as "filtered out".
+  # ten run in the repository's Rust CI. The receipt counts them as "filtered out".
   checkFlags = [ "--exact" ] ++ lib.concatMap (name: [ "--skip" name ]) ([
     "commands::nodectl::utils::tests::save_config_is_private_and_refuses_a_linked_target"
     "commands::nodectl::utils::tests::node_control_config_opens_the_vault_for_a_vault_key"
@@ -78,6 +78,7 @@ in rustPlatform.buildRustPackage ({
     "commands::nodectl::native_registry_cmd::tests::controllers_live_in_the_vault_as_ml_dsa_44_seeds"
     "commands::nodectl::native_registry_cmd::tests::agent_guarantor_sign_and_verify_run_through_the_commands"
     "commands::nodectl::native_registry_cmd::tests::action_authority_sign_and_verify_run_through_the_commands"
+    "commands::nodectl::native_registry_cmd::tests::custody_authorization_sign_and_verify_run_through_the_commands"
   ] ++ lib.optionals shielded [
     # The shield store persists state, pointers, locks and the journal under the same
     # private-directory rule, so every test that opens an instance on disk is refused in the

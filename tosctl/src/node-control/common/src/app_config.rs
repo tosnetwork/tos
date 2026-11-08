@@ -411,8 +411,9 @@ pub struct AgentRuntimeBinding {
     /// Optional hash of runtime attestation or deployment evidence.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub attestation_hash: Option<String>,
-    /// Owner-pinned OpenFox Economic Action Authority identity and Ed25519 key.
-    /// Custody never accepts these values from a payment request.
+    /// Owner-pinned custody authorization identity and its 1,312-byte
+    /// ML-DSA-44 public key in lowercase hex. Custody never accepts these
+    /// values from a payment request.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub economic_authority_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

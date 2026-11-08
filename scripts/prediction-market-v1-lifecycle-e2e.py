@@ -63,6 +63,8 @@ CHALLENGED_SCENARIO_FUNDED_WALLETS = WALLET_NAMES
 TRADING_PUBLIC_KEY = "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a"
 
 
+CUSTODY_AUTHORIZATION_CONTROLLER = "prediction-custody"
+
 class LocalnetFailed(RuntimeError):
     """A child validator process exited; retrying cannot make it healthy."""
 
@@ -127,8 +129,10 @@ class Lifecycle:
         self.env = dict(os.environ)
         self.env["VAULT_URL"] = self.vault_url
         self.addresses: dict[str, str] = {}
-        self.agent_authority_seed = secrets.token_bytes(32)
-        self.agent_authority_public_key = self.ed25519_public_key(self.agent_authority_seed)
+        # The custody authorization key is an ML-DSA-44 controller in the run's
+        # temporary Vault, created once the configuration exists.
+        self.agent_authority_public_key: str | None = None
+        self.agent_authority_key_id: str | None = None
         self.agent_account_address: str | None = None
         self.agent_account_code_hash: str | None = None
         self.match_source_address: str | None = None
@@ -298,6 +302,15 @@ class Lifecycle:
         journal = self.workdir / "prediction-agent-custody"
         journal.mkdir(mode=0o700)
         journal.chmod(0o700)
+        controller = self.json_call(
+            "agent", "native-registry", "new-controller", "--name", CUSTODY_AUTHORIZATION_CONTROLLER,
+        )
+        if (controller.get("suite") != "ML-DSA-44"
+                or len(controller.get("public_key", "")) != 2 * 1312
+                or len(controller.get("key_id", "")) != 64):
+            raise RuntimeError("custody authorization controller is not an ML-DSA-44 key")
+        self.agent_authority_public_key = controller["public_key"]
+        self.agent_authority_key_id = "mldsa44:" + controller["key_id"]
         self.tosctl_call(
             "agent", "wallet", "create", "--name", "prediction-solver", "-v", "V5R1", "-w", "0",
             "--max-per-tx", "2", "--daily-limit", "10",
@@ -356,7 +369,7 @@ class Lifecycle:
             "market_config_hash": market_config_hash, "market_code_hash": market_code_hash,
             "amount_nanotos": amount, "body_hash": body_hash, "expires_at_unix": valid_until,
             "source_agent_account_code_hash": self.agent_account_code_hash,
-            "public_key": "", "proof": "",
+            "key_id": "", "proof": "",
         }
         output = bytearray(b"TOS-PCEA\0")
         output.extend(struct.pack(">H", authorization["schema_version"]))
@@ -377,8 +390,10 @@ class Lifecycle:
         output.extend(struct.pack(">Q", amount))
         output.extend(self._lp32(body_hash))
         output.extend(struct.pack(">Q", valid_until))
-        authorization["public_key"] = "ed25519:" + self.agent_authority_public_key
-        authorization["proof"] = "ed25519:" + self.sign_ed25519_digest(hashlib.sha256(output).digest())
+        if self.agent_authority_key_id is None:
+            raise RuntimeError("custody authorization controller was not provisioned")
+        authorization["key_id"] = self.agent_authority_key_id
+        authorization["proof"] = self.sign_custody_digest(hashlib.sha256(output).digest())
         return authorization
 
     def write_definition(self) -> dict[str, Any]:
@@ -859,22 +874,21 @@ class Lifecycle:
         env["PREDICTION_TEST_SEED"] = seed.hex()
         return subprocess.check_output(["node", "-e", script], env=env, timeout=30).decode()
 
-    def sign_ed25519_digest(self, digest: bytes) -> str:
+    def sign_custody_digest(self, digest: bytes) -> str:
+        """Sign a custody authorization digest with the Vault-held ML-DSA-44 controller."""
         if len(digest) != 32:
-            raise RuntimeError("Prediction authority digest must be 32 bytes")
-        script = (
-            "const c=require('crypto');const s=Buffer.from(process.env.PREDICTION_TEST_SEED,'hex');"
-            "const d=Buffer.from(process.env.PREDICTION_TEST_DIGEST,'hex');"
-            "const k=c.createPrivateKey({key:Buffer.concat([Buffer.from('302e020100300506032b657004220420','hex'),s]),format:'der',type:'pkcs8'});"
-            "process.stdout.write(c.sign(null,d,k).toString('hex'));"
+            raise RuntimeError("custody authorization digest must be 32 bytes")
+        view = self.json_call(
+            "agent", "native-registry", "sign", "--controller", CUSTODY_AUTHORIZATION_CONTROLLER,
+            "--for", "custody-authorization", "--message-hex", digest.hex(),
         )
-        env = dict(self.env)
-        env["PREDICTION_TEST_SEED"] = self.agent_authority_seed.hex()
-        env["PREDICTION_TEST_DIGEST"] = digest.hex()
-        result = subprocess.check_output(["node", "-e", script], env=env, timeout=30).decode()
-        if len(result) != 128:
-            raise RuntimeError("Prediction authority signature is not canonical Ed25519")
-        return result
+        signature = bytes.fromhex(view.get("signature", ""))
+        if (view.get("context") != "TOS-CUSTODY-AUTHORIZATION-V1"
+                or view.get("message_hex") != digest.hex()
+                or view.get("public_key") != self.agent_authority_public_key
+                or len(signature) != 2420):
+            raise RuntimeError("custody authorization signature does not match its request")
+        return "mldsa44:" + base64.urlsafe_b64encode(signature).rstrip(b"=").decode()
 
     @staticmethod
     def _lp32(value: str) -> bytes:

@@ -535,6 +535,8 @@ enum SignatureUse {
     AgentGuarantor,
     /// An Action Authority signature (its 32-byte message digest)
     ActionAuthority,
+    /// A custody authorization (the 32-byte digest of its preimage)
+    CustodyAuthorization,
 }
 
 impl SignatureUse {
@@ -545,6 +547,7 @@ impl SignatureUse {
             Self::AgentContact => AGENT_CONTACT_SIGNATURE_CONTEXT,
             Self::AgentGuarantor => AGENT_GUARANTOR_SIGNATURE_CONTEXT,
             Self::ActionAuthority => ACTION_AUTHORITY_SIGNATURE_CONTEXT,
+            Self::CustodyAuthorization => CUSTODY_AUTHORIZATION_SIGNATURE_CONTEXT,
         }
     }
 }
@@ -554,8 +557,9 @@ const MAX_ACTION_BOC_BYTES: u64 = 64 << 10;
 
 /// The bytes a signature for `usage` covers: the hash of a registry action
 /// read from `action_boc`, or the message given in hex for the other uses. An
-/// Agent Guarantor message is exactly the 32-byte section 9 digest, and an
-/// Action Authority message is exactly its 32-byte framed digest.
+/// Agent Guarantor message is exactly the 32-byte section 9 digest, an Action
+/// Authority message is exactly its 32-byte framed digest, and a custody
+/// authorization message is exactly the 32-byte digest of its preimage.
 fn signed_message(
     usage: SignatureUse,
     action_boc: Option<&Path>,
@@ -588,10 +592,16 @@ fn signed_message(
                 "an Action Authority signature covers its {ACTION_AUTHORITY_MESSAGE_BYTES}-byte message digest, not {} bytes",
                 message.len()
             );
+            anyhow::ensure!(
+                usage != SignatureUse::CustodyAuthorization
+                    || message.len() == CUSTODY_AUTHORIZATION_MESSAGE_BYTES,
+                "a custody authorization signature covers its {CUSTODY_AUTHORIZATION_MESSAGE_BYTES}-byte preimage digest, not {} bytes",
+                message.len()
+            );
             Ok(message)
         }
         _ => anyhow::bail!(
-            "an Agent packet, contact, Guarantor or Action Authority signature covers --message-hex, not an action"
+            "an Agent packet, contact, Guarantor, Action Authority or custody authorization signature covers --message-hex, not an action"
         ),
     }
 }
@@ -602,9 +612,11 @@ fn signed_message(
 /// registry action cell, never over a bare hash), `agent-packet`
 /// (TOS-AGENT-PACKET-V1) and `agent-contact` (TOS-AGENT-CONTACT-V1), both over
 /// the given message bytes, `agent-guarantor` (TOS-AGENT-GUARANTOR-V1), over
-/// exactly the 32-byte digest of a Guarantor authorization statement, and
+/// exactly the 32-byte digest of a Guarantor authorization statement,
 /// `action-authority` (TOS-ACTION-AUTHORITY-V1), over exactly the 32-byte
-/// framed digest of an Action Authority object.
+/// framed digest of an Action Authority object, and `custody-authorization`
+/// (TOS-CUSTODY-AUTHORIZATION-V1), over exactly the 32-byte digest of a
+/// TOS-EAA, TOS-CEA or TOS-PCEA custody authorization preimage.
 ///
 /// It reads no chain state. A signature it makes proves only that this
 /// controller signed these bytes: it is not authorization. Whether a registry
@@ -622,7 +634,7 @@ struct SignCmd {
     action_boc: Option<PathBuf>,
     #[arg(
         long,
-        help = "Message in hex (Agent packet or contact signatures; the 32-byte digest for agent-guarantor and action-authority)"
+        help = "Message in hex (Agent packet or contact signatures; the 32-byte digest for agent-guarantor, action-authority and custody-authorization)"
     )]
     message_hex: Option<String>,
     #[arg(short, long, default_value = "json")]
@@ -673,7 +685,7 @@ struct VerifyCmd {
     action_boc: Option<PathBuf>,
     #[arg(
         long,
-        help = "Message in hex (Agent packet or contact signatures; the 32-byte digest for agent-guarantor and action-authority)"
+        help = "Message in hex (Agent packet or contact signatures; the 32-byte digest for agent-guarantor, action-authority and custody-authorization)"
     )]
     message_hex: Option<String>,
     #[arg(long, help = "1,312-byte ML-DSA-44 public key in hex")]
@@ -1566,21 +1578,23 @@ mod tests {
         assert!(verify(SignatureUse::AgentContact, &hash).is_err());
         assert!(verify(SignatureUse::AgentGuarantor, &hash).is_err());
         assert!(verify(SignatureUse::ActionAuthority, &hash).is_err());
+        assert!(verify(SignatureUse::CustodyAuthorization, &hash).is_err());
         let mut other = hash.clone();
         other[0] ^= 1;
         assert!(verify(SignatureUse::Registry, &other).is_err());
     }
 
-    const ALL_USES: [SignatureUse; 5] = [
+    const ALL_USES: [SignatureUse; 6] = [
         SignatureUse::Registry,
         SignatureUse::AgentPacket,
         SignatureUse::AgentContact,
         SignatureUse::AgentGuarantor,
         SignatureUse::ActionAuthority,
+        SignatureUse::CustodyAuthorization,
     ];
 
     /// A signature made for any one use verifies under that use and is refused
-    /// under each of the other four, in both directions.
+    /// under each of the other five, in both directions.
     #[test]
     fn every_use_refuses_every_other_uses_signature() {
         let message = [0x3c; 32];
@@ -1692,7 +1706,13 @@ mod tests {
         let public_key = view["public_key"].as_str().expect("public key").to_owned();
         let signature = view["signature"].as_str().expect("signature").to_owned();
         verify_with("agent-guarantor", &digest, &public_key, &signature).expect("verifies");
-        for other in ["registry", "agent-packet", "agent-contact", "action-authority"] {
+        for other in [
+            "registry",
+            "agent-packet",
+            "agent-contact",
+            "action-authority",
+            "custody-authorization",
+        ] {
             assert!(verify_with(other, &digest, &public_key, &signature).is_err(), "{other}");
         }
         let mut flipped = digest.clone();
@@ -1784,7 +1804,13 @@ mod tests {
         let public_key = view["public_key"].as_str().expect("public key").to_owned();
         let signature = view["signature"].as_str().expect("signature").to_owned();
         verify_with("action-authority", &digest, &public_key, &signature).expect("verifies");
-        for other in ["registry", "agent-packet", "agent-contact", "agent-guarantor"] {
+        for other in [
+            "registry",
+            "agent-packet",
+            "agent-contact",
+            "agent-guarantor",
+            "custody-authorization",
+        ] {
             assert!(verify_with(other, &digest, &public_key, &signature).is_err(), "{other}");
         }
         let mut flipped = digest.clone();
@@ -1795,6 +1821,53 @@ mod tests {
             assert!(sign_for(&wrong).sign_in(&vault).await.is_err());
         }
         assert!(signed_message(SignatureUse::ActionAuthority, None, None).is_err());
+    }
+
+    /// `sign --for custody-authorization` and `verify --for
+    /// custody-authorization` run the real command code: a vault controller
+    /// signs a 32-byte preimage digest under TOS-CUSTODY-AUTHORIZATION-V1, the
+    /// signature verifies only as custody-authorization (never as an Action
+    /// Authority signature) and only over that digest, and any other message
+    /// length is refused.
+    #[tokio::test]
+    async fn custody_authorization_sign_and_verify_run_through_the_commands() {
+        let vault = super::super::utils::test_vault::with_ed25519_keys(&[]).await;
+        let vault = vault.open().await;
+        store_new_controller(&vault, "custody").await.expect("create controller");
+        let digest = "c3".repeat(32);
+        let sign_for = |message: &str| match parse(&[
+            "sign",
+            "--controller",
+            "custody",
+            "--for",
+            "custody-authorization",
+            "--message-hex",
+            message,
+        ])
+        .expect("parse sign")
+        {
+            NativeRegistrySubcommand::Sign(cmd) => cmd,
+            _ => panic!("not a sign command"),
+        };
+        let view = sign_for(&digest).sign_in(&vault).await.expect("sign");
+        assert_eq!(view["context"], "TOS-CUSTODY-AUTHORIZATION-V1");
+        assert_eq!(view["message_hex"], digest.as_str());
+        let public_key = view["public_key"].as_str().expect("public key").to_owned();
+        let signature = view["signature"].as_str().expect("signature").to_owned();
+        verify_with("custody-authorization", &digest, &public_key, &signature).expect("verifies");
+        for other in
+            ["registry", "agent-packet", "agent-contact", "agent-guarantor", "action-authority"]
+        {
+            assert!(verify_with(other, &digest, &public_key, &signature).is_err(), "{other}");
+        }
+        let mut flipped = digest.clone();
+        flipped.replace_range(0..2, "c4");
+        assert!(verify_with("custody-authorization", &flipped, &public_key, &signature).is_err());
+        for wrong in ["c3".repeat(31), "c3".repeat(33), String::new()] {
+            assert!(verify_with("custody-authorization", &wrong, &public_key, &signature).is_err());
+            assert!(sign_for(&wrong).sign_in(&vault).await.is_err());
+        }
+        assert!(signed_message(SignatureUse::CustodyAuthorization, None, None).is_err());
     }
 
     /// A controller created in a real file vault reads back as the same key,

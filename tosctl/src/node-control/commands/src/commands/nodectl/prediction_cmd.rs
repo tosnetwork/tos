@@ -814,14 +814,14 @@ impl PredictionPrepareAgentCmd {
             .economic_authority_id
             .as_deref()
             .context("runtime has no economic_authority_id")?;
-        let expected_key: [u8; 32] = hex::decode(
-            runtime
-                .economic_authority_public_key_hex
-                .as_deref()
-                .context("runtime has no economic_authority_public_key")?,
-        )?
-        .try_into()
-        .map_err(|_| anyhow::anyhow!("pinned economic authority key must be 32 bytes"))?;
+        let (expected_key, expected_key_id) =
+            contracts::agent_account_custody::custody_authorization_pin(
+                runtime
+                    .economic_authority_public_key_hex
+                    .as_deref()
+                    .context("runtime has no economic_authority_public_key")?,
+            )
+            .context("owner-pinned custody authorization key")?;
         let account = agent_wallet
             .agent_account_address
             .as_ref()
@@ -890,7 +890,7 @@ impl PredictionPrepareAgentCmd {
         anyhow::ensure!(
             authorization.profile == "tos.prediction.checked-call.v1"
                 && authorization.authority_id == expected_authority_id
-                && authorization.public_key == format!("ed25519:{}", hex::encode(expected_key))
+                && authorization.key_id == expected_key_id
                 && authorization.source_account == account.to_string()
                 && authorization.source_agent_account_code_hash == source_code_hash
                 && authorization.action_kind == semantic_kind
@@ -990,7 +990,7 @@ impl PredictionPrepareAgentCmd {
             claim.clone(),
             authorization.clone(),
             expected_authority_id,
-            expected_key,
+            &expected_key,
             now,
         )?;
         // Reuse the owner-private boundary already fixed for an idempotent

@@ -966,6 +966,79 @@ pub const ACTION_AUTHORITY_SIGNATURE_CONTEXT: &[u8] = b"TOS-ACTION-AUTHORITY-V1"
 /// 32-byte framed SHA-256 digest of its domain and canonical object.
 pub const ACTION_AUTHORITY_MESSAGE_BYTES: usize = 32;
 
+/// The ML-DSA-44 context of every custody authorization signature: the
+/// `TOS-EAA`, `TOS-CEA` and `TOS-PCEA` authorizations the custody host admits
+/// against its owner-pinned custody authorization key. The object kind is
+/// separated inside the 32-byte message by the preimage prefix, never by the
+/// context. It is a separate key and context from the Action Authority.
+pub const CUSTODY_AUTHORIZATION_SIGNATURE_CONTEXT: &[u8] = b"TOS-CUSTODY-AUTHORIZATION-V1";
+
+/// The exact length of the message a custody authorization signature covers:
+/// the SHA-256 of the complete authorization preimage.
+pub const CUSTODY_AUTHORIZATION_MESSAGE_BYTES: usize = 32;
+
+/// The text prefix of an ML-DSA-44 controller key ID and signature.
+pub const MLDSA44_TEXT_PREFIX: &str = "mldsa44:";
+
+/// The only text form of an ML-DSA-44 controller key ID: `mldsa44:` and 64
+/// lowercase hex characters.
+pub fn mldsa44_key_id_text(key_id: &[u8; 32]) -> String {
+    format!("{MLDSA44_TEXT_PREFIX}{}", hex::encode(key_id))
+}
+
+/// Parses the canonical `mldsa44:<64 lowercase hex>` key ID text. The all-zero
+/// ID is refused.
+pub fn parse_mldsa44_key_id_text(text: &str) -> Result<[u8; 32]> {
+    let encoded = text
+        .strip_prefix(MLDSA44_TEXT_PREFIX)
+        .ok_or_else(|| anyhow!("an ML-DSA-44 key ID is mldsa44:<64 lowercase hex>"))?;
+    anyhow::ensure!(
+        encoded.len() == 64
+            && encoded.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)),
+        "an ML-DSA-44 key ID is mldsa44:<64 lowercase hex>"
+    );
+    let mut key_id = [0u8; 32];
+    hex::decode_to_slice(encoded, &mut key_id)
+        .map_err(|_| anyhow!("an ML-DSA-44 key ID is mldsa44:<64 lowercase hex>"))?;
+    anyhow::ensure!(key_id != [0u8; 32], "the all-zero ML-DSA-44 key ID is invalid");
+    Ok(key_id)
+}
+
+/// The only text form of an ML-DSA-44 signature: `mldsa44:` and the unpadded
+/// URL-safe Base64 of exactly [`NATIVE_REGISTRY_SIGNATURE_BYTES`] bytes.
+pub fn mldsa44_signature_text(signature: &[u8]) -> Result<String> {
+    use base64::Engine as _;
+    anyhow::ensure!(
+        signature.len() == NATIVE_REGISTRY_SIGNATURE_BYTES,
+        "an ML-DSA-44 signature is {NATIVE_REGISTRY_SIGNATURE_BYTES} bytes, not {}",
+        signature.len()
+    );
+    Ok(format!(
+        "{MLDSA44_TEXT_PREFIX}{}",
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(signature)
+    ))
+}
+
+/// Parses the canonical ML-DSA-44 signature text: no padding, no other
+/// alphabet, no whitespace, no non-zero trailing bits and exactly
+/// [`NATIVE_REGISTRY_SIGNATURE_BYTES`] bytes. Canonicality is checked by
+/// re-encoding.
+pub fn parse_mldsa44_signature_text(text: &str) -> Result<Vec<u8>> {
+    use base64::Engine as _;
+    let encoded = text
+        .strip_prefix(MLDSA44_TEXT_PREFIX)
+        .ok_or_else(|| anyhow!("an ML-DSA-44 signature is mldsa44:<unpadded URL-safe Base64>"))?;
+    let signature = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(encoded)
+        .map_err(|_| anyhow!("an ML-DSA-44 signature is mldsa44:<unpadded URL-safe Base64>"))?;
+    anyhow::ensure!(
+        signature.len() == NATIVE_REGISTRY_SIGNATURE_BYTES
+            && base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&signature) == encoded,
+        "an ML-DSA-44 signature is the canonical Base64 of {NATIVE_REGISTRY_SIGNATURE_BYTES} bytes"
+    );
+    Ok(signature)
+}
+
 /// The longest message an ML-DSA-44 controller signs here, the bound
 /// PQCHECKSIG_MLDSA44 applies on chain.
 pub const ML_DSA_44_MAX_MESSAGE_BYTES: usize = 8192;
@@ -974,13 +1047,14 @@ pub const ML_DSA_44_MAX_MESSAGE_BYTES: usize = 8192;
 /// a signature made for one can never be accepted as another.
 /// The Agent Account ML-DSA-44 authentication module's context is one of them:
 /// a controller key may also authorize Agent Account requests.
-pub const CONTROLLER_SIGNATURE_CONTEXTS: [&[u8]; 6] = [
+pub const CONTROLLER_SIGNATURE_CONTEXTS: [&[u8]; 7] = [
     NATIVE_REGISTRY_SIGNATURE_CONTEXT,
     AGENT_PACKET_SIGNATURE_CONTEXT,
     AGENT_CONTACT_SIGNATURE_CONTEXT,
     AGENT_GUARANTOR_SIGNATURE_CONTEXT,
     crate::agent_account_auth::MLDSA44_AUTH_CONTEXT,
     ACTION_AUTHORITY_SIGNATURE_CONTEXT,
+    CUSTODY_AUTHORIZATION_SIGNATURE_CONTEXT,
 ];
 
 fn require_controller_context(context: &[u8]) -> Result<()> {
@@ -1142,18 +1216,26 @@ mod context_tests {
     /// The list is pinned by its literal bytes, so dropping or renaming a
     /// context fails here even though the loop above iterates the list.
     #[test]
-    fn controller_contexts_are_exactly_the_six_uses() {
-        let expected: [&[u8]; 6] = [
+    fn controller_contexts_are_exactly_the_seven_uses() {
+        let expected: [&[u8]; 7] = [
             b"TOS-NATIVE-REGISTRY",
             b"TOS-AGENT-PACKET-V1",
             b"TOS-AGENT-CONTACT-V1",
             b"TOS-AGENT-GUARANTOR-V1",
             b"TOS-AUTH-ML-DSA-44-v1",
             b"TOS-ACTION-AUTHORITY-V1",
+            b"TOS-CUSTODY-AUTHORIZATION-V1",
         ];
         assert_eq!(CONTROLLER_SIGNATURE_CONTEXTS, expected);
         assert_eq!(AGENT_GUARANTOR_SIGNATURE_CONTEXT.len(), 22);
         assert_eq!(ACTION_AUTHORITY_SIGNATURE_CONTEXT.len(), 23);
+        assert_eq!(CUSTODY_AUTHORIZATION_SIGNATURE_CONTEXT.len(), 28);
+        // No context is a prefix of another.
+        for (i, left) in CONTROLLER_SIGNATURE_CONTEXTS.iter().enumerate() {
+            for (j, right) in CONTROLLER_SIGNATURE_CONTEXTS.iter().enumerate() {
+                assert!(i == j || !right.starts_with(left), "{i} prefixes {j}");
+            }
+        }
         assert!(
             !CONTROLLER_SIGNATURE_CONTEXTS
                 .contains(&crate::service_actor::SERVICE_ACTOR_RESPOND_CONTEXT)

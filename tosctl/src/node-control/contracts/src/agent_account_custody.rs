@@ -15,10 +15,14 @@ use chain_rpc_client::v2::{
     client_json_rpc::{MAX_EXACT_BOC_BYTES, validate_exact_boc_before_broadcast},
     data_models::RelayNetworkDomainPin,
 };
-use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+
+use crate::native_registry::{
+    CUSTODY_AUTHORIZATION_SIGNATURE_CONTEXT, NATIVE_REGISTRY_PUBLIC_KEY_BYTES, controller_key_id,
+    mldsa44_key_id_text, parse_mldsa44_key_id_text, parse_mldsa44_signature_text, verify_ml_dsa_44,
+};
 
 use crate::agent_account::{
     AGENT_ACCOUNT_MAX_ACTION_VALUE, AGENT_CANCEL_SEQNO_OPCODE,
@@ -32,10 +36,10 @@ const PREDICTION_CUSTODY_EFFECT_PROFILE_V1: &str = "tos.prediction.checked-call.
 /// artifact is the module submission, not an external message to the account.
 pub const MLDSA44_NATIVE_SEND_ACTION_KIND: &str = "agent-mldsa44-native-send";
 
-const SCHEMA: &str = "tos.agent-account.controller-journal.v2";
+const SCHEMA: &str = "tos.agent-account.controller-journal.v3";
 const JOURNAL_FILE: &str = "controller-actions.json";
 const LOCK_FILE: &str = "controller-actions.lock";
-const ECONOMIC_ACTION_TOMBSTONE_SCHEMA: &str = "tos.agent-account.economic-action-tombstone.v1";
+const ECONOMIC_ACTION_TOMBSTONE_SCHEMA: &str = "tos.agent-account.economic-action-tombstone.v2";
 const ECONOMIC_ACTION_TOMBSTONE_PREFIX: &str = "economic-action-";
 const MAX_JOURNAL_BYTES: u64 = 32 << 20;
 const MAX_ECONOMIC_ACTION_TOMBSTONE_BYTES: u64 = 2 << 20;
@@ -129,9 +133,11 @@ pub struct PredictionRelayMasterchainCheckpoint {
     pub masterchain_sequence_number: u32,
 }
 
-/// Exact, Agreement-bound authorization issued by the Owner Economic Action
-/// Authority for one custody payment. The Action Authority key is pinned by
-/// custody configuration; the key carried here is only an audit commitment.
+/// Exact, Agreement-bound authorization issued by the owner for one custody
+/// payment, signed with the owner-pinned ML-DSA-44 custody authorization key
+/// under `TOS-CUSTODY-AUTHORIZATION-V1`. The key is pinned by custody
+/// configuration; the key ID carried here only names it and must derive from
+/// the pinned key.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EconomicActionAuthorization {
@@ -170,7 +176,7 @@ pub struct EconomicActionAuthorization {
     pub destination: String,
     pub amount_atomic: u64,
     pub expires_at_unix: u64,
-    pub public_key: String,
+    pub key_id: String,
     pub proof: String,
 }
 
@@ -223,7 +229,7 @@ pub struct EconomicEffectAuthorization {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub market_code_hash: String,
     pub expires_at_unix: u64,
-    pub public_key: String,
+    pub key_id: String,
     pub proof: String,
 }
 
@@ -373,7 +379,11 @@ struct FinalizedHighWater {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 struct EconomicAuthorityHighWater {
     authority_id: String,
-    public_key: String,
+    /// `mldsa44:<64 hex>` of `public_key_hex`.
+    key_id: String,
+    /// The pinned 1,312-byte custody authorization key, lowercase hex. Stored
+    /// signatures are re-verified with it whenever the journal is opened.
+    public_key_hex: String,
     writer_generation: u64,
     #[serde(default)]
     writer_fence_digest: String,
@@ -388,6 +398,9 @@ struct EconomicAuthorityHighWater {
 #[serde(deny_unknown_fields)]
 struct EconomicActionTombstone {
     schema: String,
+    /// The custody authorization key that admitted the record, lowercase hex,
+    /// so the embedded proof is re-verified without the runtime pin.
+    authority_public_key_hex: String,
     initial_authorization_digest: String,
     current_authorization_digest: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -506,7 +519,7 @@ impl AgentAccountCustodyJournal {
         claim: ControllerActionClaim,
         authorization: EconomicActionAuthorization,
         expected_authority_id: &str,
-        expected_authority_public_key: [u8; 32],
+        expected_authority_public_key: &[u8],
         now: u64,
     ) -> anyhow::Result<(ControllerActionRecord, bool)> {
         validate_claim(&claim)?;
@@ -557,9 +570,12 @@ impl AgentAccountCustodyJournal {
         }
         self.with_document(|document| {
             let authority_key = economic_authority_key(&authorization.owner_id, &authorization.agent_id);
-            let public_key_text = format!("ed25519:{}", hex::encode(expected_authority_public_key));
+            let (key_id_text, public_key_hex) = custody_key_identity(expected_authority_public_key)?;
             if let Some(high) = document.economic_authority_high_water.get(&authority_key) {
-                if high.authority_id != expected_authority_id || high.public_key != public_key_text {
+                if high.authority_id != expected_authority_id
+                    || high.key_id != key_id_text
+                    || high.public_key_hex != public_key_hex
+                {
                     anyhow::bail!("custody Action Authority identity changed; explicit owner recovery is required");
                 }
                 if authorization.writer_generation < high.writer_generation {
@@ -576,7 +592,8 @@ impl AgentAccountCustodyJournal {
                 authority_key,
                 EconomicAuthorityHighWater {
                     authority_id: expected_authority_id.to_owned(),
-                    public_key: public_key_text,
+                    key_id: key_id_text,
+                    public_key_hex,
                     writer_generation: authorization.writer_generation,
                     writer_fence_digest: authorization.writer_fence_digest.clone(),
                 },
@@ -584,6 +601,7 @@ impl AgentAccountCustodyJournal {
             if let Some(tombstone) =
                 self.read_economic_action_tombstone(&authorization.stable_action_id)?
             {
+                let tombstone_key = tombstone.authority_public_key_hex.clone();
                 let mut stored = tombstone.record;
                 let prior = stored
                     .economic_authorization
@@ -604,13 +622,13 @@ impl AgentAccountCustodyJournal {
                     }
                     stored.economic_authorization = Some(authorization);
                     stored.updated_at_unix = now;
-                    self.persist_economic_action_tombstone(&stored)?;
+                    self.persist_economic_action_tombstone(document, &stored)?;
                 }
-                restore_hot_economic_record(document, &stored)?;
+                restore_hot_economic_record(document, &stored, &tombstone_key)?;
                 return Ok((stored, false));
             }
             let (record, created) = admit_claim(document, claim, Some(authorization), now)?;
-            self.persist_economic_action_tombstone(&record)?;
+            self.persist_economic_action_tombstone(document, &record)?;
             Ok((record, created))
         })
     }
@@ -622,7 +640,7 @@ impl AgentAccountCustodyJournal {
         claim: ControllerActionClaim,
         authorization: EconomicEffectAuthorization,
         expected_authority_id: &str,
-        expected_authority_public_key: [u8; 32],
+        expected_authority_public_key: &[u8],
         now: u64,
     ) -> anyhow::Result<(ControllerActionRecord, bool)> {
         validate_claim(&claim)?;
@@ -660,7 +678,7 @@ impl AgentAccountCustodyJournal {
                 &authorization.owner_id,
                 &authorization.agent_id,
                 &authorization.authority_id,
-                &authorization.public_key,
+                &authorization.key_id,
                 authorization.writer_generation,
                 &authorization.writer_fence_digest,
                 expected_authority_id,
@@ -669,6 +687,7 @@ impl AgentAccountCustodyJournal {
             if let Some(tombstone) =
                 self.read_economic_action_tombstone(&authorization.stable_action_id)?
             {
+                let tombstone_key = tombstone.authority_public_key_hex.clone();
                 let mut stored = tombstone.record;
                 let prior = stored
                     .economic_effect_authorization
@@ -689,9 +708,9 @@ impl AgentAccountCustodyJournal {
                     }
                     stored.economic_effect_authorization = Some(authorization);
                     stored.updated_at_unix = now;
-                    self.persist_economic_action_tombstone(&stored)?;
+                    self.persist_economic_action_tombstone(document, &stored)?;
                 }
-                restore_hot_economic_record(document, &stored)?;
+                restore_hot_economic_record(document, &stored, &tombstone_key)?;
                 return Ok((stored, false));
             }
             let generation = generation_key(&claim);
@@ -755,7 +774,7 @@ impl AgentAccountCustodyJournal {
                 target.economic_effect_authorization = Some(authorization);
             }
             let output = target.clone();
-            self.persist_economic_action_tombstone(&output)?;
+            self.persist_economic_action_tombstone(document, &output)?;
             Ok((output, created))
         })
     }
@@ -768,7 +787,7 @@ impl AgentAccountCustodyJournal {
         claim: ControllerActionClaim,
         authorization: EconomicEffectAuthorization,
         expected_authority_id: &str,
-        expected_authority_public_key: [u8; 32],
+        expected_authority_public_key: &[u8],
         now: u64,
     ) -> anyhow::Result<(ControllerActionRecord, bool)> {
         validate_claim(&claim)?;
@@ -810,7 +829,7 @@ impl AgentAccountCustodyJournal {
                 &authorization.owner_id,
                 &authorization.agent_id,
                 &authorization.authority_id,
-                &authorization.public_key,
+                &authorization.key_id,
                 authorization.writer_generation,
                 &authorization.writer_fence_digest,
                 expected_authority_id,
@@ -819,6 +838,7 @@ impl AgentAccountCustodyJournal {
             if let Some(tombstone) =
                 self.read_economic_action_tombstone(&authorization.stable_action_id)?
             {
+                let tombstone_key = tombstone.authority_public_key_hex.clone();
                 let mut stored = tombstone.record;
                 let prior = stored
                     .economic_effect_authorization
@@ -839,9 +859,9 @@ impl AgentAccountCustodyJournal {
                     }
                     stored.economic_effect_authorization = Some(authorization);
                     stored.updated_at_unix = now;
-                    self.persist_economic_action_tombstone(&stored)?;
+                    self.persist_economic_action_tombstone(document, &stored)?;
                 }
-                restore_hot_economic_record(document, &stored)?;
+                restore_hot_economic_record(document, &stored, &tombstone_key)?;
                 return Ok((stored, false));
             }
             let generation = generation_key(&claim);
@@ -900,7 +920,7 @@ impl AgentAccountCustodyJournal {
                 target.economic_effect_authorization = Some(authorization);
             }
             let output = target.clone();
-            self.persist_economic_action_tombstone(&output)?;
+            self.persist_economic_action_tombstone(document, &output)?;
             Ok((output, created))
         })
     }
@@ -1784,7 +1804,7 @@ impl AgentAccountCustodyJournal {
             );
             let output = record.clone();
             if is_economic_record(&output) {
-                self.persist_economic_action_tombstone(&output)?;
+                self.persist_economic_action_tombstone(document, &output)?;
             }
             compact_records(document);
             Ok(output)
@@ -1865,7 +1885,7 @@ impl AgentAccountCustodyJournal {
             );
             let output = record.clone();
             if is_economic_record(&output) {
-                self.persist_economic_action_tombstone(&output)?;
+                self.persist_economic_action_tombstone(document, &output)?;
             }
             compact_records(document);
             Ok(output)
@@ -1908,7 +1928,7 @@ impl AgentAccountCustodyJournal {
             for record in document.records.iter().filter(|record| {
                 generation_key(&record.claim) == generation && is_economic_record(record)
             }) {
-                self.persist_economic_action_tombstone(record)?;
+                self.persist_economic_action_tombstone(document, record)?;
             }
             compact_records(document);
             Ok(())
@@ -1929,7 +1949,7 @@ impl AgentAccountCustodyJournal {
             change(record)?;
             let output = record.clone();
             if is_economic_record(&output) {
-                self.persist_economic_action_tombstone(&output)?;
+                self.persist_economic_action_tombstone(document, &output)?;
             }
             Ok(output)
         })
@@ -1964,9 +1984,20 @@ impl AgentAccountCustodyJournal {
 
     fn persist_economic_action_tombstone(
         &self,
+        document: &JournalDocument,
         record: &ControllerActionRecord,
     ) -> anyhow::Result<()> {
         let (stable_action_id, authorization_digest) = economic_record_identity(record)?;
+        let (owner_id, agent_id) = embedded_owner_agent(record)?;
+        let (_, key_id, _, _) = embedded_authority(record)?;
+        let high = document
+            .economic_authority_high_water
+            .get(&economic_authority_key(owner_id, agent_id))
+            .context("economic record has no durable custody authorization key")?;
+        if high.key_id != key_id {
+            anyhow::bail!("economic record key ID differs from its durable custody key");
+        }
+        let authority_public_key_hex = high.public_key_hex.clone();
         let filename = economic_action_tombstone_filename(stable_action_id)?;
         let mut permanent_record = record.clone();
         if permanent_record.status == ControllerActionStatus::Resolved {
@@ -1985,6 +2016,7 @@ impl AgentAccountCustodyJournal {
             .transpose()?;
         let mut candidate = EconomicActionTombstone {
             schema: ECONOMIC_ACTION_TOMBSTONE_SCHEMA.to_owned(),
+            authority_public_key_hex,
             initial_authorization_digest: authorization_digest.clone(),
             current_authorization_digest: authorization_digest,
             terminal_resolution_digest,
@@ -2213,16 +2245,20 @@ impl AgentAccountCustodyJournal {
         for record in document.records.clone().into_iter().filter(is_economic_record) {
             let (stable_action_id, _) = economic_record_identity(&record)?;
             if let Some(tombstone) = self.read_economic_action_tombstone(stable_action_id)? {
-                restore_hot_economic_record(&mut document, &tombstone.record)?;
+                restore_hot_economic_record(
+                    &mut document,
+                    &tombstone.record,
+                    &tombstone.authority_public_key_hex,
+                )?;
                 if let Some(current) = document.records.iter().find(|candidate| {
                     economic_record_identity(candidate)
                         .ok()
                         .is_some_and(|(candidate_id, _)| candidate_id == stable_action_id)
                 }) {
-                    self.persist_economic_action_tombstone(current)?;
+                    self.persist_economic_action_tombstone(&document, current)?;
                 }
             } else {
-                self.persist_economic_action_tombstone(&record)?;
+                self.persist_economic_action_tombstone(&document, &record)?;
             }
         }
         let result = operation(&mut document)?;
@@ -2392,13 +2428,13 @@ fn embedded_authority(record: &ControllerActionRecord) -> anyhow::Result<(&str, 
     match (&record.economic_authorization, &record.economic_effect_authorization) {
         (Some(authorization), None) => Ok((
             &authorization.authority_id,
-            &authorization.public_key,
+            &authorization.key_id,
             authorization.writer_generation,
             &authorization.writer_fence_digest,
         )),
         (None, Some(authorization)) => Ok((
             &authorization.authority_id,
-            &authorization.public_key,
+            &authorization.key_id,
             authorization.writer_generation,
             &authorization.writer_fence_digest,
         )),
@@ -2447,25 +2483,20 @@ fn validate_economic_action_tombstone(
     }
 
     let (owner_id, agent_id) = embedded_owner_agent(&tombstone.record)?;
-    let (authority_id, public_key, writer_generation, writer_fence_digest) =
+    let (authority_id, key_id, writer_generation, writer_fence_digest) =
         embedded_authority(&tombstone.record)?;
-    let public_key: [u8; 32] = hex::decode(
-        public_key
-            .strip_prefix("ed25519:")
-            .context("economic tombstone authority key has no Ed25519 prefix")?,
-    )?
-    .try_into()
-    .map_err(|_| anyhow::anyhow!("economic tombstone authority key must be 32 bytes"))?;
+    let high = EconomicAuthorityHighWater {
+        authority_id: authority_id.to_owned(),
+        key_id: key_id.to_owned(),
+        public_key_hex: tombstone.authority_public_key_hex.clone(),
+        writer_generation,
+        writer_fence_digest: writer_fence_digest.to_owned(),
+    };
+    // The tombstone key must derive the embedded key ID; validate_document
+    // then re-verifies the embedded proof with it.
+    validate_high_water(&high)?;
     let mut document = JournalDocument { schema: SCHEMA.to_owned(), ..Default::default() };
-    document.economic_authority_high_water.insert(
-        economic_authority_key(owner_id, agent_id),
-        EconomicAuthorityHighWater {
-            authority_id: authority_id.to_owned(),
-            public_key: format!("ed25519:{}", hex::encode(public_key)),
-            writer_generation,
-            writer_fence_digest: writer_fence_digest.to_owned(),
-        },
-    );
+    document.economic_authority_high_water.insert(economic_authority_key(owner_id, agent_id), high);
     document.records.push(tombstone.record.clone());
     validate_document(&document)
 }
@@ -2479,6 +2510,7 @@ fn validate_economic_tombstone_transition(
     validate_economic_action_tombstone(existing, existing_id)?;
     validate_economic_action_tombstone(candidate, candidate_id)?;
     if existing_id != candidate_id
+        || existing.authority_public_key_hex != candidate.authority_public_key_hex
         || existing.record.claim != candidate.record.claim
         || existing.initial_authorization_digest != candidate.initial_authorization_digest
         || action_status_rank(&candidate.record.status)
@@ -2533,8 +2565,9 @@ fn validate_economic_tombstone_transition(
 fn restore_hot_economic_record(
     document: &mut JournalDocument,
     permanent: &ControllerActionRecord,
+    public_key_hex: &str,
 ) -> anyhow::Result<()> {
-    restore_economic_authority_high_water(document, permanent)?;
+    restore_economic_authority_high_water(document, permanent, public_key_hex)?;
     let (stable_action_id, _) = economic_record_identity(permanent)?;
     let matching: Vec<_> = document
         .records
@@ -2590,13 +2623,17 @@ fn restore_hot_economic_record(
 fn restore_economic_authority_high_water(
     document: &mut JournalDocument,
     permanent: &ControllerActionRecord,
+    public_key_hex: &str,
 ) -> anyhow::Result<()> {
     let (owner_id, agent_id) = embedded_owner_agent(permanent)?;
-    let (authority_id, public_key, writer_generation, writer_fence_digest) =
+    let (authority_id, key_id, writer_generation, writer_fence_digest) =
         embedded_authority(permanent)?;
     let key = economic_authority_key(owner_id, agent_id);
     if let Some(high) = document.economic_authority_high_water.get(&key) {
-        if high.authority_id != authority_id || high.public_key != public_key {
+        if high.authority_id != authority_id
+            || high.key_id != key_id
+            || high.public_key_hex != public_key_hex
+        {
             anyhow::bail!("permanent economic action conflicts with the pinned Action Authority");
         }
         if writer_generation < high.writer_generation {
@@ -2616,7 +2653,8 @@ fn restore_economic_authority_high_water(
         key,
         EconomicAuthorityHighWater {
             authority_id: authority_id.to_owned(),
-            public_key: public_key.to_owned(),
+            key_id: key_id.to_owned(),
+            public_key_hex: public_key_hex.to_owned(),
             writer_generation,
             writer_fence_digest: writer_fence_digest.to_owned(),
         },
@@ -2690,7 +2728,7 @@ fn same_economic_payment(
         && left.destination == right.destination
         && left.amount_atomic == right.amount_atomic
         && left.expires_at_unix == right.expires_at_unix
-        && left.public_key == right.public_key
+        && left.key_id == right.key_id
 }
 
 fn same_economic_effect(
@@ -2725,7 +2763,7 @@ fn same_economic_effect(
         && left.market_config_hash == right.market_config_hash
         && left.market_code_hash == right.market_code_hash
         && left.expires_at_unix == right.expires_at_unix
-        && left.public_key == right.public_key
+        && left.key_id == right.key_id
 }
 
 fn validate_prediction_relay_recovery_boundary(
@@ -2891,19 +2929,22 @@ fn admit_economic_high_water(
     owner_id: &str,
     agent_id: &str,
     authority_id: &str,
-    public_key: &str,
+    key_id: &str,
     writer_generation: u64,
     writer_fence_digest: &str,
     expected_authority_id: &str,
-    expected_public_key: [u8; 32],
+    expected_public_key: &[u8],
 ) -> anyhow::Result<()> {
     let authority_key = economic_authority_key(owner_id, agent_id);
-    let expected_key = format!("ed25519:{}", hex::encode(expected_public_key));
-    if authority_id != expected_authority_id || public_key != expected_key {
+    let (expected_key_id, public_key_hex) = custody_key_identity(expected_public_key)?;
+    if authority_id != expected_authority_id || key_id != expected_key_id {
         anyhow::bail!("economic action is not issued by the pinned authority");
     }
     if let Some(high) = document.economic_authority_high_water.get(&authority_key) {
-        if high.authority_id != expected_authority_id || high.public_key != expected_key {
+        if high.authority_id != expected_authority_id
+            || high.key_id != expected_key_id
+            || high.public_key_hex != public_key_hex
+        {
             anyhow::bail!(
                 "custody Action Authority identity changed; explicit owner recovery is required"
             );
@@ -2922,7 +2963,8 @@ fn admit_economic_high_water(
         authority_key,
         EconomicAuthorityHighWater {
             authority_id: expected_authority_id.to_owned(),
-            public_key: expected_key,
+            key_id: expected_key_id,
+            public_key_hex,
             writer_generation,
             writer_fence_digest: writer_fence_digest.to_owned(),
         },
@@ -2933,31 +2975,97 @@ fn admit_economic_high_water(
 fn validate_economic_authorization(
     authorization: &EconomicActionAuthorization,
     expected_authority_id: &str,
-    expected_public_key: [u8; 32],
+    expected_public_key: &[u8],
     now: u64,
 ) -> anyhow::Result<()> {
     if authorization.authority_id != expected_authority_id
-        || authorization.public_key != format!("ed25519:{}", hex::encode(expected_public_key))
         || now == 0
         || now >= authorization.expires_at_unix
     {
         anyhow::bail!("economic authorization is expired or not issued by the pinned authority");
     }
     let preimage = economic_authorization_preimage(authorization)?;
-    let digest = Sha256::digest(preimage);
-    let proof_hex = authorization
-        .proof
-        .strip_prefix("ed25519:")
-        .context("economic authorization proof has no Ed25519 prefix")?;
-    let proof_bytes = hex::decode(proof_hex).context("decode economic authorization proof")?;
-    let signature = Signature::from_slice(&proof_bytes)
-        .context("economic authorization proof must be 64 bytes")?;
-    let verifying_key = VerifyingKey::from_bytes(&expected_public_key)
-        .context("invalid pinned economic authority public key")?;
-    verifying_key
-        .verify(digest.as_slice(), &signature)
-        .context("economic authorization proof is invalid")?;
-    Ok(())
+    let digest: [u8; 32] = Sha256::digest(preimage).into();
+    verify_custody_authorization(
+        &digest,
+        &authorization.key_id,
+        &authorization.proof,
+        expected_public_key,
+    )
+    .context("economic authorization proof is invalid")
+}
+
+const ED25519_CUSTODY_REFUSAL: &str = "Ed25519 custody authorization keys and proofs are not \
+     accepted; the custody authorization key is ML-DSA-44";
+
+/// Parses an owner pin of the custody authorization key: the 1,312-byte
+/// ML-DSA-44 public key as 2,624 lowercase hex characters. A 32-byte
+/// (Ed25519-length) key is refused explicitly.
+pub fn parse_custody_authorization_public_key_hex(text: &str) -> anyhow::Result<Vec<u8>> {
+    if text.len() == 64 || text.starts_with("ed25519:") {
+        anyhow::bail!(ED25519_CUSTODY_REFUSAL);
+    }
+    if text.len() != NATIVE_REGISTRY_PUBLIC_KEY_BYTES * 2
+        || !text.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        anyhow::bail!(
+            "the custody authorization key is a {NATIVE_REGISTRY_PUBLIC_KEY_BYTES}-byte \
+             ML-DSA-44 public key in lowercase hex"
+        );
+    }
+    hex::decode(text).context("decode the custody authorization key")
+}
+
+/// Parses an owner pin of the custody authorization key and returns the key
+/// bytes and their `mldsa44:` key ID text.
+pub fn custody_authorization_pin(text: &str) -> anyhow::Result<(Vec<u8>, String)> {
+    let key = parse_custody_authorization_public_key_hex(text)?;
+    let (key_id, _) = custody_key_identity(&key)?;
+    Ok((key, key_id))
+}
+
+/// The key ID text and lowercase hex of a pinned custody authorization key.
+fn custody_key_identity(public_key: &[u8]) -> anyhow::Result<(String, String)> {
+    if public_key.len() == 32 {
+        anyhow::bail!(ED25519_CUSTODY_REFUSAL);
+    }
+    let key_id = controller_key_id(public_key)?;
+    Ok((mldsa44_key_id_text(&key_id), hex::encode(public_key)))
+}
+
+/// Checks one stored high-water entry: canonical key bytes that derive its
+/// canonical key ID. Returns the key bytes.
+fn validate_high_water(high: &EconomicAuthorityHighWater) -> anyhow::Result<Vec<u8>> {
+    let key = parse_custody_authorization_public_key_hex(&high.public_key_hex)
+        .context("stored custody authorization key is malformed")?;
+    let (derived, _) = custody_key_identity(&key)?;
+    parse_mldsa44_key_id_text(&high.key_id).context("stored custody key ID is malformed")?;
+    if derived != high.key_id || high.authority_id.is_empty() {
+        anyhow::bail!("stored custody authorization key does not derive its key ID");
+    }
+    Ok(key)
+}
+
+/// Verifies one custody authorization proof: the carried key ID must be the
+/// canonical ID of the pinned key, and the proof a canonical Pure ML-DSA-44
+/// signature by that key over the 32-byte preimage digest under
+/// `TOS-CUSTODY-AUTHORIZATION-V1`.
+fn verify_custody_authorization(
+    digest: &[u8; 32],
+    key_id: &str,
+    proof: &str,
+    pinned_key: &[u8],
+) -> anyhow::Result<()> {
+    if key_id.starts_with("ed25519:") || proof.starts_with("ed25519:") {
+        anyhow::bail!(ED25519_CUSTODY_REFUSAL);
+    }
+    let carried = parse_mldsa44_key_id_text(key_id)?;
+    let (pinned_id, _) = custody_key_identity(pinned_key)?;
+    if mldsa44_key_id_text(&carried) != pinned_id {
+        anyhow::bail!("custody authorization key ID is not the pinned custody key");
+    }
+    let signature = parse_mldsa44_signature_text(proof)?;
+    verify_ml_dsa_44(pinned_key, &signature, digest, CUSTODY_AUTHORIZATION_SIGNATURE_CONTEXT)
 }
 
 fn economic_authorization_preimage(
@@ -3075,35 +3183,24 @@ fn economic_authorization_preimage(
 fn validate_economic_effect_authorization(
     authorization: &EconomicEffectAuthorization,
     expected_authority_id: &str,
-    expected_public_key: [u8; 32],
+    expected_public_key: &[u8],
     now: u64,
 ) -> anyhow::Result<()> {
     if authorization.authority_id != expected_authority_id
-        || authorization.public_key != format!("ed25519:{}", hex::encode(expected_public_key))
         || now == 0
         || now >= authorization.expires_at_unix
     {
         anyhow::bail!("economic effect is expired or not issued by the pinned authority");
     }
     let preimage = economic_effect_authorization_preimage(authorization)?;
-    let digest = Sha256::digest(preimage);
-    let proof_hex = authorization
-        .proof
-        .strip_prefix("ed25519:")
-        .context("economic effect proof has no Ed25519 prefix")?;
-    if proof_hex.len() != 128
-        || proof_hex.bytes().any(|byte| !byte.is_ascii_hexdigit() || byte.is_ascii_uppercase())
-    {
-        anyhow::bail!("economic effect proof is not canonical lowercase Ed25519 hex");
-    }
-    let signature =
-        Signature::from_slice(&hex::decode(proof_hex).context("decode economic effect proof")?)
-            .context("economic effect proof must be 64 bytes")?;
-    VerifyingKey::from_bytes(&expected_public_key)
-        .context("invalid pinned economic authority public key")?
-        .verify(digest.as_slice(), &signature)
-        .context("economic effect authorization proof is invalid")?;
-    Ok(())
+    let digest: [u8; 32] = Sha256::digest(preimage).into();
+    verify_custody_authorization(
+        &digest,
+        &authorization.key_id,
+        &authorization.proof,
+        expected_public_key,
+    )
+    .context("economic effect authorization proof is invalid")
 }
 
 fn effect_network_global_id(authorization: &EconomicEffectAuthorization) -> anyhow::Result<i32> {
@@ -3611,6 +3708,9 @@ fn validate_document(document: &JournalDocument) -> anyhow::Result<()> {
     if document.records.len() > MAX_TOTAL_RECORDS {
         anyhow::bail!("Agent Account custody journal contains too many records");
     }
+    for high in document.economic_authority_high_water.values() {
+        validate_high_water(high)?;
+    }
     for fence in document.epoch_change_fences.values() {
         validate_fence(fence)?;
     }
@@ -3629,18 +3729,14 @@ fn validate_document(document: &JournalDocument) -> anyhow::Result<()> {
                 .economic_authority_high_water
                 .get(&authority_key)
                 .context("economic action has no durable authority high-water record")?;
-            let encoded_key = high
-                .public_key
-                .strip_prefix("ed25519:")
-                .context("stored economic authority key has no Ed25519 prefix")?;
-            let key: [u8; 32] = hex::decode(encoded_key)
-                .context("decode stored economic authority key")?
-                .try_into()
-                .map_err(|_| anyhow::anyhow!("stored economic authority key must be 32 bytes"))?;
+            let key = validate_high_water(high)?;
+            if authorization.key_id != high.key_id {
+                anyhow::bail!("economic action key ID differs from its durable custody key");
+            }
             validate_economic_authorization(
                 authorization,
                 &high.authority_id,
-                key,
+                &key,
                 record.created_at_unix,
             )?;
             if authorization.writer_generation > high.writer_generation
@@ -3668,17 +3764,14 @@ fn validate_document(document: &JournalDocument) -> anyhow::Result<()> {
                 .economic_authority_high_water
                 .get(&authority_key)
                 .context("economic effect has no durable authority high-water record")?;
-            let key: [u8; 32] = hex::decode(
-                high.public_key
-                    .strip_prefix("ed25519:")
-                    .context("stored authority key is malformed")?,
-            )?
-            .try_into()
-            .map_err(|_| anyhow::anyhow!("stored authority key must be 32 bytes"))?;
+            let key = validate_high_water(high)?;
+            if authorization.key_id != high.key_id {
+                anyhow::bail!("economic effect key ID differs from its durable custody key");
+            }
             validate_economic_effect_authorization(
                 authorization,
                 &high.authority_id,
-                key,
+                &key,
                 record.created_at_unix,
             )?;
             if authorization.writer_generation > high.writer_generation
@@ -3850,7 +3943,36 @@ mod tests {
     use chain_block::{
         Cell, IBitstring, MsgAddressInt, Serializable, StateInit, base64_encode, write_boc,
     };
-    use ed25519_dalek::{Signer, SigningKey};
+
+    /// A custody authorization key for tests: an ML-DSA-44 controller from a
+    /// fixed seed, signing under the custody authorization context.
+    struct CustodyKey {
+        seed: [u8; 32],
+    }
+
+    impl CustodyKey {
+        fn from_seed(seed: &[u8; 32]) -> Self {
+            Self { seed: *seed }
+        }
+
+        fn public_key(&self) -> Vec<u8> {
+            crate::native_registry::native_public_key_from_seed(&self.seed)
+        }
+
+        fn key_id(&self) -> String {
+            mldsa44_key_id_text(&controller_key_id(&self.public_key()).unwrap())
+        }
+
+        fn sign(&self, digest: &[u8]) -> String {
+            self.sign_under(digest, CUSTODY_AUTHORIZATION_SIGNATURE_CONTEXT)
+        }
+
+        fn sign_under(&self, digest: &[u8], context: &[u8]) -> String {
+            let signed =
+                crate::native_registry::sign_ml_dsa_44(&self.seed, digest, context).unwrap();
+            crate::native_registry::mldsa44_signature_text(&signed.signature).unwrap()
+        }
+    }
 
     #[test]
     fn task_body_identity_uses_representation_hash_for_ordinary_and_exotic_cells() {
@@ -4823,7 +4945,7 @@ mod tests {
     fn economic_authorization(
         claim: &ControllerActionClaim,
         generation: u64,
-        key: &SigningKey,
+        key: &CustodyKey,
     ) -> EconomicActionAuthorization {
         let mut authorization = EconomicActionAuthorization {
             schema_version: 2,
@@ -4850,18 +4972,18 @@ mod tests {
             destination: claim.target.clone(),
             amount_atomic: claim.value_atomic,
             expires_at_unix: u64::from(claim.valid_until),
-            public_key: format!("ed25519:{}", hex::encode(key.verifying_key().to_bytes())),
+            key_id: key.key_id(),
             proof: String::new(),
         };
         let digest = Sha256::digest(economic_authorization_preimage(&authorization).unwrap());
-        authorization.proof = format!("ed25519:{}", hex::encode(key.sign(&digest).to_bytes()));
+        authorization.proof = key.sign(&digest);
         authorization
     }
 
     fn economic_effect_authorization(
         claim: &ControllerActionClaim,
         generation: u64,
-        key: &SigningKey,
+        key: &CustodyKey,
     ) -> EconomicEffectAuthorization {
         let mut authorization = EconomicEffectAuthorization {
             schema_version: 2,
@@ -4894,12 +5016,12 @@ mod tests {
             market_config_hash: String::new(),
             market_code_hash: String::new(),
             expires_at_unix: u64::from(claim.valid_until),
-            public_key: format!("ed25519:{}", hex::encode(key.verifying_key().to_bytes())),
+            key_id: key.key_id(),
             proof: String::new(),
         };
         let digest =
             Sha256::digest(economic_effect_authorization_preimage(&authorization).unwrap());
-        authorization.proof = format!("ed25519:{}", hex::encode(key.sign(&digest).to_bytes()));
+        authorization.proof = key.sign(&digest);
         authorization
     }
 
@@ -4936,7 +5058,7 @@ mod tests {
             destination: "0:destination".into(),
             amount_atomic: 50,
             expires_at_unix: 1_800_000_060,
-            public_key: String::new(),
+            key_id: String::new(),
             proof: String::new(),
         };
         assert_eq!(
@@ -5004,7 +5126,7 @@ mod tests {
             market_config_hash: String::new(),
             market_code_hash: String::new(),
             expires_at_unix: 2_000_000_060,
-            public_key: String::new(),
+            key_id: String::new(),
             proof: String::new(),
         };
         assert_eq!(
@@ -5015,7 +5137,7 @@ mod tests {
 
     #[test]
     fn prediction_effect_matches_go_vector_and_shares_controller_sequence() {
-        let key = SigningKey::from_bytes(&[0x75; 32]);
+        let key = CustodyKey::from_seed(&[0x75; 32]);
         let network = RelayNetworkDomainPin {
             network_id: "tos:test".into(),
             global_id: -3,
@@ -5054,7 +5176,7 @@ mod tests {
             market_config_hash: format!("tvm-cell-sha256:{}", "b".repeat(64)),
             market_code_hash: format!("tvm-cell-sha256:{}", "c".repeat(64)),
             expires_at_unix: 2_000_000_060,
-            public_key: format!("ed25519:{}", hex::encode(key.verifying_key().to_bytes())),
+            key_id: key.key_id(),
             proof: String::new(),
         };
         let digest =
@@ -5063,11 +5185,11 @@ mod tests {
             hex::encode(digest),
             "e33e7e0d50a63acc05a0396c17ab5359a451a62b689cdf3a288e467f61978346"
         );
-        authorization.proof = format!("ed25519:{}", hex::encode(key.sign(&digest).to_bytes()));
+        authorization.proof = key.sign(&digest);
         validate_economic_effect_authorization(
             &authorization,
             "authority:one",
-            key.verifying_key().to_bytes(),
+            &key.public_key(),
             2_000_000_000,
         )
         .unwrap();
@@ -5078,8 +5200,7 @@ mod tests {
         authorization.body_hash = agent_account_task_body_hash(&exact_body);
         let updated_digest =
             Sha256::digest(economic_effect_authorization_preimage(&authorization).unwrap());
-        authorization.proof =
-            format!("ed25519:{}", hex::encode(key.sign(&updated_digest).to_bytes()));
+        authorization.proof = key.sign(&updated_digest);
 
         let claim = ControllerActionClaim {
             account: authorization.source_account.clone(),
@@ -5111,7 +5232,7 @@ mod tests {
                 claim.clone(),
                 authorization.clone(),
                 "authority:one",
-                key.verifying_key().to_bytes(),
+                &key.public_key(),
                 2_000_000_000,
             )
             .unwrap();
@@ -5519,7 +5640,7 @@ mod tests {
         }
         let journal =
             AgentAccountCustodyJournal::open(directory.path().canonicalize().unwrap()).unwrap();
-        let key = SigningKey::from_bytes(&[0x63; 32]);
+        let key = CustodyKey::from_seed(&[0x63; 32]);
         let first = claim(0, '1');
         let auth = economic_authorization(&first, 7, &key);
         assert!(
@@ -5528,7 +5649,7 @@ mod tests {
                     first.clone(),
                     auth.clone(),
                     "authority:owner",
-                    key.verifying_key().to_bytes(),
+                    &key.public_key(),
                     10,
                 )
                 .unwrap()
@@ -5540,7 +5661,7 @@ mod tests {
                     first.clone(),
                     auth,
                     "authority:owner",
-                    key.verifying_key().to_bytes(),
+                    &key.public_key(),
                     11,
                 )
                 .unwrap()
@@ -5550,14 +5671,14 @@ mod tests {
         other_genesis.network_domain.as_mut().unwrap().zero_state_file_hash =
             format!("sha256:{}", "c".repeat(64));
         let digest = Sha256::digest(economic_authorization_preimage(&other_genesis).unwrap());
-        other_genesis.proof = format!("ed25519:{}", hex::encode(key.sign(&digest).to_bytes()));
+        other_genesis.proof = key.sign(&digest);
         assert!(
             journal
                 .claim_economic_payment(
                     first.clone(),
                     other_genesis,
                     "authority:owner",
-                    key.verifying_key().to_bytes(),
+                    &key.public_key(),
                     11,
                 )
                 .is_err(),
@@ -5571,7 +5692,7 @@ mod tests {
                     first.clone(),
                     changed,
                     "authority:owner",
-                    key.verifying_key().to_bytes(),
+                    &key.public_key(),
                     11,
                 )
                 .is_err()
@@ -5584,14 +5705,14 @@ mod tests {
         let mut equivocated = economic_authorization(&first, 7, &key);
         equivocated.writer_fence_digest = format!("sha256:{}", "9".repeat(64));
         let digest = Sha256::digest(economic_authorization_preimage(&equivocated).unwrap());
-        equivocated.proof = format!("ed25519:{}", hex::encode(key.sign(&digest).to_bytes()));
+        equivocated.proof = key.sign(&digest);
         assert!(
             journal
                 .claim_economic_payment(
                     first.clone(),
                     equivocated,
                     "authority:owner",
-                    key.verifying_key().to_bytes(),
+                    &key.public_key(),
                     11,
                 )
                 .is_err()
@@ -5620,7 +5741,7 @@ mod tests {
                 takeover,
                 takeover_auth,
                 "authority:owner",
-                key.verifying_key().to_bytes(),
+                &key.public_key(),
                 13,
             )
             .unwrap();
@@ -5630,7 +5751,7 @@ mod tests {
                     first,
                     economic_authorization(&claim(0, '1'), 7, &key),
                     "authority:owner",
-                    key.verifying_key().to_bytes(),
+                    &key.public_key(),
                     14,
                 )
                 .is_err()
@@ -5647,7 +5768,7 @@ mod tests {
         }
         let journal =
             AgentAccountCustodyJournal::open(directory.path().canonicalize().unwrap()).unwrap();
-        let key = SigningKey::from_bytes(&[0x72; 32]);
+        let key = CustodyKey::from_seed(&[0x72; 32]);
         let mut native = claim(0, 'd');
         native.idempotency_key = "d".repeat(64);
         let mut authorization = economic_authorization(&native, 3, &key);
@@ -5660,7 +5781,7 @@ mod tests {
         authorization.sponsorship_corroboration_snapshot_identity =
             Some(format!("sha256:{}", "a".repeat(64)));
         let digest = Sha256::digest(economic_authorization_preimage(&authorization).unwrap());
-        authorization.proof = format!("ed25519:{}", hex::encode(key.sign(&digest).to_bytes()));
+        authorization.proof = key.sign(&digest);
 
         assert!(
             journal
@@ -5668,7 +5789,7 @@ mod tests {
                     native.clone(),
                     authorization.clone(),
                     "authority:owner",
-                    key.verifying_key().to_bytes(),
+                    &key.public_key(),
                     10,
                 )
                 .is_err(),
@@ -5691,7 +5812,7 @@ mod tests {
                     shorter,
                     authorization.clone(),
                     "authority:owner",
-                    key.verifying_key().to_bytes(),
+                    &key.public_key(),
                     11,
                 )
                 .is_err(),
@@ -5703,7 +5824,7 @@ mod tests {
                     bound.clone(),
                     authorization.clone(),
                     "authority:owner",
-                    key.verifying_key().to_bytes(),
+                    &key.public_key(),
                     11,
                 )
                 .unwrap()
@@ -5720,7 +5841,7 @@ mod tests {
                     changed,
                     authorization,
                     "authority:owner",
-                    key.verifying_key().to_bytes(),
+                    &key.public_key(),
                     13,
                 )
                 .is_err()
@@ -5737,7 +5858,7 @@ mod tests {
         }
         let journal =
             AgentAccountCustodyJournal::open(directory.path().canonicalize().unwrap()).unwrap();
-        let key = SigningKey::from_bytes(&[0x64; 32]);
+        let key = CustodyKey::from_seed(&[0x64; 32]);
         let mut payment = claim(0, '8');
         payment.idempotency_key = "8".repeat(64);
         journal
@@ -5745,7 +5866,7 @@ mod tests {
                 payment.clone(),
                 economic_authorization(&payment, 9, &key),
                 "authority:owner",
-                key.verifying_key().to_bytes(),
+                &key.public_key(),
                 100,
             )
             .unwrap();
@@ -5845,7 +5966,7 @@ mod tests {
         }
         let journal =
             AgentAccountCustodyJournal::open(directory.path().canonicalize().unwrap()).unwrap();
-        let key = SigningKey::from_bytes(&[0x65; 32]);
+        let key = CustodyKey::from_seed(&[0x65; 32]);
         let mut payment = claim(0, '9');
         payment.idempotency_key = "9".repeat(64);
         journal
@@ -5853,7 +5974,7 @@ mod tests {
                 payment.clone(),
                 economic_authorization(&payment, 10, &key),
                 "authority:owner",
-                key.verifying_key().to_bytes(),
+                &key.public_key(),
                 200,
             )
             .unwrap();
@@ -5961,7 +6082,7 @@ mod tests {
         }
         let journal =
             AgentAccountCustodyJournal::open(directory.path().canonicalize().unwrap()).unwrap();
-        let key = SigningKey::from_bytes(&[0x64; 32]);
+        let key = CustodyKey::from_seed(&[0x64; 32]);
         let mut effect = claim(0, '8');
         effect.idempotency_key = "8".repeat(64);
         effect.action_kind = "agent-task-send".into();
@@ -5973,7 +6094,7 @@ mod tests {
                     effect.clone(),
                     authorization.clone(),
                     "authority:owner",
-                    key.verifying_key().to_bytes(),
+                    &key.public_key(),
                     10,
                 )
                 .unwrap()
@@ -5985,7 +6106,7 @@ mod tests {
                     effect.clone(),
                     authorization,
                     "authority:owner",
-                    key.verifying_key().to_bytes(),
+                    &key.public_key(),
                     11,
                 )
                 .unwrap()
@@ -5999,7 +6120,7 @@ mod tests {
                     substituted.clone(),
                     economic_effect_authorization(&substituted, 10, &key),
                     "authority:owner",
-                    key.verifying_key().to_bytes(),
+                    &key.public_key(),
                     12,
                 )
                 .is_err()
@@ -6026,7 +6147,7 @@ mod tests {
                     stale.clone(),
                     economic_effect_authorization(&stale, 9, &key),
                     "authority:owner",
-                    key.verifying_key().to_bytes(),
+                    &key.public_key(),
                     14,
                 )
                 .is_err()
@@ -6043,7 +6164,7 @@ mod tests {
         }
         let journal =
             AgentAccountCustodyJournal::open(directory.path().canonicalize().unwrap()).unwrap();
-        let key = SigningKey::from_bytes(&[0x65; 32]);
+        let key = CustodyKey::from_seed(&[0x65; 32]);
         let body = Cell::default();
         let mut effect = claim(0, 'b');
         effect.idempotency_key = "b".repeat(64);
@@ -6051,25 +6172,19 @@ mod tests {
         effect.body_hash = Some(format!("tvm-cell-sha256:{}", hex::encode(body.hash(0))));
         let first = economic_effect_authorization(&effect, 20, &key);
         journal
-            .claim_economic_effect(
-                effect.clone(),
-                first,
-                "authority:owner",
-                key.verifying_key().to_bytes(),
-                10,
-            )
+            .claim_economic_effect(effect.clone(), first, "authority:owner", &key.public_key(), 10)
             .unwrap();
 
         let refreshed_claim = effect.clone();
         let mut takeover = economic_effect_authorization(&refreshed_claim, 21, &key);
         let digest = Sha256::digest(economic_effect_authorization_preimage(&takeover).unwrap());
-        takeover.proof = format!("ed25519:{}", hex::encode(key.sign(&digest).to_bytes()));
+        takeover.proof = key.sign(&digest);
         let (recovered, created) = journal
             .claim_economic_effect(
                 refreshed_claim.clone(),
                 takeover.clone(),
                 "authority:owner",
-                key.verifying_key().to_bytes(),
+                &key.public_key(),
                 11,
             )
             .unwrap();
@@ -6088,7 +6203,7 @@ mod tests {
                     later_claim.clone(),
                     later,
                     "authority:owner",
-                    key.verifying_key().to_bytes(),
+                    &key.public_key(),
                     13,
                 )
                 .is_err(),
@@ -6100,7 +6215,7 @@ mod tests {
                 refreshed_claim.clone(),
                 same_claim_later,
                 "authority:owner",
-                key.verifying_key().to_bytes(),
+                &key.public_key(),
                 14,
             )
             .unwrap();
@@ -6115,7 +6230,7 @@ mod tests {
                     refreshed_claim.clone(),
                     stale,
                     "authority:owner",
-                    key.verifying_key().to_bytes(),
+                    &key.public_key(),
                     14,
                 )
                 .is_err()
@@ -6130,7 +6245,7 @@ mod tests {
                     changed,
                     changed_authorization,
                     "authority:owner",
-                    key.verifying_key().to_bytes(),
+                    &key.public_key(),
                     15,
                 )
                 .is_err()
@@ -6147,7 +6262,7 @@ mod tests {
         }
         let path = directory.path().canonicalize().unwrap();
         let journal = AgentAccountCustodyJournal::open(path.clone()).unwrap();
-        let key = SigningKey::from_bytes(&[0x72; 32]);
+        let key = CustodyKey::from_seed(&[0x72; 32]);
         let mut payment = claim(0, 'c');
         payment.idempotency_key = "c".repeat(64);
         let authorization = economic_authorization(&payment, 30, &key);
@@ -6156,7 +6271,7 @@ mod tests {
                 payment.clone(),
                 authorization.clone(),
                 "authority:owner",
-                key.verifying_key().to_bytes(),
+                &key.public_key(),
                 10,
             )
             .unwrap();
@@ -6241,7 +6356,7 @@ mod tests {
                     other_account,
                     other_authorization,
                     "authority:owner",
-                    key.verifying_key().to_bytes(),
+                    &key.public_key(),
                     14,
                 )
                 .is_err(),
@@ -6257,7 +6372,7 @@ mod tests {
                     other_deployment,
                     other_deployment_authorization,
                     "authority:owner",
-                    key.verifying_key().to_bytes(),
+                    &key.public_key(),
                     15,
                 )
                 .is_err(),
@@ -6275,7 +6390,7 @@ mod tests {
         }
         let path = directory.path().canonicalize().unwrap();
         let journal = AgentAccountCustodyJournal::open(path.clone()).unwrap();
-        let key = SigningKey::from_bytes(&[0x73; 32]);
+        let key = CustodyKey::from_seed(&[0x73; 32]);
         let body = Cell::default();
         let mut effect = claim(0, 'e');
         effect.idempotency_key = "e".repeat(64);
@@ -6287,7 +6402,7 @@ mod tests {
                 effect.clone(),
                 authorization,
                 "authority:owner",
-                key.verifying_key().to_bytes(),
+                &key.public_key(),
                 10,
             )
             .unwrap();
@@ -6304,11 +6419,641 @@ mod tests {
                     moved,
                     moved_authorization,
                     "authority:owner",
-                    key.verifying_key().to_bytes(),
+                    &key.public_key(),
                     11,
                 )
                 .is_err(),
             "generic economic effects share the same permanent owner-wide replay boundary"
         );
+    }
+
+    fn private_journal_directory() -> tempfile::TempDir {
+        let directory = tempfile::tempdir().unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        directory
+    }
+
+    fn resign_payment(authorization: &mut EconomicActionAuthorization, key: &CustodyKey) {
+        let digest = Sha256::digest(economic_authorization_preimage(authorization).unwrap());
+        authorization.proof = key.sign(&digest);
+    }
+
+    /// Every malformed or foreign custody authorization is refused before any
+    /// journal state is touched: Ed25519 keys and proofs, signatures under any
+    /// other context (the Action Authority context above all), non-canonical
+    /// key ID or proof text, and a key ID that is not the pinned key's.
+    #[test]
+    fn custody_authorization_refuses_ed25519_foreign_contexts_and_non_canonical_text() {
+        let key = CustodyKey::from_seed(&[0x51; 32]);
+        let other = CustodyKey::from_seed(&[0x52; 32]);
+        let pinned = key.public_key();
+        let good = economic_authorization(&claim(0, '1'), 7, &key);
+        validate_economic_authorization(&good, "authority:owner", &pinned, 10).unwrap();
+        let digest = Sha256::digest(economic_authorization_preimage(&good).unwrap());
+
+        for context in crate::native_registry::CONTROLLER_SIGNATURE_CONTEXTS {
+            if context == CUSTODY_AUTHORIZATION_SIGNATURE_CONTEXT {
+                continue;
+            }
+            let mut foreign = good.clone();
+            foreign.proof = key.sign_under(&digest, context);
+            assert!(
+                validate_economic_authorization(&foreign, "authority:owner", &pinned, 10).is_err(),
+                "{}",
+                String::from_utf8_lossy(context)
+            );
+        }
+        // The custody signature is not an Action Authority signature either.
+        let custody_signature = parse_mldsa44_signature_text(&good.proof).unwrap();
+        assert!(
+            verify_ml_dsa_44(
+                &pinned,
+                &custody_signature,
+                &digest,
+                crate::native_registry::ACTION_AUTHORITY_SIGNATURE_CONTEXT
+            )
+            .is_err()
+        );
+
+        let mut ed25519_proof = good.clone();
+        ed25519_proof.proof = format!("ed25519:{}", "ab".repeat(64));
+        let error = validate_economic_authorization(&ed25519_proof, "authority:owner", &pinned, 10)
+            .unwrap_err();
+        assert!(format!("{error:#}").contains("Ed25519"), "{error:#}");
+        let mut ed25519_key = good.clone();
+        ed25519_key.key_id = format!("ed25519:{}", "cd".repeat(32));
+        let error = validate_economic_authorization(&ed25519_key, "authority:owner", &pinned, 10)
+            .unwrap_err();
+        assert!(format!("{error:#}").contains("Ed25519"), "{error:#}");
+
+        let canonical_id = good.key_id.clone();
+        for key_id in [
+            canonical_id.to_uppercase(),
+            canonical_id.replace("mldsa44:", "MLDSA44:"),
+            canonical_id[..canonical_id.len() - 2].to_owned(),
+            format!("{canonical_id}00"),
+            format!("mldsa44:{}", "0".repeat(64)),
+            other.key_id(),
+        ] {
+            let mut changed = good.clone();
+            changed.key_id = key_id.clone();
+            assert!(
+                validate_economic_authorization(&changed, "authority:owner", &pinned, 10).is_err(),
+                "{key_id}"
+            );
+        }
+
+        let encoded = good.proof.strip_prefix("mldsa44:").unwrap().to_owned();
+        let mut flipped_trailing = encoded.clone().into_bytes();
+        // 2,420 bytes leave four unused bits in the last character.
+        let last = flipped_trailing.len() - 1;
+        flipped_trailing[last] = if flipped_trailing[last] == b'A' { b'B' } else { b'A' };
+        for proof in [
+            format!("mldsa44:{encoded}="),
+            format!("mldsa44:{}", encoded.replace('-', "+").replace('_', "/")),
+            format!("mldsa44:{}", String::from_utf8(flipped_trailing).unwrap()),
+            format!("mldsa44:{}", &encoded[..encoded.len() - 4]),
+            format!("mldsa44:{encoded}AAAA"),
+            format!("mldsa44: {encoded}"),
+            encoded.clone(),
+            other.sign(&digest),
+        ] {
+            let mut changed = good.clone();
+            changed.proof = proof;
+            assert!(
+                validate_economic_authorization(&changed, "authority:owner", &pinned, 10).is_err()
+            );
+        }
+
+        // A pin of the wrong key, or an Ed25519-length pin, is refused.
+        assert!(
+            validate_economic_authorization(&good, "authority:owner", &other.public_key(), 10)
+                .is_err()
+        );
+        assert!(validate_economic_authorization(&good, "authority:owner", &[7; 32], 10).is_err());
+        let error = parse_custody_authorization_public_key_hex(&"ab".repeat(32)).unwrap_err();
+        assert!(format!("{error:#}").contains("Ed25519"), "{error:#}");
+        assert!(
+            parse_custody_authorization_public_key_hex(&hex::encode(&pinned).to_uppercase())
+                .is_err()
+        );
+        assert!(parse_custody_authorization_public_key_hex(&hex::encode(&pinned[1..])).is_err());
+        assert_eq!(
+            parse_custody_authorization_public_key_hex(&hex::encode(&pinned)).unwrap(),
+            pinned
+        );
+
+        // The removed field name is refused by the strict decoder.
+        let mut value = serde_json::to_value(&good).unwrap();
+        let key_id = value.as_object_mut().unwrap().remove("key_id").unwrap();
+        value.as_object_mut().unwrap().insert("public_key".into(), key_id);
+        assert!(serde_json::from_value::<EconomicActionAuthorization>(value).is_err());
+    }
+
+    /// The same refusals hold for a generic and a Prediction effect.
+    #[test]
+    fn custody_effect_authorization_refuses_the_action_authority_context() {
+        let key = CustodyKey::from_seed(&[0x53; 32]);
+        let mut effect = claim(0, '8');
+        effect.action_kind = "agent-task-send".into();
+        effect.body_hash = Some(format!("tvm-cell-sha256:{}", "8".repeat(64)));
+        let good = economic_effect_authorization(&effect, 3, &key);
+        validate_economic_effect_authorization(&good, "authority:owner", &key.public_key(), 10)
+            .unwrap();
+        let digest = Sha256::digest(economic_effect_authorization_preimage(&good).unwrap());
+        let mut swapped = good.clone();
+        swapped.proof =
+            key.sign_under(&digest, crate::native_registry::ACTION_AUTHORITY_SIGNATURE_CONTEXT);
+        assert!(
+            validate_economic_effect_authorization(
+                &swapped,
+                "authority:owner",
+                &key.public_key(),
+                10
+            )
+            .is_err()
+        );
+        let mut ed25519 = good;
+        ed25519.proof = format!("ed25519:{}", "ab".repeat(64));
+        assert!(
+            validate_economic_effect_authorization(
+                &ed25519,
+                "authority:owner",
+                &key.public_key(),
+                10
+            )
+            .is_err()
+        );
+    }
+
+    fn journal_path(directory: &tempfile::TempDir) -> std::path::PathBuf {
+        directory.path().join(JOURNAL_FILE)
+    }
+
+    fn tombstone_path(directory: &tempfile::TempDir, stable_action_id: &str) -> std::path::PathBuf {
+        directory.path().join(economic_action_tombstone_filename(stable_action_id).unwrap())
+    }
+
+    fn edit_json(path: &Path, edit: impl FnOnce(&mut serde_json::Value)) {
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+        edit(&mut value);
+        fs::write(path, serde_json::to_vec(&value).unwrap()).unwrap();
+    }
+
+    fn reopen(directory: &tempfile::TempDir) -> anyhow::Result<AgentAccountCustodyJournal> {
+        AgentAccountCustodyJournal::open(directory.path().canonicalize().unwrap())
+    }
+
+    /// A journal reopens with every stored proof re-verified by the stored
+    /// key; a record compacted out of the hot journal is restored from its
+    /// tombstone with the tombstone's key; and each kind of corruption of the
+    /// durable key, key ID, proof or schema is refused.
+    #[test]
+    fn custody_journal_reverifies_stored_proofs_on_reopen_and_recovery() {
+        let key = CustodyKey::from_seed(&[0x54; 32]);
+        let other = CustodyKey::from_seed(&[0x55; 32]);
+        let pinned = key.public_key();
+        let first = claim(0, '1');
+        let authorization = economic_authorization(&first, 7, &key);
+        let stable = authorization.stable_action_id.clone();
+
+        let directory = private_journal_directory();
+        let journal = reopen(&directory).unwrap();
+        journal
+            .claim_economic_payment(
+                first.clone(),
+                authorization.clone(),
+                "authority:owner",
+                &pinned,
+                10,
+            )
+            .unwrap();
+        drop(journal);
+        let pristine_journal = fs::read(journal_path(&directory)).unwrap();
+        let pristine_tombstone = fs::read(tombstone_path(&directory, &stable)).unwrap();
+        let tombstone: serde_json::Value = serde_json::from_slice(&pristine_tombstone).unwrap();
+        assert_eq!(tombstone["schema"], ECONOMIC_ACTION_TOMBSTONE_SCHEMA);
+        assert_eq!(tombstone["authority_public_key_hex"], hex::encode(&pinned));
+
+        // Reopen: the stored proof verifies with the stored key.
+        let journal = reopen(&directory).unwrap();
+        let found = journal.find_economic_payment_by_stable_action(&stable).unwrap().unwrap();
+        assert_eq!(found.economic_authorization.as_ref(), Some(&authorization));
+        drop(journal);
+
+        // Compaction: the hot journal forgets the record and the high water;
+        // re-claiming the stable action restores both from the tombstone.
+        edit_json(&journal_path(&directory), |value| {
+            value["records"] = serde_json::json!([]);
+            value["economic_authority_high_water"] = serde_json::json!({});
+        });
+        let journal = reopen(&directory).unwrap();
+        let (restored, created) = journal
+            .claim_economic_payment(
+                first.clone(),
+                authorization.clone(),
+                "authority:owner",
+                &pinned,
+                11,
+            )
+            .unwrap();
+        assert!(!created);
+        assert_eq!(restored.economic_authorization.as_ref(), Some(&authorization));
+        drop(journal);
+        let restored_journal: serde_json::Value =
+            serde_json::from_slice(&fs::read(journal_path(&directory)).unwrap()).unwrap();
+        let high = restored_journal["economic_authority_high_water"]
+            .as_object()
+            .unwrap()
+            .values()
+            .next()
+            .unwrap()
+            .clone();
+        assert_eq!(high["key_id"], key.key_id());
+        assert_eq!(high["public_key_hex"], hex::encode(&pinned));
+
+        let reset = |directory: &tempfile::TempDir| {
+            fs::write(journal_path(directory), &pristine_journal).unwrap();
+            fs::write(tombstone_path(directory, &stable), &pristine_tombstone).unwrap();
+        };
+        let high_water_key = economic_authority_key("owner:1", "agent:buyer");
+        type Corruption<'a> = (&'a str, Box<dyn Fn(&mut serde_json::Value) + 'a>);
+        let corruptions: Vec<Corruption> = vec![
+            (
+                "flipped stored proof",
+                Box::new(|value| {
+                    let proof = value["records"][0]["economic_authorization"]["proof"]
+                        .as_str()
+                        .unwrap()
+                        .to_owned();
+                    let mut bytes = parse_mldsa44_signature_text(&proof).unwrap();
+                    bytes[100] ^= 1;
+                    value["records"][0]["economic_authorization"]["proof"] =
+                        crate::native_registry::mldsa44_signature_text(&bytes).unwrap().into();
+                }),
+            ),
+            (
+                "stored key replaced by another valid key",
+                Box::new(|value| {
+                    value["economic_authority_high_water"][&high_water_key]["public_key_hex"] =
+                        hex::encode(other.public_key()).into();
+                }),
+            ),
+            (
+                "stored key ID moved to the other key",
+                Box::new(|value| {
+                    value["economic_authority_high_water"][&high_water_key]["key_id"] =
+                        other.key_id().into();
+                }),
+            ),
+            (
+                "Ed25519-length stored key",
+                Box::new(|value| {
+                    value["economic_authority_high_water"][&high_water_key]["public_key_hex"] =
+                        "ab".repeat(32).into();
+                }),
+            ),
+            (
+                "previous journal schema",
+                Box::new(|value| {
+                    value["schema"] = "tos.agent-account.controller-journal.v2".into();
+                }),
+            ),
+        ];
+        for (name, corrupt) in corruptions {
+            reset(&directory);
+            edit_json(&journal_path(&directory), |value| corrupt(value));
+            assert!(reopen(&directory).is_err(), "{name}");
+        }
+
+        // A tombstone whose key is not the key that admitted the record, or
+        // whose schema predates the ML-DSA-44 custody key, is refused when the
+        // record is restored, and the journal is left unchanged.
+        for (name, field, replacement) in [
+            ("tombstone key replaced", "authority_public_key_hex", hex::encode(other.public_key())),
+            ("tombstone Ed25519-length key", "authority_public_key_hex", "ab".repeat(32)),
+            (
+                "previous tombstone schema",
+                "schema",
+                "tos.agent-account.economic-action-tombstone.v1".to_owned(),
+            ),
+        ] {
+            reset(&directory);
+            edit_json(&journal_path(&directory), |value| {
+                value["records"] = serde_json::json!([]);
+                value["economic_authority_high_water"] = serde_json::json!({});
+            });
+            edit_json(&tombstone_path(&directory, &stable), |value| {
+                value[field] = replacement.clone().into();
+            });
+            let before = fs::read(journal_path(&directory)).unwrap();
+            let refused = reopen(&directory).and_then(|journal| {
+                journal.claim_economic_payment(
+                    first.clone(),
+                    authorization.clone(),
+                    "authority:owner",
+                    &pinned,
+                    12,
+                )
+            });
+            assert!(refused.is_err(), "{name}");
+            assert_eq!(fs::read(journal_path(&directory)).unwrap(), before, "{name}");
+        }
+
+        // A different pin is refused against the durable key.
+        reset(&directory);
+        let journal = reopen(&directory).unwrap();
+        let mut other_authorization = authorization.clone();
+        other_authorization.key_id = other.key_id();
+        resign_payment(&mut other_authorization, &other);
+        let error = journal
+            .claim_economic_payment(
+                first,
+                other_authorization,
+                "authority:owner",
+                &other.public_key(),
+                12,
+            )
+            .unwrap_err();
+        assert!(format!("{error:#}").contains("explicit owner recovery"), "{error:#}");
+    }
+
+    /// The objects of the custody authorization signature vector: the
+    /// published cross-language preimage fixtures (payment V2, V3, sponsorship
+    /// V3, effect V2) and the Prediction effect.
+    fn custody_vector_objects() -> Vec<(&'static str, Vec<u8>)> {
+        let payment = EconomicActionAuthorization {
+            schema_version: 2,
+            authority_id: "authority:owner".into(),
+            owner_id: "owner:1".into(),
+            agent_id: "agent:buyer".into(),
+            source_account: "-1:source".into(),
+            network_id: "tos:testnet".into(),
+            network_global_id: 42,
+            network_domain: Some(RelayNetworkDomainPin {
+                network_id: "tos:testnet".into(),
+                global_id: 42,
+                zero_state_root_hash: format!("sha256:{}", "a".repeat(64)),
+                zero_state_file_hash: format!("sha256:{}", "b".repeat(64)),
+                workchain_id: -1,
+            }),
+            stable_action_id: format!("sha256:{}", "1".repeat(64)),
+            exact_request_digest: format!("sha256:{}", "2".repeat(64)),
+            agreement_payment_request_digest: None,
+            sponsorship_finality_profile_cbor_digest: None,
+            sponsorship_release_profile_digest: None,
+            sponsorship_corroboration_snapshot_identity: None,
+            writer_generation: 7,
+            writer_fence_digest: format!("sha256:{}", "3".repeat(64)),
+            policy_revision: 4,
+            mandate_digest: format!("sha256:{}", "4".repeat(64)),
+            approval_digest_or_zero: format!("sha256:{}", "0".repeat(64)),
+            agreement_body_digest: format!("sha256:{}", "5".repeat(64)),
+            obligation_instance_id: format!("sha256:{}", "6".repeat(64)),
+            destination: "0:destination".into(),
+            amount_atomic: 50,
+            expires_at_unix: 1_800_000_060,
+            key_id: String::new(),
+            proof: String::new(),
+        };
+        let mut v3 = payment.clone();
+        v3.schema_version = 3;
+        v3.agreement_payment_request_digest = Some(format!("sha256:{}", "7".repeat(64)));
+        let mut sponsorship = v3.clone();
+        sponsorship.sponsorship_finality_profile_cbor_digest =
+            Some(format!("sha256:{}", "8".repeat(64)));
+        sponsorship.sponsorship_release_profile_digest = Some(format!("sha256:{}", "9".repeat(64)));
+        sponsorship.sponsorship_corroboration_snapshot_identity =
+            Some(format!("sha256:{}", "a".repeat(64)));
+        let effect = EconomicEffectAuthorization {
+            schema_version: 2,
+            profile: String::new(),
+            authority_id: "authority:one".into(),
+            owner_id: "owner:one".into(),
+            agent_id: "agent:buyer".into(),
+            source_account: format!("0:{}", "1".repeat(64)),
+            network_id: "tos:test".into(),
+            network_global_id: -3,
+            network_domain: Some(RelayNetworkDomainPin {
+                network_id: "tos:test".into(),
+                global_id: -3,
+                zero_state_root_hash: format!("sha256:{}", "a".repeat(64)),
+                zero_state_file_hash: format!("sha256:{}", "b".repeat(64)),
+                workchain_id: 0,
+            }),
+            action_kind: "escrow.accept".into(),
+            effect_kind: String::new(),
+            stable_action_id: format!("sha256:{}", "2".repeat(64)),
+            exact_request_digest: format!("sha256:{}", "3".repeat(64)),
+            writer_generation: 4,
+            writer_fence_digest: format!("sha256:{}", "4".repeat(64)),
+            policy_revision: 5,
+            mandate_digest: format!("sha256:{}", "5".repeat(64)),
+            approval_digest_or_zero: format!("sha256:{}", "0".repeat(64)),
+            agreement_body_digest: format!("sha256:{}", "6".repeat(64)),
+            obligation_id: "payment:one".into(),
+            destination: format!("0:{}", "7".repeat(64)),
+            amount_nanotos: 100_000_000,
+            body_hash: format!("tvm-cell-sha256:{}", "8".repeat(64)),
+            state_init_hash_or_zero: format!("sha256:{}", "0".repeat(64)),
+            source_agent_account_code_hash: String::new(),
+            market_id: String::new(),
+            market_address: String::new(),
+            market_config_hash: String::new(),
+            market_code_hash: String::new(),
+            expires_at_unix: 2_000_000_060,
+            key_id: String::new(),
+            proof: String::new(),
+        };
+        let prediction = EconomicEffectAuthorization {
+            schema_version: 1,
+            profile: PREDICTION_CUSTODY_EFFECT_PROFILE_V1.into(),
+            authority_id: "authority:one".into(),
+            owner_id: "owner:one".into(),
+            agent_id: "agent:solver".into(),
+            source_account: format!("0:{}", "1".repeat(64)),
+            network_id: String::new(),
+            network_global_id: 0,
+            network_domain: Some(RelayNetworkDomainPin {
+                network_id: "tos:test".into(),
+                global_id: -3,
+                zero_state_root_hash: format!("sha256:{}", "3".repeat(64)),
+                zero_state_file_hash: format!("sha256:{}", "4".repeat(64)),
+                workchain_id: 0,
+            }),
+            action_kind: "prediction.match.submit".into(),
+            effect_kind: "prediction.match.submit".into(),
+            stable_action_id: format!("sha256:{}", "5".repeat(64)),
+            exact_request_digest: format!("sha256:{}", "6".repeat(64)),
+            writer_generation: 7,
+            writer_fence_digest: format!("sha256:{}", "7".repeat(64)),
+            policy_revision: 8,
+            mandate_digest: format!("sha256:{}", "8".repeat(64)),
+            approval_digest_or_zero: format!("sha256:{}", "0".repeat(64)),
+            agreement_body_digest: String::new(),
+            obligation_id: String::new(),
+            destination: format!("0:{}", "a".repeat(64)),
+            amount_nanotos: 900_000_000,
+            body_hash: format!("tvm-cell-sha256:{}", "d".repeat(64)),
+            state_init_hash_or_zero: String::new(),
+            source_agent_account_code_hash: format!("tvm-cell-sha256:{}", "2".repeat(64)),
+            market_id: format!("sha256:{}", "9".repeat(64)),
+            market_address: format!("0:{}", "a".repeat(64)),
+            market_config_hash: format!("tvm-cell-sha256:{}", "b".repeat(64)),
+            market_code_hash: format!("tvm-cell-sha256:{}", "c".repeat(64)),
+            expires_at_unix: 2_000_000_060,
+            key_id: String::new(),
+            proof: String::new(),
+        };
+        vec![
+            ("payment-v2", economic_authorization_preimage(&payment).unwrap()),
+            ("payment-v3", economic_authorization_preimage(&v3).unwrap()),
+            ("sponsorship-payment-v3", economic_authorization_preimage(&sponsorship).unwrap()),
+            ("effect-v2", economic_effect_authorization_preimage(&effect).unwrap()),
+            ("prediction-effect-v1", economic_effect_authorization_preimage(&prediction).unwrap()),
+        ]
+    }
+
+    const CUSTODY_VECTOR: &str = include_str!(
+        "../tests/fixtures/agent_account_custody/custody-authorization-signature-vector.json"
+    );
+    const CUSTODY_VECTOR_SCHEMA: &str = "tos.custody-authorization-signature-vector.v1";
+    const CUSTODY_VECTOR_SEED: [u8; 32] = [0x43; 32];
+
+    fn build_custody_vector() -> serde_json::Value {
+        use fips204::Ph;
+        use fips204::ml_dsa_44;
+        use fips204::traits::{KeyGen, SerDes, Signer};
+        let zero = [0u8; 32];
+        let (public_key, secret) = ml_dsa_44::KG::keygen_from_seed(&CUSTODY_VECTOR_SEED);
+        let public_bytes = public_key.into_bytes().to_vec();
+        let pure = |message: &[u8], context: &[u8]| -> Vec<u8> {
+            secret.try_sign_with_seed(&zero, message, context).unwrap().to_vec()
+        };
+        let objects = custody_vector_objects();
+        let messages: Vec<serde_json::Value> = objects
+            .iter()
+            .map(|(name, preimage)| {
+                let message = Sha256::digest(preimage);
+                let signature = pure(&message, CUSTODY_AUTHORIZATION_SIGNATURE_CONTEXT);
+                serde_json::json!({
+                    "name": name,
+                    "preimage_hex": hex::encode(preimage),
+                    "message_hex": hex::encode(message),
+                    "signature_hex": hex::encode(&signature),
+                    "proof": crate::native_registry::mldsa44_signature_text(&signature).unwrap(),
+                })
+            })
+            .collect();
+        let primary = Sha256::digest(&objects[0].1);
+        let mut refusals = vec![serde_json::json!({
+            "name": "hash-ml-dsa-sha256",
+            "mode": "hash-sha256",
+            "context": String::from_utf8_lossy(CUSTODY_AUTHORIZATION_SIGNATURE_CONTEXT),
+            "message_hex": hex::encode(primary),
+            "signature_hex": hex::encode(secret.try_hash_sign_with_seed(
+                &zero, &primary, CUSTODY_AUTHORIZATION_SIGNATURE_CONTEXT, &Ph::SHA256,
+            ).unwrap()),
+        })];
+        let others: [(&str, &[u8]); 8] = [
+            ("empty-context", b""),
+            ("registry-context", crate::native_registry::NATIVE_REGISTRY_SIGNATURE_CONTEXT),
+            ("agent-packet-context", crate::native_registry::AGENT_PACKET_SIGNATURE_CONTEXT),
+            ("agent-contact-context", crate::native_registry::AGENT_CONTACT_SIGNATURE_CONTEXT),
+            ("agent-guarantor-context", crate::native_registry::AGENT_GUARANTOR_SIGNATURE_CONTEXT),
+            ("agent-account-auth-context", crate::agent_account_auth::MLDSA44_AUTH_CONTEXT),
+            ("service-actor-context", crate::service_actor::SERVICE_ACTOR_RESPOND_CONTEXT),
+            (
+                "action-authority-context",
+                crate::native_registry::ACTION_AUTHORITY_SIGNATURE_CONTEXT,
+            ),
+        ];
+        for (name, context) in others {
+            refusals.push(serde_json::json!({
+                "name": name,
+                "mode": "pure",
+                "context": String::from_utf8_lossy(context),
+                "message_hex": hex::encode(primary),
+                "signature_hex": hex::encode(pure(&primary, context)),
+            }));
+        }
+        serde_json::json!({
+            "schema": CUSTODY_VECTOR_SCHEMA,
+            "seed_hex": hex::encode(CUSTODY_VECTOR_SEED),
+            "context": String::from_utf8_lossy(CUSTODY_AUTHORIZATION_SIGNATURE_CONTEXT),
+            "message_rule": "SHA-256 of the complete TOS-EAA, TOS-CEA or TOS-PCEA preimage",
+            "public_key_hex": hex::encode(&public_bytes),
+            "key_id": mldsa44_key_id_text(&controller_key_id(&public_bytes).unwrap()),
+            "messages": messages,
+            "refusals": refusals,
+        })
+    }
+
+    /// The committed custody authorization vector is exactly what the seed and
+    /// the published preimages produce; every message verifies under the
+    /// custody context only, and every refusal is a valid signature in its own
+    /// mode and context that the custody verifier refuses. With
+    /// `CUSTODY_AUTHORIZATION_VECTOR_OUT=<path>` the test writes the vector.
+    #[test]
+    fn custody_authorization_vector_reproduces_and_refuses_every_other_use() {
+        use fips204::Ph;
+        use fips204::ml_dsa_44;
+        use fips204::traits::{SerDes, Verifier};
+        let built = build_custody_vector();
+        if let Ok(out) = std::env::var("CUSTODY_AUTHORIZATION_VECTOR_OUT") {
+            let mut text = serde_json::to_string_pretty(&built).unwrap();
+            text.push('\n');
+            fs::write(out, text).unwrap();
+            return;
+        }
+        let fixture: serde_json::Value = serde_json::from_str(CUSTODY_VECTOR).unwrap();
+        assert_eq!(fixture, built, "the committed vector differs from what its seed produces");
+        let field = |value: &serde_json::Value, name: &str| -> Vec<u8> {
+            hex::decode(value[name].as_str().unwrap()).unwrap()
+        };
+        let public_bytes = field(&fixture, "public_key_hex");
+        let key_id = fixture["key_id"].as_str().unwrap();
+        let messages = fixture["messages"].as_array().unwrap();
+        for (index, entry) in messages.iter().enumerate() {
+            let digest: [u8; 32] = field(entry, "message_hex").try_into().unwrap();
+            let proof = entry["proof"].as_str().unwrap();
+            verify_custody_authorization(&digest, key_id, proof, &public_bytes).unwrap();
+            for (other_index, other) in messages.iter().enumerate() {
+                if other_index != index {
+                    let other_digest: [u8; 32] = field(other, "message_hex").try_into().unwrap();
+                    assert!(
+                        verify_custody_authorization(&other_digest, key_id, proof, &public_bytes)
+                            .is_err()
+                    );
+                }
+            }
+        }
+        let key =
+            ml_dsa_44::PublicKey::try_from_bytes(public_bytes.clone().try_into().unwrap()).unwrap();
+        for entry in fixture["refusals"].as_array().unwrap() {
+            let message = field(entry, "message_hex");
+            let signature = field(entry, "signature_hex");
+            let context = entry["context"].as_str().unwrap().as_bytes();
+            let fixed: [u8; crate::native_registry::NATIVE_REGISTRY_SIGNATURE_BYTES] =
+                signature.clone().try_into().unwrap();
+            let own_valid = match entry["mode"].as_str().unwrap() {
+                "pure" => key.verify(&message, &fixed, context),
+                "hash-sha256" => key.hash_verify(&message, &fixed, context, &Ph::SHA256),
+                other => panic!("unknown refusal mode {other}"),
+            };
+            assert!(own_valid, "{} is not valid in its own mode", entry["name"]);
+            let digest: [u8; 32] = message.try_into().unwrap();
+            let proof = crate::native_registry::mldsa44_signature_text(&signature).unwrap();
+            assert!(
+                verify_custody_authorization(&digest, key_id, &proof, &public_bytes).is_err(),
+                "{} verified as a custody authorization",
+                entry["name"]
+            );
+        }
     }
 }
