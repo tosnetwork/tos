@@ -1,7 +1,7 @@
-"""The N6 observer stays inside each liteserver connection's admission budget.
+"""The N6 observer paces its liteserver queries with a fixed per-connection budget.
 
-A liteserver admits a bounded number of queries per window on each connection and drops
-the rest without answering, so a caller that bursts past it waits out a full query timeout.
+The liteserver sets no query window of its own; the observer keeps half of 64 queries per
+second on each connection so its load on the nodes it observes stays bounded.
 """
 
 import asyncio
@@ -13,7 +13,6 @@ from types import SimpleNamespace
 import pytest
 from tostester.n6_cluster import (
     LITE_ADMISSION_DROP_MARKER,
-    LITE_CONNECTION_LIMITS_SOURCE,
     LITE_LAST_BLOCK_SYNC_FAILED,
     LITE_QUERIES_PER_HEIGHT_POLL,
     LITE_QUERIES_PER_LOOKUP,
@@ -28,48 +27,11 @@ from tostester.n6_cluster import (
 ROOT = Path(__file__).resolve().parents[4]
 
 
-def write_limits(root: Path, declaration: str) -> Path:
-    path = root / LITE_CONNECTION_LIMITS_SOURCE
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(f"class AdnlInboundConnection {{\n  {declaration}\n}};\n", encoding="utf-8")
-    return root
-
-
-def test_budget_is_read_from_the_server_declaration(tmp_path: Path) -> None:
-    root = write_limits(tmp_path, "ExtConnectionQueryLimits query_limits_{2.5, 40, 12};")
-    assert lite_connection_budget(root) == LiteConnectionBudget(2.5, 40, 12)
-
-
-def test_repository_declares_exactly_one_usable_budget() -> None:
-    budget = lite_connection_budget(ROOT)
-    assert budget.window_seconds > 0
+def test_observer_budget_is_a_fixed_client_side_pace() -> None:
+    budget = lite_connection_budget()
+    assert budget == LiteConnectionBudget(1.0, 64, 32)
     assert budget.max_queries_per_window >= 2 * LITE_QUERIES_PER_LOOKUP
-    source = (ROOT / LITE_CONNECTION_LIMITS_SOURCE).read_text(encoding="utf-8")
-    assert f"{budget.max_queries_per_window}, {budget.max_inflight}}}" in source
-
-
-@pytest.mark.parametrize(
-    "declaration",
-    [
-        "",
-        "ExtConnectionQueryLimits query_limits_{1.0, 64, 32};"
-        " ExtConnectionQueryLimits query_limits_{1.0, 64, 32};",
-        "ExtConnectionQueryLimits query_limits_{0, 64, 32};",
-        "ExtConnectionQueryLimits query_limits_{1.0, 5, 32};",
-        "ExtConnectionQueryLimits query_limits_{1.0, 64, 2};",
-    ],
-)
-def test_budget_refuses_a_missing_duplicated_or_unusable_declaration(
-    tmp_path: Path, declaration: str
-) -> None:
-    root = write_limits(tmp_path, declaration)
-    with pytest.raises(RuntimeError, match="N6_LITE_BUDGET_FAILURE"):
-        lite_connection_budget(root)
-
-
-def test_budget_refuses_an_unreadable_source(tmp_path: Path) -> None:
-    with pytest.raises(RuntimeError, match="N6_LITE_BUDGET_FAILURE"):
-        lite_connection_budget(tmp_path)
+    assert budget.max_inflight >= LITE_QUERIES_PER_LOOKUP
 
 
 class FakeClock:

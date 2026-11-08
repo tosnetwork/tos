@@ -378,10 +378,6 @@ class Harness {
   std::vector<td::actor::ActorOwn<adnl::AdnlExtClient>> clients_;
 };
 
-// Sends and completes `count` queries inside one rate window: batches of 16 stay under
-// the 32 in-flight cap, so none of them is refused, and 64 fit well within one second.
-void fill_rate_window(Harness& harness, size_t client, size_t count, bool require_echo);
-
 void require_answered(Slot& slot, const std::string& where) {
   require(slot.completions.load(std::memory_order_acquire) == 1, where + ": promise did not complete exactly once");
   std::lock_guard lock(slot.mutex);
@@ -413,113 +409,47 @@ void require_closed_promptly(Slot& slot, const std::string& where) {
               (slot.result.is_ok() ? std::string{"an answer"} : slot.result.error().message().str()));
 }
 
-void fill_rate_window(Harness& harness, size_t client, size_t count, bool require_echo) {
-  for (size_t first = 0; first < count; first += 16) {
-    std::vector<std::shared_ptr<Slot>> batch;
-    for (size_t index = first; index < std::min(count, first + 16); index++) {
-      batch.push_back(harness.send(client, harness.tag(index)));
-    }
-    harness.wait_completed(batch, "accepted query did not complete");
-    if (require_echo) {
-      for (auto& slot : batch) {
-        require_answered(*slot, "accepted query");
-      }
-    }
-  }
-}
-
-// A: the 65th query in one window on one connection is answered with the same ID,
-// by the production Lite encoder; the connection stays usable and the refused query
-// never reaches the service.
-void sixty_fifth_query() {
-  Harness harness("sixty-fifth", EncoderChoice::Lite);
+// A: the server sets no per-connection, per-address or server-wide query
+// ceiling of its own. On one connection, 200 queries inside one second all reach
+// the service and are answered; 64 held at once on one connection are all held;
+// 320 held at once from one address across ten connections are all held, and all
+// are answered when released.
+void no_admission_limits() {
+  Harness harness("no-admission-limits", EncoderChoice::Lite);
   auto client = harness.connect();
+  std::vector<std::shared_ptr<Slot>> burst;
   auto started = td::Time::now();
-  fill_rate_window(harness, client, 64, true);
-  require(td::Time::now() - started < 0.9, "the 64 accepted queries did not fit one rate window; case is not the 65th");
-  auto refused = harness.send(client, harness.tag(64));
-  harness.wait_completed({refused}, "65th query did not complete");
-  require(harness.delivered() == 64, "the refused query reached the service");
-  auto expected = liteclient::LiteExtQueryFailureEncoder().encode(
-      adnl::ExtQueryFailure{adnl::ExtQueryFailureKind::PerConnectionRateLimit, td::Status::OK()});
-  require(expected.is_ok(), "Lite encoder failed");
-  {
-    std::lock_guard lock(refused->mutex);
-    require(refused->result.is_ok() && refused->result.ok().as_slice() == expected.ok().as_slice(),
-            "65th answer is not the Lite encoder's bytes for its own ID");
+  for (size_t index = 0; index < 200; index++) {
+    burst.push_back(harness.send(client, harness.tag(index)));
   }
-  auto [code, message] = require_lite_error(*refused, "65th query");
-  require(code == ErrorCode::notready && message == "liteserver admission limit exceeded", "65th Lite error differs");
-  harness.pump(1.1);
-  auto after = harness.send(client, harness.tag(65));
-  harness.wait_completed({after}, "query after the window did not complete");
-  require_answered(*after, "same connection after the rate window");
-  std::printf(
-      "B64_CASE sixty_fifth refused_elapsed_ms=%.3f same_id_lite_error=true connection_kept=true delivered=64\n",
-      1000.0 * refused->elapsed());
-}
+  harness.wait_completed(burst, "burst query did not complete");
+  auto burst_seconds = td::Time::now() - started;
+  for (auto& slot : burst) {
+    require_answered(*slot, "query in a 200-query burst");
+  }
+  require(harness.delivered() == 200, "a burst query did not reach the service");
 
-// B: the 33rd concurrently held query on one connection is refused by the in-flight
-// cap with its own ID; the 32 accepted ones still complete.
-void inflight_limit() {
-  Harness harness("inflight", EncoderChoice::Kind);
-  auto client = harness.connect();
   harness.set_mode(ServerMode::Hold);
-  std::vector<std::shared_ptr<Slot>> accepted;
-  for (size_t index = 0; index < 32; index++) {
-    accepted.push_back(harness.send(client, harness.tag(index)));
+  std::vector<std::shared_ptr<Slot>> held;
+  for (size_t index = 0; index < 64; index++) {
+    held.push_back(harness.send(client, harness.tag(1000 + index)));
   }
-  harness.wait_held(32);
-  auto refused = harness.send(client, harness.tag(32));
-  harness.wait_completed({refused}, "33rd query did not complete");
-  auto [code, message] = require_lite_error(*refused, "33rd in-flight query");
-  require(code == ErrorCode::notready && message == "per_connection_inflight", "33rd refusal kind differs: " + message);
-  require(harness.held() == 32, "the refused query reached the service");
-  harness.release_held();
-  harness.wait_completed(accepted, "held queries did not complete");
-  for (auto& slot : accepted) {
-    require_answered(*slot, "held query after release");
-  }
-  std::printf("B64_CASE inflight refused_kind=%s accepted_completed=32\n", message.c_str());
-}
-
-// B: one address may hold at most 256 queries across all its connections. Eight
-// connections of 32 fill it; the next query from a ninth is refused per IP. After
-// the held queries finish, the full per-IP capacity is available again (no leak).
-void per_ip_limit() {
-  Harness harness("per-ip", EncoderChoice::Kind);
-  harness.set_mode(ServerMode::Hold);
-  std::vector<std::shared_ptr<Slot>> accepted;
-  for (size_t connection = 0; connection < 8; connection++) {
-    auto client = harness.connect();
+  harness.wait_held(64);
+  for (size_t connection = 0; connection < 9; connection++) {
+    auto other = harness.connect();
     for (size_t index = 0; index < 32; index++) {
-      accepted.push_back(harness.send(client, harness.tag(connection * 32 + index)));
+      held.push_back(harness.send(other, harness.tag(2000 + connection * 32 + index)));
     }
-    harness.wait_held((connection + 1) * 32);
+    harness.wait_held(64 + (connection + 1) * 32);
   }
-  auto ninth = harness.connect();
-  auto refused = harness.send(ninth, harness.tag(1000));
-  harness.wait_completed({refused}, "per-IP refusal did not complete");
-  auto [code, message] = require_lite_error(*refused, "257th query from one address");
-  require(message == "per_ip", "per-IP refusal kind differs: " + message);
-  require(harness.held() == 256, "the refused query reached the service");
+  require(harness.held() == 64 + 9 * 32, "a concurrently held query did not reach the service");
   harness.release_held();
-  harness.wait_completed(accepted, "held queries did not complete");
-  for (auto& slot : accepted) {
+  harness.wait_completed(held, "held queries did not complete");
+  for (auto& slot : held) {
     require_answered(*slot, "held query after release");
   }
-  // Server-level counters returned to zero: the whole per-IP budget is usable again.
-  std::vector<std::shared_ptr<Slot>> again;
-  for (size_t index = 0; index < 32; index++) {
-    again.push_back(harness.send(ninth, harness.tag(2000 + index)));
-  }
-  harness.wait_held(32);
-  harness.release_held();
-  harness.wait_completed(again, "queries after release did not complete");
-  for (auto& slot : again) {
-    require_answered(*slot, "query after per-IP release");
-  }
-  std::printf("B64_CASE per_ip refused_kind=%s held=256 released_and_reusable=true\n", message.c_str());
+  std::printf("B64_CASE no_admission_limits burst=200 burst_seconds=%.3f held_one_connection=64 held_one_address=%zu\n",
+              burst_seconds, held.size());
 }
 
 // C: rejections cannot be turned into unbounded failure answers. Past the
@@ -528,9 +458,7 @@ void per_ip_limit() {
 void reply_budget_exhaustion() {
   Harness harness("reply-budget", EncoderChoice::Kind);
   auto client = harness.connect();
-  auto started = td::Time::now();
-  fill_rate_window(harness, client, 64, true);
-  require(td::Time::now() - started < 0.9, "the 64 accepted queries did not fit one rate window");
+  harness.set_mode(ServerMode::Error);
   std::vector<std::shared_ptr<Slot>> flood;
   for (size_t index = 0; index < 40; index++) {
     flood.push_back(harness.send(client, harness.tag(100 + index)));
@@ -554,7 +482,6 @@ void reply_budget_exhaustion() {
           "failure answers exceeded or fell short of the per-connection budget: " + std::to_string(replies));
   require(closed == flood.size() - replies, "a flooded query was neither answered nor failed by the close");
   require(reply_bytes <= replies * adnl::kMaxExtQueryFailurePayloadBytes, "failure answers exceeded their byte bound");
-  require(harness.delivered() == 64, "a refused query reached the service");
   std::printf("B64_CASE reply_budget replies=%zu closed=%zu reply_bytes=%zu\n", replies, closed, reply_bytes);
 }
 
@@ -592,27 +519,9 @@ void oversized_answered() {
 }
 
 // F: a service that installed no encoder (not Lite) never receives a Lite payload.
-// Overload, a handler error and an oversized result each close the connection, and
-// every query on it fails at once.
+// A handler error and an oversized result each close the connection, and every
+// query on it fails at once.
 void no_encoder_closes() {
-  {
-    Harness harness("no-encoder-inflight", EncoderChoice::None);
-    auto client = harness.connect();
-    harness.set_mode(ServerMode::Hold);
-    std::vector<std::shared_ptr<Slot>> held;
-    for (size_t index = 0; index < 32; index++) {
-      held.push_back(harness.send(client, harness.tag(index)));
-    }
-    harness.wait_held(32);
-    auto refused = harness.send(client, harness.tag(32));
-    harness.wait_completed({refused}, "refused query did not complete");
-    require_closed_promptly(*refused, "no-encoder overload");
-    harness.wait_completed(held, "held queries did not fail with the closed connection");
-    for (auto& slot : held) {
-      require_closed_promptly(*slot, "held query on the closed connection");
-    }
-    harness.release_held();
-  }
   for (auto mode : {ServerMode::Error, ServerMode::Oversized}) {
     Harness harness(mode == ServerMode::Error ? "no-encoder-error" : "no-encoder-oversized", EncoderChoice::None);
     auto client = harness.connect();
@@ -621,8 +530,7 @@ void no_encoder_closes() {
     harness.wait_completed({slot}, "query did not complete");
     require_closed_promptly(*slot, mode == ServerMode::Error ? "no-encoder handler error" : "no-encoder oversized");
   }
-  std::printf(
-      "B64_CASE no_encoder overload_closed=true handler_error_closed=true oversized_closed=true lite_payload=false\n");
+  std::printf("B64_CASE no_encoder handler_error_closed=true oversized_closed=true lite_payload=false\n");
 }
 
 // An encoder whose output exceeds the failure payload cap is never sent: the
@@ -636,6 +544,7 @@ void oversized_encoder_closes() {
     held.push_back(harness.send(client, harness.tag(index)));
   }
   harness.wait_held(32);
+  harness.set_mode(ServerMode::Error);
   auto refused = harness.send(client, harness.tag(32));
   harness.wait_completed({refused}, "refused query did not complete");
   require_closed_promptly(*refused, "oversized failure payload");
@@ -673,18 +582,6 @@ void unit_checks() {
   auto later = td::Timestamp::at(101.5);
   require(limits.try_acquire("192.0.2.3", later), "expired windows were not released");
   require(limits.tracked_ips() <= 2, "tracked addresses exceeded their bound");
-
-  adnl::ExtServerQueryLimits server(1, 1);
-  auto key = [](const char* host) {
-    td::IPAddress address;
-    require(address.init_ipv4_port(td::CSlice(host), 4000).is_ok(), "bad test address");
-    return adnl::ExtSourceKey(address);
-  };
-  require(server.try_acquire(key("192.0.2.1")) == adnl::ExtAdmission::Acquired, "server admission failed");
-  require(server.try_acquire(key("192.0.2.2")) == adnl::ExtAdmission::ServerInflightLimited,
-          "server-wide in-flight cap not reported as such");
-  server.release(key("192.0.2.1"));
-  require(server.inflight() == 0, "server in-flight counter did not return to zero");
 
   // Output bound: the frame of the largest legal payload, and two of them, fit;
   // one byte more queued than that does not, and no input wraps around.
@@ -733,7 +630,7 @@ void unit_checks() {
   }
   require(adnl::adnl_ext_max_server_pending_output_bytes < 1024 * adnl::adnl_ext_max_pending_output_bytes,
           "server bound is no tighter than the per-connection bound times the connection limit");
-  std::printf("B64_CASE unit lite_encoder_bounded=true reply_limits=true server_limit_reason=true output_bound=true\n");
+  std::printf("B64_CASE unit lite_encoder_bounded=true reply_limits=true output_bound=true\n");
 }
 
 }  // namespace
@@ -745,9 +642,7 @@ int main(int argc, char** argv) {
   const std::string only = argc > 1 ? argv[1] : "all";
   const std::vector<std::pair<std::string, void (*)()>> cases = {
       {"unit", unit_checks},
-      {"sixty-fifth", sixty_fifth_query},
-      {"inflight", inflight_limit},
-      {"per-ip", per_ip_limit},
+      {"no-admission-limits", no_admission_limits},
       {"reply-budget", reply_budget_exhaustion},
       {"handler-error", handler_error_answered},
       {"oversized", oversized_answered},

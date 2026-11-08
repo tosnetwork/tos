@@ -51,7 +51,6 @@
 
 #include "candidate-data-cache.h"
 #include "finality-cache-policy.h"
-#include "liteserver-admission.h"
 #include "manager-init.h"
 #include "manager-resource-policy.h"
 #include "node-consensus-status.h"
@@ -1013,7 +1012,6 @@ class ValidatorManagerImpl : public ValidatorManager {
   td::actor::ActorOwn<LiteServerCache> lite_server_cache_;
   std::vector<td::uint16> pending_ext_ports_;
   std::vector<adnl::AdnlNodeIdShort> pending_ext_ids_;
-  LiteServerAdmission lite_server_admission_;
 
   void created_ext_server(td::actor::ActorOwn<adnl::AdnlExtServer> lite_server);
 
