@@ -48,6 +48,14 @@ Open before release:
 | Devices | Physical-device and production-signing acceptance of the mobile clients. |
 | Activation | Explicit approval of the self-pay wallet as the deployed default. |
 
+Left in place, as a separate decision: version 16 still enables the LMS fee
+features the retired fee vault needed. These are the `LMSCHECKFEEHASH`
+instruction (F93103), suite 4 of `PQCHECKSIG_SUITE`, and the c7[18]
+incoming-import element, together with their tariffs. Self-pay uses none of
+them. Version 16 is the genesis version and these features are live on running
+chains, so removing them changes the VM and needs a new global version or a new
+genesis. Retiring the fee-vault contracts does not touch them.
+
 ## Module and fee-vault design (being retired)
 
 ### Current state
